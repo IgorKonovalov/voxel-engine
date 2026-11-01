@@ -1,11 +1,11 @@
-# ADR-0041: Smooth materials' surface is the trilinear zero set of the 27-count field in band slots, shaded by its gradient; crisp materials are cubes
+# ADR-0041: The default surface is honest cubes; the trilinear zero set of the 27-count field is an opt-in look for smooth materials
 
 > **Status:** proposed
-> **Date:** 2026-10-31
+> **Date:** 2026-10-31 (rewritten 2026-11-01 on Plan 0054 owner answer 13: cubes the default)
 > **Related plan(s):** [Plan 0054](../plans/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)
 > (Phase 1's readings, the owner's Phase 2 pick and the owner's Phase 3b pick, owner answer 7,
 > are the evidence; its Phase 5 accepts this at the close; amended 2026-10-31 on answers 7
-> and 8). At acceptance this supersedes
+> and 8; rewritten on answer 13). At acceptance this supersedes
 > [ADR-0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md)'s surface
 > (its procedural detail stays),
 > [ADR-0040](0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md),
@@ -42,7 +42,18 @@ adapter.
 
 ## Decision
 
-**The rendered surface of a smooth material at full detail is the zero set of the trilinear interpolation of
+**The default rendered surface is honest cubes**: the plain cube walk with face normals (the
+fly-through's `face` look, `LookPreset::DEFAULT`), tilted by ADR-0011's per-material detail as
+before, with no plane, no attribute and no band storage. A renderer that does not ask for the
+field builds no band slot and runs no field pass. **The field surface below is an opt-in look**
+(`--look field` in the fly-through, the field mirror in `vxe-render`): built, tested and kept,
+off by default. The reason is the owner's window at Plan 0054 Phase 4c's 3a43c06 (owner answer
+13, 2026-11-01): the field cost about 3x `face`'s GPU frame on the RTX 3080 Laptop at
+2530 x 1378 (seam rig 12.0 against 3.8 ms, thin rig 7.8 against 3.4 ms), and the owner judged
+the look gain not worth it ("we have almost 40% more fps if only using pure cubes"). Whether
+some material class (liquids) takes the field is left to the plans of those materials.
+
+**Under the opt-in look, the rendered surface of a smooth material at full detail is the zero set of the trilinear interpolation of
 `phi = count / 27 - 1/2` over the voxel centres**, the count taken over the attribute pass's
 occupancy (solid is not air; a translucent voxel counts as solid). **A voxel is in the band when
 its count is neither 0 nor 27, and a brick is a band brick when it holds a band voxel**: a Full
@@ -87,6 +98,15 @@ do not change.
 ## Consequences
 
 ### Positive
+- **The default costs what cubes cost.** No attribute pass, no band slot, no field walk: the
+  default's hit pass is `face`'s (0.552 ms at the level's spawn against the field's 3.741 on
+  the RTX 3080 Laptop, 1080p from 720p, Plan 0054 Phase 4c), and its mirror carries neither
+  the attribute's bytes nor the band's. Plan 0054's close records the default's readings.
+- **The default has no crack, no box and no seam to close**: every face is a cube face, and a
+  thin feature of any material renders at its true size.
+
+The rest of this section is the opt-in look's.
+
 - No cube face, no crack, no closing rule: the analytic scenes and both poses read 0 leaks under
   the spike, and the flat rigs lie on their face planes (worst hit 7.63e-6 voxel; lavapipe,
   b282738).
@@ -100,6 +120,13 @@ do not change.
   fit settings and the snap memory go with the planes.
 
 ### Negative
+- **The default shows cubes.** The roadmap's surface-look goal ("smooth and natural rock, not
+  visible cubes") is met by the opt-in look only, at its cost; the default is the blocky look
+  the founding interview rejected, accepted by the owner on frame cost (answer 13; the
+  Teardown-style fallback the owner named on 2026-10-31).
+
+The rest of this section is the opt-in look's.
+
 - **The hit pass costs 6x.** At the level's spawn, 1080p from 720p, release, perf lock, three
   alternated runs at b282738 against 811b37e: RTX 3080 Laptop 3.46 against 0.58 ms, Radeon
   RENOIR 30.04 against 4.30 ms (7x); light unchanged (0.90 and 6.91 ms). The field hit
@@ -165,12 +192,21 @@ do not change.
   spike they walked the planes.
 - **Translucency** counts as solid in the field for the primary hit, and the translucent walk
   after the hit is the voxel walk it was; the spike's field look ran none.
-- **The plain cube walk stays** as the crisp materials' path, and `face` as the comparison look;
+- **The plain cube walk stays** as the default surface and the crisp materials' path;
   `cubes-field` goes with the attribute whose normal field it shades by.
 - **ADR-0011's procedural per-material detail** stays, tilting N1.
 - ADR-0038's plane code goes with the attribute it encodes.
 
 ## Alternatives considered
+
+### Alternative I: the field as the default surface (this ADR's Decision until 2026-11-01)
+
+Smooth materials drawn by the field and crisp ones as cubes, by default. Built through Plan
+0054 Phase 4c (the crisp flag, the split pipeline, the planes removed) and inside the 5 ms
+bar at the spawn (hit plus light 4.677 ms, RTX 3080 Laptop). Rejected by the owner at the
+window (answer 13): about 3x `face`'s GPU frame at the seam and thin rigs at 2530 x 1378, with
+the crisp seam's leaks and material-0 hits still open (Plan 0054 Phase 4c's log). It remains
+the opt-in look.
 
 ### Alternative A: the per-voxel plane with snap (ADR-0011, ADR-0039)
 
@@ -219,8 +255,8 @@ a groove about 0.75 voxel deep along its edge (a rock voxel beside a 3-deep inla
 depth 0.5 and 18 at depth 1.5), and the counts of every band brick within one brick of a crisp
 voxel need the voxels' materials, which Phase 3a computed on the CPU at each sync. Phase 3a
 built it and the owner judged its rig "seems to be good", but chose crisp as solid for the
-Decision, the collar accepted (Plan 0054 owner answer 8). It stays the direction if the
-collar is refused at Plan 0054 Phase 4d.
+Decision, the collar accepted (Plan 0054 owner answer 8). It stays a direction for the opt-in
+look's seam, beside the smooth-near rule of owner answer 12 (Plan 0054's followups).
 
 ### Alternative H: the crisp set held by the renderer (Phase 3a's scratch)
 

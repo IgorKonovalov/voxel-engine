@@ -22,7 +22,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, holds still in flight, no dots: a settle, shimmer and dot spike, then mechanisms by measurement | approved | M2, no ADR yet. First and alone after 0047 (owner, 2026-10-29); before 0048 and 0032. |
 | [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 3. After Plan 0050's check, alone; 0048 and 0032 wait. |
 | [0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md) | One-voxel features on the contour surface: a box metric, a majority-filtered plane fit, a normal field, and the owner's call | approved | M2, ADR-0040 (proposed). After 0050 Phase 6, alone; Phase 4 waits for 0054's spike. |
-| [0054](0054-field-surface-trilinear-zero-set-of-the-27-fraction.md) | The field surface: the trilinear zero set of the 27-fraction, a cost-and-look spike first, then band storage and the walk if the owner picks it | in-progress | M2, ADR-0041 (proposed). Stacked on plan-0053; Phase 4 rewritten as 4a-4d. |
+| [0054](0054-field-surface-trilinear-zero-set-of-the-27-fraction.md) | The field surface: the trilinear zero set of the 27-fraction, a cost-and-look spike first, then band storage and the walk if the owner picks it | in-progress | M2, ADR-0041 (proposed). Cubes the default, the field opt-in (answer 13). |
 <!-- roster:end -->
 
 ## Recently closed

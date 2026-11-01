@@ -114,6 +114,10 @@ frame time attributed before any optimisation, the walk brought inside the owner
 under a stop rule, the crisp flag as a material property with the field as the default and the
 planes removed, and the owner's windowed check of the result.
 
+Amended 2026-11-01 (owner answer 13): honest cubes (`face`) are the default look, and the
+field surface stays as an opt-in look, off by default, at about 3x `face`'s GPU frame in the
+owner's window. Phase 4c closes on that, Phase 4d is dropped, and Phase 5 records it.
+
 We rejected finishing on the plane (Plan 0053 alone) as the only path because its ceiling is
 now known and the owner wants the alternative measured before judging. We rejected a tricubic
 or wider reconstruction for the surface itself because the 27-count is already a box filter
@@ -487,6 +491,22 @@ every asserted reading, golden and gate stays on lavapipe.
 - **Owner skill:** dev
 - **What:** the per-material surface as an engine mechanism, the field as the only smooth
   surface, and everything the planes needed gone.
+- **Amended 2026-11-01 (owner, answer 13): cubes are the default.** The text below stays as
+  the record of the opt-in look's mechanism, which is built (the log, Phase 4c). What changes
+  is the default and the done-whens: the close list at the end of this phase ("The close")
+  replaces done-whens 1 to 8 as the phase's gate. In short:
+  - **`face` is the default**: `LookPreset::DEFAULT` is `FACE`, and "The field as the
+    default" below no longer holds.
+  - **The plane removals stay** (2bca6e4). The cube default needs no plane, snap, attribute
+    or Plan 0053 look, and putting them back would restore a surface the owner rejected
+    (answers 2 and 7) at the attribute pass's cost. "What goes" below holds as written.
+  - **The field stays as an opt-in look**, `--look field`, with the crisp flag, the split
+    pipeline, `--crisp` and the field pass, and its tests kept green. Its known defects
+    (done-when 3's readings, the material-0 field hits) are disclosed, not fixed: they are
+    followups.
+  - **The default pays nothing for the field**: a run that does not start under `--look
+    field` builds no band slot and dispatches no field pass (the log's deviation "`--look
+    face` runs over a mirror with band slots" is reversed for the default).
 - **The crisp flag** (owner answer 8). `MaterialFlags::CRISP` in `vxe-world`'s material row,
   beside `TRANSLUCENT`: a render property of the row, as `detail` and `opacity` are. No edit,
   query, collision, coarse grid, collapse, raycast, census or audio path reads it, so the world
@@ -675,10 +695,72 @@ every asserted reading, golden and gate stays on lavapipe.
      field-walking ray that crosses into a run of cubes bricks may stay in the field walk (dev's
      call, measured). Bars (i) and (ii) stand unchanged and are re-read on the split; a second
      miss stops dev with the table again.
+- **The close (amended 2026-11-01, owner answer 13; replaces done-whens 1 to 8).** Where a
+  done-when above is kept, it is named; where it is dropped or turned into a reading, the
+  reason is that it defended the field as the default.
+  1. **The default is `face`.** `LookPreset::DEFAULT` is `FACE`; the banner at start-up names
+     `face` (done-when 7's banner rule, with `face` for `field`). A test,
+     `look::the_default_look_is_face`, asserts on lavapipe that the default's hit records at
+     the spawn, the vein and the patch (the 384 x 216 readback) equal `--look face`'s at every
+     pixel, and the face goldens stay byte for byte main's at `28948a5`
+     (`band_slots_leave_the_face_goldens_byte_for_byte` or its successor; Plan 0050 owner
+     answer 2).
+  2. **The default builds no band.** A run, a test or an example that does not ask for the
+     field look builds a mirror with no band slot and dispatches no field pass; the stdout
+     `field pass:` line is absent. A `tests/mirror.rs` test asserts a default mirror over the
+     level holds 0 band slots, and the existing band tests (`a_carve_gives_the_exposed_air_brick_a_band_slot`,
+     `a_band_air_brick_s_slot_is_pinned`) keep asserting the field mirror's. Switching into
+     `field` at run time in a run started without it: dev's call between building the band on
+     the first switch and leaving `field` out of the look cycle; either way the window shows
+     what is drawn (`references/best-practices.md`, the toggle rule).
+  3. **The opt-in look stays green (done-whens 1, 2, 7 and 8's record test, kept).**
+     Done-when 1's test, renamed `the_field_look_has_no_boxes_and_no_leaks`, asserts as
+     written under `--look field`. Done-when 2 holds as written.
+     `look::the_split_walk_moves_no_hit_record` holds. Done-when 7 holds, the banner naming
+     `field` only under the field look.
+  4. **The seam is a reading (done-when 3 and answer 12, dropped as bars).**
+     `a_smooth_surface_meets_a_crisp_cube_without_a_gap` asserts only what read met at
+     3a43c06: the inlay's bars, 0 misses in every seam box, the trunk's face hits clear of the
+     roots on the plane, the features' hits clear of the trunk as cube hits. It prints the
+     rest, and the log discloses it: the trunk's 15 and 19 leaks in the seam box (head-on,
+     45 degrees) at the 2x2 and 3x3 rods, the collar's material-0 hits (2 and 3), the L's
+     non-cube hits in its concave corner (59 and 56), the collar heights and the speck counts.
+     Answer 12's smooth-near bits are not built (`live/p4c/air-bits.patch` stays set aside,
+     its readings in the log); they are a followup.
+  5. **The material-0 field hits are a known defect of the opt-in look.** The log names both
+     findings (the cubes-free walk's 41, 92 and 23 pixels in cells whose solid corners carry
+     no count bit; the seam's all-air cells) as disclosed defects, not fixed here.
+  6. **Goldens (done-when 5, amended).** A golden that renders the default look renders `face`
+     and is re-blessed if it moved; a golden that existed for a removed plane look is either
+     re-pointed at `--look field` and re-blessed as the opt-in look's golden, or removed where
+     another golden already covers the field; the log names each moved, re-pointed or removed
+     golden with its share of pixels over 2/255. `crates/vxe-render/tests/translucent.rs` and
+     the cutaway tests pass unchanged, or dev stops with the reading.
+  7. **Readings, not bars (done-whens 4, 6 and 8's cost rows).** One quiet round each, logged:
+     the default's hit and light at the level's spawn, 1080p from 720p, on both adapters,
+     against main `28948a5`'s default (the snap planes); `--look field`'s hit plus light
+     against the 5.00 ms figure that was its bar; `--crisp all|rock|none` at the spawn after
+     the removals (done-when 8's table); the field pass's GPU time at the level and on the
+     thin rig under `--look field`; the VGPRs of the hit shaders. Done-when 4's carve-sync
+     comparison is dropped.
+  8. **Shadows and the rest at the default.** The shadow ray at the default is `face`'s: the
+     voxel walk from the hit along its face normal by `SHADOW_OFFSET`, which close item 1's
+     goldens hold to main's `face`. The speck count at the default (now `face`) is read
+     against main's default and logged; a higher count is a finding, not a stop. The frame
+     line's smooth-share readback runs only under the field look. Translucency and the
+     cutaway at the default are `face`'s, unchanged.
+  9. The quick and gpu tiers, clippy, fmt and the doc gates are clean at the tip; the full
+     tier is the close review's.
 
 ### Phase 4d: The owner's windowed check of the default
 - **Owner skill:** human
-- **What:** one windowed session on the release binary at Phase 4c's tip, the frame line
+- **Amended 2026-11-01 (owner, answer 13): dropped.** The default is now `face`, whose pixels
+  close item 1 holds byte for byte to main's `face`, and the owner has judged `face` in the
+  window (session 2's thin rig, "all good"; the seam and thin rigs at 3a43c06, the readings of
+  answer 13). A session at the close would show the owner nothing they have not seen. Dev
+  marks this row "dropped (owner answer 13)" and goes from Phase 4c to Phase 5. The text below
+  is the record of the check as it was written for the field default.
+- **What (as written for the field default):** one windowed session on the release binary at Phase 4c's tip, the frame line
   logged every run (the session script turns the HUD's timer on and greps the `frame (` lines,
   so the window's size and the view are on record): the level at the vein and the patch in the
   default look, lamp on and off, shaded, at the window's size of sessions 1 and 2; the thin rig
@@ -702,10 +784,32 @@ every asserted reading, golden and gate stays on lavapipe.
   ADR-0039 superseded as moot (no cube face, no crack), and ADR-0038 (the plane code's zero
   component) superseded as moot with the attribute. The Radeon walk-speed spike and, under
   owner question 2's recommended option, the thin-feature fallback are named as followups.
+- **Amended 2026-11-01 (owner, answer 13).** The text above was written for the field as the
+  default; this replaces it. `nfr.md` §2 and §3 carry, with machine, commit and load:
+  - **The default (`face`)**: the spawn's hit and light on both adapters against main
+    `28948a5`'s default (the snap planes); the level's initial fill and the autopilot's p50
+    and p99 with no attribute or field pass, against main's attribute pass (17.0 ms fill, dev
+    box); `mirror_bytes` and `allocated_bytes` at the level and over the flight at `r_full`
+    16, with no attribute and no band term, against main's.
+  - **The opt-in field look**, as readings of an option, not budgets the default draws on:
+    the spawn's hit plus light on both adapters (the 5.00 ms figure it was built against
+    named), owner answer 13's window readings (seam rig 12.0 against 3.8 ms, thin rig 7.8
+    against 3.4 ms GPU frame, RTX 3080 Laptop, 2530 x 1378, `live/session3-seam.log`), the
+    band bytes at the level and over the flight under `--look field` against answer 4's 106
+    and 530 MB, and the field pass's time.
+  - The plan's log carries the close block, Phase 4a's attribution and Phase 4b's changes
+    among its readings, and the disclosed defects of the opt-in look (close items 4 and 5).
+  ADR-0041 was rewritten by the architect on answer 13 (2026-11-01): the default surface is
+  honest cubes, the field an opt-in look for smooth materials, the window readings the reason,
+  and "the field as the default" a rejected alternative. The close review accepts it.
+  ADR-0011's contour surface is superseded by it (its per-material detail stays, tilting the
+  face normal as today), ADR-0039 and ADR-0038 are superseded as moot with the attribute, and
+  ADR-0040 is rejected at Plan 0053's close, never accepted. The Radeon walk-speed spike and
+  the thin-feature fallback become followups of the opt-in look only (`## Followups`).
 - **Files touched:** `docs/nfr.md`, this plan's log.
-- **Done when:** the close block names every reading above, Phase 4a's attribution and Phase
-  4b's changes among them; the full tier, clippy, fmt, doctests, deny and the doc gates are
-  clean at the tip, with the full tier's wall time and load recorded.
+- **Done when:** the close block names every reading above; the quick and gpu tiers, clippy,
+  fmt, doctests, deny and the doc gates are clean at the tip; the full tier is the close
+  review's run (owner, 2026-10-30).
 
 ## Data shapes
 
@@ -892,6 +996,17 @@ which no deterministic path reads.
     voxels with "a field hit needs a smooth or smooth-near corner", over accepting the readings
     or crisp as air in the field (ADR-0041's Alternative G, the inlay's groove). Done-when 3 is
     amended on it; the owner looked at the seam rig in the window at 3a43c06 the same day.
+13. **Cubes are the default (owner, 2026-11-01, after the window check at 3a43c06).** Honest
+    cubes (`face`) are the engine's default look; the field surface is no longer the default.
+    It stays in the tree as an opt-in look: the crisp flag, the split pipeline, `--crisp` and
+    the field pass. The window readings, RTX 3080 Laptop at 2530 x 1378, GPU frame, field
+    against `face`: the seam rig 12.0 against 3.8 ms, the thin rig 7.8 against 3.4 ms, about
+    3x (`live/session3-seam.log`). The owner: "we have almost 40% more fps if only using pure
+    cubes. combination of surfaces were fine, but it looks like we can use smooth only for
+    liquids maybe. dont know". Offered the level session first, the owner picked "go cubes
+    now": `face` becomes the default and the plan closes with the field kept as an option, off
+    by default. Smooth for liquids is a question for Plan 0034, not a decision. Phases 4c, 4d
+    and 5 and ADR-0041 are amended on it; answer 12's smooth-near work becomes a followup.
 
 ## Implementation log
 
@@ -1859,3 +1974,27 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:**
 
 ## Followups
+
+Added 2026-11-01 (architect, owner answer 13). None is scheduled; each is a plan of its own if
+a consumer or the owner asks for it.
+
+- **Smooth for liquids.** The owner's "we can use smooth only for liquids maybe" is a question
+  for [Plan 0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md)'s interview,
+  not a decision: whether a liquid's surface takes the field's shape (a liquid material smooth
+  under the opt-in look) or stays ADR-0029's flat face with analytic wave normals.
+- **The smooth-near seam rule** (owner answer 12, not built): air band voxels carry a
+  smooth-near bit and a dual cell gives a field hit only with a smooth or smooth-near corner,
+  so the opt-in look's crisp seam closes the trunk's leaks and the L's material-0 corner.
+  Start from `live/p4c/air-bits.patch` and its readings (the 26-neighbour rule's 107 of 676
+  rock hits on the inlay, the 3x3 collar's 1.107 voxel); done-when 3's bars are its gate.
+- **The material-0 field hits**: a mixed-sign dual cell whose solid corners carry no count bit
+  (count 27) or whose corners are all air gives a field hit with no smooth corner (Phase 4c's
+  log: 41, 92 and 23 pixels on the cubes-free walk; the seam rig's collar and L corner). A
+  defect of the opt-in look.
+- **Plan 0053's bearing.** Its majority-filtered fit and normal field were removed by Phase 4c
+  with the planes; its box metric stays as the field look's regression gate. Plan 0053 closes
+  in the same close session as this plan (its branch `plan-0053` at 8dd3ee4 is stacked under
+  `plan-0054`), with its Phase 4 answered by this plan's answers 2, 7 and 13 and ADR-0040
+  rejected, never accepted.
+- **The Radeon walk-speed spike** (owner answer 3) and **the thin-feature fallback** (owner
+  answer 8) now concern only the opt-in look, and wait for a consumer of it.
