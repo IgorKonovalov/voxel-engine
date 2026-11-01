@@ -629,6 +629,15 @@ every asserted reading, golden and gate stays on lavapipe.
      collar's highest hit off the face per feature against the worked 0.19, 0.43 and 0.75
      voxel, and the speck test's count on the trunk face with the branches crisp and with them
      smooth (a higher count is a finding for the close, not a stop).
+     Amended 2026-11-01 (owner, answer 12): the rule "a dual cell whose solid corners are all
+     crisp gives no field hit" is replaced: air band voxels carry a smooth-near bit too, and a
+     dual cell gives a field hit only when at least one of its corners (solid or air) is smooth
+     or smooth-near; which neighbours make an air voxel smooth-near is dev's call, measured on
+     this rig (the 26 neighbours first read 107 of 676 inner inlay hits as rock on the inlay's
+     plane; the 6 face neighbours are next). The test also asserts no field hit of material 0
+     on the rig. The bars above stand, except the trunk's "at most 1 voxel off the plane" for
+     the 3x3 rod, which is held: the test prints it, and the bar is set from the field's reading
+     under the rule and the owner's look at the seam rig.
   4. The crisp bit's cost on the attribute side: the field pass's GPU time at the level (no
      crisp material) and on the thin rig against Phase 4b's tip, and `update + poll + sync` of
      the frame holding a radius-7 carve beside the rig's crisp branches against the same carve
@@ -876,6 +885,13 @@ which no deterministic path reads.
     on the hit, bar 10 %) and `--crisp rock` 2.230 ms hit against a bar of 0.866; the Radeon
     +109 % for `all`. The owner picked the split pipeline (the face walk until a brick that is
     not cubes) over a per-band-cell bit or accepting the reading; done-when 8 is amended on it.
+12. **Done-when 3's miss (owner, 2026-11-01, the recommended option).** At 3a43c06 the seam rig read
+    15 and 19 leaks at the trunk's 2x2 and 3x3 rods (the crisp skip rule leaves the next field
+    piece already above zero) and field hits of material 0 at the collar and in the L's concave
+    corner (all-air dual cells with no count bit). The owner picked smooth-near bits on air band
+    voxels with "a field hit needs a smooth or smooth-near corner", over accepting the readings
+    or crisp as air in the field (ADR-0041's Alternative G, the inlay's groove). Done-when 3 is
+    amended on it; the owner looked at the seam rig in the window at 3a43c06 the same day.
 
 ## Implementation log
 
