@@ -317,6 +317,43 @@ fn the_level_spreads_over_capped_shards() {
     assert!(by_shard.iter().all(|&n| n >= 1), "{by_shard:?}");
 }
 
+/// The fly-through's default mirror over the level (no `--look field`: `GpuWorld::with_config`
+/// at `level_mirror_budget(.., false)`) holds no band slot: after the first sync it is not a
+/// field mirror, holds 0 band slots and 0 band units, its live bricks are the level's 383 608
+/// brick slots alone, and the field pass has no work.
+#[test]
+fn the_default_mirror_over_the_level_holds_no_band_slot() {
+    let (world, source) = level();
+    let Some((device, queue)) = device(&world) else {
+        return;
+    };
+    let chunks = world.extent().len() as u64;
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: flythrough::level_mirror_budget(&world, chunks, false),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    gpu.set_focus(source.spawn());
+    gpu.sync_now(&world, &device, &queue)
+        .expect("the level fits its default budget");
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let items = gpu.update_field(&mut enc);
+    queue.submit([enc.finish()]);
+    println!(
+        "default mirror: {} live bricks, {} band slots, {} band units, {items} field items",
+        gpu.live_bricks(),
+        gpu.band_bricks(),
+        gpu.band_units()
+    );
+    assert!(!gpu.field_surface());
+    assert_eq!(gpu.band_bricks(), 0);
+    assert_eq!(gpu.band_units(), 0);
+    assert_eq!(gpu.live_bricks(), 383_608);
+    assert_eq!(items, 0);
+}
+
 /// Every record's 16 brick-bits words hold, for each chunk, the bits of its bricks that are
 /// not `Uniform(AIR)`; the table carries `EMPTY_BIT` on exactly the entries whose bits are all
 /// clear, and every entry that is not `ABSENT` names the CPU's record.

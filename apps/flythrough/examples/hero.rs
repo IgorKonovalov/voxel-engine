@@ -22,9 +22,9 @@
 //! (`HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it) and the upscaler at
 //! the fly-through's defaults (`--internal-scale 1.5`: our upscaler with its jitter, which
 //! `--jitter off` stops; `--internal-scale 1` without `--jitter on` is the native frame).
-//! The look is a contour preset of `flythrough::LookPreset` (the field surface), the
-//! fly-through's default unless `--look` names another (its tuning and rock detail); the ores
-//! emit, and
+//! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face`) unless
+//! `--look` names another (its tuning and rock detail); only `--look field` mirrors the
+//! field's band slots and runs the field pass; the ores emit, and
 //! the light radius is the source's (19 chunks on the showcase, 4 on the level). The mirror
 //! syncs until its light-sample count stops changing, and the still is the last of
 //! `--frames` frames (default 64) from the same pose, so the accumulation, the filter and the
@@ -179,9 +179,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--out" => args.out = Some(v.into()),
             "--out-dir" => args.out_dir = v.into(),
             "--look" => {
-                args.look = flythrough::LookPreset::from_name(&v)
-                    .filter(|p| p.normal_mode == vxe_render::NormalMode::Contour)
-                    .ok_or(format!("--look takes a contour preset, not {v}"))?
+                args.look = flythrough::LookPreset::from_name(&v).ok_or(format!(
+                    "--look takes {}, not {v}",
+                    flythrough::LookPreset::names()
+                ))?
             }
             "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
             "--indirect" => args.lighting.indirect = on_off(&flag, &v)?,
@@ -422,7 +423,9 @@ fn main() -> Result<(), String> {
     };
     let adapter_name = adapter.get_info().name;
     println!("rendering on {adapter_name}");
-    let pool_bytes = flythrough::level_pool_units(&world, true) * vxe_render::gpu_world::UNIT_BYTES;
+    let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
+    let pool_bytes =
+        flythrough::level_pool_units(&world, field) * vxe_render::gpu_world::UNIT_BYTES;
     let (device, queue) =
         pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
@@ -433,16 +436,18 @@ fn main() -> Result<(), String> {
         )
         .map_err(|e| format!("no device: {e}"))?;
 
-    // The field's band slots on the bounded path's mirror budget.
+    // The bounded path's mirror budget, with the field's band slots under the field look.
     let chunks = world.extent().len() as u64;
-    let mut gpu = GpuWorld::with_field_surface(
-        &device,
-        MirrorConfig {
-            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true),
-            light_radius,
-            ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
-        },
-    );
+    let cfg = MirrorConfig {
+        budget_bytes: flythrough::level_mirror_budget(&world, chunks, field),
+        light_radius,
+        ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+    };
+    let mut gpu = if field {
+        GpuWorld::with_field_surface(&device, cfg)
+    } else {
+        GpuWorld::with_config(&device, cfg)
+    };
     // The light ranges around the eye take several syncs of the sample budget: sync until the
     // count stops changing.
     let focus = VoxelCoord(

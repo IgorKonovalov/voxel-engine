@@ -1640,18 +1640,22 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
     let world = World::generate(source.extent(), &source, table);
-    let pool = flythrough::level_pool_units(&world, true) * UNIT_BYTES;
+    let look = flythrough::LookPreset::DEFAULT;
+    // The default look's mirror: band slots only under the field look.
+    let field = look.normal_mode == vxe_render::NormalMode::Contour;
+    let pool = flythrough::level_pool_units(&world, field) * UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let chunks = world.extent().len() as u64;
-    let mut gpu = GpuWorld::with_field_surface(
-        &device,
-        MirrorConfig {
-            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true),
-            light_radius: 19,
-            ..MirrorConfig::new(Window::Fixed(world.extent()))
-        },
-    );
-    let look = flythrough::LookPreset::DEFAULT;
+    let cfg = MirrorConfig {
+        budget_bytes: flythrough::level_mirror_budget(&world, chunks, field),
+        light_radius: 19,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = if field {
+        GpuWorld::with_field_surface(&device, cfg)
+    } else {
+        GpuWorld::with_config(&device, cfg)
+    };
     let shot = SHOTS[0];
     gpu.set_focus(shot.eye);
     let mut last = None;

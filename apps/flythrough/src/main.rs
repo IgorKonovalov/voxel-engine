@@ -68,18 +68,19 @@
 //! `--residency` sets the streamed radii (default `flythrough::RESIDENCY`, hysteresis 1);
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
-//! mode, the body spawned in the spawn pocket. The fly-through starts in `field`
-//! (`LookPreset::DEFAULT`, the field surface of ADR-0041) with detail on, the mirror holding
-//! the field's band slots and rock its procedural detail (`--rock-detail` sets rock's feature
-//! scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints that look
-//! first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `field`,
-//! `trilinear8`, `gradient27`), a normal mode with its face mix, detail after lighting and
-//! rock's detail pair and fine weight, each part overridable by `--face-mix`,
-//! `--detail-after`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face
-//! mode without the field's band slots or rock detail, detail off (`N` then skips the field,
-//! `--detail` turns detail on), the look of Plan 0002's and Plan 0017's face readings. With the
-//! field's band slots the autopilot's report adds the field pass's band slots, CPU and GPU
-//! time over the flight. `--view`
+//! mode, the body spawned in the spawn pocket. The fly-through starts in `face`
+//! (`LookPreset::DEFAULT`, honest cubes, ADR-0041) with detail on and rock its procedural
+//! detail (`--rock-detail` sets rock's feature scale in voxels and strength, default
+//! `flythrough::ROCK_DETAIL`), and prints that look first; `--look` picks the starting preset
+//! (`flythrough::LookPreset`: `face`, `field`, `trilinear8`, `gradient27`), a normal mode with
+//! its face mix, detail after lighting and rock's detail pair and fine weight, each part
+//! overridable by `--face-mix`, `--detail-after`, `--detail-fine` and `--rock-detail`; and
+//! `--look plain` starts in face mode without rock detail, detail off (`--detail` turns detail
+//! on), the look of Plan 0002's and Plan 0017's face readings. Only a run started under
+//! `--look field` builds the field's band slots and runs the field pass; any other run's `N`
+//! skips the field. With the field's band slots the autopilot's report adds the field pass's
+//! band slots, CPU and GPU time over the flight, and the frame line the smooth share of the
+//! last frame's hits. `--view`
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `cracks`, `albedo`; with
 //! `--frames`, `steps` prints the last frame's mean and p99 steps per ray on exit, and `cracks`
 //! its leaks' share); `F9` cycles the views in that order, the banner naming the view
@@ -390,9 +391,9 @@ struct Args {
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
-    /// `--look`: the starting preset with any part flag applied, with the field's band slots
-    /// and rock detail; `None` for `--look plain`, face mode without either. `field` by
-    /// default.
+    /// `--look`: the starting preset with any part flag applied, with rock detail; `None` for
+    /// `--look plain`, face mode without it. `face` by default; only `field` builds the
+    /// field's band slots ([`Args::field_surface`]).
     look: Option<LookPreset>,
     /// Start with procedural detail on: by default, except under `--look plain`, where
     /// `--detail` turns it on.
@@ -650,6 +651,13 @@ impl Args {
             probe_slices: self.probe_slices,
             ..Lighting::default()
         }
+    }
+
+    /// Whether the run starts in the field look, so its mirror holds the field's band slots
+    /// and the field pass runs; no other run builds a band slot.
+    fn field_surface(&self) -> bool {
+        self.look
+            .is_some_and(|p| p.normal_mode == NormalMode::Contour)
     }
 
     /// The look the fly-through starts in.
@@ -3332,8 +3340,8 @@ impl Run {
         }
     }
 
-    /// Prints the frame line over `samples`, with the smooth share of the last frame's hits
-    /// read back from `gpu`'s hit records.
+    /// Prints the frame line over `samples`, under the field look with the smooth share of the
+    /// last frame's hits read back from `gpu`'s hit records.
     fn report(&mut self, gpu: &Gpu, samples: Samples) {
         let Samples {
             mut cpu_ms,
@@ -3359,19 +3367,25 @@ impl Run {
         } else {
             format!(", gpu hud {:.4} ms", median(&mut hud_ms))
         };
-        // The smooth share of the last frame's hit pixels: hits whose material is not crisp.
-        let records = readback::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
-        let table = self.world.materials();
-        let (mut hits, mut smooth) = (0u64, 0u64);
-        for r in &records {
-            if r[3] & HIT_FOUND_BIT != 0 {
-                hits += 1;
-                smooth += u64::from(!table.is_crisp(r[2]));
+        // Under the field look, the smooth share of the last frame's hit pixels: hits whose
+        // material is not crisp. No other look reads the hit records back.
+        let share = if self.look.normal_mode == NormalMode::Contour && gfx.mirror.field_surface() {
+            let records = readback::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
+            let table = self.world.materials();
+            let (mut hits, mut smooth) = (0u64, 0u64);
+            for r in &records {
+                if r[3] & HIT_FOUND_BIT != 0 {
+                    hits += 1;
+                    smooth += u64::from(!table.is_crisp(r[2]));
+                }
             }
-        }
-        let share = smooth as f64 / hits.max(1) as f64;
+            let s = smooth as f64 / hits.max(1) as f64;
+            format!("; smooth share s {s:.4} of {hits} hits")
+        } else {
+            String::new()
+        };
         println!(
-            "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu_line}{hud}; smooth share s {share:.4} of {hits} hits; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
+            "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu_line}{hud}{share}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look, self.preset()),
             median(&mut cpu_ms),
@@ -3440,7 +3454,7 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            level_pool_units(&self.world, self.args.look.is_some()) * gpu_world::UNIT_BYTES
+            level_pool_units(&self.world, self.args.field_surface()) * gpu_world::UNIT_BYTES
         };
         // An adapter below the shaders' floor: name the limit, then request the floor, which
         // the device request refuses on the same limit and the shell reports as a setup error.
@@ -3538,13 +3552,13 @@ impl Run {
                     .iter()
                     .map(|&v| v as u64)
                     .product();
-                level_mirror_budget(&self.world, chunks, self.args.look.is_some())
+                level_mirror_budget(&self.world, chunks, self.args.field_surface())
             }
         })
     }
 
     /// A mirror under `cfg` reserving [`Run::mirror_budget`], with the field's band slots when
-    /// `--look` was given. Prints what it reserved and how long creating its buffers took.
+    /// the run starts in the field look ([`Args::field_surface`]). Prints what it reserved and how long creating its buffers took.
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
         let cfg = MirrorConfig {
             budget_bytes: self.mirror_budget(),
@@ -3552,9 +3566,10 @@ impl Run {
             ..cfg
         };
         let t = now();
-        let mirror = match &self.args.look {
-            Some(_) => GpuWorld::with_field_surface(&gpu.device, cfg),
-            None => GpuWorld::with_config(&gpu.device, cfg),
+        let mirror = if self.args.field_surface() {
+            GpuWorld::with_field_surface(&gpu.device, cfg)
+        } else {
+            GpuWorld::with_config(&gpu.device, cfg)
         };
         let ms = ms_since(t);
         let l = mirror.shard_layout();
@@ -7438,17 +7453,31 @@ mod tests {
         assert!(parse_rock_detail("4,x").is_err());
     }
 
-    /// No flag starts in the field look with detail on and rock's detail, `--look face` in
-    /// face mode with every tuning part off; `--look plain` starts in face mode with neither,
-    /// and `--detail` turns detail on there.
+    /// No flag starts in the face look with detail on and rock's detail, with no band slot,
+    /// as `--look face` does; `--look field` alone builds the band slots; `--look plain` starts
+    /// in face mode with neither detail nor rock's detail, and `--detail` turns detail on there.
     #[test]
-    fn the_default_look_is_the_field_with_detail_and_plain_is_face() {
+    fn the_default_look_is_face_with_detail_and_plain_is_face_without() {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
             look_line(&a.start_look(), a.look.as_ref()),
-            "look field (normals contour, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look face (normals face, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
-        assert_eq!(a.look, Some(LookPreset::FIELD));
+        assert_eq!(a.look, Some(LookPreset::FACE));
+        assert!(!a.field_surface());
+        assert!(
+            parse_args_from(argv(&["--look", "field"]))
+                .unwrap()
+                .field_surface()
+        );
+        for name in ["face", "trilinear8", "gradient27", "plain"] {
+            assert!(
+                !parse_args_from(argv(&["--look", name]))
+                    .unwrap()
+                    .field_surface(),
+                "{name}"
+            );
+        }
         let c = parse_args_from(argv(&["--look", "face"])).unwrap();
         assert_eq!(
             look_line(&c.start_look(), c.look.as_ref()),

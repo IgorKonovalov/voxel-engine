@@ -1024,7 +1024,7 @@ which no deterministic path reads.
 | 3b: The owner's look at thin features and the per-material candidate | human | done (a): the field per material, crisp materials as cubes (owner, 2026-10-31; answer 7) | owner answers, be7b943 |
 | 4a: Where the window's frame time goes | dev | done; the windowed p50s not reproduced headless (done-when 2 names the remainder the window's) | 52cc078 |
 | 4b: The walk inside the bar | dev | paused before its gate: `field-cubes` 4.761 ms, `field` 4.748 ms against 5.00 (RTX); RADV 128 VGPRs | 91f9066 (c1 to c5, wip) and committed with this row (wip, c8) |
-| 4c: The crisp flag, the field as the default, the planes removed | dev | not started | |
+| 4c: The crisp flag, the field as the default, the planes removed | dev | paused at close item 6: `showcase_hall`'s hue bar under `face` (owner question) | 2bca6e4, 3a43c06 (wip) and committed with this row (wip) |
 | 4d: The owner's windowed check of the default | human | not started | |
 | 5: The readings, the ADR, the close block | dev | not started | |
 
@@ -1888,46 +1888,129 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
   voxels inside its border: an air voxel at the inlay's edge sees the wall's rock), and the 3x3
   collar at 45 degrees reads 1.107 voxel off the face (3 hits over the 1-voxel bar).
 
-### Resume notes (2026-11-01, stopped at done-when 3, delete when Phase 4c lands)
+- The close (owner answer 13), in the wip commit with this item. Lavapipe readings under the
+  exclusive perf lock and the memory cap; the release readings
+  (`live/p4c/close.sh`, logs `live/p4c/close/`, one quiet round each, every run at a 1-minute
+  load of 1.75 to 1.99) compare main `28948a5`'s release binary (`live/p4a/bin/flythrough-28948a5`,
+  default the snap planes) with this commit's tree (`live/p4c/bin/flythrough-close`); the
+  adapter by `--adapter NVIDIA|AMD`; hit / light / GPU frame in ms, the run's frame line.
+  - Item 1: `LookPreset::DEFAULT` is `FACE`; the start-up look line reads `look face (normals
+    face, face mix 0, detail after lighting off), detail on (...)`
+    (`the_default_look_is_face_with_detail_and_plain_is_face_without`, renamed from
+    `the_default_look_is_the_field_with_detail_and_plain_is_face`).
+    `look::the_default_look_is_face` (lavapipe): the default look over a mirror with no band
+    slot against `face` over a field mirror, hit position bits and record, 384 x 216 hit
+    mask: spawn, vein and patch 82 944 hits each, 0 pixels differ. `primary.png`,
+    `headlamp.png`, `lod.png` and `look_wall_face.png` are main's bytes
+    (`band_slots_leave_the_face_goldens_byte_for_byte` and
+    `the_default_look_leaves_the_goldens_byte_for_byte` pass).
+  - Item 2: the fly-through builds a field mirror only when the run starts under `--look
+    field` (`Args::field_surface`; `level_pool_units` and `level_mirror_budget` take it too),
+    as does `examples/hero.rs` (`--look` now takes every preset); any other run's `N` skips
+    the field (`LookPreset::next(false)`), the dev's call of item 2. At the spawn the default
+    prints no `field pass:` and no `attrib:` line. `level_mirror::the_default_mirror_over_the_level_holds_no_band_slot`:
+    383 608 live bricks, 0 band slots, 0 band units, 0 field items.
+  - Item 3: `the_field_look_has_no_boxes_and_no_leaks` (renamed from
+    `the_default_surface_is_the_field`, under `LookPreset::FIELD`): floor 43 012 and wall
+    37 800 hits, worst 7.63e-6 voxel, 0 leaks; box px 0 on the five scenes; tile edges % equal
+    to Phase 1's N1 column on every scene (patch 9 box px, no bar); guardrails 4.13 degrees,
+    24 px against face's 172, 3.15 %. `the_field_look_meets_the_guardrails` (renamed from
+    `the_default_look_meets_the_guardrails`, re-pointed at `FIELD`) reads the same.
+    `the_split_walk_moves_no_hit_record`, `thin_features_in_the_field_and_per_material` and
+    `edits::the_crisp_flag_is_a_row_property_only` pass in the tiers.
+  - Item 4, `a_smooth_surface_meets_a_crisp_cube_without_a_gap` (asserts: 0 misses in every
+    seam box, 0 leaks in the inlay's and the L's boxes, the inlay's plane and cube bars, the
+    trunk's face hits clear of the roots, the features' cube hits): passes. Printed: trunk box
+    15 (head-on) and 19 (45) leaks; collar hits off by more than a voxel or not rock 2 and 3,
+    all of material 0; collars head-on / 45: one-voxel 0.188 / 0.188 (worked 0.19), 2x2 0.500
+    / 0.500 (0.43), 3x3 0.555 / 0.629 (0.75), diagonal 0.188 / 0.188; the L's non-cube hits
+    59 and 56; trunk face specks 118 crisp, 67 smooth. Answer 12's smooth-near bits not built
+    (`live/p4c/air-bits.patch` set aside).
+  - Item 5, disclosed defects of the opt-in look, not fixed: the cubes-free walk's field hits
+    in cells whose solid corners carry no count bit (41, 92, 23 px at spawn, vein, patch, the
+    split-walk item above); the seam's all-air cells' material-0 field hits (item 4's 2 and 3,
+    and the L's 59 and 56).
+  - Item 6, goldens, share of pixels over 2/255 against main's: `showcase_hall.png` 53.1337 %
+    (renders the default, now `face`, over a mirror with no band slot); `look_contour.png`
+    27.9253 %, `look_wall_contour.png` 22.8594 % and `look_wall_contour_sharp.png` 22.8281 %
+    (re-pointed: `NormalMode::Contour` and `LookPreset::FIELD` render the field);
+    `look_wall_contour_grain.png` removed (its look, `contour-grain`, went in 2bca6e4, and no
+    test read it). Re-blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5). The bless of
+    `face_against_contour_on_the_wall` rewrote `look_wall_face.png` with 32 pixels within
+    2/255 of main's (0 over 2/255); the file is kept at main's bytes. `translucent.rs` and
+    the cutaway tests pass unchanged.
+  - Item 6, not met: `golden::showcase_hall_golden_is_lit_by_its_four_ores` fails under
+    `face` on its hue bar (at least three of the four hue classes each 0.5 % of the pixels,
+    288 px): hue shares amber 3.42 %, ember 0.41 %, cyan 2.71 %, violet 0.07 % (pixels 1968,
+    234, 1561, 41), luma 14.2/255, 0 px lit with the emission off. Main's planes read ember
+    0.69 % (Plan 0038's log); a scratch run of the same test under `LookPreset::FIELD` read
+    amber 5.01 %, ember 0.79 %, cyan 4.41 %, violet 0.06 %, luma 15.5/255, and passes (the
+    edit reverted; its image `live/p4c/showcase_hall-field.png`, 42.7535 % over 2/255 against
+    main's). The golden is blessed at `face`; the assertion is unchanged. Stopped for the owner.
+  - Assertions turned into prints (deviation): `sharpness::face_against_contour_on_the_wall`'s
+    `face S_mid > contour S_mid` (the plane's mid-band order): face 0.28182 against the field
+    0.31432 (`field` preset 0.32004); `look::contour_dark_specks_with_and_without_shadows`'s
+    "contour's only-with-shadows specks at most face's" (Phase 4c's shadows rule makes a higher
+    count a finding): the field 240 with shadows, 164 without, 103 only with; face 2083, 2055, 34.
+  - Item 7 at the spawn, 1080p from 1280 x 720 (`--level --seed 1 --headless --frames 300
+    --render 1920x1080`):
 
-- State: removals in 2bca6e4 (wip); the seam rig, `--seam-rig` and the tests of done-whens 1
-  and 3 in the wip commit after it (done-when 1 passes, done-when 3 fails as logged above).
-  Stopped for the owner: done-when 3 cannot be met under the crisp rules as written (the
-  trunk's leaks; the all-air cells' material-0 hits in the trunk collar and the L's corner).
-- Not done: done-when 4's readings, the goldens (done-when 5), done-whens 6 and 7, done-when
-  8's spawn rows after the removals, the gpu tier on this tree, Phase 4d's runner (written:
-  `live/session3.sh`, untracked, not launched).
-- Gotchas: the split walk keeps `march`'s `split_walk` and `descend`'s band-word read, with
-  `contour` off; `split_entered` is cleared at the top of every `descend`. `SEAM_DEBUG=1` on
-  the seam test prints every failing pixel's record. The sharpness and contour goldens and
-  the contour tests of look.rs (`contour_golden`, `smoothed_normal_goldens`, ...) now render
-  the field and are expected to move; none re-blessed.
+    | run | RTX 3080 Laptop | Radeon RENOIR |
+    |---|---|---|
+    | main 28948a5, default (snap planes) | 0.612 / 0.921 / 4.516 | 4.288 / 7.045 / 28.801 |
+    | tip, default (`face`) | 0.548 / 0.849 / 4.222 | 4.064 / 6.732 / 27.166 |
+    | tip, `--look field --crisp none` | 3.827 / 0.891 / 7.511, s 1.0000 | 30.734 / 7.108 / 54.522, s 1.0000 |
+    | tip, `--look field --crisp rock` | 0.570 / 0.855 / 4.263, s 0.0000 | 4.308 / 6.966 / 28.015, s 0.0000 |
+    | tip, `--look field --crisp all` | 0.572 / 0.865 / 4.294, s 0.0000 | 4.302 / 6.928 / 27.973, s 0.0000 |
 
-### Resume notes (2026-10-31, held before Phase 4, delete when Phase 4 lands)
+    The default's hit plus light: RTX 1.397 against main's 1.533 ms, Radeon 10.796 against
+    11.333. `--look field`'s hit plus light: RTX 4.718 ms against the 5.00 ms figure. The
+    initial fill: main's `attrib:` 17.832 ms GPU (RTX) and 95.743 ms (Radeon); the default
+    none; the field pass under `--look field` 12.130 ms (RTX, crisp none), 102.702 (rock),
+    74.293 (all); Radeon 61.049, 100.118, 72.518. The thin rig (`--thin-rig`, wood crisp,
+    1080p): the default 0.630 / 0.104 / 2.402 (RTX), 4.884 / 0.945 / 16.659 (Radeon);
+    `--look field` 4.821 / 0.126 / 6.667, s 0.8476 (RTX), 39.543 / 1.012 / 52.030 (Radeon);
+    its field pass 0.064 ms (RTX) and 0.188 ms (Radeon) for 1186 band slots.
+  - Item 7, VGPRs (RADV `shaderstats`, `live/p4c/radv.sh close`, load 3.1 to 4.1, not a timing
+    reading): every compute pipeline is built at start-up, so `face`, `field` and `field
+    --crisp rock` list the same shaders: two at 128 VGPRs (108 440 and 107 540 B, the field
+    hit pipeline and `field_resume` by Phase 4c's earlier attribution), two at 84, one at 64
+    (39 576 B), and the rest at 64 and below; no spill. RADV prints no pipeline names.
+  - Item 8: the default's shadow ray is `face`'s (the goldens of item 1). The speck count at
+    the default on the contour golden scene (full shadow walk): `face` 2083 with shadows, 2055
+    without, 34 only with, against main's default (snap) 365, 360, 6 (Plan 0050's log): higher,
+    a finding. The frame line's smooth share is printed only under the field look.
+  - Gate on this tree: `--profile quick` 539 run, 539 passed (9 slow), 3 skipped; doctests 7
+    passed; clippy `-D warnings` 0; fmt 0; the doc-link, comment-hygiene, index-row and
+    test-tier scripts 0. `--profile gpu` (exclusive perf lock, `live/p4c/gpu-close1.log`,
+    before the blesses and the two prints): 179 run, 175 passed, 4 failed
+    (`showcase_hall_golden_is_lit_by_its_four_ores`, `contour_dark_specks_with_and_without_shadows`,
+    `contour_golden`, `face_against_contour_on_the_wall`), 29 skipped; after them the last
+    three pass (`live/p4c/close-tests*.log`, `live/p4c/bless-close2.log`) and the first fails
+    as above. `castle_gate_golden` passed in that run.
 
-- Held by the coordinator before Phase 4 (the owner is reconsidering the field as the
-  default: free features thinner than about 3 voxels vanish under it; an architect amendment
-  follows). Phase 3 is committed with this log; nothing of Phase 4 is committed.
-- A Phase 4 start, set aside uncommitted: `live/p4/phase4-wip.patch` (untracked, applies with
-  `git apply` on this commit's tree, `--check` clean). It removes the plane attribute
-  (`attrib.rs`, `attr_work.rs`, the bench, the plane fit in `attrib.wgsl`, renamed
-  `field.wgsl`), makes the Contour normal mode the field walk (the cutaway and a mirror
-  without band slots fall back to the voxel walk), removes `cubes-field` and `field` from the
-  presets, snap, the crack classes (the cracks view shows leaks only, `CrackShares { hits,
-  leaks }`), `--plane-fit`, `--plane-offset`, `--fit-filter`, `--shadow-push`,
-  `--normal-field`, `--field-normal`, `attr_cap` and the refit banner; puts the band prefix
-  in header words 10 to 13 (`gpu_world::band_header`, read once per brick in `field_brick`);
-  renames `with_surface_attrs`, `update_attrs` to `with_field_surface`, `update_field`; adds
-  the band to `level_pool_units`. State: `vxe-render` checks clean on all targets;
-  `flythrough` lib and bin check clean; the flythrough tests (`rigs.rs`, `support/mod.rs`,
-  `level_mirror.rs`, `look.rs`, `sharpness.rs`, `golden.rs`), `main.rs`'s flag tests,
-  `examples/hero.rs` and `world_budget.rs` do not compile yet; nothing has run. It was
-  written against the unamended Phase 4 text and may not match the amendment.
-- Phase 4 notes kept: `cubes-field` rests on the plane attribute's normal field, so removing
-  the attribute removes it (the plan's "stays until the close" sentence is a deviation to
-  disclose); the band prefix is likely needed for the 5 ms cost bar (6.48 ms hit pass at
-  1b36eb3 against Phase 1's 3.46 ms); the base binary for the Phase 4 cost reading is built
-  (`live/base0050`).
+### Resume notes (2026-11-01, stopped at close item 6, delete when Phase 4c lands)
+
+- State: everything of the close list is in the wip commit with these notes, the readings
+  above; the one unmet item is `showcase_hall_golden_is_lit_by_its_four_ores`'s hue bar under
+  `face` (owner question). On the owner's answer: apply it, re-run that test and the gpu tier
+  under the perf lock, then make the Phase 4c commit (its row "done") and go to Phase 5.
+- Phase 5's readings are mostly taken here (item 7 and the flight below); the flight, RTX,
+  `--autopilot --headless --seed 1`, one round, load 1.75 to 1.90: main's default full
+  residency 17 077 full and 40 700 LOD-only chunks, mirror 871 679 852 B live, 3 221 014 080
+  B allocated, peak 992 795 308 B, streaming CPU p50 13.435 / p99 60.044 ms over 1366 frames,
+  attribute pass GPU p50 1.154 / p99 1.771 ms, march GPU p50 8.628 / p99 19.951; the tip's
+  default 502 928 492 B live at full residency, peak 532 183 724 B, same allocation,
+  streaming CPU p50 0.239 / p99 64.251 ms over 3148 frames, march GPU p50 3.031 / p99 5.767,
+  no attribute or field pass; `--look field` 941 827 116 B live (band slots 438 898 624 B,
+  1 829 483 band bricks), peak 967 839 468 B, streaming CPU p50 66.030 / p99 206.603 ms over
+  494 frames, field pass GPU p50 0.634 / p99 1.388 ms, march GPU p50 8.153 / p99 39.488. The
+  level: main 157 872 640 B live, 259 203 264 B allocated; the default 62 846 720 B live,
+  88 285 376 B allocated; `--look field` 159 089 984 B live (band 96 243 264 B), 223 027 392
+  B allocated.
+- Gotchas: `live/p4c/pngshare.py OLD NEW` reads a golden's share over 2/255;
+  `live/p4c/goldens-old/` holds main's copies; the scratch field-look showcase image is
+  `live/p4c/showcase_hall-field.png`.
 
 ### Notes
 

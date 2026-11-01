@@ -449,9 +449,9 @@ impl LookPreset {
     }
 
     pub const FACE: Self = Self::plain("face", NormalMode::Face);
-    /// The field surface (ADR-0041, `NormalMode::Contour`) with the detail's lamp term
-    /// applied at full resolution; a material marked `MaterialFlags::CRISP` in the table
-    /// renders as cubes in it.
+    /// The field surface (ADR-0041, `NormalMode::Contour`), an opt-in look, with the detail's
+    /// lamp term applied at full resolution; a material marked `MaterialFlags::CRISP` in the
+    /// table renders as cubes in it. It needs a mirror with the field's band slots.
     pub const FIELD: Self = Self {
         tuning: SurfaceTuning {
             detail_after_lighting: true,
@@ -466,8 +466,8 @@ impl LookPreset {
     /// `N`'s order: face, the field, then the two diagnostic normal modes.
     pub const ALL: [Self; 4] = [Self::FACE, Self::FIELD, Self::TRILINEAR8, Self::GRADIENT27];
 
-    /// The look the fly-through starts in without `--look`.
-    pub const DEFAULT: Self = Self::FIELD;
+    /// The look the fly-through starts in without `--look`: honest cubes (ADR-0041).
+    pub const DEFAULT: Self = Self::FACE;
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.name == name)

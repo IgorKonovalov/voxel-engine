@@ -1267,11 +1267,27 @@ pub fn pose_rig_on(
     world: &World,
     pose: &flythrough::Pose,
 ) -> LookRig {
+    pose_rig_with(device, queue, world, pose, true)
+}
+
+/// [`pose_rig_on`], the mirror holding the field's band slots only when `field` (a mirror
+/// without them is the fly-through's default, `GpuWorld::with_config`).
+pub fn pose_rig_with(
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    world: &World,
+    pose: &flythrough::Pose,
+    field: bool,
+) -> LookRig {
     let cfg = MirrorConfig {
         budget_bytes: 1 << 30,
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
-    let mut gpu = GpuWorld::with_field_surface(&device, cfg);
+    let mut gpu = if field {
+        GpuWorld::with_field_surface(&device, cfg)
+    } else {
+        GpuWorld::with_config(&device, cfg)
+    };
     gpu.set_focus(VoxelCoord(pose.position.map(|c| c.floor() as i32)));
     for _ in 0..4 {
         gpu.sync_now(world, &device, &queue)
