@@ -166,6 +166,89 @@ impl WorldSource for ThinRig {
     }
 }
 
+/// The seam rig's flat rock wall: `x` in `WALL_X`, `y` in `WALL_Y` (its face the plane
+/// `y = WALL_Y[0]`, facing -y), from the floor up to `WALL_TOP`.
+pub const WALL_X: [i32; 2] = [8, 56];
+pub const WALL_Y: [i32; 2] = [100, 108];
+pub const WALL_TOP: i32 = 112;
+/// The inlay of the crisp material set flush in the wall's face: `x` and `z` in these ranges,
+/// `INLAY_DEPTH` voxels deep from the face plane.
+pub const INLAY_X: [i32; 2] = [28, 36];
+pub const INLAY_Z: [i32; 2] = [84, 92];
+pub const INLAY_DEPTH: i32 = 3;
+/// The crisp L standing on the floor: slab A along x (`x` in `L_X`, `y` in
+/// `[L_Y[0], L_Y[0] + L_THICK)`) and slab B along y (`x` in `[L_X[0], L_X[0] + L_THICK)`, `y` in
+/// `L_Y`), both up to `L_TOP`; their concave corner is the vertical edge at
+/// `(L_X[0] + L_THICK, L_Y[0] + L_THICK)`, open toward +x and +y.
+pub const L_X: [i32; 2] = [76, 112];
+pub const L_Y: [i32; 2] = [20, 56];
+pub const L_THICK: i32 = 3;
+pub const L_TOP: i32 = 96;
+
+/// The seam rig (a smooth surface meeting crisp cubes): rock below [`FLOOR_Z`] and in a flat
+/// wall, `crisp` in an 8 x 8 inlay 3 voxels deep flush in the wall's face and in an L of two
+/// slabs 3 voxels thick meeting at 90 degrees on the floor, air elsewhere. The trunk with its
+/// branches is [`ThinRig`]'s. `crisp` is the material whose row carries the crisp flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SeamRig {
+    pub crisp: MaterialId,
+}
+
+impl SeamRig {
+    pub fn extent(&self) -> ChunkExtent {
+        ChunkExtent::new([0, 0, 0], EXTENT)
+    }
+
+    /// The spawn: between the wall and the L, facing the wall.
+    pub fn spawn(&self) -> VoxelCoord {
+        VoxelCoord([32, 70, 88])
+    }
+
+    /// Whether `p` is a voxel of the inlay.
+    pub fn in_inlay(p: [i32; 3]) -> bool {
+        (INLAY_X[0]..INLAY_X[1]).contains(&p[0])
+            && (WALL_Y[0]..WALL_Y[0] + INLAY_DEPTH).contains(&p[1])
+            && (INLAY_Z[0]..INLAY_Z[1]).contains(&p[2])
+    }
+
+    /// Whether `p` is a voxel of the L.
+    pub fn in_l(p: [i32; 3]) -> bool {
+        let z = (FLOOR_Z..L_TOP).contains(&p[2]);
+        let a = (L_X[0]..L_X[1]).contains(&p[0]) && (L_Y[0]..L_Y[0] + L_THICK).contains(&p[1]);
+        let b = (L_X[0]..L_X[0] + L_THICK).contains(&p[0]) && (L_Y[0]..L_Y[1]).contains(&p[1]);
+        z && (a || b)
+    }
+
+    pub fn material(&self, p: [i32; 3]) -> MaterialId {
+        let wall = (WALL_X[0]..WALL_X[1]).contains(&p[0])
+            && (WALL_Y[0]..WALL_Y[1]).contains(&p[1])
+            && p[2] < WALL_TOP;
+        if Self::in_inlay(p) || Self::in_l(p) {
+            self.crisp
+        } else if p[2] < FLOOR_Z || wall {
+            ROCK
+        } else {
+            AIR
+        }
+    }
+}
+
+impl WorldSource for SeamRig {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let lo = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            let brick = if lo[2] + BRICK_EDGE <= FLOOR_Z {
+                Brick::Uniform(ROCK)
+            } else {
+                Brick::from_fn(|l| self.material([0, 1, 2].map(|k| lo[k] + l[k])))
+            };
+            out.set_brick(slot, brick);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

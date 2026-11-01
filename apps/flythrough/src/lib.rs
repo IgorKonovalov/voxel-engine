@@ -225,6 +225,29 @@ pub fn with_wood_flags(table: &MaterialTable, flags: MaterialFlags) -> MaterialT
     t
 }
 
+/// A camera at `eye` looking at `target` (voxel units), 70 degrees vertical field of view.
+pub fn camera_looking_at(eye: [f32; 3], target: [f32; 3]) -> Camera {
+    let d = [0, 1, 2].map(|k| target[k] - eye[k]);
+    let len = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+    Camera {
+        position: eye.into(),
+        yaw: d[1].atan2(d[0]),
+        pitch: (d[2] / len).asin(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The seam rig's camera: at its spawn's centre, looking +y head-on at the wall's inlay.
+pub fn seam_rig_camera() -> Camera {
+    let eye = thin_rig::SeamRig {
+        crisp: THIN_RIG_WOOD,
+    }
+    .spawn()
+    .0
+    .map(|v| v as f32 + 0.5);
+    camera_looking_at(eye, [eye[0], thin_rig::WALL_Y[0] as f32, eye[2]])
+}
+
 /// The thin rig's camera: on -y in front of the trunk, at its spawn's centre, looking +y and
 /// slightly down at the features' middle.
 pub fn thin_rig_camera() -> Camera {

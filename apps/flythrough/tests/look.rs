@@ -1586,3 +1586,573 @@ fn the_split_walk_moves_no_hit_record() {
     assert_eq!(all_split, 0, "split against face, every row crisp");
     assert_eq!(all_unsplit, 0, "unsplit against face, every row crisp");
 }
+
+// ---- The field as the default look (Plan 0054 Phase 4c) ----
+
+/// Plan 0054 Phase 1's N1 tile-contrast share per scene (`tile edges %`, its log's field table at
+/// three decimals, 2026-10-30, lavapipe): the default look's bar, at most this plus half the
+/// last printed digit.
+const PHASE1_TILE_EDGES_PCT: [(&str, f64); 15] = [
+    ("bare floor", 0.000),
+    ("rod", 0.649),
+    ("lone cube", 0.000),
+    ("groove", 0.644),
+    ("wall pillar", 0.272),
+    ("ridge", 0.645),
+    ("free pillar", 0.004),
+    ("sheet", 0.773),
+    ("tilted slab", 0.000),
+    ("45-degree slab", 0.000),
+    ("diagonal slab", 0.000),
+    ("cavity", 0.188),
+    ("pillar", 0.125),
+    ("level vein", 0.397),
+    ("level patch", 0.633),
+];
+
+/// The tile-contrast bar of `scene` (`None` for a scene the table does not name).
+fn tile_bar(scene: &str) -> Option<f64> {
+    PHASE1_TILE_EDGES_PCT
+        .iter()
+        .find(|(s, _)| *s == scene)
+        .map(|(_, v)| v + 0.0005)
+}
+
+/// The default surface is the field: on lavapipe, in the fly-through's default look
+/// (`LookPreset::DEFAULT`, detail on), every hit on `floor` lies within 1e-3 voxel of `z = 64`
+/// and every hit on `wall` within 1e-3 of `x = 80` under the analytic window rule; the rod, the
+/// lone cube, the groove, the wall pillar and the ridge read 0 box pixels; every analytic scene
+/// and the level at `VEIN_POSE` and `PATCH_POSE`, lamp on and off, read 0 leaks; each scene's
+/// tile-contrast share is at most Phase 1's N1 reading ([`PHASE1_TILE_EDGES_PCT`], the poses
+/// lamp on); and Plan 0039's guardrails hold undetailed: cavity normal error at most 12
+/// degrees, pillar silhouette error at most half of face mode's, axis fraction at most 10 %.
+#[test]
+fn the_default_surface_is_the_field() {
+    assert_eq!(
+        flythrough::LookPreset::DEFAULT,
+        flythrough::LookPreset::FIELD,
+        "the default look is the field"
+    );
+    let level = pose_level();
+    let Some((device, queue)) = software_device(field_pool_bytes(&level).max(256 << 20)) else {
+        return;
+    };
+    let look = start_look(ViewMode::Shaded);
+    let mut failures = Vec::new();
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    for (name, world, camera, axis, plane) in [
+        (
+            "floor",
+            floor_world(&table),
+            floor_camera(),
+            2usize,
+            64.0f32,
+        ),
+        ("wall", wall_world(&table), wall_camera(), 0, 80.0),
+    ] {
+        let window = analytic_window(&world);
+        let (r, positions) = field_crack_reading(&device, &queue, &world, &camera, look);
+        let worst = positions
+            .iter()
+            .enumerate()
+            .filter(|&(i, p)| r.pixels[i].is_some() && kept_by_window(*p, window))
+            .map(|(_, p)| (p[axis] - plane).abs())
+            .fold(0f32, f32::max);
+        println!(
+            "{name}: {} hits ({} left out), {} leaks, worst {worst:.2e} voxel off the face",
+            r.shares.hits, r.excluded, r.shares.leaks
+        );
+        if r.shares.hits == 0 || worst > 1e-3 || r.shares.leaks != 0 {
+            failures.push(format!(
+                "{name}: {} hits, worst {worst}, {} leaks",
+                r.shares.hits, r.shares.leaks
+            ));
+        }
+    }
+    println!("{FIELD_HEADER}");
+    let boxed = ["rod", "lone cube", "groove", "wall pillar", "ridge"];
+    let tiles = |scene: &str, r: &BoxReading, failures: &mut Vec<String>| {
+        let pct = 100.0 * r.edges as f64 / r.pairs.max(1) as f64;
+        match tile_bar(scene) {
+            Some(bar) if pct > bar => {
+                failures.push(format!("{scene}: tile edges {pct:.3} % over {bar:.4}"));
+            }
+            Some(_) => {}
+            None => failures.push(format!("{scene}: no tile bar")),
+        }
+    };
+    for (scene, world, camera) in field_scenes() {
+        let r = scene_box_reading(&device, &queue, &world, &camera, look);
+        println!("{}", field_row(&r, &scene, "field (default)"));
+        if r.crack.shares.hits == 0 {
+            failures.push(format!("{scene}: no hit"));
+        }
+        if r.crack.shares.leaks != 0 {
+            failures.push(format!("{scene}: {} leaks", r.crack.shares.leaks));
+        }
+        if boxed.contains(&scene.as_str()) && r.box_px != 0 {
+            failures.push(format!("{scene}: {} box px", r.box_px));
+        }
+        tiles(&scene, &r, &mut failures);
+    }
+    for pose in flythrough::POSES {
+        for lamp in [true, false] {
+            let r = pose_box_reading(&device, &queue, &level, &pose, look, lamp);
+            let scene = format!("level {}", pose.name);
+            let label = if lamp { "lamp on" } else { "lamp off" };
+            println!(
+                "{}",
+                field_row(&r, &scene, &format!("field (default), {label}"))
+            );
+            if r.crack.shares.leaks != 0 {
+                failures.push(format!("{scene} {label}: {} leaks", r.crack.shares.leaks));
+            }
+            if lamp {
+                tiles(&scene, &r, &mut failures);
+            }
+        }
+    }
+    let face = guardrails_of(NormalMode::Face, false, false).expect("a device");
+    let field =
+        guardrails_of(flythrough::LookPreset::DEFAULT.normal_mode, false, true).expect("a device");
+    println!(
+        "guardrails: cavity normal error {:.2} degrees, silhouette {} px against face {}, axis fraction {:.2} %",
+        field.normal_error,
+        field.silhouette,
+        face.silhouette,
+        100.0 * field.axis_fraction
+    );
+    if field.normal_error > 12.0 {
+        failures.push(format!("cavity normal error {:.2}", field.normal_error));
+    }
+    if 2 * field.silhouette > face.silhouette {
+        failures.push(format!(
+            "silhouette {} against face {}",
+            field.silhouette, face.silhouette
+        ));
+    }
+    if field.axis_fraction > 0.10 {
+        failures.push(format!(
+            "axis fraction {:.2} %",
+            100.0 * field.axis_fraction
+        ));
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+// ---- The seam: a smooth surface meeting crisp cubes (Plan 0054 Phase 4c) ----
+
+use flythrough::thin_rig::{SeamRig, Shape};
+
+/// A seam reading: the crack reading (shaded, then cracks view) of one view at `WIDTH` x
+/// `HEIGHT`, with the hit positions and records of its last frame.
+struct SeamReading {
+    crack: CrackReading,
+    positions: Vec<[f32; 4]>,
+    records: Vec<[u16; 4]>,
+}
+
+fn seam_reading(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    world: &World,
+    camera: &vxe_render::Camera,
+) -> SeamReading {
+    let mut rig = field_rig_on(device.clone(), queue.clone(), world, [WIDTH, HEIGHT]);
+    let crack = crack_reading(
+        &mut rig,
+        camera,
+        &LightParams::headlamp(),
+        start_look(ViewMode::Shaded),
+        None,
+    );
+    SeamReading {
+        crack,
+        positions: readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+        records: readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+    }
+}
+
+impl SeamReading {
+    /// With `SEAM_DEBUG` set, prints pixel `i`'s hit position, record and leak flag under
+    /// `tag` (a reading aid for a failing seam bar).
+    fn dbg(&self, tag: &str, i: usize) {
+        if std::env::var_os("SEAM_DEBUG").is_some() {
+            let r = self.records[i];
+            println!(
+                "DBG {tag} px {} {}: p {:?} flags {:#x} mat {} n {:?} leak {:?}",
+                i as u32 % WIDTH,
+                i as u32 / WIDTH,
+                self.positions[i],
+                r[3],
+                r[2],
+                support::rigs::octa16_normal(r[0], r[1]),
+                self.crack.pixels[i]
+            );
+        }
+    }
+
+    fn hit(&self, i: usize) -> Option<[f32; 3]> {
+        self.crack.pixels[i].map(|_| {
+            let p = self.positions[i];
+            [p[0], p[1], p[2]]
+        })
+    }
+
+    /// Whether pixel `i`'s hit is a cube hit of `crisp`: not a field hit (record flag bit 1),
+    /// material `crisp`, its normal along an axis.
+    fn cube_hit(&self, i: usize, crisp: vxe_world::MaterialId) -> bool {
+        let r = self.records[i];
+        let n = support::rigs::octa16_normal(r[0], r[1]);
+        r[3] & 2 == 0 && r[2] == crisp && n.iter().any(|c| c.abs() >= 0.9999)
+    }
+
+    /// The leaks and misses among the pixels whose primary ray meets `aabb` (a box `[lo, hi]`
+    /// lying on or just behind the seam's surface, so every such ray hits).
+    fn leaks_and_misses(
+        &self,
+        camera: &vxe_render::Camera,
+        aabb: [[f32; 3]; 2],
+    ) -> (u64, u64, u64) {
+        let (mut n, mut leaks, mut misses) = (0, 0, 0);
+        for i in 0..self.crack.pixels.len() {
+            let (col, row) = (i as u32 % WIDTH, i as u32 / WIDTH);
+            if !ray_meets(
+                camera.position.to_array(),
+                pixel_ray(camera, col, row).to_array(),
+                aabb,
+            ) {
+                continue;
+            }
+            n += 1;
+            if self.crack.pixels[i] != Some(false) {
+                self.dbg("box", i);
+            }
+            match self.crack.pixels[i] {
+                None => misses += 1,
+                Some(true) => leaks += 1,
+                Some(false) => {}
+            }
+        }
+        (n, leaks, misses)
+    }
+}
+
+/// Whether the ray `o + d t`, `t > 0`, meets the closed box `[lo, hi]` (the slab test).
+fn ray_meets(o: [f32; 3], d: [f32; 3], [lo, hi]: [[f32; 3]; 2]) -> bool {
+    let (mut t0, mut t1) = (0f32, f32::INFINITY);
+    for k in 0..3 {
+        if d[k].abs() < 1e-9 {
+            if o[k] < lo[k] || o[k] > hi[k] {
+                return false;
+            }
+            continue;
+        }
+        let (a, b) = ((lo[k] - o[k]) / d[k], (hi[k] - o[k]) / d[k]);
+        t0 = t0.max(a.min(b));
+        t1 = t1.min(a.max(b));
+    }
+    t0 <= t1
+}
+
+/// Whether `p` lies within `eps` of the closed box `[lo, hi]`.
+fn on_box(p: [f32; 3], lo: [i32; 3], hi: [i32; 3], eps: f32) -> bool {
+    (0..3).all(|k| p[k] >= lo[k] as f32 - eps && p[k] <= hi[k] as f32 + eps)
+}
+
+/// The voxel boxes `[lo, hi)` of a thin-rig feature (one box, or one per diagonal voxel).
+fn feature_boxes(f: &flythrough::thin_rig::Feature) -> Vec<([i32; 3], [i32; 3])> {
+    match f.shape {
+        Shape::Box { lo, hi } => vec![(lo, hi)],
+        Shape::Diagonal { start } => (0..flythrough::thin_rig::LENGTH)
+            .map(|k| {
+                let v = [start[0] + k, start[1], start[2] + k];
+                (v, [v[0] + 1, v[1] + 1, v[2] + 1])
+            })
+            .collect(),
+    }
+}
+
+/// A seam view: its name and camera.
+fn seam_view(
+    name: &'static str,
+    eye: [f32; 3],
+    target: [f32; 3],
+) -> (&'static str, vxe_render::Camera) {
+    (name, flythrough::camera_looking_at(eye, target))
+}
+
+/// The worked collar heights off the face (voxels) of the one-voxel branch, the 2x2 rod and
+/// the 3x3 rod (Phase 4c's seam worked from the counts).
+const WORKED_COLLAR: [(&str, f32); 3] = [
+    ("one-voxel branch", 0.19),
+    ("2x2 rod", 0.43),
+    ("3x3 rod", 0.75),
+];
+
+/// A smooth surface meets a crisp cube without a gap: on lavapipe, in the default look, the
+/// seam rig ([`SeamRig`], the rig wood crisp by its row) and the thin rig ([`ThinRig`], its
+/// wood crisp), each seam seen head-on and at 45 degrees. Every view reads 0 leaks and 0
+/// misses among the pixels whose ray meets the seam's box. The inlay, head-on: every hit with
+/// `x` in `[12, 52]` and `z` in `[68, 108]` (the wall's face, the inlay included, four voxels
+/// clear of its edges) lies within 1e-3 voxel of `y = 100`, and every hit more than one voxel
+/// inside the inlay's border is a cube hit of the wood. The trunk: among the hits on its
+/// branch face (`x >= 66.5`, `y` in `[63.5, 65.5]` clear of the trunk's edges, `z` in
+/// `[70, 102]`) that are not on a feature, every one more than 2 voxels (Chebyshev, in `y` and
+/// `z`) from every feature's footprint lies within 1e-3 of `x = 67`, and every one within 2
+/// voxels lies at most 1 voxel off the plane with the rock's material; every hit on a feature
+/// (within 1e-3 of its voxels) more than 2 voxels from the trunk is a cube hit. The L: every
+/// hit within 1.5 voxels of its bounding box above `z = 66` (more than 2 voxels from the rock
+/// floor) lies on a slab (within 1e-3) and is a cube hit, its concave corner included. It
+/// prints each feature's collar height (the highest collar hit off the face) against the
+/// worked 0.19, 0.43 and 0.75 voxel, and the dark specks on the trunk face head-on with the
+/// branches crisp and smooth.
+#[test]
+fn a_smooth_surface_meets_a_crisp_cube_without_a_gap() {
+    use flythrough::thin_rig::{INLAY_X, INLAY_Z, L_THICK, L_TOP, L_X, L_Y, TRUNK_LO, WALL_Y};
+    let Some((device, queue)) = software_device(256 << 20) else {
+        return;
+    };
+    let wood = flythrough::THIN_RIG_WOOD;
+    let rock = flythrough::cave::ROCK;
+    let table = flythrough::with_wood_flags(
+        &flythrough::LookPreset::DEFAULT.materials(),
+        vxe_world::MaterialFlags::CRISP,
+    );
+    let source = SeamRig { crisp: wood };
+    let seam = World::generate(source.extent(), &source, &table);
+    let thin = thin_rig_world(vxe_world::MaterialFlags::CRISP);
+    let mut failures = Vec::new();
+    let check_box = |name: &str,
+                     r: &SeamReading,
+                     cam: &vxe_render::Camera,
+                     aabb: [[f32; 3]; 2],
+                     failures: &mut Vec<String>| {
+        let (n, leaks, misses) = r.leaks_and_misses(cam, aabb);
+        println!(
+            "{name}: {n} px in the seam's box, {leaks} leaks, {misses} misses; {} hits, {} leaks in the frame",
+            r.crack.shares.hits, r.crack.shares.leaks
+        );
+        if n == 0 || leaks != 0 || misses != 0 {
+            failures.push(format!("{name}: {n} px, {leaks} leaks, {misses} misses"));
+        }
+    };
+
+    // The inlay: a flat rock wall, face y = 100, the wood 8 x 8 and 3 deep flush in it.
+    let wall_y = WALL_Y[0] as f32;
+    let centre = [32.0f32, wall_y, 88.0];
+    let inlay_box = [[26.0, wall_y - 0.5, 82.0], [38.0, wall_y + 0.5, 94.0]];
+    for (name, cam) in [
+        seam_view("inlay head-on", [32.0, 70.0, 88.0], centre),
+        seam_view("inlay 45", [32.0 - 21.2, wall_y - 21.2, 88.0], centre),
+    ] {
+        let r = seam_reading(&device, &queue, &seam, &cam);
+        check_box(name, &r, &cam, inlay_box, &mut failures);
+        if name != "inlay head-on" {
+            continue;
+        }
+        let (mut on_wall, mut worst, mut inner, mut not_cube) = (0u64, 0f32, 0u64, 0u64);
+        for i in 0..r.positions.len() {
+            let Some(p) = r.hit(i) else { continue };
+            if (12.0..=52.0).contains(&p[0]) && (68.0..=108.0).contains(&p[2]) {
+                on_wall += 1;
+                worst = worst.max((p[1] - wall_y).abs());
+            }
+            let inside = p[0] > (INLAY_X[0] + 1) as f32
+                && p[0] < (INLAY_X[1] - 1) as f32
+                && p[2] > (INLAY_Z[0] + 1) as f32
+                && p[2] < (INLAY_Z[1] - 1) as f32
+                && p[1] < wall_y + 0.5;
+            if inside {
+                inner += 1;
+                if !r.cube_hit(i, wood) {
+                    not_cube += 1;
+                    r.dbg("inlay", i);
+                }
+            }
+        }
+        println!(
+            "{name}: {on_wall} hits on the wall, worst {worst:.2e} voxel off its plane; {inner} inside the inlay, {not_cube} not a cube hit"
+        );
+        if on_wall == 0 || worst > 1e-3 {
+            failures.push(format!("{name}: {on_wall} wall hits, worst {worst}"));
+        }
+        if inner == 0 || not_cube != 0 {
+            failures.push(format!("{name}: {inner} inlay hits, {not_cube} not cubes"));
+        }
+    }
+
+    // The trunk: its +x face x = 67 carries the branches' roots.
+    let face_x = (TRUNK_LO[0] + 5) as f32;
+    let trunk_target = [face_x, 64.5, 86.5];
+    let trunk_box = [[face_x - 0.5, 63.0, 70.0], [face_x, 65.0, 100.0]];
+    let plus_x: Vec<_> = FEATURES
+        .iter()
+        .filter(|f| f.measured(0).0[0] >= TRUNK_LO[0] + 5)
+        .collect();
+    let footprint_gap = |f: &flythrough::thin_rig::Feature, p: [f32; 3]| -> f32 {
+        // Chebyshev distance in y and z from p to the feature's voxels within one voxel of
+        // the face (the layers the face's and its front air's counts read).
+        feature_boxes(f)
+            .iter()
+            .filter(|(lo, _)| lo[0] <= TRUNK_LO[0] + 6)
+            .map(|(lo, hi)| {
+                (1..3)
+                    .map(|k| (lo[k] as f32 - p[k]).max(p[k] - hi[k] as f32).max(0.0))
+                    .fold(0f32, f32::max)
+            })
+            .fold(f32::INFINITY, f32::min)
+    };
+    let on_feature = |p: [f32; 3]| {
+        FEATURES.iter().any(|f| {
+            feature_boxes(f)
+                .iter()
+                .any(|&(lo, hi)| on_box(p, lo, hi, 1e-3))
+        })
+    };
+    for (name, cam) in [
+        seam_view("trunk head-on", [face_x + 33.5, 64.5, 86.5], trunk_target),
+        seam_view("trunk 45", [face_x + 24.0, 64.5 - 24.0, 86.5], trunk_target),
+    ] {
+        let r = seam_reading(&device, &queue, &thin, &cam);
+        check_box(name, &r, &cam, trunk_box, &mut failures);
+        let mut collar = vec![0f32; plus_x.len()];
+        let (mut flat, mut flat_worst, mut near, mut near_bad, mut feat, mut feat_bad) =
+            (0u64, 0f32, 0u64, 0u64, 0u64, 0u64);
+        for i in 0..r.positions.len() {
+            let Some(p) = r.hit(i) else { continue };
+            if on_feature(p) {
+                let from_trunk = if p[0] >= face_x {
+                    p[0] - face_x
+                } else {
+                    TRUNK_LO[0] as f32 - p[0]
+                };
+                if from_trunk > 2.0 {
+                    feat += 1;
+                    feat_bad += u64::from(!r.cube_hit(i, wood));
+                }
+                continue;
+            }
+            if p[0] < face_x - 0.5
+                || !(63.5..=65.5).contains(&p[1])
+                || !(70.0..=102.0).contains(&p[2])
+            {
+                continue;
+            }
+            let gaps: Vec<f32> = plus_x.iter().map(|f| footprint_gap(f, p)).collect();
+            let off = p[0] - face_x;
+            if gaps.iter().all(|&g| g > 2.0) {
+                flat += 1;
+                flat_worst = flat_worst.max(off.abs());
+                if off.abs() > 1e-3 {
+                    r.dbg("flat", i);
+                }
+            } else {
+                near += 1;
+                let bad = !(-1e-3..=1.0).contains(&off) || r.records[i][2] != rock;
+                if bad {
+                    r.dbg("collar", i);
+                }
+                near_bad += u64::from(bad);
+                for (k, &g) in gaps.iter().enumerate() {
+                    if g <= 2.0 {
+                        collar[k] = collar[k].max(off);
+                    }
+                }
+            }
+        }
+        println!(
+            "{name}: {flat} face hits clear of the roots, worst {flat_worst:.2e} off the plane; {near} collar hits, {near_bad} off by more than a voxel or not rock; {feat} feature hits clear of the trunk, {feat_bad} not a cube hit"
+        );
+        for (f, h) in plus_x.iter().zip(&collar) {
+            let worked = WORKED_COLLAR
+                .iter()
+                .find(|(n, _)| *n == f.name)
+                .map(|w| format!("{:.2}", w.1));
+            println!(
+                "  {name} collar {}: {h:.3} voxel off the face (worked {})",
+                f.name,
+                worked.unwrap_or_else(|| "-".to_owned())
+            );
+        }
+        if flat == 0 || flat_worst > 1e-3 {
+            failures.push(format!("{name}: {flat} flat hits, worst {flat_worst}"));
+        }
+        if near_bad != 0 {
+            failures.push(format!("{name}: {near_bad} collar hits bad"));
+        }
+        if feat == 0 || feat_bad != 0 {
+            failures.push(format!("{name}: {feat} feature hits, {feat_bad} not cubes"));
+        }
+    }
+
+    // The specks on the trunk face head-on, branches crisp and smooth.
+    let smooth = thin_rig_world(vxe_world::MaterialFlags::empty());
+    let head_on = flythrough::camera_looking_at([face_x + 33.5, 64.5, 86.5], trunk_target);
+    for (label, world) in [("crisp", &thin), ("smooth", &smooth)] {
+        let r = seam_reading(&device, &queue, world, &head_on);
+        let specks = dark_specks(&r.crack.shaded)
+            .into_iter()
+            .filter(|&i| {
+                r.hit(i).is_some_and(|p| {
+                    p[0] >= face_x - 0.5
+                        && p[0] <= face_x + 1.0
+                        && (TRUNK_LO[1] as f32..=(TRUNK_LO[1] + 5) as f32).contains(&p[1])
+                        && r.records[i][2] == rock
+                })
+            })
+            .count();
+        println!("trunk face head-on, branches {label}: {specks} dark specks");
+    }
+
+    // The L: two wood slabs 3 thick meeting at 90 degrees on the rock floor.
+    let slabs = [
+        ([L_X[0], L_Y[0], 64], [L_X[1], L_Y[0] + L_THICK, L_TOP]),
+        ([L_X[0], L_Y[0], 64], [L_X[0] + L_THICK, L_Y[1], L_TOP]),
+    ];
+    let corner = [(L_X[0] + L_THICK) as f32, (L_Y[0] + L_THICK) as f32];
+    let l_box = [
+        [corner[0] - 0.5, corner[1] - 0.5, 70.0],
+        [corner[0] + 6.0, corner[1] + 6.0, 90.0],
+    ];
+    for (name, cam) in [
+        seam_view("L head-on", [88.0, 50.0, 80.5], [88.0, corner[1], 80.5]),
+        seam_view(
+            "L 45",
+            [corner[0] + 20.0, corner[1] + 20.0, 80.5],
+            [corner[0], corner[1], 80.5],
+        ),
+    ] {
+        let r = seam_reading(&device, &queue, &seam, &cam);
+        check_box(name, &r, &cam, l_box, &mut failures);
+        let (mut n, mut bad, mut corner_px) = (0u64, 0u64, 0u64);
+        for i in 0..r.positions.len() {
+            let Some(p) = r.hit(i) else { continue };
+            let near_l = p[2] > 66.0
+                && p[2] <= L_TOP as f32 + 1.5
+                && p[0] >= L_X[0] as f32 - 1.5
+                && p[0] <= L_X[1] as f32 + 1.5
+                && p[1] >= L_Y[0] as f32 - 1.5
+                && p[1] <= L_Y[1] as f32 + 1.5;
+            if !near_l {
+                continue;
+            }
+            n += 1;
+            if (p[0] - corner[0]).abs() <= 1.0 && (p[1] - corner[1]).abs() <= 1.0 {
+                corner_px += 1;
+            }
+            let on = slabs.iter().any(|&(lo, hi)| on_box(p, lo, hi, 1e-3));
+            if !on || !r.cube_hit(i, wood) {
+                bad += 1;
+                r.dbg("L", i);
+            }
+        }
+        println!(
+            "{name}: {n} hits on the L, {corner_px} within a voxel of its concave corner, {bad} not a cube hit on a slab"
+        );
+        if n == 0 || bad != 0 {
+            failures.push(format!("{name}: {n} hits, {bad} not cubes"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}

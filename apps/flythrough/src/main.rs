@@ -21,7 +21,7 @@
 //! [--detail-after on|off] [--band-census] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--absorption A] [--mic]
+//! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off] [--lamp-toggle N]
 //! [--fade-reading]
@@ -209,6 +209,11 @@
 //! rig's wood), from a camera in front of the trunk; not with `--level`, `--source showcase`,
 //! `--castle`, `--autopilot`, `--vault`, `--room`, `--save` or `--replay`. The wood's row is
 //! crisp (`MaterialFlags::CRISP`): the field surface draws it as cubes.
+//!
+//! `--seam-rig` runs in the bounded seam scene (`flythrough::thin_rig::SeamRig`: a flat rock
+//! wall with an 8 x 8 inlay of the rig's wood set flush in its face, and an L of two wood
+//! slabs on the rock floor), from a camera facing the wall; the same restrictions as
+//! `--thin-rig`, and the wood's row crisp the same way.
 //!
 //! `--crisp none|rock|all` (default none) marks rows of the table crisp when it is built: the
 //! cave's rock row, or every row that is not translucent (a testbed switch for the field
@@ -414,6 +419,9 @@ struct Args {
     /// `--thin-rig`: the bounded thin-feature scene (`flythrough::thin_rig`) in place of the
     /// cave.
     thin_rig: bool,
+    /// `--seam-rig`: the bounded seam scene (`flythrough::thin_rig::SeamRig`) in place of the
+    /// cave.
+    seam_rig: bool,
     /// `--crisp`: the rows of the table marked `MaterialFlags::CRISP` when it is built.
     crisp: CrispRows,
     /// `--room-line`: print the room line whenever a fan completes (implied by `--room`).
@@ -699,6 +707,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         logic: LogicChoice::Native,
         room: None,
         thin_rig: false,
+        seam_rig: false,
         crisp: CrispRows::None,
         room_line: false,
         absorption: CAVE_ACOUSTIC[0],
@@ -991,6 +1000,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--level" => args.level = true,
             "--thin-rig" => args.thin_rig = true,
+            "--seam-rig" => args.seam_rig = true,
             "--crisp" => {
                 let v = value()?;
                 args.crisp = CrispRows::named(&v)
@@ -1132,7 +1142,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 .to_owned(),
         );
     }
-    if args.thin_rig
+    if args.thin_rig && args.seam_rig {
+        return Err("--thin-rig and --seam-rig are two scenes; pick one".to_owned());
+    }
+    if (args.thin_rig || args.seam_rig)
         && (args.level
             || args.showcase
             || args.castle
@@ -1143,7 +1156,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             || args.replay.is_some())
     {
         return Err(
-            "--thin-rig builds its own world; it does not take --level, --source showcase, \
+            "--thin-rig and --seam-rig build their own world; they do not take --level, --source showcase, \
              --castle, --autopilot, --vault, --room, --save or --replay"
                 .to_owned(),
         );
@@ -1156,8 +1169,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         );
     }
     if args.walk {
-        walk_allowed(!args.level && !args.showcase && args.room.is_none() && !args.thin_rig)
-            .map_err(|e| format!("--walk: {e}"))?;
+        walk_allowed(
+            !args.level
+                && !args.showcase
+                && args.room.is_none()
+                && !args.thin_rig
+                && !args.seam_rig,
+        )
+        .map_err(|e| format!("--walk: {e}"))?;
     }
     if (args.save.is_some() || args.replay.is_some()) && !args.level {
         return Err(SAVE_NEEDS_LEVEL.to_owned());
@@ -5148,7 +5167,7 @@ fn preset_materials(args: &Args, preset: Option<&LookPreset>) -> MaterialTable {
     };
     let table = if args.castle {
         flythrough::castle_materials(&table)
-    } else if args.thin_rig {
+    } else if args.thin_rig || args.seam_rig {
         flythrough::with_wood(&table)
     } else {
         table
@@ -5250,6 +5269,8 @@ fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
         pose.camera()
     } else if args.thin_rig {
         flythrough::thin_rig_camera()
+    } else if args.seam_rig {
+        flythrough::seam_rig_camera()
     } else {
         Camera {
             position: spawn.0.map(|v| v as f32 + 0.5).into(),
@@ -5400,6 +5421,19 @@ fn main() {
         println!(
             "thin rig: a 5-voxel trunk on a floor with free one-, two- and three-voxel rods, a \
              diagonal branch and two sheets of wood, {:?} chunks",
+            source.extent().max.0
+        );
+        let generation =
+            std::thread::spawn(move || Ok(World::generate(source.extent(), &source, &table)));
+        (source.spawn(), Pending::Level(generation))
+    } else if args.seam_rig {
+        let source = flythrough::thin_rig::SeamRig {
+            crisp: flythrough::THIN_RIG_WOOD,
+        };
+        let table = materials(&args);
+        println!(
+            "seam rig: a rock wall with an 8 x 8 wood inlay flush in its face and a wood L on the \
+             rock floor, {:?} chunks",
             source.extent().max.0
         );
         let generation =

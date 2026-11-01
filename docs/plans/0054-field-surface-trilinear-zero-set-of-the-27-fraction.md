@@ -1682,33 +1682,95 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
   item): the thin rig, wood crisp, 48 939 hits, split against unsplit 0 pixels differ; every
   row that is not translucent crisp, the field look against `face` 0 pixels differ split and
   unsplit. Quick tier at 6def8f6: 543 run, 543 passed (9 slow), 3 skipped; clippy and fmt 0.
+- The removals (2bca6e4, wip): `attrib.rs`, `attr_work.rs`, `benches/attr_work.rs` and the
+  plane fit go; the field pass is `src/shaders/field.wgsl` (`field_main` alone); `PlaneFit`,
+  `PlaneOffset`, `OccupancyFilter`, `SurfaceFit`, `SurfaceModel`, `FieldNormal` (N2),
+  `SurfaceTuning::{fit, shadow_push, normal_field, cube_hits, model, field_normal}`,
+  `MirrorConfig::attr_cap`, the surface attribute units of a slot, the cracks view's classes
+  (`CrackShares { hits, leaks }`), `cubes-field`, `contour`, `contour-sharp`, `contour-grain`,
+  `--plane-fit`, `--plane-offset`, `--fit-filter`, `--shadow-push`, `--normal-field`,
+  `--field-normal` and the refit banner go. `LookPreset::ALL` is face, field, trilinear8,
+  gradient27 and `LookPreset::DEFAULT` is `FIELD`; the shadow ray walks the voxels from
+  `p + ns * SHADOW_OFFSET`. Renamed: `with_surface_attrs` -> `with_field_surface`,
+  `update_attrs` -> `update_field`, `fit_rig_on` -> `field_rig_on`, `HIT_PLANE` ->
+  `HIT_FIELD`. Header words 10, 11 and 14 are 0 (the band prefix stays at 12 and 13). Tests
+  removed with what they exercised (mirror.rs 15 attribute and fit tests; look.rs
+  `axis_planes_have_no_cracks`, `crack_classes`, `the_closing_rule_leaves_no_crack`,
+  `the_cracks_view_keeps_its_palette_through_the_window_chain`,
+  `one_voxel_features_render_as_boxes_today`, `box_readings`, the majority-fit and
+  normal-field tests, `field_readings`; sharpness.rs's C1 and C2 candidates and the
+  contour-grain reading of `face_against_contour_on_the_wall`); re-pointed:
+  `attributes_leave_the_face_goldens_byte_for_byte` -> `band_slots_leave_the_face_goldens_byte_for_byte`
+  (passes), the mirror churn and demotion tests over field mirrors (`live_bricks` 1536 ->
+  `1536 + band_bricks()`, 2280 read). Quick tier 539 run, 539 passed, 3 skipped; clippy and fmt
+  0; on lavapipe (exclusive perf lock, load 10.5, other work) mirror.rs and
+  shader_portability.rs 33 of 33, and seven look tests pass, the face goldens unmoved.
+- Deviations: `examples/world_budget.rs` keeps local copies of `chunk_surface` and the
+  attribute units for its ADR-0011 projection (2bca6e4); `--look face` runs over a mirror
+  with band slots (any preset but `plain` gets a field mirror), so the field pass also runs
+  under `face` (2bca6e4); the stdout `attrib:` line is now `field pass: N band slots ...`
+  (2bca6e4); `contour-grain` goes with the other plane presets, not named in "What goes"
+  (2bca6e4). `--seam-rig` (the seam rig of done-when 3, `flythrough::thin_rig::SeamRig`) and
+  `flythrough::camera_looking_at`, `seam_rig_camera` are added (committed with this item).
+- `look::the_default_surface_is_the_field` (done-when 1, lavapipe, exclusive perf lock, load
+  3.08; `live/p4c/dw1.log`): passes. Floor 43 012 hits and wall 37 800, worst 7.63e-6 voxel
+  off the face, 0 leaks; box px 0 on all five one-voxel scenes; 0 leaks on every scene and at
+  both poses lamp on and off; tile edges % equal to Phase 1's N1 column on every scene (rod
+  0.649, groove 0.644, wall pillar 0.272, ridge 0.645, sheet 0.773, cavity 0.188, pillar
+  0.125, vein 0.397, patch 0.633, the rest 0.000 or 0.004); the patch reads 9 box px (no bar
+  at the poses); guardrails cavity normal error 4.13 degrees, silhouette 24 px against face's
+  172, axis fraction 3.15 %.
+- `look::a_smooth_surface_meets_a_crisp_cube_without_a_gap` (done-when 3, lavapipe, exclusive
+  perf lock; the seam rig and the thin rig, wood crisp, each head-on and at 45 degrees,
+  320 x 180; `live/p4c/seam-plan.log`): fails, done-when 3 not met.
+  - Inlay: head-on 29 584 wall hits, worst 7.63e-6 voxel off the plane; 676 hits inside the
+    inlay, all cube hits; box 2704 and 2150 px, 0 leaks, 0 misses. Met.
+  - Trunk: head-on 15 leaks in the seam's box (19 in the frame), 45 degrees 19 (35); the
+    leaks are field pieces that start above zero at the voxel mid-plane `x = 67.5` beside the
+    2x2 and 3x3 rods' undersides and tops (`z = 80.2`, `85.6`): the cell in front (corners crisp
+    rod voxels and air) is skipped by the crisp rule, so the next piece starts inside the
+    field. 2 (head-on) and 3 (45) collar hits read material 0: field hits in cells whose
+    corners are all air, one of them above zero (an air voxel under a rod beside the trunk
+    counts 15), which carry no count bit, so the crisp rule does not skip them and
+    `field_material` finds no smooth solid corner. Face hits clear of the roots: worst 0 and
+    7.63e-6 voxel; feature hits clear of the trunk 1089 and 3289, all cube hits. Collar
+    heights head-on / 45: one-voxel branch 0.188 / 0.188 (worked 0.19), 2x2 0.500 / 0.500
+    (0.43), 3x3 0.555 / 0.629 (0.75), diagonal 0.188 / 0.188. Dark specks on the trunk face
+    head-on: 118 with the branches crisp, 67 smooth (a finding for the close).
+  - L: 0 leaks and 0 misses in its box; 59 (head-on) and 56 (45) hits within 1.5 voxels of
+    it above `z = 66` are not cube hits: field hits of material 0 in the concave corner's air
+    cells (`x` 79.5 to 79.7, `y` 23.5 to 23.7, `z` 66.1 to 72.0), the corner air voxel
+    counting 15. Above `z = 72` the bricks carry `BAND_CUBES_BIT` and the corner is sharp;
+    below, the rock floor's shell makes the brick smooth-near and the field walk runs.
+  - The test's definitions (dev's): a seam's screen box is the pixels whose primary ray
+    meets a thin box on the seam's surface (the trunk's `y` in `[63, 65]`, clear of the
+    trunk's rounded edges, through which a 45-degree ray exits with no hit); a feature's
+    footprint is its voxels within one voxel of the face (the diagonal branch's first two),
+    since a face voxel's front air voxel counts the second.
+- An attempt, set aside (`live/p4c/air-bits.patch`, untracked; `live/p4c/seam-airbits.log`):
+  an air band voxel carries `SMOOTH_COUNT_BIT` when a smooth solid voxel lies in its 3^3
+  block, else `CRISP_COUNT_BIT`; a cell gives a field hit only with a corner carrying
+  `SMOOTH_COUNT_BIT`; a field hit with no smooth solid corner takes the material of the first
+  smooth solid voxel in the 3^3 block of its largest-weight smooth-near corner. Read: trunk 0
+  leaks at both views, the L every hit a cube hit, collars head-on 0.188, 0.748, 0.823; but the
+  inlay reads 107 of 676 interior hits as rock-material field hits on its plane (up to 1.5
+  voxels inside its border: an air voxel at the inlay's edge sees the wall's rock), and the 3x3
+  collar at 45 degrees reads 1.107 voxel off the face (3 hits over the 1-voxel bar).
 
-### Resume notes (2026-11-01, done-when 8 met on the split, delete when Phase 4c lands)
+### Resume notes (2026-11-01, stopped at done-when 3, delete when Phase 4c lands)
 
-- State: Phase 4b committed (f6e51a3). Phase 4c's crisp mechanism and `--crisp` are in
-  9314221; the split walk and the shell-exact cubes bit in 6def8f6, done-when 8's spawn rows
-  met; its pose rows and `the_split_walk_moves_no_hit_record` in the wip commit after it
-  (above). Stopped for a context checkpoint (lane rule 13) before the removals. Not done: the removals (plane attribute, `attrib.rs`,
-  `attr_work.rs` and its bench, the plane fit, `PlaneFit`, `PlaneOffset`, `OccupancyFilter`,
-  `CrackClosing`, snap, the crack classes, `normal_field`, N2, `cubes-field`, the flags and
-  banner rows of done-when 7; `live/p4/phase4-wip.patch` does not apply and is a guide only);
-  the field as `LookPreset::DEFAULT`; shadows over the voxel occupancy; the tests of done-whens
-  1 and 3 (`the_default_surface_is_the_field`, `a_smooth_surface_meets_a_crisp_cube_without_a_gap`
-  and its seam rig); done-when 4's field-pass and carve readings (the field pass now also
-  fills the 12^3 box and tests the shell); the moved goldens (done-when 5); done-when 6 and
-  done-when 8's spawn rows re-read after the removals; the gpu tier on this tree; Phase 4d's
-  runner.
-- Gotchas: the split walk keeps the main hit pipeline's `march` (with `split_walk` and
-  `descend`'s band-word read) and `split_pixel`; removing the plane code must keep `contour`
-  off in it. `split_entered` is cleared at the top of every `descend`. The pose-row finding
-  above (rock over none where smooth hits show) is an owner question for Phase 4d, not a stop:
-  the bars of done-when 8 are the spawn's.
-- Tools (untracked): `live/p4c/split-cmp.sh NAME` (records of `zz_split.rs` into
-  `live/p4c/rec-NAME`, `REF` to compare), `live/p4c/radv.sh BIN` (`LOOK`, `CRISP`),
-  `live/p4c/cost.sh NAME` (builds the tree's release binary into
-  `live/p4c/bin/`, rounds of c8 `field` and the tip's `field --crisp none|rock|all` and
-  `face`; `ADAPTER`, `ROUNDS`, `SUFFIX`, `RES`, `POSE`), `live/p4c/4c-part1.patch` (this wip's
-  diff before Phase 4b's commit, kept for reference), `live/p4c/t1.log` (the tests above).
+- State: removals in 2bca6e4 (wip); the seam rig, `--seam-rig` and the tests of done-whens 1
+  and 3 in the wip commit after it (done-when 1 passes, done-when 3 fails as logged above).
+  Stopped for the owner: done-when 3 cannot be met under the crisp rules as written (the
+  trunk's leaks; the all-air cells' material-0 hits in the trunk collar and the L's corner).
+- Not done: done-when 4's readings, the goldens (done-when 5), done-whens 6 and 7, done-when
+  8's spawn rows after the removals, the gpu tier on this tree, Phase 4d's runner (written:
+  `live/session3.sh`, untracked, not launched).
+- Gotchas: the split walk keeps `march`'s `split_walk` and `descend`'s band-word read, with
+  `contour` off; `split_entered` is cleared at the top of every `descend`. `SEAM_DEBUG=1` on
+  the seam test prints every failing pixel's record. The sharpness and contour goldens and
+  the contour tests of look.rs (`contour_golden`, `smoothed_normal_goldens`, ...) now render
+  the field and are expected to move; none re-blessed.
 
 ### Resume notes (2026-10-31, held before Phase 4, delete when Phase 4 lands)
 
