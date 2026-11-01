@@ -2490,9 +2490,10 @@ const THIN_GAP: i32 = 2;
 /// as the feature's.
 const THIN_SLACK: f32 = 0.5;
 
-/// The thin rig ([`flythrough::thin_rig`]) under the start look's table with the rig's wood.
-fn thin_rig_world() -> World {
-    let table = flythrough::with_wood(&flythrough::LookPreset::DEFAULT.materials());
+/// The thin rig ([`flythrough::thin_rig`]) under the start look's table with the rig's wood,
+/// its row carrying `flags` (`MaterialFlags::CRISP` as the fly-through has it).
+fn thin_rig_world(flags: vxe_world::MaterialFlags) -> World {
+    let table = flythrough::with_wood_flags(&flythrough::LookPreset::DEFAULT.materials(), flags);
     let source = ThinRig {
         wood: flythrough::THIN_RIG_WOOD,
     };
@@ -2557,7 +2558,7 @@ impl ThinReading {
 
     /// Whether pixel `i` hit within the crisp voxels' one-voxel neighbourhood: a corner of the
     /// dual cell holding its hit point lies within one voxel (Chebyshev) of a voxel of a feature,
-    /// so its count, which the crisp look takes with the wood as air, may differ.
+    /// where the crisp wood's cube, corner and material rules may move the hit.
     fn near_crisp(&self, i: usize) -> bool {
         let p = self.positions[i];
         let base = [0, 1, 2].map(|k| (p[k] - 0.5).floor() as i32);
@@ -2579,38 +2580,45 @@ fn thin_dir() -> std::path::PathBuf {
     d
 }
 
-/// Thin features in the field and per material (Plan 0054 Phase 3a), on lavapipe: the thin rig
-/// from its camera in `face`, `field` and `field-cubes`. Per feature it prints the hit pixels
-/// whose hit point lies in the feature's box (less the two voxels nearest the trunk, grown by
-/// half a voxel) in each look, and asserts that every feature reads hit pixels in `face`. In
-/// `field-cubes` every feature reads within 2 % of `face`'s pixels; the rig and the level at
-/// `VEIN_POSE` and `PATCH_POSE` read 0 leaks; and every pixel whose hit lies, in both `field`
-/// and `field-cubes`, outside the crisp voxels' one-voxel neighbourhood (no corner of its dual
-/// cell within one voxel of the wood) reads the same hit position and hit record bit for bit
-/// in both, a hit in one look and a miss in the other counting as a difference. The shaded
-/// side-by-side (face, field, field-cubes) goes to `live/thin/rig.png`.
+/// The field look's hit pixels per feature of the thin rig with smooth wood, in
+/// [`FEATURES`]' order (Plan 0054 Phase 3a's `field` column): a feature under about three
+/// voxels across renders as nothing.
+const THIN_SMOOTH_PX: [u64; 6] = [0, 0, 913, 0, 0, 2666];
+
+/// Thin features in the field and per material (Plan 0054 Phases 3a and 4c), on lavapipe: the
+/// thin rig from its camera in `face`, and in `field` with the rig wood's row crisp
+/// (`MaterialFlags::CRISP`, no renderer setting) and with the flag cleared. Per feature it
+/// prints the hit pixels whose hit point lies in the feature's box (less the two voxels nearest
+/// the trunk, grown by half a voxel) in each, and asserts that every feature reads hit pixels in
+/// `face`; with the wood crisp every feature reads within 2 % of `face`'s pixels; with it
+/// smooth each feature reads [`THIN_SMOOTH_PX`]; both field readings and the level at
+/// `VEIN_POSE` and `PATCH_POSE` read 0 leaks; and every pixel whose hit lies, in both field
+/// readings, outside the wood's one-voxel neighbourhood (no corner of its dual cell within one
+/// voxel of the wood) reads the same hit position and hit record bit for bit in both, a hit in
+/// one and a miss in the other counting as a difference. The shaded side-by-side (face, field
+/// smooth wood, field crisp wood) goes to `live/thin/rig.png`.
 #[test]
 fn thin_features_in_the_field_and_per_material() {
     let level = pose_level();
     let Some((device, queue)) = software_device(attr_pool_bytes(&level).max(256 << 20)) else {
         return;
     };
-    let world = thin_rig_world();
-    let looks = [
-        flythrough::LookPreset::FACE,
-        flythrough::LookPreset::FIELD,
-        flythrough::LookPreset::FIELD_CUBES,
+    let crisp = thin_rig_world(vxe_world::MaterialFlags::CRISP);
+    let smooth = thin_rig_world(vxe_world::MaterialFlags::empty());
+    let face_look = preset_look(flythrough::LookPreset::FACE, ViewMode::Shaded);
+    let field_look = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);
+    let names = ["face", "field smooth wood", "field crisp wood"];
+    let readings = [
+        thin_reading(&device, &queue, &crisp, face_look),
+        thin_reading(&device, &queue, &smooth, field_look),
+        thin_reading(&device, &queue, &crisp, field_look),
     ];
-    let readings: Vec<ThinReading> = looks
-        .iter()
-        .map(|p| thin_reading(&device, &queue, &world, preset_look(*p, ViewMode::Shaded)))
-        .collect();
     let [face, field, cubes] = [&readings[0], &readings[1], &readings[2]];
     let mut failures = Vec::new();
     println!(
-        "| feature | face px | field px | field / face % | field-cubes px | field-cubes / face % |\n|---|---|---|---|---|---|"
+        "| feature | face px | smooth px | smooth / face % | crisp px | crisp / face % |\n|---|---|---|---|---|---|"
     );
-    for f in &FEATURES {
+    for (f, want) in FEATURES.iter().zip(THIN_SMOOTH_PX) {
         let [a, b, c] = [face, field, cubes].map(|r| r.feature_px(f));
         let pct = |n: u64| 100.0 * n as f64 / a.max(1) as f64;
         println!(
@@ -2623,21 +2631,21 @@ fn thin_features_in_the_field_and_per_material() {
             failures.push(format!("{}: no face hit in its box", f.name));
         }
         if (c as f64 - a as f64).abs() > 0.02 * a as f64 {
-            failures.push(format!("{}: field-cubes {c} px against face {a}", f.name));
+            failures.push(format!("{}: crisp wood {c} px against face {a}", f.name));
+        }
+        if b != want {
+            failures.push(format!("{}: smooth wood {b} px against {want}", f.name));
         }
     }
-    for (p, r) in looks.iter().zip(&readings) {
+    for (name, r) in names.iter().zip(&readings) {
         println!(
-            "{}: {} hits, {} leaks",
-            p.name, r.crack.shares.hits, r.crack.shares.classes[1]
+            "{name}: {} hits, {} leaks",
+            r.crack.shares.hits, r.crack.shares.classes[1]
         );
     }
-    for (p, r) in looks[1..].iter().zip(&readings[1..]) {
+    for (name, r) in names[1..].iter().zip(&readings[1..]) {
         if r.crack.shares.classes[1] != 0 {
-            failures.push(format!(
-                "rig {}: {} leaks",
-                p.name, r.crack.shares.classes[1]
-            ));
+            failures.push(format!("rig {name}: {} leaks", r.crack.shares.classes[1]));
         }
     }
     let (mut compared, mut near, mut differ) = (0u64, 0u64, 0u64);
@@ -2660,7 +2668,7 @@ fn thin_features_in_the_field_and_per_material() {
         differ += u64::from(!same);
     }
     println!(
-        "field against field-cubes away from the wood: {compared} hit pixels compared, {differ} differ, {near} left out near the wood"
+        "smooth against crisp wood away from the wood: {compared} hit pixels compared, {differ} differ, {near} left out near the wood"
     );
     if differ != 0 {
         failures.push(format!("{differ} hit pixels differ away from the wood"));
@@ -2679,19 +2687,15 @@ fn thin_features_in_the_field_and_per_material() {
     let path = thin_dir().join("rig.png");
     write_png(&path, &out, (3 * w) as u32, h as u32);
     println!("wrote {}", path.display());
-    let cubes_look = preset_look(flythrough::LookPreset::FIELD_CUBES, ViewMode::Shaded);
-    let field_look = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);
     for pose in flythrough::POSES {
-        let r = pose_box_reading(&device, &queue, &level, &pose, cubes_look, true);
-        let f = pose_box_reading(&device, &queue, &level, &pose, field_look, true);
-        let same = r.crack.shaded == f.crack.shaded;
+        let r = pose_box_reading(&device, &queue, &level, &pose, field_look, true);
         println!(
-            "level {} field-cubes: {} hits, {} leaks; shaded image the field look's byte for byte: {same}",
+            "level {} field: {} hits, {} leaks",
             pose.name, r.crack.shares.hits, r.crack.shares.classes[1]
         );
         if r.crack.shares.classes[1] != 0 {
             failures.push(format!(
-                "{} field-cubes: {} leaks",
+                "{} field: {} leaks",
                 pose.name, r.crack.shares.classes[1]
             ));
         }

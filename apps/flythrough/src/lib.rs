@@ -214,15 +214,18 @@ pub use logic::RUBBLE;
 /// rows: the rig's "wood".
 pub const THIN_RIG_WOOD: MaterialId = 5;
 
-/// The materials the mirror marks crisp for the looks that honour it
-/// ([`LookPreset::FIELD_CUBES`]): the thin rig's wood alone.
-pub const CRISP_MATERIALS: [MaterialId; 1] = [THIN_RIG_WOOD];
-
-/// `table` (the cave's rows) with the thin rig's wood appended at [`THIN_RIG_WOOD`].
+/// `table` (the cave's rows) with the thin rig's wood appended at [`THIN_RIG_WOOD`], a crisp
+/// row ([`MaterialFlags::CRISP`]): the field surface draws its voxels as cubes.
 pub fn with_wood(table: &MaterialTable) -> MaterialTable {
+    with_wood_flags(table, MaterialFlags::CRISP)
+}
+
+/// [`with_wood`] with the wood's row carrying `flags` (`MaterialFlags::empty()` for smooth wood).
+pub fn with_wood_flags(table: &MaterialTable, flags: MaterialFlags) -> MaterialTable {
     let mut t = table.clone();
     let wood = Material {
         albedo: [0.45, 0.30, 0.16],
+        flags,
         ..Material::named("rig wood")
     };
     assert_eq!(
@@ -430,7 +433,6 @@ const TUNING_OFF: SurfaceTuning = SurfaceTuning {
     cube_hits: false,
     model: SurfaceModel::Planes,
     field_normal: FieldNormal::Analytic,
-    crisp: false,
 };
 
 impl LookPreset {
@@ -501,31 +503,18 @@ impl LookPreset {
         ..Self::CONTOUR_SHARP
     };
 
-    /// The field surface with crisp materials (a scratch, Plan 0054 Phase 3a): the field look,
-    /// but the voxels of the mirror's crisp materials ([`CRISP_MATERIALS`]) count as air in the
-    /// field and are hit as their cubes with face normals.
-    pub const FIELD_CUBES: Self = Self {
-        name: "field-cubes",
-        tuning: SurfaceTuning {
-            crisp: true,
-            ..Self::FIELD.tuning
-        },
-        ..Self::FIELD
-    };
-
     pub const TRILINEAR8: Self = Self::plain("trilinear8", NormalMode::Trilinear8);
     pub const GRADIENT27: Self = Self::plain("gradient27", NormalMode::Gradient27);
 
     /// `N`'s order: the contour presets side by side after face, then the two diagnostic
     /// normal modes.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::FACE,
         Self::CONTOUR,
         Self::CONTOUR_SHARP,
         Self::CONTOUR_GRAIN,
         Self::CUBES_FIELD,
         Self::FIELD,
-        Self::FIELD_CUBES,
         Self::TRILINEAR8,
         Self::GRADIENT27,
     ];
@@ -581,9 +570,6 @@ impl LookPreset {
         }
         if t.model == SurfaceModel::Field {
             s += &format!(", surface field, field normal {}", t.field_normal.name());
-        }
-        if t.crisp {
-            s += ", crisp cubes on";
         }
         s
     }

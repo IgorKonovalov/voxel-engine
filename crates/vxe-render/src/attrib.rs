@@ -130,6 +130,8 @@ pub struct AttribBindings<'a> {
     pub shards: [&'a wgpu::Buffer; 4],
     pub records: &'a wgpu::Buffer,
     pub table: &'a wgpu::Buffer,
+    /// The material rows (`march.wgsl`'s `materials`), which the field pass reads.
+    pub materials: &'a wgpu::Buffer,
     /// The mirror window's minimum corner and size, in chunks.
     pub window: ([i32; 3], [i32; 3]),
     pub units_per_shard: u32,

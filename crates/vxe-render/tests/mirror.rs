@@ -2729,6 +2729,7 @@ fn the_attribute_pass_keeps_its_work_buffer_until_a_list_outgrows_it() {
             shards: [0, 1, 2, 3].map(|k| gpu.pool_shard(k)),
             records: gpu.records(),
             table: gpu.table(),
+            materials: gpu.materials(),
             window: (e.min.0, e.size()),
             units_per_shard: gpu.shard_layout().units_per_shard,
         };
@@ -3209,6 +3210,7 @@ fn a_five_brick_list_matches_an_uncapped_mirror_and_the_one_brick_pass() {
         shards: [0, 1, 2, 3].map(|k| gpu.pool_shard(k)),
         records: gpu.records(),
         table: gpu.table(),
+        materials: gpu.materials(),
         window: (e.min.0, e.size()),
         units_per_shard: gpu.shard_layout().units_per_shard,
     };

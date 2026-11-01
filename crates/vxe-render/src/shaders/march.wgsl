@@ -277,8 +277,6 @@ const FLAG_CUBE_HITS: u32 = 65536u;
 const FLAG_FIELD: u32 = 131072u;
 // The field surface shades with its blended corner normals (`FieldNormal::Blend`).
 const FLAG_FIELD_BLEND: u32 = 262144u;
-// The field walk hits a crisp voxel (its band count carries CRISP_COUNT_BIT) as its cube.
-const FLAG_CRISP: u32 = 524288u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -1693,10 +1691,17 @@ fn emission_of(m: u32) -> vec3<f32> {
 // above zero is a hit at its start. A leak is a ray that reaches a solid voxel outside the
 // band, a piece whose corners all lie above zero, or a piece that starts more than
 // FIELD_LEAK_EPS above zero: each is hit there as a cube and flagged, in the cracks view's
-// place. A LOD-only chunk is walked as `march` walks it, its cells cubes. With FLAG_CRISP
-// (a scratch, `GpuWorld::set_crisp_materials`) a solid voxel whose band count carries
-// CRISP_COUNT_BIT is hit as its cube where the ray enters it, with its entry face's normal;
-// the field counts it as air, so the rock's surface rounds away from it as from air.
+// place. A LOD-only chunk is walked as `march` walks it, its cells cubes.
+//
+// A crisp voxel (a voxel of a `MaterialFlags::CRISP` row, its band count carrying
+// CRISP_COUNT_BIT) counts as solid in the field and is hit as its cube where the ray enters
+// it, with its entry face's normal; no field piece inside it is tested. A dual cell with a
+// crisp corner gives a field hit only when one of its corners carries SMOOTH_COUNT_BIT (a
+// smooth solid band voxel), so two crisp faces meeting in a concave corner stay a sharp
+// corner, and a field hit takes the material of its largest-weight smooth solid corner. A band
+// brick whose header carries BAND_CUBES_BIT (no smooth solid voxel in it or its shell, set by
+// the field pass) can give no field hit and is walked as `march` walks a brick, its solid
+// voxels cubes.
 //
 // The shading normal is the normalised gradient of the trilinear `phi` at the hit, or with
 // FLAG_FIELD_BLEND the normalised trilinear blend at the hit of its cell's corner normals: a
@@ -1709,17 +1714,20 @@ override FIELD_SURFACE: bool = false;
 const HEADER_BAND_WORD: u32 = 15u;
 const HEADER_BAND_BIT: u32 = 0x80000000u;
 const HEADER_BAND_PREFIX_WORD: u32 = 12u;
+const BAND_CUBES_BIT: u32 = 0x40000000u;
 // A piece that starts this far above zero (in phi) missed its crossing: a leak.
 const FIELD_LEAK_EPS: f32 = 1e-4;
 
 // The field's view of a brick: its chunk's table entry (ABSENT outside the window or for an
 // absent chunk) and, in a full chunk, the brick's record entry, band slot (ABSENT for none)
-// and, for a band brick, its header's band prefix (HEADER_BAND_PREFIX_WORD, two words).
+// and, for a band brick, its header's band prefix (HEADER_BAND_PREFIX_WORD, two words) and
+// whether it walks as cubes (BAND_CUBES_BIT).
 struct FBrick {
     table: u32,
     entry: u32,
     band: u32,
     prefix: vec2<u32>,
+    cubes: bool,
 };
 
 // The last brick `field_brick` resolved, the last 4^3 block row `field_cell` read (keyed by
@@ -1761,7 +1769,7 @@ fn field_brick(bw: vec3<i32>) -> FBrick {
         return fb;
     }
     fb_key = key;
-    var r = FBrick(ABSENT, 0u, ABSENT, vec2<u32>(0u));
+    var r = FBrick(ABSENT, 0u, ABSENT, vec2<u32>(0u), false);
     let chunk = floor_div(bw, 8);
     let rel = chunk - params.window_min;
     let w = params.window_size;
@@ -1779,6 +1787,7 @@ fn field_brick(bw: vec3<i32>) -> FBrick {
                 let h = pool_word(unit, HEADER_WORD + HEADER_BAND_WORD);
                 if ((h & HEADER_BAND_BIT) != 0u) {
                     r.band = h & UNIT_MASK;
+                    r.cubes = (h & BAND_CUBES_BIT) != 0u;
                     r.prefix = vec2<u32>(
                         pool_word(unit, HEADER_WORD + HEADER_BAND_PREFIX_WORD),
                         pool_word(unit, HEADER_WORD + HEADER_BAND_PREFIX_WORD + 1u),
@@ -1813,9 +1822,10 @@ fn field_solid(entry: u32, i: u32) -> bool {
 
 // A band voxel's count byte, NOT_BAND for a voxel outside the band.
 const NOT_BAND: u32 = 0xFFFFFFFFu;
-// A crisp voxel's count byte carries this bit (`field::CRISP_COUNT_BIT`); the count is in the
-// low five bits.
+// A crisp solid voxel's count byte carries this bit (`field::CRISP_COUNT_BIT`), a smooth solid
+// voxel's SMOOTH_COUNT_BIT (`field::SMOOTH_COUNT_BIT`); the count is in the low five bits.
 const CRISP_COUNT_BIT: u32 = 0x80u;
+const SMOOTH_COUNT_BIT: u32 = 0x40u;
 
 // The count byte of voxel `i` of brick `b` (a full chunk's) from its band slot, or NOT_BAND.
 fn field_byte(b: FBrick, i: u32) -> u32 {
@@ -1880,7 +1890,8 @@ fn field_phi(u: vec3<i32>) -> f32 {
 
 // What the field walk finds at voxel `v`: `size` > 0 an empty cell of that edge; else `band`
 // for a band voxel, `solid` for a solid voxel (opaque, or of a uniform solid brick), `lod` for
-// a LOD-only chunk's solid cell.
+// a cube hit that is no leak (a LOD-only chunk's solid cell, or a solid voxel of a band brick
+// walked as cubes).
 struct FCell {
     size: i32,
     band: bool,
@@ -1928,7 +1939,7 @@ fn field_cell(v: vec3<i32>) -> FCell {
     let l = vec3<u32>(v - bw * 8);
     let i = l.x + 8u * (l.y + 8u * l.z);
     let full = (b.entry & FULL_BIT) != 0u;
-    if (b.band == ABSENT) {
+    if (b.band == ABSENT || b.cubes) {
         if (!full) {
             if ((b.entry & MATERIAL_MASK) == 0u) {
                 return FCell(select(1, 8, skips), false, false, false);
@@ -1936,9 +1947,10 @@ fn field_cell(v: vec3<i32>) -> FCell {
             // A uniform solid brick outside the band.
             return FCell(0, false, true, false);
         }
-        // A Full brick outside the band: its opaque voxels.
+        // A Full brick outside the band, or a band brick walked as cubes: its opaque voxels,
+        // cubes; in a band brick a cube hit is no leak (`lod`).
         let c = lookup_walk(v, false);
-        return FCell(c.size, false, c.size == 0, false);
+        return FCell(c.size, false, c.size == 0, b.band != ABSENT && c.size == 0);
     }
     // A band brick: its band mask ORed with its opaque mask, read a 4^3 block row at a time as
     // `mask_skip` reads the opaque mask.
@@ -2058,12 +2070,17 @@ fn held_phi() -> array<f32, 8> {
 }
 
 // With `crisp_test`, the piece is the first of band voxel `v`'s segment, and a crisp `v` (one
-// of the piece's corners) is its cube, hit at `ta`.
+// of the piece's corners) is its cube, hit at `ta`. A cell with a crisp corner and no smooth
+// solid corner gives no hit.
 fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32, crisp_test: bool, v: vec3<i32>) -> FHit {
     var none = FHit(false, false, false, ta, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0));
     let base = field_corners(o, d, ta, tb);
     if (crisp_test && corner_crisp(base, v)) {
         return FHit(true, false, true, ta, vec3<f32>(0.0), v, vec3<f32>(0.5));
+    }
+    let bits = fc_bytes.x | fc_bytes.y;
+    if ((bits & (CRISP_COUNT_BIT * 0x01010101u)) != 0u && (bits & (SMOOTH_COUNT_BIT * 0x01010101u)) == 0u) {
+        return none;
     }
     let c = held_phi();
     var pos = false;
@@ -2168,7 +2185,7 @@ fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32, crisp_test: bool, v
 
 // The field test of band voxel `v` over the ray's segment `[t0, t1]` through it: its pieces
 // in the dual cells, nearest first.
-// With `crisp_test` (FLAG_CRISP on a solid voxel) a crisp `v` is its cube, hit at `t0`:
+// With `crisp_test` (a solid `v`) a crisp `v` is its cube, hit at `t0`:
 // cube and not a leak; its crispness is read with the first piece's corners, of which `v` is one.
 fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32, t1: f32, crisp_test: bool) -> FHit {
     var tm = select(vec3<f32>(BIG), (vec3<f32>(v) + 0.5 - o) * inv, d != vec3<f32>(0.0));
@@ -2303,10 +2320,9 @@ fn field_opaque_material(u: vec3<i32>) -> u32 {
 // largest trilinear weight, the first in corner order on a tie (0 when none is solid to the
 // opaque walk). A crisp voxel is not solid here.
 fn field_material(p: vec3<f32>, d: vec3<f32>, base: vec3<i32>, f: vec3<f32>) -> u32 {
-    let crisp = (params.flags & FLAG_CRISP) != 0u;
     let held = fc_held && all(base == fc_base);
     let at = voxel_at(p, d);
-    if (field_opaque(at) && !(crisp && held_crisp(held, base, at))) {
+    if (field_opaque(at) && !held_crisp(held, base, at)) {
         return field_opaque_material(at);
     }
     var best = -1.0;
@@ -2317,7 +2333,7 @@ fn field_material(p: vec3<f32>, d: vec3<f32>, base: vec3<i32>, f: vec3<f32>) -> 
         let w = w3.x * w3.y * w3.z;
         if (w > best) {
             let u = base + vec3<i32>(o);
-            if (field_opaque(u) && !(crisp && held_crisp(held, base, u))) {
+            if (field_opaque(u) && !held_crisp(held, base, u)) {
                 best = w;
                 chosen = u;
             }
@@ -2378,8 +2394,7 @@ fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
                 var face = FHit(true, !c.lod, true, t, vec3<f32>(0.0), v, vec3<f32>(0.5));
                 return FieldHit(face, axis, lookup(v).material);
             }
-            let crisp_test = c.solid && (params.flags & FLAG_CRISP) != 0u;
-            let h = field_voxel(o, d, inv, v, t, cube_exit(o, d, inv, v), crisp_test);
+            let h = field_voxel(o, d, inv, v, t, cube_exit(o, d, inv, v), c.solid);
             if (h.found && h.cube && !h.leak) {
                 // A crisp voxel: its cube, hit where the ray enters it.
                 return FieldHit(h, axis, field_opaque_material(v));

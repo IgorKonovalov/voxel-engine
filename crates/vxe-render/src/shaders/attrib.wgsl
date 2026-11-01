@@ -680,14 +680,91 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
 // bricks a workgroup, 64 invocations a brick, as `main`; the occupancy is `main`'s 10^3 box
 // without the filter. Every count unit is written whole, past the n-th byte as 0.
 //
+// A count byte holds the count in its low five bits, SMOOTH_COUNT_BIT on a solid voxel of a
+// smooth material and CRISP_COUNT_BIT on a solid voxel of a crisp one (`MaterialFlags::CRISP`
+// on a row that is not translucent): a crisp voxel is solid in every count. The material is
+// read only in a brick whose palette holds a crisp row. The pass also sets BAND_CUBES_BIT in
+// the brick's header band word (HEADER_BAND_WORD of its own slot) when neither the brick nor
+// its 26 neighbours hold a smooth solid voxel by their palettes (a brick of more than 16
+// materials, one read voxel by voxel and a LOD-only chunk's solid mip brick count as smooth),
+// and clears it otherwise: no dual cell with a corner in such a brick has a smooth solid
+// corner, so `march.wgsl`'s field walk crosses it as cubes.
+//
 // Bindings, group 0: 0, 1..4, 5 and 6 as `main`'s, then:
 //  11  storage  field_work    [n][4 x u32]: the band slot's first unit, the brick's origin in
 //                             voxels (x, y, z as i32 bits)
+//  12  storage  materials     as in march.wgsl: [id][4 x vec4], word 7 of a row the flag bits
 
 @group(0) @binding(11) var<storage, read> field_work: array<vec4<u32>>;
+@group(0) @binding(12) var<storage, read> materials: array<vec4<f32>>;
+
+const MATERIAL_TRANSLUCENT: u32 = 2u;
+const MATERIAL_CRISP: u32 = 4u;
+const HEADER_BAND_WORD: u32 = 15u;
+const BAND_CUBES_BIT: u32 = 0x40000000u;
+const SMOOTH_COUNT_BIT: u32 = 0x40u;
+const CRISP_COUNT_BIT: u32 = 0x80u;
 
 // The band mask words of the workgroup's four bricks, 16 each.
 var<workgroup> band_words: array<atomic<u32>, 64>;
+// Per brick of the workgroup: bit 0, a smooth solid voxel in it or a neighbour; bit 1, a crisp
+// material in its own palette.
+var<workgroup> brick_near: array<atomic<u32>, 4>;
+
+// Whether material `m` is drawn as cubes: a crisp row that is not translucent.
+fn material_crisp(m: u32) -> bool {
+    let f = bitcast<u32>(materials[m * 4u + 1u].w);
+    return (f & (MATERIAL_CRISP | MATERIAL_TRANSLUCENT)) == MATERIAL_CRISP;
+}
+
+// The solid materials brick (`kind`, `entry`) holds by its palette: bit 0 a smooth one, bit 1
+// a crisp one. A brick of more than 16 materials or read voxel by voxel holds both; a LOD-only
+// chunk's brick that is not air holds a smooth one (its mip cells are cubes for every
+// material, and a band voxel beside it counts it as solid either way).
+fn brick_surfaces(kind: u32, entry: u32) -> u32 {
+    if (kind == NB_AIR) {
+        return 0u;
+    }
+    if ((entry & FULL_BIT) == 0u) {
+        return select(1u, 2u, material_crisp(entry & 0xFFFFu));
+    }
+    if (kind >= NB_MIP) {
+        return 1u;
+    }
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    if (kind == NB_VOXELS || cls == CLASS_WIDE) {
+        return 3u;
+    }
+    let unit = entry & UNIT_MASK;
+    var out = 0u;
+    for (var j = 0u; j < (1u << payload_units(entry)); j++) {
+        let m = (pool_word(unit, UNIT_WORDS + j / 2u) >> ((j & 1u) * 16u)) & 0xFFFFu;
+        if (m != 0u) {
+            out |= select(1u, 2u, material_crisp(m));
+        }
+    }
+    return out;
+}
+
+// Whether voxel `i`, a solid voxel of the brick with record entry `entry`, is crisp.
+fn voxel_crisp(entry: u32, i: u32) -> bool {
+    if ((entry & FULL_BIT) == 0u) {
+        return material_crisp(entry & 0xFFFFu);
+    }
+    let unit = entry & UNIT_MASK;
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    if (cls == CLASS_WIDE) {
+        let word = pool_word(unit, PAYLOAD_WORD + i / 2u);
+        return material_crisp((word >> ((i & 1u) * 16u)) & 0xFFFFu);
+    }
+    var index = 0u;
+    for (var k = 0u; k < payload_units(entry); k++) {
+        let w = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * k + i / 32u);
+        index |= ((w >> (i % 32u)) & 1u) << k;
+    }
+    let pair = pool_word(unit, UNIT_WORDS + index / 2u);
+    return material_crisp((pair >> ((index & 1u) * 16u)) & 0xFFFFu);
+}
 
 @compute @workgroup_size(256, 1, 1)
 fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -712,6 +789,9 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
         }
         atomicStore(&band_words[b * 16u + t], m);
     }
+    if (t == 0u) {
+        atomicStore(&brick_near[b], 0u);
+    }
     if (listed && t < 27u) {
         let d = vec3<i32>(i32(t % 3u), i32((t / 3u) % 3u), i32(t / 9u)) - vec3<i32>(1);
         let k = brick_kind(floor_div(origin, 8) + d);
@@ -719,6 +799,10 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
         nb_entry[b * 27u + t] = k.y;
     }
     workgroupBarrier();
+    if (listed && t < 27u) {
+        let s = brick_surfaces(nb_kind[b * 27u + t], nb_entry[b * 27u + t]);
+        atomicOr(&brick_near[b], (s & 1u) | select(0u, s & 2u, t == 13u));
+    }
     if (listed) {
         for (var j = t; j < 27u * UNIT_WORDS; j += LANES) {
             let k = j / UNIT_WORDS;
@@ -776,6 +860,8 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
             k += countOneBits(atomicLoad(&band_words[b * 16u + j]));
         }
         let row = (word >> shift) & 0xFFu;
+        let crisp_here = (atomicLoad(&brick_near[b]) & 2u) != 0u;
+        let entry = nb_entry[b * 27u + 13u];
         for (var x = 0u; x < 8u; x++) {
             if (((row >> x) & 1u) == 0u) {
                 continue;
@@ -783,6 +869,11 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
             var n = 0u;
             for (var j = 0u; j < 9u; j++) {
                 n += countOneBits((rows[j] >> (x + 1u)) & 7u);
+            }
+            // The voxel itself: bit x + 2 of the centre row.
+            if (((rows[4] >> (x + 2u)) & 1u) != 0u) {
+                let i = x + 8u * y + 64u * z;
+                n |= select(SMOOTH_COUNT_BIT, CRISP_COUNT_BIT, crisp_here && voxel_crisp(entry, i));
             }
             atomicOr(&cells[b * 128u + k / 4u], n << (8u * (k % 4u)));
             k += 1u;
@@ -797,6 +888,13 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
         let words = UNIT_WORDS * ((n + 63u) / 64u);
         for (var j = t; j < words; j += LANES) {
             store_pool_word(unit, UNIT_WORDS + j, atomicLoad(&cells[b * 128u + j]));
+        }
+        let e = nb_entry[b * 27u + 13u];
+        if (t == 0u && (e & FULL_BIT) != 0u) {
+            let u = e & UNIT_MASK;
+            let h = pool_word(u, UNIT_WORDS + HEADER_BAND_WORD) & ~BAND_CUBES_BIT;
+            let cubes = (atomicLoad(&brick_near[b]) & 1u) == 0u;
+            store_pool_word(u, UNIT_WORDS + HEADER_BAND_WORD, h | select(0u, BAND_CUBES_BIT, cubes));
         }
     }
 }

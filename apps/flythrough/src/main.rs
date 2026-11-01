@@ -77,7 +77,7 @@
 //! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
 //! that
 //! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
-//! `contour-sharp`, `contour-grain`, `cubes-field`, `field`, `field-cubes`, `trilinear8`, `gradient27`), a normal mode with its plane
+//! `contour-sharp`, `contour-grain`, `cubes-field`, `field`, `trilinear8`, `gradient27`), a normal mode with its plane
 //! fit, face mix, detail after lighting, shadow push and rock's detail pair and fine weight,
 //! each part overridable by `--plane-fit`, `--plane-offset`, `--fit-filter` (the plane fit's
 //! occupancy, ADR-0040), `--normal-field` (shade with the planes' normal field, ADR-0040),
@@ -215,9 +215,12 @@
 //! `--thin-rig` runs in the bounded thin-feature scene (`flythrough::thin_rig`: a trunk on a
 //! floor with free one-, two- and three-voxel rods, a diagonal branch and two sheets of the
 //! rig's wood), from a camera in front of the trunk; not with `--level`, `--source showcase`,
-//! `--castle`, `--autopilot`, `--vault`, `--room`, `--save` or `--replay`. Under `--look
-//! field-cubes` the wood is the mirror's crisp material: the field counts it as air and hits
-//! it as cubes.
+//! `--castle`, `--autopilot`, `--vault`, `--room`, `--save` or `--replay`. The wood's row is
+//! crisp (`MaterialFlags::CRISP`): the field surface draws it as cubes.
+//!
+//! `--crisp none|rock|all` (default none) marks rows of the table crisp when it is built: the
+//! cave's rock row, or every row that is not translucent (a testbed switch for the field
+//! surface's per-material cost). Start-up prints `world crisp rows: ...`.
 
 mod fly;
 mod pad;
@@ -419,6 +422,8 @@ struct Args {
     /// `--thin-rig`: the bounded thin-feature scene (`flythrough::thin_rig`) in place of the
     /// cave.
     thin_rig: bool,
+    /// `--crisp`: the rows of the table marked `MaterialFlags::CRISP` when it is built.
+    crisp: CrispRows,
     /// `--room-line`: print the room line whenever a fan completes (implied by `--room`).
     room_line: bool,
     /// `--absorption`: the cave row's absorption per metre.
@@ -708,6 +713,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         logic: LogicChoice::Native,
         room: None,
         thin_rig: false,
+        crisp: CrispRows::None,
         room_line: false,
         absorption: CAVE_ACOUSTIC[0],
         mic: false,
@@ -1042,6 +1048,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--level" => args.level = true,
             "--thin-rig" => args.thin_rig = true,
+            "--crisp" => {
+                let v = value()?;
+                args.crisp = CrispRows::named(&v)
+                    .ok_or_else(|| format!("--crisp takes none, rock or all, not {v}"))?;
+            }
             "--shot" => {
                 let v = value()?;
                 shot_flag = true;
@@ -3473,7 +3484,9 @@ impl Run {
         }
     }
 
-    fn report(&mut self, samples: Samples) {
+    /// Prints the frame line over `samples`, with the smooth share of the last frame's hits
+    /// read back from `gpu`'s hit records.
+    fn report(&mut self, gpu: &Gpu, samples: Samples) {
         let Samples {
             mut cpu_ms,
             mut gpu_ms,
@@ -3483,7 +3496,7 @@ impl Run {
         let Some(gfx) = &self.gfx else { return };
         let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
         let [iw, ih] = gfx.frame.internal_size();
-        let gpu = if gpu_ms.is_empty() {
+        let gpu_line = if gpu_ms.is_empty() {
             "n/a (no TIMESTAMP_QUERY)".to_owned()
         } else {
             let passes: Vec<String> = FRAME_PASSES
@@ -3498,8 +3511,19 @@ impl Run {
         } else {
             format!(", gpu hud {:.4} ms", median(&mut hud_ms))
         };
+        // The smooth share of the last frame's hit pixels: hits whose material is not crisp.
+        let records = readback::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
+        let table = self.world.materials();
+        let (mut hits, mut smooth) = (0u64, 0u64);
+        for r in &records {
+            if r[3] & HIT_FOUND_BIT != 0 {
+                hits += 1;
+                smooth += u64::from(!table.is_crisp(r[2]));
+            }
+        }
+        let share = smooth as f64 / hits.max(1) as f64;
         println!(
-            "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
+            "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu_line}{hud}; smooth share s {share:.4} of {hits} hits; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look, self.preset()),
             median(&mut cpu_ms),
@@ -3601,6 +3625,7 @@ impl Run {
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         println!("{}", self.modes.line());
+        println!("{}", CrispRows::line(self.world.materials()));
         let mirror = if self.stream.is_some() {
             frame.set_lod(LodParams {
                 r_full: self.args.residency.r_full,
@@ -3695,7 +3720,6 @@ impl Run {
             Some(p) => {
                 let mut m = GpuWorld::with_surface_attrs(&gpu.device, cfg);
                 m.set_surface_fit(p.tuning.fit);
-                m.set_crisp_materials(crisp_materials(p));
                 m.set_field_surface(p.tuning.model == vxe_render::SurfaceModel::Field);
                 m
             }
@@ -4669,8 +4693,6 @@ impl Run {
         if std::mem::take(&mut self.preset_changed) && self.args.look.is_some() {
             gfx.mirror.set_surface_fit(self.preset.tuning.fit);
             gfx.mirror
-                .set_crisp_materials(crisp_materials(&self.preset));
-            gfx.mirror
                 .set_field_surface(self.preset.tuning.model == vxe_render::SurfaceModel::Field);
             gfx.mirror.rewrite_materials(
                 &preset_materials(&self.args, Some(&self.preset)),
@@ -4818,7 +4840,7 @@ impl Run {
             }
             if s.cpu_ms.len() == SAMPLES {
                 let s = self.samples.take().unwrap_or_default();
-                self.report(s);
+                self.report(gpu, s);
             }
         }
         self.frame += 1;
@@ -5317,6 +5339,9 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
     }
 }
 
+/// The hit record's flag bit (word 3) for a hit: `march.wgsl`'s `HIT_FOUND`.
+const HIT_FOUND_BIT: u16 = 1;
+
 /// The cave's material table; under `--look`, with rock's procedural detail from its preset;
 /// the ore emissive unless `--emissive-ore off`.
 fn materials(args: &Args) -> MaterialTable {
@@ -5332,22 +5357,75 @@ fn preset_materials(args: &Args, preset: Option<&LookPreset>) -> MaterialTable {
     } else {
         table
     };
-    if args.castle {
+    let table = if args.castle {
         flythrough::castle_materials(&table)
     } else if args.thin_rig {
         flythrough::with_wood(&table)
     } else {
         table
-    }
+    };
+    args.crisp.apply(&table)
 }
 
-/// The materials the mirror marks crisp under `preset`: [`flythrough::CRISP_MATERIALS`] when
-/// it honours them (`SurfaceTuning::crisp`), else none.
-fn crisp_materials(preset: &LookPreset) -> &'static [vxe_world::MaterialId] {
-    if preset.tuning.crisp {
-        &flythrough::CRISP_MATERIALS
-    } else {
-        &[]
+/// `--crisp`: which rows of the fly-through's table carry `MaterialFlags::CRISP` (a testbed
+/// switch for the field surface's cost lever): none added, the cave's rock row, or every row
+/// that is not translucent. Rows the table marks crisp itself (the thin rig's wood) stay crisp.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CrispRows {
+    #[default]
+    None,
+    Rock,
+    All,
+}
+
+impl CrispRows {
+    fn named(name: &str) -> Option<Self> {
+        match name {
+            "none" => Some(Self::None),
+            "rock" => Some(Self::Rock),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    /// `table` with this choice's rows marked crisp.
+    fn apply(self, table: &MaterialTable) -> MaterialTable {
+        if self == Self::None {
+            return table.clone();
+        }
+        let mut t = MaterialTable::new();
+        for (id, row) in table.rows().iter().enumerate().skip(1) {
+            let mut row = row.clone();
+            let pick = match self {
+                Self::None => false,
+                Self::Rock => id == usize::from(flythrough::cave::ROCK),
+                Self::All => !row.is_translucent(),
+            };
+            if pick {
+                row.flags = row.flags | vxe_world::MaterialFlags::CRISP;
+            }
+            t.push(row);
+        }
+        t
+    }
+
+    /// The crisp rows of `table` by name, for the start-up line.
+    fn line(table: &MaterialTable) -> String {
+        let names: Vec<&str> = table
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|&(id, _)| table.is_crisp(id as vxe_world::MaterialId))
+            .map(|(_, m)| m.name.as_str())
+            .collect();
+        format!(
+            "world crisp rows: {}",
+            if names.is_empty() {
+                "none".to_owned()
+            } else {
+                names.join(", ")
+            }
+        )
     }
 }
 
@@ -7601,7 +7679,7 @@ mod tests {
                 .err()
                 .as_deref(),
             Some(
-                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, field, field-cubes, trilinear8, gradient27, not contour-soft"
+                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, field, trilinear8, gradient27, not contour-soft"
             )
         );
         assert_eq!(

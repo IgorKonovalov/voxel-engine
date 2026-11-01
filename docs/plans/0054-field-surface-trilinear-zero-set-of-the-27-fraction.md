@@ -1540,6 +1540,84 @@ whose `field_material` returned material 1 (`s-nomat`, one round, not committed)
   tier (load 3.39 rising from a build) it read 915 001 344 B and passed; in the c8 gpu tier it
   passed; at c8's first tier (load 19.1) it read 1 186 762 752 B and failed.
 
+#### Phase 4c
+
+Partial (wip): the crisp flag's GPU path and the cost lever's switch; nothing removed yet.
+Readings on the RTX 3080 Laptop (`--adapter NVIDIA`) unless named, `flythrough --level --seed
+1 --headless --frames 300 --render 1920x1080` (1080p from 1280 x 720), release, each run under
+the exclusive perf lock and the memory cap at a 1-minute load under 2 (`live/p4c/cost.sh p1`,
+logs `live/p4c/cost-p1/`, three alternated rounds, load 0.93 to 1.95; the Radeon
+`live/p4c/cost-p1-amd/`, one round, load 0.51 to 0.67), medians of the frame line; the
+reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
+
+- Done so far (in the wip commit with this section): `MaterialFlags::CRISP`,
+  `MaterialTable::is_crisp` and `edits::the_crisp_flag_is_a_row_property_only` (from the
+  pause); the field pass (`attrib.wgsl` `field_main`, binding 12 the material rows) computes
+  every count from the mirror's occupancy, a crisp voxel solid, and sets bit 7
+  (`CRISP_COUNT_BIT`) or bit 6 (`SMOOTH_COUNT_BIT`) on each solid band voxel, reading a voxel's
+  material only in a brick whose palette holds a crisp row; it sets `BAND_CUBES_BIT` (header
+  band word bit 30) on a band brick whose palette and its 26 neighbours' palettes hold no
+  smooth solid material (a Wide brick, a voxel-read brick and a LOD chunk's solid mip brick
+  count as smooth), on the GPU rather than the CPU. The walk: a crisp solid voxel is its cube
+  at entry; a dual cell with a crisp corner and no smooth solid corner gives no hit; a field
+  hit's material is its largest-weight non-crisp opaque corner; a `BAND_CUBES_BIT` brick is
+  walked by `lookup_walk` with its solid voxels cube hits that are no leak. `field::band_of`,
+  `field::crisp_bits`, `GpuWorld::fix_crisp`, `GpuWorld::set_crisp_materials`,
+  `SurfaceTuning::crisp`, `FLAG_CRISP`, `flythrough::CRISP_MATERIALS` and the `field-cubes`
+  preset are gone; the rig wood's row carries `CRISP` (`flythrough::with_wood`,
+  `with_wood_flags`); the fly-through takes `--crisp none|rock|all`, prints `world crisp rows:
+  ...` at start-up, and the frame line prints `smooth share s` of the last frame's hits (a
+  readback of the hit records at each frame line).
+- `thin_features_in_the_field_and_per_material` (lavapipe, rewritten: the wood crisp by its
+  row, and cleared): crisp wood every feature 100.0 % of `face`'s pixels (439, 827, 1197, 508,
+  3183, 3489), 48 939 hits, 0 leaks; smooth wood 0, 0, 913, 0, 0, 2666 px (Phase 3a's `field`
+  column, asserted equal), 47 173 hits, 0 leaks; away from the wood 37 069 hit pixels
+  compared, 0 differ, 11 874 left out; the level at both poses 0 leaks.
+  `the_field_surface_has_no_boxes_and_no_leaks`, `the_field_surface_lies_on_the_flat_faces`
+  (worst 7.63e-6 voxel), `a_carve_gives_the_exposed_air_brick_a_band_slot`,
+  `mirror a_band_air_brick_s_slot_is_pinned` and `shader_portability
+  no_shader_stores_through_a_runtime_vector_index` pass (exclusive perf lock, run serially).
+  Clippy `-D warnings` 0 and fmt 0 on the workspace; `--profile quick` (no lock) 543 run, 543
+  passed (9 slow), 3 skipped; the gpu tier not run on this tree.
+- Done-when 8, read before the removals (hit / light / hit + light / GPU frame, ms; `s` the
+  printed smooth share):
+
+  | adapter | c8 `field` | `field --crisp none` | `field --crisp rock` | `field --crisp all` | `face` |
+  |---|---|---|---|---|---|
+  | RTX 3080 Laptop | 3.706 / 0.938 / 4.644 / 7.697 | 3.737 / 0.940 / 4.677 / 7.731, s 1.0000 | 2.230 / 0.937 / 3.167 / 6.274, s 0.0000 | 0.911 / 0.925 / 1.836 / 4.905, s 0.0000 | 0.547 / 0.873 / 1.420 / 4.272 |
+  | Radeon RENOIR (one round) | 31.026 / 7.236 / 38.262 / 56.101 | 30.577 / 7.235 / 37.812 / 55.507, s 1.0000 | 19.501 / 7.257 / 26.758 / 44.713, s 0.0000 | 8.329 / 7.261 / 15.590 / 33.475, s 0.0000 | 3.987 / 6.764 / 10.751 / 26.928 |
+
+  (i) `--crisp all`'s hit reads 0.911 ms against `face`'s 0.547 (+66.5 %; the Radeon +109 %)
+  against the 10 % bar: not met; the bit-for-bit comparison with `face` was not run. (ii)
+  `--crisp rock` (s 0.0000 at the spawn) reads 2.230 ms against the bar `face + s (none - face)
+  + 0.1 (none - face)` = 0.547 + 0 + 0.319 = 0.866 ms: not met. (iii) `--crisp none` 4.677 ms
+  hit plus light, done-when 6's bar 5.00 (before the removals). Dev stops here (done-when 8's
+  miss rule).
+
+### Resume notes (2026-11-01, done-when 8 missed, delete when Phase 4c lands)
+
+- State: Phase 4b committed (f6e51a3). Phase 4c's crisp mechanism and `--crisp` are in the
+  wip commit with these notes (above). Not done: the removals (plane attribute, `attrib.rs`,
+  `attr_work.rs` and its bench, the plane fit, `PlaneFit`, `PlaneOffset`, `OccupancyFilter`,
+  `CrackClosing`, snap, the crack classes, `normal_field`, N2, `cubes-field`, the flags and
+  banner rows of done-when 7; `live/p4/phase4-wip.patch` does not apply and is a guide only);
+  the field as `LookPreset::DEFAULT`; shadows over the voxel occupancy; the tests of done-whens
+  1 and 3 (`the_default_surface_is_the_field`, `a_smooth_surface_meets_a_crisp_cube_without_a_gap`
+  and its seam rig); done-when 4's field-pass and carve readings; the moved goldens
+  (done-when 5); done-when 6 after the removals; the vein and patch rows of done-when 8; the
+  quick and gpu tiers on this tree.
+- Where the `--crisp all` cost goes (not measured term by term): in a `BAND_CUBES_BIT` brick
+  each cell still resolves the brick through `field_brick` (table, record, header band word
+  and two prefix words) and then again through `lookup_walk`, and every non-band brick of the
+  walk takes `field_cell`'s path; `--crisp rock` adds the smooth-near bricks around the ore
+  and the field walk's cost in them. The owner's options (done-when 8's text): a per-band-cell
+  bit, a split pipeline (the face walk until a brick that is not cubes), or the reading
+  accepted.
+- Tools (untracked): `live/p4c/cost.sh NAME` (builds the tree's release binary into
+  `live/p4c/bin/`, rounds of c8 `field` and the tip's `field --crisp none|rock|all` and
+  `face`; `ADAPTER`, `ROUNDS`, `SUFFIX`, `RES`, `POSE`), `live/p4c/4c-part1.patch` (this wip's
+  diff before Phase 4b's commit, kept for reference), `live/p4c/t1.log` (the tests above).
+
 ### Resume notes (2026-10-31, held before Phase 4, delete when Phase 4 lands)
 
 - Held by the coordinator before Phase 4 (the owner is reconsidering the field as the

@@ -3,7 +3,10 @@
 //! the mirror's band slots.
 //!
 //! A voxel's count is its solid voxels among the 27 around it, itself included, solid being
-//! not air as in the attribute pass (a translucent voxel is solid). A voxel is in the band when
+//! not air as in the attribute pass (a translucent voxel and a crisp one are solid). The field
+//! pass also marks each solid band voxel smooth or crisp ([`SMOOTH_COUNT_BIT`],
+//! [`CRISP_COUNT_BIT`]) from its material's row, and a band brick with no smooth solid voxel
+//! near ([`BAND_CUBES_BIT`]). A voxel is in the band when
 //! its count is neither 0 nor 27, and a brick is a band brick when it holds a band voxel.
 //!
 //! [`band_mask`] reads the brick and its 26 neighbours from the world as the GPU will read
@@ -12,7 +15,7 @@
 //! voxels), any other as air. The GPU's counts and the CPU's mask then agree once the mirror
 //! holds what the world does. The slot layout and its bookkeeping are `gpu_world.rs`'s.
 
-use vxe_world::{Brick, CHUNK_EDGE_BRICKS, ChunkMips, MaterialId, brick_of_slot, brick_slot};
+use vxe_world::{CHUNK_EDGE_BRICKS, ChunkMips, brick_of_slot, brick_slot};
 
 /// Units of a band slot of `n` band voxels: its band mask and `ceil(n / 64)` units of `u8`
 /// counts.
@@ -31,46 +34,16 @@ pub enum Around<'a> {
     Full(&'a vxe_world::Chunk),
 }
 
-/// The voxels of `brick` of a material `crisp` marks (indexed by material id; an id past its
-/// end is not crisp), bit `x + 8 y` of word `z`.
-pub fn crisp_bits(brick: &Brick, crisp: &[bool]) -> [u64; 8] {
-    let is = |m: MaterialId| crisp.get(usize::from(m)).copied().unwrap_or(false);
-    match brick {
-        Brick::Uniform(m) if is(*m) => [!0; 8],
-        Brick::Uniform(_) => [0; 8],
-        Brick::Full(p) => {
-            let mut out = [0u64; 8];
-            if p.palette().into_iter().any(is) {
-                for (i, w) in (0..512).map(|i| (i, p.get(i))) {
-                    if is(w) {
-                        out[i / 64] |= 1 << (i % 64);
-                    }
-                }
-            }
-            out
-        }
-    }
-}
-
 /// The field's solid bits (bit `x + 8 y` of word `z`) of the brick at local brick coordinate
-/// `l` (each component in -1..=8) of the chunk at the centre of `around`, a crisp voxel
-/// ([`crisp_bits`]) counted as air, and its crisp voxels. A chunk held as mips reads its mips'
-/// solid bits and no crisp voxel.
-fn solid_at(around: &[Around<'_>; 27], l: [i32; 3], crisp: &[bool]) -> ([u64; 8], [u64; 8]) {
+/// `l` (each component in -1..=8) of the chunk at the centre of `around`. A chunk held as mips
+/// reads its mips' solid bits.
+fn solid_at(around: &[Around<'_>; 27], l: [i32; 3]) -> [u64; 8] {
     let cd = l.map(|v| v.div_euclid(CHUNK_EDGE_BRICKS));
     let ci = ((cd[0] + 1) + 3 * (cd[1] + 1) + 9 * (cd[2] + 1)) as usize;
     let b = l.map(|v| v.rem_euclid(CHUNK_EDGE_BRICKS));
-    let bits = match &around[ci] {
+    match &around[ci] {
         Around::Air => [0; 8],
-        Around::Full(c) => {
-            let brick = c.brick(brick_slot(b));
-            let solid = brick.solid_bits();
-            if crisp.is_empty() {
-                return (solid, [0; 8]);
-            }
-            let k = crisp_bits(brick, crisp);
-            return (std::array::from_fn(|z| solid[z] & !k[z]), k);
-        }
+        Around::Full(c) => c.brick(brick_slot(b)).solid_bits(),
         Around::Lod(m) => {
             // Level-0 voxel `v` of brick `b` is level-1 voxel `4 (b % 2) + v / 2` of mip brick
             // `b / 2`.
@@ -89,52 +62,25 @@ fn solid_at(around: &[Around<'_>; 27], l: [i32; 3], crisp: &[bool]) -> ([u64; 8]
             }
             out
         }
-    };
-    (bits, [0; 8])
+    }
 }
 
 /// The band voxels of brick `slot` of the chunk at the centre of `around` (index `(dx + 1) +
 /// 3 (dy + 1) + 9 (dz + 1)`), bit `i % 64` of word `i / 64` for voxel `i = x + 8 y + 64 z`: the
-/// voxels whose 3 x 3 x 3 neighbourhood holds both a solid and an air voxel.
+/// voxels whose 3 x 3 x 3 neighbourhood holds both a solid and an air voxel. A crisp voxel
+/// (`MaterialFlags::CRISP`) is solid here as every other.
 pub fn band_mask(around: &[Around<'_>; 27], slot: usize) -> [u64; 8] {
-    band_of(around, slot, &[]).0
-}
-
-/// [`band_mask`] with the voxels of the materials `crisp` marks counted as air, those voxels
-/// themselves in the band too; and, when the brick or one of its 26 neighbours holds a crisp
-/// voxel, the band voxels' counts in band-index order (each count, crisp voxels as air, with
-/// [`CRISP_COUNT_BIT`] set on a crisp voxel's), which the field pass cannot compute from the
-/// mirror's occupancy. An empty `crisp` is [`band_mask`] and no counts.
-pub fn band_of(
-    around: &[Around<'_>; 27],
-    slot: usize,
-    crisp: &[bool],
-) -> ([u64; 8], Option<Vec<u8>>) {
     let l = brick_of_slot(slot);
     let mut bricks = [[0u64; 8]; 27];
-    let mut centre_crisp = [0u64; 8];
-    let mut any_crisp = false;
     let (mut all_solid, mut all_air) = (true, true);
     for (k, out) in bricks.iter_mut().enumerate() {
         let d = [k as i32 % 3 - 1, (k as i32 / 3) % 3 - 1, k as i32 / 9 - 1];
-        let (bits, c) = solid_at(around, [0, 1, 2].map(|a| l[a] + d[a]), crisp);
-        *out = bits;
-        if k == 13 {
-            centre_crisp = c;
-        }
-        any_crisp |= c != [0; 8];
+        *out = solid_at(around, [0, 1, 2].map(|a| l[a] + d[a]));
         all_solid &= out.iter().all(|&w| w == !0);
         all_air &= out.iter().all(|&w| w == 0);
     }
     if all_solid || all_air {
-        // Only a crisp voxel can be in the band, and no count reads a solid voxel then.
-        return if centre_crisp == [0; 8] {
-            ([0; 8], None)
-        } else {
-            let n = band_count(&centre_crisp) as usize;
-            let k = if all_solid { 27 } else { 0 };
-            (centre_crisp, Some(vec![k | CRISP_COUNT_BIT; n]))
-        };
+        return [0; 8];
     }
     // The brick and a one-voxel shell, 10^3: row `y + 10 z` holds voxels x - 1 for x in 0..10,
     // each voxel at offset `c - 1` from the brick's origin.
@@ -171,37 +117,18 @@ pub fn band_of(
             out[z - 1] |= band << (8 * (y - 1));
         }
     }
-    for (w, c) in out.iter_mut().zip(centre_crisp) {
-        *w |= c;
-    }
-    if !any_crisp {
-        return (out, None);
-    }
-    let mut counts = Vec::with_capacity(band_count(&out) as usize);
-    for i in 0..512usize {
-        if out[i / 64] >> (i % 64) & 1 == 0 {
-            continue;
-        }
-        let (x, y, z) = (i % 8 + 1, (i / 8) % 8 + 1, i / 64 + 1);
-        let mut n = 0u32;
-        for dz in 0..3 {
-            for dy in 0..3 {
-                n += u32::from(rows[(y + dy - 1) + 10 * (z + dz - 1)] >> (x - 1) & 7).count_ones();
-            }
-        }
-        let flag = if centre_crisp[i / 64] >> (i % 64) & 1 != 0 {
-            CRISP_COUNT_BIT
-        } else {
-            0
-        };
-        counts.push(n as u8 | flag);
-    }
-    (out, Some(counts))
+    out
 }
 
-/// The bit of a band voxel's `u8` count that marks it crisp (`march.wgsl` hits it as its cube);
-/// the count itself is in the low five bits.
+/// The bit of a band voxel's `u8` count that marks it a solid voxel of a crisp material
+/// (`march.wgsl` hits it as its cube); the count itself is in the low five bits.
 pub const CRISP_COUNT_BIT: u8 = 0x80;
+/// The bit of a band voxel's `u8` count that marks it a solid voxel of a smooth material.
+pub const SMOOTH_COUNT_BIT: u8 = 0x40;
+/// The bit of a band brick's header band word ([`crate::gpu_world::HEADER_BAND_WORD`]) the field
+/// pass sets when neither the brick nor its 26 neighbours hold a smooth solid voxel: the walk
+/// crosses it as cubes.
+pub const BAND_CUBES_BIT: u32 = 0x4000_0000;
 
 /// Set bits of a band mask.
 pub fn band_count(m: &[u64; 8]) -> u32 {
@@ -274,6 +201,7 @@ impl FieldPass {
                 buffer(5, ro),
                 buffer(6, ro),
                 buffer(11, ro),
+                buffer(12, ro),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -363,6 +291,10 @@ impl FieldPass {
         entries.push(wgpu::BindGroupEntry {
             binding: 11,
             resource: work.as_entire_binding(),
+        });
+        entries.push(wgpu::BindGroupEntry {
+            binding: 12,
+            resource: mirror.materials.as_entire_binding(),
         });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("field"),

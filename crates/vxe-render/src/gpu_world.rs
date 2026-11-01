@@ -1097,9 +1097,6 @@ pub struct GpuWorld {
     /// The band masks of the chunk being selected or uploaded, by brick slot
     /// ([`GpuWorld::need`]).
     bands: Vec<Option<[u64; 8]>>,
-    /// The materials the field counts as air and the field walk hits as cubes, by id (a
-    /// scratch, [`GpuWorld::set_crisp_materials`]); empty for none.
-    crisp: Vec<bool>,
 }
 
 /// The field surface's band slots (ADR-0041, module docs) and the pass that fills them.
@@ -1308,7 +1305,6 @@ impl GpuWorld {
             field_bricks: HashSet::new(),
             field_shells: HashSet::new(),
             bands: Vec::new(),
-            crisp: Vec::new(),
         }
     }
 
@@ -1341,31 +1337,6 @@ impl GpuWorld {
         });
         for c in full {
             self.enqueue(c);
-        }
-    }
-
-    /// Marks the materials `ids` crisp for the field surface (a scratch, Plan 0054's
-    /// `field-cubes` look): the band counts a crisp voxel as air and holds every crisp voxel
-    /// with its count flagged ([`crate::field::CRISP_COUNT_BIT`]), so a field walk under
-    /// [`crate::SurfaceTuning::crisp`] hits it as its cube. The counts of a band brick within one brick
-    /// of a crisp voxel are computed on the CPU at the end of the sync that places its band slot.
-    /// A change drops and queues again every chunk mirrored full while the field is on.
-    pub fn set_crisp_materials(&mut self, ids: &[MaterialId]) {
-        let mut crisp = Vec::new();
-        for &m in ids {
-            let m = usize::from(m);
-            if crisp.len() <= m {
-                crisp.resize(m + 1, false);
-            }
-            crisp[m] = true;
-        }
-        if crisp == self.crisp {
-            return;
-        }
-        self.crisp = crisp;
-        if self.band.is_some() {
-            self.set_field_surface(false);
-            self.set_field_surface(true);
         }
     }
 
@@ -1979,6 +1950,7 @@ impl GpuWorld {
             shards: [0, 1, 2, 3].map(|k| &self.shards[k]),
             records: &self.records,
             table: &self.table,
+            materials: &self.materials,
             window: (e.min.0, e.size()),
             units_per_shard: self.layout.units_per_shard,
         };
@@ -2210,9 +2182,6 @@ impl GpuWorld {
         if result.is_ok() {
             result = self.fix_band(world, enc, &mut st);
         }
-        if result.is_ok() {
-            self.fix_crisp(world, enc, &mut st);
-        }
         if result.is_ok()
             && st.chunks == 0
             && let Some(e) = short
@@ -2288,7 +2257,7 @@ impl GpuWorld {
             self.with_around(world, coord, ch, |around| {
                 for (i, &up) in set.iter().enumerate() {
                     if up {
-                        let m = crate::field::band_of(around, i, &self.crisp).0;
+                        let m = crate::field::band_mask(around, i);
                         bands[i] = (m != [0; 8]).then_some(m);
                     }
                 }
@@ -2810,7 +2779,7 @@ impl GpuWorld {
                 slots
                     .iter()
                     .map(|&i| {
-                        let m = crate::field::band_of(around, i, &self.crisp).0;
+                        let m = crate::field::band_mask(around, i);
                         (i, (m != [0; 8]).then_some(m))
                     })
                     .collect()
@@ -2863,53 +2832,6 @@ impl GpuWorld {
         band.fresh.clear();
         band.retry = retry;
         Ok(())
-    }
-
-    /// Writes on the CPU the counts of the band slots waiting for the field pass whose brick
-    /// lies within one brick of a crisp voxel ([`GpuWorld::set_crisp_materials`]), with their
-    /// crisp flags, and takes them off the field pass's work list, which reads the mirror's
-    /// occupancy and cannot tell a crisp voxel.
-    fn fix_crisp(&mut self, world: &World, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
-        if !self.crisp.contains(&true) {
-            return;
-        }
-        let Some(band) = &self.band else {
-            return;
-        };
-        let mut items: Vec<(u32, [i32; 3])> = band.items.iter().map(|(&u, &o)| (u, o)).collect();
-        items.sort_unstable();
-        let e = CHUNK_EDGE_BRICKS;
-        for (u, origin) in items {
-            let b = origin.map(|v| v.div_euclid(BRICK_EDGE));
-            let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
-            let slot = brick_slot(b.map(|v| v.rem_euclid(e)));
-            let Some(arc) = world.store().get(c) else {
-                continue;
-            };
-            let ch = arc.read().unwrap_or_else(PoisonError::into_inner);
-            let (mask, counts) = self.with_around(world, c, &ch, |around| {
-                crate::field::band_of(around, slot, &self.crisp)
-            });
-            drop(ch);
-            let Some(counts) = counts else {
-                continue;
-            };
-            let units = crate::field::band_slot_units(crate::field::band_count(&mask));
-            let Some(k) = self.bin_of_unit(u) else {
-                continue;
-            };
-            if SLOT_BINS[k] != units {
-                // The world moved on since the slot was placed; the next sync places it again.
-                continue;
-            }
-            let mut words = vec![0u32; (units as usize - 1) * UNIT_WORDS];
-            for (j, &n) in counts.iter().enumerate() {
-                words[j / 4] |= u32::from(n) << (8 * (j % 4));
-            }
-            self.stage(k, u + 1, &words, enc, st);
-            st.bytes += (words.len() * 4) as u64;
-            self.band.as_mut().expect("on").items.remove(&u);
-        }
     }
 
     /// Sets the brick bits of the record at word `base` from its entries; true when they are
