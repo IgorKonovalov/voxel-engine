@@ -75,7 +75,7 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(gid.xy);
-    let rec = with_field(unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0)));
+    let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
     if (view == VIEW_STEPS) {
         // The cost of each hit's shadow ray toward the lamp, lit or not, in the frame's
         // shadow walk: its loop iterations, storage loads and pool loads (unclamped), a = 1;

@@ -15,10 +15,7 @@ use std::sync::Arc;
 
 use vxe_audio::Listener;
 use vxe_net::{Logic, Server};
-use vxe_render::{
-    Camera, FieldNormal, NormalMode, OccupancyFilter, PlaneFit, PlaneOffset, SurfaceFit,
-    SurfaceModel, SurfaceTuning,
-};
+use vxe_render::{Camera, NormalMode, SurfaceTuning};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
@@ -112,20 +109,17 @@ pub fn stream_record_chunks(r: Residency) -> u64 {
 pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
 
 /// `Full` bricks of headroom beyond the bounded level's own, so digging has room: 64 Ki
-/// bricks, each at the largest slot the level's rock takes (6 units, and 6 plus the most
-/// attribute units with attributes), and with the field a band slot of the most units
-/// ([`vxe_render::field::MAX_BAND_UNITS`]) beside each.
+/// bricks, each at the largest slot the level's rock takes (6 units), and with the field a
+/// band slot of the most units ([`vxe_render::field::MAX_BAND_UNITS`]) beside each.
 pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
 
 /// The pool units the bounded level `world` needs: each bin's `Full` bricks in whole pages
-/// of that bin, their slots with their chunk-local surface's contour attributes when `attrs`,
-/// and when `field` each band brick's band slot and each uniform band brick's slot in pages
-/// of theirs (the band as [`band_census`] reads it), plus the headroom.
-pub fn level_pool_units(world: &vxe_world::World, attrs: bool, field: bool) -> u64 {
+/// of that bin, and when `field` each band brick's band slot and each uniform band brick's
+/// slot in pages of theirs (the band as [`band_census`] reads it), plus the headroom.
+pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
     use vxe_render::field::{MAX_BAND_UNITS, band_slot_units};
     use vxe_render::gpu_world::{
-        BIN_COUNT, BINS, MAX_ATTR_UNITS, PAGE_UNITS, band_bin_of, bin_of, chunk_surface,
-        slot_units, slots_per_page,
+        BIN_COUNT, BINS, PAGE_UNITS, band_bin_of, bin_of, slot_units, slots_per_page,
     };
     let table = world.materials();
     let translucent = |m| {
@@ -155,11 +149,7 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool, field: bool) -> u
         };
         for (i, b) in chunk.bricks().iter().enumerate() {
             if let vxe_world::Brick::Full(p) = b {
-                let surface = attrs.then(|| {
-                    let s = chunk_surface(chunk.bricks(), i);
-                    s.iter().map(|w| w.count_ones()).sum()
-                });
-                bins[bin_of(slot_units(p, translucent, surface))] += 1;
+                bins[bin_of(slot_units(p, translucent))] += 1;
             }
             if !field {
                 continue;
@@ -182,16 +172,15 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool, field: bool) -> u
         .enumerate()
         .map(|(k, &n)| n.div_ceil(u64::from(slots_per_page(k))))
         .sum();
-    let largest = 6 + if attrs { MAX_ATTR_UNITS } else { 0 };
-    let per = u64::from(BINS[bin_of(largest)]) + if field { u64::from(MAX_BAND_UNITS) } else { 0 };
+    let per = u64::from(BINS[bin_of(6)]) + if field { u64::from(MAX_BAND_UNITS) } else { 0 };
     pages * u64::from(PAGE_UNITS) + POOL_HEADROOM_BRICKS * per
 }
 
 /// The mirror budget of the bounded level unless `--mirror-budget` sets one: the pool
 /// [`level_pool_units`] needs and a record for each of its `chunks`, sized from the world it
 /// loads rather than the streamed default.
-pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, attrs: bool, field: bool) -> u64 {
-    vxe_render::gpu_world::budget_for(level_pool_units(world, attrs, field), chunks)
+pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, field: bool) -> u64 {
+    vxe_render::gpu_world::budget_for(level_pool_units(world, field), chunks)
 }
 
 /// The audio listener for `camera`: its position (voxel units), its forward and its up. The
@@ -418,21 +407,10 @@ pub struct LookPreset {
     pub detail_fine: f32,
 }
 
-/// Every part off: the uniform gradient, the fraction offset, no occupancy filter, no face
-/// mix, detail shaded in the light pass.
+/// Every part off: no face mix, detail shaded in the light pass.
 const TUNING_OFF: SurfaceTuning = SurfaceTuning {
-    fit: SurfaceFit {
-        fit: PlaneFit::Uniform27,
-        offset: PlaneOffset::Fraction,
-        filter: OccupancyFilter::None,
-    },
     face_mix: 0.0,
     detail_after_lighting: false,
-    shadow_push: false,
-    normal_field: false,
-    cube_hits: false,
-    model: SurfaceModel::Planes,
-    field_normal: FieldNormal::Analytic,
 };
 
 impl LookPreset {
@@ -448,79 +426,25 @@ impl LookPreset {
     }
 
     pub const FACE: Self = Self::plain("face", NormalMode::Face);
-    /// Contour with every tuning part off.
-    pub const CONTOUR: Self = Self::plain("contour", NormalMode::Contour);
-    /// The geometry and lighting-path fixes: the distance-weighted gradient (the fit with the
-    /// highest mid-band contrast of the guardrail-passing fits) and the detail's lamp term
-    /// applied at full resolution.
-    pub const CONTOUR_SHARP: Self = Self {
-        name: "contour-sharp",
-        tuning: SurfaceTuning {
-            fit: SurfaceFit {
-                fit: PlaneFit::Weighted27,
-                ..Self::CONTOUR.tuning.fit
-            },
-            detail_after_lighting: true,
-            ..Self::CONTOUR.tuning
-        },
-        ..Self::CONTOUR
-    };
-    /// Today's fit, the detail's lamp term at full resolution, and rock's detail at 20 cm,
-    /// strength 0.3, with the fine octave at weight 0.5 (the guardrail-passing pair and weight
-    /// with the highest fine-band contrast).
-    pub const CONTOUR_GRAIN: Self = Self {
-        name: "contour-grain",
-        tuning: SurfaceTuning {
-            detail_after_lighting: true,
-            ..Self::CONTOUR.tuning
-        },
-        rock_detail: [2.0, 0.3],
-        detail_fine: 0.5,
-        ..Self::CONTOUR
-    };
-
-    /// Every voxel hit as its cube, shaded with the planes' normal field, at the start look's
-    /// fit and detail: ADR-0040's Alternative D, contours dropped, for comparison.
-    pub const CUBES_FIELD: Self = Self {
-        name: "cubes-field",
-        tuning: SurfaceTuning {
-            normal_field: true,
-            cube_hits: true,
-            ..Self::CONTOUR_SHARP.tuning
-        },
-        ..Self::CONTOUR_SHARP
-    };
-
-    /// The field surface (ADR-0040 Alternative B, a scratch): the contour look walks the zero
-    /// set of the trilinear 27-count field instead of the planes, at the start look's fit,
-    /// detail and lighting path, shaded with the field's gradient (`--field-normal` picks).
+    /// The field surface (ADR-0041, `NormalMode::Contour`) with the detail's lamp term
+    /// applied at full resolution; a material marked `MaterialFlags::CRISP` in the table
+    /// renders as cubes in it.
     pub const FIELD: Self = Self {
-        name: "field",
         tuning: SurfaceTuning {
-            model: SurfaceModel::Field,
-            ..Self::CONTOUR_SHARP.tuning
+            detail_after_lighting: true,
+            ..TUNING_OFF
         },
-        ..Self::CONTOUR_SHARP
+        ..Self::plain("field", NormalMode::Contour)
     };
 
     pub const TRILINEAR8: Self = Self::plain("trilinear8", NormalMode::Trilinear8);
     pub const GRADIENT27: Self = Self::plain("gradient27", NormalMode::Gradient27);
 
-    /// `N`'s order: the contour presets side by side after face, then the two diagnostic
-    /// normal modes.
-    pub const ALL: [Self; 8] = [
-        Self::FACE,
-        Self::CONTOUR,
-        Self::CONTOUR_SHARP,
-        Self::CONTOUR_GRAIN,
-        Self::CUBES_FIELD,
-        Self::FIELD,
-        Self::TRILINEAR8,
-        Self::GRADIENT27,
-    ];
+    /// `N`'s order: face, the field, then the two diagnostic normal modes.
+    pub const ALL: [Self; 4] = [Self::FACE, Self::FIELD, Self::TRILINEAR8, Self::GRADIENT27];
 
     /// The look the fly-through starts in without `--look`.
-    pub const DEFAULT: Self = Self::CONTOUR_SHARP;
+    pub const DEFAULT: Self = Self::FIELD;
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.name == name)
@@ -531,8 +455,8 @@ impl LookPreset {
         Self::ALL.map(|p| p.name).join(", ")
     }
 
-    /// The next preset in [`LookPreset::ALL`] order, wrapping, skipping the contour presets
-    /// unless `contour` is set (a mirror with contour attributes). A preset not in the list
+    /// The next preset in [`LookPreset::ALL`] order, wrapping, skipping the field unless
+    /// `contour` is set (a mirror with the field's band slots). A preset not in the list
     /// (one with a part overridden) continues from the first of its normal mode.
     pub fn next(self, contour: bool) -> Self {
         let i = Self::ALL
@@ -550,28 +474,15 @@ impl LookPreset {
             .unwrap_or(Self::FACE)
     }
 
-    /// The parts beyond the normal mode: `fit uniform27, face mix 0, detail after lighting
-    /// off, shadow push off`, then `normal field on` and `cube hits on` when set.
+    /// The parts beyond the normal mode: `face mix 0, detail after lighting off`.
     pub fn parts(&self) -> String {
         let t = &self.tuning;
         let on = |b: bool| if b { "on" } else { "off" };
-        let mut s = format!(
-            "fit {}, face mix {}, detail after lighting {}, shadow push {}",
-            t.fit.name(),
+        format!(
+            "face mix {}, detail after lighting {}",
             t.face_mix,
-            on(t.detail_after_lighting),
-            on(t.shadow_push)
-        );
-        if t.normal_field {
-            s += ", normal field on";
-        }
-        if t.cube_hits {
-            s += ", cube hits on";
-        }
-        if t.model == SurfaceModel::Field {
-            s += &format!(", surface field, field normal {}", t.field_normal.name());
-        }
-        s
+            on(t.detail_after_lighting)
+        )
     }
 
     /// [`look_materials_with`] at this preset's rock pair, with rock's fine-octave weight.
@@ -592,7 +503,7 @@ impl LookPreset {
 /// The field surface's band over a set of chunks (ADR-0040 Alternative B): a voxel is in the
 /// band when its 27-count, the solid voxels of the 3 x 3 x 3 block around it with itself, is
 /// neither 0 nor 27; a brick is a band brick when it holds a band voxel. Solid is not air
-/// ([`Brick::solid_bits`]), a translucent voxel included, as for the attribute pass. The bytes
+/// ([`Brick::solid_bits`]), a translucent voxel included, as for the field pass. The bytes
 /// are a band slot's: packed, one band-mask unit plus `ceil(n / 64)` units of `u8` counts for
 /// `n` band voxels, plus two header units for a uniform brick (which has no slot today);
 /// dense, nine units per band brick.
@@ -1113,18 +1024,23 @@ mod tests {
         );
     }
 
-    /// A preset's table carries its rock pair and fine weight on rock alone; `contour` is the
+    /// A preset's table carries its rock pair and fine weight on rock alone; `field` is the
     /// fly-through's look table row for row.
     #[test]
     fn a_preset_table_puts_its_rock_detail_and_fine_weight_on_rock() {
-        let t = LookPreset::CONTOUR_GRAIN.materials();
+        let grain = LookPreset {
+            rock_detail: [2.0, 0.3],
+            detail_fine: 0.5,
+            ..LookPreset::FIELD
+        };
+        let t = grain.materials();
         for (id, row) in t.rows().iter().enumerate() {
             let rock = id == usize::from(cave::ROCK);
             assert_eq!(row.detail, if rock { [2.0, 0.3] } else { [0.0; 2] }, "{id}");
             assert_eq!(row.detail_fine, if rock { 0.5 } else { 0.0 }, "{id}");
         }
         assert_eq!(
-            LookPreset::CONTOUR.materials().rows(),
+            LookPreset::FIELD.materials().rows(),
             look_materials().rows()
         );
     }

@@ -37,7 +37,7 @@ fn level_config(world: &World) -> MirrorConfig {
 
 /// The software adapter with limits for the level's pool.
 fn device(world: &World) -> Option<(wgpu::Device, wgpu::Queue)> {
-    support::software_device(flythrough::level_pool_units(world, false, false) * UNIT_BYTES)
+    support::software_device(flythrough::level_pool_units(world, false) * UNIT_BYTES)
 }
 
 #[test]
@@ -114,7 +114,6 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
             max_shard_units: None,
             budget_bytes: LEVEL_BUDGET,
             record_chunks: None,
-            attr_cap: usize::MAX,
             ..MirrorConfig::new(Window::Fixed(world.extent()))
         },
     );
@@ -416,8 +415,8 @@ fn the_level_s_opaque_masks_are_its_solid_bits() {
 }
 
 /// The field surface's band on the level (ADR-0041), counted on the CPU over every chunk of
-/// the extent (`flythrough::band_census`), and the band slots of the level's mirror with
-/// contour attributes at the spawn: every `Full` brick with a surface voxel is a band brick,
+/// the extent (`flythrough::band_census`), and the band slots of the level's mirror at the
+/// spawn: every `Full` brick with a surface voxel is a band brick,
 /// the mirror holds a band slot for each of the census's band bricks, and its live bytes grow
 /// by the census's packed bytes (a band mask and `ceil(n / 64)` count units per band brick, two
 /// header units for a uniform one) within 1 %, its reservation unchanged. The census, the
@@ -443,11 +442,11 @@ fn band_census() {
     assert_eq!(cs.surface_full_band_bricks, cs.surface_full_bricks);
     assert!(cs.surface_full_bricks > 0);
     let Some((device, queue)) = support::software_device(
-        flythrough::level_pool_units(&world, true, false) * UNIT_BYTES + cs.packed_bytes * 2,
+        flythrough::level_pool_units(&world, false) * UNIT_BYTES + cs.packed_bytes * 2,
     ) else {
         return;
     };
-    let mut gpu = GpuWorld::with_surface_attrs(
+    let mut gpu = GpuWorld::with_config(
         &device,
         MirrorConfig {
             budget_bytes: 1 << 30,
@@ -462,7 +461,7 @@ fn band_census() {
     assert_eq!(st.pending_chunks, 0);
     loop {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let n = gpu.update_attrs(&mut enc);
+        let n = gpu.update_field(&mut enc);
         queue.submit([enc.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         if n == 0 {

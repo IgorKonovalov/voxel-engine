@@ -1,7 +1,7 @@
 //! The rigs of the upscalers' tests (Plan 0030's, shared with FSR 2's): the level at its
 //! spawn, the presenter's blit, image distances, and the stripe wall with its sharpness
-//! readings; and the crack scenes of the contour look's crack classes (Plan 0050): analytic
-//! half-space worlds and the level at the settle rig's poses, mirrored with contour attributes.
+//! readings; and the leak scenes of the field look: analytic half-space worlds and the level at
+//! the settle rig's poses, mirrored with the field's band slots.
 
 use super::*;
 use vxe_render::{
@@ -34,7 +34,7 @@ pub fn level_rig(
     world: &World,
     camera: &vxe_render::Camera,
 ) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
-    let pool = flythrough::level_pool_units(world, true, false) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(world, true) * vxe_render::gpu_world::UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -1065,7 +1065,7 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
     Some((sum / n as f64, over as f64 / n as f64))
 }
 
-// ---- The crack scenes (tests/look.rs's crack classes) ----
+// ---- The leak scenes (tests/look.rs's cracks view) ----
 
 /// Air over chunks `[0, 2)^3` with `ROCK` wherever voxel `v` satisfies any of the half-spaces
 /// `a . (2 v + 1) <= c`: integer tests on twice the voxel centre, so each scene's plane cuts
@@ -1201,27 +1201,25 @@ pub fn corner_camera() -> vxe_render::Camera {
     }
 }
 
-/// `world` mirrored with contour attributes under plane fit `fit`, every attribute computed,
-/// over a fixed window, with a `size` frame lighting at full resolution.
-pub fn fit_rig_on(
+/// `world` mirrored with the field surface's band slots, every band slot filled, over a fixed
+/// window, with a `size` frame lighting at full resolution.
+pub fn field_rig_on(
     device: wgpu::Device,
     queue: wgpu::Queue,
     world: &World,
-    fit: vxe_render::SurfaceFit,
     size: [u32; 2],
 ) -> LookRig {
     let cfg = MirrorConfig {
         budget_bytes: 512 << 20,
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
-    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
-    gpu.set_surface_fit(fit);
+    let mut gpu = GpuWorld::with_field_surface(&device, cfg);
     gpu.set_focus(VoxelCoord(CRACK_CENTRE.map(|c| c as i32)));
     for _ in 0..4 {
         gpu.sync_now(world, &device, &queue)
             .expect("mirror fits the adapter");
     }
-    drain_attrs(&device, &queue, &mut gpu);
+    drain_field(&device, &queue, &mut gpu);
     let mut frame = Frame::new(&device, size[0], size[1]);
     frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     LookRig {
@@ -1232,29 +1230,15 @@ pub fn fit_rig_on(
     }
 }
 
-/// Turns the field surface's band slots on in `rig`'s mirror of `world` when `look` walks the
-/// field (`SurfaceModel::Field`), syncs once so it writes every chunk again, and fills them.
-/// The crisp materials are the world table's rows that carry `MaterialFlags::CRISP`.
-pub fn with_field_pool(rig: &mut LookRig, world: &World, look: &vxe_render::LookParams) {
-    if look.tuning.model != vxe_render::SurfaceModel::Field {
-        return;
-    }
-    rig.gpu.set_field_surface(true);
-    rig.gpu
-        .sync_now(world, &rig.device, &rig.queue)
-        .expect("mirror fits the adapter");
-    drain_attrs(&rig.device, &rig.queue, &mut rig.gpu);
-}
-
-/// Runs the attribute pass until its work list is empty.
-pub fn drain_attrs(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) {
+/// Runs the field pass until no band slot waits for it.
+pub fn drain_field(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) {
     loop {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let items = gpu.update_attrs(&mut enc);
+        let items = gpu.update_field(&mut enc);
         queue.submit([enc.finish()]);
         device
             .poll(wgpu::PollType::wait_indefinitely())
-            .expect("device poll after the attribute pass");
+            .expect("device poll after the field pass");
         if items == 0 {
             break;
         }
@@ -1275,27 +1259,25 @@ pub fn pose_level() -> World {
 /// The level's frame size in the crack readings.
 pub const POSE_SIZE: [u32; 2] = [384, 216];
 
-/// The level mirrored whole with contour attributes under `fit` on `device`, focused on
+/// The level mirrored whole with the field surface's band slots on `device`, focused on
 /// `pose`, with a [`POSE_SIZE`] frame at the fly-through's lighting defaults (no upscaler).
 pub fn pose_rig_on(
     device: wgpu::Device,
     queue: wgpu::Queue,
     world: &World,
     pose: &flythrough::Pose,
-    fit: vxe_render::SurfaceFit,
 ) -> LookRig {
     let cfg = MirrorConfig {
         budget_bytes: 1 << 30,
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
-    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
-    gpu.set_surface_fit(fit);
+    let mut gpu = GpuWorld::with_field_surface(&device, cfg);
     gpu.set_focus(VoxelCoord(pose.position.map(|c| c.floor() as i32)));
     for _ in 0..4 {
         gpu.sync_now(world, &device, &queue)
             .expect("mirror fits the adapter");
     }
-    drain_attrs(&device, &queue, &mut gpu);
+    drain_field(&device, &queue, &mut gpu);
     let frame = Frame::new(&device, POSE_SIZE[0], POSE_SIZE[1]);
     LookRig {
         device,
@@ -1343,9 +1325,8 @@ impl WorldSource for Features {
 }
 
 /// The one-voxel scenes' floor top: rock at `z < FEATURE_Z`, a floor feature's lowest voxels
-/// at `z = FEATURE_Z`. Inside a brick (60 = 7 x 8 + 4), so the floor's top bricks are Full and
-/// carry contour attributes; a floor at `z < 64` ends on a brick face and its top bricks are
-/// uniform rock, which has no planes.
+/// at `z = FEATURE_Z`. Inside a brick (60 = 7 x 8 + 4), so the floor's top bricks are Full; a
+/// floor at `z < 64` ends on a brick face and its top bricks are uniform rock.
 pub const FEATURE_Z: i64 = 60;
 
 /// The one-voxel scenes' wall face: rock at `x >= WALL_FEATURE_X`, inside a brick for the same

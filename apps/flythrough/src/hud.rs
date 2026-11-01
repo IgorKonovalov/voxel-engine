@@ -429,17 +429,10 @@ pub struct Pressure {
     pub r_full: Option<[i32; 2]>,
 }
 
-/// The cracks row: each class's share of the hit pixels and the self-hits', in percent:
-/// `cracks clean 97.10 %, interior 0.52 %, entry 1.98 %, crossing 0.40 %, self-hit 0.31 %`.
+/// The cracks row: the field walk's leaks' share of the hit pixels, in percent:
+/// `cracks leaks 0.31 %`.
 pub fn cracks_row(c: &vxe_render::CrackShares) -> String {
-    format!(
-        "cracks clean {:.2} %, interior {:.2} %, entry {:.2} %, crossing {:.2} %, self-hit {:.2} %",
-        100.0 * c.share(0),
-        100.0 * c.share(1),
-        100.0 * c.share(2),
-        100.0 * c.share(3),
-        100.0 * c.self_hit_share()
-    )
+    format!("cracks leaks {:.2} %", 100.0 * c.leak_share())
 }
 
 /// What the steps view read for one frame: the mean, p99 and block-max mean of steps per
@@ -977,23 +970,19 @@ mod tests {
     }
 
     /// The cracks row appears only with a cracks sample, before the format row, and reads the
-    /// four classes' shares and the self-hits' in percent of the hit pixels.
+    /// leaks' share in percent of the hit pixels.
     #[test]
     fn the_cracks_row_prints_the_last_frame_s_shares() {
         let stats = HudStats {
             cracks: Some(vxe_render::CrackShares {
                 hits: 2000,
-                classes: [1940, 10, 40, 10],
-                self_hits: 6,
+                leaks: 6,
             }),
             ..HudStats::default()
         };
         let lines = stats.to_string();
         let lines: Vec<&str> = lines.lines().collect();
-        assert_eq!(
-            lines[lines.len() - 2],
-            "cracks clean 97.00 %, interior 0.50 %, entry 2.00 %, crossing 0.50 %, self-hit 0.30 %"
-        );
+        assert_eq!(lines[lines.len() - 2], "cracks leaks 0.30 %");
         assert!(lines[lines.len() - 1].starts_with("format "));
         assert!(
             !HudStats::default()
@@ -1265,8 +1254,8 @@ pub const BANNER_MS: f64 = 3000.0;
 /// The banner's widest row in characters: it fits a 1280-pixel window at the HUD's scale 2
 /// (80 cells) and the golden's 320 pixels at scale 1 (40 cells).
 pub const BANNER_COLS: usize = 40;
-/// Rows the banner wraps into at most: the look's words in three (a contour preset names the
-/// shadow push, the fit filter and the normal field when set) and the modes' line in six.
+/// Rows the banner wraps into at most: the look's words in three (the look, the detail state
+/// and the view) and the modes' line in six.
 pub const BANNER_ROWS: usize = 9;
 
 /// A key that changes the lighting mode: `F3` to `F7` and `M`.
@@ -1357,9 +1346,6 @@ pub struct Modes {
     /// The view's name after the look's words, from [`Modes::show_view`] with any view but
     /// `shaded`.
     view: Option<&'static str>,
-    /// The mirror refits to a new plane fit: the banner adds `refitting` and shows until it
-    /// drains.
-    refitting: bool,
     /// Voxels between the probe volume's probes: the line names it (`probes 16`) while
     /// indirect light is on.
     probe_spacing: u32,
@@ -1385,7 +1371,6 @@ impl Modes {
             readout: None,
             look: None,
             view: None,
-            refitting: false,
             probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         }
     }
@@ -1427,27 +1412,10 @@ impl Modes {
         }
     }
 
-    /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, detail on`
-    /// (a contour preset adds `shadow push on`, `fit filter majority` and `normal field on`
-    /// when set, and the field surface its `field normal analytic` or `blend`): the first row
-    /// of every banner from then on.
+    /// Shows the banner from `now_ms` with the look in words, `look field, detail on`: the
+    /// first row of every banner from then on.
     pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
         let mut words = format!("look {}", preset.name);
-        let contour = preset.normal_mode == vxe_render::NormalMode::Contour;
-        if contour && preset.tuning.shadow_push {
-            words += ", shadow push on";
-        }
-        if contour && preset.tuning.fit.filter == vxe_render::OccupancyFilter::Majority {
-            words += ", fit filter majority";
-        }
-        // `cubes-field` names its field by its name.
-        if contour && preset.tuning.normal_field && !preset.tuning.cube_hits {
-            words += ", normal field on";
-        }
-        if contour && preset.tuning.model == vxe_render::SurfaceModel::Field {
-            words += ", field normal ";
-            words += preset.tuning.field_normal.name();
-        }
         words += if detail {
             ", detail on"
         } else {
@@ -1462,11 +1430,6 @@ impl Modes {
     pub fn show_view(&mut self, view: vxe_render::ViewMode, now_ms: f64) {
         self.view = (view != vxe_render::ViewMode::Shaded).then(|| view.name());
         self.banner_at = now_ms;
-    }
-
-    /// Whether the mirror refits to a new plane fit, each frame.
-    pub fn set_refitting(&mut self, refitting: bool) {
-        self.refitting = refitting;
     }
 
     /// Switches the mode `key` changes and shows the banner from `now_ms`.
@@ -1592,19 +1555,15 @@ impl Modes {
         }
     }
 
-    /// The banner at `now_ms`: the look's words and `refitting` once [`Modes::show_look`]
-    /// gave them, `view NAME` once [`Modes::show_view`] gave a view other than shaded, then
-    /// the modes' line, within [`BANNER_MS`] of the start or the last change
-    /// or while refitting; each wrapped at its commas into rows of at most [`BANNER_COLS`]
-    /// characters, one per text line; else `None`.
+    /// The banner at `now_ms`: the look's words once [`Modes::show_look`] gave them,
+    /// `view NAME` once [`Modes::show_view`] gave a view other than shaded, then the modes'
+    /// line, within [`BANNER_MS`] of the start or the last change; each wrapped at its commas
+    /// into rows of at most [`BANNER_COLS`] characters, one per text line; else `None`.
     pub fn banner(&self, now_ms: f64) -> Option<String> {
-        (now_ms - self.banner_at < BANNER_MS || self.refitting).then(|| {
+        (now_ms - self.banner_at < BANNER_MS).then(|| {
             let mut look: Vec<&str> = self.look.iter().flat_map(|l| l.split(", ")).collect();
             let view = self.view.map(|v| format!("view {v}"));
             look.extend(view.as_deref());
-            if self.refitting {
-                look.push("refitting");
-            }
             let mut rows = wrap(&look);
             rows.extend(wrap(&self.line().split(", ").collect::<Vec<_>>()));
             rows.join("\n")
@@ -1722,8 +1681,7 @@ mod mode_tests {
         assert!(again.contains("lamp on"), "{again}");
     }
 
-    /// `N` names each preset in turn on the banner's first row, `V` the detail state, and a
-    /// refit adds `refitting` and keeps the banner up until it drains.
+    /// `N` names each preset in turn on the banner's first row, and `V` the detail state.
     #[test]
     fn the_banner_names_each_look_preset_and_the_detail_state() {
         use crate::LookPreset;
@@ -1740,12 +1698,7 @@ mod mode_tests {
             preset = preset.next(true);
             m.show_look(&preset, true, t);
             let b = m.banner(t).expect("a press shows the banner");
-            // The field surface names its normal source.
-            let field = match preset.tuning.model {
-                vxe_render::SurfaceModel::Field => ", field normal analytic",
-                _ => "",
-            };
-            let words = format!("look {}{field}, detail on", preset.name);
+            let words = format!("look {}, detail on", preset.name);
             let words = wrap(&words.split(", ").collect::<Vec<_>>()).join("\n");
             assert_eq!(b, format!("{words}\n{lighting}"));
             assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
@@ -1753,23 +1706,11 @@ mod mode_tests {
             names.push(preset.name);
             t += BANNER_MS;
         }
-        assert_eq!(
-            names,
-            [
-                "contour",
-                "contour-sharp",
-                "contour-grain",
-                "cubes-field",
-                "field",
-                "trilinear8",
-                "gradient27",
-                "face"
-            ]
-        );
+        assert_eq!(names, ["field", "trilinear8", "gradient27", "face"]);
         assert_eq!(
             LookPreset::FACE.next(false).name,
             "trilinear8",
-            "without contour attributes N skips the contour presets"
+            "without the field's band slots N skips the field"
         );
         assert_eq!(LookPreset::GRADIENT27.next(false), LookPreset::FACE);
         let first = m.banner(t - BANNER_MS).unwrap();
@@ -1779,22 +1720,6 @@ mod mode_tests {
             m.banner(t).unwrap().starts_with("look face, detail off\n"),
             "V shows the detail state"
         );
-        m.show_look(&LookPreset::CONTOUR_GRAIN, true, t);
-        m.set_refitting(true);
-        let far = t + 10.0 * BANNER_MS;
-        assert_eq!(
-            m.banner(far).as_deref(),
-            Some(
-                format!(
-                    "{}\n{lighting}",
-                    wrap(&["look contour-grain", "detail on", "refitting"]).join("\n")
-                )
-                .as_str()
-            ),
-            "a refit keeps the banner up"
-        );
-        m.set_refitting(false);
-        assert_eq!(m.banner(far), None, "it fades once the refit drains");
     }
 
     /// `F9`'s view shows on the banner after the look's words, `view cracks`, from the press
@@ -1808,14 +1733,14 @@ mod mode_tests {
             0.0,
         );
         let lighting = m.banner(0.0).expect("the banner shows at the start");
-        m.show_look(&crate::LookPreset::CONTOUR_SHARP, true, 0.0);
+        m.show_look(&crate::LookPreset::FIELD, true, 0.0);
         m.show_view(ViewMode::Cracks, 5000.0);
         assert_eq!(
             m.banner(5000.0).as_deref(),
             Some(
                 format!(
                     "{}\n{lighting}",
-                    wrap(&["look contour-sharp", "detail on", "view cracks"]).join("\n")
+                    wrap(&["look field", "detail on", "view cracks"]).join("\n")
                 )
                 .as_str()
             )
@@ -1824,60 +1749,8 @@ mod mode_tests {
         m.show_view(ViewMode::Shaded, 9000.0);
         assert_eq!(
             m.banner(9000.0).as_deref(),
-            Some(format!("look contour-sharp, detail on\n{lighting}").as_str())
+            Some(format!("look field, detail on\n{lighting}").as_str())
         );
-        let mut pushed = crate::LookPreset::CONTOUR_SHARP;
-        pushed.tuning.shadow_push = true;
-        m.show_look(&pushed, true, 20_000.0);
-        assert!(
-            m.banner(20_000.0)
-                .unwrap()
-                .starts_with("look contour-sharp, shadow push on\ndetail on\n"),
-            "{:?}",
-            m.banner(20_000.0)
-        );
-        let mut filtered = crate::LookPreset::CONTOUR_SHARP;
-        filtered.tuning.fit.filter = vxe_render::OccupancyFilter::Majority;
-        m.show_look(&filtered, true, 30_000.0);
-        assert!(
-            m.banner(30_000.0).unwrap().starts_with(
-                "look contour-sharp, fit filter majority
-detail on
-"
-            ),
-            "{:?}",
-            m.banner(30_000.0)
-        );
-        let mut field = filtered;
-        field.tuning.normal_field = true;
-        field.tuning.shadow_push = true;
-        m.show_look(&field, true, 40_000.0);
-        let b = m.banner(40_000.0).unwrap();
-        let words = wrap(&[
-            "look contour-sharp",
-            "shadow push on",
-            "fit filter majority",
-            "normal field on",
-            "detail on",
-        ])
-        .join("\n");
-        assert!(b.starts_with(&format!("{words}\n")), "{b:?}");
-        assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
-        m.show_look(&crate::LookPreset::CUBES_FIELD, true, 50_000.0);
-        assert!(
-            m.banner(50_000.0)
-                .unwrap()
-                .starts_with("look cubes-field, detail on\n"),
-            "{:?}",
-            m.banner(50_000.0)
-        );
-        let mut field = crate::LookPreset::FIELD;
-        field.tuning.field_normal = vxe_render::FieldNormal::Blend;
-        m.show_look(&field, true, 60_000.0);
-        let b = m.banner(60_000.0).unwrap();
-        let words = wrap(&["look field", "field normal blend", "detail on"]).join("\n");
-        assert!(b.starts_with(&format!("{words}\n")), "{b:?}");
-        assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
     }
 }
 

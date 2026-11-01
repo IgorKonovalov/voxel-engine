@@ -94,7 +94,7 @@ fn probe_trace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     var radiance = vec3<f32>(0.0);
     var dist = PROBE_MISS_DISTANCE * f32(probe.spacing);
     if (h.found) {
-        if (h.axis < 0 && !h.plane) {
+        if (h.axis < 0) {
             dist = -1.0;
         } else {
             dist = h.t;

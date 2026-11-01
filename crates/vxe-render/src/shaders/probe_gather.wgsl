@@ -248,7 +248,7 @@ fn gather(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rec = unpack_hit(textureLoad(gather_pos_in, px, 0), textureLoad(gather_info_in, px, 0));
     var e = vec3<f32>(0.0);
     if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
-        e = probe_irradiance(rec.p, surface_detail(with_field(rec)).xyz);
+        e = probe_irradiance(rec.p, surface_detail(rec).xyz);
     }
     textureStore(indirect_out, px, vec4<f32>(e, 0.0));
 }

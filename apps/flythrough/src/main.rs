@@ -17,11 +17,8 @@
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
-//! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
-//! [--plane-offset OFFSET] [--fit-filter none|majority] [--face-mix K] [--detail-fine W]
-//! [--detail-after on|off]
-//! [--shadow-push on|off] [--normal-field on|off] [--field-normal analytic|blend]
-//! [--band-census] [--view VIEW]
+//! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--face-mix K] [--detail-fine W]
+//! [--detail-after on|off] [--band-census] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--absorption A] [--mic]
@@ -71,26 +68,21 @@
 //! `--residency` sets the streamed radii (default `flythrough::RESIDENCY`, hysteresis 1);
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
-//! mode, the body spawned in the spawn pocket. The fly-through starts in `contour-sharp`
-//! (`LookPreset::DEFAULT`) with detail on,
-//! the mirror holding contour attributes and rock its procedural detail (`--rock-detail` sets
-//! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
-//! that
-//! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
-//! `contour-sharp`, `contour-grain`, `cubes-field`, `field`, `trilinear8`, `gradient27`), a normal mode with its plane
-//! fit, face mix, detail after lighting, shadow push and rock's detail pair and fine weight,
-//! each part overridable by `--plane-fit`, `--plane-offset`, `--fit-filter` (the plane fit's
-//! occupancy, ADR-0040), `--normal-field` (shade with the planes' normal field, ADR-0040),
-//! `--field-normal` (the field surface's shading normal under `--look field`: the field's
-//! gradient or the blend of its corner normals, ADR-0040 Alternative B),
-//! `--face-mix`, `--detail-after`,
-//! `--shadow-push`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
-//! attributes or rock detail, detail off (`N` then skips the contour presets, `--detail` turns
-//! detail on), the look of Plan 0002's and Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
-//! pass's work list, CPU and GPU time over the flight. `--view`
+//! mode, the body spawned in the spawn pocket. The fly-through starts in `field`
+//! (`LookPreset::DEFAULT`, the field surface of ADR-0041) with detail on, the mirror holding
+//! the field's band slots and rock its procedural detail (`--rock-detail` sets rock's feature
+//! scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints that look
+//! first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `field`,
+//! `trilinear8`, `gradient27`), a normal mode with its face mix, detail after lighting and
+//! rock's detail pair and fine weight, each part overridable by `--face-mix`,
+//! `--detail-after`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face
+//! mode without the field's band slots or rock detail, detail off (`N` then skips the field,
+//! `--detail` turns detail on), the look of Plan 0002's and Plan 0017's face readings. With the
+//! field's band slots the autopilot's report adds the field pass's band slots, CPU and GPU
+//! time over the flight. `--view`
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `cracks`, `albedo`; with
 //! `--frames`, `steps` prints the last frame's mean and p99 steps per ray on exit, and `cracks`
-//! its crack classes' shares); `F9` cycles the views in that order, the banner naming the view
+//! its leaks' share); `F9` cycles the views in that order, the banner naming the view
 //! and the stats HUD adding the cracks view's shares row (`vxe_render::ViewMode::Cracks`);
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
@@ -118,8 +110,8 @@
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp, `F8` indirect light and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
-//! `N` cycles the look presets and `V` toggles detail, each naming the look on the banner, and
-//! a fit change refits the mirror's bricks under the attribute cap (`refitting` on the banner). `--vault` places a 16-voxel room with an indestructible
+//! `N` cycles the look presets and `V` toggles detail, each naming the look on the banner.
+//! `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
 //!
@@ -255,10 +247,10 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld,
-    HistoryKill, HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams,
-    LookParams, MarchTimer, MirrorConfig, NormalMode, OccupancyFilter, PassTimer, PlaneFit,
-    PlaneOffset, Presenter, RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
+    AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld, HistoryKill,
+    HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams,
+    MarchTimer, MirrorConfig, NormalMode, PassTimer, Presenter, RenderScale, Sampler, ShadowWalk,
+    SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -393,8 +385,8 @@ struct Args {
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
-    /// `--look`: the starting preset with any part flag applied, with contour attributes and
-    /// rock detail; `None` for `--look plain`, face mode without either. `contour-sharp` by
+    /// `--look`: the starting preset with any part flag applied, with the field's band slots
+    /// and rock detail; `None` for `--look plain`, face mode without either. `field` by
     /// default.
     look: Option<LookPreset>,
     /// Start with procedural detail on: by default, except under `--look plain`, where
@@ -567,12 +559,6 @@ impl Args {
     /// Whether the run reads a gamepad: `--pad on` in a window, without the autopilot.
     fn wants_pad(&self) -> bool {
         self.pad && !self.headless && !self.autopilot
-    }
-
-    /// Whether `--look` starts in a field surface look, whose mirror budget takes the band.
-    fn field_look(&self) -> bool {
-        self.look
-            .is_some_and(|p| p.tuning.model == vxe_render::SurfaceModel::Field)
     }
 
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`.
@@ -755,15 +741,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut light_radius_flag = None;
     // The part flags, applied to the `--look` preset after every flag is read.
     let mut rock_detail = None;
-    let mut plane_fit = None;
-    let mut plane_offset = None;
-    let mut fit_filter = None;
     let mut face_mix = None;
     let mut detail_fine = None;
     let mut detail_after = None;
-    let mut shadow_push = None;
-    let mut normal_field = None;
-    let mut field_normal = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -804,46 +784,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 };
             }
             "--rock-detail" => rock_detail = Some(parse_rock_detail(&value()?)?),
-            "--plane-fit" => {
-                let v = value()?;
-                plane_fit = Some(match v.as_str() {
-                    "uniform27" => PlaneFit::Uniform27,
-                    "weighted27" => PlaneFit::Weighted27,
-                    _ => {
-                        return Err(format!(
-                            "--plane-fit takes uniform27 or weighted27, not {v}"
-                        ));
-                    }
-                });
-            }
-            "--plane-offset" => {
-                let v = value()?;
-                plane_offset = Some(match v.as_str() {
-                    "fraction" => PlaneOffset::Fraction,
-                    "volume" => PlaneOffset::VolumeMatched,
-                    _ => return Err(format!("--plane-offset takes fraction or volume, not {v}")),
-                });
-            }
-            "--fit-filter" => {
-                let v = value()?;
-                fit_filter = Some(match v.as_str() {
-                    "none" => OccupancyFilter::None,
-                    "majority" => OccupancyFilter::Majority,
-                    _ => return Err(format!("--fit-filter takes none or majority, not {v}")),
-                });
-            }
             "--face-mix" => face_mix = Some(parse_unit("--face-mix", &value()?, 0.5)?),
             "--detail-fine" => detail_fine = Some(parse_unit("--detail-fine", &value()?, 1.0)?),
             "--detail-after" => detail_after = Some(parse_on_off("--detail-after", &value()?)?),
-            "--shadow-push" => shadow_push = Some(parse_on_off("--shadow-push", &value()?)?),
-            "--normal-field" => normal_field = Some(parse_on_off("--normal-field", &value()?)?),
-            "--field-normal" => {
-                let v = value()?;
-                field_normal = Some(
-                    vxe_render::FieldNormal::from_name(&v)
-                        .ok_or(format!("--field-normal takes analytic or blend, not {v}"))?,
-                );
-            }
             "--band-census" => args.band_census = true,
             "--view" => {
                 let v = value()?;
@@ -1162,31 +1105,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     }
     if let Some(p) = args.look.as_mut() {
         p.rock_detail = rock_detail.unwrap_or(p.rock_detail);
-        p.tuning.fit.fit = plane_fit.unwrap_or(p.tuning.fit.fit);
-        p.tuning.fit.offset = plane_offset.unwrap_or(p.tuning.fit.offset);
-        p.tuning.fit.filter = fit_filter.unwrap_or(p.tuning.fit.filter);
         p.tuning.face_mix = face_mix.unwrap_or(p.tuning.face_mix);
         p.detail_fine = detail_fine.unwrap_or(p.detail_fine);
         p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
-        p.tuning.shadow_push = shadow_push.unwrap_or(p.tuning.shadow_push);
-        p.tuning.normal_field = normal_field.unwrap_or(p.tuning.normal_field);
-        p.tuning.field_normal = field_normal.unwrap_or(p.tuning.field_normal);
     } else if rock_detail.is_some() {
         return Err("--rock-detail does not apply under --look plain".to_owned());
-    } else if plane_fit.is_some()
-        || plane_offset.is_some()
-        || fit_filter.is_some()
-        || face_mix.is_some()
-        || detail_fine.is_some()
-        || detail_after.is_some()
-        || shadow_push.is_some()
-        || normal_field.is_some()
-        || field_normal.is_some()
-    {
+    } else if face_mix.is_some() || detail_fine.is_some() || detail_after.is_some() {
         return Err(
-            "--plane-fit, --plane-offset, --fit-filter, --face-mix, --detail-fine, \
-             --detail-after, --shadow-push, --normal-field and --field-normal do not apply \
-             under --look plain"
+            "--face-mix, --detail-fine and --detail-after do not apply under --look plain"
                 .to_owned(),
         );
     }
@@ -2079,27 +2005,24 @@ struct Gfx {
     presenter: Presenter,
     /// Times the frame's passes, `FRAME_PASSES` in order.
     timer: Option<PassTimer>,
-    /// Times the attribute pass, with contour attributes and `TIMESTAMP_QUERY`.
-    attr_timer: Option<MarchTimer>,
+    /// Times the field pass, with the field's band slots and `TIMESTAMP_QUERY`.
+    field_timer: Option<MarchTimer>,
     hud: HudOverlay,
     /// Times the HUD pass, with `TIMESTAMP_QUERY`.
     hud_timer: Option<PassTimer>,
-    /// The time of every `prepare_attrs` call, in milliseconds since the start, by call
-    /// number from 1; a call made outside the frame path takes the next frame's time.
-    attr_call_ms: Vec<f64>,
 }
 
 impl Gfx {
-    /// Runs the attribute pass over what changed, alone, and waits for it: the bricks in its
-    /// work list and its GPU time when timed.
-    fn timed_attrs(&mut self, gpu: &Gpu) -> (usize, Option<f64>) {
+    /// Runs the field pass over the band slots placed since the last, alone, and waits for
+    /// it: the band slots it filled and its GPU time when timed.
+    fn timed_field(&mut self, gpu: &Gpu) -> (usize, Option<f64>) {
         let mut enc = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let timer = self.attr_timer.as_ref();
+        let timer = self.field_timer.as_ref();
         let n = self
             .mirror
-            .update_attrs_timed(&mut enc, timer.map(MarchTimer::writes));
+            .update_field_timed(&mut enc, timer.map(MarchTimer::writes));
         if let Some(t) = timer.filter(|_| n > 0) {
             t.resolve(&mut enc);
         }
@@ -2178,12 +2101,12 @@ fn bins_line(mirror: &GpuWorld) -> String {
     )
 }
 
-/// `attrib: 383608 bricks in 12.345 ms GPU (initial fill)`.
-fn attr_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
+/// `field pass: 383608 band slots in 12.345 ms GPU (initial fill)`.
+fn field_pass_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
     let ms = ms.map_or("n/a (no TIMESTAMP_QUERY)".to_owned(), |ms| {
         format!("{ms:.3} ms")
     });
-    format!("attrib: {n} bricks in {ms} GPU ({what})")
+    format!("field pass: {n} band slots in {ms} GPU ({what})")
 }
 
 #[derive(Default)]
@@ -2535,8 +2458,8 @@ struct Autopilot {
     light_evicted: u64,
     light_refused: u64,
     light_wait_ms: f64,
-    /// The attribute pass over the flight, with contour attributes.
-    attr: AttrSamples,
+    /// The field pass over the flight, with the field's band slots.
+    field: FieldSamples,
     latency_from: usize,
     peak_mirror: u64,
     peak_allocated: u64,
@@ -2585,29 +2508,14 @@ impl NearRing {
     }
 }
 
-/// Per-frame readings of the attribute pass over the autopilot's flight: the work list's
-/// length and the render thread's CPU time in `update_attrs` every frame, and the pass's GPU
-/// time on the frames whose list is not empty.
+/// Per-frame readings of the field pass over the autopilot's flight: the band slots it
+/// filled and the render thread's CPU time in `update_field` every frame, and the pass's GPU
+/// time on the frames with band slots to fill.
 #[derive(Default)]
-struct AttrSamples {
+struct FieldSamples {
     items: Vec<f64>,
     cpu_ms: Vec<f64>,
     gpu_ms: Vec<f64>,
-    /// The CPU of `update_attrs`'s two halves: the list build and the pass recording.
-    build_ms: Vec<f64>,
-    encode_ms: Vec<f64>,
-    /// The builder's counters per frame: shell visits, dirty-brick visits, whole-chunk item
-    /// calls, hash lookups.
-    counters: [Vec<f64>; 4],
-    /// Every frame whose `update_attrs` took over [`HITCH_MS`]: its flight frame, CPU
-    /// milliseconds and counters.
-    hitches: Vec<(usize, f64, AttrWorkStats)>,
-    /// How long the oldest waiting brick had waited when each call started, in milliseconds
-    /// (0 when none waited).
-    age_ms: Vec<f64>,
-    /// The attribute pass's work-buffer builds after the first flight frame and the last.
-    builds_first: Option<u32>,
-    builds_last: u32,
 }
 
 /// The mirror's staging belt: its chunks, the host bytes they map at the chunk size, and how
@@ -2621,52 +2529,14 @@ fn belt_line(mirror: &GpuWorld) -> String {
     )
 }
 
-/// Before a `prepare_attrs` call at `now_ms`: stamps it and any earlier call not yet stamped
-/// with `now_ms` in `call_ms` (by call number from 1), and returns how long the oldest brick
-/// waiting in `mirror`'s carry-over queue has waited, 0 when none waits.
-fn stamp_attr_call(mirror: &GpuWorld, call_ms: &mut Vec<f64>, now_ms: f64) -> f64 {
-    let (calls, oldest) = mirror.attr_queue_age();
-    if call_ms.len() < calls as usize + 1 {
-        call_ms.resize(calls as usize + 1, now_ms);
-    }
-    oldest.map_or(0.0, |o| now_ms - call_ms[o as usize - 1])
-}
-
-/// Most bricks the streaming mirror's attribute pass computes per frame
-/// ([`MirrorConfig::attr_cap`]); the rest waits, reading face mode.
-const ATTR_CAP: usize = 8192;
-
-/// An `update_attrs` call longer than this is listed with its counters.
-const HITCH_MS: f64 = 16.0;
-
-impl AttrSamples {
+impl FieldSamples {
     /// Records one flight frame's pass.
-    fn push(
-        &mut self,
-        st: AttrWorkStats,
-        build_ms: f64,
-        encode_ms: f64,
-        gpu_ms: Option<f64>,
-        age_ms: f64,
-    ) {
-        self.age_ms.push(age_ms);
-        let cpu = build_ms + encode_ms;
-        if cpu > HITCH_MS {
-            self.hitches.push((self.items.len(), cpu, st));
-        }
-        self.items.push(f64::from(st.items));
-        self.cpu_ms.push(cpu);
-        self.build_ms.push(build_ms);
-        self.encode_ms.push(encode_ms);
-        let c = [st.shell_visits, st.dirty_visits, st.item_calls, st.lookups];
-        for (v, n) in self.counters.iter_mut().zip(c) {
-            v.push(n as f64);
-        }
+    fn push(&mut self, items: usize, cpu_ms: f64, gpu_ms: Option<f64>) {
+        self.items.push(items as f64);
+        self.cpu_ms.push(cpu_ms);
         self.gpu_ms.extend(gpu_ms);
     }
-}
 
-impl AttrSamples {
     /// The report's lines: p50, p99 and max of each reading.
     fn lines(&mut self) -> Vec<String> {
         let stats = |v: &mut Vec<f64>| {
@@ -2676,62 +2546,21 @@ impl AttrSamples {
         let busy = self.items.iter().filter(|&&n| n > 0.0).count();
         let [i50, i99, imax] = stats(&mut self.items);
         let [c50, c99, cmax] = stats(&mut self.cpu_ms);
-        let [b50, b99, bmax] = stats(&mut self.build_ms);
-        let [e50, e99, emax] = stats(&mut self.encode_ms);
         let mut out = vec![
             format!(
-                "autopilot: attribute work list: p50 {i50:.0}, p99 {i99:.0}, max {imax:.0} bricks over {frames} frames ({busy} with work)"
+                "autopilot: field pass items: p50 {i50:.0}, p99 {i99:.0}, max {imax:.0} band slots over {frames} frames ({busy} with work)"
             ),
             format!(
-                "autopilot: attribute pass CPU (update_attrs, render thread): p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms over {frames} frames"
+                "autopilot: field pass CPU (update_field, render thread): p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms over {frames} frames"
             ),
         ];
-        let [a50, a99, amax] = stats(&mut self.age_ms);
-        out.push(format!(
-            "autopilot: attribute carry-over age (oldest waiting brick at the start of each update_attrs): p50 {a50:.1} ms, p99 {a99:.1} ms, max {amax:.1} ms (bar 250 ms)"
-        ));
-        out.push(format!(
-            "autopilot: attribute work buffer builds: {} after the first flight frame, {} at the end",
-            self.builds_first.unwrap_or(0),
-            self.builds_last
-        ));
-        out.push(format!(
-            "autopilot: attribute pass CPU split: list build p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms; pass recording p50 {e50:.3} ms, p99 {e99:.3} ms, max {emax:.3} ms"
-        ));
-        for (name, v) in [
-            "shell visits",
-            "dirty-brick visits",
-            "whole-chunk item calls",
-            "hash lookups",
-        ]
-        .iter()
-        .zip(&mut self.counters)
-        {
-            let [n50, n99, nmax] = stats(v);
-            out.push(format!(
-                "autopilot: attribute builder {name}: p50 {n50:.0}, p99 {n99:.0}, max {nmax:.0}"
-            ));
-        }
-        for (frame, ms, st) in &self.hitches {
-            out.push(format!(
-                "autopilot: attribute hitch at flight frame {frame}: {ms:.3} ms, {} whole chunks, {} dirty bricks, {} shell chunks, {} shell visits, {} dirty visits, {} item calls, {} lookups, {} items",
-                st.whole_chunks,
-                st.dirty_bricks,
-                st.shell_chunks,
-                st.shell_visits,
-                st.dirty_visits,
-                st.item_calls,
-                st.lookups,
-                st.items
-            ));
-        }
         if self.gpu_ms.is_empty() {
-            out.push("autopilot: attribute pass GPU n/a (no TIMESTAMP_QUERY or no work)".into());
+            out.push("autopilot: field pass GPU n/a (no TIMESTAMP_QUERY or no work)".into());
         } else {
             let n = self.gpu_ms.len();
             let [g50, g99, gmax] = stats(&mut self.gpu_ms);
             out.push(format!(
-                "autopilot: attribute pass GPU: p50 {g50:.3} ms, p99 {g99:.3} ms, max {gmax:.3} ms over the {n} frames with work"
+                "autopilot: field pass GPU: p50 {g50:.3} ms, p99 {g99:.3} ms, max {gmax:.3} ms over the {n} frames with work"
             ));
         }
         out
@@ -3432,8 +3261,8 @@ impl Run {
         (benches.0, benches.1, ms)
     }
 
-    /// The mirror sync after a bench, timed, with the bench line; with contour attributes, the
-    /// attribute pass over the carves timed alone.
+    /// The mirror sync after a bench, timed, with the bench line; with the field's band slots,
+    /// the field pass over the carves timed alone.
     fn bench_sync(&mut self, gpu: &Gpu, carves: usize, refused: usize, edit_ms: f64) {
         let Some(gfx) = self.gfx.as_mut() else { return };
         let t = now();
@@ -3452,9 +3281,9 @@ impl Run {
             ),
             Err(e) => println!("bench: sync failed, {e}"),
         }
-        if gfx.mirror.surface_attrs() {
+        if gfx.mirror.field_surface() {
             let what = format!("{carves} carves of radius 1 m");
-            println!("{}", attr_line(&what, gfx.timed_attrs(gpu)));
+            println!("{}", field_pass_line(&what, gfx.timed_field(gpu)));
         }
     }
 
@@ -3592,11 +3421,7 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            level_pool_units(
-                &self.world,
-                self.args.look.is_some(),
-                self.args.field_look(),
-            ) * gpu_world::UNIT_BYTES
+            level_pool_units(&self.world, self.args.look.is_some()) * gpu_world::UNIT_BYTES
         };
         // An adapter below the shaders' floor: name the limit, then request the floor, which
         // the device request refuses on the same limit and the shell reports as a setup error.
@@ -3611,7 +3436,7 @@ impl Run {
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
-        let attr_timer = self
+        let field_timer = self
             .args
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
@@ -3666,15 +3491,12 @@ impl Run {
             frame,
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
             timer,
-            attr_timer,
+            field_timer,
             hud: HudOverlay::new(&gpu.device, gpu.surface_format, HUD_SCALE),
             hud_timer: PassTimer::new(&gpu.device, &gpu.queue),
-            attr_call_ms: Vec::new(),
         };
-        if gfx.mirror.surface_attrs() {
-            println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
-        }
         if gfx.mirror.field_surface() {
+            println!("{}", field_pass_line("initial fill", gfx.timed_field(gpu)));
             println!("{}", field_line(&gfx.mirror));
         }
         if self.args.band_census && self.stream.is_none() {
@@ -3697,17 +3519,12 @@ impl Run {
                     .iter()
                     .map(|&v| v as u64)
                     .product();
-                level_mirror_budget(
-                    &self.world,
-                    chunks,
-                    self.args.look.is_some(),
-                    self.args.field_look(),
-                )
+                level_mirror_budget(&self.world, chunks, self.args.look.is_some())
             }
         })
     }
 
-    /// A mirror under `cfg` reserving [`Run::mirror_budget`], with contour attributes when
+    /// A mirror under `cfg` reserving [`Run::mirror_budget`], with the field's band slots when
     /// `--look` was given. Prints what it reserved and how long creating its buffers took.
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
         let cfg = MirrorConfig {
@@ -3717,12 +3534,7 @@ impl Run {
         };
         let t = now();
         let mirror = match &self.args.look {
-            Some(p) => {
-                let mut m = GpuWorld::with_surface_attrs(&gpu.device, cfg);
-                m.set_surface_fit(p.tuning.fit);
-                m.set_field_surface(p.tuning.model == vxe_render::SurfaceModel::Field);
-                m
-            }
+            Some(_) => GpuWorld::with_field_surface(&gpu.device, cfg),
             None => GpuWorld::with_config(&gpu.device, cfg),
         };
         let ms = ms_since(t);
@@ -3746,7 +3558,6 @@ impl Run {
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
                 record_chunks: Some(flythrough::stream_record_chunks(self.args.residency)),
-                attr_cap: ATTR_CAP,
                 ..MirrorConfig::new(Window::Follow {
                     side: flythrough::window_side(self.args.residency),
                 })
@@ -4100,11 +3911,11 @@ impl Run {
             return;
         };
         let r = self.args.residency;
-        // The frame bar's credit: the flight's frames had the attribute pass's GPU time not
+        // The frame bar's credit: the flight's frames had the field pass's GPU time not
         // been spent, `F_d* = F_d T / (T - G)`, `T` the first to last flight frame and `G` the
         // pass's GPU milliseconds over the same frames.
         let t = p.flight_span_ms.map_or(0.0, |(a, b)| b - a);
-        let g: f64 = p.attr.gpu_ms.iter().sum();
+        let g: f64 = p.field.gpu_ms.iter().sum();
         let f = p.flight_frames as f64;
         let credited = if t > g { f * t / (t - g) } else { f };
         println!(
@@ -4230,8 +4041,8 @@ impl Run {
             gfx.frame.resolution().name()
         );
         println!("autopilot: {}", probe_bytes_line(gfx.frame.probes()));
-        if !p.attr.items.is_empty() {
-            for line in p.attr.lines() {
+        if !p.field.items.is_empty() {
+            for line in p.field.lines() {
                 println!("{line}");
             }
         }
@@ -4360,7 +4171,7 @@ impl Run {
             }
         }
         if input.pressed(KeyCode::KeyN) {
-            let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
+            let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.field_surface());
             self.preset = self.preset.next(contour);
             self.look.normal_mode = self.preset.normal_mode;
             self.look.tuning = self.preset.tuning;
@@ -4596,7 +4407,7 @@ impl Run {
 
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant, dt: f32) -> Flow {
         self.tick(gpu);
-        // The sync's copies are recorded first, so the attribute pass and the march read
+        // The sync's copies are recorded first, so the field pass and the march read
         // them in the same submission.
         let mut enc = gpu
             .device
@@ -4688,18 +4499,13 @@ impl Run {
             dt.clamp(0.0, 0.1)
         });
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
-        // A preset's fit refits the mirror's bricks under the attribute cap and its rock
-        // detail rewrites the material rows; `--look plain` has neither.
+        // A preset's rock detail rewrites the material rows; `--look plain` has none.
         if std::mem::take(&mut self.preset_changed) && self.args.look.is_some() {
-            gfx.mirror.set_surface_fit(self.preset.tuning.fit);
-            gfx.mirror
-                .set_field_surface(self.preset.tuning.model == vxe_render::SurfaceModel::Field);
             gfx.mirror.rewrite_materials(
                 &preset_materials(&self.args, Some(&self.preset)),
                 &gpu.queue,
             );
         }
-        self.modes.set_refitting(gfx.mirror.refitting());
         gfx.frame.set_look(self.look);
         let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
@@ -4719,23 +4525,16 @@ impl Run {
                 || self.args.fade_reading
         });
         let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
-        // Under the autopilot's flight the attribute pass is timed: its GPU time when its
-        // work list is not empty, and the render thread's CPU time building the list and
-        // recording the pass.
-        let attr_timer = gfx.attr_timer.as_ref().filter(|_| flying);
-        // The age is read before the call takes from the queue: how long the oldest waiting
-        // brick has read face mode when this frame starts.
-        let attr_age_ms = stamp_attr_call(&gfx.mirror, &mut gfx.attr_call_ms, ms_since(self.start));
-        let t_attr = now();
-        let attr_stats = gfx.mirror.prepare_attrs();
-        let attr_build_ms = ms_since(t_attr);
-        let t_encode = now();
-        let attr_items = gfx
+        // Under the autopilot's flight the field pass is timed: its GPU time when it has band
+        // slots to fill, and the render thread's CPU time recording it.
+        let field_timer = gfx.field_timer.as_ref().filter(|_| flying);
+        let t_field = now();
+        let field_items = gfx
             .mirror
-            .encode_attrs(&mut enc, attr_timer.map(MarchTimer::writes));
-        let attr_encode_ms = ms_since(t_encode);
-        let attr_timer = attr_timer.filter(|_| attr_items > 0);
-        if let Some(t) = attr_timer {
+            .update_field_timed(&mut enc, field_timer.map(MarchTimer::writes));
+        let field_cpu_ms = ms_since(t_field);
+        let field_timer = field_timer.filter(|_| field_items > 0);
+        if let Some(t) = field_timer {
             t.resolve(&mut enc);
         }
         gfx.frame.encode(
@@ -4783,7 +4582,7 @@ impl Run {
         }
         let pass_ms = timer.map(|t| t.read_all_ms(&gpu.device));
         let gpu_ms = pass_ms.as_ref().map(|p| p.iter().sum::<f64>());
-        let attr_gpu_ms = attr_timer.map(|t| t.read_ms(&gpu.device));
+        let field_gpu_ms = field_timer.map(|t| t.read_ms(&gpu.device));
         let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
         self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
         self.hud.cpu_ms = cpu_ms as f32;
@@ -4810,19 +4609,10 @@ impl Run {
             }
         }
         if flying
-            && gfx.mirror.surface_attrs()
+            && gfx.mirror.field_surface()
             && let Some(p) = self.pilot.as_mut()
         {
-            p.attr.push(
-                attr_stats,
-                attr_build_ms,
-                attr_encode_ms,
-                attr_gpu_ms,
-                attr_age_ms,
-            );
-            let builds = gfx.mirror.attr_buffer_builds();
-            p.attr.builds_first.get_or_insert(builds);
-            p.attr.builds_last = builds;
+            p.field.push(field_items, field_cpu_ms, field_gpu_ms);
         }
         if let Some(s) = self.samples.as_mut() {
             s.cpu_ms.push(cpu_ms);
@@ -4957,9 +4747,8 @@ fn steps_line(h: &StepHistogram) -> String {
 }
 
 /// `look face, detail off, view shaded` under `--look plain`, or with the preset's name,
-/// parts and rock's detail: `look contour-sharp (normals contour, fit weighted27, face mix
-/// 0, detail after lighting on, shadow push off), detail on (rock scale 4,
-/// strength 0.1, fine 0), view shaded`.
+/// parts and rock's detail: `look field (normals contour, face mix 0, detail after lighting
+/// on), detail on (rock scale 4, strength 0.1, fine 0), view shaded`.
 fn look_line(look: &LookParams, preset: Option<&LookPreset>) -> String {
     let on = if look.detail { "on" } else { "off" };
     let view = look.view.name();
@@ -5109,7 +4898,7 @@ impl App for Flythrough {
                 light_evicted: 0,
                 light_refused: 0,
                 light_wait_ms: 0.0,
-                attr: AttrSamples::default(),
+                field: FieldSamples::default(),
                 latency_from: 0,
                 peak_mirror: 0,
                 peak_allocated: 0,
@@ -7615,21 +7404,21 @@ mod tests {
         assert!(parse_rock_detail("4,x").is_err());
     }
 
-    /// No flag starts in contour-sharp with detail on and rock's detail, `--look contour` in
-    /// the contour look with every tuning part off; `--look plain` starts in
-    /// face mode with neither, and `--detail` turns detail on there.
+    /// No flag starts in the field look with detail on and rock's detail, `--look face` in
+    /// face mode with every tuning part off; `--look plain` starts in face mode with neither,
+    /// and `--detail` turns detail on there.
     #[test]
-    fn the_default_look_is_contour_with_detail_and_plain_is_face() {
+    fn the_default_look_is_the_field_with_detail_and_plain_is_face() {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
             look_line(&a.start_look(), a.look.as_ref()),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look field (normals contour, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
-        assert_eq!(a.look, Some(LookPreset::CONTOUR_SHARP));
-        let c = parse_args_from(argv(&["--look", "contour"])).unwrap();
+        assert_eq!(a.look, Some(LookPreset::FIELD));
+        let c = parse_args_from(argv(&["--look", "face"])).unwrap();
         assert_eq!(
             look_line(&c.start_look(), c.look.as_ref()),
-            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look face (normals face, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
         let a = parse_args_from(argv(&["--look", "face"])).unwrap();
@@ -7661,12 +7450,8 @@ mod tests {
             look_line(&a.start_look(), a.look.as_ref())
         };
         assert_eq!(
-            line(&["--look", "contour-sharp"]),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
-        );
-        assert_eq!(
-            line(&["--look", "contour-grain"]),
-            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on, shadow push off), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
+            line(&["--look", "field"]),
+            "look field (normals contour, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         for p in LookPreset::ALL {
             let a = parse_args_from(argv(&["--look", p.name])).unwrap();
@@ -7678,55 +7463,43 @@ mod tests {
             parse_args_from(argv(&["--look", "contour-soft"]))
                 .err()
                 .as_deref(),
-            Some(
-                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, field, trilinear8, gradient27, not contour-soft"
-            )
+            Some("--look takes plain, face, field, trilinear8, gradient27, not contour-soft")
         );
         assert_eq!(
             line(&[
                 "--look",
-                "contour",
-                "--plane-fit",
-                "weighted27",
-                "--plane-offset",
-                "volume",
+                "field",
                 "--face-mix",
                 "0.25",
                 "--detail-fine",
                 "0.5",
                 "--detail-after",
-                "on",
+                "off",
                 "--rock-detail",
                 "2,0.2",
             ]),
-            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on, shadow push off), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
+            "look field (normals contour, face mix 0.25, detail after lighting off), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
         );
-        assert!(parse_args_from(argv(&["--plane-fit", "sobel"])).is_err());
+        // The plane attribute's settings are gone: their flags are unknown arguments.
+        for flag in [
+            "--plane-fit",
+            "--plane-offset",
+            "--fit-filter",
+            "--shadow-push",
+            "--normal-field",
+            "--field-normal",
+            "--attr-cap",
+        ] {
+            assert_eq!(
+                parse_args_from(argv(&[flag, "on"])).err(),
+                Some(format!("unknown argument {flag}")),
+                "{flag}"
+            );
+        }
         assert!(parse_args_from(argv(&["--face-mix", "0.6"])).is_err());
         assert!(parse_args_from(argv(&["--detail-fine", "-1"])).is_err());
         assert!(parse_args_from(argv(&["--detail-after", "yes"])).is_err());
-        assert_eq!(
-            line(&["--shadow-push", "on"]),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, shadow push on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
-        );
-        // The crack-closing rule is the contour walk's only one: no flag selects another.
-        assert!(parse_args_from(argv(&["--closing", "snap"])).is_err());
-        assert!(parse_args_from(argv(&["--look", "plain", "--shadow-push", "on"])).is_err());
-        assert_eq!(
-            line(&["--fit-filter", "majority"]),
-            "look contour-sharp (normals contour, fit weighted27 + majority, face mix 0, detail after lighting on, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
-        );
-        assert!(parse_args_from(argv(&["--fit-filter", "median"])).is_err());
-        assert_eq!(
-            line(&["--normal-field", "on"]),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, shadow push off, normal field on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
-        );
-        assert_eq!(
-            line(&["--look", "cubes-field"]),
-            "look cubes-field (normals contour, fit weighted27, face mix 0, detail after lighting on, shadow push off, normal field on, cube hits on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
-        );
-        assert!(parse_args_from(argv(&["--look", "plain", "--normal-field", "on"])).is_err());
-        assert!(parse_args_from(argv(&["--look", "plain", "--fit-filter", "majority"])).is_err());
+        assert!(parse_args_from(argv(&["--look", "cubes-field"])).is_err());
     }
 
     #[test]
@@ -7742,7 +7515,7 @@ mod tests {
         };
         assert_eq!(
             look_line(&look, Some(&p)),
-            "look face (normals face, fit uniform27, face mix 0, detail after lighting off, shadow push off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
+            "look face (normals face, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
         );
         assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
     }

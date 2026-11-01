@@ -11,18 +11,18 @@ mod support;
 use support::sharpness::*;
 use support::*;
 use vxe_render::{Camera, LightingResolution, NormalMode, ViewMode};
-use vxe_render::{GpuWorld, MirrorConfig, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning, wgpu};
+use vxe_render::{GpuWorld, MirrorConfig, SurfaceTuning, wgpu};
 use vxe_world::MaterialTable;
 
 /// Rock's detail in the harness: the fly-through's default pair.
 const ROCK: [f32; 2] = flythrough::ROCK_DETAIL;
 
-/// The wall mirrored with contour attributes on the software adapter, or `None` with a
+/// The wall mirrored with the field's band slots on the software adapter, or `None` with a
 /// printed skip.
 fn wall_rig() -> Option<LookRig> {
     let spheres = wall_spheres();
     println!("wall spheres (centre voxel, radius, carve): {spheres:?}");
-    attr_rig(&wall_world_with(sharp_table(ROCK)))
+    field_mirror_rig(&wall_world_with(sharp_table(ROCK)))
 }
 
 /// The fly-through's `face` and `contour` looks: detail on, the default tier, filter on.
@@ -35,14 +35,9 @@ fn contour() -> Setting {
 }
 
 /// The fly-through's preset `p` on the wall: its rock detail and fine weight in the table,
-/// its fit in the mirror, its tuning in the look; detail on, the default tier, filter on.
+/// its tuning in the look; detail on, the default tier, filter on.
 fn preset_on_the_wall(rig: &LookRig, p: &flythrough::LookPreset) -> Vec<u8> {
-    let mut rig = fit_rig(
-        &rig.device,
-        &rig.queue,
-        &wall_world_with(p.materials()),
-        p.tuning.fit,
-    );
+    let mut rig = field_rig(&rig.device, &rig.queue, &wall_world_with(p.materials()));
     let base = Setting::new(p.normal_mode, true);
     let setting = Setting {
         look: vxe_render::LookParams {
@@ -56,7 +51,7 @@ fn preset_on_the_wall(rig: &LookRig, p: &flythrough::LookPreset) -> Vec<u8> {
 
 /// Face mode against today's contour on the wall: both contrasts finite and above 0, and face
 /// mode's mid band above contour's (the voxel-edge contrast contour removes by design). The
-/// `contour-sharp` and `contour-grain` presets are read and blessed beside them.
+/// `field` preset is read and blessed beside them.
 #[test]
 fn face_against_contour_on_the_wall() {
     use flythrough::LookPreset;
@@ -66,19 +61,16 @@ fn face_against_contour_on_the_wall() {
     let cam = wall_camera();
     let f = rig.converge(&cam, face());
     let c = rig.converge(&cam, contour());
-    let sharp = preset_on_the_wall(&rig, &LookPreset::CONTOUR_SHARP);
-    let grain = preset_on_the_wall(&rig, &LookPreset::CONTOUR_GRAIN);
+    let sharp = preset_on_the_wall(&rig, &LookPreset::FIELD);
     let (f_fine, f_mid) = (s_fine(&f), s_mid(&f));
     let (c_fine, c_mid) = (s_fine(&c), s_mid(&c));
     let (sh_fine, sh_mid) = (s_fine(&sharp), s_mid(&sharp));
-    let (g_fine, g_mid) = (s_fine(&grain), s_mid(&grain));
     println!("| look | S_fine | S_mid |");
     println!("|---|---|---|");
     println!("| {} | {f_fine:.5} | {f_mid:.5} |", face().name());
     println!("| {} | {c_fine:.5} | {c_mid:.5} |", contour().name());
-    println!("| contour-sharp | {sh_fine:.5} | {sh_mid:.5} |");
-    println!("| contour-grain | {g_fine:.5} | {g_mid:.5} |");
-    for v in [f_fine, f_mid, c_fine, c_mid, sh_fine, sh_mid, g_fine, g_mid] {
+    println!("| field | {sh_fine:.5} | {sh_mid:.5} |");
+    for v in [f_fine, f_mid, c_fine, c_mid, sh_fine, sh_mid] {
         assert!(v.is_finite() && v > 0.0, "a contrast reads {v}");
     }
     assert!(
@@ -87,14 +79,13 @@ fn face_against_contour_on_the_wall() {
     );
     let path = out_dir().join(format!(
         "wall_face_fine{f_fine:.4}_mid{f_mid:.4}_contour_fine{c_fine:.4}_mid{c_mid:.4}\
-         _sharp_fine{sh_fine:.4}_mid{sh_mid:.4}_grain_fine{g_fine:.4}_mid{g_mid:.4}.png"
+         _field_fine{sh_fine:.4}_mid{sh_mid:.4}.png"
     ));
-    write_wide_png(&path, &side_by_side(&[&f, &c, &sharp, &grain]), 4);
+    write_wide_png(&path, &side_by_side(&[&f, &c, &sharp]), 3);
     println!("wrote {path:?}");
     assert_golden("look_wall_face.png", &f);
     assert_golden("look_wall_contour.png", &c);
     assert_golden("look_wall_contour_sharp.png", &sharp);
-    assert_golden("look_wall_contour_grain.png", &grain);
 }
 
 /// The edge scene's `view = Normals` render in `mode`, detail `detail`.
@@ -112,7 +103,7 @@ fn edge_normals(rig: &mut LookRig, mode: NormalMode, detail: bool) -> Vec<u8> {
 /// without detail is at most 1 px; the rest are printed in pixels and voxels.
 #[test]
 fn edge_spread() {
-    let Some(mut rig) = attr_rig(&edge_world_with(sharp_table(ROCK))) else {
+    let Some(mut rig) = field_mirror_rig(&edge_world_with(sharp_table(ROCK))) else {
         return;
     };
     let mut rows = Vec::new();
@@ -286,12 +277,11 @@ fn source_matrix() {
 
 // ---- The candidate mechanisms ----
 
-/// One candidate of the sweep: the plane fit, the face mix, the detail after lighting, and
-/// rock's detail pair and fine-octave weight.
+/// One candidate of the sweep: the face mix, the detail after lighting, and rock's detail pair
+/// and fine-octave weight.
 #[derive(Clone, Debug)]
 struct Candidate {
     name: String,
-    fit: SurfaceFit,
     face_mix: f32,
     after: bool,
     rock: [f32; 2],
@@ -303,7 +293,6 @@ impl Candidate {
     fn today() -> Self {
         Self {
             name: "today".to_owned(),
-            fit: SurfaceFit::default(),
             face_mix: 0.0,
             after: false,
             rock: ROCK,
@@ -313,10 +302,8 @@ impl Candidate {
 
     fn tuning(&self) -> SurfaceTuning {
         SurfaceTuning {
-            fit: self.fit,
             face_mix: self.face_mix,
             detail_after_lighting: self.after,
-            ..SurfaceTuning::default()
         }
     }
 
@@ -354,25 +341,23 @@ fn table_with(rock: [f32; 2], fine: f32) -> MaterialTable {
     t
 }
 
-/// `world` mirrored with contour attributes under `fit` on `device`, filled; lighting at the
-/// default tier.
-fn fit_rig(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    world: &vxe_world::World,
-    fit: SurfaceFit,
-) -> LookRig {
-    let mut gpu = GpuWorld::with_surface_attrs(
+/// `world` mirrored with the field's band slots on `device`, filled; lighting at the default
+/// tier.
+fn field_rig(device: &wgpu::Device, queue: &wgpu::Queue, world: &vxe_world::World) -> LookRig {
+    let mut gpu = GpuWorld::with_field_surface(
         device,
         MirrorConfig::new(vxe_render::Window::Fixed(world.extent())),
     );
-    gpu.set_surface_fit(fit);
     gpu.sync_now(world, device, queue)
         .expect("mirror fits the adapter");
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    let bricks = gpu.update_attrs(&mut enc);
+    let filled = gpu.update_field(&mut enc);
     queue.submit([enc.finish()]);
-    assert_eq!(bricks, world.stats().full_bricks);
+    assert_eq!(
+        filled as u64,
+        gpu.band_bricks(),
+        "every band slot is filled"
+    );
     LookRig {
         device: device.clone(),
         queue: queue.clone(),
@@ -383,7 +368,7 @@ fn fit_rig(
 
 /// A software device large enough for every scene of the sweep; `None` with a printed skip.
 fn sweep_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let pool = attr_pool_bytes(&cavity_world()).max(64 << 20);
+    let pool = field_pool_bytes(&cavity_world()).max(64 << 20);
     software_device(pool)
 }
 
@@ -391,7 +376,7 @@ fn sweep_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// cavity's normal error (degrees) and axis fraction, and the pillar's silhouette error.
 fn guardrails(device: &wgpu::Device, queue: &wgpu::Queue, c: &Candidate) -> (f64, f64, usize) {
     let cavity = cavity_world();
-    let mut rig = fit_rig(device, queue, &cavity, c.fit);
+    let mut rig = field_rig(device, queue, &cavity);
     rig.frame.set_resolution(device, LightingResolution::Full);
     let cam = cavity_camera();
     let normals = rig.render(
@@ -402,7 +387,7 @@ fn guardrails(device: &wgpu::Device, queue: &wgpu::Queue, c: &Candidate) -> (f64
     let error = cavity_normal_error(&normals, &cam);
     let axis = axis_fraction(&normals);
     let pillar = pillar_world();
-    let mut rig = fit_rig(device, queue, &pillar, c.fit);
+    let mut rig = field_rig(device, queue, &pillar);
     let cam = pillar_camera();
     let mask = rig.render(
         &cam,
@@ -440,12 +425,12 @@ struct SweepRow {
 fn sweep_row(device: &wgpu::Device, queue: &wgpu::Queue, c: &Candidate) -> SweepRow {
     use LightingResolution::{Full, Half};
     let wall = wall_world_with(table_with(c.rock, c.fine));
-    let mut rig = fit_rig(device, queue, &wall, c.fit);
+    let mut rig = field_rig(device, queue, &wall);
     let cam = wall_camera();
     let default = read(&mut rig, &cam, c.setting(Half, true));
     let full = read(&mut rig, &cam, c.setting(Full, false));
     let edge = edge_world_with(table_with(c.rock, c.fine));
-    let mut rig = fit_rig(device, queue, &edge, c.fit);
+    let mut rig = field_rig(device, queue, &edge);
     let normals = rig.render(
         &edge_camera(),
         &vxe_render::LightParams::headlamp(),
@@ -481,7 +466,7 @@ fn detail_after_lighting_is_exact_for_the_lamp() {
         return;
     };
     let wall = wall_world_with(sharp_table(ROCK));
-    let mut rig = fit_rig(&device, &queue, &wall, SurfaceFit::default());
+    let mut rig = field_rig(&device, &queue, &wall);
     let cam = wall_camera();
     let today = Candidate::today();
     let c5 = Candidate {
@@ -607,7 +592,7 @@ fn detail_after_lighting_leaves_the_indirect_light_alone() {
         return;
     };
     let wall = wall_world_with(sharp_table(ROCK));
-    let mut rig = fit_rig(&device, &queue, &wall, SurfaceFit::default());
+    let mut rig = field_rig(&device, &queue, &wall);
     let cam = wall_camera();
     let today = Candidate::today();
     let c5 = Candidate {
@@ -683,21 +668,7 @@ fn candidate_sweep() {
         return;
     };
     let today = Candidate::today();
-    let fit = |name: &str, fit: PlaneFit, offset: PlaneOffset| Candidate {
-        name: name.to_owned(),
-        fit: SurfaceFit {
-            fit,
-            offset,
-            ..SurfaceFit::default()
-        },
-        ..today.clone()
-    };
-    let mut rows = vec![
-        today.clone(),
-        fit("C1 weighted27", PlaneFit::Weighted27, PlaneOffset::Fraction),
-        fit("C2 volume", PlaneFit::Uniform27, PlaneOffset::VolumeMatched),
-        fit("C1 + C2", PlaneFit::Weighted27, PlaneOffset::VolumeMatched),
-    ];
+    let mut rows = vec![today.clone()];
     for k in [0.25, 0.5] {
         rows.push(Candidate {
             name: format!("C3 face mix {k}"),
@@ -800,7 +771,6 @@ fn the_default_look_meets_the_guardrails() {
     let p = flythrough::LookPreset::DEFAULT;
     let c = Candidate {
         name: p.name.to_owned(),
-        fit: p.tuning.fit,
         face_mix: p.tuning.face_mix,
         after: p.tuning.detail_after_lighting,
         rock: p.rock_detail,
@@ -834,9 +804,9 @@ fn enlarge(rgba: &[u8], k: usize) -> Vec<u8> {
     out
 }
 
-/// By hand: the level (seed 1) around its spawn under `contour-sharp`, `contour` and
-/// `contour-grain` at rock 2, 0.15, from the spawn voxel's centre at four headings, pitched
-/// down and up so the lamp grazes the floor and the ceiling, plus `contour-sharp`'s normals
+/// By hand: the level (seed 1) around its spawn under `field` and `field` at rock 2, 0.15 with
+/// the fine octave at 0.5, from the spawn voxel's centre at four headings, pitched down and up
+/// so the lamp grazes the floor and the ceiling, plus `field`'s normals
 /// view. Writes each image three times enlarged to `target/look-sharpness/level_ridge_*.png`;
 /// asserts only that each look converges.
 #[test]
@@ -853,18 +823,15 @@ fn level_ridges_under_the_presets() {
     );
     let grain_b = LookPreset {
         rock_detail: [2.0, 0.15],
-        ..LookPreset::CONTOUR_GRAIN
+        detail_fine: 0.5,
+        ..LookPreset::FIELD
     };
-    let looks = [
-        ("sharp", LookPreset::CONTOUR_SHARP),
-        ("contour", LookPreset::CONTOUR),
-        ("grainB", grain_b),
-    ];
+    let looks = [("field", LookPreset::FIELD), ("grainB", grain_b)];
     let worlds: Vec<_> = looks
         .iter()
         .map(|(_, p)| vxe_world::World::generate(extent, &source, &p.materials()))
         .collect();
-    let Some((device, queue)) = software_device(attr_pool_bytes(&worlds[0]).max(64 << 20)) else {
+    let Some((device, queue)) = software_device(field_pool_bytes(&worlds[0]).max(64 << 20)) else {
         return;
     };
     let pos = spawn.0.map(|v| v as f32 + 0.5);
@@ -872,7 +839,7 @@ fn level_ridges_under_the_presets() {
     let mut rigs: Vec<_> = looks
         .iter()
         .zip(&worlds)
-        .map(|((_, p), w)| fit_rig(&device, &queue, w, p.tuning.fit))
+        .map(|(_, w)| field_rig(&device, &queue, w))
         .collect();
     for k in 0..4 {
         for (pn, pitch) in [("down", -0.6f32), ("up", 0.6)] {
@@ -906,7 +873,7 @@ fn level_ridges_under_the_presets() {
                     ..vxe_render::LookParams::default()
                 },
             );
-            let path = out_dir().join(format!("level_ridge_{k}_{pn}_sharp_normals.png"));
+            let path = out_dir().join(format!("level_ridge_{k}_{pn}_field_normals.png"));
             write_png(&path, &enlarge(&normals, 3), 3 * WIDTH, 3 * HEIGHT);
         }
     }

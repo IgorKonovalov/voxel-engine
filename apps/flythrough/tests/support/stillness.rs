@@ -105,8 +105,7 @@ pub fn vein_level() -> Option<VeinLevel> {
         &source,
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
     );
-    let pool =
-        flythrough::level_pool_units(&world, false, false) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false) * vxe_render::gpu_world::UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,

@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use vxe_render::wgpu::{self, naga};
 use vxe_render::{
-    ATROUS_WGSL, ATTRIB_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, SHARPEN_WGSL,
+    ATROUS_WGSL, COMPOSITE_WGSL, FIELD_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, SHARPEN_WGSL,
     TEMPORAL_WGSL, UPSCALE_WGSL,
 };
 
@@ -34,7 +34,7 @@ struct Pass {
 }
 
 /// Every compute pass, each source concatenated exactly as the renderer does it. The list
-/// mirrors `AttribPass::new` in `attrib.rs` and `Marcher::new` and `Frame::with_sizes` in
+/// mirrors `FieldPass::new` in `field.rs` and `Marcher::new` and `Frame::with_sizes` in
 /// `marcher.rs`; a pass added there belongs here too.
 fn passes() -> Vec<Pass> {
     let after_march = |rest: &[&str]| {
@@ -51,7 +51,7 @@ fn passes() -> Vec<Pass> {
         entry,
     };
     vec![
-        pass("attrib", ATTRIB_WGSL.to_owned(), "main"),
+        pass("field", FIELD_WGSL.to_owned(), "field_main"),
         pass("march", MARCH_WGSL.to_owned(), "main"),
         pass("light", after_march(&[LIGHT_WGSL]), "shade"),
         pass("temporal", after_march(&[TEMPORAL_WGSL]), "temporal"),

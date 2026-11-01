@@ -2,7 +2,6 @@
 //! probe volume's passes (`probe_gather.wgsl`, ADR-0023) and the composite (`composite.wgsl`),
 //! each a compute dispatch over the internal target (ADR-0018).
 
-use crate::attrib::SurfaceFit;
 use crate::camera::{Camera, View};
 use crate::exposure::{
     EX_AUTO, EX_METER, EX_RESET, Exposure, ExposurePass, ExposureReadout, ExposureUniform,
@@ -150,8 +149,6 @@ pub const NORMAL_SHIFT: u32 = 2;
 pub const FLAG_DETAIL: u32 = 1 << 4;
 /// `Params::flags` bits 5..8: the [`ViewMode`].
 pub const VIEW_SHIFT: u32 = 5;
-/// `Params::flags` bit: full chunks' bricks carry contour attributes (`GpuWorld::surface_attrs`).
-pub const FLAG_ATTRS: u32 = 1 << 8;
 /// `Params::flags` bit: skip empty cells larger than a voxel (`LightParams::skips`).
 pub const FLAG_SKIPS: u32 = 1 << 9;
 /// `Params::flags` bit: the primary ray passes through solid until it has crossed real air
@@ -160,23 +157,6 @@ pub const FLAG_CUTAWAY: u32 = 1 << 10;
 /// `Params::flags` bit: with the lamp on, the light pass shades with the undetailed normal and
 /// the composite applies the detail's `n.l` ratio ([`SurfaceTuning::detail_after_lighting`]).
 pub const FLAG_DETAIL_AFTER_LIGHTING: u32 = 1 << 13;
-/// `Params::flags` bit: push a contour hit's shadow origin clear of its neighbours' planes
-/// ([`SurfaceTuning::shadow_push`]).
-pub const FLAG_SHADOW_PUSH: u32 = 1 << 14;
-/// `Params::flags` bit: in the contour look, shade with the trilinear field of the planes'
-/// normals around the hit ([`SurfaceTuning::normal_field`]).
-pub const FLAG_NORMAL_FIELD: u32 = 1 << 15;
-/// `Params::flags` bit: in the contour look, the walk tests no plane and every solid voxel hits
-/// as its cube ([`SurfaceTuning::cube_hits`]).
-pub const FLAG_CUBE_HITS: u32 = 1 << 16;
-
-/// `Params::flags` bit: in the contour look, the hit pass's pipeline for the field surface
-/// walks the trilinear zero set of the 27-counts instead of the planes
-/// ([`SurfaceModel::Field`]).
-pub const FLAG_FIELD: u32 = 1 << 17;
-/// `Params::flags` bit: the field surface's shading normal is the blend of its cell's corner
-/// normals ([`FieldNormal::Blend`]); clear, the gradient of the trilinear field.
-pub const FLAG_FIELD_BLEND: u32 = 1 << 18;
 /// `Params::flags` bit, set by the frame and not by a look: the field look's split walk. The
 /// hit pipeline walks each ray as the cube walk does until it enters a brick the field can hit
 /// in (a band brick of a full chunk with a smooth solid voxel in it or its shell), and a second
@@ -191,43 +171,6 @@ const SPLIT_GROUP: u32 = 128;
 /// Workgroups a dispatch may count on one dimension (WebGPU's default limit).
 const MAX_WORKGROUPS: u32 = 65535;
 
-/// What the contour look's walk hits: the per-voxel planes (ADR-0011), or the field surface,
-/// the zero set of the trilinear interpolation of `count / 27 - 1/2` over the voxel centres,
-/// `count` a voxel's solid voxels among the 27 around it (ADR-0041: its counts live in the
-/// mirror's band slots, [`GpuWorld::set_field_surface`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SurfaceModel {
-    #[default]
-    Planes,
-    Field,
-}
-
-/// The field surface's shading normal: the normalised gradient of the trilinear field at the
-/// hit (`Analytic`), or the trilinear blend at the hit of its cell's eight corner normals
-/// (`Blend`): a solid corner's plane normal where it has a plane, else the normalised central
-/// difference of the 27-counts across the corner.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FieldNormal {
-    #[default]
-    Analytic,
-    Blend,
-}
-
-impl FieldNormal {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Analytic => "analytic",
-            Self::Blend => "blend",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        [Self::Analytic, Self::Blend]
-            .into_iter()
-            .find(|n| n.name() == name)
-    }
-}
-
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NormalMode {
@@ -239,8 +182,11 @@ pub enum NormalMode {
     Trilinear8,
     /// Central differences of occupancy over the 3 x 3 x 3 voxels around the hit voxel.
     Gradient27,
-    /// The per-voxel contour plane read from the brick's slot in the mirror; it moves the hit
-    /// too. Needs a mirror with `surface_attrs`; without one it shades as `Face`.
+    /// The field surface (ADR-0041): the primary ray hits the zero set of the trilinear
+    /// interpolation of `count / 27 - 1/2` over the voxel centres, `count` a voxel's solid
+    /// voxels among the 27 around it, and shades with the field's gradient; it moves the hit
+    /// too. Needs a mirror with the field's band slots ([`GpuWorld::with_field_surface`]);
+    /// without one, and in the cutaway view, the ray walks the voxels and shades as `Face`.
     Contour,
 }
 
@@ -298,14 +244,11 @@ pub enum ViewMode {
     /// The composited albedo, unlit and linear: each translucent layer's `albedo × opacity`
     /// front to back over the opaque hit's albedo; black on a miss.
     Albedo,
-    /// How each primary ray reached its hit in the contour look, over the shaded image
-    /// without its translucent layers: the hit pass writes the ray's crack class and whether
-    /// its lamp shadow ray found rock within 1.5 voxels of its origin (the self-hit) into
-    /// [`Frame::layers`] (r and g), and the composite paints them (see [`CrackShares`]). Every
-    /// pass of the shaded view runs. Class 0 is clean: no surface voxel passed outside its
-    /// plane since the ray last entered an empty cell. After such a pass, class 1 hits a
-    /// voxel with no plane, class 2 enters the hit voxel already inside its plane's solid
-    /// half-space, class 3 crosses the plane inside the hit voxel.
+    /// The field walk's leaks in the contour look, over the shaded image without its
+    /// translucent layers: the hit pass writes 1 into [`Frame::layers`]'s r for a ray that
+    /// reached rock outside the field's band or missed its crossing (hit there as a cube), and
+    /// the composite paints it red (see [`CrackShares`]). The voxel walk has no leak. Every
+    /// pass of the shaded view runs.
     Cracks = 5,
 }
 
@@ -348,23 +291,20 @@ impl ViewMode {
     }
 }
 
-/// The share of a cracks-view frame's hit pixels in each crack class and with a self-hit
-/// ([`ViewMode::Cracks`]), read from the hit pass's outputs.
+/// The share of a cracks-view frame's hit pixels that are leaks ([`ViewMode::Cracks`]), read
+/// from the hit pass's outputs.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CrackShares {
     /// Hit pixels.
     pub hits: u64,
-    /// Hit pixels in classes 0 to 3.
-    pub classes: [u64; 4],
-    /// Hit pixels whose lamp shadow ray found rock within 1.5 voxels of its origin.
-    pub self_hits: u64,
+    /// Hit pixels that are leaks.
+    pub leaks: u64,
 }
 
 impl CrackShares {
-    /// From [`Frame::layers`] (`rgba16float`, the class in r and the self-hit in g) and
-    /// [`Frame::hit_records`] (`rgba16uint`, bit 0 of a's flags set on a hit) as
-    /// [`crate::readback::read_rgba16f`] and [`crate::readback::read_rgba16u`] return them,
-    /// one texel per pixel.
+    /// From [`Frame::layers`] (`rgba16float`, the leak in r) and [`Frame::hit_records`]
+    /// (`rgba16uint`, bit 0 of a's flags set on a hit) as [`crate::readback::read_rgba16f`]
+    /// and [`crate::readback::read_rgba16u`] return them, one texel per pixel.
     pub fn from_layers(layers: &[[f32; 4]], records: &[[u16; 4]]) -> Self {
         let mut s = Self::default();
         for (l, r) in layers.iter().zip(records) {
@@ -372,66 +312,46 @@ impl CrackShares {
                 continue;
             }
             s.hits += 1;
-            s.classes[(l[0].round() as usize).min(3)] += 1;
-            if l[1] > 0.5 {
-                s.self_hits += 1;
-            }
+            s.leaks += u64::from(l[0] > 0.5);
         }
         s
     }
 
-    /// Each pixel's class (0 to 3, `None` on a miss) and self-hit, decoded from a cracks-view
-    /// image without an upscaler (`rgba8unorm`, the composite's colours: a miss black; class
-    /// 0 every channel in 4..=124, or magenta with a self-hit; class 1 red, 2 yellow, 3 blue,
-    /// each with a self-hit's 128 in its zero channel, blue's red).
-    pub fn decode_rgba8(p: &[u8]) -> Option<(u8, bool)> {
+    /// Whether a pixel is a leak (`None` on a miss), decoded from a cracks-view image without
+    /// an upscaler (`rgba8unorm`, the composite's colours: a miss black, a leak red, any other
+    /// hit every channel in 4..=124).
+    pub fn decode_rgba8(p: &[u8]) -> Option<bool> {
         match (p[0], p[1], p[2]) {
             (0, 0, 0) => None,
-            (255, 0, 0) => Some((1, false)),
-            (255, 0, 128) => Some((1, true)),
-            (255, 255, 0) => Some((2, false)),
-            (255, 255, 128) => Some((2, true)),
-            (0, 0, 255) => Some((3, false)),
-            (128, 0, 255) => Some((3, true)),
-            (255, 0, 255) => Some((0, true)),
-            _ => Some((0, false)),
+            (255, 0, 0) => Some(true),
+            _ => Some(false),
         }
     }
 
     /// [`CrackShares`] of a cracks-view image (see [`CrackShares::decode_rgba8`]).
     pub fn from_rgba8(pixels: &[u8]) -> Self {
         let mut s = Self::default();
-        for (class, self_hit) in pixels.chunks_exact(4).filter_map(Self::decode_rgba8) {
+        for leak in pixels.chunks_exact(4).filter_map(Self::decode_rgba8) {
             s.hits += 1;
-            s.classes[usize::from(class)] += 1;
-            s.self_hits += u64::from(self_hit);
+            s.leaks += u64::from(leak);
         }
         s
     }
 
-    /// Class `k`'s share of the hit pixels, 0 with none.
-    pub fn share(&self, k: usize) -> f64 {
-        self.classes[k] as f64 / self.hits.max(1) as f64
-    }
-
-    /// The self-hits' share of the hit pixels, 0 with none.
-    pub fn self_hit_share(&self) -> f64 {
-        self.self_hits as f64 / self.hits.max(1) as f64
+    /// The leaks' share of the hit pixels, 0 with none.
+    pub fn leak_share(&self) -> f64 {
+        self.leaks as f64 / self.hits.max(1) as f64
     }
 }
 
-/// The surface look's tuning beyond its normal mode: the attribute pass's plane fit, a mix of
-/// a contour-plane hit's shading normal toward its entry face's normal, and where the detail's
-/// shading is applied. The default is every part off: the uniform gradient, the fraction
-/// offset, no mix, detail shaded in the light pass.
+/// The surface look's tuning beyond its normal mode: a mix of a field-surface hit's shading
+/// normal toward its entry face's normal, and where the detail's shading is applied. The
+/// default is every part off: no mix, detail shaded in the light pass.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SurfaceTuning {
-    /// The plane fit of the attribute pass. It lives in the mirror: a frame reads only the
-    /// attributes, so the caller hands it to [`GpuWorld::set_surface_fit`].
-    pub fit: SurfaceFit,
-    /// A contour-plane hit's shading normal is `normalize(mix(plane, face, face_mix))`, `face`
+    /// A field-surface hit's shading normal is `normalize(mix(field, face, face_mix))`, `face`
     /// the normal of the face the ray entered its voxel through; the hit point and the shadow
-    /// ray's offset keep the plane's. In `[0, 0.5]`; 0 is the plane normal.
+    /// ray's offset keep the field's. In `[0, 0.5]`; 0 is the field normal.
     pub face_mix: f32,
     /// With the lamp on, the light pass shades every term with the undetailed normal, and the
     /// composite multiplies the upsampled irradiance by the detail's lamp term ratio
@@ -439,23 +359,6 @@ pub struct SurfaceTuning {
     /// unit vector to the lamp, per full-resolution pixel. With the lamp off it changes
     /// nothing.
     pub detail_after_lighting: bool,
-    /// A contour hit's shadow rays start at the first of 0.5 and 0.75 voxel along the shadow
-    /// normal where no plane of the eight voxels around the point holds it inside rock, else
-    /// at 1.0; off, at 0.5.
-    pub shadow_push: bool,
-    /// The light pass and the composite shade a contour-look hit with the normal field: the
-    /// normalised trilinear blend, over the eight voxel centres around the hit point, of the
-    /// plane normals of the voxels that carry one (air and voxels without a plane add nothing;
-    /// with nothing added, the hit's own normal). The hit record and the shadow rays keep the
-    /// hit's own normal; the normals view and the detail's tilt take the field (ADR-0040).
-    pub normal_field: bool,
-    /// The contour-look walk tests no plane: every solid voxel hits as its cube, with its
-    /// entry face's normal, while the attributes stay for the normal field.
-    pub cube_hits: bool,
-    /// What the contour look's walk hits: the planes, or the field surface.
-    pub model: SurfaceModel,
-    /// The field surface's shading normal.
-    pub field_normal: FieldNormal,
 }
 
 /// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
@@ -503,31 +406,6 @@ impl LookParams {
             | if self.cutaway { FLAG_CUTAWAY } else { 0 }
             | if self.tuning.detail_after_lighting {
                 FLAG_DETAIL_AFTER_LIGHTING
-            } else {
-                0
-            }
-            | if self.tuning.shadow_push {
-                FLAG_SHADOW_PUSH
-            } else {
-                0
-            }
-            | if self.tuning.normal_field {
-                FLAG_NORMAL_FIELD
-            } else {
-                0
-            }
-            | if self.tuning.cube_hits {
-                FLAG_CUBE_HITS
-            } else {
-                0
-            }
-            | if self.tuning.model == SurfaceModel::Field {
-                FLAG_FIELD
-            } else {
-                0
-            }
-            | if self.tuning.field_normal == FieldNormal::Blend {
-                FLAG_FIELD_BLEND
             } else {
                 0
             }
@@ -1008,13 +886,12 @@ impl Lighting {
 }
 
 /// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
-/// the cracks view its pipeline with `CRACKS_VIEW`, which records the crack classes and each
-/// hit's lamp self-hit; in the field surface's look ([`SurfaceModel::Field`]) its pipeline with
-/// `FIELD_SURFACE`, which walks the field, or with the split walk ([`FLAG_FIELD_SPLIT`]) the
-/// plain pipeline and then `field_resume` over the rays it handed on.
+/// the contour look over a mirror with the field ([`NormalMode::Contour`]) its pipeline with
+/// `FIELD_SURFACE`, which walks the field surface, or with the split walk
+/// ([`FLAG_FIELD_SPLIT`]) the plain pipeline and then `field_resume` over the rays it handed
+/// on.
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
-    cracks: wgpu::ComputePipeline,
     field: wgpu::ComputePipeline,
     resume: wgpu::ComputePipeline,
     out_layout: wgpu::BindGroupLayout,
@@ -1049,14 +926,6 @@ impl Marcher {
         );
         let layouts = [Some(world_layout), Some(&out_layout)];
         let pipeline = compute_pipeline(device, "hit", MARCH_WGSL.into(), &layouts, "main");
-        let cracks = compute_pipeline_with(
-            device,
-            "hit cracks",
-            MARCH_WGSL.into(),
-            &layouts,
-            "main",
-            &[("CRACKS_VIEW", 1.0)],
-        );
         let field = compute_pipeline_with(
             device,
             "hit field",
@@ -1074,7 +943,6 @@ impl Marcher {
         );
         Self {
             pipeline,
-            cracks,
             field,
             resume,
             out_layout,
@@ -2236,7 +2104,7 @@ impl Frame {
     }
 
     /// The hit buffer's record texture (rgba16uint: octahedral normal u and v as snorm16
-    /// bits, material id, flags: bit 0 hit, bit 1 contour-plane hit, bit 2 translucent layers
+    /// bits, material id, flags: bit 0 hit, bit 1 field-surface hit, bit 2 translucent layers
     /// in front, bits 3..5 the entry face's axis plus one, 0 for none).
     pub fn hit_records(&self) -> &wgpu::Texture {
         &self.targets.hit_info[self.cur]
@@ -2381,8 +2249,7 @@ impl Frame {
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 }
                 | if light.skips { FLAG_SKIPS } else { 0 }
-                | self.look.flags()
-                | if world.surface_attrs() { FLAG_ATTRS } else { 0 },
+                | self.look.flags(),
             units_per_shard: world.shard_layout().units_per_shard,
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),
@@ -2775,8 +2642,9 @@ impl Frame {
                 indirect: None,
             }
         };
-        let field = self.look.tuning.model == SurfaceModel::Field
-            && self.look.normal_mode == NormalMode::Contour
+        // The cutaway and a mirror without band slots walk the voxels.
+        let field = self.look.normal_mode == NormalMode::Contour
+            && !self.look.cutaway
             && world.field_surface();
         // The split walk pays only where a brick walks as cubes: with no crisp row every band
         // brick is a field brick. The cracks and steps views read the field walk's own leaks
@@ -2792,8 +2660,6 @@ impl Frame {
             &self.hit.pipeline
         } else if field {
             &self.hit.field
-        } else if self.look.view == ViewMode::Cracks {
-            &self.hit.cracks
         } else {
             &self.hit.pipeline
         };

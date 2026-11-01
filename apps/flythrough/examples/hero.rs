@@ -22,8 +22,9 @@
 //! (`HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it) and the upscaler at
 //! the fly-through's defaults (`--internal-scale 1.5`: our upscaler with its jitter, which
 //! `--jitter off` stops; `--internal-scale 1` without `--jitter on` is the native frame).
-//! The look is a contour preset of `flythrough::LookPreset`, the fly-through's default unless
-//! `--look` names another (its fit, tuning and rock detail); the ores emit, and
+//! The look is a contour preset of `flythrough::LookPreset` (the field surface), the
+//! fly-through's default unless `--look` names another (its tuning and rock detail); the ores
+//! emit, and
 //! the light radius is the source's (19 chunks on the showcase, 4 on the level). The mirror
 //! syncs until its light-sample count stops changing, and the still is the last of
 //! `--frames` frames (default 64) from the same pose, so the accumulation, the filter and the
@@ -421,8 +422,7 @@ fn main() -> Result<(), String> {
     };
     let adapter_name = adapter.get_info().name;
     println!("rendering on {adapter_name}");
-    let pool_bytes =
-        flythrough::level_pool_units(&world, true, false) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool_bytes = flythrough::level_pool_units(&world, true) * vxe_render::gpu_world::UNIT_BYTES;
     let (device, queue) =
         pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
@@ -433,12 +433,12 @@ fn main() -> Result<(), String> {
         )
         .map_err(|e| format!("no device: {e}"))?;
 
-    // Contour attributes on the bounded path's mirror budget, fitted as the look says.
+    // The field's band slots on the bounded path's mirror budget.
     let chunks = world.extent().len() as u64;
-    let mut gpu = GpuWorld::with_surface_attrs(
+    let mut gpu = GpuWorld::with_field_surface(
         &device,
         MirrorConfig {
-            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true, false),
+            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true),
             light_radius,
             ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
         },
@@ -452,7 +452,6 @@ fn main() -> Result<(), String> {
             .to_array()
             .map(|v| v.floor() as i32),
     );
-    gpu.set_surface_fit(args.look.tuning.fit);
     gpu.set_focus(focus);
     let mut syncs = 0;
     let mut last = None;
@@ -460,7 +459,7 @@ fn main() -> Result<(), String> {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         gpu.sync(&world, &queue, &mut enc)
             .map_err(|e| format!("mirror: {e:?}"))?;
-        gpu.update_attrs(&mut enc);
+        gpu.update_field(&mut enc);
         queue.submit([enc.finish()]);
         device
             .poll(wgpu::PollType::wait_indefinitely())

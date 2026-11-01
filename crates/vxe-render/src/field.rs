@@ -1,9 +1,9 @@
 //! The field surface's band (ADR-0041): which voxels of a brick hold a count, as the CPU
-//! decides it, and the field pass (`attrib.wgsl`'s `field_main`) that fills the counts into
-//! the mirror's band slots.
+//! decides it, and the field pass (`field.wgsl`) that fills the counts into the mirror's band
+//! slots.
 //!
 //! A voxel's count is its solid voxels among the 27 around it, itself included, solid being
-//! not air as in the attribute pass (a translucent voxel and a crisp one are solid). The field
+//! not air (a translucent voxel and a crisp one are solid). The field
 //! pass also marks each solid band voxel smooth or crisp ([`SMOOTH_COUNT_BIT`],
 //! [`CRISP_COUNT_BIT`]) from its material's row, and a band brick with no smooth solid voxel
 //! near ([`BAND_CUBES_BIT`]). A voxel is in the band when
@@ -142,6 +142,24 @@ pub fn band_index(m: &[u64; 8], i: usize) -> u32 {
     below + (m[z] & ((1u64 << (i % 64)) - 1)).count_ones()
 }
 
+/// Bricks one workgroup of the field pass fills, 64 invocations each: item `4 g + b` is brick
+/// `b` of workgroup `g`, the last workgroup partly empty when the list is not a multiple of
+/// four. Must match `field.wgsl`'s `BRICKS`.
+pub const BRICKS_PER_GROUP: u32 = 4;
+
+/// The buffers of the mirror the field pass binds.
+pub struct FieldBindings<'a> {
+    /// The four pool shards, placeholders included.
+    pub shards: [&'a wgpu::Buffer; 4],
+    pub records: &'a wgpu::Buffer,
+    pub table: &'a wgpu::Buffer,
+    /// The material rows (`march.wgsl`'s `materials`), whose flags mark the crisp rows.
+    pub materials: &'a wgpu::Buffer,
+    /// The mirror window's minimum corner and size, in chunks.
+    pub window: ([i32; 3], [i32; 3]),
+    pub units_per_shard: u32,
+}
+
 /// One work-list entry of the field pass: the brick's band slot (its first unit) and its
 /// origin in voxels.
 #[repr(C)]
@@ -151,7 +169,7 @@ pub struct FieldItem {
     pub origin: [i32; 3],
 }
 
-/// The field pass's uniform: `attrib.wgsl`'s `Params`.
+/// The field pass's uniform: `field.wgsl`'s `Params`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
@@ -160,8 +178,7 @@ struct Params {
     window_size: [i32; 3],
     items: u32,
     groups_x: u32,
-    fit: u32,
-    _pad: [u32; 2],
+    _pad: [u32; 3],
 }
 
 /// The field pass: its pipeline and the buffers it keeps between calls.
@@ -175,8 +192,8 @@ pub struct FieldPass {
 impl FieldPass {
     pub fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("attrib.wgsl field"),
-            source: wgpu::ShaderSource::Wgsl(crate::ATTRIB_WGSL.into()),
+            label: Some("field.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(crate::FIELD_WGSL.into()),
         });
         let buffer = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
@@ -237,7 +254,7 @@ impl FieldPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        mirror: &crate::attrib::AttribBindings<'_>,
+        mirror: &FieldBindings<'_>,
         items: &[FieldItem],
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
@@ -245,7 +262,7 @@ impl FieldPass {
         if n == 0 {
             return;
         }
-        let groups = (n as u32).div_ceil(crate::attrib::BRICKS_PER_GROUP);
+        let groups = (n as u32).div_ceil(BRICKS_PER_GROUP);
         let groups_x = groups.min(65_535);
         let groups_y = groups.div_ceil(groups_x);
         let params = Params {
@@ -254,8 +271,7 @@ impl FieldPass {
             window_size: mirror.window.1,
             items: n as u32,
             groups_x,
-            fit: 0,
-            _pad: [0; 2],
+            _pad: [0; 3],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&params));
         if self.work.as_ref().is_none_or(|w| w.1 < n) {
