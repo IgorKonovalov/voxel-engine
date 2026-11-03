@@ -118,9 +118,8 @@ fn cache_read(rec: HitRecord, nf: vec3<f32>) -> vec4<f32> {
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
     for (var i = 0; i < 4; i++) {
-        var cell = v;
-        cell[a] = i32(low.x) + (i & 1);
-        cell[b] = i32(low.y) + (i >> 1);
+        var cell = select(v, vec3<i32>(i32(low.x) + (i & 1)), axis_mask(a));
+        cell = select(cell, vec3<i32>(i32(low.y) + (i >> 1)), axis_mask(b));
         let wx = select(1.0 - f.x, f.x, (i & 1) == 1);
         let wy = select(1.0 - f.y, f.y, (i >> 1) == 1);
         let m = cache_mean(cell, face);
