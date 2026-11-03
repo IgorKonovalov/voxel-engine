@@ -668,21 +668,36 @@ Determinism is not touched: everything is in `vxe-render`.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The rig on main, and today's light on the default look | dev | code committed, gate green; stop rule read on both adapters, not tripped; tables partial | ab48bd3 (code), 34084fc (records) |
-| 2: Experiment A, converge and freeze | dev | code committed, gate green; tables owed (done-whens 5 to 8, 13) | 6fb183e (code) |
-| 3: Experiment B, the world-space emissive cache | dev | code committed; tables owed (done-whens 4, 5, 6, 10) | 7313d0a (code); this record committed with this row |
+| 1: The rig on main, and today's light on the default look | dev | done; stop rule read on both adapters, not tripped; cost at rest loaded, not the three quiet rounds | ab48bd3 (code), 34084fc, 363890c (records), the rest committed with this row |
+| 2: Experiment A, converge and freeze | dev | done but for done-when 13's flicker map (unmet) and 6's noise by frame (not read as stated) | 6fb183e (code), c933a31 (tables) |
+| 3: Experiment B, the world-space emissive cache | dev | done; tables in; gate at the tip green | 7313d0a, c9ce8c9 (code), 42e2934 (digests), committed with this row |
 | 4: The owner's call in the window | human | not started | |
 
-Readings, attempts and the owed lists: [`logs/0051.md`](logs/0051.md).
+Readings and attempts: [`logs/0051.md`](logs/0051.md).
 
 ### Notes
 
+Each phase's deviations are listed under it in the readings log. Unmet or not read as stated:
+
+- **Phase 2, done-when 13, the toggle's flicker map: unmet.** It needs a `--steady` knob in `apps/flythrough/tests/strip.rs`, outside the phase's `Files touched`.
+- Phase 2, done-when 13, `S90` 0: reads 1, as today with indirect off. The rig's first frame after an event is frame 1.
+- Phase 2, done-when 6, "noise keeps falling to frame 512": the rig prints no noise by frame.
+- Phase 2, `a1=128`: no frozen-frame reading; `freeze_census` compares with 128, the renderer clamps to 127.
+- Phase 3, done-when 5, the full-table share: not read apart from the no-cell share.
+- Phase 3, B2: not built (optional).
+
+Predictions that read as misses: Phase 2 done-when 5's second (the indirect-off composite rises 1.63 to 3.96 times); Phase 3 done-when 4's `K` with the lamp off in the flight (rises to 2.2 to 2.6 times today's); Phase 3 done-when 10's native guess at `b-native` (1.472). Every hall arm holds still past 300 frames.
+
+`a_turn_reads_converged_cells` reads 30.9 s and 33.1 s, loaded, against the 30 s quiet line; it stays in the gate. Its assertion takes the plan's second branch, since today reads no excess at that run.
+
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+Phase 4 is open, so the plan does not close at this record.
+
+- **What shipped:** behind settings, all off by default: A1 to A4, C and B; `--steady` and `--cache-read` on the fly-through, `--steady` on `hero`; the settle rig in `apps/flythrough/tests/`.
+- **Public API changed:** `Lighting::{probe_freeze, skip_inside_probes, skip_converged_draw, probe_lamp, emissive_cache}`, `EmissiveCache`, `CacheRead`, the presets' builders, `Frame::{set_composite_capture, composite_capture}`.
+- **Budget readings:** in the log, every one loaded (indicative), load 1.49 to 5.79, both adapters, 1920 x 1080 from 720p, the level. RTX 3080 Laptop at rest at the spawn, frame ms: off 4.944 (5.224 at Phase 3), a 3.174, ac 3.193, b 4.290, ab 3.118, b no indirect 3.255. AMD Cezanne on RADV, the same: off 35.438 (34.579), a 23.392, ac 23.395, b 28.704, ab 22.252, b no indirect 21.053. `frame_bytes` with the cache off reads main's; with it on, 89 617 600 B at the rig's setting.
+- **Gate at the tip:** at the tree of c933a31 (code c9ce8c9), lavapipe, `--profile gate`: 704 run, 704 passed, 67 skipped, exit 0. Doctests, clippy, fmt, deny and the doc and tier gates exit 0.
+- **Outstanding `human` phases:** Phase 4.
 
 ## Followups
