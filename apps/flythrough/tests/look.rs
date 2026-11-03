@@ -135,6 +135,7 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
         translucent_layers: 4,
         cutaway: false,
         tuning: vxe_render::SurfaceTuning::default(),
+        far_normal: [0.0; 2],
     };
     assert_eq!(default, LookParams::default());
     let world = carved_world();
@@ -472,6 +473,71 @@ fn axis_fraction(rgba: &[u8]) -> f64 {
         }
     }
     axial as f64 / hits.max(1) as f64
+}
+
+/// `LookParams::far_normal [2, 6]` on the pillar, seen along +x at 320 x 180 with 70 degrees of
+/// vertical field of view. A view's tangents span `2 tan(35 deg) 320 / 180 = 2.4896` across
+/// its 320 pixels, so a voxel at distance `t` spans `128.53 / t` pixels. The camera `d` voxels
+/// from the sphere's centre (radius 20) hits it from `d - 20` at the pole to `sqrt(d^2 - 400)`
+/// at the silhouette. `d = 25`: `t` at most 15, at least 8.5 pixels a voxel, so the normals
+/// view is `face`'s. `d = 90`: `t` at least 70, at most 1.84 pixels a voxel, so it is
+/// `gradient27`'s. `d = 57`: `t` from 37 to 53.4, 3.47 to 2.41 pixels a voxel, inside the
+/// band, so it differs from both.
+#[test]
+fn the_far_normal_is_face_up_close_and_gradient27_far() {
+    let world = pillar_world_with(flythrough::cave_materials());
+    let Some(mut rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let camera = |d: f32| vxe_render::Camera {
+        position: [PILLAR_CENTRE[0] - d, PILLAR_CENTRE[1], PILLAR_CENTRE[2]].into(),
+        ..pillar_camera()
+    };
+    let far = LookParams {
+        far_normal: [2.0, 6.0],
+        ..look(NormalMode::Face, ViewMode::Normals)
+    };
+    let face = look(NormalMode::Face, ViewMode::Normals);
+    let gradient = look(NormalMode::Gradient27, ViewMode::Normals);
+    let mut views = |d: f32| {
+        let cam = camera(d);
+        let light = LightParams::at_eye();
+        (
+            rig.render(&cam, &light, far),
+            rig.render(&cam, &light, face),
+            rig.render(&cam, &light, gradient),
+        )
+    };
+    let differing =
+        |a: &[u8], b: &[u8]| a.chunks(4).zip(b.chunks(4)).filter(|(p, q)| p != q).count();
+    // A miss is black in the normals view; each distance must show the sphere.
+    let hits = |a: &[u8]| a.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+
+    let (blend, f, g) = views(25.0);
+    assert!(hits(&blend) > 1000, "{} hit pixels", hits(&blend));
+    assert!(
+        differing(&f, &g) > 1000,
+        "face and gradient27 differ up close"
+    );
+    assert_eq!(differing(&blend, &f), 0, "up close it is face's");
+
+    let (blend, f, g) = views(90.0);
+    assert!(hits(&blend) > 100, "{} hit pixels", hits(&blend));
+    assert!(
+        differing(&f, &g) > 100,
+        "face and gradient27 differ far off"
+    );
+    assert_eq!(differing(&blend, &g), 0, "far off it is gradient27's");
+
+    let (blend, f, g) = views(57.0);
+    assert!(hits(&blend) > 100, "{} hit pixels", hits(&blend));
+    let (from_face, from_gradient) = (differing(&blend, &f), differing(&blend, &g));
+    println!(
+        "in the band, of {} hit pixels: {from_face} differ from face, {from_gradient} from gradient27",
+        hits(&blend)
+    );
+    assert!(from_face > hits(&blend) / 2, "{from_face}");
+    assert!(from_gradient > hits(&blend) / 4, "{from_gradient}");
 }
 
 /// The comparison table's image metrics, one line per mode, in one run:
@@ -844,6 +910,7 @@ fn preset_look(p: flythrough::LookPreset, view: ViewMode) -> LookParams {
         normal_mode: p.normal_mode,
         view,
         tuning: p.tuning,
+        far_normal: p.far_normal,
         ..LookParams::default()
     }
 }

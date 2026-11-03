@@ -348,8 +348,8 @@ Readings: [`logs/0055.md`](logs/0055.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Procedural detail removed | dev | done | 4ec2b34 |
-| 2: FSR 2 at 1.5 the default | dev | done | committed with this row |
-| 3: The far-normal spike | dev | not started | |
+| 2: FSR 2 at 1.5 the default | dev | done | a2c4dc5 |
+| 3: The far-normal spike | dev | done | committed with this row |
 | 4: The owner's pick | human | not started | |
 | 5: The picks become the defaults | dev | not started | |
 
@@ -365,6 +365,11 @@ Readings: [`logs/0055.md`](logs/0055.md).
   now runs the default look. `docs/nfr.md` and `docs/nfr/` name `--look plain` and `--detail` in
   historical readings, left as written.
 - Phase 2: with no `--upscaler`, `--jitter` given at any scale starts in `own` (only `own` takes it).
+- Phase 1's done-when 3 was not met at 4ec2b34: `start_modes` never showed the look, and the test called `show_look` by hand. Phase 3's commit fixes `start_modes` and the test reads its banner.
+- Phase 3's done-when 2: no setting meets both the dome and the near-pillar bars; the nearest are in the readings log.
+- Phase 3 moved `the_showcase_banner_names_its_source_and_the_lamp`'s source check to the banner's second row: the look row now comes first.
+- Phase 3 added setting [1, 2] to the strips, and read five more bands at the hall shot.
+- `LookPreset` gained `far_normal`; `N` leaves the run's far normal alone.
 - The plan's TL;DR says the fly-through starts at the vein pose; no phase changes the start pose
   and none was changed (owner told, 2026-11-03).
 

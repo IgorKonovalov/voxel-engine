@@ -15,6 +15,9 @@
 //! - `VXE_STRIP_UPSCALER`: `fsr2` (default), `own` or `off`; `fsr2` and `own` at scale 1.5
 //!   with sharpening 0.5, `off` at scale 1 with no jitter.
 //! - `VXE_STRIP_LOOK`: a `LookPreset` name (default `face`).
+//! - `VXE_STRIP_FAR`: `LO,HI`, `LookParams::far_normal` (default: the preset's).
+//! - `VXE_STRIP_ENERGY`: crops `x,y,w,h` separated by `/`: the last frame's mean horizontal and
+//!   vertical neighbour `|dY|` is printed for each.
 //! - `VXE_STRIP_LAMP`: `on` or `off` at the start (default off on the showcase, on on the level).
 //! - `VXE_STRIP_INDIRECT`, `VXE_STRIP_FILTER`: `on` (default) or `off`.
 //! - `VXE_STRIP_SAMPLER`: `reuse` (default) or `list` (no reservoir reuse).
@@ -211,6 +214,25 @@ fn luma(p: &[u8]) -> f32 {
     (0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2])) / 255.0
 }
 
+/// The mean `|dY|` between horizontal and between vertical neighbours in the `[x, y, w, h]`
+/// crop of an rgba8 image of width `w`.
+fn neighbour_energy(rgba: &[u8], w: u32, c: [u32; 4]) -> (f64, f64) {
+    let y = |px: u32, py: u32| luma(&rgba[((py * w + px) * 4) as usize..]) as f64;
+    let (mut h_sum, mut v_sum) = (0.0, 0.0);
+    for py in c[1]..c[1] + c[3] {
+        for px in c[0]..c[0] + c[2] {
+            if px + 1 < c[0] + c[2] {
+                h_sum += (y(px + 1, py) - y(px, py)).abs();
+            }
+            if py + 1 < c[1] + c[3] {
+                v_sum += (y(px, py + 1) - y(px, py)).abs();
+            }
+        }
+    }
+    let (cw, ch) = (f64::from(c[2]), f64::from(c[3]));
+    (h_sum / ((cw - 1.0) * ch), v_sum / (cw * (ch - 1.0)))
+}
+
 /// The `[x, y, w, h]` crop of an rgba8 image of width `w`.
 fn crop(rgba: &[u8], w: u32, c: [u32; 4]) -> Vec<u8> {
     let mut out = Vec::with_capacity((c[2] * c[3] * 4) as usize);
@@ -277,7 +299,10 @@ fn out_dir(tag: &str) -> PathBuf {
 #[ignore = "reading only: run with --ignored"]
 fn strip_run() {
     let look = env("VXE_STRIP_LOOK").unwrap_or_else(|| "face".to_owned());
-    let preset = LookPreset::from_name(&look).expect("VXE_STRIP_LOOK takes a look preset");
+    let mut preset = LookPreset::from_name(&look).expect("VXE_STRIP_LOOK takes a look preset");
+    if let Some(f) = list::<2>("VXE_STRIP_FAR") {
+        preset.far_normal = f;
+    }
     let Some(mut scene) = scene() else {
         println!("strip: no adapter; skipped");
         return;
@@ -355,6 +380,7 @@ fn strip_run() {
         normal_mode: preset.normal_mode,
         view,
         tuning: preset.tuning,
+        far_normal: preset.far_normal,
         ..LookParams::default()
     });
     const DT: f32 = 1.0 / 60.0;
@@ -372,9 +398,10 @@ fn strip_run() {
     let tag = env("VXE_STRIP_TAG").unwrap_or_else(|| "strip".to_owned());
     let dir = out_dir(&tag);
     println!(
-        "strip {tag}: {} | {w}x{h} {upscaler} | look {} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
+        "strip {tag}: {} | {w}x{h} {upscaler} | look {} {} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
         scene.name,
         preset.name,
+        LookPreset::far_normal_words(preset.far_normal),
         lighting.lamp,
         lighting.indirect,
         lighting.filter,
@@ -435,6 +462,16 @@ fn strip_run() {
             camera.position.to_array(),
             camera.yaw.to_degrees()
         );
+        if f + 1 == frames
+            && let Some(spec) = env("VXE_STRIP_ENERGY")
+        {
+            for c in spec.split('/') {
+                let c: Vec<u32> = c.split(',').map(|v| v.parse().expect("a crop")).collect();
+                let c = [c[0], c[1], c[2], c[3]];
+                let (eh, ev) = neighbour_energy(&rgba, w, c);
+                println!("energy {c:?}: h {eh:.5} v {ev:.5}");
+            }
+        }
         if f % every == 0 || f + 1 == frames {
             write_png(&dir.join(format!("f{f:04}.png")), &rgba, w, h);
             if let Some(c) = crop_box {

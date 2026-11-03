@@ -398,6 +398,8 @@ pub struct LookPreset {
     pub name: &'static str,
     pub normal_mode: NormalMode,
     pub tuning: SurfaceTuning,
+    /// `LookParams::far_normal`, `[0.0, 0.0]` off.
+    pub far_normal: [f32; 2],
 }
 
 impl LookPreset {
@@ -407,6 +409,7 @@ impl LookPreset {
             name,
             normal_mode,
             tuning: SurfaceTuning { face_mix: 0.0 },
+            far_normal: [0.0; 2],
         }
     }
 
@@ -455,6 +458,16 @@ impl LookPreset {
     /// The parts beyond the normal mode: `face mix 0`.
     pub fn parts(&self) -> String {
         format!("face mix {}", self.tuning.face_mix)
+    }
+
+    /// The far normal in words: `far normal 2..6` or `far normal off`.
+    pub fn far_normal_words(far_normal: [f32; 2]) -> String {
+        let [lo, hi] = far_normal;
+        if hi > lo {
+            format!("far normal {lo}..{hi}")
+        } else {
+            "far normal off".to_owned()
+        }
     }
 }
 

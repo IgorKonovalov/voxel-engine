@@ -93,7 +93,9 @@ pub struct Params {
     /// A reservoir's M is capped at this many times the frame's candidates
     /// ([`Lighting::reuse_m_cap`]).
     pub reuse_m_cap: u32,
-    pub _pad8: [u32; 3],
+    /// [`LookParams::far_normal`].
+    pub far_normal: [f32; 2],
+    pub _pad8: u32,
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -349,8 +351,10 @@ pub struct SurfaceTuning {
     pub face_mix: f32,
 }
 
-/// The surface look: normal mode, view, translucent layers, cutaway and the surface tuning.
-/// The default is face normals, shaded, 4 layers, cutaway off, the tuning off.
+/// The surface look: normal mode, view, translucent layers, cutaway, the surface tuning and
+/// the far normal.
+/// The default is face normals, shaded, 4 layers, cutaway off, the tuning off, the far normal
+/// off.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LookParams {
     pub normal_mode: NormalMode,
@@ -368,6 +372,11 @@ pub struct LookParams {
     /// no shadow ray, and a miss is a flat grey-blue sky.
     pub cutaway: bool,
     pub tuning: SurfaceTuning,
+    /// Face mode's far shading normal, `[lo, hi]` in pixels per voxel across the view's width:
+    /// at or below `lo` a hit shades with the 27-count gradient, at or above `hi` with its face
+    /// normal, a smoothstep between. `hi <= lo` (`[0.0, 0.0]`) is off: the face normal, with no
+    /// neighbour read. The shadow ray keeps the face normal. No other normal mode reads it.
+    pub far_normal: [f32; 2],
 }
 
 impl Default for LookParams {
@@ -378,6 +387,7 @@ impl Default for LookParams {
             translucent_layers: 4,
             cutaway: false,
             tuning: SurfaceTuning::default(),
+            far_normal: [0.0; 2],
         }
     }
 }
@@ -2216,6 +2226,7 @@ impl Frame {
             translucent_layers: self.look.translucent_layers,
             window_min: e.min.0,
             face_mix: self.look.tuning.face_mix,
+            far_normal: self.look.far_normal,
             window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
                 .to_array(),

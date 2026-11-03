@@ -17,7 +17,7 @@
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
-//! [--headless] [--look PRESET] [--face-mix K] [--band-census] [--view VIEW]
+//! [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
@@ -70,7 +70,10 @@
 //! mode, the body spawned in the spawn pocket. The fly-through starts in `face`
 //! (`LookPreset::DEFAULT`, honest cubes, ADR-0041), and prints that look first; `--look` picks
 //! the starting preset (`flythrough::LookPreset`: `face`, `field`, `trilinear8`, `gradient27`),
-//! a normal mode with its face mix, overridable by `--face-mix`. Only a run started under
+//! a normal mode with its face mix, overridable by `--face-mix`. `--far-normal LO,HI` blends
+//! face mode's shading normal toward the 27-count gradient where a voxel spans fewer than `HI`
+//! pixels, all the way at `LO` (`LookParams::far_normal`); the banner and the look line show it,
+//! and `N` leaves it alone. Only a run started under
 //! `--look field` builds the field's band slots and runs the field pass; any other run's `N`
 //! skips the field. With the field's band slots the autopilot's report adds the field pass's
 //! band slots, CPU and GPU time over the flight, and the frame line the smooth share of the
@@ -581,6 +584,7 @@ impl Args {
             .with_source(self.showcase.then_some("showcase"))
             .with_probe_spacing(self.probe_spacing);
         m.set_auto(self.adaptation, self.start_auto());
+        m.show_look(&self.look, self.look.far_normal, now_ms);
         m.show_view(self.view, now_ms);
         m
     }
@@ -660,6 +664,7 @@ impl Args {
             translucent_layers: self.translucent_layers,
             cutaway: false,
             tuning: self.look.tuning,
+            far_normal: self.look.far_normal,
         }
     }
 }
@@ -743,8 +748,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut shot_flag = false;
     let mut exposure_flag = false;
     let mut light_radius_flag = None;
-    // The part flag, applied to the `--look` preset after every flag is read.
+    // The part flags, applied to the `--look` preset after every flag is read.
     let mut face_mix = None;
+    let mut far_normal = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -779,6 +785,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok_or(format!("--look takes {}, not {v}", LookPreset::names()))?;
             }
             "--face-mix" => face_mix = Some(parse_unit("--face-mix", &value()?, 0.5)?),
+            "--far-normal" => far_normal = Some(parse_far_normal(&value()?)?),
             "--band-census" => args.band_census = true,
             "--view" => {
                 let v = value()?;
@@ -1095,6 +1102,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         );
     }
     args.look.tuning.face_mix = face_mix.unwrap_or(args.look.tuning.face_mix);
+    args.look.far_normal = far_normal.unwrap_or(args.look.far_normal);
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
     }
@@ -1217,6 +1225,19 @@ fn parse_unit(flag: &str, v: &str, max: f32) -> Result<f32, String> {
         return Err(format!("{flag} must be in [0, {max}], not {x}"));
     }
     Ok(x)
+}
+
+/// `--far-normal LO,HI`: pixels per voxel, `0 <= LO < HI`.
+fn parse_far_normal(v: &str) -> Result<[f32; 2], String> {
+    let err = || format!("--far-normal takes LO,HI with 0 <= LO < HI, not {v}");
+    let (lo, hi) = v.split_once(',').ok_or_else(err)?;
+    let lo: f32 = lo.trim().parse().map_err(|_| err())?;
+    let hi: f32 = hi.trim().parse().map_err(|_| err())?;
+    if lo >= 0.0 && lo < hi {
+        Ok([lo, hi])
+    } else {
+        Err(err())
+    }
 }
 
 /// The verb of a `DigLogic` `op` line, as the `'static` the edit lines and the HUD hold;
@@ -4133,7 +4154,8 @@ impl Run {
             self.preset = self.preset.next(contour);
             self.look.normal_mode = self.preset.normal_mode;
             self.look.tuning = self.preset.tuning;
-            self.modes.show_look(&self.preset, ms_since(self.start));
+            self.modes
+                .show_look(&self.preset, self.look.far_normal, ms_since(self.start));
             println!("{}", look_line(&self.look, &self.preset));
         }
         if input.pressed(KeyCode::KeyI)
@@ -4689,14 +4711,15 @@ fn steps_line(h: &StepHistogram) -> String {
     )
 }
 
-/// The preset's name and parts and the view: `look field (normals contour, face mix 0), view
-/// shaded`.
+/// The preset's name and parts, the far normal and the view: `look field (normals contour,
+/// face mix 0, far normal off), view shaded`.
 fn look_line(look: &LookParams, preset: &LookPreset) -> String {
     format!(
-        "look {} (normals {}, {}), view {}",
+        "look {} (normals {}, {}, {}), view {}",
         preset.name,
         look.normal_mode.name(),
         preset.parts(),
+        LookPreset::far_normal_words(look.far_normal),
         look.view.name()
     )
 }
@@ -7030,8 +7053,8 @@ mod tests {
         }
     }
 
-    /// With `--source showcase` the banner's line starts `source showcase` and reads `lamp
-    /// off`; `F7` turns it to `lamp on`. Other sources name none.
+    /// With `--source showcase` the banner's look row is followed by a line that starts
+    /// `source showcase` and reads `lamp off`; `F7` turns it to `lamp on`. Other sources name none.
     #[test]
     fn the_showcase_banner_names_its_source_and_the_lamp() {
         let a = parse_args_from(argv(&["--source", "showcase"])).expect("parses");
@@ -7040,12 +7063,14 @@ mod tests {
         assert!(line.starts_with("source showcase, "), "{line}");
         assert!(line.contains("lamp off"), "{line}");
         let banner = m.banner(0.0).expect("the banner shows at the start");
-        assert!(banner.starts_with("source showcase"), "{banner}");
+        let row = |b: &str| b.lines().nth(1).unwrap_or("").to_owned();
+        assert!(banner.starts_with("look face, "), "{banner}");
+        assert!(row(&banner).starts_with("source showcase"), "{banner}");
         assert!(banner.contains("lamp off"), "{banner}");
         assert!(banner.lines().all(|l| l.len() <= hud::BANNER_COLS));
         m.press(hud::ModeKey::Lamp, 1000.0);
         let banner = m.banner(1000.0).expect("F7 shows the banner");
-        assert!(banner.starts_with("source showcase"), "{banner}");
+        assert!(row(&banner).starts_with("source showcase"), "{banner}");
         assert!(
             banner.contains("lamp on") && !banner.contains("lamp off"),
             "{banner}"
@@ -7356,7 +7381,7 @@ mod tests {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
             look_line(&a.start_look(), &a.look),
-            "look face (normals face, face mix 0), view shaded"
+            "look face (normals face, face mix 0, far normal off), view shaded"
         );
         assert_eq!(a.look, LookPreset::FACE);
         assert!(!a.field_surface());
@@ -7376,7 +7401,7 @@ mod tests {
         let c = parse_args_from(argv(&["--look", "face"])).unwrap();
         assert_eq!(
             look_line(&c.start_look(), &c.look),
-            "look face (normals face, face mix 0), view shaded"
+            "look face (normals face, face mix 0, far normal off), view shaded"
         );
         assert_eq!(c.look, LookPreset::FACE);
         assert_eq!(
@@ -7385,17 +7410,36 @@ mod tests {
         );
     }
 
-    /// The banner at the start is `look face` over the lighting modes, and `N`'s cycle reaches
-    /// every preset from there.
+    /// The start's banner is `look face, far normal off` over the lighting modes,
+    /// `--far-normal` shows and takes the look's far normal, and `N`'s cycle reaches every
+    /// preset from there.
     #[test]
-    fn the_start_banner_reads_look_face_and_n_cycles() {
+    fn the_start_banner_names_the_look_and_n_cycles() {
         let a = parse_args_from(argv(&[])).unwrap();
-        let mut m = hud::Modes::new(vxe_render::Lighting::default(), Default::default(), 0.0);
-        m.show_look(&a.look, 0.0);
-        let banner = m.banner(0.0).expect("the banner shows at the start");
-        let bare = hud::Modes::new(vxe_render::Lighting::default(), Default::default(), 0.0);
-        let lighting = bare.banner(0.0).expect("the banner shows at the start");
-        assert_eq!(banner, format!("look face\n{lighting}"));
+        let banner = a.start_modes(0.0).banner(0.0).expect("the start shows it");
+        let mut bare = hud::Modes::new(a.start_lighting(), a.lighting, 0.0)
+            .with_source(a.showcase.then_some("showcase"))
+            .with_probe_spacing(a.probe_spacing);
+        bare.set_auto(a.adaptation, a.start_auto());
+        let lighting = bare.banner(0.0).expect("the start shows it");
+        assert_eq!(banner, format!("look face, far normal off\n{lighting}"));
+        let knob = parse_args_from(argv(&["--far-normal", "2,6"])).unwrap();
+        assert_eq!(knob.start_look().far_normal, [2.0, 6.0]);
+        assert_eq!(
+            look_line(&knob.start_look(), &knob.look),
+            "look face (normals face, face mix 0, far normal 2..6), view shaded"
+        );
+        let banner = knob.start_modes(0.0).banner(0.0).unwrap();
+        assert!(
+            banner.starts_with("look face, far normal 2..6\n"),
+            "{banner}"
+        );
+        for bad in ["6,2", "2,2", "-1,2", "2", "x,6"] {
+            assert!(
+                parse_args_from(argv(&["--far-normal", bad])).is_err(),
+                "{bad}"
+            );
+        }
         let mut seen = vec![a.look.name];
         let mut p = a.look.next(true);
         while p != a.look {
@@ -7415,7 +7459,7 @@ mod tests {
         };
         assert_eq!(
             line(&["--look", "field"]),
-            "look field (normals contour, face mix 0), view shaded"
+            "look field (normals contour, face mix 0, far normal off), view shaded"
         );
         for p in LookPreset::ALL {
             let a = parse_args_from(argv(&["--look", p.name])).unwrap();
@@ -7431,7 +7475,7 @@ mod tests {
         );
         assert_eq!(
             line(&["--look", "field", "--face-mix", "0.25"]),
-            "look field (normals contour, face mix 0.25), view shaded"
+            "look field (normals contour, face mix 0.25, far normal off), view shaded"
         );
         // The plane attribute's settings are gone: their flags are unknown arguments.
         for flag in [

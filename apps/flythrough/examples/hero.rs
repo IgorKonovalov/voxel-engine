@@ -496,6 +496,7 @@ fn main() -> Result<(), String> {
         frame.set_look(vxe_render::LookParams {
             normal_mode: args.look.normal_mode,
             tuning: args.look.tuning,
+            far_normal: args.look.far_normal,
             ..vxe_render::LookParams::default()
         });
         frame.set_resolution(&device, args.resolution);

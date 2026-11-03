@@ -184,8 +184,10 @@ struct Params {
     // A reservoir's M is capped at this many times the frame's candidates
     // (`Lighting::reuse_m_cap`, at least 1).
     reuse_m_cap: u32,
-    _pad8: u32,
-    _pad9: u32,
+    // The face look's far shading normal (`LookParams::far_normal`), in pixels per voxel:
+    // `far_hi <= far_lo` is off.
+    far_lo: f32,
+    far_hi: f32,
     _pad10: u32,
 };
 
@@ -1040,9 +1042,21 @@ fn trilinear8_normal(p: vec3<f32>, h: Hit, nf: vec3<f32>) -> vec3<f32> {
     return normal_from_gradient(vec3<f32>(gx, gy, gz), nf);
 }
 
-// The shading normal of hit `h` under the current normal mode. A ray that starts inside rock
-// (no entry face) keeps the face-mode normal in every mode.
-fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
+// The weight of the far normal for a hit at distance `t` voxels in view `v`: 1 where a voxel
+// spans at most `far_lo` pixels across the view's width, 0 at `far_hi` and over, a smoothstep
+// between; 0 with the knob off.
+fn far_normal_weight(v: View, t: f32) -> f32 {
+    if (params.far_hi <= params.far_lo) {
+        return 0.0;
+    }
+    let px = f32(v.rect.z) / ((v.tan_left + v.tan_right) * max(t, 1e-3));
+    return 1.0 - smoothstep(params.far_lo, params.far_hi, px);
+}
+
+// The shading normal of hit `h` of a ray of view `v` under the current normal mode. A ray that
+// starts inside rock (no entry face) keeps the face-mode normal in every mode. Face mode blends
+// toward the 27-count gradient by `far_normal_weight`; at weight 0 it reads no neighbour.
+fn surface_normal(v: View, o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     let nf = face_normal(d, h);
     if (h.axis < 0) {
         return nf;
@@ -1054,7 +1068,15 @@ fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     if (mode == NORMAL_GRADIENT27) {
         return gradient27_normal(h, nf);
     }
-    return nf;
+    let w = far_normal_weight(v, h.t);
+    if (w <= 0.0) {
+        return nf;
+    }
+    let g = gradient27_normal(h, nf);
+    if (w >= 1.0) {
+        return g;
+    }
+    return normalize(mix(nf, g, w));
 }
 
 // A field-surface hit's shading normal: its field normal `n` mixed `params.face_mix` of the
@@ -2118,7 +2140,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
     var info = vec4<u32>(0u);
     if (h.found) {
-        let n = surface_normal(o, d, h);
+        let n = surface_normal(params.views[view_of(gid.xy)], o, d, h);
         let flags = HIT_FOUND | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
         pos = vec4<f32>(o + d * h.t, h.t);
         info = vec4<u32>(octa16_encode(n), h.material, flags);

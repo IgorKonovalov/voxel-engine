@@ -1690,6 +1690,7 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     frame.set_look(vxe_render::LookParams {
         normal_mode: look.normal_mode,
         tuning: look.tuning,
+        far_normal: look.far_normal,
         ..vxe_render::LookParams::default()
     });
     let camera = Camera {

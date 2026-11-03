@@ -1411,10 +1411,15 @@ impl Modes {
         }
     }
 
-    /// Shows the banner from `now_ms` with the look in words, `look field`: the first row of
-    /// every banner from then on.
-    pub fn show_look(&mut self, preset: &crate::LookPreset, now_ms: f64) {
-        self.look = Some(format!("look {}", preset.name));
+    /// Shows the banner from `now_ms` with the look in words, `look field, far normal off`:
+    /// the first row of every banner from then on. `far_normal` is the run's
+    /// (`LookParams::far_normal`), which `N` leaves alone.
+    pub fn show_look(&mut self, preset: &crate::LookPreset, far_normal: [f32; 2], now_ms: f64) {
+        self.look = Some(format!(
+            "look {}, {}",
+            preset.name,
+            crate::LookPreset::far_normal_words(far_normal)
+        ));
         self.banner_at = now_ms;
     }
 
@@ -1674,7 +1679,7 @@ mod mode_tests {
         assert!(again.contains("lamp on"), "{again}");
     }
 
-    /// `N` names each preset in turn on the banner's first row, with no other word.
+    /// `N` names each preset in turn on the banner's first row, then the far normal.
     #[test]
     fn the_banner_names_each_look_preset() {
         use crate::LookPreset;
@@ -1689,9 +1694,12 @@ mod mode_tests {
         let mut names = Vec::new();
         for _ in 0..LookPreset::ALL.len() {
             preset = preset.next(true);
-            m.show_look(&preset, t);
+            m.show_look(&preset, [0.0; 2], t);
             let b = m.banner(t).expect("a press shows the banner");
-            assert_eq!(b, format!("look {}\n{lighting}", preset.name));
+            assert_eq!(
+                b,
+                format!("look {}, far normal off\n{lighting}", preset.name)
+            );
             assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
             assert_eq!(m.banner(t + BANNER_MS), None);
             names.push(preset.name);
@@ -1705,7 +1713,14 @@ mod mode_tests {
         );
         assert_eq!(LookPreset::GRADIENT27.next(false), LookPreset::FACE);
         let first = m.banner(t - BANNER_MS).unwrap();
-        assert!(first.starts_with("look face\n"), "{first}");
+        assert!(first.starts_with("look face, far normal off\n"), "{first}");
+        m.show_look(&LookPreset::FACE, [2.0, 6.0], t);
+        assert!(
+            m.banner(t)
+                .unwrap()
+                .starts_with("look face, far normal 2..6\n"),
+            "the knob's setting shows"
+        );
     }
 
     /// `F9`'s view shows on the banner after the look's words, `view cracks`, from the press
@@ -1719,14 +1734,14 @@ mod mode_tests {
             0.0,
         );
         let lighting = m.banner(0.0).expect("the banner shows at the start");
-        m.show_look(&crate::LookPreset::FIELD, 0.0);
+        m.show_look(&crate::LookPreset::FIELD, [0.0; 2], 0.0);
         m.show_view(ViewMode::Cracks, 5000.0);
         assert_eq!(
             m.banner(5000.0).as_deref(),
             Some(
                 format!(
                     "{}\n{lighting}",
-                    wrap(&["look field", "view cracks"]).join("\n")
+                    wrap(&["look field", "far normal off", "view cracks"]).join("\n")
                 )
                 .as_str()
             )
@@ -1735,7 +1750,7 @@ mod mode_tests {
         m.show_view(ViewMode::Shaded, 9000.0);
         assert_eq!(
             m.banner(9000.0).as_deref(),
-            Some(format!("look field\n{lighting}").as_str())
+            Some(format!("look field, far normal off\n{lighting}").as_str())
         );
     }
 }
