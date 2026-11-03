@@ -788,7 +788,7 @@ default surface is honest cubes" above and "The `face` default carries no attrib
 1.5), half lighting tier, coarse shadow walk, lamp on, release, exclusive perf lock and memory
 cap, three alternated rounds started at a 1-minute load under 2, the median over the rounds of
 each run's frame line (itself the median of the last 30 frames). Sources, untracked logs in
-Plan 0054's worktree:
+`renders/plan-0054-live/` (local):
 
 - cubes on the RTX: `face` at main `28948a5`, Plan 0054 Phase 4a's matrix (`renders/plan-0054-live/p4a/runs/`),
   read while that matrix was still running; Phase 4a's log table supersedes it.
