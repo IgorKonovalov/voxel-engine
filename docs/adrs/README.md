@@ -54,7 +54,7 @@ the status.
 | [0037](0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md) | The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp | proposed (Plan 0048) |
 | [0038](0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md) | The contour plane code holds a zero normal component exactly | accepted, Outcome (Plan 0050); amends ADR-0011's code scale |
 | [0039](0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md) | The contour walk closes a crack at the passed voxel's exit, with the passed plane's normal | accepted, Outcome (Plan 0050); amends ADR-0011's hit rule after a pass |
-| [0040](0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md) | One-voxel features melt into the contour surface: the plane is fit on a majority-filtered occupancy, and the shading normal is a field over the planes | proposed (Plan 0053, decided at its Phase 4) |
+| [0040](0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md) | One-voxel features melt into the contour surface: the plane is fit on a majority-filtered occupancy, and the shading normal is a field over the planes | rejected, never accepted (Plan 0053) |
 | [0041](0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) | The default surface is honest cubes; the trilinear zero set of the 27-count field is an opt-in look for smooth materials | proposed (Plan 0054) |
 <!-- roster:end -->
 

@@ -1,20 +1,22 @@
 # 0053: One-voxel features on the contour surface: a box metric, a majority-filtered plane fit, a normal field, and the owner's call
 
-> **Status:** in-progress
+> **Status:** done (2026-11-03, with Plan 0054, v0.39.0): closed clean at the fresh-session review; the
+> majority fit and the normal field failed the owner's eye at the vein and went with the planes in Plan
+> 0054 Phase 4c; the box metric survives as the field look's gate; ADR-0040 rejected, never accepted
 > **Approved:** 2026-10-30 (owner, as drafted; the order against Plan 0051 and the two cost bars stay the owner's to set)
 > **Amended:** 2026-10-30 (architect, owner's answer): Phase 4 waits for
-> [Plan 0054](0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)'s Phase 1, the
+> [Plan 0054](../0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)'s Phase 1, the
 > field-surface spike stacked on this plan's branch after Phase 3, and compares its
 > `--look field` as a sixth look in the same windowed session. Outcome (b) names the field
 > surface by its reading, not by a future plan.
 > **Created:** 2026-10-30
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
-> **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (the per-voxel plane, whose one-clipped-cube shape this plan measures the limits of);
-> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> [ADR-0039](../../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
 > (snap, the closing rule this plan builds on);
-> [ADR-0040](../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
+> [ADR-0040](../../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
 > (proposed: the majority fit and the normal field; Phase 4 accepts or supersedes it).
 > **Source:** the owner at Plan 0050's Phase 5 (2026-10-30, screenshots in that worktree's
 > untracked `live/p5/`): voxel-sized flat-faced boxes at the vein and the patch, in `old` and

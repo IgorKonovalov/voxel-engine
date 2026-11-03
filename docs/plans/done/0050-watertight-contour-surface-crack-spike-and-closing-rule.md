@@ -15,7 +15,7 @@
 > **Amended:** 2026-10-30 (architect, after Phase 5's outcome (c)): the flat-faced boxes are
 > a fault of the surface itself (one clipped cube per voxel, ADR-0011), not of the closing
 > rule, and no closing rule reaches them; they go to
-> [Plan 0053](../0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
+> [Plan 0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
 > with [ADR-0040](../../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
 > (proposed). Phase 6 is unblocked and rewritten: the losers and `old` go, the window's cracks
 > palette is fixed, the showcase golden is re-blessed by name. The closing rule's ADR is

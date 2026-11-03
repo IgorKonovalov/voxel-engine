@@ -1,8 +1,8 @@
 # ADR-0040: One-voxel features melt into the contour surface: the plane is fit on a majority-filtered occupancy, and the shading normal is a field over the planes
 
-> **Status:** proposed
+> **Status:** rejected (2026-11-03, Plan 0053 closed; never accepted; see Outcome)
 > **Date:** 2026-10-30
-> **Related plan(s):** [Plan 0053](../plans/0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
+> **Related plan(s):** [Plan 0053](../plans/done/0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
 > (its Phase 4, the owner's check, accepts or supersedes this). Amends
 > [ADR-0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) in what
 > occupancy the plane fit reads and what normal a hit shades with; the attribute, its pages
@@ -174,3 +174,24 @@ the owner compares it in Phase 4; it is the fallback if the boxes stand, not the
 Fit the normal over a 5-cube instead of a 3-cube. It lowers the tilt of the tiles around a
 feature from 25 to about 10 degrees and widens it to five tiles. It lost because the normal
 stays one constant per voxel and the hard edges between tiles are what the eye reads as a box.
+
+## Outcome
+
+**Rejected 2026-11-03 at Plan 0053's close (Plan 0054 owner answer 14), never accepted.** The two
+changes were built and measured behind settings, and neither shipped.
+
+- **What the owner saw.** Plan 0053's Phase 4 (owner answer 3, 2026-10-31): today's look, the
+  filter, the normal field and both read "same problem" at the vein, the rods and slabs standing
+  in every one. The patch read "very few blocks, maybe acceptable" for the plane looks.
+- **Readings that agree with the eye.** The filter melts what stands on a surface (rod, lone cube
+  and wall pillar at 0 box pixels) but raises the poses' box pixels (vein 35098 to 39263, patch
+  38250 to 42080) and the groove's (697 to 4870). The normal field moves no hit, so every box stays
+  a box, at +12.0 % hit plus light on the RTX 3080 Laptop and +7.3 % on the Radeon RENOIR
+  (Plan 0053's log).
+- **Alternative D** (`cubes-field`): "not even too bad" at the vein, thin lit lines along the cube
+  edges at the patch, "not acceptable really". Alternative B (the field surface) was picked first
+  and then made an opt-in look; plain cubes became the default (ADR-0041).
+- **What is left in the tree.** The filter, the normal field and `cubes-field` were removed with
+  the planes in Plan 0054 Phase 4c (2bca6e4). Only Plan 0053's box metric stays, in
+  `apps/flythrough/tests/look.rs`, as the field look's regression gate. The close review's grep of
+  `crates/` and `apps/` finds their names only in the test that their flags are unknown arguments.
