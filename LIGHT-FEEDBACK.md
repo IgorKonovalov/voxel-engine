@@ -37,7 +37,7 @@ every light settled, which is exactly the problem I'm talking about". Then, on t
 The same still rendered from a fresh start at growing frame counts, nothing moving: the showcase's
 `hall` shot, 1920 x 1080, FSR 2 at 1.5, the default look, lamp off, manual exposure 8, RTX 3080
 Laptop, at 4bf567f (`hero --exposure 8 --adapter NVIDIA --frames N`). The 64-frame render is
-byte-identical to `docs/images/hero.png`: the README shows an unsettled frame, because the tool's
+byte-identical to the `docs/images/hero.png` of b829b21: the README showed an unsettled frame, because the tool's
 default is 64 frames. Differences are per pixel in 8-bit levels, the worst of the three channels.
 
 | Compared | Mean | p99 | Pixels off by more than 2 | more than 8 | more than 32 |
