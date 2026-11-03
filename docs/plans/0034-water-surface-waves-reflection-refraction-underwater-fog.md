@@ -46,6 +46,8 @@
 > reflected hits (Phase 4). If the verdict removes the probes, both need another source; if it
 > keeps the world-space cache, a reflected hit could read it instead of a noisy sample, which
 > is a choice for that verdict's plan. Nothing here is decided on it.
+> **Amended 2026-11-03 (owner):** liquids keep flat faces with analytic normals, which answers
+> the owner's open item of 2026-11-01. See "Owner answers".
 
 ## TL;DR
 
@@ -515,6 +517,14 @@ for the floor tier becomes `Sky` by the owner's call in Phase 9.
   perspective and clouds** (Plan 0035); this plan reads the first and, if present, the second.
 - **Swimming**, a passable class for collision, and underwater audio filtering.
 - **Glass**: non-liquid translucent rows keep Plan 0015's per-voxel compositing.
+
+## Owner answers
+
+1. **Liquids keep their flat faces (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: flat faces with analytic normals stay, as ADR-0029 decides, and a liquid
+   does not take the field surface. This answers the owner's open item of 2026-11-01
+   ([Plan 0054](done/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md) owner answers 13
+   and 14, and its Followup "Smooth for liquids"). No new ADR.
 
 ## Implementation log
 

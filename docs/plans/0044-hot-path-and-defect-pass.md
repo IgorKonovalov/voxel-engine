@@ -26,7 +26,9 @@
 > violation of clean code principles, duplications, mega files ... a plan addressing issues
 > that goes after all plans that are active are finished". The review ran at `87e4b67`; its
 > structural findings are Plan 0045.
-> **After:** Plan 0051, and before the M10 batch (owner, 2026-10-29; it was "every plan
+> **After:** Plan 0051 and its verdict plan, and before Plan 0045, Plan 0048 and M10 (amended
+> 2026-11-03, owner; see "Owner answers"). Before that: after Plan 0051, before the M10 batch
+> (owner, 2026-10-29; it was "every plan
 > active on 2026-10-22", which would have parked it behind Plans 0032 to 0037). Plan 0052,
 > the second review, ran first (closed 2026-10-30); it fixed no item listed here.
 
@@ -425,6 +427,12 @@ guesses until read.
 - **Move the residency pressure rule out of the testbed into an engine crate.** That is an
   architect question, recorded as a followup.
 - **Change any default, tier or look.**
+
+## Owner answers
+
+1. **The order (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: Plan 0051, its verdict plan, this plan, Plan 0045, Plan 0048 if it stands,
+   then M10.
 
 ## Implementation log
 
