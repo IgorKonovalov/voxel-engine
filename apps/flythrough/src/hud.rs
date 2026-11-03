@@ -1413,12 +1413,12 @@ impl Modes {
 
     /// Shows the banner from `now_ms` with the look in words, `look field, far normal off`:
     /// the first row of every banner from then on. `far_normal` is the run's
-    /// (`LookParams::far_normal`), which `N` leaves alone.
+    /// (`LookParams::far_normal`), which `N` leaves alone; it is named in face mode only.
     pub fn show_look(&mut self, preset: &crate::LookPreset, far_normal: [f32; 2], now_ms: f64) {
         self.look = Some(format!(
             "look {}, {}",
             preset.name,
-            crate::LookPreset::far_normal_words(far_normal)
+            crate::LookPreset::far_normal_words(preset.normal_mode, far_normal)
         ));
         self.banner_at = now_ms;
     }
@@ -1720,6 +1720,13 @@ mod mode_tests {
                 .unwrap()
                 .starts_with("look face, far normal 2..6\n"),
             "the knob's setting shows"
+        );
+        m.show_look(&LookPreset::GRADIENT27, [2.0, 6.0], t);
+        assert!(
+            m.banner(t)
+                .unwrap()
+                .starts_with("look gradient27, far normal off\n"),
+            "a mode that does not read the far normal does not name it"
         );
     }
 

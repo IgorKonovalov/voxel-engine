@@ -401,7 +401,7 @@ fn strip_run() {
         "strip {tag}: {} | {w}x{h} {upscaler} | look {} {} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
         scene.name,
         preset.name,
-        LookPreset::far_normal_words(preset.far_normal),
+        LookPreset::far_normal_words(preset.normal_mode, preset.far_normal),
         lighting.lamp,
         lighting.indirect,
         lighting.filter,

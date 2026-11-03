@@ -73,8 +73,8 @@
 //! the starting preset (`flythrough::LookPreset`: `face`, `field`, `trilinear8`, `gradient27`),
 //! a normal mode with its face mix, overridable by `--face-mix`. `--far-normal LO,HI` (`--look face` starts with it off) blends
 //! face mode's shading normal toward the 27-count gradient where a voxel spans fewer than `HI`
-//! pixels, all the way at `LO` (`LookParams::far_normal`); the banner and the look line show it,
-//! and `N` leaves it alone. Only a run started under
+//! pixels, all the way at `LO` (`LookParams::far_normal`); the banner and the look line show it
+//! in face mode, `far normal off` in the others, and `N` leaves it alone. Only a run started under
 //! `--look field` builds the field's band slots and runs the field pass; any other run's `N`
 //! skips the field. With the field's band slots the autopilot's report adds the field pass's
 //! band slots, CPU and GPU time over the flight, and the frame line the smooth share of the
@@ -4152,9 +4152,7 @@ impl Run {
         }
         if input.pressed(KeyCode::KeyN) {
             let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.field_surface());
-            self.preset = self.preset.next(contour);
-            self.look.normal_mode = self.preset.normal_mode;
-            self.look.tuning = self.preset.tuning;
+            self.preset = next_look(self.preset, &mut self.look, contour);
             self.modes
                 .show_look(&self.preset, self.look.far_normal, ms_since(self.start));
             println!("{}", look_line(&self.look, &self.preset));
@@ -4712,6 +4710,15 @@ fn steps_line(h: &StepHistogram) -> String {
     )
 }
 
+/// `N`: the next preset, its normal mode and tuning in `look`. The run's far normal stays in
+/// `look`, so returning to face mode uses it again.
+fn next_look(preset: LookPreset, look: &mut LookParams, contour: bool) -> LookPreset {
+    let next = preset.next(contour);
+    look.normal_mode = next.normal_mode;
+    look.tuning = next.tuning;
+    next
+}
+
 /// The preset's name and parts, the far normal and the view: `look field (normals contour,
 /// face mix 0, far normal off), view shaded`.
 fn look_line(look: &LookParams, preset: &LookPreset) -> String {
@@ -4720,7 +4727,7 @@ fn look_line(look: &LookParams, preset: &LookPreset) -> String {
         preset.name,
         look.normal_mode.name(),
         preset.parts(),
-        LookPreset::far_normal_words(look.far_normal),
+        LookPreset::far_normal_words(look.normal_mode, look.far_normal),
         look.view.name()
     )
 }
@@ -7470,6 +7477,46 @@ mod tests {
             p = p.next(true);
         }
         assert_eq!(seen, ["face", "field", "trilinear8", "gradient27"]);
+    }
+
+    /// The banner and the look line name the far normal in face mode only, the one mode that
+    /// reads it: from the default `N` reads `far normal off` in trilinear8 and gradient27 and
+    /// `far normal 2..6` back in face, and `--look field --far-normal 2,6` starts off.
+    #[test]
+    fn the_far_normal_is_named_in_face_mode_only() {
+        let a = parse_args_from(argv(&[])).unwrap();
+        let (mut preset, mut look, mut modes) = (a.look, a.start_look(), a.start_modes(0.0));
+        let mut t = 5000.0;
+        for (name, far) in [
+            ("trilinear8", "off"),
+            ("gradient27", "off"),
+            ("face", "2..6"),
+        ] {
+            preset = next_look(preset, &mut look, false);
+            modes.show_look(&preset, look.far_normal, t);
+            assert_eq!(look.far_normal, [2.0, 6.0], "{name}");
+            let banner = modes.banner(t).expect("a press shows the banner");
+            assert!(
+                banner.starts_with(&format!("look {name}, far normal {far}\n")),
+                "{banner}"
+            );
+            assert_eq!(
+                look_line(&look, &preset),
+                format!("look {name} (normals {name}, face mix 0, far normal {far}), view shaded")
+            );
+            t += 5000.0;
+        }
+        let field = parse_args_from(argv(&["--look", "field", "--far-normal", "2,6"])).unwrap();
+        assert_eq!(field.start_look().far_normal, [2.0, 6.0]);
+        assert_eq!(
+            look_line(&field.start_look(), &field.look),
+            "look field (normals contour, face mix 0, far normal off), view shaded"
+        );
+        let banner = field.start_modes(0.0).banner(0.0).unwrap();
+        assert!(
+            banner.starts_with("look field, far normal off\n"),
+            "{banner}"
+        );
     }
 
     /// `--look` pins each preset by name with its parts on the startup line, an unknown name

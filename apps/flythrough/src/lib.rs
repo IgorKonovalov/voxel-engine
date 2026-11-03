@@ -465,10 +465,11 @@ impl LookPreset {
         format!("face mix {}", self.tuning.face_mix)
     }
 
-    /// The far normal in words: `far normal 2..6` or `far normal off`.
-    pub fn far_normal_words(far_normal: [f32; 2]) -> String {
+    /// The far normal in words: `far normal 2..6` in face mode, the one mode that reads it, and
+    /// `far normal off` in the others or with the knob off.
+    pub fn far_normal_words(normal_mode: NormalMode, far_normal: [f32; 2]) -> String {
         let [lo, hi] = far_normal;
-        if hi > lo {
+        if normal_mode == NormalMode::Face && hi > lo {
             format!("far normal {lo}..{hi}")
         } else {
             "far normal off".to_owned()
