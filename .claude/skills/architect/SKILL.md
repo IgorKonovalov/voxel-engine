@@ -35,6 +35,7 @@ work on. The reads below are task-grounded, not startup routines.
 docs/
 ├── roadmap.md                # milestones; revise at a close or when a decision changes
 ├── nfr.md                    # budgets; a reading replaces a proposal at a close
+├── nfr/0N-<area>.md          #   the readings of a split section (frame, memory); new readings go there
 ├── plans/NNNN-<slug>.md      # one per milestone slice
 │   ├── README.md             #   index: roster + next free number. Refresh on every state change
 │   ├── done/                 #   closed plans
@@ -235,7 +236,8 @@ Commit by explicit path, in this order:
 3. **Accept paired ADRs** (`proposed` → `accepted`) and refresh `docs/adrs/README.md`.
 4. **Refresh `docs/plans/README.md`** (move the row to recently closed, bump the next free
    number), **`docs/roadmap.md`** (milestone status) and **`docs/nfr.md`** (readings replace
-   proposals, with machine and commit).
+   proposals, with machine and commit; a split section's readings go to its
+   `docs/nfr/0N-<area>.md`, the budget line stays in `nfr.md`).
 5. **Bump the version, once per plan and never per phase.** Minor for a feature plan, patch for
    a fix-only plan, none for docs/chore-only (a deliberate call). Edit
    `workspace.package.version` in `Cargo.toml` and add a `CHANGELOG.md` entry. The level is your

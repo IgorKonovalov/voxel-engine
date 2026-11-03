@@ -42,7 +42,7 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
 - **What:** One sentence on what this phase produces.
 - **Files touched:** `crates/vxe-world/src/brick.rs`, `crates/vxe-world/tests/edits.rs`, …
   A new shader also touches `crates/vxe-render/src/shaders/`. A new budget reading touches
-  `docs/nfr.md`.
+  `docs/nfr.md`, or the section's readings file under `docs/nfr/` where the section is split.
 - **Done when:** A concrete behavioral acceptance. For tests, state the claim they defend
   ("a radius-10 sphere carve at the origin of a solid material-3 world returns
   `{3: 4169}` and leaves voxel (0,0,10) solid"), not "tests pass". Every numeric value is

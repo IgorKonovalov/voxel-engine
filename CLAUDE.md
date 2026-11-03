@@ -57,6 +57,7 @@ apps/
 docs/
 ├── roadmap.md       # milestones M0..M9 and the decisions behind them. Read this first
 ├── nfr.md           # the budgets: frame time, VRAM, edit cost, determinism, baseline GPU
+├── nfr/             # the readings behind nfr.md's big sections, one file per section
 ├── adrs/            # NNNN-<slug>.md: decisions + rejected alternatives. Append-only once accepted
 │   └── README.md    #   ADR index + next free number
 ├── plans/           # NNNN-<slug>.md: phased implementation plans
