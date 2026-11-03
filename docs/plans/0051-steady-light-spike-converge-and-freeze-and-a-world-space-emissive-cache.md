@@ -42,6 +42,16 @@
 >    reads them by eye.
 > 6. The far-wall blotches of the showcase are converged direct light, a look item the owner
 >    keeps open outside this plan.
+> **Amended 2026-11-03, night (owner: "yes, amend it and pass to the lane"):** the hero's pixel
+> differences (`LIGHT-FEEDBACK.md`, "The hero that never settled") read the showcase's `hall` still
+> over 8192 frames. About 70 % of the drift's mean survives with no probes and no upscaler, and one
+> frame's change is about a twelfth of the drift, so the view-mean wander and `K` at the level's poses
+> may not see what the owner objected to. What changed, readings only, no new mechanism:
+> 1. **Phase 3 reads the hall per arm:** drift per pixel on the final image, and the frames to settle
+>    (done-when 10). `hero` gains `--steady`.
+> 2. **Phase 4's window session adds the hall.**
+> 3. Hard patches, dark holes, floor rings and blocky emitters remain at 8192 frames, so they are not
+>    this plan's to remove; no arm is judged on them.
 > **Approved:** 2026-10-29 (owner): "we will start as soon as 50 is done". The lane runs alone.
 > The amendment keeps the plan's question and its two experiments; dev starts it on the owner's
 > "go" as usual.
@@ -457,7 +467,22 @@ the log, and stops being a gate.
   - `K` at the yaw and the flight;
   - the table's occupancy, and the full-table share, at each pose and after the flight; the light
     and temporal pass times at rest and in the flight, both adapters.
-- **Files touched:** `crates/vxe-render/src/shaders/light.wgsl`,
+- **The hall (amended 2026-11-03, night).** `hero --exposure 8 --adapter NVIDIA --steady S --frames N`
+  from a fresh start each N: the showcase's `hall`, 1920 x 1080, the default look, FSR 2 at 1.5, lamp
+  off, a still camera. `S`: `off`, `a`, `b`, `ab`, and `b --indirect off`, each with `--internal-scale 1`
+  beside it to separate the upscaler. `N`: 64, 128, 256, 512, 1024, 2048, 4096, 8192. About 3 minutes a
+  preset on the RTX, a guess from the hero runs at 4bf567f. The difference at a pixel is the largest of
+  its three 8-bit channels' absolute differences. The rules:
+  - **Drift:** 4096 against 8192, since A's pixels can freeze only past frame 2047: mean, p99, the
+    share over 2 and over 8, and the mean on a 12 x 7 grid of the frame.
+  - **Frames to settle:** each `N` against that preset's own 8192: mean and the share over 8.
+  - **One frame:** 8192 against 8193, mean and max.
+  - **Images:** the 4096-against-8192 difference times 8 per preset, under the gitignored `renders/`.
+  - These readings are unasserted, on the RTX under lane rule 9c, and a repeat of one preset's 2048
+    must read 0 at every pixel, or the table says so. C is not a row: the lamp is off, so it should
+    change nothing here, which `--steady c` at 2048 against `off` at 2048 reads once.
+- **Files touched:** `apps/flythrough/examples/hero.rs` (`--steady`, as the fly-through's),
+  `crates/vxe-render/src/shaders/light.wgsl`,
   `crates/vxe-render/src/shaders/temporal.wgsl`, `crates/vxe-render/src/shaders/probe_update.wgsl`
   (B2), `crates/vxe-render/src/marcher.rs`, `crates/vxe-render/src/lib.rs`
   (`STORAGE_BUFFERS_NEEDED`), `apps/flythrough/src/main.rs` and `hud.rs`,
@@ -494,6 +519,11 @@ the log, and stops being a gate.
   9. `a_dig_clears_its_cells` asserts, on the hand-built box of item 3, that an edit box over
      one voxel clears that voxel's six cells and leaves a neighbour two voxels away capped, and
      that the cleared cells refill to `C_MIN` within `C_MIN` frames at scale 1. Under 10 s.
+  10. The hall's drift, frames-to-settle and one-frame tables are in the readings log, per preset,
+     beside today's from `LIGHT-FEEDBACK.md`: at 2048 against 8192, mean 2.36, share over 2 27.8 %, on
+     the hero's tree. The predictions: with A or B the drift's mean at native falls under 0.5, a guess,
+     and A's settle runs up to frame 2047 while B's reaches its floor sooner. A miss is a reading, and
+     the log names any arm that holds still only after more frames than the owner's "I can count to 5".
 
 ### Phase 4: The owner's call in the window
 - **Owner skill:** human
@@ -506,6 +536,10 @@ the log, and stops being a gate.
   `--cache-read nearest` and with `smooth`, to judge the step at a voxel edge and the missing
   detail. Beside the window, the rig's filmstrips and tables. The owner also states whether
   exposure's own settle should change (ADR-0033's constants; another plan).
+  **The hall (amended 2026-11-03, night):** the same six flag sets at
+  `flythrough --source showcase --shot hall --exposure 8`, lamp off, from a fresh start: watch it
+  settle, then a still minute, then a turn and back. Beside it, Phase 3's hall tables and difference
+  images. The verdict names what still moves in the hall under the chosen direction.
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's verdict: which of A, B, C, a combination or none is the
   direction; which read mode, if B; whether the probes stay, shrink to a lamp-bounce channel, or
@@ -620,6 +654,9 @@ Determinism is not touched: everything is in `vxe-render`.
    settle is the probes, so a third arm C (the headlamp does not feed the probes) joins the
    spike, B is read on turns, flights and digs and gains the edit-box reset, and the rig must
    reproduce the owner's dots. The blotches "stay" a look item. The plan starts after Plan 0055.
+4. **Stillness, the hall (owner, 2026-11-03, night).** "light that never settles when objects are
+   not moving + not natural flickering light (flame eg) - are super unsettling"; on the hall's drift
+   readings, "yes, amend it and pass to the lane". Phases 3 and 4 read and show the hall.
 
 ## Implementation log
 
