@@ -32,7 +32,8 @@ commit. There's no review between phases. The architect reviews once at the end.
 
 1. Find the plan (`docs/plans/NNNN-*.md`). If it isn't there, stop and ask.
 2. Read it in full, then read the ADRs it links. They explain *why*, which you'll need when
-   something is underspecified.
+   something is underspecified. Of the plan's readings log (`docs/plans/logs/NNNN.md`, when
+   one exists) read only the `### Resume notes` and the current phase's section.
 3. Restate briefly, with no code:
    - the plan number and title
    - the phases (one line each, with owner tag)
@@ -64,17 +65,19 @@ For each phase, in order:
    may have created them. If you need code outside the list, **stop and surface it**. Silent scope
    expansion is how plans rot.
 3. **Run the done-when checks before moving on.** The gate is `cargo build`,
-   `cargo nextest run --workspace --profile quick`, `cargo test --doc`,
+   `node scripts/test-changed.mjs --profile quick`, `cargo test --doc`,
    `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`, and
    whatever the phase names (a golden image, a budget reading, a run of `apps/flythrough`).
-   - **The test tiers** live in `.config/nextest.toml`. `quick` is every CPU-only test, takes no
-     perf lock and kills a test past 30 s; a newly slow CPU test goes on the slow list there.
-     Add `--profile gpu` (under the perf lock) when the phase's `Files touched` include
-     `crates/vxe-render/`, a shader, or a fly-through render test. `--profile full` is the
-     whole suite and runs once per plan, in the close review, not by you (owner,
-     2026-10-30: it holds the GPU for about an hour on lavapipe). A bare `cargo nextest run`
-     is the default profile, which is also the full suite. `-E 'rdeps(<crate>)'` narrows `quick` further while
-     iterating; it is not the phase gate.
+   - **The test tiers** live in `.config/nextest.toml`; `scripts/test-changed.mjs` runs a tier
+     narrowed to the crates the working tree changed and their dependents (owner, 2026-11-03:
+     test what changed, iteration speed over repetition). `quick` is the CPU-only tests, takes
+     no perf lock and kills a test past 30 s. Add `--profile gpu` (under the perf lock) when the
+     phase's `Files touched` include `crates/vxe-render/`, a shader, or a fly-through render
+     test. The soak list holds the long series (a test over 30 s on lavapipe here, or 60 s on
+     CI; `docs/nfr.md` section 7): a test that crosses the line goes on it, and the list runs
+     in no gate. `--profile gate` (quick plus gpu, every crate) is for the plan's tip, not a
+     phase. `--profile soak` and `--profile full` run only when the owner asks. A bare
+     `cargo nextest run` is the full suite.
    - **A new test file that opens a GPU device** goes into the gpu filter;
      `node scripts/check-test-tiers.mjs` fails until it does and names the file and the entry.
    - **A test "passes" only when you've read its assertion body** and it asserts the behavior the
@@ -86,7 +89,11 @@ For each phase, in order:
      and escalate**. Either write the real assertion or the plan is wrong (see below).
 4. **Write this phase's log row** in `## Implementation log`, inside this phase's commit and never
    as a separate commit. The current row's commit cell reads `committed with this row`. Backfill
-   the previous row's real SHA as you go.
+   the previous row's real SHA as you go. The row holds state, commit and deviations.
+   **Readings, gate counts, attempts and sweeps go to the plan's readings log**,
+   `docs/plans/logs/NNNN.md` (start it from
+   `.claude/skills/architect/references/templates/readings-log.md` and link it from the
+   Implementation log), one section per phase, committed with the phase.
    - **Record observations, never conclusions.** No pass list, no self-review, no narrative.
    - **Findings are always disclosed.** Every deviation from the plan (what you did differently,
      and the commit, with no justification) and every done-when you couldn't meet as stated.
@@ -108,10 +115,10 @@ Rules that compound:
 
 ## Step 4: After the last phase
 
-1. **Confirm the gate at the tip**: build, `--profile quick`, `--profile gpu` under the perf
-   lock when any phase touched the renderer, doctests, clippy, fmt, `cargo deny check` and
-   the doc and tier scripts. Not `--profile full`: the close review runs it once, on the tree
-   that already holds main (owner, 2026-10-30).
+1. **Confirm the gate at the tip**: build, `cargo nextest run --workspace --profile gate`
+   under the perf lock (quick plus gpu, every crate), doctests, clippy, fmt, `cargo deny check`
+   and the doc and tier scripts. Not `--profile soak` or `--profile full`: they run only when
+   the owner asks (2026-11-03).
 2. **Complete the close block** in the log and commit it as `docs(plans): …`. Backfill the final
    SHA. Write the `### Notes` (deviations, unmet done-whens, followups noticed and not acted on;
    empty is valid). Fill every `### Close triggers` bullet with raw facts: gate commands, exit
@@ -128,8 +135,9 @@ Rules that compound:
 Then **stop.** Don't start the next plan in this session.
 
 **If the session is being cleared mid-plan**, finish the unit in flight and commit resume notes
-in the log (diagnosis, candidate fixes, the gate state at the tip) as their own `docs(plans): …`
-commit. **Delete them when that phase lands.** Only findings survive to the close.
+in the readings log (diagnosis, candidate fixes, the gate state at the tip) as their own
+`docs(plans): …` commit. **Delete them when that phase lands.** Only findings survive to the
+close.
 
 ## Fix pass (after a review)
 

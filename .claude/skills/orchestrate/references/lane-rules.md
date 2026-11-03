@@ -9,11 +9,10 @@ plan lanes run at once, each in its own worktree at
 1. Work only inside your worktree. Never touch the main checkout or another lane's worktree.
    Never merge, push or switch branches; the orchestrator merges. The one exception: when the
    orchestrator asks, merge main into your own branch (`git merge --no-ff main`), resolve,
-   gate the merged tree (build, clippy, fmt, the quick tier, and the gpu tier under the perf
-   lock when either side touched `crates/vxe-render/`, a shader or a fly-through render test)
-   and commit it as `merge: main into plan-NNNN (...)`. The full tier is not yours: it runs
-   once per plan, in the close review, on this merged tree. A stacked lane (one started from
-   another lane's branch) does the same merge when its base lane lands in main.
+   gate the merged tree (build, clippy, fmt, and `--profile gate` under the perf lock) and
+   commit it as `merge: main into plan-NNNN (...)`. The soak and full tiers are not yours:
+   they run only when the owner asks for one. A stacked lane (one started from another lane's
+   branch) does the same merge when its base lane lands in main.
 2. Inside a plan you edit only the `Status:` line and the `## Implementation log` (the `dev`
    skill's rule). A done-when you cannot meet is a question, not an edit: stop and report it
    with options. Never weaken an assertion to make a bar pass.
@@ -38,33 +37,42 @@ plan lanes run at once, each in its own worktree at
 
 ## Machine load
 
-4. Cap build parallelism: `export CARGO_BUILD_JOBS=4` for every cargo command, and run
-   `--profile full` nextest passes with `--test-threads 2`. `CARGO_BUILD_JOBS` caps the build;
-   nextest's `-j` is `--test-threads`, not build jobs. The tiers are in `.config/nextest.toml`:
-   `--profile quick` is the phase gate, `--profile gpu` adds the render tests, `--profile full`
-   is everything and runs once per plan, in the close review, not in a lane (the default
-   profile is the full suite too). A lane runs `--profile full` only when the orchestrator
-   asks for a specific reading from it.
+4. Build parallelism follows the lane count the orchestrator states in your prompt (owner,
+   2026-11-03): with one or two lanes `export CARGO_BUILD_JOBS=12` and no `--test-threads`
+   cap; with three or more, `CARGO_BUILD_JOBS=4` and `--test-threads 2`. `CARGO_BUILD_JOBS`
+   caps the build; nextest's `-j` is `--test-threads`, not build jobs. The tiers are in
+   `.config/nextest.toml`: the phase gate is `node scripts/test-changed.mjs --profile quick`
+   (the changed crates' CPU tests and their dependents') plus `--profile gpu` under the perf
+   lock when the change reaches the renderer; `--profile gate` (everything but the soak list)
+   is the tip gate; `--profile soak` and `--profile full` run only when the orchestrator asks
+   for a specific reading (the default profile is the full suite too).
 5. Every cargo build, test, bench or fly-through run goes inside a memory-capped scope, so a
-   runaway dies alone (the 2026-10-20 oomd kill took every session at once):
+   runaway dies alone (the 2026-10-20 oomd kill took every session at once). With one or two
+   lanes:
 
-       systemd-run --user --scope --quiet -p MemoryMax=6G -p MemorySwapMax=1G -- <command>
+       systemd-run --user --scope --quiet -p MemoryMax=16G -p MemorySwapMax=2G -- <command>
 
-   If a command dies to the cap, report its name and peak. Don't raise the cap yourself.
+   With three or more, `-p MemoryMax=6G -p MemorySwapMax=1G`. If a command dies to the cap,
+   report its name and peak. Don't raise the cap yourself.
 6. GPU work is serialized across lanes by one exclusive lock. Anything that touches the GPU or
    measures time (render and golden tests, `vxe-render` tests, headless fly-through renders,
    any bench, any timing reading, a `--profile gpu` or `--profile full` nextest run) runs
    under it, with the lock outside the scope. A `--profile quick` run touches no GPU and takes
    no lock:
 
-       flock /home/igor/Work/voxel-engine/.git/vxe-perf.lock systemd-run --user --scope --quiet -p MemoryMax=6G -p MemorySwapMax=1G -- <command>
+       flock /home/igor/Work/voxel-engine/.git/vxe-perf.lock systemd-run --user --scope --quiet -p MemoryMax=16G -p MemorySwapMax=2G -- <command>
+
+   (rule 5's caps for the lane count).
 
    Build first, outside the lock, and keep the hold short. The owner's windowed checks take the
    same lock run by run, and the lock is free between runs, so a GPU job started then blocks
    the owner's next run. While a live-session runner is up (`pgrep -f '^bash .*live/session[0-9]+\.sh'`
    finds it; a looser pattern also matches the shell running the check), take no GPU or timing work at all; poll at most once a minute, and keep doing CPU work.
 7. Record "exclusive perf lock" and the 1-minute load average with every reading. A reading
-   taken at a load above 2 is labelled loaded (indicative), not quiet.
+   taken at a load above 2 is labelled loaded (indicative), not quiet. Readings, gate counts,
+   attempts and sweeps go to the plan's readings log, `docs/plans/logs/NNNN.md` (the dev
+   skill names the template), one section per phase; the plan's Implementation log keeps one
+   row per phase.
 
 ## Readings
 
@@ -87,12 +95,15 @@ plan lanes run at once, each in its own worktree at
 
 ## Context budget
 
-9a. Read your own plan in full, but not the large shared docs: `docs/nfr.md` (~110 KB),
-    `docs/roadmap.md` (~55 KB), `CHANGELOG.md`, other plans. `grep -n` for the section you need
-    and read only that range.
+9a. Read your own plan in full, but not the large shared docs: `docs/nfr.md` (~150 KB),
+    `docs/roadmap.md` (~60 KB), `CHANGELOG.md`, other plans. `grep -n` for the section you need
+    and read only that range. Of your plan's readings log (`docs/plans/logs/NNNN.md`) read
+    only the `### Resume notes` and the current phase's section.
 9b. Keep tool output short. Cargo and nextest output is the main waste:
     - builds: `cargo build -q`; clippy: `--message-format short`;
-    - nextest: `--status-level fail --final-status-level fail` (failures and the summary only);
+    - nextest: `set -o pipefail; <command> --status-level pass --final-status-level fail 2>&1 | tee live/<name>.log | tail -n 40`.
+      The log keeps every test's time for `node scripts/test-times.mjs live/<name>.log`; you
+      read the tail (failures and the summary);
     - anything longer: `set -o pipefail; <command> 2>&1 | tee live/<name>.log | tail -n 40`, then
       `grep` the log for what you need rather than reading it whole.
 
@@ -116,5 +127,7 @@ plan lanes run at once, each in its own worktree at
     with options, plus the exact commands for the owner's human phase.
 13. On a checkpoint request: let the running command finish, release the GPU lock, commit any
     code as `wip(...)`, and write `### Resume notes (<date>, delete when Phase N lands)` in the
-    plan's Implementation log (what is done with SHAs, what is left, readings and attempts so
-    far, gate state, gotchas). A fresh agent resumes from those notes.
+    plan's readings log, `docs/plans/logs/NNNN.md` (start it from the template if the plan has
+    none): what is done with SHAs, what is left, readings and attempts so far, gate state,
+    gotchas. A fresh agent resumes from those notes and the current phase's section, not from
+    the whole log.

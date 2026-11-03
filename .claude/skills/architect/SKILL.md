@@ -23,7 +23,8 @@ work on. The reads below are task-grounded, not startup routines.
 
 - **`dev`** is the implementer. It turns your plans into code, one commit per phase, and runs all
   phases in one session. It never writes plans or ADRs. It writes only the plan's `Status:` line
-  and `## Implementation log`. You hand it plans (via the user's "go"). It hands finished plans
+  and `## Implementation log`, and the plan's readings log under `docs/plans/logs/`. You hand
+  it plans (via the user's "go"). It hands finished plans
   back to you (via a three-line pointer the user carries into a **fresh** `/architect` session).
 - **Never auto-invoke `dev`, and no lane auto-invokes you.** The fresh-context boundary is the
   whole mechanism of the close review.
@@ -36,7 +37,8 @@ docs/
 ├── nfr.md                    # budgets; a reading replaces a proposal at a close
 ├── plans/NNNN-<slug>.md      # one per milestone slice
 │   ├── README.md             #   index: roster + next free number. Refresh on every state change
-│   └── done/                 #   closed plans
+│   ├── done/                 #   closed plans
+│   └── logs/NNNN.md          #   dev's readings log per plan (readings, attempts, resume notes); never moves
 └── adrs/NNNN-<slug>.md       # append-only once accepted
     └── README.md             #   index: roster + next free number
 ```
@@ -100,6 +102,10 @@ specific. Vague plans get ignored.
   brick and chunk sizes, VRAM at a radius, fixed-point ranges. If you can't compute a threshold,
   state the property instead of inventing a number.
 - **A `## Budgets` section names the `nfr.md` figures touched and how the close measures them.**
+- **The Implementation log stays one row per phase.** Readings, attempts and resume notes go
+  to the plan's readings log, `docs/plans/logs/NNNN.md` (`references/templates/readings-log.md`);
+  the template's log blurb says so. An agent that starts on the plan reads the plan in full and
+  the readings log only at its resume notes.
 - **Headless proof is mandatory.** Every plan names at least one test that runs without a window.
   A render plan also names its golden image and the SSIM or pixel floor.
 - **A testbed toggle shows its mode in the window**, with a behavioural done-when
@@ -154,17 +160,20 @@ followup for a future plan, not a finding.
 
 ### 1. Alignment with the plan and ADRs
 - **Start with the plan's `## Implementation log`.** It gives you the phase-to-commit map,
-  deviations and close triggers. **It is claims, not evidence.**
+  deviations and close triggers; the readings are in the plan's readings log,
+  `docs/plans/logs/NNNN.md`. **Both are claims, not evidence.**
 - Was every phase done? Were any added or skipped without a note? Does every phase have a single
   in-vocabulary owner tag?
 - **For every test the plan named, open it and read the assertion body.** Look for tautologies,
   promised tests that were never written, and assertions weaker than the done-when claims.
-- **Run the gate yourself** (build, `cargo nextest run --workspace --profile full` under the
-  perf lock, doctests, clippy, fmt, deny) on the finished tree, which already holds main
-  (the lane merged it before the review). Don't copy the log's numbers. This is the plan's
-  one full-tier run (owner, 2026-10-30; the lane and the merge into main don't repeat it), so
-  record its wall time and the load with it, and start it first, in the background, while
-  you read.
+- **Run the gate yourself** (build, `cargo nextest run --workspace --profile gate
+  --status-level pass` under the perf lock, tee'd to a log, doctests, clippy, fmt, deny) on
+  the finished tree, which already holds main (the lane merged it before the review). Don't
+  copy the log's numbers. The gate tier is everything but the soak list; the soak and full
+  tiers run only when the owner asks (2026-11-03). Record the wall time and the load, start
+  it first, in the background, while you read, and run `node scripts/test-times.mjs <log>` on
+  it: a test over the line in `docs/nfr.md` section 7 is a `minor` finding that names the
+  test for the soak list.
 - **Check every budget reading** in the close triggers against `nfr.md`: is there a number, a
   machine, a commit? A missing reading on a touched figure is a `major`.
 - Was any ADR silently reversed? Then either the code changes or a new ADR supersedes the old one.

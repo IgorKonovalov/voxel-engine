@@ -82,7 +82,9 @@ Scope cuts, naming future plans or milestones where possible.
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
 > above are the contract. This section records what happened.** Observations, never conclusions:
 > no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
-> Keep it shorter than `## Implementation phases`.
+> Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
+> resume notes go to the plan's readings log, `docs/plans/logs/NNNN.md` (started from
+> `templates/readings-log.md`), and this section links it once it exists.
 
 | phase | owner | state | commit |
 |---|---|---|---|
