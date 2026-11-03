@@ -17,7 +17,9 @@
 //                                        it however long the history (ADR-0036)
 //   8  storage texture   moments_out     rgba16float: first and second moments of the
 //                                        irradiance's luminance, then the age: frames of
-//                                        history reused, 0 after a reset
+//                                        history reused, 0 after a reset; then, with
+//                                        `Params.converged_age`, the emissive estimate's
+//                                        luminance at its last draw
 //   9  uniform           edits           the frame's edit boxes (see `Edits`)
 //  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
 //                                        the gradient mode (Params.lighting bit 3): the
@@ -44,7 +46,9 @@
 // Params.lighting bit 8 says an emission scale changed within the last frames. On the frame
 // Params.lighting bit 9 says the lamp's light changed, the lamp's part takes this frame's
 // sample as it is (and the moments follow it by the lamp's share): the light pass's lamp
-// estimate is exact up to its shadow ray, so a lamp switched off leaves nothing behind.
+// estimate is exact up to its shadow ray, so a lamp switched off leaves nothing behind. A pixel
+// whose light pass skipped the draw (a negative emissive part, `converged_draw_skip`) keeps its
+// emissive history as it is, whatever the blend; the guard's lambda still lowers its age.
 //
 // Every value is pre-exposed (ADR-0033): the history read from last frame is rescaled by
 // `exposure_ratio()` (the second moment by its square) before it blends, the accumulation's
@@ -126,8 +130,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let px = vec2<i32>(gid.xy);
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
     // The emissive irradiance in rgb, the lamp's (white) in a.
-    let sample = textureLoad(irradiance_in, px, 0);
-    let l = min(luminance(sample.xyz) + sample.w, MOMENT_LUM_MAX);
+    var sample = textureLoad(irradiance_in, px, 0);
+    let kept = sample.x < 0.0;
+    let last_estimate = drawn_estimate(luminance(sample.xyz));
+    if (kept) {
+        sample = vec4<f32>(0.0, 0.0, 0.0, sample.w);
+    }
+    var l = min(luminance(sample.xyz) + sample.w, MOMENT_LUM_MAX);
     var accum = sample;
     var moments = vec2<f32>(l, l * l);
     var age = 0.0;
@@ -213,7 +222,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             if ((params.lighting & LIGHTING_LAMP_CHANGED) != 0u) {
                 a = 1.0;
             }
-            accum = vec4<f32>(mix(h.xyz, sample.xyz, a_emissive), mix(h.w, sample.w, a));
+            if (kept) {
+                l = min(luminance(h.xyz) + sample.w, MOMENT_LUM_MAX);
+            }
+            // The tap the light pass took the reservoir from, unblended: a still view's
+            // bilinear weights carry float noise that would drift a value meant to hold.
+            let e_kept = textureLoad(prev_accum_in, vec2<i32>(floor(q + 0.5)), 0).xyz * ratio;
+            let e_new = select(mix(h.xyz, sample.xyz, a_emissive), e_kept, kept);
+            accum = vec4<f32>(e_new, mix(h.w, sample.w, a));
             // The moments follow each part at its own pace, by the lamp's share of the
             // history's luminance.
             let lamp_share = h.w / max(luminance(h.xyz) + h.w, 1e-6);
@@ -224,5 +240,6 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them
     // past it, and the second moment's bound, 65 025, is still a finite half.
     let m_max = vec2<f32>(MOMENT_LUM_MAX, MOMENT_LUM_MAX * MOMENT_LUM_MAX);
-    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, 0.0));
+    let drawn = select(0.0, min(last_estimate, HDR_MAX), params.converged_age != 0u);
+    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, drawn));
 }

@@ -18,7 +18,7 @@ mod support;
 
 use support::settle::*;
 use support::stillness::{Pose, VEIN_POSE, vein_level, vein_level_on};
-use support::{reading_device, stillness};
+use support::{SyncNow, reading_device, stillness};
 use vxe_render::glam::Vec3;
 use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, RenderScale};
 
@@ -116,6 +116,7 @@ fn the_rig_reads_the_default_look() {
             auto: false,
             upscaler: true,
             bridge: false,
+            steady: Steady::default(),
         },
     );
     let want = flythrough::LookPreset::DEFAULT;
@@ -243,18 +244,22 @@ fn settings() -> Vec<Setting> {
         .map(|s| s == "auto")
         .collect();
     let up = list("VXE_SETTLE_UPSCALER", &["up"]);
+    let steady = list("VXE_STEADY", &["off"]);
     let mut out = Vec::new();
-    for up in &up {
-        for &lamp in &on_off("VXE_SETTLE_LAMP") {
-            for &indirect in &on_off("VXE_SETTLE_INDIRECT") {
-                for &a in &auto {
-                    out.push(Setting {
-                        lamp,
-                        indirect,
-                        auto: a,
-                        upscaler: up != "s1",
-                        bridge: up == "bridge",
-                    });
+    for steady in steady.iter().map(|s| Steady::named(s)) {
+        for up in &up {
+            for &lamp in &on_off("VXE_SETTLE_LAMP") {
+                for &indirect in &on_off("VXE_SETTLE_INDIRECT") {
+                    for &a in &auto {
+                        out.push(Setting {
+                            lamp,
+                            indirect,
+                            auto: a,
+                            upscaler: up != "s1",
+                            bridge: up == "bridge",
+                            steady,
+                        });
+                    }
                 }
             }
         }
@@ -314,14 +319,15 @@ fn wander_sigmas(adapter: &str) -> Vec<(String, f32)> {
         .collect()
 }
 
-fn sigma_of(sigmas: &[(String, f32)], pose: &Pose, lamp: bool, indirect: bool, up: &str) -> f32 {
+fn sigma_of(sigmas: &[(String, f32)], pose: &Pose, lamp: bool, setting: Setting) -> f32 {
     let on = |b: bool| if b { "on" } else { "off" };
     let key = format!(
-        "{} lamp {} indirect {} {}",
+        "{} lamp {} indirect {} {}{}",
         pose.name,
         on(lamp),
-        on(indirect),
-        up
+        on(setting.indirect),
+        setting.upscaler_name(),
+        setting.steady.words()
     );
     sigmas
         .iter()
@@ -374,13 +380,7 @@ fn run_settle(all: &[&str], seeded: bool) {
                 } else {
                     let (parts, _) = sum.settles();
                     let d = parts[0].1.d;
-                    let sigma = sigma_of(
-                        &sigmas,
-                        &pose,
-                        lamp_after,
-                        setting.indirect,
-                        setting.upscaler_name(),
-                    );
+                    let sigma = sigma_of(&sigmas, &pose, lamp_after, setting);
                     let n = n_step(sigma, d);
                     println!(
                         "reading[{adapter}]: n_step {name}: composite single-seed D {d:+.4}, sigma_view {sigma:.4}, (30 sigma / |D|)^2 {:.2}, N_step {}",
@@ -644,6 +644,7 @@ fn eye_at(level: &stillness::VeinLevel, pose: &Pose) -> f32 {
             auto: true,
             upscaler: true,
             bridge: false,
+            steady: Steady::default(),
         },
         1800,
     )
@@ -712,6 +713,7 @@ fn probe_census_readings() {
             auto: false,
             upscaler: true,
             bridge: false,
+            steady: Steady::default(),
         };
         let mut frame = make_frame(&level, &pose, setting);
         let light = LightParams::headlamp();
@@ -732,8 +734,8 @@ fn probe_census_readings() {
     }
 }
 
-/// The frame's per-pass cost at 1080p from 720p at the steady flight and at rest (frames past
-/// `SETTLE` at the start), each pose, lamp on, indirect on.
+/// The frame's per-pass cost at 1080p from 720p in the steady flight, each pose, lamp on,
+/// indirect on, under `VXE_STEADY`'s presets.
 #[test]
 #[ignore = "reading only: run with --ignored"]
 fn flight_cost_readings() {
@@ -742,26 +744,468 @@ fn flight_cost_readings() {
     };
     let adapter = level.adapter.clone();
     for pose in poses() {
-        let lighting = Lighting {
-            lamp: true,
-            indirect: true,
-            exposure: Exposure::Manual(pose.exposure),
-            ..Lighting::default()
-        };
-        let Some(ms) = flight_cost(&level, &pose, lighting, KRun::Path, 120) else {
-            println!("reading[{adapter}]: no TIMESTAMP_QUERY");
-            return;
-        };
-        let line: Vec<String> = ms
+        for steady in list("VXE_STEADY", &["off"])
             .iter()
-            .filter(|(_, v)| *v > 0.0)
-            .map(|(n, v)| format!("{n} {v:.3}"))
-            .collect();
-        let total: f64 = ms.iter().map(|(_, v)| v).sum();
-        println!(
-            "reading[{adapter}]: flight cost {} 1920x1080 from 1280x720: total {total:.3} ms ({})",
-            pose.name,
-            line.join(", ")
+            .map(|s| Steady::named(s))
+        {
+            let lighting = steady.apply(Lighting {
+                lamp: true,
+                indirect: true,
+                exposure: Exposure::Manual(pose.exposure),
+                ..Lighting::default()
+            });
+            let Some(ms) = flight_cost(&level, &pose, lighting, KRun::Path, 120) else {
+                println!("reading[{adapter}]: no TIMESTAMP_QUERY");
+                return;
+            };
+            let line: Vec<String> = ms
+                .iter()
+                .filter(|(_, v)| *v > 0.0)
+                .map(|(n, v)| format!("{n} {v:.3}"))
+                .collect();
+            let total: f64 = ms.iter().map(|(_, v)| v).sum();
+            println!(
+                "reading[{adapter}]: flight cost {}{} 1920x1080 from 1280x720: total {total:.3} ms ({})",
+                pose.name,
+                steady.words(),
+                line.join(", ")
+            );
+        }
+    }
+}
+
+/// A's frozen share at rest: the volume's and the view's traced, inside and frozen probes every
+/// 64 frames to 1024, at `VXE_STEADY`'s presets' freeze counts, and the first frame all of the
+/// view's traced probes outside rock read frozen.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn frozen_share_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    for pose in poses() {
+        for setting in settings().into_iter().filter(|s| !s.auto) {
+            let freeze = setting
+                .steady
+                .a1
+                .unwrap_or(vxe_render::marcher::DEFAULT_PROBE_FREEZE);
+            let mut frame = make_frame(&level, &pose, setting);
+            let light = LightParams::headlamp();
+            let cam = pose.camera();
+            let mut curve = Vec::new();
+            let mut first = None;
+            for f in 1..=1024usize {
+                frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+                if f % 8 == 0 {
+                    let c = freeze_census(&level, &frame, &cam, freeze);
+                    if first.is_none()
+                        && c.in_view[0] > 0
+                        && c.in_view[2] + c.in_view[1] == c.in_view[0]
+                    {
+                        first = Some(f);
+                    }
+                    if f % 64 == 0 {
+                        curve.push(format!(
+                            "{f}:{:.3}/{:.3}",
+                            f64::from(c.all[2]) / f64::from((c.all[0] - c.all[1]).max(1)),
+                            f64::from(c.in_view[2])
+                                / f64::from((c.in_view[0] - c.in_view[1]).max(1)),
+                        ));
+                    }
+                }
+            }
+            println!(
+                "reading[{adapter}]: frozen {} {}: view frozen at {first:?}; frame:share of volume/view {}",
+                pose.name,
+                setting.name(),
+                curve.join(" ")
+            );
+        }
+    }
+}
+
+// ---- Experiments A and C: the asserted tests ----
+
+/// `freeze`'s frame for the lavapipe tests: 64 x 36, indirect on, 8 slices, at the vein.
+fn steady_frame(level: &stillness::VeinLevel, lighting: Lighting) -> Frame {
+    let mut frame = Frame::new(&level.device, 64, 36);
+    frame.set_lighting(Lighting {
+        indirect: true,
+        probe_slices: 8,
+        exposure: Exposure::Manual(VEIN_POSE.exposure),
+        ..lighting
+    });
+    frame.set_dt(1.0 / 60.0);
+    frame
+}
+
+fn probe_words(level: &stillness::VeinLevel, frame: &Frame) -> Vec<u8> {
+    let data = frame.probes().data();
+    vxe_render::readback::read_buffer(&level.device, &level.queue, data, 0, data.size())
+}
+
+/// The slot of a traced probe outside rock, with light in it if `lit`, nearest the eye, of the
+/// probes `keep` accepts.
+fn traced_probe(
+    level: &stillness::VeinLevel,
+    frame: &Frame,
+    camera: &Camera,
+    lit: bool,
+    keep: impl Fn(Vec3) -> bool,
+) -> u32 {
+    use vxe_render::probes::{PROBES_PER_AXIS, probe_slot};
+    let origin = frame.probes().origin_for(camera.position.to_array());
+    let n = PROBES_PER_AXIS as i32;
+    let mut all = Vec::new();
+    for z in 0..n {
+        for y in 0..n {
+            for x in 0..n {
+                let w = [origin[0] + x, origin[1] + y, origin[2] + z];
+                let p = Vec3::from(frame.probes().probe_position(w));
+                if keep(p) {
+                    all.push(((p - camera.position).length(), probe_slot(w)));
+                }
+            }
+        }
+    }
+    all.sort_by(|a, b| a.0.total_cmp(&b.0));
+    all.iter()
+        .map(|&(_, s)| s)
+        .find(|&s| {
+            let r = frame.probes().read_probe(&level.device, &level.queue, s);
+            !r.inside()
+                && r.age() > 0
+                && (!lit
+                    || r.interior_irradiance()
+                        .iter()
+                        .any(|t| t[0] + t[1] + t[2] > 0.0))
+        })
+        .expect("a traced probe outside rock")
+}
+
+/// A probe that has reached its freeze count is not traced: at `probe_freeze` 8 and 8 slices,
+/// after 8 visits (64 frames) with no restart every probe's words are bit-identical across the
+/// next 64 encoded frames, and a lamp toggle restarts a lit probe on the first visit after.
+#[test]
+fn a_frozen_probe_is_not_traced() {
+    let Some(level) = vein_level() else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    let camera = VEIN_POSE.camera();
+    let mut frame = steady_frame(
+        &level,
+        Lighting {
+            probe_freeze: Some(8),
+            ..Lighting::default()
+        },
+    );
+    let step = |frame: &mut Frame, n: usize| {
+        for _ in 0..n {
+            frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+        }
+    };
+    step(&mut frame, 64);
+    let frozen = probe_words(&level, &frame);
+    step(&mut frame, 64);
+    assert!(
+        probe_words(&level, &frame) == frozen,
+        "the atlases and states moved over 64 frames after the freeze"
+    );
+    let slot = traced_probe(&level, &frame, &camera, true, |_| true);
+    let before = frame.probes().read_probe(&level.device, &level.queue, slot);
+    frame.set_lighting(Lighting {
+        lamp: false,
+        ..frame.lighting()
+    });
+    step(&mut frame, 4);
+    assert!(frame.probe_light_window(), "the toggle opened the window");
+    let after = frame.probes().read_probe(&level.device, &level.queue, slot);
+    assert_ne!(
+        after.irradiance, before.irradiance,
+        "the window's first visit moved the texels"
+    );
+}
+
+/// With a frozen volume pinned so that the far corner is out of `lamp_reach`, a lamp moved each
+/// frame changes a near probe's texels within 8 frames, keeps a probe beyond the reach
+/// bit-identical, and the near probe freezes again once the lamp holds still.
+#[test]
+fn a_moving_lamp_unfreezes_the_probes_it_reaches() {
+    let Some(level) = vein_level() else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    let reach = vxe_render::probes::lamp_reach(light.intensity);
+    let camera = VEIN_POSE.camera();
+    let mut frame = steady_frame(
+        &level,
+        Lighting {
+            probe_freeze: Some(8),
+            ..Lighting::default()
+        },
+    );
+    // The eye in the volume's lowest cell on every axis.
+    let mut origin = frame.probes().origin_for(VEIN_POSE.position);
+    for o in &mut origin {
+        *o += vxe_render::probes::PROBES_PER_AXIS as i32 / 2 - 1;
+    }
+    frame.probes_mut().set_origin(Some(origin));
+    let step = |frame: &mut Frame, cam: &Camera, n: usize| {
+        for _ in 0..n {
+            frame.step(&level.device, &level.queue, &level.gpu, cam, &light);
+        }
+    };
+    step(&mut frame, &camera, 64);
+    let near = traced_probe(&level, &frame, &camera, true, |_| true);
+    // Beyond the reach no emitter need be in range: its state word still shows a probe held
+    // open, whose age the moving lamp would cap.
+    let far = traced_probe(&level, &frame, &camera, false, |p| {
+        (p - camera.position).length() > reach + 8.0
+    });
+    let read = |frame: &Frame, s: u32| frame.probes().read_probe(&level.device, &level.queue, s);
+    let (near0, far0) = (read(&frame, near), read(&frame, far));
+    assert!(near0.age() >= 8 && far0.age() >= 8, "both froze");
+    // A turn moves the lamp's position and direction together; it opens no window.
+    for i in 1..=8 {
+        let c = Camera {
+            yaw: camera.yaw + 0.002 * i as f32,
+            ..camera
+        };
+        step(&mut frame, &c, 1);
+        assert!(!frame.probe_light_window());
+    }
+    let near1 = read(&frame, near);
+    assert_ne!(near1.irradiance, near0.irradiance, "the near probe moved");
+    assert!(
+        near1.age() <= 4,
+        "the moving lamp caps its age: {}",
+        near1.age()
+    );
+    assert_eq!(read(&frame, far), far0, "the far probe stayed frozen");
+    // The lamp holds still: the rest of the visits, then frozen again.
+    let held = Camera {
+        yaw: camera.yaw + 0.016,
+        ..camera
+    };
+    step(&mut frame, &held, 40);
+    let settled = read(&frame, near);
+    assert!(settled.age() >= 8, "it refroze at age {}", settled.age());
+    step(&mut frame, &held, 16);
+    assert_eq!(read(&frame, near), settled, "and holds");
+}
+
+/// With A2 a probe inside rock keeps its texels and its state bit-identical over 64 frames.
+#[test]
+fn an_inside_probe_is_not_traced() {
+    let Some(level) = vein_level() else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    let camera = VEIN_POSE.camera();
+    let mut frame = steady_frame(
+        &level,
+        Lighting {
+            skip_inside_probes: true,
+            ..Lighting::default()
+        },
+    );
+    for _ in 0..8 {
+        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+    }
+    let (traced, inside) = probe_census(&level, &frame);
+    assert!(
+        inside > 0 && traced > inside,
+        "{traced} traced, {inside} inside"
+    );
+    use vxe_render::probes::PROBE_COUNT;
+    let slots: Vec<u32> = (0..PROBE_COUNT)
+        .filter(|&s| {
+            frame
+                .probes()
+                .read_probe(&level.device, &level.queue, s)
+                .inside()
+        })
+        .take(64)
+        .collect();
+    let before: Vec<_> = slots
+        .iter()
+        .map(|&s| frame.probes().read_probe(&level.device, &level.queue, s))
+        .collect();
+    for _ in 0..64 {
+        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+    }
+    for (&s, b) in slots.iter().zip(&before) {
+        assert_eq!(
+            &frame.probes().read_probe(&level.device, &level.queue, s),
+            b,
+            "slot {s}"
         );
     }
+}
+
+/// With A3 and A4 at threshold 64 and indirect off, a still pixel at the threshold keeps its
+/// emissive value bit-identical for 64 frames with its reservoir copied through, and a `Replace`
+/// of the emitters around its kept point lowers its age within 9 frames and resumes the draw.
+#[test]
+fn a_converged_pixel_keeps_its_sample() {
+    let Some(mut level) = vein_level() else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    let camera = VEIN_POSE.camera();
+    let mut frame = Frame::new(&level.device, 64, 36);
+    frame.set_lighting(Lighting {
+        lamp: false,
+        indirect: false,
+        emissive_history: vxe_render::marcher::HISTORY_AGE_MAX,
+        skip_converged_draw: Some(64),
+        exposure: Exposure::Manual(VEIN_POSE.exposure),
+        ..Lighting::default()
+    });
+    frame.set_dt(1.0 / 60.0);
+    let read = |level: &stillness::VeinLevel, frame: &Frame| {
+        (
+            vxe_render::readback::read_float(&level.device, &level.queue, frame.accumulated()),
+            vxe_render::readback::read_float(&level.device, &level.queue, frame.moments()),
+            vxe_render::readback::read_texels_u32(&level.device, &level.queue, frame.reservoirs()),
+        )
+    };
+    for _ in 0..66 {
+        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+    }
+    let (accum0, moments0, res0) = read(&level, &frame);
+    // The pixels at the threshold with a reservoir, keeping light.
+    let kept =
+        |i: usize| moments0[i][2] >= 64.0 && res0[i][3] & 0x800_0000 != 0 && accum0[i][1] > 0.0;
+    let pixels: Vec<usize> = (0..accum0.len()).filter(|&i| kept(i)).collect();
+    assert!(pixels.len() > 100, "{} converged pixels", pixels.len());
+    for f in 0..64 {
+        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+        let (a, m, r) = read(&level, &frame);
+        for &i in &pixels {
+            assert_eq!(
+                a[i], accum0[i],
+                "pixel {i} moved at frame {f}, moments {:?}",
+                m[i]
+            );
+            assert_eq!(r[i], res0[i], "pixel {i}'s reservoir moved");
+        }
+    }
+    // The emitters around a kept point go dark. A pixel's kept voxel lies behind its face.
+    let i = *pixels
+        .iter()
+        .max_by(|&&a, &&b| moments0[a][3].total_cmp(&moments0[b][3]))
+        .expect("pixels");
+    let x = [res0[i][0], res0[i][1], res0[i][2]].map(f32::from_bits);
+    let face = (res0[i][3] >> 24) & 7;
+    let mut v = x.map(|c| c.floor() as i64);
+    let axis = (face / 2) as usize;
+    if face & 1 == 1 {
+        v[axis] -= 1;
+    }
+    let (min, max) = (
+        v.map(|c| (c - 12) * vxe_world::FIXED_ONE),
+        v.map(|c| (c + 13) * vxe_world::FIXED_ONE),
+    );
+    let r = level
+        .world
+        .apply(&vxe_world::EditOp::box_(
+            vxe_world::Fixed3(min),
+            vxe_world::Fixed3(max),
+            vxe_world::Mode::Replace {
+                from: flythrough::cave::ORE,
+                to: flythrough::cave::ROCK,
+            },
+        ))
+        .expect("the replace applies");
+    assert!(
+        r.changed_from.iter().map(|c| c.1).sum::<u32>() > 0,
+        "the box holds ore"
+    );
+    level
+        .gpu
+        .sync_now(&level.world, &level.device, &level.queue)
+        .expect("mirror fits");
+    let start = frame_age(&level, &frame, i);
+    let mut ages = Vec::new();
+    for _ in 1..=30 {
+        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+        ages.push(frame_age(&level, &frame, i));
+    }
+    println!("the pixel's age from {start}, per frame after the replace: {ages:?}");
+    let lowered = ages.iter().position(|&a| a < start).map(|f| f + 1);
+    let resumed = ages.iter().position(|&a| a < 64.0).map(|f| f + 1);
+    println!("lowered at frame {lowered:?}, under the threshold at {resumed:?}");
+    assert!(
+        lowered.is_some_and(|f| f <= 9),
+        "the guard lowered the pixel's age within 9 frames"
+    );
+    assert!(
+        resumed.is_some_and(|f| f <= 9),
+        "the age fell under the threshold within 9 frames, so the draw resumed"
+    );
+    let (a, _, _) = read(&level, &frame);
+    assert_ne!(a[i], accum0[i], "the draw resumed and the value moved");
+}
+
+/// Lighting pixel `i`'s history age.
+fn frame_age(level: &stillness::VeinLevel, frame: &Frame, i: usize) -> f32 {
+    vxe_render::readback::read_float(&level.device, &level.queue, frame.moments())[i][2]
+}
+
+/// With C on, a lamp toggle both ways and a lamp moved each frame leave every probe's words
+/// bit-identical to a run with no lamp change at the same frames (the rays' random numbers go
+/// with the frame, so nothing else differs); an emission scale change still restarts them.
+#[test]
+fn the_lamp_leaves_the_probes_alone_under_c() {
+    let Some(level) = vein_level() else {
+        return;
+    };
+    let camera = VEIN_POSE.camera();
+    let lighting = Lighting {
+        probe_lamp: false,
+        ..Lighting::default()
+    };
+    let run = |changes: bool| {
+        let mut frame = steady_frame(&level, lighting);
+        let mut light = LightParams::headlamp();
+        for f in 0..64 {
+            if changes {
+                if f == 8 || f == 32 {
+                    let l = frame.lighting();
+                    frame.set_lighting(Lighting { lamp: !l.lamp, ..l });
+                }
+                light.offset_right += 0.01;
+            }
+            let c = if changes {
+                Camera {
+                    yaw: camera.yaw + 0.001 * f as f32,
+                    ..camera
+                }
+            } else {
+                camera
+            };
+            frame.step(&level.device, &level.queue, &level.gpu, &c, &light);
+            assert!(!frame.probe_light_window(), "frame {f} opened a window");
+        }
+        (frame, light)
+    };
+    let (still, _) = run(false);
+    let (mut moved, light) = run(true);
+    assert!(
+        probe_words(&level, &still) == probe_words(&level, &moved),
+        "the lamp reached the probes"
+    );
+    let before = probe_words(&level, &moved);
+    moved.set_emission_scale(&level.queue, flythrough::cave::ORE, 0.5);
+    moved.set_emission_scale(&level.queue, flythrough::cave::ORE, 0.5);
+    let mut opened = false;
+    for _ in 0..8 {
+        moved.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+        opened |= moved.probe_light_window();
+    }
+    assert!(opened, "an emission change still opens the window");
+    assert!(probe_words(&level, &moved) != before);
 }

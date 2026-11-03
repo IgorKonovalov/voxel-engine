@@ -22,7 +22,11 @@
 //                                        shading normal), its emissive part in rgb and the
 //                                        lamp's (white) in a, pre-exposed (`exposure_now`,
 //                                        clamped at HDR_MAX); 0 on a miss. In the steps view the lamp shadow
-//                                        ray's counters instead (see `shade`)
+//                                        ray's counters instead (see `shade`). A pixel that
+//                                        skipped its draw holds a mark of its last estimate's
+//                                        luminance in rgb (`converged_draw_skip`)
+//   7  texture_2d<f32>   prev_moments_in last frame's moments: z the age, w the emissive
+//                                        estimate's luminance at its last draw
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
 // max(n.l, 0) / dist^2, so that the composite's Lambertian `albedo * E / PI` is the former
@@ -55,6 +59,7 @@
 @group(2) @binding(4) var prev_info_in: texture_2d<u32>;
 @group(2) @binding(5) var prev_reservoir_in: texture_2d<u32>;
 @group(2) @binding(6) var reservoir_out: texture_storage_2d<rgba32uint, write>;
+@group(2) @binding(7) var prev_moments_in: texture_2d<f32>;
 
 // The frame's candidate table (ADR-0025), in light_samples from `params.light_table_base`:
 // a header slot (count, total weight as f32 bits), then per entry the start and length of an
@@ -107,6 +112,9 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             if ((params.lighting & LIGHTING_LAMP) != 0u) {
                 e = vec3<f32>(PI * lamp_lit(rec.p, n, ns));
             }
+            if (converged_draw_skip(gid.xy, rec, e.x)) {
+                return;
+            }
             emissive = emissive_irradiance(gid.xy, rec, n, ns);
         }
     }
@@ -119,6 +127,34 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         px,
         min(vec4<f32>(emissive * ex, e.x * ex), vec4<f32>(HDR_MAX)),
     );
+}
+
+// Whether this pixel's history has converged (`Lighting::skip_converged_draw`) on a valid
+// reservoir: it then copies the reservoir through, stores the lamp's part `lamp` with a mark of the last
+// estimate's luminance as the emissive part (the temporal pass keeps its history; the gradient
+// pass reads the magnitude as last frame's estimate) and draws nothing.
+fn converged_draw_skip(px: vec2<u32>, rec: HitRecord, lamp: f32) -> bool {
+    if (params.converged_age == 0u || (params.history & 1u) == 0u
+        || (params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
+        return false;
+    }
+    let vi = view_of(full_px(px));
+    let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, rec.p);
+    let q = select(prev_light_grid(full), full, full.x < 0.0);
+    let centre = vec2<i32>(floor(q));
+    if (q.x < 0.0 || !same_surface(centre, rec)) {
+        return false;
+    }
+    let m = textureLoad(prev_moments_in, centre, 0);
+    let stored = textureLoad(prev_reservoir_in, centre, 0);
+    if (m.z < f32(params.converged_age) || (stored.w & 0x8000000u) == 0u) {
+        return false;
+    }
+    textureStore(reservoir_out, vec2<i32>(px), stored);
+    let ex = exposure_now();
+    let last = m.w * exposure_ratio() + CONVERGED_MARK;
+    textureStore(irradiance_out, vec2<i32>(px), vec4<f32>(vec3<f32>(-last), min(lamp * ex, HDR_MAX)));
+    return true;
 }
 
 // The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p` with shading normal `n`,

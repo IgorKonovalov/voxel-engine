@@ -41,7 +41,9 @@ struct ProbeParams {
     rays: u32,
     // 1 while a light-change window is open (the update blends at hysteresis 0).
     light_window: u32,
-    _pad2: u32,
+    // Bits 0..8 the visits a probe freezes at, 0 never; bit 8 inside probes return at once; bit
+    // 9 the lamp moved this frame; bit 10 the probe rays leave the lamp out (`probes.rs`).
+    steady: u32,
 };
 
 @group(3) @binding(0) var<storage, read_write> probe_data: array<u32>;

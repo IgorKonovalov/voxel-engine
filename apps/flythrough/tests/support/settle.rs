@@ -123,17 +123,125 @@ pub struct Setting {
     pub auto: bool,
     pub upscaler: bool,
     pub bridge: bool,
+    pub steady: Steady,
+}
+
+/// The steady spike's arms a run reads: each of A's four alone, and C.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Steady {
+    /// A1: the probes' freeze count.
+    pub a1: Option<u32>,
+    /// A2: inside probes skipped.
+    pub a2: bool,
+    /// A3: the emissive history at the age's ceiling.
+    pub a3: bool,
+    /// A4: converged pixels draw nothing, at this age.
+    pub a4: Option<u32>,
+    /// C: the lamp out of the probes.
+    pub c: bool,
+}
+
+impl Steady {
+    /// `off`, `a` (A1 to A4), `a1` to `a4` alone, `c`, `ac`, and `aN` with a freeze of `N`
+    /// (`a32`, `a128`: A1 alone at that count, as its sweep reads it).
+    pub fn named(name: &str) -> Steady {
+        let a1 = Some(vxe_render::marcher::DEFAULT_PROBE_FREEZE);
+        let a4 = Some(vxe_render::marcher::HISTORY_AGE_MAX);
+        let all = Steady {
+            a1,
+            a2: true,
+            a3: true,
+            a4,
+            c: false,
+        };
+        match name {
+            "off" => Steady::default(),
+            "a" => all,
+            "ac" => Steady { c: true, ..all },
+            "c" => Steady {
+                c: true,
+                ..Steady::default()
+            },
+            "a1" => Steady {
+                a1,
+                ..Steady::default()
+            },
+            "a2" => Steady {
+                a2: true,
+                ..Steady::default()
+            },
+            "a3" => Steady {
+                a3: true,
+                ..Steady::default()
+            },
+            "a4" => Steady {
+                a3: true,
+                a4,
+                ..Steady::default()
+            },
+            other => {
+                let n = other
+                    .strip_prefix('a')
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or_else(|| panic!("unknown steady preset {other}"));
+                Steady {
+                    a1: Some(n),
+                    ..Steady::default()
+                }
+            }
+        }
+    }
+
+    pub fn apply(self, lighting: Lighting) -> Lighting {
+        Lighting {
+            probe_freeze: self.a1,
+            skip_inside_probes: self.a2,
+            emissive_history: if self.a3 {
+                vxe_render::marcher::HISTORY_AGE_MAX
+            } else {
+                lighting.emissive_history
+            },
+            skip_converged_draw: self.a4,
+            probe_lamp: !self.c,
+            ..lighting
+        }
+    }
+
+    /// The name for a run's label, empty when off.
+    pub fn words(self) -> String {
+        if self == Steady::default() {
+            return String::new();
+        }
+        let mut w = Vec::new();
+        if let Some(f) = self.a1 {
+            w.push(format!("a1={f}"));
+        }
+        if self.a2 {
+            w.push("a2".to_owned());
+        }
+        if self.a3 {
+            w.push("a3".to_owned());
+        }
+        if self.a4.is_some() {
+            w.push("a4".to_owned());
+        }
+        if self.c {
+            w.push("c".to_owned());
+        }
+        format!(" steady {}", w.join("+"))
+    }
 }
 
 impl Setting {
     pub fn name(&self) -> String {
         let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "lamp {} indirect {} {} {}",
+            "lamp {} indirect {} {} {}{}",
             on(self.lamp),
             on(self.indirect),
             if self.auto { "auto" } else { "pinned" },
-            self.upscaler_name()
+            self.upscaler_name(),
+            self.steady.words()
         )
     }
 
@@ -147,11 +255,12 @@ impl Setting {
 
     fn tag(&self) -> String {
         format!(
-            "lamp{}-ind{}-{}-{}",
+            "lamp{}-ind{}-{}-{}{}",
             u8::from(self.lamp),
             u8::from(self.indirect),
             if self.auto { "auto" } else { "pinned" },
-            self.upscaler_name()
+            self.upscaler_name(),
+            self.steady.words().replace(' ', "-")
         )
     }
 }
@@ -206,7 +315,7 @@ pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
 }
 
 fn lighting(pose: &Pose, setting: Setting) -> Lighting {
-    Lighting {
+    setting.steady.apply(Lighting {
         lamp: setting.lamp,
         indirect: setting.indirect,
         exposure: if setting.auto {
@@ -215,7 +324,7 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
             Exposure::Manual(pose.exposure)
         },
         ..Lighting::default()
-    }
+    })
 }
 
 /// One frame's read-back.
@@ -2040,6 +2149,68 @@ pub fn probe_census(level: &VeinLevel, frame: &Frame) -> (u32, u32) {
         }
     }
     (traced, inside)
+}
+
+/// The volume's state against a freeze count: traced, inside rock, frozen (at the count or
+/// over, not inside), and of the probes in `pose`'s view within `VIEW_REACH` voxels the same
+/// three.
+pub struct FreezeCensus {
+    pub all: [u32; 3],
+    pub in_view: [u32; 3],
+}
+
+/// How far a probe counts as in view: the gather's reach at the volume's spacing.
+pub const VIEW_REACH: f32 = 128.0;
+
+pub fn freeze_census(
+    level: &VeinLevel,
+    frame: &Frame,
+    camera: &Camera,
+    freeze: u32,
+) -> FreezeCensus {
+    use vxe_render::probes::{MAX_AGE, PROBE_COUNT, PROBES_PER_AXIS, STATE_BASE, probe_slot};
+    let b = readback::read_buffer(
+        &level.device,
+        &level.queue,
+        frame.probes().data(),
+        u64::from(STATE_BASE) * 4,
+        u64::from(PROBE_COUNT) * 4,
+    );
+    let word = |s: u32| {
+        u32::from_le_bytes(
+            b[s as usize * 4..s as usize * 4 + 4]
+                .try_into()
+                .expect("a word"),
+        )
+    };
+    let origin = frame.probes().origin_for(camera.position.to_array());
+    let n = PROBES_PER_AXIS as i32;
+    let mut c = FreezeCensus {
+        all: [0; 3],
+        in_view: [0; 3],
+    };
+    for z in 0..n {
+        for y in 0..n {
+            for x in 0..n {
+                let w = [origin[0] + x, origin[1] + y, origin[2] + z];
+                let s = word(probe_slot(w));
+                let age = (s >> 1) & MAX_AGE;
+                if age == 0 {
+                    continue;
+                }
+                let inside = s & 1 != 0;
+                let flags = [true, inside, !inside && age >= freeze];
+                let p = Vec3::from(frame.probes().probe_position(w));
+                let seen = (p - camera.position).length() < VIEW_REACH
+                    && project(camera, SIZE, p).is_some();
+                for (i, &f) in flags.iter().enumerate() {
+                    c.all[i] += u32::from(f);
+                    c.in_view[i] += u32::from(f && seen);
+                }
+            }
+        }
+    }
+    c
 }
 
 /// One frame at `camera` under `timer`; the milliseconds of each of `FRAME_PASSES`.

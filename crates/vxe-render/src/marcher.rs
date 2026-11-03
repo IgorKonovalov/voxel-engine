@@ -95,7 +95,9 @@ pub struct Params {
     pub reuse_m_cap: u32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
-    pub _pad8: u32,
+    /// The history age at which the light pass stops drawing for a pixel
+    /// ([`Lighting::skip_converged_draw`]); 0 never.
+    pub converged_age: u32,
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -111,6 +113,12 @@ pub const LIGHTING_GRADIENT: u32 = 1 << 3;
 /// that holds static ore light still on the patch bar (ADR-0036). Light the emissive guard
 /// cannot see reaches 90 % in `ln 0.1 / ln(255/256)` = 589 frames.
 pub const DEFAULT_EMISSIVE_HISTORY: u32 = 256;
+/// The temporal pass's age ceiling (`AGE_MAX` in `temporal.wgsl`): the longest
+/// [`Lighting::emissive_history`] the age can carry.
+pub const HISTORY_AGE_MAX: u32 = 2047;
+/// [`Lighting::probe_freeze`] in the steady presets: where a running mean's noise, `1 / n`,
+/// roughly equals hysteresis 0.97's steady noise, `0.03 / 1.97`.
+pub const DEFAULT_PROBE_FREEZE: u32 = 64;
 /// [`Lighting::reuse_m_cap`] by default.
 pub const DEFAULT_REUSE_M_CAP: u32 = 20;
 /// Frames after an emission-scale change (the frame of the change too) during which the
@@ -793,6 +801,23 @@ pub struct Lighting {
     /// window ([`Frame::probe_light_window`]), rounded up to a power of two in 8 ..= 32
     /// (default 8): more slices cost less and lag longer.
     pub probe_slices: u32,
+    /// A probe blends as a running mean over this many visits since its restart, at most
+    /// `probes::MAX_AGE`, then stops tracing and blending until a restart (a light-change
+    /// window, an edit touching it, a scroll bringing a new probe into its slot); a moving lamp
+    /// holds the probes in its reach open (`probes::lamp_reach`). `None` is the fixed
+    /// hysteresis.
+    pub probe_freeze: Option<u32>,
+    /// A probe known to be inside rock returns at once from the probe passes until a restart.
+    pub skip_inside_probes: bool,
+    /// A pixel whose history age has reached this, with a valid reservoir, draws no emissive
+    /// candidates and casts no emissive shadow ray: it copies the reservoir through and the
+    /// temporal pass keeps its emissive history. The gradient pass's re-shades still lower the
+    /// age where the light changed. With the filter off the composite shows the light pass's
+    /// raw output, which this mark makes meaningless. `None` draws every frame.
+    pub skip_converged_draw: Option<u32>,
+    /// The probe rays shade their hits with the headlamp; off, the volume holds static light
+    /// alone, a lamp switch opens no light-change window and the lamp's bounce is lost.
+    pub probe_lamp: bool,
 }
 
 impl Default for Lighting {
@@ -812,11 +837,60 @@ impl Default for Lighting {
             indirect: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
             probe_slices: crate::probes::SLICES,
+            probe_freeze: None,
+            skip_inside_probes: false,
+            skip_converged_draw: None,
+            probe_lamp: true,
         }
     }
 }
 
 impl Lighting {
+    /// `self` with static light converging and freezing: the probes as running means that
+    /// freeze, inside probes skipped, the emissive history as long as the age carries, and
+    /// converged pixels drawing nothing.
+    pub fn converge_and_freeze(self) -> Self {
+        Self {
+            probe_freeze: Some(DEFAULT_PROBE_FREEZE),
+            skip_inside_probes: true,
+            emissive_history: HISTORY_AGE_MAX,
+            skip_converged_draw: Some(HISTORY_AGE_MAX),
+            ..self
+        }
+    }
+
+    /// `self` with the headlamp left out of the probes.
+    pub fn lamp_out_of_probes(self) -> Self {
+        Self {
+            probe_lamp: false,
+            ..self
+        }
+    }
+
+    /// The word of `ProbeUniform::steady` this frame, `lamp_moved` the lamp's position or
+    /// direction changed since the last encode with the lamp on.
+    fn probe_steady(&self, lamp_moved: bool) -> u32 {
+        let freeze = self
+            .probe_freeze
+            .map_or(0, |f| f.clamp(1, crate::probes::MAX_AGE));
+        freeze
+            | if self.skip_inside_probes {
+                crate::probes::STEADY_SKIP_INSIDE
+            } else {
+                0
+            }
+            | if lamp_moved && self.lamp && self.probe_lamp {
+                crate::probes::STEADY_LAMP_MOVED
+            } else {
+                0
+            }
+            | if self.probe_lamp {
+                0
+            } else {
+                crate::probes::STEADY_NO_LAMP
+            }
+    }
+
     /// [`Lighting::probe_rays`] as the probe passes take it.
     pub fn rays(&self) -> u32 {
         self.probe_rays.clamp(1, crate::probes::RAYS_PER_PROBE)
@@ -1123,6 +1197,14 @@ impl LightKey {
             || self.params != other.params
             || self.shadow_walk != other.shadow_walk
     }
+
+    /// Whether anything but the lamp's own light differs: what the probes see with the lamp
+    /// out of them.
+    fn static_differs(&self, other: &Self) -> bool {
+        self.shadow_walk != other.shadow_walk
+            || self.candidates != other.candidates
+            || self.emission_changed_at != other.emission_changed_at
+    }
 }
 
 /// Entries the candidate table holds at most.
@@ -1374,6 +1456,7 @@ impl Frame {
                 Io::Uint,
                 Io::Uint,
                 Io::Store(wgpu::TextureFormat::Rgba32Uint),
+                Io::Float,
             ],
         );
         let (temporal_layout, temporal) = pass(
@@ -2271,6 +2354,7 @@ impl Frame {
             exposure: self.lighting.manual_exposure(),
             emissive_history: self.lighting.emissive_history as f32,
             reuse_m_cap: self.lighting.reuse_m_cap.max(1),
+            converged_age: self.lighting.skip_converged_draw.unwrap_or(0),
             output_size: if self.upscaling() {
                 self.output
             } else {
@@ -2339,6 +2423,7 @@ impl Frame {
         let volume = indirect.then(|| self.probes());
         let probe_update = volume.is_some_and(ProbeVolume::updates);
         let mut light_window = false;
+        let mut lamp_moved = false;
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
         let mut edits = EditsUniform {
             count: 0,
@@ -2380,7 +2465,15 @@ impl Frame {
             }
             self.lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
-            if h.light_key.is_some_and(|k| k != key) {
+            // With the lamp out of the probes only static light opens a window.
+            let probes_changed = h.light_key.is_some_and(|k| {
+                if self.lighting.probe_lamp {
+                    k != key
+                } else {
+                    k.static_differs(&key)
+                }
+            });
+            if probes_changed {
                 h.light_window = crate::probes::WINDOW_FRAMES;
             }
             h.light_key = Some(key);
@@ -2397,6 +2490,11 @@ impl Frame {
                 .or(h.lamps.front())
                 .copied()
                 .unwrap_or_else(|| Lamp::of(params));
+            let now = Lamp::of(params);
+            lamp_moved = h
+                .lamps
+                .back()
+                .is_some_and(|l| l.pos != now.pos || l.dir != now.dir);
             if h.lamps.len() == LAMP_FRAMES {
                 h.lamps.pop_front();
             }
@@ -2510,6 +2608,7 @@ impl Frame {
                 Res::Tex(t.lit_info(q)),
                 Res::Tex(&t.reservoir[q]),
                 Res::Tex(&t.reservoir[c]),
+                Res::Tex(&t.moments[q]),
             ],
         );
         let temporal_bind = bind_io(
@@ -2750,7 +2849,7 @@ impl Frame {
                 u64::from(updates) * u64::from(self.lighting.rays()),
                 std::sync::atomic::Ordering::Relaxed,
             );
-            self.write_probe_uniform(queue, volume, &p, updates, light_window);
+            self.write_probe_uniform(queue, volume, &p, updates, light_window, lamp_moved);
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("probes"),
                 layout: &self.probe_layout,
@@ -2906,6 +3005,7 @@ impl Frame {
         p: &Params,
         updates: u32,
         window: bool,
+        lamp_moved: bool,
     ) {
         let u = ProbeUniform {
             origin: volume.origin_for(p.views[0].origin),
@@ -2913,7 +3013,7 @@ impl Frame {
             updates,
             rays: self.lighting.rays(),
             light_window: u32::from(window),
-            _pad: 0,
+            steady: self.lighting.probe_steady(lamp_moved),
         };
         queue.write_buffer(volume.uniform(), 0, bytemuck::bytes_of(&u));
     }

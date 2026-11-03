@@ -188,7 +188,9 @@ struct Params {
     // `far_hi <= far_lo` is off.
     far_lo: f32,
     far_hi: f32,
-    _pad10: u32,
+    // The history age at which the light pass stops drawing (`Lighting::skip_converged_draw`);
+    // 0 never.
+    converged_age: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -1270,6 +1272,16 @@ fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
         return q;
     }
     return q - j;
+}
+
+// The offset of a skipped pixel's mark in the light pass's emissive part: `-(L + mark)`, so a
+// last estimate of 0 still reads negative.
+const CONVERGED_MARK: f32 = 1e-4;
+
+// The emissive estimate's luminance a light-pass output of luminance `y` stands for: `y`, or
+// a skipped pixel's mark's `L` (`converged_draw_skip`).
+fn drawn_estimate(y: f32) -> f32 {
+    return select(y, max(-y - CONVERGED_MARK, 0.0), y < 0.0);
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

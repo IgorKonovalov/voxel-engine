@@ -1348,6 +1348,8 @@ pub struct Modes {
     /// Voxels between the probe volume's probes: the line names it (`probes 16`) while
     /// indirect light is on.
     probe_spacing: u32,
+    /// `--steady`'s preset when the flag was given: the banner's row `steady NAME`.
+    steady: Option<SteadyMode>,
 }
 
 impl Modes {
@@ -1371,7 +1373,14 @@ impl Modes {
             look: None,
             view: None,
             probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
+            steady: None,
         }
+    }
+
+    /// Names `--steady`'s preset in the banner, when the flag was given.
+    pub fn with_steady(mut self, steady: Option<SteadyMode>) -> Self {
+        self.steady = steady;
+        self
     }
 
     /// These modes with the line starting `source NAME` when `source` is given.
@@ -1562,6 +1571,8 @@ impl Modes {
             let mut look: Vec<&str> = self.look.iter().flat_map(|l| l.split(", ")).collect();
             let view = self.view.map(|v| format!("view {v}"));
             look.extend(view.as_deref());
+            let steady = self.steady.map(|s| format!("steady {}", s.name()));
+            look.extend(steady.as_deref());
             let mut rows = wrap(&look);
             rows.extend(wrap(&self.line().split(", ").collect::<Vec<_>>()));
             rows.join("\n")
@@ -1591,6 +1602,40 @@ fn wrap(parts: &[&str]) -> Vec<String> {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    /// Every `--steady` preset names itself in the banner and parses from its name; no flag,
+    /// no row.
+    #[test]
+    fn the_steady_presets_show_in_the_banner() {
+        for mode in SteadyMode::ALL {
+            let m = Modes::new(
+                mode.apply(vxe_render::Lighting::default()),
+                vxe_render::LightingResolution::default(),
+                0.0,
+            )
+            .with_steady(Some(mode));
+            let banner = m.banner(0.0).expect("the banner shows at the start");
+            assert!(
+                banner.contains(&format!("steady {}", mode.name())),
+                "{banner}"
+            );
+            assert_eq!(SteadyMode::from_name(mode.name()), Some(mode));
+        }
+        let plain = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        assert!(!plain.banner(0.0).unwrap().contains("steady"));
+        let off = SteadyMode::Off.apply(vxe_render::Lighting::default());
+        assert_eq!(off, vxe_render::Lighting::default(), "off is today's frame");
+        let c = SteadyMode::Ac.apply(vxe_render::Lighting::default());
+        assert_eq!(
+            c.probe_freeze,
+            Some(vxe_render::marcher::DEFAULT_PROBE_FREEZE)
+        );
+        assert!(!c.probe_lamp);
+    }
 
     /// Each of `F3` to `F7` and `M` changes the banner's text to the new mode; the banner is
     /// empty 3 s after the last change and shows again on the next one.
@@ -1759,6 +1804,47 @@ mod mode_tests {
             m.banner(9000.0).as_deref(),
             Some(format!("look field, far normal off\n{lighting}").as_str())
         );
+    }
+}
+
+/// The steady light spike's presets (`--steady`): today's frame, static light that converges
+/// and freezes (`a`), the lamp out of the probes (`c`), or both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SteadyMode {
+    Off,
+    A,
+    C,
+    Ac,
+}
+
+impl SteadyMode {
+    pub const ALL: [Self; 4] = [Self::Off, Self::A, Self::C, Self::Ac];
+
+    /// The name `--steady` parses and the banner shows.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::A => "a",
+            Self::C => "c",
+            Self::Ac => "ac",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// `lighting` under this preset: `a` converges and freezes, `c` leaves the lamp out of the
+    /// probes.
+    pub fn apply(self, lighting: vxe_render::Lighting) -> vxe_render::Lighting {
+        let a = matches!(self, Self::A | Self::Ac);
+        let c = matches!(self, Self::C | Self::Ac);
+        let l = if a {
+            lighting.converge_and_freeze()
+        } else {
+            lighting
+        };
+        if c { l.lamp_out_of_probes() } else { l }
     }
 }
 
