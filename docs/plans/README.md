@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0056** (ADRs are a separate sequence; next free there is **0043**).
+**Next free number: 0057** (ADRs are a separate sequence; next free there is **0043**).
 
 ## Active roster
 
@@ -20,6 +20,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before Plan 0048 and M10 (owner, 2026-11-03). |
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After 0045, if it stands: 0051's verdict shrinks it to scheme A or C, or drops it. |
 | [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 4. After 0055; its verdict plan, then 0044, 0045, 0048. |
+| [0056](0056-aliasing-spike-what-moves-on-the-final-image.md) | The aliasing spike: what moves on the final image with the light held still, by class; FSR 2, `own`, native and the far normal in one window | draft | M2, no ADR at draft. After 0051's verdict, before 0044 (proposed). |
 <!-- roster:end -->
 
 ## Recently closed
