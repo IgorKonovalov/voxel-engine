@@ -742,6 +742,8 @@ closes. Plan 0054 closed on scenario A (owner answer 13, 2026-11-01: `face` the 
 field an opt-in look, its Phase 4d dropped); the close's readings are in the paragraphs "The
 default surface is honest cubes" above and "The `face` default carries no attribute" in §3.
 
+*Noted 2026-11-03:* the figures below read `own` at 1.5, but the default is now FSR 2 at 1.5 with the far normal at `[2, 6]`; the readings that exist are in [Plan 0055's readings log](../plans/logs/0055.md) and [its close](../plans/done/0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md), and re-basing this ledger is owed.
+
 **Conditions.** The level's spawn, `flythrough --level --seed 1 --headless --render 1920x1080
 --frames 300 --adapter NVIDIA|AMD [--look L]`: 1080p output from 1280 x 720 internal (`own` at
 1.5), half lighting tier, coarse shadow walk, lamp on, release, exclusive perf lock and memory

@@ -19,8 +19,8 @@
 > separate dev-only `vxe-testkit` crate, is recorded under Decision.
 > **Source:** the owner, 2026-10-22, the same review as Plan 0044. The owner's answers: two
 > plans, performance first; full splits, engine crates included.
-> **After:** Plan 0044, which now follows Plan 0051 and precedes the M10 batch (owner,
-> 2026-10-29).
+> **After:** Plan 0044, which follows Plan 0051 and its verdict plan; before Plan 0048 and M10
+> (amended 2026-11-03, owner; see "Owner answers").
 
 ## TL;DR
 
@@ -474,6 +474,12 @@ module splits can change it.
 - **Move the fly-through's render tests into `vxe-render`.** They need the cave scene builders.
   A shared scene crate is a followup if the owner wants the renderer testable alone.
 - **Add a `vxe-testkit` crate** (rejected above).
+
+## Owner answers
+
+1. **The order (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: Plan 0051, its verdict plan, Plan 0044, this plan, Plan 0048 if it stands,
+   then M10.
 
 ## Implementation log
 

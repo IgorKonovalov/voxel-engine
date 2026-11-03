@@ -49,17 +49,22 @@
 > clamp biases the probe rays' direct light low"). Plan 0047's step C scratch
 > (`stepc-diag.log`, `stepc-donly.patch`, `stepc-noclamp.patch`) was in that plan's worktree
 > under `live/`, removed at its merge; the log keeps the readings.
-> **Starts after:** [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)
-> closes, and the plan its ADR names, if any (amended 2026-11-03, owner). That work may change
+> **Starts after:** Plan 0045, if this plan stands at
+> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
+> verdict; the order is 0051, its verdict plan, 0044, 0045, this plan (amended 2026-11-03, owner).
+> The verdict plan's work may change
 > the probe update's schedule, the emissive path and the young pixels, and may add settle, dot and
 > shimmer tests this plan must hold; dev re-reads the names there. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,
 > `light.wgsl`, `marcher.rs`), and its stillness rig, its slice hash, its furnace test form
 > and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
 > which waits for this plan (owner, 2026-10-28): 0032 adds the sun's sample and sky light to
 > the probe rays and reads its bars on the probes, so it reads them once, on an unbiased probe
-> direct term, against this plan's furnace at pi and its re-blessed goldens. Plans 0044 and 0045 also touch
-> `marcher.rs` and the flythrough tests, and whichever lands second rebases. Drafted against
+> direct term, against this plan's furnace at pi and its re-blessed goldens. Plans 0044 and 0045 land first and also touch
+> `marcher.rs` and the flythrough tests, so dev re-reads the names after them. Drafted against
 > main at bc1e7a5 and Plan 0047's branch at c27891f. The names dev finds in the tree win.
+> **Amended 2026-11-03 (owner):** this plan follows Plan 0045, and at Plan 0051's verdict it
+> shrinks to scheme A or C, or is dropped. The schemes stay in this plan until then. See "Owner
+> answers", 7.
 
 ## TL;DR
 
@@ -559,6 +564,12 @@ The questions of the draft, answered at approval (owner, 2026-10-28):
 6. **The order (owner, 2026-10-29; Plan 0049 dropped 2026-11-03).** This plan starts after Plan
    0051 and the plan its ADR names, if any, and must hold that plan's asserted settle, dot and
    shimmer tests and Plan 0047's stillness tests with their bars unchanged. Phase 4, done-when 5.
+   Amended by answer 7.
+7. **The order and this plan's size (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So
+   the recommended options: the order is Plan 0051, its verdict plan, Plan 0044, Plan 0045, this
+   plan if it stands, then M10. At Plan 0051's verdict the architect decides whether this plan
+   shrinks to scheme A (the probe clamp) or scheme C (solid angle), or is dropped. Every scheme
+   stays in this plan until then.
 
 ## Implementation log
 

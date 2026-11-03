@@ -28,10 +28,12 @@
 > `the_furnace_box_reads_pi_of_indirect_irradiance`, on the soak list, run by name. `nfr.md` §2
 > and §3 readings are in `docs/nfr/02-frame-budget.md` and `docs/nfr/03-memory.md`; phases gate
 > on `scripts/test-changed.mjs`, the tip on `--profile gate`; readings go in
-> `docs/plans/logs/0036.md`. **Owner decision, open:** the cover rules read the shading normal,
+> `docs/plans/logs/0036.md`. **Owner decision, answered 2026-11-03 (Phase 4, "Owner answers"):** the cover rules read the shading normal,
 > but since Plan 0054 that is an axis normal on near cubes, so a 15-degree slope is treads with
 > `n.z` 1 and risers with `n.z` 0, and Phase 4's snow-hillside bars cannot hold as written. See
 > Phase 4. **Waits on Plan 0051's verdict:** the probes' weathered albedo (Phase 4's bounce).
+> **Amended 2026-11-03 (owner):** Phase 4's stop is resolved: the snow cover reads the 27-count
+> gradient for the cover only, and pays for it only under snow. See "Owner answers".
 
 ## TL;DR
 
@@ -268,14 +270,26 @@ between phases. The architect reviews once at the end, in a fresh session.
     `cover >= 1.3 / 1.6 = 0.8125`. It blends the albedo toward `[0.90, 0.90, 0.92]` and the
     roughness toward 0.6.
   - **Exclusions.** Translucent layers and emissive hits take none of it.
-  - **Open, for the owner (2026-11-03).** `n` above was the smooth look's shading normal. On the
-    default honest cubes it is an axis normal near the camera, blending to the 27-count gradient
-    only through the provisional far normal. The rule needs a normal: the 27-count gradient
-    read for the cover alone, or the face normal with snow on every tread. Dev stops here for
-    the owner's answer; the "Snow hillside" bars below are written for the first.
+  - **The cover's normal (owner, 2026-11-03).** `n` above was the smooth look's shading normal.
+    On the default honest cubes it is an axis normal near the camera, blending to the 27-count
+    gradient only through the provisional far normal. `snow_cover` reads the 27-count gradient
+    around the hit voxel for the cover alone; the shading normal does not change, and `exposure`,
+    `wet` and `puddle` keep it, so `wet` on a hillside is full on treads and half on risers, for
+    Phase 7's eye. The read runs only where snow cover is above 0, so a frame with no snow pays
+    nothing. Probe hits follow the same rule. `composite.wgsl` has no mirror binding today: dev
+    carries the gradient's `z` from the hit pass or binds occupancy there, whichever the Phase 6
+    snow reading finds cheaper. Dev does not stop here.
+  - **The bar's arithmetic, open for the architect (2026-11-03).** A floor-rasterised 15-degree
+    stair reads 0, 18.4 and 26.6 degrees through that gradient, not 15. It reads 26.6 on the
+    column before each riser (`g = (3, 0, -6)`), about a quarter of the exposed columns, where
+    the rule gives `1.177 - 0.3 noise`, which saturates only at noise up to 0.59. So the
+    "Snow hillside" slope bar can miss its 2/255 on those pixels; the 70-degree cliff reads 63.4
+    degrees or steeper and holds. A slope constant of 3.0 and a noise of 0.25 would hold both
+    (1.033, and under 0 on the cliff) and move a flat face's saturation to cover 0.78. The
+    architect sets the constants before this phase starts; nothing here changes them today.
   - **Bounce.** `probe_update.wgsl` shades its hits with the same weathered albedo.
-- **Files touched:** `weather.wgsl`, `composite.wgsl`, `probe_update.wgsl`, `tests/weather.rs`,
-  `apps/flythrough/tests/golden.rs`.
+- **Files touched:** `weather.wgsl`, `composite.wgsl`, `probe_update.wgsl`, `march.wgsl` (if the
+  hit pass carries the gradient), `tests/weather.rs`, `apps/flythrough/tests/golden.rs`.
 - **Done when:** on lavapipe in the albedo view:
   - *Cave mouth.* At wetness 1, every pixel whose hit is inside the tunnel and more than
     0.5 m from the drip line reads the albedo it reads with weather off, exactly. At least
@@ -436,7 +450,7 @@ these differently, the plans' names win and this plan is read through them:
 
 | `nfr.md` figure | line | projection | how the close measures it |
 |---|---|---|---|
-| §2 Headroom (entities, volumetrics, game work), shared with Plan 0035 | 2.1 ms | dev box: fall map 0.05 to 0.15 ms (65 536 rays), precip 0.2 to 0.5 ms (fill-bound, a guess), composite terms under 0.15 ms. Slow adapter: 3 to 10 times that, a guess | Phase 6, storm preset, outdoor spawn, 1080p output, three runs, both adapters |
+| §2 Headroom (entities, volumetrics, game work), shared with Plan 0035 | 2.1 ms | dev box: fall map 0.05 to 0.15 ms (65 536 rays), precip 0.2 to 0.5 ms (fill-bound, a guess), composite terms under 0.15 ms. Under snow only, the cover's gradient: at most about the +1.6 ms Plan 0055 read for a whole-frame `gradient27` (RTX, showcase pose; a guess outdoors, amended 2026-11-03, owner). Slow adapter: 3 to 10 times that, a guess | Phase 6, storm preset and (amended 2026-11-03, owner) the snow preset, outdoor spawn, 1080p output, three runs, both adapters |
 | §2 Upscale, tone map, post | 1.5 ms | unchanged: the precip pass is reported on its own row, not in this line | the upscaler's rows at the same runs (FSR 2 by default) |
 | §2 Streaming line | 1.0 ms | adds the per-frame tile bookkeeping (bit sets over the synced chunks, a sort of at most 1024 tiles), projected under 0.02 ms | the autopilot's render-thread timers, weather on against off |
 | §3 Everything else in VRAM | 1.5 GB | +16 777 216 B (two maps), under 1 KiB of uniforms | `frame_bytes` |
@@ -493,6 +507,13 @@ frames (about 1 s). That is a setting, not a code path.
 - **The flash in the probe volume:** the flash is direct light only. A 300 ms event is shorter
   than the probes' hysteresis.
 - **A gameplay weather schedule or a shelter query:** the consumer's (risk 9).
+
+## Owner answers
+
+1. **Snow cover on cubes (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: the 27-count gradient for the cover only, so the "Snow hillside" bars
+   keep their form, at a cost only under snow (Phase 4; Budgets). Phase 4 records one arithmetic
+   question on those bars for the architect.
 
 ## Implementation log
 

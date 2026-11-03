@@ -59,6 +59,8 @@
 > **Waits on Plan 0051's verdict:** little. If the world-space cache is kept, its key (a voxel
 > and a face) has no answer yet at a clip hit, and Phase 6's "every other ray's light pass is
 > unchanged" is re-read. Plan 0033 builds on Plan 0032's shape, whatever that verdict makes it.
+> **Amended 2026-11-03 (owner):** see "Owner answers". Phase 7's forest readings are cut to 300
+> frames and the worst cases.
 
 ## TL;DR
 
@@ -495,6 +497,17 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
      The ratios add level/volume per fill and adapter, and fill 64/128 per rule. Each forest
      run with the far field on also prints Phase 2's per-level canopy fill for its rule and
      fill, so the frame cost and the far canopy's density are read together.
+     *Amended 2026-11-03 (owner): 300 frames and the worst cases. This replaces the matrix
+     above.* Median of the last 30 of 300 frames, three runs each, with every level at full
+     residency before those frames count (a run that does not get there is labelled unsettled).
+     Five configurations on each adapter, all at `--sun 10,270`: far field on with `none` (the
+     open reference); on with forest at fill 128 under `level` and under `volume` (the densest
+     masks, Budgets); on with forest at fill 64 under `level` (the sparse fill's sign); off with
+     forest at fill 128 (the on/off ratio). That is ten configurations, 30 timed runs and ten
+     `--view steps` runs. Both adapters stay: each reading is stated against the lines on its own
+     adapter. The ratios are forest/open with the far field on, on/off, level/volume at fill 128
+     and fill 64/128 under `level`, per adapter. Phase 8's window still flies both rules at both
+     fills.
   2. **Do far tree shadows survive? An observation.** In the four runs above, with the
      exposure fixed at the value auto settles to in the open, far-field-on run (logged), the
      exit line's mean ground luminance per hit level goes in the log for forest and none, and
@@ -504,7 +517,8 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
      whether trunk shadows and canopy shadows are visible in the saved image. *Amended
      2026-10-22 (owner, second set):* the luminance ratios and the saved images are taken
      for each forest configuration with the far field on (two rules at two fills) against
-     `none`, at the same fixed exposure.
+     `none`, at the same fixed exposure. *Amended 2026-11-03 (owner):* the three forest
+     configurations with the far field on that reading 1 keeps.
 
 ### Phase 8: The owner's windowed outdoor flight
 - **Owner skill:** human
@@ -575,7 +589,7 @@ pub trait WorldSource {
 | §5 Residency latency | 500 ms p95 near | unchanged near; ring p95 under 1.28, 2.56, 5.12 s by level (bars) | Phase 7 autopilot, far field on |
 | §2 Primary rays | 3.0 ms | outdoor horizon view, far field on: under 3.0 ms on the NVIDIA card (bar, a guess of +0.3 to 1.0 ms over off); iGPU recorded | Phase 7, timestamps, median of the last 30 of 300 frames, three runs, quiet box, both adapters |
 | §2 Lighting | 6.0 ms | the sun ray grows with the far field, most at low sun; recorded at 45 and 10 degrees | Phase 7, both adapters |
-| §2 Primary rays, lighting and frame, forest at low sun (amendment 2026-10-22, owner) | 3.0 ms; 6.0 ms; 16.6 ms | no projection: at fill 128 canopies keep 64 to 100 % of their interior cells at levels 1 to 3 under the level rule and 52 to 64 % under the volume rule, at fill 64 at most 11 %, so a grazing far ray meets denser masks than the bare hills at fill 128 | Phase 7, `--spawn vista --sun 10,270`, the eight configurations per adapter (amended 2026-10-22, owner: both rules, fills 128 and 64), both adapters |
+| §2 Primary rays, lighting and frame, forest at low sun (amendment 2026-10-22, owner) | 3.0 ms; 6.0 ms; 16.6 ms | no projection: at fill 128 canopies keep 64 to 100 % of their interior cells at levels 1 to 3 under the level rule and 52 to 64 % under the volume rule, at fill 64 at most 11 %, so a grazing far ray meets denser masks than the bare hills at fill 128 | Phase 7, `--spawn vista --sun 10,270`, the five configurations per adapter at 300 frames (amended 2026-11-03, owner: `none`, fill 128 under both rules, fill 64 under `level`, far field off at fill 128), both adapters |
 | §3 World in VRAM, forest (amendment 2026-10-22, owner) | 3 GB | a guess: canopies add about 270, 170 and 120 `Full` bricks to a surface clip chunk at levels 1 to 3 (bounded by the canopy layer, 6, 3 and 2 bricks tall), about +0.15 to 0.25 GB, so 0.3 to 0.45 GB for three levels | Phase 2's forest census; Phase 7's forest run, recorded against 0.5 GB |
 | §5 Generation throughput, forest (amendment 2026-10-22, owner) | as above | exact tree cells about 1.2e8 voxel samples a second at 10 m/s, some 1.7 workers (a guess, Context) | Phase 2's forest rate |
 | §2 Streaming line (render thread) | 1.0 ms | clip syncs add uploads of surface clip chunks and table entries; recorded beside off | Phase 7 autopilot timers |
@@ -652,6 +666,12 @@ is shared DDR4.
 - **A shadow walk that coarsens with distance from its origin** (cone-like): a followup if
   Phase 7's low-sun reading asks for it.
 - **Probes beyond the near volume** (Plan 0029 stays near-field).
+
+## Owner answers
+
+1. **The forest readings (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: Phase 7's forest matrix is cut to 300 frames and the worst cases (Phase
+   7, reading 1; Budgets).
 
 ## Implementation log
 

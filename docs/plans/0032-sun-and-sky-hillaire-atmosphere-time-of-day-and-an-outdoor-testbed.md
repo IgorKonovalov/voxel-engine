@@ -117,16 +117,23 @@
 > hits are unaffected, but the rule "which light feeds the probes" should then name the sun);
 > no probes (`--steady b --indirect off`, Phase 6's whole sky-light design and `w_probe` go).
 > The architect re-reads Phases 5, 6 and the Budgets after that verdict and before this lane.
-> **Starts after:** [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)
-> merges (amended 2026-10-29, owner). 0048 starts after
-> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)
-> closes and the plan its ADR names, if any (amended 2026-11-03, owner). Plans 0024, 0047,
+> **Starts after:** the render-profile plan merges (amended 2026-11-03, owner). The order is
+> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
+> its verdict plan, Plans 0044 and 0045,
+> [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) if it stands, the
+> render-profile plan, then this plan. "The base commit" in every bar is main after that last
+> merge, which replaces the earlier amendments' "after 0048's merge". Plans 0024, 0047,
 > 0029, 0030, 0040 and 0038 are closed and on main.
 > The names in this plan were checked against main at bc1e7a5 and Plan 0047's branch at
 > c27891f. 0047 still has dev phases to run (its sweep may change `DEFAULT_EMISSIVE_HISTORY`
 > and `Lighting::reuse_m_cap`, and adds `--reuse-m-cap`), and 0048 adds `Lighting::probe_direct`
 > and its flag and key, so dev re-reads the names at 0048's merge, and the names dev finds in
 > the tree win.
+> **Amended 2026-11-03 (owner):** see "Owner answers", 5. A render-profile plan comes before this
+> plan (the owner's parked settings and profiles idea; owed, not drafted, and it takes its number
+> when it is). Phase 8's forest readings are cut to 300 frames and the worst cases. This plan is
+> rewritten flat when the architect re-reads it after Plan 0051's verdict; it is not rewritten
+> today, and its stacked amendments stand until then.
 
 ## TL;DR
 
@@ -946,6 +953,18 @@ adds full-walk forest runs to read what the coarse walk saves.
      `forest` configuration at elevation 10 (fill 128 and 64) also runs with `--shadow-walk
      full` on each adapter, three timed runs and one `--view steps` run each, and the table
      gains those rows labelled `full`, with the ratio coarse/full per fill. No bar.
+     *Amended 2026-11-03 (owner): 300 frames and the worst cases. This replaces the matrix
+     above.* Median of the last 30 of 300 frames, three runs each, with the residency ball full
+     before those frames count (a run that does not get there is labelled unsettled). Every run
+     is at `--sun 10,180`; elevation 60 is dropped. Five configurations on each adapter: `none`
+     (the open reference), `forest` at fill 128, `forest` at fill 64, and `forest` at fill 128
+     once with `--look face` and once with `--shadow-walk full` (fill 128 is the full walk's
+     worst case). That is ten configurations, 30 timed runs, and eight `--view steps` runs (all
+     but `--look face`). Both adapters stay: each reading is stated against the 6.0 and 16.6 ms
+     lines on its own adapter, and Phase 9 picks the fill from them. The ratios are forest/open
+     per fill, fill 64/128 and coarse/full at fill 128, per adapter. The mirror's live bytes for
+     `none` and both fills are read at the run's last frame. Phase 9's `--sun 60,180` stays, in
+     the window.
   7. **The default stays `none`** (amended 2026-10-22, owner). The outdoor source's
      `--trees` default is `none` through this plan's dev phases; a test parses no `--trees`
      flag and finds `TreeDensity::None` and the banner's `trees none`. The owner picks the
@@ -1069,7 +1088,7 @@ exposure rows are 0040's.
 | §3 Everything else in VRAM | 1.5 GB | +0.31 MB (table above; amended 2026-10-28, the exposure rows are 0040's), on a base of about 184 956 992 B at `own` 1.5 by arithmetic | `Frame::frame_bytes` printed by the autopilot, at the base commit and at the tip |
 | §3 World in VRAM | 3 GB | the outdoor source holds fewer `Full` bricks than the cave (a terrain surface against a volume of caverns) but one record per resident air chunk; unknown until read | the mirror's live bytes at frame 3000 of the outdoor run |
 | §5 Streaming line | 1.0 ms | unchanged code; a new scene, with uniform-air chunks above the hills cheap to generate and narrow | the outdoor autopilot's render-thread timers, p50 and p99 |
-| §2 Lighting and the frame, forest at low sun (amendment 2026-10-22, owner) | 6.0 ms; 16.6 ms | no projection: a half-filled canopy defeats the 2^3 skip for primary rays and the full walk (the default coarse walk sees it near-solid; amended 2026-10-27, owner), and a ray rising at 10 degrees crosses the canopy layer (about 21 to 118 voxels above the ground) over `97 / tan 10 = 550` voxels of ground distance | Phase 8's twelve configurations (two elevations, three tree settings: none and forest at leaf fill 128 and 64, two adapters; amended 2026-10-22, owner) at the coarse default, plus the four full-walk forest runs at elevation 10 (amended 2026-10-27, owner), the forest/open, fill 64/128 and coarse/full ratios, the directional ray's steps |
+| §2 Lighting and the frame, forest at low sun (amendment 2026-10-22, owner) | 6.0 ms; 16.6 ms | no projection: a half-filled canopy defeats the 2^3 skip for primary rays and the full walk (the default coarse walk sees it near-solid; amended 2026-10-27, owner), and a ray rising at 10 degrees crosses the canopy layer (about 21 to 118 voxels above the ground) over `97 / tan 10 = 550` voxels of ground distance | Phase 8's ten configurations at elevation 10 and 300 frames (five per adapter: none, forest at leaf fill 128 and 64, and fill 128 with `--look face` and with `--shadow-walk full`; amended 2026-11-03, owner), the forest/open, fill 64/128 and coarse/full ratios, the directional ray's steps |
 | §3 World in VRAM, forest (amendment 2026-10-22, owner) | 3 GB | a guess: a mean canopy of radius 23.5 (54 400 voxels) touches about 110 to 215 bricks, every one of them `Full` at a half fill, and about 1.7 trees stand per chunk column (`64^2 / 48^2 x 0.94`), so 185 to 360 more bricks a surface column; over the `r_lod` disc's 1810 columns at 128 to 192 B a brick, 0.04 to 0.13 GB | Phase 8's live bytes, `none` against `forest` |
 
 On the slow adapter (`nfr.md` §1, the Cezanne iGPU on RADV) the default frame already reads
@@ -1272,6 +1291,12 @@ Amended 2026-10-28. The owner answered each question with its first option (owne
    0047, so Phase 6's probe bars are read once on an unbiased probe term ("Starts after";
    Risks, "Plan 0048 interaction"). Phase 6's furnace reference stays pi, which holds after
    0048.
+5. **The image first, and the order (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So
+   each question took its recommended option: a render-profile plan before this plan, against
+   the budget; the order under "Starts after"; Phase 8's forest matrix cut to 300 frames and the
+   worst cases (Phase 8, bar 6; Budgets); a flat rewrite after Plan 0051's verdict. Plan 0048
+   may shrink or go at that verdict, and answer 4's furnace reference is then re-read in the
+   rewrite.
 
 ## What this plan does NOT do
 

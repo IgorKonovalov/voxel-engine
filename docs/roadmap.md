@@ -46,12 +46,13 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Entities | voxel models (MagicaVoxel-style volumes) on rigs of rigid parts, traced in the same pipeline as the world | skinned triangle meshes with a hybrid rasterize + RT path; deciding later |
 | Repo | public GitHub, MIT OR Apache-2.0 | private; local only |
 | Harness | Ritmolux-style: ADRs, phased plans, architect/dev skills, deny hooks, CI gates | CLAUDE.md + ADRs only |
-| Surface look (added 2026-10-16) | smooth and natural rock, not visible cubes, with the Sibenik cathedral figure of Laine & Karras 2010 (ESVO, Figure 1) as the quality reference: not photorealism, but that level of believable surface and soft light; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, procedural per-material surface detail, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | a blocky aesthetic; photorealism; committing to ESVO-style contours before anything is on screen. Amended 2026-11-01 (owner, Plan 0054 answer 13): honest cubes are the default on frame cost; the smooth field surface is an opt-in look (ADR-0041) |
+| Surface look (added 2026-10-16; decided 2026-11-01) | honest cubes (`face`) are the default and meet M2's goal, and the field surface is an opt-in look (`--look field`; ADR-0041, Plan 0054's close). The requirement as first set, kept as history: smooth and natural rock, not visible cubes, with the Sibenik cathedral figure of Laine & Karras 2010 (ESVO, Figure 1) as the quality reference: not photorealism, but that level of believable surface and soft light; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, procedural per-material surface detail, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | photorealism; the smooth surface as the default, on frame cost (owner, Plan 0054 answers 13 and 14). As first set: a blocky aesthetic; committing to ESVO-style contours before anything is on screen |
 | VR readiness (added 2026-10-16) | PC VR is a possible later target, so the renderer keeps three doors open from M2 on: a view is an asymmetric frustum (origin, basis, four tangent half-angles) and the frame renders N views, not one camera with a symmetric field of view; lighting is view-independent or shareable across views where the cost is equal; presentation is decoupled from the window surface. Actual VR support (OpenXR, 90 Hz, two eyes) is an unscheduled milestone with its own hardware floor, never a promise on the baseline GPU. See "Unscheduled: PC VR" below | building OpenXR support now; standalone headsets (mobile GPU, Android); treating VR as a mode of the baseline budget |
 | Physics (added 2026-10-16) | **voxel dynamics, not a rigid-body engine.** Collapse is emergent and authoritative: `vxe-world` answers which region lost its connection to the anchor after an edit, and deterministic ops decide what the world looks like afterwards. Fall damage is a controller event. Debris and falling pieces may be animated client-side by a rigid-body library as a cosmetic layer that never writes to the world. Revises M8 and the consumer's "scripted collapse only" wording | a general physics engine (`rapier`) in the authoritative world; scripted-only collapse; no collapse at all |
 | Floor, profiles and scene scale (added 2026-10-17) | the GTX 1660-class floor of `nfr.md` §1 stays the 60 fps gate at 1080p with an upscaler; a named **portable profile** (Switch-2-class: about 1.7 to 3 TFLOPS, 68 to 102 GB/s, 9 GB shared) is a target of the quality settings (internal resolution, full-detail radius, translucent layers, lighting tier), at 720p and 30 to 60 fps; 120 fps is welcome where a fast machine reaches it through a performance profile, not a gate. Lighting has two tiers: direct light by one shadow ray per light at half resolution with blur and temporal reprojection on the floor, ReSTIR direct lighting where the budget allows, and indirect light from probes in both. Glass, water and lava are translucent voxels in the brick map; mist, smoke and fire are a separate coarse volume. Open-sky and kilometre-scale scenes are in scope, so the far-field clipmap is a scheduled plan, not a maybe. The brick representation that serves all of this is ADR-0012 | Switch 1 (about 0.4 TFLOPS, 25.6 GB/s shared, no public graphics API for `wgpu`); raising the floor to the dev laptop; 120 fps as a budget; media as voxels in the brick map |
 | Baseline card (added 2026-10-21) | the GTX 1660-class card is **not acquired**. The floor stays the gate on paper, read as a projection from two readings taken on the dev box: the NVIDIA card (the dev reference) and the AMD Cezanne iGPU on RADV, named in `nfr.md` §1 as the **slow adapter** (about the portable profile's class, below the floor's). From Plan 0028 on, every render plan's close takes its GPU readings on both adapters and labels each by its adapter | buying or borrowing a GTX 1660 before M2 closes; projections from the NVIDIA card alone |
 | Outdoors (added 2026-10-22) | outdoors is a general engine capability (M10): a Hillaire atmosphere with a time of day the game sets, the sun's shadow as one per-pixel ray, a far-field clipmap to about 1 km, liquid surfaces on translucent voxels with flow later, volumetric clouds, and weather as cosmetic client state; terrain stays the game's source | a testbed-only showcase; near radius plus fog as the horizon; precomputed or analytic skies; shadow maps or heightmaps for the sun; a 2.5D cloud layer; weather written as voxels |
+| The image first (added 2026-11-03) | a stable image with no flicker or aliasing artifacts comes first, performance considered. The owner: "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course" | any other work ahead of it: "all other things doesnt really matter as of now" |
 
 ## The first consumer's needs, mapped
 
@@ -454,8 +455,8 @@ work), and the light (real-time GI standing in for the baked occlusion).
   2026-10-28): the clamp cuts the probe rays' direct light about 8.5 % low in the furnace.
   Plan 0048 (approved 2026-10-28, ADR-0037 proposed) measures probe-only schemes against pi,
   keeps the winner and today's clamp, and returns the furnace test to pi. The order is Plan
-  0051, the plan its ADR names if any, Plan 0048, then Plan 0032 (amended 2026-11-03, owner):
-  0048 holds whatever settle, dot and shimmer tests that plan asserts.
+  0051, its verdict plan, Plans 0044 and 0045, Plan 0048 if it stands, then M10 (amended
+  2026-11-03, owner): 0048 holds whatever settle, dot and shimmer tests the verdict plan asserts.
 - Indirect light that settles fast, light that holds still in flight, and young pixels
   without dots (the owner at Plan 0047's windowed check, 2026-10-28 and 2026-10-29): seconds
   of settling after a fly-in, a lamp toggle or a dig, bright dots after a fast turn or a dig,
@@ -636,7 +637,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0036 approved 2026-10-22)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -645,17 +646,22 @@ show it). Owner's interview, 2026-10-22: outdoors is a general capability, the v
 about 1 km, liquids render first and flow later, and the sky and weather are fully dynamic but
 set by the game, never by a wall clock in the engine.
 
+**Order (owner, 2026-11-03):** Plan 0051, its verdict plan, Plans 0044 and 0045, Plan 0048 if it
+stands (the verdict shrinks it to scheme A or C, or drops it), then this milestone. Its first plan
+is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
+the budget and comes before Plan 0032. It is owed, not drafted, and takes its number when it is.
+
 - **Sun and sky** (Plan 0032; ADR-0026, ADR-0027): Hillaire's atmosphere LUTs built on the GPU,
   a time of day the game sets, the sun or moon as one dedicated directional sample with a
   per-pixel shadow ray in Plan 0024's light pass, sky light into Plan 0029's probes, auto
-  exposure. After Plans 0024 and 0029; amended 2026-10-29 (owner): after Plan 0048, which
-  follows Plan 0051 (amended 2026-11-03, owner).
+  exposure. After the render-profile plan (amended 2026-11-03, owner).
 - **The far field** (Plan 0033; ADR-0028, the founding interview's far-field clipmap): up to
   three coarse chunk levels to about 1 km, generated by the source directly, edits folded in
   from full detail; the sun's shadow ray continues into it. After Plans 0028 and 0032.
 - **Liquid surfaces** (Plan 0034; ADR-0029): water and lava stay translucent voxels; their
   surface gets analytic waves, a traced reflection ray, a bent refraction ray and Beer-Lambert
-  absorption. After Plan 0032.
+  absorption. After Plan 0032. Flat faces with analytic normals stay, which answers the owner's
+  open item of 2026-11-01 on smooth liquids (owner, 2026-11-03).
 - **Aerial perspective and clouds** (Plan 0035; ADR-0030): an aerial-perspective volume over
   the near and far field, a volumetric cloud shell marched in an amortised quarter-resolution
   buffer, and a cloud shadow map on the sun sample. It shares M8's composite rule, not its
