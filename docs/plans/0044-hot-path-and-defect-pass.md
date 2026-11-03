@@ -2,6 +2,8 @@
 
 > **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
+> **Noted 2026-11-03 (architect, Plan 0054's close):** `attrib.rs`, `attrib.wgsl` and `attr_work.rs` are gone with the planes; findings against them are moot, and `field.rs` and `field.wgsl` are the opt-in look's. Trust the tree; dev surfaces the
+> drift when this plan starts.
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
 > figures in `docs/nfr.md` that the plans so far have already shipped.
 > **Related ADRs:** none. Each fix keeps the mechanism and removes waste or a defect, so no

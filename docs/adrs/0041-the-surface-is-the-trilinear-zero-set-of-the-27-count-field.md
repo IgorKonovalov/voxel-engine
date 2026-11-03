@@ -1,8 +1,8 @@
 # ADR-0041: The default surface is honest cubes; the trilinear zero set of the 27-count field is an opt-in look for smooth materials
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-03, Plan 0054 closed; see Outcome)
 > **Date:** 2026-10-31 (rewritten 2026-11-01 on Plan 0054 owner answer 13: cubes the default)
-> **Related plan(s):** [Plan 0054](../plans/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)
+> **Related plan(s):** [Plan 0054](../plans/done/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)
 > (Phase 1's readings, the owner's Phase 2 pick and the owner's Phase 3b pick, owner answer 7,
 > are the evidence; its Phase 5 accepts this at the close; amended 2026-10-31 on answers 7
 > and 8; rewritten on answer 13). At acceptance this supersedes
@@ -265,3 +265,38 @@ material's definition between the world's table and a renderer call, and every r
 instance must be told. The material row already carries the renderer's properties
 (`TRANSLUCENT`, `detail`, `opacity`); the flag joins them. Rejected by the owner for the row's
 flag (Plan 0054 owner answer 8).
+
+## Outcome
+
+**Accepted 2026-11-03 at Plan 0054's close (v0.39.0).** The Decision shipped: `face` is
+`LookPreset::DEFAULT`, the field is `--look field`, and the planes, snap and the attribute are
+removed. The default meets the roadmap's surface-look goal by the owner's call (Plan 0054 owner
+answer 14): cubes meet M2's goal, and the field is a quality option revisited per material class,
+liquids first at Plan 0034. It supersedes ADR-0011's surface (its per-material detail stays and
+tilts the face normal), ADR-0039 and ADR-0038 as moot; ADR-0040 was rejected and never accepted.
+The surface-only attribute slots of Plan 0028 under ADR-0012 went with the attribute.
+
+- **What the Decision names and the tree does differently.** The band's counts are filled by a
+  field pass of their own (`field.rs`, `field.wgsl`), not by `attrib.wgsl`'s `field_main`; no
+  attribute pass exists. The shadow ray starts `SHADOW_OFFSET` along the hit's normal
+  (`shadow_origin`, `march.wgsl`); the selectable shadow push and `--shadow-push` are gone. Under
+  a crisp row the walk splits (Plan 0054 owner answer 11): a ray walks as `face` until it enters
+  a band brick that is not marked cubes-only, and `field_resume` carries it from there.
+- **The default's reading (`docs/nfr.md` §2 and §3, `86611cc`).** Hit plus light at the level's
+  spawn, 1080p from 720p: RTX 3080 Laptop 1.397 ms against main's planes' 1.533, Radeon RENOIR
+  10.796 against 11.333. Live mirror bytes: the level 62 846 720 B against 157 872 640 B, the
+  flight 502 928 492 B against 871 679 852 B. Frame targets are main's plus 48 B: the split walk's
+  hand-off list is allocated by the first frame that splits
+  (`only_a_split_frame_allocates_the_split_list`).
+- **The opt-in look's reading.** `--look field --crisp none` reads hit plus light 4.718 ms on the
+  RTX against the 5.00 ms it was built to, 37.842 ms on the Radeon. Band bytes: 96 243 264 B at the
+  level and 438 898 624 B over the flight, against owner answer 4's 106 and 530 MB. In the owner's
+  window it costs about 3x `face`'s GPU frame, which is why it is not the default.
+- **What it did not reach, all in the opt-in look.** The crisp seam is open: the trunk's 15 and 19
+  leaks at the 2x2 and 3x3 rods, material-0 field hits at the collar and on the cubes-free walk,
+  and the L's non-cube hits in its concave corner. The smooth-near rule of owner answer 12 is not
+  built. Plan 0054's log and followups hold the readings.
+- **The default's specks.** `face` reads 2083 dark specks on the contour golden scene against
+  main's planes' 365, but 2055 of them are there with shadows off and 34 come with shadows. The
+  close accepted this as `face`'s shading (Plan 0054's followups).
+

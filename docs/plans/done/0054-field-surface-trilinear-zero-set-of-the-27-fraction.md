@@ -1,15 +1,17 @@
 # 0054: The field surface: the trilinear zero set of the 27-fraction, a cost-and-look spike first, then band storage and the walk if the owner picks it
 
-> **Status:** in-progress
+> **Status:** done (2026-11-03, v0.39.0): closed clean at the fresh-session review after one dev fix
+> pass; honest cubes (`face`) are the default with no attribute, band or field pass, the planes are
+> gone, and the field surface stays an opt-in look; ADR-0041 accepted with an Outcome
 > **Approved:** 2026-10-30 (owner, as drafted; the storage and cost bars are set at Phase 2 on Phase 1's readings)
 > **Created:** 2026-10-30
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
-> **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (the per-voxel plane this surface would replace);
-> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> [ADR-0039](../../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
 > (snap, which a field surface makes moot);
-> [ADR-0040](../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
+> [ADR-0040](../../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
 > (whose Alternative B this plan is, and whose Alternative D stays the last fallback). The
 > field surface's own ADR (encoding, normal source, what the planes' removal leaves) is
 > drafted after Phase 1's readings and accepted or dropped at this plan's close.
@@ -773,7 +775,7 @@ every asserted reading, golden and gate stays on lavapipe.
   so the window's size and the view are on record): the level at the vein and the patch in the
   default look, lamp on and off, shaded, at the window's size of sessions 1 and 2; the thin rig
   (the wood crisp by its row) and the seam rig, `face` beside. The owner judges the frame rate
-  against [`nfr.md`](../nfr.md) §2, "Frame ledger" (2026-10-31): cubes, the field but crisp,
+  against [`nfr.md`](../../nfr.md) §2, "Frame ledger" (2026-10-31): cubes, the field but crisp,
   and the field for some materials only, beside the slices reserved for the systems to come.
 - **Done when:** the owner records one of: (a) the frame rate and the seam are acceptable;
   Phase 5 runs. (b) the frame rate is not: the owner names a windowed bar (the frame or the hit
@@ -2148,7 +2150,7 @@ Added 2026-11-01 (architect, owner answer 13). None is scheduled; each is a plan
 a consumer or the owner asks for it.
 
 - **Smooth for liquids.** The owner's "we can use smooth only for liquids maybe" is a question
-  for [Plan 0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md)'s interview,
+  for [Plan 0034](../0034-water-surface-waves-reflection-refraction-underwater-fog.md)'s interview,
   not a decision: whether a liquid's surface takes the field's shape (a liquid material smooth
   under the opt-in look) or stays ADR-0029's flat face with analytic wave normals.
 - **The smooth-near seam rule** (owner answer 12, not built): air band voxels carry a
@@ -2167,3 +2169,32 @@ a consumer or the owner asks for it.
   rejected, never accepted.
 - **The Radeon walk-speed spike** (owner answer 3) and **the thin-feature fallback** (owner
   answer 8) now concern only the opt-in look, and wait for a consumer of it.
+
+Added 2026-11-03 (architect, at the close review). The two findings the log handed to the review
+are settled here; none of these blocks the close.
+
+- **The default's speck count: accepted, no shadow start owed.** Re-read at the close on lavapipe:
+  `face` 2083 with shadows, 2055 without, 34 only with, against main's snap 365, 360, 6 (Plan
+  0050's log). 2055 of the 2083 are there with shadows off, so the metric is reading `face`'s own
+  shading; the shadow ray's share is the 34, 0.06 % of the 320 x 180 frame. The field look reads
+  103 there, more than `face`. `face`'s pixels are held to main's by the face goldens, and the
+  owner judged them in the window (answer 13). A shadow start for cubes is a plan only if the eye
+  asks for one. `contour_dark_specks_with_and_without_shadows` now prints these counts and asserts
+  only its golden, as Phase 4c's item 8 allows, so it does not guard them.
+- **`castle_gate_golden`'s peak RSS: not this plan's, still owed.** 866 717 696 B alone at the
+  close and passing in the full tier, against its 1 GiB bar; failures appear only in loaded runs
+  (Plan 0050's and Plan 0052's logs read 1.48 to 1.50 GB, this plan's 1.19 GB). The plan did not
+  raise it. The per-test reading that Plan 0052's followup asks for is still owed: `VmHWM` is the
+  process's peak, and the bar flakes in a loaded run.
+- **The hero image.** `docs/images/hero.png` shows the removed `contour-sharp` look, and
+  `--example hero` now shoots `face`. README's caption says so. Re-shooting it is the owner's call.
+- **Names left from the planes.** `NormalMode::Contour` is the field look; `contour_golden`,
+  `look_contour.png`, `look_wall_contour*.png` and `LookPreset::next`'s `contour` argument carry
+  the old word, and `apps/flythrough/src/lib.rs` and `tests/look.rs` cite the field as "ADR-0040
+  Alternative B". A rename fits Plan 0045.
+- **Approved plans that name what is gone.** Plans 0032, 0044, 0045 and 0051 carry a dated header
+  note. Plan 0051's is the one with weight: its world-space cache keys on the contour attribute,
+  which no longer exists.
+- **The logs behind the readings are untracked.** `nfr.md` §2 and §3 cite `live/p4c/close/` and
+  `live/session3-seam.log` in this plan's worktree, which are lost when the worktree is deleted
+  unless they are rescued first.

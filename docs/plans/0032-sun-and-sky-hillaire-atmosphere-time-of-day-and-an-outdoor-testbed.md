@@ -3,6 +3,8 @@
 > **Status:** approved (2026-10-22)
 > **Amended:** 2026-10-22, the source switch moved from `F8` (Plan 0029 took it) to `Tab`.
 > **Created:** 2026-10-22
+> **Noted 2026-11-03 (architect, Plan 0054's close):** `attrib.wgsl` is gone with the planes, so the binding-slot note under this plan's phases needs a re-read against `march.wgsl` and `field.wgsl`. Trust the tree; dev surfaces the
+> drift when this plan starts.
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0026](../adrs/0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md)
 > (proposed with this plan: the atmosphere model),

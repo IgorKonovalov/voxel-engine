@@ -5,7 +5,7 @@
 > 0054 Phase 4c; the box metric survives as the field look's gate; ADR-0040 rejected, never accepted
 > **Approved:** 2026-10-30 (owner, as drafted; the order against Plan 0051 and the two cost bars stay the owner's to set)
 > **Amended:** 2026-10-30 (architect, owner's answer): Phase 4 waits for
-> [Plan 0054](../0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)'s Phase 1, the
+> [Plan 0054](0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)'s Phase 1, the
 > field-surface spike stacked on this plan's branch after Phase 3, and compares its
 > `--look field` as a sixth look in the same windowed session. Outcome (b) names the field
 > surface by its reading, not by a future plan.
