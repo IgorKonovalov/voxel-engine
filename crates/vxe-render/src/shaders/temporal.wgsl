@@ -29,6 +29,10 @@
 //                                        with the emissive guard (bit 10) the emissive
 //                                        part's blend rises the same way to the guard's
 //                                        lambda (its w), and the age falls by it too
+//  11  storage           cache_cells     the emissive cache's table (march.wgsl), only read:
+//                                        where a hit's cell has at least C_MIN samples, its mean
+//                                        times the exposure is the emissive part, in the
+//                                        accumulation and in the moments' luminance
 //
 // A hit is reprojected through the previous frame's view of the same index to a fractional
 // pixel as if both frames' rays went through their pixels' centres (`reproject_centred`: a
@@ -76,6 +80,58 @@ struct Edits {
 
 @group(2) @binding(9) var<uniform> edits: Edits;
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
+@group(2) @binding(11) var<storage, read_write> cache_cells: array<u32>;
+
+// The mean of the key's cell in rgb, with a 1 in a; 0 for a key with no cell or under C_MIN.
+fn cache_mean(v: vec3<i32>, face: u32) -> vec4<f32> {
+    let base = cache_slot(v, face);
+    let check = cache_check(v, face);
+    for (var i = 0u; i < CACHE_PROBES; i++) {
+        let word = CACHE_WORDS * ((base + i) & (CACHE_CELLS - 1u));
+        if (cache_cells[word] == check) {
+            let count = cache_cells[word + 1u];
+            if (count < cache_c_min()) {
+                break;
+            }
+            let n = f32(min(count, cache_c_cap())) * CACHE_Q;
+            let sums = vec3<f32>(f32(cache_cells[word + 2u]), f32(cache_cells[word + 3u]), f32(cache_cells[word + 4u]));
+            return vec4<f32>(sums / n, 1.0);
+        }
+    }
+    return vec4<f32>(0.0);
+}
+
+// The cached emissive irradiance at hit `rec` of face normal `nf` (rgb), with its validity (a):
+// the pixel's own cell, or with Params.cache bit 1 the four coplanar cells around the hit,
+// bilinear on its in-face position, a young or missing cell weighing 0.
+fn cache_read(rec: HitRecord, nf: vec3<f32>) -> vec4<f32> {
+    let v = cache_voxel(rec.p, nf);
+    let face = cache_face(rec.axis, nf);
+    if ((params.cache & 2u) == 0u) {
+        return cache_mean(v, face);
+    }
+    let a = (rec.axis + 1) % 3;
+    let b = (rec.axis + 2) % 3;
+    let uv = vec2<f32>(rec.p[a], rec.p[b]) - 0.5;
+    let low = floor(uv);
+    let f = uv - low;
+    var sum = vec3<f32>(0.0);
+    var weight = 0.0;
+    for (var i = 0; i < 4; i++) {
+        var cell = v;
+        cell[a] = i32(low.x) + (i & 1);
+        cell[b] = i32(low.y) + (i >> 1);
+        let wx = select(1.0 - f.x, f.x, (i & 1) == 1);
+        let wy = select(1.0 - f.y, f.y, (i >> 1) == 1);
+        let m = cache_mean(cell, face);
+        sum += wx * wy * m.xyz * m.w;
+        weight += wx * wy * m.w;
+    }
+    if (weight <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(sum / weight, 1.0);
+}
 
 // The gradient's gain: lambda = |new - old| / max(new, old) reads 0.9 where light fell to a
 // tenth, and a blend at 0.9 would keep a tenth of the old light; twice lambda, clamped, takes
@@ -135,6 +191,15 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let last_estimate = drawn_estimate(luminance(sample.xyz));
     if (kept) {
         sample = vec4<f32>(0.0, 0.0, 0.0, sample.w);
+    }
+    var cached = false;
+    if (cache_on() && cacheable(rec)) {
+        let ray = pixel_ray(full_px(gid.xy));
+        let c = cache_read(rec, shadow_normal_of(rec, ray.d));
+        if (c.w > 0.0) {
+            cached = true;
+            sample = vec4<f32>(c.xyz * exposure_now(), sample.w);
+        }
     }
     var l = min(luminance(sample.xyz) + sample.w, MOMENT_LUM_MAX);
     var accum = sample;
@@ -228,7 +293,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             // The tap the light pass took the reservoir from, unblended: a still view's
             // bilinear weights carry float noise that would drift a value meant to hold.
             let e_kept = textureLoad(prev_accum_in, vec2<i32>(floor(q + 0.5)), 0).xyz * ratio;
-            let e_new = select(mix(h.xyz, sample.xyz, a_emissive), e_kept, kept);
+            var e_new = select(mix(h.xyz, sample.xyz, a_emissive), e_kept, kept);
+            if (cached) {
+                e_new = sample.xyz;
+            }
             accum = vec4<f32>(e_new, mix(h.w, sample.w, a));
             // The moments follow each part at its own pace, by the lamp's share of the
             // history's luminance.

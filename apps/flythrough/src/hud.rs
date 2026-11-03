@@ -1573,6 +1573,16 @@ impl Modes {
             look.extend(view.as_deref());
             let steady = self.steady.map(|s| format!("steady {}", s.name()));
             look.extend(steady.as_deref());
+            let cache = self.lighting.emissive_cache.map(|c| {
+                format!(
+                    "cache read {}",
+                    match c.read {
+                        vxe_render::marcher::CacheRead::Nearest => "nearest",
+                        vxe_render::marcher::CacheRead::Smooth => "smooth",
+                    }
+                )
+            });
+            look.extend(cache.as_deref());
             let mut rows = wrap(&look);
             rows.extend(wrap(&self.line().split(", ").collect::<Vec<_>>()));
             rows.join("\n")
@@ -1607,9 +1617,10 @@ mod mode_tests {
     /// no row.
     #[test]
     fn the_steady_presets_show_in_the_banner() {
+        use vxe_render::marcher::CacheRead::{Nearest, Smooth};
         for mode in SteadyMode::ALL {
             let m = Modes::new(
-                mode.apply(vxe_render::Lighting::default()),
+                mode.apply(vxe_render::Lighting::default(), Nearest),
                 vxe_render::LightingResolution::default(),
                 0.0,
             )
@@ -1627,9 +1638,16 @@ mod mode_tests {
             0.0,
         );
         assert!(!plain.banner(0.0).unwrap().contains("steady"));
-        let off = SteadyMode::Off.apply(vxe_render::Lighting::default());
+        let off = SteadyMode::Off.apply(vxe_render::Lighting::default(), Nearest);
         assert_eq!(off, vxe_render::Lighting::default(), "off is today's frame");
-        let c = SteadyMode::Ac.apply(vxe_render::Lighting::default());
+        let smooth = Modes::new(
+            SteadyMode::Ab.apply(vxe_render::Lighting::default(), Smooth),
+            vxe_render::LightingResolution::default(),
+            0.0,
+        )
+        .with_steady(Some(SteadyMode::Ab));
+        assert!(smooth.banner(0.0).unwrap().contains("cache read smooth"));
+        let c = SteadyMode::Ac.apply(vxe_render::Lighting::default(), Nearest);
         assert_eq!(
             c.probe_freeze,
             Some(vxe_render::marcher::DEFAULT_PROBE_FREEZE)
@@ -1808,17 +1826,29 @@ mod mode_tests {
 }
 
 /// The steady light spike's presets (`--steady`): today's frame, static light that converges
-/// and freezes (`a`), the lamp out of the probes (`c`), or both.
+/// and freezes (`a`), the lamp out of the probes (`c`), emissive light read from a per-face
+/// table (`b`), or the combinations Phase 4 of the spike compares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SteadyMode {
     Off,
     A,
     C,
     Ac,
+    B,
+    Ab,
+    Abc,
 }
 
 impl SteadyMode {
-    pub const ALL: [Self; 4] = [Self::Off, Self::A, Self::C, Self::Ac];
+    pub const ALL: [Self; 7] = [
+        Self::Off,
+        Self::A,
+        Self::C,
+        Self::Ac,
+        Self::B,
+        Self::Ab,
+        Self::Abc,
+    ];
 
     /// The name `--steady` parses and the banner shows.
     pub fn name(self) -> &'static str {
@@ -1827,6 +1857,9 @@ impl SteadyMode {
             Self::A => "a",
             Self::C => "c",
             Self::Ac => "ac",
+            Self::B => "b",
+            Self::Ab => "ab",
+            Self::Abc => "abc",
         }
     }
 
@@ -1835,16 +1868,24 @@ impl SteadyMode {
     }
 
     /// `lighting` under this preset: `a` converges and freezes, `c` leaves the lamp out of the
-    /// probes.
-    pub fn apply(self, lighting: vxe_render::Lighting) -> vxe_render::Lighting {
-        let a = matches!(self, Self::A | Self::Ac);
-        let c = matches!(self, Self::C | Self::Ac);
-        let l = if a {
-            lighting.converge_and_freeze()
-        } else {
-            lighting
-        };
-        if c { l.lamp_out_of_probes() } else { l }
+    /// probes, `b` reads emissive light from the per-face table at `read`.
+    pub fn apply(
+        self,
+        lighting: vxe_render::Lighting,
+        read: vxe_render::marcher::CacheRead,
+    ) -> vxe_render::Lighting {
+        let name = self.name();
+        let mut l = lighting;
+        if name.contains('a') {
+            l = l.converge_and_freeze();
+        }
+        if name.contains('c') {
+            l = l.lamp_out_of_probes();
+        }
+        if name.contains('b') {
+            l = l.world_space_cache(read);
+        }
+        l
     }
 }
 

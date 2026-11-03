@@ -27,6 +27,10 @@
 //                                        luminance in rgb (`converged_draw_skip`)
 //   7  texture_2d<f32>   prev_moments_in last frame's moments: z the age, w the emissive
 //                                        estimate's luminance at its last draw
+//   8  storage           cache_cells     the emissive cache's table (march.wgsl): a hit on a
+//                                        cube face adds its emissive estimate to its cell, and
+//                                        a capped cell's pixel draws nothing and stores no
+//                                        reservoir (Params.cache; a placeholder when off)
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
 // max(n.l, 0) / dist^2, so that the composite's Lambertian `albedo * E / PI` is the former
@@ -60,6 +64,7 @@
 @group(2) @binding(5) var prev_reservoir_in: texture_2d<u32>;
 @group(2) @binding(6) var reservoir_out: texture_storage_2d<rgba32uint, write>;
 @group(2) @binding(7) var prev_moments_in: texture_2d<f32>;
+@group(2) @binding(8) var<storage, read_write> cache_cells: array<atomic<u32>>;
 
 // The frame's candidate table (ADR-0025), in light_samples from `params.light_table_base`:
 // a header slot (count, total weight as f32 bits), then per entry the start and length of an
@@ -112,10 +117,23 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             if ((params.lighting & LIGHTING_LAMP) != 0u) {
                 e = vec3<f32>(PI * lamp_lit(rec.p, n, ns));
             }
-            if (converged_draw_skip(gid.xy, rec, e.x)) {
+            var cell = -1;
+            var capped = false;
+            if (cache_on() && cacheable(rec)) {
+                cell = cache_claim(cache_voxel(rec.p, ns), cache_face(rec.axis, ns));
+                capped = cell >= 0
+                    && atomicLoad(&cache_cells[CACHE_WORDS * u32(cell) + 1u]) >= cache_c_cap();
+            }
+            // A pixel on a cell still filling draws, so that the cell fills.
+            if (cell < 0 && converged_draw_skip(gid.xy, rec, e.x)) {
                 return;
             }
-            emissive = emissive_irradiance(gid.xy, rec, n, ns);
+            if (!capped) {
+                emissive = emissive_irradiance(gid.xy, rec, n, ns);
+                if (cell >= 0) {
+                    cache_add(u32(cell), emissive);
+                }
+            }
         }
     }
     // The emissive part in rgb, the lamp's (white, or the cutaway's hemisphere) in a: the
@@ -127,6 +145,47 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         px,
         min(vec4<f32>(emissive * ex, e.x * ex), vec4<f32>(HDR_MAX)),
     );
+}
+
+// The slot holding the key `(v, face)`, claiming a free one of its CACHE_PROBES slots; -1 when
+// they all hold other keys.
+fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
+    let base = cache_slot(v, face);
+    let check = cache_check(v, face);
+    for (var i = 0u; i < CACHE_PROBES; i++) {
+        let slot = (base + i) & (CACHE_CELLS - 1u);
+        let word = CACHE_WORDS * slot;
+        // The weak exchange may fail spuriously on a free slot: try again.
+        loop {
+            let old = atomicLoad(&cache_cells[word]);
+            if (old == check) {
+                return i32(slot);
+            }
+            if (old != 0u) {
+                break;
+            }
+            let r = atomicCompareExchangeWeak(&cache_cells[word], 0u, check);
+            if (r.exchanged || r.old_value == check) {
+                return i32(slot);
+            }
+            if (r.old_value != 0u) {
+                break;
+            }
+        }
+    }
+    return -1;
+}
+
+// Adds an emissive estimate to `slot`'s sums while its count is under C_CAP.
+fn cache_add(slot: u32, emissive: vec3<f32>) {
+    let word = CACHE_WORDS * slot;
+    let before = atomicAdd(&cache_cells[word + 1u], 1u);
+    if (before < cache_c_cap()) {
+        let q = vec3<u32>(emissive * CACHE_Q + 0.5);
+        atomicAdd(&cache_cells[word + 2u], q.x);
+        atomicAdd(&cache_cells[word + 3u], q.y);
+        atomicAdd(&cache_cells[word + 4u], q.z);
+    }
 }
 
 // Whether this pixel's history has converged (`Lighting::skip_converged_draw`) on a valid

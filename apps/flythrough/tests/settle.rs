@@ -674,6 +674,58 @@ fn eye_readings() {
     );
 }
 
+/// The eye's settled exposure in the constants' own state: 600 frames lamp on, then 900 off.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn eye_lamp_off_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    for pose in POSES {
+        println!(
+            "reading[{adapter}]: eye {} 600 on, 900 off: {:.4} against the constant {:.4}",
+            pose.name,
+            eye_after_lamp_off(&level, &pose),
+            pose.exposure
+        );
+    }
+}
+
+/// The strip flight's camera at each 12th frame: whether it is in air. CPU only.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn strip_path_readings() {
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        vxe_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    let world = vxe_world::World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    for pose in [POSES[0], VEIN_POSE, spawn_pose(1.0)] {
+        let mut camera = pose.camera();
+        let mut line = Vec::new();
+        for f in 0..STRIP_FRAMES_FLOWN {
+            let (fwd, _, _) = camera.basis();
+            camera.position += fwd * STRIP_SPEED / 60.0;
+            camera.yaw += STRIP_YAW.to_radians() / 60.0;
+            let v = camera.position.to_array().map(|c| c.floor() as i32);
+            let air = world.material_at(v) == Some(vxe_world::AIR);
+            if f % 12 == 0 {
+                line.push(if air { "air" } else { "rock" });
+            }
+        }
+        println!(
+            "reading: strip path {} every 12 frames: {}",
+            pose.name,
+            line.join(" ")
+        );
+    }
+}
+
 /// The strip tool's flight's dots, each pose and the spawn (at the eye's settled exposure).
 #[test]
 #[ignore = "reading only: run with --ignored"]
@@ -694,6 +746,50 @@ fn strip_flight_dot_readings() {
                 setting.name(),
                 d.line()
             );
+        }
+    }
+}
+
+/// The dots along the rig's steady flight, whose path has air around every step.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn path_flight_dot_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    for pose in poses() {
+        for setting in settings().into_iter().filter(|s| !s.auto) {
+            let d = path_dots(&level, &pose, setting);
+            println!(
+                "reading[{adapter}]: path-flight dots {} {}: {}",
+                pose.name,
+                setting.name(),
+                d.line()
+            );
+        }
+    }
+}
+
+/// B's young share, occupancy and bytes along the yaw and the flight.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn cache_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    for pose in poses() {
+        for setting in settings().into_iter().filter(|s| !s.auto) {
+            for run in k_runs() {
+                println!(
+                    "reading[{adapter}]: cache {} {} {}: {}",
+                    pose.name,
+                    run.name(),
+                    setting.name(),
+                    cache_run(&level, &pose, setting, run)
+                );
+            }
         }
     }
 }
@@ -1208,4 +1304,320 @@ fn the_lamp_leaves_the_probes_alone_under_c() {
     }
     assert!(opened, "an emission change still opens the window");
     assert!(probe_words(&level, &moved) != before);
+}
+
+// ---- Experiment B: the asserted tests ----
+
+/// Air over chunks `[0, 2)^3`, a rock block at x, y in `[40, 64)`, z in `[40, 64)`, and an ore
+/// plate over it at z `[80, 84)`: the block's corner faces the camera, its faces lit from above.
+fn cache_box() -> (vxe_world::World, Camera) {
+    use vxe_world::*;
+    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(AIR),
+        &table,
+    );
+    let fill = |min: [i64; 3], max: [i64; 3], m| {
+        world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v| v * FIXED_ONE)),
+                Fixed3(max.map(|v| v * FIXED_ONE)),
+                Mode::Fill(m),
+            ))
+            .expect("the box is resident");
+    };
+    fill([40, 40, 40], [64, 64, 64], flythrough::cave::ROCK);
+    fill([20, 20, 80], [90, 90, 84], flythrough::cave::ORE);
+    // At the block's lowest corner on x and y, above its top: three faces in view.
+    let camera = Camera {
+        position: [30.5, 28.5, 70.5].into(),
+        yaw: 45f32.to_radians(),
+        pitch: (-35f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    };
+    (world, camera)
+}
+
+struct CacheBox {
+    level: stillness::VeinLevel,
+    camera: Camera,
+    frame: Frame,
+}
+
+/// The box under a frame at 64 x 36 (full-resolution lighting, no jitter, lamp and probes off).
+fn cache_box_rig(cache: vxe_render::marcher::EmissiveCache) -> Option<CacheBox> {
+    let (world, camera) = cache_box();
+    let (device, queue) = support::software_device(64 << 20)?;
+    let cfg = vxe_render::MirrorConfig {
+        budget_bytes: 64 << 20,
+        ..vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+    };
+    let mut gpu = vxe_render::GpuWorld::with_config(&device, cfg);
+    for _ in 0..2 {
+        gpu.sync_now(&world, &device, &queue)
+            .expect("the mirror fits");
+    }
+    let mut frame = Frame::new(&device, 64, 36);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    frame.set_lighting(Lighting {
+        lamp: false,
+        indirect: false,
+        exposure: Exposure::Manual(1.0),
+        emissive_cache: Some(cache),
+        ..Lighting::default()
+    });
+    frame.set_dt(1.0 / 60.0);
+    Some(CacheBox {
+        level: stillness::VeinLevel {
+            device,
+            queue,
+            gpu,
+            world,
+            adapter: "llvmpipe (lavapipe)".to_owned(),
+        },
+        camera,
+        frame,
+    })
+}
+
+impl CacheBox {
+    fn step(&mut self, n: usize) {
+        let light = LightParams::headlamp();
+        for _ in 0..n {
+            self.frame.step(
+                &self.level.device,
+                &self.level.queue,
+                &self.level.gpu,
+                &self.camera,
+                &light,
+            );
+        }
+    }
+
+    /// Each face key in view with its pixel count this frame.
+    fn keys(&self) -> std::collections::HashMap<FaceKey, u32> {
+        let (d, q) = (&self.level.device, &self.level.queue);
+        let pos = vxe_render::readback::read_float(d, q, self.frame.hit_positions());
+        let info = vxe_render::readback::read_rgba16u(d, q, self.frame.hit_records());
+        let mut out = std::collections::HashMap::new();
+        for (p, i) in pos.iter().zip(&info) {
+            if let Some(k) = face_key(self.camera.position, *p, *i) {
+                *out.entry(k).or_insert(0u32) += 1;
+            }
+        }
+        out
+    }
+}
+
+/// A key is its voxel and face: on the box, one frame writes as many cells as the view has face
+/// keys, each counting exactly its pixels; two pixels on one face share a cell and the same
+/// voxel's other face has its own.
+#[test]
+fn a_key_is_its_voxel_and_face() {
+    let Some(mut rig) = cache_box_rig(Default::default()) else {
+        return;
+    };
+    rig.step(1);
+    let keys = rig.keys();
+    let words = cache_words(&rig.level, &rig.frame);
+    let [used, _, _] = cache_census(&words, 16, 4096);
+    assert_eq!(
+        used,
+        keys.len() as u64,
+        "the occupancy counts each key once"
+    );
+    for (k, n) in &keys {
+        assert_eq!(cache_count(&words, *k), *n, "key {k:?} counts its pixels");
+    }
+    assert!(
+        keys.values().any(|&n| n >= 2),
+        "two pixels on one face share a cell"
+    );
+    let two_faced = keys
+        .keys()
+        .find(|(v, f)| keys.keys().any(|(w, g)| w == v && g != f));
+    let (v, f) = two_faced.expect("a voxel shows two faces");
+    let other = keys
+        .keys()
+        .find(|(w, g)| w == v && g != f)
+        .expect("its other face");
+    assert_ne!(
+        cache_cell(&words, (*v, *f)),
+        cache_cell(&words, *other),
+        "a voxel's two faces take two cells"
+    );
+}
+
+/// Once every cell in view has reached the cap, the emissive part is bit-identical frame to
+/// frame and those pixels' reservoirs are empty: at `C_MIN` 16, `C_CAP` 64, scale 1, no jitter,
+/// lamp and probes off.
+#[test]
+fn a_capped_cell_does_not_move() {
+    let Some(mut rig) = cache_box_rig(vxe_render::marcher::EmissiveCache {
+        c_min: 16,
+        c_cap: 64,
+        ..Default::default()
+    }) else {
+        return;
+    };
+    rig.step(66);
+    let words = cache_words(&rig.level, &rig.frame);
+    for k in rig.keys().keys() {
+        assert!(cache_count(&words, *k) >= 64, "key {k:?} is capped");
+    }
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let info = vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records());
+    let on_face: Vec<usize> = (0..info.len())
+        .filter(|&i| info[i][3] & 1 == 1 && (info[i][3] >> 3) & 3 > 0)
+        .collect();
+    assert!(on_face.len() > 100, "{} pixels on faces", on_face.len());
+    let read = |rig: &CacheBox| {
+        (
+            vxe_render::readback::read_float(d, q, rig.frame.accumulated()),
+            vxe_render::readback::read_texels_u32(d, q, rig.frame.reservoirs()),
+        )
+    };
+    let (a0, _) = read(&rig);
+    assert!(
+        on_face.iter().any(|&i| a0[i][0] > 0.0),
+        "the plate lights the block"
+    );
+    let light = LightParams::headlamp();
+    for _ in 0..64 {
+        rig.frame.step(d, q, &rig.level.gpu, &rig.camera, &light);
+        let (a, r) = read(&rig);
+        for &i in &on_face {
+            assert_eq!(a[i][0..3], a0[i][0..3], "pixel {i}'s emissive part moved");
+            assert_eq!(r[i], [0; 4], "pixel {i} kept a reservoir");
+        }
+    }
+}
+
+/// An edit box over one voxel clears that voxel's cells, leaves a capped neighbour two voxels
+/// away, and the cleared cells refill to `C_MIN` within `C_MIN` frames.
+#[test]
+fn a_dig_clears_its_cells() {
+    let Some(mut rig) = cache_box_rig(vxe_render::marcher::EmissiveCache {
+        c_min: 16,
+        c_cap: 64,
+        ..Default::default()
+    }) else {
+        return;
+    };
+    rig.step(66);
+    let keys = rig.keys();
+    let words = cache_words(&rig.level, &rig.frame);
+    // A voxel with a face that takes pixels every frame, and a capped face in view at least two
+    // voxels past the box's dilation on some axis.
+    let (&(v, f), _) = keys
+        .iter()
+        .max_by_key(|(k, n)| (**n, k.0))
+        .expect("faces in view");
+    let far = keys
+        .keys()
+        .find(|(w, _)| (0..3).any(|a| (w[a] - v[a]).abs() == 2))
+        .copied()
+        .expect("a face two voxels away");
+    assert!(cache_count(&words, (v, f)) >= 64);
+    let far_before = cache_count(&words, far);
+    assert!(far_before >= 64);
+    rig.frame.invalidate(v, v);
+    rig.step(1);
+    let words = cache_words(&rig.level, &rig.frame);
+    let n = keys[&(v, f)];
+    assert_eq!(
+        cache_count(&words, (v, f)),
+        n,
+        "the cell restarted this frame"
+    );
+    for face in (0..6u8).filter(|&g| g != f) {
+        assert!(
+            cache_count(&words, (v, face)) < 64,
+            "face {face} of the box's voxel cleared"
+        );
+    }
+    assert_eq!(
+        cache_count(&words, far),
+        far_before,
+        "the neighbour two voxels away stays capped"
+    );
+    rig.step(15);
+    let words = cache_words(&rig.level, &rig.frame);
+    assert!(
+        cache_count(&words, (v, f)) >= 16,
+        "the cell refilled to C_MIN within C_MIN frames: {}",
+        cache_count(&words, (v, f))
+    );
+}
+
+/// After 256 still frames at the vein, indirect off, lamp off, a 90 degree yaw over 10 frames
+/// and back leaves the display's excess dots at frames 1 to 60 after the return at most 10 % of
+/// today's reading at the same run, or at most the floor's spread where today reads none. The
+/// young share per frame prints.
+#[test]
+fn a_turn_reads_converged_cells() {
+    let Some(level) = vein_level() else {
+        return;
+    };
+    let run = |b: Option<vxe_render::marcher::EmissiveCache>| {
+        let setting = Setting {
+            lamp: false,
+            indirect: false,
+            auto: false,
+            upscaler: true,
+            bridge: false,
+            steady: Steady {
+                b,
+                ..Steady::default()
+            },
+        };
+        let mut frame = make_frame(&level, &VEIN_POSE, setting);
+        let light = LightParams::headlamp();
+        let still = VEIN_POSE.camera();
+        let step = |frame: &mut Frame, c: &Camera| {
+            frame.step(&level.device, &level.queue, &level.gpu, c, &light)
+        };
+        for _ in 0..192 {
+            step(&mut frame, &still);
+        }
+        let mut floor = Vec::new();
+        for _ in 0..64 {
+            step(&mut frame, &still);
+            floor.push(dots_of(&read_dots(&level, &frame, still)) as f64);
+        }
+        for i in 1..=10 {
+            step(&mut frame, &yawed(&VEIN_POSE, 9.0 * i as f32));
+        }
+        for i in (0..10).rev() {
+            step(&mut frame, &yawed(&VEIN_POSE, 9.0 * i as f32));
+        }
+        let mut excess = 0.0;
+        let mean = floor.iter().sum::<f64>() / floor.len() as f64;
+        let spread =
+            (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
+        let mut young = Vec::new();
+        for f in 1..=60 {
+            step(&mut frame, &still);
+            let px = read_dots(&level, &frame, still);
+            excess += dots_of(&px) as f64 - mean;
+            if b.is_some() && f % 12 == 1 {
+                let words = cache_words(&level, &frame);
+                young.push(format!("{f}:{:.3}", young_share(&px, &words, 16).0));
+            }
+        }
+        (excess, mean, spread, young)
+    };
+    let (today, tf, ts, _) = run(None);
+    let (cached, cf, cs, young) = run(Some(Default::default()));
+    println!(
+        "excess dots 1-60 after the return: today {today:.1} (floor {tf:.1}, sd {ts:.1}); cache {cached:.1} (floor {cf:.1}, sd {cs:.1}); young share {young:?}"
+    );
+    // The floor's spread per frame, over the 60 frames: under it, today reads none.
+    let none = 60.0 * ts.max(cs);
+    let bar = if today > none { 0.1 * today } else { none };
+    assert!(
+        cached <= bar,
+        "the cache's excess {cached:.1} against today's {today:.1}, bar {bar:.1}"
+    );
 }

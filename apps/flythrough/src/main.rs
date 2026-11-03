@@ -17,7 +17,7 @@
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
-//! [--steady off|a|c|ac] [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
+//! [--steady off|a|c|ac|b|ab|abc] [--cache-read nearest|smooth] [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
@@ -480,8 +480,10 @@ struct Args {
     jitter_set: bool,
     /// `--upscaler off|own|fsr2`, when given.
     upscaler: Option<hud::UpscalerMode>,
-    /// `--steady off|a|c|ac`, when given: the steady light spike's presets.
+    /// `--steady off|a|c|ac|b|ab|abc`, when given: the steady light spike's presets.
     steady: Option<hud::SteadyMode>,
+    /// `--cache-read nearest|smooth`: how the `b` presets read the table.
+    cache_read: vxe_render::marcher::CacheRead,
     /// `--exposure auto|E`: a manual exposure, or `None` for auto (the default).
     exposure: Option<f32>,
     /// `--adaptation eye|symmetric|instant`: the auto exposure's preset (eye by default).
@@ -634,7 +636,7 @@ impl Args {
 
     /// The lighting the fly-through starts in, from its flags.
     fn start_lighting(&self) -> Lighting {
-        self.steady.unwrap_or(hud::SteadyMode::Off).apply(Lighting {
+        let lighting = Lighting {
             exposure: match self.exposure {
                 Some(e) => Exposure::Manual(e),
                 None => Exposure::Auto(self.start_auto()),
@@ -651,7 +653,10 @@ impl Args {
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
             ..Lighting::default()
-        })
+        };
+        self.steady
+            .unwrap_or(hud::SteadyMode::Off)
+            .apply(lighting, self.cache_read)
     }
 
     /// Whether the run starts in the field look, so its mirror holds the field's band slots
@@ -747,6 +752,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         jitter_set: false,
         upscaler: None,
         steady: None,
+        cache_read: vxe_render::marcher::CacheRead::Nearest,
     };
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
@@ -981,10 +987,16 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--steady" => {
                 let v = value()?;
-                args.steady = Some(
-                    hud::SteadyMode::from_name(&v)
-                        .ok_or(format!("--steady takes off, a, c or ac, not {v}"))?,
-                );
+                args.steady = Some(hud::SteadyMode::from_name(&v).ok_or(format!(
+                    "--steady takes off, a, c, ac, b, ab or abc, not {v}"
+                ))?);
+            }
+            "--cache-read" => {
+                args.cache_read = match value()?.as_str() {
+                    "nearest" => vxe_render::marcher::CacheRead::Nearest,
+                    "smooth" => vxe_render::marcher::CacheRead::Smooth,
+                    v => return Err(format!("--cache-read takes nearest or smooth, not {v}")),
+                }
             }
             "--indirect" => {
                 args.indirect = match value()?.as_str() {

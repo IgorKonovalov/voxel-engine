@@ -139,6 +139,8 @@ pub struct Steady {
     pub a4: Option<u32>,
     /// C: the lamp out of the probes.
     pub c: bool,
+    /// B: the emissive cache.
+    pub b: Option<vxe_render::marcher::EmissiveCache>,
 }
 
 impl Steady {
@@ -153,9 +155,40 @@ impl Steady {
             a3: true,
             a4,
             c: false,
+            b: None,
         };
+        let cache = |read| {
+            Some(vxe_render::marcher::EmissiveCache {
+                read,
+                ..Default::default()
+            })
+        };
+        let near = cache(vxe_render::marcher::CacheRead::Nearest);
+        let smooth = cache(vxe_render::marcher::CacheRead::Smooth);
         match name {
             "off" => Steady::default(),
+            "b" => Steady {
+                b: near,
+                ..Steady::default()
+            },
+            "bs" => Steady {
+                b: smooth,
+                ..Steady::default()
+            },
+            "ab" => Steady { b: near, ..all },
+            "abs" => Steady { b: smooth, ..all },
+            "abc" => Steady {
+                b: near,
+                c: true,
+                ..all
+            },
+            "b8" | "b32" => Steady {
+                b: Some(vxe_render::marcher::EmissiveCache {
+                    c_min: name[1..].parse().expect("a count"),
+                    ..Default::default()
+                }),
+                ..Steady::default()
+            },
             "a" => all,
             "ac" => Steady { c: true, ..all },
             "c" => Steady {
@@ -203,6 +236,7 @@ impl Steady {
             },
             skip_converged_draw: self.a4,
             probe_lamp: !self.c,
+            emissive_cache: self.b,
             ..lighting
         }
     }
@@ -227,6 +261,17 @@ impl Steady {
         }
         if self.c {
             w.push("c".to_owned());
+        }
+        if let Some(b) = self.b {
+            w.push(format!(
+                "b={}{}",
+                b.c_min,
+                if b.read == vxe_render::marcher::CacheRead::Smooth {
+                    "s"
+                } else {
+                    ""
+                }
+            ));
         }
         format!(" steady {}", w.join("+"))
     }
@@ -2061,8 +2106,34 @@ impl StripDots {
 /// `STRIP_YAW`, from a start settled `SETTLE` frames. The camera may enter rock, as the tool's
 /// does.
 pub fn strip_dots(level: &VeinLevel, pose: &Pose, setting: Setting) -> StripDots {
-    let mut frame = make_frame(level, pose, setting);
     let mut camera = pose.camera();
+    const DT: f32 = 1.0 / 60.0;
+    flown_dots(level, pose, setting, camera, STRIP_FRAMES_FLOWN, |_| {
+        let (fwd, _, _) = camera.basis();
+        camera.position += fwd * STRIP_SPEED * DT;
+        camera.yaw += STRIP_YAW.to_radians() * DT;
+        camera
+    })
+}
+
+/// The same read along the rig's steady flight, whose path has air around every step.
+pub fn path_dots(level: &VeinLevel, pose: &Pose, setting: Setting) -> StripDots {
+    let start = KRun::Path.camera(pose, 0);
+    flown_dots(level, pose, setting, start, FLIGHT_FRAMES - 1, |f| {
+        KRun::Path.camera(pose, f + 1)
+    })
+}
+
+fn flown_dots(
+    level: &VeinLevel,
+    pose: &Pose,
+    setting: Setting,
+    start: Camera,
+    frames: usize,
+    mut at: impl FnMut(usize) -> Camera,
+) -> StripDots {
+    let mut frame = make_frame(level, pose, setting);
+    let camera = start;
     render(level, &mut frame, &camera, SETTLE);
     let want = Want {
         hits: false,
@@ -2086,11 +2157,8 @@ pub fn strip_dots(level: &VeinLevel, pose: &Pose, setting: Setting) -> StripDots
         by_part: [0; 7],
         by_part_floor: part_floor.map(|c| c as f64 / STRIP_FLOOR_FRAMES as f64),
     };
-    const DT: f32 = 1.0 / 60.0;
-    for _ in 0..STRIP_FRAMES_FLOWN {
-        let (fwd, _, _) = camera.basis();
-        camera.position += fwd * STRIP_SPEED * DT;
-        camera.yaw += STRIP_YAW.to_radians() * DT;
+    for f in 0..frames {
+        let camera = at(f);
         render(level, &mut frame, &camera, 1);
         let (d, bp, _) = frame_dots(&read(level, &frame, camera, want));
         out.counts.push(d.len());
@@ -2125,6 +2193,25 @@ pub fn eye_exposure(level: &VeinLevel, pose: &Pose, setting: Setting, frames: us
     };
     let mut frame = make_frame(level, pose, auto);
     render(level, &mut frame, &pose.camera(), frames);
+    let st = readback::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
+    ExposureState::from_bytes(&st).previous
+}
+
+/// The eye's exposure at `pose` after 600 frames lamp on and 900 off, under `Auto`, at the
+/// default look.
+pub fn eye_after_lamp_off(level: &VeinLevel, pose: &Pose) -> f32 {
+    let on = Setting {
+        lamp: true,
+        indirect: true,
+        auto: true,
+        upscaler: true,
+        bridge: false,
+        steady: Steady::default(),
+    };
+    let mut frame = make_frame(level, pose, on);
+    render(level, &mut frame, &pose.camera(), 600);
+    frame.set_lighting(lighting(pose, Setting { lamp: false, ..on }));
+    render(level, &mut frame, &pose.camera(), 900);
     let st = readback::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
     ExposureState::from_bytes(&st).previous
 }
@@ -2278,5 +2365,146 @@ pub fn flight_cost(
                 (n, v[v.len() / 2])
             })
             .collect(),
+    )
+}
+
+/// The emissive cache's table as words.
+pub fn cache_words(level: &VeinLevel, frame: &Frame) -> Vec<u32> {
+    let table = frame.emissive_cache_table().expect("the table is built");
+    let b = readback::read_buffer(&level.device, &level.queue, table, 0, table.size());
+    b.chunks_exact(4)
+        .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
+        .collect()
+}
+
+/// The cell of a key in the table's words: its word index, or `None` when no probed slot holds
+/// its check word.
+pub fn cache_cell(words: &[u32], key: FaceKey) -> Option<usize> {
+    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_CELLS, CACHE_PROBES, cache_slot_check};
+    let (slot, check) = cache_slot_check(key.0, u32::from(key.1));
+    (0..CACHE_PROBES)
+        .map(|i| {
+            (slot.wrapping_add(i) & (CACHE_CELLS as u32 - 1)) as usize * CACHE_CELL_WORDS as usize
+        })
+        .find(|&w| words[w] == check)
+}
+
+/// The sample count of a key's cell, 0 with none.
+pub fn cache_count(words: &[u32], key: FaceKey) -> u32 {
+    cache_cell(words, key).map_or(0, |w| words[w + 1])
+}
+
+/// The table's cells in use and of them how many have reached `c_min` and `c_cap`.
+pub fn cache_census(words: &[u32], c_min: u32, c_cap: u32) -> [u64; 3] {
+    let mut c = [0u64; 3];
+    for cell in words.chunks_exact(vxe_render::marcher::CACHE_CELL_WORDS as usize) {
+        if cell[0] != 0 {
+            c[0] += 1;
+            c[1] += u64::from(cell[1] >= c_min);
+            c[2] += u64::from(cell[1] >= c_cap);
+        }
+    }
+    c
+}
+
+/// Of a frame's internal hit pixels on cube faces, the share whose cell is young or absent
+/// (the young share) and the share with no cell at all (the full table's).
+pub fn young_share(px: &Pixels, words: &[u32], c_min: u32) -> (f64, f64) {
+    let (mut hits, mut young, mut absent) = (0u64, 0u64, 0u64);
+    for i in 0..px.hit_pos.len() {
+        if let Some(k) = face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]) {
+            hits += 1;
+            match cache_cell(words, k) {
+                None => {
+                    absent += 1;
+                    young += 1;
+                }
+                Some(w) => young += u64::from(words[w + 1] < c_min),
+            }
+        }
+    }
+    let h = hits.max(1) as f64;
+    (young as f64 / h, absent as f64 / h)
+}
+
+/// A frame's read-back for the dots and the young share.
+pub fn read_dots(level: &VeinLevel, frame: &Frame, camera: Camera) -> Pixels {
+    read(
+        level,
+        frame,
+        camera,
+        Want {
+            hits: true,
+            composite: true,
+            moments: true,
+        },
+    )
+}
+
+/// One frame's display dots at `level`.
+pub fn dots_of(px: &Pixels) -> usize {
+    frame_dots(px).0.len()
+}
+
+/// The camera `degrees` of yaw from `pose`.
+pub fn yawed(pose: &Pose, degrees: f32) -> Camera {
+    camera_at(pose.position, pose.yaw_deg + degrees, pose.pitch_deg)
+}
+
+/// B's young share and table census along a run: `KRun` from a settled start, printed per 12
+/// frames from frame 1, and the table's cells at the end, with the share of cells whose chunk
+/// lies within the mirror's light radius of the pose.
+pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) -> String {
+    let mut frame = make_frame(level, pose, setting);
+    let light = LightParams::headlamp();
+    render(level, &mut frame, &run.camera(pose, 0), SETTLE);
+    let b = setting.steady.b.expect("a cache run");
+    let mut shares = Vec::new();
+    let (mut sum, mut n) = (0.0, 0u32);
+    let mut absent_max = 0.0f64;
+    let mut seen = std::collections::HashSet::new();
+    for f in 1..FLIGHT_FRAMES {
+        let cam = run.camera(pose, f);
+        frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+        if f % 4 == 1 {
+            let px = read_dots(level, &frame, cam);
+            for i in 0..px.hit_pos.len() {
+                seen.extend(face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]));
+            }
+            let words = cache_words(level, &frame);
+            let (y, a) = young_share(&px, &words, b.c_min);
+            sum += y;
+            n += 1;
+            absent_max = absent_max.max(a);
+            if f % 12 == 1 {
+                shares.push(format!("{f}:{y:.3}"));
+            }
+        }
+    }
+    let words = cache_words(level, &frame);
+    let [used, min, cap] = cache_census(&words, b.c_min, b.c_cap);
+    // The table's keys cannot be read back to voxels: this share is of the keys read in view.
+    let eye = VoxelCoord(pose.position.map(|c| c.floor() as i32))
+        .chunk()
+        .0;
+    let r = i64::from(level.gpu.light_radius());
+    let near = seen
+        .iter()
+        .filter(|(v, _)| {
+            let c = VoxelCoord(*v).chunk().0;
+            (0..3)
+                .map(|k| (i64::from(c[k]) - i64::from(eye[k])).pow(2))
+                .sum::<i64>()
+                <= r * r
+        })
+        .count();
+    format!(
+        "{} of {} keys read in view within the light radius of the pose; young share mean {:.4} (per frame {}); no-cell share max {absent_max:.5}; cells {used} ({:.4} of the table), at c_min {min}, at c_cap {cap}; frame_bytes {}",
+        near,
+        seen.len(),
+        sum / f64::from(n.max(1)),
+        shares.join(" "),
+        used as f64 / vxe_render::marcher::CACHE_CELLS as f64,
+        frame.frame_bytes()
     )
 }
