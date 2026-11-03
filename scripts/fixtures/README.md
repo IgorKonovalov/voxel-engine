@@ -121,8 +121,9 @@ binaries` (five test files, the `still` example and the `app` binary). The tree 
 | a covered GPU file | `apps/app/tests/golden.rs` (by `binary_id`), `crates/gfx/tests/draw.rs` (by `package`) | not reported |
 | a CPU-only file | `apps/app/tests/cpu.rs` names every entry point in comments only, and a local `device` | not reported; comments are stripped before matching |
 
-The profile copies are green here (`quick` and `gpu` each repeat the gpu filter and the slow
-override `test(=slow_one)` verbatim), so the five lines above are the whole output.
+The profile copies are green here (`quick` and `gpu` each repeat the gpu filter and the soak
+override `test(=slow_one)` verbatim, `gate` is `not (<soak>)` and `soak` is `(<soak>)`), so the
+five lines above are the whole output.
 
 ## `--self-test`: the counts are asserted, not printed
 

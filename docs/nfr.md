@@ -1464,7 +1464,7 @@ mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, agains
   and 701 ms at load 7.12, 6.71 and 6.17 (loaded). Under the 3 s line. The session's first run
   (load 1.50, not one of the six) read 4015 ms, over the line; it was not reproduced in the
   next three (689 to 742 ms) and its cause was not read.
- of a one-crate change under 10 s on the dev reference; the
+- Incremental build of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
   **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,
   exclusive perf lock, 1-minute load 1.99 to 1.91):** default-members `cargo build` after a
@@ -1474,10 +1474,28 @@ mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, agains
   of them and `cargo tree -p flythrough -e normal` list none; `flythrough --features wasm`
   brings it in. Under the 10 s budget, and unchanged at the Plan 0011 close: the default build
   still compiles no `wasmtime` or `tokio`.
-- The test gate (Plan 0043): a dev phase runs `cargo nextest run --workspace --profile quick`
-  (CPU only, no perf lock), adds `--profile gpu` under the lock when it touches render paths,
-  and a close or a merge runs `--profile full`, CI its `ci` twin (the full tests, the GPU group unthrottled) (`.config/nextest.toml`). Proposal: quick
-  under 60 s on the dev reference, so a phase gate holds no lock and blocks no other lane.
+- The test gate (Plan 0043; re-cut 2026-11-03 for iteration speed, owner): a dev phase runs
+  `node scripts/test-changed.mjs --profile quick` (the CPU tests of the changed crates and
+  their dependents, no perf lock) and adds `--profile gpu` under the lock when the change
+  reaches the renderer; a plan's tip and its close review run `--profile gate` (quick plus
+  gpu, everything but the soak list), CI's push run its `ci` twin (the GPU group
+  unthrottled). The soak list (`.config/nextest.toml`) holds the long series: `--profile soak`
+  runs on request and weekly in CI (`soak.yml`), `--profile full` only when the owner asks.
+  Budgets, proposals until read on the dev reference, quiet: quick under 60 s, so a phase gate
+  holds no lock; gpu under 10 min wall; gate under 12 min wall; **no single gate test over 30 s
+  on the dev reference's lavapipe, or over 60 s on CI's Linux arm**. A test over the line moves
+  to the soak list, which has no budget. `node scripts/test-times.mjs <log>` reads a run logged
+  with `--status-level pass` and names the tests over the line.
+  **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
+  the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial
+  test time; 41 tests over 60 s take 320 of those minutes, 603 tests under 5 s take 4. The
+  five longest: `fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length` 2947 s,
+  `a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` 2173 s,
+  `the_vein_wall_patches_are_counted` 1538 s,
+  `a_reveal_behind_a_plug_follows_within_seventy_three_frames` 1374 s,
+  `the_vein_wall_holds_still_with_the_lamp_off` 1337 s. Those 41 are the first soak list. The
+  dev-reference reading of the re-cut tiers is owed by the first lane that runs them: the GPU
+  was held by Plan 0054's close review when the cut was made.
   **Reading (Plan 0043 close review, 5877b8a, 599 tests, dev reference, Ryzen 9 5900HS and RTX
   3080 Laptop GPU on lavapipe, built tree, `--test-threads 2`, other lanes running, so all
   loaded):** quick 470 tests in 45.4 s, no lock, 1-minute load 6.40 to 8.80; gpu 124 tests in
