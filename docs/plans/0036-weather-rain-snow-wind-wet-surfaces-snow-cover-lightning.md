@@ -1,6 +1,6 @@
 # 0036: Weather: rain, snow, wind, wet surfaces and snow cover, lightning
 
-> **Status:** approved (2026-10-22)
+> **Status:** approved (2026-10-22), amended 2026-11-03
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0031](../adrs/0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md)
@@ -10,8 +10,9 @@
 > (the hit buffer and `Frame::invalidate`),
 > [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe rays
 > that shade with the weathered albedo),
+> [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) and
 > [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (the particles draw
-> after its sharpen pass)
+> after their last colour pass)
 > **Source:** the owner's outdoor answers (2026-10-22: full dynamic sky and weather driven by
 > the game through a small API, cosmetic client-side, no wall clock).
 > **Starts after:** Plan 0035 closes (and so Plans 0032 and 0033). Drafted against Plan
@@ -19,6 +20,18 @@
 > 0030's output-resolution `sharpen.wgsl`. For Plans 0032, 0033 and 0035, which were drafted
 > beside this one, the names below are assumptions, listed under "Assumed interfaces". The
 > names dev finds in the tree win.
+> **Amended 2026-11-03 (architect, drift):** the fall map and the phases stand. FSR 2 at 1.5 is
+> the default (Plan 0055): the precip pass follows the frame's last colour pass, `sharpen` under
+> `own` and `fsr2 tone` under FSR 2. `F9` and `F10` are bound by the views and the upscaler at
+> the tip, so Plan 0034 takes other keys; `F11` and `F12` are still free. `tests/weather.rs`
+> joins the gpu filter in `.config/nextest.toml`, every copy. The furnace test Phase 4 names is
+> `the_furnace_box_reads_pi_of_indirect_irradiance`, on the soak list, run by name. `nfr.md` §2
+> and §3 readings are in `docs/nfr/02-frame-budget.md` and `docs/nfr/03-memory.md`; phases gate
+> on `scripts/test-changed.mjs`, the tip on `--profile gate`; readings go in
+> `docs/plans/logs/0036.md`. **Owner decision, open:** the cover rules read the shading normal,
+> but since Plan 0054 that is an axis normal on near cubes, so a 15-degree slope is treads with
+> `n.z` 1 and risers with `n.z` 0, and Phase 4's snow-hillside bars cannot hold as written. See
+> Phase 4. **Waits on Plan 0051's verdict:** the probes' weathered albedo (Phase 4's bounce).
 
 ## TL;DR
 
@@ -78,7 +91,7 @@ The decision is ADR-0031, built in `vxe-render`:
 - **`weather.wgsl` functions.** `exposure`, `wet`, `snow_cover` and `puddle` are shared by
   `composite.wgsl`, for the pixels, and `probe_update.wgsl`, for the bounce.
 - **`precip.wgsl` render pass.** Instanced streak and flake quads with no vertex buffer, drawn
-  after the sharpen pass at output resolution and before the HUD.
+  after the upscaler's last colour pass at output resolution and before the HUD.
 - **The flash.** A cone light toward the strike in the composite, gated by exposure, plus a
   glow term handed to Plan 0035's cloud march.
 
@@ -104,7 +117,7 @@ flowchart LR
         MAP --> PU[probe_update\nweathered albedo]
         U --> CO
         U --> CL[Plan 0035 clouds\ncoverage, wind, glow]
-        CO --> UP[upscale, sharpen] --> PR[precip.wgsl\nstreaks, flakes\nhidden below the map] --> HUD[HUD]
+        CO --> UP[FSR 2 or upscale, sharpen] --> PR[precip.wgsl\nstreaks, flakes\nhidden below the map] --> HUD[HUD]
         MAP --> PR
     end
     G --> W
@@ -123,12 +136,12 @@ between phases. The architect reviews once at the end, in a fresh session.
   `current`, `uniform(tick_fraction)`); `Frame::set_weather`; `weather.wgsl`'s `wet` and
   `snow_cover` applied in the composite with exposure fixed at 1 (no map yet); the fly-through's
   `--weather clear|rain|storm|snow|blizzard` presets, defined in the testbed, and the
-  key `F11` (Plan 0029 binds `F8`, Plan 0032 `Tab`, Plan 0034 `F9` and `F10`) cycling them with the mode banner
+  key `F11` (`F1` to `F10` are bound at the tip, Plan 0032 takes `Tab`) cycling them with the mode banner
   naming the preset.
 - **Files touched:** new `crates/vxe-render/src/weather.rs`, new
   `crates/vxe-render/src/shaders/weather.wgsl`, `composite.wgsl`, `marcher.rs` (the `Frame`),
   `lib.rs`, `apps/flythrough/src/main.rs`, `apps/flythrough/src/hud.rs` (the banner's modes),
-  new `apps/flythrough/tests/weather.rs`.
+  new `apps/flythrough/tests/weather.rs`, `.config/nextest.toml` (the gpu filter, every copy).
 - **Done when:**
   - *Transitions.* Unit tests in `weather.rs`. A `Weather` at rain 0 given
     `set_target(rain 1.0, 600)` reads rain exactly 0.5 after `step(300)`, 1.0 after
@@ -197,7 +210,7 @@ between phases. The architect reviews once at the end, in a fresh session.
 ### Phase 3: Rain and snow particles, wind, and the cave mouth
 - **Owner skill:** dev
 - **What:** `precip.wgsl`, an instanced render pass on the output target after the sharpen
-  pass:
+  pass, or after `fsr2 tone` under FSR 2:
   - **Rain** is `round(rain x 32 768)` streaks in a 24 x 24 x 16 m box. Each is a 2-pixel-wide
     quad from `p` to `p - v t_shutter`, with velocity `v = (wind, -9 m/s)`.
   - **Snow** is `round(snow x 24 576)` flakes in a 20 x 20 x 12 m box, falling at 1 m/s with
@@ -255,6 +268,11 @@ between phases. The architect reviews once at the end, in a fresh session.
     `cover >= 1.3 / 1.6 = 0.8125`. It blends the albedo toward `[0.90, 0.90, 0.92]` and the
     roughness toward 0.6.
   - **Exclusions.** Translucent layers and emissive hits take none of it.
+  - **Open, for the owner (2026-11-03).** `n` above was the smooth look's shading normal. On the
+    default honest cubes it is an axis normal near the camera, blending to the 27-count gradient
+    only through the provisional far normal. The rule needs a normal: the 27-count gradient
+    read for the cover alone, or the face normal with snow on every tread. Dev stops here for
+    the owner's answer; the "Snow hillside" bars below are written for the first.
   - **Bounce.** `probe_update.wgsl` shades its hits with the same weathered albedo.
 - **Files touched:** `weather.wgsl`, `composite.wgsl`, `probe_update.wgsl`, `tests/weather.rs`,
   `apps/flythrough/tests/golden.rs`.
@@ -273,7 +291,8 @@ between phases. The architect reviews once at the end, in a fresh session.
     rock exactly.
   - *Goldens.* `weather_snow_hillside.png` is blessed, and `weather_cave_mouth.png` is
     re-blessed with wetness on.
-  - *Furnace.* Plan 0029's furnace test still passes with weather off.
+  - *Furnace.* `the_furnace_box_reads_pi_of_indirect_irradiance` (soak list, by name) still
+    passes with weather off.
 
 ### Phase 5: Lightning, and the clouds take the weather
 - **Owner skill:** dev
@@ -337,7 +356,8 @@ between phases. The architect reviews once at the end, in a fresh session.
   strikes. The verdict covers:
   - the drip line's softness at 0.2 m;
   - the streak density and look;
-  - snow on slopes against the "no Lego" bar;
+  - snow on slopes, on the honest cubes the default now is (the "no Lego" bar was the smooth
+    look's; owner, 2026-11-01);
   - whether the flash needs a shadow ray (open question 1 below).
 - **Files touched:** this plan's log; ADR-0031's Outcome at the close.
 - **Done when:** the owner's verdict and the flash-shadow choice are recorded in the log.
@@ -417,7 +437,7 @@ these differently, the plans' names win and this plan is read through them:
 | `nfr.md` figure | line | projection | how the close measures it |
 |---|---|---|---|
 | §2 Headroom (entities, volumetrics, game work), shared with Plan 0035 | 2.1 ms | dev box: fall map 0.05 to 0.15 ms (65 536 rays), precip 0.2 to 0.5 ms (fill-bound, a guess), composite terms under 0.15 ms. Slow adapter: 3 to 10 times that, a guess | Phase 6, storm preset, outdoor spawn, 1080p output, three runs, both adapters |
-| §2 Upscale, tone map, post | 1.5 ms | unchanged: the precip pass is reported on its own row, not in this line | Plan 0030's rows at the same runs |
+| §2 Upscale, tone map, post | 1.5 ms | unchanged: the precip pass is reported on its own row, not in this line | the upscaler's rows at the same runs (FSR 2 by default) |
 | §2 Streaming line | 1.0 ms | adds the per-frame tile bookkeeping (bit sets over the synced chunks, a sort of at most 1024 tiles), projected under 0.02 ms | the autopilot's render-thread timers, weather on against off |
 | §3 Everything else in VRAM | 1.5 GB | +16 777 216 B (two maps), under 1 KiB of uniforms | `frame_bytes` |
 

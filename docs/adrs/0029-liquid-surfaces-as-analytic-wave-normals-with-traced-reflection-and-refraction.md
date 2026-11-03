@@ -58,7 +58,8 @@ below, with total internal reflection beyond the critical angle. A liquid whose 
 transmittance is under 1/255 in every channel is opaque at its surface (lava): the surface
 itself is the hit, lit and emissive like rock, and only the reflection is added. The reflected
 and refracted radiance bypass the a-trous filter and keep no history of their own; the
-upscaler reprojects a liquid pixel by its surface point at a higher blend weight. A rough
+upscaler reprojects a liquid pixel by its surface point at a higher blend weight (under FSR 2,
+the default since Plan 0055, the same point in its motion input and a reactive value). A rough
 liquid (roughness 0.3 or more) traces no reflection.
 
 ## Consequences
