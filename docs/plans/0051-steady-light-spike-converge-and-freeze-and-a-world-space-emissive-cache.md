@@ -631,10 +631,12 @@ Determinism is not touched: everything is in `vxe-render`.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The rig on main, and today's light on the default look | dev | not started | |
-| 2: Experiment A, converge and freeze | dev | not started | |
+| 1: The rig on main, and today's light on the default look | dev | code committed, gate green; readings partial, done-when 5 read on the RTX only, lavapipe owed | ab48bd3 (code); readings committed with this row |
+| 2: Experiment A, converge and freeze | dev | code committed, gate green; tables owed (done-whens 5 to 8, 13) | 6fb183e (code) |
 | 3: Experiment B, the world-space emissive cache | dev | not started | |
 | 4: The owner's call in the window | human | not started | |
+
+Readings, attempts and the owed lists: [`logs/0051.md`](logs/0051.md).
 
 ### Notes
 
