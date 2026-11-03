@@ -14,7 +14,8 @@
 //! - `VXE_STRIP_SIZE`: the output size `WxH` (default `1920x1080`).
 //! - `VXE_STRIP_UPSCALER`: `fsr2` (default), `own` or `off`; `fsr2` and `own` at scale 1.5
 //!   with sharpening 0.5, `off` at scale 1 with no jitter.
-//! - `VXE_STRIP_LOOK`: a `LookPreset` name (default `face`).
+//! - `VXE_STRIP_LOOK`: a `LookPreset` name (default: `LookPreset::DEFAULT`, the fly-through's
+//!   start, far normal `[2, 6]`; `face` is the same cubes with the far normal off).
 //! - `VXE_STRIP_FAR`: `LO,HI`, `LookParams::far_normal` (default: the preset's).
 //! - `VXE_STRIP_ENERGY`: crops `x,y,w,h` separated by `/`: the last frame's mean horizontal and
 //!   vertical neighbour `|dY|` is printed for each.
@@ -298,8 +299,11 @@ fn out_dir(tag: &str) -> PathBuf {
 #[test]
 #[ignore = "reading only: run with --ignored"]
 fn strip_run() {
-    let look = env("VXE_STRIP_LOOK").unwrap_or_else(|| "face".to_owned());
-    let mut preset = LookPreset::from_name(&look).expect("VXE_STRIP_LOOK takes a look preset");
+    let look = env("VXE_STRIP_LOOK");
+    let mut preset = look.as_deref().map_or(LookPreset::DEFAULT, |name| {
+        LookPreset::from_name(name).expect("VXE_STRIP_LOOK takes a look preset")
+    });
+    let look_source = if look.is_some() { "" } else { " (default)" };
     if let Some(f) = list::<2>("VXE_STRIP_FAR") {
         preset.far_normal = f;
     }
@@ -398,7 +402,7 @@ fn strip_run() {
     let tag = env("VXE_STRIP_TAG").unwrap_or_else(|| "strip".to_owned());
     let dir = out_dir(&tag);
     println!(
-        "strip {tag}: {} | {w}x{h} {upscaler} | look {} {} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
+        "strip {tag}: {} | {w}x{h} {upscaler} | look {} {}{look_source} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
         scene.name,
         preset.name,
         LookPreset::far_normal_words(preset.normal_mode, preset.far_normal),
