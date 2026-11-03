@@ -381,6 +381,7 @@ Readings: [`logs/0055.md`](logs/0055.md).
 - The plan's TL;DR says the fly-through starts at the vein pose; no phase changes the start pose
   and none was changed (owner told, 2026-11-03).
 - Review fix pass on d548cdb's findings. Major, the gate over 12 min: 5c95af6, five tests moved to the soak list. Minor, the far normal named where nothing reads it: 6a62ea4; it also touched `README.md` and adds `next_look`. Minor, the strip tool's default: 16036af. Nit, the test's name: 02b7443. Nit, `live/`: 86eecb1. Gate at 86eecb1: 640.669 s; `docs/plans/logs/0055.md`.
+- Close review's findings at aaa6516. Minor, the README's `--look plain` clause: 7b06065. Minor, `a_smooth_surface_meets_a_crisp_cube_without_a_gap` over CI's 60 s line (86.7 s, run 41614241239), on the soak list: 0546d18; `check-test-tiers` exits 0, the gate list no longer holds it, no gate rerun.
 
 ### Close triggers
 
