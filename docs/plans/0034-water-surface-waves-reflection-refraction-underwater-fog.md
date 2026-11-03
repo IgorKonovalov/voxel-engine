@@ -1,6 +1,6 @@
 # 0034: Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface
 
-> **Status:** approved (2026-10-22)
+> **Status:** approved (2026-10-22), amended 2026-11-03
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0029](../adrs/0029-liquid-surfaces-as-analytic-wave-normals-with-traced-reflection-and-refraction.md)
@@ -24,9 +24,27 @@
 > the sun as a light sample, the outdoor testbed source the goldens use). It is drafted against
 > Plan 0024's `Frame`, hit buffer, `light.wgsl` and `composite.wgsl` as they stand in the
 > plan-0024 branch, Plan 0029's probe gather and Plan 0030's upscale pass; the names `dev` finds
-> in the tree win. Phase 7's upscaler half needs Plan 0030; if it has not closed, that half
-> becomes a followup and the log says so. Independent of Plan 0033 (the far field); if it has
-> closed, a reflection ray continues into the clipmap the way a primary ray does.
+> in the tree win. Independent of Plan 0033 (the far field); if it has closed, a reflection ray
+> continues into the clipmap the way a primary ray does.
+> **Amended 2026-11-03 (architect, drift):** the liquid design and its bars stand. Against the
+> tree:
+> 1. **FSR 2 at 1.5 is the default upscaler** (Plan 0055), so Phase 7's upscaler half gains FSR
+>    2's input pass beside `own`'s rule; `LIQUID_ALPHA` is `own`'s, and FSR 2 takes the same
+>    surface-point motion and a reactive value. Plan 0030's condition is struck: it closed.
+> 2. **Bits collide.** `MaterialFlags::LIQUID` is 8 (`CRISP` took 4, Plan 0054). The hit-record
+>    flags are bits 8 and 9, since bits 3..5 hold the entry axis and Plan 0033 takes 6..7.
+> 3. **Keys.** `F9` cycles the views and `F10` the upscaler at the tip, so dev picks the two
+>    keys and the README names them. The done-when reads "the reflection key".
+> 4. **The material row:** detail scale and strength went with Plan 0055; `MATERIAL_FLOATS` is
+>    the stride constant.
+> 5. **Names.** `nfr.md` §2 and §3 readings are in `docs/nfr/02-frame-budget.md` and
+>    `docs/nfr/03-memory.md`. Phases gate on `scripts/test-changed.mjs`, the tip on `--profile
+>    gate`; a golden over 30 s on lavapipe is born on the soak list. Readings go in
+>    `docs/plans/logs/0034.md`. The order's frame now holds `gradient` and FSR 2's passes.
+> **Waits on Plan 0051's verdict:** the probes light the medium (`E` in Phase 2) and the
+> reflected hits (Phase 4). If the verdict removes the probes, both need another source; if it
+> keeps the world-space cache, a reflected hit could read it instead of a noisy sample, which
+> is a choice for that verdict's plan. Nothing here is decided on it.
 
 ## TL;DR
 
@@ -136,8 +154,8 @@ none, `Frame::set_sky_override(Some(s))` added in Phase 1.
 - **Owner skill:** dev
 - **What:** the walking skeleton. `MaterialFlags::LIQUID`, `LiquidOptics`, `Material::liquid`
   (a constructor that sets `TRANSLUCENT | LIQUID`) and `MaterialTable::is_liquid` in
-  `vxe-world`. The GPU material row grows from four `vec4` to six (`MATERIAL_VEC4S`, see Data
-  shapes) and carries the liquid bit and the optics. The translucent walk stops at the first
+  `vxe-world`. The GPU material row grows from four `vec4` to six (`MATERIAL_FLOATS` 16 to 24,
+  and the `m * 4u` of `march.wgsl`'s row reads, see Data shapes) and carries the liquid bit and the optics. The translucent walk stops at the first
   liquid face (Plan 0015's per-voxel compositing continues for non-liquid rows in front of it,
   and a liquid voxel is never composited as a layer); the hit pass writes the liquid record
   (`liquid_out`) with the face normal and the straight ray's hit unchanged. A new `liquid.wgsl`
@@ -314,11 +332,14 @@ none, `Frame::set_sky_override(Some(s))` added in Phase 1.
   d (t_s + |hit - surface point|)`, the straight ray at the bent path's length) and compares
   the real hit positions as it does today. The upscaler reprojects a liquid pixel by its
   surface point, compares the liquid record's material instead of the hit's, and blends it at
-  `LIQUID_ALPHA` (0.25, a starting value the owner reviews in Phase 9) instead of 0.1. The
+  `LIQUID_ALPHA` (0.25, a starting value the owner reviews in Phase 9) instead of 0.1.
+  *Amended 2026-11-03:* that is `own`'s rule. FSR 2, the default, gets the same surface point in
+  `fsr2/input.wgsl`'s motion and a `reactive_liquid` tuning in its reactive mask (a starting
+  value the owner reviews in Phase 9, beside the translucent and light ones). The
   a-trous filter and reservoir reuse leave `liquid_add` and `liquid_mul` alone (they are not
   inputs to either).
-- **Files touched:** `temporal.wgsl`, `upscale.wgsl`, `marcher.rs`, `apps/flythrough/tests/lights.rs`,
-  `apps/flythrough/tests/upscale.rs`.
+- **Files touched:** `temporal.wgsl`, `upscale.wgsl`, `fsr2/input.wgsl`, `fsr2.rs`, `marcher.rs`,
+  `apps/flythrough/tests/lights.rs`, `apps/flythrough/tests/upscale.rs`, `apps/flythrough/tests/fsr2.rs`.
 - **Done when:**
   - A still camera over a flat pond for 16 frames reads age 16 in every refracted floor pixel,
     as on dry ground.
@@ -331,12 +352,19 @@ none, `Frame::set_sky_override(Some(s))` added in Phase 1.
   - With waves at steepness 0.3 and a still camera, the lake's mean absolute frame-to-frame
     change in the upscaled output over 32 frames is recorded beside the native render's, and
     their ratio goes in the log (how much the history damps the waves; Phase 9 judges it).
+  - *Amended 2026-11-03.* The two bars above that read `own` keep it, explicitly. Under FSR 2:
+    with a still camera over the flat pond, the motion target reads exactly 0 on liquid pixels;
+    on a sideways move it equals the surface point's reprojection; the reactive mask reads the
+    tuning on liquid pixels and not on dry ones away from an edit; and the wave ratio above is
+    read too, as a reading. No keep-share bar: FSR 2 exposes no history count to compare with
+    Plan 0030's.
 
 ### Phase 8: The testbed's switches, the mode banner, and the readings
 - **Owner skill:** dev
-- **What:** `--liquid-reflection trace|sky|off` and `F9` cycling it; `--waves on|frozen` and
-  `F10` freezing the time the fly-through supplies (Plan 0029 binds `F8`, Plan 0032 `Tab`, Plan 0036 `F11` and `F12`; the
-  banner names whatever key `dev` binds); both shown on Plan 0024 Phase 14's mode banner for 3 s
+- **What:** `--liquid-reflection trace|sky|off` and a key cycling it; `--waves on|frozen` and
+  a key freezing the time the fly-through supplies (`F1` to `F10` are bound at the tip, Plan
+  0032 takes `Tab`, Plan 0036 `F11` and `F12`; `dev` picks two free keys, and the banner and the
+  README name them); both shown on Plan 0024 Phase 14's mode banner for 3 s
   after start and after each change. `--spawn lake|under-water|lava` places the camera at the
   goldens' poses in the outdoor source. HUD rows for the liquid pass's GPU time and its
   reflection-ray count; the autopilot prints the liquid pass's p50 and p99. `frame_bytes`
@@ -344,8 +372,9 @@ none, `Frame::set_sky_override(Some(s))` added in Phase 1.
 - **Files touched:** `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/hud_golden.rs`
   (the banner test), the root `README.md` (flags, keys), `docs/nfr.md` §2 and §3.
 - **Done when:**
-  - A test drives the frame clock: `F9` changes the banner's text through `reflection trace`,
-    `reflection sky`, `reflection off` and back, `F10` through `waves on` and `waves frozen`,
+  - A test drives the frame clock: the reflection key changes the banner's text through
+    `reflection trace`, `reflection sky`, `reflection off` and back, the waves key through
+    `waves on` and `waves frozen`,
     and the banner reads empty 3 s after the last change.
   - The parse test pins the three new flags and their refusal of an unknown value.
   - On the dev box's NVIDIA card and on the AMD iGPU (`--adapter`), quiet box, 1080p output at
@@ -359,7 +388,7 @@ none, `Frame::set_sky_override(Some(s))` added in Phase 1.
 - **Owner skill:** human
 - **What:** the owner flies the outdoor lake at noon and at a low sun, dives under it, holds the
   camera still over moving waves, sweeps across the lake at speed, visits the lava pool, and
-  tries `F9` and `F10` while watching the banner, on the dev box.
+  tries the two keys while watching the banner, on the dev box.
 - **Files touched:** this plan's log, then ADR-0029's Outcome at the close.
 - **Done when:** the owner has recorded a verdict on the wave look (smooth or busy, the
   horizon's flat silhouette acceptable or a followup for displaced geometry), on smearing or
@@ -370,7 +399,7 @@ none, `Frame::set_sky_override(Some(s))` added in Phase 1.
 
 ```rust
 // illustrative: vxe-world, carried by the table like albedo; read only with LIQUID
-impl MaterialFlags { pub const LIQUID: Self = Self(4); } // meaningful with TRANSLUCENT only
+impl MaterialFlags { pub const LIQUID: Self = Self(8); } // meaningful with TRANSLUCENT only
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct LiquidOptics {
@@ -394,8 +423,8 @@ impl Frame { pub fn set_liquid(&mut self, p: &LiquidParams) { /* uniform, 288 B 
 ```
 
 GPU material row, six `vec4` (was four): `[0]` albedo + roughness, `[1]` emission + flag bits
-(the liquid bit beside the translucent one), `[2]` detail scale, detail strength, opacity,
-spare, `[3]` absorption + ior, `[4]` scattering + wave amplitude, `[5]` wave speed + three
+(the liquid bit beside the translucent one), `[2]` as the tree holds it (opacity in `z`; the
+detail words left with Plan 0055 and any freed word is a spare), `[3]` absorption + ior, `[4]` scattering + wave amplitude, `[5]` wave speed + three
 spare. If Plan 0032 or 0033 claims the spares first, the stride grows again; it is one
 constant.
 
@@ -408,8 +437,10 @@ Per-pixel targets at the internal resolution, no history:
 | `liquid_mul` | rgba16float | 8 | `(1 - F) T`, or `T0 (1 - F)` from below |
 
 32 bytes per pixel: 66.4 MB at 1920 x 1080 internal, 29.5 MB at 1280 x 720 (Plan 0030's
-scale 1.5). Hit-record flags gain bit 6 `HIT_REFRACTED` and bit 7 `HIT_UNDER_LIQUID`. The frame
-order becomes hit, light, probes, temporal, a-trous, liquid, composite, upscale, sharpen.
+scale 1.5). Hit-record flags gain bit 8 `HIT_REFRACTED` and bit 9 `HIT_UNDER_LIQUID` (amended
+2026-11-03: 3..5 are the entry axis, 6..7 Plan 0033's level). The frame order becomes
+`FRAME_PASSES`' with `liquid` after `atrous` and `gather` and before `composite`: FSR 2's input
+pass, after the composite, reads the record, and `exposure` stays last.
 
 ```wgsl
 // illustrative: one wave's contribution to the normal at face point p (Finch, GPU Gems ch. 1)
