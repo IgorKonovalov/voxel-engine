@@ -20,7 +20,3 @@ wgpu.workspace = true
 log.workspace = true
 pollster.workspace = true
 criterion.workspace = true
-
-[[bench]]
-name = "attr_work"
-harness = false

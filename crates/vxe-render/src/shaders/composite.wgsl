@@ -8,7 +8,7 @@
 //   2  texture_2d<f32>   layer_in        the hit pass's rgba16float translucent layers
 //                                        (premultiplied colour, transmittance), or in the
 //                                        steps view its walk counters, in the cracks view
-//                                        the crack class and the self-hit
+//                                        the field walk's leak
 //   3  texture_2d<f32>   irradiance_in   the irradiance at each hit, rgb: the temporal
 //                                        pass's accumulation
 //   4  storage texture   target_tex      rgba8unorm output
@@ -37,33 +37,20 @@
 // display-encoded by `pow(c, 1 / 2.2)`; `normals` writes a hit's shading normal as
 // `n * 0.5 + 0.5`, linear, and a miss as `shaded` does; `hitmask` white on a hit;
 // `steps` the counters over 255; `albedo` the hit's albedo with the unlit layers over it;
-// `cracks` the hit's crack class (march.wgsl's `crack_class`) over the shaded image without
-// its layers (`crack_colour`).
+// `cracks` the field walk's leaks over the shaded image without its layers (`crack_colour`).
 
 // The cracks view's colour of a pixel whose shaded display colour is `shaded`, from the hit
-// pass's class in `layer.x` and self-hit in `layer.y`: a miss black; a class 0 hit
-// `4/255 + 0.47 shaded` per channel (4 to 124 of 255: never black, never a channel at 255);
-// class 1 red, 2 yellow, 3 blue; a self-hit magenta over class 0, and over classes 1 to 3 its
-// class's colour with the channel that is 0 at 128 (128 for blue's red). Each colour decodes
-// back to its class and self-hit (`vxe_render::CrackShares::from_rgba8`).
+// pass's leak in `layer.x`: a miss black; a leak red; any other hit `4/255 + 0.47 shaded` per
+// channel (4 to 124 of 255: never black, never a channel at 255). Each colour decodes back
+// (`vxe_render::CrackShares::from_rgba8`).
 fn crack_colour(found: bool, shaded: vec3<f32>, layer: vec4<f32>) -> vec3<f32> {
     if (!found) {
         return vec3<f32>(0.0);
     }
-    let cls = u32(layer.x + 0.5);
-    let self_hit = layer.y > 0.5;
-    let mark = select(0.0, 128.0 / 255.0, self_hit);
-    switch cls {
-        case 1u: { return vec3<f32>(1.0, 0.0, mark); }
-        case 2u: { return vec3<f32>(1.0, 1.0, mark); }
-        case 3u: { return vec3<f32>(mark, 0.0, 1.0); }
-        default: {
-            if (self_hit) {
-                return vec3<f32>(1.0, 0.0, 1.0);
-            }
-            return vec3<f32>(4.0 / 255.0) + 0.47 * clamp(shaded, vec3<f32>(0.0), vec3<f32>(1.0));
-        }
+    if (layer.x > 0.5) {
+        return vec3<f32>(1.0, 0.0, 0.0);
     }
+    return vec3<f32>(4.0 / 255.0) + 0.47 * clamp(shaded, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
@@ -273,7 +260,7 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
     if (view == VIEW_CRACKS) {
         // The palette in display values, as the normals view writes its colours: the
         // upscalers copy a view other than shaded and FSR 2's tone pass stores it as it comes,
-        // so the classes reach the window unchanged.
+        // so the leaks reach the window unchanged.
         let k = crack_colour(rec.found, display(c), layer);
         textureStore(target_tex, px, vec4<f32>(k, 1.0));
         return meter_of(c / ex);

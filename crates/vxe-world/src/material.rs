@@ -20,6 +20,14 @@ impl MaterialFlags {
     /// life: `World::materials` hands out a shared reference and nothing mutates the table
     /// after `World::generate`.
     pub const TRANSLUCENT: Self = Self(2);
+    /// Under the renderer's opt-in field look, voxels of this material are drawn as cubes with
+    /// face normals instead of on the smooth field surface; absent, that look draws them
+    /// smooth. The renderer's default look draws every material as cubes, so there the flag
+    /// changes nothing. A render property of the row, as `detail` and `opacity` are: no edit,
+    /// query, collision, coarse grid, collapse, raycast or audio path reads it. Fixed for the
+    /// world's life, as `TRANSLUCENT` is. No effect on a `TRANSLUCENT` row, whose voxels the
+    /// renderer's translucent walk draws.
+    pub const CRISP: Self = Self(4);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -149,5 +157,11 @@ impl MaterialTable {
     /// Whether the renderer composites voxels of `id` instead of stopping at them.
     pub fn is_translucent(&self, id: MaterialId) -> bool {
         self.flags(id).contains(MaterialFlags::TRANSLUCENT)
+    }
+
+    /// Whether the field look draws voxels of `id` as cubes ([`MaterialFlags::CRISP`]); an id
+    /// with no row is not crisp.
+    pub fn is_crisp(&self, id: MaterialId) -> bool {
+        self.flags(id).contains(MaterialFlags::CRISP)
     }
 }

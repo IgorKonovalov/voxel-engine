@@ -1,6 +1,6 @@
 # ADR-0011: Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail
 
-> **Status:** accepted (2026-10-16)
+> **Status:** accepted (2026-10-16); contour surface superseded by ADR-0041 (2026-11-03), procedural per-material detail stays
 > **Date:** 2026-10-16
 > **Related plan(s):** [Plan 0005](../plans/done/0005-surface-look-spike.md) (the spike this
 > decision is written from; its comparison table is the evidence)

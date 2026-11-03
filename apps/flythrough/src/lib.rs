@@ -7,6 +7,7 @@ pub mod castle;
 pub mod cave;
 pub mod hud;
 pub mod showcase;
+pub mod thin_rig;
 pub use flythrough_logic as logic;
 
 use std::path::{Path, PathBuf};
@@ -14,11 +15,11 @@ use std::sync::Arc;
 
 use vxe_audio::Listener;
 use vxe_net::{Logic, Server};
-use vxe_render::{Camera, NormalMode, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning};
+use vxe_render::{Camera, NormalMode, SurfaceTuning};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
-    MaterialFlags, MaterialTable, OpLog, Residency, WireError, World,
+    MaterialFlags, MaterialId, MaterialTable, OpLog, Residency, WireError, World,
 };
 
 use cave::CaveSource;
@@ -108,17 +109,17 @@ pub fn stream_record_chunks(r: Residency) -> u64 {
 pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
 
 /// `Full` bricks of headroom beyond the bounded level's own, so digging has room: 64 Ki
-/// bricks, each at the largest slot the level's rock takes (6 units, and 6 plus the most
-/// attribute units with attributes).
+/// bricks, each at the largest slot the level's rock takes (6 units), and with the field a
+/// band slot of the most units ([`vxe_render::field::MAX_BAND_UNITS`]) beside each.
 pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
 
 /// The pool units the bounded level `world` needs: each bin's `Full` bricks in whole pages
-/// of that bin, their slots with their chunk-local surface's contour attributes when `attrs`,
-/// plus the headroom.
-pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
+/// of that bin, and when `field` each band brick's band slot and each uniform band brick's
+/// slot in pages of theirs (the band as [`band_census`] reads it), plus the headroom.
+pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
+    use vxe_render::field::{MAX_BAND_UNITS, band_slot_units};
     use vxe_render::gpu_world::{
-        BIN_COUNT, BINS, MAX_ATTR_UNITS, PAGE_UNITS, bin_of, chunk_surface, slot_units,
-        slots_per_page,
+        BIN_COUNT, BINS, PAGE_UNITS, band_bin_of, bin_of, slot_units, slots_per_page,
     };
     let table = world.materials();
     let translucent = |m| {
@@ -128,19 +129,41 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
     };
     let mut bins = [0u64; BIN_COUNT];
     for c in world.store().coords() {
-        let Some(chunk) = world.store().get(c) else {
+        let arcs = if field {
+            around_guards(world, c)
+        } else {
+            let mut v = vec![None; 27];
+            v[13] = world.store().get(c);
+            v
+        };
+        let guards: Vec<_> = arcs
+            .iter()
+            .map(|a| {
+                a.as_ref()
+                    .map(|a| a.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+            })
+            .collect();
+        let around: [Option<&Chunk>; 27] = std::array::from_fn(|k| guards[k].as_deref());
+        let Some(chunk) = around[13] else {
             continue;
         };
-        let chunk = chunk
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (i, b) in chunk.bricks().iter().enumerate() {
             if let vxe_world::Brick::Full(p) = b {
-                let surface = attrs.then(|| {
-                    let s = chunk_surface(chunk.bricks(), i);
-                    s.iter().map(|w| w.count_ones()).sum()
-                });
-                bins[bin_of(slot_units(p, translucent, surface))] += 1;
+                bins[bin_of(slot_units(p, translucent))] += 1;
+            }
+            if !field {
+                continue;
+            }
+            let Some((counts, _)) = brick_counts(&around, i) else {
+                continue;
+            };
+            let n = counts.iter().filter(|&&k| k > 0 && k < 27).count() as u32;
+            if n == 0 {
+                continue;
+            }
+            bins[band_bin_of(band_slot_units(n))] += 1;
+            if let vxe_world::Brick::Uniform(m) = b {
+                bins[bin_of(2 + u32::from(translucent(*m)))] += 1;
             }
         }
     }
@@ -149,16 +172,15 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
         .enumerate()
         .map(|(k, &n)| n.div_ceil(u64::from(slots_per_page(k))))
         .sum();
-    let largest = 6 + if attrs { MAX_ATTR_UNITS } else { 0 };
-    let headroom = POOL_HEADROOM_BRICKS * u64::from(BINS[bin_of(largest)]);
-    pages * u64::from(PAGE_UNITS) + headroom
+    let per = u64::from(BINS[bin_of(6)]) + if field { u64::from(MAX_BAND_UNITS) } else { 0 };
+    pages * u64::from(PAGE_UNITS) + POOL_HEADROOM_BRICKS * per
 }
 
 /// The mirror budget of the bounded level unless `--mirror-budget` sets one: the pool
 /// [`level_pool_units`] needs and a record for each of its `chunks`, sized from the world it
 /// loads rather than the streamed default.
-pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, attrs: bool) -> u64 {
-    vxe_render::gpu_world::budget_for(level_pool_units(world, attrs), chunks)
+pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, field: bool) -> u64 {
+    vxe_render::gpu_world::budget_for(level_pool_units(world, field), chunks)
 }
 
 /// The audio listener for `camera`: its position (voxel units), its forward and its up. The
@@ -176,6 +198,75 @@ pub fn listener(camera: &Camera) -> Listener {
 /// The rubble a collapsing region leaves when `R` has the fly-through's logic remove
 /// unsupported regions instead of dropping them. The cave never generates it.
 pub use logic::RUBBLE;
+
+/// The material the [`thin_rig`] scene's branches, rods and sheets are made of, after the cave's
+/// rows: the rig's "wood".
+pub const THIN_RIG_WOOD: MaterialId = 5;
+
+/// `table` (the cave's rows) with the thin rig's wood appended at [`THIN_RIG_WOOD`], a crisp
+/// row ([`MaterialFlags::CRISP`]): the field surface draws its voxels as cubes.
+pub fn with_wood(table: &MaterialTable) -> MaterialTable {
+    with_wood_flags(table, MaterialFlags::CRISP)
+}
+
+/// [`with_wood`] with the wood's row carrying `flags` (`MaterialFlags::empty()` for smooth wood).
+pub fn with_wood_flags(table: &MaterialTable, flags: MaterialFlags) -> MaterialTable {
+    let mut t = table.clone();
+    let wood = Material {
+        albedo: [0.45, 0.30, 0.16],
+        flags,
+        ..Material::named("rig wood")
+    };
+    assert_eq!(
+        t.push(wood),
+        THIN_RIG_WOOD,
+        "the wood follows the cave's rows"
+    );
+    t
+}
+
+/// A camera at `eye` looking at `target` (voxel units), 70 degrees vertical field of view.
+pub fn camera_looking_at(eye: [f32; 3], target: [f32; 3]) -> Camera {
+    let d = [0, 1, 2].map(|k| target[k] - eye[k]);
+    let len = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+    Camera {
+        position: eye.into(),
+        yaw: d[1].atan2(d[0]),
+        pitch: (d[2] / len).asin(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The seam rig's camera: at its spawn's centre, looking +y head-on at the wall's inlay.
+pub fn seam_rig_camera() -> Camera {
+    let eye = thin_rig::SeamRig {
+        crisp: THIN_RIG_WOOD,
+    }
+    .spawn()
+    .0
+    .map(|v| v as f32 + 0.5);
+    camera_looking_at(eye, [eye[0], thin_rig::WALL_Y[0] as f32, eye[2]])
+}
+
+/// The thin rig's camera: on -y in front of the trunk, at its spawn's centre, looking +y and
+/// slightly down at the features' middle.
+pub fn thin_rig_camera() -> Camera {
+    let eye = thin_rig::ThinRig {
+        wood: THIN_RIG_WOOD,
+    }
+    .spawn()
+    .0;
+    let p = eye.map(|v| v as f32 + 0.5);
+    let target = [64.5f32, 64.5, 90.0];
+    let d = [0, 1, 2].map(|k| target[k] - p[k]);
+    let len = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+    Camera {
+        position: p.into(),
+        yaw: d[1].atan2(d[0]),
+        pitch: (d[2] / len).asin(),
+        vfov: 70f32.to_radians(),
+    }
+}
 
 /// The cave's table: air, rock, ore, the indestructible shell (at the ids `cave` uses), and
 /// [`RUBBLE`]. It lives here rather than in `cave.rs` so that file stays free of floating point.
@@ -339,16 +430,10 @@ pub struct LookPreset {
     pub detail_fine: f32,
 }
 
-/// Every part off: the uniform gradient, the fraction offset, no face mix, detail shaded in
-/// the light pass.
+/// Every part off: no face mix, detail shaded in the light pass.
 const TUNING_OFF: SurfaceTuning = SurfaceTuning {
-    fit: SurfaceFit {
-        fit: PlaneFit::Uniform27,
-        offset: PlaneOffset::Fraction,
-    },
     face_mix: 0.0,
     detail_after_lighting: false,
-    shadow_push: false,
 };
 
 impl LookPreset {
@@ -364,53 +449,25 @@ impl LookPreset {
     }
 
     pub const FACE: Self = Self::plain("face", NormalMode::Face);
-    /// Contour with every tuning part off.
-    pub const CONTOUR: Self = Self::plain("contour", NormalMode::Contour);
-    /// The geometry and lighting-path fixes: the distance-weighted gradient (the fit with the
-    /// highest mid-band contrast of the guardrail-passing fits) and the detail's lamp term
-    /// applied at full resolution.
-    pub const CONTOUR_SHARP: Self = Self {
-        name: "contour-sharp",
-        tuning: SurfaceTuning {
-            fit: SurfaceFit {
-                fit: PlaneFit::Weighted27,
-                offset: PlaneOffset::Fraction,
-            },
-            detail_after_lighting: true,
-            ..Self::CONTOUR.tuning
-        },
-        ..Self::CONTOUR
-    };
-    /// Today's fit, the detail's lamp term at full resolution, and rock's detail at 20 cm,
-    /// strength 0.3, with the fine octave at weight 0.5 (the guardrail-passing pair and weight
-    /// with the highest fine-band contrast).
-    pub const CONTOUR_GRAIN: Self = Self {
-        name: "contour-grain",
+    /// The field surface (ADR-0041, `NormalMode::Contour`), an opt-in look, with the detail's
+    /// lamp term applied at full resolution; a material marked `MaterialFlags::CRISP` in the
+    /// table renders as cubes in it. It needs a mirror with the field's band slots.
+    pub const FIELD: Self = Self {
         tuning: SurfaceTuning {
             detail_after_lighting: true,
-            ..Self::CONTOUR.tuning
+            ..TUNING_OFF
         },
-        rock_detail: [2.0, 0.3],
-        detail_fine: 0.5,
-        ..Self::CONTOUR
+        ..Self::plain("field", NormalMode::Contour)
     };
 
     pub const TRILINEAR8: Self = Self::plain("trilinear8", NormalMode::Trilinear8);
     pub const GRADIENT27: Self = Self::plain("gradient27", NormalMode::Gradient27);
 
-    /// `N`'s order: the contour presets side by side after face, then the two diagnostic
-    /// normal modes.
-    pub const ALL: [Self; 6] = [
-        Self::FACE,
-        Self::CONTOUR,
-        Self::CONTOUR_SHARP,
-        Self::CONTOUR_GRAIN,
-        Self::TRILINEAR8,
-        Self::GRADIENT27,
-    ];
+    /// `N`'s order: face, the field, then the two diagnostic normal modes.
+    pub const ALL: [Self; 4] = [Self::FACE, Self::FIELD, Self::TRILINEAR8, Self::GRADIENT27];
 
-    /// The look the fly-through starts in without `--look`.
-    pub const DEFAULT: Self = Self::CONTOUR_SHARP;
+    /// The look the fly-through starts in without `--look`: honest cubes (ADR-0041).
+    pub const DEFAULT: Self = Self::FACE;
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.name == name)
@@ -421,8 +478,8 @@ impl LookPreset {
         Self::ALL.map(|p| p.name).join(", ")
     }
 
-    /// The next preset in [`LookPreset::ALL`] order, wrapping, skipping the contour presets
-    /// unless `contour` is set (a mirror with contour attributes). A preset not in the list
+    /// The next preset in [`LookPreset::ALL`] order, wrapping, skipping the field unless
+    /// `contour` is set (a mirror with the field's band slots). A preset not in the list
     /// (one with a part overridden) continues from the first of its normal mode.
     pub fn next(self, contour: bool) -> Self {
         let i = Self::ALL
@@ -440,17 +497,14 @@ impl LookPreset {
             .unwrap_or(Self::FACE)
     }
 
-    /// The parts beyond the normal mode: `fit uniform27, face mix 0, detail after lighting
-    /// off, shadow push off`.
+    /// The parts beyond the normal mode: `face mix 0, detail after lighting off`.
     pub fn parts(&self) -> String {
         let t = &self.tuning;
         let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "fit {}, face mix {}, detail after lighting {}, shadow push {}",
-            t.fit.name(),
+            "face mix {}, detail after lighting {}",
             t.face_mix,
-            on(t.detail_after_lighting),
-            on(t.shadow_push)
+            on(t.detail_after_lighting)
         )
     }
 
@@ -467,6 +521,199 @@ impl LookPreset {
         }
         t
     }
+}
+
+/// The field surface's band over a set of chunks (ADR-0040 Alternative B): a voxel is in the
+/// band when its 27-count, the solid voxels of the 3 x 3 x 3 block around it with itself, is
+/// neither 0 nor 27; a brick is a band brick when it holds a band voxel. Solid is not air
+/// ([`Brick::solid_bits`]), a translucent voxel included, as for the field pass. The bytes
+/// are a band slot's: packed, one band-mask unit plus `ceil(n / 64)` units of `u8` counts for
+/// `n` band voxels, plus two header units for a uniform brick (which has no slot today);
+/// dense, nine units per band brick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BandCensus {
+    /// Band voxels that are solid.
+    pub solid_voxels: u64,
+    /// Band voxels that are air.
+    pub air_voxels: u64,
+    /// Band bricks that are `Full`.
+    pub full_bricks: u64,
+    /// `Full` bricks with a surface voxel (a solid voxel with an air voxel among its 26
+    /// neighbours).
+    pub surface_full_bricks: u64,
+    /// `Full` bricks with a surface voxel that are band bricks.
+    pub surface_full_band_bricks: u64,
+    /// Band bricks that are uniform and solid.
+    pub solid_bricks: u64,
+    /// Band bricks that are uniform air.
+    pub air_bricks: u64,
+    pub packed_bytes: u64,
+    pub dense_bytes: u64,
+}
+
+impl BandCensus {
+    pub fn bricks(&self) -> u64 {
+        self.full_bricks + self.solid_bricks + self.air_bricks
+    }
+}
+
+/// The 27-counts of the 512 voxels of brick `slot` of the chunk at the centre of `around`
+/// (the 27 chunks around it, index `(dx + 1) + 3 (dy + 1) + 9 (dz + 1)`, `None` read as air),
+/// voxel order `x + 8 y + 64 z`, and the brick's surface (its solid voxels with an air face
+/// neighbour, bit `i % 64` of word `i / 64`); `None` when the brick and its 26 neighbours are
+/// all uniform and all solid or all air (every count 27 or 0, no surface).
+pub fn brick_counts(
+    around: &[Option<&Chunk>; 27],
+    slot: usize,
+) -> Option<([u8; BRICK_VOXELS], [u64; 8])> {
+    let l = vxe_world::brick_of_slot(slot);
+    // The 27 bricks around, as their solid bits; `kinds` says whether all are one uniform kind.
+    let mut bits = [[0u64; 8]; 27];
+    let (mut any_solid, mut any_air, mut any_full) = (false, false, false);
+    for (k, out) in bits.iter_mut().enumerate() {
+        let d = [k as i32 % 3 - 1, (k as i32 / 3) % 3 - 1, k as i32 / 9 - 1];
+        let b = [0, 1, 2].map(|a| l[a] + d[a]);
+        let cd = b.map(|v| v.div_euclid(8));
+        let ci = ((cd[0] + 1) + 3 * (cd[1] + 1) + 9 * (cd[2] + 1)) as usize;
+        let brick = around[ci].map(|c| c.brick(vxe_world::brick_slot(b.map(|v| v.rem_euclid(8)))));
+        match brick {
+            None | Some(Brick::Uniform(vxe_world::AIR)) => any_air = true,
+            Some(Brick::Uniform(_)) => {
+                any_solid = true;
+                *out = [u64::MAX; 8];
+            }
+            Some(b @ Brick::Full(_)) => {
+                any_full = true;
+                *out = b.solid_bits();
+            }
+        }
+    }
+    if !any_full && !(any_solid && any_air) {
+        return None;
+    }
+    // The occupancy of the brick and a one-voxel shell, 10^3, cell c at voxel c - 1.
+    let mut occ = [0u8; 1000];
+    for z in 0..10i32 {
+        for y in 0..10i32 {
+            for x in 0..10i32 {
+                let v = [x - 1, y - 1, z - 1];
+                let d = v.map(|c| c.div_euclid(8));
+                let k = ((d[0] + 1) + 3 * (d[1] + 1) + 9 * (d[2] + 1)) as usize;
+                let lv = v.map(|c| c.rem_euclid(8));
+                let on = (bits[k][lv[2] as usize] >> (lv[0] + 8 * lv[1])) & 1;
+                occ[(x + 10 * (y + 10 * z)) as usize] = on as u8;
+            }
+        }
+    }
+    // Separable box sums: along x (8 x 10 x 10), y (8 x 8 x 10), z (8 x 8 x 8).
+    let mut sx = [0u8; 800];
+    for z in 0..10 {
+        for y in 0..10 {
+            for x in 0..8 {
+                let i = x + 10 * (y + 10 * z);
+                sx[x + 8 * (y + 10 * z)] = occ[i] + occ[i + 1] + occ[i + 2];
+            }
+        }
+    }
+    let mut sy = [0u8; 640];
+    for z in 0..10 {
+        for y in 0..8 {
+            for x in 0..8 {
+                let i = x + 8 * (y + 10 * z);
+                sy[x + 8 * (y + 8 * z)] = sx[i] + sx[i + 8] + sx[i + 16];
+            }
+        }
+    }
+    let mut out = [0u8; BRICK_VOXELS];
+    let mut surface = [0u64; 8];
+    for (i, c) in out.iter_mut().enumerate() {
+        *c = sy[i] + sy[i + 64] + sy[i + 128];
+        let (x, y, z) = (i % 8 + 1, (i / 8) % 8 + 1, i / 64 + 1);
+        let at = |x: usize, y: usize, z: usize| occ[x + 10 * (y + 10 * z)];
+        if at(x, y, z) == 1
+            && (at(x - 1, y, z)
+                & at(x + 1, y, z)
+                & at(x, y - 1, z)
+                & at(x, y + 1, z)
+                & at(x, y, z - 1)
+                & at(x, y, z + 1))
+                == 0
+        {
+            surface[i / 64] |= 1 << (i % 64);
+        }
+    }
+    Some((out, surface))
+}
+
+/// The chunks around `c` that `world` holds, for [`brick_counts`]; the guards are read locks.
+fn around_guards(world: &World, c: ChunkCoord) -> Vec<Option<Arc<std::sync::RwLock<Chunk>>>> {
+    (0..27)
+        .map(|k| {
+            let d = [k % 3 - 1, (k / 3) % 3 - 1, k / 9 - 1];
+            world
+                .store()
+                .get(ChunkCoord([0, 1, 2].map(|a| c.0[a] + d[a])))
+        })
+        .collect()
+}
+
+/// [`BandCensus`] over the bricks of `chunks` in `world`; a voxel of a chunk `world` does not
+/// hold reads as air.
+pub fn band_census(world: &World, chunks: &[ChunkCoord]) -> BandCensus {
+    let mut cs = BandCensus::default();
+    for &c in chunks {
+        let arcs = around_guards(world, c);
+        let guards: Vec<_> = arcs
+            .iter()
+            .map(|a| {
+                a.as_ref()
+                    .map(|a| a.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+            })
+            .collect();
+        let around: [Option<&Chunk>; 27] = std::array::from_fn(|k| guards[k].as_deref());
+        let Some(centre) = around[13] else {
+            continue;
+        };
+        for slot in 0..vxe_world::CHUNK_BRICKS {
+            let Some((counts, surface)) = brick_counts(&around, slot) else {
+                continue;
+            };
+            let brick = centre.brick(slot);
+            let solid = brick.solid_bits();
+            let surface = surface.iter().any(|&w| w != 0);
+            let mut n = 0u64;
+            for (i, &k) in counts.iter().enumerate() {
+                let on = (solid[i / 64] >> (i % 64)) & 1 != 0;
+                if k > 0 && k < 27 {
+                    n += 1;
+                    if on {
+                        cs.solid_voxels += 1;
+                    } else {
+                        cs.air_voxels += 1;
+                    }
+                }
+            }
+            let full = brick.is_full();
+            if full && surface {
+                cs.surface_full_bricks += 1;
+                if n > 0 {
+                    cs.surface_full_band_bricks += 1;
+                }
+            }
+            if n == 0 {
+                continue;
+            }
+            match brick {
+                Brick::Full(_) => cs.full_bricks += 1,
+                Brick::Uniform(vxe_world::AIR) => cs.air_bricks += 1,
+                Brick::Uniform(_) => cs.solid_bricks += 1,
+            }
+            let header = if full { 0 } else { 2 };
+            cs.packed_bytes += 64 * (1 + n.div_ceil(64) + header);
+            cs.dense_bytes += 64 * 9;
+        }
+    }
+    cs
 }
 
 /// FNV-1a 64 over the voxels of the resident chunks `coords`, in the given order: each as its
@@ -800,18 +1047,23 @@ mod tests {
         );
     }
 
-    /// A preset's table carries its rock pair and fine weight on rock alone; `contour` is the
+    /// A preset's table carries its rock pair and fine weight on rock alone; `field` is the
     /// fly-through's look table row for row.
     #[test]
     fn a_preset_table_puts_its_rock_detail_and_fine_weight_on_rock() {
-        let t = LookPreset::CONTOUR_GRAIN.materials();
+        let grain = LookPreset {
+            rock_detail: [2.0, 0.3],
+            detail_fine: 0.5,
+            ..LookPreset::FIELD
+        };
+        let t = grain.materials();
         for (id, row) in t.rows().iter().enumerate() {
             let rock = id == usize::from(cave::ROCK);
             assert_eq!(row.detail, if rock { [2.0, 0.3] } else { [0.0; 2] }, "{id}");
             assert_eq!(row.detail_fine, if rock { 0.5 } else { 0.0 }, "{id}");
         }
         assert_eq!(
-            LookPreset::CONTOUR.materials().rows(),
+            LookPreset::FIELD.materials().rows(),
             look_materials().rows()
         );
     }

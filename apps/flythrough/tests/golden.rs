@@ -1640,26 +1640,29 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
     let world = World::generate(source.extent(), &source, table);
-    let pool = flythrough::level_pool_units(&world, true) * UNIT_BYTES;
+    let look = flythrough::LookPreset::DEFAULT;
+    // The default look's mirror: band slots only under the field look.
+    let field = look.normal_mode == vxe_render::NormalMode::Contour;
+    let pool = flythrough::level_pool_units(&world, field) * UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let chunks = world.extent().len() as u64;
-    let mut gpu = GpuWorld::with_surface_attrs(
-        &device,
-        MirrorConfig {
-            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true),
-            light_radius: 19,
-            ..MirrorConfig::new(Window::Fixed(world.extent()))
-        },
-    );
-    let look = flythrough::LookPreset::DEFAULT;
-    gpu.set_surface_fit(look.tuning.fit);
+    let cfg = MirrorConfig {
+        budget_bytes: flythrough::level_mirror_budget(&world, chunks, field),
+        light_radius: 19,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = if field {
+        GpuWorld::with_field_surface(&device, cfg)
+    } else {
+        GpuWorld::with_config(&device, cfg)
+    };
     let shot = SHOTS[0];
     gpu.set_focus(shot.eye);
     let mut last = None;
     for _ in 0..256 {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
-        gpu.update_attrs(&mut enc);
+        gpu.update_field(&mut enc);
         queue.submit([enc.finish()]);
         device
             .poll(wgpu::PollType::wait_indefinitely())
@@ -1733,8 +1736,10 @@ fn hue_class(p: &[u8]) -> Option<usize> {
 }
 
 /// `showcase_hall.png`: the hall lit by its four ores alone. With every emission off the same
-/// view is black within 2/255 (no lamp: all its light is the ores'); at least three of the
-/// four hue classes each cover 0.5 % of the pixels; its mean sRGB luma lies in 12..40/255.
+/// view is black within 2/255 (no lamp: all its light is the ores'); at least two of the four
+/// hue classes each cover 0.5 % of the pixels and every class covers at least one pixel (the
+/// default look's honest cubes light the ember and violet ores' faces thinly); its mean sRGB
+/// luma lies in 12..40/255.
 #[test]
 fn showcase_hall_golden_is_lit_by_its_four_ores() {
     let table = flythrough::showcase_materials();
@@ -1776,7 +1781,8 @@ fn showcase_hall_golden_is_lit_by_its_four_ores() {
     );
     assert_eq!(lit_off, 0, "pixels lit with the emission off");
     let covered = classes.iter().filter(|&&c| c >= 288).count();
-    assert!(covered >= 3, "{classes:?}");
+    assert!(covered >= 2, "{classes:?}");
+    assert!(classes.iter().all(|&c| c >= 1), "{classes:?}");
     assert!((12.0..=40.0).contains(&luma), "{luma}");
 }
 

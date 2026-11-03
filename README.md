@@ -9,8 +9,10 @@
 (190, 384, 218), 9 m over the west floor, at yaw 0 and pitch -12 degrees, lamp off, so all of
 the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 64 frames at
 a manual exposure of 1.5, indirect light on at a probe spacing of 32 voxels, our upscaler on at
-internal scale 1.5 (1280x720 for 1920x1080) with its jitter and sharpening 0.5, the default
-look (contour-sharp) and lighting, on an RTX 3080 Laptop GPU at 1920x1080. Regenerate with
+internal scale 1.5 (1280x720 for 1920x1080) with its jitter and sharpening 0.5, the
+`contour-sharp` look, since removed (ADR-0041), and the default lighting, on an RTX 3080 Laptop GPU
+at 1920x1080. The fly-through and this example now default to `face`, so the command below shoots
+honest cubes, not this image. Regenerate with
 `cargo run --release -p flythrough --example hero -- --source showcase --shot hall --seed 1
 --size 1920x1080 --frames 64 --exposure 1.5 --indirect on --probe-spacing 32 --internal-scale
 1.5 --jitter on --sharpen 0.5 --lamp off` (every flag there is the example's default).</sub>
@@ -55,8 +57,8 @@ and entity model.
   deterministic WASI, fuel and a memory cap, proven equal to the native build.
 - **A compute ray marcher** in WGSL over a sharded GPU mirror of the world, reserved once
   and uploaded incrementally from the dirty set, walking a hierarchy of occupancy bits, with
-  a headlamp, a shadow ray, per-voxel contour normals with procedural detail, a translucent
-  material class, and a stats overlay with a frame-time strip.
+  a headlamp, a shadow ray, honest cubes with procedural detail (a smooth field surface is an
+  opt-in look, ADR-0041), a translucent material class, and a stats overlay with a frame-time strip.
 - **Spatial audio:** a headless HRTF mixer on the device callback, with occlusion,
   transmission and early reflections probed through the same voxels and the material
   table's acoustic triple.
@@ -143,7 +145,7 @@ go through an in-process server, so every edit you see came back as a client eve
 | Left / right click | Dig / fill at the crosshair; the edit result prints to the terminal |
 | Scroll | Change the dig radius |
 | `L` | Toggle the shadow ray |
-| `N` | Cycle the look presets: face, contour, contour-sharp, contour-grain, trilinear8, gradient27 (the contour presets skipped under `--look plain`); the banner names the preset, and `refitting` while a fit change refits the mirror's bricks |
+| `N` | Cycle the look presets: face, field, trilinear8, gradient27 (the field only in a run started under `--look field`, the one that builds its band slots); the banner names the preset |
 | `V` | Toggle procedural surface detail |
 | `B` | Run the carve benchmark in place |
 | `P` | Stamp a 16-voxel room with an indestructible shell at the crosshair |
@@ -196,12 +198,14 @@ shown, `F1`, the autopilot's flight).
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
 | `--mirror-budget MiB` | VRAM the GPU mirror reserves for its pool, masks and records at startup (default 3072 streamed; on `--level`, what the level needs plus dig headroom). While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure (the fuller of its pool slots and records) over 0.9, and returns after 300 frames under 0.7, down to 6 |
 | `--residency R_FULL,R_LOD` | Streamed full and LOD radii in chunks, hysteresis 1 (default 16,24) |
-| `--look PRESET` | Start in a look preset, with attribute pages for contour and rock detail: `face`, `contour` (every tuning part off), `contour-sharp` (default: the distance-weighted plane fit, the detail's lamp term at full resolution), `contour-grain` (the detail's lamp term at full resolution, rock detail 2,0.3 with the fine octave at 0.5), `trilinear8` or `gradient27`; `plain` starts in face mode without either, detail off. The startup line prints the preset's parts |
-| `--plane-fit uniform27\|weighted27`, `--plane-offset fraction\|volume`, `--face-mix K`, `--detail-fine W`, `--detail-after on\|off` | Override one part of the starting preset: the attribute pass's plane normal and offset, the shading normal's mix toward the face normal (0 to 0.5), rock's fine-octave weight (0 to 1), the detail's lamp term at full resolution. Not under `plain`; `N` cycles the presets as defined |
+| `--look PRESET` | Start in a look preset: `face` (default: honest cubes with rock detail), `field` (the smooth field surface, opt-in: builds its band slots and runs the field pass, at about 3x `face`'s GPU frame in the window), `trilinear8` or `gradient27` (diagnostic normal modes); `plain` starts in face mode without rock detail, detail off. The startup line prints the preset's parts |
+| `--crisp none\|rock\|all` | Mark the cave's rock row, or every row that is not translucent, `MaterialFlags::CRISP` when the table is built: the field look draws those materials as cubes (default `none`). The default look draws everything as cubes, so it changes nothing there |
+| `--thin-rig`, `--seam-rig` | Run in a bounded scene for the field look: free thin rods, a diagonal branch and sheets on a trunk, or a flush inlay and an L of crisp wood. Not with `--level`, `--source showcase`, `--castle`, `--autopilot`, `--vault`, `--room`, `--save` or `--replay` |
+| `--face-mix K`, `--detail-fine W`, `--detail-after on\|off` | Override one part of the starting preset: the shading normal's mix toward the face normal (0 to 0.5), rock's fine-octave weight (0 to 1), the detail's lamp term at full resolution. Not under `plain`; `N` cycles the presets as defined |
 | `--view VIEW` | Write `shaded` (default), `normals`, `hitmask`, `steps` (red: walk steps, green: storage loads, blue: pool loads per ray) or `albedo` (the composited albedo, unlit) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the loads' and pool loads' mean and p99 |
 | `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |
 | `--detail` | Start with procedural surface detail on under `--look plain` (it is on in every other look) |
-| `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1] for the starting preset, in every look but `plain` (default the preset's, 4,0.1 for contour and contour-sharp) |
+| `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1] for the starting preset, in every look but `plain` (default the preset's, 4,0.1) |
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
 | `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
@@ -229,7 +233,7 @@ shown, `F1`, the autopilot's flight).
 The storage figures come from an example: `cargo run --release -p flythrough --example
 world_budget -- --chunks 20,20,8 --census` (the level) or `--stream 16,24 --census` (the streamed
 residency); `--veins N --census` prints the census of a synthetic world of `N - 1` materials,
-and `--surface` (with `--stream`) counts the contour-plane voxels.
+and `--surface` (with `--stream`) projects what a per-voxel attribute would take (ADR-0011's layout; the mirror no longer holds one).
 The bounded run also times the coarse grid and the per-chunk mip build. A `Full` brick is a
 packed mask, palette and bit planes (ADR-0012), so the level's bricks take 58 MiB of RAM and
 the streamed defaults' about 400 MiB ([`docs/nfr.md`](docs/nfr.md) section 3).

@@ -2,6 +2,8 @@
 
 > **Status:** approved (2026-10-29)
 > **Created:** 2026-10-29
+> **Noted 2026-11-03 (architect, Plan 0054's close):** cubes are the default and the contour attribute is gone, so **this plan's world-space cache has lost its key** (`contour_attr`'s popcount index) and its readings' base look changed. The key needs an architect amendment before the lane starts. Trust the tree; dev surfaces the
+> drift when this plan starts.
 > **Approved:** 2026-10-29 (owner): "we will start as soon as 50 is done". The lane starts
 > after Plan 0050's Phase 4 check, alone, as drafted.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...

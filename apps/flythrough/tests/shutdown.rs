@@ -121,9 +121,8 @@ fn headless_run_trace() -> Option<String> {
 /// `RUN_BOUND`.
 fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
     const RUN_BOUND: Duration = Duration::from_secs(120);
-    // `--look plain`: the teardown trace needs no contour attributes, and a plain mirror
-    // builds no attribute pass. On DX12's software adapter (WARP) the attribute pass's
-    // initial fill alone runs past `RUN_BOUND`, with its shader compiled by DXC (Plan 0046).
+    // `--look plain`: the teardown trace needs no band slots, and a plain mirror builds no
+    // field pass, so the run's start does not wait on a software adapter's initial fill.
     let mut child = Command::new(env!("CARGO_BIN_EXE_flythrough"))
         .args([
             "--headless",

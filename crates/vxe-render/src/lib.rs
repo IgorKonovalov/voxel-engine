@@ -5,10 +5,9 @@
 //! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Frame`] draws it
 //! (its hit pass is the [`Marcher`]) and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
 
-pub mod attr_work;
-pub mod attrib;
 pub mod camera;
 pub mod exposure;
+pub mod field;
 pub mod font8x8;
 pub mod fsr2;
 pub mod gpu_world;
@@ -19,8 +18,6 @@ pub mod present;
 pub mod probes;
 pub mod readback;
 
-pub use attr_work::{AttrWorkStats, MirrorView};
-pub use attrib::{PlaneFit, PlaneOffset, SurfaceFit};
 pub use camera::{Camera, View};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
@@ -59,8 +56,8 @@ pub const PROBE_GATHER_WGSL: &str = include_str!("shaders/probe_gather.wgsl");
 /// The probe update's trace and blend, compiled after [`MARCH_WGSL`], [`LIGHT_WGSL`] and
 /// [`PROBE_GATHER_WGSL`].
 pub const PROBE_UPDATE_WGSL: &str = include_str!("shaders/probe_update.wgsl");
-/// The source of the contour-attribute pass, for headless validation.
-pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
+/// The source of the field pass (`field.rs`), for headless validation.
+pub const FIELD_WGSL: &str = include_str!("shaders/field.wgsl");
 pub use marcher::{SHARPEN_WGSL, UPSCALE_WGSL};
 
 /// A limit the frame's shaders need past what the adapter offers.

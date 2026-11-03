@@ -114,7 +114,6 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
             max_shard_units: None,
             budget_bytes: LEVEL_BUDGET,
             record_chunks: None,
-            attr_cap: usize::MAX,
             ..MirrorConfig::new(Window::Fixed(world.extent()))
         },
     );
@@ -318,6 +317,43 @@ fn the_level_spreads_over_capped_shards() {
     assert!(by_shard.iter().all(|&n| n >= 1), "{by_shard:?}");
 }
 
+/// The fly-through's default mirror over the level (no `--look field`: `GpuWorld::with_config`
+/// at `level_mirror_budget(.., false)`) holds no band slot: after the first sync it is not a
+/// field mirror, holds 0 band slots and 0 band units, its live bricks are the level's 383 608
+/// brick slots alone, and the field pass has no work.
+#[test]
+fn the_default_mirror_over_the_level_holds_no_band_slot() {
+    let (world, source) = level();
+    let Some((device, queue)) = device(&world) else {
+        return;
+    };
+    let chunks = world.extent().len() as u64;
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: flythrough::level_mirror_budget(&world, chunks, false),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    gpu.set_focus(source.spawn());
+    gpu.sync_now(&world, &device, &queue)
+        .expect("the level fits its default budget");
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let items = gpu.update_field(&mut enc);
+    queue.submit([enc.finish()]);
+    println!(
+        "default mirror: {} live bricks, {} band slots, {} band units, {items} field items",
+        gpu.live_bricks(),
+        gpu.band_bricks(),
+        gpu.band_units()
+    );
+    assert!(!gpu.field_surface());
+    assert_eq!(gpu.band_bricks(), 0);
+    assert_eq!(gpu.band_units(), 0);
+    assert_eq!(gpu.live_bricks(), 383_608);
+    assert_eq!(items, 0);
+}
+
 /// Every record's 16 brick-bits words hold, for each chunk, the bits of its bricks that are
 /// not `Uniform(AIR)`; the table carries `EMPTY_BIT` on exactly the entries whose bits are all
 /// clear, and every entry that is not `ABSENT` names the CPU's record.
@@ -413,4 +449,208 @@ fn the_level_s_opaque_masks_are_its_solid_bits() {
         }
     }
     assert_eq!(checked, 383_608);
+}
+
+/// The field surface's band on the level (ADR-0041), counted on the CPU over every chunk of
+/// the extent (`flythrough::band_census`), and the band slots of the level's mirror at the
+/// spawn: every `Full` brick with a surface voxel is a band brick,
+/// the mirror holds a band slot for each of the census's band bricks, and its live bytes grow
+/// by the census's packed bytes (a band mask and `ceil(n / 64)` count units per band brick, two
+/// header units for a uniform one) within 1 %, its reservation unchanged. The census, the
+/// band slots' bytes and the mirror's are printed.
+#[test]
+fn band_census() {
+    let (world, source) = level();
+    let chunks = world.store().coords();
+    let cs = flythrough::band_census(&world, &chunks);
+    println!(
+        "census: band voxels {} solid, {} air; band bricks {} Full, {} uniform solid, {} uniform air ({} in all); Full bricks with a surface voxel {}, of them band {}; bytes packed {}, dense {}",
+        cs.solid_voxels,
+        cs.air_voxels,
+        cs.full_bricks,
+        cs.solid_bricks,
+        cs.air_bricks,
+        cs.bricks(),
+        cs.surface_full_bricks,
+        cs.surface_full_band_bricks,
+        cs.packed_bytes,
+        cs.dense_bytes
+    );
+    assert_eq!(cs.surface_full_band_bricks, cs.surface_full_bricks);
+    assert!(cs.surface_full_bricks > 0);
+    let Some((device, queue)) = support::software_device(
+        flythrough::level_pool_units(&world, false) * UNIT_BYTES + cs.packed_bytes * 2,
+    ) else {
+        return;
+    };
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: 1 << 30,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    gpu.set_focus(source.spawn());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let (live, allocated) = (gpu.mirror_bytes(), gpu.allocated_bytes());
+    gpu.set_field_surface(true);
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
+    assert_eq!(st.pending_chunks, 0);
+    loop {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let n = gpu.update_field(&mut enc);
+        queue.submit([enc.finish()]);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    let grown = gpu.mirror_bytes() - live;
+    println!(
+        "band slots at the spawn: {} band bricks, {} B of band slots; mirror {} B live, {} B allocated ({live} and {allocated} without them), grown {grown} B against the census's packed {} B ({:+.3} %)",
+        gpu.band_bricks(),
+        gpu.band_units() * UNIT_BYTES,
+        gpu.mirror_bytes(),
+        gpu.allocated_bytes(),
+        cs.packed_bytes,
+        100.0 * (grown as f64 / cs.packed_bytes as f64 - 1.0)
+    );
+    assert_eq!(gpu.band_bricks(), cs.bricks());
+    assert_eq!(gpu.band_units() * UNIT_BYTES, grown);
+    assert!(
+        grown.abs_diff(cs.packed_bytes) * 100 <= cs.packed_bytes,
+        "grown {grown} B against packed {} B",
+        cs.packed_bytes
+    );
+    assert_eq!(gpu.allocated_bytes(), allocated);
+}
+
+/// The level's thin voxels (a reading): the solid voxels whose 27-count is 1 to 13, so whose
+/// centre lies outside the field surface (3 a free one-voxel rod, 9 a free one-voxel sheet,
+/// 12 a free 2 x 2 rod or a one-voxel rod on a floor). A voxel whose 3 x 3 x 3 block reaches
+/// past the extent reads that outside as air (`flythrough::brick_counts`), so voxels on the
+/// extent's outer layer are counted apart. The histogram's total is asserted against
+/// [`brute_thin`]'s count over the same chunks.
+#[test]
+#[ignore = "a reading: the thin-voxel histogram of the level"]
+fn thin_census() {
+    let (world, _) = level();
+    let ext = world.extent();
+    let lo = ext.min.0.map(|c| c * CHUNK_EDGE);
+    let hi = ext.max.0.map(|c| c * CHUNK_EDGE - 1);
+    let mut hist = [0u64; 14];
+    let mut edge = [0u64; 14];
+    let mut solid_band = 0u64;
+    let mut brute = 0u64;
+    for c in world.store().coords() {
+        let arcs: Vec<_> = (0..27)
+            .map(|k| {
+                let d = [k % 3 - 1, (k / 3) % 3 - 1, k / 9 - 1];
+                world
+                    .store()
+                    .get(ChunkCoord([0, 1, 2].map(|a| c.0[a] + d[a])))
+            })
+            .collect();
+        let guards: Vec<_> = arcs
+            .iter()
+            .map(|a| a.as_ref().map(|a| a.read().unwrap()))
+            .collect();
+        let around: [Option<&Chunk>; 27] = std::array::from_fn(|k| guards[k].as_deref());
+        let Some(centre) = around[13] else { continue };
+        brute += brute_thin(&around);
+        for slot in 0..CHUNK_BRICKS {
+            let Some((counts, _)) = flythrough::brick_counts(&around, slot) else {
+                continue;
+            };
+            let solid = centre.brick(slot).solid_bits();
+            let b = brick_of_slot(slot);
+            for (i, &k) in counts.iter().enumerate() {
+                if (solid[i / 64] >> (i % 64)) & 1 == 0 || k == 0 || k >= 27 {
+                    continue;
+                }
+                solid_band += 1;
+                if k > 13 {
+                    continue;
+                }
+                let v = [i as i32 % 8, (i as i32 / 8) % 8, i as i32 / 64];
+                let g = [0, 1, 2].map(|a| c.0[a] * CHUNK_EDGE + b[a] * BRICK_EDGE + v[a]);
+                if (0..3).any(|a| g[a] == lo[a] || g[a] == hi[a]) {
+                    edge[k as usize] += 1;
+                } else {
+                    hist[k as usize] += 1;
+                }
+            }
+        }
+    }
+    let inner: u64 = hist.iter().sum();
+    let outer: u64 = edge.iter().sum();
+    println!(
+        "thin census: {solid_band} solid band voxels; {inner} with count 1 to 13 inside, {outer} on the extent's outer layer"
+    );
+    for k in 1..14 {
+        println!(
+            "count {k:2}: {:9} inside, {:9} on the outer layer",
+            hist[k], edge[k]
+        );
+    }
+    println!("thin census: the brute-force pass reads {brute} solid voxels with count 1 to 13");
+    assert_eq!(inner + outer, brute);
+}
+
+/// The solid voxels of the chunk at the centre of `around` (indexed `x + 3 y + 9 z`, the
+/// centre 13, `None` read as air) whose 27-count is 1 to 13, counted brute force: for each
+/// brick not uniform air, a 10 x 10 x 10 occupancy gathered voxel by voxel from the 27 bricks
+/// around it, then every solid voxel's 3 x 3 x 3 sum read off it.
+fn brute_thin(around: &[Option<&Chunk>; 27]) -> u64 {
+    let eb = CHUNK_EDGE / BRICK_EDGE;
+    // The solid bits of the brick at `b` (brick coordinates relative to the centre chunk).
+    let bits_of = |b: [i32; 3]| -> [u64; 8] {
+        let k = b.map(|v| v.div_euclid(eb) + 1);
+        around[(k[0] + 3 * k[1] + 9 * k[2]) as usize].map_or([0; 8], |ch| {
+            ch.brick(brick_slot(b.map(|v| v.rem_euclid(eb))))
+                .solid_bits()
+        })
+    };
+    let centre = around[13].expect("the centre chunk");
+    let mut n = 0u64;
+    let mut occ = [false; 1000];
+    for slot in 0..CHUNK_BRICKS {
+        let bits = centre.brick(slot).solid_bits();
+        if bits == [0; 8] {
+            continue;
+        }
+        let b = brick_of_slot(slot);
+        let near: [[u64; 8]; 27] = std::array::from_fn(|d| {
+            let d = d as i32;
+            bits_of([b[0] + d % 3 - 1, b[1] + (d / 3) % 3 - 1, b[2] + d / 9 - 1])
+        });
+        if near.iter().all(|m| *m == [u64::MAX; 8]) {
+            // Every voxel of the brick counts 27.
+            continue;
+        }
+        for (j, cell) in occ.iter_mut().enumerate() {
+            // Voxel `j` of the 10^3 block around the brick, at `-1..9` on each axis.
+            let q = [j % 10, (j / 10) % 10, j / 100].map(|v| v as i32 - 1);
+            let nb = q.map(|v| v.div_euclid(BRICK_EDGE) + 1);
+            let l = q.map(|v| v.rem_euclid(BRICK_EDGE));
+            let i = (l[0] + BRICK_EDGE * (l[1] + BRICK_EDGE * l[2])) as usize;
+            let m = &near[(nb[0] + 3 * nb[1] + 9 * nb[2]) as usize];
+            *cell = (m[i / 64] >> (i % 64)) & 1 != 0;
+        }
+        for i in 0..512usize {
+            if (bits[i / 64] >> (i % 64)) & 1 == 0 {
+                continue;
+            }
+            let v = [i % 8, (i / 8) % 8, i / 64];
+            let mut k = 0;
+            for d in 0..27 {
+                let q = [v[0] + d % 3, v[1] + (d / 3) % 3, v[2] + d / 9];
+                k += u32::from(occ[q[0] + 10 * (q[1] + 10 * q[2])]);
+            }
+            if (1..=13).contains(&k) {
+                n += 1;
+            }
+        }
+    }
+    n
 }

@@ -396,12 +396,14 @@ impl Fsr2Binds {
                 pipeline: &p.pipeline,
                 groups: [Some(&self.cb), Some(b), None, None],
                 workgroups,
+                indirect: None,
             }]
         };
         let tone = vec![Dispatch {
             pipeline: &fsr.tone.pipeline,
             groups: [Some(world), None, Some(&self.tone), None],
             workgroups: self.display_groups,
+            indirect: None,
         }];
         if self.bypass {
             let mut passes: [Vec<Dispatch<'a>>; FSR2_PASSES.len()] = Default::default();
@@ -418,6 +420,7 @@ impl Fsr2Binds {
                 pipeline: &fsr.input.pipeline,
                 groups: [Some(world), None, Some(&self.input), None],
                 workgroups: self.render_groups,
+                indirect: None,
             }],
             fsr_pass(&fsr.spd_mips, &self.spd_mips, self.spd_groups),
             fsr_pass(&fsr.spd_tail, &self.spd_tail, [1, 1]),

@@ -51,8 +51,8 @@ fn shaders() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "attrib.wgsl",
-            include_str!("../src/shaders/attrib.wgsl").to_owned(),
+            "field.wgsl",
+            include_str!("../src/shaders/field.wgsl").to_owned(),
         ),
         (
             "exposure.wgsl",

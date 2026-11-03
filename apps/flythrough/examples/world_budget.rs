@@ -61,8 +61,8 @@ use flythrough::cave::CaveSource;
 use flythrough::showcase::{SHOWCASE_CHUNKS, ShowcaseSource};
 use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
 use vxe_render::gpu_world::{
-    BIN_COUNT, BINS, MATERIAL_FLOATS, PAGE_UNITS, RECORD_BYTES, UNIT_BYTES, bin_of, budget_for,
-    chunk_surface, class_code, payload_units, slot_units, slots_per_page, surface_attr_units,
+    BIN_COUNT, MATERIAL_FLOATS, PAGE_UNITS, RECORD_BYTES, SLOT_BINS, UNIT_BYTES, bin_of,
+    budget_for, class_code, payload_units, slot_units, slots_per_page,
 };
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::packed::PackedClass;
@@ -78,15 +78,33 @@ fn class_units(c: PackedClass) -> u64 {
     u64::from(2 + payload_units(class_code(c)))
 }
 
-/// Units of a full chunk's brick's slot with `n` chunk-local surface voxels' attributes.
+/// Units of a full chunk's brick's slot with `n` chunk-local surface voxels' attributes, in
+/// ADR-0011's layout (the projection's own model; the mirror holds no attribute): none for
+/// `n` 0, else a unit of surface mask and `ceil(n / 32)` units of `u16` attributes.
 fn attr_units(n: u64) -> u64 {
-    u64::from(surface_attr_units(n as u32))
+    if n == 0 { 0 } else { 1 + n.div_ceil(32) }
+}
+
+/// The chunk-local surface of brick `slot` of a chunk's `bricks` ([`surface_mask`]): its
+/// non-air voxels with an air face neighbour inside the chunk, or on the chunk's face.
+fn chunk_surface(bricks: &[Brick], slot: usize) -> [u64; 8] {
+    let b = brick_of_slot(slot);
+    let beside: [[Option<[u64; 8]>; 2]; 3] = std::array::from_fn(|k| {
+        std::array::from_fn(|d| {
+            let mut n = b;
+            n[k] += if d == 0 { -1 } else { 1 };
+            (0..vxe_world::CHUNK_EDGE_BRICKS)
+                .contains(&n[k])
+                .then(|| solid_mask(&bricks[brick_slot(n)]))
+        })
+    });
+    surface_mask(&solid_mask(&bricks[slot]), &beside)
 }
 
 /// `Full` bricks of a census bin of materials (`BrickCensus::BINS`) as slots of each bin.
-fn census_bins(c: &BrickCensus) -> [u64; 10] {
+fn census_bins(c: &BrickCensus) -> [u64; BIN_COUNT] {
     const UNITS: [u64; 6] = [2, 3, 4, 6, 18, 18];
-    let mut out = [0u64; 10];
+    let mut out = [0u64; BIN_COUNT];
     for (n, units) in c.full_by_materials.iter().zip(UNITS) {
         out[bin_of(units as u32)] += n;
     }
@@ -95,14 +113,14 @@ fn census_bins(c: &BrickCensus) -> [u64; 10] {
 
 /// Prints one look's projected mirror: the pool by bin (slots of each bin times its units),
 /// `records` records, `table` chunk-table entries and the material rows.
-fn projection(look: &str, bins: &[u64; 10], records: u64, table: u64, materials: usize) {
+fn projection(look: &str, bins: &[u64; BIN_COUNT], records: u64, table: u64, materials: usize) {
     let pool = pool_bytes(bins);
     let rec = records * RECORD_BYTES;
     let rows = (materials * MATERIAL_FLOATS * 4) as u64;
     let total = pool + rec + table * 4 + rows;
     let by_bin: Vec<String> = bins
         .iter()
-        .zip(BINS)
+        .zip(SLOT_BINS)
         .filter(|(n, _)| **n > 0)
         .map(|(n, b)| format!("{b}u x {n} = {} B", n * u64::from(b) * UNIT_BYTES))
         .collect();
@@ -120,7 +138,7 @@ fn projection(look: &str, bins: &[u64; 10], records: u64, table: u64, materials:
 /// Bytes of the slots in `bins`, each its bin's units.
 fn pool_bytes(bins: &[u64; BIN_COUNT]) -> u64 {
     bins.iter()
-        .zip(BINS)
+        .zip(SLOT_BINS)
         .map(|(n, b)| n * u64::from(b) * UNIT_BYTES)
         .sum()
 }
@@ -148,9 +166,10 @@ fn add_slot(
         let glass = |m| table.flags(m).contains(MaterialFlags::TRANSLUCENT);
         let surface = attrs.then(|| {
             let s = chunk_surface(bricks, i);
-            s.iter().map(|w| w.count_ones()).sum()
+            s.iter().map(|w| u64::from(w.count_ones())).sum::<u64>()
         });
-        bins[bin_of(slot_units(p, glass, surface))] += 1;
+        let units = u64::from(slot_units(p, glass)) + surface.map_or(0, attr_units);
+        bins[bin_of(units as u32)] += 1;
     }
 }
 
@@ -633,7 +652,7 @@ struct Census {
     /// By `PackedClass::ALL`.
     by_class: [ClassRow; 5],
     /// Slots of each bin of `MIRROR_BINS` the bricks take with their attributes.
-    contour_bins: [u64; 10],
+    contour_bins: [u64; BIN_COUNT],
     /// Bricks by the attribute pass's rounds (64 invocations, an attribute word of two
     /// surface voxels each a round): `ceil(n / 128)`, 0 to 4.
     rounds: [u64; 5],

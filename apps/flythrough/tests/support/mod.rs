@@ -532,20 +532,20 @@ pub fn centre_pixel(rgba: &[u8]) -> [u8; 3] {
     [rgba[i], rgba[i + 1], rgba[i + 2]]
 }
 
-// ---- Contour attributes and the sharpness scenes (tests/look.rs, tests/sharpness.rs) ----
+// ---- The field surface and the sharpness scenes (tests/look.rs, tests/sharpness.rs) ----
 
 use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
 use vxe_render::{Lighting, LightingResolution, NormalMode, ViewMode};
 
-/// Pool bytes a mirror with attributes needs for `world`'s bricks, with a page of headroom
-/// for each bin's partly filled page.
-pub fn attr_pool_bytes(world: &World) -> u64 {
+/// Pool bytes a mirror with the field's band slots needs for `world`'s bricks, with a page of
+/// headroom for each bin's partly filled page.
+pub fn field_pool_bytes(world: &World) -> u64 {
     (flythrough::level_pool_units(world, true) + 10 * u64::from(PAGE_UNITS)) * UNIT_BYTES
 }
 
-/// `world` mirrored with contour attributes over a fixed window, shards capped at
-/// `max_shard_units`, its attributes filled; lighting at full resolution.
-pub fn attr_rig_on(
+/// `world` mirrored with the field surface's band slots over a fixed window, shards capped at
+/// `max_shard_units`, every band slot filled; lighting at full resolution.
+pub fn field_mirror_rig_on(
     device: wgpu::Device,
     queue: wgpu::Queue,
     world: &World,
@@ -555,16 +555,16 @@ pub fn attr_rig_on(
         max_shard_units,
         ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
     };
-    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
+    let mut gpu = GpuWorld::with_field_surface(&device, cfg);
     gpu.sync_now(world, &device, &queue)
         .expect("mirror fits the adapter");
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    let bricks = gpu.update_attrs(&mut enc);
+    let filled = gpu.update_field(&mut enc);
     queue.submit([enc.finish()]);
     assert_eq!(
-        bricks,
-        world.stats().full_bricks,
-        "every Full brick has its attribute"
+        filled as u64,
+        gpu.band_bricks(),
+        "every band slot is filled"
     );
     let mut frame = Frame::new(&device, WIDTH, HEIGHT);
     // The walk and the look at full resolution: lighting at half would blur them.
@@ -577,10 +577,11 @@ pub fn attr_rig_on(
     }
 }
 
-/// [`attr_rig_on`] on the software adapter; `None` with a printed skip when there is none.
-pub fn attr_rig(world: &World) -> Option<LookRig> {
-    let (device, queue) = software_device(attr_pool_bytes(world).max(64 << 20))?;
-    Some(attr_rig_on(device, queue, world, None))
+/// [`field_mirror_rig_on`] on the software adapter; `None` with a printed skip when there is
+/// none.
+pub fn field_mirror_rig(world: &World) -> Option<LookRig> {
+    let (device, queue) = software_device(field_pool_bytes(world).max(64 << 20))?;
+    Some(field_mirror_rig_on(device, queue, world, None))
 }
 
 /// Static frames a sharpness render runs; the last is read.
@@ -735,8 +736,8 @@ pub fn wall_camera() -> Camera {
 }
 
 /// The edge scene's convex edge: the vertical line `x = y = EDGE`. Off the brick grid, so the
-/// bricks on both faces are `Full` and carry contour attributes: a face on a brick boundary
-/// leaves uniform solid bricks behind it, which have no attributes and hit as cubes.
+/// bricks on both faces are `Full`: a face on a brick boundary leaves uniform solid bricks
+/// behind it.
 pub const EDGE: i64 = 63;
 
 /// Air over chunks `[0, 2)^3` under `table` with a rock block at x and y in `[EDGE, 96)`, z

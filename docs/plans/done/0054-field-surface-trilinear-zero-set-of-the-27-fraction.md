@@ -1,0 +1,2200 @@
+# 0054: The field surface: the trilinear zero set of the 27-fraction, a cost-and-look spike first, then band storage and the walk if the owner picks it
+
+> **Status:** done (2026-11-03, v0.39.0): closed clean at the fresh-session review after one dev fix
+> pass; honest cubes (`face`) are the default with no attribute, band or field pass, the planes are
+> gone, and the field surface stays an opt-in look; ADR-0041 accepted with an Outcome
+> **Approved:** 2026-10-30 (owner, as drafted; the storage and cost bars are set at Phase 2 on Phase 1's readings)
+> **Created:** 2026-10-30
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look decision: "smooth
+> and natural rock, not visible cubes")
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> (the per-voxel plane this surface would replace);
+> [ADR-0039](../../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> (snap, which a field surface makes moot);
+> [ADR-0040](../../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
+> (whose Alternative B this plan is, and whose Alternative D stays the last fallback). The
+> field surface's own ADR (encoding, normal source, what the planes' removal leaves) is
+> drafted after Phase 1's readings and accepted or dropped at this plan's close.
+> **Source:** the owner at Plan 0050's Phase 5 ("fix it, or if it is unfixable, we will not
+> use contours") and the owner's answers of 2026-10-30: the spike runs before Plan 0053's
+> windowed check so one session compares every candidate; the storage and cost bars are set
+> on Phase 1's readings, the hard line being `nfr.md` §3's 3 GB at `r_full` 16.
+> **Starts after:** Plan 0050 Phase 6 and Plan 0053 Phases 1 to 3, stacked on the `plan-0053`
+> branch at its Phase 3 tip, so the scratch look sits in the binary the owner compares. Phase 2
+> here and Plan 0053's Phase 4 are one windowed session. Phases 3 to 5 run only on the owner's
+> pick (a) and then alone on main.
+
+## TL;DR
+
+The per-voxel plane (ADR-0011) is one cube clipped by one plane fit from binary occupancy,
+and it cannot represent anything smaller than its own kernel: one-voxel rods, pillars and
+lone cubes stay boxes (Plan 0050 Phase 5), two-voxel ridges and concave corners stay steps
+even after Plan 0053's filter and normal field. The field surface is the surface those planes
+approximate: store at every voxel within one voxel of rock, on both sides, its solid count
+over the 27-neighbourhood, define `phi = count / 27 - 0.5`, and hit the ray where the
+trilinear interpolation of `phi` over the eight surrounding voxel centres crosses zero. It is
+watertight by construction (no cube face, no crack, no closing rule), it melts a one-voxel rod
+into a bump a third of a voxel high (worked below), rounds convex edges and fillets concave
+corners, and it is what every shipped smooth voxel renderer does, meshed or marched
+(`docs/references/voxel-optimizations.md`, ESVO and the isosurface entries). Its price is
+field values on air voxels, so air bricks beside rock need a mirror slot, and a cubic solve per
+dual cell the ray crosses. Phase 1 builds it as a scratch (dense storage, no size classes) so
+the owner sees it in the window beside Plan 0053's looks and the hit pass is measured on both
+adapters, and counts the real storage on the level and the flight. If the owner picks it,
+Phases 3 to 5 build the band slots, make it the default and remove the planes. The first thing
+anyone sees is `--look field` in the fly-through and a test that reads every hit on the flat
+floor rig at `z = 64` within a thousandth of a voxel.
+
+## Context & problem
+
+`project-context.md` (Rendering, P0): first person, stable at arm's length, smooth natural
+rock. The owner will not ship a contour look with 10 cm boxes on the walls.
+
+**Where the surface stands.** ADR-0011's plane, ADR-0039's snap (Plan 0050: classes 1 and 2
+at 0, hit pass +1.0 % RTX, +2.3 % Radeon) and Plan 0053's two changes (the plane fit on a
+majority-filtered occupancy, a trilinear normal field over the planes) give a surface whose
+remaining faults are geometric: one-voxel features gone or boxed, two-voxel features and
+concave corners stepped, shaded smooth. ADR-0040 deferred the field surface for two unmeasured
+costs, the air-side storage and the walk, and named it the next plan if the owner's eye
+refuses the steps. The owner chose (2026-10-30) to measure it before that check rather than
+after.
+
+**What the field is, worked from the formula (not measured; Phase 1 measures it):**
+
+- **A flat floor**, solid below `z = 64`. The top solid layer counts 18 (`phi = +1/6`), the
+  air layer above counts 9 (`phi = -1/6`); the zero crossing is their midpoint, `z = 64`,
+  exactly the cube face. Flat walls do not move. The same holds for every axis-aligned face.
+- **A rod on the floor** (one voxel high and wide, along x). The rod voxel counts 12
+  (`phi = -0.056`), as do the air voxels beside it in its layer; the floor voxels under and
+  within one voxel of it count 21 (`+0.278`). The crossing between the floor layer and the
+  rod's layer sits at `0.278 / 0.334 = 0.83` of the way up: a bump 0.33 voxel high and three
+  voxels wide, with no vertical face. A lone cube (count 10, floor under it 19) is a bump 0.11
+  voxel high. Plan 0053's filter flattens both completely; the field keeps a hint of them.
+- **A convex 90-degree edge voxel** counts 12 (`-0.056`): its centre lies just outside, the
+  edge is rounded over about one voxel. **A concave corner's air voxel** counts 15 (`+0.056`):
+  it is filleted. A one-voxel groove's bottom voxel counts 24 and its air cell 15: the groove
+  is a shallow trough, not a slot with a flat floor.
+- **A free one-voxel pillar or sheet** has centres at `-0.056` with air at `-1/6` or lower
+  around them: the pillar's rows above the base thin to a bump at the base and vanish above
+  it. The hazard ADR-0040 names for the filter is the field's too, in a different shape.
+
+**Why the blend rule's cost is not this plan's cost.** Plan 0050's `blend` was a trilinear
+field over plane distances evaluated by two secant steps per voxel stepped, with eight
+`lookup`s and eight attribute decodes per evaluation: 5.5x and 8.2x the hit pass at 128 VGPRs.
+This plan stores a scalar per voxel (a `u8` count), evaluates once per dual cell crossed with
+the cubic solved analytically, and reads the band from a mask, so the per-cell work is eight
+byte reads and one cubic. That it lands near ADR-0040's guess of 1.3x to 2x is the thing
+Phase 1 reads; nothing here assumes it.
+
+**The `nfr.md` figures touched:** §2 the hit pass (snap alone: RTX 3080 Laptop 0.604 ms,
+Radeon RENOIR 4.364 ms at the level's spawn, 1080p from 720p), the light pass (0.913 and
+7.026 ms), the attribute pass (the level's fill 17.0 ms under the weighted fit, dev box; the
+flight's p50 and p99); §3 the mirror (157 872 640 B live and 259 203 264 B allocated at the
+level; the flight's full residency 871 679 852 B live of 3 221 014 080 B allocated at `r_full`
+16, under the 3 GB line).
+
+## Decision
+
+Measure first, in the owner's binary. Phase 1 builds the field surface as a scratch look
+(`--look field`): a dense field pool beside the mirror (nine units per band brick, a direct
+index, no size classes), the attribute pass's own occupancy shell producing the counts for
+every band brick including the air and uniform-solid bricks beside rock, and a walk that tests
+dual cells from a band mask and solves the trilinear crossing per cell. It reads the hit and
+light passes on both adapters, the box, tile-contrast and guardrail metrics of Plans 0039 and
+0053, the flat-rig exactness, a leak count, two normal sources, and a CPU census of the band's
+real storage packed and dense. Phase 2 is the owner's windowed check, the same session as
+Plan 0053's Phase 4, with the field surface as a sixth look. On pick (a), Phase 3 builds the
+band slots in the size-classed mirror (a new slot class for air-side bricks, counts packed by
+popcount, the sync and the pressure rule aware of them), Phase 4 makes the field the default
+walk with the normal source Phase 1 picked and removes the planes, snap and Plan 0053's
+losers, and Phase 5 lands the readings and the ADR.
+
+Amended 2026-10-31 (architect, owner answer 7): the field is the surface of smooth materials
+only. A material marked crisp renders as honest cubes with face normals through the plain cube
+walk, and the field counts its voxels as air. Phase 4 became Phases 4a to 4d: the window's
+frame time attributed before any optimisation, the walk brought inside the owner's 5 ms bar
+under a stop rule, the crisp flag as a material property with the field as the default and the
+planes removed, and the owner's windowed check of the result.
+
+Amended 2026-11-01 (owner answer 13): honest cubes (`face`) are the default look, and the
+field surface stays as an opt-in look, off by default, at about 3x `face`'s GPU frame in the
+owner's window. Phase 4c closes on that, Phase 4d is dropped, and Phase 5 records it.
+
+We rejected finishing on the plane (Plan 0053 alone) as the only path because its ceiling is
+now known and the owner wants the alternative measured before judging. We rejected a tricubic
+or wider reconstruction for the surface itself because the 27-count is already a box filter
+and the trilinear zero set of it is C0 across cells, which is all watertightness needs; the
+normal is where smoothness is read and Phase 1 compares two sources for it. We rejected
+dilation (ADR-0040 Alternative C) because the field fillets concave corners by itself. We
+keep `cubes-field` (Alternative D) as the last fallback, built by Plan 0053.
+
+**The analytic window rule** of Plan 0050 holds: analytic bars count hits at least 2 voxels
+inside the mirror window and print what they left out.
+
+## Architecture diagram
+
+```mermaid
+flowchart LR
+    subgraph vxe-render
+        O[attrib.wgsl: occupancy, brick + shell] --> C[count per band voxel, solid and air]
+        C --> S[band slot: band mask + u8 counts, packed by popcount]
+        S --> W[march.wgsl: DDA to a band voxel, dual cells crossed]
+        W --> Z[trilinear phi along the ray, cubic root in the cell]
+        Z --> H[hit record: position, field normal]
+        H --> L[light.wgsl: shade, shadow origin along the field normal]
+    end
+    subgraph vxe-world
+        M[brick kinds: full, uniform solid, uniform air] -.->|which bricks are band| S
+    end
+    subgraph flythrough tests
+        H --> T[flat-rig exactness, leaks, box and tile metrics, guardrails, cost]
+        M --> N[CPU census: band voxels and bricks, bytes packed and dense]
+    end
+```
+
+## Implementation phases
+
+Each phase ships as its own commit. `dev` implements Phase 1 in the stacked lane, stops for
+the owner's Phase 2, and implements Phases 3 to 5 in one session on main after pick (a). The
+architect reviews once at the end, in a fresh session. Lane rule 9c applies: exploratory
+sweeps may run on the RTX 3080 Laptop through `VXE_TEST_ADAPTER`, labelled with the adapter;
+every asserted reading, golden and gate stays on lavapipe.
+
+### Phase 1: The field as a scratch look: dense storage, the walk, the readings and the census
+- **Owner skill:** dev
+- **What:** `LookPreset::FIELD` (`--look field`, the banner names it) renders the field
+  surface from a scratch pool, with every reading below. No default changes; the plane looks
+  are untouched byte for byte with the field off.
+- **The band.** A voxel is in the band when its 27-count is neither 0 nor 27. A brick is a
+  band brick when it holds a band voxel: every Full brick with a surface voxel, every
+  uniform-solid brick with an air voxel within one voxel of it, every uniform-air brick with a
+  solid voxel within one voxel of it. The field's occupancy is the attribute pass's occupancy
+  today (dev states in the log whether translucent voxels count as solid or air there, and
+  keeps it).
+- **The scratch pool.** A separate storage buffer: per band brick in the mirror window, nine
+  units (one band mask of 512 bits, eight units of 512 `u8` counts in voxel order), indexed by
+  a per-record table of 512 `u32` parallel to `chunk_records` (an index or `ABSENT`). Filled
+  by the attribute pass from its 10-cube occupancy shell (the counts of the brick's own 512
+  voxels fall out of it), with the work list extended to the air and uniform-solid band bricks
+  the 26-neighbour reach already visits. Allocation is a bump allocator over the window,
+  rebuilt on a window move; it is a scratch and the log says so.
+- **The walk.** The DDA runs as today to the first band voxel the ray enters (the band mask
+  read where the opaque mask is read now; a band-air brick has a zero opaque mask and a slot
+  index). Inside a band voxel the ray's segment is split at the voxel's three mid-planes into
+  the dual cells it crosses (at most four), and in each cell whose eight corner `phi` values
+  mix signs the trilinear `phi` along the segment is a cubic in `t`, solved by Marmitt et
+  al.'s root isolation (`docs/references/voxel-optimizations.md`, the isosurface entry) or by
+  bracketing the sign change and two Newton steps, dev's call under the cost bar; the first
+  root on the segment is the hit. A cell whose corners are all solid is a hit at the segment's
+  start (the ray is inside rock, which only happens where the band is incomplete; counted as
+  a leak). Rays that leave the band into a solid voxel of count 27 without a hit are leaks,
+  counted per frame in the cracks view's place.
+- **The normal, two sources read:** N1, the analytic gradient of the trilinear `phi` at the
+  hit; N2, the trilinear blend at the hit of the eight corner voxels' 27-gradients (Plan 0053
+  Phase 3's field, read through the plane attribute where one exists; for an air corner the
+  gradient of the occupancy around it, computed in the attribute pass into the scratch pool's
+  spare bits or a tenth unit). N1 costs nothing to store and is discontinuous across cell
+  faces; N2 is smooth and costs a normal per band voxel. Both are selectable in the scratch
+  (`--field-normal analytic|blend`) and read on the tile-contrast metric.
+- **The readings** (lavapipe for every asserted figure, both adapters for cost, release, perf
+  lock, three alternated runs against the lane's base binary):
+  - the flat rigs: `floor` and `wall`, every hit's distance from the plane of the voxel face;
+  - the six one-voxel scenes of Plan 0053 and its tilted, 45-degree and diagonal slabs, the
+    cavity and the pillar: box pixels (by Plan 0053's metric), tile-contrast share under N1
+    and N2, leaks, hit count against the plane look;
+  - Plan 0039's guardrails: cavity normal error, pillar silhouette (face 172 px, contour
+    32 px), `A`; the speck test;
+  - `VEIN_POSE` and `PATCH_POSE` at 384 x 216, lamp on and off: box pixels, tile contrast,
+    leaks, side-by-sides under `live/field/` (shaded, normals view, the plane look beside);
+  - cost: the hit and light passes at the level's spawn, 1080p from 720p, field against the
+    lane's base look, RTX 3080 Laptop and Radeon RENOIR, with RADV shader stats (VGPRs) for
+    the hit shader; the attribute pass's initial fill and the autopilot's p50 and p99, both
+    adapters;
+  - the census (CPU, headless, over the world through `vxe-world`'s public queries): band
+    voxels solid-side and air-side, band bricks by kind (Full, uniform solid, uniform air),
+    on the level at `--seed 1` and over the streamed flight's full residency; the bytes
+    packed (one mask unit plus `ceil(n / 64)` units of `u8` per band brick, plus two header
+    units for a brick that has no slot today) and dense (nine units per band brick), against
+    today's attribute bytes and the live totals of `nfr.md` §3.
+- **Files touched:** `crates/vxe-render/src/shaders/attrib.wgsl` (the counts, the air and
+  uniform-solid work items), `march.wgsl` (the band read, the dual cells, the cubic, N1 and
+  N2), `light.wgsl` (the shadow origin along the field normal), `composite.wgsl` (the normals
+  view, the leak count in the cracks view's place), `crates/vxe-render/src/marcher.rs` and
+  `gpu_world.rs` (the scratch pool, the index table, the work list), `lib.rs`,
+  `apps/flythrough/src/lib.rs` (`LookPreset::FIELD`), `main.rs`, `hud.rs` (the flags, the
+  banner), `apps/flythrough/tests/look.rs`, `sharpness.rs`, `level_mirror.rs` (the census),
+  `tests/support/rigs.rs`, this plan's log.
+- **Done when:**
+  1. `the_field_surface_lies_on_the_flat_faces` asserts on lavapipe, under the analytic
+     window rule, that every hit on `floor` lies within 1e-3 voxel of `z = 64` and every hit
+     on `wall` within 1e-3 of its face plane, and that both read 0 leaks; the hit counts are
+     printed beside the plane look's.
+  2. `the_field_surface_has_no_boxes_and_no_leaks` asserts 0 box pixels on `rod`, `lone
+     cube`, `groove`, `wall pillar` and `ridge`, 0 leaks on every analytic scene and at both
+     poses, and prints the tile-contrast share under N1 and N2 for every scene. Amended
+     2026-10-31 (architect, owner's pick): under the field look a box pixel also needs its
+     shading normal within 15 degrees of the face's axis normal; a curved-surface hit that
+     happens to lie within 1e-3 of a face plane is not a box. The plane look's metric is
+     unchanged. The counts under the unamended metric (9, 0, 8, 2, 10) stay in the log, and
+     the rod's flat top at z = 60.333 is named there for the owner's eye in Phase 2. If any scene
+     reads leaks, dev stops for the architect: the band definition or the cell test is wrong.
+  3. `field_readings` (ignored, a reading) prints the full table: every scene and pose, N1
+     and N2, box pixels by count class, tile contrast, leaks, guardrails, the speck test, hit
+     counts against the plane look; the log carries it and names, per guardrail, whether the
+     field reads within Plan 0039's bars (cavity normal error at most 12 degrees, silhouette
+     at most half of face mode's, `A` at most 10 %).
+  4. The cost table is in the log: hit and light passes on both adapters, field against base,
+     VGPRs; attribute pass fill and flight p50 and p99 on both adapters. No bar: the owner
+     sets it at Phase 2 on these numbers.
+  5. `band_census` (a test, asserted on the level) prints the census and asserts the
+     invariant that every Full brick with at least one surface voxel is a band brick, and that
+     the GPU scratch pool's band-brick count at the level's spawn equals the CPU census's for
+     the mirror window. The packed and dense byte totals, level and flight, are in the log
+     against today's figures. No bar: the owner sets it at Phase 2.
+  6. With the field off, every golden reads the same pixels as the lane's base (29 of 29 or
+     the count at the base), and `mirror_bytes` and `allocated_bytes` equal the base's: the
+     scratch pool is outside the mirror's accounting and the log says its bytes.
+  7. The side-by-sides exist for both poses, and the log says in one line per pose what the
+     field does to the owner's rods, pillars and lone cubes of Plan 0050's Phase 5 shots and
+     to the ledge steps.
+
+### Phase 2: The owner's windowed check, one session with Plan 0053's Phase 4
+- **Owner skill:** human
+- **What:** the owner runs the release fly-through at `--pose vein` and `--pose patch`, lamp
+  on and off, shaded and normals views, in six looks: Plan 0053's four (today's snap,
+  `--fit-filter majority`, `--normal-field on`, both), `--look cubes-field`, and `--look
+  field` under N1 and N2, with the cost and census tables of Phase 1 in hand.
+- **Files touched:** this plan's log and Plan 0053's.
+- **Done when:** the owner records one of: (a) the field surface is the pick; the owner sets
+  the storage bar (live bytes at the level and the flight, against `nfr.md` §3's 3 GB at
+  `r_full` 16) and the cost bar (the hit plus light passes on the Radeon, and on the RTX),
+  and names the normal source or leaves it to Phase 1's tile-contrast reading; Phases 3 to 5
+  run. (b) a Plan 0053 look is the pick; this plan is abandoned, its Phase 1 commit is not
+  merged, and the log says what the field read so the next reader need not rebuild it. (c)
+  `cubes-field` is the pick; as (b), and Plan 0053's Phase 5 lands it.
+
+### Phase 3: Band slots in the size-classed mirror
+- **Owner skill:** dev
+- **What:** the field's storage as a mirror slot, replacing the scratch pool. A band brick's
+  slot carries, after its existing units, one band-mask unit and `ceil(n / 64)` units of `u8`
+  counts in band-index order (prefix per layer in the header, as the surface prefix is today);
+  a uniform-solid or uniform-air band brick gets a slot of a new class (opaque mask as today's
+  rule for the kind, header, band mask, counts; no payload) and its record entry's bit 31 and
+  class, so the walk enters it. The CPU side (`gpu_world.rs` sync) decides band membership
+  from the world's brick kinds and the neighbour masks it already reads for the surface mask,
+  reserves the units within the slot bins, and the pressure rule (Plan 0017) counts them. An
+  edit that exposes rock to an air brick without a slot allocates one through the same path
+  as a brick turning Full. The attribute pass fills the counts (and N2's normals if the owner
+  picked N2) for every band brick in the work list.
+- **Files touched:** `crates/vxe-render/src/gpu_world.rs` (the class, the units, the sync,
+  the pressure count), `src/shaders/attrib.wgsl` and `march.wgsl` (the slot layout read),
+  `crates/vxe-render/tests/mirror.rs` (slot layout pins), `apps/flythrough/tests/level_mirror.rs`
+  (the bytes), this plan's log.
+- **Done when:**
+  1. A mirror test pins a band-air brick's slot bit-exact for a one-brick world beside a solid
+     brick: its class, its band mask (the face layer's 64 bits set), its first count unit's
+     first bytes (9 for a face-adjacent air voxel on a flat face, 6 at an edge, 4 at a corner).
+  2. `mirror_bytes` at the level reads the census's packed figure plus the header units,
+     within 1 %, and the flight's full residency and the level's live bytes are within the
+     owner's storage bar; `allocated_bytes` at `r_full` 16 stays under 3 GB.
+  3. The field look's hit mask and normals view at both poses are byte for byte Phase 1's
+     (the storage moved, the surface did not).
+  4. An edit test: a sphere carve that opens a uniform-solid brick to air gives the exposed
+     air brick a band slot within the frame of the edit's sync, and the field look renders the
+     new hole with 0 leaks on lavapipe.
+  5. The attribute pass's cost under the autopilot flight on both adapters, three alternated
+     runs against the Plan 0053 close binary; the reading is in the log against Phase 1's.
+
+### Phase 3a: Free-standing thin features and a per-material scratch look
+- **Owner skill:** dev
+- **What:** amended 2026-10-31 (owner, answer 5). The field cannot show a free-standing
+  feature thinner than about three voxels: worked from the formula, a free one-voxel rod
+  counts 3 (`phi = -0.39`), a free 2x2 rod 12 (`-0.056`), a free one-voxel sheet 9 (`-1/6`),
+  so no dual cell around them mixes signs and they render as nothing, while they still collide
+  and block sound. A 10 cm branch is one voxel. This phase shows it on screen and builds the
+  candidate the owner named, the field per material with honest cubes for the rest:
+  - **A thin-feature rig**, a scene the fly-through can load and the tests can render: a
+    vertical trunk 5 voxels across standing on a floor, carrying a free one-voxel branch along
+    x, a free 2x2 rod, a free 3x3 rod, a one-voxel diagonal branch (one voxel per step in x and
+    z), and a one-voxel and a two-voxel free sheet, each at least 12 voxels long and clear of
+    every other feature by 4 voxels, the branches of a second material id (the rig's "wood").
+  - **A scratch look `field-cubes`**: voxels whose material row is marked crisp (a scratch
+    flag on the material table's render side; the rig's wood is the only crisp material) count
+    as air in the field and are hit as honest cubes with face normals; every other voxel is the
+    field. A crisp voxel next to field rock is drawn as its cube; the rock's field rounds away
+    from it as from air.
+  - **Two cost changes that hold under any pick**, both in the held Phase 4 patch
+    (`live/p4/phase4-wip.patch`): the band prefix in the header (so the walk does not popcount
+    the band words) and the band term in `level_pool_units`.
+- **Files touched:** dev's call, inside `vxe-render` and `apps/flythrough`; the crisp flag is a
+  render-side scratch, not a `vxe-world` change; this plan's log.
+- **Done when:**
+  1. On lavapipe, a test renders the rig in the `field` look and reads, per feature, the hit
+     pixels inside the feature's screen box against the `face` look's; the log carries the
+     table. (The expectation from the formula: the one-voxel branch, the diagonal branch, the
+     2x2 rod and the one-voxel sheet read near 0, the 3x3 rod and the two-voxel sheet near the
+     face look's. The test asserts the measurement is taken, not the expectation.)
+  2. The same test in `field-cubes` reads every branch and sheet within 2 % of the `face`
+     look's pixels, 0 leaks on the rig and at both poses, and the trunk and floor's hits
+     byte for byte the `field` look's away from the crisp voxels' one-voxel neighbourhood.
+  3. The field look's hit pass at the level's spawn on the RTX 3080 Laptop, three alternated
+     quiet runs, with the band prefix: within the owner's bar (hit plus light at most 5 ms),
+     against the 6.48 ms scratch reading at b4fbfad; the Radeon as a reading. `field-cubes`
+     read the same way at the level (no crisp material there, so it measures the material
+     test's overhead) and at the rig.
+  4. The level's mirror pressure reads the band term (no longer 1.000 at 254.1 of 259.2 MB).
+
+### Phase 3b: The owner's look at thin features and the per-material candidate
+- **Owner skill:** human
+- **What:** one windowed session on the release binary at Phase 3a's tip: the rig in `face`,
+  `field` and `field-cubes`, at arm's length and at a few metres, lamp on; then the vein and
+  patch poses in `field-cubes` (no crisp material there, so it must read as `field`). The
+  owner picks: (a) the field per material, crisp materials as honest cubes; (b) the field
+  everywhere, thin features modelled three voxels thick; (c) neither, with a direction. Each
+  look's mode is in the banner.
+- **Done when:** the pick and the owner's words are in Owner answers; Phase 4 is rewritten by
+  the architect on it before dev starts it.
+
+### The field per material: Phases 4a to 4d
+
+- **Rewritten 2026-10-31 (architect, on owner answer 7).** The owner picked (a) at Phase 3b:
+  the field for smooth materials, honest cubes with face normals for crisp ones. The held
+  text of this phase (the field everywhere, the planes removed) is replaced by Phases 4a to 4d
+  below. The order is the owner's concern first: the window read "fps is really low" in
+  `field-cubes`, so Phase 4a attributes the frame time before anything is optimised, Phase 4b
+  brings the walk inside the bar, Phase 4c makes the crisp flag a real mechanism, makes the
+  field the default and removes the planes, and Phase 4d is the owner's windowed check of the
+  result. `live/p4/phase4-wip.patch` (the planes', snap's, `cubes-field`'s and the attribute's
+  removal, written against the held text) is Phase 4c's starting point; its band-prefix and
+  pool-term pieces landed in Phase 3a and are dropped from it.
+- **Settled by owner answer 8:** the crisp flag lives on the material row (Phase 4c); a thin
+  free feature of a smooth material is accepted for this plan, its fallback a followup (Phase
+  4c); the window at the poses has no bar before Phase 4d (Phase 4b's done-when 2); crisp
+  voxels count as solid in the field, so a crisp feature's root carries a smooth collar and a
+  flush inlay has no groove (Phase 4c, amended on that answer).
+- **What is already known, from the logs (not a reading of this phase):** session 1's frame
+  line reads the window at 2530 x 1378 from 1687 x 919 (the own upscaler at 1.5), 1.68x the
+  pixels of the bar's 1280 x 720; the 16.4 ms of session 1's `field` at the patch is the march
+  GPU p50 over the frames timed while the HUD was on, and that run's frame line was taken in
+  the normals view (hit 15.74 ms, light 0.009 ms: no light, probes or denoise); session 1's
+  N2 at the vein read a 28.47 ms GPU frame with a 22.99 ms hit; session 2 logged no frame line,
+  so its window size and views while timed are not known; session 2's level runs read an
+  initial fill of 125 to 149 ms and a 4.0 s upload against session 1's 23.8 ms and 2.0 s
+  (`live/session1.log`, `live/session2.log`). So the 16.4 against 29.3 ms gap mixes the pose,
+  the view, the storage (the dense pool against the band slots), the crisp test and the passes
+  after the hit, and the headless bar (5.93 and 6.38 ms at the spawn, 720p internal) is not the
+  window's figure (the patch's windowed hit at 1.68x the pixels read 4.5x the spawn's).
+
+### Phase 4a: Where the window's frame time goes
+- **Owner skill:** dev
+- **What:** a measurement, no behaviour change: a table that splits the windowed frame time of
+  sessions 1 and 2 into named terms, reproduced headless at the window's size, and the same
+  split of the spawn's 6.38 ms against the 5 ms bar. Only a log line or a counter may be added
+  to the code, and it lands with Phase 4b.
+- **The rig.** `flythrough --level --seed 1 --headless --render 2530x1378 --frames 300
+  --adapter NVIDIA [--pose vein|patch] --look L [--view normals]`, lamp on and off, release,
+  each run under the exclusive perf lock and the memory cap at a 1-minute load under 2, three
+  alternated rounds, medians of the frame line's per-pass times (it prints every pass). Four
+  binaries, so each storage step is its own row: b282738 (session 1, the dense pool), 1b36eb3
+  (Phase 3, band slots counted by popcount), 17045d8 (Phase 3a, the band prefix and the crisp
+  test; session 2's binary) and main 28948a5 (the base). Looks: `field` on all three plan
+  binaries, `field-cubes` on 17045d8, the base's default and `face`. The same matrix at the
+  spawn at `--render 1920x1080` (the bar's conditions) and with `--thin-rig` for `field` and
+  `field-cubes`.
+- **The per-ray split.** The steps view's counters (walk steps, storage loads, pool reads per
+  ray, which the field walk already counts) read as the mean and p99 per pose and binary, so
+  the storage terms are counts as well as milliseconds; the RADV shader stats (VGPRs, code
+  bytes) of the field hit pipeline at each plan binary; and, if the counters cannot separate
+  them, one scratch build per term that disables it (the crisp test, the corner cache, the
+  normal), labelled scratch and not committed.
+- **The CPU side.** At the level no material is crisp: the reading confirms that the crisp CPU
+  path (`GpuWorld::fix_crisp`, `field::band_of`) adds nothing per frame (`update + poll + sync`
+  p50 and p99 in `field` against `field-cubes`) and names what the initial fill's and the
+  upload's rise between the sessions is (startup only, or per frame).
+- **The thin census** (for owner question 2 of this rewrite): a CPU test over the level at
+  `--seed 1` printing the solid voxels by 27-count from 1 to 13 (a solid voxel under 14 has its
+  centre outside the field's surface; 3 is a free one-voxel rod, 9 a free one-voxel sheet, 12 a
+  free 2x2 rod and also a one-voxel rod resting on a floor, which the field keeps as a bump).
+- **Files touched:** this plan's log; scratch scripts under `live/p4a/` (untracked); the census
+  test in `apps/flythrough/tests/level_mirror.rs` lands with Phase 4b.
+- **Done when:**
+  1. The log carries the table: per binary, look, pose (spawn, vein, patch, rig), resolution,
+     view and lamp, the GPU frame and every pass's median, and the per-ray counters; the load
+     of every run.
+  2. The log names the windowed gap as a sum of terms: session 1's 16.4 ms against session 2's
+     29.3 and 30.4 ms, each term (resolution, view, pose, storage step by binary, the crisp
+     test, the passes after the hit, anything else found) with its milliseconds from the
+     table, the terms adding up to the headless reproduction of the windowed figures within 10 %
+     of the gap, any remainder named as unattributed. If the headless runs at the window's size
+     do not reproduce the windowed p50s within 10 %, the log says so, and the remainder is the
+     window's (surface, present, the HUD timer's own frames), named as such.
+  3. The same split for the spawn: 17045d8's `field-cubes` 6.38 ms hit plus light against the
+     5 ms bar, by term, with the per-ray counters against b282738's 4.36 ms.
+  4. The thin census's histogram is in the log.
+
+### Phase 4b: The walk inside the bar
+- **Owner skill:** dev
+- **What:** the field walk with the crisp test brought to the owner's bar (owner answer 3:
+  hit plus light at most 5 ms at the level's spawn, 1080p from 720p, RTX 3080 Laptop, release,
+  perf lock, quiet load), working Phase 4a's terms largest first, one measured change at a time.
+- **What dev may change**, without asking:
+  - the band slot's layout and how the walk reaches it: the prefix words and their packing, the
+    count units' order, a count base in the header, the band slot's place relative to the
+    brick's slot, or a direct band index per record as the dense pool had, provided
+    `mirror_bytes` stays inside the storage bar (owner answer 4: 106 MB at the level, 530 MB
+    over the flight) and `allocated_bytes` at `r_full` 16 under 3 GB;
+  - the walk's held state: the mask and layer cache, the count-word cache, sharing the four
+    corners two neighbouring dual cells have in common, `field_brick`'s held brick (Phase 3a's
+    one-layer and one-word caches read no gain on their own; a cache that pays only with
+    another change is measured with it);
+  - register pressure: taking the crisp test, the material resolution (`field_material`) and
+    the normal out of the march loop to after the hit, folding the crisp bit into the cell
+    read so it is read once, splitting the field hit pipeline;
+  - the cubic's root finder (the Illinois steps' count, the extremum test) under the exactness
+    gates of done-when 3;
+  - the skips inside band-air bricks and the hierarchy's view of band bricks.
+- **What dev may not change** (the owner's): the surface (the trilinear zero set, N1), the
+  internal resolution, the upscaler's scale, the lighting tier, the full-detail radius, a
+  switch to cubes or to another surface by distance, a stored normal, the storage bar, or the
+  bar itself. Nothing branches on the backend.
+- **Stop rule.** Dev stops for the owner, with the table of every change's reading, what is
+  left over the bar, and the next candidate with its expected gain, when either: the RTX reads
+  above 5.00 ms after the terms Phase 4a named are worked (or after five measured changes,
+  whichever comes first), or the next change needs an item from the list above. The owner's
+  options then: raise the bar to the reading; a lower internal resolution for the field look;
+  the field inside a radius and cubes beyond it; accept the reading and go on to Phase 4c. A
+  new phase or an amendment carries the pick.
+- **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `attrib.wgsl`,
+  `crates/vxe-render/src/gpu_world.rs`, `field.rs`, `marcher.rs`,
+  `crates/vxe-render/tests/mirror.rs` (the slot pins, if the layout moves),
+  `apps/flythrough/tests/level_mirror.rs` (the thin census), this plan's log.
+- **Done when:**
+  1. `field-cubes` at the level's spawn reads hit plus light at most 5.00 ms on the RTX 3080
+     Laptop, and `field` too, three alternated quiet runs (1-minute load under 2) against
+     17045d8's release binary; the Radeon RENOIR read the same way, as a reading (its bar is
+     the walk-speed spike's, owner answer 3); the VGPRs and code bytes of the field hit pipeline
+     before and after, from the RADV shader stats.
+  2. The vein and the patch at the window's size (`--render 2530x1378`), shaded, lamp on, both
+     adapters, the GPU frame and hit against Phase 4a's rows; a reading with no bar (owner answer
+     8): the owner judges the window in Phase 4d and sets a windowed bar there if needed.
+  3. The surface did not move: `the_field_surface_lies_on_the_flat_faces` (1e-3 voxel),
+     `the_field_surface_has_no_boxes_and_no_leaks` and `thin_features_in_the_field_and_per_material`
+     pass unchanged on lavapipe, and the field and `field-cubes` hit masks at both poses and on
+     the rig (384 x 216 and the rig test's 320 x 320) are 17045d8's bit for bit, every hit
+     position within 1e-3 voxel of 17045d8's (an exact-equality failure is allowed only for a
+     changed root finder, and the log says which).
+  4. `mirror_bytes` at the level and over the flight are inside the storage bar, the reading in
+     the log against Phase 3's 96 243 264 B and 438 898 624 B.
+  5. The thin census test (`level_mirror::thin_census`, a reading) prints its histogram and
+     asserts the histogram's total equals the number of solid voxels with a count of 13 or less
+     counted by a second, brute-force pass over the same chunks.
+
+### Phase 4c: The crisp flag, the field as the default, the planes removed
+- **Owner skill:** dev
+- **What:** the per-material surface as an engine mechanism, the field as the only smooth
+  surface, and everything the planes needed gone.
+- **Amended 2026-11-01 (owner, answer 13): cubes are the default.** The text below stays as
+  the record of the opt-in look's mechanism, which is built (the log, Phase 4c). What changes
+  is the default and the done-whens: the close list at the end of this phase ("The close")
+  replaces done-whens 1 to 8 as the phase's gate. In short:
+  - **`face` is the default**: `LookPreset::DEFAULT` is `FACE`, and "The field as the
+    default" below no longer holds.
+  - **The plane removals stay** (2bca6e4). The cube default needs no plane, snap, attribute
+    or Plan 0053 look, and putting them back would restore a surface the owner rejected
+    (answers 2 and 7) at the attribute pass's cost. "What goes" below holds as written.
+  - **The field stays as an opt-in look**, `--look field`, with the crisp flag, the split
+    pipeline, `--crisp` and the field pass, and its tests kept green. Its known defects
+    (done-when 3's readings, the material-0 field hits) are disclosed, not fixed: they are
+    followups.
+  - **The default pays nothing for the field**: a run that does not start under `--look
+    field` builds no band slot and dispatches no field pass (the log's deviation "`--look
+    face` runs over a mirror with band slots" is reversed for the default).
+- **The crisp flag** (owner answer 8). `MaterialFlags::CRISP` in `vxe-world`'s material row,
+  beside `TRANSLUCENT`: a render property of the row, as `detail` and `opacity` are. No edit,
+  query, collision, coarse grid, collapse, raycast, census or audio path reads it, so the world
+  stays headless and deterministic and its results do not move. Absent is smooth, the default:
+  `Material::named` is smooth, `vxe-assets`' palette map makes smooth rows, and a consumer
+  marks a crisp material by setting the flag when it pushes the row. The table is fixed for the
+  world's life (as for `TRANSLUCENT`), so a material's surface never changes at run time. On a
+  `TRANSLUCENT` row the flag has no effect (the translucent walk owns those voxels), and the
+  doc comment says so. The payload stays the consumer's and is not read. `MaterialTable::is_crisp`
+  is the one reader. In `vxe-render`, `GpuWorld` takes the crisp set from the table it already
+  mirrors (`material_rows`); `GpuWorld::set_crisp_materials`, `SurfaceTuning::crisp` and its flag
+  bit go. The fly-through's rig wood carries the flag in its row; `flythrough::CRISP_MATERIALS`
+  goes.
+- **The GPU path (amended on owner answer 8: crisp counts as solid).** The counts are the
+  plain occupancy counts, a crisp voxel solid among them, so the band and every count are
+  the `field` look's, and a crisp voxel is a band voxel exactly when it touches air. Such a
+  voxel carries bit 7 of its `u8` count (`field::CRISP_COUNT_BIT`); a crisp voxel of count 27
+  touches no air and is never entered but through a leak. Three rules hold the cubes honest:
+  - **Inside a crisp voxel the cube wins.** The walk hits a crisp voxel as its cube where the
+    ray enters it, with the entry face's normal (the plain cube walk's hit, kept as the crisp
+    path), and tests no field piece inside it. The field's zero set does lie inside crisp
+    cubes (a free crisp branch's voxels count 3 to 11, below zero, so the field's surface
+    passes inside the branch near its root), and none of it is seen.
+  - **Outside a crisp voxel, a mixed-sign dual cell gives a field hit only when one of its
+    solid band corners is smooth** (a solid band voxel without bit 7). A cell whose solid
+    corners are all crisp gives none, and the ray goes on to the cube: two crisp faces meeting
+    in a concave corner stay a sharp corner, not a fillet. The corner test reads the bit the
+    count byte already carries; its cost is Phase 4b's bar, re-read at done-when 6.
+  - **A field hit takes the material of its cell's largest-weight smooth solid corner**, so
+    the collar a crisp feature's root carries is the smooth material's, shaded by N1.
+  The field skin therefore lies over a crisp cube only where smooth voxels are within one voxel:
+  the collar at a crisp feature's root, and the face of a flush inlay's border, which lies on
+  the cube's face plane. **Phase 3a's CPU count path goes:** with crisp as solid, the field pass
+  computes every count from the mirror's occupancy, as it does for `field`; only bit 7 needs a
+  voxel's material, and the field pass sets it from the voxel's material and the row's `CRISP`
+  flag in the material buffer the mirror already holds (`material_rows` carries the flags),
+  skipping the read for a brick whose materials hold no crisp row; how the skip is known (a
+  per-brick bit from the CPU at upload, or the payload's palette) is dev's call on the
+  done-when 4 reading. `field::band_of`'s crisp counts, `GpuWorld::fix_crisp` and the work-list
+  exclusion of bricks near crisp voxels go. A chunk held as mips holds no crisp voxel: its mip
+  cells are cubes for every material, and a voxel beside a LOD-only chunk counts that chunk by
+  its mip occupancy, as solid either way (the transition at the full radius stays today's).
+- **The seam (owner answer 8: crisp as solid, the collar accepted).** Worked from the counts:
+  - *A crisp inlay flush in a flat rock face* changes no count (everything behind the plane is
+    solid either way), so the face is flat across it: the border's field hits lie on the plane
+    and the inlay's own pixels are cube hits on the same plane. No groove.
+  - *A crisp feature standing out of a flat rock face* raises a collar on the face around its
+    root. One-voxel branch: a face voxel beside the root counts 19 (a flat face's 18 plus the
+    branch voxel in its front layer) and the air voxel in front of it 11 (9, plus the branch's
+    two voxels in its window), so the crossing between their centres lies at
+    `0.204 / (0.204 + 0.093) = 0.69` of the way out, 0.19 voxel off the plane (the flat face's
+    0.5). 2x2 rod: 20 and 13, 0.43 voxel. 3x3 rod or a two-voxel sheet: 21 and 15, the air
+    voxel itself above zero, the crossing 0.75 voxel off the plane, a full fillet. A face voxel
+    two voxels from the feature's footprint counts 18 again, so the collar is at most two
+    voxels wide.
+  - *A crisp feature resting on a rock floor* is the same collar, the floor's face rising
+    around its foot.
+  - *Two crisp faces in a concave corner* keep the sharp corner (the corner rule above).
+  - The ray cannot pass through a seam: the field's band and counts are the `field` look's,
+    which read 0 leaks, and a crisp voxel stops the ray at its face.
+- **A brick with no smooth voxel near walks as cubes. Amended 2026-10-31 (owner):** the cost
+  lever for "smoothness, maybe only for certain types of materials" (`nfr.md` §2, "Frame
+  ledger", scenario C). The rules above alone do not give it: with crisp counted as solid, a
+  crisp-only region keeps the `field` look's band and counts, so a ray through it still reads
+  the band mask, the counts and the corner bits of every dual cell it crosses and pays the field
+  walk's cost (Phase 3a's thin rig, its wood crisp: `field-cubes` hit 4.70 ms against `face`'s
+  0.64 on the RTX). The rule: a brick whose voxels and one-voxel shell hold no smooth solid voxel
+  can give no field hit (every dual cell with a corner in it has no smooth solid corner, the
+  second rule above), so the walk crosses it as `face` does: no band-mask, count or corner read
+  and no cubic, its crisp voxels hit as cubes with the entry face's normal, its air skipped by
+  the occupancy masks and the hierarchy as in `face`. The image does not change; only the cost
+  does. One bit per brick (in the record or the slot header, dev's call) carries "no smooth
+  near"; the field pass sets it from the same material read that sets bit 7 (a brick that
+  holds a smooth solid voxel is smooth-near without reading its shell), and an edit that touches a brick or its shell refreshes it with the counts. A brick of a
+  LOD-only chunk is cubes already. The field hit pipeline holds 128 VGPRs against the cube
+  walk's 64 (Phase 1's RADV stats), which caps the occupancy of cube-walking rays inside it;
+  splitting the pipeline (Phase 4b's list) is dev's to take if done-when 8 needs it.
+- **The field as the default.** The fly-through's default look is the field with the table's
+  crisp materials as cubes; `field` and `field-cubes` become that one look, named `field`.
+  `face` stays as the honest-cubes comparison look and the rig test's reference.
+- **What goes**, as Plan 0048's removal rule says: the plane attribute (`attrib.rs`,
+  `attr_work.rs` and its bench, the plane fit in `attrib.wgsl`), its settings (`PlaneFit`,
+  `PlaneOffset`, `OccupancyFilter`), `CrackClosing` and snap, the cracks view's classes (the
+  cracks view shows leaks only), ADR-0038's plane code, `SurfaceTuning::normal_field`, N2
+  (`FieldNormal::Blend`, `--field-normal`), Plan 0053's losing looks (the majority filter, the
+  normal field), `cubes-field` (it rests on the attribute's normal field, and the owner rejected
+  it at Phase 2; this replaces the held text's "stays until the close"), `--plane-fit`,
+  `--plane-offset`, `--fit-filter`, `--shadow-push`, `--normal-field`, `attr_cap` and the refit
+  banner. The cutaway and a mirror without band slots fall back to the voxel walk, as the held
+  patch does.
+- **Shadows** (the held text's amendment of 2026-10-31, kept): the spike's shadow rays walked
+  the planes. With the attribute removed the shadow ray walks the voxel occupancy (the brick and
+  mip walk without a plane test; crisp and smooth voxels alike solid to it), with its origin
+  pushed along the hit's normal (N1, or a crisp cube's face normal) by the shadow push that
+  exists today; it does not walk the field, whose cost the owner's bar cannot carry twice. The
+  speck test reads this at the default and the log carries the count beside today's; a count
+  above today's is a finding for the close, not a stop.
+- **Translucency** (the same amendment, kept): translucent voxels count as solid in the field
+  for the primary hit, as the spike did; the translucent walk after the hit stays as today over
+  the voxel occupancy. Both choices are in ADR-0041 and revisable by the walk-speed spike.
+- **Thin features in a smooth material** (owner answer 8). A free feature of a smooth material under about three
+  voxels across still renders as nothing while its shadow, collision and sound stay (the
+  shadow ray walks the voxels; Phase 3a's rig in `field` read 0 % of the face look's pixels for
+  the one-voxel, diagonal and 2x2 features). This plan accepts it and records it in ADR-0041:
+  a consumer marks a material whose features are thin crisp, or models them three voxels thick.
+  Phase 4a's thin census says how often the level carries such voxels, and an automatic
+  per-voxel fallback is a followup plan, not this one.
+- **Files touched:** `crates/vxe-world/src/material.rs` (the flag, `is_crisp`),
+  `crates/vxe-world/tests/edits.rs` (the flag reaches no result), `crates/vxe-render/src/`
+  (`attrib.rs`, `attr_work.rs` removed; `field.rs`, `gpu_world.rs`, `marcher.rs`, `lib.rs`),
+  `src/shaders/march.wgsl`, `attrib.wgsl` (or its rename), `light.wgsl`, `composite.wgsl` and
+  the shaders the held patch touches, `crates/vxe-render/benches/`, `tests/mirror.rs`,
+  `walk.rs`, `shader_portability.rs`, `apps/flythrough/src/lib.rs`, `main.rs`, `hud.rs`,
+  `thin_rig.rs`, `apps/flythrough/tests/look.rs`, `sharpness.rs`, `golden.rs` and the moved
+  goldens, `level_mirror.rs`, `tests/support/rigs.rs`, `examples/`, this plan's log.
+- **Done when:**
+  1. `the_default_surface_is_the_field` asserts on lavapipe at the default: the flat-rig
+     exactness of Phase 1's done-when 1, 0 box pixels on the five one-voxel scenes, 0 leaks on
+     every scene and at both poses, the tile-contrast share at most Phase 1's N1 reading per
+     scene, and Plan 0039's guardrails within their bars.
+  2. The flag: a `vxe-world` test that `Material::named` is smooth and a row pushed with
+     `MaterialFlags::CRISP` reads crisp through `MaterialTable::is_crisp`; a test that the same
+     sphere carve on two worlds that differ only in the rock row's `CRISP` flag returns equal
+     `EditResult`s and equal voxel hashes; `thin_features_in_the_field_and_per_material` with
+     the rig wood crisp by its row alone (no renderer setting) reads every branch and sheet
+     within 2 % of the `face` look's pixels and 0 leaks, and with the flag cleared reads Phase
+     3a's `field` column (0 px on the one-voxel, diagonal and 2x2 features).
+  3. `a_smooth_surface_meets_a_crisp_cube_without_a_gap` on lavapipe, on a seam rig: a flat
+     rock wall with a crisp inlay 8 x 8 voxels across and 3 deep set flush in it; the thin
+     rig's trunk with its crisp branches; and a crisp L (two crisp slabs 3 voxels thick meeting
+     at 90 degrees, standing on the rig's rock floor), each seen head-on and at 45 degrees. It
+     asserts: 0 leaks and 0 misses inside each seam's screen box. The inlay, head-on: every hit
+     in the wall's box, inlay included, lies within 1e-3 voxel of the wall's plane, and every
+     hit inside the inlay more than one voxel from its border is a cube hit (crisp material,
+     axis-aligned normal). The trunk: every rock hit on the branches' face more than 2 voxels
+     from every feature's footprint lies within 1e-3 voxel of the face's plane; within those 2
+     voxels every hit lies at most 1 voxel off the plane and has the rock's material; every hit
+     on a feature more than 2 voxels from the trunk is a cube hit. The L: every hit on it more
+     than 2 voxels from a rock voxel is a cube hit, its concave corner included. It prints the
+     collar's highest hit off the face per feature against the worked 0.19, 0.43 and 0.75
+     voxel, and the speck test's count on the trunk face with the branches crisp and with them
+     smooth (a higher count is a finding for the close, not a stop).
+     Amended 2026-11-01 (owner, answer 12): the rule "a dual cell whose solid corners are all
+     crisp gives no field hit" is replaced: air band voxels carry a smooth-near bit too, and a
+     dual cell gives a field hit only when at least one of its corners (solid or air) is smooth
+     or smooth-near; which neighbours make an air voxel smooth-near is dev's call, measured on
+     this rig (the 26 neighbours first read 107 of 676 inner inlay hits as rock on the inlay's
+     plane; the 6 face neighbours are next). The test also asserts no field hit of material 0
+     on the rig. The bars above stand, except the trunk's "at most 1 voxel off the plane" for
+     the 3x3 rod, which is held: the test prints it, and the bar is set from the field's reading
+     under the rule and the owner's look at the seam rig.
+  4. The crisp bit's cost on the attribute side: the field pass's GPU time at the level (no
+     crisp material) and on the thin rig against Phase 4b's tip, and `update + poll + sync` of
+     the frame holding a radius-7 carve beside the rig's crisp branches against the same carve
+     on the trunk's far side away from every crisp voxel, both in the log against `nfr.md` §2's
+     streaming line. `GpuWorld::fix_crisp` and `field::band_of`'s crisp counts no longer exist
+     (`cargo doc` and a grep say so).
+  5. Every moved golden is named in the log with its share of pixels over 2/255; the face
+     goldens did not move (Plan 0050 owner answer 2). `crates/vxe-render/tests/translucent.rs`
+     and the cutaway tests pass unchanged, or dev stops with the reading.
+  6. Hit plus light at the level's spawn on the RTX at most 5.00 ms, three alternated quiet runs
+     against Phase 4b's tip and main at `28948a5`; the Radeon as a reading; the VGPRs of the
+     hit and light shaders in the log.
+  7. No removed setting's flag remains in `--help` or the banner; `cargo doc` has no mention
+     of a plane attribute outside the ADR citations; the banner names the look `field` and
+     says nothing of crisp cubes (a material property, not a mode).
+  8. The cost lever (amended 2026-10-31, owner). The fly-through takes `--crisp none|rock|all`
+     (testbed only: it sets `MaterialFlags::CRISP` on the level's rows when the table is built,
+     `rock` on the rock row alone and `all` on every row that is not `TRANSLUCENT`; the
+     banner's world line lists the rows set, done-when 7's rule otherwise holding), and the
+     frame line prints the smooth share `s` of hit pixels (hits whose material is not crisp).
+     At the level's spawn, 1080p from 720p, release, three alternated quiet rounds on the RTX
+     and the Radeon, against `face` at the same tip: (i) `--crisp all` reads the hit pass within
+     10 % of `face`'s, and its hit mask, hit positions (1e-3 voxel), normals and materials at
+     the spawn, the vein and the patch (the 384 x 216 readback) are `face`'s bit for bit;
+     (ii) `--crisp rock` (crisp-majority: the level's bulk crisp, the ores and the rest smooth)
+     reads the hit pass at most `face + s x (none - face)` plus 10 % of the `none - face` gap,
+     with `s` its printed share; (iii) `--crisp none` (all smooth) is done-when 6's reading. The
+     log tabulates the hit and the GPU frame of the three and `face`, with `s`, per adapter, and
+     the same at the vein and the patch at the window's size (`--render 2530x1378`) as readings.
+     A miss stops dev with the table; the owner picks the lever's form (a per-band-cell bit, a
+     split pipeline, or the reading accepted).
+     Amended 2026-11-01 (owner, answer 11): the lever is the split pipeline. A ray walks with
+     `face`'s walk and pipeline (its cube-walk register budget) until it enters a brick that is
+     neither LOD-only nor marked "no smooth near", and only from there takes the field walk; a
+     field-walking ray that crosses into a run of cubes bricks may stay in the field walk (dev's
+     call, measured). Bars (i) and (ii) stand unchanged and are re-read on the split; a second
+     miss stops dev with the table again.
+- **The close (amended 2026-11-01, owner answer 13; replaces done-whens 1 to 8).** Where a
+  done-when above is kept, it is named; where it is dropped or turned into a reading, the
+  reason is that it defended the field as the default.
+  1. **The default is `face`.** `LookPreset::DEFAULT` is `FACE`; the banner at start-up names
+     `face` (done-when 7's banner rule, with `face` for `field`). A test,
+     `look::the_default_look_is_face`, asserts on lavapipe that the default's hit records at
+     the spawn, the vein and the patch (the 384 x 216 readback) equal `--look face`'s at every
+     pixel, and the face goldens stay byte for byte main's at `28948a5`
+     (`band_slots_leave_the_face_goldens_byte_for_byte` or its successor; Plan 0050 owner
+     answer 2).
+  2. **The default builds no band.** A run, a test or an example that does not ask for the
+     field look builds a mirror with no band slot and dispatches no field pass; the stdout
+     `field pass:` line is absent. A `tests/mirror.rs` test asserts a default mirror over the
+     level holds 0 band slots, and the existing band tests (`a_carve_gives_the_exposed_air_brick_a_band_slot`,
+     `a_band_air_brick_s_slot_is_pinned`) keep asserting the field mirror's. Switching into
+     `field` at run time in a run started without it: dev's call between building the band on
+     the first switch and leaving `field` out of the look cycle; either way the window shows
+     what is drawn (`references/best-practices.md`, the toggle rule).
+  3. **The opt-in look stays green (done-whens 1, 2, 7 and 8's record test, kept).**
+     Done-when 1's test, renamed `the_field_look_has_no_boxes_and_no_leaks`, asserts as
+     written under `--look field`. Done-when 2 holds as written.
+     `look::the_split_walk_moves_no_hit_record` holds. Done-when 7 holds, the banner naming
+     `field` only under the field look.
+  4. **The seam is a reading (done-when 3 and answer 12, dropped as bars).**
+     `a_smooth_surface_meets_a_crisp_cube_without_a_gap` asserts only what read met at
+     3a43c06: the inlay's bars, 0 misses in every seam box, the trunk's face hits clear of the
+     roots on the plane, the features' hits clear of the trunk as cube hits. It prints the
+     rest, and the log discloses it: the trunk's 15 and 19 leaks in the seam box (head-on,
+     45 degrees) at the 2x2 and 3x3 rods, the collar's material-0 hits (2 and 3), the L's
+     non-cube hits in its concave corner (59 and 56), the collar heights and the speck counts.
+     Answer 12's smooth-near bits are not built (`live/p4c/air-bits.patch` stays set aside,
+     its readings in the log); they are a followup.
+  5. **The material-0 field hits are a known defect of the opt-in look.** The log names both
+     findings (the cubes-free walk's 41, 92 and 23 pixels in cells whose solid corners carry
+     no count bit; the seam's all-air cells) as disclosed defects, not fixed here.
+  6. **Goldens (done-when 5, amended).** A golden that renders the default look renders `face`
+     and is re-blessed if it moved; a golden that existed for a removed plane look is either
+     re-pointed at `--look field` and re-blessed as the opt-in look's golden, or removed where
+     another golden already covers the field; the log names each moved, re-pointed or removed
+     golden with its share of pixels over 2/255. `crates/vxe-render/tests/translucent.rs` and
+     the cutaway tests pass unchanged, or dev stops with the reading.
+     Amended 2026-11-01 (owner, answer 15): `golden::showcase_hall_golden_is_lit_by_its_four_ores`
+     keeps the default (`face`) image; its hue bar becomes "at least two of the four hue
+     classes over 0.5 % of pixels and every class present (at least 1 pixel)", the honest
+     cubes' reading at 86611cc (amber 3.42, ember 0.41, cyan 2.71, violet 0.07 %) printed.
+     The default's shadow-speck count above main's (face 2083 / 2055 / 34 against snap's
+     365 / 360 / 6 on the contour golden scene, shadow rays over the voxel occupancy) is a
+     finding for the close review, not a stop; a shadow start for cubes is a followup unless
+     the review blocks on it.
+  7. **Readings, not bars (done-whens 4, 6 and 8's cost rows).** One quiet round each, logged:
+     the default's hit and light at the level's spawn, 1080p from 720p, on both adapters,
+     against main `28948a5`'s default (the snap planes); `--look field`'s hit plus light
+     against the 5.00 ms figure that was its bar; `--crisp all|rock|none` at the spawn after
+     the removals (done-when 8's table); the field pass's GPU time at the level and on the
+     thin rig under `--look field`; the VGPRs of the hit shaders. Done-when 4's carve-sync
+     comparison is dropped.
+  8. **Shadows and the rest at the default.** The shadow ray at the default is `face`'s: the
+     voxel walk from the hit along its face normal by `SHADOW_OFFSET`, which close item 1's
+     goldens hold to main's `face`. The speck count at the default (now `face`) is read
+     against main's default and logged; a higher count is a finding, not a stop. The frame
+     line's smooth-share readback runs only under the field look. Translucency and the
+     cutaway at the default are `face`'s, unchanged.
+  9. The quick and gpu tiers, clippy, fmt and the doc gates are clean at the tip; the full
+     tier is the close review's.
+
+### Phase 4d: The owner's windowed check of the default
+- **Owner skill:** human
+- **Amended 2026-11-01 (owner, answer 13): dropped.** The default is now `face`, whose pixels
+  close item 1 holds byte for byte to main's `face`, and the owner has judged `face` in the
+  window (session 2's thin rig, "all good"; the seam and thin rigs at 3a43c06, the readings of
+  answer 13). A session at the close would show the owner nothing they have not seen. Dev
+  marks this row "dropped (owner answer 13)" and goes from Phase 4c to Phase 5. The text below
+  is the record of the check as it was written for the field default.
+- **What (as written for the field default):** one windowed session on the release binary at Phase 4c's tip, the frame line
+  logged every run (the session script turns the HUD's timer on and greps the `frame (` lines,
+  so the window's size and the view are on record): the level at the vein and the patch in the
+  default look, lamp on and off, shaded, at the window's size of sessions 1 and 2; the thin rig
+  (the wood crisp by its row) and the seam rig, `face` beside. The owner judges the frame rate
+  against [`nfr.md`](../../nfr.md) §2, "Frame ledger" (2026-10-31): cubes, the field but crisp,
+  and the field for some materials only, beside the slices reserved for the systems to come.
+- **Done when:** the owner records one of: (a) the frame rate and the seam are acceptable;
+  Phase 5 runs. (b) the frame rate is not: the owner names a windowed bar (the frame or the hit
+  plus light at the poses, at the window's size), and an amendment returns to Phase 4b's
+  rules with it. (c) the seam is not: the owner names the direction (ADR-0041's Alternative G,
+  crisp as air in the field, with its groove at a flush inlay, or another), and an architect
+  amendment follows.
+
+### Phase 5: The readings, the ADR, the close block
+- **Owner skill:** dev
+- **What:** `nfr.md` §2 and §3 carry the field's readings with machine, commit and load: the
+  spawn's hit and light on both adapters, the poses at the window's size, the attribute pass,
+  the mirror bytes at the level and over the flight; the plan's log carries the close block.
+  ADR-0041 (drafted 2026-10-31, amended on owner answer 7) is accepted at the close; ADR-0011
+  (its surface; the per-material detail survives) and ADR-0040 are marked superseded by it,
+  ADR-0039 superseded as moot (no cube face, no crack), and ADR-0038 (the plane code's zero
+  component) superseded as moot with the attribute. The Radeon walk-speed spike and, under
+  owner question 2's recommended option, the thin-feature fallback are named as followups.
+- **Amended 2026-11-01 (owner, answer 13).** The text above was written for the field as the
+  default; this replaces it. `nfr.md` §2 and §3 carry, with machine, commit and load:
+  - **The default (`face`)**: the spawn's hit and light on both adapters against main
+    `28948a5`'s default (the snap planes); the level's initial fill and the autopilot's p50
+    and p99 with no attribute or field pass, against main's attribute pass (17.0 ms fill, dev
+    box); `mirror_bytes` and `allocated_bytes` at the level and over the flight at `r_full`
+    16, with no attribute and no band term, against main's.
+  - **The opt-in field look**, as readings of an option, not budgets the default draws on:
+    the spawn's hit plus light on both adapters (the 5.00 ms figure it was built against
+    named), owner answer 13's window readings (seam rig 12.0 against 3.8 ms, thin rig 7.8
+    against 3.4 ms GPU frame, RTX 3080 Laptop, 2530 x 1378, `live/session3-seam.log`), the
+    band bytes at the level and over the flight under `--look field` against answer 4's 106
+    and 530 MB, and the field pass's time.
+  - The plan's log carries the close block, Phase 4a's attribution and Phase 4b's changes
+    among its readings, and the disclosed defects of the opt-in look (close items 4 and 5).
+  ADR-0041 was rewritten by the architect on answer 13 (2026-11-01): the default surface is
+  honest cubes, the field an opt-in look for smooth materials, the window readings the reason,
+  and "the field as the default" a rejected alternative. The close review accepts it.
+  ADR-0011's contour surface is superseded by it (its per-material detail stays, tilting the
+  face normal as today), ADR-0039 and ADR-0038 are superseded as moot with the attribute, and
+  ADR-0040 is rejected at Plan 0053's close, never accepted. The Radeon walk-speed spike and
+  the thin-feature fallback become followups of the opt-in look only (`## Followups`).
+- **Files touched:** `docs/nfr.md`, this plan's log.
+- **Done when:** the close block names every reading above; the quick and gpu tiers, clippy,
+  fmt, doctests, deny and the doc gates are clean at the tip; the full tier is the close
+  review's run (owner, 2026-10-30).
+
+## Data shapes
+
+```rust
+// illustrative: vxe-render
+pub enum SurfaceModel { Planes, Field }        // Phase 1: a look's choice; Phase 4c: Field alone
+pub enum FieldNormal { Analytic, Blend }       // N1, N2; the owner picked N1, Phase 4c removes the enum
+pub struct SurfaceTuning {
+    pub model: SurfaceModel,                   // new
+    pub field_normal: FieldNormal,             // new
+    pub face_mix: f32,                         // unchanged
+    // Plan 0050's `closing` and `shadow_push`, Plan 0053's `fit` and `normal_field`:
+    // present through Phase 3, removed in Phase 4 on pick (a)
+}
+// A band brick's slot (Phase 3), after today's units:
+//   one band-mask unit (bit i: voxel i has 0 < count < 27),
+//   ceil(n / 64) units of u8 counts in band-index order (prefix per layer in the header),
+//   and, under N2, ceil(n / 32) units of octahedral u16 normals.
+// A uniform band brick gets a slot of class 6 (illustrative): opaque mask, header, band
+// mask, counts; no payload. Its record entry carries bit 31 and the class, as Full bricks do.
+// A crisp voxel's u8 count carries bit 7 (Phase 3a); the count is in the low five bits.
+
+// illustrative: vxe-world, Phase 4c (owner answer 8)
+impl MaterialFlags {
+    /// The renderer draws voxels of this material as cubes with face normals instead of the
+    /// smooth surface. Nothing else reads it; no effect on a `TRANSLUCENT` row.
+    pub const CRISP: Self = Self(4);
+}
+```
+
+The CPU world's edits, results, queries and collision do not change, and determinism is
+untouched: the field is in `vxe-render`, a client-side view. Amended 2026-10-31 (owner answer
+7): Phase 4c adds one render-only flag to `vxe-world`'s material row, beside `TRANSLUCENT`,
+which no deterministic path reads.
+
+## Budgets
+
+| `nfr.md` figure | Base (read) | Expected | How the close measures it |
+|---|---|---|---|
+| §2 the hit pass and the light pass | level spawn, 1080p from 720p, snap alone: RTX 0.604 + 0.913 ms, Radeon 4.364 + 7.026 ms (Plan 0050) | **a guess** of 1.3x to 2x on the hit pass (ADR-0040), one cubic per dual cell crossed and eight byte reads, VGPRs near snap alone's 64; light unchanged but for the normal | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 300 --adapter NVIDIA\|AMD` per look against the Plan 0053 close binary, alternated, release, perf lock, memory cap, three quiet runs; bar set by the owner at Phase 2 (RTX hit plus light at most 5 ms, owner answer 3); amended 2026-10-31: against main `28948a5` and 17045d8, plus the vein and patch at the window's size (`--render 2530x1378`) as readings (Phases 4a, 4b) |
+| §2 the attribute pass | the level's fill 17.0 ms (weighted fit, dev box, Plan 0039); the flight's p50 and p99 of Plan 0028 and 0039 | **a guess** of 1.5x to 2.5x the work items (the air and uniform-solid band bricks), each cheaper (counts, no fit) | the initial fill and `--autopilot --headless --seed 1` p50 and p99 on both adapters, three alternated runs |
+| §3 mirror bytes | 157 872 640 B live, 259 203 264 B allocated at the level; 871 679 852 B live of 3 221 014 080 B allocated over the flight (Plan 0039) | the band's bytes replace the attribute's: **a guess** of 1.5x to 3x today's attribute bytes, the air side the larger part; the census of Phase 1 replaces the guess | `mirror_bytes` and `allocated_bytes` at the level and over the flight, under the owner's bar; `r_full` 16 under 3 GB is the hard line |
+
+## Risks & open questions
+
+- **The band's air side is bigger than the solid side in a cave.** Concave caverns have more
+  air next to rock than rock next to air, and every uniform-air brick touching rock gets a
+  slot. The census is the answer, and it comes before any slot code is written. If the owner's
+  bar fails at the level, the fallback inside this plan is a two-byte-per-brick-face scheme
+  (counts for a face layer only) or `r_full` 14, both the owner's call; outside it, Plan 0053's
+  pick stands.
+- **Trilinear normals crease.** N1's gradient is discontinuous across dual cells and may show
+  a faint tiling under the lamp at arm's length. N2 removes it at a `u16` per band voxel.
+  Phase 1's tile-contrast metric reads both; the owner sees both.
+- **The cubic's precision.** `f32` along a ray at the level's extent (`2^24` voxels is Plan
+  0052's followup line) and a near-tangent crossing can miss or double a root. Bracketing the
+  sign change before the Newton steps bounds it; the leak count is the gate.
+- **Mixed-sign cells with no crossing on the segment** (the ray passes a cell whose corners
+  mix signs without touching the surface) are the common case along a wall: the cubic must
+  reject them cheaply. Marmitt's extremum test does; a miss here is the cost risk.
+- **The walk enters more bricks.** Band-air bricks have slots, so the hierarchy skips less
+  air near rock. The hit pass reading carries it; the mask-level skips inside a band-air brick
+  (its opaque mask is zero) keep the cost to the band voxels themselves.
+- **Collision keeps the voxels.** The visible surface lies up to half a voxel inside a convex
+  edge and outside a concave corner. At a 30 cm capsule and 10 cm voxels the player slides
+  over it; a consumer wanting the look and the collision to agree gets a followup, not this
+  plan.
+- **Deliberate one-voxel detail in prefabs** becomes a bump. A consumer who wants 10 cm
+  detail visible models it two voxels thick, as under Plan 0053's filter.
+- **The window is not the bar's figure** (owner answer 7). The bar is headless at the spawn at
+  720p internal; the window ran at 1687 x 919 internal at poses whose hit per pixel is higher.
+  Phase 4a attributes the gap and Phase 4d is where the owner judges the window; a windowed
+  bar, if the owner sets one, comes from there.
+- **The crisp bit costs a material read in the field pass.** With crisp as solid (owner answer
+  8) the counts need no material, but bit 7 does; a world with many crisp materials pays a
+  material read per band voxel of their bricks. Phase 4c's done-when 4 reads it.
+- **A crisp feature's root carries a smooth collar** up to 0.75 voxel high and two voxels wide
+  (worked in Phase 4c), in the smooth material. The owner accepted it (owner answer 8); Phase
+  4c's seam test bounds it and the owner sees it in Phase 4d.
+- **The attribute pass under edits** now touches air bricks. Plan 0023's hitch budget is on
+  the render thread's CPU, which the GPU pass does not load; the sync's new slot allocations
+  for exposed air bricks do, and Phase 3's done-when 4 reads it.
+
+## What this plan does NOT do
+
+- Change `vxe-world`, its edits, results, queries or collision. The field is a render-side
+  view of the voxels. (Amended 2026-10-31, owner answer 7: Phase 4c adds the render-only
+  `CRISP` flag to the material row; nothing in the world reads it.)
+- The Radeon walk-speed spike (owner answer 3): its own plan and ADR after this one.
+- An automatic per-voxel fallback for thin features of a smooth material, or a switch to
+  cubes by distance: followups (Phase 4c, thin features; Phase 4b's stop rule).
+- Give the LOD ring's mip cells a field, or a transition between the field and the cubes at
+  the full radius beyond what the planes have today.
+- A tricubic or filtered surface, or dilation. (Per-material opt-outs were here; amended
+  2026-10-31, owner answer 5: Phase 3a builds one as a scratch look.)
+- The lighting: Plan 0051 is the light spike; this plan changes only which normal shades.
+- Decide the look. Phase 2 is the owner's, and (b) and (c) are real outcomes.
+
+## Owner answers
+
+1. **Phase 1's box pixels (owner, 2026-10-31, recommended option).** The field look's box
+   metric gains the 15-degree normal condition above. The cost (hit pass 6x to 12x the base)
+   is not a Phase 1 bar; the owner sets the bars at Phase 2 on these readings.
+
+2. **Phase 2, the pick (owner, 2026-10-31, session 1, 14 runs at `b282738`'s release binary).**
+   Outcome (a): the field surface is the default surface look. At the vein the four plane looks
+   kept the rods and slabs ("same problem" through filter, field and both); `cubes-field` read
+   calmer ("not even too bad, if not for the lighting flickers") but at the patch showed thin
+   lit lines along cube edges ("not acceptable really"); the field read "smooth, wonderful" at
+   both poses. N1 analytic is the normal source: N2 showed "not much of a visual difference"
+   at either pose at twice N1's hit cost, so N2 goes. The flicker the owner saw in every look
+   is the lighting's (Plan 0051), not the surface's.
+3. **Phase 2, the cost bar (owner, 2026-10-31).** Set on the RTX 3080 Laptop: the hit plus
+   light passes at most 5 ms at the level's spawn, 1080p from 720p, release, perf lock, quiet
+   load (Phase 1 read 3.46 + 0.90 ms under N1 against 0.58 + 0.88 at the base). The Radeon
+   reading (30.0 + 6.9 ms, 7x the base hit) is recorded as out of budget on `docs/nfr.md`
+   section 1's slow adapter; a separate walk-speed spike, its own plan and ADR after this one,
+   decides whether the iGPU ships the field or falls back. Phase 2's done-when asked for a
+   Radeon bar too; amended 2026-10-31 (owner): the Radeon bar is that spike's to set.
+4. **Phase 2, the storage bar (owner, 2026-10-31).** Live band bytes at most the packed
+   figures plus 10 %: 106 MB at the level and 530 MB over the full flight at `r_full` 16, the
+   band pool inside the mirror's accounting (`mirror_bytes` and `allocated_bytes`). Phase 3
+   lands the packed layout; the spike's dense pool (241 MB / 1.15 GB) is not the bar.
+5. **After Phase 3, thin features (owner, 2026-10-31, the three recommended options).** The
+   owner reopened answer 2 on the arithmetic that a free-standing feature under about three
+   voxels across vanishes under the field (a 10 cm branch): "this solution deemed to be not
+   acceptable, or per material only". The materials without the field render as honest cubes;
+   the owner sees it on screen before deciding (Phases 3a and 3b, added); Phase 4 holds until
+   then. Phase 1's free pillar and sheet readings (0 and 6 box pixels) are consistent with the
+   arithmetic but were read as boxes gone, not as features gone.
+6. **Phase 3a's done-whens 3 and 4 (owner, 2026-10-31, the recommended options).** Done-when 3
+   read the field at 4.95 + 0.98 = 5.93 ms on the RTX 3080 Laptop (`field-cubes` 6.38) against
+   the 5 ms bar: the owner judges the look at Phase 3b first, and the walk-speed work goes into
+   Phase 4's rewrite, which keeps the same bar. Done-when 4: the level budget's unit term (0.980
+   to 0.645) and its reservation (259.2 to 393.9 MB) stand as "reads the band term"; the printed
+   pressure stays 1.000 because the record term (one record per chunk) dominates at the level,
+   as it did before this plan.
+7. **Phase 3b, the pick (owner, 2026-10-31, session 2, five runs at 17045d8's release binary).**
+   Outcome (a): the field per material, crisp materials as honest cubes. The rig in `face`:
+   "all good". In `field`: "not acceptable - invisible materials, only one trunk is visible,
+   invisible cast shadow" (the thin features vanish while their shadows stay, the shadow ray
+   walking the voxels). In `field-cubes`: "seems to be good". The vein and patch poses in
+   `field-cubes`: "looks good, but fps is really low" and "fps roughly same". The window's
+   march GPU p50 read 29.3 ms (vein) and 30.4 ms (patch) on the RTX 3080 Laptop, against
+   16.4 ms at the patch in session 1's `field` (window size not logged; `live/session2.log`,
+   `live/session1.log`). Phase 4 is rewritten on this pick.
+8. **The Phase 4 rewrite's four questions (owner, 2026-10-31).** (1) The crisp flag is
+   `MaterialFlags::CRISP` on `vxe-world`'s material row, the recommended option. (2) A thin free
+   feature of a smooth material is accepted for this plan and recorded in ADR-0041; an
+   automatic fallback is a followup, and Phase 4a's thin census measures how often it happens;
+   the recommended option. (3) The 5 ms bar at the spawn stays Phase 4b's gate; the poses at
+   the window's size are readings, and the owner sets a windowed bar at Phase 4d if needed; the
+   recommended option. (4) Not the recommended option: crisp voxels count as solid in the
+   field, so a flush inlay has no groove and each crisp feature's root carries a smooth collar
+   of about one voxel, accepted. Phase 4c and ADR-0041 are amended on it (its Alternative G
+   became the Decision, the air rule the rejected alternative).
+9. **The frame ledger's questions (owner, 2026-10-31).** The field must fit the cave frame and the
+   outdoor M10 frame (`docs/nfr.md` §2, Frame ledger): on today's ledger only scenario C (smooth
+   for some material types) fits the outdoor frame at its high guesses. The target is `nfr.md`'s
+   1080p output from 720p internal; the owner's window size is a reading. The Radeon iGPU is a
+   quality-profile question (internal resolution, lighting tier, possibly cubes only), not a gate
+   for this decision. Which materials are smooth is decided at Phase 4d, on done-when 8's
+   `--crisp none|rock|all` readings and the window session. The guessed ledger slices stay
+   guesses until their plans; done-when 8's 10 % tolerances stand.
+10. **Phase 4b's stop (owner, 2026-10-31, the recommended option).** After five measured changes
+    the RTX 3080 Laptop read `field-cubes` 5.185 ms and `field` 5.139 ms hit plus light against
+    the 5.00 ms bar, and RADV raised the field hit pipeline to 256 VGPRs (the Radeon's
+    `field-cubes` hit 42.1 to 56.5 ms, one round). The owner allows two more changes under the
+    same rules: a direct band index per record (inside the storage bar, about 102.8 of 106 MB at
+    the level and 474 of 530 MB over the flight, worked), and a change that brings RADV back to
+    128 VGPRs for the field hit pipeline without moving the RTX reading. After those two, dev goes
+    on to Phase 4c whatever the reading, and the bar is judged at Phase 4d with the frame ledger.
+    Phase 4d's session logs the frame line on every run, because Phase 4a found the window's hit
+    pass 2.3x to 3x the headless reading at the same size and view, unattributed.
+11. **Done-when 8's miss (owner, 2026-11-01, the recommended option).** At 9314221 the RTX read
+    `--crisp all` 0.911 / 1.836 ms hit / hit plus light against `face`'s 0.547 / 1.420 (+66.5 %
+    on the hit, bar 10 %) and `--crisp rock` 2.230 ms hit against a bar of 0.866; the Radeon
+    +109 % for `all`. The owner picked the split pipeline (the face walk until a brick that is
+    not cubes) over a per-band-cell bit or accepting the reading; done-when 8 is amended on it.
+12. **Done-when 3's miss (owner, 2026-11-01, the recommended option).** At 3a43c06 the seam rig read
+    15 and 19 leaks at the trunk's 2x2 and 3x3 rods (the crisp skip rule leaves the next field
+    piece already above zero) and field hits of material 0 at the collar and in the L's concave
+    corner (all-air dual cells with no count bit). The owner picked smooth-near bits on air band
+    voxels with "a field hit needs a smooth or smooth-near corner", over accepting the readings
+    or crisp as air in the field (ADR-0041's Alternative G, the inlay's groove). Done-when 3 is
+    amended on it; the owner looked at the seam rig in the window at 3a43c06 the same day.
+13. **Cubes are the default (owner, 2026-11-01, after the window check at 3a43c06).** Honest
+    cubes (`face`) are the engine's default look; the field surface is no longer the default.
+    It stays in the tree as an opt-in look: the crisp flag, the split pipeline, `--crisp` and
+    the field pass. The window readings, RTX 3080 Laptop at 2530 x 1378, GPU frame, field
+    against `face`: the seam rig 12.0 against 3.8 ms, the thin rig 7.8 against 3.4 ms, about
+    3x (`live/session3-seam.log`). The owner: "we have almost 40% more fps if only using pure
+    cubes. combination of surfaces were fine, but it looks like we can use smooth only for
+    liquids maybe. dont know". Offered the level session first, the owner picked "go cubes
+    now": `face` becomes the default and the plan closes with the field kept as an option, off
+    by default. Smooth for liquids is a question for Plan 0034, not a decision. Phases 4c, 4d
+    and 5 and ADR-0041 are amended on it; answer 12's smooth-near work becomes a followup.
+14. **M2 and Plan 0053 (owner, 2026-11-01, both the recommended option).** Cubes meet M2's
+    surface-look goal; the field is a quality option revisited per material class, liquids
+    first at Plan 0034. Plan 0053 closes in the same session as this plan, ADR-0040 rejected
+    and never accepted, 0053 merging into main first.
+15. **The close's two findings (owner, 2026-11-01, both the recommended option).** The showcase
+    hall's ember class reads 0.41 % under `face` against the 0.5 % bar (main's planes 0.69 %):
+    the architect re-derives the bar for cubes rather than pinning the golden to the field or
+    moving the shot. The default's speck count above main's goes to the close review as a
+    finding. Phase 4c's close item 6 is amended on both.
+
+## Implementation log
+
+> Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
+> above are the contract. This section records what happened.** Observations, never conclusions:
+> no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
+> Keep it shorter than `## Implementation phases`.
+
+| phase | owner | state | commit |
+|---|---|---|---|
+| 1: The field as a scratch look: dense storage, the walk, the readings and the census | dev | done | b282738 (the code, wip) and committed with this row (the field look's box rule) |
+| 2: The owner's windowed check, one session with Plan 0053's Phase 4 | human | done (a): the field surface, N1 (owner, 2026-10-31; answers 2 to 4) | owner answers, this commit |
+| 3: Band slots in the size-classed mirror | dev | done | 1b36eb3 (the code, wip) and b4fbfad (the log) |
+| 3a: Free-standing thin features and a per-material scratch look | dev | done; done-when 3 (cost bar) and 4 (pressure) not met as stated | 17045d8 |
+| 3b: The owner's look at thin features and the per-material candidate | human | done (a): the field per material, crisp materials as cubes (owner, 2026-10-31; answer 7) | owner answers, be7b943 |
+| 4a: Where the window's frame time goes | dev | done; the windowed p50s not reproduced headless (done-when 2 names the remainder the window's) | 52cc078 |
+| 4b: The walk inside the bar | dev | done: `field-cubes` 4.690 ms, `field` 4.623 ms against 5.00 (RTX, c9); RADV 128 VGPRs | 91f9066 (c1 to c5, wip), 00542da (c6 to c8, wip) and f6e51a3 (c9, the gate) |
+| 4c: The crisp flag, the field as the default, the planes removed | dev | done on the close list (owner answer 13); done-whens 1 to 8 replaced by it | 2bca6e4, 3a43c06, 86611cc (wip) and 2bc7a5d |
+| 4d: The owner's windowed check of the default | human | dropped (owner answer 13) | |
+| 5: The readings, the ADR, the close block | dev | done (the readings in `nfr.md` §2 and §3; ADR-0041 not edited, the close review's) | committed with this row |
+
+#### Phase 1
+
+Readings on lavapipe (llvmpipe, Mesa 26.2.5, LLVM 23.1.3) unless named, exclusive perf lock,
+at 811b37e plus this phase's diff. N1 is `--look field` (the field's gradient), N2 `--look field
+--field-normal blend`; "start look" is `contour-sharp`, the lane base's default. Lamp off reads
+the same rows as lamp on at both poses.
+
+- Done-when 1, `the_field_surface_lies_on_the_flat_faces`: `floor` 43012 hits (230 left out),
+  0 leaks, worst hit 7.63e-6 voxel off `z = 64` (start look 43012 hits, 392 left out); `wall`
+  37800 hits (180), 0 leaks, worst 7.63e-6 off `x = 80` (start look 37800, 180).
+- Done-when 2, as amended 2026-10-31: `box_reading` in `look.rs` takes the field look's normal
+  condition through `box_voxel`'s face test (`FIELD_BOX_DEGREES` 15: the hit record's
+  octahedral normal within 15 degrees of the face's outward axis normal), the plane looks
+  keep the position-only test. `the_field_surface_has_no_boxes_and_no_leaks` on lavapipe:
+  box px 0 on `rod`, `lone cube`, `groove`, `wall pillar`, `ridge` under N1 and N2; leaks 0 on
+  every analytic scene and at both poses under N1 and N2; every other analytic scene reads 0
+  box px; `level vein` 0, `level patch` N1 9, N2 0 (the poses carry no box assertion). The
+  plane-look counts of Plan 0053's tests at this commit: `one_voxel_features_render_as_boxes_today`
+  start look rod 499, lone cube 24, groove 697, wall pillar 276; `the_majority_fit_melts_one_voxel_features`
+  rod, lone cube, wall pillar 0 (both pass). Under the unamended metric (b282738) the field read
+  box px, N1 and N2 alike: `rod` 9, `lone cube` 0, `groove` 8, `wall pillar` 2, `ridge` 10. The
+  rod's 9 (RTX 3080 Laptop scratch dump of each box pixel's point and normals-view normal): 8
+  on the bump's flat top at `z = 60.333` within 1e-3 of the planes `y = 64` and `y = 65` with
+  normal `+z`, 1 at `x = 58.0005` with normal `(-0.11, 0, 0.99)`. The rod's flat top at
+  `z = 60.333` is for the owner's eye in Phase 2.
+- Done-when 3, `field_readings` (lavapipe, under the unamended box metric at b282738; the RTX 3080 Laptop run reads the same rows but
+  tilted slab start look 49354 hits / 17962 box px, cavity start look 20258, pillar start
+  look 8.836 %, patch N1/N2 314 box px):
+
+  | scene | look | hits | left out | box px | count < 14 | count >= 14 | 2 air | 3 air | 4+ air | pairs | tile edges % | leaks |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | bare floor | start look | 50747 | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | - |
+  | bare floor | field N1 | 50747 | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0 |
+  | bare floor | field N2 | 50747 | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0 |
+  | rod | start look | 50747 | 77 | 499 | 499 | 0 | 0 | 418 | 81 | 97251 | 0.785 | - |
+  | rod | field N1 | 50747 | 38 | 9 | 9 | 0 | 0 | 7 | 2 | 97251 | 0.649 | 0 |
+  | rod | field N2 | 50747 | 38 | 9 | 9 | 0 | 0 | 7 | 2 | 97251 | 0.000 | 0 |
+  | lone cube | start look | 50728 | 76 | 24 | 24 | 0 | 0 | 0 | 24 | 97232 | 0.000 | - |
+  | lone cube | field N1 | 50728 | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 97232 | 0.000 | 0 |
+  | lone cube | field N2 | 50728 | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 97232 | 0.000 | 0 |
+  | groove | start look | 51626 | 63 | 697 | 0 | 697 | 697 | 0 | 0 | 98926 | 0.647 | - |
+  | groove | field N1 | 51626 | 33 | 8 | 0 | 8 | 8 | 0 | 0 | 98926 | 0.644 | 0 |
+  | groove | field N2 | 51626 | 33 | 8 | 0 | 8 | 8 | 0 | 0 | 98926 | 0.000 | 0 |
+  | wall pillar | start look | 41400 | 180 | 276 | 276 | 0 | 0 | 210 | 66 | 80260 | 0.381 | - |
+  | wall pillar | field N1 | 41400 | 180 | 2 | 2 | 0 | 0 | 2 | 0 | 80260 | 0.272 | 0 |
+  | wall pillar | field N2 | 41400 | 180 | 2 | 2 | 0 | 0 | 2 | 0 | 80260 | 0.000 | 0 |
+  | ridge | start look | 50729 | 76 | 568 | 115 | 453 | 453 | 115 | 0 | 97216 | 0.728 | - |
+  | ridge | field N1 | 50729 | 36 | 10 | 4 | 6 | 6 | 4 | 0 | 97233 | 0.645 | 0 |
+  | ridge | field N2 | 50729 | 36 | 10 | 4 | 6 | 6 | 4 | 0 | 97233 | 0.000 | 0 |
+  | free pillar | start look | 48590 | 110 | 828 | 828 | 0 | 0 | 0 | 828 | 93192 | 0.098 | - |
+  | free pillar | field N1 | 48590 | 54 | 0 | 0 | 0 | 0 | 0 | 0 | 93318 | 0.004 | 0 |
+  | free pillar | field N2 | 48590 | 54 | 0 | 0 | 0 | 0 | 0 | 0 | 93318 | 0.000 | 0 |
+  | sheet | start look | 47782 | 116 | 8108 | 7717 | 391 | 8026 | 82 | 0 | 91542 | 0.965 | - |
+  | sheet | field N1 | 47782 | 61 | 6 | 2 | 4 | 4 | 2 | 0 | 91878 | 0.773 | 0 |
+  | sheet | field N2 | 47782 | 61 | 6 | 2 | 4 | 4 | 2 | 0 | 91878 | 0.003 | 0 |
+  | tilted slab | start look | 49366 | 191 | 17971 | 0 | 17971 | 10843 | 7128 | 0 | 97133 | 0.000 | - |
+  | tilted slab | field N1 | 49361 | 146 | 181 | 0 | 181 | 91 | 90 | 0 | 98223 | 0.000 | 0 |
+  | tilted slab | field N2 | 49361 | 146 | 181 | 0 | 181 | 91 | 90 | 0 | 98223 | 0.000 | 0 |
+  | 45-degree slab | start look | 48333 | 142 | 34164 | 0 | 34164 | 34164 | 0 | 0 | 94313 | 0.000 | - |
+  | 45-degree slab | field N1 | 48330 | 85 | 204 | 0 | 204 | 204 | 0 | 0 | 96143 | 0.000 | 0 |
+  | 45-degree slab | field N2 | 48330 | 85 | 204 | 0 | 204 | 204 | 0 | 0 | 96143 | 0.000 | 0 |
+  | diagonal slab | start look | 57600 | 0 | 36903 | 0 | 36903 | 0 | 36903 | 0 | 114700 | 0.000 | - |
+  | diagonal slab | field N1 | 57600 | 0 | 357 | 0 | 357 | 0 | 357 | 0 | 114700 | 0.000 | 0 |
+  | diagonal slab | field N2 | 57600 | 0 | 357 | 0 | 357 | 0 | 357 | 0 | 114700 | 0.000 | 0 |
+  | cavity | start look | 57600 | 0 | 20255 | 0 | 20255 | 14432 | 5823 | 0 | 114700 | 2.787 | - |
+  | cavity | field N1 | 57600 | 0 | 300 | 0 | 300 | 172 | 128 | 0 | 114700 | 0.188 | 0 |
+  | cavity | field N2 | 57600 | 0 | 300 | 0 | 300 | 172 | 128 | 0 | 114700 | 0.000 | 0 |
+  | pillar | start look | 3476 | 0 | 885 | 8 | 877 | 554 | 331 | 0 | 6360 | 8.962 | - |
+  | pillar | field N1 | 3444 | 0 | 32 | 0 | 32 | 0 | 32 | 0 | 6380 | 0.125 | 0 |
+  | pillar | field N2 | 3444 | 0 | 32 | 0 | 32 | 0 | 32 | 0 | 6380 | 0.000 | 0 |
+  | level vein | start look | 82944 | 0 | 35098 | 0 | 35098 | 21734 | 13364 | 0 | 165288 | 0.676 | - |
+  | level vein | field N1 | 82944 | 0 | 296 | 0 | 296 | 105 | 191 | 0 | 165288 | 0.397 | 0 |
+  | level vein | field N2 | 82944 | 0 | 296 | 0 | 296 | 105 | 191 | 0 | 165288 | 0.000 | 0 |
+  | level patch | start look | 82944 | 0 | 38250 | 199 | 38051 | 24624 | 13427 | 199 | 165133 | 0.771 | - |
+  | level patch | field N1 | 82944 | 0 | 313 | 0 | 313 | 172 | 141 | 0 | 165247 | 0.633 | 0 |
+  | level patch | field N2 | 82944 | 0 | 313 | 0 | 313 | 172 | 141 | 0 | 165247 | 0.000 | 0 |
+
+  Guardrails and the speck test (contour golden scene, full shadow walk; with, without, only
+  with): start look cavity normal error 7.13 degrees, silhouette 32 px (face 172), `A` 6.73 %,
+  specks 365, 360, 6; N1 4.13 degrees, 24 px, 3.15 %, specks 163, 164, 4; N2 3.72 degrees,
+  24 px, 3.15 %, specks 178, 178, 5. Against Plan 0039's bars (at most 12 degrees, at most 86
+  px, at most 10 %): N1 within all three, N2 within all three.
+- Done-when 4, cost: `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300
+  --adapter NVIDIA|AMD [--look field [--field-normal blend]]`, 1080p from 1280 x 720, release,
+  each run under the exclusive perf lock and the memory cap, three alternated rounds, medians
+  of the runs' `gpu hit` and `light` (the HUD line's median of the last 30 frames, 2 decimals)
+  and of the initial fill (`attrib:` line: the attribute pass and the field pass in one
+  timestamp span); base is 811b37e's binary, "tip default" the tip without `--look`; 1-minute
+  load 0.0 to 2.24 (two runs above 2: loaded); adapters by `--adapter`.
+
+  | adapter | binary, look | hit ms | light ms | hit + light | against base | initial fill ms |
+  |---|---|---|---|---|---|---|
+  | NVIDIA GeForce RTX 3080 Laptop GPU | base | 0.58 | 0.88 | 1.46 | | 14.217 |
+  | | tip default | 0.59 | 0.90 | 1.49 | +2.1 % | 14.219 (one run 84.574) |
+  | | tip field N1 | 3.46 | 0.90 | 4.36 | +199 % | 23.807 |
+  | | tip field N2 | 7.00 | 0.86 | 7.86 | +438 % | 23.809 |
+  | AMD Radeon Graphics (RADV RENOIR) | base | 4.30 | 7.02 | 11.32 | | 59.745 |
+  | | tip default | 4.30 | 7.03 | 11.33 | +0.1 % | 59.764 |
+  | | tip field N1 | 30.04 | 6.91 | 36.95 | +226 % | 96.711 |
+  | | tip field N2 | 42.33 | 6.93 | 49.26 | +335 % | 96.699 |
+
+  Hit pass alone: N1 5.97x (RTX), 6.99x (Radeon); N2 12.1x, 9.84x. RADV shader stats
+  (`RADV_DEBUG=shaderstats,nocache`, `--frames 3`): the hit shader 64 VGPRs, 31 408 B of
+  code, in both binaries; the field hit pipeline 128 VGPRs, 117 060 B; the cracks pipeline
+  84. The autopilot's attribute pass GPU time (`flythrough --autopilot --headless --seed 1
+  --adapter NVIDIA|AMD [--look field]`, three alternated rounds, medians; load 0.6 to 11.1,
+  loaded, indicative): RTX base p50 0.951, p99 1.999 ms, field 4.687, 7.146 ms; Radeon base
+  1.272, 1.628 ms, field 2.972, 3.556 ms. The field look's first level sync reads 1876 ms
+  (base 714 ms), the CPU band test inside it.
+- Done-when 5, `band_census` (lavapipe): the level, every chunk: band voxels 27 497 052
+  solid-side, 20 859 580 air-side; band bricks 350 181 Full, 37 738 uniform solid, 30 749
+  uniform air (418 668); Full bricks with a surface voxel 349 635, all band bricks; packed
+  96 243 264 B, dense 241 152 768 B. The pool at the spawn: 418 668 live slots, 418 668 band
+  bricks read back, 0 without a slot, 268 434 432 B in its two shards (252 445 248 B on the
+  RTX, whose shards grow by doubling). The flight (`--autopilot --band-census --look field`,
+  RTX 3080 Laptop, at full residency, 17 077 full chunks, census 14 982 ms of CPU): band
+  voxels 117 462 790 solid-side, 102 253 810 air-side; band bricks 1 453 938 Full, 372 413
+  uniform solid, 171 193 uniform air (1 997 544); Full bricks with a surface voxel 1 450 530,
+  all band; packed 483 198 272 B, dense 1 150 585 344 B; the pool 2 071 989 live slots,
+  1 677 721 536 B in its buffers. Today's attribute bytes, by `nfr.md` §3's contour minus
+  plain live totals (Plan 0028): level 157 872 640 - 62 846 720 = 95 025 920 B; flight
+  871 679 852 - 502 928 492 = 368 751 360 B. Arithmetic, not measured: packed in place of the
+  attributes gives 159 089 984 B live at the level and 986 126 764 B over the flight.
+- Done-when 6: the 29 goldens rendered under `VXE_BLESS=1` on lavapipe from 811b37e's tree
+  and from the tip, compared with ImageMagick `compare -metric AE`: 29 of 29 identical. The
+  level reads 157 872 640 B live, 259 203 264 B allocated in every run of both binaries and
+  with the field look; the flight 871 679 852 B live, 3 221 014 080 B allocated in both; the
+  pool's bytes are the lines above, outside both.
+- Done-when 7, side-by-sides (untracked) `live/field/{vein,patch}[-lamp-off].png` and one per
+  scene (start look shaded and normals view, then N1's, then N2's), lavapipe:
+  - Vein: the start look's one-tile-per-voxel normals give way to a continuous surface; N1's
+    normals view shows soft creases along the dual-cell grid, N2's none; the shaded panels are
+    saturated by the lamp in all three looks. No rod, pillar or lone cube of the owner's
+    Plan 0050 Phase 5 shots is resolved in this 384 x 216 frame.
+  - Patch: the floor's square tiles and the stepped row along the wall's foot become a smooth
+    floor meeting the wall in a rounded fillet; the protrusion at the frame's right edge reads
+    as a rounded bump; N1 shows faint diagonal creases on the floor, N2 none.
+- Deviations: the plan file is copied from main (c2a292d) into this commit (the lane's base has
+  no Plan 0054); `crates/vxe-render/src/field.rs` is new (the scratch pool, its CPU band test
+  and allocator, the field pass's dispatch); `light.wgsl` and `composite.wgsl` unchanged (the
+  shadow origin follows the field normal through `shadow_normal_of` in `march.wgsl`; leaks are
+  the cracks view's class 1, drawn red by the composite's palette); the pool is two shards
+  (lavapipe binds at most 128 MiB, the level's dense band is 241 MB) with the index in shard
+  0's first slots, bound in the hit pass's group 1 (bindings 3, 4), so the storage buffers per
+  stage stay 11; slots come from one free list of one size, never compacted, not a bump
+  allocator rebuilt on a window move; a brick gets a slot from an exact CPU band test over
+  the world's voxels at the end of each sync (a LOD-only neighbour counts as band, a chunk the
+  mirror does not hold as air), not from the attribute pass's work list; the field pass is
+  `attrib.wgsl`'s second entry point `field_main`, recorded after the attribute pass, uncapped
+  by `attr_cap`; the field walk compiles only into a third hit pipeline (`override
+  FIELD_SURFACE`, `Marcher::field`); the cubic's first root by its extrema and eight Illinois
+  steps; a piece that starts above zero is a hit there, counted as a leak above 1e-4 in phi;
+  N2's air corners and solid corners without a plane take the central difference of the
+  27-counts across the corner, computed at the hit, not stored; shadow rays walk the planes;
+  translucent voxels count as solid in the field (the attribute pass's occupancy) and the
+  field look runs no translucent walk; the flight census reads chunks the world does not
+  hold as air (census 1 997 544 band bricks, pool 2 071 989 slots); `--band-census` and the
+  `field pool:` line in `main.rs`, `flythrough::band_census` and `brick_counts` in `lib.rs`;
+  `LookPreset::FIELD` sits in `LookPreset::ALL` after `cubes-field`; the banner names `field
+  normal analytic|blend`, `BANNER_ROWS` stays 9; the hud test of each preset's banner
+  expects the field's words.
+- Gate at b282738: `--profile gpu` 196 run, 192 passed, 4 failed
+  (`the_field_surface_has_no_boxes_and_no_leaks` under the unamended metric and the base's
+  three below); the rest as at this commit.
+- Gate at this commit: build 0; clippy `-D warnings` 0 (workspace, and `-p flythrough
+  --features wasm`); fmt 0; doctests ok; `cargo deny check` ok; the four `scripts/check-*.mjs`
+  0; `--profile quick` (no lock, load 5.3 at the start, 24.9 at the end) 539 run, 537 passed,
+  2 timed out, 3 skipped: `flythrough::castle the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`
+  30.07 s and `flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` 30.03 s, alone
+  8.65 s and 14.71 s (load 23.0); `--profile gpu --no-fail-fast` on lavapipe (exclusive perf
+  lock, load 2.38 at the start, 1.24 at the end, 1895 s) 196 run, 193 passed, 3 failed, 31
+  skipped: the base's three, `look the_normal_field_adds_no_dark_speck`, `look
+  the_normal_field_has_no_tile_edges` (Plan 0053 Phase 3) and `sharpness
+  detail_after_lighting_is_exact_for_the_lamp` (98.028 %, Plan 0050 Phase 6).
+
+#### Phase 3
+
+Readings on lavapipe unless named, exclusive perf lock; the code is 1b36eb3's.
+
+- Done-when 1, `mirror::a_band_air_brick_s_slot_is_pinned`: class 6 entry, a 2-unit slot,
+  empty opaque mask, header word 15 only; band slot of 2 units in `band_bin_of(2)`, mask
+  `0x01010101` x 16, counts `4,6,6,6,6,6,6,4` then `6,9,...,9,6`, all 64 checked; 8 band
+  bricks.
+- Done-when 2, `level_mirror::band_census`: 418 668 band bricks, the census's count; mirror
+  157 872 640 B live without the field, 254 115 904 B with it, grown 96 243 264 B = packed
+  96 243 264 B (+0.000 %); 543 629 312 B allocated before and after (the test's 1 GiB
+  budget). The flight (RTX 3080 Laptop, `--autopilot --headless --seed 1 --look field
+  --band-census --adapter NVIDIA`, 1b36eb3's tree, load 1.7): full residency at 37.5 s,
+  17 077 full and 40 700 LOD-only chunks, 1 829 483 band bricks, 438 898 624 B of band slots,
+  mirror 1 310 578 476 B live (871 679 852 without the field, + 438 898 624), 3 221 014 080 B
+  allocated (unchanged), pressure 0.620, `r_full` 16. The census over the same 17 077 chunks
+  reads 1 997 544 band bricks, packed 483 198 272 B: it reads chunks the world does not hold
+  as air, the mirror reads LOD-only neighbours by their mips. Against the owner's bar: 96.2 MB
+  <= 106 MB at the level, 438.9 MB <= 530 MB over the flight. The level's first sync with the
+  field reads 3059 ms on the RTX (Phase 1 1876 ms).
+- Done-when 3: a scratch test (`live/p3/zz_field_dump.rs`, untracked, not committed) dumped
+  the field look's hit mask and normals view at both poses, 384 x 216, lamp on, at b2c3fa1
+  (`live/p3/ref/`) and at 1b36eb3 (`live/p3/tip/`): 0 bytes differ in all four images.
+- Done-when 4, `look::a_carve_gives_the_exposed_air_brick_a_band_slot` (a sphere of radius 7
+  about brick (4, 4, 4) of `floor`): the exposed brick's entry is class 6 after the edit's one
+  sync; 57 600 hits of 57 600 px, 0 leaks. `the_field_surface_lies_on_the_flat_faces` as in
+  Phase 1 (floor 43012 hits, wall 37800, 0 leaks, worst 7.63e-6 voxel).
+- Done-when 5 (`live/p3/cost3.sh`, logs `live/p3/cost/`): the autopilot's attribute pass GPU
+  time, three alternated rounds, medians of p50 / p99; load 2.7 to 10.2, loaded,
+  indicative. RTX: base 1.260 / 2.574 ms, Phase 1 field 3.346 / 6.802, Phase 3 field 1.093 /
+  2.573. Radeon: base 2.037 / 2.579, Phase 1 3.000 / 3.585, Phase 3 1.488 / 2.083.
+- Cost seen, not a done-when: the field look's hit pass at the level's spawn, 1080p from 720p,
+  reads 6.48 ms on the RTX 3080 Laptop in one scratch run at 1b36eb3 (load 1.7) against
+  Phase 1's 3.46 ms; the walk counts a band voxel's index by popcount over the band words
+  below it (`field_count`), there being no band prefix in the header.
+- Deviations (1b36eb3):
+  - The band data is a separate band slot (one band-mask unit, then `ceil(n / 64)` count
+    units) in a bin of its exact size, not units appended after the brick's slot.
+    `SLOT_BINS` (13) is `BINS` (10, unchanged, the brick slots) plus 5, 7 and 9; `BIN_COUNT`
+    is 13; `band_bin_of`. The brick's header word 15 is `HEADER_BAND_BIT | band unit`. A
+    uniform band brick gets a 2-unit `CLASS_UNIFORM` (6) slot laid out as class 1 (3 units for
+    a translucent material); `class_planes` and `payload_units` read class 6 as 0 planes in
+    both shaders; `MirrorView::full_slot` skips class 6.
+  - No band prefix in the header (the surface prefix holds words 10 to 13 while the attribute
+    stays); the walk counts by popcount.
+  - Band masks are computed on the CPU from the world (`field::band_mask`, `Around`: a chunk
+    in the window the world holds full reads its voxels, one held only as mips its level-1
+    mips, any other as air), in `need()` for every brick of `upload_set` (which takes the 26
+    in-chunk neighbours of a dirty brick when the field is on); `GpuWorld::fix_band` after
+    the uploads places again the band slots of other chunks' bricks within one brick of
+    chunks written whole, dropped or LOD, and the 3^3 around dirty bricks, skipping bricks
+    written in this sync and dirty bricks; a placement that finds no room retries at the
+    next sync. The field pass (`attrib.wgsl` `field_main`) reads the CPU's mask and packs the
+    counts. `set_field_surface` drops and queues again every full chunk.
+  - The level's budget (`level_pool_units`) has no band term: the field look's level mirror
+    reads pressure 1.000 (254.1 of 259.2 MB) inside the headroom.
+  - Files outside the phase's list: `field.rs` (rewritten), `marcher.rs` (the scratch
+    bindings and `field_slots` removed), `main.rs` (`field_line`), `look.rs` (the edit test),
+    `rigs.rs` (a doc line), `examples/world_budget.rs` (`BIN_COUNT`).
+  - Done-when 5's base is main 28948a5's release binary (`live/base0050/`, built from
+    `git archive`), not "the Plan 0053 close binary" (Plan 0053 closes with this plan).
+- Gate at 1b36eb3: build, clippy (workspace and `-p flythrough --features wasm`), fmt,
+  doctests, `cargo deny check` and the four `scripts/check-*.mjs`: 0. `--profile quick` (no
+  lock, load 3.4 to 26): 540 run, 539 passed, 1 timed out
+  (`replay a_stamp_and_a_collapse_replay_from_the_save` 30.02 s; alone 13.81 s, load 21), 3
+  skipped. `--profile gpu --no-fail-fast` on lavapipe (exclusive perf lock, 17:20 to 17:48,
+  1662.7 s, 1-minute load 5.59 at the start after the test build, 1.91 at the end; CPU-only
+  `cargo check` runs shared the machine part of the time): 198 run, 198 passed (7 slow), 31
+  skipped (`live/p3/gpu2.log`). An earlier run (12:40, load 19.5) was stopped by a SIGTERM
+  after 7 tests (`live/p3/gpu.log`). The three tests Phase 1's gate read failing on the base
+  (`sharpness detail_after_lighting_is_exact_for_the_lamp`, `look
+  the_normal_field_adds_no_dark_speck`, `look the_normal_field_has_no_tile_edges`) pass in
+  this run.
+
+#### Phase 3a
+
+Readings on lavapipe unless named, exclusive perf lock.
+
+- The rig (`flythrough::thin_rig`, `--thin-rig` in the fly-through, 2 x 2 x 2 chunks): rock
+  below `z = 64`; a rock trunk 5 x 5 at `x, y` 62..67 up to `z = 118`; on its +x face a
+  one-voxel branch (y 64, z 72), a 2 x 2 rod (z 78..80), a 3 x 3 rod (z 86..89) and a diagonal
+  branch from (67, 64, 96), one voxel per step in x and z; on its -x face a one-voxel sheet
+  (y 64, z 72..82) and a two-voxel sheet (y 64..66, z 88..98); every feature 14 voxels long,
+  at least 4 empty voxels from every other (a unit test checks both), of material 5 ("rig
+  wood", `flythrough::with_wood`). Camera `flythrough::thin_rig_camera()`: (64.5, 20.5, 94.5)
+  looking at (64.5, 64.5, 90.0), 70 degrees.
+- Done-when 1 and 2, `look::thin_features_in_the_field_and_per_material` (320 x 320, headlamp,
+  detail on, every hit counted; a feature's pixels are the hits whose point lies in the
+  feature's bounding box less the 2 voxels nearest the trunk, grown by 0.5 voxel):
+
+  | feature | face px | field px | field / face % | field-cubes px | field-cubes / face % |
+  |---|---|---|---|---|---|
+  | one-voxel branch | 439 | 0 | 0.0 | 439 | 100.0 |
+  | 2x2 rod | 827 | 0 | 0.0 | 827 | 100.0 |
+  | 3x3 rod | 1197 | 913 | 76.3 | 1197 | 100.0 |
+  | diagonal branch | 508 | 0 | 0.0 | 508 | 100.0 |
+  | one-voxel sheet | 3183 | 0 | 0.0 | 3183 | 100.0 |
+  | two-voxel sheet | 3489 | 2666 | 76.4 | 3489 | 100.0 |
+
+  Rig hits: face 49 417, field 47 173, field-cubes 48 871; leaks: field 0, field-cubes 0.
+  Field against field-cubes away from the wood (no corner of the hit's dual cell within one
+  voxel of a wood voxel, in either look): 37 069 hit pixels compared, 0 differ in hit position
+  or hit record, 11 874 left out. The level in field-cubes: `VEIN_POSE` 82 944 hits, 0 leaks;
+  `PATCH_POSE` 82 944 hits, 0 leaks; the shaded image is the field look's byte for byte at
+  both. Side-by-side (face, field, field-cubes): `live/thin/rig.png` (untracked).
+- Done-when 3, cost (`live/p3a/cost.sh`, logs `live/p3a/cost/`): `flythrough --level --seed 1
+  --headless --render 1920x1080 --frames 300 --adapter NVIDIA|AMD --look field|field-cubes`
+  and `flythrough --thin-rig --headless --render 1920x1080 --frames 300 ...`, 1080p from
+  1280 x 720, release, each run under the exclusive perf lock and the memory cap, started at a
+  1-minute load under 2 (0.56 to 1.92), three alternated rounds; medians of the `gpu hit` and
+  `light` line (the HUD's median of the last 30 frames). "Phase 3" is 1b36eb3's release binary
+  (`live/p3/flythrough-p3`, the walk counting by popcount), "3a" this commit's; adapters by
+  `--adapter`.
+
+  | adapter | scene | binary, look | hit ms | light ms | hit + light |
+  |---|---|---|---|---|---|
+  | NVIDIA GeForce RTX 3080 Laptop GPU | level | Phase 3, field | 6.56 | 0.95 | 7.51 |
+  | | level | 3a, field | 4.95 | 0.98 | 5.93 |
+  | | level | 3a, field-cubes | 5.41 | 0.97 | 6.38 |
+  | | rig | 3a, field | 5.35 | 0.13 | 5.48 |
+  | | rig | 3a, field-cubes | 4.68 | 0.13 | 4.81 |
+  | AMD Radeon Graphics (RADV RENOIR) | level | Phase 3, field | 55.17 | 7.24 | 62.41 |
+  | | level | 3a, field | 39.91 | 7.22 | 47.13 |
+  | | level | 3a, field-cubes | 41.84 | 7.22 | 49.06 |
+  | | rig | 3a, field | 49.34 | 1.01 | 50.35 |
+  | | rig | 3a, field-cubes | 40.43 | 0.98 | 41.41 |
+
+  The field look at the level reads 5.93 ms on the RTX against the owner's 5 ms bar: not met.
+  An exploratory RTX pass (lane rule 9c; one alternated pair of runs each, load 1.4 to 1.9)
+  with a one-layer band-mask cache and a one-word count cache in `field_byte` read 5.07 and
+  5.06 ms hit against 4.98 and 4.92 without; it was reverted.
+- Done-when 4: the fly-through's level mirror under `--look field` (RTX, 1b36eb3 against this
+  commit): reserved 259 203 264 B before, 393 945 280 B now (6 049 792 units, 3200 records);
+  254 115 904 B live in both; `mirror pressure 1.000` in both. The pressure is the larger of
+  the unit term and the record term (`GpuWorld::pressure`); the unit term moved from 0.980 to
+  0.645, the record term is 3200 of 3200 records (the level's budget reserves one record per
+  chunk of its extent) and reads 1.000 under every look.
+- Deviations (this commit):
+  - The band prefix is two packed header words (`HEADER_BAND_PREFIX_WORD` 12 and 13), and the
+    surface prefix moved into words 10 and 11 in the same packing (`gpu_world::pack_prefix`,
+    `layer_prefix` in both shaders: layers 1 to 4 in the first word at 7, 8, 8 and 9 bits,
+    5 to 7 in the second at 9 bits each); the held patch put the band prefix in words 10 to 13,
+    which the surface prefix holds while the attribute stays. `fix_band` restages a band
+    brick's header whenever it places its band slot, not only when the slot moved. The pinned
+    header of `mirror::a_band_air_brick_s_slot_is_pinned` gains the band prefix.
+  - `level_pool_units` and `level_mirror_budget` take a `field` flag (the fly-through passes
+    it when `--look` starts in a field look); with it, each band brick's band slot and each
+    uniform band brick's slot count in pages of their bins, and the headroom adds a
+    9-unit band slot per headroom brick. Every other caller passes `false` and reads the same
+    budget as before.
+  - The crisp flag is the mirror's crisp material set (`GpuWorld::set_crisp_materials`, by
+    material id) and `SurfaceTuning::crisp` (flag bit 19), not a material row column: the
+    band counts a crisp voxel as air and holds every crisp voxel, its `u8` count carrying bit
+    7 (`field::CRISP_COUNT_BIT`), so the walk tests a solid band voxel's count byte, not its
+    material row. Band bricks within one brick of a crisp voxel get their counts from the CPU
+    (`field::band_of`, `GpuWorld::fix_crisp` at the end of a sync) and leave the field pass's
+    work list. A chunk held as mips reads no crisp voxel. `flythrough::CRISP_MATERIALS` is
+    the rig's wood; `LookPreset::FIELD_CUBES` sits after `field` in `LookPreset::ALL`; the
+    banner reads `look field-cubes, field normal analytic, crisp cubes on`.
+  - Files: `apps/flythrough/src/thin_rig.rs` (new), `hud.rs`, `lib.rs`, `main.rs`
+    (`--thin-rig`), `tests/look.rs`, `tests/support/rigs.rs` (`with_field_pool` sets the crisp
+    set), the `level_pool_units` callers in `examples/` and `tests/`;
+    `crates/vxe-render/src/field.rs`, `gpu_world.rs`, `marcher.rs`, `attrib.wgsl`,
+    `march.wgsl`, `tests/mirror.rs`.
+- Gate at this commit: build, clippy `-D warnings` (workspace, and `-p flythrough --features
+  wasm`), fmt, doctests, `cargo deny check`, the four `scripts/check-*.mjs`: 0. `--profile
+  quick` (no lock, load 3.9 at the start, 21.6 at the end): 542 run, 542 passed (10 slow), 3
+  skipped. `--profile gpu --no-fail-fast` on lavapipe
+  (exclusive perf lock, 18:50 to 19:28, 2264.4 s, 1-minute load 19.9 at the start right after
+  the quick tier, 1.35 at the end): 199 run, 199 passed (14 slow), 31 skipped
+  (`live/p3a/gpu.log`).
+
+#### Phase 4a
+
+Readings on the NVIDIA GeForce RTX 3080 Laptop GPU (`--adapter NVIDIA`) unless named; release
+binaries built from `git archive` of each commit under `live/p4a/` (`build.sh`; a first pass
+reused one commit's artifacts across three source trees through `git archive`'s old mtimes and
+was discarded, the four binaries were rebuilt with `tar -m` and differ by md5); each run under
+the exclusive perf lock and the memory cap, started at a 1-minute load under 2, three
+alternated rounds (`live/p4a/matrix.sh`, `extra.sh`), medians of the frame line's per-pass
+times (the median of the last 30 frames of `--frames 300`); the per-ray counters from one
+`--view steps` run each (deterministic counts). Every render is 1.5x from internal
+(1920 x 1080 from 1280 x 720, 2530 x 1378 from 1687 x 919); the steps view counts one ray per
+output pixel. "default" is the base's `contour-sharp`. No code changed.
+
+- Done-when 1, the frame table (`--level --seed 1 --headless --frames 300 --adapter NVIDIA`;
+  the rig is `--thin-rig`, 17045d8 only; "loads" is the 1-minute load range of the three
+  runs; logs `live/p4a/runs/`, `live/p4a/extra/`):
+
+| binary | look | scene | render | view, lamp | loads | gpu frame | hit | light | gradient | temporal | atrous | probes | gather | composite | upscale | sharpen | exposure |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| main 28948a5 | default | patch | 2530x1378 | normals | 1.33-1.82 | 1.518 | 0.989 | 0.010 | 0.000 | 0.122 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.128 | 0.005 |
+| main 28948a5 | default | patch | 2530x1378 | shaded, lamp off | 1.36-1.72 | 6.331 | 1.110 | 1.293 | 0.123 | 0.127 | 0.902 | 1.267 | 0.143 | 0.301 | 0.872 | 0.133 | 0.058 |
+| main 28948a5 | default | patch | 2530x1378 | shaded, lamp on | 1.48-1.78 | 6.528 | 1.108 | 1.385 | 0.118 | 0.127 | 0.893 | 1.380 | 0.142 | 0.305 | 0.885 | 0.133 | 0.058 |
+| main 28948a5 | default | spawn | 1920x1080 | normals | 1.37-1.66 | 0.872 | 0.544 | 0.007 | 0.000 | 0.077 | 0.000 | 0.000 | 0.000 | 0.101 | 0.061 | 0.076 | 0.004 |
+| main 28948a5 | default | spawn | 1920x1080 | shaded, lamp on | 1.49-1.73 | 4.543 | 0.613 | 0.924 | 0.098 | 0.083 | 0.513 | 1.413 | 0.109 | 0.184 | 0.500 | 0.076 | 0.035 |
+| main 28948a5 | default | spawn | 2530x1378 | shaded, lamp on | 1.37-1.66 | 6.816 | 1.050 | 1.582 | 0.147 | 0.130 | 0.870 | 1.472 | 0.183 | 0.317 | 0.873 | 0.133 | 0.058 |
+| main 28948a5 | default | vein | 2530x1378 | normals | 1.23-1.52 | 1.237 | 0.710 | 0.009 | 0.000 | 0.122 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.128 | 0.004 |
+| main 28948a5 | default | vein | 2530x1378 | shaded, lamp off | 1.23-1.56 | 6.695 | 0.780 | 1.807 | 0.200 | 0.127 | 0.863 | 1.355 | 0.231 | 0.293 | 0.846 | 0.132 | 0.057 |
+| main 28948a5 | default | vein | 2530x1378 | shaded, lamp on | 1.34-1.61 | 6.846 | 0.779 | 1.818 | 0.194 | 0.126 | 0.871 | 1.467 | 0.231 | 0.296 | 0.866 | 0.131 | 0.057 |
+| main 28948a5 | face | patch | 2530x1378 | normals | 1.26-1.32 | 1.444 | 0.914 | 0.009 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.128 | 0.004 |
+| main 28948a5 | face | patch | 2530x1378 | shaded, lamp off | 1.28-1.40 | 5.972 | 1.022 | 1.139 | 0.110 | 0.136 | 0.898 | 1.063 | 0.141 | 0.300 | 0.952 | 0.137 | 0.058 |
+| main 28948a5 | face | patch | 2530x1378 | shaded, lamp on | 1.31-1.44 | 6.243 | 1.025 | 1.277 | 0.110 | 0.128 | 0.903 | 1.157 | 0.143 | 0.301 | 0.985 | 0.133 | 0.058 |
+| main 28948a5 | face | spawn | 1920x1080 | normals | 1.31-1.76 | 0.828 | 0.502 | 0.007 | 0.000 | 0.077 | 0.000 | 0.000 | 0.000 | 0.101 | 0.061 | 0.076 | 0.004 |
+| main 28948a5 | face | spawn | 1920x1080 | shaded, lamp on | 1.33-1.82 | 4.388 | 0.567 | 0.905 | 0.092 | 0.080 | 0.538 | 1.207 | 0.110 | 0.180 | 0.593 | 0.076 | 0.035 |
+| main 28948a5 | face | spawn | 2530x1378 | shaded, lamp on | 1.31-1.76 | 6.639 | 0.964 | 1.552 | 0.138 | 0.127 | 0.898 | 1.262 | 0.183 | 0.310 | 0.994 | 0.133 | 0.058 |
+| main 28948a5 | face | vein | 2530x1378 | normals | 1.31-1.44 | 1.181 | 0.651 | 0.009 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.127 | 0.004 |
+| main 28948a5 | face | vein | 2530x1378 | shaded, lamp off | 1.33-1.56 | 6.269 | 0.724 | 1.557 | 0.176 | 0.127 | 0.893 | 1.183 | 0.234 | 0.294 | 0.899 | 0.132 | 0.057 |
+| main 28948a5 | face | vein | 2530x1378 | shaded, lamp on | 1.36-1.70 | 6.403 | 0.720 | 1.610 | 0.174 | 0.136 | 0.883 | 1.240 | 0.231 | 0.292 | 0.909 | 0.137 | 0.058 |
+| b282738 | field | patch | 2530x1378 | normals | 1.09-1.87 | 5.387 | 4.849 | 0.010 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.163 | 0.103 | 0.131 | 0.005 |
+| b282738 | field | patch | 2530x1378 | normals, 3000 frames | 0.72-0.96 | 5.427 | 4.861 | 0.010 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.163 | 0.103 | 0.131 | 0.005 |
+| b282738 | field | patch | 2530x1378 | shaded, lamp off | 1.02-1.96 | 10.441 | 5.185 | 1.296 | 0.128 | 0.128 | 0.886 | 1.264 | 0.138 | 0.335 | 0.857 | 0.132 | 0.057 |
+| b282738 | field | patch | 2530x1378 | shaded, lamp on | 1.02-1.87 | 10.600 | 5.169 | 1.376 | 0.117 | 0.128 | 0.892 | 1.370 | 0.138 | 0.339 | 0.878 | 0.132 | 0.057 |
+| b282738 | field | spawn | 1920x1080 | normals | 1.26-1.38 | 3.707 | 3.379 | 0.007 | 0.000 | 0.076 | 0.000 | 0.000 | 0.000 | 0.101 | 0.062 | 0.077 | 0.005 |
+| b282738 | field | spawn | 1920x1080 | shaded, lamp on | 1.26-1.32 | 7.490 | 3.581 | 0.907 | 0.090 | 0.081 | 0.508 | 1.393 | 0.108 | 0.203 | 0.494 | 0.075 | 0.035 |
+| b282738 | field | spawn | 2530x1378 | shaded, lamp on | 1.24-1.43 | 11.634 | 5.650 | 1.551 | 0.140 | 0.128 | 1.199 | 1.444 | 0.178 | 0.344 | 0.856 | 0.131 | 0.057 |
+| b282738 | field | vein | 2530x1378 | normals | 1.02-1.86 | 4.213 | 3.643 | 0.010 | 0.000 | 0.132 | 0.000 | 0.000 | 0.000 | 0.175 | 0.109 | 0.137 | 0.005 |
+| b282738 | field | vein | 2530x1378 | shaded, lamp off | 1.11-1.84 | 9.957 | 3.879 | 1.858 | 0.207 | 0.128 | 0.870 | 1.382 | 0.231 | 0.334 | 0.858 | 0.132 | 0.058 |
+| b282738 | field | vein | 2530x1378 | shaded, lamp on | 1.21-1.47 | 10.054 | 3.875 | 1.851 | 0.195 | 0.128 | 0.868 | 1.490 | 0.231 | 0.337 | 0.877 | 0.132 | 0.057 |
+| b282738 | field N2 | vein | 2530x1378 | shaded, lamp on | 0.76-1.04 | 13.222 | 6.828 | 1.793 | 0.189 | 0.127 | 0.879 | 1.428 | 0.223 | 0.326 | 0.850 | 0.130 | 0.056 |
+| 1b36eb3 | field | patch | 2530x1378 | normals | 0.95-1.97 | 10.076 | 9.496 | 0.010 | 0.000 | 0.133 | 0.000 | 0.000 | 0.000 | 0.177 | 0.110 | 0.139 | 0.005 |
+| 1b36eb3 | field | patch | 2530x1378 | shaded, lamp off | 1.04-1.78 | 15.081 | 9.724 | 1.319 | 0.137 | 0.138 | 0.909 | 1.314 | 0.140 | 0.345 | 0.872 | 0.139 | 0.059 |
+| 1b36eb3 | field | patch | 2530x1378 | shaded, lamp on | 1.13-1.84 | 15.436 | 9.803 | 1.417 | 0.124 | 0.137 | 0.916 | 1.462 | 0.141 | 0.351 | 0.898 | 0.139 | 0.059 |
+| 1b36eb3 | field | spawn | 1920x1080 | normals | 1.08-1.94 | 6.941 | 6.598 | 0.008 | 0.000 | 0.082 | 0.000 | 0.000 | 0.000 | 0.109 | 0.066 | 0.083 | 0.005 |
+| 1b36eb3 | field | spawn | 1920x1080 | shaded, lamp on | 1.00-1.95 | 10.801 | 6.717 | 0.946 | 0.096 | 0.086 | 0.503 | 1.467 | 0.107 | 0.203 | 0.492 | 0.080 | 0.036 |
+| 1b36eb3 | field | spawn | 2530x1378 | shaded, lamp on | 1.15-1.86 | 16.534 | 10.599 | 1.615 | 0.148 | 0.137 | 0.859 | 1.514 | 0.178 | 0.348 | 0.859 | 0.138 | 0.058 |
+| 1b36eb3 | field | vein | 2530x1378 | normals | 1.16-1.82 | 7.811 | 7.269 | 0.010 | 0.000 | 0.124 | 0.000 | 0.000 | 0.000 | 0.165 | 0.104 | 0.133 | 0.005 |
+| 1b36eb3 | field | vein | 2530x1378 | shaded, lamp off | 1.26-1.89 | 13.699 | 7.351 | 1.951 | 0.223 | 0.137 | 0.880 | 1.469 | 0.231 | 0.338 | 0.860 | 0.139 | 0.059 |
+| 1b36eb3 | field | vein | 2530x1378 | shaded, lamp on | 1.21-1.96 | 13.796 | 7.303 | 1.926 | 0.210 | 0.137 | 0.887 | 1.566 | 0.231 | 0.341 | 0.876 | 0.138 | 0.059 |
+| 17045d8 | face | rig | 1920x1080 | shaded, lamp on | 1.35-1.91 | 2.329 | 0.617 | 0.105 | 0.016 | 0.048 | 0.260 | 0.659 | 0.081 | 0.124 | 0.315 | 0.074 | 0.033 |
+| 17045d8 | face | rig | 2530x1378 | shaded, lamp on | 1.35-1.83 | 3.556 | 1.071 | 0.169 | 0.022 | 0.082 | 0.428 | 0.689 | 0.131 | 0.216 | 0.552 | 0.135 | 0.056 |
+| 17045d8 | field-cubes | patch | 2530x1378 | normals | 1.51-1.89 | 7.828 | 7.287 | 0.011 | 0.000 | 0.125 | 0.000 | 0.000 | 0.000 | 0.165 | 0.104 | 0.134 | 0.005 |
+| 17045d8 | field-cubes | patch | 2530x1378 | shaded, lamp off | 1.55-1.97 | 13.026 | 7.431 | 1.343 | 0.137 | 0.138 | 0.938 | 1.331 | 0.142 | 0.325 | 0.879 | 0.140 | 0.060 |
+| 17045d8 | field-cubes | patch | 2530x1378 | shaded, lamp on | 1.72-1.97 | 13.261 | 7.315 | 1.400 | 0.123 | 0.137 | 0.937 | 1.475 | 0.139 | 0.325 | 0.891 | 0.139 | 0.059 |
+| 17045d8 | field-cubes | patch | 2530x1378 | shaded, lamp on, 3000 frames | 0.43-1.78 | 13.188 | 7.562 | 1.458 | 0.134 | 0.139 | 0.882 | 1.418 | 0.144 | 0.335 | 0.914 | 0.140 | 0.060 |
+| 17045d8 | field-cubes | rig | 1920x1080 | shaded, lamp on | 1.14-1.79 | 6.674 | 4.802 | 0.130 | 0.016 | 0.050 | 0.272 | 0.748 | 0.086 | 0.129 | 0.330 | 0.075 | 0.035 |
+| 17045d8 | field-cubes | rig | 2530x1378 | shaded, lamp on | 1.21-1.79 | 10.102 | 7.542 | 0.197 | 0.021 | 0.081 | 0.421 | 0.763 | 0.135 | 0.216 | 0.560 | 0.135 | 0.056 |
+| 17045d8 | field-cubes | spawn | 1920x1080 | normals | 1.68-1.87 | 5.631 | 5.299 | 0.008 | 0.000 | 0.082 | 0.000 | 0.000 | 0.000 | 0.110 | 0.066 | 0.082 | 0.005 |
+| 17045d8 | field-cubes | spawn | 1920x1080 | shaded, lamp on | 1.44-1.93 | 9.723 | 5.596 | 0.971 | 0.098 | 0.082 | 0.498 | 1.511 | 0.110 | 0.194 | 0.504 | 0.076 | 0.036 |
+| 17045d8 | field-cubes | spawn | 2530x1378 | shaded, lamp on | 1.74-1.90 | 14.505 | 8.653 | 1.621 | 0.149 | 0.136 | 0.866 | 1.516 | 0.179 | 0.329 | 0.863 | 0.137 | 0.058 |
+| 17045d8 | field-cubes | vein | 2530x1378 | normals | 1.88-1.97 | 6.034 | 5.486 | 0.011 | 0.000 | 0.125 | 0.000 | 0.000 | 0.000 | 0.165 | 0.106 | 0.136 | 0.005 |
+| 17045d8 | field-cubes | vein | 2530x1378 | shaded, lamp off | 1.86-1.93 | 11.908 | 5.353 | 1.954 | 0.230 | 0.129 | 0.892 | 1.487 | 0.233 | 0.315 | 0.861 | 0.134 | 0.059 |
+| 17045d8 | field-cubes | vein | 2530x1378 | shaded, lamp on | 1.87-1.91 | 12.025 | 5.480 | 1.993 | 0.214 | 0.130 | 0.891 | 1.597 | 0.238 | 0.324 | 0.898 | 0.136 | 0.059 |
+| 17045d8 | field-cubes | vein | 2530x1378 | shaded, lamp on, 3000 frames | 0.78-1.74 | 12.000 | 5.518 | 2.012 | 0.218 | 0.130 | 0.901 | 1.566 | 0.240 | 0.321 | 0.904 | 0.135 | 0.059 |
+| 17045d8 | field | patch | 2530x1378 | normals | 1.34-1.99 | 7.497 | 6.951 | 0.011 | 0.000 | 0.124 | 0.000 | 0.000 | 0.000 | 0.166 | 0.105 | 0.134 | 0.005 |
+| 17045d8 | field | patch | 2530x1378 | shaded, lamp off | 1.54-1.89 | 13.847 | 6.892 | 1.307 | 0.137 | 0.138 | 2.291 | 1.321 | 0.138 | 0.319 | 0.862 | 0.138 | 0.059 |
+| 17045d8 | field | patch | 2530x1378 | shaded, lamp on | 1.50-1.96 | 13.393 | 6.954 | 1.406 | 0.124 | 0.138 | 0.966 | 1.461 | 0.140 | 0.325 | 0.888 | 0.139 | 0.059 |
+| 17045d8 | field | rig | 1920x1080 | shaded, lamp on | 1.24-1.83 | 7.365 | 5.447 | 0.136 | 0.016 | 0.052 | 0.274 | 0.761 | 0.087 | 0.133 | 0.329 | 0.079 | 0.035 |
+| 17045d8 | field | rig | 2530x1378 | shaded, lamp on | 1.24-1.77 | 11.215 | 8.506 | 0.207 | 0.021 | 0.080 | 0.429 | 0.802 | 0.136 | 0.219 | 0.558 | 0.136 | 0.057 |
+| 17045d8 | field | spawn | 1920x1080 | normals | 1.04-1.89 | 5.172 | 4.839 | 0.008 | 0.000 | 0.077 | 0.000 | 0.000 | 0.000 | 0.102 | 0.063 | 0.078 | 0.005 |
+| 17045d8 | field | spawn | 1920x1080 | shaded, lamp on | 1.04-1.97 | 9.213 | 5.052 | 0.989 | 0.100 | 0.082 | 0.509 | 1.529 | 0.112 | 0.198 | 0.515 | 0.077 | 0.036 |
+| 17045d8 | field | spawn | 2530x1378 | shaded, lamp on | 1.03-1.91 | 13.873 | 7.884 | 1.663 | 0.151 | 0.136 | 0.888 | 1.568 | 0.183 | 0.335 | 0.883 | 0.137 | 0.059 |
+| 17045d8 | field | vein | 2530x1378 | normals | 1.55-1.98 | 5.765 | 5.184 | 0.011 | 0.000 | 0.134 | 0.000 | 0.000 | 0.000 | 0.175 | 0.111 | 0.141 | 0.005 |
+| 17045d8 | field | vein | 2530x1378 | shaded, lamp off | 1.64-1.93 | 11.494 | 5.179 | 1.971 | 0.228 | 0.137 | 0.885 | 1.476 | 0.235 | 0.319 | 0.871 | 0.139 | 0.059 |
+| 17045d8 | field | vein | 2530x1378 | shaded, lamp on | 1.17-1.97 | 11.743 | 5.240 | 1.994 | 0.216 | 0.129 | 0.892 | 1.621 | 0.239 | 0.324 | 0.900 | 0.134 | 0.058 |
+
+  Per-ray counters (`--view steps`, one run each, load 1.06 to 1.86; loads are the ray's 32-bit
+  storage loads, pool reads its pool words; p99 clamps at 255):
+
+| binary | look | scene | render | rays | steps mean / p99 | loads mean / p99 | pool reads mean / p99 | shadow rays: steps, loads mean / p99 |
+|---|---|---|---|---|---|---|---|---|
+| main 28948a5 | default | patch | 2530x1378 | 3486340 | 7.82 / 16 | 30.23 / 44 | 7.29 / 14 | 7.18, 23.26 / 34 |
+| main 28948a5 | default | spawn | 1920x1080 | 2073600 | 7.51 / 11 | 22.41 / 31 | 5.60 / 11 | 7.40, 16.40 / 27 |
+| main 28948a5 | default | spawn | 2530x1378 | 3486340 | 7.53 / 11 | 22.45 / 31 | 5.59 / 11 | 7.42, 16.45 / 27 |
+| main 28948a5 | default | vein | 2530x1378 | 3486340 | 5.11 / 8 | 20.73 / 31 | 6.67 / 14 | 6.55, 16.14 / 26 |
+| main 28948a5 | face | patch | 2530x1378 | 3486340 | 7.66 / 15 | 24.82 / 32 | 1.96 / 2 | 7.20, 22.28 / 30 |
+| main 28948a5 | face | spawn | 1920x1080 | 2073600 | 7.49 / 11 | 17.79 / 26 | 0.99 / 1 | 7.95, 17.66 / 28 |
+| main 28948a5 | face | spawn | 2530x1378 | 3486340 | 7.51 / 11 | 17.83 / 26 | 0.99 / 1 | 7.97, 17.69 / 28 |
+| main 28948a5 | face | vein | 2530x1378 | 3486340 | 5.05 / 8 | 16.05 / 22 | 2.00 / 2 | 6.44, 15.38 / 21 |
+| b282738 | field | patch | 2530x1378 | 3486340 | 9.75 / 17 | 111.91 / 223 | 54.21 / 110 | 6.92, 22.27 / 31 |
+| b282738 | field | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 90.98 / 171 | 38.94 / 59 | 7.32, 16.25 / 27 |
+| b282738 | field | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 90.83 / 170 | 39.04 / 59 | 7.34, 16.30 / 27 |
+| b282738 | field | vein | 2530x1378 | 3486340 | 7.03 / 11 | 81.37 / 138 | 42.31 / 66 | 6.41, 15.92 / 23 |
+| 1b36eb3 | field | patch | 2530x1378 | 3486340 | 9.75 / 17 | 244.37 / 255 | 233.90 / 255 | 6.92, 22.27 / 31 |
+| 1b36eb3 | field | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 222.99 / 255 | 201.60 / 255 | 7.77, 19.29 / 29 |
+| 1b36eb3 | field | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 223.07 / 255 | 201.82 / 255 | 7.78, 19.34 / 29 |
+| 1b36eb3 | field | vein | 2530x1378 | 3486340 | 7.03 / 11 | 214.08 / 255 | 201.19 / 255 | 6.41, 19.91 / 27 |
+| 17045d8 | face | rig | 1920x1080 | 2073600 | 11.16 / 20 | 19.05 / 45 | 0.13 / 2 | 8.80, 15.66 / 42 |
+| 17045d8 | face | rig | 2530x1378 | 3486340 | 11.10 / 20 | 18.81 / 45 | 0.13 / 2 | 8.80, 15.55 / 41 |
+| 17045d8 | field-cubes | patch | 2530x1378 | 3486340 | 9.75 / 17 | 178.87 / 255 | 136.85 / 255 | 6.92, 22.30 / 32 |
+| 17045d8 | field-cubes | rig | 1920x1080 | 2073600 | 15.84 / 36 | 104.98 / 255 | 59.74 / 255 | 13.68, 38.28 / 79 |
+| 17045d8 | field-cubes | rig | 2530x1378 | 3486340 | 15.72 / 36 | 103.62 / 255 | 58.77 / 255 | 13.68, 38.21 / 78 |
+| 17045d8 | field-cubes | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 142.61 / 255 | 100.27 / 190 | 7.77, 19.31 / 29 |
+| 17045d8 | field-cubes | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 142.36 / 255 | 100.15 / 189 | 7.78, 19.36 / 29 |
+| 17045d8 | field-cubes | vein | 2530x1378 | 3486340 | 7.03 / 11 | 137.23 / 231 | 105.53 / 168 | 6.41, 19.95 / 28 |
+| 17045d8 | field | patch | 2530x1378 | 3486340 | 9.75 / 17 | 173.60 / 255 | 131.17 / 255 | 6.92, 22.30 / 32 |
+| 17045d8 | field | rig | 1920x1080 | 2073600 | 17.87 / 41 | 118.84 / 255 | 72.86 / 255 | 14.51, 43.09 / 88 |
+| 17045d8 | field | rig | 2530x1378 | 3486340 | 17.69 / 41 | 117.06 / 255 | 71.47 / 255 | 14.50, 42.96 / 88 |
+| 17045d8 | field | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 136.77 / 255 | 94.63 / 182 | 7.77, 19.31 / 29 |
+| 17045d8 | field | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 136.52 / 255 | 94.52 / 182 | 7.78, 19.36 / 29 |
+| 17045d8 | field | vein | 2530x1378 | 3486340 | 7.03 / 11 | 131.04 / 219 | 99.79 / 161 | 6.41, 19.95 / 28 |
+
+  RADV shader stats (`RADV_DEBUG=shaderstats,nocache`, `--adapter AMD`, AMD Radeon Graphics
+  (RADV RENOIR), `--frames 3`, load 0.28 to 0.58; `live/p4a/radv/`): the base's hit shader
+  64 VGPRs, 31 396 B of code; the field hit pipeline 128 VGPRs at every plan binary, 117 060 B
+  (b282738), 131 920 B (1b36eb3), 155 020 B (17045d8, the same pipeline for `field` and
+  `field-cubes`: the crisp test is a flag bit, not a pipeline).
+- The CPU side (frame table runs, medians): `update + poll + sync` p50 / p99 at 17045d8, `field`
+  against `field-cubes`: spawn 1080p 0.034 / 0.070 and 0.038 / 0.061 ms, vein 0.039 / 0.075
+  and 0.036 / 0.063, patch 0.038 / 0.065 and 0.041 / 0.069 (base 0.029 to 0.036 / 0.053 to
+  0.066; b282738 0.047 to 0.059 / 0.084 to 0.127; 1b36eb3 0.032 to 0.039 / 0.067 to 0.082).
+  Startup: the level's upload reads 0.55 s (base), 1.57 s (b282738), 2.09 s (1b36eb3), 2.6 to
+  3.4 s (17045d8 `field`), 3.6 to 4.5 s (17045d8 `field-cubes`); the initial fill reads 12.3
+  to 17.8 ms (base), 23.8 (b282738), 25.0 in every 1b36eb3 run, and at 17045d8 either 25.1
+  (11 of 54 runs) or 123.8 to 149.0 ms (43 of 54), in both looks. Session 2's 125 to 149 ms
+  and 4.0 s are 17045d8's `field-cubes` startup figures; the per-frame CPU terms do not move
+  between `field` and `field-cubes`. The two-valued fill is not attributed.
+- Sustained load (`extra.sh`, 3000 frames, three rounds, load 0.43 to 1.78, `nvidia-smi`
+  sampled every 500 ms): b282738 `field` patch normals 5.427 ms GPU frame (300 frames: 5.387),
+  17045d8 `field-cubes` vein shaded 12.000 (12.025), patch 13.188 (13.261); the SM clock's mean
+  over a run 1191 to 1446 MHz, power 67 to 73 W, 64 to 68 C. b282738 `field --field-normal
+  blend` at the vein, shaded, 2530 x 1378: 13.222 ms GPU frame, hit 6.828 (session 1's N2
+  window line: 28.466, hit 22.993).
+- Done-when 2, the windowed gap. The windowed figures: session 1, b282738 `field` at the patch,
+  march GPU p50 16.369 ms over 396 timed frames, its frame line 2530 x 1378 from 1687 x 919 in
+  the normals view (GPU frame 16.260, hit 15.736, temporal 0.123, composite 0.161, upscale
+  0.100, sharpen 0.125); session 2, 17045d8 `field-cubes`, march GPU p50 29.270 (vein, 269
+  timed frames) and 30.359 ms (patch, 180), no frame line, so window size and view unknown;
+  the split below takes them as 2530 x 1378, shaded, lamp on. The headless reproduction at the
+  window's size and pose: 5.387 ms (session 1's case), 12.025 (vein) and 13.261 (patch): the
+  window reads 3.04x, 2.43x and 2.29x the headless frame, so the headless runs do not reproduce
+  the windowed p50s within 10 %. The terms, GPU frame medians from the table, chained:
+
+  | term | from | to | ms (vein) | ms (patch) | of it, the hit pass |
+  |---|---|---|---|---|---|
+  | view, normals to shaded | b282738 `field` patch normals 5.387 | b282738 `field` patch shaded 10.600 | +5.213 | +5.213 | +0.320 (light +1.366, the passes after light +3.527) |
+  | storage, dense pool to band slots with the prefix | b282738 `field` patch shaded 10.600 | 17045d8 `field` patch shaded 13.393 | +2.793 | +2.793 | +1.785 |
+  | the crisp test | 17045d8 `field` patch shaded 13.393 | 17045d8 `field-cubes` patch shaded 13.261 | -0.132 | -0.132 | +0.361 |
+  | pose, patch to vein | 17045d8 `field-cubes` patch 13.261 | 17045d8 `field-cubes` vein 12.025 | -1.236 | 0 | -1.835 |
+  | resolution | | | 0 | 0 | both sessions at the same window size as far as logged |
+  | headless gap | 5.387 | 12.025 / 13.261 | +6.638 | +7.874 | |
+  | windowed gap | 16.369 | 29.270 / 30.359 | +12.901 | +13.990 | |
+  | unattributed, the window's | | | +6.263 | +6.116 | |
+
+  Of the windowed figure itself, against its headless reproduction (session 1, where the frame
+  line exists): the hit pass reads 15.736 against 4.849 ms (3.25x) while every pass after it
+  reads within 0.006 ms of headless (temporal 0.123 / 0.123, composite 0.161 / 0.163, upscale
+  0.100 / 0.103, sharpen 0.125 / 0.131); session 1's N2 vein line the same way: hit 22.993 against 6.828 ms (3.37x),
+  light 1.683 / 1.793, atrous 0.772 / 0.879, probes 1.191 / 1.428, composite 0.301 / 0.326, upscale
+  0.746 / 0.850, sharpen 0.124 / 0.130. The window's remainder is in the hit pass alone. Session 1's
+  patch run carved five times before its frame line (`live/session1.log` lines 970 to 974) and
+  the camera was flown, so the view timed is not the pose's; the window's camera position is
+  not logged. The sustained runs read no drift. Not measured (lane rule 10): the window's
+  surface, present and the HUD timer.
+- Done-when 3, the spawn's split (1920 x 1080 from 1280 x 720, shaded, lamp on; hit + light):
+  17045d8 `field-cubes` 5.596 + 0.971 = 6.567 ms against the 5.00 ms bar (+1.567); against
+  b282738's 3.581 + 0.907 = 4.488 ms (Phase 1 read 4.36), +2.079 ms in two terms:
+
+  | term | hit ms | light ms | hit + light | loads / ray | pool reads / ray | code bytes |
+  |---|---|---|---|---|---|---|
+  | b282738 `field` (dense pool, direct index) | 3.581 | 0.907 | 4.488 | 90.98 | 38.94 | 117 060 |
+  | storage step 1: band slots counted by popcount (1b36eb3 `field`) | +3.136 | +0.039 | 7.663 | 222.99 | 201.60 | 131 920 |
+  | storage step 2: the band prefix (17045d8 `field`) | -1.665 | +0.043 | 6.041 | 136.77 | 94.63 | 155 020 |
+  | storage, net (b282738 to 17045d8 `field`) | +1.471 | +0.082 | +1.553 | +45.79 | +55.69 | |
+  | the crisp test (17045d8 `field-cubes`) | +0.544 | -0.018 | 6.567 (+0.526) | 142.61 (+5.84) | 100.27 (+5.64) | 155 020 |
+  | base `contour-sharp` / `face`, for scale | 0.613 / 0.567 | 0.924 / 0.905 | 1.537 / 1.472 | 22.41 / 17.79 | 5.60 / 0.99 | 31 396 |
+
+  Steps per ray read 9.20 mean, p99 13 in every field binary and look (base 7.51 / 7.49): the
+  DDA's path did not move; the terms are loads per step. VGPRs 128 in all three. The scratch
+  builds per term (the crisp test, the corner cache, the normal) were not made: the binaries
+  and looks separate the storage and crisp terms.
+- Done-when 4, the thin census (`level_mirror::thin_census`, a scratch reading run on the CPU
+  in release, 2.66 s; the test is held untracked as `live/p4a/thin-census.patch` and lands with
+  Phase 4b): the level at `--seed 1`, every chunk, 27 497 052 solid band voxels (the band
+  census's solid side); solid voxels by 27-count, those whose 3 x 3 x 3 block lies inside the
+  extent, and apart those on the extent's outer voxel layer (where the outside reads as air):
+
+  | count | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 1 to 13 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | inside | 8 | 57 | 106 | 145 | 412 | 791 | 882 | 1 694 | 3 238 | 5 148 | 12 950 | 28 646 | 68 820 | 122 897 |
+  | outer layer | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 12 264 | 0 | 12 272 |
+
+- Deviations: the four binaries are rebuilt under `live/p4a/bin/`, not the earlier lane
+  binaries; lamp off was read in the shaded view only; the spawn at 2530 x 1378 in the shaded
+  view only; the rig at 2530 x 1378 and 1920 x 1080 for `face`, `field` and `field-cubes`;
+  the extra rows (3000 frames, N2 at the vein) are not in the phase's matrix; session 2's
+  window size and view are assumed, not logged; the thin census separates the extent's outer
+  layer, which the phase's text does not name.
+
+
+#### Phase 4b
+
+Readings on the NVIDIA GeForce RTX 3080 Laptop GPU (`--adapter NVIDIA`) unless named;
+`flythrough --level --seed 1 --headless --frames 300 --render 1920x1080 --look field|field-cubes`
+(1080p from 1280 x 720), release, each run under the exclusive perf lock and the memory cap at
+a 1-minute load under 2, three alternated rounds against 17045d8's release binary
+(`live/p4a/bin`), medians of the frame line's hit and light (`live/p4b/cost.sh`, logs
+`live/p4b/cost-cN/`); per-ray counters from one `--view steps` run; RADV shader stats of the
+field hit pipeline by `RADV_DEBUG=shaderstats,nocache --adapter AMD --frames 3`. Every change
+is in `march.wgsl` alone (c8 also `light.wgsl`, the counters), measured one at a time on top
+of the previous one; c1 to c5 before the stop (91f9066), c6 to c8 after owner answer 10. Each tip's field
+and `field-cubes` hit positions and hit records at both poses (384 x 216) and on the thin rig
+(320 x 320), lavapipe, were dumped by a scratch test (`live/p4b/zz_field_dump.rs`, not
+committed) and compared with 17045d8's (`live/p4b/ref/`, `cmp.py`): c2, c4 and c5 read 0
+pixels differing in hit mask, position or record in all six images (c1 and c3 are inside c2's
+and c4's).
+
+| change | 17045d8 field-cubes h+l | tip field-cubes hit / light / h+l | 17045d8 field h+l | tip field hit / light / h+l | loads / ray | pool reads / ray | RADV VGPRs, code B | loads |
+|---|---|---|---|---|---|---|---|---|
+| 17045d8 (Phase 4a) | 6.567 | | 6.041 | | 142.61 | 100.27 | 128, 155 020 | |
+| c1: `field_normal` takes the hit cell's held corners (`fc`) instead of reloading them | 6.288 | 4.903 / 0.961 / 5.864 | 5.766 | 4.521 / 0.976 / 5.497 | 142.61 | 100.27 | 128, 155 728 | 1.09-1.89 |
+| c2: the crisp bit read with the corners (`field_count_raw`, `fc_crisp`); the march loop's `field_crisp` gone, the crisp test in `field_voxel` on the first piece's corners; `field_material` reads a corner's crispness from the held cell | 6.295 | 4.811 / 0.977 / 5.788 | 5.864 | 4.614 / 0.963 / 5.577 | 136.77 | 94.63 | 256, 174 184 | 0.90-1.98 |
+| c3: the corners loaded in brick order (the axes whose brick face the cell crosses last), so the held brick serves each brick's corners in a row | 6.358 | 4.530 / 0.968 / 5.498 | 5.769 | 4.464 / 0.979 / 5.443 | 126.00 | 87.96 | 256, 174 444 | 1.28-1.88 |
+| c4: `field_material` through the held brick (`field_opaque`, `field_opaque_material`) instead of up to nine `lookup`s, one material read for the chosen corner | 6.387 | 4.443 / 0.985 / 5.428 | 5.861 | 4.314 / 0.979 / 5.293 | 120.33 | 91.83 | 256, 213 820 | 0.91-1.72 |
+| c5: the material resolved after the walk (`FIELD_MATERIAL_PENDING`, `field_pixel`), out of the march loop | 6.352 | 4.219 / 0.966 / 5.185 | 5.750 | 4.160 / 0.979 / 5.139 | 120.33 | 91.83 | 256, 189 032 | 1.06-1.81 |
+| c6: `field_brick` reads the band word and the two band prefix words together (one dependency level fewer; reverted) | 6.525 | 4.220 / 0.981 / 5.201 | 5.924 | 4.105 / 0.981 / 5.086 | 120.33 | 91.83 | not read | 1.43-1.98 |
+| c7 (on c5): the held cell's corners as two words of count bytes (`fc_bytes`, `held_phi`) instead of eight `phi` and a crisp word | 6.477 | 4.151 / 0.949 / 5.100 | 5.935 | 4.033 / 0.949 / 4.982 | 120.33 | 91.83 | 256 (pre-sched 131), 189 128 | 1.78-1.95 |
+| c8: the held keys packed into one word each (`brick_key`, `NOT_HELD`; the held flags gone), the loads and pool loads counted in one word (`counted_loads`, `counted_pool_reads`), the crisp test inside the first piece (`field_piece`) instead of a second `field_corners` | 6.487 | 3.804 / 0.957 / 4.761 | 5.916 | 3.787 / 0.961 / 4.748 | 120.33 | 91.83 | 128 (pre-sched 126), 166 188 | 1.85-1.99 |
+| c9: `field_corners` sets the corner byte through a `select` on `fc_bytes` instead of a store through `fc_bytes[i / 4u]` (the gpu tier's `shader_portability no_shader_stores_through_a_runtime_vector_index` failed at c8) | 6.361 | 3.743 / 0.947 / 4.690 | 5.801 | 3.683 / 0.940 / 4.623 | 120.33 | 91.83 | 128 (pre-sched 126), 166 188 | 1.00-1.81 |
+
+The counters are `field-cubes`'s; `field` reads the same from c2 on. A scratch build at c3
+whose `field_material` returned material 1 (`s-nomat`, one round, not committed) read
+`field-cubes` 3.918 + 0.956 = 4.874 ms and `field` 3.828 + 0.957 = 4.785 ms, loads 114.15.
+
+- Done-when 1, at c8 (the RTX rows above, three alternated rounds, 1-minute load 1.85 to
+  1.99): `field-cubes` 3.804 + 0.957 = 4.761 ms and `field` 3.787 + 0.961 = 4.748 ms hit plus
+  light against the 5.00 ms bar: met (17045d8 in the same runs 6.487 and 5.916). At c9 (this
+  commit, three alternated rounds, load 1.00 to 1.81, `live/p4b/cost-c9/`): `field-cubes`
+  3.743 + 0.947 = 4.690 ms, `field` 3.683 + 0.940 = 4.623 ms (17045d8 6.361 and 5.801); RADV
+  stats of the field hit pipeline as c8's (`live/p4b/radv-c9.log`). The Radeon
+  (AMD Radeon Graphics (RADV RENOIR), `--adapter AMD`, one round, load 1.48 to 1.96,
+  `live/p4b/cost-c8-amd/`): c8 `field-cubes` 31.104 + 7.256 = 38.360 ms, `field` 31.008 +
+  7.277 = 38.285, against 17045d8's 42.074 + 7.226 = 49.300 and 40.137 + 7.256 = 47.393 (c5:
+  56.500 + 7.239, 56.206 + 7.232). RADV shader stats of the field hit pipeline
+  (`live/p4b/radv.sh`, `--look field-cubes`): 17045d8 128 VGPRs, 155 020 B; c5 256, 189 032 B;
+  c8 128 VGPRs (pre-sched 126, 121 spilled SGPRs, 2 waves per SIMD), 166 188 B.
+- Owner answer 10's two changes: (i) the direct band index per record was not built; c6
+  measured the dependency level it removes (the header's band word read before the prefix),
+  with no gain beyond the runs' spread (`field-cubes` 5.201 against c5's 5.185, `field` 5.086
+  against 5.139), and was reverted; the field walk's resolved bricks are band bricks, so c6's
+  extra prefix reads for other Full bricks did not show in the counters. (ii) RADV back to 128
+  VGPRs took two measured steps, c7 (pre-sched 133 to 131, still 256) and c8 (128).
+- Done-when 2, at c8 (2530 x 1378 from 1687 x 919, shaded, lamp on, one round each against
+  17045d8 in the same session, loads 1.53 to 1.93; `live/p4b/cost-c8-{vein,patch}-{NVIDIA,AMD}/`),
+  GPU frame / hit:
+
+  | adapter | pose | 17045d8 `field-cubes` | c8 `field-cubes` | 17045d8 `field` | c8 `field` | Phase 4a `field-cubes` (17045d8) |
+  |---|---|---|---|---|---|---|
+  | RTX 3080 Laptop | vein | 15.356 / 5.129 | 10.727 / 4.315 | 12.220 / 5.114 | 10.692 / 4.288 | 12.025 / 5.480 |
+  | RTX 3080 Laptop | patch | 13.438 / 7.646 | 12.400 / 5.582 | 16.482 / 7.274 | 12.410 / 5.628 | 13.261 / 7.315 |
+  | Radeon RENOIR | vein | 79.222 / 39.613 | 71.899 / 32.084 | 77.719 / 38.468 | 71.660 / 32.009 | not read |
+  | Radeon RENOIR | patch | 88.828 / 55.074 | 77.137 / 43.144 | 87.304 / 53.574 | 76.923 / 43.030 | not read |
+
+  The 17045d8 vein `field-cubes` GPU frame of 15.356 ms is one run (its passes after the hit
+  8.2 ms against 4.4 to 5.3 in the others).
+- Done-when 3, at c8: the dumps (`live/p4b/c8/`) against 17045d8's: hit masks 0 differing in
+  all six images, hit records (normal, material) 0 differing; hit positions 0 differing at the
+  patch and on the rig, 1 pixel differing at the vein in both looks (1.53e-5 voxel, within the
+  1e-3 bound; the root finder is unchanged, so exact equality is not met as stated). The three
+  tests in the gpu tier below.
+- Done-when 4: `gpu_world.rs` and the band slot layout did not change in this phase. At c9,
+  `level_mirror::band_census` (lavapipe, exclusive perf lock, load 0.67 to 0.94): band slots
+  at the spawn 418 668 band bricks, 96 243 264 B; mirror 254 115 904 B live, 543 629 312 B
+  allocated; grown 96 243 264 B against the census's packed 96 243 264 B (+0.000 %), Phase 3's
+  96 243 264 B. The flight was not re-read (Phase 3's 438 898 624 B, the same layout).
+- Done-when 5, `level_mirror::thin_census` (ignored, a reading; release, 13.5 s): the
+  histogram of Phase 4a's done-when 4 (122 897 inside, 12 272 on the outer layer) and
+  `brute_thin`'s count of 135 169, asserted equal to their sum.
+- Deviations: change (i) not built (above); c7 and c8 are two steps for change (ii); c9 is a
+  portability fix after the gpu tier, measured as a change; c8 packs
+  the cost counters, which `light.wgsl`'s steps view reads (`counted_loads`,
+  `counted_pool_reads`); `level_mirror::thin_census` is the held patch plus `brute_thin` and
+  the assertion; the Radeon rows and the window rows are one round each.
+- Gate at c8 (00542da, wip): build 0; clippy `-D warnings` 0; fmt 0; doctests ok; `cargo
+  deny check` ok; the four `scripts/check-*.mjs` 0; `--profile quick` (no lock, load 20.7 at
+  the end) 542 run, 542 passed (9 slow), 3 skipped. `--profile gpu --no-fail-fast` at c8
+  (2026-11-01 07:28 to 08:03, exclusive perf lock, 1-minute load 1.07 at the start, 1.39 at the
+  end; `live/p4b/gpu-tier.log`): 199 run, 198 passed (10 slow), 1 failed, 32 skipped; the
+  failure `vxe-render::shader_portability no_shader_stores_through_a_runtime_vector_index`
+  (`fn field_corners` in every shader that includes the walk), fixed by c9.
+- At c9 (this commit, exclusive perf lock, load 4.06 at the start after the build, 1.39 at the
+  end): `no_shader_stores_through_a_runtime_vector_index`, `the_field_surface_lies_on_the_flat_faces`,
+  `the_field_surface_has_no_boxes_and_no_leaks` and `thin_features_in_the_field_and_per_material`
+  pass; `castle_golden castle_gate_golden` failed in that five-test run (run beside the
+  others), and passed alone twice right after (load 0.92 to 1.00): peak RSS 913 612 800 B and
+  914 202 624 B against its 1 GiB assertion, image within the golden. Alone at c8 before the
+  tier (load 3.39 rising from a build) it read 915 001 344 B and passed; in the c8 gpu tier it
+  passed; at c8's first tier (load 19.1) it read 1 186 762 752 B and failed.
+
+#### Phase 4c
+
+Partial (wip): the crisp flag's GPU path and the cost lever's switch; nothing removed yet.
+Readings on the RTX 3080 Laptop (`--adapter NVIDIA`) unless named, `flythrough --level --seed
+1 --headless --frames 300 --render 1920x1080` (1080p from 1280 x 720), release, each run under
+the exclusive perf lock and the memory cap at a 1-minute load under 2 (`live/p4c/cost.sh p1`,
+logs `live/p4c/cost-p1/`, three alternated rounds, load 0.93 to 1.95; the Radeon
+`live/p4c/cost-p1-amd/`, one round, load 0.51 to 0.67), medians of the frame line; the
+reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
+
+- Done so far (in the wip commit with this section): `MaterialFlags::CRISP`,
+  `MaterialTable::is_crisp` and `edits::the_crisp_flag_is_a_row_property_only` (from the
+  pause); the field pass (`attrib.wgsl` `field_main`, binding 12 the material rows) computes
+  every count from the mirror's occupancy, a crisp voxel solid, and sets bit 7
+  (`CRISP_COUNT_BIT`) or bit 6 (`SMOOTH_COUNT_BIT`) on each solid band voxel, reading a voxel's
+  material only in a brick whose palette holds a crisp row; it sets `BAND_CUBES_BIT` (header
+  band word bit 30) on a band brick whose palette and its 26 neighbours' palettes hold no
+  smooth solid material (a Wide brick, a voxel-read brick and a LOD chunk's solid mip brick
+  count as smooth), on the GPU rather than the CPU. The walk: a crisp solid voxel is its cube
+  at entry; a dual cell with a crisp corner and no smooth solid corner gives no hit; a field
+  hit's material is its largest-weight non-crisp opaque corner; a `BAND_CUBES_BIT` brick is
+  walked by `lookup_walk` with its solid voxels cube hits that are no leak. `field::band_of`,
+  `field::crisp_bits`, `GpuWorld::fix_crisp`, `GpuWorld::set_crisp_materials`,
+  `SurfaceTuning::crisp`, `FLAG_CRISP`, `flythrough::CRISP_MATERIALS` and the `field-cubes`
+  preset are gone; the rig wood's row carries `CRISP` (`flythrough::with_wood`,
+  `with_wood_flags`); the fly-through takes `--crisp none|rock|all`, prints `world crisp rows:
+  ...` at start-up, and the frame line prints `smooth share s` of the last frame's hits (a
+  readback of the hit records at each frame line).
+- `thin_features_in_the_field_and_per_material` (lavapipe, rewritten: the wood crisp by its
+  row, and cleared): crisp wood every feature 100.0 % of `face`'s pixels (439, 827, 1197, 508,
+  3183, 3489), 48 939 hits, 0 leaks; smooth wood 0, 0, 913, 0, 0, 2666 px (Phase 3a's `field`
+  column, asserted equal), 47 173 hits, 0 leaks; away from the wood 37 069 hit pixels
+  compared, 0 differ, 11 874 left out; the level at both poses 0 leaks.
+  `the_field_surface_has_no_boxes_and_no_leaks`, `the_field_surface_lies_on_the_flat_faces`
+  (worst 7.63e-6 voxel), `a_carve_gives_the_exposed_air_brick_a_band_slot`,
+  `mirror a_band_air_brick_s_slot_is_pinned` and `shader_portability
+  no_shader_stores_through_a_runtime_vector_index` pass (exclusive perf lock, run serially).
+  Clippy `-D warnings` 0 and fmt 0 on the workspace; `--profile quick` (no lock) 543 run, 543
+  passed (9 slow), 3 skipped; the gpu tier not run on this tree.
+- Done-when 8, read before the removals (hit / light / hit + light / GPU frame, ms; `s` the
+  printed smooth share):
+
+  | adapter | c8 `field` | `field --crisp none` | `field --crisp rock` | `field --crisp all` | `face` |
+  |---|---|---|---|---|---|
+  | RTX 3080 Laptop | 3.706 / 0.938 / 4.644 / 7.697 | 3.737 / 0.940 / 4.677 / 7.731, s 1.0000 | 2.230 / 0.937 / 3.167 / 6.274, s 0.0000 | 0.911 / 0.925 / 1.836 / 4.905, s 0.0000 | 0.547 / 0.873 / 1.420 / 4.272 |
+  | Radeon RENOIR (one round) | 31.026 / 7.236 / 38.262 / 56.101 | 30.577 / 7.235 / 37.812 / 55.507, s 1.0000 | 19.501 / 7.257 / 26.758 / 44.713, s 0.0000 | 8.329 / 7.261 / 15.590 / 33.475, s 0.0000 | 3.987 / 6.764 / 10.751 / 26.928 |
+
+  (i) `--crisp all`'s hit reads 0.911 ms against `face`'s 0.547 (+66.5 %; the Radeon +109 %)
+  against the 10 % bar: not met; the bit-for-bit comparison with `face` was not run. (ii)
+  `--crisp rock` (s 0.0000 at the spawn) reads 2.230 ms against the bar `face + s (none - face)
+  + 0.1 (none - face)` = 0.547 + 0 + 0.319 = 0.866 ms: not met. (iii) `--crisp none` 4.677 ms
+  hit plus light, done-when 6's bar 5.00 (before the removals). Dev stops here (done-when 8's
+  miss rule).
+- The split walk (owner answer 11, in the wip commit with this item). `march.wgsl`'s `main`
+  with `FLAG_FIELD_SPLIT` (`split_pixel`) walks each ray as `march` does with no plane test,
+  and `descend` reads a full chunk's Full brick's header band word as the walk enters the
+  brick; at the first brick that is a band brick without `BAND_CUBES_BIT` the ray is appended
+  to a hand-off list (pixel, `t`, the entered voxel, the entry axis) and a second dispatch of
+  the same pass, `field_resume` (128 a workgroup, its workgroup count written by the first
+  dispatch's atomics, `dispatch_workgroups_indirect`), walks the field from there
+  (`field_walk`, `field_march`'s loop). A field-walking ray stays in the field walk to its
+  end. The frame splits only when the mirrored table holds a crisp row that is not
+  translucent (`GpuWorld::crisp_rows`), outside the cracks and steps views, and at most
+  128 x 65535 pixels; `Frame::set_field_split(false)` walks unsplit. Targets: the list
+  (16 B a pixel plus 16) and the dispatch words (16 B) are in `Frame` bytes.
+- Deviation, the "no smooth near" rule (`attrib.wgsl` `field_main`): the first split read
+  (RTX, one round, load 1.95) gave `--crisp all` hit 0.568 against `face` 0.563, and `--crisp
+  rock` 2.707 against 0.866; a scratch marker (`live/p4c/zz_hand.rs`) found 55 463 of 82 944
+  pixels at the spawn handed off, at 21 bricks of rock and air whose 26 neighbours held 1 to 10
+  ore voxels (the palette rule set the bit only where no neighbour's palette held a smooth
+  material). `BAND_CUBES_BIT` is now set when no voxel of the brick or its one-voxel shell is
+  a smooth solid band voxel: the brick's own from its count bytes, a shell voxel's band test
+  from the full 12^3 occupancy box (the field pass filled 10^3 before), its material from its
+  brick's palette when that holds one kind, read when it holds both, smooth in a brick read
+  voxel by voxel or a mip brick; the shell is not read when no palette in the 27 holds a
+  smooth material. After it the marker read 0 pixels handed off at the spawn under `--crisp
+  rock`.
+- Hit records (lavapipe, HitMask view, 384 x 216 at the spawn (yaw 0), the vein and the patch,
+  320 x 320 on the thin rig, `live/p4c/zz_split.rs` via `live/p4c/split-cmp.sh`, log
+  `live/p4c/split-cmp-precise.log`): split against unsplit, every case (crisp all, rock, none
+  at the three poses; the rig, wood crisp and smooth): hit mask, position and `t`, normal,
+  material and flags equal at every pixel. `--crisp all`'s field against `face`: equal at every
+  pixel of the three poses (82 944 hits each), (i)'s bit-for-bit comparison. Against a scratch
+  build that never sets `BAND_CUBES_BIT` (`live/p4c/rec-nocubes`): none and the rig equal;
+  `all` differs at 41 (spawn), 92 (vein) and 23 (patch) pixels and `rock` at the same 41 at
+  the spawn: there the cubes-free walk gives field hits (plane flag, material 0 at the vein and
+  the patch, up to 3.35 voxel from the cube hit) in cells whose solid corners carry neither
+  count bit, which the cubes bricks walk as cubes. Finding for the close: a dual cell whose
+  solid corners are all non-band (count 27, no bit) and that mixes signs gives a field hit
+  with no smooth corner in a field brick too.
+- Done-when 8 on the split (`live/p4c/cost.sh s2`, logs `live/p4c/cost-s2/` (RTX, three
+  alternated rounds, load 0.83 to 1.95) and `live/p4c/cost-s2-amd/` (Radeon, one round, load
+  0.73 to 0.83), medians of the frame line's per-pass times over the rounds; hit / light / hit
+  + light / GPU frame, ms):
+
+  | adapter | c8 `field` | `field --crisp none` | `field --crisp rock` | `field --crisp all` | `face` |
+  |---|---|---|---|---|---|
+  | RTX 3080 Laptop | 3.719 / 0.942 / 4.661 / 7.736 | 3.741 / 0.936 / 4.677 / 7.735, s 1.0000 | 0.561 / 0.917 / 1.478 / 4.526, s 0.0000 | 0.561 / 0.916 / 1.477 / 4.522, s 0.0000 | 0.552 / 0.869 / 1.421 / 4.244 |
+  | Radeon RENOIR (one round) | 31.015 / 7.248 / 38.263 / 56.173 | 30.459 / 7.312 / 37.771 / 55.628, s 1.0000 | 4.297 / 7.334 / 11.631 / 29.694, s 0.0000 | 4.295 / 7.330 / 11.625 / 29.654, s 0.0000 | 4.115 / 6.821 / 10.936 / 27.260 |
+
+  (i) `--crisp all`'s hit 0.561 against `face`'s 0.552, +1.6 % (Radeon +4.4 %) against 10 %,
+  and the records equal (above): met. (ii) `--crisp rock` (s 0.0000 at the spawn) 0.561
+  against `face + s (none - face) + 0.1 (none - face)` = 0.552 + 0 + 0.319 = 0.871 (Radeon
+  4.297 against 6.749): met. (iii) `--crisp none` 4.677 hit plus light (the split is off
+  without a crisp row). The light pass reads 0.047 ms over `face` in the field looks (0.916
+  against 0.869), not barred.
+- RADV shader stats (`live/p4c/radv.sh`, `RADV_DEBUG=shaderstats`, every compute shader of
+  the run): c8 holds one 128-VGPR shader (166 188 B), the tip two (169 392 and 168 604 B, the
+  field hit pipeline and `field_resume`); the shaders at 64 VGPRs and below keep their VGPRs,
+  and the code sizes that changed at 64 (31 604 to 42 688 B, 19 552 to 26 924 B) are taken to be
+  the cube walk's hit pipeline (now holding `split_pixel`) and the field pass by elimination;
+  RADV prints no pipeline names, so the attribution is not read.
+- Done-when 8 at the window's size, readings (`POSE=vein|patch RES=2530x1378 ROUNDS=1
+  cost.sh s2`, logs `live/p4c/cost-s2-{vein,patch}-{NVIDIA,AMD}/`, one round each, load 0.68
+  to 1.92; hit / light / GPU frame, ms, the run's last frame line):
+
+  | pose, adapter | c8 `field` | `--crisp none` | `--crisp rock` | `--crisp all` | `face` |
+  |---|---|---|---|---|---|
+  | vein, RTX | 4.322 / 1.971 / 10.713 | 4.367 / 1.963 / 10.764, s 1.0000 | 4.895 / 1.779 / 10.973, s 0.3371 | 0.686 / 1.691 / 6.624, s 0.0000 | 0.709 / 1.569 / 6.247 |
+  | vein, Radeon | 32.036 / 14.916 / 72.095 | 31.367 / 14.657 / 71.310, s 1.0000 | 35.462 / 13.656 / 74.129, s 0.3371 | 5.122 / 13.272 / 43.421, s 0.0000 | 5.142 / 12.342 / 40.604 |
+  | patch, RTX | 5.573 / 1.386 / 12.081 | 5.513 / 1.355 / 12.094, s 1.0000 | 6.559 / 1.338 / 11.934, s 0.2174 | 0.967 / 1.313 / 6.397, s 0.0000 | 1.000 / 1.210 / 6.001 |
+  | patch, Radeon | 43.056 / 10.383 / 76.924 | 42.029 / 10.501 / 75.872, s 1.0000 | 44.691 / 10.194 / 78.271, s 0.2174 | 7.149 / 9.958 / 40.453, s 0.0000 | 7.143 / 9.347 / 38.018 |
+
+  Finding (no bar at the poses): where smooth hits are on screen, `--crisp rock` reads the hit
+  above `--crisp none` (vein RTX 4.895 against 4.367 with s 0.3371, where (ii)'s formula would
+  give 2.308; patch 6.559 against 5.513 with s 0.2174). Not attributed: a handed-off ray stays
+  in the field walk to its end, and the resume dispatch walks the list in append order.
+- `look::the_split_walk_moves_no_hit_record` (lavapipe, gpu tier, in the wip commit with this
+  item): the thin rig, wood crisp, 48 939 hits, split against unsplit 0 pixels differ; every
+  row that is not translucent crisp, the field look against `face` 0 pixels differ split and
+  unsplit. Quick tier at 6def8f6: 543 run, 543 passed (9 slow), 3 skipped; clippy and fmt 0.
+- The removals (2bca6e4, wip): `attrib.rs`, `attr_work.rs`, `benches/attr_work.rs` and the
+  plane fit go; the field pass is `src/shaders/field.wgsl` (`field_main` alone); `PlaneFit`,
+  `PlaneOffset`, `OccupancyFilter`, `SurfaceFit`, `SurfaceModel`, `FieldNormal` (N2),
+  `SurfaceTuning::{fit, shadow_push, normal_field, cube_hits, model, field_normal}`,
+  `MirrorConfig::attr_cap`, the surface attribute units of a slot, the cracks view's classes
+  (`CrackShares { hits, leaks }`), `cubes-field`, `contour`, `contour-sharp`, `contour-grain`,
+  `--plane-fit`, `--plane-offset`, `--fit-filter`, `--shadow-push`, `--normal-field`,
+  `--field-normal` and the refit banner go. `LookPreset::ALL` is face, field, trilinear8,
+  gradient27 and `LookPreset::DEFAULT` is `FIELD`; the shadow ray walks the voxels from
+  `p + ns * SHADOW_OFFSET`. Renamed: `with_surface_attrs` -> `with_field_surface`,
+  `update_attrs` -> `update_field`, `fit_rig_on` -> `field_rig_on`, `HIT_PLANE` ->
+  `HIT_FIELD`. Header words 10, 11 and 14 are 0 (the band prefix stays at 12 and 13). Tests
+  removed with what they exercised (mirror.rs 15 attribute and fit tests; look.rs
+  `axis_planes_have_no_cracks`, `crack_classes`, `the_closing_rule_leaves_no_crack`,
+  `the_cracks_view_keeps_its_palette_through_the_window_chain`,
+  `one_voxel_features_render_as_boxes_today`, `box_readings`, the majority-fit and
+  normal-field tests, `field_readings`; sharpness.rs's C1 and C2 candidates and the
+  contour-grain reading of `face_against_contour_on_the_wall`); re-pointed:
+  `attributes_leave_the_face_goldens_byte_for_byte` -> `band_slots_leave_the_face_goldens_byte_for_byte`
+  (passes), the mirror churn and demotion tests over field mirrors (`live_bricks` 1536 ->
+  `1536 + band_bricks()`, 2280 read). Quick tier 539 run, 539 passed, 3 skipped; clippy and fmt
+  0; on lavapipe (exclusive perf lock, load 10.5, other work) mirror.rs and
+  shader_portability.rs 33 of 33, and seven look tests pass, the face goldens unmoved.
+- Deviations: `examples/world_budget.rs` keeps local copies of `chunk_surface` and the
+  attribute units for its ADR-0011 projection (2bca6e4); `--look face` runs over a mirror
+  with band slots (any preset but `plain` gets a field mirror), so the field pass also runs
+  under `face` (2bca6e4); the stdout `attrib:` line is now `field pass: N band slots ...`
+  (2bca6e4); `contour-grain` goes with the other plane presets, not named in "What goes"
+  (2bca6e4). `--seam-rig` (the seam rig of done-when 3, `flythrough::thin_rig::SeamRig`) and
+  `flythrough::camera_looking_at`, `seam_rig_camera` are added (committed with this item).
+- `look::the_default_surface_is_the_field` (done-when 1, lavapipe, exclusive perf lock, load
+  3.08; `live/p4c/dw1.log`): passes. Floor 43 012 hits and wall 37 800, worst 7.63e-6 voxel
+  off the face, 0 leaks; box px 0 on all five one-voxel scenes; 0 leaks on every scene and at
+  both poses lamp on and off; tile edges % equal to Phase 1's N1 column on every scene (rod
+  0.649, groove 0.644, wall pillar 0.272, ridge 0.645, sheet 0.773, cavity 0.188, pillar
+  0.125, vein 0.397, patch 0.633, the rest 0.000 or 0.004); the patch reads 9 box px (no bar
+  at the poses); guardrails cavity normal error 4.13 degrees, silhouette 24 px against face's
+  172, axis fraction 3.15 %.
+- `look::a_smooth_surface_meets_a_crisp_cube_without_a_gap` (done-when 3, lavapipe, exclusive
+  perf lock; the seam rig and the thin rig, wood crisp, each head-on and at 45 degrees,
+  320 x 180; `live/p4c/seam-plan.log`): fails, done-when 3 not met.
+  - Inlay: head-on 29 584 wall hits, worst 7.63e-6 voxel off the plane; 676 hits inside the
+    inlay, all cube hits; box 2704 and 2150 px, 0 leaks, 0 misses. Met.
+  - Trunk: head-on 15 leaks in the seam's box (19 in the frame), 45 degrees 19 (35); the
+    leaks are field pieces that start above zero at the voxel mid-plane `x = 67.5` beside the
+    2x2 and 3x3 rods' undersides and tops (`z = 80.2`, `85.6`): the cell in front (corners crisp
+    rod voxels and air) is skipped by the crisp rule, so the next piece starts inside the
+    field. 2 (head-on) and 3 (45) collar hits read material 0: field hits in cells whose
+    corners are all air, one of them above zero (an air voxel under a rod beside the trunk
+    counts 15), which carry no count bit, so the crisp rule does not skip them and
+    `field_material` finds no smooth solid corner. Face hits clear of the roots: worst 0 and
+    7.63e-6 voxel; feature hits clear of the trunk 1089 and 3289, all cube hits. Collar
+    heights head-on / 45: one-voxel branch 0.188 / 0.188 (worked 0.19), 2x2 0.500 / 0.500
+    (0.43), 3x3 0.555 / 0.629 (0.75), diagonal 0.188 / 0.188. Dark specks on the trunk face
+    head-on: 118 with the branches crisp, 67 smooth (a finding for the close).
+  - L: 0 leaks and 0 misses in its box; 59 (head-on) and 56 (45) hits within 1.5 voxels of
+    it above `z = 66` are not cube hits: field hits of material 0 in the concave corner's air
+    cells (`x` 79.5 to 79.7, `y` 23.5 to 23.7, `z` 66.1 to 72.0), the corner air voxel
+    counting 15. Above `z = 72` the bricks carry `BAND_CUBES_BIT` and the corner is sharp;
+    below, the rock floor's shell makes the brick smooth-near and the field walk runs.
+  - The test's definitions (dev's): a seam's screen box is the pixels whose primary ray
+    meets a thin box on the seam's surface (the trunk's `y` in `[63, 65]`, clear of the
+    trunk's rounded edges, through which a 45-degree ray exits with no hit); a feature's
+    footprint is its voxels within one voxel of the face (the diagonal branch's first two),
+    since a face voxel's front air voxel counts the second.
+- An attempt, set aside (`live/p4c/air-bits.patch`, untracked; `live/p4c/seam-airbits.log`):
+  an air band voxel carries `SMOOTH_COUNT_BIT` when a smooth solid voxel lies in its 3^3
+  block, else `CRISP_COUNT_BIT`; a cell gives a field hit only with a corner carrying
+  `SMOOTH_COUNT_BIT`; a field hit with no smooth solid corner takes the material of the first
+  smooth solid voxel in the 3^3 block of its largest-weight smooth-near corner. Read: trunk 0
+  leaks at both views, the L every hit a cube hit, collars head-on 0.188, 0.748, 0.823; but the
+  inlay reads 107 of 676 interior hits as rock-material field hits on its plane (up to 1.5
+  voxels inside its border: an air voxel at the inlay's edge sees the wall's rock), and the 3x3
+  collar at 45 degrees reads 1.107 voxel off the face (3 hits over the 1-voxel bar).
+
+- The close (owner answer 13), in the wip commit with this item. Lavapipe readings under the
+  exclusive perf lock and the memory cap; the release readings
+  (`live/p4c/close.sh`, logs `live/p4c/close/`, one quiet round each, every run at a 1-minute
+  load of 1.75 to 1.99) compare main `28948a5`'s release binary (`live/p4a/bin/flythrough-28948a5`,
+  default the snap planes) with this commit's tree (`live/p4c/bin/flythrough-close`); the
+  adapter by `--adapter NVIDIA|AMD`; hit / light / GPU frame in ms, the run's frame line.
+  - Item 1: `LookPreset::DEFAULT` is `FACE`; the start-up look line reads `look face (normals
+    face, face mix 0, detail after lighting off), detail on (...)`
+    (`the_default_look_is_face_with_detail_and_plain_is_face_without`, renamed from
+    `the_default_look_is_the_field_with_detail_and_plain_is_face`).
+    `look::the_default_look_is_face` (lavapipe): the default look over a mirror with no band
+    slot against `face` over a field mirror, hit position bits and record, 384 x 216 hit
+    mask: spawn, vein and patch 82 944 hits each, 0 pixels differ. `primary.png`,
+    `headlamp.png`, `lod.png` and `look_wall_face.png` are main's bytes
+    (`band_slots_leave_the_face_goldens_byte_for_byte` and
+    `the_default_look_leaves_the_goldens_byte_for_byte` pass).
+  - Item 2: the fly-through builds a field mirror only when the run starts under `--look
+    field` (`Args::field_surface`; `level_pool_units` and `level_mirror_budget` take it too),
+    as does `examples/hero.rs` (`--look` now takes every preset); any other run's `N` skips
+    the field (`LookPreset::next(false)`), the dev's call of item 2. At the spawn the default
+    prints no `field pass:` and no `attrib:` line. `level_mirror::the_default_mirror_over_the_level_holds_no_band_slot`:
+    383 608 live bricks, 0 band slots, 0 band units, 0 field items.
+  - Item 3: `the_field_look_has_no_boxes_and_no_leaks` (renamed from
+    `the_default_surface_is_the_field`, under `LookPreset::FIELD`): floor 43 012 and wall
+    37 800 hits, worst 7.63e-6 voxel, 0 leaks; box px 0 on the five scenes; tile edges % equal
+    to Phase 1's N1 column on every scene (patch 9 box px, no bar); guardrails 4.13 degrees,
+    24 px against face's 172, 3.15 %. `the_field_look_meets_the_guardrails` (renamed from
+    `the_default_look_meets_the_guardrails`, re-pointed at `FIELD`) reads the same.
+    `the_split_walk_moves_no_hit_record`, `thin_features_in_the_field_and_per_material` and
+    `edits::the_crisp_flag_is_a_row_property_only` pass in the tiers.
+  - Item 4, `a_smooth_surface_meets_a_crisp_cube_without_a_gap` (asserts: 0 misses in every
+    seam box, 0 leaks in the inlay's and the L's boxes, the inlay's plane and cube bars, the
+    trunk's face hits clear of the roots, the features' cube hits): passes. Printed: trunk box
+    15 (head-on) and 19 (45) leaks; collar hits off by more than a voxel or not rock 2 and 3,
+    all of material 0; collars head-on / 45: one-voxel 0.188 / 0.188 (worked 0.19), 2x2 0.500
+    / 0.500 (0.43), 3x3 0.555 / 0.629 (0.75), diagonal 0.188 / 0.188; the L's non-cube hits
+    59 and 56; trunk face specks 118 crisp, 67 smooth. Answer 12's smooth-near bits not built
+    (`live/p4c/air-bits.patch` set aside).
+  - Item 5, disclosed defects of the opt-in look, not fixed: the cubes-free walk's field hits
+    in cells whose solid corners carry no count bit (41, 92, 23 px at spawn, vein, patch, the
+    split-walk item above); the seam's all-air cells' material-0 field hits (item 4's 2 and 3,
+    and the L's 59 and 56).
+  - Item 6, goldens, share of pixels over 2/255 against main's: `showcase_hall.png` 53.1337 %
+    (renders the default, now `face`, over a mirror with no band slot); `look_contour.png`
+    27.9253 %, `look_wall_contour.png` 22.8594 % and `look_wall_contour_sharp.png` 22.8281 %
+    (re-pointed: `NormalMode::Contour` and `LookPreset::FIELD` render the field);
+    `look_wall_contour_grain.png` removed (its look, `contour-grain`, went in 2bca6e4, and no
+    test read it). Re-blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5). The bless of
+    `face_against_contour_on_the_wall` rewrote `look_wall_face.png` with 32 pixels within
+    2/255 of main's (0 over 2/255); the file is kept at main's bytes. `translucent.rs` and
+    the cutaway tests pass unchanged.
+  - Item 6, at 86611cc: `golden::showcase_hall_golden_is_lit_by_its_four_ores` failed under
+    `face` on its hue bar (at least three of the four hue classes each 0.5 % of the pixels,
+    288 px): hue shares amber 3.42 %, ember 0.41 %, cyan 2.71 %, violet 0.07 % (pixels 1968,
+    234, 1561, 41), luma 14.2/255, 0 px lit with the emission off. Main's planes read ember
+    0.69 % (Plan 0038's log); a scratch run of the same test under `LookPreset::FIELD` read
+    amber 5.01 %, ember 0.79 %, cyan 4.41 %, violet 0.06 %, luma 15.5/255, and passes (the
+    edit reverted; its image `live/p4c/showcase_hall-field.png`, 42.7535 % over 2/255 against
+    main's). The golden is blessed at `face`. Stopped for the owner (answers 14 and 15).
+  - Item 6, owner answer 15 (committed with this row): the hue bar reads "at least two of the
+    four classes at 288 px (0.5 %) and every class at least 1 px". Lavapipe, exclusive perf
+    lock, load 1.02 (`live/p4c/showcase-bar.log`): passes, the image 0.0000 % over 2/255
+    against the blessed `face` golden; amber 3.42 %, ember 0.41 %, cyan 2.71 %, violet 0.07 %,
+    luma 14.2/255, 29 806 light samples, 0 px lit with the emission off.
+  - Assertions turned into prints (deviation): `sharpness::face_against_contour_on_the_wall`'s
+    `face S_mid > contour S_mid` (the plane's mid-band order): face 0.28182 against the field
+    0.31432 (`field` preset 0.32004); `look::contour_dark_specks_with_and_without_shadows`'s
+    "contour's only-with-shadows specks at most face's" (Phase 4c's shadows rule makes a higher
+    count a finding): the field 240 with shadows, 164 without, 103 only with; face 2083, 2055, 34.
+  - Item 7 at the spawn, 1080p from 1280 x 720 (`--level --seed 1 --headless --frames 300
+    --render 1920x1080`):
+
+    | run | RTX 3080 Laptop | Radeon RENOIR |
+    |---|---|---|
+    | main 28948a5, default (snap planes) | 0.612 / 0.921 / 4.516 | 4.288 / 7.045 / 28.801 |
+    | tip, default (`face`) | 0.548 / 0.849 / 4.222 | 4.064 / 6.732 / 27.166 |
+    | tip, `--look field --crisp none` | 3.827 / 0.891 / 7.511, s 1.0000 | 30.734 / 7.108 / 54.522, s 1.0000 |
+    | tip, `--look field --crisp rock` | 0.570 / 0.855 / 4.263, s 0.0000 | 4.308 / 6.966 / 28.015, s 0.0000 |
+    | tip, `--look field --crisp all` | 0.572 / 0.865 / 4.294, s 0.0000 | 4.302 / 6.928 / 27.973, s 0.0000 |
+
+    The default's hit plus light: RTX 1.397 against main's 1.533 ms, Radeon 10.796 against
+    11.333. `--look field`'s hit plus light: RTX 4.718 ms against the 5.00 ms figure. The
+    initial fill: main's `attrib:` 17.832 ms GPU (RTX) and 95.743 ms (Radeon); the default
+    none; the field pass under `--look field` 12.130 ms (RTX, crisp none), 102.702 (rock),
+    74.293 (all); Radeon 61.049, 100.118, 72.518. The thin rig (`--thin-rig`, wood crisp,
+    1080p): the default 0.630 / 0.104 / 2.402 (RTX), 4.884 / 0.945 / 16.659 (Radeon);
+    `--look field` 4.821 / 0.126 / 6.667, s 0.8476 (RTX), 39.543 / 1.012 / 52.030 (Radeon);
+    its field pass 0.064 ms (RTX) and 0.188 ms (Radeon) for 1186 band slots.
+  - Item 7, the flight (RTX, `--autopilot --headless --seed 1`, one round each, start load 1.75
+    to 1.90, the run raising it to 5.6 to 8.5): main's default full residency 17 077 full and
+    40 700 LOD-only chunks, mirror 871 679 852 B live, 3 221 014 080 B allocated, peak 992 795
+    308 B, streaming CPU p50 13.435 / p99 60.044 ms over 1366 frames, attribute pass GPU p50
+    1.154 / p99 1.771 ms, march GPU p50 8.628 / p99 19.951; the tip's default 502 928 492 B
+    live at full residency, peak 532 183 724 B, same allocation, streaming CPU p50 0.239 / p99
+    64.251 ms over 3148 frames, march GPU p50 3.031 / p99 5.767, no attribute or field pass;
+    `--look field` 941 827 116 B live (band slots 438 898 624 B, 1 829 483 band bricks), peak
+    967 839 468 B, streaming CPU p50 66.030 / p99 206.603 ms over 494 frames, field pass GPU
+    p50 0.634 / p99 1.388 ms, march GPU p50 8.153 / p99 39.488. The level: main 157 872 640 B
+    live, 259 203 264 B allocated; the default 62 846 720 B live, 88 285 376 B allocated;
+    `--look field` 159 089 984 B live (band 96 243 264 B, 418 668 band bricks), 223 027 392 B
+    allocated.
+  - Item 7, VGPRs (RADV `shaderstats`, `live/p4c/radv.sh close`, load 3.1 to 4.1, not a timing
+    reading): every compute pipeline is built at start-up, so `face`, `field` and `field
+    --crisp rock` list the same shaders: two at 128 VGPRs (108 440 and 107 540 B, the field
+    hit pipeline and `field_resume` by Phase 4c's earlier attribution), two at 84, one at 64
+    (39 576 B), and the rest at 64 and below; no spill. RADV prints no pipeline names.
+  - Item 8: the default's shadow ray is `face`'s (the goldens of item 1). The speck count at
+    the default on the contour golden scene (full shadow walk): `face` 2083 with shadows, 2055
+    without, 34 only with, against main's default (snap) 365, 360, 6 (Plan 0050's log): higher,
+    a finding. The frame line's smooth share is printed only under the field look.
+  - Gate on this tree: `--profile quick` 539 run, 539 passed (9 slow), 3 skipped; doctests 7
+    passed; clippy `-D warnings` 0; fmt 0; the doc-link, comment-hygiene, index-row and
+    test-tier scripts 0. `--profile gpu` (exclusive perf lock, `live/p4c/gpu-close1.log`,
+    before the blesses and the two prints): 179 run, 175 passed, 4 failed
+    (`showcase_hall_golden_is_lit_by_its_four_ores`, `contour_dark_specks_with_and_without_shadows`,
+    `contour_golden`, `face_against_contour_on_the_wall`), 29 skipped; after them the last
+    three pass (`live/p4c/close-tests*.log`, `live/p4c/bless-close2.log`) and the first fails
+    as above. `castle_gate_golden` passed in that run.
+  - Gate after the hue bar (owner answer 15), on the tree of this row's commit:
+    `--profile gpu --no-fail-fast` (exclusive perf lock, memory cap, start load 1.89, end 1.57;
+    `live/p4c/gpu-close2.log`) 179 run, 179 passed (7 slow), 29 skipped, 1694.5 s;
+    `--profile quick` 539 run, 539 passed (8 slow), 3 skipped; doctests 8 passed, 1 ignored;
+    clippy `-D warnings` 0; fmt 0; `cargo deny check` 0; the doc-link, comment-hygiene,
+    index-row and test-tier scripts 0.
+
+#### Phase 5
+
+- `docs/nfr.md` §2 gains "The default surface is honest cubes, the field an opt-in look" (the
+  spawn's hit, light and GPU frame on both adapters, main `28948a5`'s default against
+  `86611cc`'s `face` default and `--look field --crisp none|rock|all`; the initial fill; the RTX
+  flight's streaming CPU, attribute and march p50 and p99; the VGPRs) and "The opt-in field
+  look" (hit plus light against the 5.00 ms figure, the field pass at the fill, on the flight
+  and on the thin rig, the thin rig's passes, owner answer 13's window readings). §3 gains "The
+  `face` default carries no attribute and no band term" (the level's and the flight's live,
+  peak and allocated bytes, main against `86611cc`, and `--look field`'s band bytes against
+  answer 4's 106 and 530 MB). The frame ledger's head names the close's scenario A and points
+  at both. Every figure is Phase 4c's close item 7 reading (`live/p4c/close/`, one quiet round
+  each), none retaken.
+- Not read: the default's poses at the window's size (Phase 5's amended text names the spawn on
+  both adapters, the fill, the flight and the bytes for the default; the window sizes only in
+  answer 13's readings); the flight on the Radeon.
+- ADR-0041, ADR-0011, ADR-0038, ADR-0039 and ADR-0040 are not edited (the architect's and the
+  close review's). Status stays `in-progress`: the close review sets `done`.
+
+### Notes
+
+_(Deviations from the plan, with the commit, stated without justification. Done-whens not
+satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
+each. Empty is fine.)_
+
+- Base: a stacked lane on `plan-0053` at 811b37e (Plan 0053 Phase 3's wip), on `plan-0050-p6`:
+  Plan 0052 (v0.37.0), Plan 0050 Phase 6 (snap the only closing rule, the cracks palette fix,
+  three goldens re-blessed), Plan 0053 Phases 1 to 3 (the box metric with its edge rule, the
+  majority-filtered fit, `SurfaceTuning::normal_field` on flag bit 15 and `cube_hits` on bit
+  16, `cubes-field`, `BANNER_ROWS` 9). The field look takes flag bits 17 and 18. Failing on the
+  base and not touched: `sharpness detail_after_lighting_is_exact_for_the_lamp` (98.028 %
+  against 98.3 %), `look the_normal_field_has_no_tile_edges`, `look
+  the_normal_field_adds_no_dark_speck`.
+- Phase 1: the code and readings are in b282738 (wip); done-when 2's box rule for the field
+  look is in this phase's second commit. Under the unamended metric the field read rod 9, lone
+  cube 0, groove 8, wall pillar 2, ridge 10; the rod's flat top at `z = 60.333` is named for
+  the owner's Phase 2 look. The deviations are in the Phase 1 section; `field.rs` has one
+  comment reworded for the comment-hygiene gate.
+- Noticed, not acted on: the field walk reads every corner count through the chunk table, the
+  record and the index, and the hit shader holds 128 VGPRs; no cost work was done.
+- Phase 3a: done-when 3 not met: the field look's hit plus light at the level reads 5.93 ms on
+  the RTX 3080 Laptop against the owner's 5 ms bar (Phase 3's 7.51 ms; Phase 1's dense pool
+  4.36 ms). Done-when 4 not met as stated: `mirror pressure` still reads 1.000 at the level
+  (the record term, 3200 of 3200); the band term moved the unit term from 0.980 to 0.645 and
+  the reservation from 259.2 to 393.9 MB.
+- Phase 4b: owner answer 10's change (i), the direct band index, was not built (c6 measured
+  the dependency level it would remove, no gain, reverted); change (ii) is c7 and c8; c9 a
+  portability fix. Done-when 3: one hit position at the vein differs from 17045d8's by
+  1.53e-5 voxel in both looks with the root finder unchanged.
+- Phase 4c deviations (2bca6e4 unless named): `examples/world_budget.rs` keeps local copies of
+  `chunk_surface` and the attribute units; `contour-grain` removed though not named in "What
+  goes"; the stdout `attrib:` line is now `field pass: ...`; `sharpness::face_against_contour_on_the_wall`'s
+  `face S_mid > contour S_mid` and `look::contour_dark_specks_with_and_without_shadows`'s
+  only-with-shadows order turned into prints (86611cc); the seam test's box and footprint
+  definitions are dev's (3a43c06); answer 12's smooth-near bits not built (`live/p4c/air-bits.patch`).
+- Phase 4c done-whens 1 to 8 replaced by the close list (owner answer 13); done-when 8's (i)
+  and (ii) missed before the split walk (the first table) and met on it.
+- Findings for the close review: the default's shadow-speck count on the contour golden scene,
+  `face` 2083 / 2055 / 34 against main's snap 365 / 360 / 6; the seam rig's trunk leaks 15 and 19
+  at the 2x2 and 3x3 rods, its material-0 collar hits 2 and 3 and the L's 59 and 56 non-cube
+  corner hits (opt-in look); the cubes-free walk's material-0 field hits 41, 92, 23 px; the
+  trunk face specks 118 crisp against 67 smooth; `--crisp rock` reads the hit above `--crisp
+  none` at the vein and the patch (4.895 against 4.367, 6.559 against 5.513 ms, RTX).
+- `castle_golden castle_gate_golden`'s peak RSS (1 GiB assertion) reads about 914 MB alone and
+  failed when run beside other lavapipe tests (1.19 GB at load 19 at c8; one failure in a
+  five-test run at c9): load-dependent, the image identical.
+- Review fix, finding 1 (major): the split walk's hand-off list is built by the first frame
+  that splits; until then the hit pass binds a 32 B placeholder. `Frame::frame_bytes` at 1080p
+  output from 1280 x 720 internal (lavapipe, exclusive perf lock, the upscale test's print):
+  main 28948a5 130 267 168 B, 3d6718d 145 012 800 B, the fix 130 267 216 B (+48 B: the
+  placeholder and the 16 B dispatch words); `look only_a_split_frame_allocates_the_split_list`
+  pins it and the thin rig's +1 638 416 B on its first split frame; in `nfr.md` §3. Commit: the
+  `fix(render)` commit carrying this line.
+- Review fix, finding 2 (minor): the 4b row names f6e51a3 and the met bar; Plan 0053's close
+  triggers filled. Commit: the `docs(plans)` fix commit.
+- Review fix, finding 3 (nit): `MaterialFlags::CRISP`'s doc says the flag acts under the field
+  look and the default draws every material as cubes. Commit: the `fix(world)` commit.
+
+### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **What shipped:** the fly-through's default look is `face` (honest cubes) with no attribute
+  pass, no band slot and no field pass; the field surface (the trilinear zero set of the
+  27-count, N1 normals) is the opt-in `--look field`, over band slots in the size-classed
+  mirror, with `MaterialFlags::CRISP` materials walked as cubes and the split walk (cube walk
+  until a band brick that is not cubes-only, then `field_resume`); the plane attribute, snap,
+  the plane fits and every plane look are removed.
+- **Public API changed:** `vxe-world`: `MaterialFlags::CRISP`, `MaterialTable::is_crisp`.
+  `vxe-render`: `attrib` and `attr_work` modules removed, `field` (the field pass,
+  `CRISP_COUNT_BIT`, `SMOOTH_COUNT_BIT`), `GpuWorld::with_field_surface`, `update_field`,
+  `crisp_rows`, `Frame::set_field_split`, `CrackShares { hits, leaks }` (the WGSL hit flag
+  `HIT_PLANE` renamed `HIT_FIELD`); removed
+  `PlaneFit`, `PlaneOffset`, `OccupancyFilter`, `SurfaceFit`, `SurfaceModel`, `FieldNormal`,
+  `SurfaceTuning::{fit, shadow_push, normal_field, cube_hits, model, field_normal, crisp}`,
+  `MirrorConfig::attr_cap`, `GpuWorld::{set_crisp_materials, fix_crisp}`. `flythrough`:
+  `LookPreset::DEFAULT` is `FACE`, `ALL` is face, field, trilinear8, gradient27; `--crisp
+  none|rock|all`, `--seam-rig`; removed `--plane-fit`, `--plane-offset`, `--fit-filter`,
+  `--shadow-push`, `--normal-field`, `--field-normal` and the plane presets.
+- **Budget readings:** in `docs/nfr.md` §2 ("The default surface is honest cubes", "The opt-in
+  field look") and §3 ("The `face` default carries no attribute and no band term"), each with
+  machine, commit `86611cc`, lock and load; Phase 4c's log for the rest (done-when 8's tables,
+  the poses at the window's size, the RADV stats).
+- **Gate at the tip:** at 2bc7a5d's tree (Phase 5 changes only docs): `cargo nextest run
+  --workspace --profile gpu --no-fail-fast` exit 0, 179 run, 179 passed, 29 skipped (exclusive
+  perf lock, memory cap, load 1.89 at start); `--profile quick` exit 0, 539 run, 539 passed, 3
+  skipped; `cargo test --doc` exit 0, 8 passed, 1 ignored; `cargo clippy --workspace
+  --all-targets -- -D warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check`
+  exit 0; `check-doc-links`, `check-comment-hygiene`, `check-index-rows`, `check-test-tiers`
+  exit 0 (re-run after the Phase 5 edits). `--profile full` not run (the close review's).
+- **Outstanding `human` phases:** none; Phase 4d dropped (owner answer 13).
+
+## Followups
+
+Added 2026-11-01 (architect, owner answer 13). None is scheduled; each is a plan of its own if
+a consumer or the owner asks for it.
+
+- **Smooth for liquids.** The owner's "we can use smooth only for liquids maybe" is a question
+  for [Plan 0034](../0034-water-surface-waves-reflection-refraction-underwater-fog.md)'s interview,
+  not a decision: whether a liquid's surface takes the field's shape (a liquid material smooth
+  under the opt-in look) or stays ADR-0029's flat face with analytic wave normals.
+- **The smooth-near seam rule** (owner answer 12, not built): air band voxels carry a
+  smooth-near bit and a dual cell gives a field hit only with a smooth or smooth-near corner,
+  so the opt-in look's crisp seam closes the trunk's leaks and the L's material-0 corner.
+  Start from `live/p4c/air-bits.patch` and its readings (the 26-neighbour rule's 107 of 676
+  rock hits on the inlay, the 3x3 collar's 1.107 voxel); done-when 3's bars are its gate.
+- **The material-0 field hits**: a mixed-sign dual cell whose solid corners carry no count bit
+  (count 27) or whose corners are all air gives a field hit with no smooth corner (Phase 4c's
+  log: 41, 92 and 23 pixels on the cubes-free walk; the seam rig's collar and L corner). A
+  defect of the opt-in look.
+- **Plan 0053's bearing.** Its majority-filtered fit and normal field were removed by Phase 4c
+  with the planes; its box metric stays as the field look's regression gate. Plan 0053 closes
+  in the same close session as this plan (its branch `plan-0053` at 8dd3ee4 is stacked under
+  `plan-0054`), with its Phase 4 answered by this plan's answers 2, 7 and 13 and ADR-0040
+  rejected, never accepted.
+- **The Radeon walk-speed spike** (owner answer 3) and **the thin-feature fallback** (owner
+  answer 8) now concern only the opt-in look, and wait for a consumer of it.
+
+Added 2026-11-03 (architect, at the close review). The two findings the log handed to the review
+are settled here; none of these blocks the close.
+
+- **The default's speck count: accepted, no shadow start owed.** Re-read at the close on lavapipe:
+  `face` 2083 with shadows, 2055 without, 34 only with, against main's snap 365, 360, 6 (Plan
+  0050's log). 2055 of the 2083 are there with shadows off, so the metric is reading `face`'s own
+  shading; the shadow ray's share is the 34, 0.06 % of the 320 x 180 frame. The field look reads
+  103 there, more than `face`. `face`'s pixels are held to main's by the face goldens, and the
+  owner judged them in the window (answer 13). A shadow start for cubes is a plan only if the eye
+  asks for one. `contour_dark_specks_with_and_without_shadows` now prints these counts and asserts
+  only its golden, as Phase 4c's item 8 allows, so it does not guard them.
+- **`castle_gate_golden`'s peak RSS: not this plan's, still owed.** 866 717 696 B alone at the
+  close and passing in the full tier, against its 1 GiB bar; failures appear only in loaded runs
+  (Plan 0050's and Plan 0052's logs read 1.48 to 1.50 GB, this plan's 1.19 GB). The plan did not
+  raise it. The per-test reading that Plan 0052's followup asks for is still owed: `VmHWM` is the
+  process's peak, and the bar flakes in a loaded run.
+- **The hero image.** `docs/images/hero.png` shows the removed `contour-sharp` look, and
+  `--example hero` now shoots `face`. README's caption says so. Re-shooting it is the owner's call.
+- **Names left from the planes.** `NormalMode::Contour` is the field look; `contour_golden`,
+  `look_contour.png`, `look_wall_contour*.png` and `LookPreset::next`'s `contour` argument carry
+  the old word, and `apps/flythrough/src/lib.rs` and `tests/look.rs` cite the field as "ADR-0040
+  Alternative B". A rename fits Plan 0045.
+- **Approved plans that name what is gone.** Plans 0032, 0044, 0045 and 0051 carry a dated header
+  note. Plan 0051's is the one with weight: its world-space cache keys on the contour attribute,
+  which no longer exists.
+- **The logs behind the readings are untracked.** `nfr.md` §2 and §3 cite `live/p4c/close/` and
+  `live/session3-seam.log` in this plan's worktree, which are lost when the worktree is deleted
+  unless they are rescued first.

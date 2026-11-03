@@ -1,6 +1,6 @@
 # ADR-0039: The contour walk closes a crack at the passed voxel's exit, with the passed plane's normal
 
-> **Status:** accepted (2026-10-31, Plan 0050 closed; see Outcome)
+> **Status:** accepted (2026-10-31, Plan 0050 closed; see Outcome); superseded by ADR-0041 (2026-11-03), moot with the planes
 > **Date:** 2026-10-30
 > **Related plan(s):** [Plan 0050](../plans/done/0050-watertight-contour-surface-crack-spike-and-closing-rule.md)
 > (Phases 3 and 4, whose readings this records). Amends

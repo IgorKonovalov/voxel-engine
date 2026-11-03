@@ -1,6 +1,6 @@
 # ADR-0038: The contour plane code holds a zero normal component exactly
 
-> **Status:** accepted (2026-10-31, Plan 0050 closed; see Outcome)
+> **Status:** accepted (2026-10-31, Plan 0050 closed; see Outcome); superseded by ADR-0041 (2026-11-03), moot with the attribute
 > **Date:** 2026-10-29
 > **Related plan(s):** [Plan 0050](../plans/done/0050-watertight-contour-surface-crack-spike-and-closing-rule.md)
 > (Phase 2). Amends [ADR-0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md)'s

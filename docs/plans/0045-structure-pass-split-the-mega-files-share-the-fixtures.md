@@ -2,6 +2,8 @@
 
 > **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
+> **Noted 2026-11-03 (architect, Plan 0054's close):** `attrib.rs`, `attrib.wgsl` and `attr_work.rs` are gone with the planes; `field.rs` and `field.wgsl` stand in their place in this plan's splits. The names left from the planes (`NormalMode::Contour`, the `contour` goldens) fit this pass. Trust the tree; dev surfaces the
+> drift when this plan starts.
 > **Milestone:** cross-cutting (code health)
 > **Related ADRs:** none. The splits move code and keep every mechanism. Promoting `FnSource`
 > and `SplitMix64` into `vxe-world` adds public items but no decision. The rejected option, a

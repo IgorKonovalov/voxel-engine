@@ -5,10 +5,10 @@
 // Bindings, group 0 (every pass of the frame):
 //   0  uniform  params         views, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
-//                              bits 5..8: view, bit 8: full chunks' bricks carry contour
-//                              attributes, bit 9: skip empty cells larger than a voxel, bit
-//                              10: cutaway, bit 13: detail after lighting), the lighting flags,
-//                              exposure and the face mix
+//                              bits 5..8: view, bit 9: skip empty cells larger than a voxel,
+//                              bit 10: cutaway, bit 13: detail after lighting, bit 19: the
+//                              split field walk), the lighting flags, exposure and the face
+//                              mix
 //   1  storage  brick_pool0    shard 0 of the pool: [unit][16 x u32], 64-byte units; unit u is
 //                              unit u % units_per_shard of shard u / units_per_shard; 7, 8 and
 //                              9 are shards 1 to 3. A Full brick's slot is a run of units
@@ -20,11 +20,9 @@
 //                              layout (plane k is bit k of a voxel's palette index), or for
 //                              class 5 (Wide) 16 units of u16 ids, voxel i in half i % 2 of
 //                              word i / 2; then, for a planar brick holding a TRANSLUCENT
-//                              voxel, one unit of its translucent voxels; then, for a full
-//                              chunk's brick when the flag says so, its surface mask and its
-//                              surface voxels' contour attributes (header word 14: their
-//                              units in the low half, 0 for none; words 10..14 the surface
-//                              voxels below each layer, 8 u16)
+//                              voxel, one unit of its translucent voxels. A band brick's
+//                              header names its band slot (word 15) and holds its band
+//                              prefix (words 12 and 13, see the field walk)
 //   2  storage  chunk_records  [record][528 x u32]: 16 words of brick bits (bit b of word
 //                              b / 32 set when entry b is not uniform air), then 512 brick
 //                              entries. Entry bit 31 set: the slot's first unit in bits 0..26
@@ -58,31 +56,24 @@
 //   1  storage texture  hit_info_out   rgba16uint: the shading normal before detail as two
 //                                      snorm16 octahedral coordinates (exact for the six axis
 //                                      normals), the material id, and flags: bit 0 hit, bit 1
-//                                      contour-plane hit, bit 2 translucent layers in front,
+//                                      field-surface hit, bit 2 translucent layers in front,
 //                                      bits 3..5 the entry face's axis plus one (0: the ray
 //                                      started inside rock)
 //   2  storage texture  layer_out      rgba16float: the translucent layers in front of the hit
 //                                      (premultiplied colour, transmittance), lit by the lamp's
 //                                      cone and distance term except in the albedo view; in the
 //                                      steps view the primary ray's counters instead; in the
-//                                      cracks view its crack class in r and its lamp shadow
-//                                      ray's self-hit (1 or 0) in g
+//                                      cracks view 1 in r for a field walk's leak, else 0
 //
 // A pixel takes the first view whose rectangle holds it (the first when none does). Its ray
 // runs from the view's origin along `fwd + right x - up y`, x and y moving linearly across the
 // rectangle from minus the left tangent to the right one and from the up tangent to minus the
 // down one.
 //
-// With attributes (flag bit 8), a full chunk's Full brick has a u16 contour attribute for each
-// voxel of its surface mask (its non-air voxels with an air face neighbour inside the chunk,
-// or on the chunk's face): voxel (x, y, z)'s at index prefix[z] + the surface bits below it in
-// its layer, two per word: bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the plane
-// offset code k for (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF, and every
-// voxel off the surface, is no plane. In the Contour normal mode the walk tests a solid voxel that has a plane against
-// the ray: it is hit where the ray enters the plane's solid half-space inside the voxel's
-// cube, with the plane normal, and skipped when the ray's segment through the cube misses
-// that half-space. A solid voxel with no plane, of a uniform brick or of a mip-brick, hits
-// as a cube.
+// In the Contour normal mode over a mirror with band slots the primary ray walks the field
+// surface (see the field walk below), outside the cutaway view; every other ray (the shadow,
+// probe and translucent rays among them), and the primary ray in the other modes, walks the
+// voxels: a solid voxel hits as its cube.
 //
 // World units are voxels. The walk is a DDA over cells of seven sizes: a chunk that is absent
 // or empty (its table entry's EMPTY_BIT) is skipped as one 64^3 cell, a 2 x 2 x 2 group of
@@ -153,8 +144,8 @@ struct Params {
     frame: u32,
     lighting: u32,
     window_min: vec3<i32>,
-    // A contour-plane hit's shading normal is mixed this far toward its entry face's normal
-    // (`SurfaceTuning::face_mix`); 0 keeps the plane's.
+    // A field-surface hit's shading normal is mixed this far toward its entry face's normal
+    // (`SurfaceTuning::face_mix`); 0 keeps the field's.
     face_mix: f32,
     window_size: vec3<i32>,
     _pad3: i32,
@@ -229,6 +220,33 @@ struct ExposureState {
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
 
+// The split field walk (FLAG_FIELD_SPLIT): the hit pipeline walks every ray as `march` does,
+// its cells cubes, until the ray enters a full chunk's brick that the field can hit in (a band
+// brick without BAND_CUBES_BIT), and appends the ray there to `split_list` with what the field
+// walk resumes from; `field_resume`, in a dispatch of `split_args.groups` workgroups, walks
+// the field from it. A ray entry: the pixel (x in bits 0..16, y in 16..32), `t` as bits, the
+// entered voxel relative to the window's first voxel (x, y in the third word, z and the
+// entry axis plus one in the fourth). The counts start at zero each frame (the frame clears
+// them); the first pixel writes the dispatch's y and z.
+struct SplitList {
+    count: atomic<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    rays: array<vec4<u32>>,
+};
+struct SplitArgs {
+    groups: atomic<u32>,
+    y: u32,
+    z: u32,
+};
+@group(1) @binding(3) var<storage, read_write> split_list: SplitList;
+@group(1) @binding(4) var<storage, read_write> split_args: SplitArgs;
+// `field_resume`'s workgroup size (marcher.rs: SPLIT_GROUP).
+const SPLIT_GROUP: u32 = 128u;
+// A `march` miss's material when the split walk hands the ray on.
+const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
+
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
 const LOD_BIT: u32 = 0x40000000u;
@@ -240,6 +258,7 @@ const MATERIAL_MASK: u32 = 0xFFFFu;
 const UNIT_MASK: u32 = 0x3FFFFFFu;
 const CLASS_SHIFT: u32 = 26u;
 const CLASS_WIDE: u32 = 5u;
+const CLASS_UNIFORM: u32 = 6u;
 // MaterialFlags::TRANSLUCENT, in the material row's flag bits.
 const MATERIAL_TRANSLUCENT: u32 = 2u;
 // u32 words of a pool unit and of a chunk record, and the record word where the brick entries
@@ -259,12 +278,12 @@ const NORMAL_SHIFT: u32 = 2u;
 const FLAG_DETAIL: u32 = 16u;
 const VIEW_SHIFT: u32 = 5u;
 const VIEW_BITS: u32 = 7u;
-const FLAG_ATTRS: u32 = 256u;
 const FLAG_SKIPS: u32 = 512u;
 const FLAG_CUTAWAY: u32 = 1024u;
 const FLAG_DETAIL_AFTER_LIGHTING: u32 = 8192u;
-// Flags bit 14: push a contour hit's shadow origin clear of its neighbours' planes.
-const FLAG_SHADOW_PUSH: u32 = 16384u;
+// The field look's split walk: the hit pipeline's `main` walks to the first field brick and
+// hands the ray to `field_resume` (`split_pixel`).
+const FLAG_FIELD_SPLIT: u32 = 524288u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -276,8 +295,6 @@ const VIEW_HITMASK: u32 = 2u;
 const VIEW_STEPS: u32 = 3u;
 const VIEW_ALBEDO: u32 = 4u;
 const VIEW_CRACKS: u32 = 5u;
-// The attribute of no plane.
-const NO_PLANE: u32 = 0xFFFFu;
 // Params.lighting bits.
 const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
@@ -292,7 +309,7 @@ const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
 // Hit record flags.
 const HIT_FOUND: u32 = 1u;
-const HIT_PLANE: u32 = 2u;
+const HIT_FIELD: u32 = 2u;
 const HIT_TRANSLUCENT: u32 = 4u;
 const HIT_AXIS_SHIFT: u32 = 3u;
 const PI: f32 = 3.14159265358979;
@@ -311,15 +328,12 @@ struct Cell {
     air: bool,
 };
 
-// `plane`: the hit is on a contour plane, `n` its normal.
 struct Hit {
     found: bool,
     voxel: vec3<i32>,
     axis: i32,
     t: f32,
     material: u32,
-    plane: bool,
-    n: vec3<f32>,
 };
 
 // The walk's state across the steps of one `march`: the chunk it is in with its table entry
@@ -349,9 +363,17 @@ struct Walk {
     mask: vec4<u32>,
     // Set when a brick entry read since the reset carries TRANSLUCENT_BIT.
     saw_translucent: bool,
+    // With `split_walk`: `brick` is a field brick (a band brick without BAND_CUBES_BIT).
+    brick_field: bool,
 };
 
 var<private> walk: Walk;
+
+// Set by `split_pixel` around its `march`: `descend` reads each full chunk's Full brick's band
+// word as it enters the brick, and sets `split_entered` when the voxel it answers for lies in
+// a field brick, where `march` stops and hands the ray on. Clear for every other walk.
+var<private> split_walk: bool = false;
+var<private> split_entered: bool;
 
 // The stretch of the ray parameter over which `march` takes the coarse shadow walk's cells
 // (`lookup_walk`); empty (BIG, -BIG) for the full walk. The light pass sets it around a
@@ -363,26 +385,19 @@ var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 // loads from the mirror (table, record bits and entries, mask lines, the header's translucent
 // words, the rest of the slots), and the pool loads among them: every slot word but a mask
 // line's or a translucent word's. `main` resets them before the primary ray and reads them after it in the
-// steps view.
+// steps view. The loads count in the low half of `loads` and the pool loads in its high half
+// (one register; a ray past 65535 loads would carry into the high half, far above the 255 the
+// views clamp at).
 var<private> walk_steps: u32;
 var<private> loads: u32;
-var<private> pool_reads: u32;
 
-// Set in the cracks view's hit pipeline alone: the walk records `crack_class` and the hit pass
-// traces each hit's lamp self-hit. A pipeline constant, so every other pipeline that walks
-// holds none of that code, whose registers would slow the walk in every view.
-override CRACKS_VIEW: bool = false;
+fn counted_loads() -> u32 {
+    return loads & 0xFFFFu;
+}
 
-// How the last `march` reached its hit (the cracks view): 0 when it passed no surface voxel
-// outside its plane's solid half-space (contour kind 2) since the last empty cell it entered
-// (or with contour off), else CRACK_INTERIOR when the hit voxel has no plane (an interior
-// voxel, a uniform brick, a mip cell), CRACK_ENTRY when the ray enters the hit voxel already
-// inside its half-space, CRACK_CROSSING when it crosses the plane inside the voxel. 0 on a
-// miss.
-var<private> crack_class: u32;
-const CRACK_INTERIOR: u32 = 1u;
-const CRACK_ENTRY: u32 = 2u;
-const CRACK_CROSSING: u32 = 3u;
+fn counted_pool_reads() -> u32 {
+    return loads >> 16u;
+}
 
 fn reset_walk() {
     walk.in_chunk = false;
@@ -407,8 +422,7 @@ fn slot_word(unit: u32, word: u32) -> u32 {
 
 // `slot_word`, counted as a pool load.
 fn pool_word(unit: u32, word: u32) -> u32 {
-    loads += 1u;
-    pool_reads += 1u;
+    loads += 0x10001u;
     return slot_word(unit, word);
 }
 
@@ -556,6 +570,7 @@ fn absent_descent(size: i32) -> Descent {
 }
 
 fn descend(v: vec3<i32>) -> Descent {
+    split_entered = false;
     let skips = (params.flags & FLAG_SKIPS) != 0u;
     let chunk = floor_div(v, 64);
     let rel = chunk - params.window_min;
@@ -605,18 +620,25 @@ fn descend(v: vec3<i32>) -> Descent {
         walk.brick_entry =
             record_word(walk.base + ENTRY_WORD + walk.first + u32(b.x + e * (b.y + e * b.z)));
         walk.saw_translucent = walk.saw_translucent || (walk.brick_entry & TRANSLUCENT_BIT) != 0u;
+        walk.brick_field = false;
+        if (split_walk && level == 0u && (walk.brick_entry & FULL_BIT) != 0u) {
+            let h = pool_word(walk.brick_entry & UNIT_MASK, HEADER_WORD + HEADER_BAND_WORD);
+            walk.brick_field = (h & (HEADER_BAND_BIT | BAND_CUBES_BIT)) == HEADER_BAND_BIT;
+        }
     }
     let entry = walk.brick_entry;
     if (entry == 0u) {
         return empty_descent(select(cell, 8 * cell, skips));
     }
+    split_entered = walk.brick_field;
     let l = c - b * 8;
     return Descent(0, entry, cell, level, vec3<u32>(l), u32(l.x + 8 * (l.y + 8 * l.z)), true);
 }
 
-// Bit planes of a planar class: 0, 1, 2 or 4 for classes 1 to 4.
+// Bit planes of a planar class: 0, 1, 2 or 4 for classes 1 to 4, none for a uniform band
+// brick's slot (class 6, laid out as class 1).
 fn class_planes(cls: u32) -> u32 {
-    return select(cls - 1u, 4u, cls == 4u);
+    return select(select(cls - 1u, 4u, cls == 4u), 0u, cls == CLASS_UNIFORM);
 }
 
 // Units of a Full entry's payload: its planes, or 16 of raw ids for class Wide.
@@ -780,78 +802,19 @@ fn advance(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, t: f32, k: i32, face: i32
     return select(v, vec3<i32>(select(face - 1, face, d[k] > 0.0)), axis_mask(k));
 }
 
-// Octahedral decoding of 6 + 6 bits into a unit vector.
-fn decode_octahedral(e: u32) -> vec3<f32> {
-    let p = vec2<f32>(f32(e & 63u), f32((e >> 6u) & 63u)) / 31.0 - 1.0;
-    var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
-    if (n.z < 0.0) {
-        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
-        n = vec3<f32>((1.0 - abs(n.yx)) * s, n.z);
+// Layer `z`'s prefix (`z` in 0..8) in a packed prefix of two header words `lo`, `hi`
+// (`gpu_world::pack_prefix`): layers 1 to 4 in `lo` at bits 0, 7, 15 and 23 (7, 8, 8 and 9
+// bits wide), layers 5 to 7 in `hi` at bits 0, 9 and 18 (9 bits each); layer 0's is 0.
+fn layer_prefix(lo: u32, hi: u32, z: u32) -> u32 {
+    if (z == 0u) {
+        return 0u;
     }
-    return normalize(n);
-}
-
-// The unit offset of a Full entry's surface mask from its first unit, its attributes one unit
-// on: past its mask, header, payload and, for a planar brick holding a TRANSLUCENT voxel, its
-// translucent unit.
-fn attr_offset(entry: u32) -> u32 {
-    let cls = (entry >> CLASS_SHIFT) & 7u;
-    let t = select(0u, 1u, (entry & TRANSLUCENT_BIT) != 0u && cls != CLASS_WIDE);
-    return 2u + payload_units(entry) + t;
-}
-
-// The contour attribute of voxel `index` of the Full brick with record entry `entry`: NO_PLANE
-// for a brick without attributes or a voxel off its surface mask, else the attribute at the
-// voxel's popcount index.
-fn contour_attr(entry: u32, index: u32) -> u32 {
-    let unit = entry & UNIT_MASK;
-    if ((pool_word(unit, HEADER_WORD + 14u) & 0xFFFFu) == 0u) {
-        return NO_PLANE;
+    if (z >= 5u) {
+        return (hi >> (9u * (z - 5u))) & 0x1FFu;
     }
-    let s = UNIT_WORDS * attr_offset(entry);
-    let z = index / 64u;
-    let b = index % 64u;
-    let lo = pool_word(unit, s + 2u * z);
-    var bit = 0u;
-    var below = 0u;
-    if (b < 32u) {
-        bit = (lo >> b) & 1u;
-        below = countOneBits(lo & ((1u << b) - 1u));
-    } else {
-        let hi = pool_word(unit, s + 2u * z + 1u);
-        bit = (hi >> (b - 32u)) & 1u;
-        below = countOneBits(lo) + countOneBits(hi & ((1u << (b - 32u)) - 1u));
-    }
-    if (bit == 0u) {
-        return NO_PLANE;
-    }
-    let prefix = pool_word(unit, HEADER_WORD + 10u + z / 2u);
-    let k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
-    let word = pool_word(unit, s + UNIT_WORDS + k / 2u);
-    return (word >> ((k & 1u) * 16u)) & 0xFFFFu;
-}
-
-// The contour test of solid voxel `v`, entered at `t`: `kind` 0 when the voxel has no plane,
-// 1 for a hit at the entry `t` (the ray enters already inside the plane's solid half-space)
-// with normal `n`, 3 for a hit where the ray crosses the plane inside the voxel's cube, 2
-// when the ray misses the half-space inside the cube.
-struct Contour {
-    kind: u32,
-    t: f32,
-    n: vec3<f32>,
-    // The voxel's attribute, NO_PLANE for none.
-    a: u32,
-};
-
-// The offset of attribute `a`'s plane from its voxel's centre along its normal, in voxels.
-fn plane_offset(a: u32) -> f32 {
-    return (f32(a >> 12u) - 7.0) / 8.0;
-}
-
-// The signed distance at `p` from the plane of attribute `a` of voxel `v`, negative inside
-// its solid half-space.
-fn plane_distance(a: u32, v: vec3<i32>, p: vec3<f32>) -> f32 {
-    return dot(decode_octahedral(a), p - vec3<f32>(v) - 0.5) - plane_offset(a);
+    let shift = select(8u * z - 9u, 0u, z == 1u);
+    let width = select(select(9u, 8u, z < 4u), 7u, z == 1u);
+    return (lo >> shift) & ((1u << width) - 1u);
 }
 
 // The ray parameter where it leaves cube `v`.
@@ -861,41 +824,11 @@ fn cube_exit(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>) -> f32 {
     return min(min(tk.x, tk.y), tk.z);
 }
 
-fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32, c: Cell) -> Contour {
-    var none = Contour(0u, t, vec3<f32>(0.0), NO_PLANE);
-    if (c.slot == ABSENT) {
-        return none;
-    }
-    let a = contour_attr(c.slot, c.index);
-    if (a == NO_PLANE) {
-        return none;
-    }
-    let n = decode_octahedral(a);
-    let offset = plane_offset(a);
-    // Signed distance along n from the plane, negative inside the solid half-space.
-    let centre = vec3<f32>(v) + 0.5;
-    let s_in = dot(n, o + d * t - centre) - offset;
-    if (s_in <= 0.0) {
-        return Contour(1u, t, n, a);
-    }
-    let t_out = cube_exit(o, d, inv, v);
-    let s_out = dot(n, o + d * t_out - centre) - offset;
-    if (s_out <= 0.0) {
-        return Contour(3u, t + (t_out - t) * s_in / (s_in - s_out), n, a);
-    }
-    return Contour(2u, t, n, a);
-}
-
-fn contour_active() -> bool {
-    return ((params.flags >> NORMAL_SHIFT) & 3u) == NORMAL_CONTOUR
-        && (params.flags & FLAG_ATTRS) != 0u;
-}
-
 // The first solid voxel along `o + d t` for `0 <= t <= t_limit`. With `cutaway` set the walk
 // starts passing: solid cells are stepped through until the first empty cell of a resident
 // chunk.
 fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
-    var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u, false, vec3<f32>(0.0));
+    var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u);
     let bmin_i = params.window_min * 64;
     let bmax_i = (params.window_min + params.window_size) * 64;
     let bmin = vec3<f32>(bmin_i);
@@ -923,15 +856,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
         v = advance(o, d, inv, t, axis, face);
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
-    let contour = contour_active();
     var passing = cutaway;
-    if (CRACKS_VIEW) {
-        crack_class = 0u;
-    }
-    // The attribute of the last surface voxel passed outside its plane since the last empty
-    // cell, NO_PLANE for none: the crack-closing memory and the cracks view's pass. One
-    // register, not a normal and a count.
-    var passed = NO_PLANE;
 
     for (var step = 0u; step < MAX_STEPS; step++) {
         walk_steps += 1u;
@@ -942,6 +867,10 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return miss;
         }
         let c = lookup_walk(v, t >= coarse_span.x && t <= coarse_span.y);
+        if (split_entered) {
+            // The split walk's hand-off: the ray enters a field brick at `v`.
+            return Hit(false, v, axis, t, SPLIT_HANDOFF);
+        }
         var size = c.size;
         if (passing) {
             if (size == 0) {
@@ -951,34 +880,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             }
         }
         if (size == 0) {
-            if (!contour) {
-                return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
-            }
-            let p = contour_test(o, d, inv, v, t, c);
-            if (p.kind != 2u) {
-                if (passed != NO_PLANE && p.kind != 3u) {
-                    // Close the crack at the passed voxel's exit, this voxel's entry: with
-                    // the passed plane's normal before a voxel without a plane, with the
-                    // mean of the two planes' normals before an entry already inside.
-                    let passed_n = decode_octahedral(passed);
-                    let mean = passed_n + p.n;
-                    let l = length(mean);
-                    let ns = select(passed_n, mean / max(l, 1e-6), p.kind == 1u && l > 1e-3);
-                    return Hit(true, v, axis, t, c.material, true, ns);
-                }
-                if (CRACKS_VIEW && passed != NO_PLANE) {
-                    crack_class = select(select(CRACK_CROSSING, CRACK_ENTRY, p.kind == 1u), CRACK_INTERIOR, p.kind == 0u);
-                }
-                if (p.kind == 0u) {
-                    return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
-                }
-                return Hit(true, v, axis, p.t, c.material, true, p.n);
-            }
-            // The ray passes the voxel outside its plane: walk on as through air.
-            passed = p.a;
-            size = 1;
-        } else {
-            passed = NO_PLANE;
+            return Hit(true, v, axis, t, c.material);
         }
         // Leave the cell through its nearest face, the lower axis on a tie: the same
         // `(t, axis)` order `advance` crosses the other axes' planes in.
@@ -1149,9 +1051,6 @@ fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     if (h.axis < 0) {
         return nf;
     }
-    if (h.plane) {
-        return face_mixed(h.n, nf);
-    }
     let mode = normal_mode();
     if (mode == NORMAL_TRILINEAR8) {
         return trilinear8_normal(o + d * h.t, h, nf);
@@ -1162,7 +1061,7 @@ fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     return nf;
 }
 
-// A contour-plane hit's shading normal: its plane normal `n` mixed `params.face_mix` of the
+// A field-surface hit's shading normal: its field normal `n` mixed `params.face_mix` of the
 // way toward its entry face's normal `f`, `normalize(mix(n, f, k))`; exactly `n` at 0.
 fn face_mixed(n: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
     if (params.face_mix > 0.0) {
@@ -1171,7 +1070,7 @@ fn face_mixed(n: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
     return n;
 }
 
-// The plane normal `n` of a contour-plane hit whose stored shading normal is `m`, the face mix
+// The field normal `n` of a field-surface hit whose stored shading normal is `m`, the face mix
 // of `n` toward its entry face's normal `f`: `(1 - k) n = l m - k f` with `l = |mix|` the root
 // of `l^2 - 2 l k (m.f) + k^2 - (1 - k)^2 = 0`, real for `k <= 1/2`; `m` itself at 0.
 fn face_unmixed(m: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
@@ -1256,14 +1155,9 @@ fn detail(p: vec3<f32>, n: vec3<f32>, scale: f32, strength: f32, fine: f32) -> v
 // How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
 const SHADOW_OFFSET: f32 = 0.5;
 
-// The direction the shadow ray of hit `h` leaves along: the plane normal of a contour-plane
-// hit, whose point lies inside its voxel's cube, so that the face normal would start the ray
-// inside neighbouring rock; the face normal of any cube hit. The undetailed normal in both
-// cases: the offset is a robustness step out of the surface, not part of the look.
+// The direction the shadow ray of a voxel-walk hit `h` leaves along: its entry face's normal,
+// undetailed: the offset is a robustness step out of the surface, not part of the look.
 fn shadow_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
-    if (h.plane) {
-        return h.n;
-    }
     return face_normal(d, h);
 }
 
@@ -1352,121 +1246,67 @@ fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
 }
 
 // One pixel's hit record, decoded from the hit buffer: `n` is the shading normal before
-// detail, `axis` the entry face's axis (-1: the ray started inside rock).
+// detail, `axis` the entry face's axis (-1: the ray started inside rock). `nf` is the normal
+// the shading starts from, `n` as decoded.
 struct HitRecord {
     found: bool,
-    plane: bool,
+    field: bool,
     translucent: bool,
     axis: i32,
     material: u32,
     p: vec3<f32>,
     t: f32,
     n: vec3<f32>,
+    nf: vec3<f32>,
 };
 
 fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
     let flags = info.w;
     return HitRecord(
         (flags & HIT_FOUND) != 0u,
-        (flags & HIT_PLANE) != 0u,
+        (flags & HIT_FIELD) != 0u,
         (flags & HIT_TRANSLUCENT) != 0u,
         i32((flags >> HIT_AXIS_SHIFT) & 3u) - 1,
         info.z,
         pos.xyz,
         pos.w,
         octa16_decode(info.xy),
+        octa16_decode(info.xy),
     );
 }
 
-// The detailed shading normal of a hit in xyz and its albedo factor in w: the hit's normal
-// and 1 without the detail flag or with a material of detail strength 0.
+// The detailed shading normal of a hit in xyz and its albedo factor in w: the hit's shading
+// normal `nf` and 1 without the detail flag or with a material of detail strength 0.
 fn surface_detail(rec: HitRecord) -> vec4<f32> {
     if ((params.flags & FLAG_DETAIL) != 0u) {
         // Exactly no change at strength 0.
         let row = materials[rec.material * 4u + 2u];
         if (row.y > 0.0) {
-            return detail(rec.p, rec.n, row.x, row.y, row.w);
+            return detail(rec.p, rec.nf, row.x, row.y, row.w);
         }
     }
-    return vec4<f32>(rec.n, 1.0);
+    return vec4<f32>(rec.nf, 1.0);
 }
 
-// The shadow normal of a hit seen along `d` (see `shadow_normal`): the plane normal of a
-// contour-plane hit, else the entry face's normal, `-d` for a ray that started inside rock.
+// The shadow normal of a hit seen along `d`: a field-surface hit's field normal, unmixed
+// (`face_unmixed`); else the entry face's normal, `-d` for a ray that started inside rock.
 fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
     if (rec.axis < 0) {
-        return select(-d, rec.n, rec.plane);
+        return select(-d, rec.n, rec.field);
     }
     let face = select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
-    if (rec.plane) {
-        // The stored normal is the plane's mixed toward this face (`face_mixed`).
+    if (rec.field) {
         return face_unmixed(rec.n, face);
     }
     return face;
 }
 
-// Whether a shadow origin at `q` lies clear of the rock the contour planes model: no solid
-// voxel without a plane holds `q` and no plane of the eight voxels around `q` holds it inside
-// its solid half-space.
-fn origin_clear(q: vec3<f32>) -> bool {
-    let c0 = lookup(vec3<i32>(floor(q)));
-    if (c0.size == 0 && (c0.slot == ABSENT || contour_attr(c0.slot, c0.index) == NO_PLANE)) {
-        return false;
-    }
-    let b = vec3<i32>(floor(q - 0.5));
-    for (var i = 0u; i < 8u; i++) {
-        let u = b + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u));
-        let c = lookup(u);
-        if (c.size == 0 && c.slot != ABSENT) {
-            let a = contour_attr(c.slot, c.index);
-            if (a != NO_PLANE && plane_distance(a, u, q) <= 0.0) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 // Where the shadow rays of a hit at `p` with shadow normal `ns` start: SHADOW_OFFSET along
-// `ns`; with the shadow push in the contour look, the first of 0.5 and 0.75 voxel that is
-// `origin_clear`, else 1.0.
+// `ns`. The shadow rays walk the voxels (`march`), crisp and smooth alike solid, and a
+// field-surface hit lies up to half a voxel off its voxels' faces, so the offset is a step out
+// of the voxels' rock as much as off the surface.
 fn shadow_origin(p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
-    if ((params.flags & FLAG_SHADOW_PUSH) == 0u || !contour_active()) {
-        return p + ns * SHADOW_OFFSET;
-    }
-    for (var k = 0u; k < 2u; k++) {
-        let q = p + ns * (SHADOW_OFFSET + 0.25 * f32(k));
-        if (origin_clear(q)) {
-            return q;
-        }
-    }
-    return p + ns;
-}
-
-// The cracks view's self-hit: a lamp shadow ray that finds rock within this many voxels of its
-// origin, three times SHADOW_OFFSET. A true occluder that close is a neighbouring voxel's own
-// plane.
-const SELF_HIT: f32 = 1.5;
-
-// Whether the lamp's shadow ray of hit `rec`, seen along `d`, finds rock within SELF_HIT of its
-// origin; false where the light pass casts no lamp shadow ray (lamp or shadows off, outside
-// the cone, facing away). The walk is the full one: SELF_HIT is inside the coarse walk's
-// margin.
-fn lamp_self_hit(rec: HitRecord, d: vec3<f32>) -> bool {
-    if ((params.lighting & LIGHTING_LAMP) == 0u || (params.flags & FLAG_SHADOWS) == 0u
-        || (params.flags & FLAG_CUTAWAY) != 0u) {
-        return false;
-    }
-    let to_light = params.light_pos - rec.p;
-    let dist2 = max(dot(to_light, to_light), 1e-4);
-    let l = to_light * inverseSqrt(dist2);
-    let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
-    let lit = params.light_intensity * cone * max(dot(lighting_normal(rec), l), 0.0) / dist2;
-    if (lit <= 0.0) {
-        return false;
-    }
-    let o = shadow_origin(rec.p, shadow_normal_of(rec, d));
-    return march(o, l, min(sqrt(dist2), SELF_HIT), false).found;
+    return p + ns * SHADOW_OFFSET;
 }
 
 // Whether the detail's shading is applied after lighting (flag bit 13 with the lamp on, not
@@ -1482,7 +1322,7 @@ fn detail_after_lighting() -> bool {
 // when the detail is applied after lighting.
 fn lighting_normal(rec: HitRecord) -> vec3<f32> {
     if (detail_after_lighting()) {
-        return rec.n;
+        return rec.nf;
     }
     return surface_detail(rec).xyz;
 }
@@ -1491,7 +1331,7 @@ fn lighting_normal(rec: HitRecord) -> vec3<f32> {
 // `clamp(max(nd.l, 0) / max(n.l, 1e-3), 0, 2)`, `l` the unit vector from the hit to the lamp.
 fn detail_lamp_ratio(rec: HitRecord, nd: vec3<f32>) -> f32 {
     let l = normalize(params.light_pos - rec.p);
-    return clamp(max(dot(nd, l), 0.0) / max(dot(rec.n, l), 1e-3), 0.0, 2.0);
+    return clamp(max(dot(nd, l), 0.0) / max(dot(rec.nf, l), 1e-3), 0.0, 2.0);
 }
 
 // `p` projected through previous view `v` to a fractional pixel of the target (pixel
@@ -1583,9 +1423,798 @@ fn emission_of(m: u32) -> vec3<f32> {
     return materials[m * 4u + 1u].xyz * emission_scale[emission_base + m];
 }
 
+// ---- The field surface (the Contour normal mode, the hit pipeline with FIELD_SURFACE) ----
+//
+// ADR-0041: the surface is the zero set of `phi = count / 27 - 1/2` trilinearly interpolated
+// over the voxel centres, `count` a voxel's solid voxels among the 27 around it, itself
+// included (solid is not air, a translucent voxel included). A band brick's header names its
+// band slot (HEADER_BAND_WORD: HEADER_BAND_BIT and the slot's first unit; a uniform band brick
+// has a class 6 slot for it): the band mask (unit 0, the opaque mask's layout), then the band
+// voxels' u8 counts in band-index order, the k-th in byte k % 4 of word k / 4 of unit 1 on;
+// the brick's header holds its band prefix (HEADER_BAND_PREFIX_WORD, `layer_prefix`), so a
+// voxel's band index is its layer's prefix and the band bits below it in its layer. A
+// band voxel's count is read there, any other voxel's is 27 when it is solid and 0 when it is
+// air. The walk is `march`'s DDA over the cells that hold a band voxel (0 < count < 27) or a
+// solid one: a band brick's band mask ORed with its opaque mask (all set for a uniform solid
+// brick, a translucent one included), and a chunk or a group of bricks is skipped only when
+// its brick bits are clear. In a band
+// voxel the ray's segment through the voxel is split at the voxel's three mid-planes into its
+// pieces in the dual cells it crosses (the cubes between eight voxel centres, at most four),
+// and on a piece whose cell's eight corners mix signs `phi` along the ray is a cubic in `t`:
+// the cubic's extrema split the piece into monotone runs, and the first run that rises to
+// zero holds the hit, found by eight steps of the Illinois method. A piece that starts at or
+// above zero is a hit at its start. A leak is a ray that reaches a solid voxel outside the
+// band, a piece whose corners all lie above zero, or a piece that starts more than
+// FIELD_LEAK_EPS above zero: each is hit there as a cube and flagged, in the cracks view's
+// place. A LOD-only chunk is walked as `march` walks it, its cells cubes.
+//
+// A crisp voxel (a voxel of a `MaterialFlags::CRISP` row, its band count carrying
+// CRISP_COUNT_BIT) counts as solid in the field and is hit as its cube where the ray enters
+// it, with its entry face's normal; no field piece inside it is tested. A dual cell with a
+// crisp corner gives a field hit only when one of its corners carries SMOOTH_COUNT_BIT (a
+// smooth solid band voxel), so two crisp faces meeting in a concave corner stay a sharp
+// corner, and a field hit takes the material of its largest-weight smooth solid corner. A band
+// brick whose header carries BAND_CUBES_BIT (no smooth solid voxel in it or its shell, set by
+// the field pass) can give no field hit and is walked as `march` walks a brick, its solid
+// voxels cubes.
+//
+// The shading normal is the normalised gradient of the trilinear `phi` at the hit, mixed
+// toward the entry face by the face mix (`face_mixed`). The hit record flags a field hit
+// (HIT_FIELD), so the light pass starts its shadow rays along the field normal
+// (`shadow_normal_of`); they walk the voxels (`march`), not the field. Translucent voxels are
+// solid to the field, and the field walk composites no translucent layer.
+
+override FIELD_SURFACE: bool = false;
+
+const HEADER_BAND_WORD: u32 = 15u;
+const HEADER_BAND_BIT: u32 = 0x80000000u;
+const HEADER_BAND_PREFIX_WORD: u32 = 12u;
+const BAND_CUBES_BIT: u32 = 0x40000000u;
+// A piece that starts this far above zero (in phi) missed its crossing: a leak.
+const FIELD_LEAK_EPS: f32 = 1e-4;
+
+// The field's view of a brick: its chunk's table entry (ABSENT outside the window or for an
+// absent chunk) and, in a full chunk, the brick's record entry, band slot (ABSENT for none)
+// and, for a band brick, its header's band prefix (HEADER_BAND_PREFIX_WORD, two words) and
+// whether it walks as cubes (BAND_CUBES_BIT).
+struct FBrick {
+    table: u32,
+    entry: u32,
+    band: u32,
+    prefix: vec2<u32>,
+    cubes: bool,
+};
+
+// The last brick `field_brick` resolved, the last 4^3 block row `field_cell` read (keyed by
+// band slot and word), the last group of bricks it tested (keyed by record and word) and the
+// last dual cell's corners `field_piece` loaded.
+// Keys are packed into one word each, NOT_HELD when nothing is held. `fb_key` is the brick
+// coordinate's low ten bits per axis (`brick_key`): unique while the window, with the one brick
+// a corner reads past its edge, spans fewer than 1024 bricks (128 chunks) on every axis.
+const NOT_HELD: u32 = 0xFFFFFFFFu;
+var<private> fb_key: u32;
+var<private> fb: FBrick;
+var<private> fm_key: u32;
+var<private> fm_opaque: vec4<u32>;
+var<private> fm_band: vec4<u32>;
+var<private> fg_key: u32;
+var<private> fg_bits: u32;
+var<private> fc_held: bool;
+var<private> fc_base: vec3<i32>;
+// The held cell's corner count bytes, corner i in byte i % 4 of word i / 4, CRISP_COUNT_BIT
+// kept: two registers held across the walk where eight `phi` values would take eight.
+var<private> fc_bytes: vec2<u32>;
+
+fn reset_field_walk() {
+    reset_walk();
+    fb_key = NOT_HELD;
+    fm_key = NOT_HELD;
+    fg_key = NOT_HELD;
+    fc_held = false;
+}
+
+fn brick_key(bw: vec3<i32>) -> u32 {
+    let k = vec3<u32>(bw) & vec3<u32>(1023u);
+    return k.x | (k.y << 10u) | (k.z << 20u);
+}
+
+fn field_brick(bw: vec3<i32>) -> FBrick {
+    let key = brick_key(bw);
+    if (key == fb_key) {
+        return fb;
+    }
+    fb_key = key;
+    var r = FBrick(ABSENT, 0u, ABSENT, vec2<u32>(0u), false);
+    let chunk = floor_div(bw, 8);
+    let rel = chunk - params.window_min;
+    let w = params.window_size;
+    if (all(rel >= vec3<i32>(0)) && all(rel < w)) {
+        let wr = ((chunk % w) + w) % w;
+        loads += 1u;
+        r.table = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
+        if (r.table != ABSENT && (r.table & LOD_BIT) == 0u) {
+            let rec = r.table & RECORD_MASK;
+            let b = bw - chunk * 8;
+            let bi = u32(b.x + 8 * (b.y + 8 * b.z));
+            r.entry = record_word(rec * RECORD_WORDS + ENTRY_WORD + bi);
+            if ((r.entry & FULL_BIT) != 0u) {
+                let unit = r.entry & UNIT_MASK;
+                let h = pool_word(unit, HEADER_WORD + HEADER_BAND_WORD);
+                if ((h & HEADER_BAND_BIT) != 0u) {
+                    r.band = h & UNIT_MASK;
+                    r.cubes = (h & BAND_CUBES_BIT) != 0u;
+                    r.prefix = vec2<u32>(
+                        pool_word(unit, HEADER_WORD + HEADER_BAND_PREFIX_WORD),
+                        pool_word(unit, HEADER_WORD + HEADER_BAND_PREFIX_WORD + 1u),
+                    );
+                }
+            }
+        }
+    }
+    fb = r;
+    return r;
+}
+
+// Whether voxel `i` of the brick with record entry `entry` (in a full chunk) is solid to the
+// field: not air, a translucent voxel included.
+fn field_solid(entry: u32, i: u32) -> bool {
+    if ((entry & FULL_BIT) == 0u) {
+        return (entry & MATERIAL_MASK) != 0u;
+    }
+    let unit = entry & UNIT_MASK;
+    if (((pool_word(unit, i / 32u) >> (i % 32u)) & 1u) != 0u) {
+        return true;
+    }
+    if ((entry & TRANSLUCENT_BIT) == 0u) {
+        return false;
+    }
+    if (((entry >> CLASS_SHIFT) & 7u) == CLASS_WIDE) {
+        return voxel_material(entry, i) != 0u;
+    }
+    let t = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * payload_units(entry) + i / 32u);
+    return ((t >> (i % 32u)) & 1u) != 0u;
+}
+
+// A band voxel's count byte, NOT_BAND for a voxel outside the band.
+const NOT_BAND: u32 = 0xFFFFFFFFu;
+// A crisp solid voxel's count byte carries this bit (`field::CRISP_COUNT_BIT`), a smooth solid
+// voxel's SMOOTH_COUNT_BIT (`field::SMOOTH_COUNT_BIT`); the count is in the low five bits.
+const CRISP_COUNT_BIT: u32 = 0x80u;
+const SMOOTH_COUNT_BIT: u32 = 0x40u;
+
+// The count byte of voxel `i` of brick `b` (a full chunk's) from its band slot, or NOT_BAND.
+fn field_byte(b: FBrick, i: u32) -> u32 {
+    if (b.band == ABSENT) {
+        return NOT_BAND;
+    }
+    let w = i / 32u;
+    let m = pool_word(b.band, w);
+    let bit = 1u << (i % 32u);
+    if ((m & bit) == 0u) {
+        return NOT_BAND;
+    }
+    // The layer's prefix, the low word of the layer when `i` is in its high word, and the bits
+    // below `i` in its own word.
+    var k = layer_prefix(b.prefix.x, b.prefix.y, i / 64u) + countOneBits(m & (bit - 1u));
+    if ((w & 1u) != 0u) {
+        k += countOneBits(pool_word(b.band, w - 1u));
+    }
+    return (pool_word(b.band, UNIT_WORDS + k / 4u) >> (8u * (k % 4u))) & 0xFFu;
+}
+
+// The count of voxel `u`: a band voxel's from its band slot, else 27 for a solid voxel and 0
+// for air (a LOD-only chunk's through its mip cell).
+fn field_count(u: vec3<i32>) -> u32 {
+    return field_count_raw(u) & 0x1Fu;
+}
+
+// `field_count` with a band voxel's CRISP_COUNT_BIT kept.
+fn field_count_raw(u: vec3<i32>) -> u32 {
+    let bw = floor_div(u, 8);
+    let b = field_brick(bw);
+    if (b.table == ABSENT) {
+        return 0u;
+    }
+    if ((b.table & LOD_BIT) != 0u) {
+        return select(0u, 27u, lookup(u).size == 0);
+    }
+    let l = vec3<u32>(u - bw * 8);
+    let i = l.x + 8u * (l.y + 8u * l.z);
+    let k = field_byte(b, i);
+    if (k != NOT_BAND) {
+        return k;
+    }
+    return select(0u, 27u, field_solid(b.entry, i));
+}
+
+// Whether voxel `u` is crisp: a band voxel whose count byte carries CRISP_COUNT_BIT.
+fn field_crisp(u: vec3<i32>) -> bool {
+    let bw = floor_div(u, 8);
+    let b = field_brick(bw);
+    if (b.table == ABSENT || (b.table & LOD_BIT) != 0u) {
+        return false;
+    }
+    let l = vec3<u32>(u - bw * 8);
+    let k = field_byte(b, l.x + 8u * (l.y + 8u * l.z));
+    return k != NOT_BAND && (k & CRISP_COUNT_BIT) != 0u;
+}
+
+fn field_phi(u: vec3<i32>) -> f32 {
+    return f32(field_count(u)) / 27.0 - 0.5;
+}
+
+// What the field walk finds at voxel `v`: `size` > 0 an empty cell of that edge; else `band`
+// for a band voxel, `solid` for a solid voxel (opaque, or of a uniform solid brick), `lod` for
+// a cube hit that is no leak (a LOD-only chunk's solid cell, or a solid voxel of a band brick
+// walked as cubes).
+struct FCell {
+    size: i32,
+    band: bool,
+    solid: bool,
+    lod: bool,
+};
+
+fn field_cell(v: vec3<i32>) -> FCell {
+    let skips = (params.flags & FLAG_SKIPS) != 0u;
+    let chunk = floor_div(v, 64);
+    let rel = chunk - params.window_min;
+    if (any(rel < vec3<i32>(0)) || any(rel >= params.window_size)) {
+        return FCell(64, false, false, false);
+    }
+    let bw = floor_div(v, 8);
+    let b = field_brick(bw);
+    if (b.table == ABSENT) {
+        return FCell(select(1, 64, skips), false, false, false);
+    }
+    if ((b.table & LOD_BIT) != 0u) {
+        let c = lookup_walk(v, false);
+        return FCell(c.size, false, c.size == 0, c.size == 0);
+    }
+    let rec = b.table & RECORD_MASK;
+    if (skips) {
+        // A 2 x 2 x 2 group of bricks none of which is uniform air, from the record's brick
+        // bits (a band brick's entry is never 0); in an empty chunk they are clear.
+        let lb = bw - chunk * 8;
+        let g = vec3<u32>(lb / 2);
+        let wi = 4u * g.z + g.y / 2u;
+        // Record indices stay below 2^28, so the key is never NOT_HELD.
+        let key = rec * 16u + wi;
+        if (key != fg_key) {
+            fg_key = key;
+            fg_bits = 0u;
+            if ((b.table & EMPTY_BIT) == 0u) {
+                let base = rec * RECORD_WORDS;
+                fg_bits = record_word(base + wi) | record_word(base + wi + 2u);
+            }
+        }
+        if ((fg_bits & (0x0303u << (2u * g.x + 16u * (g.y & 1u)))) == 0u) {
+            return FCell(16, false, false, false);
+        }
+    }
+    let l = vec3<u32>(v - bw * 8);
+    let i = l.x + 8u * (l.y + 8u * l.z);
+    let full = (b.entry & FULL_BIT) != 0u;
+    if (b.band == ABSENT || b.cubes) {
+        if (!full) {
+            if ((b.entry & MATERIAL_MASK) == 0u) {
+                return FCell(select(1, 8, skips), false, false, false);
+            }
+            // A uniform solid brick outside the band.
+            return FCell(0, false, true, false);
+        }
+        // A Full brick outside the band, or a band brick walked as cubes: its opaque voxels,
+        // cubes; in a band brick a cube hit is no leak (`lod`).
+        let c = lookup_walk(v, false);
+        return FCell(c.size, false, c.size == 0, b.band != ABSENT && c.size == 0);
+    }
+    // A band brick: its band mask ORed with its opaque mask, read a 4^3 block row at a time as
+    // `mask_skip` reads the opaque mask.
+    let q = l / 4u;
+    let w = 8u * q.z + q.y;
+    let key = b.band * 16u + w;
+    if (key != fm_key) {
+        fm_key = key;
+        let unit = b.entry & UNIT_MASK;
+        let cls = (b.entry >> CLASS_SHIFT) & 7u;
+        if (cls == CLASS_UNIFORM && (b.entry & TRANSLUCENT_BIT) != 0u) {
+            // A uniform translucent brick is solid to the field throughout.
+            fm_opaque = vec4<u32>(0xFFFFFFFFu);
+        } else {
+            fm_opaque = vec4<u32>(
+                mask_word_at(unit, w),
+                mask_word_at(unit, w + 2u),
+                mask_word_at(unit, w + 4u),
+                mask_word_at(unit, w + 6u),
+            );
+        }
+        fm_band = vec4<u32>(
+            pool_word(b.band, w),
+            pool_word(b.band, w + 2u),
+            pool_word(b.band, w + 4u),
+            pool_word(b.band, w + 6u),
+        );
+    }
+    let mk = fm_opaque | fm_band;
+    if (skips) {
+        if (((mk.x | mk.y | mk.z | mk.w) & (0x0F0F0F0Fu << (4u * q.x))) == 0u) {
+            return FCell(4, false, false, false);
+        }
+        let h = l / 2u;
+        let j = 2u * ((l.z / 2u) & 1u);
+        if (((mk[j] | mk[j + 1u]) & (0x0303u << (2u * h.x + 16u * (h.y & 1u)))) == 0u) {
+            return FCell(2, false, false, false);
+        }
+    }
+    let bit = 1u << (i % 32u);
+    if ((mk[l.z & 3u] & bit) == 0u) {
+        return FCell(1, false, false, false);
+    }
+    return FCell(0, (fm_band[l.z & 3u] & bit) != 0u, (fm_opaque[l.z & 3u] & bit) != 0u, false);
+}
+
+// A field walk's hit: `t`, the normal (the field's, or a cube hit's face normal), whether it
+// is a cube hit (a leak or a LOD cell) and whether it is a leak.
+struct FHit {
+    found: bool,
+    leak: bool,
+    cube: bool,
+    t: f32,
+    n: vec3<f32>,
+    // The dual cell's base voxel and the hit's position in it, for the normal and material.
+    base: vec3<i32>,
+    f: vec3<f32>,
+};
+
+// The trilinear gradient of the corners `c` (index x + 2 y + 4 z) at `f`.
+fn trilinear_gradient(c: array<f32, 8>, f: vec3<f32>) -> vec3<f32> {
+    let gx = mix(mix(c[1] - c[0], c[3] - c[2], f.y), mix(c[5] - c[4], c[7] - c[6], f.y), f.z);
+    let gy = mix(mix(c[2] - c[0], c[3] - c[1], f.x), mix(c[6] - c[4], c[7] - c[5], f.x), f.z);
+    let gz = mix(mix(c[4] - c[0], c[5] - c[1], f.x), mix(c[6] - c[2], c[7] - c[3], f.x), f.y);
+    return vec3<f32>(gx, gy, gz);
+}
+
+fn cubic_at(k: vec4<f32>, s: f32) -> f32 {
+    return ((k.w * s + k.z) * s + k.y) * s + k.x;
+}
+
+// The first crossing of the field along `o + d t` for `t` in `[ta, tb]`, inside one dual
+// cell: found, or a leak at `ta` (see the walk's comment).
+// The dual cell holding the piece `[ta, tb]` of `o + d t`: its base voxel, its corners
+// loaded into `fc_bytes` unless they are held.
+fn field_corners(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> vec3<i32> {
+    let pm = o + d * (0.5 * (ta + tb));
+    let base = vec3<i32>(floor(pm - 0.5));
+    if (!fc_held || any(base != fc_base)) {
+        fc_held = true;
+        fc_base = base;
+        fc_bytes = vec2<u32>(0u);
+        // The corners in brick order, so `field_brick`'s held brick serves each brick's corners
+        // in a row: the bits of `j` go to the axes the cell does not cross a brick face on
+        // first, then to those it crosses.
+        let cross = (base & vec3<i32>(7)) == vec3<i32>(7);
+        let nc = u32(!cross.x) + u32(!cross.y) + u32(!cross.z);
+        let px = select(0u, nc, cross.x);
+        let py = select(u32(!cross.x), nc + u32(cross.x), cross.y);
+        let pz = select(u32(!cross.x) + u32(!cross.y), nc + u32(cross.x) + u32(cross.y), cross.z);
+        for (var j = 0u; j < 8u; j++) {
+            let i = ((j >> px) & 1u) | (((j >> py) & 1u) << 1u) | (((j >> pz) & 1u) << 2u);
+            let k = field_count_raw(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
+            // A select, not a store through `fc_bytes[i / 4u]` (no runtime-indexed vector
+            // component store, `shader_portability`).
+            let byte = (k & 0xFFu) << (8u * (i % 4u));
+            fc_bytes |= select(vec2<u32>(byte, 0u), vec2<u32>(0u, byte), i >= 4u);
+        }
+    }
+    return base;
+}
+
+// Whether voxel `u`, a corner of the held cell at `base`, is crisp.
+fn corner_crisp(base: vec3<i32>, u: vec3<i32>) -> bool {
+    let o = vec3<u32>(u - base);
+    let i = o.x + 2u * o.y + 4u * o.z;
+    return ((fc_bytes[i / 4u] >> (8u * (i % 4u))) & CRISP_COUNT_BIT) != 0u;
+}
+
+// The held cell's corner `phi` values.
+fn held_phi() -> array<f32, 8> {
+    var c: array<f32, 8>;
+    for (var i = 0u; i < 8u; i++) {
+        c[i] = f32((fc_bytes[i / 4u] >> (8u * (i % 4u))) & 0x1Fu) / 27.0 - 0.5;
+    }
+    return c;
+}
+
+// With `crisp_test`, the piece is the first of band voxel `v`'s segment, and a crisp `v` (one
+// of the piece's corners) is its cube, hit at `ta`. A cell with a crisp corner and no smooth
+// solid corner gives no hit.
+fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32, crisp_test: bool, v: vec3<i32>) -> FHit {
+    var none = FHit(false, false, false, ta, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0));
+    let base = field_corners(o, d, ta, tb);
+    if (crisp_test && corner_crisp(base, v)) {
+        return FHit(true, false, true, ta, vec3<f32>(0.0), v, vec3<f32>(0.5));
+    }
+    let bits = fc_bytes.x | fc_bytes.y;
+    if ((bits & (CRISP_COUNT_BIT * 0x01010101u)) != 0u && (bits & (SMOOTH_COUNT_BIT * 0x01010101u)) == 0u) {
+        return none;
+    }
+    let c = held_phi();
+    var pos = false;
+    var neg = false;
+    for (var i = 0u; i < 8u; i++) {
+        pos = pos || c[i] > 0.0;
+        neg = neg || c[i] <= 0.0;
+    }
+    if (!pos) {
+        return none;
+    }
+    let q0 = o + d * ta - (vec3<f32>(base) + 0.5);
+    if (!neg) {
+        return FHit(true, true, true, ta, vec3<f32>(0.0), base, q0);
+    }
+    // phi(ta + s) = k.x + k.y s + k.z s^2 + k.w s^3: each corner's weight is a product of
+    // three linear factors a + b s.
+    var k = vec4<f32>(0.0);
+    for (var i = 0u; i < 8u; i++) {
+        let bit = vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u) == vec3<u32>(1u);
+        let a = select(1.0 - q0, q0, bit);
+        let b = select(-d, d, bit);
+        k += c[i] * vec4<f32>(
+            a.x * a.y * a.z,
+            b.x * a.y * a.z + a.x * b.y * a.z + a.x * a.y * b.z,
+            b.x * b.y * a.z + b.x * a.y * b.z + a.x * b.y * b.z,
+            b.x * b.y * b.z,
+        );
+    }
+    let len = tb - ta;
+    if (k.x >= 0.0) {
+        return FHit(true, k.x > FIELD_LEAK_EPS, false, ta, vec3<f32>(0.0), base, q0);
+    }
+    // The extrema: roots of 3 k.w s^2 + 2 k.z s + k.y inside (0, len), ascending.
+    var cut = vec2<f32>(len, len);
+    let qa = 3.0 * k.w;
+    let qb = 2.0 * k.z;
+    let qc = k.y;
+    if (abs(qa) > 1e-12) {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if (disc >= 0.0) {
+            let qq = -0.5 * (qb + select(-1.0, 1.0, qb >= 0.0) * sqrt(disc));
+            var r1 = qq / qa;
+            var r2 = select(len, qc / qq, abs(qq) > 1e-20);
+            if (r1 > r2) {
+                let tmp = r1;
+                r1 = r2;
+                r2 = tmp;
+            }
+            cut = vec2<f32>(select(len, r1, r1 > 0.0 && r1 < len), select(len, r2, r2 > 0.0 && r2 < len));
+            if (cut.x > cut.y) {
+                cut = cut.yx;
+            }
+        }
+    } else if (abs(qb) > 1e-12) {
+        let r = -qc / qb;
+        cut.x = select(len, r, r > 0.0 && r < len);
+    }
+    var s0 = 0.0;
+    var f0 = k.x;
+    for (var run = 0u; run < 3u; run++) {
+        let s1 = select(select(len, cut.y, run == 1u), cut.x, run == 0u);
+        if (s1 <= s0) {
+            continue;
+        }
+        let f1 = cubic_at(k, s1);
+        if (f1 >= 0.0) {
+            // Illinois steps on [s0, s1], f(s0) < 0 <= f(s1).
+            var a = s0;
+            var fa = f0;
+            var b = s1;
+            var fb = f1;
+            var side = 0;
+            for (var it = 0u; it < 8u; it++) {
+                let s = (a * fb - b * fa) / (fb - fa);
+                let fs = cubic_at(k, s);
+                if (fs >= 0.0) {
+                    b = s;
+                    fb = fs;
+                    if (side == 1) {
+                        fa *= 0.5;
+                    }
+                    side = 1;
+                } else {
+                    a = s;
+                    fa = fs;
+                    if (side == -1) {
+                        fb *= 0.5;
+                    }
+                    side = -1;
+                }
+            }
+            let s = (a * fb - b * fa) / (fb - fa);
+            let t = ta + clamp(s, 0.0, len);
+            return FHit(true, false, false, t, vec3<f32>(0.0), base, o + d * t - (vec3<f32>(base) + 0.5));
+        }
+        s0 = s1;
+        f0 = f1;
+    }
+    return none;
+}
+
+// The field test of band voxel `v` over the ray's segment `[t0, t1]` through it: its pieces
+// in the dual cells, nearest first.
+// With `crisp_test` (a solid `v`) a crisp `v` is its cube, hit at `t0`:
+// cube and not a leak; its crispness is read with the first piece's corners, of which `v` is one.
+fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32, t1: f32, crisp_test: bool) -> FHit {
+    var tm = select(vec3<f32>(BIG), (vec3<f32>(v) + 0.5 - o) * inv, d != vec3<f32>(0.0));
+    tm = select(vec3<f32>(t1), tm, tm > vec3<f32>(t0) & tm < vec3<f32>(t1));
+    var a = tm.x;
+    var b = tm.y;
+    var c = tm.z;
+    if (a > b) {
+        let s = a;
+        a = b;
+        b = s;
+    }
+    if (b > c) {
+        let s = b;
+        b = c;
+        c = s;
+    }
+    if (a > b) {
+        let s = a;
+        a = b;
+        b = s;
+    }
+    let cuts = array<f32, 4>(a, b, c, t1);
+    var lo = t0;
+    var first = crisp_test;
+    for (var i = 0u; i < 4u; i++) {
+        let hi = cuts[i];
+        if (hi > lo) {
+            let h = field_piece(o, d, lo, hi, first, v);
+            first = false;
+            if (h.found) {
+                return h;
+            }
+            lo = hi;
+        }
+    }
+    return FHit(false, false, false, t1, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0));
+}
+
+// The normal of a field hit at `f` in the cell at `base`: the field's gradient, `fallback`
+// where it vanishes.
+fn field_normal(base: vec3<i32>, f: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+    // The hit's cell is the last one `field_piece` loaded: its corners are held.
+    var c = held_phi();
+    if (!fc_held || any(base != fc_base)) {
+        for (var i = 0u; i < 8u; i++) {
+            c[i] = field_phi(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
+        }
+    }
+    return normal_from_gradient(trilinear_gradient(c, f), fallback);
+}
+
+// Whether voxel `u` is crisp, from the held cell at `base` when `u` is one of its corners.
+fn held_crisp(held: bool, base: vec3<i32>, u: vec3<i32>) -> bool {
+    if (held && all(u >= base) && all(u <= base + vec3<i32>(1))) {
+        return corner_crisp(base, u);
+    }
+    return field_crisp(u);
+}
+
+// Whether voxel `u` is solid to the opaque walk (`lookup`'s `size == 0`: an opaque voxel; a
+// translucent one is air to it), read through `field_brick`'s held brick; a LOD-only chunk's
+// through `lookup`.
+fn field_opaque(u: vec3<i32>) -> bool {
+    let bw = floor_div(u, 8);
+    let b = field_brick(bw);
+    if (b.table == ABSENT) {
+        return false;
+    }
+    if ((b.table & LOD_BIT) != 0u) {
+        return lookup(u).size == 0;
+    }
+    let e = b.entry;
+    if (e == 0u) {
+        return false;
+    }
+    if ((e & FULL_BIT) == 0u) {
+        return (e & TRANSLUCENT_BIT) == 0u;
+    }
+    let l = vec3<u32>(u - bw * 8);
+    let i = l.x + 8u * (l.y + 8u * l.z);
+    return ((pool_word(e & UNIT_MASK, i / 32u) >> (i % 32u)) & 1u) != 0u;
+}
+
+// The material of voxel `u`, one `field_opaque` reads as solid: `lookup(u).material`.
+fn field_opaque_material(u: vec3<i32>) -> u32 {
+    let bw = floor_div(u, 8);
+    let b = field_brick(bw);
+    if ((b.table & LOD_BIT) != 0u) {
+        return lookup(u).material;
+    }
+    if ((b.entry & FULL_BIT) == 0u) {
+        return b.entry & MATERIAL_MASK;
+    }
+    let l = vec3<u32>(u - bw * 8);
+    return voxel_material(b.entry, l.x + 8u * (l.y + 8u * l.z));
+}
+
+// The material of a field hit at `p` seen along `d` in the cell at `base`, `f` its position
+// there: the voxel holding `p` when it is solid, else the solid corner of the cell with the
+// largest trilinear weight, the first in corner order on a tie (0 when none is solid to the
+// opaque walk). A crisp voxel is not solid here.
+fn field_material(p: vec3<f32>, d: vec3<f32>, base: vec3<i32>, f: vec3<f32>) -> u32 {
+    let held = fc_held && all(base == fc_base);
+    let at = voxel_at(p, d);
+    if (field_opaque(at) && !held_crisp(held, base, at)) {
+        return field_opaque_material(at);
+    }
+    var best = -1.0;
+    var chosen = vec3<i32>(0);
+    for (var i = 0u; i < 8u; i++) {
+        let o = vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u);
+        let w3 = select(1.0 - f, f, o == vec3<u32>(1u));
+        let w = w3.x * w3.y * w3.z;
+        if (w > best) {
+            let u = base + vec3<i32>(o);
+            if (field_opaque(u) && !held_crisp(held, base, u)) {
+                best = w;
+                chosen = u;
+            }
+        }
+    }
+    if (best < 0.0) {
+        return 0u;
+    }
+    return field_opaque_material(chosen);
+}
+
+// The field walk's first hit along `o + d t`, `t >= 0`, with the entry axis of its voxel
+// (-1 when the ray started inside it) and its material, FIELD_MATERIAL_PENDING for a field
+// hit, whose material `field_material` resolves after the walk.
+const FIELD_MATERIAL_PENDING: u32 = 0xFFFFFFFFu;
+struct FieldHit {
+    h: FHit,
+    axis: i32,
+    material: u32,
+};
+
+fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
+    var miss = FieldHit(FHit(false, false, false, 0.0, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0)), -1, 0u);
+    let bmin_i = params.window_min * 64;
+    let bmax_i = (params.window_min + params.window_size) * 64;
+    let bmin = vec3<f32>(bmin_i);
+    let bmax = vec3<f32>(bmax_i);
+    let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
+    let ta = (bmin - o) * inv;
+    let tb = (bmax - o) * inv;
+    let tmin = min(ta, tb);
+    let tmax = max(ta, tb);
+    let t0 = max(max(tmin.x, tmin.y), tmin.z);
+    let t1 = min(min(tmax.x, tmax.y), tmax.z);
+    if (t1 < max(t0, 0.0)) {
+        return miss;
+    }
+    var t = max(t0, 0.0);
+    var axis = -1;
+    var v = voxel_at(o + d * t, d);
+    if (t0 > 0.0) {
+        axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
+        let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
+        v = advance(o, d, inv, t, axis, face);
+    }
+    v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
+    return field_walk(o, d, t, v, axis);
+}
+
+// The field walk from voxel `v`, entered at `t` through its face on `axis` (-1 for none):
+// `field_march`'s loop, and where `field_resume` takes a split walk's ray on.
+fn field_walk(o: vec3<f32>, d: vec3<f32>, t_start: f32, v_start: vec3<i32>, axis_start: i32) -> FieldHit {
+    var miss = FieldHit(FHit(false, false, false, 0.0, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0)), -1, 0u);
+    let bmin_i = params.window_min * 64;
+    let bmax_i = (params.window_min + params.window_size) * 64;
+    let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
+    reset_field_walk();
+    var t = t_start;
+    var v = v_start;
+    var axis = axis_start;
+    for (var step = 0u; step < MAX_STEPS; step++) {
+        walk_steps += 1u;
+        if (any(v < bmin_i) || any(v >= bmax_i)) {
+            return miss;
+        }
+        let c = field_cell(v);
+        var size = c.size;
+        if (size == 0) {
+            if (!c.band) {
+                // A LOD cell, or a solid voxel outside the band: a cube hit, a leak unless LOD.
+                var face = FHit(true, !c.lod, true, t, vec3<f32>(0.0), v, vec3<f32>(0.5));
+                return FieldHit(face, axis, lookup(v).material);
+            }
+            let h = field_voxel(o, d, inv, v, t, cube_exit(o, d, inv, v), c.solid);
+            if (h.found && h.cube && !h.leak) {
+                // A crisp voxel: its cube, hit where the ray enters it.
+                return FieldHit(h, axis, field_opaque_material(v));
+            }
+            if (h.found) {
+                // The material is resolved after the walk (`field_pixel`).
+                return FieldHit(h, axis, FIELD_MATERIAL_PENDING);
+            }
+            size = 1;
+        }
+        let cell_min = floor_div(v, size) * size;
+        let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
+        let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
+        var k = 0;
+        if (tk.y < tk[k]) { k = 1; }
+        if (tk.z < tk[k]) { k = 2; }
+        t = tk[k];
+        v = advance(o, d, inv, t, k, edge[k]);
+        axis = k;
+    }
+    return miss;
+}
+
+// The hit pass's pixel in the field look: the field walk's hit record; the layer holds the
+// steps view's counters, the cracks view's leak (1 in r) or nothing (no translucent walk).
+// With `resume` the walk starts at voxel `v`, entered at `t` through its face on `axis` (a
+// split walk's hand-off), else at the ray's origin.
+fn field_pixel(gid: vec2<u32>, resume: bool, t: f32, v: vec3<i32>, axis: i32) {
+    let ray = pixel_ray(gid);
+    let o = ray.o;
+    let d = ray.d;
+    walk_steps = 0u;
+    loads = 0u;
+    var fh: FieldHit;
+    if (resume) {
+        fh = field_walk(o, d, t, v, axis);
+    } else {
+        fh = field_march(o, d);
+    }
+    let h = fh.h;
+    if (h.found && fh.material == FIELD_MATERIAL_PENDING) {
+        fh.material = field_material(o + d * h.t, d, h.base, h.f);
+    }
+    let counts = vec3<u32>(min(walk_steps, 255u), min(counted_loads(), 255u), min(counted_pool_reads(), 255u));
+    var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
+    var info = vec4<u32>(0u);
+    if (h.found) {
+        var nf = -d;
+        if (fh.axis >= 0) {
+            nf = select(vec3<f32>(0.0), vec3<f32>(-sign(d[fh.axis])), axis_mask(fh.axis));
+        }
+        var n = nf;
+        if (!h.cube) {
+            n = face_mixed(field_normal(h.base, h.f, nf), nf);
+        }
+        let flags = HIT_FOUND | select(HIT_FIELD, 0u, h.cube) | (u32(fh.axis + 1) << HIT_AXIS_SHIFT);
+        pos = vec4<f32>(o + d * h.t, h.t);
+        info = vec4<u32>(octa16_encode(n), fh.material, flags);
+    }
+    var layer = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let view = view_mode();
+    if (view == VIEW_STEPS) {
+        layer = vec4<f32>(vec3<f32>(counts), 1.0);
+    } else if (view == VIEW_CRACKS) {
+        layer = vec4<f32>(select(0.0, 1.0, h.found && h.leak), 0.0, 0.0, 1.0);
+    }
+    let px = vec2<i32>(gid);
+    textureStore(hit_pos_out, px, pos);
+    textureStore(hit_info_out, px, info);
+    textureStore(layer_out, px, layer);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.size.x || gid.y >= params.size.y) {
+        return;
+    }
+    if (FIELD_SURFACE) {
+        field_pixel(gid.xy, false, 0.0, vec3<i32>(0), -1);
+        return;
+    }
+    if ((params.flags & FLAG_FIELD_SPLIT) != 0u) {
+        split_pixel(gid.xy);
         return;
     }
     let ray = pixel_ray(gid.xy);
@@ -1593,12 +2222,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let d = ray.d;
     walk_steps = 0u;
     loads = 0u;
-    pool_reads = 0u;
     let h = march(o, d, BIG, (params.flags & FLAG_CUTAWAY) != 0u);
     // Read before the normal modes' lookups touch the walk and the counters.
-    let crack = select(0u, crack_class, h.found);
     let translucent_seen = walk.saw_translucent && params.translucent_layers > 0u;
-    let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
+    let counts = vec3<u32>(min(walk_steps, 255u), min(counted_loads(), 255u), min(counted_pool_reads(), 255u));
     let t_end = select(BIG, h.t, h.found);
     let view = view_mode();
     let px = vec2<i32>(gid.xy);
@@ -1606,7 +2233,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var info = vec4<u32>(0u);
     if (h.found) {
         let n = surface_normal(o, d, h);
-        let flags = HIT_FOUND | select(0u, HIT_PLANE, h.plane) | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
+        let flags = HIT_FOUND | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
         pos = vec4<f32>(o + d * h.t, h.t);
         info = vec4<u32>(octa16_encode(n), h.material, flags);
     }
@@ -1616,15 +2243,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // among them, each clamped at 255. No translucent walk in this view.
         layer = vec4<f32>(vec3<f32>(counts), 1.0);
     } else if (view == VIEW_CRACKS) {
-        // The primary ray's crack class and its lamp shadow ray's self-hit. No translucent
-        // walk in this view.
-        var self_hit = false;
-        if (CRACKS_VIEW) {
-            if (h.found) {
-                self_hit = lamp_self_hit(unpack_hit(pos, info), d);
-            }
-        }
-        layer = vec4<f32>(f32(crack), select(0.0, 1.0, self_hit), 0.0, 1.0);
+        // The voxel walk has no leak. No translucent walk in this view.
+        layer = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     } else if (translucent_seen) {
         info.w |= HIT_TRANSLUCENT;
         layer = translucent_march(o, d, t_end, view != VIEW_ALBEDO);
@@ -1632,4 +2252,61 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(hit_pos_out, px, pos);
     textureStore(hit_info_out, px, info);
     textureStore(layer_out, px, layer);
+}
+
+// The split walk's pixel (FLAG_FIELD_SPLIT, in the hit pipeline without FIELD_SURFACE): the ray
+// walks as `march` walks, every solid voxel a cube hit recorded as `field_pixel` records one
+// (its entry face's normal, the voxel's material, no translucent walk), until it enters a field
+// brick; there it is appended to `split_list` and its record is left to `field_resume`. The
+// cracks and steps views do not split (marcher.rs).
+fn split_pixel(gid: vec2<u32>) {
+    if (all(gid == vec2<u32>(0u))) {
+        split_args.y = 1u;
+        split_args.z = 1u;
+    }
+    let ray = pixel_ray(gid);
+    let d = ray.d;
+    split_walk = true;
+    let h = march(ray.o, d, BIG, false);
+    split_walk = false;
+    if (!h.found && h.material == SPLIT_HANDOFF) {
+        let k = atomicAdd(&split_list.count, 1u);
+        if (k % SPLIT_GROUP == 0u) {
+            atomicAdd(&split_args.groups, 1u);
+        }
+        let r = vec3<u32>(h.voxel - params.window_min * 64);
+        split_list.rays[k] = vec4<u32>(
+            gid.x | (gid.y << 16u),
+            bitcast<u32>(h.t),
+            r.x | (r.y << 16u),
+            r.z | (u32(h.axis + 1) << 16u),
+        );
+        return;
+    }
+    var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
+    var info = vec4<u32>(0u);
+    if (h.found) {
+        let flags = HIT_FOUND | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
+        pos = vec4<f32>(ray.o + d * h.t, h.t);
+        info = vec4<u32>(octa16_encode(face_normal(d, h)), h.material, flags);
+    }
+    let px = vec2<i32>(gid);
+    textureStore(hit_pos_out, px, pos);
+    textureStore(hit_info_out, px, info);
+    textureStore(layer_out, px, vec4<f32>(0.0, 0.0, 0.0, 1.0));
+}
+
+// The split walk's field half: one ray of `split_list` per invocation, the field walk from
+// its hand-off, its record written as `field_pixel` writes it.
+@compute @workgroup_size(128, 1, 1)
+fn field_resume(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let k = gid.x;
+    if (k >= atomicLoad(&split_list.count)) {
+        return;
+    }
+    let e = split_list.rays[k];
+    let px = vec2<u32>(e.x & 0xFFFFu, e.x >> 16u);
+    let r = vec3<u32>(e.z & 0xFFFFu, e.z >> 16u, e.w & 0xFFFFu);
+    let v = vec3<i32>(r) + params.window_min * 64;
+    field_pixel(px, true, bitcast<f32>(e.y), v, i32(e.w >> 16u) - 1);
 }
