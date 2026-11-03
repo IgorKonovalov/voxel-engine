@@ -6,7 +6,17 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
-- **Changed (docs): `docs/images/hero.png` re-shot at the `face` default and a manual exposure of 8 (it was 1.5), the README caption and command with it.**
+## [0.40.0] - 2026-11-03
+
+Plan 0055 (a minor bump: public API removed and added, the fly-through's default look and upscaler changed; ADR-0042 accepted with `[2, 6]` provisional, Outcomes on ADR-0011, ADR-0024, ADR-0034 and ADR-0041). The clarity pass before Plan 0051. Procedural detail is gone. FSR 2 at scale 1.5 is the fly-through's default, on the owner's "fsr2 stays" and "fsr2 stays counts"; the scripted slow pan did not run. A far shading normal blends the face normal to the 27-count gradient by the voxel's size on screen. Upscale reads 2.932 to 2.958 ms on the RTX 3080 Laptop, over its 1.5 ms line, recorded as a reading.
+
+- **Added: `LookParams::far_normal`; `Params` gains `far_normal` in spare words, same size.**
+- **Removed: `vxe_world::Material::{detail, detail_fine}`; `LookParams::detail`, `SurfaceTuning::detail_after_lighting`, `FLAG_DETAIL`, `FLAG_DETAIL_AFTER_LIGHTING`. The material row's GPU layout is unchanged; its detail lanes are written zero and named spare.**
+- **Changed (fly-through): the default upscaler is `fsr2` at 1.5 with sharpening 0.5; `--upscaler own` and `F10` keep ours. `LookPreset::DEFAULT` is `FACE` plus `far_normal [2, 6]`; `--look face` is the far normal off.**
+- **Added (fly-through): `--far-normal LO,HI`, `LookPreset::far_normal`, `LookPreset::far_normal_words`, the far normal on the banner and the look line.**
+- **Removed (fly-through): `--detail`, `--rock-detail`, `--detail-fine`, `--detail-after`, `--look plain`, the `V` key; `ROCK_DETAIL`, `look_materials`, `look_materials_with`, `LookPreset::{rock_detail, detail_fine, materials}`.**
+- **Changed (tests): `apps/flythrough/tests/sharpness.rs` and the `look_detail` and `look_wall_*` goldens are gone; `showcase_hall.png` re-blessed under FSR 2 and the far normal; six tests moved to the soak list.**
+- **Changed (docs): `docs/images/hero.png` re-shot under the new defaults at a manual exposure of 8 (it was 1.5), the README caption and command with it.**
 
 ## [0.39.0] - 2026-11-03
 

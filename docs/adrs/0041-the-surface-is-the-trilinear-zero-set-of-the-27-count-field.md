@@ -1,6 +1,6 @@
 # ADR-0041: The default surface is honest cubes; the trilinear zero set of the 27-count field is an opt-in look for smooth materials
 
-> **Status:** accepted (2026-11-03, Plan 0054 closed; see Outcome)
+> **Status:** accepted (2026-11-03, Plan 0054 closed; see Outcome; its detail clauses fell with Plan 0055)
 > **Date:** 2026-10-31 (rewritten 2026-11-01 on Plan 0054 owner answer 13: cubes the default)
 > **Related plan(s):** [Plan 0054](../plans/done/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)
 > (Phase 1's readings, the owner's Phase 2 pick and the owner's Phase 3b pick, owner answer 7,
@@ -300,3 +300,8 @@ The surface-only attribute slots of Plan 0028 under ADR-0012 went with the attri
   main's planes' 365, but 2055 of them are there with shadows off and 34 come with shadows. The
   close accepted this as `face`'s shading (Plan 0054's followups).
 
+**2026-11-03, Plan 0055's close (v0.40.0):** ADR-0011's procedural detail is removed, so this
+decision's clauses about it fall: nothing tilts N1 or the `face` normal, and the Decision's detail
+tilt and lamp ratio have no reader. The default's geometry stays honest cubes, but its shading normal
+is no longer always the face normal: `LookPreset::DEFAULT` is `face` plus ADR-0042's far normal, and
+`--look face` is the far normal off.

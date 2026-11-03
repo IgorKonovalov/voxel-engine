@@ -1,7 +1,8 @@
 # ADR-0034: AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in
 
 > **Status:** accepted (2026-10-27, at Plan 0041's close; see Outcome: the port shipped opt-in,
-> and the owner made our own upscaler at scale 1.5 the fly-through's default)
+> and the owner made our own upscaler at scale 1.5 the fly-through's default; since 2026-11-03,
+> Plan 0055, FSR 2 at scale 1.5 is that default)
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0041](../plans/done/0041-fsr2-port-to-wgsl.md)
 > **Supersedes in part:** [ADR-0024](0024-own-temporal-upscaler-on-the-hit-buffer.md): its
@@ -190,3 +191,29 @@ still defaults to Plan 0024's frame. FSR 2 stays selectable. This ADR therefore 
 ADR-0024 only in its rejection of an FSR 2 port (Alternative A); ADR-0024's upscaler, not this
 one, is the M2 default. Removing one of the two upscalers, and FSR's FP16 and subgroup
 variants, are later plans.
+
+**2026-11-03, Plan 0055's close (v0.40.0): FSR 2 at scale 1.5 with RCAS at sharpening 0.5 is the
+fly-through's default.** Our upscaler stays selectable (`--upscaler own`, `F10`), and the library's
+`Frame` still defaults to Plan 0024's frame. The owner's baseline of 2026-11-03 found thin emissive
+lines too bright and wide under our upscaler, and its anti-aliasing check preferred FSR 2 at 1.5.
+Plan 0055's account of the cause rests on this decision's linear-HDR input: FSR 2 blends linear light
+before the tone map, our upscaler display-encoded colour after it.
+
+**The slow-pan verdict.** Plan 0055 Phase 4 scheduled a scripted slow pan across the near pillars
+and the ore under FSR 2, because this Outcome's 2026-10-27 readings miss every slow pan against
+ours. **That run did not happen.** The owner watched six variants on the showcase in one window on
+the RTX 3080 Laptop and said "fsr2 stays". Asked at the close whether that counts, with the
+architect recommending it be recorded as still owed, the owner ruled on 2026-11-03: "fsr2 stays
+counts". So those words are this ADR's slow-pan verdict. The slow-pan bars are still missed in the
+2026-10-27 headless readings, and no newer reading replaces them.
+
+**Measured (Plan 0055, `docs/nfr/02-frame-budget.md` and `docs/nfr/03-memory.md`, tree on 4ec2b34,
+perf lock, load 0.59 to 1.43), FSR 2 against ours.** RTX 3080 Laptop at 2530 x 1378 from 1687 x 919:
+showcase start frame 10.348 and 10.399 against 8.632 and 8.652 ms, `--level --pose vein` 7.400 and
+7.520 against 5.426 and 5.449; FSR 2's passes 2.932 to 2.958 ms. RADV RENOIR at 1920 x 1080 from
+1280 x 720: showcase start 48.360 against 41.677 ms, vein 32.865 against 26.124; FSR 2's passes
+9.967 to 9.983 ms. The upscale stage's 1.5 ms line in `docs/nfr.md` section 2 is over on both, and
+the close records that as a reading, not a budget change. `frame_bytes` on the fly-through's line:
+309 377 468 B against 184 957 040 B at 1080p, 483 147 556 B against 273 897 312 B at 2530 x 1378.
+The Radeon reading is informational by the owner's call; a walk-speed spike there is owed
+separately. Removing our upscaler stays with Plan 0045.

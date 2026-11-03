@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0042.**
+**Next free number: 0043.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -25,7 +25,7 @@ the status.
 | [0008](0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) | Collapse as a capped support flood on the coarse grid and rigid vertical drop ops, not a rigid-body engine | accepted; drop clause amended by ADR-0016 |
 | [0009](0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) | The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library | accepted |
 | [0010](0010-game-logic-as-a-component-behind-a-logic-trait.md) | The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred | accepted |
-| [0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) | Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail | accepted; contour surface superseded by ADR-0041, detail stays |
+| [0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) | Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail | accepted; contour surface superseded by ADR-0041, detail removed by Plan 0055 |
 | [0012](0012-mask-first-brick-with-per-brick-palette-planes.md) | A brick is occupancy masks plus a per-brick palette in bit planes, the same bytes on the CPU and in the mirror | accepted; CPU format by Plan 0021, mirror slots and surface-only attributes by Plan 0028; supersedes ADR-0004's mirror layout (Outcome) |
 | [0013](0013-mirror-reserves-its-vram-budget-up-front.md) | The mirror reserves its VRAM budget up front and never reallocates | accepted |
 | [0014](0014-prefab-identity-in-the-op-log.md) | A stamp op names its prefab by content id, and a save carries the prefabs it names | accepted |
@@ -38,7 +38,7 @@ the status.
 | [0021](0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) | Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network | accepted (Plan 0020) |
 | [0022](0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) | Mirror uploads go through a persistently mapped staging belt and copy commands, not `Queue::write_buffer` | accepted (Plan 0027; Outcome: belt share a miss); supersedes ADR-0017's Alternative B rejection in part |
 | [0023](0023-indirect-light-from-a-scrolling-probe-volume.md) | Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights | accepted (Plan 0029, Outcome) |
-| [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | accepted (Plan 0030); superseded in part by ADR-0034; the fly-through's default at 1.5 since Plan 0041 |
+| [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | accepted (Plan 0030); superseded in part by ADR-0034; opt-in since Plan 0055 |
 | [0025](0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md) | Light candidates come from a power-over-distance table of the emitter chunks near the camera, and only those chunks hold light samples on the GPU | accepted (Plan 0024) |
 | [0026](0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md) | The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets | proposed (Plan 0032) |
 | [0027](0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) | The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one | proposed (Plan 0032) |
@@ -48,7 +48,7 @@ the status.
 | [0031](0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md) | Weather is cosmetic client state stepped by the game's ticks, and rain, snow, wetness and snow cover are rendered against a fall map traced through the mirror, never written as voxels | proposed (Plan 0036) |
 | [0032](0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md) | The night sky is drawn analytically on miss pixels (a binned star catalogue, sky bodies the game lists, an aurora shell lighting the scene via a hemisphere map), and the night look is a luminance tint | proposed (Plan 0037) |
 | [0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md) | Exposure adapts like an eye: fast toward bright, slow toward dark in two stages, metered and stepped on the GPU, applied as pre-exposure | accepted, Outcome (Plan 0040) |
-| [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | accepted (Plan 0041, Outcome): shipped opt-in, ADR-0024's upscaler at 1.5 the default |
+| [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | accepted, Outcome (Plans 0041, 0055): at 1.5 the fly-through's default |
 | [0035](0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md) | DX12 shaders compile with wgpu's bundled static DXC, never FXC | accepted, Outcome (Plan 0046) |
 | [0036](0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md) | Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient | accepted, Outcome (Plan 0047): H 256, the f32 store, the guard on; probe slices hashed |
 | [0037](0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md) | The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp | proposed (Plan 0048) |
@@ -56,6 +56,7 @@ the status.
 | [0039](0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md) | The contour walk closes a crack at the passed voxel's exit, with the passed plane's normal | accepted, Outcome (Plan 0050); superseded by ADR-0041, moot |
 | [0040](0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md) | One-voxel features melt into the contour surface: the plane is fit on a majority-filtered occupancy, and the shading normal is a field over the planes | rejected, never accepted (Plan 0053) |
 | [0041](0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) | The default surface is honest cubes; the trilinear zero set of the 27-count field is an opt-in look for smooth materials | accepted, Outcome (Plan 0054); supersedes ADR-0011's surface, ADR-0038, ADR-0039 |
+| [0042](0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md) | The far shading normal blends from the face normal to the 27-count gradient by the voxel's size on screen | accepted (Plan 0055); `[2, 6]` provisional |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
