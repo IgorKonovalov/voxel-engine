@@ -57,8 +57,8 @@ jobs:
       - name: Pipeline times on lavapipe
         if: runner.os == 'Linux'
         run: cargo run -p vxe-render --release --example pipeline_times
-      # The full tier (.config/nextest.toml): every test, quick, gpu and slow alike. The `ci`
-      # profile runs the full tier's tests with the GPU tests in parallel.
+      # The gate tier (.config/nextest.toml): every test but the soak list, which soak.yml runs
+      # weekly. The `ci` profile runs the gate tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
       - run: cargo nextest run --workspace --profile ci
         env:

@@ -1,0 +1,30 @@
+# The soak tier (.config/nextest.toml, `ci-soak`): the long render series that the push
+# workflow leaves out. Weekly, and on demand from the Actions tab. Linux only: the goldens are
+# blessed on lavapipe, and the series are readings against bars, not platform checks.
+name: Soak
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the Linux build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      # Per-test times in the log, so `node scripts/test-times.mjs` can rank them.
+      - run: cargo nextest run --workspace --profile ci-soak --no-fail-fast --status-level pass
+        env:
+          VXE_REQUIRE_SOFTWARE_ADAPTER: "1"
