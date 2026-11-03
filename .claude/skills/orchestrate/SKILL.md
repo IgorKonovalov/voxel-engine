@@ -85,8 +85,13 @@ prompt.
   merge into main does not repeat it unless the merge had a conflict. A fix pass after the
   review reruns only what the findings touched. The soak and full tiers run only when the
   owner asks for one, with the reason.
+- **Read CI before you merge.** `gh run list --branch main --limit 1` from the main checkout:
+  a red run on main is a task handed to a lane (a fix pass, or a chore lane) and named to the
+  owner in the merge note, never left for the next merge to inherit. Six red runs went
+  unread between 2026-10-28 and 2026-11-01.
 - Merge from the main checkout: `git merge --no-ff --no-commit plan-NNNN`, resolve, run the
-  three doc gates, then commit `merge: plan-NNNN into main (<what>, vX.Y.Z)`.
+  four doc gates (links, comment hygiene, index rows, plan size), then commit
+  `merge: plan-NNNN into main (<what>, vX.Y.Z)`.
   - Index conflicts: keep both sides' rows in number order. Next-free numbers are the higher
     of the two.
   - Plans that moved to `done/` break links in other plans; the link gate finds them.

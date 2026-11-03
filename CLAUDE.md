@@ -79,8 +79,10 @@ scripts/
 ├── check-comment-hygiene.mjs  # no relative link or plan-relative narration in .rs/.wgsl comments
 ├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
 ├── check-test-tiers.mjs       # every test file that opens a GPU device is in .config/nextest.toml's gpu filter
+├── check-plan-size.mjs        # a plan's Implementation log (0055 on) stays under 150 lines, no resume notes in it
 ├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
+├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
 .github/workflows/ci.yml  # build, nextest, doctests, clippy, fmt, hooks, doc gates; cargo-deny
 ```

@@ -125,6 +125,21 @@ The profile copies are green here (`quick` and `gpu` each repeat the gpu filter 
 override `test(=slow_one)` verbatim, `gate` is `not (<soak>)` and `soak` is `(<soak>)`), so the
 five lines above are the whole output.
 
+## `plan-size/`: for `check-plan-size.mjs`
+
+```
+node scripts/check-plan-size.mjs scripts/fixtures/plan-size
+```
+
+Expect **exit 1 and exactly two findings**, then the count line `2 finding(s) across 2 plan(s)`:
+
+| Case | Seeded as | Expected |
+|------|-----------|----------|
+| an Implementation log over the cap | `0099-seeded-log-dump.md`: a 140-bullet readings table under the log | `docs/plans/0099-seeded-log-dump.md -> Implementation log is N lines, cap 150: ...` |
+| resume notes in the plan body | `0099-seeded-log-dump.md`: a `### Resume notes (...)` heading inside the log | `docs/plans/0099-seeded-log-dump.md:<line> -> resume notes in the plan body: ...` |
+| a short log that names resume notes in prose | `0098-seeded-within-cap.md`: "Resume notes" in a bullet, never a heading | not reported |
+| a plan numbered before 0055 | none seeded; the repository's own plans up to 0054 are the case | not scanned; their readings stay inline |
+
 ## `--self-test`: the counts are asserted, not printed
 
 ```

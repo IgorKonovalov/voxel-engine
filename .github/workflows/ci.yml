@@ -60,9 +60,19 @@ jobs:
       # The gate tier (.config/nextest.toml): every test but the soak list, which soak.yml runs
       # weekly. The `ci` profile runs the gate tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
-      - run: cargo nextest run --workspace --profile ci
+      # Per-test times go to a log, so the budget step below can read them.
+      - name: Gate tier
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo nextest run --workspace --profile ci --status-level pass 2>&1 | tee target/nextest-gate.log
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
+      # docs/nfr.md section 7: no gate test over 60 s on this arm. One that crosses the line
+      # fails the push until it moves to the soak list in .config/nextest.toml.
+      - name: Gate test times against the budget
+        if: runner.os == 'Linux'
+        run: node scripts/test-times.mjs target/nextest-gate.log --over 60
       # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
       # component; its tests (`tests/component.rs`) need the feature and the built component.
       # Every other fly-through test ran in the workspace step, so only that binary runs here.
@@ -98,6 +108,8 @@ jobs:
         run: node scripts/check-index-rows.mjs --self-test
       - name: Test tiers
         run: node scripts/check-test-tiers.mjs
+      - name: Plan size
+        run: node scripts/check-plan-size.mjs
 
   deny:
     runs-on: ubuntu-latest

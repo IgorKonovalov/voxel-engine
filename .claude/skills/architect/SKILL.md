@@ -108,6 +108,9 @@ specific. Vague plans get ignored.
   the readings log only at its resume notes.
 - **Headless proof is mandatory.** Every plan names at least one test that runs without a window.
   A render plan also names its golden image and the SSIM or pixel floor.
+- **Every named test states its expected wall time on lavapipe.** One that needs a long
+  series (over 30 s there, or 60 s on CI; `docs/nfr.md` section 7) is born on the soak list in
+  `.config/nextest.toml`, named as such in the phase, and is never a gate.
 - **A testbed toggle shows its mode in the window**, with a behavioural done-when
   (`references/best-practices.md`, Tests).
 - **Name what the plan does NOT do.** Tempting bundles go there, with a pointer to a milestone.
@@ -173,7 +176,9 @@ followup for a future plan, not a finding.
   tiers run only when the owner asks (2026-11-03). Record the wall time and the load, start
   it first, in the background, while you read, and run `node scripts/test-times.mjs <log>` on
   it: a test over the line in `docs/nfr.md` section 7 is a `minor` finding that names the
-  test for the soak list.
+  test for the soak list, and a gate tier over its wall-time budget there is a `major`. Run
+  `node scripts/velocity.mjs` too and put its last three lines under the bookkeeping owed: a
+  window at half the one before is a finding for the owner, not for the plan.
 - **Check every budget reading** in the close triggers against `nfr.md`: is there a number, a
   machine, a commit? A missing reading on a touched figure is a `major`.
 - Was any ADR silently reversed? Then either the code changes or a new ADR supersedes the old one.
@@ -220,12 +225,13 @@ Commit by explicit path, in this order:
 
 1. **Flip the plan's `Status:` to `done`**, adding the close date and the one-line verdict, and
    `git mv` it to `docs/plans/done/`.
-2. **Repair the links the move broke, in both directions, and run the three doc gates**, each
+2. **Repair the links the move broke, in both directions, and run the four doc gates**, each
    to exit 0: `node scripts/check-doc-links.mjs` (every relative link resolves), then
    `node scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in a
-   `.rs` or `.wgsl` comment) and `node scripts/check-index-rows.mjs` plus its `--self-test`
-   (every row inside a `roster:begin` region is at most its cap). Run them again after steps 3
-   and 4 rewrite the indexes.
+   `.rs` or `.wgsl` comment), `node scripts/check-index-rows.mjs` plus its `--self-test`
+   (every row inside a `roster:begin` region is at most its cap) and
+   `node scripts/check-plan-size.mjs` (the Implementation log within its cap, no resume notes
+   in the plan body). Run them again after steps 3 and 4 rewrite the indexes.
 3. **Accept paired ADRs** (`proposed` → `accepted`) and refresh `docs/adrs/README.md`.
 4. **Refresh `docs/plans/README.md`** (move the row to recently closed, bump the next free
    number), **`docs/roadmap.md`** (milestone status) and **`docs/nfr.md`** (readings replace
