@@ -159,7 +159,7 @@ they compare with the table above:
 **We rejected** extending Plan 0051's `K` to the display, because a per-face mean hides an edge crawl
 on near faces. We rejected a full-frame warp for `C`, because its filter's floor would be read as
 aliasing. We rejected adding edge antialiasing or a new upscaler now, because no reading has attributed
-a source. We rejected reopening "fsr2 stays counts" in advance: the readings inform the owner, and he
+a source. We rejected reopening "fsr2 stays counts" in advance: the readings inform the owner, and they
 decides. **No ADR at draft:** the architect writes one after Phase 4 only if the owner picks a mechanism
 with a rejected alternative. A changed far-normal setting is a dated Outcome on ADR-0042.
 
