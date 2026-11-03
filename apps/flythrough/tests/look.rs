@@ -1562,7 +1562,7 @@ fn only_a_split_frame_allocates_the_split_list() {
 /// over a mirror with no band slot (the fly-through's default mirror) the same hit position
 /// (bits) and hit record at every pixel as over a mirror with the field's band slots.
 #[test]
-fn the_default_look_is_face() {
+fn the_default_look_reads_the_same_hit_records_with_and_without_band_slots() {
     assert_eq!(
         flythrough::LookPreset::DEFAULT,
         flythrough::LookPreset {
