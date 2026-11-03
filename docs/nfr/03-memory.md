@@ -364,3 +364,10 @@ MiB more, the prefabs' 328 MiB plus the build's transients. Chunk generation ove
 chunks the castle meets (`examples/castle_gen`, single thread, three runs, load 9.1 to 6.3):
 mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, against 186.2 to
 188.6 us and 1650 to 1710 us for the hall alone.
+
+**`frame_bytes` under the fly-through's FSR 2 default (Plan 0055 Phase 2, tree on 4ec2b34).**
+The fly-through's `frame targets` line at scale 1.5: 1080p FSR 2 309 377 468 B against ours
+184 957 040 B; 2530 x 1378 FSR 2 483 147 556 B against ours 273 897 312 B. `Frame` alone at 1080p
+output (`frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`, lavapipe): FSR 2
+254 687 644 B against ours 130 267 216 B.
+

@@ -47,8 +47,9 @@
 //! upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off); `--upscaler off|own|fsr2` picks
 //! the upscaler: `off` is Plan 0024's frame (scale 1, the jitter off), `own` the upscaler of
 //! ADR-0024 at `--internal-scale`, `fsr2` FSR 2 (ADR-0034) at `--internal-scale` with its own
-//! jitter; without it the upscaler is `own` when the scale is above 1 or the jitter is on,
-//! else `off`, so no flag starts in `own` at 1.5 and `--internal-scale 1` in `off`. In a
+//! jitter; without it the upscaler is `off` at scale 1 with the jitter off, `own` when
+//! `--jitter` is given (only `own` takes it), else `fsr2`, so no flag starts in `fsr2` at 1.5
+//! and `--internal-scale 1` in `off`. In a
 //! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
 //! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -584,14 +585,17 @@ impl Args {
         m
     }
 
-    /// The upscaler the fly-through starts with: `--upscaler`, else `own` when the scale is
-    /// above 1 or the jitter is on, else `off`.
+    /// The upscaler the fly-through starts with: `--upscaler`, else `off` at scale 1 with the
+    /// jitter off, `own` when `--jitter` is given (FSR 2 jitters by its own sequence and
+    /// ignores it), else `fsr2`.
     fn start_upscaler(&self) -> hud::UpscalerMode {
         self.upscaler
-            .unwrap_or(if self.internal_scale != RenderScale::One || self.jitter {
+            .unwrap_or(if self.internal_scale == RenderScale::One && !self.jitter {
+                hud::UpscalerMode::Off
+            } else if self.jitter_set {
                 hud::UpscalerMode::Own
             } else {
-                hud::UpscalerMode::Off
+                hud::UpscalerMode::Fsr2
             })
     }
 
@@ -7279,7 +7283,8 @@ mod tests {
     /// `--upscaler` picks the frame's upscaler, scale and jitter: `off` is scale 1 with the
     /// jitter off whatever `--internal-scale` says; `own` jitters unless `--jitter off`; FSR 2
     /// takes `--internal-scale` and `--sharpen`. Without it the scale and `--jitter` decide:
-    /// no flag is `own` at 1.5, jittered; `--internal-scale 1` is Plan 0024's frame.
+    /// no flag is `fsr2` at 1.5 with sharpening 0.5; `--internal-scale 1` is Plan 0024's frame;
+    /// `--upscaler own` is ours at 1.5, jittered; `--jitter` with no `--upscaler` is ours.
     #[test]
     fn upscaler_picks_the_kind_scale_and_jitter() {
         let parse = |a: &[&str]| parse_args_from(argv(a));
@@ -7288,7 +7293,20 @@ mod tests {
             let (kind, scale, jitter) = args.upscaler_settings(args.start_upscaler());
             (kind.name(), scale, jitter)
         };
-        assert_eq!(settings(&[]), ("own", RenderScale::OneHalf, true));
+        assert_eq!(settings(&[]), ("fsr2", RenderScale::OneHalf, false));
+        let none = parse(&[]).unwrap();
+        match none.upscaler_settings(none.start_upscaler()).0 {
+            UpscalerKind::Fsr2(s) => assert_eq!(s.sharpness, 0.5),
+            k => panic!("{k:?}"),
+        }
+        assert_eq!(
+            settings(&["--upscaler", "own"]),
+            ("own", RenderScale::OneHalf, true)
+        );
+        assert_eq!(
+            settings(&["--internal-scale", "2"]),
+            ("fsr2", RenderScale::Two, false)
+        );
         assert_eq!(
             settings(&["--internal-scale", "1"]),
             ("off", RenderScale::One, false)

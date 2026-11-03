@@ -888,3 +888,13 @@ reference, 1080p; the cave frame needs 1.9 to 3.7 ms of table 2, the outdoor fra
 load 5.3 to 6.9, three runs alternated with the c09aa5b binary at `--rock-detail 4,0`):** hit
 2.793, 2.815 and 2.846 ms against 2.800, 2.828 and 2.826; GPU frame 10.388, 10.439 and 10.530 ms
 against 10.436, 10.531 and 10.525; composite 0.259 to 0.260 ms against 0.273.
+
+**FSR 2 at 1.5 the fly-through's default (Plan 0055 Phase 2, tree on 4ec2b34, `flythrough
+--headless --frames 300`, GPU frame median of the last 30, perf lock, 1-minute load 0.59 to
+1.43).** Frame in ms, FSR 2 against ours. RTX 3080 Laptop GPU at 2530 x 1378 from 1687 x 919:
+showcase start 10.348 and 10.399 against 8.632 and 8.652, `--level --pose vein` 7.400 and 7.520
+against 5.426 and 5.449; FSR 2's passes read 2.932 to 2.958 ms, over §2's 1.5 ms upscale line,
+ours 0.928 to 1.301 ms (upscale plus sharpen). RADV RENOIR at 1920 x 1080 from 1280 x 720:
+showcase start 48.360 against 41.677, vein 32.865 against 26.124; FSR 2's passes 9.967 to 9.983
+ms, ours 3.655 to 3.864 ms.
+

@@ -347,8 +347,8 @@ Readings: [`logs/0055.md`](logs/0055.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Procedural detail removed | dev | done | committed with this row |
-| 2: FSR 2 at 1.5 the default | dev | not started | |
+| 1: Procedural detail removed | dev | done | 4ec2b34 |
+| 2: FSR 2 at 1.5 the default | dev | done | committed with this row |
 | 3: The far-normal spike | dev | not started | |
 | 4: The owner's pick | human | not started | |
 | 5: The picks become the defaults | dev | not started | |
@@ -364,6 +364,7 @@ Readings: [`logs/0055.md`](logs/0055.md).
 - Followup, not acted on: `docs/nfr.md:386` says the shutdown test runs `--look plain`; the test
   now runs the default look. `docs/nfr.md` and `docs/nfr/` name `--look plain` and `--detail` in
   historical readings, left as written.
+- Phase 2: with no `--upscaler`, `--jitter` given at any scale starts in `own` (only `own` takes it).
 - The plan's TL;DR says the fly-through starts at the vein pose; no phase changes the start pose
   and none was changed (owner told, 2026-11-03).
 
