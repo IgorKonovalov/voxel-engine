@@ -353,7 +353,7 @@ Readings: [`logs/0055.md`](logs/0055.md).
 | 2: FSR 2 at 1.5 the default | dev | done | a2c4dc5 |
 | 3: The far-normal spike | dev | done | e9f0d55 |
 | 4: The owner's pick | human | done | owner answers above |
-| 5: The picks become the defaults | dev | done | committed with this row |
+| 5: The picks become the defaults | dev | done | b829b21 |
 
 ### Notes
 
@@ -386,7 +386,7 @@ Readings: [`logs/0055.md`](logs/0055.md).
 - **What shipped:** feature
 - **Public API changed:** `vxe_world::Material` loses `detail`, `detail_fine`; `vxe_render`: `LookParams` loses `detail`, gains `far_normal`; `SurfaceTuning` loses `detail_after_lighting`; `FLAG_DETAIL`, `FLAG_DETAIL_AFTER_LIGHTING` gone; `Params` gains `far_normal` in spare words, same size; material row layout unchanged. `flythrough`: `ROCK_DETAIL`, `look_materials`, `look_materials_with`, `LookPreset::rock_detail`, `detail_fine`, `materials` gone; `LookPreset::far_normal`, `far_normal_words` added. CLI: `--detail`, `--rock-detail`, `--detail-fine`, `--detail-after`, `--look plain`, the `V` key gone; `--far-normal LO,HI` added; the default upscaler is `fsr2`.
 - **Budget readings:** `docs/plans/logs/0055.md`, and `docs/nfr/02-frame-budget.md`, `docs/nfr/03-memory.md`. Frame (RTX 3080 Laptop, 2530 x 1378 from 1687 x 919, e9f0d55's tree): showcase start 11.799, 11.936 ms; vein 7.482, 7.519 ms. RADV RENOIR 1080p: showcase 55.063, 54.998 ms; vein 33.107, 33.206 ms. Upscale stage under FSR 2: RTX 2.932 to 2.958 ms, RADV 9.967 to 9.983 ms, over the 1.5 ms line (a2c4dc5's parent tree). Hit pass at Phase 1: 2.793 to 2.846 ms. `frame_bytes` at 1.5, fly-through's line: 1080p 309 377 468 B against ours 184 957 040 B; 2530 x 1378 483 147 556 B against 273 897 312 B.
-- **Gate at the tip:** e9f0d55's tree plus Phase 5: `cargo build` 0; `cargo nextest run --workspace --profile gate --no-fail-fast` 0, 694 run, 694 passed, 46 skipped; `cargo test --doc --workspace` 0; clippy 0; fmt 0; `cargo deny check` 0; doc and tier scripts 0.
+- **Gate at the tip:** b829b21's tree: `cargo build` 0; `cargo nextest run --workspace --profile gate --no-fail-fast` 0, 694 run, 694 passed, 46 skipped; `cargo test --doc --workspace` 0; clippy 0; fmt 0; `cargo deny check` 0; doc and tier scripts 0.
 - **Outstanding `human` phases:** none
 
 ## Followups
