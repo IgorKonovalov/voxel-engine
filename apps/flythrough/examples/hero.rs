@@ -20,9 +20,10 @@
 //! `R` voxels where the view ray meets rock before the frame is drawn. The lamp is off by
 //! default for both sources; indirect light is on at the hero's probe spacing
 //! (`HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it) and the upscaler at
-//! the fly-through's defaults (`--internal-scale 1.5`: our upscaler with its jitter, which
-//! `--jitter off` stops; `--internal-scale 1` without `--jitter on` is the native frame).
-//! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face`) unless
+//! the fly-through's defaults (`--internal-scale 1.5`: FSR 2; `--jitter` starts our upscaler,
+//! jittered or not; `--internal-scale 1` without `--jitter on` is the native frame).
+//! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face` with the
+//! far normal) unless
 //! `--look` names another; only `--look field` mirrors the
 //! field's band slots and runs the field pass; the ores emit, and
 //! the light radius is the source's (19 chunks on the showcase, 4 on the level). The mirror
@@ -73,7 +74,7 @@ struct Args {
     lighting: Lighting,
     probe_spacing: u32,
     internal_scale: RenderScale,
-    /// `--jitter on|off` as given; unset, the upscaler jitters above scale 1.
+    /// `--jitter on|off` as given, which selects our upscaler; unset, FSR 2 above scale 1.
     jitter: Option<bool>,
     sharpen: f32,
     light_radius: Option<i32>,
@@ -82,11 +83,15 @@ struct Args {
 }
 
 impl Args {
-    /// The frame's jitter: `--jitter` when given, else on above scale 1 (our upscaler
-    /// jitters, as the fly-through's does) and off at scale 1 (no upscaler).
+    /// The frame's jitter: `--jitter` when given (our upscaler), else off (FSR 2 jitters by
+    /// its own sequence, and scale 1 has no upscaler).
     fn jitter(&self) -> bool {
-        self.jitter
-            .unwrap_or(self.internal_scale != RenderScale::One)
+        self.jitter.unwrap_or(false)
+    }
+
+    /// Whether the frame runs FSR 2: above scale 1 without `--jitter`, as the fly-through.
+    fn fsr2(&self) -> bool {
+        self.jitter.is_none() && self.internal_scale != RenderScale::One
     }
 }
 
@@ -487,8 +492,18 @@ fn main() -> Result<(), String> {
         let mut frame =
             Frame::with_sizes(&device, args.internal_scale.internal(args.size), args.size);
         frame.set_probe_spacing(&device, still.probe_spacing);
-        frame.set_jitter(&device, args.jitter());
-        frame.set_sharpness(&queue, args.sharpen);
+        if args.fsr2() {
+            frame.set_upscaler_kind(
+                &device,
+                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                    sharpness: args.sharpen,
+                    ..vxe_render::Fsr2Settings::default()
+                }),
+            );
+        } else {
+            frame.set_jitter(&device, args.jitter());
+            frame.set_sharpness(&queue, args.sharpen);
+        }
         frame.set_lighting(Lighting {
             exposure: still.exposure,
             ..args.lighting
@@ -541,9 +556,15 @@ mod tests {
         assert_eq!(d.shots, Shots::One(SHOTS[0]));
         assert_eq!(d.size, [1920, 1080]);
         assert!(!d.lighting.lamp && d.lighting.indirect);
-        assert_eq!((d.internal_scale, d.jitter()), (RenderScale::OneHalf, true));
-        assert!(!parse(&["--internal-scale", "1"]).unwrap().jitter());
-        assert!(!parse(&["--jitter", "off"]).unwrap().jitter());
+        assert_eq!(
+            (d.internal_scale, d.jitter(), d.fsr2()),
+            (RenderScale::OneHalf, false, true)
+        );
+        assert_eq!(d.look, flythrough::LookPreset::DEFAULT);
+        let native = parse(&["--internal-scale", "1"]).unwrap();
+        assert!(!native.jitter() && !native.fsr2());
+        let ours = parse(&["--jitter", "off"]).unwrap();
+        assert!(!ours.jitter() && !ours.fsr2());
         // Each shot keeps its manual exposure; `--exposure auto` is the eye.
         for s in SHOTS {
             let one = parse(&["--shot", s.name]).unwrap();

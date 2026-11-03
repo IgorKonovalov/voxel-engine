@@ -8,9 +8,9 @@
 <sub>The showcase cavern (`--source showcase`), seed 1, its `hall` shot: from voxel
 (190, 384, 218), 9 m over the west floor, at yaw 0 and pitch -12 degrees, lamp off, so all of
 the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 64 frames at
-a manual exposure of 8, indirect light on at a probe spacing of 32 voxels, our upscaler on at
-internal scale 1.5 (1280x720 for 1920x1080) with its jitter and sharpening 0.5, the default
-`face` look (honest cubes) and the default lighting, on an RTX 3080 Laptop GPU at 1920x1080.
+a manual exposure of 8, indirect light on at a probe spacing of 32 voxels, FSR 2 on at
+internal scale 1.5 (1280x720 for 1920x1080) with sharpening 0.5, the default `face` look
+(honest cubes with the far normal at `[2, 6]`) and the default lighting, on an RTX 3080 Laptop GPU at 1920x1080.
 Regenerate with
 `cargo run --release -p flythrough --example hero -- --exposure 8 --out docs/images/hero.png`
 (every other setting above is the example's default).</sub>
@@ -195,10 +195,11 @@ shown, `F1`, the autopilot's flight).
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
 | `--mirror-budget MiB` | VRAM the GPU mirror reserves for its pool, masks and records at startup (default 3072 streamed; on `--level`, what the level needs plus dig headroom). While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure (the fuller of its pool slots and records) over 0.9, and returns after 300 frames under 0.7, down to 6 |
 | `--residency R_FULL,R_LOD` | Streamed full and LOD radii in chunks, hysteresis 1 (default 16,24) |
-| `--look PRESET` | Start in a look preset: `face` (default: honest cubes), `field` (the smooth field surface, opt-in: builds its band slots and runs the field pass, at about 3x `face`'s GPU frame in the window), `trilinear8` or `gradient27` (diagnostic normal modes); `plain` starts in face mode without rock detail, detail off. The startup line prints the preset's parts |
+| `--look PRESET` | Start in a look preset: `face` (honest cubes; by default with the far normal at `[2, 6]`, and named here with it off), `field` (the smooth field surface, opt-in: builds its band slots and runs the field pass, at about 3x `face`'s GPU frame in the window), `trilinear8` or `gradient27` (diagnostic normal modes); `plain` starts in face mode without rock detail, detail off. The startup line prints the preset's parts |
 | `--crisp none\|rock\|all` | Mark the cave's rock row, or every row that is not translucent, `MaterialFlags::CRISP` when the table is built: the field look draws those materials as cubes (default `none`). The default look draws everything as cubes, so it changes nothing there |
 | `--thin-rig`, `--seam-rig` | Run in a bounded scene for the field look: free thin rods, a diagonal branch and sheets on a trunk, or a flush inlay and an L of crisp wood. Not with `--level`, `--source showcase`, `--castle`, `--autopilot`, `--vault`, `--room`, `--save` or `--replay` |
 | `--face-mix K` | Override the starting preset's mix of the shading normal toward the face normal (0 to 0.5) |
+| `--far-normal LO,HI` | Blend face mode's shading normal toward the 27-count gradient where a voxel spans fewer than `HI` pixels, all the way at `LO` (default `2,6`; `--look face` is off); the banner and the look line show it |
 | `--view VIEW` | Write `shaded` (default), `normals`, `hitmask`, `steps` (red: walk steps, green: storage loads, blue: pool loads per ray) or `albedo` (the composited albedo, unlit) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the loads' and pool loads' mean and p99 |
 | `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |

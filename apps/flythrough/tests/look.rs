@@ -1557,16 +1557,19 @@ fn only_a_split_frame_allocates_the_split_list() {
 // ---- The default look and the opt-in field look (Plan 0054 Phase 4c) ----
 
 /// The fly-through's default look is `face` (ADR-0041): `LookPreset::DEFAULT` is
-/// `LookPreset::FACE`, and on lavapipe the level (`--level --seed 1`) at the spawn (looking
+/// `LookPreset::FACE` with the far normal at `[2, 6]`, and on lavapipe the level (`--level --seed 1`) at the spawn (looking
 /// +x), `VEIN_POSE` and `PATCH_POSE` (384 x 216, the hit-mask view) reads in the default look
 /// over a mirror with no band slot (the fly-through's default mirror) the same hit position
-/// (bits) and hit record at every pixel as `face` over a mirror with the field's band slots.
+/// (bits) and hit record at every pixel as over a mirror with the field's band slots.
 #[test]
 fn the_default_look_is_face() {
     assert_eq!(
         flythrough::LookPreset::DEFAULT,
-        flythrough::LookPreset::FACE,
-        "the default look is face"
+        flythrough::LookPreset {
+            far_normal: [2.0, 6.0],
+            ..flythrough::LookPreset::FACE
+        },
+        "the default look is face with the far normal"
     );
     let level = pose_level();
     let Some((device, queue)) = software_device(field_pool_bytes(&level).max(256 << 20)) else {
@@ -1603,15 +1606,14 @@ fn the_default_look_is_face() {
         )
     };
     let default = preset_look(flythrough::LookPreset::DEFAULT, ViewMode::HitMask);
-    let face = preset_look(flythrough::LookPreset::FACE, ViewMode::HitMask);
     let mut failures = Vec::new();
     for pose in [spawn_pose, flythrough::VEIN_POSE, flythrough::PATCH_POSE] {
         let a = records(false, &pose, default);
-        let b = records(true, &pose, face);
+        let b = records(true, &pose, default);
         let hits = a.1.iter().filter(|r| r[3] & 1 != 0).count();
         let differ = records_differ(&a, &b);
         println!(
-            "{}: {hits} hits in the default look, {differ} pixels differ from face over band slots",
+            "{}: {hits} hits in the default look, {differ} pixels differ over band slots",
             pose.name
         );
         if hits == 0 || differ != 0 {

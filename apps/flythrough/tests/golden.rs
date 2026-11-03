@@ -1632,9 +1632,10 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 }
 
 /// The showcase's `hall` shot at the golden's size after `frames` frames at the
-/// fly-through's defaults (indirect light on at the default probe spacing, our upscaler at
-/// its default scale 1.5 with its jitter, the lighting at its default resolution, `LookPreset::DEFAULT`), the lamp off, the shot's exposure and the showcase's light radius, under
-/// `table`.
+/// fly-through's defaults (indirect light on at the default probe spacing, FSR 2 at its default
+/// scale 1.5 with sharpening 0.5, the lighting at its default resolution,
+/// `LookPreset::DEFAULT`), the lamp off, the shot's exposure and the showcase's light radius,
+/// under `table`.
 fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
@@ -1671,16 +1672,20 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
         }
         last = Some(gpu.light_samples());
     }
-    // The fly-through's default upscaler: ours at internal scale 1.5 with its jitter and
-    // sharpening 0.5.
+    // The fly-through's default upscaler: FSR 2 at internal scale 1.5 with sharpening 0.5.
     let output = [WIDTH, HEIGHT];
     let mut frame = Frame::with_sizes(
         &device,
         vxe_render::RenderScale::OneHalf.internal(output),
         output,
     );
-    frame.set_jitter(&device, true);
-    frame.set_sharpness(&queue, 0.5);
+    frame.set_upscaler_kind(
+        &device,
+        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+            sharpness: 0.5,
+            ..vxe_render::Fsr2Settings::default()
+        }),
+    );
     frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         indirect: true,

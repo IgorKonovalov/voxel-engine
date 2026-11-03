@@ -332,7 +332,9 @@ detail lanes and the fine-octave lane are written zero and named spare.
 
 ## Owner answers
 
-_(Phase 4 writes here.)_
+2026-11-03, after one windowed session of the six variants on the showcase on the RTX
+(`renders/plan-0055-strips/variants.sh`; the level was not among them): (a) "i think variant 4 is the best. difficuilt to say with problematic lighting"
+(variant 4 is `[2, 6]`), then "keep 2,6 as provisional". (b) "fsr2 stays".
 
 ## Implementation log
 
@@ -349,9 +351,9 @@ Readings: [`logs/0055.md`](logs/0055.md).
 |---|---|---|---|
 | 1: Procedural detail removed | dev | done | 4ec2b34 |
 | 2: FSR 2 at 1.5 the default | dev | done | a2c4dc5 |
-| 3: The far-normal spike | dev | done | committed with this row |
-| 4: The owner's pick | human | not started | |
-| 5: The picks become the defaults | dev | not started | |
+| 3: The far-normal spike | dev | done | e9f0d55 |
+| 4: The owner's pick | human | done | owner answers above |
+| 5: The picks become the defaults | dev | done | committed with this row |
 
 ### Notes
 
@@ -370,16 +372,22 @@ Readings: [`logs/0055.md`](logs/0055.md).
 - Phase 3 moved `the_showcase_banner_names_its_source_and_the_lamp`'s source check to the banner's second row: the look row now comes first.
 - Phase 3 added setting [1, 2] to the strips, and read five more bands at the hall shot.
 - `LookPreset` gained `far_normal`; `N` leaves the run's far normal alone.
+- Phase 4 ran `variants.sh` (six variants, showcase) in place of `session.sh`; the level run and the separate slow-pan run did not happen as scripted. The owner named `[2, 6]` provisional because the lighting made it hard to judge.
+- Phase 5 touched files outside its list: `apps/flythrough/examples/hero.rs` (FSR 2 above scale 1 without `--jitter`), `apps/flythrough/src/lib.rs`, `apps/flythrough/src/main.rs`, `apps/flythrough/tests/golden.rs` (the hall test builds FSR 2), `README.md`, `docs/nfr/02-frame-budget.md`.
+- Phase 5 changed `the_default_look_is_face` to compare the default look over both mirrors, not against `face`: the default's normals differ from `face` on far surfaces. It also asserts `DEFAULT` is `FACE` plus `[2, 6]`.
+- `--look face` is the far normal off; `N` leaves the run's far normal on when it returns to `face`.
+- Followup, not acted on: flythrough::look `the_default_look_is_face` reads 173.5 s on lavapipe, over the soak line, and is not on the soak list.
+- Followup, not acted on: RADV showcase frame reads 55 ms under the defaults (about 18 fps); a slower adapter has no far-normal off switch but `--look face`.
 - The plan's TL;DR says the fly-through starts at the vein pose; no phase changes the start pose
   and none was changed (owner told, 2026-11-03).
 
 ### Close triggers
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe_world::Material` loses `detail`, `detail_fine`; `vxe_render`: `LookParams` loses `detail`, gains `far_normal`; `SurfaceTuning` loses `detail_after_lighting`; `FLAG_DETAIL`, `FLAG_DETAIL_AFTER_LIGHTING` gone; `Params` gains `far_normal` in spare words, same size; material row layout unchanged. `flythrough`: `ROCK_DETAIL`, `look_materials`, `look_materials_with`, `LookPreset::rock_detail`, `detail_fine`, `materials` gone; `LookPreset::far_normal`, `far_normal_words` added. CLI: `--detail`, `--rock-detail`, `--detail-fine`, `--detail-after`, `--look plain`, the `V` key gone; `--far-normal LO,HI` added; the default upscaler is `fsr2`.
+- **Budget readings:** `docs/plans/logs/0055.md`, and `docs/nfr/02-frame-budget.md`, `docs/nfr/03-memory.md`. Frame (RTX 3080 Laptop, 2530 x 1378 from 1687 x 919, e9f0d55's tree): showcase start 11.799, 11.936 ms; vein 7.482, 7.519 ms. RADV RENOIR 1080p: showcase 55.063, 54.998 ms; vein 33.107, 33.206 ms. Upscale stage under FSR 2: RTX 2.932 to 2.958 ms, RADV 9.967 to 9.983 ms, over the 1.5 ms line (a2c4dc5's parent tree). Hit pass at Phase 1: 2.793 to 2.846 ms. `frame_bytes` at 1.5, fly-through's line: 1080p 309 377 468 B against ours 184 957 040 B; 2530 x 1378 483 147 556 B against 273 897 312 B.
+- **Gate at the tip:** e9f0d55's tree plus Phase 5: `cargo build` 0; `cargo nextest run --workspace --profile gate --no-fail-fast` 0, 694 run, 694 passed, 46 skipped; `cargo test --doc --workspace` 0; clippy 0; fmt 0; `cargo deny check` 0; doc and tier scripts 0.
+- **Outstanding `human` phases:** none
 
 ## Followups
 

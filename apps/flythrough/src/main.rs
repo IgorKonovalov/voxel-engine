@@ -68,9 +68,10 @@
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
 //! mode, the body spawned in the spawn pocket. The fly-through starts in `face`
-//! (`LookPreset::DEFAULT`, honest cubes, ADR-0041), and prints that look first; `--look` picks
+//! (`LookPreset::DEFAULT`, honest cubes with the far normal at `[2, 6]`, ADR-0041), and prints
+//! that look first; `--look` picks
 //! the starting preset (`flythrough::LookPreset`: `face`, `field`, `trilinear8`, `gradient27`),
-//! a normal mode with its face mix, overridable by `--face-mix`. `--far-normal LO,HI` blends
+//! a normal mode with its face mix, overridable by `--face-mix`. `--far-normal LO,HI` (`--look face` starts with it off) blends
 //! face mode's shading normal toward the 27-count gradient where a voxel spans fewer than `HI`
 //! pixels, all the way at `LO` (`LookParams::far_normal`); the banner and the look line show it,
 //! and `N` leaves it alone. Only a run started under
@@ -7374,16 +7375,38 @@ mod tests {
         assert!(args.upscaler_settings(hud::UpscalerMode::Own).2);
     }
 
-    /// No flag starts in the face look with no band slot, as `--look face` does; `--look field`
-    /// alone builds the band slots.
+    /// The owner's picks (Plan 0055 Phase 4): no flag starts in face normals with the far
+    /// normal at `[2, 6]`, in FSR 2 at scale 1.5 with sharpening 0.5.
+    #[test]
+    fn the_start_look_and_upscaler_are_the_owners_picks() {
+        let a = parse_args_from(argv(&[])).unwrap();
+        let look = a.start_look();
+        assert_eq!(look.normal_mode, NormalMode::Face);
+        assert_eq!(look.far_normal, [2.0, 6.0]);
+        assert_eq!(
+            look_line(&look, &a.look),
+            "look face (normals face, face mix 0, far normal 2..6), view shaded"
+        );
+        let (kind, scale, jitter) = a.upscaler_settings(a.start_upscaler());
+        assert_eq!(
+            (kind.name(), scale, jitter),
+            ("fsr2", RenderScale::OneHalf, false)
+        );
+        match kind {
+            UpscalerKind::Fsr2(s) => assert_eq!(s.sharpness, 0.5),
+            k => panic!("{k:?}"),
+        }
+        let over = parse_args_from(argv(&["--far-normal", "1,2"])).unwrap();
+        assert_eq!(over.start_look().far_normal, [1.0, 2.0]);
+    }
+
+    /// No flag starts in the face look with no band slot, as `--look face` does, whose far
+    /// normal is off; `--look field` alone builds the band slots.
     #[test]
     fn the_default_look_is_face() {
         let a = parse_args_from(argv(&[])).unwrap();
-        assert_eq!(
-            look_line(&a.start_look(), &a.look),
-            "look face (normals face, face mix 0, far normal off), view shaded"
-        );
-        assert_eq!(a.look, LookPreset::FACE);
+        assert_eq!(a.look, LookPreset::DEFAULT);
+        assert_eq!(a.look.normal_mode, NormalMode::Face);
         assert!(!a.field_surface());
         assert!(
             parse_args_from(argv(&["--look", "field"]))
@@ -7410,7 +7433,7 @@ mod tests {
         );
     }
 
-    /// The start's banner is `look face, far normal off` over the lighting modes,
+    /// The start's banner is `look face, far normal 2..6` over the lighting modes,
     /// `--far-normal` shows and takes the look's far normal, and `N`'s cycle reaches every
     /// preset from there.
     #[test]
@@ -7422,16 +7445,16 @@ mod tests {
             .with_probe_spacing(a.probe_spacing);
         bare.set_auto(a.adaptation, a.start_auto());
         let lighting = bare.banner(0.0).expect("the start shows it");
-        assert_eq!(banner, format!("look face, far normal off\n{lighting}"));
-        let knob = parse_args_from(argv(&["--far-normal", "2,6"])).unwrap();
-        assert_eq!(knob.start_look().far_normal, [2.0, 6.0]);
+        assert_eq!(banner, format!("look face, far normal 2..6\n{lighting}"));
+        let knob = parse_args_from(argv(&["--far-normal", "3,10"])).unwrap();
+        assert_eq!(knob.start_look().far_normal, [3.0, 10.0]);
         assert_eq!(
             look_line(&knob.start_look(), &knob.look),
-            "look face (normals face, face mix 0, far normal 2..6), view shaded"
+            "look face (normals face, face mix 0, far normal 3..10), view shaded"
         );
         let banner = knob.start_modes(0.0).banner(0.0).unwrap();
         assert!(
-            banner.starts_with("look face, far normal 2..6\n"),
+            banner.starts_with("look face, far normal 3..10\n"),
             "{banner}"
         );
         for bad in ["6,2", "2,2", "-1,2", "2", "x,6"] {
@@ -7442,7 +7465,7 @@ mod tests {
         }
         let mut seen = vec![a.look.name];
         let mut p = a.look.next(true);
-        while p != a.look {
+        while p.name != a.look.name {
             seen.push(p.name);
             p = p.next(true);
         }

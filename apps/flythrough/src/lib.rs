@@ -424,8 +424,13 @@ impl LookPreset {
     /// `N`'s order: face, the field, then the two diagnostic normal modes.
     pub const ALL: [Self; 4] = [Self::FACE, Self::FIELD, Self::TRILINEAR8, Self::GRADIENT27];
 
-    /// The look the fly-through starts in without `--look`: honest cubes (ADR-0041).
-    pub const DEFAULT: Self = Self::FACE;
+    /// The look the fly-through starts in without `--look`: honest cubes (ADR-0041) with the
+    /// far normal at `[2, 6]`, the owner's provisional pick. `--look face` is the same cubes
+    /// with the far normal off.
+    pub const DEFAULT: Self = Self {
+        far_normal: [2.0, 6.0],
+        ..Self::FACE
+    };
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.name == name)

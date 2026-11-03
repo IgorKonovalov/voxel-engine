@@ -898,3 +898,12 @@ ours 0.928 to 1.301 ms (upscale plus sharpen). RADV RENOIR at 1920 x 1080 from 1
 showcase start 48.360 against 41.677, vein 32.865 against 26.124; FSR 2's passes 9.967 to 9.983
 ms, ours 3.655 to 3.864 ms.
 
+**The fly-through's defaults with the far normal at `[2, 6]` (Plan 0055 Phase 5, tree on e9f0d55,
+`--headless --frames 300`, median of the last 30, perf lock, 1-minute load 1.16 to 1.49).** RTX 3080
+Laptop GPU at 2530 x 1378 from 1687 x 919: showcase start frame 11.799 and 11.936 ms (hit 4.264,
+4.306), `--level --pose vein` 7.482 and 7.519 ms (hit 0.632, 0.637). RADV RENOIR at 1920 x 1080 from
+1280 x 720, FSR 2: showcase start 55.063 and 54.998 ms (hit 21.078) against 48.468 and 48.725 (hit
+14.47) with `--look face` and 51.023 and 51.034 (hit 17.007) at `[1, 2]`; vein 33.107 and 33.206 ms
+(hit 3.05 to 3.08) against 33.131 and 34.344 (hit 3.04 to 3.26). The hall shot's crops and the other
+settings are in `docs/plans/logs/0055.md`.
+
