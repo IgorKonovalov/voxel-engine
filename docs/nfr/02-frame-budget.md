@@ -818,7 +818,7 @@ figure, itself a guess until that plan's close reads it; "guess" means no plan e
 
 | system | RTX ms | Radeon ms | status | source |
 |---|---|---|---|---|
-| light quality: probe direct light, settle and dots | 0.1 to 0.3 | 0.4 to 1.7 | budgeted | Plan 0048 (probe update at most +5 %, its bar 6), Plan 0049 (variance, a-trous, temporal and shadow-origin guesses). Plan 0051 predicts a saving at rest on the RTX (probes under 0.2 ms, light + gradient + temporal under 0.6 ms) that is not counted until read |
+| light quality: probe direct light, settle and dots | 0.1 to 0.3 | 0.4 to 1.7 | budgeted | Plan 0048 (probe update at most +5 %, its bar 6), and the mechanism after Plan 0051's ADR, a slice kept from dropped Plan 0049's guesses until read. Plan 0051 predicts a saving at rest on the RTX (probes under 0.2 ms, light + gradient + temporal under 0.6 ms) and a table guess of under 0.1 ms, none counted until read |
 | liquids | 0.9 to 1.2 | 5.9 to 7.8 (6.5x) | budgeted | Plan 0034, ADR-0029: a half-screen lake in `Trace`, refraction walk 0.4 plus the liquid pass 0.5 to 0.8; under 0.5 in `Sky`; lava adds none |
 | voxel-model entities (creatures) | 0.3 to 0.8 | 2.0 to 5.2 (6.5x) | guess | M6 (`roadmap.md`): a top-level structure of AABBs per ray, a model walk on the pixels they cover; no plan or ADR yet |
 | entity shadows and motion vectors | 0.2 to 0.5 | 1.3 to 3.3 (6.5x) | guess | M6: shadow rays and probe rays test the same structure; the temporal pass's motion vectors |

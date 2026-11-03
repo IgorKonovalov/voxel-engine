@@ -1,12 +1,14 @@
 # Light feedback: Plan 0049 live session 2 (2026-10-29)
 
 The owner's live check of the light at Plan 0049 Phase 2, together with everything measured so
-far. Plan 0049 (`docs/plans/0049-light-settles-fast-and-young-pixels-hold-no-dots.md`, on branch
-`plan-0049`) is the authoritative record. This file collects the owner's words and the evidence
-in one place.
+far. Plan 0049 (`docs/plans/done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md`,
+dropped 2026-11-03, its rig under tag `archive/plan-0049`) is the authoritative record of the
+readings. Plan 0051 takes the work. This file collects the owner's words and the evidence in one
+place.
 
 The owner's rule (2026-10-29): until the light is fixed, nothing else moves forward. The order
-is Plan 0049 alone, then 0048, then 0032.
+at this session was Plan 0049 alone, then 0048, then 0032; it is now Plan 0051, the plan its ADR
+names if any, then 0048, then 0032.
 
 ## What the owner wants
 
@@ -125,5 +127,5 @@ At the vein, `--level --seed 1`, 8k frames per series:
 
 - `.git/lane-archive/plan-0049/session2/`: the full session log, the runner, the owner's notes
   verbatim, and the screenshots (`wedges`, `step3`, `hud-step4`, `step5`).
-- `.claude/worktrees/plan-0049/live/filmstrip/p1/`: Phase 1 filmstrips.
-- Plan 0049's Implementation log on branch `plan-0049`: the Phase 1 tables in full.
+- `renders/plan-0049-live/filmstrip/p1/` (local, gitignored): Phase 1 filmstrips.
+- Plan 0049's Implementation log, under `docs/plans/done/`: the Phase 1 tables in full.

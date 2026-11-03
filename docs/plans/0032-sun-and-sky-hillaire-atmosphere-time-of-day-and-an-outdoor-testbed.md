@@ -75,7 +75,7 @@
 > goldens) is under Risks, "Plan 0048 interaction". Phase 6's furnace reference stays pi,
 > which holds again after 0048. "The base commit" in every bar is main after 0048's merge.
 > **Amended 2026-10-28 (owner, order):** this plan waits for
-> [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md), which may change the
+> [Plan 0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md), which may change the
 > probe update's schedule and the young pixels' filter that this plan's sky light and sun
 > sample pass through. The order is 0047, 0048, 0049, then this plan. "The base commit" in
 > every bar is now main after 0049's merge, and dev re-reads the names there. No phase
@@ -86,10 +86,18 @@
 > every bar is main after 0048's merge. Its sky light and sun sample pass through 0049's kept
 > settings and 0048's probe direct scheme, so 0049's settle, dot and shimmer tests join the
 > tests this plan must not regress. No phase changes.
+> **Amended 2026-11-03 (owner: Plan 0049 dropped):** Plan 0049 will not merge. The order is
+> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
+> the plan its ADR names if any, Plan 0048, then this plan. "The base commit" stays main after
+> 0048's merge. The settle, dot and shimmer tests this plan must not regress are the ones the plan
+> after 0051's ADR asserts, if any, and Plan 0047's. Its sky light and sun sample pass through
+> whatever that direction keeps, and a world-space emissive table or frozen probes would need a
+> restart when the sun moves, so the architect re-reads Phases 5 and 6 after 0051's Phase 4. No
+> phase changes today.
 > **Starts after:** [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)
 > merges (amended 2026-10-29, owner). 0048 starts after
-> [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) merges, which itself
-> starts after [Plan 0047](done/0047-emissive-light-holds-still-long-guarded-history.md) merges. Plans 0024,
+> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)
+> closes and the plan its ADR names, if any (amended 2026-11-03, owner). Plans 0024, 0047,
 > 0029, 0030, 0040 and 0038 are closed and on main.
 > The names in this plan were checked against main at bc1e7a5 and Plan 0047's branch at
 > c27891f. 0047 still has dev phases to run (its sweep may change `DEFAULT_EMISSIVE_HISTORY`
@@ -1175,7 +1183,7 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      (`gradient_at` returns both lambdas), `gradient.wgsl`, and `.config/nextest.toml`'s gpu
      filter (`flythrough::emissive_stillness` added to the same line Phase 3 extends, in every
      copy). The lane starts from 0048's merge (owner, 2026-10-28), so these are the files as
-     0047, then 0049 and then 0048 left them (amended 2026-10-29, owner), and the
+     0047, then Plan 0051's direction and then 0048 left them (amended 2026-11-03, owner), and the
      byte-identical bars compare against the goldens as 0048 re-blessed them.
   9. *0047's remaining phases* may set a new `DEFAULT_EMISSIVE_HISTORY` and
      `Lighting::reuse_m_cap` and add `--reuse-m-cap`. Phase 5 bar 6's 11 frames come from

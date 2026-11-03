@@ -18,8 +18,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0051, before M10 (owner, 2026-10-29); Plan 0052 (closed) struck what it fixed first. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, so after Plan 0051 and before M10. |
-| [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0049, whose bars it holds; before Plan 0032. |
-| [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, holds still in flight, no dots: a settle, shimmer and dot spike, then mechanisms by measurement | approved | M2, no ADR yet. First and alone after 0047 (owner, 2026-10-29); before 0048 and 0032. |
+| [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0051 and the plan its ADR names, if any; before Plan 0032. |
 | [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 3. After Plan 0050's check, alone; 0048 and 0032 wait. |
 <!-- roster:end -->
 
@@ -28,6 +27,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Abandoned by the owner: its Phase 1 readings kept in the plan, its rig under tag `archive/plan-0049`; Plan 0051 takes the work | 2026-11-03, abandoned |
 | [0054](done/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md) | Honest cubes the default, the planes gone (hit plus light 1.397 ms, mirror 60 % smaller at the level); the field surface built and kept opt-in | 2026-11-03, v0.39.0 |
 | [0053](done/0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md) | One-voxel features: a box metric kept; the majority fit and the normal field failed the eye and are gone; ADR-0040 rejected | 2026-11-03, v0.39.0 |
 | [0050](done/0050-watertight-contour-surface-crack-spike-and-closing-rule.md) | A watertight contour surface: a crack spike, then snap closes the wedges and triangles at +1.3 % (RTX) and +0.4 % (Radeon); the one-voxel boxes go to Plan 0053 | 2026-10-31, v0.38.0 |
