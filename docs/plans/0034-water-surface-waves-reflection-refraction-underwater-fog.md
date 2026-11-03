@@ -40,7 +40,8 @@
 > 5. **Names.** `nfr.md` §2 and §3 readings are in `docs/nfr/02-frame-budget.md` and
 >    `docs/nfr/03-memory.md`. Phases gate on `scripts/test-changed.mjs`, the tip on `--profile
 >    gate`; a golden over 30 s on lavapipe is born on the soak list. Readings go in
->    `docs/plans/logs/0034.md`. The order's frame now holds `gradient` and FSR 2's passes.
+>    `docs/plans/logs/0034.md`. The order's frame now holds `gradient` and FSR 2's passes. A
+>    golden with indirect light on renders at `golden.rs`'s settled frames, as Plan 0032's do.
 > **Waits on Plan 0051's verdict:** the probes light the medium (`E` in Phase 2) and the
 > reflected hits (Phase 4). If the verdict removes the probes, both need another source; if it
 > keeps the world-space cache, a reflected hit could read it instead of a noisy sample, which
