@@ -636,7 +636,7 @@ fn outside_level_camera() -> Camera {
     camera_looking_x([-400.0, c[1], c[2]])
 }
 
-/// The cutaway look: face normals, no detail, shaded.
+/// The cutaway look: face normals, shaded.
 fn cutaway_look() -> vxe_render::LookParams {
     vxe_render::LookParams {
         cutaway: true,
@@ -1633,8 +1633,7 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 
 /// The showcase's `hall` shot at the golden's size after `frames` frames at the
 /// fly-through's defaults (indirect light on at the default probe spacing, our upscaler at
-/// its default scale 1.5 with its jitter, the lighting at its default resolution, `LookPreset::DEFAULT` with
-/// rock's detail), the lamp off, the shot's exposure and the showcase's light radius, under
+/// its default scale 1.5 with its jitter, the lighting at its default resolution, `LookPreset::DEFAULT`), the lamp off, the shot's exposure and the showcase's light radius, under
 /// `table`.
 fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
@@ -1690,7 +1689,6 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     });
     frame.set_look(vxe_render::LookParams {
         normal_mode: look.normal_mode,
-        detail: true,
         tuning: look.tuning,
         ..vxe_render::LookParams::default()
     });

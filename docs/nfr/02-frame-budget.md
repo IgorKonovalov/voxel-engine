@@ -882,3 +882,9 @@ reference, 1080p; the cave frame needs 1.9 to 3.7 ms of table 2, the outdoor fra
 - **At the owner's window** the RTX's B leaves 1.2 to 3.7 ms by pose (the window table) against
   the cave frame's projected 2.9 to 5.6 ms there (table 2 x 1.5, a projection): B misses at the
   window at the spawn and the patch; A leaves 9.0 to 9.4 ms and fits.
+
+**Procedural detail removed (Plan 0055 Phase 1, RTX 3080 Laptop GPU, showcase start, headless,
+2530 x 1378 from 1687 x 919, `--upscaler fsr2`, median of 30 of 300 frames, perf lock, 1-minute
+load 5.3 to 6.9, three runs alternated with the c09aa5b binary at `--rock-detail 4,0`):** hit
+2.793, 2.815 and 2.846 ms against 2.800, 2.828 and 2.826; GPU frame 10.388, 10.439 and 10.530 ms
+against 10.436, 10.531 and 10.525; composite 0.259 to 0.260 ms against 0.273.

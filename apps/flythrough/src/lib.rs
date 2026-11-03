@@ -386,82 +386,37 @@ pub fn with_showcase_rows(table: &MaterialTable) -> MaterialTable {
     t
 }
 
-/// The showcase's table: [`look_materials`] with the ore emitting [`ORE_EMISSION`] (the
+/// The showcase's table: [`cave_materials`] with the ore emitting [`ORE_EMISSION`] (the
 /// amber) and the three emissive rows of [`with_showcase_rows`].
 pub fn showcase_materials() -> MaterialTable {
-    with_showcase_rows(&with_emissive_ore(&look_materials()))
+    with_showcase_rows(&with_emissive_ore(&cave_materials()))
 }
 
-/// Rock's procedural detail in every look but `--look plain`: a 40 cm feature scale (4 voxels)
-/// at strength 0.1.
-pub const ROCK_DETAIL: [f32; 2] = [4.0, 0.1];
-
-/// [`cave_materials`] with rock's detail set to [`ROCK_DETAIL`]: the table the fly-through
-/// uses unless `--look plain`. Every other row keeps no detail.
-pub fn look_materials() -> MaterialTable {
-    look_materials_with(ROCK_DETAIL)
-}
-
-/// [`cave_materials`] with rock's detail set to `rock_detail` (feature scale in voxels,
-/// strength): the table under `--rock-detail`. Every other row keeps no detail.
-pub fn look_materials_with(rock_detail: [f32; 2]) -> MaterialTable {
-    let base = cave_materials();
-    let mut t = MaterialTable::new();
-    for (id, row) in base.rows().iter().enumerate().skip(1) {
-        let mut row = row.clone();
-        if id == usize::from(cave::ROCK) {
-            row.detail = rock_detail;
-        }
-        t.push(row);
-    }
-    t
-}
-
-/// A named look of the window: a normal mode, the surface tuning, and rock's detail pair and
-/// fine-octave weight. `--look` starts in one, `N` cycles them in [`LookPreset::ALL`] order.
+/// A named look of the window: a normal mode and the surface tuning. `--look` starts in one, `N` cycles them in [`LookPreset::ALL`] order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LookPreset {
     pub name: &'static str,
     pub normal_mode: NormalMode,
     pub tuning: SurfaceTuning,
-    /// Rock's feature scale in voxels and strength.
-    pub rock_detail: [f32; 2],
-    /// Rock's third-octave weight (`Material::detail_fine`).
-    pub detail_fine: f32,
 }
 
-/// Every part off: no face mix, detail shaded in the light pass.
-const TUNING_OFF: SurfaceTuning = SurfaceTuning {
-    face_mix: 0.0,
-    detail_after_lighting: false,
-};
-
 impl LookPreset {
-    /// A preset of `mode` with every tuning part off and rock at [`ROCK_DETAIL`].
-    const fn plain(name: &'static str, normal_mode: NormalMode) -> Self {
+    /// A preset of `mode` with no face mix.
+    const fn of(name: &'static str, normal_mode: NormalMode) -> Self {
         Self {
             name,
             normal_mode,
-            tuning: TUNING_OFF,
-            rock_detail: ROCK_DETAIL,
-            detail_fine: 0.0,
+            tuning: SurfaceTuning { face_mix: 0.0 },
         }
     }
 
-    pub const FACE: Self = Self::plain("face", NormalMode::Face);
-    /// The field surface (ADR-0041, `NormalMode::Contour`), an opt-in look, with the detail's
-    /// lamp term applied at full resolution; a material marked `MaterialFlags::CRISP` in the
-    /// table renders as cubes in it. It needs a mirror with the field's band slots.
-    pub const FIELD: Self = Self {
-        tuning: SurfaceTuning {
-            detail_after_lighting: true,
-            ..TUNING_OFF
-        },
-        ..Self::plain("field", NormalMode::Contour)
-    };
-
-    pub const TRILINEAR8: Self = Self::plain("trilinear8", NormalMode::Trilinear8);
-    pub const GRADIENT27: Self = Self::plain("gradient27", NormalMode::Gradient27);
+    pub const FACE: Self = Self::of("face", NormalMode::Face);
+    /// The field surface (ADR-0041, `NormalMode::Contour`), an opt-in look; a material marked
+    /// `MaterialFlags::CRISP` in the table renders as cubes in it. It needs a mirror with the
+    /// field's band slots.
+    pub const FIELD: Self = Self::of("field", NormalMode::Contour);
+    pub const TRILINEAR8: Self = Self::of("trilinear8", NormalMode::Trilinear8);
+    pub const GRADIENT27: Self = Self::of("gradient27", NormalMode::Gradient27);
 
     /// `N`'s order: face, the field, then the two diagnostic normal modes.
     pub const ALL: [Self; 4] = [Self::FACE, Self::FIELD, Self::TRILINEAR8, Self::GRADIENT27];
@@ -473,7 +428,7 @@ impl LookPreset {
         Self::ALL.into_iter().find(|p| p.name == name)
     }
 
-    /// The names `--look` takes besides `plain`, comma-separated.
+    /// The names `--look` takes, comma-separated.
     pub fn names() -> String {
         Self::ALL.map(|p| p.name).join(", ")
     }
@@ -497,29 +452,9 @@ impl LookPreset {
             .unwrap_or(Self::FACE)
     }
 
-    /// The parts beyond the normal mode: `face mix 0, detail after lighting off`.
+    /// The parts beyond the normal mode: `face mix 0`.
     pub fn parts(&self) -> String {
-        let t = &self.tuning;
-        let on = |b: bool| if b { "on" } else { "off" };
-        format!(
-            "face mix {}, detail after lighting {}",
-            t.face_mix,
-            on(t.detail_after_lighting)
-        )
-    }
-
-    /// [`look_materials_with`] at this preset's rock pair, with rock's fine-octave weight.
-    pub fn materials(&self) -> MaterialTable {
-        let base = look_materials_with(self.rock_detail);
-        let mut t = MaterialTable::new();
-        for (id, row) in base.rows().iter().enumerate().skip(1) {
-            let mut row = row.clone();
-            if id == usize::from(cave::ROCK) {
-                row.detail_fine = self.detail_fine;
-            }
-            t.push(row);
-        }
-        t
+        format!("face mix {}", self.tuning.face_mix)
     }
 }
 
@@ -1025,47 +960,6 @@ mod tests {
         let mut s = ScrollSteps::default();
         assert_eq!([s.add(-0.6), s.add(-0.6)], [0, -1]);
         assert!((s.carry() + 0.2).abs() < 1e-6, "carry {}", s.carry());
-    }
-
-    #[test]
-    fn look_materials_puts_the_override_on_rock_only() {
-        let t = look_materials_with([8.0, 0.75]);
-        let base = cave_materials();
-        assert_eq!(t.rows().len(), base.rows().len());
-        for (id, row) in t.rows().iter().enumerate() {
-            let want = if id == usize::from(cave::ROCK) {
-                [8.0, 0.75]
-            } else {
-                [0.0, 0.0]
-            };
-            assert_eq!(row.detail, want, "row {id} ({})", row.name);
-            assert_eq!(row.albedo, base.rows()[id].albedo, "row {id}");
-        }
-        assert_eq!(
-            look_materials().get(cave::ROCK).map(|r| r.detail),
-            Some(ROCK_DETAIL)
-        );
-    }
-
-    /// A preset's table carries its rock pair and fine weight on rock alone; `field` is the
-    /// fly-through's look table row for row.
-    #[test]
-    fn a_preset_table_puts_its_rock_detail_and_fine_weight_on_rock() {
-        let grain = LookPreset {
-            rock_detail: [2.0, 0.3],
-            detail_fine: 0.5,
-            ..LookPreset::FIELD
-        };
-        let t = grain.materials();
-        for (id, row) in t.rows().iter().enumerate() {
-            let rock = id == usize::from(cave::ROCK);
-            assert_eq!(row.detail, if rock { [2.0, 0.3] } else { [0.0; 2] }, "{id}");
-            assert_eq!(row.detail_fine, if rock { 0.5 } else { 0.0 }, "{id}");
-        }
-        assert_eq!(
-            LookPreset::FIELD.materials().rows(),
-            look_materials().rows()
-        );
     }
 
     #[test]

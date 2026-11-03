@@ -1,6 +1,6 @@
 # 0055: The clarity pass before Plan 0051: procedural detail removed, FSR 2 at 1.5 the default, and a spike for a footprint-blended far normal
 
-> **Status:** approved (2026-11-03, owner: "flip approved but do not start"; dev waits for the owner's go)
+> **Status:** in-progress (2026-11-03)
 > **Created:** 2026-11-03
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler
 > bullets; Plan 0051 and the light plans after it read their bars on this plan's default look)
@@ -343,9 +343,11 @@ _(Phase 4 writes here.)_
 > resume notes go to the plan's readings log, `docs/plans/logs/0055.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings: [`logs/0055.md`](logs/0055.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Procedural detail removed | dev | not started | |
+| 1: Procedural detail removed | dev | done | committed with this row |
 | 2: FSR 2 at 1.5 the default | dev | not started | |
 | 3: The far-normal spike | dev | not started | |
 | 4: The owner's pick | human | not started | |
@@ -353,9 +355,17 @@ _(Phase 4 writes here.)_
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1 touched files outside its list: `apps/flythrough/examples/hero.rs`,
+  `apps/flythrough/tests/shutdown.rs` (`--look plain` gone), `apps/flythrough/tests/support/rigs.rs`,
+  `apps/flythrough/tests/support/sharpness.rs` (deleted; `axis_fraction` moved to `tests/look.rs`),
+  `README.md` (flag and key tables), and renamed `cave.rs`'s `DETAIL_SHIFT` to `FINE_SHIFT`.
+- Phase 1 deleted `look_detail.png` and the three `look_wall_*.png` goldens with their tests.
+- Followup, not acted on: `GpuWorld::rewrite_materials` has no caller left in the workspace.
+- Followup, not acted on: `docs/nfr.md:386` says the shutdown test runs `--look plain`; the test
+  now runs the default look. `docs/nfr.md` and `docs/nfr/` name `--look plain` and `--detail` in
+  historical readings, left as written.
+- The plan's TL;DR says the fly-through starts at the vein pose; no phase changes the start pose
+  and none was changed (owner told, 2026-11-03).
 
 ### Close triggers
 

@@ -15,7 +15,6 @@
 //! - `VXE_STRIP_UPSCALER`: `fsr2` (default), `own` or `off`; `fsr2` and `own` at scale 1.5
 //!   with sharpening 0.5, `off` at scale 1 with no jitter.
 //! - `VXE_STRIP_LOOK`: a `LookPreset` name (default `face`).
-//! - `VXE_STRIP_ROCK`: rock's detail `SCALE,STRENGTH` (default `4,0`: no rock detail).
 //! - `VXE_STRIP_LAMP`: `on` or `off` at the start (default off on the showcase, on on the level).
 //! - `VXE_STRIP_INDIRECT`, `VXE_STRIP_FILTER`: `on` (default) or `off`.
 //! - `VXE_STRIP_SAMPLER`: `reuse` (default) or `list` (no reservoir reuse).
@@ -122,8 +121,8 @@ fn sync_whole(scene: &mut Scene, world: &World) {
     }
 }
 
-fn scene(preset: &LookPreset) -> Option<Scene> {
-    let base = flythrough::with_emissive_ore(&preset.materials());
+fn scene() -> Option<Scene> {
+    let base = flythrough::with_emissive_ore(&flythrough::cave_materials());
     let source = env("VXE_STRIP_SOURCE").unwrap_or_else(|| "showcase".to_owned());
     if source == "level" {
         let source = flythrough::cave::CaveSource::new(
@@ -278,9 +277,8 @@ fn out_dir(tag: &str) -> PathBuf {
 #[ignore = "reading only: run with --ignored"]
 fn strip_run() {
     let look = env("VXE_STRIP_LOOK").unwrap_or_else(|| "face".to_owned());
-    let mut preset = LookPreset::from_name(&look).expect("VXE_STRIP_LOOK takes a look preset");
-    preset.rock_detail = list::<2>("VXE_STRIP_ROCK").unwrap_or([4.0, 0.0]);
-    let Some(mut scene) = scene(&preset) else {
+    let preset = LookPreset::from_name(&look).expect("VXE_STRIP_LOOK takes a look preset");
+    let Some(mut scene) = scene() else {
         println!("strip: no adapter; skipped");
         return;
     };
@@ -355,7 +353,6 @@ fn strip_run() {
     frame.set_lighting(lighting);
     frame.set_look(LookParams {
         normal_mode: preset.normal_mode,
-        detail: true,
         view,
         tuning: preset.tuning,
         ..LookParams::default()
@@ -375,10 +372,9 @@ fn strip_run() {
     let tag = env("VXE_STRIP_TAG").unwrap_or_else(|| "strip".to_owned());
     let dir = out_dir(&tag);
     println!(
-        "strip {tag}: {} | {w}x{h} {upscaler} | look {} rock {:?} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
+        "strip {tag}: {} | {w}x{h} {upscaler} | look {} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
         scene.name,
         preset.name,
-        preset.rock_detail,
         lighting.lamp,
         lighting.indirect,
         lighting.filter,

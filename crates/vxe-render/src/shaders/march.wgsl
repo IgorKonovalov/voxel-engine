@@ -4,11 +4,10 @@
 //
 // Bindings, group 0 (every pass of the frame):
 //   0  uniform  params         views, mirror window, light, target size, flags (bit 0: shadow ray,
-//                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
+//                              bit 1: occupancy masks, bits 2..4: normal mode,
 //                              bits 5..8: view, bit 9: skip empty cells larger than a voxel,
-//                              bit 10: cutaway, bit 13: detail after lighting, bit 19: the
-//                              split field walk), the lighting flags, exposure and the face
-//                              mix
+//                              bit 10: cutaway, bit 19: the split field walk), the lighting
+//                              flags, exposure and the face mix
 //   1  storage  brick_pool0    shard 0 of the pool: [unit][16 x u32], 64-byte units; unit u is
 //                              unit u % units_per_shard of shard u / units_per_shard; 7, 8 and
 //                              9 are shards 1 to 3. A Full brick's slot is a run of units
@@ -34,8 +33,7 @@
 //                              record (entries 0..64 mip level 1, 64..72 level 2, 72 level 3);
 //                              0xFFFFFFFF when absent
 //   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
-//                              detail scale (voxels) + detail strength + opacity + the fine
-//                              detail octave's weight, 4 spare
+//                              2 spare + opacity + 1 spare, 4 spare
 //   7  storage  brick_pool1    pool shard 1
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
@@ -53,7 +51,7 @@
 // Bindings, group 1 (the hit pass's outputs, the hit buffer):
 //   0  storage texture  hit_pos_out    rgba32float: the hit's world position (voxels) and t;
 //                                      (0, 0, 0, BIG) on a miss
-//   1  storage texture  hit_info_out   rgba16uint: the shading normal before detail as two
+//   1  storage texture  hit_info_out   rgba16uint: the shading normal as two
 //                                      snorm16 octahedral coordinates (exact for the six axis
 //                                      normals), the material id, and flags: bit 0 hit, bit 1
 //                                      field-surface hit, bit 2 translucent layers in front,
@@ -275,12 +273,10 @@ const BIG: f32 = 3.0e38;
 const FLAG_SHADOWS: u32 = 1u;
 const FLAG_MASKS: u32 = 2u;
 const NORMAL_SHIFT: u32 = 2u;
-const FLAG_DETAIL: u32 = 16u;
 const VIEW_SHIFT: u32 = 5u;
 const VIEW_BITS: u32 = 7u;
 const FLAG_SKIPS: u32 = 512u;
 const FLAG_CUTAWAY: u32 = 1024u;
-const FLAG_DETAIL_AFTER_LIGHTING: u32 = 8192u;
 // The field look's split walk: the hit pipeline's `main` walks to the first field brick and
 // hands the ray to `field_resume` (`split_pixel`).
 const FLAG_FIELD_SPLIT: u32 = 524288u;
@@ -1083,80 +1079,11 @@ fn face_unmixed(m: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
     return normalize(l * m - k * f);
 }
 
-// A hash of lattice point `c` to [0, 1).
-fn hash3(c: vec3<i32>) -> f32 {
-    let x = bitcast<vec3<u32>>(c) * vec3<u32>(1597334677u, 3812015801u, 2798796415u);
-    var h = (x.x ^ x.y ^ x.z) * 2654435761u;
-    h ^= h >> 15u;
-    h *= 2246822519u;
-    h ^= h >> 13u;
-    return f32(h >> 8u) / 16777216.0;
-}
-
-// Value noise at `p` with a quintic fade: the value in [0, 1) and its gradient.
-fn value_noise(p: vec3<f32>) -> vec4<f32> {
-    let fl = floor(p);
-    let i = vec3<i32>(fl);
-    let f = p - fl;
-    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    let du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-    let a = hash3(i);
-    let b = hash3(i + vec3<i32>(1, 0, 0));
-    let c = hash3(i + vec3<i32>(0, 1, 0));
-    let dd = hash3(i + vec3<i32>(1, 1, 0));
-    let e = hash3(i + vec3<i32>(0, 0, 1));
-    let ff = hash3(i + vec3<i32>(1, 0, 1));
-    let g = hash3(i + vec3<i32>(0, 1, 1));
-    let hh = hash3(i + vec3<i32>(1, 1, 1));
-    let k1 = b - a;
-    let k2 = c - a;
-    let k3 = e - a;
-    let k4 = a - b - c + dd;
-    let k5 = a - c - e + g;
-    let k6 = a - b - e + ff;
-    let k7 = -a + b + c - dd + e - ff - g + hh;
-    let v = a + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z
-        + k6 * u.z * u.x + k7 * u.x * u.y * u.z;
-    let grad = du * vec3<f32>(
-        k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z,
-        k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x,
-        k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y,
-    );
-    return vec4<f32>(v, grad);
-}
-
-// Normal tilt of the detail term per unit strength and unit noise gradient in feature units.
-const DETAIL_TILT: f32 = 4.0;
-
-// Procedural detail at world point `p` (voxels) on a surface of normal `n`: two octaves of
-// value noise at feature scale `scale` and `scale / 2`, weights 1 and 1/2, and with `fine`
-// above 0 a third at `scale / 4` of weight `fine`. It returns the normal tilted against the
-// noise's tangential gradient (in feature units) times `strength` and `DETAIL_TILT`, and the
-// albedo factor `1 + strength (2 v - 1)` for the noise value `v` in [0, 1). It is a pure
-// function of `p`, so a wall point shades the same from any camera.
-fn detail(p: vec3<f32>, n: vec3<f32>, scale: f32, strength: f32, fine: f32) -> vec4<f32> {
-    let q = p / scale;
-    let o1 = value_noise(q);
-    let o2 = value_noise(q * 2.0 + vec3<f32>(17.0, 31.0, 47.0));
-    var v = (o1.x + 0.5 * o2.x) / 1.5;
-    // Gradient with respect to q: octave 2 is sampled at 2q.
-    var g = (o1.yzw + o2.yzw) / 1.5;
-    if (fine > 0.0) {
-        // Octave 3 at 4q: its gradient with respect to q is 4 times its own.
-        let o3 = value_noise(q * 4.0 + vec3<f32>(59.0, 7.0, 23.0));
-        v = (o1.x + 0.5 * o2.x + fine * o3.x) / (1.5 + fine);
-        g = (o1.yzw + o2.yzw + 4.0 * fine * o3.yzw) / (1.5 + fine);
-    }
-    let gt = g - dot(g, n) * n;
-    let tilted = normalize(n - (strength * DETAIL_TILT) * gt);
-    return vec4<f32>(tilted, 1.0 + strength * (2.0 * v - 1.0));
-}
-
 // How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
 const SHADOW_OFFSET: f32 = 0.5;
 
-// The direction the shadow ray of a voxel-walk hit `h` leaves along: its entry face's normal,
-// undetailed: the offset is a robustness step out of the surface, not part of the look.
+// The direction the shadow ray of a voxel-walk hit `h` leaves along: its entry face's normal:
+// the offset is a robustness step out of the surface, not part of the look.
 fn shadow_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
     return face_normal(d, h);
 }
@@ -1245,9 +1172,8 @@ fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
     return normalize(n);
 }
 
-// One pixel's hit record, decoded from the hit buffer: `n` is the shading normal before
-// detail, `axis` the entry face's axis (-1: the ray started inside rock). `nf` is the normal
-// the shading starts from, `n` as decoded.
+// One pixel's hit record, decoded from the hit buffer: `n` is the shading normal,
+// `axis` the entry face's axis (-1: the ray started inside rock).
 struct HitRecord {
     found: bool,
     field: bool,
@@ -1257,7 +1183,6 @@ struct HitRecord {
     p: vec3<f32>,
     t: f32,
     n: vec3<f32>,
-    nf: vec3<f32>,
 };
 
 fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
@@ -1271,21 +1196,7 @@ fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
         pos.xyz,
         pos.w,
         octa16_decode(info.xy),
-        octa16_decode(info.xy),
     );
-}
-
-// The detailed shading normal of a hit in xyz and its albedo factor in w: the hit's shading
-// normal `nf` and 1 without the detail flag or with a material of detail strength 0.
-fn surface_detail(rec: HitRecord) -> vec4<f32> {
-    if ((params.flags & FLAG_DETAIL) != 0u) {
-        // Exactly no change at strength 0.
-        let row = materials[rec.material * 4u + 2u];
-        if (row.y > 0.0) {
-            return detail(rec.p, rec.nf, row.x, row.y, row.w);
-        }
-    }
-    return vec4<f32>(rec.nf, 1.0);
 }
 
 // The shadow normal of a hit seen along `d`: a field-surface hit's field normal, unmixed
@@ -1307,31 +1218,6 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
 // of the voxels' rock as much as off the surface.
 fn shadow_origin(p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
     return p + ns * SHADOW_OFFSET;
-}
-
-// Whether the detail's shading is applied after lighting (flag bit 13 with the lamp on, not
-// in the cutaway view): the light pass then shades with the undetailed normal and the
-// composite applies `detail_lamp_ratio`.
-fn detail_after_lighting() -> bool {
-    return (params.flags & FLAG_DETAIL_AFTER_LIGHTING) != 0u
-        && (params.lighting & LIGHTING_LAMP) != 0u
-        && (params.flags & FLAG_CUTAWAY) == 0u;
-}
-
-// The normal the light pass shades a hit with: the detailed normal, or the undetailed one
-// when the detail is applied after lighting.
-fn lighting_normal(rec: HitRecord) -> vec3<f32> {
-    if (detail_after_lighting()) {
-        return rec.nf;
-    }
-    return surface_detail(rec).xyz;
-}
-
-// The detail's lamp term at hit `rec` with detailed normal `nd`, over the undetailed one's:
-// `clamp(max(nd.l, 0) / max(n.l, 1e-3), 0, 2)`, `l` the unit vector from the hit to the lamp.
-fn detail_lamp_ratio(rec: HitRecord, nd: vec3<f32>) -> f32 {
-    let l = normalize(params.light_pos - rec.p);
-    return clamp(max(dot(nd, l), 0.0) / max(dot(rec.nf, l), 1e-3), 0.0, 2.0);
 }
 
 // `p` projected through previous view `v` to a fractional pixel of the target (pixel

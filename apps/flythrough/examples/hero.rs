@@ -23,7 +23,7 @@
 //! the fly-through's defaults (`--internal-scale 1.5`: our upscaler with its jitter, which
 //! `--jitter off` stops; `--internal-scale 1` without `--jitter on` is the native frame).
 //! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face`) unless
-//! `--look` names another (its tuning and rock detail); only `--look field` mirrors the
+//! `--look` names another; only `--look field` mirrors the
 //! field's band slots and runs the field pass; the ores emit, and
 //! the light radius is the source's (19 chunks on the showcase, 4 on the level). The mirror
 //! syncs until its light-sample count stops changing, and the still is the last of
@@ -363,7 +363,7 @@ fn main() -> Result<(), String> {
                 source.extent(),
                 &source,
                 &flythrough::with_showcase_rows(&flythrough::with_emissive_ore(
-                    &args.look.materials(),
+                    &flythrough::cave_materials(),
                 )),
             );
             (world, source.spawn(), SHOWCASE_LIGHT_RADIUS)
@@ -373,7 +373,7 @@ fn main() -> Result<(), String> {
             let world = World::generate(
                 source.extent,
                 &source,
-                &flythrough::with_emissive_ore(&args.look.materials()),
+                &flythrough::with_emissive_ore(&flythrough::cave_materials()),
             );
             (
                 world,
@@ -495,7 +495,6 @@ fn main() -> Result<(), String> {
         });
         frame.set_look(vxe_render::LookParams {
             normal_mode: args.look.normal_mode,
-            detail: true,
             tuning: args.look.tuning,
             ..vxe_render::LookParams::default()
         });

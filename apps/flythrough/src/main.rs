@@ -17,9 +17,7 @@
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
-//! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--face-mix K] [--detail-fine W]
-//! [--detail-after on|off] [--band-census] [--view VIEW]
-//! [--detail]
+//! [--headless] [--look PRESET] [--face-mix K] [--band-census] [--view VIEW]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
@@ -69,14 +67,9 @@
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
 //! mode, the body spawned in the spawn pocket. The fly-through starts in `face`
-//! (`LookPreset::DEFAULT`, honest cubes, ADR-0041) with detail on and rock its procedural
-//! detail (`--rock-detail` sets rock's feature scale in voxels and strength, default
-//! `flythrough::ROCK_DETAIL`), and prints that look first; `--look` picks the starting preset
-//! (`flythrough::LookPreset`: `face`, `field`, `trilinear8`, `gradient27`), a normal mode with
-//! its face mix, detail after lighting and rock's detail pair and fine weight, each part
-//! overridable by `--face-mix`, `--detail-after`, `--detail-fine` and `--rock-detail`; and
-//! `--look plain` starts in face mode without rock detail, detail off (`--detail` turns detail
-//! on), the look of Plan 0002's and Plan 0017's face readings. Only a run started under
+//! (`LookPreset::DEFAULT`, honest cubes, ADR-0041), and prints that look first; `--look` picks
+//! the starting preset (`flythrough::LookPreset`: `face`, `field`, `trilinear8`, `gradient27`),
+//! a normal mode with its face mix, overridable by `--face-mix`. Only a run started under
 //! `--look field` builds the field's band slots and runs the field pass; any other run's `N`
 //! skips the field. With the field's band slots the autopilot's report adds the field pass's
 //! band slots, CPU and GPU time over the flight, and the frame line the smooth share of the
@@ -111,7 +104,7 @@
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp, `F8` indirect light and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
-//! `N` cycles the look presets and `V` toggles detail, each naming the look on the banner.
+//! `N` cycles the look presets, naming the look on the banner.
 //! `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -391,13 +384,9 @@ struct Args {
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
-    /// `--look`: the starting preset with any part flag applied, with rock detail; `None` for
-    /// `--look plain`, face mode without it. `face` by default; only `field` builds the
-    /// field's band slots ([`Args::field_surface`]).
-    look: Option<LookPreset>,
-    /// Start with procedural detail on: by default, except under `--look plain`, where
-    /// `--detail` turns it on.
-    detail: bool,
+    /// `--look`: the starting preset with any part flag applied. `face` by default; only
+    /// `field` builds the field's band slots ([`Args::field_surface`]).
+    look: LookPreset,
     view: ViewMode,
     /// `--translucent-layers`: translucent voxels composited in front of the opaque hit.
     translucent_layers: u32,
@@ -656,21 +645,17 @@ impl Args {
     /// Whether the run starts in the field look, so its mirror holds the field's band slots
     /// and the field pass runs; no other run builds a band slot.
     fn field_surface(&self) -> bool {
-        self.look
-            .is_some_and(|p| p.normal_mode == NormalMode::Contour)
+        self.look.normal_mode == NormalMode::Contour
     }
 
     /// The look the fly-through starts in.
     fn start_look(&self) -> LookParams {
         LookParams {
-            normal_mode: self
-                .look
-                .map_or_else(NormalMode::default, |p| p.normal_mode),
-            detail: self.detail,
+            normal_mode: self.look.normal_mode,
             view: self.view,
             translucent_layers: self.translucent_layers,
             cutaway: false,
-            tuning: self.look.map_or_else(Default::default, |p| p.tuning),
+            tuning: self.look.tuning,
         }
     }
 }
@@ -703,8 +688,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         residency: RESIDENCY,
         audio: false,
         audio_debug: false,
-        look: Some(LookPreset::DEFAULT),
-        detail: false,
+        look: LookPreset::DEFAULT,
         view: ViewMode::Shaded,
         translucent_layers: LookParams::default().translucent_layers,
         hud: false,
@@ -750,17 +734,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         jitter_set: false,
         upscaler: None,
     };
-    let mut detail_flag = false;
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
     let mut shot_flag = false;
     let mut exposure_flag = false;
     let mut light_radius_flag = None;
-    // The part flags, applied to the `--look` preset after every flag is read.
-    let mut rock_detail = None;
+    // The part flag, applied to the `--look` preset after every flag is read.
     let mut face_mix = None;
-    let mut detail_fine = None;
-    let mut detail_after = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -791,19 +771,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--look" => {
                 let v = value()?;
-                args.look = if v == "plain" {
-                    None
-                } else {
-                    Some(LookPreset::from_name(&v).ok_or(format!(
-                        "--look takes plain, {}, not {v}",
-                        LookPreset::names()
-                    ))?)
-                };
+                args.look = LookPreset::from_name(&v)
+                    .ok_or(format!("--look takes {}, not {v}", LookPreset::names()))?;
             }
-            "--rock-detail" => rock_detail = Some(parse_rock_detail(&value()?)?),
             "--face-mix" => face_mix = Some(parse_unit("--face-mix", &value()?, 0.5)?),
-            "--detail-fine" => detail_fine = Some(parse_unit("--detail-fine", &value()?, 1.0)?),
-            "--detail-after" => detail_after = Some(parse_on_off("--detail-after", &value()?)?),
             "--band-census" => args.band_census = true,
             "--view" => {
                 let v = value()?;
@@ -1038,7 +1009,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     _ => return Err(format!("--source takes cave, level or showcase, not {v}")),
                 };
             }
-            "--detail" => detail_flag = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             "--adapter" => args.adapter = Some(value()?),
@@ -1084,7 +1054,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
-    args.detail = detail_flag || args.look.is_some();
     // The showcase is lit by its ores alone, and its light radius keeps every emitter of the
     // hall in the buffer from any eye.
     args.lamp = lamp_flag.unwrap_or(!args.showcase);
@@ -1121,19 +1090,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 .to_owned(),
         );
     }
-    if let Some(p) = args.look.as_mut() {
-        p.rock_detail = rock_detail.unwrap_or(p.rock_detail);
-        p.tuning.face_mix = face_mix.unwrap_or(p.tuning.face_mix);
-        p.detail_fine = detail_fine.unwrap_or(p.detail_fine);
-        p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
-    } else if rock_detail.is_some() {
-        return Err("--rock-detail does not apply under --look plain".to_owned());
-    } else if face_mix.is_some() || detail_fine.is_some() || detail_after.is_some() {
-        return Err(
-            "--face-mix, --detail-fine and --detail-after do not apply under --look plain"
-                .to_owned(),
-        );
-    }
+    args.look.tuning.face_mix = face_mix.unwrap_or(args.look.tuning.face_mix);
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
     }
@@ -1256,32 +1213,6 @@ fn parse_unit(flag: &str, v: &str, max: f32) -> Result<f32, String> {
         return Err(format!("{flag} must be in [0, {max}], not {x}"));
     }
     Ok(x)
-}
-
-/// `on` or `off` for `flag`.
-fn parse_on_off(flag: &str, v: &str) -> Result<bool, String> {
-    match v {
-        "on" => Ok(true),
-        "off" => Ok(false),
-        _ => Err(format!("{flag} takes on or off, not {v}")),
-    }
-}
-
-/// `SCALE,STRENGTH`: a feature scale in voxels above 0 and a strength in `[0, 1]`.
-fn parse_rock_detail(v: &str) -> Result<[f32; 2], String> {
-    let err = || format!("--rock-detail takes SCALE,STRENGTH (e.g. 4,0.3), not {v}");
-    let (scale, strength) = v.split_once(',').ok_or_else(err)?;
-    let parse = |s: &str| s.trim().parse::<f32>().map_err(|_| err());
-    let [scale, strength] = [parse(scale)?, parse(strength)?];
-    if !(scale > 0.0 && scale.is_finite()) {
-        return Err(format!("--rock-detail: scale must be above 0, not {scale}"));
-    }
-    if !(0.0..=1.0).contains(&strength) {
-        return Err(format!(
-            "--rock-detail: strength must be in [0, 1], not {strength}"
-        ));
-    }
-    Ok([scale, strength])
 }
 
 /// The verb of a `DigLogic` `op` line, as the `'static` the edit lines and the HUD hold;
@@ -2843,8 +2774,6 @@ struct Run {
     look: LookParams,
     /// The preset `N` last chose, or `--look`'s with its part flags.
     preset: LookPreset,
-    /// `N` changed the preset: its fit and material rows reach the mirror in the next frame.
-    preset_changed: bool,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
     dig_radius: i64,
@@ -3083,12 +3012,6 @@ impl Run {
             None => "coarse: not kept while streaming".to_owned(),
             Some(c) => c.line(),
         }
-    }
-
-    /// The current preset when the table carries rock's detail (every look but `--look
-    /// plain`).
-    fn preset(&self) -> Option<&LookPreset> {
-        self.args.look.is_some().then_some(&self.preset)
     }
 
     fn camera_ray(&self) -> (Fixed3, [i64; 3]) {
@@ -3387,7 +3310,7 @@ impl Run {
         println!(
             "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu_line}{hud}{share}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
-            look_line(&self.look, self.preset()),
+            look_line(&self.look, &self.preset),
             median(&mut cpu_ms),
             gfx.frame.frame_bytes(),
             self.world.stats().full_bricks,
@@ -3469,10 +3392,7 @@ impl Run {
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
-        let field_timer = self
-            .args
-            .look
-            .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
+        let field_timer = MarchTimer::new(&gpu.device, &gpu.queue);
         let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
         let mut frame = Frame::with_sizes(&gpu.device, scale.internal(output), output);
         frame.set_probe_spacing(&gpu.device, self.args.probe_spacing);
@@ -4209,10 +4129,8 @@ impl Run {
             self.preset = self.preset.next(contour);
             self.look.normal_mode = self.preset.normal_mode;
             self.look.tuning = self.preset.tuning;
-            self.preset_changed = true;
-            self.modes
-                .show_look(&self.preset, self.look.detail, ms_since(self.start));
-            println!("{}", look_line(&self.look, self.preset()));
+            self.modes.show_look(&self.preset, ms_since(self.start));
+            println!("{}", look_line(&self.look, &self.preset));
         }
         if input.pressed(KeyCode::KeyI)
             && let Some(shot) = self.castle_shot.map(castle::CastleShot::next)
@@ -4233,13 +4151,7 @@ impl Run {
         if input.pressed(KeyCode::F9) {
             self.look.view = self.look.view.next();
             self.modes.show_view(self.look.view, ms_since(self.start));
-            println!("{}", look_line(&self.look, self.preset()));
-        }
-        if input.pressed(KeyCode::KeyV) {
-            self.look.detail = !self.look.detail;
-            self.modes
-                .show_look(&self.preset, self.look.detail, ms_since(self.start));
-            println!("{}", look_line(&self.look, self.preset()));
+            println!("{}", look_line(&self.look, &self.preset));
         }
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
@@ -4533,13 +4445,6 @@ impl Run {
             dt.clamp(0.0, 0.1)
         });
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
-        // A preset's rock detail rewrites the material rows; `--look plain` has none.
-        if std::mem::take(&mut self.preset_changed) && self.args.look.is_some() {
-            gfx.mirror.rewrite_materials(
-                &preset_materials(&self.args, Some(&self.preset)),
-                &gpu.queue,
-            );
-        }
         gfx.frame.set_look(self.look);
         let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
@@ -4780,25 +4685,16 @@ fn steps_line(h: &StepHistogram) -> String {
     )
 }
 
-/// `look face, detail off, view shaded` under `--look plain`, or with the preset's name,
-/// parts and rock's detail: `look field (normals contour, face mix 0, detail after lighting
-/// on), detail on (rock scale 4, strength 0.1, fine 0), view shaded`.
-fn look_line(look: &LookParams, preset: Option<&LookPreset>) -> String {
-    let on = if look.detail { "on" } else { "off" };
-    let view = look.view.name();
-    match preset {
-        None => format!("look {}, detail {on}, view {view}", look.normal_mode.name()),
-        Some(p) => {
-            let [scale, strength] = p.rock_detail;
-            format!(
-                "look {} (normals {}, {}), detail {on} (rock scale {scale}, strength {strength}, fine {}), view {view}",
-                p.name,
-                look.normal_mode.name(),
-                p.parts(),
-                p.detail_fine
-            )
-        }
-    }
+/// The preset's name and parts and the view: `look field (normals contour, face mix 0), view
+/// shaded`.
+fn look_line(look: &LookParams, preset: &LookPreset) -> String {
+    format!(
+        "look {} (normals {}, {}), view {}",
+        preset.name,
+        look.normal_mode.name(),
+        preset.parts(),
+        look.view.name()
+    )
 }
 
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit
@@ -4987,8 +4883,7 @@ impl App for Flythrough {
                     .pose
                     .map(|p| (hud::pose_banner(p.name), self.camera)),
                 look: self.args.start_look(),
-                preset: self.args.look.unwrap_or(LookPreset::FACE),
-                preset_changed: false,
+                preset: self.args.look,
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
@@ -5165,16 +5060,10 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
 /// The hit record's flag bit (word 3) for a hit: `march.wgsl`'s `HIT_FOUND`.
 const HIT_FOUND_BIT: u16 = 1;
 
-/// The cave's material table; under `--look`, with rock's procedural detail from its preset;
-/// the ore emissive unless `--emissive-ore off`.
+/// The cave's material table, the ore emissive unless `--emissive-ore off`; the castle's rows
+/// under `--castle`.
 fn materials(args: &Args) -> MaterialTable {
-    preset_materials(args, args.look.as_ref())
-}
-
-/// [`materials`] with rock's detail from `preset`, or none for `--look plain`; the castle's
-/// rows under `--castle`.
-fn preset_materials(args: &Args, preset: Option<&LookPreset>) -> MaterialTable {
-    let table = preset.map_or_else(cave_materials, LookPreset::materials);
+    let table = cave_materials();
     let table = if args.emissive_ore {
         flythrough::with_emissive_ore(&table)
     } else {
@@ -5378,7 +5267,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("{}", look_line(&args.start_look(), args.look.as_ref()));
+    println!("{}", look_line(&args.start_look(), &args.look));
     let logic = load_logic(&args.logic);
     println!("logic: {}", args.logic);
 
@@ -6376,8 +6265,7 @@ mod tests {
             net: Some(net),
             spawn: voxel_of(camera.position),
             look: args.start_look(),
-            preset: args.look.unwrap_or(LookPreset::FACE),
-            preset_changed: false,
+            preset: args.look,
             args,
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
@@ -7443,34 +7331,23 @@ mod tests {
         assert!(args.upscaler_settings(hud::UpscalerMode::Own).2);
     }
 
+    /// No flag starts in the face look with no band slot, as `--look face` does; `--look field`
+    /// alone builds the band slots.
     #[test]
-    fn rock_detail_parses_scale_and_strength() {
-        assert_eq!(parse_rock_detail("8,0.6"), Ok([8.0, 0.6]));
-        assert_eq!(parse_rock_detail("2.5, 0"), Ok([2.5, 0.0]));
-        assert!(parse_rock_detail("4").is_err());
-        assert!(parse_rock_detail("0,0.3").is_err());
-        assert!(parse_rock_detail("4,1.5").is_err());
-        assert!(parse_rock_detail("4,x").is_err());
-    }
-
-    /// No flag starts in the face look with detail on and rock's detail, with no band slot,
-    /// as `--look face` does; `--look field` alone builds the band slots; `--look plain` starts
-    /// in face mode with neither detail nor rock's detail, and `--detail` turns detail on there.
-    #[test]
-    fn the_default_look_is_face_with_detail_and_plain_is_face_without() {
+    fn the_default_look_is_face() {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
-            look_line(&a.start_look(), a.look.as_ref()),
-            "look face (normals face, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            look_line(&a.start_look(), &a.look),
+            "look face (normals face, face mix 0), view shaded"
         );
-        assert_eq!(a.look, Some(LookPreset::FACE));
+        assert_eq!(a.look, LookPreset::FACE);
         assert!(!a.field_surface());
         assert!(
             parse_args_from(argv(&["--look", "field"]))
                 .unwrap()
                 .field_surface()
         );
-        for name in ["face", "trilinear8", "gradient27", "plain"] {
+        for name in ["face", "trilinear8", "gradient27"] {
             assert!(
                 !parse_args_from(argv(&["--look", name]))
                     .unwrap()
@@ -7480,45 +7357,51 @@ mod tests {
         }
         let c = parse_args_from(argv(&["--look", "face"])).unwrap();
         assert_eq!(
-            look_line(&c.start_look(), c.look.as_ref()),
-            "look face (normals face, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            look_line(&c.start_look(), &c.look),
+            "look face (normals face, face mix 0), view shaded"
         );
-        assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
-        let a = parse_args_from(argv(&["--look", "face"])).unwrap();
-        assert_eq!((a.look, a.detail), (Some(LookPreset::FACE), true));
-        let a = parse_args_from(argv(&["--look", "plain"])).unwrap();
-        assert_eq!((a.look, a.detail), (None, false));
+        assert_eq!(c.look, LookPreset::FACE);
         assert_eq!(
-            look_line(&a.start_look(), a.look.as_ref()),
-            "look face, detail off, view shaded"
-        );
-        let a = parse_args_from(argv(&["--look", "plain", "--detail"])).unwrap();
-        assert!(a.detail);
-        assert!(parse_args_from(argv(&["--look", "plain", "--rock-detail", "4,0.2"])).is_err());
-        assert!(parse_args_from(argv(&["--look", "plain", "--detail-after", "on"])).is_err());
-        assert_eq!(
-            parse_args_from(argv(&["--attrib-quant", "none"]))
-                .err()
-                .as_deref(),
-            Some("unknown argument --attrib-quant")
+            parse_args_from(argv(&["--look", "plain"])).err().as_deref(),
+            Some("--look takes face, field, trilinear8, gradient27, not plain")
         );
     }
 
+    /// The banner at the start is `look face` over the lighting modes, and `N`'s cycle reaches
+    /// every preset from there.
+    #[test]
+    fn the_start_banner_reads_look_face_and_n_cycles() {
+        let a = parse_args_from(argv(&[])).unwrap();
+        let mut m = hud::Modes::new(vxe_render::Lighting::default(), Default::default(), 0.0);
+        m.show_look(&a.look, 0.0);
+        let banner = m.banner(0.0).expect("the banner shows at the start");
+        let bare = hud::Modes::new(vxe_render::Lighting::default(), Default::default(), 0.0);
+        let lighting = bare.banner(0.0).expect("the banner shows at the start");
+        assert_eq!(banner, format!("look face\n{lighting}"));
+        let mut seen = vec![a.look.name];
+        let mut p = a.look.next(true);
+        while p != a.look {
+            seen.push(p.name);
+            p = p.next(true);
+        }
+        assert_eq!(seen, ["face", "field", "trilinear8", "gradient27"]);
+    }
+
     /// `--look` pins each preset by name with its parts on the startup line, an unknown name
-    /// lists the valid ones, and the part flags override the preset's parts.
+    /// lists the valid ones, and the part flag overrides the preset's part.
     #[test]
     fn look_presets_parse_by_name_with_their_parts() {
         let line = |v: &[&str]| {
             let a = parse_args_from(argv(v)).unwrap();
-            look_line(&a.start_look(), a.look.as_ref())
+            look_line(&a.start_look(), &a.look)
         };
         assert_eq!(
             line(&["--look", "field"]),
-            "look field (normals contour, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look field (normals contour, face mix 0), view shaded"
         );
         for p in LookPreset::ALL {
             let a = parse_args_from(argv(&["--look", p.name])).unwrap();
-            assert_eq!(a.look, Some(p), "{}", p.name);
+            assert_eq!(a.look, p, "{}", p.name);
             assert_eq!(a.start_look().normal_mode, p.normal_mode, "{}", p.name);
             assert_eq!(a.start_look().tuning, p.tuning, "{}", p.name);
         }
@@ -7526,22 +7409,11 @@ mod tests {
             parse_args_from(argv(&["--look", "contour-soft"]))
                 .err()
                 .as_deref(),
-            Some("--look takes plain, face, field, trilinear8, gradient27, not contour-soft")
+            Some("--look takes face, field, trilinear8, gradient27, not contour-soft")
         );
         assert_eq!(
-            line(&[
-                "--look",
-                "field",
-                "--face-mix",
-                "0.25",
-                "--detail-fine",
-                "0.5",
-                "--detail-after",
-                "off",
-                "--rock-detail",
-                "2,0.2",
-            ]),
-            "look field (normals contour, face mix 0.25, detail after lighting off), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
+            line(&["--look", "field", "--face-mix", "0.25"]),
+            "look field (normals contour, face mix 0.25), view shaded"
         );
         // The plane attribute's settings are gone: their flags are unknown arguments.
         for flag in [
@@ -7560,27 +7432,7 @@ mod tests {
             );
         }
         assert!(parse_args_from(argv(&["--face-mix", "0.6"])).is_err());
-        assert!(parse_args_from(argv(&["--detail-fine", "-1"])).is_err());
-        assert!(parse_args_from(argv(&["--detail-after", "yes"])).is_err());
         assert!(parse_args_from(argv(&["--look", "cubes-field"])).is_err());
-    }
-
-    #[test]
-    fn the_look_line_names_the_preset_under_look() {
-        let look = LookParams {
-            normal_mode: NormalMode::Face,
-            detail: true,
-            ..LookParams::default()
-        };
-        let p = LookPreset {
-            rock_detail: [4.0, 0.3],
-            ..LookPreset::FACE
-        };
-        assert_eq!(
-            look_line(&look, Some(&p)),
-            "look face (normals face, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
-        );
-        assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
     }
 
     /// The cost of one `World::stats` call on the streamed cave at its spawn after full

@@ -145,8 +145,6 @@ pub const FLAG_SHADOWS: u32 = 1;
 pub const FLAG_MASKS: u32 = 2;
 /// `Params::flags` bits 2..4: the [`NormalMode`].
 pub const NORMAL_SHIFT: u32 = 2;
-/// `Params::flags` bit: perturb the shading with per-material procedural detail.
-pub const FLAG_DETAIL: u32 = 1 << 4;
 /// `Params::flags` bits 5..8: the [`ViewMode`].
 pub const VIEW_SHIFT: u32 = 5;
 /// `Params::flags` bit: skip empty cells larger than a voxel (`LightParams::skips`).
@@ -154,9 +152,6 @@ pub const FLAG_SKIPS: u32 = 1 << 9;
 /// `Params::flags` bit: the primary ray passes through solid until it has crossed real air
 /// (`LookParams::cutaway`).
 pub const FLAG_CUTAWAY: u32 = 1 << 10;
-/// `Params::flags` bit: with the lamp on, the light pass shades with the undetailed normal and
-/// the composite applies the detail's `n.l` ratio ([`SurfaceTuning::detail_after_lighting`]).
-pub const FLAG_DETAIL_AFTER_LIGHTING: u32 = 1 << 13;
 /// `Params::flags` bit, set by the frame and not by a look: the field look's split walk. The
 /// hit pipeline walks each ray as the cube walk does until it enters a brick the field can hit
 /// in (a band brick of a full chunk with a smooth solid voxel in it or its shell), and a second
@@ -345,29 +340,20 @@ impl CrackShares {
 }
 
 /// The surface look's tuning beyond its normal mode: a mix of a field-surface hit's shading
-/// normal toward its entry face's normal, and where the detail's shading is applied. The
-/// default is every part off: no mix, detail shaded in the light pass.
+/// normal toward its entry face's normal. The default is no mix.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SurfaceTuning {
     /// A field-surface hit's shading normal is `normalize(mix(field, face, face_mix))`, `face`
     /// the normal of the face the ray entered its voxel through; the hit point and the shadow
     /// ray's offset keep the field's. In `[0, 0.5]`; 0 is the field normal.
     pub face_mix: f32,
-    /// With the lamp on, the light pass shades every term with the undetailed normal, and the
-    /// composite multiplies the upsampled irradiance by the detail's lamp term ratio
-    /// `clamp(max(n_d.l, 0) / max(n.l, 1e-3), 0, 2)`, `n_d` the detailed normal and `l` the
-    /// unit vector to the lamp, per full-resolution pixel. With the lamp off it changes
-    /// nothing.
-    pub detail_after_lighting: bool,
 }
 
-/// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
-/// surface tuning. The default is face normals, no detail, shaded, 4 layers, cutaway off, the
-/// tuning off.
+/// The surface look: normal mode, view, translucent layers, cutaway and the surface tuning.
+/// The default is face normals, shaded, 4 layers, cutaway off, the tuning off.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LookParams {
     pub normal_mode: NormalMode,
-    pub detail: bool,
     pub view: ViewMode,
     /// Translucent voxels composited in front of the opaque hit, nearest first; 0 ignores
     /// them. The translucent walk runs only when the opaque walk read a brick entry flagged
@@ -388,7 +374,6 @@ impl Default for LookParams {
     fn default() -> Self {
         Self {
             normal_mode: NormalMode::default(),
-            detail: false,
             view: ViewMode::default(),
             translucent_layers: 4,
             cutaway: false,
@@ -401,14 +386,8 @@ impl LookParams {
     /// The look's bits of `Params::flags`.
     pub fn flags(&self) -> u32 {
         (self.normal_mode as u32) << NORMAL_SHIFT
-            | if self.detail { FLAG_DETAIL } else { 0 }
             | (self.view as u32) << VIEW_SHIFT
             | if self.cutaway { FLAG_CUTAWAY } else { 0 }
-            | if self.tuning.detail_after_lighting {
-                FLAG_DETAIL_AFTER_LIGHTING
-            } else {
-                0
-            }
     }
 }
 
@@ -2052,7 +2031,7 @@ impl Frame {
         self.lod
     }
 
-    /// Sets the surface look: normal mode, detail and view. A change of view drops the
+    /// Sets the surface look: normal mode and view. A change of view drops the
     /// upscaler's history (not the lighting's).
     pub fn set_look(&mut self, look: LookParams) {
         if look.view != self.look.view {

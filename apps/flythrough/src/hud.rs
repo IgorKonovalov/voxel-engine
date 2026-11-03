@@ -1254,8 +1254,7 @@ pub const BANNER_MS: f64 = 3000.0;
 /// The banner's widest row in characters: it fits a 1280-pixel window at the HUD's scale 2
 /// (80 cells) and the golden's 320 pixels at scale 1 (40 cells).
 pub const BANNER_COLS: usize = 40;
-/// Rows the banner wraps into at most: the look's words in three (the look, the detail state
-/// and the view) and the modes' line in six.
+/// Rows the banner wraps into at most: the look's words in three (the look and the view) and the modes' line in six.
 pub const BANNER_ROWS: usize = 9;
 
 /// A key that changes the lighting mode: `F3` to `F7` and `M`.
@@ -1412,16 +1411,10 @@ impl Modes {
         }
     }
 
-    /// Shows the banner from `now_ms` with the look in words, `look field, detail on`: the
-    /// first row of every banner from then on.
-    pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
-        let mut words = format!("look {}", preset.name);
-        words += if detail {
-            ", detail on"
-        } else {
-            ", detail off"
-        };
-        self.look = Some(words);
+    /// Shows the banner from `now_ms` with the look in words, `look field`: the first row of
+    /// every banner from then on.
+    pub fn show_look(&mut self, preset: &crate::LookPreset, now_ms: f64) {
+        self.look = Some(format!("look {}", preset.name));
         self.banner_at = now_ms;
     }
 
@@ -1681,9 +1674,9 @@ mod mode_tests {
         assert!(again.contains("lamp on"), "{again}");
     }
 
-    /// `N` names each preset in turn on the banner's first row, and `V` the detail state.
+    /// `N` names each preset in turn on the banner's first row, with no other word.
     #[test]
-    fn the_banner_names_each_look_preset_and_the_detail_state() {
+    fn the_banner_names_each_look_preset() {
         use crate::LookPreset;
         let mut m = Modes::new(
             vxe_render::Lighting::default(),
@@ -1696,11 +1689,9 @@ mod mode_tests {
         let mut names = Vec::new();
         for _ in 0..LookPreset::ALL.len() {
             preset = preset.next(true);
-            m.show_look(&preset, true, t);
+            m.show_look(&preset, t);
             let b = m.banner(t).expect("a press shows the banner");
-            let words = format!("look {}, detail on", preset.name);
-            let words = wrap(&words.split(", ").collect::<Vec<_>>()).join("\n");
-            assert_eq!(b, format!("{words}\n{lighting}"));
+            assert_eq!(b, format!("look {}\n{lighting}", preset.name));
             assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
             assert_eq!(m.banner(t + BANNER_MS), None);
             names.push(preset.name);
@@ -1714,12 +1705,7 @@ mod mode_tests {
         );
         assert_eq!(LookPreset::GRADIENT27.next(false), LookPreset::FACE);
         let first = m.banner(t - BANNER_MS).unwrap();
-        assert!(first.starts_with("look face, detail on\n"), "{first}");
-        m.show_look(&preset, false, t);
-        assert!(
-            m.banner(t).unwrap().starts_with("look face, detail off\n"),
-            "V shows the detail state"
-        );
+        assert!(first.starts_with("look face\n"), "{first}");
     }
 
     /// `F9`'s view shows on the banner after the look's words, `view cracks`, from the press
@@ -1733,14 +1719,14 @@ mod mode_tests {
             0.0,
         );
         let lighting = m.banner(0.0).expect("the banner shows at the start");
-        m.show_look(&crate::LookPreset::FIELD, true, 0.0);
+        m.show_look(&crate::LookPreset::FIELD, 0.0);
         m.show_view(ViewMode::Cracks, 5000.0);
         assert_eq!(
             m.banner(5000.0).as_deref(),
             Some(
                 format!(
                     "{}\n{lighting}",
-                    wrap(&["look field", "detail on", "view cracks"]).join("\n")
+                    wrap(&["look field", "view cracks"]).join("\n")
                 )
                 .as_str()
             )
@@ -1749,7 +1735,7 @@ mod mode_tests {
         m.show_view(ViewMode::Shaded, 9000.0);
         assert_eq!(
             m.banner(9000.0).as_deref(),
-            Some(format!("look field, detail on\n{lighting}").as_str())
+            Some(format!("look field\n{lighting}").as_str())
         );
     }
 }

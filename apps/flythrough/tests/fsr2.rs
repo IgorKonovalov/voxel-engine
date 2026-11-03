@@ -8,7 +8,7 @@ use support::*;
 use vxe_render::{Frame, GpuWorld, LightParams, LookParams, UpscalerKind, View, readback, wgpu};
 
 /// FSR 2 on the stripe wall at arm's length, a still camera at scale 1.5 for 32 frames,
-/// recovers sub-pixel detail a blit cannot: its gradient energy is above the bilinear blit's
+/// recovers what a blit cannot: its gradient energy is above the bilinear blit's
 /// and its edge spread below it, both read in this run.
 #[test]
 fn fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit() {

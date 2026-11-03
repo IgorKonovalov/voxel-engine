@@ -1252,7 +1252,7 @@ pub fn pose_level() -> World {
         1,
         ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
     );
-    let table = flythrough::with_emissive_ore(&flythrough::LookPreset::DEFAULT.materials());
+    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
     World::generate(source.extent, &source, &table)
 }
 

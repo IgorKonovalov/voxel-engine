@@ -23,7 +23,7 @@ impl MaterialFlags {
     /// Under the renderer's opt-in field look, voxels of this material are drawn as cubes with
     /// face normals instead of on the smooth field surface; absent, that look draws them
     /// smooth. The renderer's default look draws every material as cubes, so there the flag
-    /// changes nothing. A render property of the row, as `detail` and `opacity` are: no edit,
+    /// changes nothing. A render property of the row, as `opacity` is: no edit,
     /// query, collision, coarse grid, collapse, raycast or audio path reads it. Fixed for the
     /// world's life, as `TRANSLUCENT` is. No effect on a `TRANSLUCENT` row, whose voxels the
     /// renderer's translucent walk draws.
@@ -63,19 +63,13 @@ pub struct Material {
     /// applies it; nothing in this crate reads it.
     pub acoustic: [f32; 3],
     pub payload: u64,
-    /// Procedural surface detail for the renderer: feature scale in voxels, strength in
-    /// `[0, 1]`. Strength 0 is no detail.
-    pub detail: [f32; 2],
     /// The alpha the renderer composites a `TRANSLUCENT` voxel at, in `[0, 1]`; ignored
     /// without the flag.
     pub opacity: f32,
-    /// The weight of the renderer's third, finest detail octave (a quarter of the detail's
-    /// feature scale), in `[0, 1]`; 0 is the two-octave detail.
-    pub detail_fine: f32,
 }
 
 impl Material {
-    /// A grey, rough, non-emissive row with no flags, no detail and opacity 1.
+    /// A grey, rough, non-emissive row with no flags and opacity 1.
     pub fn named(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -86,9 +80,7 @@ impl Material {
             flags: MaterialFlags::empty(),
             acoustic: [0.0; 3],
             payload: 0,
-            detail: [0.0; 2],
             opacity: 1.0,
-            detail_fine: 0.0,
         }
     }
 

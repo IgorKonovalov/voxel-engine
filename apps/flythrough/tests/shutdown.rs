@@ -121,18 +121,11 @@ fn headless_run_trace() -> Option<String> {
 /// `RUN_BOUND`.
 fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
     const RUN_BOUND: Duration = Duration::from_secs(120);
-    // `--look plain`: the teardown trace needs no band slots, and a plain mirror builds no
-    // field pass, so the run's start does not wait on a software adapter's initial fill.
+    // The default look: the teardown trace needs no band slots, and a mirror without them
+    // builds no field pass, so the run's start does not wait on a software adapter's initial
+    // fill.
     let mut child = Command::new(env!("CARGO_BIN_EXE_flythrough"))
-        .args([
-            "--headless",
-            "--frames",
-            "3",
-            "--render",
-            "64x36",
-            "--look",
-            "plain",
-        ])
+        .args(["--headless", "--frames", "3", "--render", "64x36"])
         .args(extra)
         .env("RUST_LOG", "flythrough=info")
         .stdout(Stdio::null())

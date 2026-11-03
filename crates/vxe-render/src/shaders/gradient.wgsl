@@ -58,7 +58,7 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
             let v = params.prev_views[view_of(q * params.light_scale + unpack_offset(params.prev_light_offset))];
             let d = normalize(rec.p - v.origin);
-            let n = lighting_normal(rec);
+            let n = rec.n;
             let ns = shadow_normal_of(rec, d);
             let combined = (params.lighting & LIGHTING_GRADIENT) != 0u;
             var lamp = 0.0;

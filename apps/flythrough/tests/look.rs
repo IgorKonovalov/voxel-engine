@@ -4,25 +4,14 @@
 
 mod support;
 
-use support::sharpness::axis_fraction;
 use support::*;
 use vxe_render::gpu_world::PAGE_UNITS;
 use vxe_render::{LightParams, LookParams, NormalMode, ViewMode};
 use vxe_world::World;
 
-/// Rock's detail in the look tests: the spike's `[scale, strength]`, pinned here so that the
-/// fly-through's default can move without moving a golden or a metric.
-const SPIKE_ROCK_DETAIL: [f32; 2] = [4.0, 0.3];
-
-/// The cave table with rock at [`SPIKE_ROCK_DETAIL`].
-fn spike_materials() -> vxe_world::MaterialTable {
-    flythrough::look_materials_with(SPIKE_ROCK_DETAIL)
-}
-
 fn look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
     LookParams {
         normal_mode,
-        detail: false,
         view,
         ..LookParams::default()
     }
@@ -36,19 +25,12 @@ fn metrics(mode: NormalMode) -> Option<(f64, usize)> {
 
 /// [`metrics`], over mirrors with the field's band slots when `attrs` is set.
 fn metrics_with(mode: NormalMode, attrs: bool) -> Option<(f64, usize)> {
-    metrics_of(mode, false, attrs)
-}
-
-/// [`metrics_with`], with `detail` on and rock (the cavity's row 3, the pillar's rock) at
-/// [`SPIKE_ROCK_DETAIL`] when `detail` is set.
-fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize)> {
-    guardrails_of(mode, detail, attrs).map(|g| (g.normal_error, g.silhouette))
+    guardrails_of(mode, attrs).map(|g| (g.normal_error, g.silhouette))
 }
 
 /// The guardrails of the "not a Lego look" bar: the cavity's normal error (degrees), the
 /// pillar's silhouette error (pixels) and the cavity's axis fraction `A`, the share of its
-/// hit pixels whose shading normal (detailed when `detail` is set) lies within 5 degrees of
-/// a coordinate axis.
+/// hit pixels whose shading normal lies within 5 degrees of a coordinate axis.
 #[derive(Clone, Copy, Debug)]
 struct Guardrails {
     normal_error: f64,
@@ -56,30 +38,14 @@ struct Guardrails {
     axis_fraction: f64,
 }
 
-/// [`Guardrails`] of `mode` as [`metrics_of`] renders them.
-fn guardrails_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<Guardrails> {
-    let mut cavity_table = look_table();
-    let mut pillar_table = flythrough::cave_materials();
-    if detail {
-        // Row 3 is the cavity's rock; `look_table` keeps rows in id order.
-        let mut t = vxe_world::MaterialTable::new();
-        for (id, row) in cavity_table.rows().iter().enumerate().skip(1) {
-            let mut row = row.clone();
-            if id == 3 {
-                row.detail = SPIKE_ROCK_DETAIL;
-            }
-            t.push(row);
-        }
-        cavity_table = t;
-        pillar_table = spike_materials();
-    }
+/// [`Guardrails`] of `mode`, over mirrors with the field's band slots when `attrs` is set.
+fn guardrails_of(mode: NormalMode, attrs: bool) -> Option<Guardrails> {
     let look = |view| LookParams {
         normal_mode: mode,
-        detail,
         view,
         ..LookParams::default()
     };
-    let cavity = cavity_world_with(cavity_table);
+    let cavity = cavity_world_with(look_table());
     let mut rig = if attrs {
         field_mirror_rig(&cavity)?
     } else {
@@ -90,7 +56,7 @@ fn guardrails_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<Guardrai
     let normal_error = cavity_normal_error(&normals, &cam);
     let axis = axis_fraction(&normals);
 
-    let pillar = pillar_world_with(pillar_table);
+    let pillar = pillar_world_with(flythrough::cave_materials());
     let mut rig = if attrs {
         field_mirror_rig_on(rig.device, rig.queue, &pillar, None)
     } else {
@@ -100,9 +66,8 @@ fn guardrails_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<Guardrai
     let mask = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::HitMask));
     let silhouette = pillar_silhouette_error(&mask, &cam);
     println!(
-        "{}{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels, axis fraction {:.2} %",
+        "{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels, axis fraction {:.2} %",
         mode.name(),
-        if detail { " + detail" } else { "" },
         axis * 100.0
     );
     Some(Guardrails {
@@ -158,7 +123,7 @@ fn a_wall_facing_minus_x_reads_minus_x_in_face_mode() {
 }
 
 /// `primary.png`, `headlamp.png` and `lod.png` render byte for byte with the look at its
-/// default: shaded, face normals, no detail.
+/// default: shaded, face normals.
 #[test]
 fn the_default_look_leaves_the_goldens_byte_for_byte() {
     if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
@@ -166,7 +131,6 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
     }
     let default = LookParams {
         normal_mode: NormalMode::Face,
-        detail: false,
         view: ViewMode::Shaded,
         translucent_layers: 4,
         cutaway: false,
@@ -271,14 +235,14 @@ fn contour_planes_cut_the_silhouette_and_normal_errors() {
     );
 }
 
-/// The axis fraction `A`: face mode's undetailed normals are all axes; contour's is printed,
+/// The axis fraction `A`: face mode's normals are all axes; contour's is printed,
 /// and contour still meets the cavity normal error and silhouette guardrails.
 #[test]
 fn axis_fraction_of_face_and_contour() {
-    let Some(face) = guardrails_of(NormalMode::Face, false, false) else {
+    let Some(face) = guardrails_of(NormalMode::Face, false) else {
         return;
     };
-    let contour = guardrails_of(NormalMode::Contour, false, true).unwrap();
+    let contour = guardrails_of(NormalMode::Contour, true).unwrap();
     println!(
         "axis fraction: face {:.2} %, contour {:.2} %",
         face.axis_fraction * 100.0,
@@ -468,134 +432,6 @@ fn contour_dark_specks_with_and_without_shadows() {
     );
 }
 
-fn detail_look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
-    LookParams {
-        normal_mode,
-        detail: true,
-        view,
-        ..LookParams::default()
-    }
-}
-
-/// The golden scene with its carve, under `table`.
-fn carved_world_with(table: &vxe_world::MaterialTable) -> World {
-    let source = scene_source();
-    let world = World::generate(source.extent, &source, table);
-    let r = world.apply(&scene_carve(&world)).unwrap();
-    assert!(!r.changed_from.is_empty(), "the carve removes rock");
-    world
-}
-
-/// With every row's strength at 0, the detail term is exactly zero: `primary.png`,
-/// `headlamp.png` and `lod.png` render byte for byte with detail on.
-#[test]
-fn zero_strength_detail_leaves_the_goldens_byte_for_byte() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
-        return;
-    }
-    let world = carved_world();
-    assert!(
-        world.materials().rows().iter().all(|m| m.detail[1] == 0.0),
-        "the cave table carries no detail"
-    );
-    let Some(mut rig) = LookRig::new(&world, None) else {
-        return;
-    };
-    let on = detail_look(NormalMode::Face, ViewMode::Shaded);
-    for (name, light) in [
-        ("primary.png", LightParams::at_eye()),
-        ("headlamp.png", LightParams::headlamp()),
-    ] {
-        let img = rig.render(&scene_camera(), &light, on);
-        let golden = read_png(&golden_path(name)).0;
-        let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
-        assert_eq!(differing, 0, "{name}: {differing} bytes differ");
-    }
-    let lod = lod_scene();
-    let mut rig = LookRig::on(rig.device, rig.queue, &lod, None);
-    rig.frame.set_lod(lod_forced_1());
-    let img = rig.render(&scene_camera(), &LightParams::at_eye(), on);
-    let golden = read_png(&golden_path("lod.png")).0;
-    let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
-    assert_eq!(differing, 0, "lod.png: {differing} bytes differ");
-}
-
-/// Rock at `detail = [4.0, 0.3]` changes at least 20 % of the headlamp scene's pixels by more
-/// than 8/255 against face mode.
-#[test]
-fn rock_detail_golden() {
-    let table = spike_materials();
-    let rock = table.get(flythrough::cave::ROCK).unwrap();
-    assert_eq!(rock.detail, [4.0, 0.3]);
-    let world = carved_world_with(&table);
-    let Some(mut rig) = LookRig::new(&world, None) else {
-        return;
-    };
-    let img = rig.render(
-        &scene_camera(),
-        &LightParams::headlamp(),
-        detail_look(NormalMode::Face, ViewMode::Shaded),
-    );
-    assert_golden("look_detail.png", &img);
-    let face = rig.render(
-        &scene_camera(),
-        &LightParams::headlamp(),
-        look(NormalMode::Face, ViewMode::Shaded),
-    );
-    let f = fraction_differing(&img, &face, 8);
-    println!(
-        "look_detail.png differs from face mode at {:.2} % of pixels by more than 8/255",
-        f * 100.0
-    );
-    assert!(f >= 0.20, "{:.2} %", f * 100.0);
-}
-
-/// The detail noise is a function of world position alone: the pillar's front pole decodes
-/// the same detailed normal from two camera positions on one line of sight.
-#[test]
-fn detail_is_a_function_of_world_position() {
-    let world = pillar_world_with(spike_materials());
-    let Some(mut rig) = LookRig::new(&world, None) else {
-        return;
-    };
-    let near = pillar_camera();
-    let (col, row) = (WIDTH / 2, HEIGHT / 2);
-    let d = pixel_ray(&near, col, row);
-    let far = vxe_render::Camera {
-        position: near.position - d * 30.0,
-        ..near
-    };
-    let on = detail_look(NormalMode::Face, ViewMode::Normals);
-    let i = (row * WIDTH + col) as usize * 4;
-    let a = rig.render(&near, &LightParams::at_eye(), on)[i..i + 4].to_vec();
-    let b = rig.render(&far, &LightParams::at_eye(), on)[i..i + 4].to_vec();
-    let flat = rig.render(
-        &near,
-        &LightParams::at_eye(),
-        look(NormalMode::Face, ViewMode::Normals),
-    )[i..i + 4]
-        .to_vec();
-    println!(
-        "pole normal {:?} from both cameras {:?} / {:?}, without detail {:?}",
-        decode_normal(&a),
-        a,
-        b,
-        flat
-    );
-    for k in 0..3 {
-        assert!(
-            a[k].abs_diff(b[k]) <= 2,
-            "channel {k}: {} against {}",
-            a[k],
-            b[k]
-        );
-    }
-    assert!(
-        (0..3).any(|k| a[k].abs_diff(flat[k]) > 4),
-        "detail tilts the pole's normal: {a:?} against {flat:?}"
-    );
-}
-
 /// A material row is 64 B on the GPU, and the live mirror bytes are the slots' units, the
 /// 2112-byte records, the table and those rows, nothing else.
 #[test]
@@ -619,31 +455,36 @@ fn material_rows_are_64_bytes() {
     );
 }
 
-/// The comparison table's image metrics, one line per mode with and without detail, in one
-/// run: `cargo nextest run -p flythrough --test look --no-capture every_mode`.
-#[test]
-fn every_mode_with_and_without_detail() {
-    let mut rows = Vec::new();
-    for mode in NormalMode::ALL {
-        for detail in [false, true] {
-            let Some(m) = metrics_of(mode, detail, mode == NormalMode::Contour) else {
-                return;
-            };
-            rows.push((mode, detail, m));
+/// The share of the hit pixels of a `view = Normals` render whose decoded normal lies within
+/// 5 degrees of a coordinate axis, a miss (a decoded length under 0.5) not counted.
+fn axis_fraction(rgba: &[u8]) -> f64 {
+    let cos5 = 5f32.to_radians().cos();
+    let (mut hits, mut axial) = (0usize, 0usize);
+    for p in rgba.chunks(4) {
+        let n = decode_normal(p);
+        if n.length() < 0.5 {
+            continue;
+        }
+        hits += 1;
+        let n = n.normalize();
+        if n.x.abs().max(n.y.abs()).max(n.z.abs()) >= cos5 {
+            axial += 1;
         }
     }
-    println!("| mode | detail | cavity normal error (degrees) | pillar silhouette error (px) |");
-    println!("|---|---|---|---|");
-    for (mode, detail, (error, silhouette)) in &rows {
-        println!(
-            "| {} | {} | {error:.2} | {silhouette} |",
-            mode.name(),
-            if *detail { "on" } else { "off" }
-        );
-    }
-    // Detail moves no hit: each mode's silhouette is the same with and without it.
-    for pair in rows.chunks(2) {
-        assert_eq!(pair[0].2.1, pair[1].2.1, "{}", pair[0].0.name());
+    axial as f64 / hits.max(1) as f64
+}
+
+/// The comparison table's image metrics, one line per mode, in one run:
+/// `cargo nextest run -p flythrough --test look --no-capture every_mode`.
+#[test]
+fn every_mode() {
+    println!("| mode | cavity normal error (degrees) | pillar silhouette error (px) |");
+    println!("|---|---|---|");
+    for mode in NormalMode::ALL {
+        let Some((error, silhouette)) = metrics_with(mode, mode == NormalMode::Contour) else {
+            return;
+        };
+        println!("| {} | {error:.2} | {silhouette} |", mode.name());
     }
 }
 
@@ -751,7 +592,7 @@ use support::rigs::Feature;
 const FACE_EPS: f32 = 1e-3;
 
 /// Under the field look a hit on a cube face is a box only when its shading normal (the hit
-/// record's, detail off) lies within this many degrees of the face's outward axis normal. The
+/// record's) lies within this many degrees of the face's outward axis normal. The
 /// field surface is curved and crosses voxel face planes: a hit on it that happens to lie
 /// within [`FACE_EPS`] of a face plane, with a normal far from that face's, shows no cube face.
 /// The plane looks keep the position-only test.
@@ -847,7 +688,7 @@ fn box_voxel(world: &World, p: [f32; 3], facing: impl Fn([f32; 3]) -> bool) -> O
 /// A box reading of one scene in one look: the crack reading, the box pixels among the counted
 /// hits sorted by their voxel's 27-count (under 14, 14 and over) and by its air faces (2, 3,
 /// 4 or more), and the tile-contrast share: of the counted adjacent hit-pixel pairs on one
-/// surface, those whose normals-view normals (detail off) differ by more than
+/// surface, those whose normals-view normals differ by more than
 /// [`TILE_DEGREES`].
 struct BoxReading {
     crack: CrackReading,
@@ -869,7 +710,7 @@ fn normal_angle(a: &[u8], b: &[u8]) -> f64 {
         .to_degrees()
 }
 
-/// [`crack_reading`] of `camera` in `look`, then its normals view with detail off, and the box
+/// [`crack_reading`] of `camera` in `look`, then its normals view, and the box
 /// and tile-contrast metrics over the hits it counts (`window` as there), `world` the CPU world
 /// the box metric reads.
 fn box_reading(
@@ -883,7 +724,6 @@ fn box_reading(
     let crack = crack_reading(rig, camera, light, look, window);
     rig.frame.set_look(LookParams {
         view: ViewMode::Normals,
-        detail: false,
         ..look
     });
     for _ in 0..CRACK_FRAMES {
@@ -998,11 +838,10 @@ fn kept_by_window(position: [f32; 4], [lo, hi]: [[f32; 3]; 2]) -> bool {
             .all(|k| position[k] >= lo[k] + WINDOW_MARGIN && position[k] <= hi[k] - WINDOW_MARGIN)
 }
 
-/// Preset `p`'s look, detail on, in `view`.
+/// Preset `p`'s look in `view`.
 fn preset_look(p: flythrough::LookPreset, view: ViewMode) -> LookParams {
     LookParams {
         normal_mode: p.normal_mode,
-        detail: true,
         view,
         tuning: p.tuning,
         ..LookParams::default()
@@ -1011,7 +850,7 @@ fn preset_look(p: flythrough::LookPreset, view: ViewMode) -> LookParams {
 
 // ---- The field surface (ADR-0040 Alternative B, Plan 0054's scratch) ----
 
-/// The field look (`LookPreset::FIELD`, detail on) in `view`.
+/// The field look (`LookPreset::FIELD`) in `view`.
 fn field_look(view: ViewMode) -> LookParams {
     preset_look(flythrough::LookPreset::FIELD, view)
 }
@@ -1047,7 +886,7 @@ fn the_field_surface_lies_on_the_flat_faces() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
-    let table = flythrough::LookPreset::FIELD.materials();
+    let table = flythrough::cave_materials();
     for (name, world, camera, axis, plane) in [
         (
             "floor",
@@ -1107,7 +946,7 @@ fn a_carve_gives_the_exposed_air_brick_a_band_slot() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
-    let table = flythrough::LookPreset::FIELD.materials();
+    let table = flythrough::cave_materials();
     let world = floor_world(&table);
     let look = field_look(ViewMode::Shaded);
     let mut rig = field_rig_on(device, queue, &world, [WIDTH, HEIGHT]);
@@ -1160,7 +999,7 @@ fn field_looks() -> [(&'static str, LookParams); 1] {
 /// The analytic scenes of the field readings: the one-voxel scenes (the box metric's), the
 /// tilted, 45-degree and diagonal slabs, the cavity and the pillar, each with its camera.
 fn field_scenes() -> Vec<(String, World, vxe_render::Camera)> {
-    let table = flythrough::LookPreset::FIELD.materials();
+    let table = flythrough::cave_materials();
     let mut scenes: Vec<(String, World, vxe_render::Camera)> = Feature::ALL
         .into_iter()
         .map(|f| (f.name().to_owned(), f.world(&table), f.camera()))
@@ -1291,7 +1130,7 @@ const THIN_SLACK: f32 = 0.5;
 /// The thin rig ([`flythrough::thin_rig`]) under the start look's table with the rig's wood,
 /// its row carrying `flags` (`MaterialFlags::CRISP` as the fly-through has it).
 fn thin_rig_world(flags: vxe_world::MaterialFlags) -> World {
-    let table = flythrough::with_wood_flags(&flythrough::LookPreset::FIELD.materials(), flags);
+    let table = flythrough::with_wood_flags(&flythrough::cave_materials(), flags);
     let source = ThinRig {
         wood: flythrough::THIN_RIG_WOOD,
     };
@@ -1543,7 +1382,7 @@ fn the_split_walk_moves_no_hit_record() {
     let hits = split.1.iter().filter(|r| r[3] & 1 != 0).count();
     let wood_differ = records_differ(&split, &unsplit);
     println!("crisp wood: {hits} hits, split against unsplit {wood_differ} pixels differ");
-    let base = flythrough::LookPreset::FIELD.materials();
+    let base = flythrough::cave_materials();
     let mut table = vxe_world::MaterialTable::new();
     for row in base.rows().iter().skip(1) {
         let mut row = row.clone();
@@ -1745,12 +1584,12 @@ fn tile_bar(scene: &str) -> Option<f64> {
 }
 
 /// The opt-in field look has no boxes and no leaks: on lavapipe, in the field look
-/// (`LookPreset::FIELD`, detail on), every hit on `floor` lies within 1e-3 voxel of `z = 64`
+/// (`LookPreset::FIELD`), every hit on `floor` lies within 1e-3 voxel of `z = 64`
 /// and every hit on `wall` within 1e-3 of `x = 80` under the analytic window rule; the rod, the
 /// lone cube, the groove, the wall pillar and the ridge read 0 box pixels; every analytic scene
 /// and the level at `VEIN_POSE` and `PATCH_POSE`, lamp on and off, read 0 leaks; each scene's
 /// tile-contrast share is at most Phase 1's N1 reading ([`PHASE1_TILE_EDGES_PCT`], the poses
-/// lamp on); and Plan 0039's guardrails hold undetailed: cavity normal error at most 12
+/// lamp on); and Plan 0039's guardrails hold: cavity normal error at most 12
 /// degrees, pillar silhouette error at most half of face mode's, axis fraction at most 10 %.
 #[test]
 fn the_field_look_has_no_boxes_and_no_leaks() {
@@ -1760,7 +1599,7 @@ fn the_field_look_has_no_boxes_and_no_leaks() {
     };
     let look = field_look(ViewMode::Shaded);
     let mut failures = Vec::new();
-    let table = flythrough::LookPreset::FIELD.materials();
+    let table = flythrough::cave_materials();
     for (name, world, camera, axis, plane) in [
         (
             "floor",
@@ -1830,9 +1669,8 @@ fn the_field_look_has_no_boxes_and_no_leaks() {
             }
         }
     }
-    let face = guardrails_of(NormalMode::Face, false, false).expect("a device");
-    let field =
-        guardrails_of(flythrough::LookPreset::FIELD.normal_mode, false, true).expect("a device");
+    let face = guardrails_of(NormalMode::Face, false).expect("a device");
+    let field = guardrails_of(flythrough::LookPreset::FIELD.normal_mode, true).expect("a device");
     println!(
         "guardrails: cavity normal error {:.2} degrees, silhouette {} px against face {}, axis fraction {:.2} %",
         field.normal_error,
@@ -2035,7 +1873,7 @@ fn a_smooth_surface_meets_a_crisp_cube_without_a_gap() {
     let wood = flythrough::THIN_RIG_WOOD;
     let rock = flythrough::cave::ROCK;
     let table = flythrough::with_wood_flags(
-        &flythrough::LookPreset::FIELD.materials(),
+        &flythrough::cave_materials(),
         vxe_world::MaterialFlags::CRISP,
     );
     let source = SeamRig { crisp: wood };

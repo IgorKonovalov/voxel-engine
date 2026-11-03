@@ -387,8 +387,8 @@ pub const EMPTY_BIT: u32 = 1 << 29;
 pub const RECORD_MASK: u32 = EMPTY_BIT - 1;
 /// First entry of each mip level in a LOD record, level 1 first.
 pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
-/// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits, detail scale
-/// and strength, opacity, the fine detail octave's weight, 4 spare.
+/// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits, 2 spare,
+/// opacity, 5 spare.
 pub const MATERIAL_FLOATS: usize = 16;
 /// The entry code of packed class `c`: 1 to 4 for 0, 1, 2 and 4 planes, [`CLASS_WIDE`].
 pub fn class_code(c: PackedClass) -> u32 {
@@ -1263,7 +1263,7 @@ impl GpuWorld {
     }
 
     /// Rewrites the material rows from `table`, a table of the same rows as the world's at the
-    /// first sync with other renderer fields (albedo, roughness, detail, opacity): the
+    /// first sync with other renderer fields (albedo, roughness, opacity): the
     /// translucent, emissive and opaque flags the upload reads stay the first sync's. Before
     /// the first sync the rows wait for it.
     ///
@@ -3181,10 +3181,10 @@ fn material_rows(table: &MaterialTable) -> Vec<[f32; MATERIAL_FLOATS]> {
                 m.emission[1],
                 m.emission[2],
                 f32::from_bits(m.flags.0),
-                m.detail[0],
-                m.detail[1],
+                0.0,
+                0.0,
                 m.opacity,
-                m.detail_fine,
+                0.0,
                 0.0,
                 0.0,
                 0.0,

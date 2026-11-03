@@ -6,12 +6,12 @@
 //! Every value is a pure integer function of the seed and the voxel coordinate, so chunks can
 //! be generated in any order on any thread and on any platform with identical bytes.
 //!
-//! Density is the sum of two octaves, caverns at cell 64 and detail at cell 16 (one eighth
+//! Density is the sum of two octaves, caverns at cell 64 and a fine octave at cell 16 (one eighth
 //! weight); ore veins come from a third noise at cell 16. All lattices align with bricks, so inside one brick each octave is a trilinear function of one cell, and a
 //! trilinear function over a box takes its extremes at the box's corners. A brick whose eight
 //! corner densities all lie beyond `MARGIN` on one side of a threshold is therefore uniform
 //! on that side and is emitted without evaluating its voxels. `MARGIN` covers the integer
-//! rounding in `ValueNoise::sample` (under one unit per octave, plus the detail shift).
+//! rounding in `ValueNoise::sample` (under one unit per octave, plus the fine shift).
 
 use std::sync::Arc;
 
@@ -29,8 +29,8 @@ pub const SHELL: MaterialId = 3;
 const AIR_ABOVE: i64 = 6000;
 /// Ore-noise value above which rock is ore.
 const ORE_ABOVE: i64 = 28000;
-/// The detail octave is divided by `1 << DETAIL_SHIFT` before it is added to the caverns.
-const DETAIL_SHIFT: u32 = 3;
+/// The fine octave is divided by `1 << FINE_SHIFT` before it is added to the caverns.
+const FINE_SHIFT: u32 = 3;
 /// Rounding slack for the per-brick early-out.
 const MARGIN: i64 = 4;
 /// Voxels of indestructible shell inside each face of the extent.
@@ -127,7 +127,7 @@ impl CaveSource {
 
     fn density(&self, p: [i32; 3]) -> i64 {
         let (a, b) = self.density_noise();
-        a.sample(p) + (b.sample(p) >> DETAIL_SHIFT)
+        a.sample(p) + (b.sample(p) >> FINE_SHIFT)
     }
 
     /// Rock, ore or air from the noise alone, before shell and pocket.
@@ -202,7 +202,7 @@ impl CaveSource {
             if self.in_shell(p) {
                 SHELL
             } else if self.in_pocket(p)
-                || dn.interpolate(&dc, p) + (dd.interpolate(&ddc, p) >> DETAIL_SHIFT) > AIR_ABOVE
+                || dn.interpolate(&dc, p) + (dd.interpolate(&ddc, p) >> FINE_SHIFT) > AIR_ABOVE
             {
                 AIR
             } else if on.interpolate(&oc, p) > ORE_ABOVE {
