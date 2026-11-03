@@ -69,6 +69,32 @@ default is 64 frames. Differences are per pixel in 8-bit levels, the worst of th
 
 ![The difference between 2048 and 8192 frames, times 8](docs/images/light/hall-diff-2048-vs-8192-x8.png)
 
+### What the drift is made of
+
+The same shot and settings at b2ea5ec's tree, one setting removed at a time. A repeat run of frame
+2048 reads 0 at every pixel, so these are the renderer's differences and not the driver's.
+
+| Setting | One frame: 2048 vs 2049 mean, max, over 2 | Drift: 2048 vs 8192 mean, p99, over 2, over 8 |
+|---|---|---|
+| Default (FSR 2, indirect on) | 0.19, 119, 0.62 % | 2.36, 15, 27.8 %, 4.18 % |
+| Indirect off | 0.18, 122, 0.60 % | 1.84, 16, 17.8 %, 3.77 % |
+| Native, no upscaler | 0.06, 8, 0.03 % | 2.16, 13, 25.2 %, 3.07 % |
+| Native, indirect off | 0.05, 4, 0.00 % | 1.64, 14, 15.3 %, 2.75 % |
+
+- **The image creeps rather than boils.** The drift is over ten times the one-frame change, so a
+  one-frame metric misses most of it.
+- **About 70 % of the drift's mean survives with no probes and no upscaler** (1.64 of 2.36). That
+  leaves the direct emissive path: the wall's worst cells read 6.7 with both removed and 7.9 with
+  both on.
+- **The probes spread it wide and thin.** Indirect on takes the pixels over 2 levels from 15.3 % to
+  25.2 %, on the pillars as well as the wall, and hardly moves those over 8.
+- **FSR 2 adds little drift and most of the frame-to-frame jumps:** 119 levels at worst against 8.
+  Where those jumps lie, and whether they are the sparkle the eye sees, is unread (Plan 0056's first
+  reading, if it is approved).
+- **This is one still shot with the lamp off.** The readings at the level's vein and patch poses
+  (Plan 0049, and Plan 0051's Phase 1) rank the gather first in the view-mean's variance. That is a
+  different scene and a different measure, and neither reading replaces the other.
+
 ## The session, step by step
 
 All runs: `--level --seed 1 --hud --pose vein|patch`, windowed on the RTX 3080 Laptop, auto
