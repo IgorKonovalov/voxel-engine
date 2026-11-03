@@ -955,6 +955,16 @@ option: the level 159 089 984 B live (96 243 264 B of band slots over 418 668 ba
 027 392 B allocated; the flight 941 827 116 B live (438 898 624 B of band slots over 1 829 483
 band bricks), peak 967 839 468 B, against Plan 0054 owner answer 4's 106 and 530 MB.
 
+**The `face` default's frame targets (Plan 0054's review fix, `Frame::frame_bytes` printed by
+`frame_bytes_add_the_histories_and_the_output_target` in `apps/flythrough/tests/upscale.rs`,
+1080p output from 1280 x 720 internal, lavapipe, exclusive perf lock).** Main `28948a5` reads
+130 267 168 B; Plan 0054's tip before the fix (`3d6718d`) 145 012 800 B, the split walk's
+hand-off list (16 B of header and 16 B a pixel, 14 745 616 B) and its 16 B dispatch words
+allocated in every frame; after the fix 130 267 216 B, main's plus the 32 B placeholder list
+and the 16 B dispatch words. The full list is allocated by the first frame that runs the split
+walk (`--look field` with a crisp row); `only_a_split_frame_allocates_the_split_list` in
+`apps/flythrough/tests/look.rs` pins both.
+
 **The frame's targets (Plan 0024 Phase 11, `Frame::frame_bytes` printed by `flythrough
 --autopilot --headless --seed 1 --render 1920x1080`):** 308 736 000 B with full-resolution
 lighting and 195 379 200 B at half resolution, against the 1.5 GB line; the light-sample buffer

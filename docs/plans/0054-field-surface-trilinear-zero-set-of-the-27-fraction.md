@@ -1040,7 +1040,7 @@ which no deterministic path reads.
 | 3a: Free-standing thin features and a per-material scratch look | dev | done; done-when 3 (cost bar) and 4 (pressure) not met as stated | 17045d8 |
 | 3b: The owner's look at thin features and the per-material candidate | human | done (a): the field per material, crisp materials as cubes (owner, 2026-10-31; answer 7) | owner answers, be7b943 |
 | 4a: Where the window's frame time goes | dev | done; the windowed p50s not reproduced headless (done-when 2 names the remainder the window's) | 52cc078 |
-| 4b: The walk inside the bar | dev | paused before its gate: `field-cubes` 4.761 ms, `field` 4.748 ms against 5.00 (RTX); RADV 128 VGPRs | 91f9066 (c1 to c5, wip) and committed with this row (wip, c8) |
+| 4b: The walk inside the bar | dev | done: `field-cubes` 4.690 ms, `field` 4.623 ms against 5.00 (RTX, c9); RADV 128 VGPRs | 91f9066 (c1 to c5, wip), 00542da (c6 to c8, wip) and f6e51a3 (c9, the gate) |
 | 4c: The crisp flag, the field as the default, the planes removed | dev | done on the close list (owner answer 13); done-whens 1 to 8 replaced by it | 2bca6e4, 3a43c06, 86611cc (wip) and 2bc7a5d |
 | 4d: The owner's windowed check of the default | human | dropped (owner answer 13) | |
 | 5: The readings, the ADR, the close block | dev | done (the readings in `nfr.md` §2 and §3; ADR-0041 not edited, the close review's) | committed with this row |
@@ -2096,6 +2096,17 @@ each. Empty is fine.)_
 - `castle_golden castle_gate_golden`'s peak RSS (1 GiB assertion) reads about 914 MB alone and
   failed when run beside other lavapipe tests (1.19 GB at load 19 at c8; one failure in a
   five-test run at c9): load-dependent, the image identical.
+- Review fix, finding 1 (major): the split walk's hand-off list is built by the first frame
+  that splits; until then the hit pass binds a 32 B placeholder. `Frame::frame_bytes` at 1080p
+  output from 1280 x 720 internal (lavapipe, exclusive perf lock, the upscale test's print):
+  main 28948a5 130 267 168 B, 3d6718d 145 012 800 B, the fix 130 267 216 B (+48 B: the
+  placeholder and the 16 B dispatch words); `look only_a_split_frame_allocates_the_split_list`
+  pins it and the thin rig's +1 638 416 B on its first split frame; in `nfr.md` §3. Commit: the
+  `fix(render)` commit carrying this line.
+- Review fix, finding 2 (minor): the 4b row names f6e51a3 and the met bar; Plan 0053's close
+  triggers filled. Commit: the `docs(plans)` fix commit.
+- Review fix, finding 3 (nit): `MaterialFlags::CRISP`'s doc says the flag acts under the field
+  look and the default draws every material as cubes. Commit: the `fix(world)` commit.
 
 ### Close triggers
 

@@ -2442,6 +2442,26 @@ impl Frame {
                 buffer_entry(13, self.exposure.state_uniform()),
             ],
         });
+        // The cutaway and a mirror without band slots walk the voxels.
+        let field = self.look.normal_mode == NormalMode::Contour
+            && !self.look.cutaway
+            && world.field_surface();
+        // The split walk pays only where a brick walks as cubes: with no crisp row every band
+        // brick is a field brick. The cracks and steps views read the field walk's own leaks
+        // and counters, so they walk it unsplit.
+        let split = field
+            && self.field_split
+            && world.crisp_rows()
+            && !matches!(self.look.view, ViewMode::Cracks | ViewMode::Steps)
+            && u64::from(t.width) * u64::from(t.height)
+                <= u64::from(SPLIT_GROUP) * u64::from(MAX_WORKGROUPS);
+        // The hit pass binds the full list only in a frame that splits; the unsplit walk
+        // leaves the stub untouched.
+        let split_list = if split {
+            t.split_list(device)
+        } else {
+            &t.split_stub
+        };
         let (c, q) = (self.cur, self.cur ^ 1);
         let hit_bind = bind_io(
             device,
@@ -2450,7 +2470,7 @@ impl Frame {
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
                 Res::Tex(&t.layer),
-                Res::Buf(&t.split_list),
+                Res::Buf(split_list),
                 Res::Buf(&t.split_args),
             ],
         );
@@ -2642,19 +2662,6 @@ impl Frame {
                 indirect: None,
             }
         };
-        // The cutaway and a mirror without band slots walk the voxels.
-        let field = self.look.normal_mode == NormalMode::Contour
-            && !self.look.cutaway
-            && world.field_surface();
-        // The split walk pays only where a brick walks as cubes: with no crisp row every band
-        // brick is a field brick. The cracks and steps views read the field walk's own leaks
-        // and counters, so they walk it unsplit.
-        let split = field
-            && self.field_split
-            && world.crisp_rows()
-            && !matches!(self.look.view, ViewMode::Cracks | ViewMode::Steps)
-            && u64::from(t.width) * u64::from(t.height)
-                <= u64::from(SPLIT_GROUP) * u64::from(MAX_WORKGROUPS);
         let hit_pipeline = if split {
             p.flags |= FLAG_FIELD_SPLIT;
             &self.hit.pipeline
@@ -2665,7 +2672,7 @@ impl Frame {
         };
         let resume_bind = split.then(|| {
             encoder.clear_buffer(&t.split_args, 0, None);
-            encoder.clear_buffer(&t.split_list, 0, Some(16));
+            encoder.clear_buffer(split_list, 0, Some(16));
             bind_io(
                 device,
                 &self.hit.resume_layout,
@@ -2673,7 +2680,7 @@ impl Frame {
                     Res::Tex(&t.hit_pos[c]),
                     Res::Tex(&t.hit_info[c]),
                     Res::Tex(&t.layer),
-                    Res::Buf(&t.split_list),
+                    Res::Buf(split_list),
                 ],
             )
         });
@@ -3055,9 +3062,12 @@ struct Targets {
     /// The exposure meter's tiles: two `f32` per 8 x 8 workgroup of the internal target.
     tiles: wgpu::Buffer,
     /// The split walk's hand-off list (a count word and three of padding, then a `vec4<u32>`
-    /// per pixel) and its resume dispatch's workgroup counts (`march.wgsl`'s `SplitList` and
-    /// `SplitArgs`).
-    split_list: wgpu::Buffer,
+    /// per pixel; `march.wgsl`'s `SplitList`), built by the first encode that splits
+    /// ([`Targets::split_list`]); until then the hit pass binds `split_stub`, the header and
+    /// one ray (the binding's minimum size), which the unsplit walk never writes. The resume
+    /// dispatch's workgroup counts (`SplitArgs`).
+    split_list: std::sync::OnceLock<wgpu::Buffer>,
+    split_stub: wgpu::Buffer,
     split_args: wgpu::Buffer,
 }
 
@@ -3129,9 +3139,10 @@ impl Targets {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
-            split_list: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("split walk rays"),
-                size: 16 + 16 * u64::from(width) * u64::from(height),
+            split_list: std::sync::OnceLock::new(),
+            split_stub: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("split walk rays (unsplit)"),
+                size: 32,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -3144,6 +3155,18 @@ impl Targets {
                 mapped_at_creation: false,
             }),
         }
+    }
+
+    /// The split walk's hand-off list at one ray per pixel, built here on the first call.
+    fn split_list(&self, device: &wgpu::Device) -> &wgpu::Buffer {
+        self.split_list.get_or_init(|| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("split walk rays"),
+                size: 16 + 16 * u64::from(self.width) * u64::from(self.height),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        })
     }
 
     /// The meter's tiles on each edge.
@@ -3182,7 +3205,8 @@ impl Targets {
             + lpx * (half + 8 + 2 * 16 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
             + strata * 8
             + self.tiles.size()
-            + self.split_list.size()
+            + self.split_list.get().map_or(0, wgpu::Buffer::size)
+            + self.split_stub.size()
             + self.split_args.size()
     }
 }

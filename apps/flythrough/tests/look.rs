@@ -1575,6 +1575,79 @@ fn the_split_walk_moves_no_hit_record() {
     assert_eq!(all_unsplit, 0, "unsplit against face, every row crisp");
 }
 
+/// `Frame::frame_bytes` of the default frame at 1080p output from 1280 x 720 internal, after
+/// a render in its default look over the thin rig mirrored without band slots: main 28948a5's
+/// figure (DEFAULT_MAIN) plus the split walk's 32-byte stub list and 16-byte dispatch words,
+/// and no hand-off list.
+const DEFAULT_FRAME_BYTES: u64 = 130_267_216;
+const DEFAULT_MAIN: u64 = 130_267_168;
+
+/// The split walk's hand-off list (16 B of header and 16 B a pixel) is allocated only by a
+/// frame that splits: on lavapipe the default frame (internal 1280 x 720, output 1920 x 1080)
+/// rendered in its default look over a mirror without band slots reads `DEFAULT_FRAME_BYTES`,
+/// as before the render; the thin rig's frame in the field look with its wood crisp grows by
+/// exactly the list at its size on its first render, and not again on its second.
+#[test]
+fn only_a_split_frame_allocates_the_split_list() {
+    let Some((device, queue)) = software_device(256 << 20) else {
+        return;
+    };
+    let wood = thin_rig_world(vxe_world::MaterialFlags::CRISP);
+    let mut gpu = vxe_render::GpuWorld::with_config(
+        &device,
+        vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(wood.extent())),
+    );
+    gpu.sync_now(&wood, &device, &queue)
+        .expect("mirror fits the adapter");
+    assert!(!gpu.field_surface(), "a mirror without band slots");
+    let frame = vxe_render::Frame::with_sizes(&device, [1280, 720], [1920, 1080]);
+    let before = frame.frame_bytes();
+    frame.render(
+        &device,
+        &queue,
+        &gpu,
+        &flythrough::thin_rig_camera(),
+        &LightParams::headlamp(),
+    );
+    let default = frame.frame_bytes();
+    println!(
+        "default frame_bytes at 1080p from 1280x720: {before} B before a render, {default} B after; main 28948a5 {DEFAULT_MAIN} B"
+    );
+    assert_eq!(before, default, "a render without the split walk");
+    assert_eq!(default, DEFAULT_FRAME_BYTES);
+    assert_eq!(default, DEFAULT_MAIN + 32 + 16);
+
+    let mut rig = field_rig_on(device.clone(), queue.clone(), &wood, THIN_SIZE);
+    let field = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);
+    let unsplit = rig.frame.frame_bytes();
+    let _ = rig.render(
+        &flythrough::thin_rig_camera(),
+        &LightParams::headlamp(),
+        field,
+    );
+    let split = rig.frame.frame_bytes();
+    let _ = rig.render(
+        &flythrough::thin_rig_camera(),
+        &LightParams::headlamp(),
+        field,
+    );
+    let list = 16 + 16 * u64::from(THIN_SIZE[0]) * u64::from(THIN_SIZE[1]);
+    println!(
+        "thin rig frame_bytes: {unsplit} B before the split walk, {split} B after (+{} B, list {list} B)",
+        split - unsplit
+    );
+    assert_eq!(
+        split - unsplit,
+        list,
+        "the first split frame builds the list"
+    );
+    assert_eq!(
+        rig.frame.frame_bytes(),
+        split,
+        "a second split frame reuses it"
+    );
+}
+
 // ---- The default look and the opt-in field look (Plan 0054 Phase 4c) ----
 
 /// The fly-through's default look is `face` (ADR-0041): `LookPreset::DEFAULT` is
