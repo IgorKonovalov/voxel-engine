@@ -380,6 +380,7 @@ Readings: [`logs/0055.md`](logs/0055.md).
 - Followup, not acted on: RADV showcase frame reads 55 ms under the defaults (about 18 fps); a slower adapter has no far-normal off switch but `--look face`.
 - The plan's TL;DR says the fly-through starts at the vein pose; no phase changes the start pose
   and none was changed (owner told, 2026-11-03).
+- Review fix pass on d548cdb's findings. Major, the gate over 12 min: 5c95af6, five tests moved to the soak list. Minor, the far normal named where nothing reads it: 6a62ea4; it also touched `README.md` and adds `next_look`. Minor, the strip tool's default: 16036af. Nit, the test's name: 02b7443. Nit, `live/`: 86eecb1. Gate at 86eecb1: 640.669 s; `docs/plans/logs/0055.md`.
 
 ### Close triggers
 
