@@ -95,8 +95,8 @@ plan lanes run at once, each in its own worktree at
 
 ## Context budget
 
-9a. Read your own plan in full, but not the large shared docs: `docs/nfr.md` (~50 KB) and the
-    readings files under `docs/nfr/` (~100 KB), `docs/roadmap.md` (~60 KB), `CHANGELOG.md`,
+9a. Read your own plan in full, but not the large shared docs: `docs/nfr.md` (~40 KB) and the
+    readings files under `docs/nfr/` (~115 KB), `docs/roadmap.md` (~60 KB), `CHANGELOG.md`,
     other plans. `grep -n` for the section or the figure you need and read only that range. Of your plan's readings log (`docs/plans/logs/NNNN.md`) read
     only the `### Resume notes` and the current phase's section.
 9b. Keep tool output short. Cargo and nextest output is the main waste:

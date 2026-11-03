@@ -35,7 +35,7 @@ work on. The reads below are task-grounded, not startup routines.
 docs/
 ├── roadmap.md                # milestones; revise at a close or when a decision changes
 ├── nfr.md                    # budgets; a reading replaces a proposal at a close
-├── nfr/0N-<area>.md          #   the readings of a split section (frame, memory); new readings go there
+├── nfr/0N-<area>.md          #   the readings of a split section (frame, memory, edits); new readings go there
 ├── plans/NNNN-<slug>.md      # one per milestone slice
 │   ├── README.md             #   index: roster + next free number. Refresh on every state change
 │   ├── done/                 #   closed plans
