@@ -43,59 +43,32 @@ pub const TILE: u32 = 8;
 /// The bar's frame size.
 pub const SIZE: [u32; 2] = [192, 108];
 
-/// A still camera on the level, with the manual exposure its run is pinned at.
-#[derive(Clone, Copy, Debug)]
-pub struct Pose {
-    pub name: &'static str,
-    pub position: [f32; 3],
-    pub yaw_deg: f32,
-    pub pitch_deg: f32,
-    pub exposure: f32,
-}
-
-/// Facing the wall where the lamp-off patches were first counted. The exposure is the eye's
-/// adapted value after 600 frames with the lamp on and 900 off at 192 x 108.
-pub const PATCH_POSE: Pose = Pose {
-    name: "patch",
-    position: [676.2, 514.8, 193.1],
-    yaw_deg: 59.0,
-    pitch_deg: -9.7,
-    exposure: 10.9624,
-};
-
-/// Out from an ore vein along its normal, looking at it (`exposure.rs`'s pose), at its eye's
-/// adapted value, read the same way.
-pub const VEIN_POSE: Pose = Pose {
-    name: "vein",
-    position: [727.5, 644.3, 208.5],
-    yaw_deg: 153.4,
-    pitch_deg: 0.0,
-    exposure: VEIN_EXPOSURE,
-};
-
-/// `VEIN_POSE`'s adapted exposure.
-pub const VEIN_EXPOSURE: f32 = 5.3720;
-
-impl Pose {
-    pub fn camera(&self) -> Camera {
-        Camera {
-            position: self.position.into(),
-            yaw: self.yaw_deg.to_radians(),
-            pitch: self.pitch_deg.to_radians(),
-            vfov: 70f32.to_radians(),
-        }
-    }
-}
+/// The still cameras and their pinned exposures, one definition shared with the binary's
+/// `--pose`.
+pub use flythrough::{PATCH_POSE, Pose, VEIN_POSE};
 
 /// The level (seed 1, the ore emissive) mirrored whole on the software adapter before the run,
-/// so no upload lands inside it.
+/// so no upload lands inside it; the world is kept for edits and the adapter's name for the
+/// readings' labels.
 pub struct VeinLevel {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub gpu: GpuWorld,
+    pub world: World,
+    pub adapter: String,
 }
 
 pub fn vein_level() -> Option<VeinLevel> {
+    vein_level_on(|pool| {
+        software_device(pool).map(|(d, q)| (d, q, "llvmpipe (lavapipe)".to_owned()))
+    })
+}
+
+/// [`vein_level`] on the device `device` makes for a pool of the given bytes (a reading test
+/// passes [`reading_device`]).
+pub fn vein_level_on(
+    device: impl FnOnce(u64) -> Option<(wgpu::Device, wgpu::Queue, String)>,
+) -> Option<VeinLevel> {
     let source = flythrough::cave::CaveSource::new(
         1,
         ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
@@ -106,7 +79,7 @@ pub fn vein_level() -> Option<VeinLevel> {
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
     );
     let pool = flythrough::level_pool_units(&world, false) * vxe_render::gpu_world::UNIT_BYTES;
-    let (device, queue) = software_device(pool)?;
+    let (device, queue, adapter) = device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
         ..MirrorConfig::new(Window::Fixed(world.extent()))
@@ -117,7 +90,13 @@ pub fn vein_level() -> Option<VeinLevel> {
         gpu.sync_now(&world, &device, &queue)
             .expect("mirror fits the adapter");
     }
-    Some(VeinLevel { device, queue, gpu })
+    Some(VeinLevel {
+        device,
+        queue,
+        gpu,
+        world,
+        adapter,
+    })
 }
 
 /// One part's statistics over the window.
@@ -221,10 +200,10 @@ impl Reading {
 }
 
 /// Per tile: the mean and whether every pixel of it counted (the composite), or the mean alone.
-type Tiles = Vec<(f32, bool)>;
+pub type Tiles = Vec<(f32, bool)>;
 
 /// The meter's transform of an absolute luminance.
-fn meter_log2(y: f32) -> f32 {
+pub fn meter_log2(y: f32) -> f32 {
     y.max(2f32.powi(-16)).log2().clamp(-16.0, 16.0)
 }
 

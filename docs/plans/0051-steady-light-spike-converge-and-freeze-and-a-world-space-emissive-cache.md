@@ -1,6 +1,6 @@
 # 0051: The steady-light spike: static light that converges and freezes, and a world-space emissive cache, each read against the wander, the dots and the shimmer
 
-> **Status:** approved (2026-10-29), amended 2026-11-03
+> **Status:** in-progress (approved 2026-10-29, amended 2026-11-03)
 > **Created:** 2026-10-29
 > **Amended 2026-11-03 (owner):** "amend". The plan as drafted could not start: its cache keyed
 > on `contour_attr`'s popcount index, which Plans 0053 and 0054 removed (v0.39.0), and its rig

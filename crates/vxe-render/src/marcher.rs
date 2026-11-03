@@ -1038,6 +1038,9 @@ pub struct Frame {
     kind: UpscalerKind,
     fsr: Option<Fsr2>,
     composite_hdr: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
+    /// A copy of the composite's image at the internal size, taken right after the composite
+    /// pass ([`Frame::set_composite_capture`]); `None` unless a test or tool asked for it.
+    composite_capture: Option<wgpu::Texture>,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -1658,6 +1661,7 @@ impl Frame {
             kind: UpscalerKind::Off,
             fsr: None,
             composite_hdr: None,
+            composite_capture: None,
             probes: std::sync::OnceLock::new(),
             probe_spacing: DEFAULT_PROBE_SPACING,
             device: device.clone(),
@@ -2110,6 +2114,23 @@ impl Frame {
         &self.targets.irradiance
     }
 
+    /// Turns the composite capture on or off: while on, every encode copies the composite's
+    /// image (rgba8unorm, display-encoded, at the internal size) into
+    /// [`Frame::composite_capture`] right after the composite pass, before the upscaler
+    /// overwrites the target. For tests and tools that read the composite apart from the
+    /// upscaled display; it costs one copy a frame and is not counted in
+    /// [`Frame::frame_bytes`]. Under FSR 2 the composite writes FSR's linear input instead
+    /// ([`Fsr2::colour_in`]), and nothing is captured.
+    pub fn set_composite_capture(&mut self, device: &wgpu::Device, on: bool) {
+        self.composite_capture =
+            on.then(|| composite_capture_texture(device, self.internal_size()));
+    }
+
+    /// The composite capture the last encode wrote, or `None` while it is off.
+    pub fn composite_capture(&self) -> Option<&wgpu::Texture> {
+        self.composite_capture.as_ref()
+    }
+
     /// The light pass's reservoirs the next or last encode writes (rgba32uint: the kept
     /// point, then W, M, the face and a valid bit; see `light.wgsl`).
     pub fn reservoirs(&self) -> &wgpu::Texture {
@@ -2163,6 +2184,9 @@ impl Frame {
         );
         if let Some(f) = self.fsr.as_mut() {
             f.resize(device, internal, output);
+        }
+        if self.composite_capture.is_some() {
+            self.composite_capture = Some(composite_capture_texture(device, internal));
         }
         self.reset_history();
     }
@@ -2807,6 +2831,17 @@ impl Frame {
                     None => pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], 1),
                 }
             }
+            drop(pass);
+            if FRAME_PASSES[i] == "composite"
+                && self.fsr.is_none()
+                && let Some(capture) = &self.composite_capture
+            {
+                encoder.copy_texture_to_texture(
+                    t.output.as_image_copy(),
+                    capture.as_image_copy(),
+                    capture.size(),
+                );
+            }
         }
         let exposure_pass = FRAME_PASSES.len() as u32 - 1;
         self.exposure.encode(
@@ -2976,6 +3011,24 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
         binding,
         resource: buffer.as_entire_binding(),
     }
+}
+
+/// The texture [`Frame::set_composite_capture`] copies the composite into.
+fn composite_capture_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("composite capture"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
 }
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
