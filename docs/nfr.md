@@ -372,7 +372,7 @@ binary of `86611cc`'s tree, whose default is `face` with no attribute pass; one 
 each, every run under the exclusive perf lock and the memory cap, started at a 1-minute load of
 1.75 to 1.99; `flythrough --level --seed 1 --headless --frames 300 --render 1920x1080 --adapter
 NVIDIA|AMD [--look field --crisp none|rock|all]`, 1080p from 1280 x 720, release, each run's
-frame line; logs `live/p4c/close/` in Plan 0054's worktree).** Hit / light / GPU frame, ms:
+frame line; logs `renders/plan-0054-live/p4c/close/` (local)).** Hit / light / GPU frame, ms:
 
 | run | RTX 3080 Laptop | Radeon RENOIR |
 |---|---|---|
@@ -405,7 +405,7 @@ smooth): hit plus light 4.718 ms on the RTX against the 5.00 ms figure it was bu
 ms (RTX) and 4.884 / 0.945 / 16.659 (Radeon); `--look field` 4.821 / 0.126 / 6.667 ms with a
 smooth share of 0.8476 (RTX) and 39.543 / 1.012 / 52.030 (Radeon); its field pass 0.064 ms (RTX)
 and 0.188 ms (Radeon) for 1186 band slots. The owner's window (Plan 0054 owner answer 13, RTX
-3080 Laptop, 2530 x 1378, `live/session3-seam.log`): GPU frame 12.0 ms on the seam rig against
+3080 Laptop, 2530 x 1378, `renders/plan-0054-live/session3-seam.log`): GPU frame 12.0 ms on the seam rig against
 `face`'s 3.8, 7.8 ms on the thin rig against 3.4.
 
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
@@ -790,13 +790,13 @@ cap, three alternated rounds started at a 1-minute load under 2, the median over
 each run's frame line (itself the median of the last 30 frames). Sources, untracked logs in
 Plan 0054's worktree:
 
-- cubes on the RTX: `face` at main `28948a5`, Plan 0054 Phase 4a's matrix (`live/p4a/runs/`),
+- cubes on the RTX: `face` at main `28948a5`, Plan 0054 Phase 4a's matrix (`renders/plan-0054-live/p4a/runs/`),
   read while that matrix was still running; Phase 4a's log table supersedes it.
 - cubes on the Radeon: **no `face` reading at this tree.** The default `contour-sharp` (the cube
-  walk with contour planes and snap) at `811b37e` (`live/cost/level-base-*.log`, Plan 0054 Phase
+  walk with contour planes and snap) at `811b37e` (`renders/plan-0054-live/cost/level-base-*.log`, Plan 0054 Phase
   1's base) stands in as an upper bound: on the RTX at `28948a5` `face`'s hit reads 7.5 % under
   the default's (0.567 against 0.613 ms).
-- the field: Plan 0054 Phase 3a's cost runs at `17045d8` (`live/p3a/cost/`, its done-when 3).
+- the field: Plan 0054 Phase 3a's cost runs at `17045d8` (`renders/plan-0054-live/p3a/cost/`, its done-when 3).
   `field-cubes` is the field with the crisp test, the nearest reading of Phase 4c's default (no
   level material is crisp, so it shows the crisp test's cost and no cube); `field` is without it.
 
@@ -946,7 +946,7 @@ B live across both binaries).
 **The `face` default carries no attribute and no band term (Plan 0054's close readings, main
 `28948a5`'s release binary against `86611cc`'s, RTX 3080 Laptop GPU, exclusive perf lock and
 memory cap, one quiet round each at a start load of 1.75 to 1.99, `r_full` 16; logs
-`live/p4c/close/` in Plan 0054's worktree).** The level: main's default 157 872 640 B live and
+`renders/plan-0054-live/p4c/close/` (local)).** The level: main's default 157 872 640 B live and
 259 203 264 B allocated; the `face` default 62 846 720 B live and 88 285 376 B allocated. The
 streamed flight's full residency (17 077 full and 40 700 LOD-only chunks): main's default 871
 679 852 B live, peak 992 795 308 B, 3 221 014 080 B allocated; the `face` default 502 928 492 B
