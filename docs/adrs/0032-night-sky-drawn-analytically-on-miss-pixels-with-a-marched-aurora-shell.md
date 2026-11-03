@@ -24,8 +24,9 @@ does so by a time or a direction the game sets.
 The facts that decide the shape. A star is a point: the brightest subtends milliarcseconds,
 while a pixel of a 1080p frame with a 90 degree field is about 0.07 degrees wide. What a star
 contributes to a pixel is its flux, not a radiance to sample. The frame renders at an
-internal resolution with a sub-pixel jitter per frame, and Plan 0030's upscaler takes miss
-pixels with no history (alpha 1.0), so a point sampled at the jittered ray's direction
+internal resolution with a sub-pixel jitter per frame. Plan 0030's upscaler takes miss pixels
+with no history (alpha 1.0), and FSR 2, the default since Plan 0055, reprojects them by
+direction; in either, a point sampled at the jittered ray's direction
 flickers on and off from frame to frame. Northern lights are emissive curtains about 1 km
 thick, hundreds of kilometres long, from about 100 km up to 300 km of altitude, with vertical
 ray striations. Overhead, those rays converge in perspective into the corona, and at the
@@ -124,8 +125,9 @@ byte the frame before.
   are on. The pass skips the loop when the frame's exposure makes the brightest star
   invisible, so daylight pays a branch, not the loop.
 - The point-spread function is a look choice: a sigma under about half an internal pixel
-  aliases, and one over a pixel blurs. The upscaler's Lanczos kernel with no history on misses
-  can still shimmer a star a little at scale 1.5. The plan measures it.
+  aliases, and one over a pixel blurs. `own`'s kernel with no history on misses can still
+  shimmer a star a little at scale 1.5, and FSR 2's lock and sharpen passes can brighten one. The
+  plan measures both.
 - The aurora is a stylised emission model, not a simulation of particle precipitation. Its
   parameters (curtain count, fold scale, colours) are art direction that the game owns.
 - The aurora's light reaches the probes through their hysteresis and `cloud_sky` through its
