@@ -19,8 +19,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0051, before M10 (owner, 2026-10-29); Plan 0052 (closed) struck what it fixed first. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, so after Plan 0051 and before M10. |
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0051 and the plan its ADR names, if any; before Plan 0032. |
-| [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 4. Amended 2026-11-03. First, alone; 0048, 0032 wait. |
-| [0055](0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md) | The clarity pass before 0051: procedural detail removed, FSR 2 at 1.5 the default, a spike for a footprint-blended far normal | draft | M2, no new ADR (0042 if Phase 4 keeps the blend). First, alone; 0051 after it. |
+| [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 4. Amended 2026-11-03, twice. After Plan 0055, alone; 0048, 0032 wait. |
+| [0055](0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md) | The clarity pass before 0051: procedural detail removed, FSR 2 at 1.5 the default, a spike for a footprint-blended far normal | approved, not started | M2, no new ADR (0042 if Phase 4 keeps the blend). First, alone; 0051 after it. |
 <!-- roster:end -->
 
 ## Recently closed

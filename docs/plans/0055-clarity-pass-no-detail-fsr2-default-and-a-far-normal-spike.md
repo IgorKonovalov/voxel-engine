@@ -1,6 +1,6 @@
 # 0055: The clarity pass before Plan 0051: procedural detail removed, FSR 2 at 1.5 the default, and a spike for a footprint-blended far normal
 
-> **Status:** draft
+> **Status:** approved (2026-11-03, owner: "flip approved but do not start"; dev waits for the owner's go)
 > **Created:** 2026-11-03
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler
 > bullets; Plan 0051 and the light plans after it read their bars on this plan's default look)

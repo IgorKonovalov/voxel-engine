@@ -18,6 +18,30 @@
 >    motion as well as at rest. One value a face is a new look on cubes, so the eye compares
 >    nearest and a coplanar bilinear read in Phase 4.
 > 5. **Budgets, gates and test times** follow `docs/nfr/02-frame-budget.md`'s ledger and the `gate` tier.
+> **Amended 2026-11-03, evening (owner: "agreed"):** the baseline's window checks and the
+> headless strips that followed them (`renders/baseline-2026-11-03/HANDOFF.md`,
+> `renders/strips/NOTES.md`, local) changed what this spike must read. What changed:
+> 1. **It starts after Plan 0055**, the clarity pass (no procedural detail, FSR 2 at 1.5 the
+>    default, a far normal if the owner keeps it); Phase 1 reads on that default look and the
+>    rig takes it.
+> 2. **The lamp-off settle is the probe volume.** Under a fixed exposure at the level's patch
+>    pose the mean luma settles over 1.5 to 2 s with a non-monotonic wander with indirect on,
+>    and in one frame with it off; the emissive screen history plays no part, and the eye is
+>    refuted (the showcase runs at a manual exposure and flickered). The toggle readings are
+>    probe readings; B is not read on the toggle.
+> 3. **A third arm, C: the headlamp does not feed the probes** (Phase 2). The probe rays shade
+>    their hits without the lamp, so a lamp switch, move or turn leaves the probes untouched by
+>    construction, and the lamp's bounce is lost. It is the owner's parked idea of 2026-10-22
+>    (bounce only for certain sources), the simplest steady answer, and it makes A1's lamp
+>    rule moot where it is on.
+> 4. **B gains an edit-box reset, and the dig joins its runs** (Phase 3): the cells of the
+>    voxels in a dilated edit box are cleared when the box lands, so the dig's dots and settle
+>    are read under B; invalidation proper stays the ADR's.
+> 5. **The rig must reproduce the owner's dots** before a pass means anything (Phase 1): a
+>    faster yaw and a flight join the runs, and if none shows them the log says so and Phase 4
+>    reads them by eye.
+> 6. The far-wall blotches of the showcase are converged direct light, a look item the owner
+>    keeps open outside this plan.
 > **Approved:** 2026-10-29 (owner): "we will start as soon as 50 is done". The lane runs alone.
 > The amendment keeps the plan's question and its two experiments; dev starts it on the owner's
 > "go" as usual.
@@ -38,7 +62,8 @@
 > [Plan 0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md)'s Implementation
 > log). The owner: "clearly something is wrong and we need to understand why", and, agreeing with
 > the assessment "mostly", a lean toward "simplification of lights, but steadiness".
-> **Starts after:** nothing: Plan 0050 and Plan 0054 are closed. It runs alone on main. The next
+> **Starts after:** [Plan 0055](0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md)
+> closes (amended 2026-11-03, evening). It runs alone on main. The next
 > light plans wait for Phase 4's call: the plan the ADR names, if any, then
 > [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md), then
 > [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md).
@@ -219,10 +244,11 @@ the log, and stops being a gate.
   `marcher.rs`, `main.rs`, `support/mod.rs`, `.config/nextest.toml` and the plans index, and
   `main.rs` holds nothing to take. The log names what was taken. The tag's logs stay in
   `renders/plan-0049-live/` (gitignored, local).
-- **The base look.** `make_frame` and `vein_level_on` take the fly-through's default:
-  `LookPreset::DEFAULT`'s `LookParams` with detail on, shaded, over its table with the ore
-  emissive and rock at `ROCK_DETAIL`. A `Setting` field `detail` keeps the old look for the
-  bridge below. Poses unchanged: `VEIN_POSE`, `PATCH_POSE`, and the rig's `VEIN_FLIGHT`,
+- **The base look (amended 2026-11-03, evening).** `make_frame` and `vein_level_on` take the
+  fly-through's start after Plan 0055: `LookPreset::DEFAULT`'s `LookParams` (no detail; the
+  far normal if Plan 0055 kept it), shaded, FSR 2 at scale 1.5 with sharpening 0.5, over its
+  table with the ore emissive. A `Setting` field `bridge` renders face under our upscaler at
+  1.5 jittered (Plan 0049's setting) for the bridge below. Poses unchanged: `VEIN_POSE`, `PATCH_POSE`, and the rig's `VEIN_FLIGHT`,
   `PATCH_FLIGHT` and fly-in starts, all on the same voxels.
 - **The new metric, the world-keyed flicker.** For each frame, each internal pixel of the
   composite capture with a hit is keyed by its voxel `floor(p - 0.5 nf)` and its entry face. A
@@ -240,21 +266,26 @@ the log, and stops being a gate.
   - the dots (`dot_readings`: dig, yaw 10 f, yaw 30 f; excess by part and age);
   - `K` at the yaw and the flight;
   - the share of probes inside rock over 1024 frames at rest;
+  - **the owner's dots, reproduced (added 2026-11-03, evening):** beside `yaw 10 f` and
+    `yaw 30 f`, a 180-degree yaw over 20 frames and the strip tool's flight (40 voxels a
+    second with a 12 degree a second yaw, 180 frames; `apps/flythrough/tests/strip.rs`) at
+    both poses and the level's spawn, excess dots by frame and by part; if no run shows an
+    excess over its floor the log says so, and Phase 4 counts them by eye;
   - **cost at rest:** `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700
     --adapter NVIDIA|AMD [--pose vein]`, the spawn and `VEIN_POSE`, each run's frame line (the
     median of its last 30 frames), three quiet rounds, exclusive perf lock, memory cap. It runs
     past frame 2047 so that A's pixels can reach `AGE_MAX` in the same conditions;
   - **the same frame in flight:** the rig's flight, per pass, RTX and Radeon;
-  - the bridge: the vein's wander at `detail` off against Plan 0049's table on lavapipe, and the
+  - the bridge: the vein's wander under `bridge` against Plan 0049's table on lavapipe, and the
     eye's settled exposure at each pose against `pose.exposure` (the constants stay; the
     difference is a reading).
 - **Files touched:** `apps/flythrough/tests/settle.rs` (new), `apps/flythrough/tests/support/settle.rs`
   (new), `apps/flythrough/tests/support/stillness.rs`, `apps/flythrough/tests/support/mod.rs`,
   `crates/vxe-render/src/marcher.rs`, `.config/nextest.toml`, `docs/plans/logs/0051.md` (new).
 - **Done when:**
-  1. `the_rig_reads_the_default_look` asserts that `make_frame`'s look equals the look the
-     fly-through's `LookPreset::DEFAULT` gives with detail on, and that the rig's rock row
-     carries `ROCK_DETAIL` and its ore `ORE_EMISSION` (no frames; under 10 s with `vein_level`).
+  1. `the_rig_reads_the_default_look` asserts that `make_frame`'s look and upscaler equal the
+     fly-through's start after Plan 0055 (`LookPreset::DEFAULT`, FSR 2 at 1.5), and that the
+     rig's ore row carries `ORE_EMISSION` (no frames; under 10 s with `vein_level`).
   2. The tag's `the_lamp_toggle_opens_the_light_window` and
      `a_turn_with_the_lamp_on_opens_no_window` pass on lavapipe on main, each with its time in
      the log (a guess: under 30 s, 64 frames at 12.6 a second plus the level), and
@@ -269,7 +300,7 @@ the log, and stops being a gate.
   6. With the rig added, the goldens are bit-identical to main's and `frame_bytes` is
      unchanged while the capture is off.
 
-### Phase 2: Experiment A, converge and freeze
+### Phase 2: Experiments A, converge and freeze, and C, the lamp out of the probes
 - **Owner skill:** dev
 - **What:** four changes behind `Lighting` settings, old behaviour the default, and their
   readings, with `--steady a` on the fly-through.
@@ -301,6 +332,16 @@ the log, and stops being a gate.
     history back as a sample through the irradiance target would round it and move it.) The
     gradient pass keeps re-shading one pixel per stratum, so a change still registers and the
     guard lowers the age below the cap, which resumes the draw.
+  - **C, the headlamp does not feed the probes (added 2026-11-03, evening).** Behind
+    `Lighting::probe_lamp` (on today; `--steady c` turns it off): the probe rays' hit shading
+    omits the headlamp term, so the volume holds static light alone and a lamp switch, move or
+    turn leaves every probe as it was; the lamp's bounce is lost. Under C a lamp switch opens
+    no light-change window (ADR-0023; an emission change still does), and A1's lamp rule is
+    moot. Its readings: the toggle settle at both poses (the prediction: the composite's
+    `S90` at the frame of the switch, as with indirect off, and the gather bit-identical
+    across it), the still wander with the lamp on (the prediction: the gather's `sigma_view`
+    falls to its lamp-off value), `K` in the flight with the lamp on, and the probe update's
+    cost. The eye judges the lost bounce in Phase 4.
 - **The readings,** Phase 1's tables and runs for A (A1 to A4 together, then each alone), today's
   from Phase 1, plus: for A the frames until the probes in view have frozen, the share frozen per
   frame over 1024 frames at rest, and the sweeps of `probe_freeze`.
@@ -344,6 +385,14 @@ the log, and stops being a gate.
   11. The log's "What A deletes" names the constants and mechanisms A makes redundant if kept:
      `YOUNG_UPDATES`, `YOUNG_HYSTERESIS`, `HYSTERESIS`'s value debate (it stays for the lamp's
      rule), and the emissive history cap.
+  12. `the_lamp_leaves_the_probes_alone_under_c` asserts on lavapipe that with C on a lamp
+     toggle both ways and a lamp moved each frame leave every probe's texels and state
+     bit-identical over 64 frames, and that an emission scale change still restarts them.
+     About 150 frames: about 16 s.
+  13. The toggle settle, wander and `K` tables for C and for A with C are in the readings log
+     beside A's. The prediction: under C the composite's `S90` after the toggle is 0 at both
+     poses, and the toggle's flicker map (the strip tool's) is blank but for the lamp's own
+     pixels.
 
 ### Phase 3: Experiment B, the world-space emissive cache
 - **Owner skill:** dev
@@ -388,8 +437,12 @@ the log, and stops being a gate.
     lighting pixels a voxel, 54 a face, so `C_CAP` in about 76 frames. At 88 voxels it is 0.58 a
     voxel, 0.34 a face: `C_MIN` in about 48 frames and `C_CAP` in about 200 s at 60 frames a
     second. Those samples are correlated (reservoir reuse), so the count overstates convergence.
-  - **No invalidation.** Edits are not supported: the dig run is skipped for B and the log says
-    so. The lamp is not in the table, so a toggle leaves it alone, and the rig reads that the
+  - **Edit-box reset (added 2026-11-03, evening), the spike's only invalidation.** When an
+    edit box lands, a compute dispatch over the box dilated by one voxel clears the cells of
+    every face of every voxel in it (a dig of radius 3 is under 2 100 keys), so the dug
+    surface and its rim re-fill from young. The dig run is in B's readings (its dots and its
+    settle); invalidation proper, a world-space guard that re-verifies a stored kept point,
+    stays the ADR's. The lamp is not in the table, so a toggle leaves it alone, and the rig reads that the
     emissive part does not move at a toggle. An emission scale change is not followed either; the
     level's runs have none. The table clears on `Frame::reset_history`.
   - **B2, optional:** the probe rays read the cell's mean at their hits where `count >= C_MIN`
@@ -398,7 +451,7 @@ the log, and stops being a gate.
 - **The readings,** today, A, B and A plus B, both poses, lamp on and off, `Manual(pose.exposure)`,
   `nearest` and `smooth`:
   - the wander table and the composite's `S90` at the toggle;
-  - the fast yaw's excess dots (frames 1 to 60) and the **young share:** the share of hit
+  - the fast yaw's and the dig's excess dots (frames 1 to 60) and the **young share:** the share of hit
     pixels per frame whose cell has `count < C_MIN` or none, over frames 1 to 60 after the yaw and
     over the flight;
   - `K` at the yaw and the flight;
@@ -438,20 +491,23 @@ the log, and stops being a gate.
      history and its f32 store, the emissive guard's screen-space form (its world-space form
      replaces it), reservoir reuse for the emissive part, the a-trous for the emissive part,
      Plan 0048's clamp question in its present form, and A3 and A4.
+  9. `a_dig_clears_its_cells` asserts, on the hand-built box of item 3, that an edit box over
+     one voxel clears that voxel's six cells and leaves a neighbour two voxels away capped, and
+     that the cleared cells refill to `C_MIN` within `C_MIN` frames at scale 1. Under 10 s.
 
 ### Phase 4: The owner's call in the window
 - **Owner skill:** human
 - **What:** the owner runs the release fly-through, `flythrough --level --seed 1 --pose vein` and
-  `--pose patch`, auto exposure, four flag sets: `--steady off` (today), `--steady a`, `--steady
-  ab`, and `--steady b --indirect off` (the simplest light: the lamp exact, the emissive from the
+  `--pose patch`, auto exposure, six flag sets: `--steady off` (today), `--steady c`, `--steady a`, `--steady ac`,
+  `--steady abc`, and `--steady b --indirect off` (the simplest light: the lamp exact, the emissive from the
   table, no probes). B alone stays in the tables, since the gather would still wander in the
   window. In each: a still minute, the lamp toggle both ways, a fast turn by hand, a flight down
-  the passage and back, and for today and A only, a dig. At arm's length of a lit wall, `ab` with
+  the passage and back, and for today, A, B and C, a dig. At arm's length of a lit wall, `ab` with
   `--cache-read nearest` and with `smooth`, to judge the step at a voxel edge and the missing
   detail. Beside the window, the rig's filmstrips and tables. The owner also states whether
   exposure's own settle should change (ADR-0033's constants; another plan).
 - **Files touched:** this plan's log.
-- **Done when:** the log records the owner's verdict: which of A, B, both or neither is the
+- **Done when:** the log records the owner's verdict: which of A, B, C, a combination or none is the
   direction; which read mode, if B; whether the probes stay, shrink to a lamp-bounce channel, or
   go; which of the "deletes" lists the ADR should carry; and what remained visible, by run and
   pose. The architect writes the ADR and the plan from it. This plan closes with that record, as
@@ -523,8 +579,8 @@ Determinism is not touched: everything is in `vxe-render`.
   alternate frames, which the upscaler averages. `K` and the `up1.5` wander read it against scale
   1.
 - **B without invalidation is not a renderer.** It answers one question: does a converged
-  world-space value remove the dots and the shimmer? The dig is out of its runs, and the ADR
-  owns invalidation (edit boxes plus a world-space guard that re-verifies a stored kept point
+  world-space value remove the dots and the shimmer? The dig reaches its runs only through the box reset, and the ADR
+  owns invalidation proper (edit boxes plus a world-space guard that re-verifies a stored kept point
   per cell). The cubes' face key makes an edit box's cells countable, which the ADR can use.
 - **B's young share in flight may be high** in a cave of walls never seen, and far faces fill
   slowly. The reading says how much pre-warming (probe rays writing the table, a background fill
@@ -542,6 +598,8 @@ Determinism is not touched: everything is in `vxe-render`.
 ## What this plan does NOT do
 
 - Change any default. Every setting is off unless the flag says otherwise.
+- The far-wall blotches of the showcase: converged direct light (the strips of 2026-11-03),
+  a look item the owner keeps open, outside this plan.
 - Build invalidation for the table, eviction, the light-radius sizing, pre-warming, coarser
   cells, or a lamp-bounce channel for the probes. Each belongs to the ADR and the plan after
   Phase 4.
@@ -558,6 +616,10 @@ Determinism is not touched: everything is in `vxe-render`.
 2. **Amend and drop (owner, 2026-11-03).** "Amend" this plan onto cubes, and "drop" Plan 0049,
    its rig kept under tag `archive/plan-0049`. The key, the phases and the read modes above are
    the architect's amendment under that instruction.
+3. **Agreed (owner, 2026-11-03, evening).** The strips' finding changes the shape: the lamp-off
+   settle is the probes, so a third arm C (the headlamp does not feed the probes) joins the
+   spike, B is read on turns, flights and digs and gains the edit-box reset, and the rig must
+   reproduce the owner's dots. The blotches "stay" a look item. The plan starts after Plan 0055.
 
 ## Implementation log
 
