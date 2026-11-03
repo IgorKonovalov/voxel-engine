@@ -729,15 +729,22 @@ each. Empty is fine.)_
   38250 to 42080) and the patch's tile edges rise (0.771 to 1.208 %); the groove's box pixels
   rise 697 to 4870 (its side voxels' faces into the groove, hit as cube faces under the floor's
   plane).
+- Review fix (Plan 0054's close review, minor): the close triggers filled; committed with this
+  line.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** of Phases 2 and 3 nothing survives; the box metric (Phase 1's, with Phase
+  2's edge rule) stays in `apps/flythrough/tests/look.rs` as `box_voxel` and `box_reading`, read
+  by the field look's tests. The majority-filtered fit, `SurfaceTuning::normal_field`,
+  `cube_hits` and `cubes-field` were removed in Plan 0054 Phase 4c (2bca6e4).
+- **Public API changed:** none left (every addition of Phases 2 and 3 removed in 2bca6e4).
+- **Budget readings:** the Phase 2 and Phase 3 tables in this log, superseded by Plan 0054's;
+  none in `docs/nfr.md`.
+- **Gate at the tip:** Plan 0054's (this plan closes with it on branch `plan-0054`; that plan's
+  close triggers).
+- **Outstanding `human` phases:** none (Phase 4 done; Phase 5 subsumed by Plan 0054).
 
 ## Followups
