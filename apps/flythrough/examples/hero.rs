@@ -565,18 +565,17 @@ mod tests {
         }
         let all = parse(&["--shot", "all"]).unwrap();
         assert_eq!(all.shots, Shots::All);
-        let names: Vec<String> = all
-            .stills(VoxelCoord([0; 3]))
-            .iter()
-            .map(|s| s.path.display().to_string())
-            .collect();
+        // Compared as paths, not strings: `PathBuf::join` writes the platform separator, so the
+        // display form differs on Windows while the components are the same.
+        let stills = all.stills(VoxelCoord([0; 3]));
+        let paths: Vec<&Path> = stills.iter().map(|s| s.path.as_path()).collect();
         assert_eq!(
-            names,
+            paths,
             [
-                "target/hero/hero-hall.png",
-                "target/hero/hero-chasm.png",
-                "target/hero/hero-crystals.png",
-                "target/hero/hero-hall-spacing16.png"
+                Path::new("target/hero/hero-hall.png"),
+                Path::new("target/hero/hero-chasm.png"),
+                Path::new("target/hero/hero-crystals.png"),
+                Path::new("target/hero/hero-hall-spacing16.png")
             ]
         );
         assert_eq!(

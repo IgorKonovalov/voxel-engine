@@ -3,9 +3,9 @@
 // GPU device, and names nothing else.
 //
 // The test tiers (Plan 0043) split the suite into `quick` (CPU only, no perf lock), `gpu` and
-// a slow list. `quick` is `not (GPU) and not (SLOW)`, so a GPU test file the gpu filter does
-// not match lands in the quick tier: it runs on lavapipe without the perf lock, on every dev
-// phase of every lane. Nothing in nextest notices. This gate does.
+// a soak list of long series. `quick` is `not (GPU) and not (SOAK)`, so a GPU test file the gpu
+// filter does not match lands in the quick tier: it runs on lavapipe without the perf lock, on
+// every dev phase of every lane. Nothing in nextest notices. This gate does.
 //
 // A test file is GPU when it, or a `support` module it declares (`mod support;`), names a
 // device entry point. Two more kinds of test binary are scanned, by their `#[cfg(test)]` items
@@ -26,8 +26,9 @@
 // `binary_id(<package>::<test>)` for one integration-test binary and
 // `(package(<package>) - kind(lib))` for every integration-test binary of a package. The
 // `quick` profile's default-filter must start with `not (<gpu>)` and the `gpu` profile's with
-// `(<gpu>)`, verbatim, and both must end with `and not (<slow>)`, where <slow> is another
-// default-profile override's filter, the same in both. A list edited in one place and not the
+// `(<gpu>)`, verbatim, and both must end with `and not (<soak>)`, where <soak> is another
+// default-profile override's filter, the same in both; the `gate` profile's default-filter must
+// be `not (<soak>)` and the `soak` profile's `(<soak>)`. A list edited in one place and not the
 // others is a finding too.
 //
 // Usage:  node scripts/check-test-tiers.mjs [root]
@@ -175,8 +176,9 @@ if (leftover) {
   findings.push(`${CONFIG} -> the gpu filter has a term this gate cannot read: ${leftover}`);
 }
 
-// The copies in the quick and gpu profiles: `not (<gpu>) and not (<slow>)` and
-// `(<gpu>) and not (<slow>)`, the slow list being another default-profile override's filter.
+// The copies in the quick and gpu profiles: `not (<gpu>) and not (<soak>)` and
+// `(<gpu>) and not (<soak>)`, the soak list being another default-profile override's filter;
+// then the gate and soak profiles, `not (<soak>)` and `(<soak>)`.
 const copies = [
   ["quick", `not (${gpu})`, "not (<gpu>)"],
   ["gpu", `(${gpu})`, "(<gpu>)"],
@@ -190,15 +192,28 @@ for (const [profile, prefix, shown] of copies) {
     );
     continue;
   }
-  const slow = /^ and not \((.*)\)$/.exec(df.slice(prefix.length))?.[1];
-  if (slow === undefined || !overrideFilters.includes(slow)) {
+  const soak = /^ and not \((.*)\)$/.exec(df.slice(prefix.length))?.[1];
+  if (soak === undefined || !overrideFilters.includes(soak)) {
     findings.push(
-      `${CONFIG} -> [profile.${profile}] default-filter does not end with \`and not (<slow>)\`, the slow override's filter copied verbatim`,
+      `${CONFIG} -> [profile.${profile}] default-filter does not end with \`and not (<soak>)\`, the soak override's filter copied verbatim`,
     );
-  } else tails.push(slow);
+  } else tails.push(soak);
 }
 if (tails.length === 2 && tails[0] !== tails[1]) {
-  findings.push(`${CONFIG} -> the quick and gpu profiles exclude different slow lists`);
+  findings.push(`${CONFIG} -> the quick and gpu profiles exclude different soak lists`);
+}
+if (tails.length === 2 && tails[0] === tails[1]) {
+  const soak = tails[0];
+  for (const [profile, expected, shown] of [
+    ["gate", `not (${soak})`, "not (<soak>)"],
+    ["soak", `(${soak})`, "(<soak>)"],
+  ]) {
+    if (defaults.get(profile) !== expected) {
+      findings.push(
+        `${CONFIG} -> [profile.${profile}] default-filter is not ${shown}: copy the soak override's filter into it verbatim`,
+      );
+    }
+  }
 }
 
 // Every integration-test file: tests/*.rs of a crate or app.

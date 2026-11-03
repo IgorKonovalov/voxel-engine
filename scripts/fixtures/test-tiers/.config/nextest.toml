@@ -8,10 +8,16 @@ test-group = 'lavapipe'
 
 [[profile.default.overrides]]
 filter = 'test(=slow_one)'
-slow-timeout = { period = "60s" }
+slow-timeout = { period = "600s" }
 
 [profile.quick]
 default-filter = 'not ((package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)) and not (test(=slow_one))'
 
 [profile.gpu]
 default-filter = '((package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)) and not (test(=slow_one))'
+
+[profile.gate]
+default-filter = 'not (test(=slow_one))'
+
+[profile.soak]
+default-filter = '(test(=slow_one))'

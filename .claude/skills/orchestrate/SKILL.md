@@ -46,6 +46,9 @@ prompt.
   its resume notes.
 - **Quiet windows:** when the owner leaves the machine idle, tell the lanes that owe quiet
   readings to take them now, with nothing else building.
+- **State the lane count in every lane prompt** (lane rules 4 and 5): at one or two lanes the
+  agents build with 12 jobs under a 16 GiB cap; at three or more, 4 jobs under 6 GiB. Tell the
+  running lanes when the count crosses two.
 - Keep the owner informed in short lines: what each lane is doing and what waits on them.
   Batch questions and window checks; don't ask one at a time.
 
@@ -72,25 +75,31 @@ prompt.
   `merge: main into plan-NNNN (...)`. That code work is the lane's, not the orchestrator's;
   the merge into main stays the orchestrator's.
 - After the last dev phase and the owner's check, a **fresh** architect agent runs the close
-  review (architect Mode 4) in the lane's worktree. It runs the full tier itself, and on a
+  review (architect Mode 4) in the lane's worktree. It runs the gate tier itself, and on a
   clean review it does the close ceremony on the branch. Findings go back to a dev agent as a
   fix pass.
-- **The full tier runs once per plan, in the close review (owner, 2026-10-30).** The lane
-  gates every phase with the quick tier and the GPU phases with the gpu tier, and its
-  close-out confirms both at the final tip; the review's run on the tree that already holds
-  main is the plan's one `--profile full`. The merge into main does not repeat it unless the
-  merge had a conflict. A fix pass after the review reruns only what the findings touched,
-  and the review reruns the full tier once more on the fixed tip.
+- **The gate tier (`--profile gate`, everything but the soak list) is the most any step runs
+  (owner, 2026-11-03).** The lane gates each phase with `scripts/test-changed.mjs` (quick, and
+  gpu under the lock for a render change), its close-out confirms the gate tier at the tip,
+  and the review's run on the tree that already holds main is the plan's one gate run. The
+  merge into main does not repeat it unless the merge had a conflict. A fix pass after the
+  review reruns only what the findings touched. The soak and full tiers run only when the
+  owner asks for one, with the reason.
+- **Read CI before you merge.** `gh run list --branch main --limit 1` from the main checkout:
+  a red run on main is a task handed to a lane (a fix pass, or a chore lane) and named to the
+  owner in the merge note, never left for the next merge to inherit. Six red runs went
+  unread between 2026-10-28 and 2026-11-01.
 - Merge from the main checkout: `git merge --no-ff --no-commit plan-NNNN`, resolve, run the
-  three doc gates, then commit `merge: plan-NNNN into main (<what>, vX.Y.Z)`.
+  four doc gates (links, comment hygiene, index rows, plan size), then commit
+  `merge: plan-NNNN into main (<what>, vX.Y.Z)`.
   - Index conflicts: keep both sides' rows in number order. Next-free numbers are the higher
     of the two.
   - Plans that moved to `done/` break links in other plans; the link gate finds them.
   - When resolving with a script, read every file before writing it.
   - **Gate the merged tree before committing.** Always: build, clippy and the quick tier
     (minutes, no lock), because a clean textual merge can still fail to compile (a constant
-    one lane removed and another lane's new test uses). The full tier only when the merge had
-    a conflict: `cargo nextest run --workspace --profile full --no-fail-fast` under the perf
+    one lane removed and another lane's new test uses). The gate tier only when the merge had
+    a conflict: `cargo nextest run --workspace --profile gate --no-fail-fast` under the perf
     lock, after `scripts/build-guests.sh`, with `set -o pipefail` so a `| tail` can't hide a
     failure. The lane merged main into itself before its review, so the merge into main is
     normally conflict-free and already reviewed on that tree.
@@ -101,6 +110,7 @@ prompt.
 
 ## Memory and state
 
-- Lane state that must survive a reboot lives in the plan's Implementation log and the
-  worktree, not in memory. Memory holds the owner's decisions and pointers.
+- Lane state that must survive a reboot lives in the plan's readings log
+  (`docs/plans/logs/NNNN.md`) and the worktree, not in memory. Memory holds the owner's
+  decisions and pointers.
 - `.git/dev-batch-common.md` is superseded by `references/lane-rules.md`.

@@ -46,7 +46,9 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
 - **Done when:** A concrete behavioral acceptance. For tests, state the claim they defend
   ("a radius-10 sphere carve at the origin of a solid material-3 world returns
   `{3: 4169}` and leaves voxel (0,0,10) solid"), not "tests pass". Every numeric value is
-  worked out, not guessed, or stated as a property.
+  worked out, not guessed, or stated as a property. Each test names its expected wall time
+  on lavapipe; one over 30 s is born on the soak list (`.config/nextest.toml`) and is not a
+  gate.
 
 ### Phase 2: <name>
 …
@@ -82,7 +84,9 @@ Scope cuts, naming future plans or milestones where possible.
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
 > above are the contract. This section records what happened.** Observations, never conclusions:
 > no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
-> Keep it shorter than `## Implementation phases`.
+> Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
+> resume notes go to the plan's readings log, `docs/plans/logs/NNNN.md` (started from
+> `templates/readings-log.md`), and this section links it once it exists.
 
 | phase | owner | state | commit |
 |---|---|---|---|

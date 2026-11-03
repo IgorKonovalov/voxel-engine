@@ -12,9 +12,9 @@ the milestone sequence in `docs/roadmap.md`, the budgets in `docs/nfr.md`.
 
 > **Stack (ADR-0001):** Rust stable pinned in `rust-toolchain.toml`, edition 2024, `wgpu` +
 > WGSL compute ray marching, `winit` shell, Linux + Windows. Canonical commands: `cargo build`,
-> `cargo nextest run --profile quick|gpu|full` (`.config/nextest.toml`: CPU-only per phase,
-> render tests under the perf lock, everything once per plan in the close review; bare `run`
-> is full),
+> `node scripts/test-changed.mjs --profile quick|gpu` per phase (the changed crates' tests;
+> gpu under the perf lock), `cargo nextest run --profile gate` at a plan's tip and close
+> (`.config/nextest.toml`; `soak` and `full` only when the owner asks; bare `run` is full),
 > `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
 > `cargo deny check`.
 
@@ -61,7 +61,8 @@ docs/
 │   └── README.md    #   ADR index + next free number
 ├── plans/           # NNNN-<slug>.md: phased implementation plans
 │   ├── README.md    #   Plans index + next free number. Read this each session
-│   └── done/        #   Closed plans move here (architect close ceremony)
+│   ├── done/        #   Closed plans move here (architect close ceremony)
+│   └── logs/        #   NNNN.md: a plan's readings, attempts and resume notes; stays put at close
 └── references/      # annotated external sources (papers, talks, repos) a plan cites by title.
                      #   local/ (gitignored) holds saved copies of some reference material
 .claude/
@@ -78,6 +79,10 @@ scripts/
 ├── check-comment-hygiene.mjs  # no relative link or plan-relative narration in .rs/.wgsl comments
 ├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
 ├── check-test-tiers.mjs       # every test file that opens a GPU device is in .config/nextest.toml's gpu filter
+├── check-plan-size.mjs        # a plan's Implementation log (0055 on) stays under 150 lines, no resume notes in it
+├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
+├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
+├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
 .github/workflows/ci.yml  # build, nextest, doctests, clippy, fmt, hooks, doc gates; cargo-deny
 ```
@@ -100,7 +105,7 @@ interview -> ADR (if a real tradeoff) -> phased plan -> "go" -> dev implements a
 
 - **The architect designs and `dev` builds. Never invert.** The architect writes no production
   code. `dev` writes no plans or ADRs. Inside a plan, `dev` edits only the `Status:` line and the
-  `## Implementation log`.
+  `## Implementation log`, plus the plan's readings log under `docs/plans/logs/`.
 - **Every handoff is manual.** The user's "go" is the approval. The close review runs in a
   **fresh session**, because a review from inside the session that wrote the code is worthless.
   No skill auto-invokes another.
