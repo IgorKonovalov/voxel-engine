@@ -46,6 +46,10 @@ measurement:
 | Upscale, tone map, post | 1.5 ms |
 | Headroom (entities, volumetrics, game work) | 2.1 ms |
 
+The upscale line is over under the fly-through's FSR 2 default since Plan 0055: 2.932 to 2.958 ms on
+the RTX 3080 Laptop, 9.967 to 9.983 ms on the RADV RENOIR. The close keeps the line and records the
+reading; the default stands on the owner's eye.
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 
@@ -383,7 +387,8 @@ Every reading against these budgets, with its machine and commit, is in
   the default look still failed at 121.055 s against its 120 s bound, and each `mirror`
   attribute test still passed nextest's 90 s slow marker (15.3 s for the three at 578c8d3,
   152.8 to 158.2 s under FXC after Plan 0028), so WARP's cost is the attribute pass's
-  execution; the test runs `--look plain` there. The Windows `cargo build --workspace` step
+  execution. The test then ran `--look plain` there, a look Plan 0055 removed; it runs the
+  default look now, which has no attribute pass. The Windows `cargo build --workspace` step
   delta is not read: the merge run's cache key changed with the lockfile.
 
 ## 8. Collision and coarse grids

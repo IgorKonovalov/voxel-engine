@@ -1,6 +1,6 @@
 # ADR-0011: Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail
 
-> **Status:** accepted (2026-10-16); contour surface superseded by ADR-0041 (2026-11-03), procedural per-material detail stays
+> **Status:** accepted (2026-10-16); contour surface superseded by ADR-0041 (2026-11-03), procedural per-material detail removed by Plan 0055 (2026-11-03; see Outcome)
 > **Date:** 2026-10-16
 > **Related plan(s):** [Plan 0005](../plans/done/0005-surface-look-spike.md) (the spike this
 > decision is written from; its comparison table is the evidence)
@@ -218,3 +218,10 @@ Laine & Karras 2010, sections 3.2 to 3.4):
 - **Their cure for corners was more planes per voxel from the hierarchy**, each voxel's
   shape being the intersection of its cube with its ancestors' contours. Without enclosing
   planes, intersecting more of them only removes more material (ADR-0040, Alternative A).
+
+**2026-11-03, Plan 0055's close (v0.40.0): the procedural per-material detail is removed, and
+nothing of this decision remains in the tree.** The owner's baseline read it as a blur under the
+headlamp, and removing it saves about 0.08 ms at the showcase pose, so this was a look call, and
+only rock used it. `Material::detail`, `Material::detail_fine`, the flag bits, the tilt and the lamp
+ratio are gone. The material row keeps its GPU layout: the detail lanes are written zero and named
+spare. We rejected defaulting it off: it saves nothing and is code to maintain.

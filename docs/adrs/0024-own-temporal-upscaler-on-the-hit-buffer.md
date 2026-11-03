@@ -156,3 +156,9 @@ this upscaler in a window, and the owner made this upscaler at scale 1.5, jitter
 fly-through's default ("I'm for own 1.5 - there is not much difference with fsr anyways").
 The library's `Frame` still defaults to Plan 0024's frame. The readings and the ruling are in
 ADR-0034's Outcome.
+
+**2026-11-03, Plan 0055's close (v0.40.0):** this upscaler is no longer the fly-through's default.
+FSR 2 at scale 1.5 is; `--upscaler own` and `F10` still select this one, jittered. The cause the
+plan names is that this pass blends display-encoded colour after the tone map, which brightens and
+widens thin emissive seams, and FSR 2 blends linear light before it. Removing this upscaler stays
+with Plan 0045. ADR-0034's Outcome holds the readings and the ruling.

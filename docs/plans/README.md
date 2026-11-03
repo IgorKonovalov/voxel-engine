@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0056** (ADRs are a separate sequence; next free there is **0042**).
+**Next free number: 0056** (ADRs are a separate sequence; next free there is **0043**).
 
 ## Active roster
 
@@ -20,7 +20,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, so after Plan 0051 and before M10. |
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0051 and the plan its ADR names, if any; before Plan 0032. |
 | [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 4. Amended 2026-11-03. After 0055; 0048, 0032 wait. |
-| [0055](0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md) | The clarity pass before 0051: procedural detail removed, FSR 2 at 1.5 the default, a spike for a footprint-blended far normal | approved, not started | M2, no new ADR (0042 if Phase 4 keeps the blend). First, alone; 0051 after it. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -28,6 +27,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0055](done/0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md) | The clarity pass: procedural detail gone, FSR 2 at 1.5 the default, the far normal on at `[2, 6]` (provisional) | 2026-11-03, v0.40.0 |
 | [0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Abandoned by the owner: its Phase 1 readings kept in the plan, its rig under tag `archive/plan-0049`; Plan 0051 takes the work | 2026-11-03, abandoned |
 | [0054](done/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md) | Honest cubes the default, the planes gone (hit plus light 1.397 ms, mirror 60 % smaller at the level); the field surface built and kept opt-in | 2026-11-03, v0.39.0 |
 | [0053](done/0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md) | One-voxel features: a box metric kept; the majority fit and the normal field failed the eye and are gone; ADR-0040 rejected | 2026-11-03, v0.39.0 |

@@ -200,7 +200,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0053 and 0054 closed)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0053, 0054 and 0055 closed)
 
 Plans 0053 and 0054, the surface-look decision, closed 2026-11-03 (v0.39.0, ADR-0041 accepted
 with an Outcome, ADR-0040 rejected): the majority fit and the normal field failed the owner's
@@ -222,6 +222,15 @@ off by default, at about 3x the cubes' GPU frame in the owner's window. Whether 
 it is Plan 0034's question.
 Amended 2026-11-01 (owner, Plan 0054 owner answer 14): cubes meet M2's surface-look goal;
 the field is a quality option revisited per material class, liquids first.
+
+Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
+ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
+tree. FSR 2 at scale 1.5 is the fly-through's default, and our upscaler is opt-in. A far shading
+normal blends the face normal to the 27-count gradient by the voxel's size on screen, on by default
+at `[2, 6]`, the owner's provisional pick, reopened after Plan 0051. FSR 2 stands on the owner's
+word ("fsr2 stays", "fsr2 stays counts"); the scripted slow pan did not run. Upscale reads 2.93 to
+2.96 ms on the RTX 3080 Laptop against section 2's 1.5 ms line, and the showcase frame on the RADV
+RENOIR reads 55 ms. Plan 0051 reads its light bars on this look.
 
 Plan 0047, still emissive light, closed 2026-10-29 (v0.36.0, ADR-0036 accepted with an
 Outcome): the emissive part of the temporal pass accumulates in `f32` over a 256-frame
