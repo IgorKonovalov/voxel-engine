@@ -1,9 +1,9 @@
 # 0056: The aliasing spike: what moves on the final image with the light held still, read by class, and one window for FSR 2, `own`, native and the far normal
 
-> **Status:** draft (2026-11-03), for the owner's review; no phase starts before the owner's "go"
+> **Status:** approved (2026-11-03), not started; the lane starts at Plan 0051's Phase 4 verdict
 > **Created:** 2026-11-03
+> **Approved:** 2026-11-03 (owner): "approve, go with recommended". See Owner answers.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler bullets).
-> The roadmap's order changes when this plan is approved, not at draft.
 > **Related ADRs:** [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)
 > (FSR 2 the default; "fsr2 stays counts" stands, and this spike brings readings, not a reversal),
 > [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (`own`, opt-in),
@@ -171,7 +171,7 @@ The owner's order is Plan 0051, its verdict plan, Plans 0044, 0045, 0048, then M
 - **The window needs the verdict's light.** Phases 1 and 2's `E` arms need nothing from Plan 0051; the
   `H` arms and Phase 4 do, because the far normal was judged through a wander once already.
 - **Relation to the verdict plan:** read-only against it. It builds the light; this reads the image
-  through it. Its tests may take `T`, `L` and `C` as display-level bars. See Question 1.
+  through it. Its tests may take `T`, `L` and `C` as display-level bars (Owner answers, 1).
 - **Relation to Plan 0044:** that plan removes waste with no change of behaviour, and counts FSR 2's
   per-frame `prepare` and `gradient27_normal` on default pixels, both provisional on the choices made
   here. Reading first saves it re-reading.
@@ -362,7 +362,7 @@ tier gates need no new entry.
   target/release/flythrough --level --seed 1 --pose vein --lamp off --hud <L>
   target/release/flythrough --level --seed 1 --pose vein --lamp off --hud --pan 1.1 <L>
 
-  # 6. FSR 2 as antialiasing at full rate, if the owner kept it (Question 2).
+  # 6. FSR 2 as antialiasing at full rate (Owner answers, 2).
   target/release/flythrough --source showcase --shot hall --exposure 8 --hud --pan 1.1 \
       --upscaler fsr2 --internal-scale 1 --far-normal 3,9 <L>
   ```
@@ -427,17 +427,16 @@ section 7. None is near it.
 - **Determinism, threading:** nothing touches `vxe-world`. GPU memory: `R` at 2160 is a larger frame; the
   runs hold the perf lock and the memory cap.
 
-### Questions for the owner
+## Owner answers
 
-1. **When does it start?** (a) **Recommended: right after Plan 0051's Phase 4 verdict, before the verdict
-   plan's mechanisms land.** `--steady` is on main by then, and the verdict plan can take a display-level
-   bar from it. (b) After the verdict plan closes: the window then shows the shipped light, but the verdict
-   plan gets no such bar, and the owner's first aliasing answer comes one plan later. (c) Phases 1 and 2 now,
-   beside Plan 0051, since `E` needs nothing from it: the sooner answer, but the lanes contend for the RTX,
-   and the `H` arms need re-reading later.
-2. **Is full-rate FSR 2 worth reading?** (a) **Recommended: yes, read it and show it (run 6),** since the
-   owner said "by any means possible". It reads what more rays per output pixel buy, at a guessed doubling
-   that the RTX can pay at 1080p and the Radeon cannot. (b) No: it stays out, one reading and one run fewer.
+The owner, 2026-11-03: "approve, go with recommended".
+
+1. **The start.** Right after Plan 0051's Phase 4 verdict, before the verdict plan's mechanisms land.
+   `--steady` is on main by then, and the verdict plan can take a display-level bar from it. Rejected: after
+   the verdict plan closes (no such bar, and the first aliasing answer one plan later); Phases 1 and 2 now
+   beside Plan 0051 (the lanes contend for the RTX, and the `H` arms need re-reading later).
+2. **Full-rate FSR 2 is read and shown (run 6),** since the owner said "by any means possible". It reads what
+   more rays per output pixel buy, at a guessed doubling that the RTX can pay at 1080p and the Radeon cannot.
 
 ## What this plan does NOT do
 

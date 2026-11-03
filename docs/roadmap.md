@@ -455,7 +455,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   2026-10-28): the clamp cuts the probe rays' direct light about 8.5 % low in the furnace.
   Plan 0048 (approved 2026-10-28, ADR-0037 proposed) measures probe-only schemes against pi,
   keeps the winner and today's clamp, and returns the furnace test to pi. The order is Plan
-  0051, its verdict plan, Plans 0044 and 0045, Plan 0048 if it stands, then M10 (amended
+  0051, Plan 0056 (the aliasing spike) from the verdict, the verdict plan, Plans 0044 and 0045, Plan 0048 if it stands, then M10 (amended
   2026-11-03, owner): 0048 holds whatever settle, dot and shimmer tests the verdict plan asserts.
 - Indirect light that settles fast, light that holds still in flight, and young pixels
   without dots (the owner at Plan 0047's windowed check, 2026-10-28 and 2026-10-29): seconds
@@ -646,7 +646,7 @@ show it). Owner's interview, 2026-10-22: outdoors is a general capability, the v
 about 1 km, liquids render first and flow later, and the sky and weather are fully dynamic but
 set by the game, never by a wall clock in the engine.
 
-**Order (owner, 2026-11-03):** Plan 0051, its verdict plan, Plans 0044 and 0045, Plan 0048 if it
+**Order (owner, 2026-11-03):** Plan 0051, Plan 0056 (the aliasing spike) from its verdict, the verdict plan, Plans 0044 and 0045, Plan 0048 if it
 stands (the verdict shrinks it to scheme A or C, or drops it), then this milestone. Its first plan
 is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
 the budget and comes before Plan 0032. It is owed, not drafted, and takes its number when it is.
