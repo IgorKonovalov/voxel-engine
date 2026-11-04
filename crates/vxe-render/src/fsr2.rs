@@ -65,6 +65,24 @@ pub struct Fsr2Settings {
     pub reactive_light: f32,
     /// FSR's `viewSpaceToMetersFactor`: the world's voxel edge in metres.
     pub metres_per_voxel: f32,
+    /// The jitter sequence's phase count; `None` is FSR's own, [`jitter_phases`].
+    pub jitter_phases: Option<u32>,
+    /// A cap on an emitting hit's pre-exposed colour into FSR: the composite scales such a
+    /// pixel so that its largest channel is at most this; `None` is no cap.
+    pub emitter_cap: Option<f32>,
+    /// The tone pass adds a static blue-noise dither of one 8-bit level to the shaded view: the
+    /// frame's blue-noise texel at the pixel (tiled), less a half, over 255. It reads no frame
+    /// index, so it holds still on a still image.
+    pub dither: bool,
+}
+
+impl Fsr2Settings {
+    /// The phase count for a `render_width` image shown `display_width` wide: the setting's,
+    /// at least 1, else [`jitter_phases`].
+    pub fn phases(&self, render_width: u32, display_width: u32) -> u32 {
+        self.jitter_phases
+            .map_or_else(|| jitter_phases(render_width, display_width), |n| n.max(1))
+    }
 }
 
 impl Default for Fsr2Settings {
@@ -74,6 +92,9 @@ impl Default for Fsr2Settings {
             reactive_translucent: 1.0,
             reactive_light: 1.0,
             metres_per_voxel: 0.1,
+            jitter_phases: None,
+            emitter_cap: None,
+            dither: false,
         }
     }
 }
@@ -929,7 +950,7 @@ impl Fsr2 {
             pre_exposure,
             previous_pre_exposure: if reset { pre_exposure } else { *prev },
             tan_half_fov: tan_h,
-            jitter_sequence_length: jitter_phases(w, self.res.display[0]) as f32,
+            jitter_sequence_length: self.settings.phases(w, self.res.display[0]) as f32,
             delta_time: dt,
             dynamic_res_change: 0.0,
             view_space_to_meters: self.settings.metres_per_voxel,

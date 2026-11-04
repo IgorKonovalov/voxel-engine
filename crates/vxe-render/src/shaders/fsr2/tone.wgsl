@@ -9,6 +9,9 @@
 //                                   composite's linear colour (equal sizes)
 //   1  storage texture   tone_out   rgba8unorm: the frame's image
 //
+// With `params.dither` the shaded view takes a static blue-noise dither of one level
+// (march.wgsl's `blue_noise`, tiled; no frame index, so a still image holds still).
+//
 // Every view but the shaded one reaches the upscaler already in display values and is stored
 // as it comes, clamped to [0, 1].
 
@@ -40,6 +43,11 @@ fn tone(@builtin(global_invocation_id) gid: vec3<u32>) {
     var out = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
     if (view_mode() == VIEW_SHADED) {
         out = tone_display(c);
+        if (params.dither != 0u) {
+            // A static dither of one level: the blue-noise texel at the pixel, centred.
+            let n = textureLoad(blue_noise, px % vec2<i32>(128), 0).x;
+            out = clamp(out + (n - 0.5) / 255.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        }
     }
     textureStore(tone_out, px, vec4<f32>(out, 1.0));
 }

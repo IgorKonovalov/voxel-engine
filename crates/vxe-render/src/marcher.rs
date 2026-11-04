@@ -101,7 +101,15 @@ pub struct Params {
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
     pub _pad9: u32,
+    /// [`Fsr2Settings::emitter_cap`] while FSR 2 runs unbypassed; 0 is no cap.
+    pub emitter_cap: f32,
+    /// 1: [`Fsr2Settings::dither`] while FSR 2 runs unbypassed.
+    pub dither: u32,
+    /// Pads the block to a multiple of 16 bytes, as the shaders' struct is.
+    pub _tail: [u32; 2],
 }
+
+const _: () = assert!(size_of::<Params>().is_multiple_of(16));
 
 /// `Params::lighting` bit: the headlamp lights the frame.
 pub const LIGHTING_LAMP: u32 = 1;
@@ -2609,10 +2617,15 @@ impl Frame {
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
-        let jitter = if self.fsr.as_ref().is_some_and(|f| !f.bypassed()) {
+        let fsr = self
+            .fsr
+            .as_ref()
+            .filter(|f| !f.bypassed())
+            .map(Fsr2::settings);
+        let jitter = if let Some(f) = self.fsr.as_ref().filter(|f| !f.bypassed()) {
             // FSR's sample of pixel p lies at p + 0.5 - offset (`fsr2::jitter_offset`).
             let [w, _] = self.internal_size();
-            let [x, y] = jitter_at(self.frame, crate::fsr2::jitter_phases(w, self.output[0]));
+            let [x, y] = jitter_at(self.frame, f.settings().phases(w, self.output[0]));
             [-x, -y]
         } else if self.jitter {
             jitter_at(self.frame, JITTER_PHASES)
@@ -2651,6 +2664,8 @@ impl Frame {
             cache_mask: (self.cache.size() / (CACHE_CELL_WORDS * 4)) as u32 - 1,
             cache: self.lighting.cache_word(),
             fill: self.lighting.fill_word(),
+            emitter_cap: fsr.and_then(|f| f.emitter_cap).unwrap_or(0.0),
+            dither: u32::from(fsr.is_some_and(|f| f.dither)),
             output_size: if self.upscaling() {
                 self.output
             } else {

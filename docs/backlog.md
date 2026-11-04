@@ -62,18 +62,19 @@ separate and live-versus-restart is undocumented. What it takes: a best-practice
 mechanism lands as a documented setting, and a plan for the settings surface and the profiles.
 The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
 
-### Far normal range: provisional pick
+### Far normal range: the owner picked `[1, 2]`
 
-Plan 0055 shipped the far normal at `[2, 6]` as the owner's provisional pick ("difficult to say
-with problematic lighting"). It costs about 1.5 ms of hit on the RTX and 6.6 ms of frame on the
-RADV showcase against `[1, 2]`'s 0.4 and 2.5. Re-open in a window once Plan 0057's steady light
-is in; the owner judges in the app, not from strips.
+Plan 0055 shipped `[2, 6]` as a provisional pick. Plan 0056's window (2026-11-04) picked `[1, 2]`
+by eye, against a headless reading of about 7 times `[2, 6]`'s still jumps under FSR 2, and
+named the edge dots left at `[1, 2]` the next aliasing item. Owed: a plan whose first phase
+makes `[1, 2]` the default with ADR-0042's Outcome, then the edge dots, and removes the emitter
+cap knob (Plan 0056's Followups). Draft it after Plan 0057's merge.
 
 ### Slow-pan verdict for FSR 2 (ADR-0034)
 
-The slow pan that ADR-0034 named as the verdict for FSR 2 against our upscaler never ran. Plan
-0055 made FSR 2 the default anyway. Owed to a window session after the steady light lands: run the
-slow pan once and record the verdict in ADR-0034's Outcome.
+The slow pan ADR-0034 named as FSR 2's verdict ran in Plan 0056's window (2026-11-04, steps 2
+and 5b), and the owner's word was "FSR 2 at 1.5 stays". Owed: ADR-0034's dated Outcome, written
+with the far-normal plan above.
 
 ## Tooling and process
 

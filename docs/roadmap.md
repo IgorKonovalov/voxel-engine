@@ -201,7 +201,18 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054 and 0055 closed; 0049 abandoned)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055 and 0056 closed; 0049 abandoned)
+
+Plan 0056, the aliasing spike, closed 2026-11-04 (v0.42.0, no ADR): it read the final image
+under an eye lamp that cannot move. FSR 2's frame-to-frame jumps at 1.5 sit on silhouettes and
+emitters, are locked to its jitter and survive the frozen light, so they are the upscaler's,
+not the light's; native holds bit-identical. The floor's rings are its 1-voxel terraces, and the
+small yellow dots on fast turns are light on creases, mostly new each frame (handed to Plan
+0057). Candidates stay opt-in knobs. The owner's window kept FSR 2 at 1.5, picked far normal
+`[1, 2]` by eye (about 7 times `[2, 6]`'s still jumps headless, recorded beside it), called the
+emitter cap a fault, and routed the remaining complaint, slow light settle, to Plan 0057 as a
+camera-radius preload. Owed: a plan whose first phase makes `[1, 2]` the default with
+ADR-0042's Outcome and whose next item is the edge dots left at `[1, 2]`, after Plan 0057.
 
 Plans 0053 and 0054, the surface-look decision, closed 2026-11-03 (v0.39.0, ADR-0041 accepted
 with an Outcome, ADR-0040 rejected): the majority fit and the normal field failed the owner's
@@ -244,7 +255,7 @@ Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outc
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
 tree. FSR 2 at scale 1.5 is the fly-through's default, and our upscaler is opt-in. A far shading
 normal blends the face normal to the 27-count gradient by the voxel's size on screen, on by default
-at `[2, 6]`, the owner's provisional pick, reopened in Plan 0056. FSR 2 stands on the owner's
+at `[2, 6]`, the owner's provisional pick, reopened in Plan 0056 (its window picked `[1, 2]`). FSR 2 stands on the owner's
 word ("fsr2 stays", "fsr2 stays counts"); the scripted slow pan did not run. Upscale reads 2.93 to
 2.96 ms on the RTX 3080 Laptop against section 2's 1.5 ms line, and the showcase frame on the RADV
 RENOIR reads 55 ms. Plan 0051 reads its light bars on this look.
@@ -669,7 +680,8 @@ set by the game, never by a wall clock in the engine.
 
 **Order (owner, 2026-11-03):** Plan 0051, Plan 0056 (the aliasing spike) from its verdict, the verdict plan, Plans 0044 and 0045, Plan 0048 if it
 stands (the verdict shrinks it to scheme A or C, or drops it), then this milestone. As of
-2026-11-04: 0051 is closed, the verdict plan is Plan 0057 (beside 0056), and 0048 was dropped under
+2026-11-04: 0051 and 0056 are closed, the verdict plan is Plan 0057, the far-normal plan Plan 0056
+owes comes after it, and 0048 was dropped under
 ADR-0043 (owner, 2026-11-04). Its first plan
 is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
 the budget and comes before Plan 0032. It is owed, not drafted, and takes its number when it is.

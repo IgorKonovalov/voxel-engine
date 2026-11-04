@@ -1,22 +1,22 @@
 # 0056: The aliasing spike: what moves on the final image with the light held still, read by class, and one window for FSR 2, `own`, native and the far normal
 
-> **Status:** approved (2026-11-03), not started; the lane starts at Plan 0051's Phase 4 verdict
+> **Status:** done (closed 2026-11-04, v0.42.0): clean review. The jumps are FSR 2's jitter on silhouettes and emitters, not light; the dots are light on creases; the owner keeps FSR 2 at 1.5 and picks far normal `[1, 2]` by eye, the next plan's first phase
 > **Created:** 2026-11-03
 > **Approved:** 2026-11-03 (owner): "approve, go with recommended". See Owner answers.
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler bullets).
-> **Related ADRs:** [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look and upscaler bullets).
+> **Related ADRs:** [ADR-0034](../../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)
 > (FSR 2 the default; "fsr2 stays counts" stands, and this spike brings readings, not a reversal),
-> [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (`own`, opt-in),
-> [ADR-0042](../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
+> [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (`own`, opt-in),
+> [ADR-0042](../../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
 > (the far normal; `[2, 6]` is provisional, "reopened after Plan 0051": this plan is that reopen).
 > No ADR at draft: see Decision.
 > **Source:** the owner, 2026-11-03: "yes, draft the aliasing spike", and "the main thing that I
 > care about for now is a stable image without any flicker or aliasing artiacts. we move towards
 > this image by any means possible, considering performance of course."
-> ([`LIGHT-FEEDBACK.md`](../../LIGHT-FEEDBACK.md), "What the owner wants" and "The hero that never
+> ([`LIGHT-FEEDBACK.md`](../../../LIGHT-FEEDBACK.md), "What the owner wants" and "The hero that never
 > settled".)
-> **Starts after:** [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
-> Phase 4 verdict, and before [Plan 0044](0044-hot-path-and-defect-pass.md). See "Where it sits".
+> **Starts after:** [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
+> Phase 4 verdict, and before [Plan 0044](../0044-hot-path-and-defect-pass.md). See "Where it sits".
 
 ## TL;DR
 
@@ -266,6 +266,13 @@ tier gates need no new entry.
   the first three upscalers, far normal on and off; ADR-0042 says that it was never judged there. At
   the window's size, 2530 x 1378 (17 phases): the default alone. `D` under `E`, FSR 2 and native, at
   the hall.
+  **Amended 2026-11-04 (owner): the level's fast motion on the verdict's light.** Plan 0051's verdict
+  is `--steady b --indirect off` (the lamp exact, the emissive from the world-space table, no indirect
+  gather; this branch holds it), so at the level `H` is that light, lamp off. Beside the slow pan, a
+  fast yaw at ten times its rate (ten pixels a frame; `C` lags by that shift) at `vein` and `patch`,
+  under `H` and under `E`, FSR 2 at 1.5 and native: the owner saw small yellow dots on fast turns and
+  flights in every arm of Plan 0051's session, hall and level, and no arm removed them. They get a row
+  in the class table. A flight is still not read headless: the owner flies in Phase 4, on this light.
 - **The rings,** at the hall's floor and the level's `patch`:
   - **R1:** the z-level map (`floor(p.z)` parity from `hit_positions`) written beside the crop; the share
     of ring-edge pixels within 1 pixel of a z-level change. At the hall, the CPU's `floor_at` contours
@@ -290,6 +297,9 @@ tier gates need no new entry.
   4. **Every row of the class table has its answer in the log,** in one line each, or "only the eye", or
      "unread" with why. The rings' row names which of R1 to R5 stood, and what is left.
   5. The log names the arms that Phase 3 should carry, in one line each, with the reading behind each.
+  6. **Amended 2026-11-04 (owner):** the yellow dots' row names their class from the fast-yaw rows (light,
+     if they appear under `H` and not `E`; upscaler, if under FSR 2 and not native; geometry, if under
+     all four), or "unread" with why, and whether they are world-anchored or camera-anchored.
 
 ### Phase 3: Candidates, costs and the window's toggles
 
@@ -442,8 +452,8 @@ The owner, 2026-11-03: "approve, go with recommended".
 
 - Design or ship a fix. A candidate is a reading behind a knob. The fix is the ADR and plan after Phase 4.
 - Reopen ADR-0034 by assumption, remove `own` (Plan 0045, or a later one), or remove any upscaler.
-- Attribute or fix the drift, the probes' wander, the emissive path's creep or the dots: Plan 0051 and its
-  verdict plan.
+- Attribute or fix the drift, the probes' wander or the emissive path's creep: Plan 0051 and its verdict
+  plan. Fix the dots: the verdict plan's, once Phase 2 has named their class (amended 2026-11-04, owner).
 - Add MSAA, analytic coverage or a mip-based far normal (ADR-0042's Alternative A): a later plan, if the
   window asks.
 - Change the floor's generator, so no smoothing of the terraces, even if R1 stands. A level's geometry is the
@@ -464,16 +474,54 @@ The owner, 2026-11-03: "approve, go with recommended".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Where the jumps lie | dev | not started | |
-| 2: The matrix, the pan and the rings | dev | not started | |
-| 3: Candidates, costs and the window's toggles | dev | not started | |
-| 4: The owner's window | human | not started | |
+| 1: Where the jumps lie | dev | done | e630380 |
+| 2: The matrix, the pan and the rings | dev | done | e678ae7 |
+| 3: Candidates, costs and the window's toggles | dev | done | 136b123 |
+| 4: The owner's window | human | done; verdict in the log | committed with this row |
+
+Readings, gates and attempts: [`logs/0056.md`](../logs/0056.md).
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `E` also sets `Lighting::candidates` 0: at `light_radius` 0 the hall's mirror holds 61
+  light samples (the eye's chunk holds emitters).
+- Phase 1: `H` on this branch is `--steady b --indirect off`, lamp off, probe spacing 32 (Plan
+  0051's verdict light; the hall's `H` takes the same mapping). New variable beyond the plan's
+  list: `VXE_STRIP_STEADY`, and `VXE_STRIP_LAMP_POWER` for `E`'s intensity (default 4000).
+- Phase 1: `VXE_STRIP_PROBE_SPACING` defaults to the hero's 32 whenever `VXE_STRIP_LIGHT` is given,
+  and to the tree's 16 otherwise, so the tool's earlier runs read as before.
+- Phase 1: the tool's first read frame is step `settle + 1`; the bridge reads the Context table
+  at `VXE_STRIP_SETTLE=2047`.
+- `--steady` is on main since v0.41.0, with Plan 0051's verdict `--steady b --indirect off`; Plan
+  0057's Phase 2 removes the presets after this plan's Phase 2 readings, which are the ones read
+  through them.
+- Phase 2: the hall's `H` `off` arm keeps the preset's far normal `[2, 6]` (as `F10` shows it); the
+  `E` matrix's scale-1 arms use `[3, 9]`.
+- Phase 2: the level's `E` is lamp power 10 at exposure 1 (4000 and 1000 at the pose's exposure
+  saturate the frame); the dome-luma rule is the hall's only.
+- Phase 2: the slow pan at the level is read at 0.25 and at 1 px a frame beside the fast yaw at
+  10 px (the amendment's "ten times its rate" and "ten pixels a frame").
+- Phase 2: the ring reads (an edge at 2 levels, P(edge | z change) over P(edge | none) in 10 m `t`
+  bins), the dot's yellow rule and the anchoring test are the tool's own definitions, stated in
+  `support/aliasing.rs`; under `E` no pixel is yellow by the rule.
+- Phase 2: `R` at 3840 x 2160 is not bit-identical still (`T` max 26, 0.001 mean); unread why.
+- Phase 2: the reading runs used a frozen copy of the phase's test binary (`live/bin/strip-p2`).
+- `--steady` is on main since v0.41.0; the light called `H` here, and Phase 4's `<L>`, is
+  `--steady b --indirect off`.
+- Phase 3: `V`'s off is `--far-normal` `[0, 0]`; `Z` under FSR 2 is a settings change through
+  `set_upscaler_kind` that keeps FSR 2's history, under `own` a `set_sharpness` uniform write.
+- Phase 3: the emitter cap is applied in `composite.wgsl` (FSR 2's input colour), and the two
+  knobs reach the shaders through four new words at the end of `Params` (`march.wgsl`,
+  `marcher.rs`): files outside the phase's list.
+- Phase 3: new fly-through flags beyond the plan's list: `--jitter-phases N`, `--emitter-cap C`,
+  `--dither on|off` (FSR 2's candidate knobs, off by default, named in the banner's fsr2 line);
+  new strip variables `VXE_STRIP_JITTER_PHASES`, `VXE_STRIP_EMITTER_CAP`, `VXE_STRIP_DITHER`.
+- Phase 3: candidate 5 is read as a fold line (one frame from its cycle's per-pixel mean) on
+  Phase 3's runs, not offline from Phase 2's frames, which were not kept.
+- Phase 3: the runner is `live/session1.sh` (untracked), not `renders/plan-0056/session.sh`.
+- Phase 3: done-when 2 is read by the hero example from main's 38cd29a source and from this
+  tree on lavapipe, compared pixel for pixel, and `frame_bytes` from the cost runs' frame line
+  against main's binary; no golden test was added or changed.
 
 ### Close triggers
 
@@ -483,8 +531,30 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
 - **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **Outstanding `human` phases:** none. The plan awaits its fresh-session close review.
+- **Far normal default:** the owner's verdict (b) moves the default to 1..2; a changed number,
+  so the plan the architect writes after this one carries it as its first phase. No code
+  change on this branch.
 
 ## Followups
 
-None at draft.
+Written at the close review, 2026-11-04 (fresh session).
+
+- **Owed now: the far-normal plan.** Its first phase moves `LookPreset::DEFAULT`'s far normal to
+  `[1, 2]` (the owner's verdict (b), by eye) with ADR-0042's dated Outcome closing "provisional",
+  the goldens re-blessed and the hit-pass saving read (Phase 3: RTX hit 3.37 against 4.40 ms,
+  RADV 17.0 against 21.1 ms, loaded). Its bars may not assert `[2, 6]`'s stillness: under `E`,
+  `[1, 2]` reads 35 110 still jumps against 4 766 and `C` 1.532 against 0.818, recorded beside the
+  verdict. Its second item is the edge dots at `[1, 2]` on silhouettes and emitters' edges (the
+  owner's step 2 screenshot), read by this plan's classes before any mechanism. It also removes
+  `Fsr2Settings::emitter_cap` and `--emitter-cap` (the owner's "fault": magenta blotches), and
+  states whether `--jitter-phases` and `--dither` stay opt-in. Start after Plan 0057's merge, since
+  both re-bless the default look.
+- **Phase 4 (e) unanswered:** the rings, holes, patches and emitters got no owner word. The
+  readings name them (R1 terraces, light patches, saturated whole-voxel ore); they go to the next
+  plan's interview as one batched question.
+- **`R` at 3840 x 2160 is not bit-identical on a still camera** (max 26, mean 0.001), while native
+  `E` at 1080 is. Unread; the next plan that uses `R` as a floor reads why first.
+- **`flythrough::fsr2 doubling_the_exposure_reaches_fsr_the_same_frame`** read 38.4 s in the tip
+  gate on lavapipe (load 2.8), over the 30 s line; not this plan's test, owed to the soak list. The
+  tip gate's 848.6 s is over the 12-minute proposal, loaded; for the owner, not this plan.

@@ -191,6 +191,12 @@ struct Params {
     far_lo: f32,
     far_hi: f32,
     _pad9: u32,
+    // FSR 2's cap on an emitting hit's pre-exposed colour (`Fsr2Settings::emitter_cap`; 0 is
+    // none) and its tone pass's static dither (1 on), both 0 without FSR 2.
+    emitter_cap: f32,
+    dither: u32,
+    _tail0: u32,
+    _tail1: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
