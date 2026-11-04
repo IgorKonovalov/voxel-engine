@@ -1176,7 +1176,7 @@ fn dig(level: &mut VeinLevel, frame: &mut Frame, px: &Pixels, far: bool) -> ([i3
     (min.0, max.0)
 }
 
-fn camera_at(position: [f32; 3], yaw_deg: f32, pitch_deg: f32) -> Camera {
+pub fn camera_at(position: [f32; 3], yaw_deg: f32, pitch_deg: f32) -> Camera {
     Camera {
         position: position.into(),
         yaw: yaw_deg.to_radians(),

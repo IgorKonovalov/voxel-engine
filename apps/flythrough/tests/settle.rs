@@ -710,6 +710,236 @@ fn the_table_hash_spreads_a_levels_keys() {
     }
 }
 
+/// The preload's radius in voxels the visibility reading counts against (`Lighting`'s
+/// default `preload_radius`).
+const VIS_R: f32 = 64.0;
+/// The frames of history a face must be absent from to count as entering view.
+const VIS_HISTORY: usize = 60;
+/// The reading's default resolution (16:9 at the rig's 70-degree vertical field of view; the
+/// fly-through's half-tier lighting grid at 1080p from 720p); `VXE_VIS_SIZE` (`WxH`) overrides.
+const VIS_SIZE: [usize; 2] = [640, 360];
+
+fn vis_size() -> [usize; 2] {
+    std::env::var("VXE_VIS_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some([w.parse().ok()?, h.parse().ok()?])
+        })
+        .unwrap_or(VIS_SIZE)
+}
+/// The primary rays' reach in voxels.
+const VIS_REACH: f32 = 512.0;
+/// The distance histogram's upper edges in voxels (the last bin is open).
+const VIS_BINS: [f32; 5] = [8.0, 16.0, 32.0, 64.0, 128.0];
+
+type VisKey = (vxe_world::VoxelCoord, vxe_world::Face);
+
+/// The first voxel and entry face the ray from `eye` along `dir` (unit) hits within `reach`
+/// voxels, with the hit point; `None` on a miss or a ray the world refuses.
+fn vis_cast(world: &vxe_world::World, eye: Vec3, dir: Vec3, reach: f32) -> Option<(VisKey, Vec3)> {
+    let origin = vxe_world::Fixed3((eye * 256.0).round().to_array().map(|c| c as i64));
+    let d = (dir * 256.0).round();
+    let len = d.length();
+    let df = d.to_array().map(|c| c as i64);
+    let hit = world
+        .raycast(origin, df, (reach * 256.0 * 256.0 / len) as i64)
+        .ok()??;
+    let face = hit.face?;
+    let at = Vec3::from(origin.0.map(|c| c as f32 / 256.0)) + d * (hit.t as f32 / 65536.0);
+    Some(((hit.voxel, face), at))
+}
+
+/// The centre of `key`'s face and its outward normal.
+fn vis_face(key: VisKey) -> (Vec3, Vec3) {
+    use vxe_world::Face;
+    let v = Vec3::from(key.0.0.map(|c| c as f32)) + Vec3::splat(0.5);
+    let n = match key.1 {
+        Face::NegX => Vec3::NEG_X,
+        Face::PosX => Vec3::X,
+        Face::NegY => Vec3::NEG_Y,
+        Face::PosY => Vec3::Y,
+        Face::NegZ => Vec3::NEG_Z,
+        Face::PosZ => Vec3::Z,
+    };
+    (v + n * 0.5, n)
+}
+
+/// Whether `eye` has a clear line within `VIS_R` to `key`'s face: a ray toward the face's
+/// centre, or toward `at` (a point on the face), enters that voxel through that face.
+fn vis_clear(world: &vxe_world::World, eye: Vec3, key: VisKey, at: Vec3) -> bool {
+    let (centre, n) = vis_face(key);
+    if (eye - centre).dot(n) <= 0.0 {
+        return false;
+    }
+    [centre, at].into_iter().any(|target| {
+        let to = target - n * 0.01 - eye;
+        let dist = to.length();
+        dist <= VIS_R && vis_cast(world, eye, to / dist, dist + 1.0).is_some_and(|(k, _)| k == key)
+    })
+}
+
+/// One frame's primary hits at `VIS_SIZE`: per pixel, the face key, its distance and hit point.
+fn vis_frame(world: &vxe_world::World, camera: &Camera) -> Vec<Option<(VisKey, f32, Vec3)>> {
+    let [w, h] = vis_size();
+    let (fwd, right, up) = camera.basis();
+    let tv = (camera.vfov * 0.5).tan();
+    let ta = tv * w as f32 / h as f32;
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let rows: Vec<usize> = (0..h).collect();
+    let chunk = h.div_ceil(threads);
+    std::thread::scope(|s| {
+        let jobs: Vec<_> = rows
+            .chunks(chunk)
+            .map(|rows| {
+                s.spawn(move || {
+                    let mut out = Vec::with_capacity(rows.len() * w);
+                    for &y in rows {
+                        for x in 0..w {
+                            let u = (x as f32 + 0.5) / w as f32 * 2.0 - 1.0;
+                            let v = 1.0 - (y as f32 + 0.5) / h as f32 * 2.0;
+                            let dir = (fwd + right * (u * ta) + up * (v * tv)).normalize();
+                            out.push(
+                                vis_cast(world, camera.position, dir, VIS_REACH)
+                                    .map(|(k, at)| (k, (at - camera.position).length(), at)),
+                            );
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        jobs.into_iter()
+            .flat_map(|j| j.join().expect("vis rows"))
+            .collect()
+    })
+}
+
+/// One visibility run: `cameras` in order after `VIS_HISTORY` frames at the first; prints
+/// the entering pixels (a face not in view in the previous `VIS_HISTORY` frames), the share
+/// within `VIS_R`, the share of those with a clear line from an eye of the previous
+/// `VIS_HISTORY` frames, and their distance histogram. Returns (entering, within, clear).
+fn vis_run(world: &vxe_world::World, name: &str, cameras: &[Camera]) -> [usize; 3] {
+    use std::collections::HashMap;
+    let mut last: HashMap<VisKey, usize> = HashMap::new();
+    let mut eyes: Vec<Vec3> = Vec::new();
+    let first = cameras[0];
+    let history: Vec<Camera> = std::iter::repeat_n(first, VIS_HISTORY).collect();
+    let (mut entering, mut within, mut clear) = (0usize, 0usize, 0usize);
+    let mut hist = [0usize; VIS_BINS.len() + 1];
+    let mut hist_clear = [0usize; VIS_BINS.len() + 1];
+    let mut hit_pixels = 0usize;
+    let mut peak = (0usize, 0usize);
+    for (f, camera) in history.iter().chain(cameras.iter()).enumerate() {
+        let hits = vis_frame(world, camera);
+        let counted = f >= VIS_HISTORY;
+        let mut frame_entering = Vec::new();
+        for (key, dist, at) in hits.iter().flatten() {
+            let fresh = last.get(key).is_none_or(|&seen| seen + VIS_HISTORY < f);
+            if counted && fresh {
+                frame_entering.push((*key, *dist, *at));
+            }
+        }
+        if counted {
+            // The distinct eyes of the previous `VIS_HISTORY` frames, newest first.
+            let mut prev: Vec<Vec3> = Vec::new();
+            for e in eyes[f - VIS_HISTORY..f].iter().rev() {
+                if prev.iter().all(|p| p.distance(*e) > 0.25) {
+                    prev.push(*e);
+                }
+            }
+            let flags: Vec<bool> = std::thread::scope(|s| {
+                let threads = std::thread::available_parallelism().map_or(1, usize::from);
+                let chunk = frame_entering.len().div_ceil(threads).max(1);
+                let jobs: Vec<_> = frame_entering
+                    .chunks(chunk)
+                    .map(|part| {
+                        let prev = &prev;
+                        s.spawn(move || {
+                            part.iter()
+                                .map(|&(key, dist, at)| {
+                                    dist <= VIS_R
+                                        && prev.iter().any(|&e| vis_clear(world, e, key, at))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+                jobs.into_iter()
+                    .flat_map(|j| j.join().expect("vis clear"))
+                    .collect()
+            });
+            for (&(_, dist, _), ok) in frame_entering.iter().zip(flags) {
+                entering += 1;
+                within += usize::from(dist <= VIS_R);
+                clear += usize::from(ok);
+                let bin = VIS_BINS
+                    .iter()
+                    .position(|&e| dist < e)
+                    .unwrap_or(VIS_BINS.len());
+                hist[bin] += 1;
+                hist_clear[bin] += usize::from(ok);
+            }
+            hit_pixels += hits.iter().flatten().count();
+            if frame_entering.len() > peak.1 {
+                peak = (f - VIS_HISTORY, frame_entering.len());
+            }
+        }
+        for (key, ..) in hits.iter().flatten() {
+            last.insert(*key, f);
+        }
+        eyes.push(camera.position);
+    }
+    let share = |a: usize, b: usize| if b == 0 { 0.0 } else { a as f64 / b as f64 };
+    println!(
+        "reading: preload visibility {name} at {}x{}, {} frames: entering pixels {entering}, within R {within} ({:.3}), clear within R from an eye of the previous {VIS_HISTORY} frames {clear} ({:.3} of within R, {:.3} of entering); distance <8 / 8-16 / 16-32 / 32-64 / 64-128 / 128+: {:?}, of them clear {:?}; entering {:.4} of the hit pixels; peak frame {} with {}",
+        vis_size()[0],
+        vis_size()[1],
+        cameras.len(),
+        share(within, entering),
+        share(clear, within),
+        share(clear, entering),
+        hist,
+        hist_clear,
+        share(entering, hit_pixels),
+        peak.0,
+        peak.1
+    );
+    [entering, within, clear]
+}
+
+/// Which faces entering view the preload's eye rays could have reached (Plan 0057 Phase 4
+/// Part 2b): the rig's steady flight at both poses at 0.5 voxel a frame (`KRun::Path`, 361
+/// frames), and `yaw 90 10 f` and `yaw 180 20 f` onto `VEIN_POSE`, each after 60 still frames
+/// at its start, on the level at seed 1 through `vxe-world`'s raycast at `vis_size()`. No GPU.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn preload_visibility_readings() {
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        vxe_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    let world = vxe_world::World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    for pose in [stillness::PATCH_POSE, VEIN_POSE] {
+        let cameras: Vec<Camera> = (0..=360).map(|f| KRun::Path.camera(&pose, f)).collect();
+        vis_run(&world, &format!("{} walk", pose.name), &cameras);
+    }
+    for (frames, degrees) in [(10usize, 90.0f32), (20, 180.0)] {
+        let pose = VEIN_POSE;
+        let cameras: Vec<Camera> = (0..=frames + 10)
+            .map(|i| {
+                let yaw = pose.yaw_deg - degrees + degrees * (i.min(frames) as f32) / frames as f32;
+                camera_at(pose.position, yaw, pose.pitch_deg)
+            })
+            .collect();
+        vis_run(&world, &format!("vein yaw {degrees} {frames}f"), &cameras);
+    }
+}
+
 /// The table's occupancy after the steady flight repeated `VXE_FLIGHTS` times (default 4) from
 /// each pose, never cleared between (`occupancy_run`).
 #[test]
