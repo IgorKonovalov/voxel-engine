@@ -909,3 +909,21 @@ Laptop GPU at 2530 x 1378 from 1687 x 919: showcase start frame 11.799 and 11.93
 (hit 3.05 to 3.08) against 33.131 and 34.344 (hit 3.04 to 3.26). The hall shot's crops and the other
 settings are in `docs/plans/logs/0055.md`.
 
+**The aliasing spike's arms and candidates (Plan 0056 Phase 3, tree on 879c452 plus the phase,
+`flythrough --headless --frames 300`, GPU frame median of the last 30, exclusive perf lock, three
+alternated rounds; 1-minute load 1.8 to 2.8 in round 2 but for the RADV vein's `own`, native,
+scale-1 and cap runs (3.7 to 11.3), up to 26 in rounds 1 and 3. Most round-2 runs and every
+run of rounds 1 and 3 read over 2, so every figure here is loaded (indicative)).** Frame in ms, round 2, showcase start then `--level --pose vein`. RTX 3080
+Laptop GPU at 2530 x 1378 from 1687 x 919: main's 38cd29a binary 14.996 and 8.125; the default
+(FSR 2 at 1.5, far normal `[2, 6]`) 12.340 and 8.013; `[1, 2]` 11.260 and 7.938 (hit 3.369
+against 4.397); `--look face` 10.828 and 7.803 (hit 2.932); `--sharpen 0` 12.255 and 7.755; `own`
+10.329 and 5.827 (upscale plus sharpen 1.025, 0.984); native 19.662 and 9.204 (hit 10.233);
+FSR 2 at scale 1 with `[3, 9]` 25.662 and 15.126 (FSR 2's passes 5.063, 5.344); `--emitter-cap 1
+--dither on` 12.896 and 8.003 (FSR 2's passes 3.024 against 3.125). RADV RENOIR at 1920 x 1080
+from 1280 x 720: main 54.949 and 33.060; default 54.954 and 32.842; `[1, 2]` 50.795 and 32.888;
+`face` 48.394 and 33.273; `--sharpen 0` 54.057 and 32.780; `own` 48.101 and 30.154; native
+88.231 and 49.668; FSR 2 at 1 with `[3, 9]` 105.626 and 73.771 (FSR 2's passes 16.130 at the
+start); cap and dither 54.961 and 43.231 (the vein's round 2 at load 11.3; rounds 1 and 3 33.071,
+33.084). `frame_bytes` with every knob off equals main's: 483 147 556 B at 2530 x 1378 and
+309 377 468 B at 1080p; FSR 2 at 1 reads 808 972 340 and 503 318 268 B. All three rounds and the
+per-pass lines are in `docs/plans/logs/0056.md`.

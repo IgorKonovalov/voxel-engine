@@ -17,7 +17,7 @@
 > [`logs/0051.md`](logs/0051.md); [`LIGHT-FEEDBACK.md`](../../LIGHT-FEEDBACK.md), "What the owner
 > wants".
 > **Starts after:** Plan 0051's close (v0.41.0, on main). Runs beside
-> [Plan 0056](0056-aliasing-spike-what-moves-on-the-final-image.md)'s lane, which is read-only
+> [Plan 0056](done/0056-aliasing-spike-what-moves-on-the-final-image.md)'s lane, which is read-only
 > against this plan and hands it the yellow dots' class (0056 Phase 2, done-when 4); this plan
 > takes that answer as an input at its Phase 1 and Phase 4. Then Plans 0044 and 0045; Plan 0048
 > is moot under ADR-0043 and awaits the owner's "drop".

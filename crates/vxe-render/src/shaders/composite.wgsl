@@ -230,7 +230,13 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         let albedo = materials[rec.material * 4u].xyz;
         c = albedo * lit_at(px, rec) * (1.0 / PI);
         if ((params.flags & FLAG_CUTAWAY) == 0u) {
-            c += emission_of(rec.material) * ex;
+            let e = emission_of(rec.material);
+            c += e * ex;
+            // FSR 2's emitter cap: an emitting hit's largest channel held at the cap.
+            let top = max(c.x, max(c.y, c.z));
+            if (params.emitter_cap > 0.0 && any(e > vec3<f32>(0.0)) && top > params.emitter_cap) {
+                c *= params.emitter_cap / top;
+            }
         }
     }
     if (view == VIEW_CRACKS) {

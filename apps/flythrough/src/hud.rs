@@ -379,6 +379,8 @@ pub struct HudStats {
     pub lighting: Option<LightingRow>,
     /// The exposure; `None` hides its row.
     pub exposure: Option<ExposureRow>,
+    /// The aliasing toggles' row ([`aliasing_row`]); `None` hides it.
+    pub aliasing: Option<String>,
 }
 
 /// The exposure row: the mode in words, the exposure the next frame uses in EV (`log2 e`), the
@@ -507,6 +509,7 @@ impl HudStats {
             pad: None,
             lighting: None,
             exposure: None,
+            aliasing: None,
         }
     }
 
@@ -626,6 +629,9 @@ impl HudStats {
         }
         if let Some(e) = &self.exposure {
             row(out, HudColour::White, format_args!("{e}"))?;
+        }
+        if let Some(a) = &self.aliasing {
+            row(out, HudColour::White, format_args!("{a}"))?;
         }
         row(
             out,
@@ -1931,17 +1937,75 @@ pub struct UpscalerBanner {
     pub mode: UpscalerMode,
     /// The internal scale's name (`RenderScale::name`).
     pub scale: &'static str,
+    /// The upscaler's RCAS sharpening (`--sharpen`, `Z`); unnamed while the upscaler is off.
+    pub sharpen: f32,
+    /// FSR 2's candidate knobs as words (`, phases 8, emitter cap 1, dither`), empty when none
+    /// is set; named only while the mode is fsr2.
+    pub fsr2_knobs: String,
     shown_at: Option<f64>,
 }
 
+/// FSR 2's candidate knobs (`--jitter-phases`, `--emitter-cap`, `--dither`) as the banner's
+/// suffix: `, phases 8, emitter cap 1, dither`, each only when set; empty when none is.
+pub fn fsr2_knob_words(phases: Option<u32>, emitter_cap: Option<f32>, dither: bool) -> String {
+    let mut s = String::new();
+    if let Some(n) = phases {
+        s += &format!(", phases {n}");
+    }
+    if let Some(c) = emitter_cap {
+        s += &format!(", emitter cap {c}");
+    }
+    if dither {
+        s += ", dither";
+    }
+    s
+}
+
+/// The sharpening `Z` steps through: 0.5, 0.25, 0, then 0.5 again; any other value steps to
+/// 0.5.
+pub fn next_sharpen(s: f32) -> f32 {
+    if s == 0.5 {
+        0.25
+    } else if s == 0.25 {
+        0.0
+    } else {
+        0.5
+    }
+}
+
 impl UpscalerBanner {
-    /// The banner of the starting mode, hidden until the first change.
+    /// The banner of the starting mode, hidden until the first change, at `--sharpen`'s
+    /// default.
     pub fn new(mode: UpscalerMode, scale: &'static str) -> Self {
         Self {
             mode,
             scale,
+            sharpen: 0.5,
+            fsr2_knobs: String::new(),
             shown_at: None,
         }
+    }
+
+    /// The same banner at sharpening `sharpen`.
+    pub fn with_sharpen(self, sharpen: f32) -> Self {
+        Self { sharpen, ..self }
+    }
+
+    /// The same banner naming FSR 2's candidate knobs, `knobs` as [`fsr2_knob_words`] writes
+    /// them.
+    pub fn with_fsr2_knobs(self, knobs: String) -> Self {
+        Self {
+            fsr2_knobs: knobs,
+            ..self
+        }
+    }
+
+    /// The sharpening is now `sharpen` (`Z`); the banner shows from `now_ms`. Under FSR 2 the
+    /// change is a settings change that keeps its history (`Frame::set_upscaler_kind`), and
+    /// under our upscaler a uniform write, so the image shows no history drop at the key.
+    pub fn set_sharpen(&mut self, sharpen: f32, now_ms: f64) {
+        self.sharpen = sharpen;
+        self.shown_at = Some(now_ms);
     }
 
     /// The banner of the starting mode, shown from `now_ms` as the lighting modes' banner is
@@ -1960,9 +2024,23 @@ impl UpscalerBanner {
         self.shown_at = Some(now_ms);
     }
 
-    /// `upscaler fsr2, scale 1.5`.
+    /// `upscaler fsr2, scale 1.5, sharpen 0.5`; `upscaler off, scale 1` with no upscaler.
     pub fn line(&self) -> String {
-        format!("upscaler {}, scale {}", self.mode.name(), self.scale)
+        if self.mode == UpscalerMode::Off {
+            format!("upscaler off, scale {}", self.scale)
+        } else {
+            format!(
+                "upscaler {}, scale {}, sharpen {}{}",
+                self.mode.name(),
+                self.scale,
+                self.sharpen,
+                if self.mode == UpscalerMode::Fsr2 {
+                    self.fsr2_knobs.as_str()
+                } else {
+                    ""
+                }
+            )
+        }
     }
 
     /// The line within [`BANNER_MS`] of the last change, else `None`.
@@ -1971,6 +2049,64 @@ impl UpscalerBanner {
             .filter(|&at| now_ms - at < BANNER_MS)
             .map(|_| self.line())
     }
+}
+
+/// `--pan DEG_PER_S`'s constant yaw, which `Period` stops and starts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pan {
+    /// Degrees a second, positive to the left.
+    pub deg_per_s: f32,
+    pub on: bool,
+    shown_at: Option<f64>,
+}
+
+impl Pan {
+    /// The pan at `deg_per_s`, running, its banner shown from `now_ms`.
+    pub fn new(deg_per_s: f32, now_ms: f64) -> Self {
+        Self {
+            deg_per_s,
+            on: true,
+            shown_at: Some(now_ms),
+        }
+    }
+
+    /// `Period`: stops or starts the pan; the banner shows from `now_ms`.
+    pub fn toggle(&mut self, now_ms: f64) {
+        self.on = !self.on;
+        self.shown_at = Some(now_ms);
+    }
+
+    /// The yaw in radians the pan adds over `dt` seconds.
+    pub fn yaw(&self, dt: f32) -> f32 {
+        if self.on {
+            self.deg_per_s.to_radians() * dt
+        } else {
+            0.0
+        }
+    }
+
+    /// `pan 1.1 deg/s`, or `pan 1.1 deg/s stopped`.
+    pub fn line(&self) -> String {
+        format!(
+            "pan {} deg/s{}",
+            self.deg_per_s,
+            if self.on { "" } else { " stopped" }
+        )
+    }
+
+    /// The line within [`BANNER_MS`] of the last change, else `None`.
+    pub fn banner(&self, now_ms: f64) -> Option<String> {
+        self.shown_at
+            .filter(|&at| now_ms - at < BANNER_MS)
+            .map(|_| self.line())
+    }
+}
+
+/// The stats HUD's aliasing row: the upscaler, its scale and sharpening, the far normal and the
+/// pan, shown the whole time.
+pub fn aliasing_row(upscaler: &UpscalerBanner, far_normal: &str, pan: Option<&Pan>) -> String {
+    let pan = pan.map_or_else(|| "no pan".to_owned(), Pan::line);
+    format!("{}; {far_normal}; {pan}", upscaler.line())
 }
 
 #[cfg(test)]
@@ -2005,8 +2141,8 @@ mod upscaler_banner_tests {
         assert_eq!(
             seen,
             [
-                "upscaler own, scale 1.5",
-                "upscaler fsr2, scale 1.5",
+                "upscaler own, scale 1.5, sharpen 0.5",
+                "upscaler fsr2, scale 1.5, sharpen 0.5",
                 "upscaler off, scale 1"
             ]
         );
@@ -2015,7 +2151,7 @@ mod upscaler_banner_tests {
         let start = UpscalerBanner::shown_from(UpscalerMode::Fsr2, "1.5", 0.0);
         assert_eq!(
             start.banner(BANNER_MS - 1.0).as_deref(),
-            Some("upscaler fsr2, scale 1.5"),
+            Some("upscaler fsr2, scale 1.5, sharpen 0.5"),
             "the starting mode shows at the start"
         );
         assert_eq!(start.banner(BANNER_MS), None);
