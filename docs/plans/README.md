@@ -19,7 +19,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0051 and its verdict plan, before 0045 (owner, 2026-11-03). |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before Plan 0048 and M10 (owner, 2026-11-03). |
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After 0045, if it stands: 0051's verdict shrinks it to scheme A or C, or drops it. |
-| [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 4. After 0055; its verdict plan, then 0044, 0045, 0048. |
 | [0056](0056-aliasing-spike-what-moves-on-the-final-image.md) | The aliasing spike: what moves on the final image with the light held still, by class; FSR 2, `own`, native and the far normal in one window | approved | M2, no ADR at draft. Starts at 0051's verdict, before its verdict plan lands, and before 0044. |
 <!-- roster:end -->
 
@@ -28,6 +27,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: A, B and C read behind settings; the owner picked B with indirect off, nearest read, the probes to a lamp-bounce channel | 2026-11-04, v0.41.0 |
 | [0055](done/0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md) | The clarity pass: procedural detail gone, FSR 2 at 1.5 the default, the far normal on at `[2, 6]` (provisional) | 2026-11-03, v0.40.0 |
 | [0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Abandoned by the owner: its Phase 1 readings kept in the plan, its rig under tag `archive/plan-0049`; Plan 0051 takes the work | 2026-11-03, abandoned |
 | [0054](done/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md) | Honest cubes the default, the planes gone (hit plus light 1.397 ms, mirror 60 % smaller at the level); the field surface built and kept opt-in | 2026-11-03, v0.39.0 |

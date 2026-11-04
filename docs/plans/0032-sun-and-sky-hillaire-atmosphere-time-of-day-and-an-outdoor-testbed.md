@@ -88,7 +88,7 @@
 > settings and 0048's probe direct scheme, so 0049's settle, dot and shimmer tests join the
 > tests this plan must not regress. No phase changes.
 > **Amended 2026-11-03 (owner: Plan 0049 dropped):** Plan 0049 will not merge. The order is
-> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
+> [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
 > the plan its ADR names if any, Plan 0048, then this plan. "The base commit" stays main after
 > 0048's merge. The settle, dot and shimmer tests this plan must not regress are the ones the plan
 > after 0051's ADR asserts, if any, and Plan 0047's. Its sky light and sun sample pass through
@@ -118,7 +118,7 @@
 > no probes (`--steady b --indirect off`, Phase 6's whole sky-light design and `w_probe` go).
 > The architect re-reads Phases 5, 6 and the Budgets after that verdict and before this lane.
 > **Starts after:** the render-profile plan merges (amended 2026-11-03, owner). The order is
-> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
+> [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
 > its verdict plan, Plans 0044 and 0045,
 > [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) if it stands, the
 > render-profile plan, then this plan. "The base commit" in every bar is main after that last

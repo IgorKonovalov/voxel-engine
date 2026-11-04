@@ -6,6 +6,14 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-04
+
+Plan 0051 (a minor bump: public API added, every default unchanged; no ADR at close, the verdict's ADR and plan follow). The steady-light spike. Three experiments behind `Lighting` settings, read headless and on the RTX 3080 Laptop and the Radeon on RADV, all loaded (indicative). A: probes as running means that freeze after 64 visits (a moving lamp holds those in its reach open), inside probes skipped, the emissive history uncapped and converged pixels skipping the draw; at rest on the RTX the probe update reads 0.016 ms against 1.058. C: the headlamp out of the probe rays, so a lamp switch leaves every probe as it was. B: the emissive direct irradiance per cube face in a 2^22-cell hashed table (83 886 080 B when on), read where a cell holds 16 samples, skipped once it holds 4096, cleared by a dilated edit box; at the showcase's hall, native, B with indirect off drifts 0.004 against today's 2.19 (4096 against 8192 frames), 0.525 under FSR 2. The owner's window picked B with indirect off and the nearest read, the probes shrunk to a lamp-bounce channel whose logic is redone, and no change to exposure. The small yellow dots on fast motion stayed in every arm; Plan 0056 reads them. Goldens and `frame_bytes` unchanged with every setting off.
+
+- **Added: `Lighting::{probe_freeze, skip_inside_probes, skip_converged_draw, probe_lamp, emissive_cache}`, `EmissiveCache`, `CacheRead`, the presets' builders, `Frame::{set_composite_capture, composite_capture, emissive_cache_table}`, `probes::lamp_reach`; `Params` and `ProbeUniform` take the settings in spare words, same size.**
+- **Added (fly-through): `--steady off|a|c|ac|b|ab|abc` and `--cache-read nearest|smooth`, shown on the banner; `--steady` on the `hero` example.**
+- **Added (tests): `apps/flythrough/tests/settle.rs` and its `support::settle` rig (wander, settle, dots, the world-keyed flicker `K`, the young share, the table's occupancy, the cost in flight), in the gpu tier.**
+
 ## [0.40.0] - 2026-11-03
 
 Plan 0055 (a minor bump: public API removed and added, the fly-through's default look and upscaler changed; ADR-0042 accepted with `[2, 6]` provisional, Outcomes on ADR-0011, ADR-0024, ADR-0034 and ADR-0041). The clarity pass before Plan 0051. Procedural detail is gone. FSR 2 at scale 1.5 is the fly-through's default, on the owner's "fsr2 stays" and "fsr2 stays counts"; the scripted slow pan did not run. A far shading normal blends the face normal to the 27-count gradient by the voxel's size on screen. Upscale reads 2.932 to 2.958 ms on the RTX 3080 Laptop, over its 1.5 ms line, recorded as a reading.

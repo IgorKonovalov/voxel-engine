@@ -224,6 +224,17 @@ it is Plan 0034's question.
 Amended 2026-11-01 (owner, Plan 0054 owner answer 14): cubes meet M2's surface-look goal;
 the field is a quality option revisited per material class, liquids first.
 
+Plan 0051, the steady-light spike, closed 2026-11-04 (v0.41.0, no ADR at close): three experiments
+built behind `Lighting` settings, all off by default, and read headless and on both adapters. A
+(probes and emissive pixels as running means that freeze, inside probes skipped, converged pixels
+skip the draw), C (the headlamp out of the probe rays) and B (the emissive direct irradiance per
+cube face in a hashed world-space table, with an edit-box reset). At the showcase's hall, native,
+B with indirect off drifts 0.004 against today's 2.19 (4096 against 8192 frames); under FSR 2 it
+reads 0.525, and no arm holds still within the owner's five seconds. In the owner's window the
+small yellow dots on fast motion stayed in every arm. The owner's verdict: B with indirect off,
+the nearest read, the probes shrunk to a lamp-bounce channel whose logic is redone, exposure
+unchanged. The ADR and the plan the verdict names follow; Plan 0056 hunts the dots first.
+
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
 tree. FSR 2 at scale 1.5 is the fly-through's default, and our upscaler is opt-in. A far shading
@@ -463,10 +474,10 @@ work), and the light (real-time GI standing in for the baked occlusion).
   and shimmer during ordinary flight. Plan 0049 measured them on a spike and found the light
   never settles at a still camera; the owner dropped it on 2026-11-03, its readings kept in the
   plan under `done/`. The rule of 2026-10-29 stands: every other plan stays parked until the
-  owner accepts the light. **Plan 0051** (amended 2026-11-03, no ADR until its Phase 4) runs
-  first and alone: probes and pixels that converge and freeze, and a world-space emissive table
-  keyed by cube face, read against the wander, the dots and the shimmer. The owner's call in the
-  window decides the direction, and the ADR and the plan that builds it follow.
+  owner accepts the light. **Plan 0051** closed 2026-11-04 (v0.41.0): the owner's window picked
+  the world-space emissive table keyed by cube face with no indirect gather, and the probes
+  shrink to a lamp-bounce channel. The ADR and the plan the verdict names follow, after Plan
+  0056 reads the dots that no arm removed.
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
