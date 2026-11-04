@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** in-progress (Phase 1, 2026-11-04); Phase 2 lands after Plan 0056's Phase 2 readings
+> **Status:** in-progress (Phase 2, 2026-11-04); Plan 0056's Phase 2 readings are in its log (e678ae7)
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
@@ -603,7 +603,7 @@ Open at draft: the "go".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The open questions, read | dev | wip: readings owed (patch occupancy, flight and rest costs); stop rule read stop ([log](logs/0057.md)) | committed with this row |
+| 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](logs/0057.md)) | committed with this row |
 | 2: The table is the only emissive store, and the default | dev | not started | |
 | 3: The world-space guard | dev | not started | |
 | 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
