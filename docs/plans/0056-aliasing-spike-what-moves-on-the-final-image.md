@@ -1,6 +1,6 @@
 # 0056: The aliasing spike: what moves on the final image with the light held still, read by class, and one window for FSR 2, `own`, native and the far normal
 
-> **Status:** in-progress (2026-11-04): Phases 1 to 3 done by `dev`; Phase 4 (human) next
+> **Status:** in-progress (2026-11-04): Phases 1 to 4 done; the owner's verdict is in the log; awaits its fresh-session close review
 > **Created:** 2026-11-03
 > **Approved:** 2026-11-03 (owner): "approve, go with recommended". See Owner answers.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler bullets).
@@ -476,8 +476,8 @@ The owner, 2026-11-03: "approve, go with recommended".
 |---|---|---|---|
 | 1: Where the jumps lie | dev | done | e630380 |
 | 2: The matrix, the pan and the rings | dev | done | e678ae7 |
-| 3: Candidates, costs and the window's toggles | dev | done | committed with this row |
-| 4: The owner's window | human | not started | |
+| 3: Candidates, costs and the window's toggles | dev | done | 136b123 |
+| 4: The owner's window | human | done; verdict in the log | committed with this row |
 
 Readings, gates and attempts: [`logs/0056.md`](logs/0056.md).
 
@@ -531,7 +531,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
 - **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **Outstanding `human` phases:** none. The plan awaits its fresh-session close review.
+- **Far normal default:** the owner's verdict (b) moves the default to 1..2; a changed number,
+  so the plan the architect writes after this one carries it as its first phase. No code
+  change on this branch.
 
 ## Followups
 
