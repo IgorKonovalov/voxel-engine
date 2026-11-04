@@ -19,7 +19,8 @@
 // Nothing changed, the re-shade equals last frame's lamp estimate (the light pass's irradiance
 // in a), so lambda is 0 but for f16 rounding. A pixel with no hit, or no valid history, reads 0.
 //
-// The guard (`guard_cell`) takes the same pixel's cell: the cell's kept emitter is re-shaded
+// The guard (`guard_cell`), within its window only (`LIGHTING_GUARD`: frames after an edit, a
+// mirror write or an emission-scale change; `marcher::GUARD_WINDOW`), takes the same pixel's cell: the cell's kept emitter is re-shaded
 // from the face's centre (`kept_irradiance`, one shadow ray), and where it differs from the
 // kept luminance by more than GUARD_DEAD_ZONE of the larger the cell reopens. A capped cell
 // that keeps no emitter and whose sums are 0 (lit by nothing) draws one fresh emissive sample
@@ -66,7 +67,7 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let lambda = abs(e - old) / max(max(e, old), 1e-4);
                 out = vec4<f32>(lambda, e, old, 0.0);
             }
-            if (cacheable(rec)) {
+            if ((params.lighting & LIGHTING_GUARD) != 0u && cacheable(rec)) {
                 guard_cell(q, rec, ns);
             }
         }

@@ -123,6 +123,19 @@ pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
 /// point light, one shadow ray), so the reset adds none.
 pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
+/// `Params::lighting` bit: the table's guard runs (`guard_cell` in `gradient.wgsl`): the
+/// frame lies within [`GUARD_WINDOW`] frames of a change to the world's emissive light.
+pub const LIGHTING_GUARD: u32 = 1 << 10;
+/// Frames after a change to the world's emissive light during which the table's guard
+/// re-shades kept emitters and re-verifies dark capped cells, and may reopen them; outside it
+/// no cell's light can have changed, so the guard does nothing. The changes that open it: an
+/// edit box ([`Frame::invalidate`], or more than [`MAX_EDITS`] of them), any write to the
+/// mirror (`GpuWorld::bytes_written` moved since the last encode: a chunk streamed in or out,
+/// an edit's upload), and a change of a material's emission scale in the pixels' light
+/// ([`Frame::set_emission_scales`]). The first encode opens it. A later source of changing
+/// emissive light (a moving emitter) must open it too. A guess at ten times the far face's
+/// re-verify cadence (about 26 frames at 0.34 lighting pixels a face).
+pub const GUARD_WINDOW: u32 = 256;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
@@ -1117,6 +1130,8 @@ pub struct Frame {
     /// Workgroups a dispatch row of the table's passes takes at most ([`MAX_DISPATCH_GROUPS`];
     /// a test sets fewer, [`Frame::set_table_dispatch_cap`]).
     table_dispatch_cap: u32,
+    /// The guard runs in every frame, its window ignored ([`Frame::force_guard_window`]).
+    guard_forced: bool,
     probe_spacing: u32,
     device: wgpu::Device,
     probe_layout: wgpu::BindGroupLayout,
@@ -1206,6 +1221,10 @@ struct History {
     light_key: Option<LightKey>,
     /// Encoded frames with a probe update left in the open light-change window.
     light_window: u32,
+    /// The frame of the last change that opens the guard's window ([`GUARD_WINDOW`]), and the
+    /// mirror's `bytes_written` at the last encode with history.
+    guard_event: Option<u32>,
+    guard_bytes: Option<u64>,
 }
 
 /// What a frame's static light depends on, as the probe volume's light-change window compares
@@ -1852,6 +1871,7 @@ impl Frame {
             sweep_params,
             sweep_chunk: std::sync::Mutex::new(None),
             table_dispatch_cap: MAX_DISPATCH_GROUPS,
+            guard_forced: false,
             probe_spacing: DEFAULT_PROBE_SPACING,
             device: device.clone(),
             probe_layout,
@@ -2333,6 +2353,12 @@ impl Frame {
         self.table_dispatch_cap = groups.clamp(1, MAX_DISPATCH_GROUPS);
     }
 
+    /// Runs the table's guard in every frame, outside its window ([`GUARD_WINDOW`]) too: a
+    /// test's way to read what the window keeps out of a still world.
+    pub fn force_guard_window(&mut self, on: bool) {
+        self.guard_forced = on;
+    }
+
     pub fn lighting(&self) -> Lighting {
         self.lighting
     }
@@ -2626,6 +2652,16 @@ impl Frame {
             boxes = std::mem::take(&mut h.edits);
             edits_overflowed = h.overflow;
             h.overflow = false;
+            let bytes = world.bytes_written();
+            if !boxes.is_empty() || edits_overflowed || h.guard_bytes != Some(bytes) {
+                h.guard_event = Some(self.frame);
+            }
+            h.guard_bytes = Some(bytes);
+            let within =
+                |f: Option<u32>| f.is_some_and(|f| self.frame.wrapping_sub(f) < GUARD_WINDOW);
+            if self.guard_forced || within(h.guard_event) || within(self.emission_changed_at) {
+                p.lighting |= LIGHTING_GUARD;
+            }
             h.last_views = params.views;
             h.encoded = true;
             let key = LightKey {
@@ -2948,9 +2984,10 @@ impl Frame {
                 ],
             )
         });
-        // The gradient pass runs for the gradient mode's lambda and the table's guard, in
-        // every shaded view.
-        let gradient_on = self.look.view.shades();
+        // The gradient pass runs in a shaded view for the gradient mode's lambda, and for the
+        // table's guard within its window.
+        let gradient_on =
+            self.look.view.shades() && p.lighting & (LIGHTING_GRADIENT | LIGHTING_GUARD) != 0;
         let gradient_cache_bind = bind_io_at(
             device,
             &self.gradient_cache_layout,

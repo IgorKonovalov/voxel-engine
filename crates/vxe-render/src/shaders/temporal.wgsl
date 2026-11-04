@@ -30,8 +30,10 @@
 // The emissive part (ADR-0043): a hit on a cube face whose cell holds a sample takes the
 // cell's mean times this frame's exposure, with no screen history, the same value at every
 // pixel of the face. Any other hit (no face: the field look, a translucent hit, a ray from
-// inside rock; or a key with no cell, the table full) is a fallback: its own emissive sample
-// blends as the lamp's part does.
+// inside rock; or a key with no cell, the table full) is a fallback: its own emissive samples'
+// running mean over the pixel's age, `1 / (age + 1)`, until the age reaches FALLBACK_CAP, then
+// held, so a still fallback pixel holds still; it restarts where the pixel resets (no
+// accepted history, no history, an edit box), and follows an emission-scale change at ALPHA.
 //
 // A hit is reprojected through the previous frame's view of the same index to a fractional
 // pixel as if both frames' rays went through their pixels' centres (`reproject_centred`: a
@@ -43,8 +45,8 @@
 // nearest this hit's is taken alone; with none of those either, with no
 // history (`Params.history` bit 0 clear), or with the hit inside an edit box dilated by
 // one voxel, the pixel resets: age 0, accumulation this frame's sample. Otherwise the age is
-// the taps' age plus one, capped at AGE_MAX. The lamp's part, a fallback's emissive part and
-// the moments blend the new sample in at `max(ALPHA, 1 / (age + 1))`. On the frame
+// the taps' age plus one, capped at AGE_MAX. The lamp's part and the moments blend the new
+// sample in at `max(ALPHA, 1 / (age + 1))`, a fallback's emissive part as above. On the frame
 // Params.lighting bit 9 says the lamp's light changed, the lamp's part takes this frame's
 // sample as it is: the light pass's lamp estimate is exact up to its shadow ray, so a lamp
 // switched off leaves nothing behind.
@@ -127,6 +129,13 @@ fn gradient_at(q: vec2<f32>) -> f32 {
 }
 
 const ALPHA: f32 = 0.2;
+// The age at which a fallback's emissive mean stops taking samples: 64 samples, its noise an
+// eighth of one sample's, then held until the pixel resets.
+const FALLBACK_CAP: f32 = 64.0;
+// A held fallback's history is its heaviest tap's alone where that tap's bilinear weight is at
+// least this: a still camera reprojects each pixel onto its own centre up to rounding, and the
+// blend of four taps would re-round the stored half every frame.
+const HELD_TAP_W: f32 = 0.999;
 const AGE_MAX: f32 = 2047.0;
 const HISTORY_COS: f32 = 0.8;
 const HISTORY_DIST: f32 = 0.5;
@@ -178,6 +187,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         var w_sum = 0.0;
         var h = vec4<f32>(0.0);
         var m = vec3<f32>(0.0);
+        // The accepted tap of the largest weight and its history: a held fallback copies it
+        // where it carries nearly all the weight, so a still pixel's value is not re-rounded.
+        var best_w = 0.0;
+        var best_h = vec3<f32>(0.0);
         let tol = HISTORY_DIST + HISTORY_DIST_PER_T * rec.t;
         for (var i = 0; i < 4; i++) {
             let o = vec2<i32>(i & 1, i >> 1);
@@ -194,7 +207,12 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             let wy = select(1.0 - f.y, f.y, o.y == 1);
             let w = wx * wy;
             w_sum += w;
-            h += w * textureLoad(prev_accum_in, tap, 0);
+            let ht = textureLoad(prev_accum_in, tap, 0);
+            h += w * ht;
+            if (w > best_w) {
+                best_w = w;
+                best_h = ht.xyz;
+            }
             m += w * textureLoad(prev_moments_in, tap, 0).xyz;
         }
         if (w_sum <= 1e-3) {
@@ -216,6 +234,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 best = d;
                 w_sum = 1.0;
                 h = textureLoad(prev_accum_in, tap, 0);
+                best_w = 1.0;
+                best_h = h.xyz;
                 m = textureLoad(prev_moments_in, tap, 0).xyz;
             }
         }
@@ -224,9 +244,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             h = h / w_sum * ratio;
             m = vec3<f32>(m.xy / w_sum * vec2<f32>(ratio, ratio * ratio), m.z / w_sum);
             age = min(floor(m.z + 0.5) + 1.0, AGE_MAX);
-            // A fallback's emissive part blends as the lamp's part does, but for a lamp change.
-            let a_emissive = max(ALPHA, 1.0 / (age + 1.0));
-            var a = a_emissive;
+            // A fallback's emissive part: the running mean, held from FALLBACK_CAP samples.
+            // Within an emission-scale change's frames (Params.lighting bit 8) it blends at no
+            // less than ALPHA, so a held mean follows the new emission.
+            var a_emissive = select(1.0 / (age + 1.0), 0.0, age >= FALLBACK_CAP);
+            if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
+                a_emissive = max(a_emissive, ALPHA);
+            }
+            var a = max(ALPHA, 1.0 / (age + 1.0));
             if ((params.lighting & LIGHTING_GRADIENT) != 0u) {
                 // Where the lamp's light changed, the new sample weighs as much as the change.
                 let lambda = clamp(GRADIENT_GAIN * gradient_at(q + 0.5), 0.0, 1.0);
@@ -236,7 +261,11 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             if ((params.lighting & LIGHTING_LAMP_CHANGED) != 0u) {
                 a = 1.0;
             }
-            let e_new = select(mix(h.xyz, sample.xyz, a_emissive), sample.xyz, cached);
+            var e_fallback = mix(h.xyz, sample.xyz, a_emissive);
+            if (a_emissive == 0.0 && best_w >= HELD_TAP_W) {
+                e_fallback = best_h * ratio;
+            }
+            let e_new = select(e_fallback, sample.xyz, cached);
             accum = vec4<f32>(e_new, mix(h.w, sample.w, a));
             moments = mix(m.xy, vec2<f32>(l, l * l), a);
         }

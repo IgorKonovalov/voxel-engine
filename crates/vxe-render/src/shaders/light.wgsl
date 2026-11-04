@@ -106,9 +106,9 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             var capped = false;
             if (cacheable(rec)) {
                 cell = cache_claim(cache_voxel(rec.p, ns), cache_face(rec.axis, ns));
-                if (cell < 0) {
+                if (cell == -1) {
                     atomicAdd(&cache_stats.misses, 1u);
-                } else {
+                } else if (cell >= 0) {
                     capped = atomicLoad(&cache_cells[CACHE_WORDS * u32(cell) + CACHE_COUNT]) >= cache_c_cap();
                 }
             }
@@ -137,42 +137,75 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 // The slot holding the key `(v, face)`, claiming a free one of its CACHE_PROBES slots; -1 when
-// they all hold other keys. A claim exchanges word 1 (0 in a free slot) and then stores word 0,
-// so a pixel of another key whose word 1 is the same and whose word 0 is 0 can take the slot
-// for its own between the two: a sample in a neighbour's cell, at most once a claim.
+// they all hold other keys (a miss); -2 when another pixel of the same key is claiming its slot
+// this instant (not a miss: this pixel adds nothing this frame, and the temporal pass reads the
+// cell the other pixel claims). Two scans keep one cell
+// a key: the first looks for the key in every probe (a sweep may have freed a slot before it),
+// the second claims the first free slot. A claim exchanges word 1 from 0 to the key's busy
+// value (`cache_busy`, never a valid word 1), stores word 0, then publishes word 1; a pixel
+// that meets its own busy value returns -2 instead of probing on, and every reader compares
+// word 1 with a valid key, so no pixel sees a half-written key. Nothing frees a slot during
+// the light pass, so every pixel of a key meets the same first free slot.
 fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
     let base = cache_slot(v, face);
     let key = cache_key(v, face);
+    let busy = cache_busy(key);
+    for (var i = 0u; i < CACHE_PROBES; i++) {
+        let word = CACHE_WORDS * ((base + i) & params.cache_mask);
+        let w1 = atomicLoad(&cache_cells[word + 1u]);
+        if (w1 == busy) {
+            return -2;
+        }
+        if (w1 == key.y && cache_word0_is(word, key.x)) {
+            return i32((base + i) & params.cache_mask);
+        }
+    }
     for (var i = 0u; i < CACHE_PROBES; i++) {
         let slot = (base + i) & params.cache_mask;
         let word = CACHE_WORDS * slot;
         // The weak exchange may fail spuriously on a free slot: try again.
         loop {
-            let old = atomicLoad(&cache_cells[word + 1u]);
-            if (old == key.y) {
-                if (atomicLoad(&cache_cells[word]) == key.x) {
-                    return i32(slot);
-                }
-                break;
-            }
-            if (old != 0u) {
-                break;
-            }
-            let r = atomicCompareExchangeWeak(&cache_cells[word + 1u], 0u, key.y);
+            let r = atomicCompareExchangeWeak(&cache_cells[word + 1u], 0u, busy);
             if (r.exchanged) {
                 atomicStore(&cache_cells[word], key.x);
+                atomicStore(&cache_cells[word + 1u], key.y);
                 atomicAdd(&cache_stats.occupied, 1u);
                 return i32(slot);
             }
+            if (r.old_value == busy) {
+                return -2;
+            }
+            if (r.old_value == key.y && cache_word0_is(word, key.x)) {
+                return i32(slot);
+            }
             if (r.old_value != 0u) {
-                if (r.old_value == key.y && atomicLoad(&cache_cells[word]) == key.x) {
-                    return i32(slot);
-                }
                 break;
             }
         }
     }
     return -1;
+}
+
+// A claim's busy word 1 for `key`: its word 1 without the valid bit, or 1 where that is 0.
+// Never a valid word 1 (bit 31 clear) and never a free slot's 0.
+fn cache_busy(key: vec2<u32>) -> u32 {
+    return max(key.y & 0x7FFFFFFFu, 1u);
+}
+
+// Whether word 0 of the cell at `word` reads `x`, re-read a few times while it reads 0 and `x`
+// is not: a claim's store of word 0 that this invocation does not see yet beside its word 1
+// (storage atomics are relaxed in WGSL).
+fn cache_word0_is(word: u32, x: u32) -> bool {
+    for (var t = 0u; t < 8u; t++) {
+        let w0 = atomicLoad(&cache_cells[word]);
+        if (w0 == x) {
+            return true;
+        }
+        if (w0 != 0u) {
+            return false;
+        }
+    }
+    return false;
 }
 
 // Adds an emissive sample to `slot`'s sums while its count is under C_CAP.

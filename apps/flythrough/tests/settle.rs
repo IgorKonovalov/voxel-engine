@@ -595,6 +595,121 @@ fn dig_box_readings() {
     }
 }
 
+/// The face keys of every opaque voxel's face toward air within the cube of `2 * half` voxels
+/// an edge centred on `centre` in `world` (the keys a table around a pose can be asked to
+/// hold: `cache_key`'s voxel and entry face, `2 axis + 1` where the air lies toward `+axis`),
+/// sorted. A voxel outside the world reads as rock.
+fn air_faces(world: &vxe_world::World, centre: [f32; 3], half: i32) -> Vec<([i32; 3], u32)> {
+    use vxe_world::AIR;
+    let lo = centre.map(|c| c.floor() as i32 - half);
+    let n = (2 * half + 2) as usize;
+    let table = world.materials();
+    // 0 rock (opaque), 1 air, 2 translucent, over the cube and a one-voxel rim.
+    let mut cls = vec![0u8; n * n * n];
+    for z in 0..n {
+        for y in 0..n {
+            for x in 0..n {
+                let v = [
+                    lo[0] - 1 + x as i32,
+                    lo[1] - 1 + y as i32,
+                    lo[2] - 1 + z as i32,
+                ];
+                cls[(z * n + y) * n + x] = match world.material_at(v) {
+                    Some(AIR) => 1,
+                    Some(m) if table.is_translucent(m) => 2,
+                    _ => 0,
+                };
+            }
+        }
+    }
+    let at = |x: usize, y: usize, z: usize| cls[(z * n + y) * n + x];
+    let mut keys = Vec::new();
+    for z in 1..n - 1 {
+        for y in 1..n - 1 {
+            for x in 1..n - 1 {
+                if at(x, y, z) != 0 {
+                    continue;
+                }
+                let v = [
+                    lo[0] - 1 + x as i32,
+                    lo[1] - 1 + y as i32,
+                    lo[2] - 1 + z as i32,
+                ];
+                let around = [
+                    (at(x - 1, y, z), 0),
+                    (at(x + 1, y, z), 1),
+                    (at(x, y - 1, z), 2),
+                    (at(x, y + 1, z), 3),
+                    (at(x, y, z - 1), 4),
+                    (at(x, y, z + 1), 5),
+                ];
+                for (c, face) in around {
+                    if c == 1 {
+                        keys.push((v, face));
+                    }
+                }
+            }
+        }
+    }
+    keys.sort_unstable();
+    keys
+}
+
+/// The table's hash spreads a level's keys (ADR-0043's table): the key set of every opaque
+/// face toward air within a 128-voxel cube around `PATCH_POSE` and around `VEIN_POSE` on the
+/// level at seed 1 (`air_faces`), inserted in key order by linear probing through
+/// `marcher::cache_slot`, four probes: at `DEFAULT_TABLE_CELLS` no key lacks a slot, and at the
+/// power of two nearest a load of 0.5 the share of keys left without a slot is at most twice a
+/// seeded uniform assignment's of the same keys at that size (`uniform_slot`, seed 0x0057).
+/// No GPU.
+#[test]
+fn the_table_hash_spreads_a_levels_keys() {
+    use vxe_render::marcher::{DEFAULT_TABLE_CELLS, cache_slot};
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        vxe_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    let world = vxe_world::World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    for pose in [stillness::PATCH_POSE, VEIN_POSE] {
+        let keys = air_faces(&world, pose.position, 64);
+        let n = keys.len();
+        assert!(n > 10_000, "{}: {n} keys", pose.name);
+        let bases = |cells: u32| -> Vec<u32> {
+            keys.iter().map(|&(v, f)| cache_slot(v, f, cells)).collect()
+        };
+        let (full_missed, ..) = probe_insert(&bases(DEFAULT_TABLE_CELLS), DEFAULT_TABLE_CELLS);
+        // The power of two nearest 2 n, in log2.
+        let half_cells = 1u32 << ((2.0 * n as f64).log2().round() as u32);
+        let (hash_missed, _, hmean, hmax) = probe_insert(&bases(half_cells), half_cells);
+        let ubases: Vec<u32> = (0..n as u64)
+            .map(|i| uniform_slot(0x0057, i, half_cells))
+            .collect();
+        let (uni_missed, _, umean, umax) = probe_insert(&ubases, half_cells);
+        println!(
+            "reading: {} keys {n}; at {DEFAULT_TABLE_CELLS} cells no slot {full_missed}; at {half_cells} cells (load {:.3}) no slot: hash {hash_missed} ({:.5}, runs mean {hmean:.3} max {hmax}), uniform {uni_missed} ({:.5}, runs mean {umean:.3} max {umax})",
+            pose.name,
+            n as f64 / f64::from(half_cells),
+            hash_missed as f64 / n as f64,
+            uni_missed as f64 / n as f64
+        );
+        assert_eq!(full_missed, 0, "{}: keys without a slot", pose.name);
+        assert!(
+            uni_missed > 0,
+            "{}: the uniform run misses nothing",
+            pose.name
+        );
+        assert!(
+            hash_missed <= 2 * uni_missed,
+            "{}: the hash leaves {hash_missed} keys without a slot, the uniform {uni_missed}",
+            pose.name
+        );
+    }
+}
+
 /// The table's occupancy after the steady flight repeated `VXE_FLIGHTS` times (default 4) from
 /// each pose, never cleared between (`occupancy_run`).
 #[test]
@@ -1705,12 +1820,9 @@ fn a_face_reads_its_mean_from_the_first_sample() {
     }
 }
 
-/// A hit with no face (behind a translucent slab) takes the fallback: on the box with a glass
-/// layer over the rock block's top, a translucent hit's emissive part after 8 frames equals the
-/// closed-form blend of its own samples, `e += max(0.2, 1 / (age + 1)) (s - e)`, within 1 %,
-/// and its key holds no cell.
-#[test]
-fn a_hit_with_no_face_takes_the_fallback() {
+/// The box with a glass layer over the rock block's top (`cache_box_in` with the castle's
+/// rows), at 64 x 36, scale 1, lamp off.
+fn slab_rig() -> Option<CacheBox> {
     use vxe_world::*;
     let table =
         flythrough::castle_materials(&flythrough::with_emissive_ore(&flythrough::cave_materials()));
@@ -1722,7 +1834,95 @@ fn a_hit_with_no_face_takes_the_fallback() {
             Mode::Fill(flythrough::castle::material(flythrough::castle::GLASS)),
         ))
         .expect("the slab is resident");
-    let Some(mut rig) = cache_box_rig_on(world, camera, 4096, [64, 36], None) else {
+    cache_box_rig_on(world, camera, 4096, [64, 36], None)
+}
+
+/// A still fallback pixel holds still: on the slab box (`slab_rig`), after 64 frames every
+/// translucent hit's accumulated emissive part is bit-identical over the next 64 (its running
+/// mean held at 64 samples); a one-voxel edit box over the slab at the median translucent hit
+/// restarts the pixels whose hit lies in its dilated span (each one's value changes within 2
+/// frames). About 130 frames.
+#[test]
+fn a_still_fallback_pixel_holds_still() {
+    let Some(mut rig) = slab_rig() else {
+        return;
+    };
+    rig.step(64);
+    let read = |rig: &CacheBox| {
+        let (d, q) = (&rig.level.device, &rig.level.queue);
+        (
+            vxe_render::readback::read_float(d, q, rig.frame.accumulated()),
+            vxe_render::readback::read_float(d, q, rig.frame.hit_positions()),
+            vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records()),
+        )
+    };
+    let (held, pos, info) = read(&rig);
+    let glass: Vec<usize> = (0..info.len())
+        .filter(|&i| info[i][3] & 1 == 1 && info[i][3] & 4 != 0 && held[i][0] > 0.0)
+        .collect();
+    assert!(glass.len() > 20, "{} lit translucent hits", glass.len());
+    let rgb = |a: &[[f32; 4]], i: usize| [a[i][0], a[i][1], a[i][2]].map(f32::to_bits);
+    for f in 1..=64 {
+        rig.step(1);
+        let (acc, _, _) = read(&rig);
+        let moved: Vec<usize> = glass
+            .iter()
+            .copied()
+            .filter(|&i| rgb(&acc, i) != rgb(&held, i))
+            .collect();
+        assert!(
+            moved.is_empty(),
+            "frame {f} after 64: {} of {} translucent hits moved, first {:?}",
+            moved.len(),
+            glass.len(),
+            moved.first().map(|&i| (acc[i], held[i]))
+        );
+    }
+    // The median translucent hit's voxel, under the glass.
+    let mut by_x: Vec<usize> = glass.clone();
+    by_x.sort_by(|&a, &b| {
+        pos[a][0]
+            .total_cmp(&pos[b][0])
+            .then(pos[a][1].total_cmp(&pos[b][1]))
+    });
+    let m = pos[by_x[by_x.len() / 2]];
+    let v = [m[0].floor() as i32, m[1].floor() as i32, 64];
+    let inside: Vec<usize> = glass
+        .iter()
+        .copied()
+        .filter(|&i| {
+            (0..3).all(|k| pos[i][k] >= (v[k] - 1) as f32 && pos[i][k] <= (v[k] + 2) as f32)
+        })
+        .collect();
+    assert!(!inside.is_empty(), "no translucent hit in the box at {v:?}");
+    rig.frame.invalidate(v, v);
+    let mut changed = vec![false; inside.len()];
+    for _ in 0..2 {
+        rig.step(1);
+        let (acc, _, _) = read(&rig);
+        for (c, &i) in changed.iter_mut().zip(&inside) {
+            *c |= rgb(&acc, i) != rgb(&held, i);
+        }
+    }
+    println!(
+        "reading: slab, {} translucent hits held over 64 frames; the edit box at {v:?} restarted {} of {} inside it",
+        glass.len(),
+        changed.iter().filter(|&&c| c).count(),
+        inside.len()
+    );
+    assert!(
+        changed.iter().all(|&c| c),
+        "a pixel in the edit box kept its value"
+    );
+}
+
+/// A hit with no face (behind a translucent slab) takes the fallback: on the box with a glass
+/// layer over the rock block's top, a translucent hit's emissive part after 8 frames equals the
+/// closed-form running mean of its own samples, `e += (s - e) / (age + 1)`, within 1 %, and
+/// its key holds no cell.
+#[test]
+fn a_hit_with_no_face_takes_the_fallback() {
+    let Some(mut rig) = slab_rig() else {
         return;
     };
     let mut expect: Vec<[f64; 3]> = Vec::new();
@@ -1742,7 +1942,7 @@ fn a_hit_with_no_face_takes_the_fallback() {
                 .map(|&i| [0, 1, 2].map(|c| f64::from(s[i][c])))
                 .collect();
         } else {
-            let a = (1.0f64 / (f as f64 + 1.0)).max(0.2);
+            let a = 1.0f64 / (f as f64 + 1.0);
             for (e, &i) in expect.iter_mut().zip(&glass) {
                 for c in 0..3 {
                     e[c] += a * (f64::from(s[i][c]) - e[c]);
@@ -2262,6 +2462,11 @@ const GUARD_CELLS: u32 = 1 << 14;
 /// table at GUARD_CELLS cells and its cap `cap`.
 fn guard_rig(plug: bool, cap: u32) -> Option<(CacheBox, vxe_world::EditOp, vxe_world::EditOp)> {
     let (world, carve, to_rock, camera) = guard_box(plug);
+    Some((guard_rig_on(world, camera, cap)?, carve, to_rock))
+}
+
+/// `world` from `camera` under the guard box's frame (`guard_rig`).
+fn guard_rig_on(world: vxe_world::World, camera: Camera, cap: u32) -> Option<CacheBox> {
     let mut rig = cache_box_rig_on(world, camera, cap, [192, 108], None)?;
     rig.frame.set_lighting(Lighting {
         lamp: false,
@@ -2271,7 +2476,26 @@ fn guard_rig(plug: bool, cap: u32) -> Option<(CacheBox, vxe_world::EditOp, vxe_w
         table_cells: GUARD_CELLS,
         ..Lighting::default()
     });
-    Some((rig, carve, to_rock))
+    Some(rig)
+}
+
+/// The guard box with the plug in and a hole through it of one 2^3 block of the coarse shadow
+/// walk (`ShadowWalk::Coarse`, the default), y 30..32 and z 38..40, near the plug's top edge:
+/// from the far wall's rows above z 31.5 in view the hole's shadow on the emitter wall
+/// (x = 4) reaches its top row of faces, two or three of its 400, so a pixel's emissive sample
+/// finds light about once in 150 to 200 and a cell of `GUARD_CAP` samples caps dark with a
+/// share near `(1 - 1/170)^256`, about 0.2; the rows below see no emitter and cap dark.
+fn gap_rig(cap: u32) -> Option<CacheBox> {
+    use vxe_world::*;
+    let (world, _, _, camera) = guard_box(true);
+    world
+        .apply(&EditOp::box_(
+            Fixed3([14, 30, 38].map(|v| v * FIXED_ONE)),
+            Fixed3([15, 32, 40].map(|v| v * FIXED_ONE)),
+            Mode::Carve,
+        ))
+        .expect("the box is resident");
+    guard_rig_on(world, camera, cap)
 }
 
 /// The far wall's face keys in view with at least one gradient stratum's 9 pixels each.
@@ -2454,6 +2678,78 @@ fn a_still_scene_reopens_no_cell() {
         .frame
         .read_table_reopens(&rig.level.device, &rig.level.queue);
     assert_eq!(reopens, 0, "the guard reopened {reopens} cells");
+}
+
+/// [`gap_still_run`]'s keys in view, dark capped keys, keys whose count fell, reopens and
+/// uncapped keys.
+type GapRun = (Vec<FaceKey>, usize, Vec<FaceKey>, u32, Vec<FaceKey>);
+
+/// The gap box's still run (`a_still_world_never_reopens_a_cell`): `GUARD_WINDOW + 8` frames
+/// from the first (the window the first upload opened has closed and every cell in view has
+/// capped), then 512 still frames read frame by frame. Returns the keys in view, the dark
+/// capped ones among them at the start of the 512, the keys whose count fell in them, and the
+/// reopen counter's growth over them.
+fn gap_still_run(forced: bool) -> Option<GapRun> {
+    let mut rig = gap_rig(GUARD_CAP)?;
+    rig.frame.force_guard_window(forced);
+    rig.step(vxe_render::marcher::GUARD_WINDOW as usize + 8);
+    let mut keys: Vec<FaceKey> = rig.keys().into_keys().collect();
+    keys.sort_unstable();
+    let words = cache_words(&rig.level, &rig.frame);
+    let uncapped: Vec<FaceKey> = keys
+        .iter()
+        .copied()
+        .filter(|&k| cache_count(&words, k) < GUARD_CAP)
+        .collect();
+    let dark = keys
+        .iter()
+        .filter(|&&k| cache_count(&words, k) >= GUARD_CAP && cell_lum(&words, k, GUARD_CAP) == 0.0)
+        .count();
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let before = rig.frame.read_table_reopens(d, q);
+    let (at, _) = reopen_series(&mut rig, &keys, 512);
+    let after = rig
+        .frame
+        .read_table_reopens(&rig.level.device, &rig.level.queue);
+    let fell = keys
+        .iter()
+        .zip(&at)
+        .filter(|(_, a)| a.is_some())
+        .map(|(k, _)| *k)
+        .collect();
+    Some((keys, dark, fell, after - before, uncapped))
+}
+
+/// A still world never reopens a cell (ADR-0043's guard, within its window only): on the gap
+/// box (`gap_rig`: the far wall lit through a small hole, so some of its capped cells
+/// drew no light in `GUARD_CAP` samples and the guard's fresh sample may find some), scale 1,
+/// lamp off, `C_CAP` 256, once the window the first upload opened has closed, 512 still frames
+/// leave every count in view monotone and the reopen counter unchanged; with the window
+/// forced open for the whole run the counter grows. About 2 x 780 frames.
+#[test]
+fn a_still_world_never_reopens_a_cell() {
+    let Some((keys, dark, fell, reopens, uncapped)) = gap_still_run(false) else {
+        return;
+    };
+    let (_, dark_forced, _, reopens_forced, _) =
+        gap_still_run(true).expect("the device opened once");
+    println!(
+        "reading: gap box, {} keys in view; dark capped at the start {dark} (forced {dark_forced}); reopens over 512 still frames {reopens}, window forced open {reopens_forced}",
+        keys.len()
+    );
+    assert!(keys.len() >= 100, "{} keys in view", keys.len());
+    assert!(uncapped.is_empty(), "uncapped cells: {uncapped:?}");
+    assert!(
+        dark >= 1,
+        "no capped cell is dark: the gap lights every one"
+    );
+    assert!(dark < keys.len(), "no cell is lit through the gap");
+    assert!(fell.is_empty(), "counts fell: {fell:?}");
+    assert_eq!(reopens, 0, "the guard reopened {reopens} cells");
+    assert!(
+        reopens_forced > 0,
+        "with the window forced open the guard reopened no cell"
+    );
 }
 
 /// The still hall by pixel class (Plan 0057 Phase 4 Part 1), a reading: the showcase's `hall`

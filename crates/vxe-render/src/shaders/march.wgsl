@@ -300,6 +300,8 @@ const LIGHTING_GRADIENT: u32 = 8u;
 const LIGHTING_FILTER_OFF: u32 = 32u;
 const LIGHTING_EMISSION_CHANGED: u32 = 256u;
 const LIGHTING_LAMP_CHANGED: u32 = 512u;
+// The table's guard runs this frame (`marcher::LIGHTING_GUARD`, `GUARD_WINDOW`).
+const LIGHTING_GUARD: u32 = 1024u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 // The exposure is automatic: this frame's is the state's `current`, not `params.exposure`.
 const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
