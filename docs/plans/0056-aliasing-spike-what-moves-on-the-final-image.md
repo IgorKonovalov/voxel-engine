@@ -1,6 +1,6 @@
 # 0056: The aliasing spike: what moves on the final image with the light held still, read by class, and one window for FSR 2, `own`, native and the far normal
 
-> **Status:** approved (2026-11-03), not started; the lane starts at Plan 0051's Phase 4 verdict
+> **Status:** in-progress (2026-11-04): Phases 1 to 3 by `dev`, then Phase 4 (human)
 > **Created:** 2026-11-03
 > **Approved:** 2026-11-03 (owner): "approve, go with recommended". See Owner answers.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler bullets).
@@ -474,16 +474,24 @@ The owner, 2026-11-03: "approve, go with recommended".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Where the jumps lie | dev | not started | |
+| 1: Where the jumps lie | dev | done | committed with this row |
 | 2: The matrix, the pan and the rings | dev | not started | |
 | 3: Candidates, costs and the window's toggles | dev | not started | |
 | 4: The owner's window | human | not started | |
 
+Readings, gates and attempts: [`logs/0056.md`](logs/0056.md).
+
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `E` also sets `Lighting::candidates` 0: at `light_radius` 0 the hall's mirror holds 61
+  light samples (the eye's chunk holds emitters).
+- Phase 1: `H` on this branch is `--steady b --indirect off`, lamp off, probe spacing 32 (Plan
+  0051's verdict light; the hall's `H` takes the same mapping). New variable beyond the plan's
+  list: `VXE_STRIP_STEADY`, and `VXE_STRIP_LAMP_POWER` for `E`'s intensity (default 4000).
+- Phase 1: `VXE_STRIP_PROBE_SPACING` defaults to the hero's 32 whenever `VXE_STRIP_LIGHT` is given,
+  and to the tree's 16 otherwise, so the tool's earlier runs read as before.
+- Phase 1: the tool's first read frame is step `settle + 1`; the bridge reads the Context table
+  at `VXE_STRIP_SETTLE=2047`.
 
 ### Close triggers
 

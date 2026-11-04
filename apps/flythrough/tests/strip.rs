@@ -36,6 +36,20 @@
 //! - `VXE_STRIP_FLICKER`: `from,to` run frames the flicker map averages over (default: the
 //!   whole run). The map is the mean per pixel of `|dY|` between consecutive frames, `Y` the
 //!   display-encoded luma in 0..1, written times 8 as grey.
+//! - `VXE_STRIP_LIGHT`: `hero` (the variables above), `eye` (`aliasing::eye_lamp` at
+//!   `VXE_STRIP_LAMP_POWER`, default 4000 (the hall's dome crop at a mean display luma of 30 to 120 at exposure 8), with `aliasing::eye_lighting`: the lamp on, no
+//!   indirect, no emissive candidates, the mirror's light radius 0) or `eye0` (`eye` with every emitting material's
+//!   emission scaled to 0). Given at all, the probe spacing defaults to the hero's 32.
+//! - `VXE_STRIP_LIGHT_RADIUS`: the mirror's `light_radius` (default: 0 under `eye`, else the
+//!   source's). `VXE_STRIP_PROBE_SPACING`: the probe volume's spacing.
+//! - `VXE_STRIP_STEADY`: a `--steady` preset (`off`, `a`, `c`, `ac`, `b`, `ab`, `abc`), the
+//!   cache read nearest.
+//! - `VXE_STRIP_SHARPEN`: the upscaler's sharpening (default 0.5).
+//! - `VXE_STRIP_READ=fold`: after the settle, `VXE_STRIP_FRAMES` still frames folded over
+//!   `VXE_STRIP_PHASES` (default: `fsr2::jitter_phases`, `own`'s `JITTER_PHASES`, 18 for
+//!   `off`): `T`, `L`, `J` (`support::aliasing`), the guard's energy, the jumps by class and
+//!   footprint over the first cycle's mask, and `jumps.png` (T's jumps per pixel, white at `JUMPS_WHITE`
+//!   jumps), `jumps-l.png`, `mask.png`, `last.png` and `clusters.png` (the 8 worst 32-pixel tiles).
 //!
 //! Example (the RTX, under the perf lock and the memory cap):
 //! `VXE_TEST_ADAPTER=rtx VXE_STRIP_TAG=lamp-off VXE_STRIP_SOURCE=level VXE_STRIP_LAMP_AT=60
@@ -47,6 +61,7 @@ use std::path::PathBuf;
 
 use flythrough::showcase::{SHOTS, ShowcaseSource};
 use flythrough::{LookPreset, Pose};
+use support::aliasing::{self, ByClass, Hits, Mask};
 use support::{reading_device, write_png};
 use vxe_render::gpu_world::{GpuWorld, MirrorConfig, UNIT_BYTES, Window};
 use vxe_render::{
@@ -101,6 +116,23 @@ struct Scene {
     exposure: f32,
     lamp: bool,
     name: String,
+    /// The materials that emit.
+    emits: Vec<u16>,
+    /// The mirror's `light_radius`.
+    light_radius: i32,
+}
+
+/// The hero's probe spacing (`examples/hero.rs`), the default under `VXE_STRIP_LIGHT`.
+const HERO_PROBE_SPACING: u32 = 32;
+
+fn emitting(table: &MaterialTable) -> Vec<u16> {
+    (1..table.len() as u16)
+        .filter(|&m| {
+            table
+                .get(m)
+                .is_some_and(|r| r.emission.iter().any(|&e| e > 0.0))
+        })
+        .collect()
 }
 
 fn sync_whole(scene: &mut Scene, world: &World) {
@@ -123,6 +155,13 @@ fn sync_whole(scene: &mut Scene, world: &World) {
         }
         last = Some(scene.gpu.light_samples());
     }
+}
+
+/// The mirror's light radius: `VXE_STRIP_LIGHT_RADIUS`, else 0 under the eye lamp, else the
+/// source's `default`.
+fn light_radius(default: i32) -> i32 {
+    let eye = matches!(env("VXE_STRIP_LIGHT").as_deref(), Some("eye" | "eye0"));
+    env_or("VXE_STRIP_LIGHT_RADIUS", if eye { 0 } else { default })
 }
 
 fn scene() -> Option<Scene> {
@@ -148,14 +187,17 @@ fn scene() -> Option<Scene> {
         };
         let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
         let (device, queue, adapter) = reading_device(pool)?;
+        let base_cfg = MirrorConfig::new(Window::Fixed(world.extent()));
         let cfg = MirrorConfig {
             budget_bytes: flythrough::level_mirror_budget(
                 &world,
                 world.extent().len() as u64,
                 false,
             ),
-            ..MirrorConfig::new(Window::Fixed(world.extent()))
+            light_radius: light_radius(base_cfg.light_radius),
+            ..base_cfg
         };
+        let radius = cfg.light_radius;
         let mut gpu = GpuWorld::with_config(&device, cfg);
         gpu.set_focus(VoxelCoord(pose.position.map(|v| v.floor() as i32)));
         let mut scene = Scene {
@@ -166,6 +208,8 @@ fn scene() -> Option<Scene> {
             exposure: pose.exposure,
             lamp: true,
             name: format!("level at {} on {adapter}", pose.name),
+            emits: emitting(&base),
+            light_radius: radius,
         };
         sync_whole(&mut scene, &world);
         return Some(scene);
@@ -186,9 +230,10 @@ fn scene() -> Option<Scene> {
     let (device, queue, adapter) = reading_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: flythrough::level_mirror_budget(&world, world.extent().len() as u64, false),
-        light_radius: 19,
+        light_radius: light_radius(19),
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
+    let radius = cfg.light_radius;
     let mut gpu = GpuWorld::with_config(&device, cfg);
     gpu.set_focus(shot.eye);
     let camera = Camera {
@@ -205,6 +250,8 @@ fn scene() -> Option<Scene> {
         exposure: shot.exposure_milli as f32 / 1000.0,
         lamp: false,
         name: format!("showcase at {} on {adapter}", shot.name),
+        emits: emitting(&table),
+        light_radius: radius,
     };
     sync_whole(&mut scene, &world);
     Some(scene)
@@ -296,6 +343,201 @@ fn out_dir(tag: &str) -> PathBuf {
     dir
 }
 
+/// The guard's crops at 1920 x 1080: the dome, the near pillar, the far wall.
+const GUARD_CROPS: [[u32; 4]; 3] = [
+    [800, 0, 700, 250],
+    [560, 300, 200, 400],
+    [780, 230, 640, 360],
+];
+
+/// The neighbour energy on `VXE_STRIP_ENERGY`'s crops, else the guard's at 1920 x 1080, else
+/// the whole image.
+fn guard(rgba: &[u8], w: u32, h: u32) -> String {
+    let crops: Vec<[u32; 4]> = match env("VXE_STRIP_ENERGY") {
+        Some(spec) => spec
+            .split('/')
+            .map(|c| {
+                let c: Vec<u32> = c.split(',').map(|v| v.parse().expect("a crop")).collect();
+                [c[0], c[1], c[2], c[3]]
+            })
+            .collect(),
+        None if (w, h) == (1920, 1080) => GUARD_CROPS.to_vec(),
+        None => vec![[0, 0, w, h]],
+    };
+    crops
+        .iter()
+        .map(|c| {
+            let (eh, ev) = neighbour_energy(rgba, w, *c);
+            format!("{c:?} h {eh:.5} v {ev:.5}")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// An rgba8 image magnified `k` times, nearest.
+fn magnify(rgba: &[u8], w: u32, h: u32, k: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity((w * h * k * k * 4) as usize);
+    for y in 0..h * k {
+        for x in 0..w * k {
+            let s = (((y / k) * w + x / k) * 4) as usize;
+            out.extend_from_slice(&rgba[s..s + 4]);
+        }
+    }
+    out
+}
+
+/// The frame's internal hit buffer: positions with `t`, and records.
+fn read_hits(scene: &Scene, frame: &Frame) -> (Vec<[f32; 4]>, Vec<[u16; 4]>) {
+    (
+        readback::read_float(&scene.device, &scene.queue, frame.hit_positions()),
+        readback::read_rgba16u(&scene.device, &scene.queue, frame.hit_records()),
+    )
+}
+
+/// Jumps per pixel at which `jumps.png` is white.
+const JUMPS_WHITE: u32 = 8;
+
+/// `VXE_STRIP_READ=fold`: a still camera's frames folded over the jitter's cycle.
+struct FoldRead<'a> {
+    size: [u32; 2],
+    phases: u32,
+    frames: u32,
+    tag: &'a str,
+    dir: &'a std::path::Path,
+}
+
+impl FoldRead<'_> {
+    fn run(&self, scene: &mut Scene, frame: &mut Frame, camera: &Camera, light: &LightParams) {
+        let [w, h] = self.size;
+        let internal = frame.internal_size();
+        let tan_sum = 2.0 * (camera.vfov * 0.5).tan() * w as f32 / h as f32;
+        let emits = scene.emits.clone();
+        let is_emit = |m: u16| emits.contains(&m);
+        let mut frames = Vec::with_capacity(self.frames as usize);
+        let mut mask: Option<Mask> = None;
+        for f in 0..self.frames {
+            frame.step(&scene.device, &scene.queue, &scene.gpu, camera, light);
+            frames.push(readback::read_rgba8(
+                &scene.device,
+                &scene.queue,
+                frame.target(),
+            ));
+            if f < self.phases.max(1) {
+                let (pos, info) = read_hits(scene, frame);
+                let hits = Hits {
+                    size: internal,
+                    pos: &pos,
+                    info: &info,
+                };
+                let m = Mask::of(&hits, [w, h], tan_sum, &is_emit);
+                match &mut mask {
+                    Some(a) => a.merge(&m),
+                    None => mask = Some(m),
+                }
+            }
+        }
+        let fold = aliasing::fold(&frames, self.phases);
+        let mask = mask.expect("a fold reads at least one frame");
+        let last = frames.last().expect("a frame");
+        println!(
+            "fold {}: {} frames, {} phases, {} whole cycles",
+            self.tag,
+            frames.len(),
+            fold.phases,
+            fold.cycles
+        );
+        println!(
+            "fold T (mean, p99.9, max, over 2, jumps over {}): {}",
+            aliasing::JUMP,
+            fold.t.cell()
+        );
+        println!("fold L: {}", fold.l.cell());
+        println!(
+            "fold J {:.4}; unlocked share of jumps (L / T) {:.4}",
+            fold.j,
+            fold.unlocked()
+        );
+        println!("fold guard energy: {}", guard(last, w, h));
+        if (w, h) == (1920, 1080) {
+            let dome = crop(last, w, GUARD_CROPS[0]);
+            let n = (dome.len() / 4) as f32;
+            println!(
+                "fold dome crop mean display luma {:.1} /255",
+                dome.chunks_exact(4).map(luma).sum::<f32>() / n * 255.0
+            );
+        }
+        let ones = vec![1u32; mask.class.len()];
+        println!(
+            "fold pixels by class:\n{}",
+            ByClass::of(&mask, &ones).table("pixels")
+        );
+        println!(
+            "fold T jumps by class:\n{}",
+            ByClass::of(&mask, &fold.t_jumps).table("T jumps")
+        );
+        println!(
+            "fold L jumps by class:\n{}",
+            ByClass::of(&mask, &fold.l_jumps).table("L jumps")
+        );
+        write_png(
+            &self.dir.join("jumps.png"),
+            &aliasing::count_image(&fold.t_jumps, JUMPS_WHITE),
+            w,
+            h,
+        );
+        write_png(
+            &self.dir.join("jumps-l.png"),
+            &aliasing::count_image(&fold.l_jumps, JUMPS_WHITE),
+            w,
+            h,
+        );
+        let mask_image = mask.image();
+        write_png(&self.dir.join("mask.png"), &mask_image, w, h);
+        write_png(&self.dir.join("last.png"), last, w, h);
+        // The worst clusters: 32-pixel tiles by T jumps, a 96-pixel crop around each, magnified
+        // twice, beside the same crop of the mask.
+        const TILE: u32 = 32;
+        const CROP: u32 = 96;
+        let mut panels = Vec::new();
+        for (k, (tx, ty, sum)) in aliasing::worst_tiles(&fold.t_jumps, [w, h], TILE, 8)
+            .into_iter()
+            .enumerate()
+        {
+            let cx = (tx + TILE / 2)
+                .saturating_sub(CROP / 2)
+                .min(w.saturating_sub(CROP));
+            let cy = (ty + TILE / 2)
+                .saturating_sub(CROP / 2)
+                .min(h.saturating_sub(CROP));
+            let c = [cx, cy, CROP.min(w), CROP.min(h)];
+            let mut mix = ByClass::default();
+            for y in ty..(ty + TILE).min(h) {
+                for x in tx..(tx + TILE).min(w) {
+                    let i = (y * w + x) as usize;
+                    mix.add(mask.class[i], mask.footprint[i], u64::from(fold.t_jumps[i]));
+                }
+            }
+            let words: Vec<String> = aliasing::Class::ALL
+                .iter()
+                .filter(|&&cl| mix.class_sum(cl) > 0)
+                .map(|&cl| format!("{} {}", cl.name(), mix.class_sum(cl)))
+                .collect();
+            println!(
+                "fold cluster {k}: tile at ({tx}, {ty}), {sum} T jumps; crop {c:?}; {}",
+                words.join(", ")
+            );
+            panels.push(magnify(&crop(last, w, c), c[2], c[3], 2));
+            panels.push(magnify(&crop(&mask_image, w, c), c[2], c[3], 2));
+        }
+        if !panels.is_empty() {
+            let side = CROP.min(w).min(h) * 2;
+            let (px, pw, ph) = sheet(&panels, side, side, 4);
+            write_png(&self.dir.join("clusters.png"), &px, pw, ph);
+        }
+        println!("fold: written under {}", self.dir.display());
+    }
+}
+
 #[test]
 #[ignore = "reading only: run with --ignored"]
 fn strip_run() {
@@ -331,12 +573,13 @@ fn strip_run() {
         .expect("VXE_STRIP_SIZE takes WxH");
     let output = [w, h];
     let upscaler = env("VXE_STRIP_UPSCALER").unwrap_or_else(|| "fsr2".to_owned());
+    let sharpen: f32 = env_or("VXE_STRIP_SHARPEN", 0.5);
     let mut frame = match upscaler.as_str() {
         "off" => Frame::new(device, w, h),
         "own" => {
             let mut f = Frame::with_sizes(device, RenderScale::OneHalf.internal(output), output);
             f.set_jitter(device, true);
-            f.set_sharpness(queue, 0.5);
+            f.set_sharpness(queue, sharpen);
             f
         }
         "fsr2" => {
@@ -344,7 +587,7 @@ fn strip_run() {
             f.set_upscaler_kind(
                 device,
                 UpscalerKind::Fsr2(Fsr2Settings {
-                    sharpness: 0.5,
+                    sharpness: sharpen,
                     ..Fsr2Settings::default()
                 }),
             );
@@ -352,6 +595,13 @@ fn strip_run() {
         }
         v => panic!("VXE_STRIP_UPSCALER takes fsr2, own or off, not {v}"),
     };
+    let internal = frame.internal_size();
+    let phases = match upscaler.as_str() {
+        "fsr2" => vxe_render::fsr2::jitter_phases(internal[0], w),
+        "own" => vxe_render::marcher::JITTER_PHASES,
+        _ => 18,
+    };
+    let phases: u32 = env_or("VXE_STRIP_PHASES", phases);
     let exposure = match env("VXE_STRIP_EXPOSURE").as_deref() {
         Some("auto") => Exposure::Auto(AutoExposure::eye()),
         Some(v) => Exposure::Manual(
@@ -378,6 +628,37 @@ fn strip_run() {
         exposure,
         ..Lighting::default()
     };
+    let light_mode = env("VXE_STRIP_LIGHT");
+    let steady = env("VXE_STRIP_STEADY").map(|v| {
+        flythrough::hud::SteadyMode::from_name(&v)
+            .unwrap_or_else(|| panic!("VXE_STRIP_STEADY takes a --steady preset, not {v}"))
+    });
+    if let Some(m) = steady {
+        lighting = m.apply(lighting, vxe_render::marcher::CacheRead::Nearest);
+    }
+    let lamp_power: f32 = env_or("VXE_STRIP_LAMP_POWER", 4000.0);
+    let light = match light_mode.as_deref() {
+        None | Some("hero") => LightParams::headlamp(),
+        Some("eye" | "eye0") => {
+            lighting = aliasing::eye_lighting(lighting);
+            aliasing::eye_lamp(lamp_power)
+        }
+        Some(v) => panic!("VXE_STRIP_LIGHT takes hero, eye or eye0, not {v}"),
+    };
+    if light_mode.as_deref() == Some("eye0") {
+        for &m in &scene.emits {
+            frame.set_emission_scale(queue, m, 0.0);
+        }
+    }
+    let spacing: u32 = env_or(
+        "VXE_STRIP_PROBE_SPACING",
+        if light_mode.is_some() {
+            HERO_PROBE_SPACING
+        } else {
+            vxe_render::probes::DEFAULT_PROBE_SPACING
+        },
+    );
+    frame.set_probe_spacing(device, spacing);
     let mean_image = on_off("VXE_STRIP_MEAN", false);
     frame.set_lighting(lighting);
     frame.set_look(LookParams {
@@ -413,11 +694,31 @@ fn strip_run() {
         lighting.candidates,
         lighting.exposure
     );
+    println!(
+        "strip {tag}: light {} (lamp power {}, light radius {}, light samples {}), steady {}, probe spacing {spacing}, sharpen {sharpen}, internal {}x{}, jitter phases {phases}",
+        light_mode.as_deref().unwrap_or("hero"),
+        light.intensity,
+        scene.light_radius,
+        scene.gpu.light_samples(),
+        steady.map_or("off", |m| m.name()),
+        internal[0],
+        internal[1]
+    );
 
-    let light = LightParams::headlamp();
     let mut camera = scene.camera;
     for _ in 0..settle {
         frame.step(device, queue, &scene.gpu, &camera, &light);
+    }
+    if env("VXE_STRIP_READ").as_deref() == Some("fold") {
+        let read = FoldRead {
+            size: [w, h],
+            phases,
+            frames,
+            tag: &tag,
+            dir: &dir,
+        };
+        read.run(&mut scene, &mut frame, &camera, &light);
+        return;
     }
 
     let n = (w * h) as usize;
@@ -547,5 +848,207 @@ fn strip_run() {
         "strip: {} frames written under {}",
         panels.len(),
         dir.display()
+    );
+}
+
+/// 72 frames of 10 000 pixels (100 x 100) at 18 phases.
+const FOLD_SIDE: usize = 100;
+const FOLD_FRAMES: usize = 72;
+const FOLD_PHASES: u32 = 18;
+
+fn series(value: impl Fn(usize, usize) -> u8) -> Vec<Vec<u8>> {
+    (0..FOLD_FRAMES)
+        .map(|f| {
+            (0..FOLD_SIDE * FOLD_SIDE)
+                .flat_map(|i| {
+                    let v = value(f, i);
+                    [v, v.wrapping_add(17), v.wrapping_mul(3), 255]
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn the_phase_fold_splits_a_locked_series_from_noise() {
+    // A series of period 18: each pixel takes a seeded value per phase.
+    let mut mix = aliasing::Mix(56);
+    let table: Vec<u8> = (0..FOLD_PHASES as usize * FOLD_SIDE * FOLD_SIDE)
+        .map(|_| mix.byte())
+        .collect();
+    let locked = aliasing::fold(
+        &series(|f, i| table[(f % FOLD_PHASES as usize) * FOLD_SIDE * FOLD_SIDE + i]),
+        FOLD_PHASES,
+    );
+    println!(
+        "locked: T {} | L {} | J {:.6}",
+        locked.t.cell(),
+        locked.l.cell(),
+        locked.j
+    );
+    assert_eq!(locked.cycles, 4);
+    assert!(
+        locked.t.mean > 0.0 && locked.t.jumps > 0,
+        "T sees the cycle"
+    );
+    assert_eq!(locked.l.max, 0, "L sees nothing of a locked series");
+    assert!(
+        (locked.j - 1.0).abs() < 1e-9,
+        "J of a locked series: {}",
+        locked.j
+    );
+
+    // Seeded white noise.
+    let mut mix = aliasing::Mix(0x0056);
+    let noise: Vec<u8> = (0..FOLD_FRAMES * FOLD_SIDE * FOLD_SIDE)
+        .map(|_| mix.byte())
+        .collect();
+    let noisy = aliasing::fold(
+        &series(|f, i| noise[f * FOLD_SIDE * FOLD_SIDE + i]),
+        FOLD_PHASES,
+    );
+    println!(
+        "noise: T {} | L {} | J {:.6}",
+        noisy.t.cell(),
+        noisy.l.cell(),
+        noisy.j
+    );
+    assert!(noisy.j.abs() <= 0.1, "J of noise: {}", noisy.j);
+    assert!(
+        (noisy.l.mean - noisy.t.mean).abs() <= 0.2 * noisy.t.mean,
+        "L's mean {} against T's {}",
+        noisy.l.mean,
+        noisy.t.mean
+    );
+
+    // A constant series.
+    let still = aliasing::fold(&series(|_, i| (i % 251) as u8), FOLD_PHASES);
+    let zero = aliasing::Change {
+        samples: still.t.samples,
+        ..aliasing::Change::default()
+    };
+    assert_eq!(still.t, zero);
+    assert_eq!(
+        still.l,
+        aliasing::Change {
+            samples: still.l.samples,
+            ..zero
+        }
+    );
+    assert_eq!(still.j, 0.0);
+    assert!(still.t_jumps.iter().chain(&still.l_jumps).all(|&c| c == 0));
+}
+
+/// A hit on the `axis` face (0 x, 1 y, 2 z) at `p`, of material `m`.
+fn hit(p: [f32; 3], axis: u16, m: u16) -> ([f32; 4], [u16; 4]) {
+    let t = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+    ([p[0], p[1], p[2], t], [0, 0, m, 1 | (axis + 1) << 3])
+}
+
+const MISS: ([f32; 4], [u16; 4]) = ([0.0, 0.0, 0.0, 3e38], [0, 0, 0, 0]);
+
+/// The class of the centre of a 3 x 3 grid whose centre is a hit on the z = 10 plane at
+/// (5.5, 7.5) and whose right neighbour is `right`; the other neighbours share the centre's
+/// face.
+fn centre_class(right: ([f32; 4], [u16; 4])) -> (aliasing::Class, Mask) {
+    let centre = hit([5.5, 7.5, 10.0], 2, 3);
+    let near = hit([5.2, 7.2, 10.0], 2, 3);
+    let mut grid = vec![near; 9];
+    grid[4] = centre;
+    grid[5] = right;
+    let pos: Vec<[f32; 4]> = grid.iter().map(|g| g.0).collect();
+    let info: Vec<[u16; 4]> = grid.iter().map(|g| g.1).collect();
+    let hits = Hits {
+        size: [3, 3],
+        pos: &pos,
+        info: &info,
+    };
+    let emits = |m: u16| m == 9;
+    let mask = Mask::of(&hits, [3, 3], 2.0, &emits);
+    (hits.class(1, 1, &emits), mask)
+}
+
+#[test]
+fn the_class_mask_names_each_class() {
+    use aliasing::Class;
+    let cases = [
+        ("interior", hit([5.9, 7.1, 10.0], 2, 3), Class::Interior),
+        ("seam", hit([6.2, 7.5, 10.0], 2, 3), Class::Seam),
+        ("crease", hit([6.0, 7.5, 10.6], 0, 3), Class::Crease),
+        ("silhouette", hit([6.4, 7.5, 18.0], 2, 3), Class::Silhouette),
+        ("silhouette by a miss", MISS, Class::Silhouette),
+        ("emitter", hit([6.2, 7.5, 10.0], 2, 9), Class::Emitter),
+    ];
+    for (name, right, want) in cases {
+        let (got, mask) = centre_class(right);
+        assert_eq!(got, want, "{name}");
+        assert_eq!(
+            mask.class[4], want,
+            "{name}: the display pixel over the centre"
+        );
+    }
+    let pos = vec![MISS.0; 9];
+    let info = vec![MISS.1; 9];
+    let all_miss = Hits {
+        size: [3, 3],
+        pos: &pos,
+        info: &info,
+    };
+    assert_eq!(all_miss.class(1, 1, &|_| false), Class::Miss);
+    // Inside a cycle the pixel was interior, then a silhouette: it takes the silhouette.
+    let (_, mut cycle) = centre_class(cases[0].1);
+    let (_, edge) = centre_class(cases[3].1);
+    let (_, back) = centre_class(cases[0].1);
+    cycle.merge(&edge);
+    cycle.merge(&back);
+    assert_eq!(cycle.class[4], Class::Silhouette);
+}
+
+/// The first frame of the eye lamp's native run from which every frame to frame 128 is
+/// bit-identical, read on lavapipe (`cavity_world`, 192 x 108, `off`): frame 4.
+const EYE_STILL_FROM: usize = 4;
+
+#[test]
+fn the_eye_lamp_holds_the_native_frame_bit_identical() {
+    let world = support::cavity_world();
+    let full = world.stats().full_bricks as u64;
+    let Some((device, queue)) = support::software_device(((full + 4096) * 512).max(64 << 20))
+    else {
+        return;
+    };
+    let cfg = MirrorConfig {
+        light_radius: 0,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    support::SyncNow::sync_now(&mut gpu, &world, &device, &queue).expect("the mirror fits");
+    let mut frame = Frame::new(&device, 192, 108);
+    frame.set_lighting(aliasing::eye_lighting(Lighting {
+        exposure: Exposure::Manual(1.0),
+        ..Lighting::default()
+    }));
+    frame.set_dt(1.0 / 60.0);
+    let light = aliasing::eye_lamp(1200.0);
+    let camera = support::cavity_camera();
+    let mut frames = Vec::new();
+    for _ in 0..=128 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+        frames.push(readback::read_rgba8(&device, &queue, frame.target()));
+    }
+    let last = frames.last().expect("frames");
+    let from = (0..frames.len())
+        .rev()
+        .take_while(|&f| frames[f] == *last)
+        .last()
+        .expect("the last frame equals itself");
+    let lit = last.chunks_exact(4).filter(|p| p[0] > 8).count();
+    println!(
+        "eye lamp, native: every frame from {from} to 128 is bit-identical; {lit} of {} pixels over 8",
+        last.len() / 4
+    );
+    assert!(lit > last.len() / 8, "the lamp lights the cavity");
+    assert!(
+        from <= EYE_STILL_FROM,
+        "the frame changes until {from}, past {EYE_STILL_FROM}"
     );
 }
