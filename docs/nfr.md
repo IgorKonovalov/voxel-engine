@@ -224,6 +224,11 @@ Every reading against these budgets, with its machine and commit, is in
   session). The default reads 188 and 191 ms. In the owner's windowed default flight the mirror
   sat at its 3 GiB budget with `r_full` 13 and deferral streaks of up to 2015 syncs, which
   ADR-0012's mirror-slot plan owns.
+- **Noted 2026-11-04:** the deferrals above are history. Plan 0028 (v0.29.0) closed the
+  mirror-slot plan: the default reaches full residency at `r_full` 16 with 0.87 GB live, and the
+  pressure rule no longer fires. The "default contour look" of these rows no longer exists
+  (Plan 0054, v0.39.0: honest cubes, no attribute pass). No residency p95 has been re-read since
+  Plan 0023; that re-read is owed to a plan that touches streaming.
 
 ## 6. Determinism and headless operation
 
@@ -346,8 +351,9 @@ Every reading against these budgets, with its machine and commit, is in
   201.5 s, exclusive perf lock, load 9.51 to 2.53; full 599 tests in 327.1 s, exclusive perf
   lock, load 7.90 to 3.71. The dev lane read 44.8, 205.2 and 362.7 s at 8059d41, also loaded.
   Before the tiers every phase gate was a full run under the lock, 4 to 7 minutes in the
-  lanes' logs at 87e4b67. The CI Linux job time against run 39808788735's 981 s is owed by the
-  first CI run after the merge into main (the Phase 3 amendment).
+  lanes' logs at 87e4b67. The CI Linux job time against run 39808788735's 981 s was owed by the
+  first CI run after the merge into main (the Phase 3 amendment); the reading is run
+  41332396750's, above.
   **Reading (Plan 0052 close review, 200607c with main 7ef72e6 merged, 745 tests, dev
   reference on lavapipe, `CARGO_BUILD_JOBS=4`, `--test-threads 2`, exclusive perf lock, a 6 GiB
   memory cap, built tree):** full 745 run, 744 passed, 1 failed (main's

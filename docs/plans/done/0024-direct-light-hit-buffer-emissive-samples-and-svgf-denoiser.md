@@ -1,6 +1,6 @@
 # 0024: Direct light that holds in the dark: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies where the world was edited
 
-> **Status:** done (closed 2026-10-22 by the second close review): direct light, the emissive
+> **Status:** done (closed 2026-10-22 by the second close review, v0.27.0): direct light, the emissive
 > sampler and the denoiser ship at the owner's defaults (half tier, coarse walk, reuse,
 > edit-box history, a 32-frame emissive history) under the lighting and denoise lines on the
 > dev box; the recorded misses are in the log and Followups

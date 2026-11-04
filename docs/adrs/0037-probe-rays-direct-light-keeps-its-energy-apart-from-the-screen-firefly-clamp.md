@@ -1,8 +1,9 @@
 # ADR-0037: The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp
 
-> **Status:** proposed
+> **Status:** rejected (2026-11-04, never accepted): the owner dropped Plan 0048 the day
+> ADR-0043 was proposed; see Outcome
 > **Date:** 2026-10-28
-> **Related plan(s):** [Plan 0048](../plans/0048-probe-rays-direct-light-without-the-clamp-bias.md);
+> **Related plan(s):** [Plan 0048](../plans/done/0048-probe-rays-direct-light-without-the-clamp-bias.md);
 > refines how the probe update of
 > [ADR-0023](0023-indirect-light-from-a-scrolling-probe-volume.md) calls the emissive
 > estimator of
@@ -115,3 +116,14 @@ stays on screen for many frames. The probe-only clamp keeps the screen as it is.
 Measured in Plan 0047's step D to still the gather. At every `k` tried (8, 4, 2) it cut the
 gather's mean luminance by 38 to 53 %, and at 8 and 4 it raised the composite's patches. It
 is the opposite of this decision: it buys stillness with more bias.
+
+## Outcome
+
+2026-11-04, rejected without a build. Plan 0051's verdict (ADR-0043, proposed the same day)
+takes the emissive sample out of the probe rays altogether: the probe volume becomes a
+lamp-bounce channel, and emissive light reaches the screen from a world-space per-face table.
+There is no probe-side emissive estimator left for a scheme of its own to correct, so the owner
+dropped Plan 0048 ("drop", 2026-11-04) and this ADR is rejected. The clamp's bias now lives in
+the table's mean as a steady world-space bias, named in ADR-0043's Negative consequences; the
+screen's clamp of 2 stands as ADR-0018 set it. The candidate schemes above stay as the record of
+what a per-source indirect light would face if emitters ever feed the channel.

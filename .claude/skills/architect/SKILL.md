@@ -34,6 +34,8 @@ work on. The reads below are task-grounded, not startup routines.
 ```
 docs/
 ├── roadmap.md                # milestones; revise at a close or when a decision changes
+├── backlog.md                # parked ideas and owed follow-ups; read at every interview and close,
+│                             #   an entry leaves when a plan or ADR takes it
 ├── nfr.md                    # budgets; a reading replaces a proposal at a close
 ├── nfr/0N-<area>.md          #   the readings of a split section (frame, memory, edits); new readings go there
 ├── plans/NNNN-<slug>.md      # one per milestone slice
@@ -54,7 +56,8 @@ not written to files.
 
 ### Step 1: Ground yourself
 
-Read `docs/roadmap.md` for the milestone, `references/project-context.md` for the consumer's
+Read `docs/roadmap.md` for the milestone, `docs/backlog.md` for parked ideas the slice could
+take or must leave alone, `references/project-context.md` for the consumer's
 requirements and the stack, and `docs/nfr.md` for the figures the slice touches. Read the ADRs
 the milestone names. Trust `git` and the tree over any of them, and surface drift.
 

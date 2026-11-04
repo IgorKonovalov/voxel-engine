@@ -1,6 +1,6 @@
 # 0015: The traversal hierarchy: chunk bits, full-resolution brick masks, a one-read-per-level walk, and the translucent class
 
-> **Status:** done (closed 2026-10-19: a clean fresh-session review on a3754df; every phase shipped, the gate green, the Phase 3 re-bless counts re-derived against 106998d, and the streamed spawn march at 1.95 ms against the 3.0 ms line on the dev box; two done-whens were unsatisfiable as the plan wrote them, recorded in ADR-0012 Outcome)
+> **Status:** done (closed 2026-10-19: a clean fresh-session review on a3754df; every phase shipped, the gate green, the Phase 3 re-bless counts re-derived against 106998d, and the streamed spawn march at 1.95 ms against the 3.0 ms line on the dev box; two done-whens were unsatisfiable as the plan wrote them, recorded in ADR-0012 Outcome; v0.14.0)
 > **Created:** 2026-10-17
 > **Milestone:** M2 in `docs/roadmap.md` (the frame-time floor before the lighting plan)
 > **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)

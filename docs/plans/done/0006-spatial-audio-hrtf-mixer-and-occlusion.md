@@ -1,6 +1,6 @@
 # 0006: Spatial audio: a headless HRTF mixer on the device callback, occlusion and early reflections through the material table
 
-> **Status:** done (closed 2026-10-17: every phase shipped with its tests holding the plan's figures and the listening checks passing; the moving-listener click is handed to Plan 0020)
+> **Status:** done (closed 2026-10-17: every phase shipped with its tests holding the plan's figures and the listening checks passing; the moving-listener click is handed to Plan 0020; v0.12.0)
 > **Created:** 2026-10-16
 > **Milestone:** M4 in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0006](../../adrs/0006-hrtf-source-and-audio-thread-model.md) (HRTF source, rendering, thread model), ADR-0002 (access model: probes take short chunk read locks), ADR-0001 (stack)

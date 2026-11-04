@@ -87,6 +87,16 @@
 > every bar is main after 0048's merge. Its sky light and sun sample pass through 0049's kept
 > settings and 0048's probe direct scheme, so 0049's settle, dot and shimmer tests join the
 > tests this plan must not regress. No phase changes.
+> **Amended 2026-11-04 (architect, drift; the verdict is in):** Plan 0051 closed (v0.41.0); its
+> verdict is ADR-0043 (proposed) and Plan 0057: emissive light from a world-space per-face table
+> read nearest, no emissive screen history, the probe volume a lamp-only bounce channel that runs
+> only with the lamp on, and Plan 0048 dropped. For this plan: the sun's and sky's terms cannot
+> join "the emissive part's long history" (deleted with ADR-0036) or feed the probes as Phases 5
+> and 6 write it; Phases 5 to 7, bar 8, and the furnace and stillness tests they cite are
+> rewritten flat before the lane starts, with the sun and sky as a per-source feed into the lamp
+> channel or the sky ray alone, and `DEFAULT_EMISSIVE_HISTORY`, `Lighting::reuse_m_cap` and
+> `Lighting::probe_direct` struck. The order is Plan 0057, Plans 0044 and 0045, the
+> render-profile plan, then this plan. The amendment below it stands as history.
 > **Amended 2026-11-03 (owner: Plan 0049 dropped):** Plan 0049 will not merge. The order is
 > [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
 > the plan its ADR names if any, Plan 0048, then this plan. "The base commit" stays main after
@@ -101,7 +111,7 @@
 >    closing). The upscaler text, the "main's defaults" of Phases 7 and 8, the miss-pixel risk
 >    and the Budgets base follow; the older `own` figures stay as the record of what they read.
 > 2. **The surface is honest cubes with a far normal** (`LookParams::far_normal` `[2, 6]`,
->    provisional until Plan 0051). `LookPreset::materials()` is gone with the detail: the
+>    provisional until Plan 0056's Phase 4). `LookPreset::materials()` is gone with the detail: the
 >    outdoor table is `cave_materials()` with the rows appended, and `--look` no longer selects
 >    materials. `ProbeVolume::light_restarts` is gone (the window is always on), `_pad5` is
 >    `_pad4`, `BANNER_ROWS` is 9, and bit 7 is free too.
@@ -120,7 +130,7 @@
 > **Starts after:** the render-profile plan merges (amended 2026-11-03, owner). The order is
 > [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
 > its verdict plan, Plans 0044 and 0045,
-> [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) if it stands, the
+> [Plan 0048](done/0048-probe-rays-direct-light-without-the-clamp-bias.md) if it stands, the
 > render-profile plan, then this plan. "The base commit" in every bar is main after that last
 > merge, which replaces the earlier amendments' "after 0048's merge". Plans 0024, 0047,
 > 0029, 0030, 0040 and 0038 are closed and on main.
@@ -1251,7 +1261,7 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      the bit's `ALPHA` 0.2 floor, not from `H`, so they hold at any default; bar 8's 256 is
      set in the test. Every other history bar runs at the default dev finds.
 - **Plan 0048 interaction** (owner, 2026-10-28; 0048 lands after 0047 and before this plan).
-  What [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) changes that this
+  What [Plan 0048](done/0048-probe-rays-direct-light-without-the-clamp-bias.md) changes that this
   plan reads:
   1. *The probe rays' direct term.* The probe update calls the emissive estimator through
      0048's `Lighting::probe_direct` scheme (ADR-0037), not the screen's clamp of 2; the light
@@ -1287,7 +1297,7 @@ Amended 2026-10-28. The owner answered each question with its first option (owne
 3. **The outdoor exposure for the dev phases.** `eye()` with `min` 1e-4 and `max` 4.0, Plan
    0040's recommendation, until Phase 9 picks (Phase 4).
 4. **Plan 0048 and the order.** This plan waits for
-   [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md), which follows Plan
+   [Plan 0048](done/0048-probe-rays-direct-light-without-the-clamp-bias.md), which follows Plan
    0047, so Phase 6's probe bars are read once on an unbiased probe term ("Starts after";
    Risks, "Plan 0048 interaction"). Phase 6's furnace reference stays pi, which holds after
    0048.

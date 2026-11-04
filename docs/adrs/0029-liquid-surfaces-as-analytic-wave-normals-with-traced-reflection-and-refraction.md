@@ -1,6 +1,10 @@
 # ADR-0029: A liquid surface is where a translucent liquid meets air, shaded with an analytic wave normal, one traced reflection ray and one bent refraction ray, absorbed by Beer-Lambert
 
-> **Status:** proposed
+> **Status:** proposed; amended 2026-11-04 (architect, drift): "plus the probe irradiance" and
+> "single-scattered ambient light from the probe irradiance" read ADR-0023's volume, which
+> ADR-0043 (proposed) makes a lamp-only channel with no emissive indirect; under it those terms
+> are the lamp's bounce alone, and emissive ambient under liquid is a per-source feed into the
+> channel, decided when Plan 0034 starts
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0034](../plans/0034-water-surface-waves-reflection-refraction-underwater-fog.md)
 

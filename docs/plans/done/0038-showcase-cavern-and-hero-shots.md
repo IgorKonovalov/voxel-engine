@@ -1,6 +1,6 @@
 # 0038: A showcase cavern lit by four ores, and a hero still with named shots and no headlamp
 
-> **Status:** done (2026-10-28). Close review clean: every phase landed as amended, the gate re-run at b9f4b08 is green, `hero.png` reproduces byte for byte from its caption, and the section 2 and 3 readings were re-taken after Phase 6a and the two merges; four nits go to Followups.
+> **Status:** done (2026-10-28, v0.35.0). Close review clean: every phase landed as amended, the gate re-run at b9f4b08 is green, `hero.png` reproduces byte for byte from its caption, and the section 2 and 3 readings were re-taken after Phase 6a and the two merges; four nits go to Followups.
 > **Decisions:** Owner, 2026-10-22: hall 72 x 58 x 24 m as planned with probe spacing settled from the review renders; ore palette as planned; shots hall, chasm and crystals with `hall` the default; everything stays diggable (no SHELL bridge or pillars).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (testbed content: the hero and demos show M2's

@@ -1,6 +1,10 @@
 # ADR-0032: The night sky is drawn analytically on miss pixels (a binned star catalogue, sky bodies the game lists, an aurora shell lighting the scene via a hemisphere map), and the night look is a luminance tint
 
-> **Status:** proposed
+> **Status:** proposed; amended 2026-11-04 (architect, drift): "Plan 0032's probe misses" and
+> "reaches the probes through their hysteresis" name ADR-0023's sky-reading rays and its
+> hysteresis schedule, both gone under ADR-0043 (proposed); the aurora's light on the ground
+> through the probes is a per-source feed into the lamp-only channel, with that channel's blend,
+> decided when Plan 0037 starts
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0037](../plans/0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md)
 > (builds it)

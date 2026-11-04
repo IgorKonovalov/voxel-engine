@@ -1,6 +1,6 @@
 # ADR-0004: Per-chunk 8-bit palette mirror and a brick pool sharded over fixed bindings
 
-> **Status:** accepted (2026-10-16)
+> **Status:** accepted (2026-10-16); record head and masks changed by Plan 0015 under ADR-0012 (Outcome addendum)
 > **Date:** 2026-10-16
 > **Related plan(s):** [Plan 0002](../plans/done/0002-streaming-residency-lod-ring-and-mirror-narrowing.md)
 > **Supersedes in part:** ADR-0002's mirror clauses: voxels at `u16` in the mirror, and the
