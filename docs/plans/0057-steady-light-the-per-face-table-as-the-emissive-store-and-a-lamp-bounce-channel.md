@@ -53,6 +53,23 @@
 > Part 1b by letting the guard reopen only while the world has changed, and the gradient's cost
 > (0.092 ms) is a reading against a prediction that compared with a pass Phase 2 did not run: the
 > prediction is restated, the cost accepted under `docs/nfr.md` section 2's 6.0 ms line.
+>
+> **Amended 2026-11-04 (owner), the camera-radius preload.** After Plan 0056's window under
+> `--steady b --indirect off` the owner said the light no longer flickers once it settles, but
+> "places like this [a dark ceiling corner at the vein] takes some time to settle", "real players
+> won't be that slow", "still quite a bit of time before light 'loaded' in dark corners and after
+> fast turn", "you can clearly see this light 'loading' when digging holes", and asked to "explore
+> idea of preloading light around the camera in certain radius, no matter where this camera
+> looks". Phase 4 gains **Part 2b, the camera-radius preload**, built after Part 2 on its pass:
+> rays from the eye over the full sphere, out to `R` = 64 voxels, sample the faces they hit
+> until each cell holds `C_PRE` samples, at a fixed ray count and sample budget a frame, so the
+> faces a turn, a step or a dig at arm's length shows are settled before they are seen. This
+> **reinstates the dropped warm rays for the settle, not for the dots**: the dots were read on
+> mature cells (Phase 1's young share 0.005 to 0.099; Plan 0056's creases), so warming faces
+> could not touch them, and that is why the rays were dropped; the settle is the opposite case,
+> cells too young or absent when they come into view (the hole's `S90` 319 and 1891 frames on
+> Phase 3's tree against bars of 60 and 120), which warming faces is for. Done-whens 12 to 17,
+> Phase 6's run 6 and item (h), the Budgets, Risks, Followups and the Decision follow.
 
 ## TL;DR
 
@@ -64,7 +81,10 @@ the lamp alone), sized and swept so it holds the surfaces around the camera. **A
 is sampled, not only its pixels** (amended): where Phase 3's tree still misses the dug hole's
 settle bar, a fill pass draws a fixed number of samples a frame for each cell an edit or the
 guard reopened, and where the creases' dots are read to come through the half-resolution
-upsample, the composite reads each pixel's own face. **Invalidation is an edit box
+upsample, the composite reads each pixel's own face. **The faces around the camera are
+preloaded** (amended 2026-11-04, owner): rays from the eye over the full sphere, within 64
+voxels, fill the cells they hit whatever the view, so a fast turn, a dark corner and a dig at
+arm's length show light that is already settled. **Invalidation is an edit box
 plus a world-space guard:** each cell keeps the emitter that lit it most, and the gradient pass
 re-shades that point from the face and reopens the cell where the light changed. **The probe
 volume becomes a lamp-bounce channel:** lamp-only rays within the lamp's reach, a running mean
@@ -128,7 +148,10 @@ kept emitter per cell and re-shades it from the face at the stratum cadence. **T
 creases** (Phase 4, amended) are read again on Phase 3's tree, then a fill pass for reopened
 cells and an own-face emissive read in the composite are built each only where its reading
 says so; the warm rays and the fill of every young face in view are dropped, because Phase 1
-read the fast turn's excess outside the young cells. **The lamp channel** (Phase 5) redoes the probe update as lamp-only rays
+read the fast turn's excess outside the young cells. **The camera-radius preload** (Phase 4
+Part 2b, amended 2026-11-04, owner) brings the full-sphere rays back on Part 2's fill pass for
+the settle the owner sees in dark corners, after a fast turn and in a dig: faces within `R` of
+the eye are filled to `C_PRE` before the view reaches them, at a fixed budget a frame. **The lamp channel** (Phase 5) redoes the probe update as lamp-only rays
 within a read reach over a running mean that freezes, and keeps the volume's scaffolding. **The
 window** (Phase 6) is the owner's, with digs.
 
@@ -141,13 +164,24 @@ what is shown (the mean of one sample) and not how fast a face gains samples; it
 read and Phase 4's fill that answer the owner's two complaints. The alternatives to the direction
 itself are ADR-0043's.
 
+For the preload (amended 2026-11-04, owner) we rejected a fill list fed from the brick map's
+faces within `R`, because the GPU holds no list of air faces: a scan of the mirrored bricks
+within 64 voxels is 4096 bricks of 512 voxels, which a frame cannot pay and a cursor spreads
+over tens of frames, and it fills faces the eye cannot see; it wins only for faces hidden from
+the eye, which Part 2b's first reading counts. We rejected a fill driven by the chunk upload
+within `light_radius`, because `light_radius` is 4 chunks (256 voxels), 64 times the volume of
+`R`, which in the hall (already 0.32 of the table from the view) would fill the table, and an
+upload fires once per chunk, not when the camera comes near or a dig opens a face. Prewarming
+at a dig from the edit's box is Part 2 itself; the preload covers a dig within `R` as well, and
+Part 2 the one beyond.
+
 ## Architecture diagram
 
 ```mermaid
 flowchart LR
     subgraph vxe-render
         LP[light pass: lamp NEE + one emissive sample per pixel; adds to the face's cell; capped face draws nothing] --> T[(table: key, count, 3 sums Q17.15, kept emitter, stamp; 2^20 cells)]
-        FP[fill pass, if read owed: F samples a frame per reopened cell in view] --> T
+        FP[fill pass: F samples a frame per reopened cell in view; preload rays over the sphere within R fill hit cells to C_PRE] --> T
         G[gradient pass: re-shades each cell's kept emitter from its face; reopens a changed cell] --> T
         E[edit boxes: clear the dilated box's cells; overflow clears the table] --> T
         S[sweep on a chunk change: clear cells beyond the light radius] --> T
@@ -576,6 +610,68 @@ in its log, or the orchestrator agrees the order; the log names which.
     voxels' stair (a guess of 1.5), so at `F` 8 about 15 000 samples on the dig's first frame,
     under a tenth of a 720p lighting pass's emissive work, falling as the cells reach `C_FILL`;
     nothing at rest and nothing on a turn. A guess the readings replace.
+- **Part 2b, the camera-radius preload (amended 2026-11-04, owner; built after Part 2, on its
+  pass).** The owner's settle complaint is the cells a turn, a step or a dig brings into view
+  before they hold enough samples: dark corners, after a fast turn, in a dug hole. Part 2 fills
+  a cell only after an edit or the guard reopens it; a face seen for the first time still
+  converges at its footprint (Phase 1: one frame at arm's length, about 48 at 88 voxels, slower
+  where the light is dim and most samples are shadowed). Part 2b fills the faces around the
+  eye whatever the view, so their light is settled before they are seen. **Order:** Part 1b,
+  then Part 2 (its list, pass and fill routine), then Part 2b on that routine, then the end
+  readings; Part 2b is built on the owner's ask, and only its form waits on the reading below.
+  - **The rays (the dropped warm rays, reinstated for the settle).** `N` rays a frame
+    (`preload_rays`, swept 4096, 8192, 16 384; the default the smallest that meets done-whens
+    13 to 16) from the eye over the full sphere (a Fibonacci set rotated per frame by a hash of
+    the frame, the first draft's set), through the march's walk, cut at `R` voxels
+    (`preload_radius`, 64 by default, 0 off). A hit on a cacheable face whose cell is under
+    `C_PRE` samples (`preload_until`, swept 256, 1024, 4096; the default the reading's) draws
+    `k` samples through Part 2's fill routine (a resampled emissive sample from a random point
+    on the face, with its shadow ray, offered as the kept emitter), `k = clamp(d^2 / 64, 1, 16)`
+    at hit distance `d` voxels, so a face's rate does not fall with distance out to 32 voxels.
+    A hit with no cell claims one only while the table's occupancy is under `PRE_LOAD_MAX`
+    (0.25 of the cells, the plan's dense-case line); above it the rays sample existing cells
+    only, so the preload never pushes a view's key out of four probes. The rays run after the
+    light pass and Part 2's list and before the temporal pass.
+  - **The budget.** The frame's preload samples are capped at `S_PRE` (`preload_samples`,
+    32 768 a guess, swept 16 384 and 32 768): each hit's `k` is scaled by `min(1, S_PRE / the
+    previous frame's demand)`, so a dense view lowers the fill rate, not the frame. While the
+    previous frame's rays found no cell under `C_PRE`, the camera has moved under one voxel and
+    turned under one degree since, and the guard window is closed, the pass casts `N / 16` rays
+    (a trickle that notices a face a small move opens); otherwise `N`.
+  - **`R` from the walk, by arithmetic.** `vxe-sim`'s `ControllerParams` carries no walking
+    speed (the move's wish is the caller's); the fly-through's is 0.5 voxel a tick, 3 m/s, **30
+    voxels a second** (`apps/flythrough/src/fly.rs`), and its flight 30 voxels a second, 120 with
+    `Shift`. The settle bar is one second (60 frames), so `R` must be at least the 30 voxels a
+    walking player covers in it; it must also cover the fill's own time ahead of the view. A
+    face at `d` between 8 and 32 voxels gains `N k / (4 pi d^2) = N / 804` samples a frame
+    facing the eye, **about 10 a frame at `N` 8192**, so `C_PRE` 256 in about 25 frames and 1024
+    in about 100; at `d` 4 about 41 a frame, at `d` 64 about 2.5. At `R` 64 (one chunk edge,
+    `CHUNK_EDGE`) a face first seen at 8 voxels has been within `R` for `(64 - 8) / 30` = 1.9 s,
+    about 112 frames, at walking speed, which covers `C_PRE` 256 and 1024; at 120 voxels a
+    second it has 28 frames, which covers 256 only (a reading, not a bar). All guesses at an
+    unbudgeted frame, which the per-distance reading below replaces.
+  - **Occupancy at `R`, by arithmetic.** The faces visible from the eye within 64 voxels are at
+    most a closed surround's `4 pi 64^2 x 1.5` (the voxels' stair), about 77 000 cells, 0.074 of
+    2^20; a hall's floor and ceiling within `R` about 38 600 (0.037). At the vein and the patch
+    (0.0576 and 0.0424 after four flights) that stays under 0.15. The hall already loads 0.32
+    from the view alone, over `PRE_LOAD_MAX`, so there the preload samples only cells the view
+    has made and claims none: **at the table's capacity the preload degrades to filling what
+    exists**, and the hall's unseen faces settle at their footprint as today. A larger table for
+    the hall is the owner's call in Phase 6 (h), not this part's.
+  - **The reading first, which picks the form** (`preload_visibility_readings`, CPU, no GPU,
+    `vxe-world`'s ray query, about 30 s, ignored): the rig's flight at both poses replayed at 0.5
+    voxel a frame, and the rig's `yaw 90 10 f` and `yaw 180 20 f` at `VEIN_POSE`; at each frame,
+    the pixels (dev's resolution, recorded) whose face enters view (not in view in the previous
+    60 frames), the share whose face had a clear line within `R` from an eye position of the
+    previous 60 frames, and the histogram of their distance from the eye. **The rule:** if that
+    share is at least 0.9 at both poses, the eye rays are built as above; if under, the faces
+    hidden from the eye carry the settle and the brick-map list (the rejected form, Decision)
+    comes back to the architect with the share before anything is built. If under 0.9 of the
+    entering pixels lie within 64 voxels, `R` comes back with the histogram.
+  - **The per-distance reading** (RTX, `VXE_TEST_ADAPTER=rtx`): at `VEIN_POSE` from a fresh
+    table, the samples a face a frame at 4, 8, 16, 32 and 64 voxels with the view turned away,
+    at each `N` and `S_PRE`, against the arithmetic above; and the frames until every face hit
+    within `R` holds `C_PRE`, at the vein, the patch and the hall.
 - **Part 3, the own-face read (if the creases' rule says build):** the composite, for a
   full-resolution pixel whose hit has a face key and a cell, takes the emissive part as that
   cell's mean times `exposure_now()`; the lamp part and the fallback's emissive are upsampled as
@@ -588,8 +684,11 @@ in its log, or the orchestrator agrees the order; the log names which.
   256, 512, 4096, 8192, native and `up`; the fill and the composite's cost at rest, on the dig's
   first frames and in the flight, both adapters, for each `F` and `C_FILL`; amended 2026-11-04:
   the still hall's class table, the still reopens and the occupancy with misses, against
-  done-whens 8, 9 and 11, so a fill or an own-face read that moves a still frame shows there.
-- **Files touched:** `crates/vxe-render/src/shaders/cache_fill.wgsl` (new, Part 2),
+  done-whens 8, 9 and 11, so a fill or an own-face read that moves a still frame shows there;
+  amended 2026-11-04 (owner): each of these with the preload on and off, the preload's cost at
+  rest (the trickle), in the flight and on a turn's first frames at each `N` and `S_PRE`, both
+  adapters, and the occupancy with misses at the vein, the patch and the hall with it on.
+- **Files touched:** `crates/vxe-render/src/shaders/cache_fill.wgsl` (new, Parts 2 and 2b),
   `temporal.wgsl` (the fallback's mean, Part 1b), `crates/vxe-render/src/marcher.rs`'s
   `cache_slot` and its CPU test (Part 1b),
   `cache_clear.wgsl`, `gradient.wgsl` (the reopened bit), `composite.wgsl` (Part 3), `light.wgsl`,
@@ -672,6 +771,52 @@ in its log, or the orchestrator agrees the order; the log names which.
      `occupancy_readings` reads a full-table share of **0 at both poses after four flights**
      and no duplicate key in the dump. A miss above 0 at 2^20 comes back to the architect with
      the census before the size changes.
+  12. **Added 2026-11-04 (owner), the preload's form.** The log holds
+     `preload_visibility_readings`' table (share eye-visible within `R`, distance histogram, both
+     poses, the walk and the two yaws) and its verdict line (eye rays, or back to the architect),
+     and the per-distance table beside the arithmetic of Part 2b.
+  13. **Added 2026-11-04 (owner).** `a_face_behind_the_camera_is_settled_before_the_turn`
+     asserts, on a box with an emitter lighting a near wall and a dim corner (lit at under a
+     tenth of the near wall's irradiance) 6 to 12 voxels behind the camera, scale 1, lamp off,
+     `C_PRE` 256, `C_CAP` 1024, that after 64 still frames facing away and a 180-degree yaw in
+     one frame, on the first frame after the yaw at least 90 % of the corner's pixels read within
+     10 % of their cell's settled mean (the same run continued facing the corner until every
+     corner cell reads `C_CAP`); and that with `preload_radius` 0 under 50 % do (the test fails
+     first). About 2 x 140 frames: about 14 s.
+  14. **Added 2026-11-04 (owner), the fast turn, a reading against a bar (RTX).** At
+     `VEIN_POSE` from a fresh table, 120 still frames, then the rig's `yaw 90 10 f` (90 degrees in
+     10 frames): of the pixels whose face was not in view in the 120 frames, on the first frame
+     each face is in view **at least 90 % read within 10 % of the face's settled mean** (a
+     reference run facing the end heading for 8192 frames), **and 99 % by the tenth frame after
+     the yaw ends**; scale 1, lamp off and on, with the preload off beside it. `up1.5` is read
+     and not asserted. A miss goes to the owner in Phase 6 (h) with the table.
+  15. **Added 2026-11-04 (owner), the dig at arm's length.** `a_near_dig_settles_from_the_preload_alone`
+     asserts, on done-when 2's box with the camera 5 voxels from the dig, `F` 0 (Part 2 off) and
+     the preload on, that the hole's emissive `S90` reads at most 60 frames, Part 2's bar; with
+     both off it reads over 60 (the test fails first). About 2 x 150 frames: about 15 s. On the
+     level, `dig_box_readings` at both distances with the preload on and off, beside Part 2's
+     rows: the 5-voxel dig at most 60 frames at scale 1, lamp off (a reading against the bar);
+     the 100-voxel dig lies beyond `R` and stays Part 2's.
+  16. **Added 2026-11-04 (owner), the dark corner at walking speed, a reading against a bar
+     (RTX).** `VEIN_CORNER`: dev picks it on Part 2's tip as the lit faces within 24 voxels of
+     `VEIN_POSE`'s eye and above it (the owner's dark ceiling corner at the vein) in the lowest
+     tenth of the settled means, and records its box; the owner confirms or moves it in Phase 6's
+     run 6. The camera walks the 60 voxels of the rig's path into `VEIN_POSE` at 0.5 voxel a frame
+     (120 frames, 30 voxels a second, the fly-through's walk) with its heading held 180 degrees
+     from the corner, stops, and turns with the rig's `yaw 180 20 f`: on every frame the corner
+     is in view, **at least 90 % of its pixels read within 10 % of their settled mean**, from a
+     fresh table, scale 1, lamp off, with the preload off beside it (expected to miss). At 120
+     voxels a second (`Shift`) the same run is read, not asserted.
+  17. **Added 2026-11-04 (owner), the preload's cost, memory and show.** The banner and the HUD
+     show `preload R <R> N <N> C <C_PRE>` or `preload off`, the HUD the rays, hits and samples
+     of the frame (`hud.rs`'s banner test, no GPU, under 1 s); `--preload <voxels>|off` sets it
+     and a free key (dev's choice, named in the banner) toggles it in the window.
+     `frame_bytes` reads done-when 5's figure plus the stats words the preload adds (16 B, dev
+     records), asserted in `upscale.rs`. The cost on the RTX, quiet where the machine allows:
+     **at rest after the fill at most 0.01 ms; in the flight at most 0.15 ms**; the Cezanne a
+     reading against the lighting line. The still hall's native bar (done-when 8) and the still
+     reopens' 0 (done-when 9) hold with the preload on, and the occupancy after four flights
+     stays under 0.25 at both poses with 0 misses.
 
 ### Phase 5: The lamp-bounce channel
 - **Owner skill:** dev
@@ -774,6 +919,14 @@ in its log, or the orchestrator agrees the order; the log names which.
   target/release/flythrough --level --seed 1 --pose vein --hud --lamp-bounce off
 
   # 5. At arm's length of a lit wall: the step at a voxel edge, nearest only.
+
+  # 6. (amended 2026-11-04, owner) The camera-radius preload, on and off by its key: at the
+  #    vein, walk in from down the passage and turn fast to the dark ceiling corner (point at
+  #    it, to confirm or move VEIN_CORNER); a fast turn after standing still; a dig at arm's
+  #    length; then the same with Shift held. Once at auto exposure and once with
+  #    --exposure fixed, to tell the table's settle from the eye adaptation's (ADR-0033).
+  target/release/flythrough --level --seed 1 --pose vein --hud
+  target/release/flythrough --level --seed 1 --pose vein --hud --exposure 8
   ```
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's words on: (a) whether anything moves at rest, hall
@@ -786,7 +939,12 @@ in its log, or the orchestrator agrees the order; the log names which.
   dug hole at arm's length and at range, in frames or seconds by eye, against Phase 4's bar (60
   and 120 frames); (d) the lamp bounce's look and lag,
   and whether `lamp_bounce` stays on by default; (e) the step at voxel edges; (f) what remains
-  visible, by run and pose; (g) whether the default is accepted. A "no" on (g) names the run and
+  visible, by run and pose; (h) (amended 2026-11-04, owner) run 6: whether the light still
+  "loads" in the dark corner, after a fast turn and in a dig at arm's length with the preload
+  on, against off, with done-whens 13 to 17's tables at hand; whether the preload is on by
+  default and at which `R`; whether its off-screen cost is acceptable against the rule that the
+  cost matches what is on screen; and, if the hall's table sits over `PRE_LOAD_MAX`, whether a
+  larger table is wanted there; (g) whether the default is accepted. A "no" on (g) names the run and
   goes to the architect with the tables. The plan closes with that record.
 
 ## Data shapes
@@ -799,6 +957,10 @@ pub struct Lighting {
     pub fill_samples: u32,         // F: samples a frame per reopened cell in view; 0 off (if built)
     pub fill_until: u32,           // C_FILL: a reopened cell leaves the list at this count (if built)
     pub own_face_read: bool,       // the composite reads a pixel's own cell (if built)
+    pub preload_radius: u32,       // R voxels for the eye's full-sphere rays; 64 default, 0 off
+    pub preload_rays: u32,         // N rays a frame (N / 16 at rest once filled)
+    pub preload_until: u32,        // C_PRE: a cell the rays hit is filled to this count
+    pub preload_samples: u32,      // S_PRE: the frame's cap on the preload's samples
     pub lamp_bounce: bool,         // the probe channel; on by default, nothing runs lamp-off
     pub probe_freeze: u32,         // visits to converge; the only blend
     pub probe_side: u32,           // PROBES_PER_AXIS, from the reach
@@ -820,9 +982,9 @@ Base figures are Plan 0051's cost tables (`logs/0051.md`, Phases 2 and 3), the l
 | `nfr.md` figure | Base (read, indicative) | Expected | How the close measures it |
 |---|---|---|---|
 | §2 GPU frame | RTX `off` 4.944 ms, `b --indirect off` 3.255; Cezanne 35.438, 21.053 | The default (table, guard, lamp channel, and whatever Phase 4 builds): **a guess** of the `b --indirect off` figure plus 0.3 ms on the RTX and 2.0 ms on the Cezanne, lamp on; on a dig's first frames the reopened fill adds its burst, nothing on a turn (Phase 4's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD [--pose vein]`, three quiet rounds alternated with the v0.41.0 binary, the perf lock, the memory cap; and the rig's flight on both adapters |
-| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10) | the same runs, per pass |
+| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10). **Amended 2026-11-04 (owner), the preload, guesses by arithmetic:** a sample with its shadow ray costs about 3.5 ns on the RTX (v0.41.0's light pass, 0.802 ms over 640 x 360 lighting pixels), so `S_PRE` 32 768 is about 0.11 ms, and 8192 rays cut at 64 voxels about 0.005 ms (the hit pass, 0.513 ms over 1280 x 720); about 0.12 ms in flight, under 0.01 at rest. The Cezanne at Phase 3's light ratio (5.1) about 0.6 ms. The line then reads about 0.36 ms RTX and 1.8 ms Cezanne of 6.0 (6 % and 30 %), before Part 2's fill | the same runs, per pass; the preload's cost at rest, in flight and on a turn (done-when 17) |
 | §2 denoise line (3.0 ms): temporal + a-trous | RTX 0.086 + 0.497 | unchanged or lower (the a-trous over one channel) | the same runs |
-| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
+| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, + the preload's stats words (16 B; amended 2026-11-04: the preload adds no store, it fills the table, up to about 0.074 of its cells at `R` 64 and never past `PRE_LOAD_MAX` 0.25), - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
 
 Determinism is not touched: everything is in `vxe-render`. The table's integer sums make a
 face's mean independent of the order its pixels add, which the close reads as a bit-identical
@@ -866,6 +1028,28 @@ cell dump across two runs of the same still frame on lavapipe.
 - **The table fills in a dense scene.** The sweep bounds it to the light radius; the castle's
   92 % air stamps and the showcase's pillars are the dense cases to read occupancy on. A miss
   count above 0 at the default size goes to the architect.
+- **The preload is outrun** (amended 2026-11-04, owner). At `Shift` (120 voxels a second) a face
+  first seen at 8 voxels has had about 28 frames within `R`, and in the hall the sample budget
+  binds (most hits lie at 20 to 64 voxels, so `k` averages about 10 and the demand about 80 000
+  samples against `S_PRE` 32 768). There the faces settle at the preload's lowered rate plus
+  their footprint, never slower than without it. The runs at `Shift` are readings.
+- **Dark faces need more samples than bright ones** (amended 2026-11-04, owner). A face lit
+  through a gap sees most of its samples shadowed, so its relative spread is several times a
+  lit wall's and 10 % takes far more than 256 samples; that is the owner's dark corner. The
+  `C_PRE` sweep up to 4096 (`C_CAP`) and done-when 16 read it; if 4096 at the default `N` does
+  not meet done-when 16 within the walk's 112 frames, the shortfall goes to the owner in Phase 6
+  (h) with the table, not to a larger budget unasked.
+- **The preload works off the screen** (amended 2026-11-04, owner). It spends samples on faces
+  the view does not show, against "the cost matches what is on screen". The owner asked for it;
+  the trickle at rest bounds the waste, and whether it is on by default is the owner's (Phase 6
+  (h)).
+- **The table at the hall's load** (amended 2026-11-04, owner). The hall's view already holds
+  0.32 of 2^20, over `PRE_LOAD_MAX`, so the preload claims no cell there and its unseen faces
+  settle as today. Raising the size is the owner's call in Phase 6 (h), against `docs/nfr.md`
+  section 3's 1.5 GB line (2^21 cells add 41 943 040 B).
+- **Exposure's settle reads as the light's** (amended 2026-11-04, owner). Turning into a dark
+  corner at auto exposure, ADR-0033's eye adaptation also brightens over seconds, which no fill
+  shortens; Phase 6's run 6 at a fixed exposure tells the two apart.
 - **The lamp channel's lag.** `h_move` trades flicker for lag; the owner judges it in Phase 6
   and may turn `lamp_bounce` off.
 - **Plan 0056 reads the light through `--steady` until Phase 2 removes it.** The lane order is
@@ -878,8 +1062,11 @@ cell dump across two runs of the same still frame on lavapipe.
 - Fix the yellow dots beyond the crease's own-face read (Phase 4, Part 3, if read owed): any
   other light mechanism the split leaves is a Followup for the architect, and an upscaler or
   geometry share is 0056's followup plan.
-- Warm rays from the eye, or a fill of every young face in view: dropped by the amendment of
-  2026-11-04 on Phase 1's stop rule.
+- A fill of every young face in view, or warm rays aimed at the fast turn's dots: dropped by the
+  amendment of 2026-11-04 on Phase 1's stop rule. The full-sphere rays return in Phase 4's Part
+  2b for the settle only (owner, 2026-11-04), cut at `R` and budgeted, with no burst on a turn.
+- Fill faces hidden from the eye within `R` from the brick map: rejected for the preload unless
+  Part 2b's visibility reading sends it back (Decision).
 - Set a display-level drift or flicker bar under FSR 2, or change the upscaler, sharpening or
   the far normal: Plan 0056.
 - Indirect light from emissive sources: a per-source feed into the lamp channel, a later plan
@@ -957,7 +1144,17 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **The hall's settle from a fresh start**, if the owner calls it slow in Phase 6: a fill for
   cells opened after a table clear, the same list as Phase 4's Part 2; no plan yet. Amended
   2026-11-04: the same fill answers a still hall's drift if Phase 4 puts it on uncapped cells
-  and the owner calls it visible.
+  and the owner calls it visible. Amended 2026-11-04 (owner): Part 2b's preload fills the
+  fresh start's faces within `R` of the eye, where the table is under `PRE_LOAD_MAX`; what
+  remains is the hall beyond `R` and the hall's table over that load.
+- **The preload's other forms** (amended 2026-11-04, owner): the brick-map list for faces hidden
+  from the eye, if Part 2b's visibility reading reads under 0.9 or the owner sees faces behind
+  an occluder load in Phase 6 (h); a larger table for the hall, if the owner asks; and a stop
+  rule by a cell's spread instead of its count (the cell holds no sum of squares today), if
+  the dark faces' `C_PRE` reading says a count is the wrong stop.
+- **ADR-0043's Outcome at the close** (amended 2026-11-04, owner): the warm rays it named are
+  dropped for the turn's dots and reinstated as Part 2b's preload for the settle; the Outcome
+  records which, with Part 2b's readings.
 - **ADR-0043's table-sizing input, for its Outcome at the close** (amended 2026-11-04,
   architect): the occupancy after four flights (Phase 2: 0.0576 vein, 0.0424 patch of 2^20),
   the dense cases the Risks name (the castle, the showcase hall) read once on Phase 4's tip, the
