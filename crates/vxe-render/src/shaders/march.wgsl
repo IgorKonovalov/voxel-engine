@@ -1332,13 +1332,13 @@ struct CacheStats {
     _fill_pad: array<u32, 3>,
     fill_cells: array<u32, FILL_LIST_MAX>,
     // The preload (cache_fill.wgsl), kept across frames: the sweep's next offset, which of the
-    // two lists is the next frame's input, and each list's entries (past PRELOAD_LIST_MAX the
-    // excess is the dropped count).
+    // two lists of each kind is the next frame's input, and each fill list's entries (past
+    // PRELOAD_LIST_MAX the excess is the dropped count).
     pre_cursor: u32,
     pre_parity: u32,
     pre_count: array<atomic<u32>, 2>,
-    // Set by the args pass each frame: the input list, its entries, the cells drawn this
-    // frame, the first offset the sweep visits and how many offsets it visits.
+    // Set by the args pass each frame: the input lists, the fill's input entries, the cells
+    // drawn this frame, the first offset the sweep visits and how many offsets it visits.
     pre_in: u32,
     pre_n_in: u32,
     pre_draw: u32,
@@ -1348,11 +1348,17 @@ struct CacheStats {
     // `pre_cut` draw, and `pre_rest` of band `pre_cut`'s.
     pre_cut: u32,
     pre_rest: u32,
-    _pre_pad: u32,
+    // The probe list's input faces.
+    pre_probe_n: u32,
+    // Each probe list's faces (past PRELOAD_PROBE_LIST_MAX the excess is dropped).
+    pre_probe_count: array<atomic<u32>, 2>,
+    // The dispatch's split: the fill's workgroups, then the probes'.
+    pre_fill_groups: u32,
+    pre_probe_groups: u32,
     // The frame's counts (cleared each encode with the preload on; `marcher::PreloadStats`):
-    // bricks scanned past the early-out, faces listed, cells claimed, faces refused a cell
-    // (the table's load, a miss this frame or by the claim, no lit sample), samples drawn,
-    // list entries dropped.
+    // slabs read past their stamp, faces listed, cells claimed, faces refused a cell (the
+    // table's load, a miss this frame or by the claim, no lit sample), samples drawn, fill list
+    // entries dropped, faces probed, slabs skipped as done, probe list entries dropped.
     pre_scanned: atomic<u32>,
     pre_listed: atomic<u32>,
     pre_claimed: atomic<u32>,
@@ -1361,10 +1367,32 @@ struct CacheStats {
     pre_refused_unlit: atomic<u32>,
     pre_samples: atomic<u32>,
     pre_drops: atomic<u32>,
+    pre_probed: atomic<u32>,
+    pre_done: atomic<u32>,
+    pre_probe_drops: atomic<u32>,
+    // The preload's workgroups this frame (`preload_args`).
+    pre_groups: u32,
+    // The last frame's light-pass misses and occupied cells (`preload_args`), for the probes.
+    pre_last_misses: u32,
+    pre_last_occupied: u32,
+    _pre_pad: array<u32, 2>,
+    // Kept across frames: the cells whose fill entries ran out of draws and the cells the
+    // probes claimed, counted while the light pass runs and taken by the next args pass,
+    // which applies their bits.
+    pre_left_n: atomic<u32>,
+    pre_claims_n: atomic<u32>,
+    // The sweep's idle test (cache_fill.wgsl's `preload_args`): slabs found other than done
+    // since the current cycle began, the offsets the cycle has left to visit, and the epochs
+    // (plus 1; 0 is none) of the cycle and of the last cycle that found every slab done.
+    pre_busy: atomic<u32>,
+    pre_cycle_left: u32,
+    pre_cycle_epoch: u32,
+    pre_idle_epoch: u32,
     // Each list's entries by distance band (cache_fill.wgsl's `preload_band`).
     pre_hist: array<array<atomic<u32>, 64>, 2>,
-    // The two lists of entries (list k at k * PRELOAD_LIST_MAX), then the sweep's offsets
-    // (`marcher::preload_offsets`, each component plus 512 in ten bits, x low).
+    // The two fill lists of entries (list k at k * PRELOAD_LIST_MAX), then the sweep's offsets
+    // (`marcher::preload_offsets`, each component plus 512 in ten bits, x low), the two probe
+    // lists and the slab stamps (cache_fill.wgsl's PRELOAD_OFFSETS_AT and after).
     pre_lists: array<u32>,
 };
 

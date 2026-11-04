@@ -698,10 +698,11 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// (2 x 8 B x 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir
 /// textures (2 x 16 B x 640 x 360 = 7 372 800 B), plus the table's 2^20 cells of 40 B
 /// (41 943 040 B), plus the reopened fill's list (16 B of header and 16 384 slots of 4 B,
-/// 65 552 B) and its 12-byte indirect dispatch, plus the preload's store (its 80 B header and
-/// its lists' 2 x 64 distance bands of 4 B, two lists of 32 768 entries of 4 B and the sweep's
-/// offsets at the largest radius, 17 077 of 4 B: 331 044 B), its 4 144 B uniform and its
-/// 24-byte indirect dispatches: 161 551 832 B.
+/// 65 552 B) and its 12-byte indirect dispatch, plus the preload's store (its 152 B header and
+/// its fill lists' 2 x 64 distance bands of 4 B; two fill lists of 32 768 entries of 8 B, the
+/// sweep's offsets at the largest radius, 17 077 of 4 B, two probe lists of 16 384 faces of
+/// 8 B, the left and claimed lists of 32 768 slots of 4 B and the slab stamps, 33^3 x 8 of
+/// 4 B: 2 267 532 B), its 4 160 B uniform and its 24-byte indirect dispatches: 163 488 336 B.
 #[test]
 fn frame_bytes_hold_the_table_and_no_emissive_history() {
     let Some((device, _queue)) = software_device(64 << 20) else {
@@ -712,10 +713,14 @@ fn frame_bytes_hold_the_table_and_no_emissive_history() {
     let bytes = Frame::with_sizes(&device, internal, output).frame_bytes();
     let lighting = 640u64 * 360;
     let fill = 16 + 4 * 16_384 + 12;
-    let preload = 80 + 512 + 4 * (2 * 32_768 + 17_077) + 4_144 + 24;
+    let preload = 152
+        + 512
+        + 4 * (4 * 32_768 + 17_077 + 4 * 16_384 + 2 * 32_768 + 33 * 33 * 33 * 8)
+        + 4_160
+        + 24;
     let expected = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + 41_943_040 + fill + preload;
     println!("frame_bytes at the default: {bytes} B");
-    assert_eq!(expected, 161_551_832);
+    assert_eq!(expected, 163_488_336);
     assert_eq!(bytes, expected);
 }
 

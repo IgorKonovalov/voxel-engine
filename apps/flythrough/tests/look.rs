@@ -1487,12 +1487,14 @@ fn the_split_walk_moves_no_hit_record() {
 /// no hand-off list, and the emissive table of ADR-0043 in place of the screen's emissive
 /// history and reservoirs (TABLE_DELTA: + 41 943 040 - 3 686 400 - 7 372 800, `upscale.rs`'s
 /// `frame_bytes_hold_the_table_and_no_emissive_history`), the reopened fill's list and
-/// dispatch words (+ 65 564), and the preload's store, uniform and dispatch words (+ 335 212).
-const DEFAULT_FRAME_BYTES: u64 = 161_551_832;
+/// dispatch words (+ 65 564), and the preload's store, uniform and dispatch words
+/// (+ 2 271 716).
+const DEFAULT_FRAME_BYTES: u64 = 163_488_336;
 const DEFAULT_MAIN: u64 = 130_267_168;
 const TABLE_DELTA: u64 = 41_943_040 - 3_686_400 - 7_372_800;
 const FILL_BYTES: u64 = 16 + 4 * 16_384 + 12;
-const PRELOAD_BYTES: u64 = 80 + 512 + 4 * (2 * 32_768 + 17_077) + 4_144 + 24;
+const PRELOAD_BYTES: u64 =
+    152 + 512 + 4 * (4 * 32_768 + 17_077 + 4 * 16_384 + 2 * 32_768 + 33 * 33 * 33 * 8) + 4_160 + 24;
 
 /// The split walk's hand-off list (16 B of header and 16 B a pixel) is allocated only by a
 /// frame that splits: on lavapipe the default frame (internal 1280 x 720, output 1920 x 1080)

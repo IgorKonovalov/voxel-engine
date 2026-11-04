@@ -3135,15 +3135,24 @@ struct DugHole {
     dig_frame: vxe_render::marcher::PreloadStats,
 }
 
-/// `dug_hole_s90`'s run with the rig's lighting changed by `adjust`.
+/// `dug_hole_s90`'s run with the rig's lighting changed by `adjust`, at 192 x 108.
 fn dug_hole_run(far: bool, adjust: impl Fn(Lighting) -> Lighting) -> Option<DugHole> {
+    dug_hole_run_at(far, [192, 108], adjust)
+}
+
+/// `dug_hole_run` at `size`.
+fn dug_hole_run_at(
+    far: bool,
+    size: [u32; 2],
+    adjust: impl Fn(Lighting) -> Lighting,
+) -> Option<DugHole> {
     use vxe_world::*;
     let (camera, centre) = dig_case(far);
     let mut rig = cache_box_rig_on(
         dig_box(),
         camera,
         vxe_render::marcher::DEFAULT_TABLE_CAP,
-        [192, 108],
+        size,
         None,
     )?;
     let l = rig.frame.lighting();
@@ -3629,8 +3638,13 @@ fn a_face_behind_the_camera_is_settled_before_the_turn() {
 /// the dig box with the camera 5 voxels from the dig (`dig_case`), the reopened fill off (F 0)
 /// and the preload at its default, the dig's frame visits the edit box's bricks and lists
 /// faces, at least 90 % of the hole's lit pixels read within 10 % of their settled mean by frame
-/// 16 after the dig and its `S90` is at most 60 frames; with both off, `S90` is read beside it.
-/// About 2 x 316 frames.
+/// 16 after the dig and its `S90` is at most 60 frames; with both off, `S90` is read beside it
+/// (the pixels settle the hole alone at this size). At `NEAR_DIG_SMALL`, where a hole face
+/// covers about one lighting pixel, the preload's `S90` is at most 60 and both off read over 60
+/// (the test fails first). About 4 x 316 frames.
+/// The near dig's small frame: a hole face 5 to 20 voxels away covers about one pixel.
+const NEAR_DIG_SMALL: [u32; 2] = [24, 14];
+
 #[test]
 fn a_near_dig_settles_from_the_preload_alone() {
     let Some(on) = dug_hole_run(false, |l| Lighting {
@@ -3648,6 +3662,31 @@ fn a_near_dig_settles_from_the_preload_alone() {
     println!(
         "reading: near dig, F 0: preload on S90 {:?} shares at 1/4/16 {:?} over {}; both off S90 {:?} shares {:?}",
         on.s90, on.shares, on.lit, off.s90, off.shares
+    );
+    // At 24 x 14 a hole face covers about one lighting pixel, so the pixels alone no longer
+    // settle it in a few frames (at 192 x 108 they cover hundreds, and both off read `S90` 4).
+    let small = |preload_radius| {
+        dug_hole_run_at(false, NEAR_DIG_SMALL, |l| Lighting {
+            fill_samples: 0,
+            preload_radius,
+            ..l
+        })
+        .expect("the device opened once")
+    };
+    let (on_small, off_small) = (small(vxe_render::marcher::DEFAULT_PRELOAD_RADIUS), small(0));
+    println!(
+        "reading: near dig at {NEAR_DIG_SMALL:?}, F 0: preload on S90 {:?} shares at 1/4/16 {:?} over {}; both off S90 {:?} shares {:?} over {}",
+        on_small.s90, on_small.shares, on_small.lit, off_small.s90, off_small.shares, off_small.lit
+    );
+    assert!(
+        on_small.s90.is_some_and(|s| s <= 60),
+        "at {NEAR_DIG_SMALL:?}: S90 {:?}",
+        on_small.s90
+    );
+    assert!(
+        off_small.s90.is_none_or(|s| s > 60),
+        "both off at {NEAR_DIG_SMALL:?}: S90 {:?}",
+        off_small.s90
     );
     assert!(
         on.dig_frame.edit_bricks > 0 && on.dig_frame.listed > 0,
@@ -3904,12 +3943,22 @@ fn preload_lighting(pose: &Pose, radius: u32) -> Lighting {
     }
 }
 
-/// A fresh frame for the preload readings: `stillness::SIZE`, full-resolution lighting (so a
-/// lighting pixel is a hit pixel), scale 1, the default look.
+/// A fresh frame for the preload readings: `stillness::SIZE` (or `VXE_PRELOAD_SIZE`, as
+/// `WxH`), full-resolution lighting (so a lighting pixel is a hit pixel; half with
+/// `VXE_PRELOAD_COST_ONLY`), scale 1, the default look.
 fn preload_frame(level: &stillness::VeinLevel, lighting: Lighting) -> Frame {
-    let mut f = Frame::new(&level.device, stillness::SIZE[0], stillness::SIZE[1]);
+    let [w, h] = preload_size();
+    let mut f = Frame::new(&level.device, w, h);
     f.set_look(look_of(flythrough::LookPreset::DEFAULT));
-    f.set_resolution(&level.device, LightingResolution::Full);
+    // Cost-only readings take the default half-resolution lighting (the Budgets' frame).
+    f.set_resolution(
+        &level.device,
+        if preload_cost_only() {
+            LightingResolution::Half
+        } else {
+            LightingResolution::Full
+        },
+    );
     f.set_lighting(lighting);
     f.set_dt(1.0 / 60.0);
     f
@@ -3942,36 +3991,67 @@ fn preload_pixels(
         .collect()
 }
 
+/// The preload readings' frame size: `VXE_PRELOAD_SIZE` as `WxH`, else `stillness::SIZE`.
+fn preload_size() -> [u32; 2] {
+    std::env::var("VXE_PRELOAD_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some([w.parse().ok()?, h.parse().ok()?])
+        })
+        .unwrap_or(stillness::SIZE)
+}
+
+/// Whether the preload readings read only the passes' cost (`VXE_PRELOAD_COST_ONLY`): no
+/// reference run and no pixel readback, so the shares read 0 of 0.
+fn preload_cost_only() -> bool {
+    std::env::var("VXE_PRELOAD_COST_ONLY").is_ok()
+}
+
+/// The least count a cell of `preload_reference` holds to stand as a face's settled mean:
+/// at 1024 samples a face of relative spread 1 reads within about 3 % of its mean.
+const PRELOAD_REFERENCE_COUNT: u32 = 1024;
+
 /// The settled cell means a run's faces read (the reference of done-whens 14 and 16): a fresh
-/// frame walks `cameras` with the preload at 64 voxels, C_PRE at C_CAP (4096) and S_PRE at
-/// 524 288, then holds the last pose until the preload's list is empty (at most 4096 frames);
-/// the table's mean luminance of each cell, times `exposure`, by key, and the least count
-/// among the cells holding samples.
+/// frame walks `cameras` with the preload at its largest radius (`PRELOAD_RADIUS_MAX`), C_PRE
+/// at C_CAP (4096) and S_PRE at 524 288, holding every 16th camera and the last until the
+/// preload's lists read empty (at most 512 frames, the last at most 4096), so every lit face
+/// within 128 voxels of the path is filled; the table's mean luminance of each cell holding at
+/// least `PRELOAD_REFERENCE_COUNT` samples, times `exposure`, by key; the least count among
+/// them; and the frames held. A face whose cell holds fewer (beyond 128 voxels of every held
+/// camera, or refused by the claim rule and seen by few pixels) has no reference, and the
+/// readings count it apart.
 fn preload_reference(
     level: &stillness::VeinLevel,
     pose: &Pose,
     cameras: &[Camera],
 ) -> (std::collections::HashMap<FaceKey, f64>, u32, usize) {
-    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP};
+    use vxe_render::marcher::{
+        CACHE_CELL_WORDS, CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP, PRELOAD_RADIUS_MAX,
+    };
     let mut frame = preload_frame(
         level,
         Lighting {
             preload_until: DEFAULT_TABLE_CAP,
             preload_samples: 1 << 19,
-            ..preload_lighting(pose, 64)
+            ..preload_lighting(pose, PRELOAD_RADIUS_MAX)
         },
     );
     let light = LightParams::headlamp();
-    for c in cameras {
-        frame.step(&level.device, &level.queue, &level.gpu, c, &light);
-    }
-    let last = *cameras.last().expect("a camera");
     let mut held = 0;
-    for f in 0..4096 {
-        frame.step(&level.device, &level.queue, &level.gpu, &last, &light);
-        held = f + 1;
-        if f > 64 && frame.read_preload_stats(&level.device, &level.queue).list == 0 {
-            break;
+    for (i, c) in cameras.iter().enumerate() {
+        frame.step(&level.device, &level.queue, &level.gpu, c, &light);
+        let last = i + 1 == cameras.len();
+        if i % 16 != 15 && !last {
+            continue;
+        }
+        for f in 0..if last { 4096 } else { 512 } {
+            frame.step(&level.device, &level.queue, &level.gpu, c, &light);
+            held += 1;
+            let s = frame.read_preload_stats(&level.device, &level.queue);
+            if f > 16 && s.list == 0 && s.probes == 0 && s.listed == 0 {
+                break;
+            }
         }
     }
     let words = cache_words(level, &frame);
@@ -3989,6 +4069,9 @@ fn preload_reference(
         let sx = |c: i32| (c << 12) >> 12;
         let face = ((k.1 >> 28) & 7) as u8;
         let n = cell[CACHE_COUNT_WORD].min(DEFAULT_TABLE_CAP);
+        if n < PRELOAD_REFERENCE_COUNT {
+            continue;
+        }
         least = least.min(n);
         let c = |i: usize| {
             f64::from(cell[CACHE_COUNT_WORD + 1 + i]) / f64::from(CACHE_Q) / f64::from(n)
@@ -4052,7 +4135,7 @@ fn preload_level_readings() {
         vxe_render::marcher::FRAME_PASSES
             .iter()
             .zip(ms)
-            .filter(|(n, _)| ["light", "fill", "preload", "temporal"].contains(n))
+            .filter(|(n, _)| ["preload", "light", "fill", "temporal"].contains(n))
             .map(|(n, v)| {
                 let mut v = v.clone();
                 v.sort_by(f64::total_cmp);
@@ -4091,6 +4174,12 @@ fn preload_level_readings() {
                     }
                 }
                 let t = frame.read_table_stats(&level.device, &level.queue);
+                // At rest: 256 more still frames after the list first reads empty.
+                if empty_at.is_some() {
+                    for _ in 0..256 {
+                        frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+                    }
+                }
                 let mut ms = vec![Vec::new(); vxe_render::marcher::FRAME_PASSES.len()];
                 if let Some(timer) = &timer {
                     for _ in 0..120 {
@@ -4176,12 +4265,20 @@ fn preload_level_readings() {
                         c
                     })
                     .collect();
-                let (reference, least, held) = preload_reference(&level, &pose, &cams);
+                let (reference, least, held) = if preload_cost_only() {
+                    Default::default()
+                } else {
+                    preload_reference(&level, &pose, &cams)
+                };
                 let mut frame = preload_frame(&level, preload_lighting(&pose, r));
                 let mut last_seen: HashMap<FaceKey, usize> = HashMap::new();
                 // Bands: within 64, 64..96, 96..128, beyond: [entering, within 10 %].
                 let mut bands = [[0usize; 2]; 4];
                 let mut ms = vec![Vec::new(); vxe_render::marcher::FRAME_PASSES.len()];
+                // The preload's samples, faces probed, faces listed and cells claimed, summed.
+                let mut pre_sum = [0u64; 4];
+                // Entering pixels within 64 voxels whose face has no reference.
+                let mut noref = 0usize;
                 for (f, c) in cams.iter().enumerate() {
                     match &timer {
                         Some(t) if f > 0 => {
@@ -4191,9 +4288,20 @@ fn preload_level_readings() {
                         }
                         _ => frame.step(&level.device, &level.queue, &level.gpu, c, &light),
                     }
+                    let st = frame.read_preload_stats(&level.device, &level.queue);
+                    pre_sum[0] += u64::from(st.samples);
+                    pre_sum[1] += u64::from(st.probed);
+                    pre_sum[2] += u64::from(st.listed);
+                    pre_sum[3] += u64::from(st.claimed);
+                    if preload_cost_only() {
+                        continue;
+                    }
                     let px = preload_pixels(&level, &frame, c.position);
                     for &(k, d, lum) in px.iter().flatten() {
                         let entering = f >= 60 && last_seen.get(&k).is_none_or(|&s| f - s > 60);
+                        if entering && d <= 64.0 && !reference.contains_key(&k) {
+                            noref += 1;
+                        }
                         if entering
                             && let Some(&rf) = reference.get(&k)
                             && rf > 1e-6
@@ -4213,12 +4321,16 @@ fn preload_level_readings() {
                 let share =
                     |b: [usize; 2]| format!("{:.3} of {}", b[1] as f64 / b[0].max(1) as f64, b[0]);
                 println!(
-                    "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering lit pixels within 10 % on their first frame: within 64 {}; 64..96 {}; 96..128 {}; beyond {} (reference least count {least}, held {held}); in flight: {}",
+                    "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering lit pixels within 10 % on their first frame: within 64 {}; 64..96 {}; 96..128 {}; beyond {} (no reference within 64 {noref}; reference least count {least}, held {held}); in flight: {}; a frame: {:.0} samples, {:.1} faces probed, {:.1} listed, {:.1} claimed",
                     share(bands[0]),
                     share(bands[1]),
                     share(bands[2]),
                     share(bands[3]),
-                    costs(&ms)
+                    costs(&ms),
+                    pre_sum[0] as f64 / cams.len() as f64,
+                    pre_sum[1] as f64 / cams.len() as f64,
+                    pre_sum[2] as f64 / cams.len() as f64,
+                    pre_sum[3] as f64 / cams.len() as f64,
                 );
             }
             if runs.iter().any(|x| x == "corner") && pose.name == VEIN_POSE.name {

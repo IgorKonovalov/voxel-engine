@@ -120,6 +120,12 @@ const CANDIDATE_DIMS: u32 = 6u;
 
 @compute @workgroup_size(8, 8, 1)
 fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
+    shade_px(gid);
+}
+
+// The light pass at lighting pixel `gid.xy` (`shade`, and the rows of cache_fill.wgsl's
+// `shade_preload` under the lighting grid).
+fn shade_px(gid: vec3<u32>) {
     let view = view_mode();
     if (gid.x >= params.light_size.x || gid.y >= params.light_size.y || (view != VIEW_SHADED && view != VIEW_STEPS && view != VIEW_CRACKS)) {
         return;
