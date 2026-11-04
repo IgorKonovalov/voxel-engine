@@ -33,6 +33,14 @@
 > (the creases), if the half-resolution upsample is read to carry the dots. Phases 1 to 3, 5 and
 > 6 stand, with Phase 6's done-when gaining the creases. ADR-0043's fill-pass paragraph is
 > amended in its Outcome at the close, as the plan provided.
+>
+> **Amended 2026-11-04 (architect, for the owner), Phase 2 done-when 7:** Phase 2's fast yaw read
+> the opposite of the bar's premise (`logs/0057.md` Phase 2, done-when 7): with the table's read
+> off the screen path reads no excess (-911.7 over a floor of 69.3, sd 11.6), and the table reads
+> +552.5 over a floor of 27.6 (sd 2.0). The table's read, not the screen path, puts the dots on
+> the screen after a yaw. Done-when 7 becomes a reading whose two excesses feed Phase 4's crease
+> rule, and the bar it carried (the table puts no excess over its own floor after a yaw) moves to
+> Phase 4 as done-when 7, asserted if the own-face read is built. Phase 2 is not held.
 
 ## TL;DR
 
@@ -286,14 +294,22 @@ in its log, or the orchestrator agrees the order; the log names which.
      at the default equals main's 130 267 216 B minus the `f32` pair's excess (3 686 400 B,
      ADR-0036's figure) minus the reservoir textures' bytes (dev computes and records) plus
      41 943 040 B, with the arithmetic in the test's comment. Under 5 s.
-  7. `a_fast_yaw_reads_an_excess_today_and_none_from_the_table` asserts, at `VEIN_POSE` with the
-     lamp on, indirect off, at the yaw and the run Phase 1 found today's excess at (the plan's
-     guess: `yaw 90 10 f`; the log names it), that **a build with the table's read disabled by a
-     test-only setting reads an excess over its floor** (the test fails first), and that the
-     default's excess at frames 1 to 60 is at most 10 % of it. If Phase 1 finds no run where
-     today reads an excess, the test asserts the default reads none over its floor and the log
-     says the first half could not be written. Two runs of about 200 frames: about 25 s, on the
-     soak list from birth.
+  7. **Amended 2026-11-04 (architect, for the owner): a reading, not a bar.**
+     `a_fast_yaw_reads_an_excess_today_and_none_from_the_table` is renamed
+     `the_fast_yaw_excess_by_table_read` and stays on the soak list (two runs of about 200
+     frames, 29.0 s read on lavapipe). At `VEIN_POSE`, lamp on, indirect off, FSR 2 at 1.5,
+     pinned, `yaw 90 10 f`, frames 1 to 60 after, it runs the default and the test-only
+     `table_read: false` arm and prints each arm's excess, floor and floor sd, and the noise
+     line (60 x the floor's sd) the old assertion used. It asserts only that each arm's floor
+     is measured (a non-zero still-frame dot count with its sd) and that the 60 frames ran; it
+     asserts no excess. Phase 2's reading stands as its first row: **read off -911.7 (floor
+     69.3, sd 11.6, line 696.6); table +552.5 (floor 27.6, sd 2.0, line 120)**. Beside it the
+     log sets Phase 1's rows at the same pose, lamp and yaw (`off` +252, the spike's `b` +158;
+     one seed, Phase 1's tree), so the table's excess reads against v0.41.0's. The test's
+     first premise (the screen path alone reads an excess) did not hold, and Plan 0051's Phase
+     3 read the same; the bar the test carried, that the default puts no excess over its own
+     floor after a fast yaw, is the owner's want and is Phase 4's done-when 7, where the
+     mechanism that could meet it is built.
   8. The banner and the HUD show the table row (`the_banner_names_the_table`, `hud.rs`, no GPU,
      under 1 s), and `--steady`, `--cache-read`, `--emissive-guard`, `--reuse-m-cap` and
      `--sampler` are refused with a message that names this plan's number.
@@ -385,6 +401,16 @@ in its log, or the orchestrator agrees the order; the log names which.
     At a crease, with the camera moving, that nearest tap can lie on the other face, so a pixel
     shows its neighbour face's cell for one frame. This is a candidate the readings below
     attribute or refute, not yet a reading.
+  - **Amended 2026-11-04 (architect, for the owner), from Phase 2's done-when 7.** The fast
+    yaw's excess is now measured headless on the table: +552.5 over a floor of 27.6 (sd 2.0)
+    with the table's read on, and none (-911.7 over 69.3) with it off (`logs/0057.md` Phase 2).
+    So the table's read is what puts the dots up after a yaw, and they fall on mature cells
+    (Phase 1). The rig's row joins the crease reading as a fifth row, its default taken from
+    that reading until Phase 3's tree re-reads it, and the bar Phase 2's done-when 7 carried
+    lands here as done-when 7. A second candidate is named, not built: at a true face edge FSR
+    2's jitter moves a pixel between two faces' cells each frame, a hard step that Phase 2's
+    removal of the screen history no longer smooths (v0.41.0 read +252 at the row, the spike's
+    `b` +158). The rig row at scale 1 and at `--lighting full` splits the two.
 - **The settle bar for the dug hole, stated.** The owner: "I can count to 5 when light settles"
   (`LIGHT-FEEDBACK.md`) and "when i dig it takes some time for light to settle in hole"
   (`logs/0051.md`, Phase 4, note 6). Five counts is the fault, so the bar is one count, one
@@ -409,10 +435,17 @@ in its log, or the orchestrator agrees the order; the log names which.
     beside (131.95, 253.66, 61.39 and 63.30 a frame: patch FSR 2, patch native, vein FSR 2, vein
     native), and for each yellow dot whether its displayed emissive lies more than 10 % from its
     own face's cell mean times the exposure (the cell read back on the CPU as Phase 1's rig
-    does). **The rule:** if `--lighting full` reads at most half the default's yellow dots in at
-    least three of the four rows, and over half of the default's yellow dots lie more than 10 %
-    from their own cell, Part 3 builds the own-face read; otherwise it is not built, and the log
-    carries the split to the plan's Followups.
+    does). **The rig's row (amended 2026-11-04):** `the_fast_yaw_excess_by_table_read`'s run
+    (vein, lamp on, `yaw 90 10 f`, frames 1 to 60) at the default and at `--lighting full`, each
+    at `up1.5` and scale 1, with the excess dots split the same way (displayed emissive more
+    than 10 % from its own cell or not); the default at `up1.5` is Phase 2's +552.5 over 27.6
+    until this tree re-reads it, and the log sets both beside. **The rule:** if `--lighting full`
+    reads at most half the default's yellow dots (the rig's row: half its excess) in at least
+    three of the five rows, the rig's row among them, and over half of the default's yellow
+    dots (the rig's row: its excess dots) lie more than 10 % from their own cell, Part 3 builds
+    the own-face read; otherwise it is not built, and the log carries the split, the rig row's
+    scale-1 figure with it, to the plan's Followups. The rig's row is required because it is
+    the one row where the table's read was shown to carry the excess.
 - **Part 2, the reopened fill (if the hole's rule says build):**
   - **The list.** The edit-box clear and the guard's reopen set a `reopened` bit in the cell's
     stamp word; a pixel whose cell carries the bit, is under `C_FILL` samples (swept 64, 256;
@@ -471,6 +504,15 @@ in its log, or the orchestrator agrees the order; the log names which.
   6. The end readings are in the log. The predictions: the hole meets the bar at `F` 8; with
      Part 3 the yellow dots a frame read under half of 0056's `H` rows in every row. A miss is a
      reading the owner judges in Phase 6.
+  7. **Added 2026-11-04 (architect, for the owner), from Phase 2's done-when 7.** If Part 3 is
+     built: `a_fast_yaw_reads_no_excess_from_the_table` asserts, on the rig's row (`VEIN_POSE`,
+     lamp on, indirect off, FSR 2 at 1.5, pinned, `yaw 90 10 f`, frames 1 to 60), that the
+     default's excess over its floor is at most its noise line (60 x the floor's sd; 120 at
+     Phase 2's sd 2.0, under v0.41.0's +252 at the row), and that with the own-face read
+     disabled by a test-only setting it reads over that line (the test fails first; Phase 2
+     read +552.5). Two runs of about 200 frames: about 30 s, on the soak list from birth. If
+     Part 3 is not built, the test is not written and `the_fast_yaw_excess_by_table_read`'s
+     row on this phase's tip goes to the log and the Followups.
 
 ### Phase 5: The lamp-bounce channel
 - **Owner skill:** dev
@@ -570,7 +612,8 @@ in its log, or the orchestrator agrees the order; the log names which.
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's words on: (a) whether anything moves at rest, hall
   and level; (b) the fast turn, against v0.41.0 and against the spike's session, and the small
-  yellow dots on creases while turning (Phase 4's verdict on the own-face read beside it); (c) the
+  yellow dots on creases while turning (Phase 4's verdict on the own-face read and the rig's
+  fast-yaw row, against v0.41.0's, beside it); (c) the
   dug hole at arm's length and at range, in frames or seconds by eye, against Phase 4's bar (60
   and 120 frames); (d) the lamp bounce's look and lag,
   and whether `lamp_bounce` stays on by default; (e) the step at voxel edges; (f) what remains
@@ -622,6 +665,10 @@ cell dump across two runs of the same still frame on lavapipe.
   The crease candidate (the half-resolution upsample's nearest tap on the other face) is
   unread until Phase 4's Part 1; if it is refuted, the dots have no mechanism in this plan and
   go to the Followups with the split.
+- **The table's read raises the fast yaw's dots over v0.41.0's** (read, Phase 2: +552.5 over
+  27.6 at the rig's row, where Phase 1 read v0.41.0 at +252 and the spike's `b` at +158). Phase
+  2 lands with it; Phase 4's done-when 7 is the bar, and if Part 3 is not built or misses it,
+  the default ships to Phase 6 with that excess, and the owner judges it there (item b).
 - **The guard sees one point a cell.** A second emitter behind the first changes a face's light
   without moving the kept point's re-shade; the cell is caught only when a new sample lands. The
   reveal test is the bar; a two-emitter test is a reading.
@@ -721,6 +768,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **The yellow dots, if Phase 4's Part 1 refutes the crease candidate** (amended 2026-11-04,
   architect): light on creases, mostly new each frame, not young cells (Phase 1) and not the
   upscaler (Plan 0056 Phase 2), with no mechanism yet attributed. It belongs to no plan yet: the
-  architect takes Phase 4's split and drafts the spike for the plan after this one.
+  architect takes Phase 4's split and drafts the spike for the plan after this one. The same
+  holds if Part 3 is built and Phase 4's done-when 7 misses (amended 2026-11-04, from Phase 2's
+  done-when 7): the spike starts from the rig's fast-yaw row (table read on and off, `up1.5` and
+  scale 1, `--lighting full`) and the second candidate, a pixel at a true face edge moving
+  between two cells under FSR 2's jitter with no screen history to smooth the step.
 - **The hall's settle from a fresh start**, if the owner calls it slow in Phase 6: a fill for
   cells opened after a table clear, the same list as Phase 4's Part 2; no plan yet.
