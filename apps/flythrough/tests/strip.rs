@@ -45,6 +45,9 @@
 //! - `VXE_STRIP_STEADY`: a `--steady` preset (`off`, `a`, `c`, `ac`, `b`, `ab`, `abc`), the
 //!   cache read nearest.
 //! - `VXE_STRIP_SHARPEN`: the upscaler's sharpening (default 0.5).
+//! - FSR 2's candidate knobs (`Fsr2Settings`): `VXE_STRIP_JITTER_PHASES` (the jitter's phase
+//!   count; the fold's default follows it), `VXE_STRIP_EMITTER_CAP` (a pre-exposed level) and
+//!   `VXE_STRIP_DITHER=on` (the tone pass's static one-level dither).
 //! - `VXE_STRIP_READ=fold`: after the settle, `VXE_STRIP_FRAMES` still frames folded over
 //!   `VXE_STRIP_PHASES` (default: `fsr2::jitter_phases`, `own`'s `JITTER_PHASES`, 18 for
 //!   `off`): `T`, `L`, `J` (`support::aliasing`), the guard's energy, the jumps by class and
@@ -546,6 +549,32 @@ impl PanRead<'_> {
 /// Jumps per pixel at which `jumps.png` is white.
 const JUMPS_WHITE: u32 = 8;
 
+/// Each frame of the last whole cycle against that cycle's per-pixel mean, rounded to a level:
+/// how far one frame lies from the image a still view would hold if it showed the mean, which
+/// is also the jump a pan's first frame would make from it. `None` without a whole cycle.
+fn from_cycle_mean(frames: &[Vec<u8>], phases: u32) -> Option<aliasing::Change> {
+    let p = phases.max(1) as usize;
+    let cycles = frames.len() / p;
+    if cycles == 0 {
+        return None;
+    }
+    let cycle = &frames[(cycles - 1) * p..cycles * p];
+    let len = cycle[0].len();
+    let mean: Vec<u8> = (0..len)
+        .map(|i| {
+            let sum: u32 = cycle.iter().map(|f| u32::from(f[i])).sum();
+            ((sum + p as u32 / 2) / p as u32) as u8
+        })
+        .collect();
+    let mut hist = aliasing::Hist::default();
+    for f in cycle {
+        for d in aliasing::levels(f, &mean) {
+            hist.add(d);
+        }
+    }
+    Some(hist.change())
+}
+
 /// `VXE_STRIP_READ=fold`: a still camera's frames folded over the jitter's cycle.
 struct FoldRead<'a> {
     size: [u32; 2],
@@ -604,6 +633,12 @@ impl FoldRead<'_> {
             fold.unlocked()
         );
         println!("fold guard energy: {}", guard(last, w, h));
+        if let Some(c) = from_cycle_mean(&frames, self.phases) {
+            println!(
+                "fold one frame from its cycle's mean (mean, p99.9, max, over 2, jumps): {}",
+                c.cell()
+            );
+        }
         if (w, h) == (1920, 1080) {
             let dome = crop(last, w, GUARD_CROPS[0]);
             let n = (dome.len() / 4) as f32;
@@ -782,6 +817,15 @@ fn strip_run() {
                 device,
                 UpscalerKind::Fsr2(Fsr2Settings {
                     sharpness: sharpen,
+                    jitter_phases: env("VXE_STRIP_JITTER_PHASES").map(|v| {
+                        v.parse()
+                            .expect("VXE_STRIP_JITTER_PHASES takes a phase count")
+                    }),
+                    emitter_cap: env("VXE_STRIP_EMITTER_CAP").map(|v| {
+                        v.parse()
+                            .expect("VXE_STRIP_EMITTER_CAP takes a pre-exposed level")
+                    }),
+                    dither: on_off("VXE_STRIP_DITHER", false),
                     ..Fsr2Settings::default()
                 }),
             );
@@ -791,7 +835,9 @@ fn strip_run() {
     };
     let internal = frame.internal_size();
     let phases = match upscaler.as_str() {
-        "fsr2" => vxe_render::fsr2::jitter_phases(internal[0], w),
+        "fsr2" => frame
+            .fsr2()
+            .map_or(0, |f| f.settings().phases(internal[0], w)),
         "own" => vxe_render::marcher::JITTER_PHASES,
         _ => 18,
     };

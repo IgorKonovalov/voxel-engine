@@ -1,6 +1,6 @@
 # 0056: The aliasing spike: what moves on the final image with the light held still, read by class, and one window for FSR 2, `own`, native and the far normal
 
-> **Status:** in-progress (2026-11-04): Phases 1 to 3 by `dev`, then Phase 4 (human)
+> **Status:** in-progress (2026-11-04): Phases 1 to 3 done by `dev`; Phase 4 (human) next
 > **Created:** 2026-11-03
 > **Approved:** 2026-11-03 (owner): "approve, go with recommended". See Owner answers.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler bullets).
@@ -475,8 +475,8 @@ The owner, 2026-11-03: "approve, go with recommended".
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Where the jumps lie | dev | done | e630380 |
-| 2: The matrix, the pan and the rings | dev | done | committed with this row |
-| 3: Candidates, costs and the window's toggles | dev | not started | |
+| 2: The matrix, the pan and the rings | dev | done | e678ae7 |
+| 3: Candidates, costs and the window's toggles | dev | done | committed with this row |
 | 4: The owner's window | human | not started | |
 
 Readings, gates and attempts: [`logs/0056.md`](logs/0056.md).
@@ -506,6 +506,22 @@ Readings, gates and attempts: [`logs/0056.md`](logs/0056.md).
   `support/aliasing.rs`; under `E` no pixel is yellow by the rule.
 - Phase 2: `R` at 3840 x 2160 is not bit-identical still (`T` max 26, 0.001 mean); unread why.
 - Phase 2: the reading runs used a frozen copy of the phase's test binary (`live/bin/strip-p2`).
+- `--steady` is on main since v0.41.0; the light called `H` here, and Phase 4's `<L>`, is
+  `--steady b --indirect off`.
+- Phase 3: `V`'s off is `--far-normal` `[0, 0]`; `Z` under FSR 2 is a settings change through
+  `set_upscaler_kind` that keeps FSR 2's history, under `own` a `set_sharpness` uniform write.
+- Phase 3: the emitter cap is applied in `composite.wgsl` (FSR 2's input colour), and the two
+  knobs reach the shaders through four new words at the end of `Params` (`march.wgsl`,
+  `marcher.rs`): files outside the phase's list.
+- Phase 3: new fly-through flags beyond the plan's list: `--jitter-phases N`, `--emitter-cap C`,
+  `--dither on|off` (FSR 2's candidate knobs, off by default, named in the banner's fsr2 line);
+  new strip variables `VXE_STRIP_JITTER_PHASES`, `VXE_STRIP_EMITTER_CAP`, `VXE_STRIP_DITHER`.
+- Phase 3: candidate 5 is read as a fold line (one frame from its cycle's per-pixel mean) on
+  Phase 3's runs, not offline from Phase 2's frames, which were not kept.
+- Phase 3: the runner is `live/session1.sh` (untracked), not `renders/plan-0056/session.sh`.
+- Phase 3: done-when 2 is read by the hero example from main's 38cd29a source and from this
+  tree on lavapipe, compared pixel for pixel, and `frame_bytes` from the cost runs' frame line
+  against main's binary; no golden test was added or changed.
 
 ### Close triggers
 

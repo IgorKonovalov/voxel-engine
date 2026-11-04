@@ -28,6 +28,7 @@
 //! [--emissive-guard on|off] [--reuse-m-cap N]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
+//! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
 //! [--exposure auto|E]
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
@@ -54,7 +55,10 @@
 //! cycles the sharpening (0.5, 0.25, 0; the upscaler keeps its history), `V` the far normal
 //! (`[2, 6]`, `[1, 2]`, off), and `--pan DEG_PER_S` turns the camera at a constant yaw rate
 //! (positive to the left, by the frame's measured interval) that `Period` stops and starts;
-//! the stats HUD names all four on one row;
+//! the stats HUD names all four on one row; FSR 2's candidate knobs, off by default, are
+//! `--jitter-phases N` (its jitter's phase count), `--emitter-cap C` (an emitting hit's
+//! pre-exposed colour held at `C` into FSR 2) and `--dither on` (a static one-level dither in
+//! its tone pass), each named in the banner's fsr2 line when set;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
 //! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -482,6 +486,14 @@ struct Args {
     sharpen: f32,
     /// `--pan DEG_PER_S`: a constant yaw rate, degrees a second, positive to the left.
     pan: Option<f32>,
+    /// `--jitter-phases N`: FSR 2's jitter phase count (`Fsr2Settings::jitter_phases`).
+    jitter_phases: Option<u32>,
+    /// `--emitter-cap C`: FSR 2's cap on an emitting hit's pre-exposed colour
+    /// (`Fsr2Settings::emitter_cap`).
+    emitter_cap: Option<f32>,
+    /// `--dither on|off`: FSR 2's tone pass adds its static one-level dither
+    /// (`Fsr2Settings::dither`).
+    dither: bool,
     /// `--jitter` was given.
     jitter_set: bool,
     /// `--upscaler off|own|fsr2`, when given.
@@ -632,6 +644,9 @@ impl Args {
             hud::UpscalerMode::Fsr2 => (
                 UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
                     sharpness: self.sharpen,
+                    jitter_phases: self.jitter_phases,
+                    emitter_cap: self.emitter_cap,
+                    dither: self.dither,
                     ..vxe_render::Fsr2Settings::default()
                 }),
                 self.internal_scale,
@@ -752,6 +767,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         jitter: DEFAULT_JITTER,
         sharpen: DEFAULT_SHARPEN,
         pan: None,
+        jitter_phases: None,
+        emitter_cap: None,
+        dither: false,
         exposure: None,
         adaptation: hud::Adaptation::Eye,
         adapt: None,
@@ -911,6 +929,31 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--pan" => {
                 let v = value()?;
                 args.pan = Some(parse_pan(&v)?);
+            }
+            "--jitter-phases" => {
+                let v = value()?;
+                args.jitter_phases = Some(
+                    v.parse()
+                        .ok()
+                        .filter(|n| (1..=1024).contains(n))
+                        .ok_or(format!("--jitter-phases takes 1 to 1024, not {v}"))?,
+                );
+            }
+            "--emitter-cap" => {
+                let v = value()?;
+                args.emitter_cap = Some(
+                    v.parse()
+                        .ok()
+                        .filter(|c: &f32| c.is_finite() && *c > 0.0)
+                        .ok_or(format!("--emitter-cap takes a level above 0, not {v}"))?,
+                );
+            }
+            "--dither" => {
+                args.dither = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--dither takes on or off, not {v}")),
+                };
             }
             "--sharpen" => {
                 let v = value()?;
@@ -5005,7 +5048,12 @@ impl App for Flythrough {
                     },
                     0.0,
                 )
-                .with_sharpen(self.args.sharpen),
+                .with_sharpen(self.args.sharpen)
+                .with_fsr2_knobs(hud::fsr2_knob_words(
+                    self.args.jitter_phases,
+                    self.args.emitter_cap,
+                    self.args.dither,
+                )),
                 upscaler_changed: false,
                 sharpen_changed: false,
                 pan: self.args.pan.map(|d| hud::Pan::new(d, 0.0)),
@@ -6629,7 +6677,8 @@ mod tests {
     /// `V` steps the far normal through `[2, 6]`, `[1, 2]` and off, `Z` the sharpening through
     /// 0.25, 0 and 0.5, and `Period` stops and starts `--pan`'s yaw; each press changes the
     /// banner's text to the new mode, and the stats HUD's aliasing row names all four.
-    /// `--pan` parses a number of degrees a second and refuses a non-number and 0.
+    /// `--pan` parses a number of degrees a second and refuses a non-number and 0; FSR 2's
+    /// candidate knobs parse, refuse 0 and a non-word, and show in the fsr2 banner line.
     #[test]
     fn the_aliasing_toggles_show_in_the_banner() {
         let mut run = bare_run(carved_rock());
@@ -6666,6 +6715,36 @@ mod tests {
             hud::aliasing_row(&run.upscaler, "far normal 2..6", run.pan.as_ref()),
             "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; pan 1.1 deg/s"
         );
+        let knobs = parse_args_from(argv(&[
+            "--jitter-phases",
+            "8",
+            "--emitter-cap",
+            "1",
+            "--dither",
+            "on",
+        ]))
+        .expect("the candidate knobs parse");
+        assert_eq!(
+            (knobs.jitter_phases, knobs.emitter_cap, knobs.dither),
+            (Some(8), Some(1.0), true)
+        );
+        let banner = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5").with_fsr2_knobs(
+            hud::fsr2_knob_words(knobs.jitter_phases, knobs.emitter_cap, knobs.dither),
+        );
+        assert_eq!(
+            banner.line(),
+            "upscaler fsr2, scale 1.5, sharpen 0.5, phases 8, emitter cap 1, dither"
+        );
+        for (flag, bad) in [
+            ("--jitter-phases", "0"),
+            ("--emitter-cap", "0"),
+            ("--dither", "x"),
+        ] {
+            assert!(
+                parse_args_from(argv(&[flag, bad])).is_err(),
+                "{flag} {bad} parses"
+            );
+        }
         let p = parse_args_from(argv(&["--pan", "1.1"])).expect("--pan 1.1 parses");
         assert_eq!(p.pan, Some(1.1));
         for bad in ["x", "0", "-0", "inf"] {

@@ -101,7 +101,15 @@ pub struct Params {
     /// The history age at which the light pass stops drawing for a pixel
     /// ([`Lighting::skip_converged_draw`]); 0 never.
     pub converged_age: u32,
+    /// [`Fsr2Settings::emitter_cap`] while FSR 2 runs unbypassed; 0 is no cap.
+    pub emitter_cap: f32,
+    /// 1: [`Fsr2Settings::dither`] while FSR 2 runs unbypassed.
+    pub dither: u32,
+    /// Pads the block to a multiple of 16 bytes, as the shaders' struct is.
+    pub _tail: [u32; 2],
 }
+
+const _: () = assert!(size_of::<Params>().is_multiple_of(16));
 
 /// `Params::lighting` bit: the headlamp lights the frame.
 pub const LIGHTING_LAMP: u32 = 1;
@@ -2440,6 +2448,11 @@ impl Frame {
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
+        let fsr = self
+            .fsr
+            .as_ref()
+            .filter(|f| !f.bypassed())
+            .map(Fsr2::settings);
         let jitter = if let Some(f) = self.fsr.as_ref().filter(|f| !f.bypassed()) {
             // FSR's sample of pixel p lies at p + 0.5 - offset (`fsr2::jitter_offset`).
             let [w, _] = self.internal_size();
@@ -2482,6 +2495,8 @@ impl Frame {
             emissive_history: self.lighting.emissive_history as f32,
             reuse_m_cap: self.lighting.reuse_m_cap.max(1),
             converged_age: self.lighting.skip_converged_draw.unwrap_or(0),
+            emitter_cap: fsr.and_then(|f| f.emitter_cap).unwrap_or(0.0),
+            dither: u32::from(fsr.is_some_and(|f| f.dither)),
             cache: self.lighting.emissive_cache.map_or(0, |c| c.word()),
             output_size: if self.upscaling() {
                 self.output

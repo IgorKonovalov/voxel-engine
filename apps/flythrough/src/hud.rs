@@ -1939,7 +1939,26 @@ pub struct UpscalerBanner {
     pub scale: &'static str,
     /// The upscaler's RCAS sharpening (`--sharpen`, `Z`); unnamed while the upscaler is off.
     pub sharpen: f32,
+    /// FSR 2's candidate knobs as words (`, phases 8, emitter cap 1, dither`), empty when none
+    /// is set; named only while the mode is fsr2.
+    pub fsr2_knobs: String,
     shown_at: Option<f64>,
+}
+
+/// FSR 2's candidate knobs (`--jitter-phases`, `--emitter-cap`, `--dither`) as the banner's
+/// suffix: `, phases 8, emitter cap 1, dither`, each only when set; empty when none is.
+pub fn fsr2_knob_words(phases: Option<u32>, emitter_cap: Option<f32>, dither: bool) -> String {
+    let mut s = String::new();
+    if let Some(n) = phases {
+        s += &format!(", phases {n}");
+    }
+    if let Some(c) = emitter_cap {
+        s += &format!(", emitter cap {c}");
+    }
+    if dither {
+        s += ", dither";
+    }
+    s
 }
 
 /// The sharpening `Z` steps through: 0.5, 0.25, 0, then 0.5 again; any other value steps to
@@ -1962,6 +1981,7 @@ impl UpscalerBanner {
             mode,
             scale,
             sharpen: 0.5,
+            fsr2_knobs: String::new(),
             shown_at: None,
         }
     }
@@ -1969,6 +1989,15 @@ impl UpscalerBanner {
     /// The same banner at sharpening `sharpen`.
     pub fn with_sharpen(self, sharpen: f32) -> Self {
         Self { sharpen, ..self }
+    }
+
+    /// The same banner naming FSR 2's candidate knobs, `knobs` as [`fsr2_knob_words`] writes
+    /// them.
+    pub fn with_fsr2_knobs(self, knobs: String) -> Self {
+        Self {
+            fsr2_knobs: knobs,
+            ..self
+        }
     }
 
     /// The sharpening is now `sharpen` (`Z`); the banner shows from `now_ms`. Under FSR 2 the
@@ -2001,10 +2030,15 @@ impl UpscalerBanner {
             format!("upscaler off, scale {}", self.scale)
         } else {
             format!(
-                "upscaler {}, scale {}, sharpen {}",
+                "upscaler {}, scale {}, sharpen {}{}",
                 self.mode.name(),
                 self.scale,
-                self.sharpen
+                self.sharpen,
+                if self.mode == UpscalerMode::Fsr2 {
+                    self.fsr2_knobs.as_str()
+                } else {
+                    ""
+                }
             )
         }
     }
