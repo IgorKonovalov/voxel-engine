@@ -1655,6 +1655,29 @@ mod mode_tests {
         assert!(!c.probe_lamp);
     }
 
+    /// `--steady ab --indirect off`: the fly-through builds its `Lighting` with `indirect` from
+    /// `--indirect` and then applies the preset, which sets A's and B's fields and leaves
+    /// `indirect` as given.
+    #[test]
+    fn ab_with_indirect_off_applies_both() {
+        use vxe_render::marcher::{CacheRead, DEFAULT_PROBE_FREEZE, HISTORY_AGE_MAX};
+        let mode = SteadyMode::from_name("ab").expect("ab parses");
+        let l = mode.apply(
+            vxe_render::Lighting {
+                indirect: false,
+                ..vxe_render::Lighting::default()
+            },
+            CacheRead::Nearest,
+        );
+        let cache = l.emissive_cache.expect("B's table is on");
+        assert_eq!(cache.read, CacheRead::Nearest);
+        assert_eq!(l.probe_freeze, Some(DEFAULT_PROBE_FREEZE));
+        assert_eq!(l.skip_converged_draw, Some(HISTORY_AGE_MAX));
+        assert!(l.skip_inside_probes);
+        assert_eq!(l.emissive_history, HISTORY_AGE_MAX);
+        assert!(!l.indirect, "the preset leaves --indirect off");
+    }
+
     /// Each of `F3` to `F7` and `M` changes the banner's text to the new mode; the banner is
     /// empty 3 s after the last change and shows again on the next one.
     #[test]

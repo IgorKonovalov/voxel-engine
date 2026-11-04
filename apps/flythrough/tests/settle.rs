@@ -7,7 +7,8 @@
 //! reading-only and `#[ignore]`d: they print readings and assert nothing a gate runs, on the
 //! adapter `VXE_TEST_ADAPTER` picks (`support::reading_device`). Their runs narrow by
 //! environment variables, each a comma list: `VXE_SETTLE_POSES` (patch, vein),
-//! `VXE_SETTLE_EVENTS` (flyin, flyin-pinned, toggle, dig, yaw10, yaw30, yaw180),
+//! `VXE_SETTLE_EVENTS` (flyin, flyin-pinned, toggle, dig, dig100, yaw10, yaw30, yaw118,
+//! yaw180),
 //! `VXE_SETTLE_LAMP` and `VXE_SETTLE_INDIRECT` (on, off), `VXE_SETTLE_AUTO` (pinned, auto),
 //! `VXE_SETTLE_UPSCALER` (up, s1, bridge) and `VXE_K_RUNS` (yaw, flight). `settle_readings`
 //! takes each run's `N_step` from the composite's `sigma_view` in a `wander_readings` log on
@@ -275,12 +276,17 @@ fn events(all: &[&str]) -> Vec<Event> {
             "flyin-pinned" => Event::FlyIn { pinned: true },
             "toggle" => Event::Toggle,
             "dig" => Event::Dig,
+            "dig100" => Event::DigFar,
             "yaw10" => Event::Yaw {
                 frames: 10,
                 degrees: 90,
             },
             "yaw30" => Event::Yaw {
                 frames: 30,
+                degrees: 90,
+            },
+            "yaw118" => Event::Yaw {
+                frames: 118,
                 degrees: 90,
             },
             "yaw180" => Event::Yaw {
@@ -362,7 +368,7 @@ fn run_settle(all: &[&str], seeded: bool) {
                 )]
                 let t0 = std::time::Instant::now();
                 let r = settle_run(&mut level, &pose, setting, event, 0, tag.as_deref());
-                if event == Event::Dig {
+                if event.is_dig() {
                     reset_world(&mut level);
                 }
                 let name = format!("{} {} {}", pose.name, event.name(), setting.name());
@@ -392,7 +398,7 @@ fn run_settle(all: &[&str], seeded: bool) {
                 let runs = if dry { 1 } else { n.unwrap_or(1) };
                 for k in 1..runs {
                     let rk = settle_run(&mut level, &pose, setting, event, k * SEED_STRIDE, None);
-                    if event == Event::Dig {
+                    if event.is_dig() {
                         reset_world(&mut level);
                     }
                     sum.add(&rk);
@@ -551,11 +557,67 @@ fn settle_readings() {
     run_settle(&["toggle", "dig"], true);
 }
 
-/// The dots after the fast yaws and the dig (with their settle).
+/// The dots after the fast yaws, the slow yaw (90 degrees over 118 frames) and the two digs
+/// (with their settle), split by cell age where the run reads the table.
 #[test]
 #[ignore = "reading only: run with --ignored"]
 fn dot_readings() {
-    run_settle(&["yaw10", "yaw30", "yaw180", "dig"], false);
+    run_settle(
+        &["yaw10", "yaw30", "yaw118", "yaw180", "dig", "dig100"],
+        false,
+    );
+}
+
+/// The dug hole's emissive settle and young share (`dig_box_run`) at arm's length and down the
+/// passage, at the vein unless `VXE_SETTLE_POSES` names others.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn dig_box_readings() {
+    let Some(mut level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let want = list("VXE_SETTLE_POSES", &["vein"]);
+    for pose in POSES.iter().filter(|p| want.iter().any(|w| w == p.name)) {
+        for event in events(&["dig", "dig100"]) {
+            for setting in settings().into_iter().filter(|s| !s.auto) {
+                let line = dig_box_run(&mut level, pose, setting, event == Event::DigFar);
+                reset_world(&mut level);
+                println!(
+                    "reading[{adapter}]: hole {} {} {}: {line}",
+                    pose.name,
+                    event.name(),
+                    setting.name()
+                );
+            }
+        }
+    }
+}
+
+/// The table's occupancy after the steady flight repeated `VXE_FLIGHTS` times (default 4) from
+/// each pose, never cleared between (`occupancy_run`).
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn occupancy_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let flights: usize = std::env::var("VXE_FLIGHTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
+    for pose in poses() {
+        for setting in settings().into_iter().filter(|s| !s.auto) {
+            for line in occupancy_run(&level, &pose, setting, flights) {
+                println!(
+                    "reading[{adapter}]: occupancy {} {}: {line}",
+                    pose.name,
+                    setting.name()
+                );
+            }
+        }
+    }
 }
 
 /// A long series after an event: the gather's and the composite's mean tile log2 over the
@@ -576,7 +638,7 @@ fn long_series() {
         for event in events(&["toggle"]) {
             for setting in settings().into_iter().filter(|s| !s.auto) {
                 let rows = long_run(&mut level, &pose, setting, event, frames);
-                if event == Event::Dig {
+                if event.is_dig() {
                     reset_world(&mut level);
                 }
                 let line: Vec<String> = rows
@@ -831,7 +893,7 @@ fn probe_census_readings() {
 }
 
 /// The frame's per-pass cost at 1080p from 720p in the steady flight, each pose, lamp on,
-/// indirect on, under `VXE_STEADY`'s presets.
+/// indirect as `VXE_SETTLE_INDIRECT` lists (default on), under `VXE_STEADY`'s presets.
 #[test]
 #[ignore = "reading only: run with --ignored"]
 fn flight_cost_readings() {
@@ -839,14 +901,19 @@ fn flight_cost_readings() {
         return;
     };
     let adapter = level.adapter.clone();
+    let indirect: Vec<bool> = list("VXE_SETTLE_INDIRECT", &["on"])
+        .iter()
+        .map(|s| s == "on")
+        .collect();
     for pose in poses() {
-        for steady in list("VXE_STEADY", &["off"])
+        for (steady, indirect) in list("VXE_STEADY", &["off"])
             .iter()
             .map(|s| Steady::named(s))
+            .flat_map(|s| indirect.iter().map(move |&i| (s, i)))
         {
             let lighting = steady.apply(Lighting {
                 lamp: true,
-                indirect: true,
+                indirect,
                 exposure: Exposure::Manual(pose.exposure),
                 ..Lighting::default()
             });
@@ -861,8 +928,9 @@ fn flight_cost_readings() {
                 .collect();
             let total: f64 = ms.iter().map(|(_, v)| v).sum();
             println!(
-                "reading[{adapter}]: flight cost {}{} 1920x1080 from 1280x720: total {total:.3} ms ({})",
+                "reading[{adapter}]: flight cost {} indirect {}{} 1920x1080 from 1280x720: total {total:.3} ms ({})",
                 pose.name,
+                if indirect { "on" } else { "off" },
                 steady.words(),
                 line.join(", ")
             );
@@ -1347,6 +1415,14 @@ struct CacheBox {
 
 /// The box under a frame at 64 x 36 (full-resolution lighting, no jitter, lamp and probes off).
 fn cache_box_rig(cache: vxe_render::marcher::EmissiveCache) -> Option<CacheBox> {
+    cache_box_rig_sized(cache, [64, 36])
+}
+
+/// `cache_box_rig` at `size`.
+fn cache_box_rig_sized(
+    cache: vxe_render::marcher::EmissiveCache,
+    size: [u32; 2],
+) -> Option<CacheBox> {
     let (world, camera) = cache_box();
     let (device, queue) = support::software_device(64 << 20)?;
     let cfg = vxe_render::MirrorConfig {
@@ -1358,7 +1434,7 @@ fn cache_box_rig(cache: vxe_render::marcher::EmissiveCache) -> Option<CacheBox> 
         gpu.sync_now(&world, &device, &queue)
             .expect("the mirror fits");
     }
-    let mut frame = Frame::new(&device, 64, 36);
+    let mut frame = Frame::new(&device, size[0], size[1]);
     frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     frame.set_lighting(Lighting {
         lamp: false,
@@ -1548,6 +1624,62 @@ fn a_dig_clears_its_cells() {
         cache_count(&words, (v, f)) >= 16,
         "the cell refilled to C_MIN within C_MIN frames: {}",
         cache_count(&words, (v, f))
+    );
+}
+
+/// The dots' split by cell age is a partition of the excess: on the box at the rig's `SIZE`,
+/// scale 1, a fresh table at `C_MIN` 16, frames 1 to 8 read as the event's (young cells) and
+/// frames 25 to 32 as the floor's, every frame's young and mature dots sum to its dots, and
+/// the young and mature excess sum to the excess.
+#[test]
+fn the_dots_split_by_cell_age_sums_to_the_excess() {
+    let Some(mut rig) = cache_box_rig_sized(Default::default(), support::stillness::SIZE) else {
+        return;
+    };
+    rig.frame.set_composite_capture(&rig.level.device, true);
+    let mut dots = Dots {
+        cell_split: true,
+        ..Dots::default()
+    };
+    let (mut floor, mut floor_cell, mut seen) = (0usize, [0usize; 2], 0usize);
+    for f in 1..=32 {
+        rig.step(1);
+        if (9..25).contains(&f) {
+            continue;
+        }
+        let px = read_dots(&rig.level, &rig.frame, rig.camera);
+        let words = cache_words(&rig.level, &rig.frame);
+        let (n, split) = frame_dot_split(&px, &words);
+        assert_eq!(
+            split[0] + split[1],
+            n,
+            "frame {f}: every dot is young or mature"
+        );
+        seen += n;
+        if f <= 8 {
+            dots.counts.push(n);
+            for (a, b) in dots.by_cell.iter_mut().zip(split) {
+                *a += b;
+            }
+        } else {
+            floor += n;
+            for (a, b) in floor_cell.iter_mut().zip(split) {
+                *a += b;
+            }
+        }
+    }
+    dots.floor = floor as f64 / 8.0;
+    dots.by_cell_floor = floor_cell.map(|c| c as f64 / 8.0);
+    let [young, mature] = dots.cell_excess();
+    println!(
+        "dots {seen} over the 16 frames; excess {:.3}: young {young:.3}, mature {mature:.3}",
+        dots.excess_sum()
+    );
+    assert!(seen > 0, "the box shows dots to split");
+    assert!(
+        (young + mature - dots.excess_sum()).abs() < 1e-9,
+        "young {young} and mature {mature} sum to the excess {}",
+        dots.excess_sum()
     );
 }
 

@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** approved (2026-11-04, owner: "go"), not started; Phase 2 lands after Plan 0056's Phase 2 readings
+> **Status:** in-progress (Phase 1, 2026-11-04); Phase 2 lands after Plan 0056's Phase 2 readings
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
@@ -602,7 +602,7 @@ Open at draft: the "go".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The open questions, read | dev | not started | |
+| 1: The open questions, read | dev | wip: readings owed (patch occupancy, flight and rest costs); stop rule read stop ([log](logs/0057.md)) | committed with this row |
 | 2: The table is the only emissive store, and the default | dev | not started | |
 | 3: The world-space guard | dev | not started | |
 | 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
@@ -614,6 +614,11 @@ Open at draft: the "go".
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the dig at 100 voxels is seen from the steady flight's start facing its travel, not from `VEIN_POSE` (no hit near 100 voxels in that view's central half).
+- Phase 1: `the_dots_split_by_cell_age_sums_to_the_excess` reads 5.2 to 7.6 s on lavapipe, loaded, against the plan's "under 5 s".
+- Phase 1: the hall re-ran `ab --indirect off` only; the `b --indirect off` rows are Plan 0051's.
+- Phase 1: `ab_with_indirect_off_applies_both` checks the preset over `indirect: false`; the flag parse in `main.rs` is outside the phase's files and was read, not tested.
 
 ### Close triggers
 

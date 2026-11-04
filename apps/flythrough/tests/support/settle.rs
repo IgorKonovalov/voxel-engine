@@ -85,6 +85,8 @@ pub const WARP_DIST: f32 = 0.5;
 pub const WARP_COS: f32 = 0.9;
 /// The dig's carve radius in voxels.
 pub const DIG_RADIUS: i64 = 10;
+/// The far dig's distance from the eye, in voxels: down the passage.
+pub const DIG_FAR: u32 = 100;
 /// `marcher.rs`'s `HALF_OFFSET`: the internal pixel of each 2 x 2 the half-resolution
 /// lighting grid samples.
 const HALF_OFFSET: [u32; 2] = [0, 1];
@@ -182,7 +184,7 @@ impl Steady {
                 c: true,
                 ..all
             },
-            "b8" | "b32" => Steady {
+            "b1" | "b8" | "b32" => Steady {
                 b: Some(vxe_render::marcher::EmissiveCache {
                     c_min: name[1..].parse().expect("a count"),
                     ..Default::default()
@@ -625,6 +627,10 @@ pub enum Event {
     Toggle,
     /// A carve of `DIG_RADIUS` at the wall under the view's centre.
     Dig,
+    /// The same carve at the hit nearest `DIG_FAR` voxels from the eye in the view's central
+    /// half, seen from the steady flight's start facing its travel (`dig_camera`): down the
+    /// passage.
+    DigFar,
     /// A yaw of `degrees` onto the pose over `frames` frames.
     Yaw { frames: usize, degrees: u32 },
 }
@@ -636,6 +642,7 @@ impl Event {
             Event::FlyIn { pinned: true } => "fly-in pinned".into(),
             Event::Toggle => "toggle".into(),
             Event::Dig => "dig".into(),
+            Event::DigFar => format!("dig at {DIG_FAR}"),
             Event::Yaw { frames, degrees } => format!("yaw {degrees}deg {frames}f"),
         }
     }
@@ -645,7 +652,12 @@ impl Event {
     }
 
     pub fn dots(self) -> bool {
-        matches!(self, Event::Dig | Event::Yaw { .. })
+        matches!(self, Event::Dig | Event::DigFar | Event::Yaw { .. })
+    }
+
+    /// A carve, which `reset_world` undoes after the run.
+    pub fn is_dig(self) -> bool {
+        matches!(self, Event::Dig | Event::DigFar)
     }
 }
 
@@ -733,6 +745,44 @@ pub struct Dots {
     /// before (the rig's warp accepts it).
     pub reject_share: f64,
     pub age0: usize,
+    /// Whether the run read the table, and the dots by their pixel's cell (`dots_by_cell`),
+    /// summed over the dot frames, and the floor's means: young (no cell, or under
+    /// `YOUNG_COUNT` samples), mature. `no_key` counts the young dots with no face key.
+    pub cell_split: bool,
+    pub by_cell: [usize; 2],
+    pub by_cell_floor: [f64; 2],
+    pub no_key: usize,
+}
+
+/// The sample count under which the dots' split calls a cell young (the spike's `C_MIN`).
+pub const YOUNG_COUNT: u32 = 16;
+
+/// Of a frame's display dots `dots` (indices into the display), how many lie on a pixel whose
+/// cell is young (no face key, no cell, or under `YOUNG_COUNT` samples) and how many on a
+/// mature cell, and how many of the young have no face key. Each dot takes the internal
+/// pixel under it (`Pixels::internal_of`) and that pixel's hit's face key.
+pub fn dots_by_cell(px: &Pixels, dots: &[usize], words: &[u32]) -> ([usize; 2], usize) {
+    let [ow, _] = px.display_size;
+    let (mut split, mut no_key) = ([0usize; 2], 0usize);
+    for &i in dots {
+        let (x, y) = (i as u32 % ow, i as u32 / ow);
+        let (ix, iy) = px.internal_of(px.display_size, x, y);
+        let j = (iy * SIZE[0] + ix) as usize;
+        match face_key(px.camera.position, px.hit_pos[j], px.hit_info[j]) {
+            None => {
+                split[0] += 1;
+                no_key += 1;
+            }
+            Some(k) => split[usize::from(cache_count(words, k) >= YOUNG_COUNT)] += 1,
+        }
+    }
+    (split, no_key)
+}
+
+/// A frame's display dots and their split by cell (`dots_by_cell`).
+pub fn frame_dot_split(px: &Pixels, words: &[u32]) -> (usize, [usize; 2]) {
+    let d = frame_dots(px).0;
+    (d.len(), dots_by_cell(px, &d, words).0)
 }
 
 pub const BY_PART: [&str; 7] = [
@@ -763,6 +813,12 @@ impl Dots {
 
     pub fn excess_at(&self, f: usize) -> f64 {
         self.counts[f - 1] as f64 - self.floor
+    }
+
+    /// The excess over the dot frames by cell: young, mature. They sum to `excess_sum`.
+    pub fn cell_excess(&self) -> [f64; 2] {
+        let n = self.counts.len() as f64;
+        [0, 1].map(|k| self.by_cell[k] as f64 - n * self.by_cell_floor[k])
     }
 
     pub fn line(&self) -> String {
@@ -799,7 +855,18 @@ impl Dots {
             age.join(", "),
             self.reject_share,
             self.age0,
-        )
+        ) + &if self.cell_split {
+            let [y, m] = self.cell_excess();
+            format!(
+                "; by cell [young {y:.0}, mature {m:.0}] (young share of the excess {:.3}; {} young dots with no face key; floor young {:.1}, mature {:.1}/frame)",
+                y / self.excess_sum(),
+                self.no_key,
+                self.by_cell_floor[0],
+                self.by_cell_floor[1],
+            )
+        } else {
+            "; by cell n/a (no table)".to_owned()
+        }
     }
 }
 
@@ -1085,6 +1152,68 @@ pub fn reset_world(level: &mut VeinLevel) {
     }
 }
 
+/// The still camera of a run: the pose's, or for `Event::DigFar` the steady flight's start
+/// facing its travel, which looks down the passage.
+pub fn dig_camera(pose: &Pose, event: Event) -> Camera {
+    if event == Event::DigFar {
+        KRun::Path.camera(pose, 0)
+    } else {
+        pose.camera()
+    }
+}
+
+/// The voxel a dig carves around: under the view's centre, or `far` the hit whose distance
+/// from the eye is nearest `DIG_FAR`, with that distance.
+fn dig_target(px: &Pixels, far: bool) -> ([i32; 3], f32) {
+    let eye = px.camera.position;
+    let p = if far {
+        // The view's central half on each axis, so the hole lies in view.
+        (SIZE[1] / 4..3 * SIZE[1] / 4)
+            .flat_map(|y| (SIZE[0] / 4..3 * SIZE[0] / 4).map(move |x| (x, y)))
+            .filter_map(|(x, y)| hit(px, x, y).map(|h| h.0))
+            .min_by(|a, b| {
+                let d = |p: &Vec3| ((*p - eye).length() - DIG_FAR as f32).abs();
+                d(a).total_cmp(&d(b))
+            })
+            .expect("the view hits rock")
+    } else {
+        hit(px, SIZE[0] / 2, SIZE[1] / 2)
+            .expect("the view's centre hits the wall")
+            .0
+    };
+    (
+        [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32],
+        (p - eye).length(),
+    )
+}
+
+/// Carves `DIG_RADIUS` at `dig_target` of `px`, syncs the mirror and invalidates the frame's
+/// history over the changed box; the box.
+fn dig(level: &mut VeinLevel, frame: &mut Frame, px: &Pixels, far: bool) -> ([i32; 3], [i32; 3]) {
+    let (v, dist) = dig_target(px, far);
+    let r = level
+        .world
+        .apply(&EditOp::sphere(
+            centre_of_voxel(v),
+            DIG_RADIUS * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .expect("the carve applies");
+    let (min, max) = r.aabb.expect("the carve changes voxels");
+    level
+        .gpu
+        .sync_now(&level.world, &level.device, &level.queue)
+        .expect("mirror fits");
+    frame.invalidate(min.0, max.0);
+    println!(
+        "dig at {v:?}, {dist:.1} voxels from the eye: box {:?} to {:?}, {} voxels changed",
+        min.0,
+        max.0,
+        r.changed_from.iter().map(|c| c.1).sum::<u32>()
+    );
+    (min.0, max.0)
+}
+
 fn camera_at(position: [f32; 3], yaw_deg: f32, pitch_deg: f32) -> Camera {
     Camera {
         position: position.into(),
@@ -1109,7 +1238,7 @@ pub fn settle_run(
     let mut frame = make_frame(level, pose, setting);
     frame.set_frame_index(seed);
     let light = LightParams::headlamp();
-    let end = pose.camera();
+    let end = dig_camera(pose, event);
     if let Event::FlyIn { pinned: true } = event {
         let o = frame.probes().origin_for(pose.position);
         frame.probes_mut().set_origin(Some(o));
@@ -1145,7 +1274,7 @@ pub fn settle_run(
                 frame.step(&level.device, &level.queue, &level.gpu, &c, &light);
             }
         }
-        Event::Toggle | Event::Dig => render(level, &mut frame, &end, SETTLE),
+        Event::Toggle | Event::Dig | Event::DigFar => render(level, &mut frame, &end, SETTLE),
         Event::Yaw { frames, degrees } => {
             let degrees = degrees as f32;
             let start = camera_at(pose.position, pose.yaw_deg - degrees, pose.pitch_deg);
@@ -1164,7 +1293,7 @@ pub fn settle_run(
             }
         }
     }
-    let want0 = if dots_on || event == Event::Dig {
+    let want0 = if dots_on || event.is_dig() {
         want_dots
     } else {
         Want {
@@ -1182,30 +1311,8 @@ pub fn settle_run(
             lamp: !setting.lamp,
             ..lighting(pose, setting)
         }),
-        Event::Dig => {
-            let (cx, cy) = (SIZE[0] / 2, SIZE[1] / 2);
-            let (p, _) = hit(&f0, cx, cy).expect("the view's centre hits the wall");
-            let v = [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32];
-            let r = level
-                .world
-                .apply(&EditOp::sphere(
-                    centre_of_voxel(v),
-                    DIG_RADIUS * FIXED_ONE,
-                    Mode::Carve,
-                ))
-                .expect("the carve applies");
-            let (min, max) = r.aabb.expect("the carve changes voxels");
-            level
-                .gpu
-                .sync_now(&level.world, &level.device, &level.queue)
-                .expect("mirror fits");
-            frame.invalidate(min.0, max.0);
-            println!(
-                "dig at {v:?}: box {:?} to {:?}, {} voxels changed",
-                min.0,
-                max.0,
-                r.changed_from.iter().map(|c| c.1).sum::<u32>()
-            );
+        Event::Dig | Event::DigFar => {
+            dig(level, &mut frame, &f0, event == Event::DigFar);
         }
         _ => {}
     }
@@ -1220,6 +1327,8 @@ pub fn settle_run(
     let mut floor_n = 0usize;
     let mut floor_part = [0usize; 7];
     let mut floor_age = [0usize; 5];
+    let mut floor_cell = [0usize; 2];
+    let split_on = dots_on && setting.steady.b.is_some();
     let mut floor_count = 0usize;
     let mut floor_counts: Vec<f64> = Vec::new();
     let mut strip = Vec::new();
@@ -1278,8 +1387,17 @@ pub fn settle_run(
         let mut fd = Vec::new();
         if dot_frame {
             let (d, bp, ba) = frame_dots(&px);
+            let (bc, nk) = if split_on {
+                dots_by_cell(&px, &d, &cache_words(level, &frame))
+            } else {
+                ([0; 2], 0)
+            };
             if f <= DOT_FRAMES {
                 dots.counts.push(d.len());
+                dots.no_key += nk;
+                for (a, b) in dots.by_cell.iter_mut().zip(bc) {
+                    *a += b;
+                }
                 for (a, b) in dots.by_part.iter_mut().zip(bp) {
                     *a += b;
                 }
@@ -1293,6 +1411,9 @@ pub fn settle_run(
                 floor_n += 1;
                 floor_count += d.len();
                 floor_counts.push(d.len() as f64);
+                for (a, b) in floor_cell.iter_mut().zip(bc) {
+                    *a += b;
+                }
                 for (a, b) in floor_part.iter_mut().zip(bp) {
                     *a += b;
                 }
@@ -1329,6 +1450,8 @@ pub fn settle_run(
         dots.floor_sd = sd(&floor_counts);
         dots.by_part_floor = floor_part.map(|c| c as f64 / n);
         dots.by_age_floor = floor_age.map(|c| c as f64 / n);
+        dots.cell_split = split_on;
+        dots.by_cell_floor = floor_cell.map(|c| c as f64 / n);
         dots.reject_share = rej as f64 / age0.max(1) as f64;
         dots.age0 = age0 as usize;
         dots
@@ -2389,6 +2512,19 @@ pub fn cache_cell(words: &[u32], key: FaceKey) -> Option<usize> {
         .find(|&w| words[w] == check)
 }
 
+/// Whether a key with no cell found none of its probed slots free: the table's slot-probe
+/// failure, which the light pass counts as nothing and shows as the screen path.
+pub fn cache_full(words: &[u32], key: FaceKey) -> bool {
+    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_CELLS, CACHE_PROBES, cache_slot_check};
+    let (slot, _) = cache_slot_check(key.0, u32::from(key.1));
+    cache_cell(words, key).is_none()
+        && (0..CACHE_PROBES).all(|i| {
+            words[(slot.wrapping_add(i) & (CACHE_CELLS as u32 - 1)) as usize
+                * CACHE_CELL_WORDS as usize]
+                != 0
+        })
+}
+
 /// The sample count of a key's cell, 0 with none.
 pub fn cache_count(words: &[u32], key: FaceKey) -> u32 {
     cache_cell(words, key).map_or(0, |w| words[w + 1])
@@ -2408,9 +2544,10 @@ pub fn cache_census(words: &[u32], c_min: u32, c_cap: u32) -> [u64; 3] {
 }
 
 /// Of a frame's internal hit pixels on cube faces, the share whose cell is young or absent
-/// (the young share) and the share with no cell at all (the full table's).
-pub fn young_share(px: &Pixels, words: &[u32], c_min: u32) -> (f64, f64) {
-    let (mut hits, mut young, mut absent) = (0u64, 0u64, 0u64);
+/// (the young share), the share with no cell at all, and of those the share whose probed slots
+/// were all taken (`cache_full`, the full table's).
+pub fn young_share(px: &Pixels, words: &[u32], c_min: u32) -> (f64, f64, f64) {
+    let (mut hits, mut young, mut absent, mut full) = (0u64, 0u64, 0u64, 0u64);
     for i in 0..px.hit_pos.len() {
         if let Some(k) = face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]) {
             hits += 1;
@@ -2418,13 +2555,14 @@ pub fn young_share(px: &Pixels, words: &[u32], c_min: u32) -> (f64, f64) {
                 None => {
                     absent += 1;
                     young += 1;
+                    full += u64::from(cache_full(words, k));
                 }
                 Some(w) => young += u64::from(words[w + 1] < c_min),
             }
         }
     }
     let h = hits.max(1) as f64;
-    (young as f64 / h, absent as f64 / h)
+    (young as f64 / h, absent as f64 / h, full as f64 / h)
 }
 
 /// A frame's read-back for the dots and the young share.
@@ -2462,6 +2600,7 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
     let mut shares = Vec::new();
     let (mut sum, mut n) = (0.0, 0u32);
     let mut absent_max = 0.0f64;
+    let mut full_max = 0.0f64;
     let mut seen = std::collections::HashSet::new();
     for f in 1..FLIGHT_FRAMES {
         let cam = run.camera(pose, f);
@@ -2472,7 +2611,8 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
                 seen.extend(face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]));
             }
             let words = cache_words(level, &frame);
-            let (y, a) = young_share(&px, &words, b.c_min);
+            let (y, a, full) = young_share(&px, &words, b.c_min);
+            full_max = full_max.max(full);
             sum += y;
             n += 1;
             absent_max = absent_max.max(a);
@@ -2499,7 +2639,7 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
         })
         .count();
     format!(
-        "{} of {} keys read in view within the light radius of the pose; young share mean {:.4} (per frame {}); no-cell share max {absent_max:.5}; cells {used} ({:.4} of the table), at c_min {min}, at c_cap {cap}; frame_bytes {}",
+        "{} of {} keys read in view within the light radius of the pose; young share mean {:.4} (per frame {}); no-cell share max {absent_max:.5}; full-table share max {full_max:.5}; cells {used} ({:.4} of the table), at c_min {min}, at c_cap {cap}; frame_bytes {}",
         near,
         seen.len(),
         sum / f64::from(n.max(1)),
@@ -2507,4 +2647,150 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
         used as f64 / vxe_render::marcher::CACHE_CELLS as f64,
         frame.frame_bytes()
     )
+}
+
+/// The frames after a dig at which `dig_box_run` reads the table (every frame to 64, then
+/// every 8th to 512).
+fn dig_table_frame(f: usize) -> bool {
+    f <= 64 || (f <= 512 && f.is_multiple_of(8))
+}
+
+/// The dug hole's settle (`Event::Dig` or `Event::DigFar`, which `reset_world` undoes after):
+/// settle `SETTLE` frames at `dig_camera`, the carve, then frames 1 ..= `REF.1` still. The hole's
+/// pixels are the lighting pixels of frame 1 whose face key's voxel lies in the carve's box
+/// dilated by one (the cells the edit-box reset clears). Each is a series of `meter_log2` of its
+/// emissive part, read every frame to `SETTLE_DENSE` and sparsely after (`settle_sampled`), and
+/// `settle_of` over them gives `S90` and the mean's 90 % frame; at `dig_table_frame`s, of the
+/// hole pixels whose hit is still in the hole, the young share (no cell, or under
+/// `YOUNG_COUNT` samples) and the share with no cell. One line.
+pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bool) -> String {
+    let mut frame = make_frame(level, pose, setting);
+    let light = LightParams::headlamp();
+    let cam = dig_camera(pose, if far { Event::DigFar } else { Event::Dig });
+    render(level, &mut frame, &cam, SETTLE);
+    let want = Want {
+        hits: true,
+        composite: false,
+        moments: false,
+    };
+    let f0 = read(level, &frame, cam, want);
+    let (min, max) = dig(level, &mut frame, &f0, far);
+    let inside = |k: FaceKey| (0..3).all(|a| k.0[a] >= min[a] - 1 && k.0[a] <= max[a] + 1);
+    let table = setting.steady.b.is_some();
+    let mut pixels: Vec<usize> = Vec::new();
+    let mut series: Vec<Vec<f32>> = Vec::new();
+    let mut young = Vec::new();
+    for f in 1..=REF.1 {
+        frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+        let sampled = settle_sampled(f) || f >= REF.0;
+        if !sampled && f > 1 {
+            let last = series.last().expect("frame 1 read").clone();
+            series.push(last);
+            continue;
+        }
+        let px = read(level, &frame, cam, want);
+        if f == 1 {
+            let g = px.grid;
+            pixels = (0..g[1])
+                .flat_map(|y| (0..g[0]).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let (ix, iy) = px.internal_of(g, x, y);
+                    let i = (iy * SIZE[0] + ix) as usize;
+                    face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]).is_some_and(inside)
+                })
+                .map(|(x, y)| (y * g[0] + x) as usize)
+                .collect();
+            // Frame 0 stands for the dig's frame: the series starts at frame 1's reading.
+            series.push(Vec::new());
+        }
+        let (_, v) = px.values(Part::Emissive, false);
+        series.push(pixels.iter().map(|&i| meter_log2(v[i])).collect());
+        if table && dig_table_frame(f) {
+            let words = cache_words(level, &frame);
+            let g = px.grid;
+            let (mut y, mut a, mut n) = (0u32, 0u32, 0u32);
+            for &l in &pixels {
+                let (ix, iy) = px.internal_of(g, l as u32 % g[0], l as u32 / g[0]);
+                let i = (iy * SIZE[0] + ix) as usize;
+                // A hole pixel whose hit left the hole this frame (jitter) counts as neither.
+                let Some(k) = face_key(px.camera.position, px.hit_pos[i], px.hit_info[i])
+                    .filter(|&k| inside(k))
+                else {
+                    continue;
+                };
+                n += 1;
+                let c = cache_cell(&words, k).map(|w| words[w + 1]);
+                a += u32::from(c.is_none());
+                y += u32::from(c.is_none_or(|c| c < YOUNG_COUNT));
+            }
+            let n = f64::from(n.max(1));
+            young.push((f, f64::from(y) / n, f64::from(a) / n));
+        }
+    }
+    series[0] = series[1].clone();
+    let s = settle_of(&series, &vec![true; pixels.len()]);
+    let at = [1usize, 2, 4, 8, 16, 32, 60, 64, 128, 256, 512];
+    let curve: Vec<String> = at
+        .iter()
+        .map(|&f| format!("{f}:{:.0}", s.curve[f] * 100.0))
+        .collect();
+    let young: Vec<String> = young
+        .iter()
+        .filter(|(f, _, _)| at.contains(f))
+        .map(|(f, y, a)| format!("{f}:{y:.3}/{a:.3}"))
+        .collect();
+    format!(
+        "{} hole pixels ({} counted); emissive S90 {} mean90 {} (step {:+.3}, noise {:.4}); settled % at frame {}; young/no-cell share in the hole at frame {}",
+        pixels.len(),
+        s.counted,
+        s.frames.map_or("none".into(), |f| f.to_string()),
+        s.mean_90.map_or("none".into(), |f| f.to_string()),
+        s.step0,
+        s.ref_noise,
+        curve.join(" "),
+        if table {
+            young.join(" ")
+        } else {
+            "n/a (no table)".to_owned()
+        }
+    )
+}
+
+/// The table's occupancy over `flights` repeats of the steady flight from a settled start
+/// (`KRun::Path`, the camera back at the start between them, the table never cleared): per
+/// flight, the cells in use, at `c_min` and at `c_cap`, and the largest no-cell and full-table
+/// shares (`young_share`) over every 4th frame. One line a flight.
+pub fn occupancy_run(
+    level: &VeinLevel,
+    pose: &Pose,
+    setting: Setting,
+    flights: usize,
+) -> Vec<String> {
+    let b = setting.steady.b.expect("a table run");
+    let mut frame = make_frame(level, pose, setting);
+    let light = LightParams::headlamp();
+    render(level, &mut frame, &KRun::Path.camera(pose, 0), SETTLE);
+    let mut out = Vec::new();
+    for k in 1..=flights {
+        let (mut absent_max, mut full_max) = (0.0f64, 0.0f64);
+        for f in 0..FLIGHT_FRAMES {
+            let cam = KRun::Path.camera(pose, f);
+            frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+            if f % 4 == 1 {
+                let px = read_dots(level, &frame, cam);
+                let words = cache_words(level, &frame);
+                let (_, a, full) = young_share(&px, &words, b.c_min);
+                absent_max = absent_max.max(a);
+                full_max = full_max.max(full);
+            }
+        }
+        let words = cache_words(level, &frame);
+        let [used, min, cap] = cache_census(&words, b.c_min, b.c_cap);
+        out.push(format!(
+            "after flight {k}: cells {used} ({:.4} of {}), at c_min {min}, at c_cap {cap}; no-cell share max {absent_max:.5}, full-table share max {full_max:.5}",
+            used as f64 / vxe_render::marcher::CACHE_CELLS as f64,
+            vxe_render::marcher::CACHE_CELLS
+        ));
+    }
+    out
 }
