@@ -44,7 +44,7 @@
 > 1. **The level's hit-flag bits** are 6..7, not 5..7: since Plan 0054 bits 3..5 hold the entry
 >    face's axis (`HIT_AXIS_SHIFT`), and bit 1 the field hit.
 > 2. **"Far normal" is taken.** Plan 0055 gave that name to `LookParams::far_normal` and
->    `--far-normal` (near hits blended by footprint, provisional until Plan 0051). This plan's
+>    `--far-normal` (near hits blended by footprint, provisional until Plan 0056's Phase 4). This plan's
 >    mode for clip hits is renamed `clip_normals`, the key and the banner keep the words
 >    `normals gradient|face`. Phase 8 judges the seam where the two meet, if the near one stays.
 > 3. **FSR 2 at 1.5 is the upscaler that resolves the band** (default since Plan 0055). The
@@ -59,6 +59,12 @@
 > **Waits on Plan 0051's verdict:** little. If the world-space cache is kept, its key (a voxel
 > and a face) has no answer yet at a clip hit, and Phase 6's "every other ray's light pass is
 > unchanged" is re-read. Plan 0033 builds on Plan 0032's shape, whatever that verdict makes it.
+> **Amended 2026-11-04 (architect, drift):** the verdict is ADR-0043 (proposed) and Plan 0057:
+> the per-face table is the only emissive store and its key carries a voxel and a face with no
+> level bits. A clip hit has no key and takes Plan 0057's no-face fallback (a short screen blend)
+> until this plan gives it one; whether a clip cell joins the table is this plan's question, read
+> at Phase 6, and ADR-0043's Outcome records the answer. The far normal's `[2, 6]` is
+> provisional until Plan 0056's Phase 4, not Plan 0051.
 > **Amended 2026-11-03 (owner):** see "Owner answers". Phase 7's forest readings are cut to 300
 > frames and the worst cases.
 
@@ -225,10 +231,10 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   march's level rule with a hard switch at `s_1 - w_1 / 2` and the level in hit flags bits
   6..7; `UniformSource` answers `Uniform`; a test source `PlaneBoxSource` (voxels with `z < 0`
   material 3, plus axis-aligned boxes) whose coarse path is exact.
-- **Files touched:** `crates/vxe-world/src/{source.rs, clip.rs, mips.rs, store.rs, lib.rs}`,
-  `crates/vxe-world/tests/clip.rs`, `crates/vxe-render/src/{gpu_world.rs, marcher.rs}`,
-  `crates/vxe-render/src/shaders/march.wgsl`, `apps/flythrough/tests/far_field.rs`,
-  `apps/flythrough/tests/support/mod.rs`, `apps/flythrough/tests/golden/far_skeleton.png`.
+- **Files touched:** `crates/vxe-world/src/{source.rs, clip.rs (new), mips.rs, store.rs, lib.rs}`,
+  `crates/vxe-world/tests/clip.rs` (new), `crates/vxe-render/src/{gpu_world.rs, marcher.rs}`,
+  `crates/vxe-render/src/shaders/march.wgsl`, `apps/flythrough/tests/far_field.rs` (new),
+  `apps/flythrough/tests/support/mod.rs`, `apps/flythrough/tests/golden/far_skeleton.png` (new).
 - **Done when:** with the near store generated over chunks [-4, 4) x [-4, 4) x [-1, 1), level 1
   over clip chunks [-4, 16) x [-8, 8) x [-2, 2), `r_full` 4 (so s_1 = 2 x 64 = 128 voxels,
   w_1 = 64, the hard switch at 96) and a box at x in [1500, 1600), y in [-100, 100), z in

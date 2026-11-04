@@ -46,6 +46,14 @@
 > reflected hits (Phase 4). If the verdict removes the probes, both need another source; if it
 > keeps the world-space cache, a reflected hit could read it instead of a noisy sample, which
 > is a choice for that verdict's plan. Nothing here is decided on it.
+> **Amended 2026-11-04 (architect, drift):** the verdict is ADR-0043 (proposed) and Plan 0057:
+> the probe volume becomes a lamp-only bounce channel, off with the lamp off, and emissive
+> indirect light is gone. So `E` in Phase 2 and the reflected hits' "plus the probe irradiance"
+> in Phase 4 read the lamp's bounce alone; a reflected hit on a cube face reads the per-face
+> table for its emissive part (the table outlives the view, so this needs no new mechanism), and
+> emissive ambient in the medium is a per-source feed into the channel if the owner asks. The
+> architect rewrites Phases 2 and 4's wording before the lane starts; reservoir reuse
+> (Risks, "the reflected sample") no longer exists.
 > **Amended 2026-11-03 (owner):** liquids keep flat faces with analytic normals, which answers
 > the owner's open item of 2026-11-01. See "Owner answers".
 

@@ -32,6 +32,12 @@
 > but since Plan 0054 that is an axis normal on near cubes, so a 15-degree slope is treads with
 > `n.z` 1 and risers with `n.z` 0, and Phase 4's snow-hillside bars cannot hold as written. See
 > Phase 4. **Waits on Plan 0051's verdict:** the probes' weathered albedo (Phase 4's bounce).
+> **Amended 2026-11-04 (architect, drift):** the verdict is ADR-0043 (proposed) and Plan 0057:
+> the probe volume is a lamp-only bounce channel, so Phase 4's weathered albedo reaches the
+> probes only as the lamp's bounce, and Phase 4's done-when names Plan 0057's
+> `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` in place of the emissive furnace
+> test, which Plan 0057 removes. Lightning's flash through the probes (Phase 7) is a per-source
+> feed into the channel or the light pass alone; the architect settles it before the lane starts.
 > **Amended 2026-11-03 (owner):** Phase 4's stop is resolved: the snow cover reads the 27-count
 > gradient for the cover only, and pays for it only under snow. See "Owner answers".
 

@@ -1,6 +1,6 @@
 # 0043: Test tiers: a quick gate per phase, a GPU tier under the lock, the full suite at close
 
-> **Status:** done (2026-10-22): the three tiers split the suite exactly (470 + 124 + 5 = 599), the gpu-list gate bites its fixture, quick reads 45 s with no lock; v0.29.1. Phase 3's CI readings are owed by the first CI run on main
+> **Status:** done (2026-10-22): the three tiers split the suite exactly (470 + 124 + 5 = 599), the gpu-list gate bites its fixture, quick reads 45 s with no lock; v0.29.1. Phase 3's CI readings were owed by the first CI run on main; they landed in `docs/nfr.md` section 7 (run 41332396750 on 929d1b3, 2026-11-01)
 > **Created:** 2026-10-22
 > **Milestone:** M7 in `docs/roadmap.md` (tooling: the gate every lane runs)
 > **Related ADRs:** none. The rejected options are recorded under Decision. None of them is a

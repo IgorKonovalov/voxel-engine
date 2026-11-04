@@ -13,6 +13,14 @@
 > phase gate is `scripts/test-changed.mjs`. The figures in this plan stay at `87e4b67`, as
 > marked; `dev` re-inventories. **Waits on Plan 0051's verdict:** only what it adds or removes
 > (the reservoir unpack, any new cache path); this plan moves whichever code stands.
+> **Amended 2026-11-04 (architect, drift):** the verdict is ADR-0043 (proposed) and Plan 0057,
+> which lands before this plan: the reservoir unpack is gone, the per-face table's passes
+> (`cache_clear`, `cache_sweep`, `cache_fill`) and the lamp channel are new code to place, and
+> the attribute scheduler's `attr_queue` in the diagram is already gone (Plan 0054). **The
+> removal of `own`**, which Plan 0055 handed to this plan while Phase 3 only moves `Upscaler`:
+> Plan 0056 needs `own` alive until its Phase 4 verdict; if that verdict keeps FSR 2, Phase 3
+> removes `own` instead of moving it, else it stays. `dev` re-inventories at the start, as the
+> header says. Plan 0048 is dropped.
 > **Milestone:** cross-cutting (code health)
 > **Related ADRs:** none. The splits move code and keep every mechanism. Promoting `FnSource`
 > and `SplitMix64` into `vxe-world` adds public items but no decision. The rejected option, a
@@ -20,7 +28,8 @@
 > **Source:** the owner, 2026-10-22, the same review as Plan 0044. The owner's answers: two
 > plans, performance first; full splits, engine crates included.
 > **After:** Plan 0044, which follows Plan 0051 and its verdict plan; before Plan 0048 and M10
-> (amended 2026-11-03, owner; see "Owner answers").
+> (amended 2026-11-03, owner; see "Owner answers"; as of 2026-11-04 the verdict plan is Plan
+> 0057 and Plan 0048 is dropped, so: after Plan 0044, before M10).
 
 ## TL;DR
 
@@ -157,7 +166,7 @@ Finish with two mechanical gates, because a size rule written in prose is the ki
 ```mermaid
 flowchart TB
     subgraph render[vxe-render after the split]
-        GW[gpu_world/: format, alloc, slot, lights, attr_queue, stage, window]
+        GW[gpu_world/: format, alloc, slot, lights, stage, window]
         MR[frame/: settings, targets, timer, upscaler, frame]
         GU[gpu_util: layouts, pipelines, bind_io]
         SH[shaders/: common, mirror, walk, hitrec + one file per pass]

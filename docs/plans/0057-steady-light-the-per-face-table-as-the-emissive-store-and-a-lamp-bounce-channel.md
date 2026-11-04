@@ -18,7 +18,7 @@
 > wants".
 > **Starts after:** Plan 0051's close (v0.41.0, on main). Runs beside
 > [Plan 0056](0056-aliasing-spike-what-moves-on-the-final-image.md)'s lane, which is read-only
-> against this plan and hands it the yellow dots' class (0056 Phase 2, done-when 6); this plan
+> against this plan and hands it the yellow dots' class (0056 Phase 2, done-when 4); this plan
 > takes that answer as an input at its Phase 1 and Phase 4. Then Plans 0044 and 0045; Plan 0048
 > is moot under ADR-0043 and awaits the owner's "drop".
 
@@ -74,7 +74,7 @@ flickering".
    it.
 4. **The edit-box reset is a spike's:** one dispatch dimension with no cap at 65 535 groups, and
    an overflowed edit frame leaves the table alone.
-5. **The lamp channel's reach:** `LAMP_REACH` at `intensity / d^2 < 1 / 256` is 554 voxels, past
+5. **The lamp channel's reach:** `probes::lamp_reach` at `intensity / d^2 < 1 / 256` is 554 voxels, past
    the volume's far corner (443), so a moving lamp held every probe open.
 6. **Readings owed on the arm:** the full-table share, the table's size from occupancy (0.0142
    of 2^22 at most), the arm in flight on both adapters, quiet rounds at rest.
@@ -401,7 +401,7 @@ in its log, or the orchestrator agrees the order; the log names which.
     (a lamp switch-on still opens the window, as the channel's fast fill from zero).
   - **The reach, from a reading.** Dev reads, on `cache_box` and at the level's spawn, the gather's
     irradiance at a lit wall's hit as the lamp-to-probe distance grows, against the wall's direct
-    irradiance from the lamp, and sets `LAMP_REACH` where the bounce falls under 1 % of the
+    irradiance from the lamp, and sets `probes::lamp_reach` where the bounce falls under 1 % of the
     direct, rounded up to whole probe spacings. The volume's side (`PROBES_PER_AXIS`, a setting
     now) is the smallest power of two whose half-side covers the reach (the plan's guess: 16, so
     25.6 m and an eightfold smaller volume). Only probes within the reach of the lamp are listed;
@@ -414,8 +414,9 @@ in its log, or the orchestrator agrees the order; the log names which.
     step; the default is the reading's.
   - **Lamp off, nothing runs.** With the lamp off no probe pass is encoded and the gather is
     skipped; the volume is allocated on demand as today (Plan 0052). `Lighting::indirect`
-    becomes `lamp_bounce` (on by default); the fly-through's `--indirect` and `F8` follow, and
-    the banner names `lamp bounce`.
+    becomes `lamp_bounce` (on by default); the fly-through gains `--lamp-bounce on|off`, `F8`
+    toggles it, the banner names `lamp bounce`, and `--indirect on|off` stays as an alias until
+    Plan 0056 closes (its `E` arm and Phase 4 fallback pass `--indirect off`).
   - **Kept** (ADR-0043): the tagged scrolling volume, the maps, the gather's weights and bias,
     the inside flag and skip (`skip_inside_probes` becomes the rule), the edit-touch list, the
     ray set, on-demand allocation.

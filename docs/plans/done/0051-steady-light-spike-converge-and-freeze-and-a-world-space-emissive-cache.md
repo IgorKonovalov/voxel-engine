@@ -78,7 +78,7 @@
 > **Starts after:** [Plan 0055](0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md)
 > closes (amended 2026-11-03, evening). It runs alone on main. The next
 > light plans wait for Phase 4's call: the plan the ADR names, if any, then
-> [Plan 0048](../0048-probe-rays-direct-light-without-the-clamp-bias.md), then
+> [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md), then
 > [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md).
 
 ## TL;DR

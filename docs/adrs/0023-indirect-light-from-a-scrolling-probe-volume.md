@@ -1,6 +1,6 @@
 # ADR-0023: Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights
 
-> **Status:** accepted (2026-10-22, at Plan 0029's close; see Outcome)
+> **Status:** accepted (2026-10-22, at Plan 0029's close; see Outcome); slice cadence hashed by Plan 0047 (ADR-0036's Outcome); ray shading and blend amended by ADR-0043 (proposed)
 > **Date:** 2026-10-21
 > **Related plan(s):** [Plan 0029](../plans/done/0029-indirect-light-probe-volume.md)
 

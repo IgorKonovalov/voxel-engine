@@ -8,7 +8,9 @@ needs and owns its own loop and entity model.
 
 This file is the **orientation map**: it says which part owns what and how work flows. It does
 not explain how the code works. Decisions live in `docs/adrs/`, work in flight in `docs/plans/`,
-the milestone sequence in `docs/roadmap.md`, the budgets in `docs/nfr.md`.
+the milestone sequence in `docs/roadmap.md`, the budgets in `docs/nfr.md`, parked ideas in
+`docs/backlog.md` (an idea the owner says "later" to goes there in the same session, not into
+agent memory).
 
 > **Stack (ADR-0001):** Rust stable pinned in `rust-toolchain.toml`, edition 2024, `wgpu` +
 > WGSL compute ray marching, `winit` shell, Linux + Windows. Canonical commands: `cargo build`,
@@ -56,8 +58,11 @@ apps/
                      #   `component`) a WebAssembly component
 docs/
 ├── roadmap.md       # milestones M0..M9 and the decisions behind them. Read this first
+├── backlog.md       # parked ideas and owed follow-ups no plan or ADR carries yet; dated entries,
+│                    #   edited by hand in the session the idea comes up
 ├── nfr.md           # the budgets: frame time, VRAM, edit cost, determinism, baseline GPU
 ├── nfr/             # the readings behind nfr.md's big sections, one file per section
+├── images/          # the README's hero and the light write-ups' stills and difference images
 ├── adrs/            # NNNN-<slug>.md: decisions + rejected alternatives. Append-only once accepted
 │   └── README.md    #   ADR index + next free number
 ├── plans/           # NNNN-<slug>.md: phased implementation plans
@@ -85,7 +90,8 @@ scripts/
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
-.github/workflows/ci.yml  # build, nextest, doctests, clippy, fmt, hooks, doc gates; cargo-deny
+.github/workflows/ci.yml  # build, nextest (gate tier), doctests, clippy, fmt, hooks, doc gates; cargo-deny
+.github/workflows/soak.yml  # the weekly soak tier
 ```
 
 `.claude/` is **committed** (except `settings.local.json`).

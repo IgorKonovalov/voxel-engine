@@ -11,12 +11,18 @@
 > plan's and leaves them, so nothing is struck for it. Added, as the same waste on what became
 > the default since this review: FSR 2's `prepare` builds its bind groups and views per frame,
 > and joins Phase 3's counter; `gradient27_normal` now runs on default pixels through the far
-> normal (provisional until Plan 0051), so Phase 5's `occupancy` reads there. `floor_div`'s
-> copy is `field.wgsl`'s, and `MAX_EDITS`' hard-coded array is in three shaders. The gates are
+> normal (provisional until Plan 0056's Phase 4), so Phase 5's `occupancy` reads there. `floor_div`'s
+> copy is `field.wgsl`'s, and `MAX_EDITS`' hard-coded array is in four shaders (Plan 0051 added
+> `cache_clear.wgsl`; Plan 0057 adds more, so Phase 8's layout test iterates the shaders). The gates are
 > `scripts/test-changed.mjs` and the `gate` tier; readings go to
 > `docs/nfr/02-frame-budget.md`. **Waits on Plan 0051's verdict:** defect 4 and Phase 5's
 > reservoir clamp fall if the world-space cache replaces the screen reservoirs; a new probe
 > or cache path that lands first joins Phases 3 and 5 by the re-verify rule.
+> **Amended 2026-11-04 (architect, drift):** the verdict is ADR-0043 (proposed) and Plan 0057,
+> which lands before this plan: the screen reservoirs and reuse go (so defect 4 and Phase 5's
+> reservoir clamp fall), the per-face table arrives with `cache_clear`, `cache_sweep` and
+> `cache_fill` passes and a cell guard in the gradient pass (they join Phases 3 and 5 by the
+> re-verify rule), and the probe volume becomes a lamp-only channel. Plan 0048 is dropped.
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
 > figures in `docs/nfr.md` that the plans so far have already shipped.
 > **Related ADRs:** none. Each fix keeps the mechanism and removes waste or a defect, so no
@@ -27,7 +33,8 @@
 > that goes after all plans that are active are finished". The review ran at `87e4b67`; its
 > structural findings are Plan 0045.
 > **After:** Plan 0051 and its verdict plan, and before Plan 0045, Plan 0048 and M10 (amended
-> 2026-11-03, owner; see "Owner answers"). Before that: after Plan 0051, before the M10 batch
+> 2026-11-03, owner; see "Owner answers"; as of 2026-11-04 the verdict plan is Plan 0057 and
+> Plan 0048 is dropped). Before that: after Plan 0051, before the M10 batch
 > (owner, 2026-10-29; it was "every plan
 > active on 2026-10-22", which would have parked it behind Plans 0032 to 0037). Plan 0052,
 > the second review, ran first (closed 2026-10-30); it fixed no item listed here.
@@ -367,7 +374,7 @@ Every phase:
     `offset_of!`, and that every same-named constant has the same value on both sides.
   - **The constant-naming problems** the test exposes are fixed: `HEADER_TRANSLUCENT_WORD`,
     and the `MAX_EDITS` array lengths.
-- **Files touched:** `crates/vxe-render/{Cargo.toml,src/lib.rs,src/test_support.rs}`,
+- **Files touched:** `crates/vxe-render/{Cargo.toml,src/lib.rs,src/test_support.rs (new)}`,
   `crates/vxe-render/tests/*.rs`, `crates/vxe-render/src/shaders/{temporal.wgsl,upscale.wgsl,fsr2/input.wgsl,march.wgsl}`,
   `apps/flythrough/tests/{support/mod.rs,golden.rs}`, `apps/flythrough/Cargo.toml`,
   `.github/workflows/ci.yml` if the feature needs naming there.
