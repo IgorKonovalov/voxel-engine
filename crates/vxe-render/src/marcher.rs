@@ -2440,10 +2440,10 @@ impl Frame {
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
-        let jitter = if self.fsr.as_ref().is_some_and(|f| !f.bypassed()) {
+        let jitter = if let Some(f) = self.fsr.as_ref().filter(|f| !f.bypassed()) {
             // FSR's sample of pixel p lies at p + 0.5 - offset (`fsr2::jitter_offset`).
             let [w, _] = self.internal_size();
-            let [x, y] = jitter_at(self.frame, crate::fsr2::jitter_phases(w, self.output[0]));
+            let [x, y] = jitter_at(self.frame, f.settings().phases(w, self.output[0]));
             [-x, -y]
         } else if self.jitter {
             jitter_at(self.frame, JITTER_PHASES)

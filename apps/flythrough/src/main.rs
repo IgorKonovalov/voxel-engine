@@ -27,7 +27,7 @@
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
 //! [--emissive-guard on|off] [--reuse-m-cap N]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
-//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2]
+//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--exposure auto|E]
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
@@ -50,7 +50,11 @@
 //! jitter; without it the upscaler is `off` at scale 1 with the jitter off, `own` when
 //! `--jitter` is given (only `own` takes it), else `fsr2`, so no flag starts in `fsr2` at 1.5
 //! and `--internal-scale 1` in `off`. In a
-//! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner;
+//! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner, `Z`
+//! cycles the sharpening (0.5, 0.25, 0; the upscaler keeps its history), `V` the far normal
+//! (`[2, 6]`, `[1, 2]`, off), and `--pan DEG_PER_S` turns the camera at a constant yaw rate
+//! (positive to the left, by the frame's measured interval) that `Period` stops and starts;
+//! the stats HUD names all four on one row;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
 //! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -476,6 +480,8 @@ struct Args {
     jitter: bool,
     /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
     sharpen: f32,
+    /// `--pan DEG_PER_S`: a constant yaw rate, degrees a second, positive to the left.
+    pan: Option<f32>,
     /// `--jitter` was given.
     jitter_set: bool,
     /// `--upscaler off|own|fsr2`, when given.
@@ -745,6 +751,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         internal_scale: DEFAULT_SCALE,
         jitter: DEFAULT_JITTER,
         sharpen: DEFAULT_SHARPEN,
+        pan: None,
         exposure: None,
         adaptation: hud::Adaptation::Eye,
         adapt: None,
@@ -900,6 +907,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.internal_scale = RenderScale::from_name(&v)
                     .ok_or(format!("--internal-scale takes 1, 1.5 or 2, not {v}"))?;
+            }
+            "--pan" => {
+                let v = value()?;
+                args.pan = Some(parse_pan(&v)?);
             }
             "--sharpen" => {
                 let v = value()?;
@@ -1252,6 +1263,28 @@ fn parse_unit(flag: &str, v: &str, max: f32) -> Result<f32, String> {
 }
 
 /// `--far-normal LO,HI`: pixels per voxel, `0 <= LO < HI`.
+/// `--pan`'s degrees a second: a finite number other than 0.
+fn parse_pan(v: &str) -> Result<f32, String> {
+    v.parse()
+        .ok()
+        .filter(|d: &f32| d.is_finite() && *d != 0.0)
+        .ok_or(format!(
+            "--pan takes degrees a second other than 0, not {v}"
+        ))
+}
+
+/// The far normal `V` steps through: `[2, 6]`, `[1, 2]`, off, then `[2, 6]` again; any other
+/// band steps to `[2, 6]`.
+fn next_far_normal(f: [f32; 2]) -> [f32; 2] {
+    if f == [2.0, 6.0] {
+        [1.0, 2.0]
+    } else if f == [1.0, 2.0] {
+        [0.0, 0.0]
+    } else {
+        [2.0, 6.0]
+    }
+}
+
 fn parse_far_normal(v: &str) -> Result<[f32; 2], String> {
     let err = || format!("--far-normal takes LO,HI with 0 <= LO < HI, not {v}");
     let (lo, hi) = v.split_once(',').ok_or_else(err)?;
@@ -2812,6 +2845,10 @@ struct Run {
     /// The upscaler `F10` cycles and its banner; a change is applied at the next frame.
     upscaler: hud::UpscalerBanner,
     upscaler_changed: bool,
+    /// `Z` changed the sharpening: applied at the next frame.
+    sharpen_changed: bool,
+    /// `--pan`'s yaw, which `Period` stops and starts.
+    pan: Option<hud::Pan>,
     /// The scene's banner row (`castle gate`) and when it was last shown, by the frame loop's
     /// clock; `None` without one.
     scene: Option<(String, f64)>,
@@ -2964,6 +3001,11 @@ impl Run {
         s.format_us = h.format_us;
         s.lighting = lighting;
         s.exposure = Some(self.modes.exposure_row());
+        s.aliasing = Some(hud::aliasing_row(
+            &self.upscaler,
+            &LookPreset::far_normal_words(self.look.normal_mode, self.look.far_normal),
+            self.pan.as_ref(),
+        ));
     }
 
     /// Drops `--pose`'s banner row once the camera has left the pose.
@@ -2993,6 +3035,7 @@ impl Run {
             scene,
             self.modes.banner(now),
             self.upscaler.banner(now),
+            self.pan.and_then(|p| p.banner(now)),
         ]
         .into_iter()
         .flatten()
@@ -4091,6 +4134,9 @@ impl Run {
                 }
                 None => self.fly.update(input, dt),
             }
+            if let Some(p) = &self.pan {
+                self.fly.camera.yaw += p.yaw(dt);
+            }
             self.handle_input(input);
             self.cutaway
                 .update(&mut self.look, &self.world, self.fly.camera.position);
@@ -4131,6 +4177,28 @@ impl Run {
                 .change(mode, scale.name(), ms_since(self.start));
             self.upscaler_changed = true;
             println!("{}", self.upscaler.line());
+        }
+        if input.pressed(KeyCode::KeyZ) {
+            self.args.sharpen = hud::next_sharpen(self.args.sharpen);
+            self.upscaler
+                .set_sharpen(self.args.sharpen, ms_since(self.start));
+            self.sharpen_changed = true;
+            println!("{}", self.upscaler.line());
+        }
+        if input.pressed(KeyCode::KeyV) {
+            self.look.far_normal = next_far_normal(self.look.far_normal);
+            self.modes
+                .show_look(&self.preset, self.look.far_normal, ms_since(self.start));
+            println!("{}", look_line(&self.look, &self.preset));
+        }
+        if input.pressed(KeyCode::Period) {
+            match self.pan.as_mut() {
+                Some(p) => {
+                    p.toggle(ms_since(self.start));
+                    println!("{}", p.line());
+                }
+                None => println!("pan: start with --pan DEG_PER_S"),
+            }
         }
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
@@ -4483,6 +4551,13 @@ impl Run {
             gfx.frame.set_upscaler_kind(&gpu.device, kind);
             gfx.frame
                 .set_sizes(&gpu.device, scale.internal(output), output);
+        }
+        if std::mem::take(&mut self.sharpen_changed) {
+            gfx.frame.set_sharpness(&gpu.queue, self.args.sharpen);
+            if self.upscaler.mode == hud::UpscalerMode::Fsr2 {
+                let (kind, _, _) = self.args.upscaler_settings(self.upscaler.mode);
+                gfx.frame.set_upscaler_kind(&gpu.device, kind);
+            }
         }
         gfx.frame.set_lighting(self.modes.lighting);
         // Headless frames step the exposure by exactly 1/60 s; the window by its measured
@@ -4929,8 +5004,11 @@ impl App for Flythrough {
                         self.args.upscaler_settings(mode).1.name()
                     },
                     0.0,
-                ),
+                )
+                .with_sharpen(self.args.sharpen),
                 upscaler_changed: false,
+                sharpen_changed: false,
+                pan: self.args.pan.map(|d| hud::Pan::new(d, 0.0)),
                 scene: self
                     .args
                     .castle
@@ -6330,6 +6408,8 @@ mod tests {
             modes,
             upscaler: hud::UpscalerBanner::new(hud::UpscalerMode::Off, "1"),
             upscaler_changed: false,
+            sharpen_changed: false,
+            pan: None,
             scene: None,
             castle_shot: None,
             pose: None,
@@ -6544,6 +6624,57 @@ mod tests {
             run.banner().is_none_or(|b| !b.contains("pose vein")),
             "the row goes once the camera moves"
         );
+    }
+
+    /// `V` steps the far normal through `[2, 6]`, `[1, 2]` and off, `Z` the sharpening through
+    /// 0.25, 0 and 0.5, and `Period` stops and starts `--pan`'s yaw; each press changes the
+    /// banner's text to the new mode, and the stats HUD's aliasing row names all four.
+    /// `--pan` parses a number of degrees a second and refuses a non-number and 0.
+    #[test]
+    fn the_aliasing_toggles_show_in_the_banner() {
+        let mut run = bare_run(carved_rock());
+        run.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
+        run.pan = Some(hud::Pan::new(1.1, -1.0e9));
+        let mut input = Input::default();
+        let mut press = |run: &mut Run, key: KeyCode| {
+            input.end_frame();
+            input.key_up(key);
+            input.key_down(key);
+            run.handle_input(&input);
+            run.banner().expect("a press shows the banner")
+        };
+        for want in ["far normal 1..2", "far normal off", "far normal 2..6"] {
+            let banner = press(&mut run, KeyCode::KeyV);
+            assert!(banner.contains(want), "{want}: {banner}");
+        }
+        for want in ["sharpen 0.25", "sharpen 0", "sharpen 0.5"] {
+            let banner = press(&mut run, KeyCode::KeyZ);
+            assert!(
+                banner
+                    .lines()
+                    .any(|l| l == format!("upscaler fsr2, scale 1.5, {want}")),
+                "{want}: {banner}"
+            );
+            assert_eq!(run.args.sharpen.to_string(), want["sharpen ".len()..]);
+        }
+        for (want, on) in [("pan 1.1 deg/s stopped", false), ("pan 1.1 deg/s", true)] {
+            let banner = press(&mut run, KeyCode::Period);
+            assert!(banner.lines().any(|l| l == want), "{want}: {banner}");
+            assert_eq!(run.pan.map(|p| p.on), Some(on));
+        }
+        assert_eq!(
+            hud::aliasing_row(&run.upscaler, "far normal 2..6", run.pan.as_ref()),
+            "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; pan 1.1 deg/s"
+        );
+        let p = parse_args_from(argv(&["--pan", "1.1"])).expect("--pan 1.1 parses");
+        assert_eq!(p.pan, Some(1.1));
+        for bad in ["x", "0", "-0", "inf"] {
+            assert_eq!(
+                parse_args_from(argv(&["--pan", bad])).err().as_deref(),
+                Some(format!("--pan takes degrees a second other than 0, not {bad}").as_str()),
+                "{bad}"
+            );
+        }
     }
 
     /// `F9` cycles the views shaded, normals, hitmask, steps, cracks, albedo, shaded; each
