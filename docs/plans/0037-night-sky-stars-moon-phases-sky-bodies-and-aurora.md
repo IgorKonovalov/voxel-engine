@@ -47,6 +47,11 @@
 > **Waits on Plan 0051's verdict:** Phase 6 lights the ground through the probes and its bars
 > read the gather; Risk 4's lag is the probes' hysteresis. With no probes the night light has
 > only the sky ray; with a frozen probe a pulsing aurora needs that plan's restart rule.
+> **Amended 2026-11-04 (architect, drift):** the verdict is ADR-0043 (proposed) and Plan 0057:
+> the probe rays shade the lamp alone and read no sky, and the hysteresis schedule Risk 4 names
+> is gone. Phase 6 lights the ground through the sky ray's `night_light` lookup in the light
+> pass, or through a per-source aurora feed into the lamp channel with that channel's blend; its
+> bars stop reading the gather. The architect rewrites Phase 6 before the lane starts.
 
 ## TL;DR
 

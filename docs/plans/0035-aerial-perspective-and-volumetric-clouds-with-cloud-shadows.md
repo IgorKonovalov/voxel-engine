@@ -47,6 +47,12 @@
 > probe misses and the cloud shadow reaches probe rays (Phase 6). With no probes the lighting
 > half reduces to the sky ray; with a frozen probe, moving cloud shadow needs that plan's
 > restart rule. Nothing here is decided on it.
+> **Amended 2026-11-04 (architect, drift):** the verdict is ADR-0043 (proposed) and Plan 0057:
+> the probe rays shade the lamp alone and read no sky, so Phase 6's `cloud_sky` at probe misses
+> and the cloud shadow through the probe estimator have no probe to reach. The lighting half is
+> the sky ray with `cloud_sky` and the shadow map in the light pass; a sky or cloud feed into the
+> lamp channel is a per-source flag the owner may ask for later. Phase 6 is rewritten before the
+> lane starts.
 
 ## TL;DR
 
