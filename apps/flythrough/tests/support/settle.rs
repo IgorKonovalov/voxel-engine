@@ -332,6 +332,21 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
             vxe_render::marcher::DEFAULT_FILL_SAMPLES,
         ),
         fill_until: env("VXE_FILL_UNTIL", vxe_render::marcher::DEFAULT_FILL_UNTIL),
+        // The preload's: `VXE_PRELOAD` (R in voxels, 0 off), `VXE_PRELOAD_BRICKS` (B),
+        // `VXE_PRELOAD_UNTIL` (C_PRE) and `VXE_PRELOAD_SAMPLES` (S_PRE).
+        preload_radius: env("VXE_PRELOAD", vxe_render::marcher::DEFAULT_PRELOAD_RADIUS),
+        preload_bricks: env(
+            "VXE_PRELOAD_BRICKS",
+            vxe_render::marcher::DEFAULT_PRELOAD_BRICKS,
+        ),
+        preload_until: env(
+            "VXE_PRELOAD_UNTIL",
+            vxe_render::marcher::DEFAULT_PRELOAD_UNTIL,
+        ),
+        preload_samples: env(
+            "VXE_PRELOAD_SAMPLES",
+            vxe_render::marcher::DEFAULT_PRELOAD_SAMPLES,
+        ),
         ..Lighting::default()
     })
 }
@@ -3212,6 +3227,11 @@ pub fn hall_class_run(
     frame.set_lighting(Lighting {
         lamp: false,
         exposure: Exposure::Manual(8.0),
+        // The preload's radius: `VXE_PRELOAD` (0 off), else the default.
+        preload_radius: std::env::var("VXE_PRELOAD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(vxe_render::marcher::DEFAULT_PRELOAD_RADIUS),
         ..Lighting::default()
     });
     frame.set_look(LookParams::default());

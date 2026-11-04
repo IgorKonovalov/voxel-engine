@@ -1344,7 +1344,11 @@ struct CacheStats {
     pre_draw: u32,
     pre_base: u32,
     pre_visit: u32,
-    _pre_pad: array<u32, 3>,
+    // The fill's cut (cache_fill.wgsl's `preload_draws`): the entries of the bands under
+    // `pre_cut` draw, and `pre_rest` of band `pre_cut`'s.
+    pre_cut: u32,
+    pre_rest: u32,
+    _pre_pad: u32,
     // The frame's counts (cleared each encode with the preload on; `marcher::PreloadStats`):
     // bricks scanned past the early-out, faces listed, cells claimed, faces refused a cell
     // (the table's load, a miss this frame or by the claim, no lit sample), samples drawn,
@@ -1357,7 +1361,9 @@ struct CacheStats {
     pre_refused_unlit: atomic<u32>,
     pre_samples: atomic<u32>,
     pre_drops: atomic<u32>,
-    // The two lists of cell slots (list k at k * PRELOAD_LIST_MAX), then the sweep's offsets
+    // Each list's entries by distance band (cache_fill.wgsl's `preload_band`).
+    pre_hist: array<array<atomic<u32>, 64>, 2>,
+    // The two lists of entries (list k at k * PRELOAD_LIST_MAX), then the sweep's offsets
     // (`marcher::preload_offsets`, each component plus 512 in ten bits, x low).
     pre_lists: array<u32>,
 };

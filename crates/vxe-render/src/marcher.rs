@@ -808,8 +808,9 @@ pub const PRELOAD_EDIT_BRICKS_MAX: usize = 256;
 /// Offsets the sweep's table holds at [`PRELOAD_RADIUS_MAX`]: `preload_offsets(16).len()`.
 pub const PRELOAD_OFFSETS_MAX: u64 = 17_077;
 /// The counters' bytes before the preload's lists: `CacheStats` from `pre_cursor` to
-/// `pre_drops` (twenty words).
-const PRELOAD_HEADER_BYTES: u64 = 80;
+/// `pre_drops` (twenty words, [`PRELOAD_STATE_BYTES`]), then its two lists' 64 distance bands.
+const PRELOAD_HEADER_BYTES: u64 = PRELOAD_STATE_BYTES + 2 * 64 * 4;
+const PRELOAD_STATE_BYTES: u64 = 80;
 /// The preload's store in the counters' buffer past the fill list: its header, its two lists
 /// and the sweep's offsets.
 pub const PRELOAD_BYTES: u64 =
@@ -2529,7 +2530,7 @@ impl Frame {
             queue,
             &self.cache_stats,
             CACHE_STATS_BYTES + FILL_LIST_BYTES,
-            PRELOAD_HEADER_BYTES,
+            PRELOAD_STATE_BYTES,
         );
         let w: &[u32] = bytemuck::cast_slice(&bytes);
         PreloadStats {
@@ -3331,7 +3332,7 @@ impl Frame {
             encoder.clear_buffer(
                 &self.cache_stats,
                 CACHE_STATS_BYTES + FILL_LIST_BYTES + 48,
-                Some(PRELOAD_HEADER_BYTES - 48),
+                Some(PRELOAD_STATE_BYTES - 48),
             );
             (
                 bind_io_at(

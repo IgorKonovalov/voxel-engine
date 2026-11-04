@@ -1874,6 +1874,15 @@ fn cache_box_rig_on(
 }
 
 impl CacheBox {
+    /// Turns the preload off, for a test of the light pass's own cells.
+    fn preload_off(&mut self) {
+        let l = self.frame.lighting();
+        self.frame.set_lighting(Lighting {
+            preload_radius: 0,
+            ..l
+        });
+    }
+
     fn step(&mut self, n: usize) {
         let light = LightParams::headlamp();
         for _ in 0..n {
@@ -1904,12 +1913,13 @@ impl CacheBox {
 
 /// A key is its voxel and face: on the box, one frame writes as many cells as the view has face
 /// keys, each counting exactly its pixels; two pixels on one face share a cell and the same
-/// voxel's other face has its own.
+/// voxel's other face has its own. The light pass's cells alone: the preload is off.
 #[test]
 fn a_key_is_its_voxel_and_face() {
     let Some(mut rig) = cache_box_rig(vxe_render::marcher::DEFAULT_TABLE_CAP) else {
         return;
     };
+    rig.preload_off();
     rig.step(1);
     let keys = rig.keys();
     let words = cache_words(&rig.level, &rig.frame);
@@ -2330,7 +2340,7 @@ fn a_hit_with_no_face_takes_the_fallback() {
 /// chunk the camera moves into and `light_radius` 1, after
 /// the camera moves one chunk along +x, a face whose chunk lies beyond one chunk of the new
 /// camera chunk counts only this frame's pixels (0 out of view), and one within it its old count
-/// plus them.
+/// plus them. The light pass's cells alone: the preload is off.
 #[test]
 fn the_sweep_clears_cells_beyond_the_light_radius() {
     use vxe_world::*;
@@ -2347,6 +2357,7 @@ fn the_sweep_clears_cells_beyond_the_light_radius() {
     let Some(mut rig) = cache_box_rig_on(world, camera, 4096, [64, 36], Some(1)) else {
         return;
     };
+    rig.preload_off();
     rig.step(4);
     let before = cache_words(&rig.level, &rig.frame);
     let keys: Vec<FaceKey> = rig.keys().into_keys().collect();
@@ -3866,4 +3877,418 @@ fn a_face_hidden_from_every_eye_is_settled_before_it_is_seen() {
         "shift, by the tenth frame: {}",
         shift.at_late
     );
+}
+
+/// The preload readings' lighting at `pose`: lamp off, indirect off, the pose's exposure,
+/// the preload at `radius` voxels and `VXE_PRELOAD_BRICKS`, `VXE_PRELOAD_UNTIL` and
+/// `VXE_PRELOAD_SAMPLES` (else the defaults).
+fn preload_lighting(pose: &Pose, radius: u32) -> Lighting {
+    let env = |name: &str, default: u32| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    };
+    use vxe_render::marcher::{
+        DEFAULT_PRELOAD_BRICKS, DEFAULT_PRELOAD_SAMPLES, DEFAULT_PRELOAD_UNTIL,
+    };
+    Lighting {
+        lamp: false,
+        indirect: false,
+        exposure: Exposure::Manual(pose.exposure),
+        preload_radius: radius,
+        preload_bricks: env("VXE_PRELOAD_BRICKS", DEFAULT_PRELOAD_BRICKS),
+        preload_until: env("VXE_PRELOAD_UNTIL", DEFAULT_PRELOAD_UNTIL),
+        preload_samples: env("VXE_PRELOAD_SAMPLES", DEFAULT_PRELOAD_SAMPLES),
+        ..Lighting::default()
+    }
+}
+
+/// A fresh frame for the preload readings: `stillness::SIZE`, full-resolution lighting (so a
+/// lighting pixel is a hit pixel), scale 1, the default look.
+fn preload_frame(level: &stillness::VeinLevel, lighting: Lighting) -> Frame {
+    let mut f = Frame::new(&level.device, stillness::SIZE[0], stillness::SIZE[1]);
+    f.set_look(look_of(flythrough::LookPreset::DEFAULT));
+    f.set_resolution(&level.device, LightingResolution::Full);
+    f.set_lighting(lighting);
+    f.set_dt(1.0 / 60.0);
+    f
+}
+
+/// One frame's pixels as the preload readings take them: each hit pixel's face key (if it has
+/// one), its distance from the eye and its accumulated luminance.
+fn preload_pixels(
+    level: &stillness::VeinLevel,
+    frame: &Frame,
+    eye: Vec3,
+) -> Vec<Option<(FaceKey, f32, f64)>> {
+    let (d, q) = (&level.device, &level.queue);
+    let pos = vxe_render::readback::read_float(d, q, frame.hit_positions());
+    let info = vxe_render::readback::read_rgba16u(d, q, frame.hit_records());
+    let acc = vxe_render::readback::read_float(d, q, frame.accumulated());
+    (0..pos.len())
+        .map(|i| {
+            face_key(eye, pos[i], info[i]).map(|k| {
+                let c = acc[i];
+                let lum =
+                    0.2126 * f64::from(c[0]) + 0.7152 * f64::from(c[1]) + 0.0722 * f64::from(c[2]);
+                (
+                    k,
+                    (Vec3::new(pos[i][0], pos[i][1], pos[i][2]) - eye).length(),
+                    lum,
+                )
+            })
+        })
+        .collect()
+}
+
+/// The settled cell means a run's faces read (the reference of done-whens 14 and 16): a fresh
+/// frame walks `cameras` with the preload at 64 voxels, C_PRE at C_CAP (4096) and S_PRE at
+/// 524 288, then holds the last pose until the preload's list is empty (at most 4096 frames);
+/// the table's mean luminance of each cell, times `exposure`, by key, and the least count
+/// among the cells holding samples.
+fn preload_reference(
+    level: &stillness::VeinLevel,
+    pose: &Pose,
+    cameras: &[Camera],
+) -> (std::collections::HashMap<FaceKey, f64>, u32, usize) {
+    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP};
+    let mut frame = preload_frame(
+        level,
+        Lighting {
+            preload_until: DEFAULT_TABLE_CAP,
+            preload_samples: 1 << 19,
+            ..preload_lighting(pose, 64)
+        },
+    );
+    let light = LightParams::headlamp();
+    for c in cameras {
+        frame.step(&level.device, &level.queue, &level.gpu, c, &light);
+    }
+    let last = *cameras.last().expect("a camera");
+    let mut held = 0;
+    for f in 0..4096 {
+        frame.step(&level.device, &level.queue, &level.gpu, &last, &light);
+        held = f + 1;
+        if f > 64 && frame.read_preload_stats(&level.device, &level.queue).list == 0 {
+            break;
+        }
+    }
+    let words = cache_words(level, &frame);
+    let w = CACHE_CELL_WORDS as usize;
+    let mut out = std::collections::HashMap::new();
+    let mut least = u32::MAX;
+    for cell in words.chunks_exact(w) {
+        if cell[1] & 0x8000_0000 == 0 || cell[CACHE_COUNT_WORD] == 0 {
+            continue;
+        }
+        let k = (cell[0], cell[1]);
+        let x = (k.0 & 0xF_FFFF) as i32;
+        let y = ((k.0 >> 20) | ((k.1 & 0xFF) << 12)) as i32;
+        let z = ((k.1 >> 8) & 0xF_FFFF) as i32;
+        let sx = |c: i32| (c << 12) >> 12;
+        let face = ((k.1 >> 28) & 7) as u8;
+        let n = cell[CACHE_COUNT_WORD].min(DEFAULT_TABLE_CAP);
+        least = least.min(n);
+        let c = |i: usize| {
+            f64::from(cell[CACHE_COUNT_WORD + 1 + i]) / f64::from(CACHE_Q) / f64::from(n)
+        };
+        let lum = 0.2126 * c(0) + 0.7152 * c(1) + 0.0722 * c(2);
+        out.insert(
+            ([sx(x), sx(y), sx(z)], face),
+            lum * f64::from(pose.exposure),
+        );
+    }
+    (out, least, held)
+}
+
+/// Whether `now` lies within a factor 1.1 of `reference` (above 1e-6).
+fn within_tenth(now: f64, reference: f64) -> bool {
+    reference > 1e-6 && (now / reference).log2().abs() <= 1.1f64.log2()
+}
+
+/// The preload on the level (Plan 0057 Phase 4 Part 2b, done-whens 12, 14, 16 and 17), lamp
+/// off, scale 1, full-resolution lighting at `stillness::SIZE`, each pose of
+/// `VXE_SETTLE_POSES`, each radius of `VXE_PRELOAD_RADII` (default 64 and 0), the runs of
+/// `VXE_PRELOAD_RUNS` (default all):
+/// - `fill`: from a fresh table at the pose, still: frames until the list first reads empty,
+///   the cells claimed and refused (load, miss, unlit) and the list's drops over them, the
+///   occupancy and misses then, and the passes' median GPU time over 120 frames at rest after.
+/// - `turn`: 120 still frames, then the rig's `yaw 90 10 f` and 10 still frames: of the pixels
+///   whose face was not in view in the 120 frames, the share within 10 % of the face's settled
+///   mean (`preload_reference`) on the face's first frame in view, and on the tenth frame after
+///   the yaw ends.
+/// - `walk` and `shift`: the steady flight at 0.5 and 2 voxels a frame: of the entering pixels
+///   (a face no pixel hit in the 60 frames before) within 64 voxels, the share within 10 % on
+///   their first frame, and the shares in the bands 64..96, 96..128 and beyond; the passes'
+///   median GPU time over the flight.
+/// - `corner`: `VEIN_CORNER` (the lit faces within 24 voxels of the eye and above it in the
+///   lowest tenth of their settled means, vein only): the 60 voxels of the path into the pose
+///   at 0.5 voxel a frame heading 180 degrees from the corner, then `yaw 180 20 f`; on each
+///   frame the corner is in view, the share of its pixels within 10 %.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn preload_level_readings() {
+    use std::collections::{HashMap, HashSet};
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let light = LightParams::headlamp();
+    let radii: Vec<u32> = list("VXE_PRELOAD_RADII", &["64", "0"])
+        .iter()
+        .map(|r| r.parse().expect("a radius"))
+        .collect();
+    let runs = list(
+        "VXE_PRELOAD_RUNS",
+        &["fill", "turn", "walk", "shift", "corner"],
+    );
+    let timer = vxe_render::PassTimer::with_passes(
+        &level.device,
+        &level.queue,
+        vxe_render::marcher::FRAME_PASSES.len() as u32,
+    );
+    let costs = |ms: &[Vec<f64>]| -> String {
+        vxe_render::marcher::FRAME_PASSES
+            .iter()
+            .zip(ms)
+            .filter(|(n, _)| ["light", "fill", "preload", "temporal"].contains(n))
+            .map(|(n, v)| {
+                let mut v = v.clone();
+                v.sort_by(f64::total_cmp);
+                format!("{n} {:.4}", v.get(v.len() / 2).copied().unwrap_or(0.0))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    for pose in poses() {
+        for &r in &radii {
+            let tag = format!(
+                "{} R {r} {}",
+                pose.name,
+                std::env::var("VXE_PRELOAD_TAG").unwrap_or_default()
+            );
+            if runs.iter().any(|x| x == "fill") {
+                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let cam = pose.camera();
+                let mut sum = vxe_render::marcher::PreloadStats::default();
+                let mut empty_at = None;
+                for f in 1..=4096 {
+                    frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+                    let s = frame.read_preload_stats(&level.device, &level.queue);
+                    sum.claimed += s.claimed;
+                    sum.refused_load += s.refused_load;
+                    sum.refused_miss += s.refused_miss;
+                    sum.refused_unlit += s.refused_unlit;
+                    sum.drops += s.drops;
+                    sum.samples += s.samples;
+                    if f > 1 && s.list == 0 && s.listed == 0 {
+                        empty_at = Some(f);
+                        break;
+                    }
+                    if r == 0 && f >= 1 {
+                        break;
+                    }
+                }
+                let t = frame.read_table_stats(&level.device, &level.queue);
+                let mut ms = vec![Vec::new(); vxe_render::marcher::FRAME_PASSES.len()];
+                if let Some(timer) = &timer {
+                    for _ in 0..120 {
+                        let v = timed_step(&level, &mut frame, timer, &cam);
+                        for (a, x) in ms.iter_mut().zip(v) {
+                            a.push(x);
+                        }
+                    }
+                }
+                println!(
+                    "reading[{adapter}]: preload fill {tag}: list empty at frame {empty_at:?}; claimed {}, refused load {} miss {} unlit {}, drops {}, samples {}; occupied {} of {} ({:.4}), misses {}; at rest: {}",
+                    sum.claimed,
+                    sum.refused_load,
+                    sum.refused_miss,
+                    sum.refused_unlit,
+                    sum.drops,
+                    sum.samples,
+                    t.occupied,
+                    t.cells,
+                    f64::from(t.occupied) / f64::from(t.cells),
+                    t.misses,
+                    costs(&ms)
+                );
+            }
+            if runs.iter().any(|x| x == "turn") {
+                let mut cams: Vec<Camera> = vec![KRun::Yaw.camera(&pose, 0); 120];
+                cams.extend((1..=20).map(|f| KRun::Yaw.camera(&pose, f)));
+                let (reference, least, held) = preload_reference(&level, &pose, &cams);
+                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let mut seen: HashSet<FaceKey> = HashSet::new();
+                let mut first: HashSet<FaceKey> = HashSet::new();
+                let (mut n1, mut ok1, mut n10, mut ok10, mut noref) = (0, 0, 0, 0, 0);
+                for (f, c) in cams.iter().enumerate() {
+                    frame.step(&level.device, &level.queue, &level.gpu, c, &light);
+                    let px = preload_pixels(&level, &frame, c.position);
+                    if f < 120 {
+                        seen.extend(px.iter().flatten().map(|p| p.0));
+                        continue;
+                    }
+                    let mut new_keys = HashSet::new();
+                    for &(k, _, lum) in px.iter().flatten() {
+                        if seen.contains(&k) {
+                            continue;
+                        }
+                        let Some(&rf) = reference.get(&k) else {
+                            noref += 1;
+                            continue;
+                        };
+                        if rf <= 1e-6 {
+                            continue;
+                        }
+                        if !first.contains(&k) {
+                            new_keys.insert(k);
+                            n1 += 1;
+                            ok1 += usize::from(within_tenth(lum, rf));
+                        }
+                        if f == 139 {
+                            n10 += 1;
+                            ok10 += usize::from(within_tenth(lum, rf));
+                        }
+                    }
+                    first.extend(new_keys);
+                }
+                println!(
+                    "reading[{adapter}]: preload turn {tag}: entering lit pixels within 10 % on the face's first frame {:.3} of {n1}, on the tenth frame after the yaw {:.3} of {n10} (no reference {noref}; reference least count {least}, held {held})",
+                    ok1 as f64 / n1.max(1) as f64,
+                    ok10 as f64 / n10.max(1) as f64
+                );
+            }
+            for (run, speed) in [("walk", 0.5f32), ("shift", 2.0)] {
+                if !runs.iter().any(|x| x == run) {
+                    continue;
+                }
+                let (start, end) = flight_path(&pose);
+                let (start, end) = (Vec3::from(start), Vec3::from(end));
+                let dir = (end - start).normalize();
+                let len = (end - start).length();
+                let frames = (len / speed) as usize;
+                let cams: Vec<Camera> = (0..=frames)
+                    .map(|f| {
+                        let mut c = KRun::Path.camera(&pose, 0);
+                        c.position = start + dir * (speed * f as f32).min(len);
+                        c
+                    })
+                    .collect();
+                let (reference, least, held) = preload_reference(&level, &pose, &cams);
+                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let mut last_seen: HashMap<FaceKey, usize> = HashMap::new();
+                // Bands: within 64, 64..96, 96..128, beyond: [entering, within 10 %].
+                let mut bands = [[0usize; 2]; 4];
+                let mut ms = vec![Vec::new(); vxe_render::marcher::FRAME_PASSES.len()];
+                for (f, c) in cams.iter().enumerate() {
+                    match &timer {
+                        Some(t) if f > 0 => {
+                            for (a, x) in ms.iter_mut().zip(timed_step(&level, &mut frame, t, c)) {
+                                a.push(x);
+                            }
+                        }
+                        _ => frame.step(&level.device, &level.queue, &level.gpu, c, &light),
+                    }
+                    let px = preload_pixels(&level, &frame, c.position);
+                    for &(k, d, lum) in px.iter().flatten() {
+                        let entering = f >= 60 && last_seen.get(&k).is_none_or(|&s| f - s > 60);
+                        if entering
+                            && let Some(&rf) = reference.get(&k)
+                            && rf > 1e-6
+                        {
+                            let b = [64.0, 96.0, 128.0]
+                                .iter()
+                                .position(|&e| d <= e)
+                                .unwrap_or(3);
+                            bands[b][0] += 1;
+                            bands[b][1] += usize::from(within_tenth(lum, rf));
+                        }
+                    }
+                    for &(k, ..) in px.iter().flatten() {
+                        last_seen.insert(k, f);
+                    }
+                }
+                let share =
+                    |b: [usize; 2]| format!("{:.3} of {}", b[1] as f64 / b[0].max(1) as f64, b[0]);
+                println!(
+                    "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering lit pixels within 10 % on their first frame: within 64 {}; 64..96 {}; 96..128 {}; beyond {} (reference least count {least}, held {held}); in flight: {}",
+                    share(bands[0]),
+                    share(bands[1]),
+                    share(bands[2]),
+                    share(bands[3]),
+                    costs(&ms)
+                );
+            }
+            if runs.iter().any(|x| x == "corner") && pose.name == VEIN_POSE.name {
+                let eye = Vec3::from(pose.position);
+                let (probe, ..) = preload_reference(&level, &pose, &[pose.camera()]);
+                let mut lit: Vec<(FaceKey, f64)> = probe
+                    .iter()
+                    .filter(|(k, v)| {
+                        let c = Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32)
+                            + Vec3::splat(0.5);
+                        **v > 1e-6 && (c - eye).length() <= 24.0 && c.z > eye.z
+                    })
+                    .map(|(k, v)| (*k, *v))
+                    .collect();
+                lit.sort_by(|a, b| a.1.total_cmp(&b.1));
+                let corner: HashSet<FaceKey> = lit[..lit.len() / 10].iter().map(|p| p.0).collect();
+                let lo = corner
+                    .iter()
+                    .fold([i32::MAX; 3], |a, k| [0, 1, 2].map(|i| a[i].min(k.0[i])));
+                let hi = corner
+                    .iter()
+                    .fold([i32::MIN; 3], |a, k| [0, 1, 2].map(|i| a[i].max(k.0[i])));
+                let centre: Vec3 = corner
+                    .iter()
+                    .map(|k| Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32))
+                    .sum::<Vec3>()
+                    / corner.len().max(1) as f32;
+                let to = centre - eye;
+                let corner_yaw = to.y.atan2(to.x).to_degrees();
+                let corner_pitch = (to.z / to.length()).asin().to_degrees();
+                let away = corner_yaw + 180.0;
+                let back = Vec3::new(away.to_radians().cos(), away.to_radians().sin(), 0.0);
+                let mut cams: Vec<Camera> = (0..=120)
+                    .map(|f| {
+                        camera_at((eye - back * (60.0 - 0.5 * f as f32)).to_array(), away, 0.0)
+                    })
+                    .collect();
+                cams.extend((1..=30).map(|f| {
+                    let t = (f.min(20) as f32) / 20.0;
+                    camera_at(pose.position, away - 180.0 * t, corner_pitch * t)
+                }));
+                let (reference, least, held) = preload_reference(&level, &pose, &cams);
+                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let mut line = Vec::new();
+                for (f, c) in cams.iter().enumerate() {
+                    frame.step(&level.device, &level.queue, &level.gpu, c, &light);
+                    if f < 120 {
+                        continue;
+                    }
+                    let px = preload_pixels(&level, &frame, c.position);
+                    let (mut n, mut ok) = (0, 0);
+                    for &(k, _, lum) in px.iter().flatten() {
+                        if corner.contains(&k)
+                            && let Some(&rf) = reference.get(&k)
+                            && rf > 1e-6
+                        {
+                            n += 1;
+                            ok += usize::from(within_tenth(lum, rf));
+                        }
+                    }
+                    if n > 0 {
+                        line.push(format!("{}: {:.3}/{n}", f - 120, ok as f64 / n as f64));
+                    }
+                }
+                println!(
+                    "reading[{adapter}]: preload corner {tag}: VEIN_CORNER {} faces, box {lo:?}..{hi:?}, yaw {corner_yaw:.1} pitch {corner_pitch:.1}; per frame in view (frame after the walk: share/pixels): {} (reference least count {least}, held {held})",
+                    corner.len(),
+                    line.join(" ")
+                );
+            }
+        }
+    }
 }

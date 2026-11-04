@@ -21,9 +21,11 @@
 //   preload_args   one invocation: swaps the preload's two lists (the last frame's output is
 //                  this frame's input), and writes the preload fill's and the sweep's indirect
 //                  dispatches into `preload_dispatch` (group 3, binding 2; words 0..3 and 3..6)
-//   preload_fill   the input list's first `draw_cells` entries take one workgroup each, whose
-//                  FILL_LANES lanes each draw one sample into the cell (`fill_face`); the rest
-//                  take one lane each. An entry whose cell lost its CACHE_PRELOADING bit (an
+//   preload_fill   one workgroup per input entry. About the nearest `draw_cells` entries
+//                  draw this frame, by the distance bands their entries carry
+//                  (`preload_draws`), so which cells draw is a function of the list's set,
+//                  never of the order its entries were appended in; a drawing entry's
+//                  FILL_LANES lanes each draw one sample into the cell (`fill_face`). An entry whose cell lost its CACHE_PRELOADING bit (an
 //                  edit box, the sweep or a whole-table clear emptied it) is dropped; one at
 //                  C_PRE clears the bit and leaves; any other carries to the output list.
 //   preload_sweep  one workgroup of 64 lanes per brick: the bricks of the frame's edit boxes
@@ -103,6 +105,25 @@ fn preload_args() {
     cache_stats.pre_draw = draw;
     cache_stats.pre_parity = p ^ 1u;
     atomicStore(&cache_stats.pre_count[p ^ 1u], 0u);
+    // The nearest `draw` entries draw: every entry of the distance bands under `pre_cut`, and
+    // `pre_rest` of band `pre_cut`'s by hash (`preload_draws`).
+    var cum = 0u;
+    var cut = PRELOAD_BANDS;
+    var rest = 0u;
+    for (var b = 0u; b < PRELOAD_BANDS; b++) {
+        let c = atomicLoad(&cache_stats.pre_hist[p][b]);
+        if (cum + c > draw) {
+            cut = b;
+            rest = draw - cum;
+            break;
+        }
+        cum += c;
+    }
+    cache_stats.pre_cut = cut;
+    cache_stats.pre_rest = rest;
+    for (var b = 0u; b < PRELOAD_BANDS; b++) {
+        atomicStore(&cache_stats.pre_hist[p ^ 1u][b], 0u);
+    }
     var visit = select(preload.bricks, preload.trickle, preload.still != 0u && n_in == 0u);
     visit = min(visit, preload.offsets);
     let cursor = select(0u, cache_stats.pre_cursor, cache_stats.pre_cursor < preload.offsets);
@@ -110,7 +131,7 @@ fn preload_args() {
     cache_stats.pre_visit = visit;
     cache_stats.pre_cursor = select(0u, (cursor + visit) % max(preload.offsets, 1u), preload.offsets > 0u);
     preload_dispatch = array<u32, 6>(
-        draw + (n_in - draw + FILL_LANES - 1u) / FILL_LANES,
+        n_in,
         1u,
         1u,
         preload.edit_bricks + visit,
@@ -119,13 +140,28 @@ fn preload_args() {
     );
 }
 
-// Appends `slot` to this frame's output list; a full list drops it and clears its bit, so the
-// sweep lists it again when it next passes.
-fn preload_append(slot: u32) {
+// Distance bands of PRELOAD_BAND_VOXELS from the eye's brick's centre, PRELOAD_BANDS of them
+// (the last open): an entry's band orders the fill nearest first.
+const PRELOAD_BANDS: u32 = 64u;
+const PRELOAD_BAND_VOXELS: f32 = 2.0;
+// An entry: the cell's slot in its low PRELOAD_SLOT_BITS bits, its band above.
+const PRELOAD_SLOT_BITS: u32 = 26u;
+
+fn preload_band(v: vec3<i32>) -> u32 {
+    let eye = vec3<f32>(preload.eye_brick) * 8.0 + vec3<f32>(4.0);
+    let d = length(vec3<f32>(v) + vec3<f32>(0.5) - eye);
+    return min(u32(d / PRELOAD_BAND_VOXELS), PRELOAD_BANDS - 1u);
+}
+
+// Appends the cell `slot` of voxel `v`'s face to this frame's output list in `v`'s band; a full
+// list drops it and clears its bit, so the sweep lists it again when it next passes.
+fn preload_append(slot: u32, v: vec3<i32>) {
     let out = cache_stats.pre_in ^ 1u;
     let i = atomicAdd(&cache_stats.pre_count[out], 1u);
     if (i < PRELOAD_LIST_MAX) {
-        cache_stats.pre_lists[out * PRELOAD_LIST_MAX + i] = slot;
+        let band = preload_band(v);
+        cache_stats.pre_lists[out * PRELOAD_LIST_MAX + i] = slot | (band << PRELOAD_SLOT_BITS);
+        atomicAdd(&cache_stats.pre_hist[out][band], 1u);
     } else {
         atomicAdd(&cache_stats.pre_drops, 1u);
         atomicAnd(&cache_cells[CACHE_WORDS * slot + CACHE_STAMP], ~CACHE_PRELOADING);
@@ -133,12 +169,12 @@ fn preload_append(slot: u32) {
 }
 
 // An input entry after this frame's samples, `count` its cell's count: at C_PRE it leaves the
-// list, else it carries to the output list.
-fn preload_carry(slot: u32, count: u32) {
+// list, else it carries to the output list in its band from this frame's eye.
+fn preload_carry(slot: u32, v: vec3<i32>, count: u32) {
     if (count >= preload.until) {
         atomicAnd(&cache_cells[CACHE_WORDS * slot + CACHE_STAMP], ~CACHE_PRELOADING);
     } else {
-        preload_append(slot);
+        preload_append(slot, v);
     }
 }
 
@@ -152,39 +188,45 @@ fn preload_standing(slot: u32) -> bool {
         && (atomicLoad(&cache_cells[word + 1u]) & 0x80000000u) != 0u;
 }
 
+// Whether the input entry of `slot` in `band` draws this frame: the bands nearer than the
+// args pass's cut, and of the cut's band `pre_rest` of its entries by a hash of the slot and
+// the frame. So the frame's draws are about the nearest `draw_cells` entries, a function of
+// the list's set and never of the order its entries were appended in.
+fn preload_draws(slot: u32, band: u32) -> bool {
+    let cut = cache_stats.pre_cut;
+    if (band != cut) {
+        return band < cut;
+    }
+    let n = max(atomicLoad(&cache_stats.pre_hist[cache_stats.pre_in][cut]), 1u);
+    return hash_u32(slot ^ hash_u32(params.frame ^ 0x27D4EB2Fu)) % n < cache_stats.pre_rest;
+}
+
 @compute @workgroup_size(16, 1, 1)
 fn preload_fill(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) lane: u32) {
     let list = cache_stats.pre_in * PRELOAD_LIST_MAX;
-    let draw = cache_stats.pre_draw;
-    if (wg.x < draw) {
-        let slot = cache_stats.pre_lists[list + wg.x];
-        if (!preload_standing(slot)) {
-            return;
-        }
-        let word = CACHE_WORDS * slot;
-        let before = atomicLoad(&cache_cells[word + CACHE_COUNT]);
-        var after = before;
-        if (before < preload.until) {
-            let k = vec2<u32>(atomicLoad(&cache_cells[word]), atomicLoad(&cache_cells[word + 1u]));
-            let h = hash_u32((slot * 0x9E3779B9u ^ (lane + 1u) * 0x85EBCA6Bu) ^ 0x5BD1E995u);
-            fill_face(slot, cache_key_voxel(k), (k.y >> 28u) & 7u, vec2<u32>(h & 0xFFFFu, h >> 16u));
-            after = before + FILL_LANES;
-        }
-        if (lane == 0u) {
-            if (after != before) {
-                atomicAdd(&cache_stats.pre_samples, FILL_LANES);
-            }
-            preload_carry(slot, after);
-        }
+    if (wg.x >= cache_stats.pre_n_in) {
         return;
     }
-    let i = draw + (wg.x - draw) * FILL_LANES + lane;
-    if (i >= cache_stats.pre_n_in) {
+    let entry = cache_stats.pre_lists[list + wg.x];
+    let slot = entry & ((1u << PRELOAD_SLOT_BITS) - 1u);
+    if (!preload_standing(slot)) {
         return;
     }
-    let slot = cache_stats.pre_lists[list + i];
-    if (preload_standing(slot)) {
-        preload_carry(slot, atomicLoad(&cache_cells[CACHE_WORDS * slot + CACHE_COUNT]));
+    let word = CACHE_WORDS * slot;
+    let k = vec2<u32>(atomicLoad(&cache_cells[word]), atomicLoad(&cache_cells[word + 1u]));
+    let v = cache_key_voxel(k);
+    let before = atomicLoad(&cache_cells[word + CACHE_COUNT]);
+    var after = before;
+    if (before < preload.until && preload_draws(slot, entry >> PRELOAD_SLOT_BITS)) {
+        let h = hash_u32((slot * 0x9E3779B9u ^ (lane + 1u) * 0x85EBCA6Bu) ^ 0x5BD1E995u);
+        fill_face(slot, v, (k.y >> 28u) & 7u, vec2<u32>(h & 0xFFFFu, h >> 16u));
+        after = before + FILL_LANES;
+    }
+    if (lane == 0u) {
+        if (after != before) {
+            atomicAdd(&cache_stats.pre_samples, FILL_LANES);
+        }
+        preload_carry(slot, v, after);
     }
 }
 
@@ -254,7 +296,7 @@ fn preload_face(v: vec3<i32>, face: u32) {
         let old = atomicOr(&cache_cells[word + CACHE_STAMP], CACHE_PRELOADING);
         if ((old & CACHE_PRELOADING) == 0u) {
             atomicAdd(&cache_stats.pre_listed, 1u);
-            preload_append(slot);
+            preload_append(slot, v);
         }
         return;
     }
@@ -297,7 +339,7 @@ fn preload_face(v: vec3<i32>, face: u32) {
         let old = atomicOr(&cache_cells[CACHE_WORDS * slot + CACHE_STAMP], CACHE_PRELOADING);
         if ((old & CACHE_PRELOADING) == 0u) {
             atomicAdd(&cache_stats.pre_listed, 1u);
-            preload_append(slot);
+            preload_append(slot, v);
         }
     }
 }
