@@ -7172,7 +7172,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, indirect off at 64 rays 1/8, filter on, ore pulse off, table 1048576, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, indirect off at 64 rays 1/8, filter on, ore pulse off, table 1048576, fill 8 to 256, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

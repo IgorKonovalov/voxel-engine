@@ -697,7 +697,8 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// before ADR-0043, less the `rgba32float` accumulation pair's excess over `rgba16float`
 /// (2 x 8 B x 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir
 /// textures (2 x 16 B x 640 x 360 = 7 372 800 B), plus the table's 2^20 cells of 40 B
-/// (41 943 040 B): 161 151 056 B.
+/// (41 943 040 B), plus the reopened fill's list (16 B of header and 16 384 slots of 4 B,
+/// 65 552 B) and its 12-byte indirect dispatch: 161 216 620 B.
 #[test]
 fn frame_bytes_hold_the_table_and_no_emissive_history() {
     let Some((device, _queue)) = software_device(64 << 20) else {
@@ -707,9 +708,10 @@ fn frame_bytes_hold_the_table_and_no_emissive_history() {
     let internal = vxe_render::RenderScale::OneHalf.internal(output);
     let bytes = Frame::with_sizes(&device, internal, output).frame_bytes();
     let lighting = 640u64 * 360;
-    let expected = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + 41_943_040;
+    let fill = 16 + 4 * 16_384 + 12;
+    let expected = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + 41_943_040 + fill;
     println!("frame_bytes at the default: {bytes} B");
-    assert_eq!(expected, 161_151_056);
+    assert_eq!(expected, 161_216_620);
     assert_eq!(bytes, expected);
 }
 

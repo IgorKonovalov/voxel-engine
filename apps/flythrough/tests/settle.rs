@@ -1630,7 +1630,8 @@ fn a_capped_cell_does_not_move() {
 }
 
 /// An edit box over one voxel clears that voxel's cells, leaves a capped neighbour two voxels
-/// away, and the cleared cells refill to 16 samples within 16 frames.
+/// away, and the cleared cells refill to 16 samples within 16 frames; on the frame after the
+/// box, the cell of the voxel's most-seen face counts its pixels plus the reopened fill's F.
 #[test]
 fn a_dig_clears_its_cells() {
     let Some(mut rig) = cache_box_rig(64) else {
@@ -1656,7 +1657,8 @@ fn a_dig_clears_its_cells() {
     rig.frame.invalidate(v, v);
     rig.step(1);
     let words = cache_words(&rig.level, &rig.frame);
-    let n = keys[&(v, f)];
+    // Its pixels' samples and the reopened fill's F.
+    let n = keys[&(v, f)] + vxe_render::marcher::DEFAULT_FILL_SAMPLES;
     assert_eq!(
         cache_count(&words, (v, f)),
         n,
@@ -2678,6 +2680,245 @@ fn a_still_scene_reopens_no_cell() {
         .frame
         .read_table_reopens(&rig.level.device, &rig.level.queue);
     assert_eq!(reopens, 0, "the guard reopened {reopens} cells");
+}
+
+/// The dig box: two rock chunks along x (128 x 64 x 64) with a passage carved at x 2..108,
+/// y and z 20..44, its ceiling (z = 44) set with four 4 x 4 ore patches at x 16, 40, 64 and 88
+/// (y 30..34). Returns the world.
+fn dig_box() -> vxe_world::World {
+    use flythrough::cave::{ORE, ROCK};
+    use vxe_world::*;
+    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 1, 1]),
+        &UniformSource(ROCK),
+        &table,
+    );
+    let op = |min: [i64; 3], max: [i64; 3], mode| {
+        world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v| v * FIXED_ONE)),
+                Fixed3(max.map(|v| v * FIXED_ONE)),
+                mode,
+            ))
+            .expect("the box is resident");
+    };
+    op([2, 20, 20], [108, 44, 44], Mode::Carve);
+    for x in [16, 40, 64, 88] {
+        op(
+            [x, 30, 44],
+            [x + 4, 34, 45],
+            Mode::Replace {
+                from: ROCK,
+                to: ORE,
+            },
+        );
+    }
+    world
+}
+
+/// The dig box's two digs of radius 10: at arm's length, the camera at (60, 25, 32) facing the
+/// passage's -y wall with the dig centred on it 5 voxels away; and at range, the camera at
+/// (8, 32, 32) facing +x down the passage with the dig centred on its end wall 100 voxels away.
+fn dig_case(far: bool) -> (Camera, [i64; 3]) {
+    if far {
+        (
+            Camera {
+                position: [8.0, 32.0, 32.0].into(),
+                yaw: 0.0,
+                pitch: 0.0,
+                vfov: 50f32.to_radians(),
+            },
+            [108, 32, 32],
+        )
+    } else {
+        (
+            Camera {
+                position: [60.0, 25.0, 32.0].into(),
+                yaw: (-90f32).to_radians(),
+                pitch: 0.0,
+                vfov: 50f32.to_radians(),
+            },
+            [60, 20, 32],
+        )
+    }
+}
+
+/// Frames a dug hole's run reads after the dig; its pixels' reference is their mean over the
+/// last `DIG_REF` of them, and `S90` is read up to `DIG_FRAMES - DIG_REF`.
+const DIG_FRAMES: usize = 300;
+const DIG_REF: usize = 60;
+
+/// The dug hole's `S90` on the dig box (`dig_box`, `dig_case`) at 192 x 108, scale 1, lamp off,
+/// manual exposure 1, the fill at `fill_samples` (and the default C_FILL): 16 frames, the
+/// carve (synced and its box invalidated), then `DIG_FRAMES` frames, each reading the
+/// accumulated emissive part. The hole's pixels are those of the first frame after the dig
+/// whose face key's voxel lies in the carve's box dilated by one and whose reference luminance
+/// is above 1e-6; a pixel is settled at a frame when its luminance lies within a factor 1.1 of
+/// its reference. `S90` is the frame after the last at which under 90 % of the hole's pixels
+/// are settled (0 when none), `None` when that frame is past `DIG_FRAMES - DIG_REF`. Returns
+/// `S90` and the hole's pixel count.
+fn dug_hole_s90(far: bool, fill_samples: u32) -> Option<(Option<usize>, usize)> {
+    use vxe_world::*;
+    let (camera, centre) = dig_case(far);
+    let mut rig = cache_box_rig_on(
+        dig_box(),
+        camera,
+        vxe_render::marcher::DEFAULT_TABLE_CAP,
+        [192, 108],
+        None,
+    )?;
+    let l = rig.frame.lighting();
+    rig.frame.set_lighting(Lighting { fill_samples, ..l });
+    rig.step(16);
+    let r = rig
+        .level
+        .world
+        .apply(&EditOp::sphere(
+            Fixed3(centre.map(|v| v * FIXED_ONE + FIXED_ONE / 2)),
+            10 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .expect("the dig applies");
+    let (min, max) = r.aabb.expect("the dig changes voxels");
+    rig.level
+        .gpu
+        .sync_now(&rig.level.world, &rig.level.device, &rig.level.queue)
+        .expect("the mirror fits");
+    rig.frame.invalidate(min.0, max.0);
+    let inside = |k: FaceKey| (0..3).all(|a| k.0[a] >= min.0[a] - 1 && k.0[a] <= max.0[a] + 1);
+    let mut pixels: Vec<usize> = Vec::new();
+    let mut series: Vec<Vec<f64>> = Vec::with_capacity(DIG_FRAMES);
+    for f in 1..=DIG_FRAMES {
+        rig.step(1);
+        let (d, q) = (&rig.level.device, &rig.level.queue);
+        if f == 1 {
+            let pos = vxe_render::readback::read_float(d, q, rig.frame.hit_positions());
+            let info = vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records());
+            pixels = (0..pos.len())
+                .filter(|&i| face_key(camera.position, pos[i], info[i]).is_some_and(inside))
+                .collect();
+        }
+        let acc = vxe_render::readback::read_float(d, q, rig.frame.accumulated());
+        series.push(
+            pixels
+                .iter()
+                .map(|&i| {
+                    let c = acc[i];
+                    0.2126 * f64::from(c[0]) + 0.7152 * f64::from(c[1]) + 0.0722 * f64::from(c[2])
+                })
+                .collect(),
+        );
+    }
+    let reference: Vec<f64> = (0..pixels.len())
+        .map(|i| {
+            series[DIG_FRAMES - DIG_REF..]
+                .iter()
+                .map(|s| s[i])
+                .sum::<f64>()
+                / DIG_REF as f64
+        })
+        .collect();
+    let lit: Vec<usize> = (0..pixels.len()).filter(|&i| reference[i] > 1e-6).collect();
+    let until = DIG_FRAMES - DIG_REF;
+    let settled = |f: usize| {
+        lit.iter()
+            .filter(|&&i| (series[f - 1][i] / reference[i]).log2().abs() <= 1.1f64.log2())
+            .count() as f64
+            / lit.len().max(1) as f64
+    };
+    let s90 = match (1..=until).rev().find(|&f| settled(f) < 0.9) {
+        Some(f) if f == until => None,
+        Some(f) => Some(f + 1),
+        None => Some(0),
+    };
+    let (by, _) = rig
+        .frame
+        .read_table_reopens_by(&rig.level.device, &rig.level.queue);
+    println!(
+        "reading: dug hole far {far} F {fill_samples}: reopens by branch {by:?}; settled share at 1/8/16/32/64/120/240: {:?}",
+        [1usize, 8, 16, 32, 64, 120, 240].map(|f| (settled(f) * 1000.0).round() / 1000.0)
+    );
+    Some((s90, lit.len()))
+}
+
+/// A dug hole settles within the bar (Plan 0057 Phase 4's dug-hole bar, on the dig box): with
+/// the reopened fill at its default, the hole's `S90` reads at most 60 frames at arm's length
+/// and at most 120 at 100 voxels. With the fill off (F 0) the 100-voxel dig is read and printed,
+/// not asserted: on this box it settles within 120 frames without the fill (its faces cover
+/// more than a lighting pixel each), so the fill's need rests on the level's reading
+/// (`dig_box_readings`). About 3 x 316 frames.
+#[test]
+fn a_dug_hole_settles_within_the_bar() {
+    let f = vxe_render::marcher::DEFAULT_FILL_SAMPLES;
+    let Some((near, near_px)) = dug_hole_s90(false, f) else {
+        return;
+    };
+    let (far, far_px) = dug_hole_s90(true, f).expect("the device opened once");
+    let (off, _) = dug_hole_s90(true, 0).expect("the device opened once");
+    println!(
+        "reading: dug hole, F {f}: S90 at arm's length {near:?} over {near_px} lit hole pixels, at 100 voxels {far:?} over {far_px}; F 0 at 100 voxels {off:?}"
+    );
+    assert!(
+        near_px >= 100 && far_px >= 10,
+        "hole pixels {near_px}, {far_px}"
+    );
+    assert!(
+        near.is_some_and(|s| s <= 60),
+        "S90 at arm's length {near:?}"
+    );
+    assert!(far.is_some_and(|s| s <= 120), "S90 at 100 voxels {far:?}");
+}
+
+/// A reopened face fills and a new face does not: on the dig box from 100 voxels (`dig_case`)
+/// at 96 x 54, scale 1, lamp off, where an end-wall face covers about a third of a lighting
+/// pixel, a face seen by one pixel: after an edit box over its voxel clears its cell (64 frames
+/// in), its count reads at least F after the next frame and at least 2 F after the second; in
+/// a fresh run, the same face, first seen with no edit, reads at most 2 after frame 2.
+/// About 2 x 70 frames.
+#[test]
+fn a_reopened_face_fills_and_a_new_face_does_not() {
+    let f = vxe_render::marcher::DEFAULT_FILL_SAMPLES;
+    let (camera, _) = dig_case(true);
+    let rig_of = || {
+        cache_box_rig_on(
+            dig_box(),
+            camera,
+            vxe_render::marcher::DEFAULT_TABLE_CAP,
+            [96, 54],
+            None,
+        )
+    };
+    let Some(mut fresh) = rig_of() else {
+        return;
+    };
+    fresh.step(1);
+    // An end-wall face (x = 108, entry face -x) seen by exactly one pixel.
+    let mut ones: Vec<FaceKey> = fresh
+        .keys()
+        .into_iter()
+        .filter(|&((v, face), n)| v[0] == 108 && face == 0 && n == 1)
+        .map(|(k, _)| k)
+        .collect();
+    ones.sort_unstable();
+    assert!(ones.len() >= 10, "{} one-pixel end-wall faces", ones.len());
+    let key = ones[ones.len() / 2];
+    fresh.step(1);
+    let new_count = cache_count(&cache_words(&fresh.level, &fresh.frame), key);
+    drop(fresh);
+    let mut rig = rig_of().expect("the device opened once");
+    rig.step(64);
+    rig.frame.invalidate(key.0, key.0);
+    rig.step(1);
+    let c1 = cache_count(&cache_words(&rig.level, &rig.frame), key);
+    rig.step(1);
+    let c2 = cache_count(&cache_words(&rig.level, &rig.frame), key);
+    println!(
+        "reading: face {key:?}, F {f}: after the edit box {c1} then {c2}; first seen with no edit {new_count} after frame 2"
+    );
+    assert!(c1 >= f, "count {c1} after the first frame");
+    assert!(c2 >= 2 * f, "count {c2} after the second frame");
+    assert!(new_count <= 2, "the new face counts {new_count}");
 }
 
 /// [`gap_still_run`]'s keys in view, dark capped keys, keys whose count fell, reopens and

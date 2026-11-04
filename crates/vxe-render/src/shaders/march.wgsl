@@ -183,7 +183,9 @@ struct Params {
     cache_mask: u32,
     // The size of the frame's image (the upscale pass's output); `size` without the upscaler.
     output_size: vec2<u32>,
-    _pad8: u32,
+    // The reopened fill (`Lighting::fill_samples`, `fill_until`): F in bits 0..8, C_FILL in
+    // bits 8..21; F 0 is off.
+    fill: u32,
     // The face look's far shading normal (`LookParams::far_normal`), in pixels per voxel:
     // `far_hi <= far_lo` is off.
     far_lo: f32,
@@ -1284,6 +1286,21 @@ const CACHE_PROBES: u32 = 4u;
 const CACHE_Q: f32 = 32768.0;
 // The cell's word of the count; the sums follow it.
 const CACHE_COUNT: u32 = 2u;
+// The cell's stamp word: CACHE_REOPENED, set where an edit box or the guard reopened the cell
+// and cleared once the fill has brought it to C_FILL, over the frame (its low 31 bits) the
+// light pass last listed it for the fill (cache_fill.wgsl).
+const CACHE_STAMP: u32 = 9u;
+const CACHE_REOPENED: u32 = 0x80000000u;
+
+// The reopened fill's samples a frame per listed cell (F, 0 off) and the count at which a
+// reopened cell leaves the list (C_FILL).
+fn fill_samples() -> u32 {
+    return params.fill & 0xFFu;
+}
+
+fn fill_until() -> u32 {
+    return (params.fill >> 8u) & 0x1FFFu;
+}
 
 // The table's counters: lighting pixels whose key found neither its cell nor a free slot this
 // frame (cleared each encode), the cells holding a key, and the cells the guard reopened
@@ -1299,7 +1316,16 @@ struct CacheStats {
     reopens_by: array<atomic<u32>, 3>,
     // The last re-shade reopen's new luminance, as f32 bits.
     last_e_new: u32,
+    // The reopened fill's list for this frame (cache_fill.wgsl; cleared each encode with the
+    // fill on): the cells offered (past FILL_LIST_MAX they are dropped, and the excess is their
+    // count), three words of padding, then the listed slots.
+    fill_offered: atomic<u32>,
+    _fill_pad: array<u32, 3>,
+    fill_cells: array<u32>,
 };
+
+// Cells the fill list holds; `marcher::FILL_LIST_MAX`.
+const FILL_LIST_MAX: u32 = 16384u;
 
 fn cache_read_on() -> bool {
     return (params.cache & 1u) != 0u;

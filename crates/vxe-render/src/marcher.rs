@@ -23,6 +23,7 @@ pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
 pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
 const CACHE_CLEAR_WGSL: &str = include_str!("shaders/cache_clear.wgsl");
 const CACHE_SWEEP_WGSL: &str = include_str!("shaders/cache_sweep.wgsl");
+const CACHE_FILL_WGSL: &str = include_str!("shaders/cache_fill.wgsl");
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
@@ -94,7 +95,9 @@ pub struct Params {
     pub cache_mask: u32,
     /// The size of the frame's image: the output size with the upscaler, else `size`.
     pub output_size: [u32; 2],
-    pub _pad8: u32,
+    /// The reopened fill ([`Lighting::fill_samples`] in bits 0..8, [`Lighting::fill_until`] in
+    /// bits 8..21).
+    pub fill: u32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
     pub _pad9: u32,
@@ -762,6 +765,23 @@ pub const CACHE_Q: f32 = 32768.0;
 /// ([`Lighting::table_cap`]). At most 4096: one sample's channel reaches 18.85 at the testbed's
 /// brightest emitter, which at Q17.15 and 4096 samples is `2.53e9`, under `2^32`.
 pub const DEFAULT_TABLE_CAP: u32 = 4096;
+/// Cells the reopened fill lists a frame at most (`FILL_LIST_MAX` in `light.wgsl`); a frame's
+/// offers past it are dropped and counted.
+pub const FILL_LIST_MAX: u32 = 16_384;
+/// The table's counters' bytes (`CacheStats` in `march.wgsl` up to its fill list).
+const CACHE_STATS_BYTES: u64 = 32;
+/// The fill list's bytes, in the counters' buffer past [`CACHE_STATS_BYTES`]: the offer
+/// counter, three words of padding and the slots.
+pub const FILL_LIST_BYTES: u64 = 16 + 4 * FILL_LIST_MAX as u64;
+/// The reopened fill's indirect dispatch: three words.
+pub const FILL_DISPATCH_BYTES: u64 = 12;
+/// The most samples a frame the fill draws per listed cell (`FILL_LANES` in
+/// `cache_fill.wgsl`).
+pub const FILL_SAMPLES_MAX: u32 = 16;
+/// [`Lighting::fill_samples`] by default.
+pub const DEFAULT_FILL_SAMPLES: u32 = 8;
+/// [`Lighting::fill_until`] by default.
+pub const DEFAULT_FILL_UNTIL: u32 = 256;
 /// Workgroups a dispatch dimension takes at most (wgpu's default limit).
 pub const MAX_DISPATCH_GROUPS: u32 = 65_535;
 
@@ -865,6 +885,15 @@ pub struct Lighting {
     /// The temporal pass reads the table (default on). Off, every hit takes the fallback: for
     /// tests that compare against the table.
     pub table_read: bool,
+    /// The reopened fill's samples a frame per listed cell, at most [`FILL_SAMPLES_MAX`]
+    /// (default [`DEFAULT_FILL_SAMPLES`]); 0 is off. A cell an edit box or the guard reopened
+    /// is listed by the first of its pixels each frame, and the fill draws this many emissive
+    /// samples from random points on its face, so a dug hole converges at this rate however
+    /// few pixels its faces cover. A face seen for the first time with no edit is not listed.
+    pub fill_samples: u32,
+    /// The count at which a reopened cell leaves the fill's list (C_FILL; default
+    /// [`DEFAULT_FILL_UNTIL`], at most [`Lighting::table_cap`]).
+    pub fill_until: u32,
 }
 
 impl Default for Lighting {
@@ -887,6 +916,8 @@ impl Default for Lighting {
             table_cells: DEFAULT_TABLE_CELLS,
             table_cap: DEFAULT_TABLE_CAP,
             table_read: true,
+            fill_samples: DEFAULT_FILL_SAMPLES,
+            fill_until: DEFAULT_FILL_UNTIL,
         }
     }
 }
@@ -895,6 +926,14 @@ impl Lighting {
     /// [`Lighting::table_cells`] as the frame allocates it: a power of two, at least 64.
     pub fn cells(&self) -> u32 {
         self.table_cells.max(64).next_power_of_two()
+    }
+
+    /// `Params::fill`.
+    fn fill_word(&self) -> u32 {
+        let until = self
+            .fill_until
+            .clamp(1, self.table_cap.clamp(1, DEFAULT_TABLE_CAP));
+        self.fill_samples.min(FILL_SAMPLES_MAX) | until << 8
     }
 
     /// `Params::cache`.
@@ -1052,6 +1091,15 @@ pub struct Frame {
     hit: Marcher,
     light_layout: wgpu::BindGroupLayout,
     light: wgpu::ComputePipeline,
+    /// The reopened fill (`cache_fill.wgsl`): its two pipelines, their group 2 and 3 layouts,
+    /// and the indirect dispatch the args pass writes (the list the light pass writes lies in
+    /// `cache_stats` past its 32 bytes of counters).
+    fill: wgpu::ComputePipeline,
+    fill_args: wgpu::ComputePipeline,
+    fill_layout: wgpu::BindGroupLayout,
+    fill_stats_layout: wgpu::BindGroupLayout,
+    fill_args_layout: wgpu::BindGroupLayout,
+    fill_dispatch: wgpu::Buffer,
     temporal_layout: wgpu::BindGroupLayout,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
@@ -1525,8 +1573,48 @@ impl Frame {
             "light",
             LIGHT_WGSL,
             "shade",
-            &[Io::Float, Io::Uint, f16, Io::Storage, Io::Storage],
+            &[
+                Io::Float,
+                Io::Uint,
+                f16,
+                Io::Storage,
+                Io::Storage,
+                Io::Uniform,
+            ],
         );
+        // The reopened fill: light.wgsl's table and counters (which hold the list) at their
+        // bindings in group 2; the args pass writes the indirect dispatch through group 3.
+        let fill_layout = io_layout_at(device, "fill", &[(3, Io::Storage), (4, Io::Storage)]);
+        // The args pass binds the counters alone in group 2 (the world's storage buffers and
+        // the table's would pass `max_storage_buffers_per_shader_stage`'s 11).
+        let fill_stats_layout = io_layout_at(device, "fill stats", &[(4, Io::Storage)]);
+        let fill_args_layout = io_layout(device, "fill args", &[Io::Storage]);
+        let fill_source = format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{CACHE_FILL_WGSL}");
+        let fill = compute_pipeline(
+            device,
+            "fill",
+            fill_source.clone(),
+            &[Some(&world_layout), None, Some(&fill_layout)],
+            "fill",
+        );
+        let fill_args = compute_pipeline(
+            device,
+            "fill args",
+            fill_source,
+            &[
+                Some(&world_layout),
+                None,
+                Some(&fill_stats_layout),
+                Some(&fill_args_layout),
+            ],
+            "fill_args",
+        );
+        let fill_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fill dispatch"),
+            size: FILL_DISPATCH_BYTES,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
         let (cache_clear_layout, cache_clear) = pass(
             "cache clear",
             CACHE_CLEAR_WGSL,
@@ -1542,7 +1630,7 @@ impl Frame {
         let cache = table_buffer(device, DEFAULT_TABLE_CELLS);
         let cache_stats = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("emissive table counters"),
-            size: 32,
+            size: CACHE_STATS_BYTES + FILL_LIST_BYTES,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -1767,6 +1855,12 @@ impl Frame {
             world_layout,
             hit,
             light_layout,
+            fill,
+            fill_args,
+            fill_layout,
+            fill_stats_layout,
+            fill_args_layout,
+            fill_dispatch,
             light,
             temporal_layout,
             temporal,
@@ -2443,6 +2537,8 @@ impl Frame {
             + self.exposure.bytes()
             + self.fsr.as_ref().map_or(0, Fsr2::bytes)
             + self.cache.size()
+            + FILL_LIST_BYTES
+            + self.fill_dispatch.size()
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -2554,6 +2650,7 @@ impl Frame {
             exposure: self.lighting.manual_exposure(),
             cache_mask: (self.cache.size() / (CACHE_CELL_WORDS * 4)) as u32 - 1,
             cache: self.lighting.cache_word(),
+            fill: self.lighting.fill_word(),
             output_size: if self.upscaling() {
                 self.output
             } else {
@@ -2866,8 +2963,38 @@ impl Frame {
                 Res::Tex(&t.irradiance),
                 Res::Buf(cache_table),
                 Res::Buf(&self.cache_stats),
+                Res::Buf(&self.edits),
             ],
         );
+        // The reopened fill runs in a shaded view outside the cutaway with F above 0: the light
+        // pass lists the frame's reopened cells into a list cleared here.
+        let fill_on = self.look.view.shades()
+            && !self.look.cutaway
+            && self.lighting.fill_samples.min(FILL_SAMPLES_MAX) > 0;
+        if fill_on {
+            encoder.clear_buffer(&self.cache_stats, CACHE_STATS_BYTES, Some(16));
+        }
+        let fill_bind = fill_on.then(|| {
+            (
+                bind_io_at(
+                    device,
+                    &self.fill_layout,
+                    &[3, 4],
+                    &[Res::Buf(cache_table), Res::Buf(&self.cache_stats)],
+                ),
+                bind_io_at(
+                    device,
+                    &self.fill_stats_layout,
+                    &[4],
+                    &[Res::Buf(&self.cache_stats)],
+                ),
+                bind_io(
+                    device,
+                    &self.fill_args_layout,
+                    &[Res::Buf(&self.fill_dispatch)],
+                ),
+            )
+        });
         let temporal_bind = bind_io(
             device,
             &self.temporal_layout,
@@ -3113,6 +3240,16 @@ impl Frame {
             pass.groups[2] = Some(&gradient_cache_bind);
             gradient.push(pass);
         }
+        let mut fill: Vec<Dispatch<'_>> = Vec::new();
+        if let Some((list, stats, args)) = &fill_bind {
+            let mut a = frame_pass(&self.fill_args, stats, 2, [1, 1]);
+            a.groups[3] = Some(args);
+            fill.push(a);
+            fill.push(Dispatch {
+                indirect: Some(&self.fill_dispatch),
+                ..frame_pass(&self.fill, list, 2, [0, 0])
+            });
+        }
         let mut atrous: Vec<Dispatch<'_>> = Vec::new();
         if filtering {
             atrous.push(frame_pass(&self.variance, &variance_bind, 2, lw));
@@ -3201,6 +3338,7 @@ impl Frame {
             hit,
             gradient,
             vec![frame_pass(&self.light, &light_bind, 2, lw)],
+            fill,
             vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
             probes,
@@ -3437,10 +3575,11 @@ fn composite_capture_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Tex
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
 /// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 20] = [
+pub const FRAME_PASSES: [&str; 21] = [
     "hit",
     "gradient",
     "light",
+    "fill",
     "temporal",
     "atrous",
     "probes",

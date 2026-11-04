@@ -22,6 +22,14 @@
 //                                        emitter (`cache_offer`); a capped cell's pixel draws
 //                                        nothing
 //   4  storage           cache_stats     the table's counters (`CacheStats`)
+//                                        and, past them, the frame's reopened-fill list: a
+//                                        hit on a reopened cell under C_FILL lists it once a
+//                                        frame (`fill_offer`), with the fill on
+//   5  uniform           light_edits     the frame's edit boxes (temporal.wgsl's `Edits`): a
+//                                        cell whose hit lies in one, dilated by one voxel, is
+//                                        marked reopened, so the faces a dig exposes (cells
+//                                        claimed new this frame) are filled as the cells the
+//                                        edit-box reset cleared are
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
 // max(n.l, 0) / dist^2, so that the composite's Lambertian `albedo * E / PI` is the former
@@ -52,6 +60,50 @@
 @group(2) @binding(2) var irradiance_out: texture_storage_2d<rgba16float, write>;
 @group(2) @binding(3) var<storage, read_write> cache_cells: array<atomic<u32>>;
 @group(2) @binding(4) var<storage, read_write> cache_stats: CacheStats;
+
+// Up to MAX_EDITS boxes, inclusive voxel bounds (temporal.wgsl's `Edits`).
+struct LightEdits {
+    count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    boxes: array<vec4<i32>, 128>,
+};
+
+@group(2) @binding(5) var<uniform> light_edits: LightEdits;
+
+// Whether `p` lies in one of the frame's edit boxes dilated by one voxel (temporal.wgsl's
+// `in_edit`).
+fn in_light_edit(p: vec3<f32>) -> bool {
+    for (var i = 0u; i < light_edits.count; i++) {
+        let lo = vec3<f32>(light_edits.boxes[2u * i].xyz - 1);
+        let hi = vec3<f32>(light_edits.boxes[2u * i + 1u].xyz + 2);
+        if (all(p >= lo) && all(p <= hi)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Lists `slot` for this frame's fill where it is reopened, under C_FILL and not yet listed this
+// frame (the stamp's compare-exchange: one pixel of the face lists it).
+fn fill_offer(slot: u32) {
+    let word = CACHE_WORDS * slot;
+    let stamp = atomicLoad(&cache_cells[word + CACHE_STAMP]);
+    let now = CACHE_REOPENED | (params.frame & 0x7FFFFFFFu);
+    if ((stamp & CACHE_REOPENED) == 0u || stamp == now) {
+        return;
+    }
+    if (atomicLoad(&cache_cells[word + CACHE_COUNT]) >= fill_until()) {
+        return;
+    }
+    if (atomicCompareExchangeWeak(&cache_cells[word + CACHE_STAMP], stamp, now).exchanged) {
+        let i = atomicAdd(&cache_stats.fill_offered, 1u);
+        if (i < FILL_LIST_MAX) {
+            cache_stats.fill_cells[i] = slot;
+        }
+    }
+}
 
 // The frame's candidate table (ADR-0025), in light_samples from `params.light_table_base`:
 // a header slot (count, total weight as f32 bits), then per entry the start and length of an
@@ -106,17 +158,35 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             var capped = false;
             if (cacheable(rec)) {
                 cell = cache_claim(cache_voxel(rec.p, ns), cache_face(rec.axis, ns));
-                if (cell == -1) {
+                if (cell < 0) {
                     atomicAdd(&cache_stats.misses, 1u);
-                } else if (cell >= 0) {
+                } else {
                     capped = atomicLoad(&cache_cells[CACHE_WORDS * u32(cell) + CACHE_COUNT]) >= cache_c_cap();
+                    if (fill_samples() > 0u) {
+                        if (light_edits.count > 0u && in_light_edit(rec.p)) {
+                            atomicOr(&cache_cells[CACHE_WORDS * u32(cell) + CACHE_STAMP], CACHE_REOPENED);
+                        }
+                        fill_offer(u32(cell));
+                    }
                 }
             }
             // A capped cell's pixel casts no emissive shadow ray: the temporal pass reads the
             // cell's mean.
             if (!capped) {
-                let r = draw_candidates(gid.xy, rec.p, n);
-                emissive = resolve_emissive(r, rec.p, ns);
+                // A cell's sample is drawn at a uniform point of its face, with the face's
+                // normal, as the fill's are (`face_point`): the cell holds the face's mean
+                // whatever points of it the pixels hit.
+                var sp = rec.p;
+                var sn = n;
+                var sns = ns;
+                if (cell >= 0) {
+                    let f = cache_face(rec.axis, ns);
+                    sp = face_point(cache_voxel(rec.p, ns), f, gid.xy);
+                    sn = face_dir(f);
+                    sns = sn;
+                }
+                let r = draw_candidates(gid.xy, sp, sn);
+                emissive = resolve_emissive(r, sp, sns);
                 if (cell >= 0) {
                     cache_add(u32(cell), emissive);
                     if (luminance(emissive) > 0.0) {
@@ -137,15 +207,13 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 // The slot holding the key `(v, face)`, claiming a free one of its CACHE_PROBES slots; -1 when
-// they all hold other keys (a miss); -2 when another pixel of the same key is claiming its slot
-// this instant (not a miss: this pixel adds nothing this frame, and the temporal pass reads the
-// cell the other pixel claims). Two scans keep one cell
-// a key: the first looks for the key in every probe (a sweep may have freed a slot before it),
-// the second claims the first free slot. A claim exchanges word 1 from 0 to the key's busy
-// value (`cache_busy`, never a valid word 1), stores word 0, then publishes word 1; a pixel
-// that meets its own busy value returns -2 instead of probing on, and every reader compares
-// word 1 with a valid key, so no pixel sees a half-written key. Nothing frees a slot during
-// the light pass, so every pixel of a key meets the same first free slot.
+// they all hold other keys (a miss). Two scans keep one cell a key: the first looks for the key
+// in every probe (a sweep may have freed a slot before it), the second claims the first free
+// slot. A claim exchanges word 1 from 0 to the key's busy value (`cache_busy`, never a valid
+// word 1), stores word 0, then publishes word 1; a pixel that meets its own key's busy value
+// takes that slot (its count and sums are the key's already) instead of probing on, and every
+// reader compares word 1 with a valid key, so no pixel sees a half-written key. Nothing frees
+// a slot during the light pass, so every pixel of a key meets the same first free slot.
 fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
     let base = cache_slot(v, face);
     let key = cache_key(v, face);
@@ -154,7 +222,7 @@ fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
         let word = CACHE_WORDS * ((base + i) & params.cache_mask);
         let w1 = atomicLoad(&cache_cells[word + 1u]);
         if (w1 == busy) {
-            return -2;
+            return i32((base + i) & params.cache_mask);
         }
         if (w1 == key.y && cache_word0_is(word, key.x)) {
             return i32((base + i) & params.cache_mask);
@@ -173,7 +241,7 @@ fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
                 return i32(slot);
             }
             if (r.old_value == busy) {
-                return -2;
+                return i32(slot);
             }
             if (r.old_value == key.y && cache_word0_is(word, key.x)) {
                 return i32(slot);
@@ -186,10 +254,10 @@ fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
     return -1;
 }
 
-// A claim's busy word 1 for `key`: its word 1 without the valid bit, or 1 where that is 0.
-// Never a valid word 1 (bit 31 clear) and never a free slot's 0.
+// A claim's busy word 1 for `key`: a hash of both words with the valid bit clear and bit 0 set,
+// so never a valid word 1 nor a free slot's 0; two keys share one with a chance of 2^-30.
 fn cache_busy(key: vec2<u32>) -> u32 {
-    return max(key.y & 0x7FFFFFFFu, 1u);
+    return (hash_u32(key.x ^ hash_u32(key.y)) & 0x7FFFFFFEu) | 1u;
 }
 
 // Whether word 0 of the cell at `word` reads `x`, re-read a few times while it reads 0 and `x`
@@ -241,6 +309,15 @@ fn kept_pack(lum: f32, k: vec2<u32>) -> u32 {
 
 fn kept_lum(w: u32) -> f32 {
     return bitcast<f32>(w & 0xFFFF0000u);
+}
+
+// A uniform point of face `face` of voxel `v`, from `rand` at pixel `px` (dimensions 0 and 1;
+// the candidates take 2 on).
+fn face_point(v: vec3<i32>, face: u32, px: vec2<u32>) -> vec3<f32> {
+    let ax = face / 2u;
+    let t0 = select(vec3<f32>(0.0), vec3<f32>(1.0), axis_mask(i32((ax + 1u) % 3u)));
+    let t1 = select(vec3<f32>(0.0), vec3<f32>(1.0), axis_mask(i32((ax + 2u) % 3u)));
+    return face_centre(v, face) + t0 * (rand(px, 0u) - 0.5) + t1 * (rand(px, 1u) - 0.5);
 }
 
 // The unit face `face` of voxel `v`'s centre.

@@ -80,7 +80,8 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
 // truncation to seven mantissa bits is under 0.008 of it.
 const GUARD_DEAD_ZONE: f32 = 0.05;
 
-// Clears the cell at `word`'s count, sums, kept key and luminance (its key and stamp stay),
+// Clears the cell at `word`'s count, sums, kept key and luminance (its key and stamp stay) and
+// marks it reopened,
 // counting the reopen, and its cause (`CacheStats::reopens_by`), when the cell held a sample.
 fn reopen_cell(word: u32, cause: u32) {
     if (atomicExchange(&cache_cells[word + CACHE_COUNT], 0u) == 0u) {
@@ -89,6 +90,8 @@ fn reopen_cell(word: u32, cause: u32) {
     for (var k = CACHE_COUNT + 1u; k <= CACHE_KEPT_LUM; k++) {
         atomicStore(&cache_cells[word + k], 0u);
     }
+    // Reopened: the fill samples it until C_FILL (cache_fill.wgsl).
+    atomicOr(&cache_cells[word + CACHE_STAMP], CACHE_REOPENED);
     atomicAdd(&cache_stats.reopens, 1u);
     atomicAdd(&cache_stats.reopens_by[cause], 1u);
 }

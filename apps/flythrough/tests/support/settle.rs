@@ -312,6 +312,12 @@ pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
 }
 
 fn lighting(pose: &Pose, setting: Setting) -> Lighting {
+    let env = |name: &str, default: u32| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    };
     setting.steady.apply(Lighting {
         lamp: setting.lamp,
         indirect: setting.indirect,
@@ -320,6 +326,12 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
         } else {
             Exposure::Manual(pose.exposure)
         },
+        // The reopened fill's sweep: `VXE_FILL_SAMPLES` (F) and `VXE_FILL_UNTIL` (C_FILL).
+        fill_samples: env(
+            "VXE_FILL_SAMPLES",
+            vxe_render::marcher::DEFAULT_FILL_SAMPLES,
+        ),
+        fill_until: env("VXE_FILL_UNTIL", vxe_render::marcher::DEFAULT_FILL_UNTIL),
         ..Lighting::default()
     })
 }
@@ -3250,7 +3262,9 @@ pub fn hall_class_run(
         &classes(&caps[1], &caps[2]),
     );
     format!(
-        "clears {clears}, sweeps {sweeps}, reopens at 4096/8192/8193 {reopens:?}, occupied {}, misses {}\n drift 4096/8192 {drift}\n one 8192/8193 {one}",
-        stats.occupied, stats.misses
+        "clears {clears}, sweeps {sweeps}, reopens at 4096/8192/8193 {reopens:?}, occupied {}, misses {}\n drift 4096/8192 {drift}\n one 8192/8193 {one}\n {}",
+        stats.occupied,
+        stats.misses,
+        table_census(&caps[2].words)
     )
 }

@@ -1,6 +1,7 @@
 // The emissive table's edit-box reset (ADR-0043): every face of every voxel in the frame's edit
 // boxes, each dilated by one voxel, has its cell's count, sums and the words after them cleared,
-// so it fills from its first sample again. The cell keeps its key: its slot stays its own.
+// so it fills from its first sample again, and marked reopened for the fill (cache_fill.wgsl). The
+// cell keeps its key: its slot stays its own.
 // Compiled after march.wgsl, whose cell key helpers it uses.
 //
 // One invocation per voxel, numbered through the boxes in order. The dispatch is the sum of
@@ -30,9 +31,11 @@ fn clear_cell(v: vec3<i32>, face: u32) {
     for (var i = 0u; i < CACHE_PROBES; i++) {
         let word = CACHE_WORDS * ((base + i) & params.cache_mask);
         if (atomicLoad(&cache_cells[word + 1u]) == key.y && atomicLoad(&cache_cells[word]) == key.x) {
-            for (var k = CACHE_COUNT; k < CACHE_WORDS; k++) {
+            for (var k = CACHE_COUNT; k < CACHE_STAMP; k++) {
                 atomicStore(&cache_cells[word + k], 0u);
             }
+            // Reopened: the fill samples it until C_FILL (cache_fill.wgsl).
+            atomicStore(&cache_cells[word + CACHE_STAMP], CACHE_REOPENED);
             return;
         }
     }

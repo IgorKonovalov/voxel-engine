@@ -561,7 +561,7 @@ impl HudStats {
             format_args!("gpu march {}  hud {}", Ms(self.march_ms), Ms(self.hud_ms)),
         )?;
         if let Some(l) = &self.lighting {
-            // Yellow when the lighting passes (light, temporal and the probe update and
+            // Yellow when the lighting passes (light, the reopened fill, temporal and the probe update and
             // gather) exceed the lighting line or the filter the denoise line.
             let ms = |name: &str| {
                 l.passes
@@ -570,7 +570,7 @@ impl HudStats {
                     .map(|&(_, v)| v)
                     .sum::<f32>()
             };
-            let colour = if ms("light") + ms("temporal") + ms("probes") + ms("gather")
+            let colour = if ms("light") + ms("fill") + ms("temporal") + ms("probes") + ms("gather")
                 > LIGHTING_LINE_MS
                 || ms("atrous") > DENOISE_LINE_MS
             {
@@ -1509,9 +1509,10 @@ impl Modes {
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
-    /// indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, exposure
-    /// auto eye +1.53 EV` (the probe rays per update, the share of probes refreshed a frame,
-    /// while indirect light is on the voxels between probes, the emissive table's cells, and
+    /// indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to
+    /// 256, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes refreshed
+    /// a frame, while indirect light is on the voxels between probes, the emissive table's cells,
+    /// the reopened fill's samples a frame and the count it fills to, or `off`, and
     /// the exposure in EV, `log2 e`), after `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
         let l = &self.lighting;
@@ -1525,7 +1526,7 @@ impl Modes {
             String::new()
         };
         format!(
-            "{source}lighting {}, shadow walk {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {}, fill {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.history.name(),
@@ -1536,6 +1537,11 @@ impl Modes {
             on(l.filter),
             on(self.pulse),
             l.cells(),
+            if l.fill_samples == 0 {
+                "off".to_owned()
+            } else {
+                format!("{} to {}", l.fill_samples, l.fill_until)
+            },
             self.exposure_mode(),
             self.exposure_ev()
         )
@@ -1589,7 +1595,7 @@ fn wrap(parts: &[&str]) -> Vec<String> {
 mod mode_tests {
     use super::*;
 
-    /// The banner and the modes' line name the emissive table and its cells.
+    /// The banner and the modes' line name the emissive table, its cells and the reopened fill.
     #[test]
     fn the_banner_names_the_table() {
         let m = Modes::new(
@@ -1599,6 +1605,7 @@ mod mode_tests {
         );
         let banner = m.banner(0.0).expect("the banner shows at the start");
         assert!(banner.contains("table 1048576"), "{banner}");
+        assert!(banner.contains("fill 8 to 256"), "{banner}");
         let small = Modes::new(
             vxe_render::Lighting {
                 table_cells: 64,
@@ -1608,6 +1615,15 @@ mod mode_tests {
             0.0,
         );
         assert!(small.line().contains("table 64,"), "{}", small.line());
+        let off = Modes::new(
+            vxe_render::Lighting {
+                fill_samples: 0,
+                ..vxe_render::Lighting::default()
+            },
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        assert!(off.line().contains("fill off,"), "{}", off.line());
     }
 
     /// Each of `F3` to `F7` and `M` changes the banner's text to the new mode; the banner is
@@ -1622,7 +1638,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, table 1048576\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nhistory edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, table 1048576\nfill 8 to 256, exposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
