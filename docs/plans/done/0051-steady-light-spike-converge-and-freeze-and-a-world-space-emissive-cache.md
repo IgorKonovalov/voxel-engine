@@ -707,6 +707,8 @@ Phase 4's verdict is recorded in the log, so the plan now awaits its fresh-sessi
 
 Recorded at the close review (2026-11-04, fresh session). Each is for the plan the verdict names
 (the ADR and that plan follow), not a fix to this spike's code, which is thrown away with it.
+Taken up the same day by [ADR-0043](../../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
+and [Plan 0057](../0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md).
 
 - **The settle under B is not "count to 5".** At the hall, `b --indirect off` at native reads a
   mean 3.22 at 64 frames and 1.13 at 512 against its own 8192 (Phase 3's settle table); the

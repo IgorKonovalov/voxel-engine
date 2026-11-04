@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0043.**
+**Next free number: 0044.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -32,12 +32,12 @@ the status.
 | [0015](0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) | Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction | accepted; level and room-change clauses superseded by ADR-0021 |
 | [0016](0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) | A falling region crushes the sub-threshold voxels in its path | accepted (Plan 0022); amends ADR-0008's drop clause |
 | [0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) | The mirror's CPU work stays in the frame loop, bounded per frame, with narrowing on the stream workers | accepted; worker narrowing not built (Outcome); Alternative B's ring taken up by ADR-0022 |
-| [0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md) | Direct light is one sample per pixel from a hit buffer, denoised by an SVGF-family filter whose history dies where the world was edited | accepted (Plan 0024) |
+| [0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md) | Direct light is one sample per pixel from a hit buffer, denoised by an SVGF-family filter whose history dies where the world was edited | accepted (Plan 0024); emissive part amended by ADR-0043 (proposed) |
 | [0019](0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md) | Gamepad input is generic axes and pad buttons in the shell's `Input`, fed by the testbed's own gilrs | accepted |
 | [0020](0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) | A paired mixer-bench bound is read with both builds' loops aligned to 64 bytes | accepted |
 | [0021](0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) | Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network | accepted (Plan 0020) |
 | [0022](0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) | Mirror uploads go through a persistently mapped staging belt and copy commands, not `Queue::write_buffer` | accepted (Plan 0027; Outcome: belt share a miss); supersedes ADR-0017's Alternative B rejection in part |
-| [0023](0023-indirect-light-from-a-scrolling-probe-volume.md) | Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights | accepted (Plan 0029, Outcome) |
+| [0023](0023-indirect-light-from-a-scrolling-probe-volume.md) | Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights | accepted (Plan 0029, Outcome); ray shading and blend amended by ADR-0043 (proposed) |
 | [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | accepted (Plan 0030); superseded in part by ADR-0034; opt-in since Plan 0055 |
 | [0025](0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md) | Light candidates come from a power-over-distance table of the emitter chunks near the camera, and only those chunks hold light samples on the GPU | accepted (Plan 0024) |
 | [0026](0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md) | The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets | proposed (Plan 0032) |
@@ -50,13 +50,14 @@ the status.
 | [0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md) | Exposure adapts like an eye: fast toward bright, slow toward dark in two stages, metered and stepped on the GPU, applied as pre-exposure | accepted, Outcome (Plan 0040) |
 | [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | accepted, Outcome (Plans 0041, 0055): at 1.5 the fly-through's default |
 | [0035](0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md) | DX12 shaders compile with wgpu's bundled static DXC, never FXC | accepted, Outcome (Plan 0046) |
-| [0036](0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md) | Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient | accepted, Outcome (Plan 0047): H 256, the f32 store, the guard on; probe slices hashed |
-| [0037](0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md) | The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp | proposed (Plan 0048) |
+| [0036](0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md) | Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient | accepted, Outcome (Plan 0047); superseded by ADR-0043 (proposed) |
+| [0037](0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md) | The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp | proposed (Plan 0048); moot under ADR-0043 (proposed) |
 | [0038](0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md) | The contour plane code holds a zero normal component exactly | accepted, Outcome (Plan 0050); superseded by ADR-0041, moot |
 | [0039](0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md) | The contour walk closes a crack at the passed voxel's exit, with the passed plane's normal | accepted, Outcome (Plan 0050); superseded by ADR-0041, moot |
 | [0040](0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md) | One-voxel features melt into the contour surface: the plane is fit on a majority-filtered occupancy, and the shading normal is a field over the planes | rejected, never accepted (Plan 0053) |
 | [0041](0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) | The default surface is honest cubes; the trilinear zero set of the 27-count field is an opt-in look for smooth materials | accepted, Outcome (Plan 0054); supersedes ADR-0011's surface, ADR-0038, ADR-0039 |
 | [0042](0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md) | The far shading normal blends from the face normal to the 27-count gradient by the voxel's size on screen | accepted (Plan 0055); `[2, 6]` provisional |
+| [0043](0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md) | Emissive light is read from a world-space table of per-face irradiance, and the probe volume becomes a lamp-bounce channel | proposed (Plan 0057); amends ADR-0018, ADR-0023, ADR-0036; makes ADR-0037 moot |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
