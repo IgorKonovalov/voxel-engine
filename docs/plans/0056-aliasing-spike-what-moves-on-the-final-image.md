@@ -266,6 +266,13 @@ tier gates need no new entry.
   the first three upscalers, far normal on and off; ADR-0042 says that it was never judged there. At
   the window's size, 2530 x 1378 (17 phases): the default alone. `D` under `E`, FSR 2 and native, at
   the hall.
+  **Amended 2026-11-04 (owner): the level's fast motion on the verdict's light.** Plan 0051's verdict
+  is `--steady b --indirect off` (the lamp exact, the emissive from the world-space table, no indirect
+  gather; this branch holds it), so at the level `H` is that light, lamp off. Beside the slow pan, a
+  fast yaw at ten times its rate (ten pixels a frame; `C` lags by that shift) at `vein` and `patch`,
+  under `H` and under `E`, FSR 2 at 1.5 and native: the owner saw small yellow dots on fast turns and
+  flights in every arm of Plan 0051's session, hall and level, and no arm removed them. They get a row
+  in the class table. A flight is still not read headless: the owner flies in Phase 4, on this light.
 - **The rings,** at the hall's floor and the level's `patch`:
   - **R1:** the z-level map (`floor(p.z)` parity from `hit_positions`) written beside the crop; the share
     of ring-edge pixels within 1 pixel of a z-level change. At the hall, the CPU's `floor_at` contours
@@ -290,6 +297,9 @@ tier gates need no new entry.
   4. **Every row of the class table has its answer in the log,** in one line each, or "only the eye", or
      "unread" with why. The rings' row names which of R1 to R5 stood, and what is left.
   5. The log names the arms that Phase 3 should carry, in one line each, with the reading behind each.
+  6. **Amended 2026-11-04 (owner):** the yellow dots' row names their class from the fast-yaw rows (light,
+     if they appear under `H` and not `E`; upscaler, if under FSR 2 and not native; geometry, if under
+     all four), or "unread" with why, and whether they are world-anchored or camera-anchored.
 
 ### Phase 3: Candidates, costs and the window's toggles
 
@@ -442,8 +452,8 @@ The owner, 2026-11-03: "approve, go with recommended".
 
 - Design or ship a fix. A candidate is a reading behind a knob. The fix is the ADR and plan after Phase 4.
 - Reopen ADR-0034 by assumption, remove `own` (Plan 0045, or a later one), or remove any upscaler.
-- Attribute or fix the drift, the probes' wander, the emissive path's creep or the dots: Plan 0051 and its
-  verdict plan.
+- Attribute or fix the drift, the probes' wander or the emissive path's creep: Plan 0051 and its verdict
+  plan. Fix the dots: the verdict plan's, once Phase 2 has named their class (amended 2026-11-04, owner).
 - Add MSAA, analytic coverage or a mip-based far normal (ADR-0042's Alternative A): a later plan, if the
   window asks.
 - Change the floor's generator, so no smoothing of the terraces, even if R1 stands. A level's geometry is the
