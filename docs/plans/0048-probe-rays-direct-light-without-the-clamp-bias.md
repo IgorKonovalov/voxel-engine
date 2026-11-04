@@ -18,7 +18,7 @@
 > changes otherwise.
 > **Amended 2026-11-03 (owner: Plan 0049 dropped):** Plan 0049 will not merge, and the settle,
 > dot and shimmer tests it was to add were never written. Its place in this plan's order goes to
-> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
+> [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
 > which already held this plan for its answer. This plan starts after Plan 0051 closes and, if
 > 0051's ADR keeps a mechanism, after the plan that builds it; its "before" is main then. It holds
 > whatever settle, dot and shimmer tests that plan asserts, and Plan 0047's stillness tests. If
@@ -50,7 +50,7 @@
 > (`stepc-diag.log`, `stepc-donly.patch`, `stepc-noclamp.patch`) was in that plan's worktree
 > under `live/`, removed at its merge; the log keeps the readings.
 > **Starts after:** Plan 0045, if this plan stands at
-> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
+> [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
 > verdict; the order is 0051, its verdict plan, 0044, 0045, this plan (amended 2026-11-03, owner).
 > The verdict plan's work may change
 > the probe update's schedule, the emissive path and the young pixels, and may add settle, dot and

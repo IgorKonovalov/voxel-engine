@@ -1,6 +1,9 @@
 # 0051: The steady-light spike: static light that converges and freezes, and a world-space emissive cache, each read against the wander, the dots and the shimmer
 
-> **Status:** in-progress (2026-11-04): every phase implemented; awaiting the fresh-session close review (approved 2026-10-29, amended 2026-11-03)
+> **Status:** done (2026-11-04, v0.41.0): closed clean as a spike; A, B and C built behind settings, all off by
+> default, and read on both adapters; the owner's verdict is B with indirect off, the nearest read, the probes
+> shrunk to a lamp-bounce channel whose logic is redone, exposure unchanged; the ADR and the plan the verdict
+> names follow
 > **Created:** 2026-10-29
 > **Amended 2026-11-03 (owner):** "amend". The plan as drafted could not start: its cache keyed
 > on `contour_attr`'s popcount index, which Plans 0053 and 0054 removed (v0.39.0), and its rig
@@ -55,28 +58,28 @@
 > **Approved:** 2026-10-29 (owner): "we will start as soon as 50 is done". The lane runs alone.
 > The amendment keeps the plan's question and its two experiments; dev starts it on the owner's
 > "go" as usual.
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
-> **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
+> **Related ADRs:** [ADR-0036](../../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
 > (its Alternative A, the world-space cache, is this spike's second experiment; its Outcome
 > names Plan 0049, dropped, and "any mechanism beyond this decision or ADR-0023 is a new ADR",
 > which is this spike's),
-> [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe update
-> whose blend the first experiment changes), [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
-> (the estimator, the screen history, the firefly clamp), [ADR-0037](../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
+> [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe update
+> whose blend the first experiment changes), [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> (the estimator, the screen history, the firefly clamp), [ADR-0037](../../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
 > (proposed; Plan 0048, which waits for this spike's answer),
-> [ADR-0041](../adrs/0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) (honest
+> [ADR-0041](../../adrs/0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) (honest
 > cubes the default, the attribute gone). No ADR at draft: see Decision.
 > **Source:** the architect's assessment of 2026-10-29, after Plan 0049's live session 2
-> ([`LIGHT-FEEDBACK.md`](../../LIGHT-FEEDBACK.md); the Phase 1 readings in
-> [Plan 0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md)'s Implementation
+> ([`LIGHT-FEEDBACK.md`](../../../LIGHT-FEEDBACK.md); the Phase 1 readings in
+> [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md)'s Implementation
 > log). The owner: "clearly something is wrong and we need to understand why", and, agreeing with
 > the assessment "mostly", a lean toward "simplification of lights, but steadiness".
-> **Starts after:** [Plan 0055](done/0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md)
+> **Starts after:** [Plan 0055](0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md)
 > closes (amended 2026-11-03, evening). It runs alone on main. The next
 > light plans wait for Phase 4's call: the plan the ADR names, if any, then
-> [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md), then
-> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md).
+> [Plan 0048](../0048-probe-rays-direct-light-without-the-clamp-bias.md), then
+> [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md).
 
 ## TL;DR
 
@@ -673,7 +676,7 @@ Determinism is not touched: everything is in `vxe-render`.
 | 3: Experiment B, the world-space emissive cache | dev | done; tables in; gate at the tip green | 7313d0a, c9ce8c9 (code), 42e2934 (digests), committed with this row |
 | 4: The owner's call in the window | human | done; verdict in the log | committed with this row |
 
-Readings and attempts: [`logs/0051.md`](logs/0051.md).
+Readings and attempts: [`logs/0051.md`](../logs/0051.md).
 
 ### Notes
 
@@ -701,3 +704,31 @@ Phase 4's verdict is recorded in the log, so the plan now awaits its fresh-sessi
 - **Outstanding `human` phases:** none.
 
 ## Followups
+
+Recorded at the close review (2026-11-04, fresh session). Each is for the plan the verdict names
+(the ADR and that plan follow), not a fix to this spike's code, which is thrown away with it.
+
+- **The settle under B is not "count to 5".** At the hall, `b --indirect off` at native reads a
+  mean 3.22 at 64 frames and 1.13 at 512 against its own 8192 (Phase 3's settle table); the
+  verdict plan states a settle bar in frames and the fill mechanism that meets it (pre-warming,
+  coarser far cells, or a lower `C_MIN`), and the owner's dug-hole settle joins that bar.
+- **FSR 2 moves the verdict's light.** `b --indirect off` drifts 0.525 under FSR 2 against 0.004
+  native, and every `up` row's one-frame max reads 99 to 107 against 1 to 7 native. Plan 0056
+  reads the class; the verdict plan takes its answer as an input.
+- **The owner's dots are not reproduced headless.** `a_turn_reads_converged_cells` takes its
+  second branch: today reads no excess at that run (-116.4 against a floor of 31.4), so it defends
+  only that B adds none. The verdict plan's dots test must read an excess for today first, from
+  Plan 0056's fast-yaw rows.
+- **The edit-box reset is a spike's.** `clear_cells` dispatches the dilated boxes' summed volume
+  over 64 in one dimension, with no cap at the workgroup limit (65 535, about 4.19 M voxels) and a
+  `u32` product; and an overflowed frame (more than `MAX_EDITS` boxes) flushes the screen history
+  but leaves the table's cells. Invalidation proper (and a world-space guard) is the ADR's.
+- **The lamp-bounce channel needs its own reach.** `LAMP_REACH` from `intensity / d^2 < 1/256`
+  is 554 voxels, past the volume's far corner (about 443), so a moving lamp holds every probe
+  open; the channel's design sets a reach the volume can bound, or none.
+- **Readings owed on the verdict's arm:** the full-table share (slot-probe failures, apart from
+  the no-cell share), the table's size from its occupancy (0.0142 at most here), `b --indirect
+  off` in flight on both adapters, and quiet rounds at rest. `--steady ab --indirect off` is the
+  verdict's first question (Phase 4, item 1).
+- **The toggle's flicker map** (Phase 2, done-when 13) was never made; it matters again only if
+  the lamp-bounce channel can move the image on a toggle.
