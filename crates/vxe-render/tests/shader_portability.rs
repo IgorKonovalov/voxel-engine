@@ -35,6 +35,14 @@ fn shaders() -> Vec<(&'static str, String)> {
             ),
         ),
         (
+            "cache_fill.wgsl",
+            format!(
+                "{MARCH}\n{}\n{}",
+                include_str!("../src/shaders/light.wgsl"),
+                include_str!("../src/shaders/cache_fill.wgsl")
+            ),
+        ),
+        (
             "probe_gather.wgsl",
             format!(
                 "{MARCH}\n{}",

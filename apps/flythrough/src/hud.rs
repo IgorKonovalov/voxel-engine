@@ -419,6 +419,8 @@ pub struct LightingRow {
     pub light_samples: u64,
     pub live_probes: Option<u32>,
     pub table: Option<vxe_render::TableStats>,
+    /// The preload's counts at the last sample (`None` while it is off).
+    pub preload: Option<vxe_render::marcher::PreloadStats>,
     pub modes: String,
     /// The internal and output sizes while the upscaler runs: a row then reads its passes.
     pub upscale: Option<[[u32; 2]; 2]>,
@@ -564,7 +566,7 @@ impl HudStats {
             format_args!("gpu march {}  hud {}", Ms(self.march_ms), Ms(self.hud_ms)),
         )?;
         if let Some(l) = &self.lighting {
-            // Yellow when the lighting passes (light, the reopened fill, temporal and the probe update and
+            // Yellow when the lighting passes (light, the reopened fill, the preload, temporal and the probe update and
             // gather) exceed the lighting line or the filter the denoise line.
             let ms = |name: &str| {
                 l.passes
@@ -573,7 +575,12 @@ impl HudStats {
                     .map(|&(_, v)| v)
                     .sum::<f32>()
             };
-            let colour = if ms("light") + ms("fill") + ms("temporal") + ms("probes") + ms("gather")
+            let colour = if ms("light")
+                + ms("fill")
+                + ms("preload")
+                + ms("temporal")
+                + ms("probes")
+                + ms("gather")
                 > LIGHTING_LINE_MS
                 || ms("atrous") > DENOISE_LINE_MS
             {
@@ -594,6 +601,17 @@ impl HudStats {
             let table = l.table.map_or_else(String::new, |t| {
                 format!(", table {} {} {}", t.cells, t.occupied, t.misses)
             });
+            let table = match l.preload {
+                Some(p) => format!(
+                    "{table}, preload {} bricks {} listed {} claimed {} refused {} samples",
+                    p.edit_bricks + p.visited,
+                    p.listed,
+                    p.claimed,
+                    p.refused_load + p.refused_miss + p.refused_unlit,
+                    p.samples
+                ),
+                None => table,
+            };
             row(
                 out,
                 HudColour::White,
@@ -1101,6 +1119,16 @@ mod tests {
                 occupied: 59_724,
                 misses: 3,
             }),
+            preload: Some(vxe_render::marcher::PreloadStats {
+                edit_bricks: 2,
+                visited: 128,
+                listed: 40,
+                claimed: 12,
+                refused_load: 1,
+                refused_unlit: 5,
+                samples: 20_000,
+                ..Default::default()
+            }),
             modes: "lighting full".to_owned(),
             upscale: None,
         });
@@ -1113,7 +1141,7 @@ mod tests {
         );
         assert_eq!(
             lines[4],
-            "lights 18522 samples, 9876 probes live, table 1048576 59724 3; lighting full"
+            "lights 18522 samples, 9876 probes live, table 1048576 59724 3, preload 130 bricks 40 listed 12 claimed 6 refused 20000 samples; lighting full"
         );
         assert_eq!(colours[3], HudColour::White);
         s.lighting.as_mut().unwrap().passes[5].1 = 1.25;
@@ -1126,6 +1154,7 @@ mod tests {
         s.lighting.as_mut().unwrap().passes[5].1 = 0.5;
         s.lighting.as_mut().unwrap().live_probes = None;
         s.lighting.as_mut().unwrap().table = None;
+        s.lighting.as_mut().unwrap().preload = None;
         s.write_rows(&mut out, &mut colours);
         assert_eq!(
             out.lines().nth(4),
@@ -1151,6 +1180,7 @@ mod tests {
             light_samples: 0,
             live_probes: None,
             table: None,
+            preload: None,
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
         });
@@ -1219,6 +1249,7 @@ mod tests {
             light_samples: 0,
             live_probes: None,
             table: None,
+            preload: None,
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
         });
@@ -1277,6 +1308,9 @@ pub const BANNER_ROWS: usize = 9;
 pub enum ModeKey {
     /// `F3`: full or coarse shadow walk.
     ShadowWalk,
+    /// `F4`: the camera-radius preload, off or at the start's radius (or the default's when
+    /// it started off).
+    Preload,
     /// `F5`: edit boxes, or edit boxes and the gradient.
     History,
     /// `F6`: full or half lighting resolution.
@@ -1360,6 +1394,8 @@ pub struct Modes {
     /// Voxels between the probe volume's probes: the line names it (`probes 16`) while
     /// indirect light is on.
     probe_spacing: u32,
+    /// The preload's radius `F4` turns it back on at.
+    preload_on: u32,
 }
 
 impl Modes {
@@ -1383,6 +1419,11 @@ impl Modes {
             look: None,
             view: None,
             probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
+            preload_on: if lighting.preload_radius > 0 {
+                lighting.preload_radius
+            } else {
+                vxe_render::marcher::DEFAULT_PRELOAD_RADIUS
+            },
         }
     }
 
@@ -1467,6 +1508,14 @@ impl Modes {
                 }
             }
             ModeKey::Lamp => l.lamp = !l.lamp,
+            ModeKey::Preload => {
+                if l.preload_radius > 0 {
+                    self.preload_on = l.preload_radius;
+                    l.preload_radius = 0;
+                } else {
+                    l.preload_radius = self.preload_on;
+                }
+            }
             ModeKey::Indirect => l.indirect = !l.indirect,
             ModeKey::Pulse => self.pulse = !self.pulse,
             ModeKey::Exposure => {
@@ -1516,10 +1565,12 @@ impl Modes {
 
     /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
     /// indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to
-    /// 256, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes refreshed
-    /// a frame, while indirect light is on the voxels between probes, the emissive table's cells,
-    /// the reopened fill's samples a frame and the count it fills to, or `off`, and
-    /// the exposure in EV, `log2 e`), after `source NAME, ` when the modes name a source.
+    /// 256, preload R 64 B 128 C 256, exposure auto eye +1.53 EV` (the probe rays per update,
+    /// the share of probes refreshed a frame, while indirect light is on the voxels between
+    /// probes, the emissive table's cells, the reopened fill's samples a frame and the count it
+    /// fills to, or `off`, the preload's radius in voxels, bricks a frame and the count it fills
+    /// to, or `preload off` (`F4`), and the exposure in EV, `log2 e`), after `source NAME, ` when
+    /// the modes name a source.
     pub fn line(&self) -> String {
         let l = &self.lighting;
         let on = |b: bool| if b { "on" } else { "off" };
@@ -1532,7 +1583,7 @@ impl Modes {
             String::new()
         };
         format!(
-            "{source}lighting {}, shadow walk {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {}, fill {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {}, fill {}, {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.history.name(),
@@ -1547,6 +1598,16 @@ impl Modes {
                 "off".to_owned()
             } else {
                 format!("{} to {}", l.fill_samples, l.fill_until)
+            },
+            if l.preload_brick_radius() == 0 {
+                "preload off".to_owned()
+            } else {
+                format!(
+                    "preload R {} B {} C {}",
+                    8 * l.preload_brick_radius(),
+                    l.preload_bricks,
+                    l.preload_cap()
+                )
             },
             self.exposure_mode(),
             self.exposure_ev()
@@ -1601,7 +1662,9 @@ fn wrap(parts: &[&str]) -> Vec<String> {
 mod mode_tests {
     use super::*;
 
-    /// The banner and the modes' line name the emissive table, its cells and the reopened fill.
+    /// The banner and the modes' line name the emissive table, its cells, the reopened fill
+    /// and the preload (`preload R 64 B 128 C 256`, or `preload off`); `F4` turns the preload
+    /// off and back on at its radius.
     #[test]
     fn the_banner_names_the_table() {
         let m = Modes::new(
@@ -1630,6 +1693,35 @@ mod mode_tests {
             0.0,
         );
         assert!(off.line().contains("fill off,"), "{}", off.line());
+        assert!(banner.contains("preload R 64 B 128 C 256"), "{banner}");
+        let mut wide = Modes::new(
+            vxe_render::Lighting {
+                preload_radius: 100,
+                preload_until: 1024,
+                ..vxe_render::Lighting::default()
+            },
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        assert!(
+            wide.line().contains("preload R 96 B 128 C 1024,"),
+            "{}",
+            wide.line()
+        );
+        wide.press(ModeKey::Preload, 1.0);
+        assert!(wide.line().contains("preload off,"), "{}", wide.line());
+        assert_eq!(wide.lighting.preload_radius, 0);
+        wide.press(ModeKey::Preload, 2.0);
+        assert_eq!(wide.lighting.preload_radius, 100);
+        let started_off = Modes::new(
+            vxe_render::Lighting {
+                preload_radius: 0,
+                ..vxe_render::Lighting::default()
+            },
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        assert!(started_off.line().contains("preload off,"));
     }
 
     /// Each of `F3` to `F7` and `M` changes the banner's text to the new mode; the banner is
@@ -1644,7 +1736,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, table 1048576\nfill 8 to 256, exposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nhistory edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, table 1048576\nfill 8 to 256, preload R 64 B 128 C 256\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -1654,6 +1746,7 @@ mod mode_tests {
             (ModeKey::History, "history gradient"),
             (ModeKey::Resolution, "lighting full"),
             (ModeKey::Lamp, "lamp off"),
+            (ModeKey::Preload, "preload off"),
             (ModeKey::Indirect, "indirect on"),
             (ModeKey::Pulse, "ore pulse on"),
         ] {

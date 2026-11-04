@@ -25,7 +25,7 @@
 //! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]
 //! [--history edits|gradient] [--lighting full|half]
-//! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
+//! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
 //! [--exposure auto|E]
@@ -110,8 +110,9 @@
 //! indirect light on (off by default, ADR-0043); `--probe-spacing N` sets the voxels between its probes
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
-//! default, 16 or 32). In a window
-//! `F3` toggles the shadow walk, `F5` the history killer, `F6` the lighting
+//! default, 16 or 32); `--preload VOXELS|off` sets the camera-radius preload's radius (default
+//! 64, rounded down to whole bricks, at most 128) or turns it off. In a window
+//! `F3` toggles the shadow walk, `F4` the preload, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp, `F8` indirect light and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets, naming the look on the banner.
@@ -460,6 +461,9 @@ struct Args {
     lighting: LightingResolution,
     /// `--indirect on|off`: indirect light from the probe volume (on by default).
     indirect: bool,
+    /// `--preload VOXELS|off`: the camera-radius preload's radius in voxels, 0 off (default
+    /// `DEFAULT_PRELOAD_RADIUS`).
+    preload: u32,
     /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
     probe_spacing: u32,
     /// `--probe-rays N`: rays each updated probe traces (default 64).
@@ -653,6 +657,7 @@ impl Args {
             indirect: self.indirect,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
+            preload_radius: self.preload,
             ..Lighting::default()
         }
     }
@@ -728,6 +733,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp_toggle: None,
         fade_reading: false,
         indirect: false,
+        preload: vxe_render::marcher::DEFAULT_PRELOAD_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
         probe_slices: vxe_render::probes::SLICES,
@@ -985,6 +991,20 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 return Err(format!(
                     "{flag} is gone since Plan 0057: emissive light is read from the per-face table (ADR-0043)"
                 ));
+            }
+            "--preload" => {
+                args.preload = match value()?.as_str() {
+                    "off" => 0,
+                    v => match v.parse::<u32>() {
+                        Ok(r) if (8..=vxe_render::marcher::PRELOAD_RADIUS_MAX).contains(&r) => r,
+                        _ => {
+                            return Err(format!(
+                                "--preload takes off or a radius of 8 to {} voxels, not {v}",
+                                vxe_render::marcher::PRELOAD_RADIUS_MAX
+                            ));
+                        }
+                    },
+                }
             }
             "--indirect" => {
                 args.indirect = match value()?.as_str() {
@@ -2212,6 +2232,8 @@ struct Hud {
     live_probes: Option<u32>,
     /// The emissive table's counters at the last sample.
     table: Option<vxe_render::TableStats>,
+    /// The preload's counts at the last sample, while it is on.
+    preload: Option<vxe_render::marcher::PreloadStats>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
     /// The last frame's cracks view, read back while that view and the HUD are on.
@@ -2244,6 +2266,7 @@ impl Hud {
             cpu_ms: 0.0,
             live_probes: None,
             table: None,
+            preload: None,
             steps: None,
             cracks: None,
             exposure: None,
@@ -2905,6 +2928,10 @@ impl Run {
             .gfx
             .as_ref()
             .map(|g| g.frame.read_table_stats(&gpu.device, &gpu.queue));
+        self.hud.preload = self.gfx.as_ref().and_then(|g| {
+            (g.frame.lighting().preload_radius > 0)
+                .then(|| g.frame.read_preload_stats(&gpu.device, &gpu.queue))
+        });
         self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
             g.frame.lighting().indirect.then(|| {
                 let probes = g.frame.probes();
@@ -2944,6 +2971,7 @@ impl Run {
                     .live_probes
                     .filter(|_| self.modes.lighting.indirect),
                 table: self.hud.table,
+                preload: self.hud.preload,
                 modes: self.modes.line(),
                 upscale: g
                     .frame
@@ -4142,6 +4170,7 @@ impl Run {
     fn handle_input(&mut self, input: &Input) {
         for (key, mode) in [
             (KeyCode::F3, hud::ModeKey::ShadowWalk),
+            (KeyCode::F4, hud::ModeKey::Preload),
             (KeyCode::F5, hud::ModeKey::History),
             (KeyCode::F6, hud::ModeKey::Resolution),
             (KeyCode::F7, hud::ModeKey::Lamp),
@@ -7382,7 +7411,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, indirect off at 64 rays 1/8, filter on, ore pulse off, table 1048576, fill 8 to 256, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, indirect off at 64 rays 1/8, filter on, ore pulse off, table 1048576, fill 8 to 256, preload R 64 B 128 C 256, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -7402,9 +7431,30 @@ mod tests {
                 "--light-radius",
                 "--light-radius takes 0 to 64 chunks, not x",
             ),
+            (
+                "--preload",
+                "--preload takes off or a radius of 8 to 128 voxels, not x",
+            ),
         ] {
             assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
         }
+        // The preload: on at 64 voxels by default, `off` is 0, a radius sets it.
+        assert_eq!(parse(&[]).unwrap().start_lighting().preload_radius, 64);
+        assert_eq!(
+            parse(&["--preload", "off"])
+                .unwrap()
+                .start_lighting()
+                .preload_radius,
+            0
+        );
+        assert_eq!(
+            parse(&["--preload", "96"])
+                .unwrap()
+                .start_lighting()
+                .preload_radius,
+            96
+        );
+        assert!(parse(&["--preload", "4"]).is_err());
         // The steady spike's flags and the screen path's are refused, naming Plan 0057.
         for flag in [
             "--steady",

@@ -90,10 +90,11 @@ fn in_light_edit(p: vec3<f32>) -> bool {
 fn fill_offer(slot: u32) {
     let word = CACHE_WORDS * slot;
     let stamp = atomicLoad(&cache_cells[word + CACHE_STAMP]);
-    let now = CACHE_REOPENED | (params.frame & 0x7FFFFFFFu);
-    if ((stamp & CACHE_REOPENED) == 0u || stamp == now) {
+    let frame = params.frame & CACHE_STAMP_FRAME;
+    if ((stamp & CACHE_REOPENED) == 0u || (stamp & CACHE_STAMP_FRAME) == frame) {
         return;
     }
+    let now = (stamp & ~CACHE_STAMP_FRAME) | frame;
     if (atomicLoad(&cache_cells[word + CACHE_COUNT]) >= fill_until()) {
         return;
     }
@@ -174,24 +175,12 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             // cell's mean.
             if (!capped) {
                 // A cell's sample is drawn at a uniform point of its face, with the face's
-                // normal, as the fill's are (`face_point`): the cell holds the face's mean
-                // whatever points of it the pixels hit.
-                var sp = rec.p;
-                var sn = n;
-                var sns = ns;
+                // normal, as the fill's and the preload's are (`fill_face`): the cell holds the
+                // face's mean whatever points of it the pixels hit.
                 if (cell >= 0) {
-                    let f = cache_face(rec.axis, ns);
-                    sp = face_point(cache_voxel(rec.p, ns), f, gid.xy);
-                    sn = face_dir(f);
-                    sns = sn;
-                }
-                let r = draw_candidates(gid.xy, sp, sn);
-                emissive = resolve_emissive(r, sp, sns);
-                if (cell >= 0) {
-                    cache_add(u32(cell), emissive);
-                    if (luminance(emissive) > 0.0) {
-                        cache_offer(u32(cell), cache_voxel(rec.p, ns), cache_face(rec.axis, ns), r);
-                    }
+                    emissive = fill_face(u32(cell), cache_voxel(rec.p, ns), cache_face(rec.axis, ns), gid.xy);
+                } else {
+                    emissive = resolve_emissive(draw_candidates(gid.xy, rec.p, n), rec.p, ns);
                 }
             }
         }
@@ -318,6 +307,39 @@ fn face_point(v: vec3<i32>, face: u32, px: vec2<u32>) -> vec3<f32> {
     let t0 = select(vec3<f32>(0.0), vec3<f32>(1.0), axis_mask(i32((ax + 1u) % 3u)));
     let t1 = select(vec3<f32>(0.0), vec3<f32>(1.0), axis_mask(i32((ax + 2u) % 3u)));
     return face_centre(v, face) + t0 * (rand(px, 0u) - 0.5) + t1 * (rand(px, 1u) - 0.5);
+}
+
+// One emissive sample of face `face` of voxel `v` (its irradiance `e`, the resampled emitter
+// `r`): at a uniform point of the face (`face_point`) with the face's normal, random numbers
+// at pixel `px`.
+struct FaceSample {
+    e: vec3<f32>,
+    r: Reservoir,
+};
+
+fn face_sample(v: vec3<i32>, face: u32, px: vec2<u32>) -> FaceSample {
+    let p = face_point(v, face, px);
+    let nf = face_dir(face);
+    let r = draw_candidates(px, p, nf);
+    return FaceSample(resolve_emissive(r, p, nf), r);
+}
+
+// Adds `s`, a sample of face `face` of voxel `v`, to the cell `slot` (`cache_add`), and offers
+// its emitter as the cell's kept emitter when it is lit (`cache_offer`).
+fn cache_take(slot: u32, v: vec3<i32>, face: u32, s: FaceSample) {
+    cache_add(slot, s.e);
+    if (luminance(s.e) > 0.0) {
+        cache_offer(slot, v, face, s.r);
+    }
+}
+
+// Draws one sample of face `face` of voxel `v` at pixel `px` into the cell `slot`
+// (`face_sample`, `cache_take`): the light pass's, the reopened fill's and the preload's
+// sample of a face with a cell. Returns its irradiance.
+fn fill_face(slot: u32, v: vec3<i32>, face: u32, px: vec2<u32>) -> vec3<f32> {
+    let s = face_sample(v, face, px);
+    cache_take(slot, v, face, s);
+    return s.e;
 }
 
 // The unit face `face` of voxel `v`'s centre.

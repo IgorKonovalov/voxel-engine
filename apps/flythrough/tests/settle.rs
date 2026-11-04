@@ -655,6 +655,129 @@ fn air_faces(world: &vxe_world::World, centre: [f32; 3], half: i32) -> Vec<([i32
     keys
 }
 
+/// The preload's census around `eye` at a radius of `r` voxels: the opaque faces toward air
+/// whose face centre lies within `r` of the eye (`air_faces`), and over the sweep's bricks
+/// (`marcher::preload_offsets` at `r / 8` bricks around the eye's brick) how many end at once
+/// (every voxel air; or one opaque material throughout with six such neighbour bricks), how
+/// many are left to visit, and the faces the visited bricks hold. A voxel outside the world
+/// reads as rock, as the mirror's absent chunks do.
+fn preload_census(world: &vxe_world::World, eye: [f32; 3], r: u32) -> String {
+    use std::collections::HashMap;
+    use vxe_world::AIR;
+    let table = world.materials();
+    let faces = air_faces(world, eye, r as i32 + 1);
+    let within = faces
+        .iter()
+        .filter(|(v, f)| {
+            let n = [
+                (-1.0f32, 0),
+                (1.0, 0),
+                (-1.0, 1),
+                (1.0, 1),
+                (-1.0, 2),
+                (1.0, 2),
+            ][*f as usize];
+            let mut c = v.map(|x| x as f32 + 0.5);
+            c[n.1] += 0.5 * n.0;
+            let d: f32 = (0..3).map(|k| (c[k] - eye[k]).powi(2)).sum();
+            d <= (r * r) as f32
+        })
+        .count();
+    // 0 every voxel air, 1 one opaque material throughout, 2 anything else.
+    let mut class: HashMap<[i32; 3], u8> = HashMap::new();
+    let mut class_of = |b: [i32; 3]| -> u8 {
+        *class.entry(b).or_insert_with(|| {
+            let mut first = None;
+            let mut uniform = true;
+            for i in 0..512 {
+                let v = [b[0] * 8 + i % 8, b[1] * 8 + (i / 8) % 8, b[2] * 8 + i / 64];
+                let m = world.material_at(v);
+                if first.is_none() {
+                    first = Some(m);
+                } else if first != Some(m) {
+                    uniform = false;
+                    break;
+                }
+            }
+            match first.flatten() {
+                _ if !uniform => 2,
+                Some(AIR) => 0,
+                Some(m) if table.is_translucent(m) => 2,
+                _ => 1,
+            }
+        })
+    };
+    let eb = eye.map(|c| (c / 8.0).floor() as i32);
+    let offsets = vxe_render::marcher::preload_offsets(r / 8);
+    let (mut air, mut solid, mut left) = (0usize, 0usize, Vec::new());
+    for o in &offsets {
+        let b = [eb[0] + o[0], eb[1] + o[1], eb[2] + o[2]];
+        match class_of(b) {
+            0 => air += 1,
+            1 if [
+                [-1, 0, 0],
+                [1, 0, 0],
+                [0, -1, 0],
+                [0, 1, 0],
+                [0, 0, -1],
+                [0, 0, 1],
+            ]
+            .iter()
+            .all(|d| class_of([b[0] + d[0], b[1] + d[1], b[2] + d[2]]) == 1) =>
+            {
+                solid += 1;
+            }
+            _ => left.push(b),
+        }
+    }
+    let left_set: std::collections::HashSet<[i32; 3]> = left.iter().copied().collect();
+    let in_bricks = air_faces(world, eye, r as i32 + 16)
+        .iter()
+        .filter(|(v, _)| left_set.contains(&v.map(|c| c.div_euclid(8))))
+        .count();
+    format!(
+        "R {r}: faces within {within}; bricks {} (air {air}, enclosed solid {solid}, left {}), faces in the bricks left {in_bricks}",
+        offsets.len(),
+        left.len()
+    )
+}
+
+/// The preload's census (Plan 0057 Phase 4 Part 2b, done-when 12): `preload_census` at 64 and
+/// 96 voxels around `VEIN_POSE`'s, `PATCH_POSE`'s and the showcase hall's eye, on the level and
+/// the showcase at seed 1. No GPU.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn preload_face_census() {
+    use flythrough::showcase::{SHOTS, ShowcaseSource};
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        vxe_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    let level = vxe_world::World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    let show = ShowcaseSource::new(1);
+    let hall = vxe_world::World::generate(
+        show.extent(),
+        &show,
+        &flythrough::with_showcase_rows(&flythrough::with_emissive_ore(
+            &flythrough::cave_materials(),
+        )),
+    );
+    let hall_eye = SHOTS[0].eye.0.map(|v| v as f32 + 0.5);
+    for (name, world, eye) in [
+        ("vein", &level, VEIN_POSE.position),
+        ("patch", &level, stillness::PATCH_POSE.position),
+        ("hall", &hall, hall_eye),
+    ] {
+        for r in [64, 96] {
+            println!("reading: census {name} {}", preload_census(world, eye, r));
+        }
+    }
+}
+
 /// The table's hash spreads a level's keys (ADR-0043's table): the key set of every opaque
 /// face toward air within a 128-voxel cube around `PATCH_POSE` and around `VEIN_POSE` on the
 /// level at seed 1 (`air_faces`), inserted in key order by linear probing through
@@ -2989,6 +3112,20 @@ const DIG_REF: usize = 60;
 /// are settled (0 when none), `None` when that frame is past `DIG_FRAMES - DIG_REF`. Returns
 /// `S90` and the hole's pixel count.
 fn dug_hole_s90(far: bool, fill_samples: u32) -> Option<(Option<usize>, usize)> {
+    dug_hole_run(far, |l| Lighting { fill_samples, ..l }).map(|h| (h.s90, h.lit))
+}
+
+/// A dug hole's run (`dug_hole_s90`): `S90`, the lit hole pixels, the settled share at frames
+/// 1, 4 and 16 after the dig, and the preload's counts on the dig's frame.
+struct DugHole {
+    s90: Option<usize>,
+    lit: usize,
+    shares: [f64; 3],
+    dig_frame: vxe_render::marcher::PreloadStats,
+}
+
+/// `dug_hole_s90`'s run with the rig's lighting changed by `adjust`.
+fn dug_hole_run(far: bool, adjust: impl Fn(Lighting) -> Lighting) -> Option<DugHole> {
     use vxe_world::*;
     let (camera, centre) = dig_case(far);
     let mut rig = cache_box_rig_on(
@@ -2999,7 +3136,8 @@ fn dug_hole_s90(far: bool, fill_samples: u32) -> Option<(Option<usize>, usize)> 
         None,
     )?;
     let l = rig.frame.lighting();
-    rig.frame.set_lighting(Lighting { fill_samples, ..l });
+    rig.frame.set_lighting(adjust(l));
+    let fill_samples = rig.frame.lighting().fill_samples;
     rig.step(16);
     let r = rig
         .level
@@ -3019,10 +3157,12 @@ fn dug_hole_s90(far: bool, fill_samples: u32) -> Option<(Option<usize>, usize)> 
     let inside = |k: FaceKey| (0..3).all(|a| k.0[a] >= min.0[a] - 1 && k.0[a] <= max.0[a] + 1);
     let mut pixels: Vec<usize> = Vec::new();
     let mut series: Vec<Vec<f64>> = Vec::with_capacity(DIG_FRAMES);
+    let mut dig_frame = vxe_render::marcher::PreloadStats::default();
     for f in 1..=DIG_FRAMES {
         rig.step(1);
         let (d, q) = (&rig.level.device, &rig.level.queue);
         if f == 1 {
+            dig_frame = rig.frame.read_preload_stats(d, q);
             let pos = vxe_render::readback::read_float(d, q, rig.frame.hit_positions());
             let info = vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records());
             pixels = (0..pos.len())
@@ -3065,11 +3205,17 @@ fn dug_hole_s90(far: bool, fill_samples: u32) -> Option<(Option<usize>, usize)> 
     let (by, _) = rig
         .frame
         .read_table_reopens_by(&rig.level.device, &rig.level.queue);
+    let preload = rig.frame.lighting().preload_radius;
     println!(
-        "reading: dug hole far {far} F {fill_samples}: reopens by branch {by:?}; settled share at 1/8/16/32/64/120/240: {:?}",
-        [1usize, 8, 16, 32, 64, 120, 240].map(|f| (settled(f) * 1000.0).round() / 1000.0)
+        "reading: dug hole far {far} F {fill_samples} preload {preload}: reopens by branch {by:?}; settled share at 1/4/8/16/32/64/120/240: {:?}; dig frame's preload {dig_frame:?}",
+        [1usize, 4, 8, 16, 32, 64, 120, 240].map(|f| (settled(f) * 1000.0).round() / 1000.0)
     );
-    Some((s90, lit.len()))
+    Some(DugHole {
+        s90,
+        lit: lit.len(),
+        shares: [settled(1), settled(4), settled(16)],
+        dig_frame,
+    })
 }
 
 /// A dug hole settles within the bar (Plan 0057 Phase 4's dug-hole bar, on the dig box): with
@@ -3272,4 +3418,452 @@ fn hall_class_readings() {
         let line = hall_class_run(&device, &queue, &gpu, camera, scale == "native");
         println!("reading[{adapter}]: hall classes {scale}: {line}");
     }
+}
+
+// ---- Plan 0057 Phase 4 Part 2b: the camera-radius preload ----
+
+/// A world of air over chunks `[0, 2)^3` with each `(min, max, material)` box filled in turn.
+fn air_box_with(fills: &[([i64; 3], [i64; 3], vxe_world::MaterialId)]) -> vxe_world::World {
+    use vxe_world::*;
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(AIR),
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    for &(min, max, m) in fills {
+        world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v| v * FIXED_ONE)),
+                Fixed3(max.map(|v| v * FIXED_ONE)),
+                Mode::Fill(m),
+            ))
+            .expect("the box is resident");
+    }
+    world
+}
+
+/// Each pixel's accumulated luminance (the emissive part with the lamp off, at exposure 1).
+fn accumulated_lum(rig: &CacheBox) -> Vec<f64> {
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    vxe_render::readback::read_float(d, q, rig.frame.accumulated())
+        .iter()
+        .map(|c| 0.2126 * f64::from(c[0]) + 0.7152 * f64::from(c[1]) + 0.0722 * f64::from(c[2]))
+        .collect()
+}
+
+/// The pixels whose face key `inside` takes, with their keys, from `eye` this frame.
+fn pixels_where(
+    rig: &CacheBox,
+    eye: Vec3,
+    inside: impl Fn(FaceKey) -> bool,
+) -> Vec<(usize, FaceKey)> {
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let pos = vxe_render::readback::read_float(d, q, rig.frame.hit_positions());
+    let info = vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records());
+    (0..pos.len())
+        .filter_map(|i| {
+            face_key(eye, pos[i], info[i])
+                .filter(|&k| inside(k))
+                .map(|k| (i, k))
+        })
+        .collect()
+}
+
+/// Steps `rig` from `camera` until every cell of `keys` reads `cap` samples (checked every 16
+/// frames, at most `limit` frames), then returns each pixel's accumulated luminance: the
+/// capped cells' settled means, which no later sample moves. `None` when the limit passed.
+fn settled_reference(
+    rig: &mut CacheBox,
+    camera: Camera,
+    keys: &[FaceKey],
+    cap: u32,
+    limit: usize,
+) -> Option<Vec<f64>> {
+    rig.camera = camera;
+    for _ in 0..limit / 16 {
+        rig.step(16);
+        let words = cache_words(&rig.level, &rig.frame);
+        if keys.iter().all(|&k| cache_count(&words, k) >= cap) {
+            return Some(accumulated_lum(rig));
+        }
+    }
+    None
+}
+
+/// The share of `pixels` (with a reference above 1e-6) whose `now` lies within a factor 1.1 of
+/// `reference`, and how many pixels that is.
+fn share_within(pixels: &[usize], now: &[f64], reference: &[f64]) -> (f64, usize) {
+    let lit: Vec<usize> = pixels
+        .iter()
+        .copied()
+        .filter(|&i| reference[i] > 1e-6)
+        .collect();
+    let ok = lit
+        .iter()
+        .filter(|&&i| (now[i] / reference[i]).log2().abs() <= 1.1f64.log2())
+        .count();
+    (ok as f64 / lit.len().max(1) as f64, lit.len())
+}
+
+/// The turn box (done-when 13): a rock floor at z 40..44 and a wall at x 50..54 over x and y
+/// 40..90, and an ore strip at the wall's top at x 54..57, y 60..69, z 64..66, whose underside
+/// lights the wall's face at x 54 from close above and the corner where it meets the floor, 20
+/// voxels below, dimly. The camera at (62.5, 64.5, 50.5), 8.5 voxels from the wall,
+/// faces +x (away) and turned faces the corner (yaw 180, pitch -30).
+fn turn_box() -> (vxe_world::World, Camera, Camera) {
+    use flythrough::cave::{ORE, ROCK};
+    let world = air_box_with(&[
+        ([40, 40, 40], [90, 90, 44], ROCK),
+        ([50, 40, 44], [54, 90, 66], ROCK),
+        ([54, 60, 64], [57, 69, 66], ORE),
+    ]);
+    let away = camera_at([62.5, 64.5, 50.5], 0.0, 0.0);
+    let turned = camera_at([62.5, 64.5, 50.5], 180.0, -30.0);
+    (world, away, turned)
+}
+
+/// The turn box's corner: the wall's faces toward +x at z 44..48 and the floor's toward +z at
+/// x 54..58, over y 55..74.
+fn turn_corner(k: FaceKey) -> bool {
+    let [x, y, z] = k.0;
+    (55..74).contains(&y)
+        && ((x == 53 && (44..48).contains(&z) && k.1 == 1)
+            || ((54..58).contains(&x) && z == 43 && k.1 == 5))
+}
+
+/// The mean luminance of the cells of `keys` that hold samples, from the table's words.
+fn cells_mean(words: &[u32], keys: &[FaceKey]) -> f64 {
+    use vxe_render::marcher::{CACHE_COUNT_WORD, CACHE_Q};
+    let means: Vec<f64> = keys
+        .iter()
+        .filter_map(|&k| cache_cell(words, k))
+        .filter(|&w| words[w + CACHE_COUNT_WORD] > 0)
+        .map(|w| {
+            let n = f64::from(words[w + CACHE_COUNT_WORD].min(1024));
+            let c =
+                |i: usize| f64::from(words[w + CACHE_COUNT_WORD + 1 + i]) / f64::from(CACHE_Q) / n;
+            0.2126 * c(0) + 0.7152 * c(1) + 0.0722 * c(2)
+        })
+        .collect();
+    means.iter().sum::<f64>() / means.len().max(1) as f64
+}
+
+/// The turn box's run at `preload_radius`: 64 still frames facing away, a 180-degree yaw in one
+/// frame, and on the first frame after it the corner's settled share against the run continued
+/// facing the corner until every corner cell reads C_CAP (1024). C_PRE 256, 64 x 36, scale 1,
+/// lamp off. Returns the share, the corner's lit pixels, and the corner's and the near wall's
+/// (the wall's faces toward +x at z 60..64, over y 55..74, out of view) mean cell luminance.
+fn turn_corner_run(preload_radius: u32) -> Option<(f64, usize, f64, f64)> {
+    let (world, away, turned) = turn_box();
+    let mut rig = cache_box_rig_on(world, away, 1024, [64, 36], None)?;
+    let l = rig.frame.lighting();
+    rig.frame.set_lighting(Lighting {
+        preload_radius,
+        preload_until: 256,
+        ..l
+    });
+    rig.step(64);
+    let near_keys: Vec<FaceKey> = (55..74)
+        .flat_map(|y| (60..64).map(move |z| ([53, y, z], 1u8)))
+        .collect();
+    assert!(
+        pixels_where(&rig, away.position, turn_corner).is_empty(),
+        "the corner is out of view facing away"
+    );
+    rig.camera = turned;
+    rig.step(1);
+    let corner = pixels_where(&rig, turned.position, turn_corner);
+    let now = accumulated_lum(&rig);
+    let mut keys: Vec<FaceKey> = corner.iter().map(|&(_, k)| k).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let reference = settled_reference(&mut rig, turned, &keys, 1024, 4096)
+        .expect("the corner's cells reach C_CAP");
+    let px: Vec<usize> = corner.iter().map(|&(i, _)| i).collect();
+    let (share, lit) = share_within(&px, &now, &reference);
+    let words = cache_words(&rig.level, &rig.frame);
+    Some((
+        share,
+        lit,
+        cells_mean(&words, &keys),
+        cells_mean(&words, &near_keys),
+    ))
+}
+
+/// A face behind the camera is settled before the turn (Plan 0057 Phase 4 Part 2b, done-when
+/// 13): on the turn box (`turn_box`), after 64 still frames facing away with the preload at its
+/// default radius, on the first frame after a 180-degree yaw at least 90 % of the dim corner's
+/// lit pixels read within 10 % of their cell's settled mean; with the preload off under 50 %
+/// do. The corner is lit at under a tenth of the near wall's irradiance. About 2 x 140 frames.
+#[test]
+fn a_face_behind_the_camera_is_settled_before_the_turn() {
+    let r = vxe_render::marcher::DEFAULT_PRELOAD_RADIUS;
+    let Some((on, lit, corner, near)) = turn_corner_run(r) else {
+        return;
+    };
+    let (off, lit_off, ..) = turn_corner_run(0).expect("the device opened once");
+    println!(
+        "reading: turn box: corner within 10 % on the first frame: preload {r} {on:.3} of {lit}, off {off:.3} of {lit_off}; corner mean {corner:.5}, near wall {near:.5}"
+    );
+    assert!(lit >= 50, "corner pixels {lit}");
+    assert!(
+        corner > 0.0 && corner < 0.1 * near,
+        "corner {corner}, near wall {near}"
+    );
+    assert!(on >= 0.9, "preload on: {on}");
+    assert!(off < 0.5, "preload off: {off}");
+}
+
+/// The near dig settles from the preload alone (Plan 0057 Phase 4 Part 2b, done-when 15): on
+/// the dig box with the camera 5 voxels from the dig (`dig_case`), the reopened fill off (F 0)
+/// and the preload at its default, the dig's frame visits the edit box's bricks and lists
+/// faces, at least 90 % of the hole's lit pixels read within 10 % of their settled mean by frame
+/// 16 after the dig and its `S90` is at most 60 frames; with both off, `S90` is read beside it.
+/// About 2 x 316 frames.
+#[test]
+fn a_near_dig_settles_from_the_preload_alone() {
+    let Some(on) = dug_hole_run(false, |l| Lighting {
+        fill_samples: 0,
+        ..l
+    }) else {
+        return;
+    };
+    let off = dug_hole_run(false, |l| Lighting {
+        fill_samples: 0,
+        preload_radius: 0,
+        ..l
+    })
+    .expect("the device opened once");
+    println!(
+        "reading: near dig, F 0: preload on S90 {:?} shares at 1/4/16 {:?} over {}; both off S90 {:?} shares {:?}",
+        on.s90, on.shares, on.lit, off.s90, off.shares
+    );
+    assert!(
+        on.dig_frame.edit_bricks > 0 && on.dig_frame.listed > 0,
+        "the dig's frame: {:?}",
+        on.dig_frame
+    );
+    assert!(on.lit >= 100, "hole pixels {}", on.lit);
+    assert!(on.shares[2] >= 0.9, "frame 16: {}", on.shares[2]);
+    assert!(on.s90.is_some_and(|s| s <= 60), "S90 {:?}", on.s90);
+}
+
+/// The pillar box (done-when 16): a rock floor at z 30..34 over x and y 0..128, a wall at y
+/// 66..68, x 0..88, z 34..50 beside the path, and behind its end a rock block at x 92..96, y
+/// 70..74, z 34..46 whose faces toward -x and -y (the hidden face) no eye on the path sees
+/// until it passes x 80; an ore plate at x 84..100, y 60..80, z 52..54 lights them from above
+/// the wall. The path runs along +x at y 64, z 40, heading 20 degrees toward +y, from x 4.
+fn pillar_box() -> vxe_world::World {
+    use flythrough::cave::{ORE, ROCK};
+    air_box_with(&[
+        ([0, 0, 30], [128, 128, 34], ROCK),
+        ([0, 66, 34], [88, 68, 50], ROCK),
+        ([92, 70, 34], [96, 74, 46], ROCK),
+        ([84, 60, 52], [100, 80, 54], ORE),
+    ])
+}
+
+fn pillar_hidden(k: FaceKey) -> bool {
+    let [x, y, z] = k.0;
+    (34..46).contains(&z)
+        && ((x == 92 && (70..74).contains(&y) && k.1 == 0)
+            || (y == 70 && (92..96).contains(&x) && k.1 == 2))
+}
+
+fn pillar_camera(frame: usize, speed: f32) -> Camera {
+    camera_at([4.0 + speed * frame as f32, 64.0, 40.0], 20.0, 0.0)
+}
+
+/// The first path frame from whose eye some point of the hidden face is clear on the CPU: a
+/// 4 x 4 grid of points on each of its faces, a ray from the eye toward each entering the
+/// face's voxel through that face (`vis_cast`).
+fn pillar_first_clear(world: &vxe_world::World, speed: f32, frames: usize) -> Option<usize> {
+    use vxe_world::Face;
+    (0..frames).find(|&f| {
+        let eye = pillar_camera(f, speed).position;
+        (34..46).any(|z| {
+            (0..4).any(|i| {
+                let a = i as f32 * 0.25 + 0.125;
+                let targets = [
+                    (
+                        Vec3::new(92.0 - 0.01, 70.0 + 4.0 * a, z as f32 + 0.5),
+                        Face::NegX,
+                    ),
+                    (
+                        Vec3::new(92.0 + 4.0 * a, 70.0 - 0.01, z as f32 + 0.5),
+                        Face::NegY,
+                    ),
+                ];
+                targets.iter().any(|&(p, face)| {
+                    let d = (p - eye).normalize();
+                    vis_cast(world, eye, d, 200.0).is_some_and(|((_, f), _)| f == face)
+                        && vis_cast(world, eye, d, 200.0)
+                            .is_some_and(|((v, _), _)| pillar_hidden((v.0, face_index(face))))
+                })
+            })
+        })
+    })
+}
+
+/// `vxe_world::Face`'s index in the table's key (`2 axis + 1` toward `+axis`).
+fn face_index(f: vxe_world::Face) -> u8 {
+    use vxe_world::Face;
+    match f {
+        Face::NegX => 0,
+        Face::PosX => 1,
+        Face::NegY => 2,
+        Face::PosY => 3,
+        Face::NegZ => 4,
+        Face::PosZ => 5,
+    }
+}
+
+/// The pillar box's walk at `speed` voxels a frame with the preload at `preload_radius`: the
+/// first frame the hidden face is in view, and its settled share there and `late` frames on
+/// (or at its last frame in view, if sooner) against each pixel's cell mean once every cell of
+/// the face in view at the late read reads C_CAP (1024), the camera held at that pose; a first
+/// frame's pixel whose key is out of view there is not counted. C_PRE 256, 128 x 72, scale 1,
+/// lamp off.
+fn pillar_run(speed: f32, frames: usize, preload_radius: u32, late: usize) -> Option<PillarRun> {
+    let world = pillar_box();
+    let first_clear = pillar_first_clear(&world, speed, frames);
+    let mut rig = cache_box_rig_on(world, pillar_camera(0, speed), 1024, [128, 72], None)?;
+    let l = rig.frame.lighting();
+    rig.frame.set_lighting(Lighting {
+        preload_radius,
+        preload_until: 256,
+        ..l
+    });
+    // The first frame read in view, and the last at most `late` frames after it: the frame,
+    // the face's pixels with their keys, every pixel's luminance and the pose.
+    type Read = (usize, Vec<(usize, FaceKey)>, Vec<f64>, Camera);
+    let mut seen: Option<Read> = None;
+    let mut held: Option<Read> = None;
+    for f in 0..frames {
+        let camera = pillar_camera(f, speed);
+        rig.camera = camera;
+        rig.step(1);
+        let px = pillar_px(&rig, camera);
+        if seen.is_none() {
+            if !px.is_empty() {
+                let lum = accumulated_lum(&rig);
+                seen = Some((f, px.clone(), lum.clone(), camera));
+                held = Some((f, px, lum, camera));
+            }
+        } else if px.is_empty() {
+            break;
+        } else {
+            held = Some((f, px, accumulated_lum(&rig), camera));
+        }
+        if seen.as_ref().is_some_and(|s| f >= s.0 + late) {
+            break;
+        }
+    }
+    let (first, px, now, _) = seen.expect("the hidden face comes into view on the path");
+    let (late_frame, late_px, late_now, hold) = held.expect("read with the first");
+    let mut keys: Vec<FaceKey> = late_px.iter().map(|&(_, k)| k).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let reference = settled_reference(&mut rig, hold, &keys, 1024, 4096)
+        .expect("the face's cells in view reach C_CAP");
+    // Each pixel takes its own key's cell mean at the held pose.
+    let reference_px = pillar_px(&rig, hold);
+    let by_key: std::collections::HashMap<FaceKey, f64> = reference_px
+        .iter()
+        .map(|&(i, k)| (k, reference[i]))
+        .collect();
+    let share = |p: &[(usize, FaceKey)], v: &[f64]| {
+        let pairs: Vec<(f64, f64)> = p
+            .iter()
+            .filter_map(|&(i, k)| by_key.get(&k).map(|&r| (v[i], r)))
+            .filter(|&(_, r)| r > 1e-6)
+            .collect();
+        let ok = pairs
+            .iter()
+            .filter(|&&(a, r)| (a / r).log2().abs() <= 1.1f64.log2())
+            .count();
+        (ok as f64 / pairs.len().max(1) as f64, pairs.len())
+    };
+    let (at_first, n_first) = share(&px, &now);
+    let (at_late, n_late) = share(&late_px, &late_now);
+    Some(PillarRun {
+        first_clear,
+        first,
+        late: late_frame - first,
+        at_first,
+        n_first,
+        at_late,
+        n_late,
+    })
+}
+
+struct PillarRun {
+    first_clear: Option<usize>,
+    first: usize,
+    /// Frames from the first in view to the late read (`late`, or fewer when the face left
+    /// the view first).
+    late: usize,
+    at_first: f64,
+    n_first: usize,
+    at_late: f64,
+    n_late: usize,
+}
+
+fn pillar_px(rig: &CacheBox, camera: Camera) -> Vec<(usize, FaceKey)> {
+    pixels_where(rig, camera.position, pillar_hidden)
+}
+
+/// A face hidden from every eye is settled before it is seen (Plan 0057 Phase 4 Part 2b,
+/// done-when 16): on the pillar box (`pillar_box`; the hiding checked on the CPU, no eye
+/// before the face's first frame in view sees it), walking at 0.5 voxel a frame from 80 voxels
+/// out, on the first frame any of the hidden face's pixels is in view at least 90 % of them read
+/// within 10 % of their settled mean, and with the preload off under 50 %; at 2 voxels a frame
+/// (Shift) at least 90 % by the tenth frame in view. About 3 runs of 170 and 50 frames.
+#[test]
+fn a_face_hidden_from_every_eye_is_settled_before_it_is_seen() {
+    let r = vxe_render::marcher::DEFAULT_PRELOAD_RADIUS;
+    let Some(walk) = pillar_run(0.5, 200, r, 0) else {
+        return;
+    };
+    let off = pillar_run(0.5, 200, 0, 0).expect("the device opened once");
+    let shift = pillar_run(2.0, 60, r, 10).expect("the device opened once");
+    for (name, run) in [
+        ("walk", &walk),
+        ("walk, preload off", &off),
+        ("shift", &shift),
+    ] {
+        println!(
+            "reading: pillar box {name}: first clear {:?}, first in view {} at x {:.1}: within 10 % {:.3} of {}; {} frames on {:.3} of {}",
+            run.first_clear,
+            run.first,
+            4.0 + if name == "shift" { 2.0 } else { 0.5 } * run.first as f32,
+            run.at_first,
+            run.n_first,
+            run.late,
+            run.at_late,
+            run.n_late
+        );
+    }
+    for run in [&walk, &off, &shift] {
+        assert!(
+            run.first_clear.is_some_and(|c| c + 2 >= run.first),
+            "the face is hidden from every eye before its first frame in view: clear {:?}, seen {}",
+            run.first_clear,
+            run.first
+        );
+    }
+    assert!(
+        walk.first >= 120,
+        "within R for the walk's frames before: {}",
+        walk.first
+    );
+    assert!(walk.n_first >= 1, "the face's first pixels");
+    assert!(walk.at_first >= 0.9, "walking: {}", walk.at_first);
+    assert!(off.at_first < 0.5, "preload off: {}", off.at_first);
+    assert!(shift.n_late >= 1, "the face in view at Shift");
+    assert!(
+        shift.at_late >= 0.9,
+        "shift, by the tenth frame: {}",
+        shift.at_late
+    );
 }

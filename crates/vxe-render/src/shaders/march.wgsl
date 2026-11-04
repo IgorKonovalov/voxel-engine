@@ -1293,10 +1293,13 @@ const CACHE_Q: f32 = 32768.0;
 // The cell's word of the count; the sums follow it.
 const CACHE_COUNT: u32 = 2u;
 // The cell's stamp word: CACHE_REOPENED, set where an edit box or the guard reopened the cell
-// and cleared once the fill has brought it to C_FILL, over the frame (its low 31 bits) the
-// light pass last listed it for the fill (cache_fill.wgsl).
+// and cleared once the fill has brought it to C_FILL; CACHE_PRELOADING, set while the cell
+// stands in the preload's list (cache_fill.wgsl) and cleared when it leaves it; over the frame
+// (its low 30 bits, CACHE_STAMP_FRAME) the light pass last listed it for the fill.
 const CACHE_STAMP: u32 = 9u;
 const CACHE_REOPENED: u32 = 0x80000000u;
+const CACHE_PRELOADING: u32 = 0x40000000u;
+const CACHE_STAMP_FRAME: u32 = 0x3FFFFFFFu;
 
 // The reopened fill's samples a frame per listed cell (F, 0 off) and the count at which a
 // reopened cell leaves the list (C_FILL).
@@ -1327,11 +1330,42 @@ struct CacheStats {
     // count), three words of padding, then the listed slots.
     fill_offered: atomic<u32>,
     _fill_pad: array<u32, 3>,
-    fill_cells: array<u32>,
+    fill_cells: array<u32, FILL_LIST_MAX>,
+    // The preload (cache_fill.wgsl), kept across frames: the sweep's next offset, which of the
+    // two lists is the next frame's input, and each list's entries (past PRELOAD_LIST_MAX the
+    // excess is the dropped count).
+    pre_cursor: u32,
+    pre_parity: u32,
+    pre_count: array<atomic<u32>, 2>,
+    // Set by the args pass each frame: the input list, its entries, the cells drawn this
+    // frame, the first offset the sweep visits and how many offsets it visits.
+    pre_in: u32,
+    pre_n_in: u32,
+    pre_draw: u32,
+    pre_base: u32,
+    pre_visit: u32,
+    _pre_pad: array<u32, 3>,
+    // The frame's counts (cleared each encode with the preload on; `marcher::PreloadStats`):
+    // bricks scanned past the early-out, faces listed, cells claimed, faces refused a cell
+    // (the table's load, a miss this frame or by the claim, no lit sample), samples drawn,
+    // list entries dropped.
+    pre_scanned: atomic<u32>,
+    pre_listed: atomic<u32>,
+    pre_claimed: atomic<u32>,
+    pre_refused_load: atomic<u32>,
+    pre_refused_miss: atomic<u32>,
+    pre_refused_unlit: atomic<u32>,
+    pre_samples: atomic<u32>,
+    pre_drops: atomic<u32>,
+    // The two lists of cell slots (list k at k * PRELOAD_LIST_MAX), then the sweep's offsets
+    // (`marcher::preload_offsets`, each component plus 512 in ten bits, x low).
+    pre_lists: array<u32>,
 };
 
 // Cells the fill list holds; `marcher::FILL_LIST_MAX`.
 const FILL_LIST_MAX: u32 = 16384u;
+// Cells a preload list holds; `marcher::PRELOAD_LIST_MAX`.
+const PRELOAD_LIST_MAX: u32 = 32768u;
 
 fn cache_read_on() -> bool {
     return (params.cache & 1u) != 0u;

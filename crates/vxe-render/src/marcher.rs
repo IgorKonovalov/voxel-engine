@@ -783,6 +783,39 @@ pub const DEFAULT_FILL_SAMPLES: u32 = 8;
 pub const DEFAULT_FILL_UNTIL: u32 = 256;
 /// Workgroups a dispatch dimension takes at most (wgpu's default limit).
 pub const MAX_DISPATCH_GROUPS: u32 = 65_535;
+/// [`Lighting::preload_radius`] by default, in voxels: 8 bricks.
+pub const DEFAULT_PRELOAD_RADIUS: u32 = 64;
+/// The largest [`Lighting::preload_radius`], in voxels (16 bricks).
+pub const PRELOAD_RADIUS_MAX: u32 = 128;
+/// [`Lighting::preload_bricks`] by default.
+pub const DEFAULT_PRELOAD_BRICKS: u32 = 128;
+/// [`Lighting::preload_until`] by default (C_PRE).
+pub const DEFAULT_PRELOAD_UNTIL: u32 = 256;
+/// [`Lighting::preload_samples`] by default (S_PRE).
+pub const DEFAULT_PRELOAD_SAMPLES: u32 = 32_768;
+/// Cells each of the preload's two lists holds (`PRELOAD_LIST_MAX` in `march.wgsl`); a frame's
+/// entries past it are dropped and counted, and the sweep lists them again.
+pub const PRELOAD_LIST_MAX: u32 = 32_768;
+/// Samples the sweep draws for a face with no cell before it claims one (k0;
+/// `PRELOAD_PROBE_MAX` in `cache_fill.wgsl`).
+pub const PRELOAD_PROBE_SAMPLES: u32 = 8;
+/// The share of the table's cells past which the sweep claims no cell (PRE_LOAD_MAX), as a
+/// divisor: a quarter.
+pub const PRELOAD_LOAD_DIVISOR: u32 = 4;
+/// The edit boxes' bricks the sweep visits first in a frame, at most (`brick_list` in
+/// `cache_fill.wgsl`); the rest of a large edit wait for the sweep's cursor.
+pub const PRELOAD_EDIT_BRICKS_MAX: usize = 256;
+/// Offsets the sweep's table holds at [`PRELOAD_RADIUS_MAX`]: `preload_offsets(16).len()`.
+pub const PRELOAD_OFFSETS_MAX: u64 = 17_077;
+/// The counters' bytes before the preload's lists: `CacheStats` from `pre_cursor` to
+/// `pre_drops` (twenty words).
+const PRELOAD_HEADER_BYTES: u64 = 80;
+/// The preload's store in the counters' buffer past the fill list: its header, its two lists
+/// and the sweep's offsets.
+pub const PRELOAD_BYTES: u64 =
+    PRELOAD_HEADER_BYTES + 4 * (2 * PRELOAD_LIST_MAX as u64 + PRELOAD_OFFSETS_MAX);
+/// The preload's indirect dispatches: the fill's three words, then the sweep's.
+pub const PRELOAD_DISPATCH_BYTES: u64 = 24;
 
 fn cache_mix(v: [i32; 3], face: u32, a: u32, b: u32) -> u32 {
     let mut h = (v[0] as u32).wrapping_mul(a)
@@ -809,6 +842,68 @@ pub fn cache_slot(voxel: [i32; 3], face: u32, cells: u32) -> u32 {
 pub fn cache_key(voxel: [i32; 3], face: u32) -> [u32; 2] {
     let [x, y, z] = voxel.map(|c| c as u32 & 0xF_FFFF);
     [x | y << 20, y >> 12 | z << 8 | face << 28 | 1 << 31]
+}
+
+/// The brick offsets the preload's sweep visits around the eye's brick, nearest first: every
+/// `o` with `|o|^2 <= radius^2` in bricks, sorted by `|o|^2`, then z, y and x. At a radius of
+/// 8 bricks (64 voxels) 2109 offsets.
+pub fn preload_offsets(radius: u32) -> Vec<[i32; 3]> {
+    let r = radius as i32;
+    let mut out = Vec::new();
+    for z in -r..=r {
+        for y in -r..=r {
+            for x in -r..=r {
+                if x * x + y * y + z * z <= r * r {
+                    out.push([x, y, z]);
+                }
+            }
+        }
+    }
+    out.sort_by_key(|&[x, y, z]| (x * x + y * y + z * z, z, y, x));
+    out
+}
+
+/// The preload's counts of the last encode, read back by [`Frame::read_preload_stats`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PreloadStats {
+    /// Bricks the sweep visited: the edit boxes' within the radius, then the table's.
+    pub edit_bricks: u32,
+    pub visited: u32,
+    /// Bricks past the early-out, whose voxels were read.
+    pub scanned: u32,
+    /// Faces put on the list (a cell under C_PRE not yet on it, or a cell just claimed).
+    pub listed: u32,
+    /// Cells the sweep claimed for faces with none.
+    pub claimed: u32,
+    /// Faces with no cell refused one: the table's load, a miss (this frame's light pass or
+    /// the claim), no lit probe sample.
+    pub refused_load: u32,
+    pub refused_miss: u32,
+    pub refused_unlit: u32,
+    /// Emissive samples the preload drew (the fill's and the sweep's probes).
+    pub samples: u32,
+    /// List entries dropped by a full list.
+    pub drops: u32,
+    /// The list's entries the frame filled from (its input) and the cells it drew for.
+    pub list: u32,
+    pub drawn: u32,
+}
+
+/// The preload's uniform (`Preload` in `cache_fill.wgsl`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PreloadUniform {
+    eye_brick: [i32; 3],
+    edit_bricks: u32,
+    offsets: u32,
+    bricks: u32,
+    trickle: u32,
+    still: u32,
+    until: u32,
+    draw_cells: u32,
+    load_max: u32,
+    probe: u32,
+    brick_list: [[i32; 4]; PRELOAD_EDIT_BRICKS_MAX],
 }
 
 /// The emissive table's counters, read back by [`Frame::read_table_stats`].
@@ -882,6 +977,26 @@ pub struct Lighting {
     /// The count at which a reopened cell leaves the fill's list (C_FILL; default
     /// [`DEFAULT_FILL_UNTIL`], at most [`Lighting::table_cap`]).
     pub fill_until: u32,
+    /// The camera-radius preload's radius in voxels, rounded down to whole bricks and at most
+    /// [`PRELOAD_RADIUS_MAX`] (default [`DEFAULT_PRELOAD_RADIUS`]); 0 is off. A cursor sweeps the
+    /// mirror's bricks within it around the eye's brick, nearest first, and lists every lit
+    /// face it finds, claiming a cell for a face with none when one of
+    /// [`PRELOAD_PROBE_SAMPLES`] samples is lit, the table holds under a quarter of its cells
+    /// and the frame counted no miss; the listed cells are filled to
+    /// [`Lighting::preload_until`] whatever the view shows.
+    pub preload_radius: u32,
+    /// Bricks the sweep visits a frame (B; default [`DEFAULT_PRELOAD_BRICKS`]), after the
+    /// frame's edit boxes' bricks; a sixteenth (at least 1) while the list is empty, the camera
+    /// moved under a voxel and turned under a degree since the last encode and the guard's
+    /// window is closed.
+    pub preload_bricks: u32,
+    /// The count to which the preload fills a listed cell (C_PRE; default
+    /// [`DEFAULT_PRELOAD_UNTIL`], at most [`Lighting::table_cap`]).
+    pub preload_until: u32,
+    /// The preload fill's samples a frame at most (S_PRE; default
+    /// [`DEFAULT_PRELOAD_SAMPLES`]), [`FILL_SAMPLES_MAX`] a listed cell, so the list's first
+    /// `S_PRE / 16` cells draw each frame.
+    pub preload_samples: u32,
 }
 
 impl Default for Lighting {
@@ -905,6 +1020,10 @@ impl Default for Lighting {
             table_read: true,
             fill_samples: DEFAULT_FILL_SAMPLES,
             fill_until: DEFAULT_FILL_UNTIL,
+            preload_radius: DEFAULT_PRELOAD_RADIUS,
+            preload_bricks: DEFAULT_PRELOAD_BRICKS,
+            preload_until: DEFAULT_PRELOAD_UNTIL,
+            preload_samples: DEFAULT_PRELOAD_SAMPLES,
         }
     }
 }
@@ -921,6 +1040,17 @@ impl Lighting {
             .fill_until
             .clamp(1, self.table_cap.clamp(1, DEFAULT_TABLE_CAP));
         self.fill_samples.min(FILL_SAMPLES_MAX) | until << 8
+    }
+
+    /// [`Lighting::preload_radius`] in whole bricks, at most 16; 0 is off.
+    pub fn preload_brick_radius(&self) -> u32 {
+        self.preload_radius.min(PRELOAD_RADIUS_MAX) / 8
+    }
+
+    /// [`Lighting::preload_until`] as the preload takes it: 1 to the cap.
+    pub fn preload_cap(&self) -> u32 {
+        self.preload_until
+            .clamp(1, self.table_cap.clamp(1, DEFAULT_TABLE_CAP))
     }
 
     /// `Params::cache`.
@@ -1087,6 +1217,24 @@ pub struct Frame {
     fill_stats_layout: wgpu::BindGroupLayout,
     fill_args_layout: wgpu::BindGroupLayout,
     fill_dispatch: wgpu::Buffer,
+    /// The camera-radius preload (`cache_fill.wgsl`): its args pass, fill and sweep, their
+    /// group 3 layouts (the uniform; the uniform and the dispatches), its uniform and its
+    /// indirect dispatches. Its lists and the sweep's offsets lie in `cache_stats` past the
+    /// fill list.
+    preload_args: wgpu::ComputePipeline,
+    preload_fill: wgpu::ComputePipeline,
+    preload_sweep: wgpu::ComputePipeline,
+    preload_layout: wgpu::BindGroupLayout,
+    preload_args_layout: wgpu::BindGroupLayout,
+    preload_uniform: wgpu::Buffer,
+    preload_dispatch: wgpu::Buffer,
+    /// The brick radius whose offsets `cache_stats` holds, `None` before the first write.
+    preload_offsets_radius: std::sync::Mutex<Option<u32>>,
+    /// The edit and table bricks the last encode's sweep visited at most (the edit bricks,
+    /// then the table's B), for [`Frame::read_preload_stats`].
+    preload_edit_bricks: std::sync::atomic::AtomicU32,
+    /// The last encode ran the preload.
+    preload_ran: std::sync::atomic::AtomicBool,
     temporal_layout: wgpu::BindGroupLayout,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
@@ -1602,6 +1750,63 @@ impl Frame {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
             mapped_at_creation: false,
         });
+        // The preload: the fill's group 2 with its uniform at group 3 binding 1; the args pass
+        // binds the counters alone in group 2, as the fill's does, and the dispatches at 2.
+        let preload_layout = io_layout_at(device, "preload", &[(1, Io::Uniform)]);
+        let preload_args_layout = io_layout_at(
+            device,
+            "preload args",
+            &[(1, Io::Uniform), (2, Io::Storage)],
+        );
+        let preload_source = format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{CACHE_FILL_WGSL}");
+        let preload_args = compute_pipeline(
+            device,
+            "preload args",
+            preload_source.clone(),
+            &[
+                Some(&world_layout),
+                None,
+                Some(&fill_stats_layout),
+                Some(&preload_args_layout),
+            ],
+            "preload_args",
+        );
+        let preload_fill = compute_pipeline(
+            device,
+            "preload fill",
+            preload_source.clone(),
+            &[
+                Some(&world_layout),
+                None,
+                Some(&fill_layout),
+                Some(&preload_layout),
+            ],
+            "preload_fill",
+        );
+        let preload_sweep = compute_pipeline(
+            device,
+            "preload sweep",
+            preload_source,
+            &[
+                Some(&world_layout),
+                None,
+                Some(&fill_layout),
+                Some(&preload_layout),
+            ],
+            "preload_sweep",
+        );
+        let preload_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("preload"),
+            size: size_of::<PreloadUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let preload_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("preload dispatch"),
+            size: PRELOAD_DISPATCH_BYTES,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
         let (cache_clear_layout, cache_clear) = pass(
             "cache clear",
             CACHE_CLEAR_WGSL,
@@ -1617,7 +1822,7 @@ impl Frame {
         let cache = table_buffer(device, DEFAULT_TABLE_CELLS);
         let cache_stats = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("emissive table counters"),
-            size: CACHE_STATS_BYTES + FILL_LIST_BYTES,
+            size: CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_BYTES,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -1848,6 +2053,16 @@ impl Frame {
             fill_stats_layout,
             fill_args_layout,
             fill_dispatch,
+            preload_args,
+            preload_fill,
+            preload_sweep,
+            preload_layout,
+            preload_args_layout,
+            preload_uniform,
+            preload_dispatch,
+            preload_offsets_radius: std::sync::Mutex::new(None),
+            preload_edit_bricks: std::sync::atomic::AtomicU32::new(0),
+            preload_ran: std::sync::atomic::AtomicBool::new(false),
             light,
             temporal_layout,
             temporal,
@@ -2303,6 +2518,38 @@ impl Frame {
         )
     }
 
+    /// The preload's counts of the last submitted encode (zero where it did not run): a
+    /// blocking read.
+    pub fn read_preload_stats(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> PreloadStats {
+        if !self.preload_ran.load(std::sync::atomic::Ordering::Relaxed) {
+            return PreloadStats::default();
+        }
+        let bytes = crate::readback::read_buffer(
+            device,
+            queue,
+            &self.cache_stats,
+            CACHE_STATS_BYTES + FILL_LIST_BYTES,
+            PRELOAD_HEADER_BYTES,
+        );
+        let w: &[u32] = bytemuck::cast_slice(&bytes);
+        PreloadStats {
+            edit_bricks: self
+                .preload_edit_bricks
+                .load(std::sync::atomic::Ordering::Relaxed),
+            visited: w[8],
+            scanned: w[12],
+            listed: w[13],
+            claimed: w[14],
+            refused_load: w[15],
+            refused_miss: w[16],
+            refused_unlit: w[17],
+            samples: w[18],
+            drops: w[19],
+            list: w[5],
+            drawn: w[6],
+        }
+    }
+
     /// The cells the table's guard reopened since the table was last cleared, after the last
     /// submitted encode: a blocking read.
     pub fn read_table_reopens(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> u32 {
@@ -2526,6 +2773,9 @@ impl Frame {
             + self.cache.size()
             + FILL_LIST_BYTES
             + self.fill_dispatch.size()
+            + PRELOAD_BYTES
+            + self.preload_uniform.size()
+            + self.preload_dispatch.size()
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -2723,6 +2973,8 @@ impl Frame {
         let mut old_lamp = Lamp::of(params);
         // More than MAX_EDITS boxes arrived: the table clears whole, as the screen flushes.
         let mut edits_overflowed = false;
+        // The camera moved under a voxel and turned under a degree since the last encode.
+        let mut camera_still = false;
         if keep_history {
             let mut h = self
                 .history
@@ -2753,6 +3005,12 @@ impl Frame {
             if self.guard_forced || within(h.guard_event) || within(self.emission_changed_at) {
                 p.lighting |= LIGHTING_GUARD;
             }
+            let (was, now) = (h.last_views[0], params.views[0]);
+            let moved: f32 = (0..3)
+                .map(|k| (now.origin[k] - was.origin[k]).powi(2))
+                .sum();
+            let turn: f32 = (0..3).map(|k| now.fwd[k] * was.fwd[k]).sum();
+            camera_still = h.encoded && moved < 1.0 && turn > 1f32.to_radians().cos();
             h.last_views = params.views;
             h.encoded = true;
             let key = LightKey {
@@ -2919,7 +3177,13 @@ impl Frame {
             || clear_whole
         {
             encoder.clear_buffer(cache_table, 0, None);
-            encoder.clear_buffer(&self.cache_stats, 0, None);
+            // The counters, the fill list and the preload's header: its lists' entries name
+            // cleared cells, which their check drops, and the sweep's offsets stay.
+            encoder.clear_buffer(
+                &self.cache_stats,
+                0,
+                Some(CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_HEADER_BYTES),
+            );
             self.cache_clears
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         } else {
@@ -2989,6 +3253,118 @@ impl Frame {
                 ),
             )
         });
+        // The preload runs where the fill could (a shaded view outside the cutaway) with its
+        // radius and emissive candidates above 0.
+        let preload_r = self.lighting.preload_brick_radius();
+        let preload_on = self.look.view.shades()
+            && !self.look.cutaway
+            && preload_r > 0
+            && self.lighting.candidates > 0;
+        let preload_bind = preload_on.then(|| {
+            let offsets = {
+                let mut written = self
+                    .preload_offsets_radius
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let table = preload_offsets(preload_r);
+                if *written != Some(preload_r) {
+                    *written = Some(preload_r);
+                    let packed: Vec<u32> = table
+                        .iter()
+                        .map(|o| {
+                            let [x, y, z] = o.map(|c| (c + 512) as u32);
+                            x | y << 10 | z << 20
+                        })
+                        .collect();
+                    queue.write_buffer(
+                        &self.cache_stats,
+                        CACHE_STATS_BYTES
+                            + FILL_LIST_BYTES
+                            + PRELOAD_HEADER_BYTES
+                            + 8 * u64::from(PRELOAD_LIST_MAX),
+                        bytemuck::cast_slice(&packed),
+                    );
+                }
+                table.len() as u32
+            };
+            let eye_brick = p.views[0].origin.map(|c| (c / 8.0).floor() as i32);
+            let r2 = (preload_r * preload_r) as i32;
+            let mut u = PreloadUniform {
+                eye_brick,
+                edit_bricks: 0,
+                offsets,
+                bricks: self.lighting.preload_bricks.clamp(1, 4096),
+                trickle: (self.lighting.preload_bricks.clamp(1, 4096) / 16).max(1),
+                still: u32::from(camera_still && p.lighting & LIGHTING_GUARD == 0),
+                until: self.lighting.preload_cap(),
+                draw_cells: self.lighting.preload_samples / FILL_SAMPLES_MAX,
+                load_max: cells / PRELOAD_LOAD_DIVISOR,
+                probe: PRELOAD_PROBE_SAMPLES,
+                brick_list: [[0; 4]; PRELOAD_EDIT_BRICKS_MAX],
+            };
+            // The edit boxes' bricks, dilated by a voxel as the reset's are, within the radius.
+            let mut n = 0;
+            'boxes: for [min, max] in &boxes {
+                let lo = min.map(|c| (c - 1).div_euclid(8));
+                let hi = max.map(|c| (c + 1).div_euclid(8));
+                for z in lo[2]..=hi[2] {
+                    for y in lo[1]..=hi[1] {
+                        for x in lo[0]..=hi[0] {
+                            let d = [x - eye_brick[0], y - eye_brick[1], z - eye_brick[2]];
+                            if d.iter().map(|c| c * c).sum::<i32>() > r2 {
+                                continue;
+                            }
+                            if n == PRELOAD_EDIT_BRICKS_MAX {
+                                break 'boxes;
+                            }
+                            u.brick_list[n] = [x, y, z, 0];
+                            n += 1;
+                        }
+                    }
+                }
+            }
+            u.edit_bricks = n as u32;
+            self.preload_edit_bricks
+                .store(u.edit_bricks, std::sync::atomic::Ordering::Relaxed);
+            queue.write_buffer(&self.preload_uniform, 0, bytemuck::bytes_of(&u));
+            // The frame's counts.
+            encoder.clear_buffer(
+                &self.cache_stats,
+                CACHE_STATS_BYTES + FILL_LIST_BYTES + 48,
+                Some(PRELOAD_HEADER_BYTES - 48),
+            );
+            (
+                bind_io_at(
+                    device,
+                    &self.fill_layout,
+                    &[3, 4],
+                    &[Res::Buf(cache_table), Res::Buf(&self.cache_stats)],
+                ),
+                bind_io_at(
+                    device,
+                    &self.fill_stats_layout,
+                    &[4],
+                    &[Res::Buf(&self.cache_stats)],
+                ),
+                bind_io_at(
+                    device,
+                    &self.preload_layout,
+                    &[1],
+                    &[Res::Buf(&self.preload_uniform)],
+                ),
+                bind_io_at(
+                    device,
+                    &self.preload_args_layout,
+                    &[1, 2],
+                    &[
+                        Res::Buf(&self.preload_uniform),
+                        Res::Buf(&self.preload_dispatch),
+                    ],
+                ),
+            )
+        });
+        self.preload_ran
+            .store(preload_on, std::sync::atomic::Ordering::Relaxed);
         let temporal_bind = bind_io(
             device,
             &self.temporal_layout,
@@ -3182,7 +3558,7 @@ impl Frame {
         let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(hit_pipeline, &hit_bind, 1, full)];
         if let Some(b) = &resume_bind {
             hit.push(Dispatch {
-                indirect: Some(&t.split_args),
+                indirect: Some((&t.split_args, 0)),
                 ..frame_pass(&self.hit.resume, b, 1, [0, 0])
             });
         }
@@ -3240,9 +3616,23 @@ impl Frame {
             a.groups[3] = Some(args);
             fill.push(a);
             fill.push(Dispatch {
-                indirect: Some(&self.fill_dispatch),
+                indirect: Some((&self.fill_dispatch, 0)),
                 ..frame_pass(&self.fill, list, 2, [0, 0])
             });
+        }
+        let mut preload: Vec<Dispatch<'_>> = Vec::new();
+        if let Some((list, stats, uniform, args)) = &preload_bind {
+            let mut a = frame_pass(&self.preload_args, stats, 2, [1, 1]);
+            a.groups[3] = Some(args);
+            preload.push(a);
+            let mut f = frame_pass(&self.preload_fill, list, 2, [0, 0]);
+            f.groups[3] = Some(uniform);
+            f.indirect = Some((&self.preload_dispatch, 0));
+            preload.push(f);
+            let mut w = frame_pass(&self.preload_sweep, list, 2, [0, 0]);
+            w.groups[3] = Some(uniform);
+            w.indirect = Some((&self.preload_dispatch, 12));
+            preload.push(w);
         }
         let mut atrous: Vec<Dispatch<'_>> = Vec::new();
         if filtering {
@@ -3333,6 +3723,7 @@ impl Frame {
             gradient,
             vec![frame_pass(&self.light, &light_bind, 2, lw)],
             fill,
+            preload,
             vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
             probes,
@@ -3360,7 +3751,7 @@ impl Frame {
                     }
                 }
                 match d.indirect {
-                    Some(args) => pass.dispatch_workgroups_indirect(args, 0),
+                    Some((args, offset)) => pass.dispatch_workgroups_indirect(args, offset),
                     None => pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], 1),
                 }
             }
@@ -3536,8 +3927,8 @@ pub(crate) struct Dispatch<'a> {
     pub pipeline: &'a wgpu::ComputePipeline,
     pub groups: [Option<&'a wgpu::BindGroup>; 4],
     pub workgroups: [u32; 2],
-    /// Dispatched with the workgroup counts this buffer holds at offset 0 instead.
-    pub indirect: Option<&'a wgpu::Buffer>,
+    /// Dispatched with the workgroup counts this buffer holds at this byte offset instead.
+    pub indirect: Option<(&'a wgpu::Buffer, u64)>,
 }
 
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -3569,11 +3960,12 @@ fn composite_capture_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Tex
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
 /// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 21] = [
+pub const FRAME_PASSES: [&str; 22] = [
     "hit",
     "gradient",
     "light",
     "fill",
+    "preload",
     "temporal",
     "atrous",
     "probes",
@@ -3998,6 +4390,27 @@ impl PassTimer {
 #[cfg(test)]
 mod tests {
     use super::{JITTER_PHASES, RenderScale, jitter_at};
+
+    /// The preload's offsets hold every brick within the radius once, nearest first, from the
+    /// eye's own brick: 2109 at 8 bricks, and at 16 exactly the store's `PRELOAD_OFFSETS_MAX`;
+    /// each packs into the shader's ten bits a component.
+    #[test]
+    fn the_preload_offsets_run_nearest_first() {
+        use super::{PRELOAD_OFFSETS_MAX, PRELOAD_RADIUS_MAX, preload_offsets};
+        let near = preload_offsets(8);
+        assert_eq!(near.len(), 2109);
+        assert_eq!(near[0], [0, 0, 0]);
+        let d2 = |o: &[i32; 3]| o.iter().map(|c| c * c).sum::<i32>();
+        assert!(near.windows(2).all(|w| d2(&w[0]) <= d2(&w[1])));
+        let mut set = near.clone();
+        set.sort_unstable();
+        set.dedup();
+        assert_eq!(set.len(), near.len());
+        let far = preload_offsets(PRELOAD_RADIUS_MAX / 8);
+        assert_eq!(far.len() as u64, PRELOAD_OFFSETS_MAX);
+        assert!(far.iter().flatten().all(|c| (c + 512) as u32 <= 1023));
+        assert!(preload_offsets(0) == vec![[0, 0, 0]]);
+    }
 
     /// The jitter's sixteen phases are distinct points of `(-0.5, 0.5)^2` that repeat with
     /// period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).
