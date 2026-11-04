@@ -1,6 +1,8 @@
 # 0048: The probe rays' direct light without the clamp's bias: candidate schemes measured, and the furnace back at pi
 
-> **Status:** approved (2026-10-28), amended 2026-11-03
+> **Status:** abandoned (2026-11-04, owner: "drop"). Moot under ADR-0043: the probe rays gather no
+> emissive light, so the clamp bias this plan corrects is gone with Plan 0057. Nothing was built.
+> Was approved (2026-10-28), amended 2026-11-03.
 > **Created:** 2026-10-28
 > **Approved:** 2026-10-28 (owner), with the answers under "Owner answers": the screen's
 > clamp stays (an edge-pixel bias is a reading and a Followup); bar 6's +5 % on each adapter,
@@ -10,7 +12,7 @@
 > **Amended 2026-10-29 (owner):** "after all these reviews and merges are done, I want to
 > concentrate on a real fix for the light flicker; without it it doesn't make sense to move
 > forward." The order is 0047, then
-> [Plan 0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md) end to end, then this
+> [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) end to end, then this
 > plan, then Plan 0032. This plan starts after 0049 merges, and its "before" is 0049's merged
 > tree. It must not undo 0049's fix: Phase 4 gains done-when 5, that 0049's asserted settle,
 > dot and shimmer tests and Plan 0047's stillness tests pass with their bars unchanged on this
@@ -18,7 +20,7 @@
 > changes otherwise.
 > **Amended 2026-11-03 (owner: Plan 0049 dropped):** Plan 0049 will not merge, and the settle,
 > dot and shimmer tests it was to add were never written. Its place in this plan's order goes to
-> [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
+> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
 > which already held this plan for its answer. This plan starts after Plan 0051 closes and, if
 > 0051's ADR keeps a mechanism, after the plan that builds it; its "before" is main then. It holds
 > whatever settle, dot and shimmer tests that plan asserts, and Plan 0047's stillness tests. If
@@ -36,27 +38,27 @@
 > arm C (no lamp in the probes) leaves the furnaces alone, since they run lamp off; a verdict
 > with no probes makes this whole plan moot. Any of these sends it back to the architect
 > before Phase 1; this amendment decides none of them.
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet, and its headless proof: "irradiance in a closed test box
 > matches an analytic value within a stated tolerance")
-> **Related ADRs:** [ADR-0037](../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
-> (proposed with this plan), [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
-> (the estimator and its clamp, unchanged on screen), [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md)
-> (the probe update this plan changes), [ADR-0025](../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
-> (the candidate table, unchanged), [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
+> **Related ADRs:** [ADR-0037](../../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
+> (proposed with this plan), [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> (the estimator and its clamp, unchanged on screen), [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md)
+> (the probe update this plan changes), [ADR-0025](../../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
+> (the candidate table, unchanged), [ADR-0036](../../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
 > (Plan 0047's stillness, which this plan must not regress)
 > **Source:** Plan 0047's Implementation log, Phase 4 step C, and its Followups ("The firefly
 > clamp biases the probe rays' direct light low"). Plan 0047's step C scratch
 > (`stepc-diag.log`, `stepc-donly.patch`, `stepc-noclamp.patch`) was in that plan's worktree
 > under `live/`, removed at its merge; the log keeps the readings.
 > **Starts after:** Plan 0045, if this plan stands at
-> [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
+> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
 > verdict; the order is 0051, its verdict plan, 0044, 0045, this plan (amended 2026-11-03, owner).
 > The verdict plan's work may change
 > the probe update's schedule, the emissive path and the young pixels, and may add settle, dot and
 > shimmer tests this plan must hold; dev re-reads the names there. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,
 > `light.wgsl`, `marcher.rs`), and its stillness rig, its slice hash, its furnace test form
-> and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
+> and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
 > which waits for this plan (owner, 2026-10-28): 0032 adds the sun's sample and sky light to
 > the probe rays and reads its bars on the probes, so it reads them once, on an unbiased probe
 > direct term, against this plan's furnace at pi and its re-blessed goldens. Plans 0044 and 0045 land first and also touch
