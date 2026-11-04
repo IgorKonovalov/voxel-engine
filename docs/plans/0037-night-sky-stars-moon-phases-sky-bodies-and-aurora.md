@@ -1,6 +1,6 @@
 # 0037: The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint
 
-> **Status:** approved (2026-10-22)
+> **Status:** approved (2026-10-22), amended 2026-11-03
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0032](../adrs/0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md)
@@ -30,6 +30,23 @@
 > probes; `Clouds`, `CloudUpdate`, `cloud_reconstruct.wgsl`, `cloud_sky`, the composite's
 > `media` section) and Plan 0024's composite on main (`composite.wgsl`, `display()`,
 > `hud::Modes`). The names dev finds in the tree win.
+> **Amended 2026-11-03 (architect, drift):** the night sky's design and bars stand. Against the
+> tree:
+> 1. **FSR 2 at 1.5 is the default** (Plan 0055). It accumulates miss pixels by ray direction,
+>    so the flicker the box splat answers now also meets FSR 2's history and its lock pass, and
+>    `own`'s kernel is no longer Lanczos (Plan 0052). The Context, Risk 2 and Phase 8's star
+>    reading follow, on both upscalers. The splat stays: it is right under either.
+> 2. **Plan 0040 built the exposure.** The composite's `c` is already pre-exposed, there is no
+>    later multiply, and the meter reads `c / ex`. Phase 7's tint reads `Y` from `c / ex`, in
+>    the same place, and bars 3 and 4 read accordingly. `]` is bound; dev picks a free key.
+> 3. **Names.** `nfr.md` §2, §3 readings are in `docs/nfr/02-frame-budget.md` and
+>    `docs/nfr/03-memory.md`; §7 stays. Phases gate on `scripts/test-changed.mjs`, the tip on
+>    `--profile gate`; a test over 30 s on lavapipe (Phase 6's 256 frames, a golden with
+>    indirect on at `golden.rs`'s settled frames) is born on the soak list. Readings go in
+>    `docs/plans/logs/0037.md`.
+> **Waits on Plan 0051's verdict:** Phase 6 lights the ground through the probes and its bars
+> read the gather; Risk 4's lag is the probes' hysteresis. With no probes the night light has
+> only the sky ray; with a frozen probe a pulsing aurora needs that plan's restart rule.
 
 ## TL;DR
 
@@ -77,8 +94,9 @@ Facts the design rests on:
   2, 3, 4, 5 and 6 read about 111, 60, 31, 17, 10, 6, 4 and 3 of 255 on a black sky. At
   physical brightness the eye gets stars to about magnitude 4 to 5 on screen. `Night::star_gain`
   is there for a game that wants more.
-- **Jitter and the upscaler.** Plan 0030 jitters every ray by a sub-pixel offset per frame
-  and takes miss pixels with no history. A star sampled at a point flickers. A star whose
+- **Jitter and the upscaler.** Both upscalers jitter every ray by a sub-pixel offset per frame.
+  FSR 2 (the default) accumulates miss pixels reprojected by direction; `own` takes them with no
+  history (amended 2026-11-03). A star sampled at a point flickers. A star whose
   flux is integrated over the pixel's box does not, because every pixel shares the jitter, so
   the boxes tile the screen and the flux in them sums to the star's at any offset.
 - **Real star counts.** The sky holds about 9100 stars to magnitude 6.5, about 900 to 4.5,
@@ -119,7 +137,7 @@ for byte the same.
    `transmittance`), and Plan 0032's in-scattering `sky_radiance(d)` and sun disc are added.
    Plan 0035's `media` section then lays the clouds over the pixel (`L T + S`), and the
    translucent layers come after. The night terms join the miss's radiance before the
-   exposure metering of Plan 0032 Phase 4, so the metering sees them.
+   exposure metering (Plan 0040), so the metering sees them.
 2. **Stars.** `StarCatalogue::generate(&StarParams)` builds the seeded field on the CPU. Star
    `i` of `N` (brightest first) takes `u = (i + h_i) / N` with `h_i` a PCG hash of `(seed, i)`
    in `[0, 1)`, and magnitude `m = limit + log10(u) / slope`, clamped to `brightest`. So the
@@ -500,8 +518,9 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
   `Frame::set_night_tint(Option<NightTint>)`, independent of `Night` (a lamp-lit cave can use
   it too). The composite applies it to every pixel, hit or miss, after the night terms, the
   clouds and the translucent layers, after the exposure metering has read the frame, and
-  before the exposure multiply and the tone map. It reads the pixel's pre-exposure radiance
-  `c` (frame units):
+  before the tone map. It reads the pixel's pre-exposure radiance `c` (frame units; amended
+  2026-11-03: since Plan 0040 the composite's colour is pre-exposed, so this is that colour over
+  `ex`, and the mix writes back times `ex`, both upscalers' variants alike):
   `Y = dot(c, (0.2126, 0.7152, 0.0722))`;
   `t = clamp((log10(none_above) - log10(Y)) / (log10(none_above) - log10(full_below)), 0, 1)`
   (1 for `Y <= full_below`, including `Y = 0`); `w = strength x t^2 (3 - 2t)`;
@@ -510,7 +529,7 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
   toward the game's night hue (Decision 9). In the fly-through, `--night-tint off|on` and
   `--night-tint-strength S` (0 to 1) set it. The default is `on` with `--source outdoor`
   (the owner's chosen look) and `off` with the cave source. A key (proposed `]`; dev picks
-  a free one if it is taken) toggles `night tint on` and `night tint off` on the mode
+  a free one, since `]` is taken at the tip) toggles `night tint on` and `night tint off` on the mode
   banner. The testbed's values are guesses the owner tunes at Phase 9: `strength` 0.8, `hue`
   (0.80, 0.92, 1.30), and the bounds tied to Plan 0032's unit (`E_sun` frame units for
   127 500 lux, so 1 cd/m2 is `E_sun / 127 500`): `none_above = 3 E_sun / 127 500` (3 cd/m2,
@@ -553,7 +572,7 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
      (the outdoor source with seed 1, spawn `outside` facing north and pitched up 30 degrees,
      00:00, moon phase 180, stars at gain 1, auto exposure with instant adaptation) with the
      testbed's tint. The same test renders the pose with the tint off and reads the HDR
-     target before the exposure multiply: each pixel's luminance matches within 1e-5
+     target over the frame's exposure: each pixel's luminance matches within 1e-5
      relative, and the mean blue share over pixels with a channel above `full_below` is
      higher with the tint on. That is a property, and both means go in the log.
   5. **Banner.** The tint key changes the banner's text to `night tint off` and back to
@@ -607,7 +626,8 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
   aurora's presets with clouds off and scattered, look straight up into a `storm` corona,
   try `--star-gain` at 1, 4 and 16, and try `--aurora-update` modes on the slow adapter.
   They toggle the night tint on a moonless night, under a full moon and at dusk, and try
-  `--night-tint-strength` at 0.5, 0.8 and 1.
+  `--night-tint-strength` at 0.5, 0.8 and 1. The stars are judged on the default FSR 2 and on
+  `--upscaler own` (amended 2026-11-03).
 - **Files touched:** this plan's log (dev records the verdicts), then ADR-0032's Outcome at
   the close.
 - **Done when:** the owner has recorded a verdict on the stars' brightness and gain (the
@@ -732,17 +752,19 @@ recorded against the line, not gated. A miss is recorded with the profile measur
    plan and ADR. The tint's risk is that its bounds sit in frame units tied to Plan 0032's
    guessed sun constant: if the owner retunes `E_sun`, the testbed's bounds move with it by
    construction, and a game sets its own.
-2. **Shimmer through the upscaler.** Flux is conserved at the composite, but Plan 0030's
-   upscale rebuilds miss pixels from one frame of jittered samples through a Lanczos kernel,
-   so a star's output can wobble. Phase 8 logs a still camera's frame-to-frame spread of a
-   magnitude-1 star's summed output over a 9 x 9 output window, at `star_psf_px` 0.6 and
-   0.25. The property is that the wider point-spread function wobbles less. Phase 9 judges
-   it by eye. The followup is reprojection of misses by direction in Plan 0030's upscale
-   pass, already a followup of Plan 0032.
+2. **Shimmer through the upscaler** (amended 2026-11-03). Flux is conserved at the composite.
+   `own` rebuilds miss pixels from one frame of jittered samples through its kernel, so a star's
+   output can wobble; FSR 2 accumulates them by direction, so a star may hold or, through its
+   lock and rcas passes, brighten or ring. Phase 8 logs a still camera's frame-to-frame spread of
+   a magnitude-1 star's summed output over a 9 x 9 output window, at `star_psf_px` 0.6 and 0.25,
+   and its mean against the composite's flux, under each upscaler. Under `own` the property is
+   that the wider point-spread function wobbles less; under FSR 2 these are readings. Phase 9
+   judges by eye on the default. The followup under `own` is reprojection of misses by direction
+   in its upscale pass, already a followup of Plan 0032.
 3. **Aurora intensities are units by convention.** The presets' emission figures are
    guesses in frame units. Real displays span two to three orders of magnitude, and
    the game sets them.
-4. **The aurora's light lags.** Probe hysteresis (0.97) and `cloud_sky`'s one-eighth refresh
+4. **The aurora's light lags.** Probe hysteresis (0.97, as drafted; dev reads the tree) and `cloud_sky`'s one-eighth refresh
    smooth a pulsing display's light over about 30 frames. This is acceptable for a glow, and
    Phase 9 judges it.
 5. **Keys.** The proposals are `;` (stars), backquote (the moon), backslash (bodies) and

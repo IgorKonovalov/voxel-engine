@@ -1,9 +1,22 @@
 # 0044: The hot-path and defect pass: what the frame, the sync, the walk, the edits and the audio callback do for nothing
 
-> **Status:** approved (2026-10-22)
+> **Status:** approved (2026-10-22), amended 2026-11-03
 > **Created:** 2026-10-22
 > **Noted 2026-11-03 (architect, Plan 0054's close):** `attrib.rs`, `attrib.wgsl` and `attr_work.rs` are gone with the planes; findings against them are moot, and `field.rs` and `field.wgsl` are the opt-in look's. Trust the tree; dev surfaces the
 > drift when this plan starts.
+> **Amended 2026-11-03 (architect, drift):** the intent and the phases stand. Struck, with what
+> did it: `prepare_attrs`, `attr_work.rs`, `attrib.wgsl`, `full_slot` and `is_full_chunk` (Plan
+> 0054, with the planes); defect 5's two missing shaders (Plan 0041 listed them; the list form
+> stays Phase 5's target). Plan 0052 fixed no item of this plan: its log names them as this
+> plan's and leaves them, so nothing is struck for it. Added, as the same waste on what became
+> the default since this review: FSR 2's `prepare` builds its bind groups and views per frame,
+> and joins Phase 3's counter; `gradient27_normal` now runs on default pixels through the far
+> normal (provisional until Plan 0051), so Phase 5's `occupancy` reads there. `floor_div`'s
+> copy is `field.wgsl`'s, and `MAX_EDITS`' hard-coded array is in three shaders. The gates are
+> `scripts/test-changed.mjs` and the `gate` tier; readings go to
+> `docs/nfr/02-frame-budget.md`. **Waits on Plan 0051's verdict:** defect 4 and Phase 5's
+> reservoir clamp fall if the world-space cache replaces the screen reservoirs; a new probe
+> or cache path that lands first joins Phases 3 and 5 by the re-verify rule.
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
 > figures in `docs/nfr.md` that the plans so far have already shipped.
 > **Related ADRs:** none. Each fix keeps the mechanism and removes waste or a defect, so no
@@ -13,9 +26,11 @@
 > violation of clean code principles, duplications, mega files ... a plan addressing issues
 > that goes after all plans that are active are finished". The review ran at `87e4b67`; its
 > structural findings are Plan 0045.
-> **After:** Plan 0051, and before the M10 batch (owner, 2026-10-29; it was "every plan
+> **After:** Plan 0051 and its verdict plan, and before Plan 0045, Plan 0048 and M10 (amended
+> 2026-11-03, owner; see "Owner answers"). Before that: after Plan 0051, before the M10 batch
+> (owner, 2026-10-29; it was "every plan
 > active on 2026-10-22", which would have parked it behind Plans 0032 to 0037). Plan 0052,
-> the second review, runs first and strikes what it already fixed.
+> the second review, ran first (closed 2026-10-30); it fixed no item listed here.
 
 ## TL;DR
 
@@ -64,23 +79,22 @@ resolved is struck in `### Notes` with the commit that resolved it, and is not r
   and group-3 bind group, plus a `create_view` per texture binding, every frame. It builds them
   even for passes that are off (downsample, variance, gradient). It allocates three `Vec`s per
   `bind_io` call. `light_table` (`:967`) collects and sorts every light chunk per frame.
+  Since this review FSR 2 is the default upscaler: `Fsr2::prepare` (`fsr2.rs`, at the tip)
+  builds its pass groups and a view per texture binding each frame, in the same style.
 - **Mirror sync.**
   - `GpuWorld::select` (`gpu_world.rs:1959`) calls `need()`, which takes a read lock, allocates
     an `upload_set` `Vec<bool>` and runs `chunk_surface` per brick. Only then does it reach
     `if short.is_some() && !demotion { continue }` (`:2017`). Under pool pressure, every sync
     sizes the whole pending set and uploads none of it.
   - `need()` runs again for each uploaded chunk under the write lock (`:2074`).
-  - `full_slot` hashes `mirrored` with SipHash per brick, although `table_cpu` already holds
-    the record for every in-window chunk.
-  - `prepare_attrs` throws away three `HashSet` capacities per frame (`:1501`).
   - `place_lights` rescans every light chunk on each sync and on each eviction (`:2448`,
     `:2516`).
 - **March inner loop.**
   - `lookup_walk` calls `voxel_material` (up to five words) on every solid voxel
     (`march.wgsl:640`). That includes the full-walk shadow rays (`light.wgsl:155` keeps only
     `found`), `occupancy()` (26 calls per `gradient27_normal`) and the cutaway passing steps.
-  - `floor_div` converts to `f32` and divides on every step (`march.wgsl:373`, copied at
-    `attrib.wgsl:120`), although every divisor is a power of two.
+  - `floor_div` converts to `f32` and divides on every step (`march.wgsl:373`, copied in
+    `field.wgsl` at the tip), although every divisor is a power of two.
   - The step-view counters `loads`, `pool_reads` and `walk_steps` are incremented in every
     build.
   - `lod_level` recomputes the camera chunk at every chunk entry.
@@ -104,8 +118,10 @@ resolved is struck in `### Notes` with the commit that resolved it, and is not r
 **Defects (each one verified):**
 
 1. **Render tests ignore `VXE_REQUIRE_SOFTWARE_ADAPTER`.** The `device()` copies in
-   `vxe-render/tests/{mirror,walk,translucent}.rs` fall back to any adapter. CI's lavapipe
-   promise therefore holds for the fly-through's tests and not for the renderer's.
+   `vxe-render/tests/{mirror,walk,translucent,frame,exposure}.rs` skip when the software
+   adapter is missing (at the tip they force the fallback adapter; only `hud.rs` reads the
+   variable). CI's lavapipe promise therefore holds for the fly-through's tests and not for
+   the renderer's.
 2. **`golden.rs` shadows its support module.** `apps/flythrough/tests/golden.rs:55`, `:400`
    and `:519` redefine `carved_world`, `make_lod` and `lod_scene` byte for byte, over the
    `support::*` it imports. An edit to the support fixture silently misses the goldens.
@@ -116,12 +132,15 @@ resolved is struck in `### Notes` with the commit that resolved it, and is not r
 4. **The reservoir count saturates silently.** The reuse cap is `REUSE_M_CAP * candidates`,
    but the count is stored in 8 bits (`light.wgsl:370`, `:383`). Reuse is under-weighted when
    `candidates >= 13`, which the public `u32` allows.
-5. **The portability test misses two shaders.** `upscale.wgsl` and `sharpen.wgsl` are not in
-   `tests/shader_portability.rs`, which rejects runtime vector-index stores (an FXC failure).
+5. **The portability test keeps a hand list.** `tests/shader_portability.rs`, which rejects
+   runtime vector-index stores (an FXC failure), names its shaders. The two this review found
+   missing, `upscale.wgsl` and `sharpen.wgsl`, were added with Plan 0041; a new shader can
+   still be missed.
 6. **Rust and WGSL layouts are matched by hand.**
    - The uniform structs (`Params`, `View`, `Edits`, `UpTuning`) and the bit constants (entry
      bits, `FLAG_*`, `LIGHTING_*`) exist on both sides, kept in step by comments.
-   - `MAX_EDITS = 64` in Rust is hard-coded as `array<vec4<i32>, 128>` in two shaders.
+   - `MAX_EDITS = 64` in Rust is hard-coded as `array<vec4<i32>, 128>` in three shaders
+     (`temporal.wgsl`, `upscale.wgsl`, `fsr2/input.wgsl`).
    - `HEADER_TRANSLUCENT_WORD` is 24 in WGSL (slot-relative) and 8 in Rust (header-relative).
    - No test compares either side.
 
@@ -168,8 +187,11 @@ flowchart LR
 
 Every phase:
 - re-verifies its findings at the tip first and strikes the resolved ones in `### Notes`;
-- gates on `--profile quick`, plus `--profile gpu` when it touches `vxe-render` (Plan 0043);
-- runs every reading under the perf lock, labelled with the 1-minute load.
+- gates on `node scripts/test-changed.mjs --profile quick`, plus `--profile gpu` under the perf
+  lock when it touches `vxe-render`; the plan's tip gates on `--profile gate`, and a golden on
+  the soak list that a phase claims byte-identical runs by name;
+- runs every reading under the perf lock, labelled with the 1-minute load;
+- keeps each new test under 30 s on lavapipe, or names it on the soak list.
 
 ### Phase 1: the audio callback frees nothing and zeroes nothing large
 - **Owner skill:** dev
@@ -225,17 +247,18 @@ Every phase:
 - **What:**
   - `Targets` holds its views.
   - The group-2 and group-3 bind groups are built per history parity (two sets) in
-    `set_sizes`, and the world group is rebuilt only when a bound buffer changes (the
-    `AttribPass` pattern, `attrib.rs:191`).
+    `set_sizes`, and the world group is rebuilt only when a bound buffer changes.
+  - `Fsr2::prepare`'s groups and views get the same treatment, per its history parity.
   - Groups for passes that are off are not built.
   - The dispatch `Vec`s become fixed arrays.
   - `light_table` is rebuilt only when `GpuWorld`'s light ranges or the focus chunk change.
   - `present.rs` gets the same treatment.
-- **Files touched:** `crates/vxe-render/src/{marcher.rs,present.rs,gpu_world.rs}`,
+- **Files touched:** `crates/vxe-render/src/{marcher.rs,fsr2.rs,present.rs,gpu_world.rs}`,
   `crates/vxe-render/tests/` (one new test file or an existing one).
 - **Done when:**
   - A counter on `Frame` (bind groups and views created) reads **0 after the second frame** of
-    a fixed-size headless run with every lighting mode cycled once.
+    a fixed-size headless run with every lighting mode cycled once, under FSR 2 and under our
+    upscaler. A `set_upscaler` or debug-view change may build its groups once.
   - A resize to a new size reads exactly the groups of both parities, once.
   - Every golden is byte-identical.
   - The CPU time of `encode` is read before and after on the dev box.
@@ -247,11 +270,9 @@ Every phase:
   - `need()` computes the chunk's 512 solid masks once and derives the surfaces from them. Its
     result is carried to `upload`, not recomputed.
   - `upload_set` returns a `[u64; 8]` bitset.
-  - `full_slot` and `is_full_chunk` go through `in_window` and `table_cpu`.
-  - `prepare_attrs` drains its sets in place and keeps `front` and `rest` as fields.
   - `place_lights` and `write_chunk_lights` reuse scratch `Vec`s and stop rescanning on each
     eviction.
-- **Files touched:** `crates/vxe-render/src/{gpu_world.rs,attr_work.rs}`,
+- **Files touched:** `crates/vxe-render/src/gpu_world.rs`,
   `crates/vxe-render/tests/mirror.rs`.
 - **Done when:**
   - A new mirror test fills the pool, queues 64 chunks that cannot fit, and syncs. `SyncStats`
@@ -260,7 +281,8 @@ Every phase:
   - Every existing mirror test passes unchanged. The slot words a chunk receives are
     byte-identical to `87e4b67`'s, through the existing `a_slot_holds_the_packed_brick_s_own_words`.
   - The streamed default (`r_full` 16) `sync` p50 and p99 are read on both adapters against
-    Plan 0028's 3.1 ms reading in `docs/nfr.md` section 2.
+    Plan 0028's 3.1 ms reading (README's closed row for Plan 0028; its figures are in
+    `docs/nfr/02-frame-budget.md`), and the newer at-rest row in that file's frame ledger.
 
 ### Phase 5: the march walks without reading what it discards
 - **Owner skill:** dev
@@ -269,13 +291,13 @@ Every phase:
     hit, in the entry points that use it.
   - A `solid_at(v)` serves `occupancy()`, the shadow rays and the cutaway steps.
   - `floor_div` by a power of two becomes an arithmetic shift, and `cell_min` becomes a mask,
-    in `march.wgsl` and `attrib.wgsl`.
+    in `march.wgsl` and `field.wgsl`.
   - The step counters sit behind `override COUNT_STEPS: bool`, true only in the steps-view
     pipeline.
   - The camera chunk moves into `Params`.
   - The reservoir cap is clamped to 255 on the CPU and in WGSL.
   - The portability test lists every shader file.
-- **Files touched:** `crates/vxe-render/src/shaders/{march.wgsl,attrib.wgsl,light.wgsl}`,
+- **Files touched:** `crates/vxe-render/src/shaders/{march.wgsl,field.wgsl,light.wgsl}`,
   `crates/vxe-render/src/marcher.rs`, `crates/vxe-render/tests/shader_portability.rs`.
 - **Done when:**
   - **Every golden is byte-identical**, the steps view included. A shift equals a floor
@@ -285,10 +307,11 @@ Every phase:
     `cell_min` for `v` in -4096..=4096 at every cell size the walk uses.
   - `candidates = 16` gives a stored count of at most 255, asserted on a readback of the
     reservoir.
-  - `shader_portability.rs` iterates `src/shaders/*.wgsl` instead of a list, so a new shader
-    cannot be missed.
+  - `shader_portability.rs` iterates `src/shaders/**/*.wgsl`, `fsr2/` included, instead of a
+    list, so a new shader cannot be missed. A shader composed with a prelude keeps it.
   - The hit pass, the light pass and the frame are read on both adapters (the dev box and the
-    slow adapter, lane rule 8) against their latest `docs/nfr.md` section 2 readings.
+    slow adapter, lane rule 8), at the default look with its far normal, against their latest
+    readings in `docs/nfr/02-frame-budget.md` and Plan 0055's log.
 
 ### Phase 6: the world reads a chunk once per run of steps
 - **Owner skill:** dev
@@ -336,7 +359,8 @@ Every phase:
   - **A `test-support` feature in `vxe-render`** with `software_device`, `any_device` and
     `high_performance_device`. All three follow the same skip-or-require rule for
     `VXE_REQUIRE_SOFTWARE_ADAPTER` (the vxe-net `test-logic` feature is the precedent). Every
-    render test, and the fly-through's support module, uses it.
+    render test, and the fly-through's support module, uses it; the support module's
+    reading-only `VXE_TEST_ADAPTER` switch stays, on top of it.
   - **`golden.rs` loses its three shadow copies.**
   - **A layout test** parses each shader with naga and runs `naga::proc::Layouter`. It asserts
     that every uniform struct's span and member offsets equal the Rust struct's `size_of` and
@@ -344,7 +368,7 @@ Every phase:
   - **The constant-naming problems** the test exposes are fixed: `HEADER_TRANSLUCENT_WORD`,
     and the `MAX_EDITS` array lengths.
 - **Files touched:** `crates/vxe-render/{Cargo.toml,src/lib.rs,src/test_support.rs}`,
-  `crates/vxe-render/tests/*.rs`, `crates/vxe-render/src/shaders/{temporal.wgsl,upscale.wgsl,march.wgsl}`,
+  `crates/vxe-render/tests/*.rs`, `crates/vxe-render/src/shaders/{temporal.wgsl,upscale.wgsl,fsr2/input.wgsl,march.wgsl}`,
   `apps/flythrough/tests/{support/mod.rs,golden.rs}`, `apps/flythrough/Cargo.toml`,
   `.github/workflows/ci.yml` if the feature needs naming there.
 - **Done when:**
@@ -370,7 +394,7 @@ pub(crate) struct ChunkReader<'a> { store: &'a ChunkStore, last: Option<(ChunkCo
 
 ## Budgets
 
-| `docs/nfr.md` figure | Phase | Expected | How the close reads it |
+| `docs/nfr.md` figure (readings in `docs/nfr/0N-*.md`) | Phase | Expected | How the close reads it |
 |---|---|---|---|
 | Section 2, frame time at the lighting defaults | 2, 3, 5 | lower or equal (guess: encode CPU down by the bind-group work; the march by the material reads in shadow and normal paths) | `flythrough --autopilot --headless`, the defaults, both adapters, quiet box |
 | Section 2, the hit pass and the light pass | 5 | lower or equal | the per-pass timer, same runs |
@@ -384,7 +408,7 @@ guesses until read.
 
 ## Risks & open questions
 
-- **Drift.** Ten plans land before this one, in the same files. The "re-verify first" rule is
+- **Drift.** Many plans landed before this one, in the same files. The "re-verify first" rule is
   what keeps the plan honest. A phase whose findings are all gone closes with a note.
 - **Determinism.** Phase 6 changes how collapse counts and writes. The pinned hashes are the
   guard, and a changed hash is a stop, not a re-bless.
@@ -403,6 +427,12 @@ guesses until read.
 - **Move the residency pressure rule out of the testbed into an engine crate.** That is an
   architect question, recorded as a followup.
 - **Change any default, tier or look.**
+
+## Owner answers
+
+1. **The order (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: Plan 0051, its verdict plan, this plan, Plan 0045, Plan 0048 if it stands,
+   then M10.
 
 ## Implementation log
 

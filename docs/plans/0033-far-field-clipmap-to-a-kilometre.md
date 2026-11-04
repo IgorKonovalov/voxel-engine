@@ -1,6 +1,6 @@
 # 0033: The far field: a clipmap of three coarse chunk levels to about 1 km
 
-> **Status:** approved (2026-10-22)
+> **Status:** approved (2026-10-22), amended 2026-11-03
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0028](../adrs/0028-far-field-as-a-clipmap-of-source-generated-coarse-chunks.md)
@@ -14,8 +14,9 @@
 > [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the packed brick
 > a clip chunk stores), ADR-0027 (Plan 0032's per-pixel sun shadow ray, which this plan
 > continues into the far field),
-> [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (the upscaler that
-> resolves the dithered seam band)
+> [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) and
+> [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (the upscalers that
+> resolve the dithered seam band; FSR 2 is the default since Plan 0055)
 > **Source:** the owner's outdoor answers (2026-10-22: view range about 1 km with the
 > far-field clipmap); the roadmap's far-field note and its "Floor, profiles and scene scale"
 > decision; ADR-0003's Negative on LOD generation cost.
@@ -39,6 +40,27 @@
 > selectable mode, `--clip-rule level|volume`, shown on the banner. Phase 1 adds the mode,
 > Phase 2's census and Phase 5's overlay check cover both rules, Phase 7's readings add the
 > volume rule and leaf fill 64, and Phase 8 picks the default rule.
+> **Amended 2026-11-03 (architect, drift):** the clipmap and its bars stand. Against the tree:
+> 1. **The level's hit-flag bits** are 6..7, not 5..7: since Plan 0054 bits 3..5 hold the entry
+>    face's axis (`HIT_AXIS_SHIFT`), and bit 1 the field hit.
+> 2. **"Far normal" is taken.** Plan 0055 gave that name to `LookParams::far_normal` and
+>    `--far-normal` (near hits blended by footprint, provisional until Plan 0051). This plan's
+>    mode for clip hits is renamed `clip_normals`, the key and the banner keep the words
+>    `normals gradient|face`. Phase 8 judges the seam where the two meet, if the near one stays.
+> 3. **FSR 2 at 1.5 is the upscaler that resolves the band** (default since Plan 0055). The
+>    close reads and judges under it; `--upscaler own` is the comparison. The look is honest
+>    cubes (Plan 0054, ADR-0041), not the smooth surface the Context named.
+> 4. **Names.** `nfr.md` §2 and §3 readings are in `docs/nfr/02-frame-budget.md` and
+>    `docs/nfr/03-memory.md`; §5 stays in `nfr.md`. Phases gate on `scripts/test-changed.mjs`,
+>    the tip on `--profile gate`. `tests/far_field.rs` joins the gpu filter in
+>    `.config/nextest.toml`, every copy; a test over 30 s on lavapipe is born on the soak list.
+>    Readings go in `docs/plans/logs/0033.md`. Figures checked and unchanged: the 2112-byte
+>    record, the 192-byte two-material slot, `r_full` 16, `r_lod` 24, §5's 6.95e7.
+> **Waits on Plan 0051's verdict:** little. If the world-space cache is kept, its key (a voxel
+> and a face) has no answer yet at a clip hit, and Phase 6's "every other ray's light pass is
+> unchanged" is re-read. Plan 0033 builds on Plan 0032's shape, whatever that verdict makes it.
+> **Amended 2026-11-03 (owner):** see "Owner answers". Phase 7's forest readings are cut to 300
+> frames and the worst cases.
 
 ## TL;DR
 
@@ -132,8 +154,8 @@ The numbers the plan rests on (arithmetic, `chunks_in_ball` and the disc of the 
   the same voxel reads for an exact tree cell (each voxel is read once either way); Phase 2
   measures both.
 
-The consumer requirement is general (the owner's outdoor capability); `project-context.md`'s
-Rendering row sets the look (smooth, not visible cubes). The `nfr.md` figures touched are §2
+The consumer requirement is general (the owner's outdoor capability); the look is the engine's
+default, honest cubes (owner, 2026-11-01). The `nfr.md` figures touched are §2
 (primary rays and lighting), §3 (world VRAM and RAM) and §5 (generation throughput, residency
 latency).
 
@@ -152,7 +174,7 @@ with no record, a `Cells` clip chunk a record and slots from Plan 0028's bins un
 reservation, with clip records reserved apart from the near ones. `march` gains the level rule
 (the larger of the ray's level so far and the level of `|p - camera|`, coarser on an absent
 chunk), the dithered band, a per-level bound of non-empty chunks a ray may leave early through,
-the level in the hit flags and a far normal mode (face, or a gradient over the hit cell's 3³
+the level in the hit flags and a clip normal mode (face, or a gradient over the hit cell's 3³
 neighbourhood); `light.wgsl`'s sun shadow ray starts at its hit's level. With no clip levels
 the walk is today's and every existing golden holds its floor.
 
@@ -201,7 +223,7 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   in `mips.rs` (`ChunkMips::build` keeps `AnySolid`); the mirror's level-1 table window at the
   tail of `chunk_table` (static, no scrolling yet), uniform table entries, clip records; the
   march's level rule with a hard switch at `s_1 - w_1 / 2` and the level in hit flags bits
-  5..7; `UniformSource` answers `Uniform`; a test source `PlaneBoxSource` (voxels with `z < 0`
+  6..7; `UniformSource` answers `Uniform`; a test source `PlaneBoxSource` (voxels with `z < 0`
   material 3, plus axis-aligned boxes) whose coarse path is exact.
 - **Files touched:** `crates/vxe-world/src/{source.rs, clip.rs, mips.rs, store.rs, lib.rs}`,
   `crates/vxe-world/tests/clip.rs`, `crates/vxe-render/src/{gpu_world.rs, marcher.rs}`,
@@ -343,7 +365,7 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   Linux (the Windows arm confirms it); a source answering `Unsupported` yields no clip chunk
   and one `StreamStats` flag.
 
-### Phase 4: Three levels in the mirror, scrolling, the band and the far normals
+### Phase 4: Three levels in the mirror, scrolling, the band and the clip normals
 - **Owner skill:** dev
 - **What:** the mirror's three wrapped level windows, moved when the focus's level-`k` chunk
   changes (entries leaving freed, entering written absent), uniform entries, clip records
@@ -352,7 +374,7 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   bound of non-empty clip chunks (an AABB in voxels, refreshed at sync) through which a ray
   leaves early; the dithered band from the blue-noise texture when the upscaler is on (a hard
   switch at `s_k - w_k / 2` otherwise); the far limit at `(r_clip - 2) x 64 x 8` voxels; the
-  far normal mode (`face` or `gradient`) for clip hits; a `levels` view that tints hits by
+  clip normal mode (`face` or `gradient`) for clip hits; a `levels` view that tints hits by
   level.
 - **Files touched:** `crates/vxe-render/src/{gpu_world.rs, marcher.rs, lib.rs}`,
   `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/tests/mirror.rs`,
@@ -423,7 +445,7 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
 - **Owner skill:** dev
 - **What:** `--far-field [off|on]`, `--clip-radius`, the outdoor default on; `r_lod` set to
   `r_full` when the far field is on; a key cycling the far field `on`, `levels` view, `off`, and
-  a key switching far normals `gradient` and `face`, both through `Modes` and its banner
+  a key switching clip normals `gradient` and `face`, both through `Modes` and its banner
   (`far field on, 3 levels to 1024 m, normals gradient`); HUD rows for clip chunks resident per
   level against their ball, clip bytes live and the overlay; the outdoor autopilot flight at 10
   m/s with the far field on and off; the readings below on the NVIDIA card and the AMD iGPU.
@@ -440,7 +462,7 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   the root `README.md` (the flags and keys), `docs/nfr.md` §2, §3 and §5.
 - **Done when:** a test presses the far-field key three times and finds `Modes::line()` naming
   `far field levels`, `far field off`, `far field on` in turn with the banner shown from each
-  press, and the far-normals key flipping `normals gradient` to `normals face`, and (amended
+  press, and the clip-normals key flipping `normals gradient` to `normals face`, and (amended
   2026-10-22, owner) a parse of `--clip-rule volume` naming `rule volume` on the line while
   the default names `rule level`; the outdoor
   autopilot with the far field on reads: clip residency per level at full residency equal to
@@ -475,6 +497,17 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
      The ratios add level/volume per fill and adapter, and fill 64/128 per rule. Each forest
      run with the far field on also prints Phase 2's per-level canopy fill for its rule and
      fill, so the frame cost and the far canopy's density are read together.
+     *Amended 2026-11-03 (owner): 300 frames and the worst cases. This replaces the matrix
+     above.* Median of the last 30 of 300 frames, three runs each, with every level at full
+     residency before those frames count (a run that does not get there is labelled unsettled).
+     Five configurations on each adapter, all at `--sun 10,270`: far field on with `none` (the
+     open reference); on with forest at fill 128 under `level` and under `volume` (the densest
+     masks, Budgets); on with forest at fill 64 under `level` (the sparse fill's sign); off with
+     forest at fill 128 (the on/off ratio). That is ten configurations, 30 timed runs and ten
+     `--view steps` runs. Both adapters stay: each reading is stated against the lines on its own
+     adapter. The ratios are forest/open with the far field on, on/off, level/volume at fill 128
+     and fill 64/128 under `level`, per adapter. Phase 8's window still flies both rules at both
+     fills.
   2. **Do far tree shadows survive? An observation.** In the four runs above, with the
      exposure fixed at the value auto settles to in the open, far-field-on run (logged), the
      exit line's mean ground luminance per hit level goes in the log for forest and none, and
@@ -484,13 +517,14 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
      whether trunk shadows and canopy shadows are visible in the saved image. *Amended
      2026-10-22 (owner, second set):* the luminance ratios and the saved images are taken
      for each forest configuration with the far field on (two rules at two fills) against
-     `none`, at the same fixed exposure.
+     `none`, at the same fixed exposure. *Amended 2026-11-03 (owner):* the three forest
+     configurations with the far field on that reading 1 keeps.
 
 ### Phase 8: The owner's windowed outdoor flight
 - **Owner skill:** human
 - **What:** the outdoor fly-through at 2560 x 1440, banner and HUD visible: still views of the
   horizon at each switch distance in the `levels` view and shaded, slow and 30 m/s passes along
-  the terrain watching for seams and popping, far normals `gradient` against `face`, and one
+  the terrain watching for seams and popping, clip normals `gradient` against `face`, and one
   flight at `r_full` 24 against 16 (level 1 then starts at 134 to 141 m, about 1.5 px a cell at
   1080p, and the near tier's cost is the census's). *Amended 2026-10-22 (owner):* from
   `--spawn vista --trees forest`, the owner runs the day with `/` from 16:00 through sunset
@@ -500,7 +534,7 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   naming the rule, and picks the default rule.
 - **Files touched:** this plan's log.
 - **Done when:** the owner has recorded in the Implementation log a verdict on the seams and
-  popping, the default far normal mode, and whether the outdoor `r_full` default stays 16.
+  popping, the default clip normal mode, and whether the outdoor `r_full` default stays 16.
   *Amended 2026-10-22 (owner):* also a verdict on distant forest shadows at sunset: whether
   they read at each level band, whether far canopies look too dense or too sparse, and
   whether thin trunks vanishing beyond about 243 m is visible. *Amended 2026-10-22 (owner,
@@ -536,8 +570,8 @@ pub trait WorldSource {
   no record (uniform air is the empty bit with no record).
 - **Params:** `clip_levels`, `clip_window` (W), `clip_min[3]` (`vec4<i32>`), `clip_switch` and
   `clip_band` (`vec4<f32>`, voxels), `clip_bounds_min[3]` and `clip_bounds_max[3]`, `far_limit`,
-  `far_normals`. The near walk's `lod1_r2` and `lod2_r2` stay for the LOD-only ring.
-- **Hit flags:** bits 5..7 the hit's level (0 near, 1 to 3 clip), read by the light pass for the
+  `clip_normals`. The near walk's `lod1_r2` and `lod2_r2` stay for the LOD-only ring.
+- **Hit flags:** bits 6..7 the hit's level (0 near, 1 to 3 clip), read by the light pass for the
   shadow start and by the `levels` view.
 - **Mirror:** clip records reserved apart (`MirrorConfig::clip_records`, per level, default
   4096: 3 x 4096 x 2112 B = 25 952 256 B), clip slots from the shared bins; pressure's record
@@ -555,7 +589,7 @@ pub trait WorldSource {
 | §5 Residency latency | 500 ms p95 near | unchanged near; ring p95 under 1.28, 2.56, 5.12 s by level (bars) | Phase 7 autopilot, far field on |
 | §2 Primary rays | 3.0 ms | outdoor horizon view, far field on: under 3.0 ms on the NVIDIA card (bar, a guess of +0.3 to 1.0 ms over off); iGPU recorded | Phase 7, timestamps, median of the last 30 of 300 frames, three runs, quiet box, both adapters |
 | §2 Lighting | 6.0 ms | the sun ray grows with the far field, most at low sun; recorded at 45 and 10 degrees | Phase 7, both adapters |
-| §2 Primary rays, lighting and frame, forest at low sun (amendment 2026-10-22, owner) | 3.0 ms; 6.0 ms; 16.6 ms | no projection: at fill 128 canopies keep 64 to 100 % of their interior cells at levels 1 to 3 under the level rule and 52 to 64 % under the volume rule, at fill 64 at most 11 %, so a grazing far ray meets denser masks than the bare hills at fill 128 | Phase 7, `--spawn vista --sun 10,270`, the eight configurations per adapter (amended 2026-10-22, owner: both rules, fills 128 and 64), both adapters |
+| §2 Primary rays, lighting and frame, forest at low sun (amendment 2026-10-22, owner) | 3.0 ms; 6.0 ms; 16.6 ms | no projection: at fill 128 canopies keep 64 to 100 % of their interior cells at levels 1 to 3 under the level rule and 52 to 64 % under the volume rule, at fill 64 at most 11 %, so a grazing far ray meets denser masks than the bare hills at fill 128 | Phase 7, `--spawn vista --sun 10,270`, the five configurations per adapter at 300 frames (amended 2026-11-03, owner: `none`, fill 128 under both rules, fill 64 under `level`, far field off at fill 128), both adapters |
 | §3 World in VRAM, forest (amendment 2026-10-22, owner) | 3 GB | a guess: canopies add about 270, 170 and 120 `Full` bricks to a surface clip chunk at levels 1 to 3 (bounded by the canopy layer, 6, 3 and 2 bricks tall), about +0.15 to 0.25 GB, so 0.3 to 0.45 GB for three levels | Phase 2's forest census; Phase 7's forest run, recorded against 0.5 GB |
 | §5 Generation throughput, forest (amendment 2026-10-22, owner) | as above | exact tree cells about 1.2e8 voxel samples a second at 10 m/s, some 1.7 workers (a guess, Context) | Phase 2's forest rate |
 | §2 Streaming line (render thread) | 1.0 ms | clip syncs add uploads of surface clip chunks and table entries; recorded beside off | Phase 7 autopilot timers |
@@ -586,8 +620,9 @@ is shared DDR4.
   that leave the slab. If Phase 7's march misses its bar, the next levers are a coarser shadow
   walk by distance (a followup) and a lower `r_clip` in the portable profile (two levels end at
   512 m).
-- **The seam without the upscaler.** The band is dithered only when the upscaler runs (Plan
-  0030); otherwise the hard switch shows up to half a coarse cell of surface offset on grazing
+- **The seam without the upscaler.** The band is dithered only when an upscaler runs (FSR 2 by
+  default, Plan 0030's `own` opt-in; a dither is what FSR 2's lock and depth-clip passes have
+  not been read on, so Phase 8 judges it there); otherwise the hard switch shows up to half a coarse cell of surface offset on grazing
   terrain. Phase 4's plane test bounds it; Phase 8 judges it.
 - **Interiors left out of the far field wall off long sightlines underground.** The outdoor
   coarse path draws no caverns, so a camera in a cavern sees rock where a passage continues
@@ -632,6 +667,12 @@ is shared DDR4.
   Phase 7's low-sun reading asks for it.
 - **Probes beyond the near volume** (Plan 0029 stays near-field).
 
+## Owner answers
+
+1. **The forest readings (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: Phase 7's forest matrix is cut to 300 frames and the worst cases (Phase
+   7, reading 1; Budgets).
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -644,7 +685,7 @@ is shared DDR4.
 | 1: Walking skeleton: one level, bounded, a box at 150 m | dev | not started | |
 | 2: The outdoor source's coarse path and the census | dev | not started | |
 | 3: Clip residency on the streamer | dev | not started | |
-| 4: Three levels in the mirror, scrolling, the band and the far normals | dev | not started | |
+| 4: Three levels in the mirror, scrolling, the band and the clip normals | dev | not started | |
 | 5: Edits fold into the far field | dev | not started | |
 | 6: The sun's shadow ray walks the far field | dev | not started | |
 | 7: The fly-through's switches, HUD rows and readings on both adapters | dev | not started | |

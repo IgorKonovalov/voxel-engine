@@ -7,12 +7,12 @@
 
 <sub>The showcase cavern (`--source showcase`), seed 1, its `hall` shot: from voxel
 (190, 384, 218), 9 m over the west floor, at yaw 0 and pitch -12 degrees, lamp off, so all of
-the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 64 frames at
+the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 8192 frames at
 a manual exposure of 8, indirect light on at a probe spacing of 32 voxels, FSR 2 on at
 internal scale 1.5 (1280x720 for 1920x1080) with sharpening 0.5, the default `face` look
 (honest cubes with the far normal at `[2, 6]`) and the default lighting, on an RTX 3080 Laptop GPU at 1920x1080.
 Regenerate with
-`cargo run --release -p flythrough --example hero -- --exposure 8 --out docs/images/hero.png`
+`cargo run --release -p flythrough --example hero -- --exposure 8 --frames 8192 --out docs/images/hero.png`
 (every other setting above is the example's default).</sub>
 
 A game-agnostic voxel engine in Rust. A streaming world of small voxels (10 cm at the first

@@ -1,6 +1,6 @@
 # 0035: Aerial perspective over the near and far field, and volumetric clouds that shadow the ground
 
-> **Status:** approved (2026-10-22)
+> **Status:** approved (2026-10-22), amended 2026-11-03
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0030](../adrs/0030-volumetric-cloud-shell-amortised-march-and-projected-shadow-map.md)
@@ -33,6 +33,20 @@
 > draft (`Sky`, `Body`, `sky.wgsl`'s `sky_radiance` and `transmittance`, the directional
 > sample, the sky ray beyond the probes, pre-exposure, `--source outdoor`). Plans 0032 and
 > 0033 were drafted in parallel with this one: the names dev finds in the tree win.
+> **Amended 2026-11-03 (architect, drift):** the shell, the march and the bars stand. FSR 2 at
+> 1.5 is the default upscaler (Plan 0055), and it does keep history on a miss, reprojected by ray
+> direction, so the Context's "rejects history on a miss" and the matching risk now hold only
+> for `--upscaler own`. Wind-driven cloud on rotation-only motion can ghost under FSR 2, so
+> Phase 4 gains a reactive term and Phase 8 judges both upscalers. Base figures follow: Plan
+> 0032's bytes are 0.31 MB, and the fly-through's frame targets read 309 377 468 B under FSR 2 at
+> 1080p (Plan 0055's log). `nfr.md` §2 and §3 readings are in `docs/nfr/02-frame-budget.md` and
+> `docs/nfr/03-memory.md`. Phases gate on `scripts/test-changed.mjs`, the tip on `--profile
+> gate`; a golden over 30 s on lavapipe is born on the soak list, and one with indirect light on
+> renders at `golden.rs`'s settled frames as Plan 0032's do. Readings go in
+> `docs/plans/logs/0035.md`. **Waits on Plan 0051's verdict:** `cloud_sky` replaces the sky at
+> probe misses and the cloud shadow reaches probe rays (Phase 6). With no probes the lighting
+> half reduces to the sky ray; with a frozen probe, moving cloud shadow needs that plan's
+> restart rule. Nothing here is decided on it.
 
 ## TL;DR
 
@@ -89,9 +103,10 @@ Facts the design uses:
   fits `rgba16float`'s 65 504. The aerial perspective barely shows inside the near field
   (optical depth 0.005 to 154 m, Plan 0032's arithmetic); it matters across Plan 0033's
   kilometre and at cloud distances.
-- **Plan 0030 rejects history on a miss**, so sky and cloud pixels take the composite's
-  current value through the upscaler. The cloud image must be temporally stable by itself,
-  which is the reconstruction pass's job.
+- **FSR 2 reprojects a miss by its ray direction** (`fsr2/input.wgsl`, the default since Plan
+  0055; amended 2026-11-03), and `own` rejects history on a miss. Neither follows the wind. The
+  cloud image must be temporally stable by itself, which is the reconstruction pass's job, and
+  FSR 2 must be told not to lean on its history where cloud moves over the pixel.
 - **The aerial-perspective LUT and M8's fog are different volumes with one composite rule**
   (decided here, see Decision). The roadmap's M8 note puts dust, fog, mist and smoke in a
   separate coarse volume marched at half resolution and composited over the opaque hit.
@@ -217,7 +232,7 @@ flowchart LR
         R --> C[composite\nAP, clouds, layers]
         L --> C
         AP --> C
-        C --> U[Plan 0030 upscale]
+        C --> U[FSR 2 or own upscale]
     end
     WX --> NV
     WX --> CM
@@ -325,9 +340,12 @@ Render tests skip with a printed reason where no adapter exists, as today.
   this frame's wind displacement through the previous view, history clamp to the marched
   neighbours' box, blend 0.25, nearest-marched fill); the composite's depth-weighted upsample;
   the forced `Every` and blend 0.5 inside the shell; the cloud buffers resize with
-  `Frame::resize` and `set_resolution`.
+  `Frame::resize` and `set_resolution`. *Amended 2026-11-03:* FSR 2's input pass reads the
+  upsampled cloud's `1 - transmittance` into its reactive mask, weighted by a
+  `reactive_cloud` tuning (a starting value Phase 8 judges), as it does a translucent layer's.
 - **Files touched:** `clouds.wgsl`, new `crates/vxe-render/src/shaders/cloud_reconstruct.wgsl`,
-  `composite.wgsl`, `clouds.rs`, `marcher.rs` (`cloud_reconstruct` in `FRAME_PASSES`),
+  `composite.wgsl`, `fsr2/input.wgsl`, `fsr2.rs`, `clouds.rs`, `marcher.rs` (`cloud_reconstruct`
+  in `FRAME_PASSES`),
   `crates/vxe-render/tests/clouds.rs`, `apps/flythrough/src/main.rs` and `hud.rs` (an
   update-mode key with the banner).
 - **Done when:** with a still camera on the scattered preset, `OneInFour` and `OneInSixteen`
@@ -343,7 +361,9 @@ Render tests skip with a printed reason where no adapter exists, as today.
   field 50 m per frame keeps history in at least 95 % of cloud pixels with wind compensation,
   and its 8-frame image is closer to `Every` than the same run with compensation off (the
   two differences logged); with the camera at 2.5 km altitude `Clouds::effective_update`
-  returns `Every` whatever the mode, and at 0.5 km and 5 km returns the mode.
+  returns `Every` whatever the mode, and at 0.5 km and 5 km returns the mode; under FSR 2 the
+  reactive mask reads 0 on a clear-sky miss and the tuning's value under an opaque cloud
+  (amended 2026-11-03).
 
 ### Phase 5: Aerial perspective in the composite, and the media rule
 - **Owner skill:** dev
@@ -421,7 +441,8 @@ Render tests skip with a printed reason where no adapter exists, as today.
 - **What:** the owner flies the outdoor testbed on both adapters (pinged when ready, batched
   with the other outdoor checks): overcast, scattered cumulus through a sunset into night,
   a flight up through the shell and above it, the cloud shadows crossing terrain with the
-  wind, each lighting mode and update mode, the aerial perspective on and off.
+  wind, each lighting mode and update mode, the aerial perspective on and off, under FSR 2 and
+  `--upscaler own` (amended 2026-11-03).
 - **Files touched:** this plan's log (dev records the owner's verdicts).
 - **Done when:** the owner has named the lighting mode and update modes to keep (per
   adapter), and said whether the look is smooth and natural (no banding, no blocky
@@ -468,8 +489,8 @@ cloud-buffer rows shrink to 4/9):
 | this frame's marched samples | rgba16float + rg32float | 480 x 270 (sized for `OneInFour`; `Every` marches it four times a frame) | 2 073 600 |
 | aerial-perspective volume, one view | rgba16float 3D | 32^3 | 262 144 |
 
-About 30.9 MB (30 889 544 B), against §3's 1.5 GB "everything else" line beside Plan 0024's
-276 MB, Plan 0029's 50.3 MB, Plan 0030's history and Plan 0032's 0.56 MB. A second view adds
+About 30.9 MB (30 889 544 B), against §3's 1.5 GB "everything else" line, beside the default
+frame's 309 MB of targets under FSR 2 and Plan 0032's 0.31 MB (amended 2026-11-03). A second view adds
 a second aerial-perspective volume and a second set of cloud buffers. Storage-texture formats are WebGPU core
 (`rgba8unorm`, `rgba16float`, `r32float`, `rg32float`), so no adapter feature is requested.
 
@@ -502,15 +523,16 @@ was measured, as with every render plan since Plan 0028.
 - **Ghosting on fast turns and cuts.** The one-in-four update reveals a screen edge at a
   quarter of its pixels. Reprojection makes slow turns safe; a cut (teleport) resets history,
   and its first frames show the spatial fill. Phase 8 judges it.
-- **Plan 0030 and the sky.** The upscaler takes misses at alpha 1.0, so cloud pixels get no
-  upscaler accumulation and are as soft as the half-resolution reconstruction. Clouds are soft;
-  if the owner sees shimmer at cloud edges over the sky, a followup gives the upscaler the
-  cloud's mean depth for reprojection of misses.
+- **The upscalers and the sky** (amended 2026-11-03). `own` takes misses at alpha 1.0, so under
+  it cloud pixels are as soft as the half-resolution reconstruction. FSR 2 accumulates misses by
+  direction, so wind or a low update mode can smear cloud edges; the reactive term above is the
+  first answer. If the owner sees either, a followup gives the upscaler the cloud's mean depth
+  for reprojection.
 - **Quadratic slices against the paper's.** Hillaire 2020 spaces its 32 slices over 32 km
   for a world seen from the air; ours is a 1 km world under a sky of clouds, hence the
   quadratic mapping. Phase 5's brute-force comparison is the check that six slices carry
   the kilometre without banding; if they do not, a 48-slice volume (393 216 B) is the knob.
-- **Keys.** Plan 0029 binds `F8`; Plan 0032 binds `Tab`, `,`, `.` and `/`, and Plans 0033 and 0034 add keys in the
+- **Keys.** `F1` to `F10` are bound at the tip; Plan 0032 binds `Tab`, `,`, `.` and `/`, and Plans 0033 and 0034 add keys in the
   same batch. Dev takes unbound keys and lists them in the mode line; the banner, not the
   key, is the contract.
 - **Lavapipe cost.** Generating 2.4 million noise texels and marching 14 400 cloud rays for

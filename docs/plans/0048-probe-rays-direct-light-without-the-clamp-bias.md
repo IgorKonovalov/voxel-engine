@@ -1,6 +1,6 @@
 # 0048: The probe rays' direct light without the clamp's bias: candidate schemes measured, and the furnace back at pi
 
-> **Status:** approved (2026-10-28)
+> **Status:** approved (2026-10-28), amended 2026-11-03
 > **Created:** 2026-10-28
 > **Approved:** 2026-10-28 (owner), with the answers under "Owner answers": the screen's
 > clamp stays (an edge-pixel bias is a reading and a Followup); bar 6's +5 % on each adapter,
@@ -25,6 +25,17 @@
 > 0051 keeps the world-space cache, the clamp question changes shape (0051's "What B deletes"),
 > and the architect re-reads this plan before it starts. The older text on Plan 0049 below is
 > rewritten to match; the amendments above stay as the record.
+> **Amended 2026-11-03 (architect, drift):** no scheme, bar or order changes. The tests now read
+> on honest cubes with no procedural detail and FSR 2 at 1.5 the fly-through's default (Plans
+> 0053 to 0055). The names follow the tree: the soak list for the slow list, `--profile gate`
+> for the full gate (a soak-list test the plan names runs by name), `docs/nfr/02-frame-budget.md`
+> for `nfr.md` section 2's readings. Plan 0047's `live/` scratch left with its worktree, so its
+> step C patches are history, read from Plan 0047's log. Phase 1's references re-read on the
+> tree first. **Waits on Plan 0051's Phase 4 verdict:** arm A (converge and freeze) moves B2's
+> schedule and the stillness "before"; arm B (world-space cache) reshapes the clamp question;
+> arm C (no lamp in the probes) leaves the furnaces alone, since they run lamp off; a verdict
+> with no probes makes this whole plan moot. Any of these sends it back to the architect
+> before Phase 1; this amendment decides none of them.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet, and its headless proof: "irradiance in a closed test box
 > matches an analytic value within a stated tolerance")
@@ -35,19 +46,25 @@
 > (the candidate table, unchanged), [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
 > (Plan 0047's stillness, which this plan must not regress)
 > **Source:** Plan 0047's Implementation log, Phase 4 step C, and its Followups ("The firefly
-> clamp biases the probe rays' direct light low"). Plan 0047's step C scratch is in that
-> plan's worktree under `live/` (`stepc-diag.log`, `stepc-donly.patch`, `stepc-noclamp.patch`).
-> **Starts after:** [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)
-> closes, and the plan its ADR names, if any (amended 2026-11-03, owner). That work may change
+> clamp biases the probe rays' direct light low"). Plan 0047's step C scratch
+> (`stepc-diag.log`, `stepc-donly.patch`, `stepc-noclamp.patch`) was in that plan's worktree
+> under `live/`, removed at its merge; the log keeps the readings.
+> **Starts after:** Plan 0045, if this plan stands at
+> [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
+> verdict; the order is 0051, its verdict plan, 0044, 0045, this plan (amended 2026-11-03, owner).
+> The verdict plan's work may change
 > the probe update's schedule, the emissive path and the young pixels, and may add settle, dot and
 > shimmer tests this plan must hold; dev re-reads the names there. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,
 > `light.wgsl`, `marcher.rs`), and its stillness rig, its slice hash, its furnace test form
 > and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
 > which waits for this plan (owner, 2026-10-28): 0032 adds the sun's sample and sky light to
 > the probe rays and reads its bars on the probes, so it reads them once, on an unbiased probe
-> direct term, against this plan's furnace at pi and its re-blessed goldens. Plans 0044 and 0045 also touch
-> `marcher.rs` and the flythrough tests, and whichever lands second rebases. Drafted against
+> direct term, against this plan's furnace at pi and its re-blessed goldens. Plans 0044 and 0045 land first and also touch
+> `marcher.rs` and the flythrough tests, so dev re-reads the names after them. Drafted against
 > main at bc1e7a5 and Plan 0047's branch at c27891f. The names dev finds in the tree win.
+> **Amended 2026-11-03 (owner):** this plan follows Plan 0045, and at Plan 0051's verdict it
+> shrinks to scheme A or C, or is dropped. The schemes stay in this plan until then. See "Owner
+> answers", 7.
 
 ## TL;DR
 
@@ -112,9 +129,11 @@ albedo a their fixed point is `E = a (PI L + E)`, which gives `E = PI L` at a = 
 the same claim: more of its hits lie near an edge.
 
 **The `nfr.md` figures touched:** §2, the probe volume's two passes (update plus gather at
-most 1.7 ms on the dev box at the streamed spawn, read 1.63 to 1.66 ms), and the lighting line
-(at most 6.0 ms at the half tier). §3 the frame's bytes (`Frame::frame_bytes`), only if the
-running gain is kept.
+most 1.7 ms on the dev box at the streamed spawn, read 1.63 to 1.66 ms at Plan 0029; the frame
+ledger in `docs/nfr/02-frame-budget.md` reads 1.317 ms on `face`, 8.838 ms on the Radeon), and
+the lighting line (at most 6.0 ms at the half tier). §3 the frame's bytes
+(`Frame::frame_bytes`), only if the running gain is kept. New §2 readings go in
+`docs/nfr/02-frame-budget.md`.
 
 ## Decision
 
@@ -173,7 +192,7 @@ flowchart LR
   mean at an edge pixel. It also takes this plan's "before" readings in Plan 0047's stillness
   rig and the probe passes' cost. Today's tree prints its bias.
 - **Files touched:** `apps/flythrough/tests/probe_direct.rs` (new; it joins the gpu filter in
-  `.config/nextest.toml` and the slow list), `apps/flythrough/tests/support/furnace.rs` (new:
+  `.config/nextest.toml`, and each test over the line joins the soak list), `apps/flythrough/tests/support/furnace.rs` (new:
   `furnace_world`, the floor probe and `furnace_direct_mean`, moved from `indirect.rs` with
   the box size a parameter), `apps/flythrough/tests/indirect.rs` (uses the moved helpers),
   `crates/vxe-render/src/probes.rs` (a test-only readback of one probe's ray words, if the
@@ -214,9 +233,10 @@ flowchart LR
     the variable unset it reads the default only.
 - **Done when:**
   1. On the merged tree, the rig's standard-box D lies within 1 % of Plan 0047's committed
-     reading at the same probe code (2.9010 with the hash) and under pi by more than 5 %. If
-     Plan 0051's direction changed the probe update's schedule, dev first re-reads D on that
-     merge and logs it beside 2.9010; that reading is the reference (amended 2026-11-03, owner). If
+     reading at the same probe code (2.9010 with the hash) and under pi by more than 5 %. Dev
+     first re-reads D on the merged tree and logs it beside 2.9010: Plans 0053 to 0055 changed
+     the surface since that reading, and Plan 0051's direction may change the probe update's
+     schedule. That re-read is the reference (amended 2026-11-03). If
      it lies within 1.5 % of pi, the bias is gone from the tree and dev stops for the
      architect.
   2. The rig prints, for the default, both furnaces' D with its error, visits and quarters,
@@ -228,8 +248,8 @@ flowchart LR
      raised to the radiance range's top (see Risks: `k` at most `65504 / (albedo lum(Le))`,
      131 008 here, applied as a `min` before `pack2x16float`), as a scratch patch. It is
      logged, with its quarters, as the variance a scheme must beat.
-  4. `the_furnace_box_reads_pi_of_indirect_irradiance` passes unchanged on the helpers'
-     new home, and `check-test-tiers.mjs` passes.
+  4. `the_furnace_box_reads_pi_of_indirect_irradiance` (a soak-list test, run by name) passes
+     unchanged on the helpers' new home, and `check-test-tiers.mjs` passes.
 
 ### Phase 2: The candidate schemes as modes of one setting
 - **Owner skill:** dev
@@ -273,8 +293,8 @@ flowchart LR
     `k`. The light pass keeps `Lighting::candidates`.
 - **Done when:**
   1. With the default, every test in `flythrough::indirect`, `flythrough::lights`,
-     `flythrough::golden` and `flythrough::emissive_stillness` passes with no golden
-     re-blessed. The centre probe's 36 interior texels after 256 frames in the standard
+     `flythrough::golden` and `flythrough::emissive_stillness`, their soak-list tests run by
+     name, passes with no golden re-blessed. The centre probe's 36 interior texels after 256 frames in the standard
      furnace are byte-identical to Phase 1's on lavapipe. The light pass's irradiance target
      at `PATCH_POSE` after 120 frames is byte-identical under every mode, because the screen
      path is untouched.
@@ -357,12 +377,12 @@ flowchart LR
 - **Owner skill:** dev
 - **What:** Phase 3's setting becomes the default, the furnace test asserts against pi again, the narrow furnace joins it, the goldens
   with the probes on are re-blessed at the new default, and the budget readings land in
-  `docs/nfr.md`.
+  `docs/nfr/02-frame-budget.md`.
 - **Files touched:** `crates/vxe-render/src/marcher.rs` (the default, by Phase 3's rule),
   `apps/flythrough/tests/indirect.rs`, `apps/flythrough/tests/golden/*.png`
   (those whose test runs with indirect light on: `indirect.png`, `showcase_hall.png`, and
-  any other dev finds), `.config/nextest.toml` (slow list), `docs/nfr.md` (§2 readings and
-  §3 if B2), `apps/flythrough/tests/probe_direct.rs`.
+  any other dev finds), `.config/nextest.toml` (soak list), `docs/nfr/02-frame-budget.md`
+  (§2 readings), `docs/nfr/03-memory.md` (§3, if B2), `apps/flythrough/tests/probe_direct.rs`.
 - **Done when:**
   1. `the_furnace_box_reads_pi_of_indirect_irradiance` asserts bar 1 (D within 1.5 % of pi,
      error at most 0.5 %). It keeps Plan 0047's bars against D at 256 frames: every
@@ -372,18 +392,18 @@ flowchart LR
      lag at 256 frames, plus bar 1's 1.5 % allowance for D's offset from pi. The doc comment
      says so. Plan 0029's old 10 % of pi then holds as a consequence. A new test,
      `the_narrow_furnace_reads_pi`, asserts bar 2 and the same texel bars against D and pi.
-     Its run time is logged, and it joins the slow list.
+     Its run time is logged, and it is born on the soak list (about 90 s or more on lavapipe).
   2. Each re-blessed golden is named in the log with its moved share, its mean luminance change
      and its gather's mean change, read against Plan 0047's golden on the same view. The
      gather's mean rises or stays (bar 4's direction). A golden whose mean falls by more than
      1 % stops dev for the architect. The before and after images of every re-blessed golden
      go under the plan's scratch for Phase 5.
-  3. `docs/nfr.md` §2 gets the update and gather readings at the new default on both adapters,
-     beside Plan 0047's, with machine, commit, load and power state, and §3 gets the
-     `frame_bytes` change if B2 is kept.
-  4. The full gate: build, `cargo nextest run --workspace --profile full` under the perf lock,
-     doctests, clippy with `-D warnings`, fmt, deny, and the doc and tier gates. Exit codes and
-     counts are in the log.
+  3. `docs/nfr/02-frame-budget.md` gets the update and gather readings at the new default on
+     both adapters, beside Plan 0047's, with machine, commit, load and power state, and
+     `docs/nfr/03-memory.md` gets the `frame_bytes` change if B2 is kept.
+  4. The tip gate: build, `cargo nextest run --workspace --profile gate` under the perf lock,
+     doctests, clippy with `-D warnings`, fmt, deny, and the doc and tier gates, plus the
+     soak-list tests this plan names, by name. Exit codes and counts are in the log.
   5. **The light's fix holds** (amended 2026-11-03, owner). At the new default, on lavapipe,
      the settle, dot and shimmer tests that the plan after Plan 0051's ADR asserts, by the
      names dev finds on main, if any, and Plan 0047's stillness tests
@@ -420,7 +440,7 @@ flowchart LR
   README caption is updated if it names the light.
 - **Files touched:** as Phases 2 and 4, `docs/images/hero.png`, the root `README.md` (the flag
   and key rows; the caption, if it names the light), `apps/flythrough/examples/hero.rs` (only
-  if its defaults change), `docs/nfr.md` §3 (if B2's buffer goes, or stays).
+  if its defaults change), `docs/nfr/03-memory.md` (if B2's buffer goes, or stays).
 - **Done when:**
   1. The owner's default is `Lighting::default`'s, and Phase 4's done-whens 1 to 5 are re-read
      and met at it (unchanged readings, if it is Phase 3's). The log has the re-read readings.
@@ -434,7 +454,7 @@ flowchart LR
      file, byte-identical or with at most 0.1 % of pixels differing by more than 2/255, as in
      Plan 0038 Phase 7. The README caption names the light as the new default renders it, if
      it names the light at all. `node scripts/check-doc-links.mjs` passes.
-  4. The full gate, as Phase 4 done-when 4.
+  4. The tip gate, as Phase 4 done-when 4.
 
 ## Data shapes
 
@@ -544,6 +564,12 @@ The questions of the draft, answered at approval (owner, 2026-10-28):
 6. **The order (owner, 2026-10-29; Plan 0049 dropped 2026-11-03).** This plan starts after Plan
    0051 and the plan its ADR names, if any, and must hold that plan's asserted settle, dot and
    shimmer tests and Plan 0047's stillness tests with their bars unchanged. Phase 4, done-when 5.
+   Amended by answer 7.
+7. **The order and this plan's size (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So
+   the recommended options: the order is Plan 0051, its verdict plan, Plan 0044, Plan 0045, this
+   plan if it stands, then M10. At Plan 0051's verdict the architect decides whether this plan
+   shrinks to scheme A (the probe clamp) or scheme C (solid angle), or is dropped. Every scheme
+   stays in this plan until then.
 
 ## Implementation log
 

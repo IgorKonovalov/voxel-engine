@@ -1,17 +1,26 @@
 # 0045: The structure pass: split the mega files, share the fixtures, and gate their regrowth
 
-> **Status:** approved (2026-10-22)
+> **Status:** approved (2026-10-22), amended 2026-11-03
 > **Created:** 2026-10-22
 > **Noted 2026-11-03 (architect, Plan 0054's close):** `attrib.rs`, `attrib.wgsl` and `attr_work.rs` are gone with the planes; `field.rs` and `field.wgsl` stand in their place in this plan's splits. The names left from the planes (`NormalMode::Contour`, the `contour` goldens) fit this pass. Trust the tree; dev surfaces the
 > drift when this plan starts.
+> **Amended 2026-11-03 (architect, drift):** the splits and their seams stand. Struck: the
+> attribute scheduler and `attr_offset` (Plan 0054), `detail.wgsl` (Plan 0055 removed the
+> detail), `mirror_attrs.rs` (no attribute tests remain). `field.rs` and `exposure.rs` and
+> `fsr2.rs` use `gpu_util`; `field.wgsl` takes `attrib.wgsl`'s place. Phase 8's file-size gate
+> needs the source files that have grown over its cap since the review, which no phase named,
+> so its text now includes them. The partition check follows the 2026-11-03 tier re-cut, the
+> phase gate is `scripts/test-changed.mjs`. The figures in this plan stay at `87e4b67`, as
+> marked; `dev` re-inventories. **Waits on Plan 0051's verdict:** only what it adds or removes
+> (the reservoir unpack, any new cache path); this plan moves whichever code stands.
 > **Milestone:** cross-cutting (code health)
 > **Related ADRs:** none. The splits move code and keep every mechanism. Promoting `FnSource`
 > and `SplitMix64` into `vxe-world` adds public items but no decision. The rejected option, a
 > separate dev-only `vxe-testkit` crate, is recorded under Decision.
 > **Source:** the owner, 2026-10-22, the same review as Plan 0044. The owner's answers: two
 > plans, performance first; full splits, engine crates included.
-> **After:** Plan 0044, which now follows Plan 0051 and precedes the M10 batch (owner,
-> 2026-10-29).
+> **After:** Plan 0044, which follows Plan 0051 and its verdict plan; before Plan 0048 and M10
+> (amended 2026-11-03, owner; see "Owner answers").
 
 ## TL;DR
 
@@ -71,9 +80,10 @@ All figures are at `87e4b67`. The plans ahead edit these same files and grow mos
   - the pass timer;
   - `Frame`.
 
-  The layout and pipeline helpers are re-implemented in `attrib.rs`, `hud.rs` and `present.rs`.
+  The layout and pipeline helpers are re-implemented in `field.rs`, `exposure.rs`, `fsr2.rs`,
+  `hud.rs` and `present.rs`.
   `readback.rs` holds three copies of one padded copy-and-depad.
-- **`march.wgsl`** holds bindings, mirror decode, DDA traversal, normals, detail noise, the hit
+- **`march.wgsl`** holds bindings, mirror decode, DDA traversal, normals, the hit
   record and reprojection, and rand. Each frame pass is `format!("{MARCH_WGSL}\n{source}")`, so
   `sharpen.wgsl`, which needs `params.output_size` only, compiles all of it. Duplicated helpers:
 
@@ -85,7 +95,7 @@ All figures are at `87e4b67`. The plans ahead edit these same files and grow mos
   | edit-box test | 2 |
   | reservoir unpack | 2 |
 
-  `attrib.wgsl` re-implements the mirror decode.
+  `field.wgsl` re-implements the mirror decode.
 - **`vxe-world`:**
   - `Streamer` mixes residency policy, the worker pool and spill scheduling (`apply`: 155
     lines).
@@ -150,7 +160,7 @@ flowchart TB
         GW[gpu_world/: format, alloc, slot, lights, attr_queue, stage, window]
         MR[frame/: settings, targets, timer, upscaler, frame]
         GU[gpu_util: layouts, pipelines, bind_io]
-        SH[shaders/: common, mirror, walk, hitrec, detail + one file per pass]
+        SH[shaders/: common, mirror, walk, hitrec + one file per pass]
     end
     subgraph world[vxe-world after the split]
         ST[stream/: residency, workers, facade]
@@ -168,8 +178,9 @@ flowchart TB
 
 Every phase does three things:
 - re-inventories its files at the tip first;
-- gates on `--profile quick`, plus `--profile gpu` when it touches `vxe-render` or the
-  shaders (Plan 0043);
+- gates on `node scripts/test-changed.mjs --profile quick`, plus `--profile gpu` under the
+  perf lock when it touches `vxe-render` or the shaders; the tip gates on `--profile gate`, and
+  a golden on the soak list that a phase claims byte-identical runs by name;
 - proves no behaviour change: goldens byte-identical, pinned hashes equal, bench readings
   within the spread of three runs each before and after.
 
@@ -210,13 +221,12 @@ A public item that moves keeps a re-export at its old path unless this plan name
 ### Phase 2: `GpuWorld` becomes a directory of owned parts
 - **Owner skill:** dev
 - **What:** `gpu_world.rs` becomes `gpu_world/`:
-  - `format.rs`: the GPU contract constants, `class_code`, `payload_units`, `attr_offset`,
+  - `format.rs`: the GPU contract constants, `class_code`, `payload_units`,
     `slot_units`, `bin_of`, `ShardLayout` and `budget_for`.
   - `alloc.rs`: a `PoolAlloc` owning the bins, page state and `Fit`.
   - `slot.rs`: `fill_slot`, `materials_of`, `upload_set` and `chunk_surface`. All pure CPU,
     unit-tested without a device.
   - `lights.rs`: a `LightMirror` owning the `light_*` fields.
-  - `attr_queue.rs`: an `AttrScheduler` owning the `attr_*` and queue fields.
   - `stage.rs`: an `Uploader` with the belt and the `flush_*` functions.
   - `window.rs`: a `WindowQueue`.
   - `mod.rs`: `GpuWorld` as the composition.
@@ -228,7 +238,7 @@ A public item that moves keeps a re-export at its old path unless this plan name
   `vxe-render`'s modules become private behind the existing curated `pub use` list. Layout
   items become `pub(crate)`. Unused `pub` items are deleted: `OPAQUE_WORDS`,
   `read_texels_u32`, and the test-only `free_pages()` `Vec`.
-- **Files touched:** `crates/vxe-render/src/{gpu_world/,lib.rs,readback.rs,attr_work.rs,marcher.rs}`,
+- **Files touched:** `crates/vxe-render/src/{gpu_world/,lib.rs,readback.rs,marcher.rs}`,
   `crates/vxe-render/tests/`, `apps/flythrough/` (imports only), `apps/flythrough/examples/`.
 - **Done when:**
   - `GpuWorld` has at most 15 fields, each a part or a scalar.
@@ -248,14 +258,14 @@ A public item that moves keeps a re-export at its old path unless this plan name
   - `upscale.rs`: `Upscaler`, `halton` and `jitter_at`.
   - `frame.rs`: `Frame`.
 
-  The layout, bind-group and pipeline helpers go to `gpu_util.rs`, which `attrib.rs`, `hud.rs`
-  and `present.rs` then use.
+  The layout, bind-group and pipeline helpers go to `gpu_util.rs`, which `field.rs`,
+  `exposure.rs`, `fsr2.rs`, `hud.rs` and `present.rs` then use.
 
   `Frame::with_sizes` reads a `const PASSES: [PassSpec; N]` table instead of nine hand-written
   pairs. `encode_with` splits into `write_uniforms`, `bind_groups` and `record`, and its
   `keep_history: bool` becomes an enum. `readback.rs`'s three copies become one `read_texels`
   and two thin wrappers.
-- **Files touched:** `crates/vxe-render/src/{frame/,gpu_util.rs,marcher.rs,attrib.rs,hud.rs,present.rs,readback.rs,lib.rs}`.
+- **Files touched:** `crates/vxe-render/src/{frame/,gpu_util.rs,marcher.rs,field.rs,exposure.rs,fsr2.rs,hud.rs,present.rs,readback.rs,lib.rs}`.
 - **Done when:**
   - No function in `frame/` exceeds 150 lines.
   - `Frame` has at most 20 fields.
@@ -265,13 +275,12 @@ A public item that moves keeps a re-export at its old path unless this plan name
 
 ### Phase 4: the shaders become modules a pass picks
 - **Owner skill:** dev
-- **What:** `march.wgsl` splits into five modules:
+- **What:** `march.wgsl` splits into four modules:
   - `common.wgsl`: Params, View, flags, luminance, hash and rand.
   - `mirror.wgsl`: the layout constants and pure decode over words.
   - `walk.wgsl`: the walk, `descend`, `lookup` and the DDA, with `enter_window` and
     `exit_cell` extracted.
   - `hitrec.wgsl`: the octahedral encoding, the hit record and reprojection.
-  - `detail.wgsl`.
 
   Each pass is composed with `concat!(include_str!(…), …)` of only what it uses. The
   duplicates collapse:
@@ -282,10 +291,11 @@ A public item that moves keeps a re-export at its old path unless this plan name
   - one "same surface" function taking its threshold. Each caller passes its current constant,
     so no output changes.
 
-  `attrib.wgsl` uses `mirror.wgsl` instead of its own decode. The bit constants come from a
+  `field.wgsl` uses `mirror.wgsl` instead of its own decode, and `fsr2/`'s passes that prepend
+  `march.wgsl` today (`input`, `tone`, the HDR composite) take only what they use. The bit constants come from a
   WGSL prelude that Rust generates from the `gpu_world/format.rs` and `frame/settings.rs`
   consts. Plan 0044's layout test keeps guarding the structs.
-- **Files touched:** `crates/vxe-render/src/shaders/`, `crates/vxe-render/src/{frame/,attrib.rs,gpu_world/format.rs}`,
+- **Files touched:** `crates/vxe-render/src/shaders/`, `crates/vxe-render/src/{frame/,field.rs,fsr2.rs,gpu_world/format.rs}`,
   `crates/vxe-render/tests/shader_portability.rs`.
 - **Done when:**
   - Every golden is byte-identical.
@@ -382,17 +392,21 @@ A public item that moves keeps a re-export at its old path unless this plan name
 ### Phase 8: the mega test files split, and two gates keep everything small
 - **Owner skill:** dev
 - **What:**
-  - **`vxe-render/tests/mirror.rs`** splits into `mirror_alloc.rs`, `mirror_tiers.rs`,
-    `mirror_budget.rs` and `mirror_attrs.rs`.
+  - **`vxe-render/tests/mirror.rs`** splits into `mirror_alloc.rs`, `mirror_tiers.rs` and
+    `mirror_budget.rs`.
   - **Any other test file over the cap** at the tip splits along its sections.
+  - **Any source file still over the cap** after Phases 2 to 7 splits along its sections too.
+    At the tip that names `apps/flythrough/src/hud.rs` (Plan 0052 counted it as this plan's)
+    and `apps/flythrough/src/showcase.rs`.
   - **`scripts/check-file-size.mjs`** has two caps: 1200 lines for a `.rs` or `.wgsl` under
     `src/`, and 2000 for a file under `tests/`, `benches/` or `examples/`. It has an optional
     `root` argument and a seeded fixture tree, like the other gates, and joins CI.
   - **`clippy.toml`** sets `too-many-lines-threshold = 150`, and `[workspace.lints.clippy]`
     denies `too_many_lines`. Every function still over 150 lines carries
     `#[expect(clippy::too_many_lines, reason = "...")]`, and the close lists each one.
-  - **The Plan 0043 tier lists** are updated for any test binary renamed here.
-- **Files touched:** `crates/vxe-render/tests/`, any test file over the cap, `scripts/check-file-size.mjs`,
+  - **The tier filters in `.config/nextest.toml`** (the gpu and soak expressions, in every
+    copy) are updated for any test binary renamed here.
+- **Files touched:** `crates/vxe-render/tests/`, any file over the cap, `scripts/check-file-size.mjs`,
   `scripts/fixtures/file-size/`, `scripts/fixtures/README.md`, `clippy.toml`, `Cargo.toml`,
   `.github/workflows/ci.yml`, `.config/nextest.toml`.
 - **Done when:**
@@ -401,7 +415,7 @@ A public item that moves keeps a re-export at its old path unless this plan name
     one file exactly at the cap that passes.
   - `cargo clippy --workspace --all-targets -- -D warnings` exits 0 with the lint denied, and
     no `src/` function carries the `expect`. Test functions may carry it, and they are listed.
-  - The Plan 0043 partition check (`N(quick) + N(gpu) + N(slow) = N(full)`) still holds, and
+  - The tier partition still holds (`N(quick) + N(gpu) + N(soak) = N(full)`), and
     `check-test-tiers.mjs` exits 0.
 
 ### Phase 9: the owner reads every toggle on screen
@@ -460,6 +474,12 @@ module splits can change it.
 - **Move the fly-through's render tests into `vxe-render`.** They need the cave scene builders.
   A shared scene crate is a followup if the owner wants the renderer testable alone.
 - **Add a `vxe-testkit` crate** (rejected above).
+
+## Owner answers
+
+1. **The order (owner, 2026-11-03).** "the main thing that I care about for now is a stable image without any flicker or aliasing artiacts. we move towards this image by any means possible, considering performance of course. all other things doesnt really matter as of now, so just go with recommended" So the
+   recommended option: Plan 0051, its verdict plan, Plan 0044, this plan, Plan 0048 if it stands,
+   then M10.
 
 ## Implementation log
 

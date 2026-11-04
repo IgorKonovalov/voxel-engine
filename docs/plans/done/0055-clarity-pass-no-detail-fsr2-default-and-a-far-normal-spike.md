@@ -1,15 +1,17 @@
 # 0055: The clarity pass before Plan 0051: procedural detail removed, FSR 2 at 1.5 the default, and a spike for a footprint-blended far normal
 
-> **Status:** in-progress (2026-11-03)
+> **Status:** done (2026-11-03, v0.40.0): closed clean after two fix passes, the last on the close review's
+> two minors; procedural detail is gone, FSR 2 at 1.5 is the fly-through's default on the owner's word,
+> and the far normal is on at `[2, 6]`, provisional, reopened after Plan 0051; ADR-0042 accepted
 > **Created:** 2026-11-03
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look and upscaler
 > bullets; Plan 0051 and the light plans after it read their bars on this plan's default look)
-> **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (its procedural detail: an Outcome addendum at this plan's close says it is removed),
-> [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) (an
+> [ADR-0034](../../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) (an
 > Outcome addendum at the close: FSR 2 at 1.5 becomes the fly-through's default, our upscaler
-> stays opt-in), [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (our
-> upscaler, kept opt-in), [ADR-0041](../adrs/0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md)
+> stays opt-in), [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (our
+> upscaler, kept opt-in), [ADR-0041](../../adrs/0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md)
 > (its "tilted by ADR-0011's per-material detail" clause falls with the detail). If Phase 4
 > accepts the far normal, the architect writes ADR-0042 at the close (the rejected
 > alternatives are named under Decision); no ADR is written for a spike that fails.
@@ -336,6 +338,12 @@ detail lanes and the fine-octave lane are written zero and named spare.
 (`renders/plan-0055-strips/variants.sh`; the level was not among them): (a) "i think variant 4 is the best. difficuilt to say with problematic lighting"
 (variant 4 is `[2, 6]`), then "keep 2,6 as provisional". (b) "fsr2 stays".
 
+2026-11-03, at the close. The scripted slow pan under FSR 2 did not run: `session.sh` was never
+started, and `variants.sh` has no separate pan. The close review asked whether (b) stands as
+ADR-0034's slow-pan verdict, and the architect recommended recording it as still owed. The owner
+decided otherwise: "fsr2 stays counts". So (b) is that verdict, given in the owner's words on the
+six-variant session, and no slow-pan verdict is owed anywhere.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -345,7 +353,7 @@ detail lanes and the fine-octave lane are written zero and named spare.
 > resume notes go to the plan's readings log, `docs/plans/logs/0055.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings: [`logs/0055.md`](logs/0055.md).
+Readings: [`logs/0055.md`](../logs/0055.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -391,7 +399,35 @@ Readings: [`logs/0055.md`](logs/0055.md).
 - **Gate at the tip:** b829b21's tree: `cargo build` 0; `cargo nextest run --workspace --profile gate --no-fail-fast` 0, 694 run, 694 passed, 46 skipped; `cargo test --doc --workspace` 0; clippy 0; fmt 0; `cargo deny check` 0; doc and tier scripts 0.
 - **Outstanding `human` phases:** none
 
+## Close
+
+2026-11-03, architect, fresh session. Verdict: clean. The first review's findings, on d548cdb,
+had their fix pass (Notes). The close review of aaa6516 then found two minors and no blocker or
+major; 7b06065 and 0546d18 fix them, and this close read both diffs and f7d77dc.
+
+- **What the close relied on without rerunning.** The gate was not rerun after the fix pass (the
+  owner's rule of 2026-11-03: the gate tier runs once per plan, a fix pass reruns what its findings
+  touched). The review reported 690 passed, 51 skipped, 636.8 s at aaa6516; that figure reached this
+  close through the orchestrator's brief, and neither this plan nor its log holds it. The log's
+  own reading is 690 passed, 51 skipped, 640.669 s at 86eecb1, and only docs differ between the two
+  commits. Both counts include `a_smooth_surface_meets_a_crisp_cube_without_a_gap`, which 0546d18
+  moves to the soak list, so a rerun lists one test fewer (not read). 0546d18 adds it to all five
+  copies of the filter, and `check-test-tiers` exits 0 on that tree. The doctests, clippy, fmt and
+  deny readings are 86eecb1's, in the log.
+- **Done-whens not met, recorded as readings.** Phase 3's near-pillar bar (no setting meets it and
+  the dome bar together) and its +0.8 ms cost bar at the owner's pick: `[2, 6]` reads about +1.5 ms
+  at the showcase start, the same as whole-frame `gradient27`. The setting is the owner's call
+  (ADR-0042). Phase 2's upscale stage is over `docs/nfr.md` section 2's 1.5 ms line, as the plan
+  said it would be: 2.932 to 2.958 ms on the RTX 3080 Laptop.
+- **Not run:** Phase 4's level run and the scripted slow pan (above). The far normal was never
+  judged in a window on the level.
+- **The stale line at `docs/nfr.md` section 7** that said the shutdown test runs `--look plain` is
+  corrected at this close. The other followups under Notes stay followups.
+
 ## Followups
+
+- The far normal's setting: reopen `[2, 6]` after Plan 0051, when the light no longer gets in the
+  way of judging it (the owner's "difficuilt to say with problematic lighting"; ADR-0042).
 
 - The strip tool (`apps/flythrough/tests/strip.rs`) prints its per-crop neighbour-difference
   measure from Phase 3 on; a later plan may fold it into the sharpness readings' home.

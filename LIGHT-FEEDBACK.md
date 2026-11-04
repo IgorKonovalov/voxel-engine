@@ -21,6 +21,79 @@ names if any, then 0048, then 0032.
 - **The cost matches what is on screen.** "It's suspicious that we are doing all of that
   calculations, and process is so heavy. Maybe it's right but maybe we can optimize." And:
   "I see only a very small fraction of overall world. What are we computing then?"
+- **The light holds still unless something real moves it (2026-11-03).** "light that never
+  settles when objects are not moving + not natural flickering light (flame eg) - are super
+  unsettling". A flame may flicker because a flame flickers. Nothing else may.
+- **A stable image comes first (2026-11-03).** "the main thing that I care about for now is a
+  stable image without any flicker or aliasing artiacts. we move towards this image by any means
+  possible, considering performance of course."
+
+## The hero that never settled (2026-11-03)
+
+The owner looked at the README's hero and saw artifacts: "it seems that shot was taken before
+every light settled, which is exactly the problem I'm talking about". Then, on the readings below:
+"this is exactly what I'm talking about".
+
+The same still rendered from a fresh start at growing frame counts, nothing moving: the showcase's
+`hall` shot, 1920 x 1080, FSR 2 at 1.5, the default look, lamp off, manual exposure 8, RTX 3080
+Laptop, at 4bf567f (`hero --exposure 8 --adapter NVIDIA --frames N`). The 64-frame render is
+byte-identical to the `docs/images/hero.png` of b829b21: the README showed an unsettled frame, because the tool's
+default is 64 frames. Differences are per pixel in 8-bit levels, the worst of the three channels.
+
+| Compared | Mean | p99 | Pixels off by more than 2 | more than 8 | more than 32 |
+|---|---|---|---|---|---|
+| 64 vs 8192 | 4.83 | 33 | 53.5 % | 14.2 % | 1.00 % |
+| 512 vs 8192 | 2.49 | 16 | 27.8 % | 4.6 % | 0.08 % |
+| 2048 vs 8192 | 2.36 | 15 | 27.8 % | 4.2 % | 0.08 % |
+| 512 vs 2048 | 2.37 | 16 | 25.2 % | 4.5 % | 0.10 % |
+
+- **It stops improving and never arrives.** 2048 frames is no nearer 8192 than 512 is, and about a
+  quarter of the pixels stay more than 2 levels apart with nothing moving. How much of that floor
+  is the light and how much is FSR 2's jitter is not separated in this table.
+- **The speckle is the unsettled part.** The mean difference of a pixel from its 3 x 3 neighbours
+  falls from 0.886 at 64 frames to 0.654 at 8192, mostly on the cyan wall.
+- **The emissive-lit wall moves most**, up to about 18 mean in the worst cell of a 12 x 7 grid,
+  against about 1 to 3 on the floor and pillars. The difference has two shapes: sharp sparkle along
+  edges, and smooth drifting blobs, as on the right pillar. That the blobs are the probes is a
+  guess until it is read.
+- **Still there at 8192 frames, so not settling:** hard-edged colour patches on the ceiling, dark
+  holes in the cyan wall, rings on the floor, blocky white emitters.
+
+![The hall after 8192 frames: the speckle gone, the hard patches and the floor's rings still there](docs/images/light/hall-settled-8192-frames.png)
+
+64 frames against 8192, the difference times 8:
+
+![The difference between 64 and 8192 frames, times 8](docs/images/light/hall-diff-64-vs-8192-x8.png)
+
+2048 frames against 8192, the difference times 8: what never settles:
+
+![The difference between 2048 and 8192 frames, times 8](docs/images/light/hall-diff-2048-vs-8192-x8.png)
+
+### What the drift is made of
+
+The same shot and settings at b2ea5ec's tree, one setting removed at a time. A repeat run of frame
+2048 reads 0 at every pixel, so these are the renderer's differences and not the driver's.
+
+| Setting | One frame: 2048 vs 2049 mean, max, over 2 | Drift: 2048 vs 8192 mean, p99, over 2, over 8 |
+|---|---|---|
+| Default (FSR 2, indirect on) | 0.19, 119, 0.62 % | 2.36, 15, 27.8 %, 4.18 % |
+| Indirect off | 0.18, 122, 0.60 % | 1.84, 16, 17.8 %, 3.77 % |
+| Native, no upscaler | 0.06, 8, 0.03 % | 2.16, 13, 25.2 %, 3.07 % |
+| Native, indirect off | 0.05, 4, 0.00 % | 1.64, 14, 15.3 %, 2.75 % |
+
+- **The image creeps rather than boils.** The drift is over ten times the one-frame change, so a
+  one-frame metric misses most of it.
+- **About 70 % of the drift's mean survives with no probes and no upscaler** (1.64 of 2.36). That
+  leaves the direct emissive path: the wall's worst cells read 6.7 with both removed and 7.9 with
+  both on.
+- **The probes spread it wide and thin.** Indirect on takes the pixels over 2 levels from 15.3 % to
+  25.2 %, on the pillars as well as the wall, and hardly moves those over 8.
+- **FSR 2 adds little drift and most of the frame-to-frame jumps:** 119 levels at worst against 8.
+  Where those jumps lie, and whether they are the sparkle the eye sees, is unread (Plan 0056's first
+  reading, if it is approved).
+- **This is one still shot with the lamp off.** The readings at the level's vein and patch poses
+  (Plan 0049, and Plan 0051's Phase 1) rank the gather first in the view-mean's variance. That is a
+  different scene and a different measure, and neither reading replaces the other.
 
 ## The session, step by step
 
