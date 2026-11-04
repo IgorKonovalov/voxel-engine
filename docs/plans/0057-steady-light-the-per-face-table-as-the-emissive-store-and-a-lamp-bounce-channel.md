@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** in-progress (Phase 2, 2026-11-04); Plan 0056's Phase 2 readings are in its log (e678ae7)
+> **Status:** in-progress (Phase 3, 2026-11-04); Plan 0056's Phase 2 readings are in its log (e678ae7)
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
@@ -741,7 +741,7 @@ Open at draft: the "go".
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](logs/0057.md)) | edee79b |
-| 2: The table is the only emissive store, and the default | dev | wip: done-when 7 unmet (a question), readings running ([log](logs/0057.md)) | committed with this row |
+| 2: The table is the only emissive store, and the default | dev | done: code at d940f32; done-when 7 a reading (amended f107977, test 84f5c60); 9's predictions not met on the patch's scale-1 `sv`, the hall's native drift and the patch's misses; 10 not met (`Lighting::sampler` kept) ([log](logs/0057.md)) | committed with this row |
 | 3: The world-space guard | dev | not started | |
 | 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
 | 5: The lamp-bounce channel | dev | not started | |
@@ -757,6 +757,14 @@ each. Empty is fine.)_
 - Phase 1: `the_dots_split_by_cell_age_sums_to_the_excess` reads 5.2 to 7.6 s on lavapipe, loaded, against the plan's "under 5 s".
 - Phase 1: the hall re-ran `ab --indirect off` only; the `b --indirect off` rows are Plan 0051's.
 - Phase 1: `ab_with_indirect_off_applies_both` checks the preset over `indirect: false`; the flag parse in `main.rs` is outside the phase's files and was read, not tested.
+- Phase 2 (d940f32): the table's counters live in a 16 B buffer of their own (`CacheStats`), not in its header.
+- Phase 2 (d940f32): the miss counter counts lighting pixels whose key found no slot, not faces.
+- Phase 2 (d940f32): an edit frame whose dilated boxes hold more faces than the table has cells clears the whole table.
+- Phase 2 (d940f32): an emission-scale change clears the whole table.
+- Phase 2 (d940f32): `vxe_render::Sampler`, `Lighting::sampler`, `marcher::CacheRead` and `hud::SteadyMode` stay, unread, for Plan 0056's `strip.rs`; done-when 10 not met.
+- Phase 2 (d940f32): `apps/flythrough/tests/look.rs`'s `DEFAULT_FRAME_BYTES` changed, outside the phase's files.
+- Phase 2: done-when 7 is a reading (amended at f107977); the table reads +552.5 over its floor after the fast yaw, the read-off arm none.
+- Phase 2: done-when 9's predictions not met: patch scale-1 emissive `sv` 0.0002 / 0.0003, the hall's native drift 0.257, the patch's full-table share 0.00029 (misses above 0: the size goes to the architect).
 
 ### Close triggers
 
