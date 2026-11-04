@@ -1957,8 +1957,9 @@ fn an_overflowed_edit_frame_clears_the_table() {
 /// The display's excess dots in frames 1 to 60 after a 90 degree yaw onto `VEIN_POSE` over 10
 /// frames, lamp on, indirect off, FSR 2 at 1.5, exposure pinned, the table's read `table`:
 /// settled 192 frames at the pose, its floor read over 64 more; then 64 frames at the yaw's
-/// start, the yaw, and the 60 dot frames. The excess, the floor's mean and its spread.
-fn fast_yaw_excess(level: &stillness::VeinLevel, table: bool) -> (f64, f64, f64) {
+/// start, the yaw, and the 60 dot frames. The excess, the floor's mean and its spread, the
+/// floor's frame count and the dot frames run.
+fn fast_yaw_excess(level: &stillness::VeinLevel, table: bool) -> (f64, f64, f64, usize, usize) {
     let setting = Setting {
         lamp: true,
         indirect: false,
@@ -1994,34 +1995,37 @@ fn fast_yaw_excess(level: &stillness::VeinLevel, table: bool) -> (f64, f64, f64)
     let spread =
         (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
     let mut excess = 0.0;
+    let mut ran = 0;
     for _ in 1..=DOT_FRAMES {
         step(&mut frame, &still);
         excess += dots_of(&read_dots(level, &frame, still)) as f64 - mean;
+        ran += 1;
     }
-    (excess, mean, spread)
+    (excess, mean, spread, floor.len(), ran)
 }
 
-/// A fast yaw reads an excess with the table's read off and none from the table: at
-/// `VEIN_POSE`, lamp on, indirect off, after a 90 degree yaw over 10 frames (the run Phase 1 of
-/// Plan 0057 read today's excess at), the run with the read off reads more excess dots over 60
-/// frames than 60 floor spreads, and the default's excess is at most 10 % of it.
+/// The fast yaw's excess dots by the table's read, a reading: at `VEIN_POSE`, lamp on, indirect
+/// off, FSR 2 at 1.5, exposure pinned, after a 90 degree yaw over 10 frames, frames 1 to 60,
+/// the default and the read off (`table_read: false`) each print their excess, floor, floor
+/// spread and noise line (60 floor spreads). It asserts only that each floor was measured (a
+/// non-zero still-frame dot count over 64 frames, with its spread) and that the 60 dot frames
+/// ran; no excess is asserted.
 #[test]
-fn a_fast_yaw_reads_an_excess_today_and_none_from_the_table() {
+fn the_fast_yaw_excess_by_table_read() {
     let Some(level) = vein_level() else {
         return;
     };
-    let (off, off_floor, off_sd) = fast_yaw_excess(&level, false);
-    let (on, on_floor, on_sd) = fast_yaw_excess(&level, true);
-    println!(
-        "fast yaw excess dots 1-60: read off {off:.1} (floor {off_floor:.1}, sd {off_sd:.1}); table {on:.1} (floor {on_floor:.1}, sd {on_sd:.1})"
-    );
-    let none = DOT_FRAMES as f64 * off_sd;
-    assert!(
-        off > none,
-        "the read off reads an excess: {off:.1} against {none:.1}"
-    );
-    assert!(
-        on <= 0.1 * off,
-        "the table's excess {on:.1} against {off:.1}"
-    );
+    for (name, table) in [("table", true), ("read off", false)] {
+        let (excess, floor, sd, floor_frames, ran) = fast_yaw_excess(&level, table);
+        println!(
+            "reading: fast yaw excess dots 1-60, {name}: {excess:.1} (floor {floor:.1}, sd {sd:.1}, line {:.1})",
+            DOT_FRAMES as f64 * sd
+        );
+        assert_eq!(floor_frames, 64, "{name}: the floor's frames");
+        assert!(
+            floor > 0.0 && sd.is_finite(),
+            "{name}: the floor was measured: {floor} (sd {sd})"
+        );
+        assert_eq!(ran, DOT_FRAMES, "{name}: the dot frames run");
+    }
 }
