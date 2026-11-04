@@ -83,6 +83,30 @@
 > 64 voxels at the level, from Part 1b's key counts). `R` stays 64 voxels, a brick radius of 8;
 > the faces beyond it settle at their footprint. Done-whens 12 to 17, Phase 6's run 6 and item
 > (h), the Budgets, Risks, Followups and the Decision follow.
+>
+> **Amended 2026-11-05 (architect, for the owner), the claim rule, from the level readings**
+> (`logs/0057.md` at 4ec11a7, Part 2b's level readings on the restructured tree). The boxes meet
+> done-whens 13, 15 and 16, the walk's cost is under its bar, and the level misses done-whens 14
+> and 16 with the preload on about as much as off, because **17 563 of the 18 619 faces probed
+> at the patch refused a cell**: one sample is a resampled pick over 8 candidates by their
+> unshadowed weight plus one shadow ray, so a face lit through a gap, whose best candidates are
+> mostly occluded, draws a lit sample with a small probability `p` and 8 of them find it with
+> `1 - (1 - p)^8` (about 0.22 at `p` 1/32). The turn's faces in view hold 1024-sample references
+> and still miss, so most of the refusals are dim faces, not unlit ones: the owner's dark corner.
+> **Decision: every face within `r0` of the eye claims a cell whatever its probes read**
+> (`preload_claim_radius`, 24 voxels by default, swept 16, 24 and 32), and is filled to `C_PRE`
+> lit or not; beyond `r0` to `R` the 8-probe rule stands; the load and miss guards hold
+> everywhere. Rejected: more probe rounds per epoch (option (b)), since a face at `p` 1/32 needs
+> about 96 probes to be found nineteen times in twenty, over a third of `C_PRE`, and a face no emitter
+> reaches pays them again every epoch, which streaming raises while walking, where a claimed cell
+> is filled once for its life; a deterministic centre-to-centre ray per candidate emitter,
+> since the candidate table lists chunks of emitter samples, so the test is a loop over every
+> emitter within the light radius per face, and a centre ray misses a face lit off its centre
+> through a gap; and options (a) and (c), which keep a rule whose miss is attributed. **The
+> reference run** claimed through the same rule and kept cells of 1024 samples, so 3 660 of the
+> patch walk's 6 349 entering pixels had none: it now claims every face unconditionally, holds
+> until every cell reaches `C_CAP`, and a pixel with no reference counts as not settled. Part
+> 2b's claim, done-whens 12, 14, 16 and 17, the Budgets, Risks and Phase 6 (h) follow.
 
 ## TL;DR
 
@@ -96,7 +120,8 @@ settle bar, a fill pass draws a fixed number of samples a frame for each cell an
 guard reopened, and where the creases' dots are read to come through the half-resolution
 upsample, the composite reads each pixel's own face. **The faces around the camera are
 preloaded** (amended 2026-11-04, owner; its form amended the same day): a cursor sweeps the
-mirror's bricks within 64 voxels of the eye and fills every lit face it finds, whatever the view
+mirror's bricks within 64 voxels of the eye and fills every face within 24 voxels and every
+lit face beyond (amended 2026-11-05), whatever the view
 and whether or not any eye could see it, so a fast turn, a walk round a pillar, a dark corner and
 a dig at arm's length show light that is already settled. **Invalidation is an edit box
 plus a world-space guard:** each cell keeps the emitter that lit it most, and the gradient pass
@@ -164,7 +189,8 @@ cells and an own-face emissive read in the composite are built each only where i
 says so; the warm rays and the fill of every young face in view are dropped, because Phase 1
 read the fast turn's excess outside the young cells. **The camera-radius preload** (Phase 4
 Part 2b, amended 2026-11-04, owner; its form amended the same day) sweeps the mirror's bricks
-within `R` of the eye and feeds their lit faces to Part 2's fill routine, for the settle the owner
+within `R` of the eye and feeds their faces to Part 2's fill routine (every face within `r0`, 24
+voxels, and beyond it the faces a probe finds lit; amended 2026-11-05), for the settle the owner
 sees in dark corners, after a fast turn, walking and in a dig: faces within `R` are filled to
 `C_PRE` before any view reaches them, at a fixed budget a frame. **The lamp channel** (Phase 5) redoes the probe update as lamp-only rays
 within a read reach over a running mean that freezes, and keeps the volume's scaffolding. **The
@@ -662,11 +688,31 @@ in its log, or the orchestrator agrees the order; the log names which.
     opaque voxel's face toward a cacheable air neighbour (the light pass's rule, as
     `the_table_hash_spreads_a_levels_keys` enumerates it) is looked up by `cache_slot`. A face
     whose cell holds `C_PRE` samples is skipped. A face with no cell draws `k0` samples (8)
-    through the fill routine and claims a cell (`cache_claim`) only if one of them is lit, the
-    table's occupancy is under `PRE_LOAD_MAX` (0.25) and the previous frame counted no miss; a
-    face no emitter reaches therefore takes no cell, and shows its correct 0 when seen. A face
+    through the fill routine and claims a cell (`cache_claim`) by the claim rule below. A face
     with a cell under `C_PRE` is listed once (a `preloading` bit in the stamp word beside Part 2's
     `CACHE_REOPENED`).
+  - **The claim rule (amended 2026-11-05, architect, for the owner, from the level readings).**
+    Two bands by the distance from the eye to the face's voxel centre, the test `R` uses:
+    - **Within `r0`** (`preload_claim_radius`, 24 voxels by default, swept 16, 24 and 32; the
+      default the largest whose walking cost meets done-when 17's 0.15 ms at both poses): a face
+      with no cell **claims one whatever its `k0` samples read**, takes them, and is listed for
+      the fill to `C_PRE` whether or not a sample was lit (the sweep's `preload_wants` lists a
+      cell within `r0` under `C_PRE` without asking for a kept emitter). A face no emitter
+      reaches is then filled once to `C_PRE` with zeros and skipped as done after that, for the
+      life of its cell, instead of being probed again every epoch. The test is the eye's
+      distance, so it is the same on every frame for the same eye.
+    - **From `r0` to `R`:** the 8-probe rule, unchanged: the face claims a cell only if one of
+      its `k0` samples is lit; a face that draws none is probed once an epoch (the slab stamp).
+    - **Both bands:** no claim while the last frame's occupancy is at `PRE_LOAD_MAX` (0.25) or
+      over, or its light pass counted a miss. The HUD counts claims by band and refusals by
+      cause (load, miss, unlit).
+    - **Why `r0` 24.** The faces that carry a turn's pixels are the near ones (a face's pixel
+      area falls as `1 / d^2`), `VEIN_CORNER` is defined within 24 voxels of `VEIN_POSE`'s eye
+      (done-when 16), and the walk's new faces within `r0` grow as `r0^2` (the flux `pi r0^2
+      v`), so at 24 they are about `(24 / 64)^2`, a seventh, of the flux into `R`, and at 32 a
+      quarter. Why not all of `R`: the vein walk probed about 211 faces a frame (the cost
+      table), and filling every one to `C_PRE` is about 54 000 samples a frame, over `S_PRE`
+      and about twice the walk's 0.15 ms by the measured 4.6 ns a sample.
   - **The list and the fill.** A persistent preload list, in the counters buffer past Part 2's
     fill list (the light pipeline's 11 storage buffers are full; a preload pipeline binds the
     world's 9, the table and the counters, as the fill's does), at most `PRELOAD_LIST_MAX`
@@ -819,7 +865,13 @@ in its log, or the orchestrator agrees the order; the log names which.
      early-out leaves to visit, against the arithmetic above. **The fill time** (RTX): from a
      fresh table, the frames until every lit face within `R` holds `C_PRE`, at the vein, the
      patch and the hall, at each `B`, `S_PRE` and `C_PRE`, with the occupancy, the misses, the
-     cells the claim rule refused (load, miss, unlit) and the list's drops.
+     cells the claim rule refused (load, miss, unlit) and the list's drops. Amended 2026-11-05
+     (architect, for the owner): the fill time and the claims by band (within `r0`, lit and
+     unlit; from `r0` to `R`, claimed and refused by cause) at `r0` 16, 24 and 32, and, from the
+     reference run (done-when 14), the faces within `R` by band whose reference mean is 0 (no
+     emitter reaches them) against those lit, with the lit ones' share of lit samples by decile,
+     so the log says how many of the faces the 8-probe rule refuses beyond `r0` are dim, not
+     unlit.
   13. **Added 2026-11-04 (owner), the 180-degree turn.**
      `a_face_behind_the_camera_is_settled_before_the_turn` asserts, on a box with an emitter
      lighting a near wall and a dim corner (lit at under a tenth of the near wall's irradiance)
@@ -830,18 +882,42 @@ in its log, or the orchestrator agrees the order; the log names which.
      `preload_radius` 0 under 50 % do (the test fails first). 64 frames cover a sweep at `B` 64
      (34 frames) with room. About 2 x 140 frames: about 14 s.
   14. **Added 2026-11-04 (owner), the turn and the walk on the level, readings against bars
-     (RTX); amended 2026-11-04 (architect, for the owner).** At `VEIN_POSE` from a fresh table,
-     120 still frames, then the rig's `yaw 90 10 f`: of the pixels whose face was not in view in
-     the 120 frames, on the first frame each face is in view **at least 90 % read within 10 % of
-     the face's settled mean** (a reference run facing the end heading for 8192 frames), **and
-     99 % by the tenth frame after the yaw ends**. And the rig's flight at both poses at 0.5
-     voxel a frame (30 voxels a second): of the entering pixels within `R`, on their first frame
-     in view **at least 90 % within 10 %**; at 2 voxels a frame (`Shift`) the same, read. Each
-     row with the preload off beside it, scale 1, lamp off and on, and the entering pixels
-     beyond `R` read by the histogram's bands (not asserted) at `R` 64 and 96. `up1.5` is read
-     and not asserted. A miss goes to the owner in Phase 6 (h) with the table, split by cause:
-     the face had no cell (the sweep had not reached it or the claim refused it) or a cell under
-     `C_PRE`.
+     (RTX); amended 2026-11-04 (architect, for the owner); amended 2026-11-05 (architect, for
+     the owner), the bands and the reference.** **The reference** (`preload_reference`): the
+     run's cameras walked at the largest radius read, every face within it claimed whatever its
+     probes read (no claim rule; the load and miss guards are read, and a refused claim is
+     printed), each 16th camera and the last held until the lists read empty and every listed
+     cell holds `C_CAP` (4096); a reference cell is one at `C_CAP`. **A pixel whose face has no
+     reference cell counts as not settled**: it stays in the denominator as a miss, the log
+     prints the count by band, and a row whose count is over 1 % of its pixels is not a reading
+     of this done-when until the reference is fixed. At 4096 samples a face lit on one sample in
+     32 has a relative standard error of about 0.09, so the darkest faces' misses are partly the
+     reference's own; each row is also split by the reference mean's decile. **The rows:** at
+     `VEIN_POSE` from a fresh table, 120 still frames, then the rig's `yaw 90 10 f`: of the
+     pixels whose face was not in view in the 120 frames and lies within `r0`, on the first
+     frame each face is in view **at least 90 % read within 10 % of the face's reference mean,
+     and 99 % by the tenth frame after the yaw ends**. And the rig's flight at both poses at 0.5
+     voxel a frame (30 voxels a second): of the entering pixels within `r0`, on their first
+     frame in view **at least 90 % within 10 %**; at 2 voxels a frame (`Shift`) the same, read.
+     The bands from `r0` to `R` and beyond `R` (the histogram's, at `R` 64 and 96) are read
+     beside each row and not asserted. Each row with the preload off beside it, scale 1, lamp
+     off and on, at `C_PRE` 256 and 1024; `up1.5` is read and not asserted. The prediction (a
+     guess): the band within `r0` meets the bar at `C_PRE` 256 if its faces lit on under one
+     sample in 16 carry about a tenth of its pixels, since such a face holds a relative standard
+     error of about 0.24 at 256 samples and 0.12 at 1024 and lands within 10 % about a third and
+     three fifths of the time; the decile split reads it. A miss goes to the owner in Phase 6 (h) with the table, split
+     by cause: no reference, no cell (the sweep had not reached it, or the claim refused it, by
+     cause) or a cell under `C_PRE`. **The asserted half** (lavapipe):
+     `a_face_near_the_eye_is_claimed_lit_or_not` asserts, on a box with an emitter, a face 8
+     voxels from the eye lit only through a one-voxel gap (dev records the geometry and its lit
+     share of samples, under one in 16, from a CPU or GPU count), a face 8 voxels from the eye
+     no emitter reaches (checked on the CPU through `World::raycast` against every emitter
+     voxel), and a face of the same unlit kind 40 voxels from the eye, `r0` 24, `C_PRE` 256,
+     scale 1, lamp off, after one sweep and 32 still frames facing away from all three: the two
+     near faces hold cells of `C_PRE` samples, the unlit one's mean 0, the far unlit face holds
+     no cell; and with `preload_claim_radius` 0 the gap-lit face holds a cell in under half of
+     16 seeds (the test fails first; if it does not, the log says so and the rule's need rests
+     on the level's reading). About 2 x 60 frames: about 6 s.
   15. **Added 2026-11-04 (owner), the dig at arm's length and at range; amended 2026-11-04
      (architect, for the owner).** `a_near_dig_settles_from_the_preload_alone` asserts, on
      done-when 2's box with the camera 5 voxels from the dig, `F` 0 (Part 2 off) and the
@@ -872,10 +948,16 @@ in its log, or the orchestrator agrees the order; the log names which.
      with `yaw 180 20 f`; on every frame the corner is in view **at least 90 % of its pixels
      read within 10 % of their settled mean** (RTX, fresh table, scale 1, lamp off, a reading
      against a bar), the preload off beside it (expected to miss), and at `Shift` read.
+     Amended 2026-11-05 (architect, for the owner): the corner is read against done-when 14's
+     reference (cells of `C_CAP`, a pixel with none not settled), and the log records the frames
+     the corner's faces lay within `r0` of the eye before its first frame in view, against the
+     lead the preload needs (one sweep, 17 frames at `B` 128, plus 16 frames of fill); a miss
+     with a shorter lead is the lead's, named so, not the claim rule's.
   17. **Added 2026-11-04 (owner), the preload's cost, memory and show; amended 2026-11-04
-     (architect, for the owner).** The banner and the HUD show `preload R <R> B <B> C <C_PRE>`
-     or `preload off`, the HUD the bricks visited, faces listed, cells claimed and refused, and
-     samples of the frame (`hud.rs`'s banner test, no GPU, under 1 s); `--preload
+     (architect, for the owner); amended 2026-11-05 (architect, for the owner).** The banner and
+     the HUD show `preload R <R> r0 <r0> B <B> C <C_PRE>` or `preload off` (`--preload-claim
+     <voxels>` sets `r0`), the HUD the bricks visited, faces listed, cells claimed by band and
+     refused by cause, and samples of the frame (`hud.rs`'s banner test, no GPU, under 1 s); `--preload
      <voxels>|off` sets it and a free key (dev's choice, named in the banner) toggles it in the
      window; it is on by default at 64 until the owner's Phase 6 (h). `frame_bytes` reads
      done-when 5's figure plus the preload list and its stats (dev records the bytes), asserted
@@ -1018,7 +1100,12 @@ in its log, or the orchestrator agrees the order; the log names which.
   run 6: whether the light still "loads" in the dark corner, round the pillar at walking speed
   and at Shift, after a fast turn and in a dig at arm's length and at range, with the preload on
   against off, with done-whens 12 to 17's tables at hand; whether the preload is on by default
-  and at which `R` (64 or 96); whether its off-screen cost (the sweep and fill of faces the view
+  and at which `R` (64 or 96); (amended 2026-11-05, architect, for the owner) whether the light
+  within `r0` (24 by default, or what done-when 17's cost picked) reads "loaded" in the dark
+  corner and after a fast turn, and whether the dim faces from `r0` to `R` that the 8-probe rule
+  still refuses are visible, with done-when 12's lit-share table and done-when 14's bands and
+  deciles at hand, so a wider `r0` (its cost by the Budgets' `r0^2` arithmetic) or a larger
+  `C_PRE` near the eye for the darkest faces is the owner's call, not raised unasked; whether its off-screen cost (the sweep and fill of faces the view
   does not show, done-when 17's figures) is acceptable against the rule that the cost matches
   what is on screen; whether the faces beyond `R` that still settle at their footprint are
   visible; and, since the hall's table sits near or over `PRE_LOAD_MAX` (0.185 native, 0.260
@@ -1060,9 +1147,9 @@ Base figures are Plan 0051's cost tables (`logs/0051.md`, Phases 2 and 3), the l
 | `nfr.md` figure | Base (read, indicative) | Expected | How the close measures it |
 |---|---|---|---|
 | §2 GPU frame | RTX `off` 4.944 ms, `b --indirect off` 3.255; Cezanne 35.438, 21.053 | The default (table, guard, lamp channel, and whatever Phase 4 builds): **a guess** of the `b --indirect off` figure plus 0.3 ms on the RTX and 2.0 ms on the Cezanne, lamp on; on a dig's first frames the reopened fill adds its burst, nothing on a turn (Phase 4's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD [--pose vein]`, three quiet rounds alternated with the v0.41.0 binary, the perf lock, the memory cap; and the rig's flight on both adapters |
-| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10). **Amended 2026-11-04 (owner; the form amended the same day, architect), the preload, guesses by arithmetic:** a sample with its shadow ray costs about 3.5 ns on the RTX (v0.41.0's light pass, 0.802 ms over 640 x 360 lighting pixels), so `S_PRE` 32 768 is about 0.11 ms; the walk's demand, about 19 000 samples a frame at 30 voxels a second, about 0.07 ms, and `Shift` binds at `S_PRE`. The sweep at `B` 128: most bricks end on their entry word, a surface brick's 512 voxels test six neighbours each through the mirror's lookup, a guess of under 0.01 ms; at rest the trickle (`B / 16`) and an empty list, under 0.01 ms. About 0.12 ms in flight. The Cezanne at Phase 3's light ratio (5.1) about 0.6 ms. The line then reads about 0.36 ms RTX and 1.8 ms Cezanne of 6.0 (6 % and 30 %), before Part 2's fill | the same runs, per pass; the preload's cost at rest, in flight and on a turn (done-when 17) |
+| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10). **Amended 2026-11-04 (owner; the form amended the same day, architect), the preload, guesses by arithmetic:** a sample with its shadow ray costs about 3.5 ns on the RTX (v0.41.0's light pass, 0.802 ms over 640 x 360 lighting pixels), so `S_PRE` 32 768 is about 0.11 ms; the walk's demand, about 19 000 samples a frame at 30 voxels a second, about 0.07 ms, and `Shift` binds at `S_PRE`. The sweep at `B` 128: most bricks end on their entry word, a surface brick's 512 voxels test six neighbours each through the mirror's lookup, a guess of under 0.01 ms; at rest the trickle (`B / 16`) and an empty list, under 0.01 ms. About 0.12 ms in flight. The Cezanne at Phase 3's light ratio (5.1) about 0.6 ms. The line then reads about 0.36 ms RTX and 1.8 ms Cezanne of 6.0 (6 % and 30 %), before Part 2's fill. **Amended 2026-11-05 (architect, for the owner), read and guessed:** the walk read 0.062 (patch) and 0.094 ms (vein), about 4.6 ns a sample in the light pass's excess (0.059 ms over 12 798 samples at the vein), at rest 0.015 and 0.012 (loaded; a quiet re-read owed against 0.01). The claim within `r0` 24 adds, **a guess**, the faces probed a frame (444 and 211, read) times `(24 / 64)^2` times their refused share (0.94 and 0.75, read) times the 248 samples to `C_PRE`: about 14 500 and 5 600 samples, **+0.07 and +0.03 ms, about 0.13 and 0.12 ms walking**; at `r0` 32 the patch is about 0.18, over the bar, so the sweep picks; at rest nothing once the faces within `r0` hold `C_PRE` (their slabs are done); at `Shift` `S_PRE` binds (about 0.19 ms, read, not a bar) | the same runs, per pass; the preload's cost at rest, in flight and on a turn (done-when 17), at each `r0` |
 | §2 denoise line (3.0 ms): temporal + a-trous | RTX 0.086 + 0.497 | unchanged or lower (the a-trous over one channel) | the same runs |
-| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, + the preload list (`PRELOAD_LIST_MAX` 32 768 entries ping-ponged, about 256 KiB, a guess) and its stats words (amended 2026-11-04: no other store; it fills the table, about 15 000 to 25 000 faces within `R` 64 at the level, half lit, 0.007 to 0.012 of 2^20 by the census, mostly cells the view also makes, and claims none past `PRE_LOAD_MAX` 0.25 or after a frame's miss), - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
+| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, + the preload list (`PRELOAD_LIST_MAX` 32 768 entries ping-ponged, about 256 KiB, a guess) and its stats words (amended 2026-11-04: no other store; it fills the table, about 15 000 to 25 000 faces within `R` 64 at the level, half lit, 0.007 to 0.012 of 2^20 by the census, mostly cells the view also makes, and claims none past `PRE_LOAD_MAX` 0.25 or after a frame's miss; amended 2026-11-05: the claim within `r0` adds no store, only a uniform word, and its cells, the faces within 24 voxels of a walked path inside the 256-voxel light radius, are about 23 000 on a straight 512-voxel walk at the vein's density, about 0.022 of 2^20, **a guess**, beside today's read 0.010 and 0.024), - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
 
 Determinism is not touched: everything is in `vxe-render`. The table's integer sums make a
 face's mean independent of the order its pixels add, which the close reads as a bit-identical
@@ -1117,13 +1204,25 @@ cell dump across two runs of the same still frame on lavapipe.
   samples outrun the eye rays' in a dense, walled-off level; the census and the fill-time table
   (done-when 12) read how many, and the claim rule and `PRE_LOAD_MAX` bound the table. A face
   lit only rarely may draw 8 unlit samples and take no cell; it then fills at its footprint when
-  seen, as today (the refused count reads it).
+  seen, as today (the refused count reads it). Amended 2026-11-05 (architect, for the owner):
+  read at the patch as 17 563 of 18 619 faces probed, most of them dim rather than unlit; within
+  `r0` they now claim a cell regardless, and from `r0` to `R` they still refuse, which done-when
+  12's lit-share table and done-when 14's band from `r0` to `R` read for the owner.
 - **Dark faces need more samples than bright ones** (amended 2026-11-04, owner). A face lit
   through a gap sees most of its samples shadowed, so its relative spread is several times a
   lit wall's and 10 % takes far more than 256 samples; that is the owner's dark corner. The
   `C_PRE` sweep up to 4096 (`C_CAP`) and done-when 16 read it; if 4096 at the default `B` and
   `S_PRE` does not meet done-when 16 within the walk's 112 frames, the shortfall goes to the owner in Phase 6
-  (h) with the table, not to a larger budget unasked.
+  (h) with the table, not to a larger budget unasked. Amended 2026-11-05: done-when 14 reads
+  the band within `r0` at `C_PRE` 256 and 1024, split by the reference mean's decile, and the
+  reference at `C_CAP` 4096 is itself about 0.09 noisy for a face lit on one sample in 32.
+- **The claim within `r0` fills unlit faces** (amended 2026-11-05, architect, for the owner).
+  A face within `r0` that no emitter reaches takes a cell and `C_PRE` samples of zero, once for
+  the cell's life: about 248 samples wasted a face, a guess of up to 0.07 ms walking at the
+  patch, inside the walk's bar by the Budgets' arithmetic, and the `r0` sweep reads it. If the
+  walk's cost at 24 reads over 0.15 ms, `r0` falls to 16 and the band from 16 to 24 goes to the
+  owner in Phase 6 (h); a cheaper unlit test inside `r0` (a sum of squares to stop on, the
+  Followups' stop rule) is the next form, not more probes.
 - **The preload works off the screen** (amended 2026-11-04, owner). It spends samples on faces
   the view does not show, against "the cost matches what is on screen". The owner asked for it;
   the trickle at rest bounds the waste, and whether it is on by default is the owner's (Phase 6
