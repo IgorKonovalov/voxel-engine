@@ -120,7 +120,7 @@
 > **Starts after:** the render-profile plan merges (amended 2026-11-03, owner). The order is
 > [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md),
 > its verdict plan, Plans 0044 and 0045,
-> [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) if it stands, the
+> [Plan 0048](done/0048-probe-rays-direct-light-without-the-clamp-bias.md) if it stands, the
 > render-profile plan, then this plan. "The base commit" in every bar is main after that last
 > merge, which replaces the earlier amendments' "after 0048's merge". Plans 0024, 0047,
 > 0029, 0030, 0040 and 0038 are closed and on main.
@@ -1251,7 +1251,7 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      the bit's `ALPHA` 0.2 floor, not from `H`, so they hold at any default; bar 8's 256 is
      set in the test. Every other history bar runs at the default dev finds.
 - **Plan 0048 interaction** (owner, 2026-10-28; 0048 lands after 0047 and before this plan).
-  What [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) changes that this
+  What [Plan 0048](done/0048-probe-rays-direct-light-without-the-clamp-bias.md) changes that this
   plan reads:
   1. *The probe rays' direct term.* The probe update calls the emissive estimator through
      0048's `Lighting::probe_direct` scheme (ADR-0037), not the screen's clamp of 2; the light
@@ -1287,7 +1287,7 @@ Amended 2026-10-28. The owner answered each question with its first option (owne
 3. **The outdoor exposure for the dev phases.** `eye()` with `min` 1e-4 and `max` 4.0, Plan
    0040's recommendation, until Phase 9 picks (Phase 4).
 4. **Plan 0048 and the order.** This plan waits for
-   [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md), which follows Plan
+   [Plan 0048](done/0048-probe-rays-direct-light-without-the-clamp-bias.md), which follows Plan
    0047, so Phase 6's probe bars are read once on an unbiased probe term ("Starts after";
    Risks, "Plan 0048 interaction"). Phase 6's furnace reference stays pi, which holds after
    0048.
