@@ -1,6 +1,6 @@
 # 0046: DX12 shaders through wgpu's bundled static DXC: pipeline times measured per pass under FXC and DXC, the feature on for every consumer, the shutdown workaround reverted
 
-> **Status:** done (closed 2026-10-22): DXC compiles every pass on WARP in 2.5 s cold against FXC's 76.6 s (attrib 0.6 s against 42.4 s); the Windows shutdown and attribute tests stay slow on the pass's execution, so the workaround stays and that cost is a followup
+> **Status:** done (closed 2026-10-22): DXC compiles every pass on WARP in 2.5 s cold against FXC's 76.6 s (attrib 0.6 s against 42.4 s); the Windows shutdown and attribute tests stay slow on the pass's execution, so the workaround stays and that cost is a followup; v0.31.1
 > **Created:** 2026-10-22
 > **Milestone:** none; platform health (the Windows arm of ADR-0001's Linux + Windows stack)
 > **Related ADRs:** [ADR-0035](../../adrs/0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md)

@@ -1,6 +1,6 @@
 # ADR-0008: Collapse as a capped support flood on the coarse grid and rigid vertical drop ops, not a rigid-body engine
 
-> **Status:** accepted (2026-10-17, at Plan 0009's close; see Outcome)
+> **Status:** accepted (2026-10-17, at Plan 0009's close; see Outcome); drop clause amended by ADR-0016
 > **Date:** 2026-10-16
 > **Related plan(s):** [Plan 0009](../plans/done/0009-support-query-and-collapse-ops.md)
 

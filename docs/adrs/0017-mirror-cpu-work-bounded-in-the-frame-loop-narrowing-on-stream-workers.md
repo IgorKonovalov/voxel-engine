@@ -1,6 +1,6 @@
 # ADR-0017: The mirror's CPU work stays in the frame loop, bounded per frame, with narrowing on the stream workers
 
-> **Status:** accepted (2026-10-21, at the Plan 0023 close; see Outcome)
+> **Status:** accepted (2026-10-21, at the Plan 0023 close; see Outcome); Alternative B's ring taken up by ADR-0022
 > **Date:** 2026-10-20
 > **Related plan(s):** [Plan 0023](../plans/done/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md)
 

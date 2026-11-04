@@ -2194,7 +2194,8 @@ are settled here; none of these blocks the close.
   Alternative B". A rename fits Plan 0045.
 - **Approved plans that name what is gone.** Plans 0032, 0044, 0045 and 0051 carry a dated header
   note. Plan 0051's is the one with weight: its world-space cache keys on the contour attribute,
-  which no longer exists.
+  which no longer exists. (Resolved 2026-11-03: Plan 0051's amendment keyed the cache on the
+  cube face; it closed 2026-11-04.)
 - **The logs behind the readings are untracked.** `nfr.md` §2 and §3 cite `live/p4c/close/` and
   `live/session3-seam.log` in this plan's worktree, which are lost when the worktree is deleted
   unless they are rescued first.

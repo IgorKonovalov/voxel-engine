@@ -1,8 +1,9 @@
 # ADR-0024: The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass
 
 > **Status:** accepted (2026-10-22, at Plan 0030's close; see Outcome: shipped opt-in, not as the
-> default); superseded in part by ADR-0034 (its rejection of an FSR 2 port only). Since
-> 2026-10-27 its upscaler at scale 1.5 is the fly-through's default (ADR-0034's Outcome)
+> default); superseded in part by ADR-0034 (its rejection of an FSR 2 port only). From
+> 2026-10-27 its upscaler at scale 1.5 was the fly-through's default (ADR-0034's Outcome);
+> opt-in again since Plan 0055 (2026-11-03), FSR 2 at 1.5 the default
 > **Date:** 2026-10-21
 > **Amended:** 2026-10-22 (owner, at Plan 0030's Phase 2 stop, while proposed): Plan 0024's
 > lighting passes become jitter-aware, and history is accepted from a 3 x 3 neighbourhood.

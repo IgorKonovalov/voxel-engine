@@ -1,6 +1,9 @@
 # ADR-0030: Clouds are a ray-marched shell of seeded noise, one pixel in four of a quarter-resolution buffer per frame, rebuilt temporally and shadowing the ground through a projected map
 
-> **Status:** proposed
+> **Status:** proposed; amended 2026-11-04 (architect, drift): "Plan 0032's sun sample, in the
+> light pass and in the probe rays" assumes probe rays that shade the sun; under ADR-0043
+> (proposed) the probe rays shade the lamp alone, so the sun's visibility by the shadow map is
+> read in the light pass and, if the sun feeds the channel, as a per-source term there
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0035](../plans/0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md)
 

@@ -1,6 +1,11 @@
 # ADR-0027: The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one
 
-> **Status:** proposed
+> **Status:** proposed; amended 2026-11-04 (architect, drift): "joins the emissive part's long
+> history" and "the same static light changed bit" name ADR-0036's screen history and the
+> emission-change window, which ADR-0043 (proposed) deletes; the directional term then follows
+> the lamp part's rules (a short screen blend, reset on a change), and "the probe volume's rays
+> get sunlight bounce" is a per-source feed into ADR-0043's lamp-only channel. Both are decided
+> when Plan 0032 starts
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (builds it); Plan 0033 (continues the ray into the far-field clipmap)

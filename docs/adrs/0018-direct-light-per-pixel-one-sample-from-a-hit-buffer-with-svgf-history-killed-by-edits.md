@@ -1,6 +1,6 @@
 # ADR-0018: Direct light is one sample per pixel from a hit buffer, denoised by an SVGF-family filter whose history dies where the world was edited
 
-> **Status:** accepted (2026-10-22, at Plan 0024's close)
+> **Status:** accepted (2026-10-22, at Plan 0024's close); emissive history refined by ADR-0036; emissive part amended by ADR-0043 (proposed)
 > **Date:** 2026-10-20
 > **Related plan(s):** [Plan 0024](../plans/done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
 

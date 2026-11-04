@@ -4,8 +4,8 @@
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0033](../plans/0033-far-field-clipmap-to-a-kilometre.md)
 > **Claims:** the founding-interview decision "Far-field clipmap (coarser rings beyond the
-> full-detail radius)" listed in the [ADR index](README.md) under "Decisions taken but not
-> yet recorded", and settles ADR-0003's open Negative ("a `WorldSource` method that produces
+> full-detail radius)" (`docs/roadmap.md`, "Decisions from the founding interview", the
+> "Floor, profiles and scene scale" row), and settles ADR-0003's open Negative ("a `WorldSource` method that produces
 > mips directly is the far-field clipmap's job").
 
 ## Context

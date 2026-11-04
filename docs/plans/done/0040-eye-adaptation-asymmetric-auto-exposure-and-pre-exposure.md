@@ -1,6 +1,6 @@
 # 0040: Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets
 
-> **Status:** done (2026-10-28). Close review clean: every phase landed, the gate re-run is green, the fresh quiet readings sit inside the §2 and §3 lines; two nits go to Followups.
+> **Status:** done (2026-10-28, v0.34.0). Close review clean: every phase landed, the gate re-run is green, the fresh quiet readings sit inside the §2 and §3 lines; two nits go to Followups.
 > **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: time constants 0.15 / 1 / 4 s (normal after about 10 s), max exposure 64 so the dark-adapted cave settles at the key, centre-weighted metering, the fly-through defaulting to auto eye. Owner, 2026-10-27 (Phase 5 session): the slower constants 0.15 / 2 / 10 s and `max` 16, so the cave stays dim; the third clause of Phase 4 bar 2 is answered (b) with (a); the light patches seen while adapting are investigated first (Phase 4 amendment).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the "exposure, tone mapping, and an

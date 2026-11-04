@@ -1,6 +1,9 @@
 # ADR-0026: The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets
 
-> **Status:** proposed
+> **Status:** proposed; amended 2026-11-04 (architect, drift): the clause "a probe ray of the
+> indirect volume (ADR-0023) that misses returns its radiance" assumes probe rays that shade
+> every light. ADR-0043 (proposed) makes the volume a lamp-only channel, so sky light into the
+> probes is a per-source feed into that channel, decided when Plan 0032 starts
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (builds it); Plan 0035 (adds the aerial-perspective volume and the clouds on top of it);

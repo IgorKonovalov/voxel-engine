@@ -58,6 +58,7 @@ docs/
 ├── roadmap.md       # milestones M0..M9 and the decisions behind them. Read this first
 ├── nfr.md           # the budgets: frame time, VRAM, edit cost, determinism, baseline GPU
 ├── nfr/             # the readings behind nfr.md's big sections, one file per section
+├── images/          # the README's hero and the light write-ups' stills and difference images
 ├── adrs/            # NNNN-<slug>.md: decisions + rejected alternatives. Append-only once accepted
 │   └── README.md    #   ADR index + next free number
 ├── plans/           # NNNN-<slug>.md: phased implementation plans
@@ -85,7 +86,8 @@ scripts/
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
-.github/workflows/ci.yml  # build, nextest, doctests, clippy, fmt, hooks, doc gates; cargo-deny
+.github/workflows/ci.yml  # build, nextest (gate tier), doctests, clippy, fmt, hooks, doc gates; cargo-deny
+.github/workflows/soak.yml  # the weekly soak tier
 ```
 
 `.claude/` is **committed** (except `settings.local.json`).
