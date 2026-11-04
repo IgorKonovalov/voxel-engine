@@ -911,8 +911,9 @@ settings are in `docs/plans/logs/0055.md`.
 
 **The aliasing spike's arms and candidates (Plan 0056 Phase 3, tree on 879c452 plus the phase,
 `flythrough --headless --frames 300`, GPU frame median of the last 30, exclusive perf lock, three
-alternated rounds; 1-minute load 1.9 to 2.8 in round 2 but for the RADV vein's `own`, native,
-scale-1 and cap runs (3.7 to 11.3), up to 26 in rounds 1 and 3 (loaded, indicative)).** Frame in ms, round 2, showcase start then `--level --pose vein`. RTX 3080
+alternated rounds; 1-minute load 1.8 to 2.8 in round 2 but for the RADV vein's `own`, native,
+scale-1 and cap runs (3.7 to 11.3), up to 26 in rounds 1 and 3. Most round-2 runs and every
+run of rounds 1 and 3 read over 2, so every figure here is loaded (indicative)).** Frame in ms, round 2, showcase start then `--level --pose vein`. RTX 3080
 Laptop GPU at 2530 x 1378 from 1687 x 919: main's 38cd29a binary 14.996 and 8.125; the default
 (FSR 2 at 1.5, far normal `[2, 6]`) 12.340 and 8.013; `[1, 2]` 11.260 and 7.938 (hit 3.369
 against 4.397); `--look face` 10.828 and 7.803 (hit 2.932); `--sharpen 0` 12.255 and 7.755; `own`

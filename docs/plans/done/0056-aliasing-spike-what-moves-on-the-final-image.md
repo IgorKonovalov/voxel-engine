@@ -1,22 +1,22 @@
 # 0056: The aliasing spike: what moves on the final image with the light held still, read by class, and one window for FSR 2, `own`, native and the far normal
 
-> **Status:** in-progress (2026-11-04): Phases 1 to 4 done; the owner's verdict is in the log; awaits its fresh-session close review
+> **Status:** done (closed 2026-11-04, v0.42.0): clean review. The jumps are FSR 2's jitter on silhouettes and emitters, not light; the dots are light on creases; the owner keeps FSR 2 at 1.5 and picks far normal `[1, 2]` by eye, the next plan's first phase
 > **Created:** 2026-11-03
 > **Approved:** 2026-11-03 (owner): "approve, go with recommended". See Owner answers.
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look and upscaler bullets).
-> **Related ADRs:** [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look and upscaler bullets).
+> **Related ADRs:** [ADR-0034](../../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)
 > (FSR 2 the default; "fsr2 stays counts" stands, and this spike brings readings, not a reversal),
-> [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (`own`, opt-in),
-> [ADR-0042](../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
+> [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (`own`, opt-in),
+> [ADR-0042](../../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
 > (the far normal; `[2, 6]` is provisional, "reopened after Plan 0051": this plan is that reopen).
 > No ADR at draft: see Decision.
 > **Source:** the owner, 2026-11-03: "yes, draft the aliasing spike", and "the main thing that I
 > care about for now is a stable image without any flicker or aliasing artiacts. we move towards
 > this image by any means possible, considering performance of course."
-> ([`LIGHT-FEEDBACK.md`](../../LIGHT-FEEDBACK.md), "What the owner wants" and "The hero that never
+> ([`LIGHT-FEEDBACK.md`](../../../LIGHT-FEEDBACK.md), "What the owner wants" and "The hero that never
 > settled".)
-> **Starts after:** [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
-> Phase 4 verdict, and before [Plan 0044](0044-hot-path-and-defect-pass.md). See "Where it sits".
+> **Starts after:** [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
+> Phase 4 verdict, and before [Plan 0044](../0044-hot-path-and-defect-pass.md). See "Where it sits".
 
 ## TL;DR
 
@@ -479,7 +479,7 @@ The owner, 2026-11-03: "approve, go with recommended".
 | 3: Candidates, costs and the window's toggles | dev | done | 136b123 |
 | 4: The owner's window | human | done; verdict in the log | committed with this row |
 
-Readings, gates and attempts: [`logs/0056.md`](logs/0056.md).
+Readings, gates and attempts: [`logs/0056.md`](../logs/0056.md).
 
 ### Notes
 
@@ -538,4 +538,23 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-None at draft.
+Written at the close review, 2026-11-04 (fresh session).
+
+- **Owed now: the far-normal plan.** Its first phase moves `LookPreset::DEFAULT`'s far normal to
+  `[1, 2]` (the owner's verdict (b), by eye) with ADR-0042's dated Outcome closing "provisional",
+  the goldens re-blessed and the hit-pass saving read (Phase 3: RTX hit 3.37 against 4.40 ms,
+  RADV 17.0 against 21.1 ms, loaded). Its bars may not assert `[2, 6]`'s stillness: under `E`,
+  `[1, 2]` reads 35 110 still jumps against 4 766 and `C` 1.532 against 0.818, recorded beside the
+  verdict. Its second item is the edge dots at `[1, 2]` on silhouettes and emitters' edges (the
+  owner's step 2 screenshot), read by this plan's classes before any mechanism. It also removes
+  `Fsr2Settings::emitter_cap` and `--emitter-cap` (the owner's "fault": magenta blotches), and
+  states whether `--jitter-phases` and `--dither` stay opt-in. Start after Plan 0057's merge, since
+  both re-bless the default look.
+- **Phase 4 (e) unanswered:** the rings, holes, patches and emitters got no owner word. The
+  readings name them (R1 terraces, light patches, saturated whole-voxel ore); they go to the next
+  plan's interview as one batched question.
+- **`R` at 3840 x 2160 is not bit-identical on a still camera** (max 26, mean 0.001), while native
+  `E` at 1080 is. Unread; the next plan that uses `R` as a floor reads why first.
+- **`flythrough::fsr2 doubling_the_exposure_reaches_fsr_the_same_frame`** read 38.4 s in the tip
+  gate on lavapipe (load 2.8), over the 30 s line; not this plan's test, owed to the soak list. The
+  tip gate's 848.6 s is over the 12-minute proposal, loaded; for the owner, not this plan.
