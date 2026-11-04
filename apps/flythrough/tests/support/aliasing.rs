@@ -648,3 +648,224 @@ pub fn eye_lighting(base: vxe_render::Lighting) -> vxe_render::Lighting {
         ..base
     }
 }
+
+// ---- The pan ----
+
+/// The yaw in radians that moves the image centre one display pixel, for a view `height`
+/// pixels high with vertical field of view `vfov` at `pitch`: `atan(1 / focal) / cos(pitch)`,
+/// `focal = (height / 2) / tan(vfov / 2)`.
+pub fn yaw_per_pixel(height: u32, vfov: f32, pitch: f32) -> f32 {
+    let focal = height as f32 * 0.5 / (vfov * 0.5).tan();
+    (1.0 / focal).atan() / pitch.cos()
+}
+
+/// `C`'s lag in frames and shift in pixels at `px_per_frame`: a whole pixel over `1 / rate`
+/// frames under one pixel a frame, else the rate's whole pixels over one frame.
+pub fn lag_shift(px_per_frame: f32) -> (usize, i32) {
+    if px_per_frame.abs() >= 1.0 {
+        (1, px_per_frame.round() as i32)
+    } else {
+        (
+            (1.0 / px_per_frame.abs()).round() as usize,
+            px_per_frame.signum() as i32,
+        )
+    }
+}
+
+/// `C`'s centre band for a display `w` wide: columns 810 to 1109 at 1920, scaled.
+pub fn band(w: u32) -> std::ops::Range<u32> {
+    w * 810 / 1920..w * 1110 / 1920
+}
+
+/// The display-encoded luma of an rgba8 pixel in levels, 0 to 255.
+pub fn luma8(p: &[u8]) -> f32 {
+    0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2])
+}
+
+/// Dots in an rgba8 image: a pixel whose luma (levels) is over its 5 x 5 median by more than
+/// 24 and more than twice the median (the settle rig's rule).
+pub fn dots(rgba: &[u8], w: u32, h: u32) -> Vec<bool> {
+    let y: Vec<f32> = rgba.chunks_exact(4).map(luma8).collect();
+    let mut out = vec![false; y.len()];
+    let mut win = Vec::with_capacity(25);
+    for py in 2..h.saturating_sub(2) {
+        for px in 2..w.saturating_sub(2) {
+            let v = y[(py * w + px) as usize];
+            if v <= 24.0 {
+                continue;
+            }
+            win.clear();
+            for dy in 0..5 {
+                for dx in 0..5 {
+                    win.push(y[((py + dy - 2) * w + px + dx - 2) as usize]);
+                }
+            }
+            win.sort_by(f32::total_cmp);
+            let m = win[12];
+            out[(py * w + px) as usize] = v - m > 24.0 && v > 2.0 * m;
+        }
+    }
+    out
+}
+
+/// A yellow pixel: red and green both over twice blue, and green over half of red.
+pub fn yellow(p: &[u8]) -> bool {
+    let (r, g, b) = (u32::from(p[0]), u32::from(p[1]), u32::from(p[2]));
+    r > 2 * b && g > 2 * b && 2 * g > r
+}
+
+/// Whether `set` holds a pixel within one pixel of (`x`, `y`).
+pub fn near(set: &[bool], w: u32, h: u32, x: i32, y: i32) -> bool {
+    (-1..=1).any(|dy| {
+        (-1..=1).any(|dx| {
+            let (nx, ny) = (x + dx, y + dy);
+            nx >= 0
+                && ny >= 0
+                && nx < w as i32
+                && ny < h as i32
+                && set[(ny as u32 * w + nx as u32) as usize]
+        })
+    })
+}
+
+// ---- The rings ----
+
+/// Per display pixel, the hit under it (as [`Mask::of`] maps it): `floor(p.z)` and `t`, `None`
+/// on a miss.
+pub fn z_levels(hits: &Hits<'_>, display: [u32; 2]) -> Vec<Option<(i32, f32)>> {
+    let [w, h] = display;
+    let [iw, ih] = hits.size;
+    let mut out = Vec::with_capacity((w * h) as usize);
+    for y in 0..h {
+        let iy = under(y, h, ih) as u32;
+        for x in 0..w {
+            let ix = under(x, w, iw) as u32;
+            let i = (iy * iw + ix) as usize;
+            out.push(if is_hit(hits.info[i]) && hits.pos[i][3] < 1e30 {
+                Some((hits.pos[i][2].floor() as i32, hits.pos[i][3]))
+            } else {
+                None
+            });
+        }
+    }
+    out
+}
+
+/// The z-level map's image: `floor(p.z)` parity black and white, misses red.
+pub fn z_image(z: &[Option<(i32, f32)>]) -> Vec<u8> {
+    z.iter()
+        .flat_map(|v| match v {
+            Some((l, _)) if l.rem_euclid(2) == 0 => [230, 230, 230, 255],
+            Some(_) => [30, 30, 30, 255],
+            None => [200, 0, 0, 255],
+        })
+        .collect()
+}
+
+/// Ring reads on a crop `[x, y, w, h]` of an rgba8 image `w` wide and its z-level map.
+#[derive(Clone, Debug, Default)]
+pub struct Rings {
+    /// Image-edge pixels (a horizontal or vertical neighbour's luma over [`RING_EDGE`] levels
+    /// apart) and the share of them within one pixel of a z-level change.
+    pub edges: u64,
+    pub edges_at_z: f64,
+    /// The share of all crop pixels within one pixel of a z-level change.
+    pub base_at_z: f64,
+    /// Per `t` bin of [`RING_BIN`] voxels: (edges, edges at a z change, pixels, pixels at a z
+    /// change).
+    pub by_t: Vec<[u64; 4]>,
+    /// Horizontal neighbours' `|dY|` in whole levels, 0 to 8 and over.
+    pub hist: [u64; 10],
+    /// Mean run length along rows of equal 8-bit luma, and the runs' count.
+    pub plateau: f64,
+    pub runs: u64,
+}
+
+/// An image edge for the ring read: neighbours' luma this many levels apart.
+pub const RING_EDGE: f32 = 2.0;
+/// The ring read's `t` bins, voxels.
+pub const RING_BIN: f32 = 100.0;
+
+impl Rings {
+    pub fn read(rgba: &[u8], z: &[Option<(i32, f32)>], w: u32, c: [u32; 4]) -> Rings {
+        let y8 = |x: u32, y: u32| luma8(&rgba[((y * w + x) * 4) as usize..]);
+        let zl = |x: u32, y: u32| z[(y * w + x) as usize];
+        let mut r = Rings::default();
+        let (mut at_z, mut base, mut n) = (0u64, 0u64, 0u64);
+        for py in c[1] + 1..c[1] + c[3] - 1 {
+            let mut run = 1u64;
+            for px in c[0] + 1..c[0] + c[2] - 1 {
+                let v = y8(px, py);
+                let dh = (y8(px + 1, py) - v).abs();
+                let dv = (y8(px, py + 1) - v).abs();
+                r.hist[(dh.round() as usize).min(9)] += 1;
+                if y8(px + 1, py).round() == v.round() {
+                    run += 1;
+                } else {
+                    r.plateau += run as f64;
+                    r.runs += 1;
+                    run = 1;
+                }
+                let Some((l, t)) = zl(px, py) else {
+                    continue;
+                };
+                let z_change = (-1i32..=1).any(|dy| {
+                    (-1i32..=1).any(|dx| {
+                        zl((px as i32 + dx) as u32, (py as i32 + dy) as u32)
+                            .is_some_and(|(m, _)| m != l)
+                    })
+                });
+                let edge = dh > RING_EDGE || dv > RING_EDGE;
+                let bin = (t / RING_BIN) as usize;
+                if r.by_t.len() <= bin {
+                    r.by_t.resize(bin + 1, [0; 4]);
+                }
+                let b = &mut r.by_t[bin];
+                b[2] += 1;
+                n += 1;
+                if z_change {
+                    b[3] += 1;
+                    base += 1;
+                }
+                if edge {
+                    b[0] += 1;
+                    r.edges += 1;
+                    if z_change {
+                        b[1] += 1;
+                        at_z += 1;
+                    }
+                }
+            }
+        }
+        r.edges_at_z = at_z as f64 / r.edges.max(1) as f64;
+        r.base_at_z = base as f64 / n.max(1) as f64;
+        r.plateau /= r.runs.max(1) as f64;
+        r
+    }
+
+    pub fn lines(&self) -> String {
+        let mut s = format!(
+            "rings: {} edge pixels, {:.3} of them within 1 px of a z-level change, against {:.3} of all hit pixels; plateau mean run {:.2} px over {} runs; |dY| histogram 0..8,9+: {:?}\n",
+            self.edges, self.edges_at_z, self.base_at_z, self.plateau, self.runs, self.hist
+        );
+        for (k, b) in self.by_t.iter().enumerate() {
+            if b[2] == 0 {
+                continue;
+            }
+            let p_edge_z = b[1] as f64 / b[3].max(1) as f64;
+            let p_edge_not = (b[0] - b[1]) as f64 / (b[2] - b[3]).max(1) as f64;
+            let _ = writeln!(
+                s,
+                "rings t {}..{}: {} px, {} at z change; P(edge | z change) {:.3}, P(edge | none) {:.3}, ratio {:.2}",
+                k as f32 * RING_BIN,
+                (k + 1) as f32 * RING_BIN,
+                b[2],
+                b[3],
+                p_edge_z,
+                p_edge_not,
+                p_edge_z / p_edge_not.max(1e-9)
+            );
+        }
+        s
+    }
+}

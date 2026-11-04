@@ -474,8 +474,8 @@ The owner, 2026-11-03: "approve, go with recommended".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Where the jumps lie | dev | done | committed with this row |
-| 2: The matrix, the pan and the rings | dev | not started | |
+| 1: Where the jumps lie | dev | done | e630380 |
+| 2: The matrix, the pan and the rings | dev | done | committed with this row |
 | 3: Candidates, costs and the window's toggles | dev | not started | |
 | 4: The owner's window | human | not started | |
 
@@ -492,6 +492,20 @@ Readings, gates and attempts: [`logs/0056.md`](logs/0056.md).
   and to the tree's 16 otherwise, so the tool's earlier runs read as before.
 - Phase 1: the tool's first read frame is step `settle + 1`; the bridge reads the Context table
   at `VXE_STRIP_SETTLE=2047`.
+- `--steady` is on main since v0.41.0, with Plan 0051's verdict `--steady b --indirect off`; Plan
+  0057's Phase 2 removes the presets after this plan's Phase 2 readings, which are the ones read
+  through them.
+- Phase 2: the hall's `H` `off` arm keeps the preset's far normal `[2, 6]` (as `F10` shows it); the
+  `E` matrix's scale-1 arms use `[3, 9]`.
+- Phase 2: the level's `E` is lamp power 10 at exposure 1 (4000 and 1000 at the pose's exposure
+  saturate the frame); the dome-luma rule is the hall's only.
+- Phase 2: the slow pan at the level is read at 0.25 and at 1 px a frame beside the fast yaw at
+  10 px (the amendment's "ten times its rate" and "ten pixels a frame").
+- Phase 2: the ring reads (an edge at 2 levels, P(edge | z change) over P(edge | none) in 10 m `t`
+  bins), the dot's yellow rule and the anchoring test are the tool's own definitions, stated in
+  `support/aliasing.rs`; under `E` no pixel is yellow by the rule.
+- Phase 2: `R` at 3840 x 2160 is not bit-identical still (`T` max 26, 0.001 mean); unread why.
+- Phase 2: the reading runs used a frozen copy of the phase's test binary (`live/bin/strip-p2`).
 
 ### Close triggers
 

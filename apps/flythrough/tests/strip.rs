@@ -50,6 +50,18 @@
 //!   `off`): `T`, `L`, `J` (`support::aliasing`), the guard's energy, the jumps by class and
 //!   footprint over the first cycle's mask, and `jumps.png` (T's jumps per pixel, white at `JUMPS_WHITE`
 //!   jumps), `jumps-l.png`, `mask.png`, `last.png` and `clusters.png` (the 8 worst 32-pixel tiles).
+//! - `VXE_STRIP_SCALE`: the upscalers' internal scale, `1`, `1.5` (default) or `2`.
+//! - `VXE_STRIP_SHRINK=K`: with `off`, renders `K` times the size on each edge and box-filters
+//!   every read frame down to the output size (`R` at `K` 2 and `VXE_STRIP_FAR=4,12`).
+//! - `VXE_STRIP_REF`: an absolute path to a PNG of the output size; a fold prints its last
+//!   frame's mean level distance from it.
+//! - `VXE_STRIP_RINGS=x,y,w,h`: a fold reads the rings on that crop of its last frame
+//!   (`aliasing::Rings`) and writes `zlevel.png`, `rings-zlevel.png` and `rings-crop.png`.
+//! - `VXE_STRIP_PAN=PX_PER_FRAME`: after the settle, `VXE_STRIP_FRAMES` frames of a pure yaw to
+//!   the left at that many display pixels a frame at the image centre, `C` read in the centre
+//!   band against the frame `lag` before shifted `shift` pixels (`aliasing::lag_shift`), with its
+//!   jumps by class; `VXE_STRIP_DOTS=on` adds the dot and yellow-dot count and their anchoring.
+//! - `VXE_STRIP_READ=drift`: step `settle + 1` against step `VXE_STRIP_DRIFT_TO` (default 8192).
 //!
 //! Example (the RTX, under the perf lock and the memory cap):
 //! `VXE_TEST_ADAPTER=rtx VXE_STRIP_TAG=lamp-off VXE_STRIP_SOURCE=level VXE_STRIP_LAMP_AT=60
@@ -292,7 +304,7 @@ fn crop(rgba: &[u8], w: u32, c: [u32; 4]) -> Vec<u8> {
 }
 
 /// An rgba8 image box-filtered down by `k` on each edge.
-fn shrink(rgba: &[u8], w: u32, h: u32, k: u32) -> (Vec<u8>, u32, u32) {
+fn shrink_image(rgba: &[u8], w: u32, h: u32, k: u32) -> (Vec<u8>, u32, u32) {
     let (ow, oh) = (w / k, h / k);
     let mut out = vec![0u8; (ow * oh * 4) as usize];
     for oy in 0..oh {
@@ -394,12 +406,150 @@ fn read_hits(scene: &Scene, frame: &Frame) -> (Vec<[f32; 4]>, Vec<[u16; 4]>) {
     )
 }
 
+/// The display image: the target, box-filtered down by `shrink` (`R`).
+fn display(scene: &Scene, frame: &Frame, shrink: u32) -> Vec<u8> {
+    let t = frame.target();
+    let rgba = readback::read_rgba8(&scene.device, &scene.queue, t);
+    if shrink > 1 {
+        shrink_image(&rgba, t.width(), t.height(), shrink).0
+    } else {
+        rgba
+    }
+}
+
+/// `VXE_STRIP_PAN=PX_PER_FRAME`: a pure yaw to the left from the settled still, `C` read in the
+/// centre band each frame against the frame `lag` before shifted `shift` pixels.
+struct PanRead<'a> {
+    size: [u32; 2],
+    shrink: u32,
+    rate: f32,
+    frames: u32,
+    dots: bool,
+    tag: &'a str,
+    dir: &'a std::path::Path,
+}
+
+impl PanRead<'_> {
+    fn run(&self, scene: &mut Scene, frame: &mut Frame, camera: &mut Camera, light: &LightParams) {
+        use std::collections::VecDeque;
+        let [w, h] = self.size;
+        let internal = frame.internal_size();
+        let tan_sum = 2.0 * (camera.vfov * 0.5).tan() * w as f32 / h as f32;
+        let emits = scene.emits.clone();
+        let is_emit = |m: u16| emits.contains(&m);
+        let step = aliasing::yaw_per_pixel(h, camera.vfov, camera.pitch);
+        let (lag, shift) = aliasing::lag_shift(self.rate);
+        let cols = aliasing::band(w);
+        println!(
+            "pan {}: {} px a frame, {:.5} degrees a frame, {:.3} degrees a second at 60 frames a second; C lags {lag} frames, shift {shift} px, columns {}..{}; {} frames",
+            self.tag,
+            self.rate,
+            (self.rate * step).to_degrees(),
+            (self.rate * step).to_degrees() * 60.0,
+            cols.start,
+            cols.end,
+            self.frames
+        );
+        let mut hist = aliasing::Hist::default();
+        let mut edge = aliasing::Hist::default();
+        let mut by = ByClass::default();
+        let mut past: VecDeque<(Vec<u8>, Vec<bool>)> = VecDeque::new();
+        // Dots: all, yellow, yellow world-anchored (a dot within a pixel of `x - shift` in the
+        // frame `lag` before), yellow camera-anchored (a dot within a pixel of `x`).
+        let mut dot = [0u64; 4];
+        let mut dot_class = ByClass::default();
+        let mut dot_frames = 0u64;
+        let mut first_dots = None;
+        let mut last = Vec::new();
+        for _ in 0..self.frames {
+            frame.step(&scene.device, &scene.queue, &scene.gpu, camera, light);
+            let rgba = display(scene, frame, self.shrink);
+            let (pos, info) = read_hits(scene, frame);
+            let hits = Hits {
+                size: internal,
+                pos: &pos,
+                info: &info,
+            };
+            let mask = Mask::of(&hits, [w, h], tan_sum, &is_emit);
+            let d = if self.dots {
+                aliasing::dots(&rgba, w, h)
+            } else {
+                Vec::new()
+            };
+            if self.dots && first_dots.is_none() {
+                first_dots = Some(d.iter().filter(|&&v| v).count());
+            }
+            if past.len() == lag {
+                let (prev, prev_dots) = &past[0];
+                aliasing::crawl(
+                    &rgba,
+                    prev,
+                    w,
+                    shift,
+                    cols.clone(),
+                    &mut hist,
+                    Some((&mask, &mut by, &mut edge)),
+                );
+                if self.dots {
+                    dot_frames += 1;
+                    for (i, _) in d.iter().enumerate().filter(|(_, v)| **v) {
+                        dot[0] += 1;
+                        if !aliasing::yellow(&rgba[i * 4..i * 4 + 4]) {
+                            continue;
+                        }
+                        dot[1] += 1;
+                        let (x, y) = ((i as u32 % w) as i32, (i as u32 / w) as i32);
+                        dot_class.add(mask.class[i], mask.footprint[i], 1);
+                        if aliasing::near(prev_dots, w, h, x - shift, y) {
+                            dot[2] += 1;
+                        }
+                        if aliasing::near(prev_dots, w, h, x, y) {
+                            dot[3] += 1;
+                        }
+                    }
+                }
+                past.pop_front();
+            }
+            past.push_back((rgba.clone(), d));
+            last = rgba;
+            camera.yaw += self.rate * step;
+        }
+        println!(
+            "pan C (mean, p99.9, max, over 2, jumps over {}): {}",
+            aliasing::JUMP,
+            hist.change().cell()
+        );
+        println!("pan C on creases and silhouettes: {}", edge.change().cell());
+        println!("pan C jumps by class:\n{}", by.table("C jumps"));
+        println!("pan guard energy (last frame): {}", guard(&last, w, h));
+        if self.dots {
+            println!(
+                "pan dots: still frame {}; over {dot_frames} frames {} dots ({:.2} a frame), {} yellow ({:.2} a frame), of the yellow {:.3} world-anchored, {:.3} camera-anchored",
+                first_dots.unwrap_or(0),
+                dot[0],
+                dot[0] as f64 / dot_frames.max(1) as f64,
+                dot[1],
+                dot[1] as f64 / dot_frames.max(1) as f64,
+                dot[2] as f64 / dot[1].max(1) as f64,
+                dot[3] as f64 / dot[1].max(1) as f64
+            );
+            println!(
+                "pan yellow dots by class:\n{}",
+                dot_class.table("yellow dots")
+            );
+        }
+        write_png(&self.dir.join("last.png"), &last, w, h);
+        println!("pan: written under {}", self.dir.display());
+    }
+}
+
 /// Jumps per pixel at which `jumps.png` is white.
 const JUMPS_WHITE: u32 = 8;
 
 /// `VXE_STRIP_READ=fold`: a still camera's frames folded over the jitter's cycle.
 struct FoldRead<'a> {
     size: [u32; 2],
+    shrink: u32,
     phases: u32,
     frames: u32,
     tag: &'a str,
@@ -417,11 +567,7 @@ impl FoldRead<'_> {
         let mut mask: Option<Mask> = None;
         for f in 0..self.frames {
             frame.step(&scene.device, &scene.queue, &scene.gpu, camera, light);
-            frames.push(readback::read_rgba8(
-                &scene.device,
-                &scene.queue,
-                frame.target(),
-            ));
+            frames.push(display(scene, frame, self.shrink));
             if f < self.phases.max(1) {
                 let (pos, info) = read_hits(scene, frame);
                 let hits = Hits {
@@ -534,6 +680,43 @@ impl FoldRead<'_> {
             let (px, pw, ph) = sheet(&panels, side, side, 4);
             write_png(&self.dir.join("clusters.png"), &px, pw, ph);
         }
+        if let Some(path) = env("VXE_STRIP_REF") {
+            let (r, rw, rh) = support::read_png(&PathBuf::from(&path));
+            assert_eq!((rw, rh), (w, h), "VXE_STRIP_REF is {rw}x{rh}");
+            let d = aliasing::levels(last, &r);
+            println!(
+                "fold distance from {path}: mean {:.3} levels, over 8 {:.2} %",
+                d.iter().map(|&v| f64::from(v)).sum::<f64>() / d.len() as f64,
+                d.iter().filter(|&&v| v > 8).count() as f64 / d.len() as f64 * 100.0
+            );
+        }
+        if let Some(c) = list::<4>("VXE_STRIP_RINGS").map(|c| c.map(|v| v as u32)) {
+            let (pos, info) = read_hits(scene, frame);
+            let hits = Hits {
+                size: internal,
+                pos: &pos,
+                info: &info,
+            };
+            let z = aliasing::z_levels(&hits, [w, h]);
+            let zi = aliasing::z_image(&z);
+            write_png(&self.dir.join("zlevel.png"), &zi, w, h);
+            write_png(
+                &self.dir.join("rings-zlevel.png"),
+                &crop(&zi, w, c),
+                c[2],
+                c[3],
+            );
+            write_png(
+                &self.dir.join("rings-crop.png"),
+                &crop(last, w, c),
+                c[2],
+                c[3],
+            );
+            print!(
+                "fold {c:?} {}",
+                aliasing::Rings::read(last, &z, w, c).lines()
+            );
+        }
         println!("fold: written under {}", self.dir.display());
     }
 }
@@ -574,16 +757,27 @@ fn strip_run() {
     let output = [w, h];
     let upscaler = env("VXE_STRIP_UPSCALER").unwrap_or_else(|| "fsr2".to_owned());
     let sharpen: f32 = env_or("VXE_STRIP_SHARPEN", 0.5);
+    let scale = env("VXE_STRIP_SCALE").map_or(RenderScale::OneHalf, |v| {
+        RenderScale::ALL
+            .into_iter()
+            .find(|s| s.name() == v)
+            .unwrap_or_else(|| panic!("VXE_STRIP_SCALE takes 1, 1.5 or 2, not {v}"))
+    });
+    let shrink: u32 = env_or("VXE_STRIP_SHRINK", 1);
+    assert!(
+        shrink == 1 || upscaler == "off",
+        "VXE_STRIP_SHRINK renders the native frame larger: VXE_STRIP_UPSCALER=off"
+    );
     let mut frame = match upscaler.as_str() {
-        "off" => Frame::new(device, w, h),
+        "off" => Frame::new(device, w * shrink, h * shrink),
         "own" => {
-            let mut f = Frame::with_sizes(device, RenderScale::OneHalf.internal(output), output);
+            let mut f = Frame::with_sizes(device, scale.internal(output), output);
             f.set_jitter(device, true);
             f.set_sharpness(queue, sharpen);
             f
         }
         "fsr2" => {
-            let mut f = Frame::with_sizes(device, RenderScale::OneHalf.internal(output), output);
+            let mut f = Frame::with_sizes(device, scale.internal(output), output);
             f.set_upscaler_kind(
                 device,
                 UpscalerKind::Fsr2(Fsr2Settings {
@@ -709,9 +903,47 @@ fn strip_run() {
     for _ in 0..settle {
         frame.step(device, queue, &scene.gpu, &camera, &light);
     }
+    if let Some(rate) = env("VXE_STRIP_PAN") {
+        let read = PanRead {
+            size: [w, h],
+            shrink,
+            rate: rate.parse().expect("VXE_STRIP_PAN takes pixels a frame"),
+            frames,
+            dots: on_off("VXE_STRIP_DOTS", false),
+            tag: &tag,
+            dir: &dir,
+        };
+        read.run(&mut scene, &mut frame, &mut camera, &light);
+        return;
+    }
+    if env("VXE_STRIP_READ").as_deref() == Some("drift") {
+        // Step `settle + 1` against step `VXE_STRIP_DRIFT_TO`.
+        frame.step(device, queue, &scene.gpu, &camera, &light);
+        let a = display(&scene, &frame, shrink);
+        let to: u32 = env_or("VXE_STRIP_DRIFT_TO", 8192);
+        for _ in settle + 1..to {
+            frame.step(device, queue, &scene.gpu, &camera, &light);
+        }
+        let b = display(&scene, &frame, shrink);
+        let mut hist = aliasing::Hist::default();
+        aliasing::levels(&a, &b)
+            .into_iter()
+            .for_each(|d| hist.add(d));
+        let c = hist.change();
+        let over_8 =
+            aliasing::levels(&a, &b).iter().filter(|&&d| d > 8).count() as f64 / (w * h) as f64;
+        println!(
+            "drift step {} vs {to}: {}; over 8 {:.2} %",
+            settle + 1,
+            c.cell(),
+            over_8 * 100.0
+        );
+        return;
+    }
     if env("VXE_STRIP_READ").as_deref() == Some("fold") {
         let read = FoldRead {
             size: [w, h],
+            shrink,
             phases,
             frames,
             tag: &tag,
@@ -787,7 +1019,7 @@ fn strip_run() {
                     c[3],
                 );
             }
-            panels.push(shrink(&rgba, w, h, 4).0);
+            panels.push(shrink_image(&rgba, w, h, 4).0);
         }
         prev = Some(y);
         let (fwd, _, _) = camera.basis();
@@ -1051,4 +1283,159 @@ fn the_eye_lamp_holds_the_native_frame_bit_identical() {
         from <= EYE_STILL_FROM,
         "the frame changes until {from}, past {EYE_STILL_FROM}"
     );
+}
+
+#[test]
+fn the_pan_moves_the_centre_band_one_pixel() {
+    let world = support::pillar_world();
+    let Some((device, queue)) = support::software_device(64 << 20) else {
+        return;
+    };
+    let cfg = MirrorConfig {
+        light_radius: 0,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    support::SyncNow::sync_now(&mut gpu, &world, &device, &queue).expect("the mirror fits");
+    let (w, h) = (support::WIDTH, support::HEIGHT);
+    let mut frame = Frame::new(&device, w, h);
+    frame.set_lighting(aliasing::eye_lighting(Lighting {
+        exposure: Exposure::Manual(1.0),
+        ..Lighting::default()
+    }));
+    frame.set_dt(1.0 / 60.0);
+    let light = aliasing::eye_lamp(1200.0);
+    let mut camera = support::pillar_camera();
+    let step = aliasing::yaw_per_pixel(h, camera.vfov, camera.pitch);
+    let (lag, shift) = aliasing::lag_shift(1.0);
+    assert_eq!((lag, shift), (1, 1));
+    let cols = aliasing::band(w);
+    let mut frames = Vec::new();
+    for _ in 0..8 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+        frames.push(readback::read_rgba8(&device, &queue, frame.target()));
+        camera.yaw += step;
+    }
+    let residual: Vec<(i32, f64)> = (-2..=2)
+        .map(|s| {
+            let mut hist = aliasing::Hist::default();
+            for p in frames.windows(2) {
+                aliasing::crawl(&p[1], &p[0], w, s, cols.clone(), &mut hist, None);
+            }
+            (s, hist.change().mean)
+        })
+        .collect();
+    println!("the band's mean residual by shift: {residual:?}");
+    let best = residual
+        .iter()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("five shifts");
+    assert_eq!(best.0, shift, "the residual is least at the rate's shift");
+    let unshifted = residual.iter().find(|r| r.0 == 0).expect("shift 0").1;
+    assert!(
+        best.1 < unshifted,
+        "the shifted residual {} is under the unshifted {unshifted}",
+        best.1
+    );
+}
+
+/// R1's CPU half: the hall floor's terraces over the visible floor, x and y in 192..704 and
+/// 192..576 (whole 64-voxel cells), from the showcase's floor rule (`FLOOR_Z` plus the seed-1
+/// floor noise at cell 64, shifted down 11): terrace widths along rows and columns, the riser
+/// heights, and the lattice corners that are extrema of their 8 neighbours with the floor on a
+/// ring of radius 32 around them all below (a maximum) or all above (a minimum), so that every
+/// level between closes around the corner.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn hall_floor_terraces() {
+    use flythrough::showcase::FLOOR_Z;
+    let noise = vxe_world::hash::ValueNoise::new(1 ^ 0x5A0C_A5E0_0000_0002, 6);
+    let floor = |x: i32, y: i32| FLOOR_Z + (noise.sample([x, y, 0]) >> 11);
+    let (x0, x1, y0, y1) = (192, 704, 192, 576);
+    let mut runs = (0u64, 0u64);
+    let mut steps = [0u64; 4];
+    for y in y0..y1 {
+        let mut run = 1u64;
+        for x in x0 + 1..x1 {
+            let d = (floor(x, y) - floor(x - 1, y)).unsigned_abs();
+            if d == 0 {
+                run += 1;
+            } else {
+                runs.0 += run;
+                runs.1 += 1;
+                run = 1;
+                steps[(d as usize).min(3)] += 1;
+            }
+        }
+    }
+    let mut cruns = (0u64, 0u64);
+    for x in x0..x1 {
+        let mut run = 1u64;
+        for y in y0 + 1..y1 {
+            if floor(x, y) == floor(x, y - 1) {
+                run += 1;
+            } else {
+                cruns.0 += run;
+                cruns.1 += 1;
+                run = 1;
+            }
+        }
+    }
+    let mut corner_diff = (0i64, 0u64);
+    let mut extrema = Vec::new();
+    for cy in (y0..=y1).step_by(64) {
+        for cx in (x0..=x1).step_by(64) {
+            let c = floor(cx, cy);
+            let ns: Vec<i64> = [(-64, 0), (64, 0), (0, -64), (0, 64)]
+                .iter()
+                .map(|&(dx, dy)| floor(cx + dx, cy + dy))
+                .collect();
+            for &n in &ns[..2] {
+                corner_diff.0 += (n - c).abs();
+                corner_diff.1 += 1;
+            }
+            let all: Vec<i64> = (-1..=1)
+                .flat_map(|j| (-1..=1).map(move |i| (i, j)))
+                .filter(|&(i, j)| (i, j) != (0, 0))
+                .map(|(i, j)| floor(cx + 64 * i, cy + 64 * j))
+                .collect();
+            let ring: Vec<i64> = (0..64)
+                .map(|k| {
+                    let a = k as f32 / 64.0 * std::f32::consts::TAU;
+                    floor(
+                        cx + (32.0 * a.cos()).round() as i32,
+                        cy + (32.0 * a.sin()).round() as i32,
+                    )
+                })
+                .collect();
+            let max = all.iter().all(|&n| n < c) && ring.iter().all(|&n| n < c);
+            let min = all.iter().all(|&n| n > c) && ring.iter().all(|&n| n > c);
+            if max || min {
+                let lo = ring.iter().min().copied().unwrap_or(c);
+                let hi = ring.iter().max().copied().unwrap_or(c);
+                extrema.push(format!(
+                    "({cx}, {cy}) {} at z {c}, ring of radius 32 at {lo}..{hi}",
+                    if max { "max" } else { "min" }
+                ));
+            }
+        }
+    }
+    println!(
+        "hall floor x {x0}..{x1}, y {y0}..{y1}: terraces along x mean {:.2} voxels ({} runs), along y mean {:.2} ({} runs); risers of 1, 2, 3+ voxels: {}, {}, {}; mean corner difference over 64 voxels {:.2}",
+        runs.0 as f64 / runs.1.max(1) as f64,
+        runs.1,
+        cruns.0 as f64 / cruns.1.max(1) as f64,
+        cruns.1,
+        steps[1],
+        steps[2],
+        steps[3],
+        corner_diff.0 as f64 / corner_diff.1.max(1) as f64
+    );
+    println!(
+        "hall floor lattice extrema with closed contours: {}",
+        extrema.len()
+    );
+    for e in &extrema {
+        println!("  {e}");
+    }
 }
