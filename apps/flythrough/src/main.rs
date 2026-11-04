@@ -17,15 +17,14 @@
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
-//! [--steady off|a|c|ac|b|ab|abc] [--cache-read nearest|smooth] [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
+//! [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off] [--lamp-toggle N]
 //! [--fade-reading]
-//! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
-//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
-//! [--emissive-guard on|off] [--reuse-m-cap N]
+//! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]
+//! [--history edits|gradient] [--lighting full|half]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2]
 //! [--exposure auto|E]
@@ -94,19 +93,17 @@
 //! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
 //! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
 //! `--light-radius N` sets the chunks around the camera whose emitters light the frame
-//! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates;
+//! (default 4);
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
-//! `--emissive-history N` sets the frames static emissive light accumulates over (default 256;
-//! the lamp's light keeps a short history); `--emissive-guard off` turns off the emissive-only
-//! gradient that shortens that history where emissive light changed (on by default,
-//! ADR-0036); `--reuse-m-cap N` caps a reused reservoir's M at N times the frame's candidates
-//! (default 20; 1 to 64); `--indirect off` turns the probe volume's indirect
-//! light off (on by default, ADR-0023); `--probe-spacing N` sets the voxels between its probes
+//! emissive light is read from the per-face table from a face's first sample (ADR-0043), and
+//! `--steady`, `--cache-read`, `--sampler`, `--emissive-history`, `--emissive-guard` and
+//! `--reuse-m-cap` are refused, naming Plan 0057; `--indirect on` turns the probe volume's
+//! indirect light on (off by default, ADR-0043); `--probe-spacing N` sets the voxels between its probes
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
 //! default, 16 or 32). In a window
-//! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
+//! `F3` toggles the shadow walk, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp, `F8` indirect light and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets, naming the look on the banner.
@@ -253,8 +250,8 @@ use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld, HistoryKill,
     HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams,
-    MarchTimer, MirrorConfig, NormalMode, PassTimer, Presenter, RenderScale, Sampler, ShadowWalk,
-    SyncStats, ViewMode, Window, wgpu,
+    MarchTimer, MirrorConfig, NormalMode, PassTimer, Presenter, RenderScale, ShadowWalk, SyncStats,
+    ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -449,18 +446,10 @@ struct Args {
     filter: bool,
     /// `--light-radius N`: chunks around the camera whose emitters light the frame.
     light_radius: i32,
-    /// `--sampler list|reuse`: the light pass's emissive sampler.
-    sampler: Sampler,
     /// `--history edits|gradient`: what kills the temporal history.
     history: HistoryKill,
     /// `--lighting full|half`: the lighting passes' resolution.
     lighting: LightingResolution,
-    /// `--emissive-history N`: frames the emissive light's history blends over at least.
-    emissive_history: u32,
-    /// `--emissive-guard on|off`: the emissive-only gradient guard (on by default).
-    emissive_guard: bool,
-    /// `--reuse-m-cap N`: the reservoir reuse's cap on M, in frames' candidates.
-    reuse_m_cap: u32,
     /// `--indirect on|off`: indirect light from the probe volume (on by default).
     indirect: bool,
     /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
@@ -480,10 +469,6 @@ struct Args {
     jitter_set: bool,
     /// `--upscaler off|own|fsr2`, when given.
     upscaler: Option<hud::UpscalerMode>,
-    /// `--steady off|a|c|ac|b|ab|abc`, when given: the steady light spike's presets.
-    steady: Option<hud::SteadyMode>,
-    /// `--cache-read nearest|smooth`: how the `b` presets read the table.
-    cache_read: vxe_render::marcher::CacheRead,
     /// `--exposure auto|E`: a manual exposure, or `None` for auto (the default).
     exposure: Option<f32>,
     /// `--adaptation eye|symmetric|instant`: the auto exposure's preset (eye by default).
@@ -587,8 +572,7 @@ impl Args {
     fn start_modes(&self, now_ms: f64) -> hud::Modes {
         let mut m = hud::Modes::new(self.start_lighting(), self.lighting, now_ms)
             .with_source(self.showcase.then_some("showcase"))
-            .with_probe_spacing(self.probe_spacing)
-            .with_steady(self.steady);
+            .with_probe_spacing(self.probe_spacing);
         m.set_auto(self.adaptation, self.start_auto());
         m.show_look(&self.look, self.look.far_normal, now_ms);
         m.show_view(self.view, now_ms);
@@ -636,7 +620,7 @@ impl Args {
 
     /// The lighting the fly-through starts in, from its flags.
     fn start_lighting(&self) -> Lighting {
-        let lighting = Lighting {
+        Lighting {
             exposure: match self.exposure {
                 Some(e) => Exposure::Manual(e),
                 None => Exposure::Auto(self.start_auto()),
@@ -644,19 +628,12 @@ impl Args {
             lamp: self.lamp,
             shadow_walk: self.shadow_walk,
             filter: self.filter,
-            sampler: self.sampler,
             history: self.history,
-            emissive_history: self.emissive_history,
-            emissive_guard: self.emissive_guard,
-            reuse_m_cap: self.reuse_m_cap,
             indirect: self.indirect,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
             ..Lighting::default()
-        };
-        self.steady
-            .unwrap_or(hud::SteadyMode::Off)
-            .apply(lighting, self.cache_read)
+        }
     }
 
     /// Whether the run starts in the field look, so its mirror holds the field's band slots
@@ -729,19 +706,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp: true,
         lamp_toggle: None,
         fade_reading: false,
-        indirect: true,
+        indirect: false,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
         probe_slices: vxe_render::probes::SLICES,
         shadow_walk: ShadowWalk::default(),
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
-        sampler: Sampler::default(),
         history: HistoryKill::default(),
         lighting: LightingResolution::default(),
-        emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
-        emissive_guard: true,
-        reuse_m_cap: vxe_render::DEFAULT_REUSE_M_CAP,
         internal_scale: DEFAULT_SCALE,
         jitter: DEFAULT_JITTER,
         sharpen: DEFAULT_SHARPEN,
@@ -751,8 +724,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         metering: vxe_render::Metering::default(),
         jitter_set: false,
         upscaler: None,
-        steady: None,
-        cache_read: vxe_render::marcher::CacheRead::Nearest,
     };
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
@@ -886,16 +857,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .filter(|n| (4..=64).contains(n))
                     .ok_or(format!("--probe-spacing takes 4 to 64 voxels, not {v}"))?;
             }
-            "--emissive-history" => {
-                let v = value()?;
-                args.emissive_history =
-                    v.parse()
-                        .ok()
-                        .filter(|n| (1..=4096).contains(n))
-                        .ok_or(format!(
-                            "--emissive-history takes 1 to 4096 frames, not {v}"
-                        ))?;
-            }
             "--internal-scale" => {
                 let v = value()?;
                 args.internal_scale = RenderScale::from_name(&v)
@@ -934,11 +895,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.history = HistoryKill::from_name(&v)
                     .ok_or(format!("--history takes edits or gradient, not {v}"))?;
             }
-            "--sampler" => {
-                let v = value()?;
-                args.sampler = Sampler::from_name(&v)
-                    .ok_or(format!("--sampler takes list or reuse, not {v}"))?;
-            }
             "--light-radius" => {
                 let v = value()?;
                 light_radius_flag = v
@@ -947,21 +903,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .filter(|r| (0..=64).contains(r))
                     .ok_or(format!("--light-radius takes 0 to 64 chunks, not {v}"))
                     .map(Some)?;
-            }
-            "--reuse-m-cap" => {
-                let v = value()?;
-                args.reuse_m_cap = v
-                    .parse()
-                    .ok()
-                    .filter(|n| (1..=64).contains(n))
-                    .ok_or(format!("--reuse-m-cap takes 1 to 64, not {v}"))?;
-            }
-            "--emissive-guard" => {
-                args.emissive_guard = match value()?.as_str() {
-                    "on" => true,
-                    "off" => false,
-                    v => return Err(format!("--emissive-guard takes on or off, not {v}")),
-                }
             }
             "--filter" => {
                 args.filter = match value()?.as_str() {
@@ -985,18 +926,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     v => return Err(format!("--lamp takes on or off, not {v}")),
                 }
             }
-            "--steady" => {
-                let v = value()?;
-                args.steady = Some(hud::SteadyMode::from_name(&v).ok_or(format!(
-                    "--steady takes off, a, c, ac, b, ab or abc, not {v}"
-                ))?);
-            }
-            "--cache-read" => {
-                args.cache_read = match value()?.as_str() {
-                    "nearest" => vxe_render::marcher::CacheRead::Nearest,
-                    "smooth" => vxe_render::marcher::CacheRead::Smooth,
-                    v => return Err(format!("--cache-read takes nearest or smooth, not {v}")),
-                }
+            "--steady" | "--cache-read" | "--sampler" | "--emissive-history"
+            | "--emissive-guard" | "--reuse-m-cap" => {
+                return Err(format!(
+                    "{flag} is gone since Plan 0057: emissive light is read from the per-face table (ADR-0043)"
+                ));
             }
             "--indirect" => {
                 args.indirect = match value()?.as_str() {
@@ -2200,6 +2134,8 @@ struct Hud {
     cpu_ms: f32,
     /// The probe volume's live probes at the last world sample, with indirect light on.
     live_probes: Option<u32>,
+    /// The emissive table's counters at the last sample.
+    table: Option<vxe_render::TableStats>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
     /// The last frame's cracks view, read back while that view and the HUD are on.
@@ -2231,6 +2167,7 @@ impl Hud {
             hud_ms: None,
             cpu_ms: 0.0,
             live_probes: None,
+            table: None,
             steps: None,
             cracks: None,
             exposure: None,
@@ -2881,9 +2818,13 @@ impl Run {
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
-    /// Counts the probe volume's live probes for the HUD, with indirect light on: a blocking
-    /// read of its state words, paid at the world sample's cadence.
+    /// Reads the emissive table's counters and, with indirect light on, counts the probe
+    /// volume's live probes for the HUD: blocking reads, paid at the world sample's cadence.
     fn sample_probes(&mut self, gpu: &Gpu) {
+        self.hud.table = self
+            .gfx
+            .as_ref()
+            .map(|g| g.frame.read_table_stats(&gpu.device, &gpu.queue));
         self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
             g.frame.lighting().indirect.then(|| {
                 let probes = g.frame.probes();
@@ -2922,6 +2863,7 @@ impl Run {
                     .hud
                     .live_probes
                     .filter(|_| self.modes.lighting.indirect),
+                table: self.hud.table,
                 modes: self.modes.line(),
                 upscale: g
                     .frame
@@ -4111,7 +4053,6 @@ impl Run {
     fn handle_input(&mut self, input: &Input) {
         for (key, mode) in [
             (KeyCode::F3, hud::ModeKey::ShadowWalk),
-            (KeyCode::F4, hud::ModeKey::Sampler),
             (KeyCode::F5, hud::ModeKey::History),
             (KeyCode::F6, hud::ModeKey::Resolution),
             (KeyCode::F7, hud::ModeKey::Lamp),
@@ -7124,9 +7065,13 @@ mod tests {
                     .banner(0.0)
                     .expect("the banner shows at the start")
             };
-            let default = banner(&[]);
+            let default = banner(&["--indirect", "on"]);
             assert!(default.contains("probes 16"), "{source:?}: {default}");
-            let wide = banner(&["--probe-spacing", "32"]);
+            assert!(
+                !banner(&[]).contains("probes"),
+                "indirect light is off by default"
+            );
+            let wide = banner(&["--probe-spacing", "32", "--indirect", "on"]);
             assert!(
                 wide.contains("probes 32") && !wide.contains("probes 16"),
                 "{source:?}: {wide}"
@@ -7135,7 +7080,8 @@ mod tests {
             let off = banner(&["--probe-spacing", "32", "--indirect", "off"]);
             assert!(!off.contains("probes"), "{source:?}: {off}");
         }
-        let a = parse_args_from(argv(&["--probe-spacing", "32"])).expect("parses");
+        let a =
+            parse_args_from(argv(&["--probe-spacing", "32", "--indirect", "on"])).expect("parses");
         let mut m = a.start_modes(0.0);
         m.press(hud::ModeKey::Indirect, 1000.0);
         assert!(!m.banner(1000.0).unwrap().contains("probes"));
@@ -7184,8 +7130,6 @@ mod tests {
         let a = parse(&[
             "--shadow-walk",
             "coarse",
-            "--sampler",
-            "list",
             "--history",
             "gradient",
             "--lighting",
@@ -7195,30 +7139,18 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(a.shadow_walk, ShadowWalk::Coarse);
-        assert_eq!(a.sampler, Sampler::List);
         assert_eq!(a.history, HistoryKill::Gradient);
         assert_eq!(a.lighting, LightingResolution::Full);
         assert_eq!(a.light_radius, 6);
         let d = parse(&[]).unwrap();
-        assert!(d.emissive_ore && d.lamp && d.filter && d.indirect);
-        assert!(d.start_lighting().indirect);
-        assert!(d.start_lighting().emissive_guard);
+        assert!(d.emissive_ore && d.lamp && d.filter && !d.indirect);
         assert!(
-            !parse(&["--emissive-guard", "off"])
-                .unwrap()
-                .start_lighting()
-                .emissive_guard
+            !d.start_lighting().indirect,
+            "indirect light is off by default"
         );
         assert_eq!(
-            d.start_lighting().reuse_m_cap,
-            vxe_render::DEFAULT_REUSE_M_CAP
-        );
-        assert_eq!(
-            parse(&["--reuse-m-cap", "8"])
-                .unwrap()
-                .start_lighting()
-                .reuse_m_cap,
-            8
+            d.start_lighting().table_cells,
+            vxe_render::DEFAULT_TABLE_CELLS
         );
         assert_eq!(d.probe_spacing, 16);
         assert_eq!(parse(&["--probe-spacing", "8"]).unwrap().probe_spacing, 8);
@@ -7229,16 +7161,9 @@ mod tests {
         );
         assert!(parse(&["--probe-slices", "12"]).is_err());
         assert_eq!(
-            (
-                d.shadow_walk,
-                d.sampler,
-                d.history,
-                d.lighting,
-                d.light_radius
-            ),
+            (d.shadow_walk, d.history, d.lighting, d.light_radius),
             (
                 ShadowWalk::Coarse,
-                Sampler::Reuse,
                 HistoryKill::Edits,
                 LightingResolution::Half,
                 4
@@ -7247,7 +7172,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 256, guard on, reuse cap 20, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, indirect off at 64 rays 1/8, filter on, ore pulse off, table 1048576, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -7261,24 +7186,29 @@ mod tests {
             ("--probe-slices", "--probe-slices takes 8, 16 or 32, not x"),
             ("--filter", "--filter takes on or off, not x"),
             ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
-            ("--sampler", "--sampler takes list or reuse, not x"),
             ("--history", "--history takes edits or gradient, not x"),
             ("--lighting", "--lighting takes full or half, not x"),
             (
                 "--light-radius",
                 "--light-radius takes 0 to 64 chunks, not x",
             ),
-            (
-                "--emissive-history",
-                "--emissive-history takes 1 to 4096 frames, not x",
-            ),
-            (
-                "--emissive-guard",
-                "--emissive-guard takes on or off, not x",
-            ),
-            ("--reuse-m-cap", "--reuse-m-cap takes 1 to 64, not x"),
         ] {
             assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
+        }
+        // The steady spike's flags and the screen path's are refused, naming Plan 0057.
+        for flag in [
+            "--steady",
+            "--cache-read",
+            "--emissive-guard",
+            "--reuse-m-cap",
+            "--sampler",
+            "--emissive-history",
+        ] {
+            let err = parse(&[flag, "b"]).err().unwrap_or_default();
+            assert!(
+                err.starts_with(flag) && err.contains("Plan 0057"),
+                "{flag}: {err}"
+            );
         }
     }
 

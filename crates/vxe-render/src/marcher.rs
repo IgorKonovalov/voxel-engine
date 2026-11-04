@@ -22,6 +22,7 @@ pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
 /// The sharpening pass (RCAS), compiled after [`MARCH_WGSL`].
 pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
 const CACHE_CLEAR_WGSL: &str = include_str!("shaders/cache_clear.wgsl");
+const CACHE_SWEEP_WGSL: &str = include_str!("shaders/cache_sweep.wgsl");
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
@@ -66,8 +67,8 @@ pub struct Params {
     /// The manual exposure ([`Exposure::Manual`]); 1.0 and unread in auto, where the exposure
     /// state's `current` is the frame's.
     pub exposure: f32,
-    /// [`Lighting::emissive_cache`] as the shaders read it: bit 0 on, bit 1 the smooth read,
-    /// bits 2..14 `c_min`, bits 14..28 `c_cap`.
+    /// The emissive table as the shaders read it: bit 0 the temporal pass reads it
+    /// ([`Lighting::table_read`]), bits 14..28 [`Lighting::table_cap`].
     pub cache: u32,
     /// Emissive candidates per pixel ([`Lighting::candidates`]).
     pub candidates: u32,
@@ -89,41 +90,26 @@ pub struct Params {
     pub light_scale: u32,
     pub light_offset: u32,
     pub prev_light_offset: u32,
-    /// The emissive part's history length in frames ([`Lighting::emissive_history`]).
-    pub emissive_history: f32,
+    /// [`Lighting::table_cells`] less one: a slot index's mask.
+    pub cache_mask: u32,
     /// The size of the frame's image: the output size with the upscaler, else `size`.
     pub output_size: [u32; 2],
-    /// A reservoir's M is capped at this many times the frame's candidates
-    /// ([`Lighting::reuse_m_cap`]).
-    pub reuse_m_cap: u32,
+    pub _pad8: u32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
-    /// The history age at which the light pass stops drawing for a pixel
-    /// ([`Lighting::skip_converged_draw`]); 0 never.
-    pub converged_age: u32,
+    pub _pad9: u32,
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
 pub const LIGHTING_LAMP: u32 = 1;
 /// `Params::lighting` bit: shadow rays take the coarse walk ([`ShadowWalk::Coarse`]).
 pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
-/// `Params::lighting` bit: the light pass reuses last frame's reservoirs ([`Sampler::Reuse`]).
-pub const LIGHTING_REUSE: u32 = 1 << 2;
 /// `Params::lighting` bit: the temporal pass also shortens history by A-SVGF's gradient
 /// ([`History::Gradient`]).
 pub const LIGHTING_GRADIENT: u32 = 1 << 3;
-/// The emissive part's history in frames, by default: the shortest of 64, 128, 256 and 512
-/// that holds static ore light still on the patch bar (ADR-0036). Light the emissive guard
-/// cannot see reaches 90 % in `ln 0.1 / ln(255/256)` = 589 frames.
-pub const DEFAULT_EMISSIVE_HISTORY: u32 = 256;
-/// The temporal pass's age ceiling (`AGE_MAX` in `temporal.wgsl`): the longest
-/// [`Lighting::emissive_history`] the age can carry.
-pub const HISTORY_AGE_MAX: u32 = 2047;
 /// [`Lighting::probe_freeze`] in the steady presets: where a running mean's noise, `1 / n`,
 /// roughly equals hysteresis 0.97's steady noise, `0.03 / 1.97`.
 pub const DEFAULT_PROBE_FREEZE: u32 = 64;
-/// [`Lighting::reuse_m_cap`] by default.
-pub const DEFAULT_REUSE_M_CAP: u32 = 20;
 /// Frames after an emission-scale change (the frame of the change too) during which the
 /// emissive part blends at no less
 /// than the lamp's 0.2 (`0.8^11 = 0.086`: a step settles within 10 % in them).
@@ -137,10 +123,6 @@ pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
 /// point light, one shadow ray), so the reset adds none.
 pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
-/// `Params::lighting` bit: the emissive guard (ADR-0036, [`Lighting::emissive_guard`]): the
-/// gradient pass writes an emissive-only lambda, and the temporal pass raises the emissive
-/// part's blend to it and lowers the age by it. Set while emissive candidates are above 0.
-pub const LIGHTING_EMISSIVE_GUARD: u32 = 1 << 10;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
@@ -470,30 +452,13 @@ impl ShadowWalk {
     }
 }
 
-/// How the light pass picks its emissive sample.
+/// How the light pass picked its emissive sample before ADR-0043. Unread: kept only so the
+/// strip test of Plan 0056 builds until that plan closes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Sampler {
-    /// Resampling over the frame's candidates alone (the flat list).
     List,
-    /// The candidates plus last frame's reservoirs at the reprojected pixel and five
-    /// neighbours within 30 pixels (ReSTIR); the default.
     #[default]
     Reuse,
-}
-
-impl Sampler {
-    pub const ALL: [Self; 2] = [Self::List, Self::Reuse];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::List => "list",
-            Self::Reuse => "reuse",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
 }
 
 /// What kills the temporal pass's history.
@@ -768,14 +733,24 @@ impl Upscaler {
     }
 }
 
-/// Cells of the emissive cache's table.
-pub const CACHE_CELLS: u64 = 1 << 22;
-/// `u32`s of a cell: the check word, the count and the three sums (Q17.15).
-pub const CACHE_CELL_WORDS: u64 = 5;
+/// Cells of the emissive table by default ([`Lighting::table_cells`]): 40 B a cell, so
+/// 41 943 040 B.
+pub const DEFAULT_TABLE_CELLS: u32 = 1 << 20;
+/// `u32`s of a cell: the key (two words), the count, the three sums (Q17.15), the kept
+/// emitter's voxel and face (two words), its luminance and a frame stamp.
+pub const CACHE_CELL_WORDS: u64 = 10;
+/// The cell's word of the count; the three sums follow it.
+pub const CACHE_COUNT_WORD: usize = 2;
 /// Slots a key probes linearly.
 pub const CACHE_PROBES: u32 = 4;
 /// The fixed point of the sums.
 pub const CACHE_Q: f32 = 32768.0;
+/// Samples at which a cell stops adding, and its pixels stop drawing, by default
+/// ([`Lighting::table_cap`]). At most 4096: one sample's channel reaches 18.85 at the testbed's
+/// brightest emitter, which at Q17.15 and 4096 samples is `2.53e9`, under `2^32`.
+pub const DEFAULT_TABLE_CAP: u32 = 4096;
+/// Workgroups a dispatch dimension takes at most (wgpu's default limit).
+pub const MAX_DISPATCH_GROUPS: u32 = 65_535;
 
 fn cache_mix(v: [i32; 3], face: u32, a: u32, b: u32) -> u32 {
     let mut h = (v[0] as u32).wrapping_mul(a)
@@ -790,53 +765,38 @@ fn cache_mix(v: [i32; 3], face: u32, a: u32, b: u32) -> u32 {
     h
 }
 
-/// A cell key's first slot and check word (`cache_slot` and `cache_check` in `march.wgsl`): the
-/// voxel and its entry face, `2 axis + 1` toward `+axis`.
-pub fn cache_slot_check(voxel: [i32; 3], face: u32) -> (u32, u32) {
-    (
-        cache_mix(voxel, face, 0x8DA6_B343, 0xCB1A_B31F) & (CACHE_CELLS as u32 - 1),
-        cache_mix(voxel, face, 0x9E37_79B1, 0x85EB_CA77) | 1,
-    )
+/// A key's first slot in a table of `cells` cells (`cache_slot` in `march.wgsl`): the voxel and
+/// its entry face, `2 axis + 1` toward `+axis`.
+pub fn cache_slot(voxel: [i32; 3], face: u32, cells: u32) -> u32 {
+    cache_mix(voxel, face, 0x8DA6_B343, 0xCB1A_B31F) & (cells - 1)
 }
 
-/// How the temporal pass reads the emissive cache.
+/// A key's two words (`cache_key` in `march.wgsl`): each coordinate's low 20 bits, x and y's
+/// low 12 in the first; y's high 8, z, the face in bits 28..31 and a valid bit 31 in the
+/// second, which is never 0.
+pub fn cache_key(voxel: [i32; 3], face: u32) -> [u32; 2] {
+    let [x, y, z] = voxel.map(|c| c as u32 & 0xF_FFFF);
+    [x | y << 20, y >> 12 | z << 8 | face << 28 | 1 << 31]
+}
+
+/// The emissive table's counters, read back by [`Frame::read_table_stats`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TableStats {
+    /// The table's cells ([`Lighting::table_cells`]).
+    pub cells: u32,
+    /// Cells holding a key.
+    pub occupied: u32,
+    /// Lighting pixels of the last encode whose key found neither its cell nor a free slot
+    /// in [`CACHE_PROBES`] probes; their emissive part was their own sample.
+    pub misses: u32,
+}
+
+/// How the spike's temporal pass read its table, before ADR-0043. Unread: kept only so the
+/// strip test of Plan 0056 builds until that plan closes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheRead {
-    /// The pixel's own cell: one value a face.
     Nearest,
-    /// The four coplanar cells around the hit, bilinear on its in-face position.
     Smooth,
-}
-
-/// The emissive direct irradiance per cube face, read where it has converged
-/// ([`Lighting::emissive_cache`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EmissiveCache {
-    /// Samples at which a cell's mean replaces the screen history.
-    pub c_min: u32,
-    /// Samples at which a cell stops adding, and its pixels stop drawing. At most 4096: one
-    /// sample's channel reaches 18.85 at the testbed's brightest emitter, which at Q17.15 and
-    /// 4096 samples is `2.53e9`, under `2^32`.
-    pub c_cap: u32,
-    pub read: CacheRead,
-}
-
-impl Default for EmissiveCache {
-    fn default() -> Self {
-        Self {
-            c_min: 16,
-            c_cap: 4096,
-            read: CacheRead::Nearest,
-        }
-    }
-}
-
-impl EmissiveCache {
-    fn word(&self) -> u32 {
-        1 | u32::from(self.read == CacheRead::Smooth) << 1
-            | (self.c_min & 0xFFF) << 2
-            | (self.c_cap & 0x3FFF) << 14
-    }
 }
 
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
@@ -850,21 +810,13 @@ pub struct Lighting {
     /// Emissive candidates the light pass resamples per pixel; 0 turns emissive light off.
     pub candidates: u32,
     pub shadow_walk: ShadowWalk,
-    /// The a-trous filter runs; off, the composite shows the light pass's raw irradiance.
+    /// The a-trous filter runs over the lamp's part (and a fallback hit's emissive part); off,
+    /// the composite shows the light pass's raw irradiance.
     pub filter: bool,
+    /// Unread ([`Sampler`]): kept only so the strip test of Plan 0056 builds until that plan
+    /// closes.
     pub sampler: Sampler,
     pub history: HistoryKill,
-    /// Frames of history the emissive part of the irradiance blends over at least (static
-    /// light holds still); the lamp's part keeps alpha 0.2.
-    pub emissive_history: u32,
-    /// Reservoir reuse keeps at most this many times the frame's candidates of history in a
-    /// reservoir's M ([`Sampler::Reuse`]; default [`DEFAULT_REUSE_M_CAP`]): a higher cap holds
-    /// a kept point longer, a lower one decorrelates neighbouring frames' samples.
-    pub reuse_m_cap: u32,
-    /// The emissive guard (ADR-0036, on by default): the gradient pass re-shades last frame's
-    /// kept emitter points in every history mode, and where the emissive light changed the
-    /// emissive part's long history follows as fast as the change.
-    pub emissive_guard: bool,
     /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
     /// their irradiance, in the shaded view outside the cutaway. Off by default.
     pub indirect: bool,
@@ -883,20 +835,23 @@ pub struct Lighting {
     pub probe_freeze: Option<u32>,
     /// A probe known to be inside rock returns at once from the probe passes until a restart.
     pub skip_inside_probes: bool,
-    /// A pixel whose history age has reached this, with a valid reservoir, draws no emissive
-    /// candidates and casts no emissive shadow ray: it copies the reservoir through and the
-    /// temporal pass keeps its emissive history. The gradient pass's re-shades still lower the
-    /// age where the light changed. With the filter off the composite shows the light pass's
-    /// raw output, which this mark makes meaningless. `None` draws every frame.
-    pub skip_converged_draw: Option<u32>,
     /// The probe rays shade their hits with the headlamp; off, the volume holds static light
     /// alone, a lamp switch opens no light-change window and the lamp's bounce is lost.
     pub probe_lamp: bool,
-    /// A table of the emissive direct irradiance per cube face: the light pass adds its samples
-    /// to the hit's cell and draws nothing on a capped one; the temporal pass reads a cell with
-    /// enough samples in place of the screen history. Field, translucent and from-rock hits keep
-    /// today's path. An edit box clears its cells; an emission change is not followed.
-    pub emissive_cache: Option<EmissiveCache>,
+    /// Cells of the emissive table (ADR-0043), a power of two (default
+    /// [`DEFAULT_TABLE_CELLS`]): the emissive direct irradiance per cube face, its only store.
+    /// The light pass adds each sample to the hit face's cell and draws nothing on a capped
+    /// one; the temporal pass shows the cell's mean from its first sample. A hit with no face
+    /// (the field look, a translucent hit, a ray from inside rock) or whose key finds no slot
+    /// blends its own sample as the lamp's part does. An edit box clears its cells, an
+    /// emission-scale change ([`Frame::set_emission_scales`]) the whole table, and the camera
+    /// entering another chunk frees the cells beyond the light radius.
+    pub table_cells: u32,
+    /// Samples at which a cell stops adding, at most 4096 (default [`DEFAULT_TABLE_CAP`]).
+    pub table_cap: u32,
+    /// The temporal pass reads the table (default on). Off, every hit takes the fallback: for
+    /// tests that compare against the table.
+    pub table_read: bool,
 }
 
 impl Default for Lighting {
@@ -910,52 +865,28 @@ impl Default for Lighting {
             filter: true,
             sampler: Sampler::default(),
             history: HistoryKill::default(),
-            emissive_history: DEFAULT_EMISSIVE_HISTORY,
-            reuse_m_cap: DEFAULT_REUSE_M_CAP,
-            emissive_guard: true,
             indirect: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
             probe_slices: crate::probes::SLICES,
             probe_freeze: None,
             skip_inside_probes: false,
-            skip_converged_draw: None,
             probe_lamp: true,
-            emissive_cache: None,
+            table_cells: DEFAULT_TABLE_CELLS,
+            table_cap: DEFAULT_TABLE_CAP,
+            table_read: true,
         }
     }
 }
 
 impl Lighting {
-    /// `self` with static light converging and freezing: the probes as running means that
-    /// freeze, inside probes skipped, the emissive history as long as the age carries, and
-    /// converged pixels drawing nothing.
-    pub fn converge_and_freeze(self) -> Self {
-        Self {
-            probe_freeze: Some(DEFAULT_PROBE_FREEZE),
-            skip_inside_probes: true,
-            emissive_history: HISTORY_AGE_MAX,
-            skip_converged_draw: Some(HISTORY_AGE_MAX),
-            ..self
-        }
+    /// [`Lighting::table_cells`] as the frame allocates it: a power of two, at least 64.
+    pub fn cells(&self) -> u32 {
+        self.table_cells.max(64).next_power_of_two()
     }
 
-    /// `self` with the headlamp left out of the probes.
-    pub fn lamp_out_of_probes(self) -> Self {
-        Self {
-            probe_lamp: false,
-            ..self
-        }
-    }
-
-    /// `self` with emissive light read from the per-face table.
-    pub fn world_space_cache(self, read: CacheRead) -> Self {
-        Self {
-            emissive_cache: Some(EmissiveCache {
-                read,
-                ..EmissiveCache::default()
-            }),
-            ..self
-        }
+    /// `Params::cache`.
+    fn cache_word(&self) -> u32 {
+        u32::from(self.table_read) | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14
     }
 
     /// The word of `ProbeUniform::steady` this frame, `lamp_moved` the lamp's position or
@@ -1012,17 +943,7 @@ impl Lighting {
             } else {
                 0
             }
-            | if self.sampler == Sampler::Reuse {
-                LIGHTING_REUSE
-            } else {
-                0
-            }
             | if self.indirect { LIGHTING_INDIRECT } else { 0 }
-            | if self.emissive_guard && self.candidates > 0 {
-                LIGHTING_EMISSIVE_GUARD
-            } else {
-                0
-            }
             | if matches!(self.exposure, Exposure::Auto(_)) {
                 LIGHTING_AUTO_EXPOSURE
             } else {
@@ -1172,14 +1093,26 @@ pub struct Frame {
     /// [`Frame::probes_mut`] or a spacing change), at `probe_spacing`; its passes' group-3
     /// layout; the gather's group-2 layout. The device builds the volume.
     probes: std::sync::OnceLock<ProbeVolume>,
-    /// The emissive cache's table, from the first encode with [`Lighting::emissive_cache`]; the
-    /// placeholder binds in its place until then.
-    cache: std::sync::OnceLock<wgpu::Buffer>,
-    /// The table clears at the next encode: [`Frame::reset_history`] asked.
+    /// The emissive table (ADR-0043): [`Lighting::cells`] cells of [`CACHE_CELL_WORDS`]
+    /// `u32`s, rebuilt when the cell count changes; and its counters (`CacheStats` in
+    /// `march.wgsl`: misses, occupied, two pads).
+    cache: wgpu::Buffer,
+    cache_stats: wgpu::Buffer,
+    /// The table clears at the next encode: [`Frame::reset_history`] asked, or the table was
+    /// rebuilt.
     cache_clear_requested: std::sync::atomic::AtomicBool,
     cache_clear: wgpu::ComputePipeline,
     cache_clear_layout: wgpu::BindGroupLayout,
-    cache_placeholder: wgpu::Buffer,
+    cache_sweep: wgpu::ComputePipeline,
+    cache_sweep_layout: wgpu::BindGroupLayout,
+    /// The sweep's uniform (`Sweep` in `cache_sweep.wgsl`).
+    sweep_params: wgpu::Buffer,
+    /// The camera's chunk at the last encode, `None` before the first: the sweep runs when it
+    /// changes.
+    sweep_chunk: std::sync::Mutex<Option<[i32; 3]>>,
+    /// Workgroups a dispatch row of the table's passes takes at most ([`MAX_DISPATCH_GROUPS`];
+    /// a test sets fewer, [`Frame::set_table_dispatch_cap`]).
+    table_dispatch_cap: u32,
     probe_spacing: u32,
     device: wgpu::Device,
     probe_layout: wgpu::BindGroupLayout,
@@ -1214,6 +1147,28 @@ pub struct Frame {
     /// A copy of the composite's image at the internal size, taken right after the composite
     /// pass ([`Frame::set_composite_capture`]); `None` unless a test or tool asked for it.
     composite_capture: Option<wgpu::Texture>,
+}
+
+/// The emissive table's buffer of `cells` cells.
+fn table_buffer(device: &wgpu::Device, cells: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("emissive table"),
+        size: u64::from(cells) * CACHE_CELL_WORDS * 4,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// A dispatch of `groups` workgroups in rows of at most `cap`: `[x, y]` with `x * y >= groups`.
+pub fn dispatch_rows(groups: u32, cap: u32) -> [u32; 2] {
+    let cap = cap.max(1);
+    if groups <= cap {
+        [groups, 1]
+    } else {
+        [cap, groups.div_ceil(cap)]
+    }
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -1547,17 +1502,7 @@ impl Frame {
             "light",
             LIGHT_WGSL,
             "shade",
-            &[
-                Io::Float,
-                Io::Uint,
-                f16,
-                Io::Float,
-                Io::Uint,
-                Io::Uint,
-                Io::Store(wgpu::TextureFormat::Rgba32Uint),
-                Io::Float,
-                Io::Storage,
-            ],
+            &[Io::Float, Io::Uint, f16, Io::Storage, Io::Storage],
         );
         let (cache_clear_layout, cache_clear) = pass(
             "cache clear",
@@ -1565,10 +1510,25 @@ impl Frame {
             "clear_cells",
             &[Io::Uniform, Io::Storage],
         );
-        let cache_placeholder = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("emissive cache placeholder"),
-            size: CACHE_CELL_WORDS * 4,
-            usage: wgpu::BufferUsages::STORAGE,
+        let (cache_sweep_layout, cache_sweep) = pass(
+            "cache sweep",
+            CACHE_SWEEP_WGSL,
+            "sweep_cells",
+            &[Io::Uniform, Io::Storage, Io::Storage],
+        );
+        let cache = table_buffer(device, DEFAULT_TABLE_CELLS);
+        let cache_stats = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("emissive table counters"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let sweep_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("emissive table sweep"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let (temporal_layout, temporal) = pass(
@@ -1583,18 +1543,14 @@ impl Frame {
                 Io::Float,
                 Io::Float,
                 Io::Float,
-                Io::Store(wgpu::TextureFormat::Rgba32Float),
+                f16,
                 f16,
                 Io::Uniform,
                 Io::Float,
                 Io::Storage,
             ],
         );
-        let gradient_layout = io_layout(
-            device,
-            "gradient",
-            &[Io::Float, Io::Uint, Io::Float, Io::Uint, f16],
-        );
+        let gradient_layout = io_layout(device, "gradient", &[Io::Float, Io::Uint, Io::Float, f16]);
         let gradient = compute_pipeline(
             device,
             "gradient",
@@ -1634,6 +1590,8 @@ impl Frame {
                 (2, Io::Float),
                 (5, f16),
                 (6, Io::Uniform),
+                (7, Io::Float),
+                (8, Io::Float),
             ],
         );
         let atrous = compute_pipeline(
@@ -1643,12 +1601,17 @@ impl Frame {
             &[Some(&world_layout), None, Some(&atrous_layout)],
             "atrous",
         );
-        let steps = [0, 1, 2, 3].map(|i| {
+        let steps = [0usize, 1, 2, 3].map(|i| {
             wgpu::util::DeviceExt::create_buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("atrous step"),
-                    contents: bytemuck::cast_slice(&[1u32 << i, 0, 0, 0]),
+                    contents: bytemuck::cast_slice(&[
+                        1u32 << i,
+                        u32::from(i + 1 == ATROUS_ITERATIONS),
+                        0,
+                        0,
+                    ]),
                     usage: wgpu::BufferUsages::UNIFORM,
                 },
             )
@@ -1859,11 +1822,18 @@ impl Frame {
             composite_hdr: None,
             composite_capture: None,
             probes: std::sync::OnceLock::new(),
-            cache: std::sync::OnceLock::new(),
-            cache_clear_requested: std::sync::atomic::AtomicBool::new(false),
+            cache,
+            cache_stats,
+            // The new table's words are zero on creation; clear them once anyway with the
+            // counters.
+            cache_clear_requested: std::sync::atomic::AtomicBool::new(true),
             cache_clear,
             cache_clear_layout,
-            cache_placeholder,
+            cache_sweep,
+            cache_sweep_layout,
+            sweep_params,
+            sweep_chunk: std::sync::Mutex::new(None),
+            table_dispatch_cap: MAX_DISPATCH_GROUPS,
             probe_spacing: DEFAULT_PROBE_SPACING,
             device: device.clone(),
             probe_layout,
@@ -2169,10 +2139,21 @@ impl Frame {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// The emissive cache's table once an encode with [`Lighting::emissive_cache`] built it
-    /// (`COPY_SRC`; `CACHE_CELL_WORDS` `u32`s a cell: check, count, three sums in Q17.15).
-    pub fn emissive_cache_table(&self) -> Option<&wgpu::Buffer> {
-        self.cache.get()
+    /// The emissive table (`COPY_SRC`; [`CACHE_CELL_WORDS`] `u32`s a cell, laid out as
+    /// `march.wgsl` says).
+    pub fn emissive_table(&self) -> &wgpu::Buffer {
+        &self.cache
+    }
+
+    /// The emissive table's counters after the last submitted encode: a blocking read.
+    pub fn read_table_stats(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> TableStats {
+        let bytes = crate::readback::read_buffer(device, queue, &self.cache_stats, 0, 16);
+        let w: &[u32] = bytemuck::cast_slice(&bytes);
+        TableStats {
+            cells: (self.cache.size() / (CACHE_CELL_WORDS * 4)) as u32,
+            occupied: w[1],
+            misses: w[0],
+        }
     }
 
     /// Encodes and submits one frame of `camera` over `world` with history, after advancing
@@ -2217,6 +2198,9 @@ impl Frame {
                 self.emission_cpu[row] = scale;
                 if row == i {
                     self.emission_changed_at = Some(self.frame);
+                    // The table's cells hold the old emission's light: they restart.
+                    self.cache_clear_requested
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                 } else {
                     self.probe_emission_changed_at = Some(self.frame);
                 }
@@ -2277,8 +2261,23 @@ impl Frame {
     }
 
     /// Sets exposure, tone map, lamp, candidates and shadow walk.
+    /// Sets the lighting knobs; a change of [`Lighting::cells`] rebuilds the emissive table
+    /// empty.
     pub fn set_lighting(&mut self, lighting: Lighting) {
+        let cells = lighting.cells();
+        if u64::from(cells) * CACHE_CELL_WORDS * 4 != self.cache.size() {
+            self.cache = table_buffer(&self.device, cells);
+            self.cache_clear_requested
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.lighting = lighting;
+    }
+
+    /// Caps a dispatch row of the table's edit-box reset and sweep at `groups` workgroups (at
+    /// least 1, at most [`MAX_DISPATCH_GROUPS`], the default): a test's way to read the rows
+    /// a dispatch past the cap takes.
+    pub fn set_table_dispatch_cap(&mut self, groups: u32) {
+        self.table_dispatch_cap = groups.clamp(1, MAX_DISPATCH_GROUPS);
     }
 
     pub fn lighting(&self) -> Lighting {
@@ -2340,13 +2339,7 @@ impl Frame {
         self.composite_capture.as_ref()
     }
 
-    /// The light pass's reservoirs the next or last encode writes (rgba32uint: the kept
-    /// point, then W, M, the face and a valid bit; see `light.wgsl`).
-    pub fn reservoirs(&self) -> &wgpu::Texture {
-        &self.targets.reservoir[self.cur]
-    }
-
-    /// The temporal pass's accumulated irradiance (rgba32float: the emissive part in rgb, the
+    /// The temporal pass's accumulated irradiance (rgba16float: the emissive part in rgb, the
     /// lamp's in a).
     pub fn accumulated(&self) -> &wgpu::Texture {
         &self.targets.accum[self.cur]
@@ -2363,13 +2356,14 @@ impl Frame {
         &self.targets.moments[self.cur]
     }
 
-    /// Bytes the frame's targets, its probe volume (once built) and FSR 2's resources occupy.
+    /// Bytes the frame's targets, the emissive table, its probe volume (once built) and FSR 2's
+    /// resources occupy.
     pub fn frame_bytes(&self) -> u64 {
         self.targets.bytes()
             + self.probes.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
             + self.fsr.as_ref().map_or(0, Fsr2::bytes)
-            + self.cache.get().map_or(0, wgpu::Buffer::size)
+            + self.cache.size()
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -2479,10 +2473,8 @@ impl Frame {
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.manual_exposure(),
-            emissive_history: self.lighting.emissive_history as f32,
-            reuse_m_cap: self.lighting.reuse_m_cap.max(1),
-            converged_age: self.lighting.skip_converged_draw.unwrap_or(0),
-            cache: self.lighting.emissive_cache.map_or(0, |c| c.word()),
+            cache_mask: (self.cache.size() / (CACHE_CELL_WORDS * 4)) as u32 - 1,
+            cache: self.lighting.cache_word(),
             output_size: if self.upscaling() {
                 self.output
             } else {
@@ -2559,6 +2551,8 @@ impl Frame {
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
         let mut old_lamp = Lamp::of(params);
+        // More than MAX_EDITS boxes arrived: the table clears whole, as the screen flushes.
+        let mut edits_overflowed = false;
         if keep_history {
             let mut h = self
                 .history
@@ -2577,6 +2571,7 @@ impl Frame {
             }
             edits.count = h.edits.len() as u32;
             boxes = std::mem::take(&mut h.edits);
+            edits_overflowed = h.overflow;
             h.overflow = false;
             h.last_views = params.views;
             h.encoded = true;
@@ -2725,27 +2720,50 @@ impl Frame {
                 Res::Tex(t.lit_info(c)),
             ],
         );
-        let cache_table = if self.lighting.emissive_cache.is_some() {
-            let table = self.cache.get_or_init(|| {
-                self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("emissive cache"),
-                    size: CACHE_CELLS * CACHE_CELL_WORDS * 4,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            });
-            if self
-                .cache_clear_requested
-                .swap(false, std::sync::atomic::Ordering::Relaxed)
-            {
-                encoder.clear_buffer(table, 0, None);
-            }
-            table
+        let cache_table = &self.cache;
+        // The edit boxes' dilated voxels, in u64: a box past 2^32 voxels or with more faces
+        // than the table has cells clears the whole table, as an overflowed frame does.
+        let cache_clear_voxels: u64 = boxes
+            .iter()
+            .map(|[min, max]| {
+                (0..3)
+                    .map(|k| (i64::from(max[k]) - i64::from(min[k]) + 3).max(0) as u64)
+                    .product::<u64>()
+            })
+            .sum();
+        let cells = (cache_table.size() / (CACHE_CELL_WORDS * 4)) as u32;
+        let clear_whole = edits_overflowed || cache_clear_voxels * 6 > u64::from(cells);
+        if self
+            .cache_clear_requested
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+            || clear_whole
+        {
+            encoder.clear_buffer(cache_table, 0, None);
+            encoder.clear_buffer(&self.cache_stats, 0, None);
         } else {
-            &self.cache_placeholder
+            // The misses count this frame's.
+            encoder.clear_buffer(&self.cache_stats, 0, Some(4));
+        }
+        // The sweep runs on the frame the camera's chunk changes, before the light pass.
+        let eye = p.views[0].origin;
+        let chunk = eye.map(|v| (v / 64.0).floor() as i32);
+        let sweep = {
+            let mut last = self
+                .sweep_chunk
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let moved = last.is_some_and(|c| c != chunk);
+            *last = Some(chunk);
+            moved
         };
+        if sweep {
+            let r = world.light_radius();
+            queue.write_buffer(
+                &self.sweep_params,
+                0,
+                bytemuck::cast_slice(&[chunk[0], chunk[1], chunk[2], r.saturating_mul(r)]),
+            );
+        }
         let light_bind = bind_io(
             device,
             &self.light_layout,
@@ -2753,12 +2771,8 @@ impl Frame {
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
-                Res::Tex(t.lit_pos(q)),
-                Res::Tex(t.lit_info(q)),
-                Res::Tex(&t.reservoir[q]),
-                Res::Tex(&t.reservoir[c]),
-                Res::Tex(&t.moments[q]),
                 Res::Buf(cache_table),
+                Res::Buf(&self.cache_stats),
             ],
         );
         let temporal_bind = bind_io(
@@ -2798,13 +2812,15 @@ impl Frame {
                 bind_io_at(
                     device,
                     &self.atrous_layout,
-                    &[0, 1, 2, 5, 6],
+                    &[0, 1, 2, 5, 6, 7, 8],
                     &[
                         Res::Tex(t.lit_pos(c)),
                         Res::Tex(t.lit_info(c)),
                         Res::Tex(&t.filter[i % 2]),
                         Res::Tex(&t.filter[(i + 1) % 2]),
                         Res::Buf(&self.steps[i]),
+                        Res::Tex(&t.accum[c]),
+                        Res::Tex(&t.moments[c]),
                     ],
                 )
             })
@@ -2844,7 +2860,6 @@ impl Frame {
                 Res::Tex(t.lit_pos(q)),
                 Res::Tex(t.lit_info(q)),
                 Res::Tex(&t.irradiance),
-                Res::Tex(&t.reservoir[q]),
                 Res::Tex(&t.strata),
             ],
         );
@@ -2876,14 +2891,8 @@ impl Frame {
                 ],
             )
         });
-        // The gradient pass runs for the gradient mode's lambda or the emissive guard's.
-        let gradient_on = self.look.view.shades()
-            && (self.lighting.history == HistoryKill::Gradient
-                || self.lighting.flags() & LIGHTING_EMISSIVE_GUARD != 0);
-        if !gradient_on {
-            // No strata this frame: the temporal pass must not read last one's.
-            p.lighting &= !LIGHTING_EMISSIVE_GUARD;
-        }
+        // The gradient pass runs for the gradient mode's lambda.
+        let gradient_on = self.look.view.shades() && self.lighting.history == HistoryKill::Gradient;
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
@@ -2959,29 +2968,43 @@ impl Frame {
             hit.push(frame_pass(&self.downsample, &downsample_bind, 3, lw));
         }
         let mut gradient: Vec<Dispatch<'_>> = Vec::new();
-        // The cache's edit-box reset runs in the gradient's slot, before the light pass.
-        let cache_clear_voxels: u32 = boxes
-            .iter()
-            .map(|[min, max]| {
-                (0..3)
-                    .map(|k| (max[k] - min[k] + 3).max(0) as u32)
-                    .product::<u32>()
-            })
-            .sum();
-        let cache_clear_bind = (self.lighting.emissive_cache.is_some() && cache_clear_voxels > 0)
-            .then(|| {
-                bind_io(
-                    device,
-                    &self.cache_clear_layout,
-                    &[Res::Buf(&self.edits), Res::Buf(cache_table)],
-                )
-            });
+        // The table's edit-box reset and sweep run in the gradient's slot, before the light
+        // pass.
+        let cache_clear_bind = (!clear_whole && cache_clear_voxels > 0).then(|| {
+            bind_io(
+                device,
+                &self.cache_clear_layout,
+                &[Res::Buf(&self.edits), Res::Buf(cache_table)],
+            )
+        });
         if let Some(b) = &cache_clear_bind {
             gradient.push(frame_pass(
                 &self.cache_clear,
                 b,
                 2,
-                [cache_clear_voxels.div_ceil(64), 1],
+                dispatch_rows(
+                    cache_clear_voxels.div_ceil(64) as u32,
+                    self.table_dispatch_cap,
+                ),
+            ));
+        }
+        let sweep_bind = sweep.then(|| {
+            bind_io(
+                device,
+                &self.cache_sweep_layout,
+                &[
+                    Res::Buf(&self.sweep_params),
+                    Res::Buf(cache_table),
+                    Res::Buf(&self.cache_stats),
+                ],
+            )
+        });
+        if let Some(b) = &sweep_bind {
+            gradient.push(frame_pass(
+                &self.cache_sweep,
+                b,
+                2,
+                dispatch_rows(cells.div_ceil(64), self.table_dispatch_cap),
             ));
         }
         if gradient_on {
@@ -3359,16 +3382,13 @@ struct Targets {
     layer: wgpu::Texture,
     /// The light pass's irradiance (rgba16float), on the lighting grid.
     irradiance: wgpu::Texture,
-    /// The temporal pass's accumulated irradiance (rgba32float: the emissive part's long
-    /// history keeps its mean, ADR-0036) and moments (rgba16float).
+    /// The temporal pass's accumulated irradiance and moments (rgba16float).
     accum: [wgpu::Texture; 2],
     moments: [wgpu::Texture; 2],
     /// The filter's ping-pong pair (rgba16float: irradiance rgb, variance a).
     filter: [wgpu::Texture; 2],
-    /// The light pass's reservoirs (rgba32uint), this frame's and the last.
-    reservoir: [wgpu::Texture; 2],
     /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float: the
-    /// combined lambda, the new and old luminances, the emissive guard's lambda).
+    /// lamp's lambda, the new and old luminances, 0).
     strata: wgpu::Texture,
     /// The frame's display-encoded image (rgba8unorm): the composite's output at the
     /// internal size, or with the upscaler at the output size, the composite's image in its
@@ -3422,7 +3442,7 @@ impl Targets {
         let (lw, lh) = (width.div_ceil(scale), height.div_ceil(scale));
         let tex = |label, format| sized(label, format, width, height);
         let lit = |label, format| sized(label, format, lw, lh);
-        use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float, Rgba32Uint};
+        use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float};
         let half = scale > 1;
         Self {
             width,
@@ -3434,10 +3454,9 @@ impl Targets {
             half_info: half.then(|| [0, 1].map(|_| lit("half hit info", Rgba16Uint))),
             layer: tex("layer", Rgba16Float),
             irradiance: lit("irradiance", Rgba16Float),
-            accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba32Float)),
+            accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba16Float)),
             moments: [0, 1].map(|_| lit("moments", Rgba16Float)),
             filter: [0, 1].map(|_| lit("filter", Rgba16Float)),
-            reservoir: [0, 1].map(|_| lit("reservoir", Rgba32Uint)),
             strata: sized(
                 "gradient strata",
                 Rgba16Float,
@@ -3521,7 +3540,7 @@ impl Targets {
         px * (2 * (16 + 8) + 8)
             + output * 4
             + history
-            + lpx * (half + 8 + 2 * 16 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
+            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
             + strata * 8
             + self.tiles.size()
             + self.split_list.get().map_or(0, wgpu::Buffer::size)

@@ -692,6 +692,27 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
     assert_eq!(up, plain + histories + grown);
 }
 
+/// `frame_bytes` at the default (1080p output, scale 1.5, half-resolution lighting at 640 x
+/// 360, `Frame` alone) holds the emissive table and no emissive history: main's 130 267 216 B
+/// before ADR-0043, less the `rgba32float` accumulation pair's excess over `rgba16float`
+/// (2 x 8 B x 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir
+/// textures (2 x 16 B x 640 x 360 = 7 372 800 B), plus the table's 2^20 cells of 40 B
+/// (41 943 040 B): 161 151 056 B.
+#[test]
+fn frame_bytes_hold_the_table_and_no_emissive_history() {
+    let Some((device, _queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let output = [1920u32, 1080];
+    let internal = vxe_render::RenderScale::OneHalf.internal(output);
+    let bytes = Frame::with_sizes(&device, internal, output).frame_bytes();
+    let lighting = 640u64 * 360;
+    let expected = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + 41_943_040;
+    println!("frame_bytes at the default: {bytes} B");
+    assert_eq!(expected, 161_151_056);
+    assert_eq!(bytes, expected);
+}
+
 /// Every image's sharpness on the stripe wall at both distances, still and panning at arm's
 /// length, under `upscaler`, printed with Phase 6's bars checked; the return value lists the
 /// failures. With `full` the far-distance pans and Plan 0024's frame panning are read too

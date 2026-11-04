@@ -5,10 +5,11 @@
 mod support;
 
 use support::stillness::*;
-use vxe_render::{HistoryKill, Lighting, Sampler};
+use vxe_render::{HistoryKill, Lighting};
 
 /// The harness sees patches where they exist: none with the emissive candidates off at either
-/// pose, at least 100 a step with a one-frame emissive history at the patch pose.
+/// pose, at least 100 a step at the patch pose with the table's read off, where every hit blends
+/// its own emissive sample at the lamp's rate.
 #[test]
 fn the_vein_wall_patches_are_counted() {
     let Some(level) = vein_level() else {
@@ -36,15 +37,15 @@ fn the_vein_wall_patches_are_counted() {
         &level,
         &PATCH_POSE,
         Lighting {
-            emissive_history: 1,
+            table_read: false,
             ..Lighting::default()
         },
         SIZE,
     );
-    short.print("patch history 1");
+    short.print("patch table read off");
     assert!(
         short.composite.mean_patches() >= 100.0,
-        "a one-frame emissive history reads at least 100 patches a step at the patch pose: {:.2}",
+        "the fallback's blend reads at least 100 patches a step at the patch pose: {:.2}",
         short.composite.mean_patches()
     );
 }
@@ -135,9 +136,8 @@ fn the_vein_wall_holds_still_with_the_lamp_off() {
 }
 
 /// One variant of the sweep: a `;`-separated list in `STILL_SWEEP`, each a `,`-separated list
-/// of `key=value`: `pose` (patch, vein or both; default both), `h` (the emissive history),
-/// `cap` (the reuse cap), `sampler` (list or reuse), `cand` (candidates), `guard` (on or off),
-/// `kill` (edits or gradient), `size` (`WxH`), `probe_rays` and `probe_slices` (the probe
+/// of `key=value`: `pose` (patch, vein or both; default both), `cand` (candidates), `read`
+/// (the table's read, on or off), `kill` (edits or gradient), `size` (`WxH`), `probe_rays` and `probe_slices` (the probe
 /// volume's rays per update and slices), `trace` (on: the gather's per-frame trace, printed
 /// around each gather step over 8 patches). Unset keys keep `Lighting::default()`.
 fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2], bool) {
@@ -155,12 +155,9 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2], bool) {
                     _ => vec![PATCH_POSE, VEIN_POSE],
                 }
             }
-            "h" => lit.emissive_history = v.parse().expect("h"),
-            "cap" => lit.reuse_m_cap = v.parse().expect("cap"),
             "cand" => lit.candidates = v.parse().expect("cand"),
-            "sampler" => lit.sampler = Sampler::from_name(v).expect("sampler"),
             "kill" => lit.history = HistoryKill::from_name(v).expect("kill"),
-            "guard" => lit.emissive_guard = v == "on",
+            "read" => lit.table_read = v == "on",
             "probe_rays" => lit.probe_rays = v.parse().expect("probe_rays"),
             "probe_slices" => lit.probe_slices = v.parse().expect("probe_slices"),
             "trace" => trace = v == "on",
@@ -187,15 +184,12 @@ fn emissive_patch_sweep() {
         let (poses, lit, size, traced) = variant(spec);
         for pose in poses {
             let name = format!(
-                "{} [{spec}] {}x{} h {} cap {} {} cand {} guard {} rays {} slices {}",
+                "{} [{spec}] {}x{} cand {} table read {} rays {} slices {}",
                 pose.name,
                 size[0],
                 size[1],
-                lit.emissive_history,
-                lit.reuse_m_cap,
-                lit.sampler.name(),
                 lit.candidates,
-                lit.emissive_guard,
+                lit.table_read,
                 lit.rays(),
                 lit.slices()
             );

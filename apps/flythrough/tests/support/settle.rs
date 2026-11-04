@@ -128,67 +128,46 @@ pub struct Setting {
     pub steady: Steady,
 }
 
-/// The steady spike's arms a run reads: each of A's four alone, and C.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The probe knobs a run reads (the steady spike's A1, A2 and C), and whether the temporal pass
+/// reads the emissive table (ADR-0043; off, every hit takes the fallback).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Steady {
     /// A1: the probes' freeze count.
     pub a1: Option<u32>,
     /// A2: inside probes skipped.
     pub a2: bool,
-    /// A3: the emissive history at the age's ceiling.
-    pub a3: bool,
-    /// A4: converged pixels draw nothing, at this age.
-    pub a4: Option<u32>,
     /// C: the lamp out of the probes.
     pub c: bool,
-    /// B: the emissive cache.
-    pub b: Option<vxe_render::marcher::EmissiveCache>,
+    /// The table's read (on by default).
+    pub table: bool,
+}
+
+impl Default for Steady {
+    fn default() -> Self {
+        Self {
+            a1: None,
+            a2: false,
+            c: false,
+            table: true,
+        }
+    }
 }
 
 impl Steady {
-    /// `off`, `a` (A1 to A4), `a1` to `a4` alone, `c`, `ac`, and `aN` with a freeze of `N`
-    /// (`a32`, `a128`: A1 alone at that count, as its sweep reads it).
+    /// `table` (the default; `off` and `b` name it too, as the readings before ADR-0043 did),
+    /// `noread` (the table's read off), `a` (A1 and A2), `c`, `ac`, `a1`, `a2`, and `aN` with a
+    /// freeze of `N`.
     pub fn named(name: &str) -> Steady {
         let a1 = Some(vxe_render::marcher::DEFAULT_PROBE_FREEZE);
-        let a4 = Some(vxe_render::marcher::HISTORY_AGE_MAX);
         let all = Steady {
             a1,
             a2: true,
-            a3: true,
-            a4,
-            c: false,
-            b: None,
+            ..Steady::default()
         };
-        let cache = |read| {
-            Some(vxe_render::marcher::EmissiveCache {
-                read,
-                ..Default::default()
-            })
-        };
-        let near = cache(vxe_render::marcher::CacheRead::Nearest);
-        let smooth = cache(vxe_render::marcher::CacheRead::Smooth);
         match name {
-            "off" => Steady::default(),
-            "b" => Steady {
-                b: near,
-                ..Steady::default()
-            },
-            "bs" => Steady {
-                b: smooth,
-                ..Steady::default()
-            },
-            "ab" => Steady { b: near, ..all },
-            "abs" => Steady { b: smooth, ..all },
-            "abc" => Steady {
-                b: near,
-                c: true,
-                ..all
-            },
-            "b1" | "b8" | "b32" => Steady {
-                b: Some(vxe_render::marcher::EmissiveCache {
-                    c_min: name[1..].parse().expect("a count"),
-                    ..Default::default()
-                }),
+            "table" | "off" | "b" => Steady::default(),
+            "noread" => Steady {
+                table: false,
                 ..Steady::default()
             },
             "a" => all,
@@ -203,15 +182,6 @@ impl Steady {
             },
             "a2" => Steady {
                 a2: true,
-                ..Steady::default()
-            },
-            "a3" => Steady {
-                a3: true,
-                ..Steady::default()
-            },
-            "a4" => Steady {
-                a3: true,
-                a4,
                 ..Steady::default()
             },
             other => {
@@ -231,19 +201,13 @@ impl Steady {
         Lighting {
             probe_freeze: self.a1,
             skip_inside_probes: self.a2,
-            emissive_history: if self.a3 {
-                vxe_render::marcher::HISTORY_AGE_MAX
-            } else {
-                lighting.emissive_history
-            },
-            skip_converged_draw: self.a4,
             probe_lamp: !self.c,
-            emissive_cache: self.b,
+            table_read: self.table,
             ..lighting
         }
     }
 
-    /// The name for a run's label, empty when off.
+    /// The name for a run's label, empty at the default.
     pub fn words(self) -> String {
         if self == Steady::default() {
             return String::new();
@@ -255,25 +219,11 @@ impl Steady {
         if self.a2 {
             w.push("a2".to_owned());
         }
-        if self.a3 {
-            w.push("a3".to_owned());
-        }
-        if self.a4.is_some() {
-            w.push("a4".to_owned());
-        }
         if self.c {
             w.push("c".to_owned());
         }
-        if let Some(b) = self.b {
-            w.push(format!(
-                "b={}{}",
-                b.c_min,
-                if b.read == vxe_render::marcher::CacheRead::Smooth {
-                    "s"
-                } else {
-                    ""
-                }
-            ));
+        if !self.table {
+            w.push("noread".to_owned());
         }
         format!(" steady {}", w.join("+"))
     }
@@ -1328,7 +1278,7 @@ pub fn settle_run(
     let mut floor_part = [0usize; 7];
     let mut floor_age = [0usize; 5];
     let mut floor_cell = [0usize; 2];
-    let split_on = dots_on && setting.steady.b.is_some();
+    let split_on = dots_on && setting.steady.table;
     let mut floor_count = 0usize;
     let mut floor_counts: Vec<f64> = Vec::new();
     let mut strip = Vec::new();
@@ -2019,12 +1969,13 @@ pub const POSES: [Pose; 2] = [PATCH_POSE, VEIN_POSE];
 pub type FaceKey = ([i32; 3], u8);
 
 /// The face key of a hit (position with t, record) seen from `eye`; `None` for a miss, a ray
-/// that started in rock (no entry face) or a field hit. The entry face's axis is the record's
+/// that started in rock (no entry face), a field hit or a hit behind translucent layers. The entry face's axis is the record's
 /// (flag bits 3..5, less 1), its outward side the one holding the eye: the shading normal can
 /// lean away from the face under the far normal.
 pub fn face_key(eye: Vec3, pos: [f32; 4], info: [u16; 4]) -> Option<FaceKey> {
     let flags = info[3];
-    if flags & 1 == 0 || flags & 2 != 0 {
+    // A miss, a field-surface hit or a hit behind translucent layers has no cell.
+    if flags & 1 == 0 || flags & 6 != 0 {
         return None;
     }
     let axis = i32::from((flags >> 3) & 3) - 1;
@@ -2491,53 +2442,56 @@ pub fn flight_cost(
     )
 }
 
-/// The emissive cache's table as words.
+/// The emissive table as words.
 pub fn cache_words(level: &VeinLevel, frame: &Frame) -> Vec<u32> {
-    let table = frame.emissive_cache_table().expect("the table is built");
+    let table = frame.emissive_table();
     let b = readback::read_buffer(&level.device, &level.queue, table, 0, table.size());
     b.chunks_exact(4)
         .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
         .collect()
 }
 
-/// The cell of a key in the table's words: its word index, or `None` when no probed slot holds
-/// its check word.
-pub fn cache_cell(words: &[u32], key: FaceKey) -> Option<usize> {
-    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_CELLS, CACHE_PROBES, cache_slot_check};
-    let (slot, check) = cache_slot_check(key.0, u32::from(key.1));
+/// The table's cells, from its words.
+pub fn cache_cells(words: &[u32]) -> u32 {
+    (words.len() / vxe_render::marcher::CACHE_CELL_WORDS as usize) as u32
+}
+
+/// The word index of each of a key's probed slots, in probe order.
+fn cache_slots(words: &[u32], key: FaceKey) -> impl Iterator<Item = usize> {
+    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_PROBES, cache_slot};
+    let cells = cache_cells(words);
+    let slot = cache_slot(key.0, u32::from(key.1), cells);
     (0..CACHE_PROBES)
-        .map(|i| {
-            (slot.wrapping_add(i) & (CACHE_CELLS as u32 - 1)) as usize * CACHE_CELL_WORDS as usize
-        })
-        .find(|&w| words[w] == check)
+        .map(move |i| (slot.wrapping_add(i) & (cells - 1)) as usize * CACHE_CELL_WORDS as usize)
+}
+
+/// The cell of a key in the table's words: its word index, or `None` when no probed slot holds
+/// its key.
+pub fn cache_cell(words: &[u32], key: FaceKey) -> Option<usize> {
+    let k = vxe_render::marcher::cache_key(key.0, u32::from(key.1));
+    cache_slots(words, key).find(|&w| words[w] == k[0] && words[w + 1] == k[1])
 }
 
 /// Whether a key with no cell found none of its probed slots free: the table's slot-probe
-/// failure, which the light pass counts as nothing and shows as the screen path.
+/// failure, which the light pass counts as a miss and shows through the fallback.
 pub fn cache_full(words: &[u32], key: FaceKey) -> bool {
-    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_CELLS, CACHE_PROBES, cache_slot_check};
-    let (slot, _) = cache_slot_check(key.0, u32::from(key.1));
-    cache_cell(words, key).is_none()
-        && (0..CACHE_PROBES).all(|i| {
-            words[(slot.wrapping_add(i) & (CACHE_CELLS as u32 - 1)) as usize
-                * CACHE_CELL_WORDS as usize]
-                != 0
-        })
+    cache_cell(words, key).is_none() && cache_slots(words, key).all(|w| words[w + 1] != 0)
 }
 
 /// The sample count of a key's cell, 0 with none.
 pub fn cache_count(words: &[u32], key: FaceKey) -> u32 {
-    cache_cell(words, key).map_or(0, |w| words[w + 1])
+    cache_cell(words, key).map_or(0, |w| words[w + vxe_render::marcher::CACHE_COUNT_WORD])
 }
 
 /// The table's cells in use and of them how many have reached `c_min` and `c_cap`.
 pub fn cache_census(words: &[u32], c_min: u32, c_cap: u32) -> [u64; 3] {
     let mut c = [0u64; 3];
+    let n = vxe_render::marcher::CACHE_COUNT_WORD;
     for cell in words.chunks_exact(vxe_render::marcher::CACHE_CELL_WORDS as usize) {
-        if cell[0] != 0 {
+        if cell[1] != 0 {
             c[0] += 1;
-            c[1] += u64::from(cell[1] >= c_min);
-            c[2] += u64::from(cell[1] >= c_cap);
+            c[1] += u64::from(cell[n] >= c_min);
+            c[2] += u64::from(cell[n] >= c_cap);
         }
     }
     c
@@ -2557,7 +2511,9 @@ pub fn young_share(px: &Pixels, words: &[u32], c_min: u32) -> (f64, f64, f64) {
                     young += 1;
                     full += u64::from(cache_full(words, k));
                 }
-                Some(w) => young += u64::from(words[w + 1] < c_min),
+                Some(w) => {
+                    young += u64::from(words[w + vxe_render::marcher::CACHE_COUNT_WORD] < c_min)
+                }
             }
         }
     }
@@ -2596,7 +2552,7 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
     let mut frame = make_frame(level, pose, setting);
     let light = LightParams::headlamp();
     render(level, &mut frame, &run.camera(pose, 0), SETTLE);
-    let b = setting.steady.b.expect("a cache run");
+    let cap = vxe_render::marcher::DEFAULT_TABLE_CAP;
     let mut shares = Vec::new();
     let (mut sum, mut n) = (0.0, 0u32);
     let mut absent_max = 0.0f64;
@@ -2611,7 +2567,7 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
                 seen.extend(face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]));
             }
             let words = cache_words(level, &frame);
-            let (y, a, full) = young_share(&px, &words, b.c_min);
+            let (y, a, full) = young_share(&px, &words, YOUNG_COUNT);
             full_max = full_max.max(full);
             sum += y;
             n += 1;
@@ -2622,7 +2578,7 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
         }
     }
     let words = cache_words(level, &frame);
-    let [used, min, cap] = cache_census(&words, b.c_min, b.c_cap);
+    let [used, min, cap] = cache_census(&words, YOUNG_COUNT, cap);
     // The table's keys cannot be read back to voxels: this share is of the keys read in view.
     let eye = VoxelCoord(pose.position.map(|c| c.floor() as i32))
         .chunk()
@@ -2644,7 +2600,7 @@ pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) ->
         seen.len(),
         sum / f64::from(n.max(1)),
         shares.join(" "),
-        used as f64 / vxe_render::marcher::CACHE_CELLS as f64,
+        used as f64 / f64::from(cache_cells(&words)),
         frame.frame_bytes()
     )
 }
@@ -2676,7 +2632,7 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
     let f0 = read(level, &frame, cam, want);
     let (min, max) = dig(level, &mut frame, &f0, far);
     let inside = |k: FaceKey| (0..3).all(|a| k.0[a] >= min[a] - 1 && k.0[a] <= max[a] + 1);
-    let table = setting.steady.b.is_some();
+    let table = setting.steady.table;
     let mut pixels: Vec<usize> = Vec::new();
     let mut series: Vec<Vec<f32>> = Vec::new();
     let mut young = Vec::new();
@@ -2719,7 +2675,8 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
                     continue;
                 };
                 n += 1;
-                let c = cache_cell(&words, k).map(|w| words[w + 1]);
+                let c =
+                    cache_cell(&words, k).map(|w| words[w + vxe_render::marcher::CACHE_COUNT_WORD]);
                 a += u32::from(c.is_none());
                 y += u32::from(c.is_none_or(|c| c < YOUNG_COUNT));
             }
@@ -2766,7 +2723,7 @@ pub fn occupancy_run(
     setting: Setting,
     flights: usize,
 ) -> Vec<String> {
-    let b = setting.steady.b.expect("a table run");
+    let cap = vxe_render::marcher::DEFAULT_TABLE_CAP;
     let mut frame = make_frame(level, pose, setting);
     let light = LightParams::headlamp();
     render(level, &mut frame, &KRun::Path.camera(pose, 0), SETTLE);
@@ -2779,17 +2736,17 @@ pub fn occupancy_run(
             if f % 4 == 1 {
                 let px = read_dots(level, &frame, cam);
                 let words = cache_words(level, &frame);
-                let (_, a, full) = young_share(&px, &words, b.c_min);
+                let (_, a, full) = young_share(&px, &words, YOUNG_COUNT);
                 absent_max = absent_max.max(a);
                 full_max = full_max.max(full);
             }
         }
         let words = cache_words(level, &frame);
-        let [used, min, cap] = cache_census(&words, b.c_min, b.c_cap);
+        let [used, min, at_cap] = cache_census(&words, YOUNG_COUNT, cap);
         out.push(format!(
-            "after flight {k}: cells {used} ({:.4} of {}), at c_min {min}, at c_cap {cap}; no-cell share max {absent_max:.5}, full-table share max {full_max:.5}",
-            used as f64 / vxe_render::marcher::CACHE_CELLS as f64,
-            vxe_render::marcher::CACHE_CELLS
+            "after flight {k}: cells {used} ({:.4} of {}), at c_min {min}, at c_cap {at_cap}; no-cell share max {absent_max:.5}, full-table share max {full_max:.5}",
+            used as f64 / f64::from(cache_cells(&words)),
+            cache_cells(&words)
         ));
     }
     out

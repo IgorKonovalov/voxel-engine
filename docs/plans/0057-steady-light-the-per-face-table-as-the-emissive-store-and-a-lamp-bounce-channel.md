@@ -603,8 +603,8 @@ Open at draft: the "go".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](logs/0057.md)) | committed with this row |
-| 2: The table is the only emissive store, and the default | dev | not started | |
+| 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](logs/0057.md)) | edee79b |
+| 2: The table is the only emissive store, and the default | dev | wip: done-when 7 unmet (a question), readings running ([log](logs/0057.md)) | committed with this row |
 | 3: The world-space guard | dev | not started | |
 | 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
 | 5: The lamp-bounce channel | dev | not started | |

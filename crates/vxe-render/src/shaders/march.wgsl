@@ -159,7 +159,8 @@ struct Params {
     lod1_r2: i32,
     lod2_r2: i32,
     exposure: f32,
-    // The emissive cache: bit 0 on, bit 1 the smooth read, bits 2..14 C_MIN, bits 14..28 C_CAP.
+    // The emissive table (`Lighting::table_cells`): bit 0 the temporal pass reads it (off only in
+    // a test), bits 14..28 C_CAP.
     cache: u32,
     candidates: u32,
     // The slot of light_samples where the frame's candidate table starts (light.wgsl).
@@ -178,20 +179,16 @@ struct Params {
     light_scale: u32,
     light_offset: u32,
     prev_light_offset: u32,
-    // The emissive part's history length in frames (`Lighting::emissive_history`).
-    emissive_history: f32,
+    // The table's cells less one (a power of two less one): a slot index's mask.
+    cache_mask: u32,
     // The size of the frame's image (the upscale pass's output); `size` without the upscaler.
     output_size: vec2<u32>,
-    // A reservoir's M is capped at this many times the frame's candidates
-    // (`Lighting::reuse_m_cap`, at least 1).
-    reuse_m_cap: u32,
+    _pad8: u32,
     // The face look's far shading normal (`LookParams::far_normal`), in pixels per voxel:
     // `far_hi <= far_lo` is off.
     far_lo: f32,
     far_hi: f32,
-    // The history age at which the light pass stops drawing (`Lighting::skip_converged_draw`);
-    // 0 never.
-    converged_age: u32,
+    _pad9: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -299,12 +296,10 @@ const VIEW_CRACKS: u32 = 5u;
 // Params.lighting bits.
 const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
-const LIGHTING_REUSE: u32 = 4u;
 const LIGHTING_GRADIENT: u32 = 8u;
 const LIGHTING_FILTER_OFF: u32 = 32u;
 const LIGHTING_EMISSION_CHANGED: u32 = 256u;
 const LIGHTING_LAMP_CHANGED: u32 = 512u;
-const LIGHTING_EMISSIVE_GUARD: u32 = 1024u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 // The exposure is automatic: this frame's is the state's `current`, not `params.exposure`.
 const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
@@ -1275,21 +1270,30 @@ fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
     return q - j;
 }
 
-// The emissive cache's table (`Lighting::emissive_cache`): CACHE_CELLS cells of CACHE_WORDS u32s:
-// a check word (0 a free cell), the count of samples, then the three sums of the absolute
-// emissive irradiance in Q17.15. A key is a voxel and an entry face (2 axis + 1 toward +axis);
-// it lives in the first of CACHE_PROBES slots from `cache_slot` holding its check word.
-const CACHE_CELLS: u32 = 4194304u;
-const CACHE_WORDS: u32 = 5u;
+// The emissive table (ADR-0043, `Lighting::table_cells`): `params.cache_mask + 1` cells of
+// CACHE_WORDS u32s, in a storage buffer of its own. A cell: the key in words 0 and 1
+// (`cache_key`; word 1 is 0 in a free cell), the count of samples, the three sums of the
+// absolute emissive irradiance in Q17.15, then the kept emitter's voxel and face (two words),
+// its luminance (f32 bits) and a frame stamp, the last four reserved. A key is a voxel and an
+// entry face (2 axis + 1 toward +axis) and lives in the first of CACHE_PROBES slots from
+// `cache_slot` holding it. The table's counters live in a second buffer (`CacheStats`).
+const CACHE_WORDS: u32 = 10u;
 const CACHE_PROBES: u32 = 4u;
 const CACHE_Q: f32 = 32768.0;
+// The cell's word of the count; the sums follow it.
+const CACHE_COUNT: u32 = 2u;
 
-fn cache_on() -> bool {
+// The table's counters: lighting pixels whose key found neither its cell nor a free slot this
+// frame (cleared each encode), and the cells holding a key.
+struct CacheStats {
+    misses: atomic<u32>,
+    occupied: atomic<u32>,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+fn cache_read_on() -> bool {
     return (params.cache & 1u) != 0u;
-}
-
-fn cache_c_min() -> u32 {
-    return (params.cache >> 2u) & 0xFFFu;
 }
 
 fn cache_c_cap() -> u32 {
@@ -1307,17 +1311,28 @@ fn cache_mix(v: vec3<i32>, face: u32, a: u32, b: u32) -> u32 {
     return h;
 }
 
-// The first slot of the key (`marcher::cache_slot_check`).
+// The first slot of the key (`marcher::cache_slot`).
 fn cache_slot(v: vec3<i32>, face: u32) -> u32 {
-    return cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & (CACHE_CELLS - 1u);
+    return cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & params.cache_mask;
 }
 
-// The key's non-zero check word.
-fn cache_check(v: vec3<i32>, face: u32) -> u32 {
-    return cache_mix(v, face, 0x9E3779B1u, 0x85EBCA77u) | 1u;
+// The key's two words (`marcher::cache_key`): each coordinate's low 20 bits (the key wraps
+// every 2^20 voxels, past any light radius), x then y's low 12 bits in word 0; y's high 8
+// bits, z, the face in bits 28..31 and a valid bit 31 in word 1, so word 1 is never 0.
+fn cache_key(v: vec3<i32>, face: u32) -> vec2<u32> {
+    let c = bitcast<vec3<u32>>(v) & vec3<u32>(0xFFFFFu);
+    return vec2<u32>(c.x | (c.y << 20u), (c.y >> 12u) | (c.z << 8u) | (face << 28u) | 0x80000000u);
 }
 
-// Whether a hit takes the cache's path: an opaque cube face entered from air.
+// The voxel of a key's two words: each 20-bit coordinate sign-extended.
+fn cache_key_voxel(k: vec2<u32>) -> vec3<i32> {
+    let x = k.x & 0xFFFFFu;
+    let y = (k.x >> 20u) | ((k.y & 0xFFu) << 12u);
+    let z = (k.y >> 8u) & 0xFFFFFu;
+    return bitcast<vec3<i32>>(vec3<u32>(x, y, z) << vec3<u32>(12u)) >> vec3<u32>(12u);
+}
+
+// Whether a hit takes the table's path: an opaque cube face entered from air.
 fn cacheable(rec: HitRecord) -> bool {
     return rec.found && rec.axis >= 0 && !rec.field && !rec.translucent;
 }
@@ -1330,16 +1345,6 @@ fn cache_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
 // The entry face of a hit on `axis` with face normal `nf`.
 fn cache_face(axis: i32, nf: vec3<f32>) -> u32 {
     return 2u * u32(axis) + select(0u, 1u, nf[axis] > 0.0);
-}
-
-// The offset of a skipped pixel's mark in the light pass's emissive part: `-(L + mark)`, so a
-// last estimate of 0 still reads negative.
-const CONVERGED_MARK: f32 = 1e-4;
-
-// The emissive estimate's luminance a light-pass output of luminance `y` stands for: `y`, or
-// a skipped pixel's mark's `L` (`converged_draw_skip`).
-fn drawn_estimate(y: f32) -> f32 {
-    return select(y, max(-y - CONVERGED_MARK, 0.0), y < 0.0);
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

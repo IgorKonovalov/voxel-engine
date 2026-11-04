@@ -1484,9 +1484,12 @@ fn the_split_walk_moves_no_hit_record() {
 /// `Frame::frame_bytes` of the default frame at 1080p output from 1280 x 720 internal, after
 /// a render in its default look over the thin rig mirrored without band slots: main 28948a5's
 /// figure (DEFAULT_MAIN) plus the split walk's 32-byte stub list and 16-byte dispatch words,
-/// and no hand-off list.
-const DEFAULT_FRAME_BYTES: u64 = 130_267_216;
+/// no hand-off list, and the emissive table of ADR-0043 in place of the screen's emissive
+/// history and reservoirs (TABLE_DELTA: + 41 943 040 - 3 686 400 - 7 372 800, `upscale.rs`'s
+/// `frame_bytes_hold_the_table_and_no_emissive_history`).
+const DEFAULT_FRAME_BYTES: u64 = 161_151_056;
 const DEFAULT_MAIN: u64 = 130_267_168;
+const TABLE_DELTA: u64 = 41_943_040 - 3_686_400 - 7_372_800;
 
 /// The split walk's hand-off list (16 B of header and 16 B a pixel) is allocated only by a
 /// frame that splits: on lavapipe the default frame (internal 1280 x 720, output 1920 x 1080)
@@ -1521,7 +1524,7 @@ fn only_a_split_frame_allocates_the_split_list() {
     );
     assert_eq!(before, default, "a render without the split walk");
     assert_eq!(default, DEFAULT_FRAME_BYTES);
-    assert_eq!(default, DEFAULT_MAIN + 32 + 16);
+    assert_eq!(default, DEFAULT_MAIN + 32 + 16 + TABLE_DELTA);
 
     let mut rig = field_rig_on(device.clone(), queue.clone(), &wood, THIN_SIZE);
     let field = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);

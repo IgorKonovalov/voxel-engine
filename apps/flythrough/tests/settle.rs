@@ -1209,116 +1209,6 @@ fn an_inside_probe_is_not_traced() {
     }
 }
 
-/// With A3 and A4 at threshold 64 and indirect off, a still pixel at the threshold keeps its
-/// emissive value bit-identical for 64 frames with its reservoir copied through, and a `Replace`
-/// of the emitters around its kept point lowers its age within 9 frames and resumes the draw.
-#[test]
-fn a_converged_pixel_keeps_its_sample() {
-    let Some(mut level) = vein_level() else {
-        return;
-    };
-    let light = LightParams::headlamp();
-    let camera = VEIN_POSE.camera();
-    let mut frame = Frame::new(&level.device, 64, 36);
-    frame.set_lighting(Lighting {
-        lamp: false,
-        indirect: false,
-        emissive_history: vxe_render::marcher::HISTORY_AGE_MAX,
-        skip_converged_draw: Some(64),
-        exposure: Exposure::Manual(VEIN_POSE.exposure),
-        ..Lighting::default()
-    });
-    frame.set_dt(1.0 / 60.0);
-    let read = |level: &stillness::VeinLevel, frame: &Frame| {
-        (
-            vxe_render::readback::read_float(&level.device, &level.queue, frame.accumulated()),
-            vxe_render::readback::read_float(&level.device, &level.queue, frame.moments()),
-            vxe_render::readback::read_texels_u32(&level.device, &level.queue, frame.reservoirs()),
-        )
-    };
-    for _ in 0..66 {
-        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
-    }
-    let (accum0, moments0, res0) = read(&level, &frame);
-    // The pixels at the threshold with a reservoir, keeping light.
-    let kept =
-        |i: usize| moments0[i][2] >= 64.0 && res0[i][3] & 0x800_0000 != 0 && accum0[i][1] > 0.0;
-    let pixels: Vec<usize> = (0..accum0.len()).filter(|&i| kept(i)).collect();
-    assert!(pixels.len() > 100, "{} converged pixels", pixels.len());
-    for f in 0..64 {
-        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
-        let (a, m, r) = read(&level, &frame);
-        for &i in &pixels {
-            assert_eq!(
-                a[i], accum0[i],
-                "pixel {i} moved at frame {f}, moments {:?}",
-                m[i]
-            );
-            assert_eq!(r[i], res0[i], "pixel {i}'s reservoir moved");
-        }
-    }
-    // The emitters around a kept point go dark. A pixel's kept voxel lies behind its face.
-    let i = *pixels
-        .iter()
-        .max_by(|&&a, &&b| moments0[a][3].total_cmp(&moments0[b][3]))
-        .expect("pixels");
-    let x = [res0[i][0], res0[i][1], res0[i][2]].map(f32::from_bits);
-    let face = (res0[i][3] >> 24) & 7;
-    let mut v = x.map(|c| c.floor() as i64);
-    let axis = (face / 2) as usize;
-    if face & 1 == 1 {
-        v[axis] -= 1;
-    }
-    let (min, max) = (
-        v.map(|c| (c - 12) * vxe_world::FIXED_ONE),
-        v.map(|c| (c + 13) * vxe_world::FIXED_ONE),
-    );
-    let r = level
-        .world
-        .apply(&vxe_world::EditOp::box_(
-            vxe_world::Fixed3(min),
-            vxe_world::Fixed3(max),
-            vxe_world::Mode::Replace {
-                from: flythrough::cave::ORE,
-                to: flythrough::cave::ROCK,
-            },
-        ))
-        .expect("the replace applies");
-    assert!(
-        r.changed_from.iter().map(|c| c.1).sum::<u32>() > 0,
-        "the box holds ore"
-    );
-    level
-        .gpu
-        .sync_now(&level.world, &level.device, &level.queue)
-        .expect("mirror fits");
-    let start = frame_age(&level, &frame, i);
-    let mut ages = Vec::new();
-    for _ in 1..=30 {
-        frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
-        ages.push(frame_age(&level, &frame, i));
-    }
-    println!("the pixel's age from {start}, per frame after the replace: {ages:?}");
-    let lowered = ages.iter().position(|&a| a < start).map(|f| f + 1);
-    let resumed = ages.iter().position(|&a| a < 64.0).map(|f| f + 1);
-    println!("lowered at frame {lowered:?}, under the threshold at {resumed:?}");
-    assert!(
-        lowered.is_some_and(|f| f <= 9),
-        "the guard lowered the pixel's age within 9 frames"
-    );
-    assert!(
-        resumed.is_some_and(|f| f <= 9),
-        "the age fell under the threshold within 9 frames, so the draw resumed"
-    );
-    let (a, _, _) = read(&level, &frame);
-    assert_ne!(a[i], accum0[i], "the draw resumed and the value moved");
-}
-
-/// Lighting pixel `i`'s history age.
-fn frame_age(level: &stillness::VeinLevel, frame: &Frame, i: usize) -> f32 {
-    vxe_render::readback::read_float(&level.device, &level.queue, frame.moments())[i][2]
-}
-
 /// With C on, a lamp toggle both ways and a lamp moved each frame leave every probe's words
 /// bit-identical to a run with no lamp change at the same frames (the rays' random numbers go
 /// with the frame, so nothing else differs); an emission scale change still restarts them.
@@ -1379,12 +1269,16 @@ fn the_lamp_leaves_the_probes_alone_under_c() {
 /// Air over chunks `[0, 2)^3`, a rock block at x, y in `[40, 64)`, z in `[40, 64)`, and an ore
 /// plate over it at z `[80, 84)`: the block's corner faces the camera, its faces lit from above.
 fn cache_box() -> (vxe_world::World, Camera) {
+    cache_box_in(&flythrough::with_emissive_ore(&flythrough::cave_materials()))
+}
+
+/// The box (`cache_box`) over the material table `table`.
+fn cache_box_in(table: &vxe_world::MaterialTable) -> (vxe_world::World, Camera) {
     use vxe_world::*;
-    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [2, 2, 2]),
         &UniformSource(AIR),
-        &table,
+        table,
     );
     let fill = |min: [i64; 3], max: [i64; 3], m| {
         world
@@ -1413,21 +1307,33 @@ struct CacheBox {
     frame: Frame,
 }
 
-/// The box under a frame at 64 x 36 (full-resolution lighting, no jitter, lamp and probes off).
-fn cache_box_rig(cache: vxe_render::marcher::EmissiveCache) -> Option<CacheBox> {
-    cache_box_rig_sized(cache, [64, 36])
+/// The box under a frame at 64 x 36 (full-resolution lighting, no jitter, lamp and probes off),
+/// the table's cap at `cap`.
+fn cache_box_rig(cap: u32) -> Option<CacheBox> {
+    cache_box_rig_sized(cap, [64, 36])
 }
 
 /// `cache_box_rig` at `size`.
-fn cache_box_rig_sized(
-    cache: vxe_render::marcher::EmissiveCache,
-    size: [u32; 2],
-) -> Option<CacheBox> {
+fn cache_box_rig_sized(cap: u32, size: [u32; 2]) -> Option<CacheBox> {
     let (world, camera) = cache_box();
+    cache_box_rig_on(world, camera, cap, size, None)
+}
+
+/// `cache_box_rig` over `world` from `camera` at `size`, with the mirror's light radius
+/// `light_radius` when given.
+fn cache_box_rig_on(
+    world: vxe_world::World,
+    camera: Camera,
+    cap: u32,
+    size: [u32; 2],
+    light_radius: Option<i32>,
+) -> Option<CacheBox> {
     let (device, queue) = support::software_device(64 << 20)?;
+    let base = vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(world.extent()));
     let cfg = vxe_render::MirrorConfig {
         budget_bytes: 64 << 20,
-        ..vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+        light_radius: light_radius.unwrap_or(base.light_radius),
+        ..base
     };
     let mut gpu = vxe_render::GpuWorld::with_config(&device, cfg);
     for _ in 0..2 {
@@ -1440,7 +1346,7 @@ fn cache_box_rig_sized(
         lamp: false,
         indirect: false,
         exposure: Exposure::Manual(1.0),
-        emissive_cache: Some(cache),
+        table_cap: cap,
         ..Lighting::default()
     });
     frame.set_dt(1.0 / 60.0);
@@ -1491,7 +1397,7 @@ impl CacheBox {
 /// voxel's other face has its own.
 #[test]
 fn a_key_is_its_voxel_and_face() {
-    let Some(mut rig) = cache_box_rig(Default::default()) else {
+    let Some(mut rig) = cache_box_rig(vxe_render::marcher::DEFAULT_TABLE_CAP) else {
         return;
     };
     rig.step(1);
@@ -1526,15 +1432,11 @@ fn a_key_is_its_voxel_and_face() {
 }
 
 /// Once every cell in view has reached the cap, the emissive part is bit-identical frame to
-/// frame and those pixels' reservoirs are empty: at `C_MIN` 16, `C_CAP` 64, scale 1, no jitter,
-/// lamp and probes off.
+/// frame and those pixels' light pass draws nothing (its emissive sample reads 0): at `C_CAP`
+/// 64, scale 1, no jitter, lamp and probes off.
 #[test]
 fn a_capped_cell_does_not_move() {
-    let Some(mut rig) = cache_box_rig(vxe_render::marcher::EmissiveCache {
-        c_min: 16,
-        c_cap: 64,
-        ..Default::default()
-    }) else {
+    let Some(mut rig) = cache_box_rig(64) else {
         return;
     };
     rig.step(66);
@@ -1551,7 +1453,7 @@ fn a_capped_cell_does_not_move() {
     let read = |rig: &CacheBox| {
         (
             vxe_render::readback::read_float(d, q, rig.frame.accumulated()),
-            vxe_render::readback::read_texels_u32(d, q, rig.frame.reservoirs()),
+            vxe_render::readback::read_float(d, q, rig.frame.irradiance()),
         )
     };
     let (a0, _) = read(&rig);
@@ -1565,20 +1467,16 @@ fn a_capped_cell_does_not_move() {
         let (a, r) = read(&rig);
         for &i in &on_face {
             assert_eq!(a[i][0..3], a0[i][0..3], "pixel {i}'s emissive part moved");
-            assert_eq!(r[i], [0; 4], "pixel {i} kept a reservoir");
+            assert_eq!(r[i][0..3], [0.0; 3], "pixel {i} drew an emissive sample");
         }
     }
 }
 
 /// An edit box over one voxel clears that voxel's cells, leaves a capped neighbour two voxels
-/// away, and the cleared cells refill to `C_MIN` within `C_MIN` frames.
+/// away, and the cleared cells refill to 16 samples within 16 frames.
 #[test]
 fn a_dig_clears_its_cells() {
-    let Some(mut rig) = cache_box_rig(vxe_render::marcher::EmissiveCache {
-        c_min: 16,
-        c_cap: 64,
-        ..Default::default()
-    }) else {
+    let Some(mut rig) = cache_box_rig(64) else {
         return;
     };
     rig.step(66);
@@ -1622,7 +1520,7 @@ fn a_dig_clears_its_cells() {
     let words = cache_words(&rig.level, &rig.frame);
     assert!(
         cache_count(&words, (v, f)) >= 16,
-        "the cell refilled to C_MIN within C_MIN frames: {}",
+        "the cell refilled to 16 samples within 16 frames: {}",
         cache_count(&words, (v, f))
     );
 }
@@ -1633,7 +1531,10 @@ fn a_dig_clears_its_cells() {
 /// the young and mature excess sum to the excess.
 #[test]
 fn the_dots_split_by_cell_age_sums_to_the_excess() {
-    let Some(mut rig) = cache_box_rig_sized(Default::default(), support::stillness::SIZE) else {
+    let Some(mut rig) = cache_box_rig_sized(
+        vxe_render::marcher::DEFAULT_TABLE_CAP,
+        support::stillness::SIZE,
+    ) else {
         return;
     };
     rig.frame.set_composite_capture(&rig.level.device, true);
@@ -1683,73 +1584,444 @@ fn the_dots_split_by_cell_age_sums_to_the_excess() {
     );
 }
 
-/// After 256 still frames at the vein, indirect off, lamp off, a 90 degree yaw over 10 frames
-/// and back leaves the display's excess dots at frames 1 to 60 after the return at most 10 % of
-/// today's reading at the same run, or at most the floor's spread where today reads none. The
-/// young share per frame prints.
+/// Each lighting pixel of the rig's frame with a face key: its index and key.
+fn keyed_pixels(rig: &CacheBox) -> Vec<(usize, FaceKey)> {
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let pos = vxe_render::readback::read_float(d, q, rig.frame.hit_positions());
+    let info = vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records());
+    (0..pos.len())
+        .filter_map(|i| face_key(rig.camera.position, pos[i], info[i]).map(|k| (i, k)))
+        .collect()
+}
+
+/// A cell's mean irradiance from the table's words: the sums over the count (at most the cap).
+fn cell_mean(words: &[u32], w: usize, cap: u32) -> [f64; 3] {
+    let c = vxe_render::marcher::CACHE_COUNT_WORD;
+    let n = f64::from(words[w + c].min(cap)) * f64::from(vxe_render::marcher::CACHE_Q);
+    [1, 2, 3].map(|k| f64::from(words[w + c + k]) / n)
+}
+
+/// One `f16` step at `v`: the spacing of half-precision values around it.
+fn f16_step(v: f64) -> f64 {
+    2f64.powi(v.abs().max(6.1e-5).log2().floor() as i32 - 10)
+}
+
+/// A face reads its cell's mean from its first sample (ADR-0043): on the box at scale 1, no
+/// jitter, lamp off, exposure 1, on the first frame every pixel on a face carries the same
+/// emissive value, its cell's sums over its count within one `f16` step; once every cell in
+/// view is capped (`C_CAP` 64, after 64 frames), the next 64 frames are bit-identical.
 #[test]
-fn a_turn_reads_converged_cells() {
+fn a_face_reads_its_mean_from_the_first_sample() {
+    let Some(mut rig) = cache_box_rig(64) else {
+        return;
+    };
+    rig.step(1);
+    let keyed = keyed_pixels(&rig);
+    assert!(keyed.len() > 500, "{} keyed pixels", keyed.len());
+    let words = cache_words(&rig.level, &rig.frame);
+    let acc = vxe_render::readback::read_float(
+        &rig.level.device,
+        &rig.level.queue,
+        rig.frame.accumulated(),
+    );
+    let mut per_face: std::collections::HashMap<FaceKey, [f32; 3]> = Default::default();
+    let mut lit = 0;
+    for &(i, k) in &keyed {
+        let w = cache_cell(&words, k).unwrap_or_else(|| panic!("key {k:?} has a cell"));
+        let mean = cell_mean(&words, w, 64);
+        let e = [acc[i][0], acc[i][1], acc[i][2]];
+        for c in 0..3 {
+            let got = f64::from(e[c]);
+            assert!(
+                (got - mean[c]).abs() <= f16_step(mean[c]),
+                "pixel {i} key {k:?} channel {c}: {got} against the cell's {}",
+                mean[c]
+            );
+        }
+        let first = *per_face.entry(k).or_insert(e);
+        assert_eq!(first, e, "pixel {i}: face {k:?} carries one value");
+        lit += usize::from(e[0] > 0.0);
+    }
+    assert!(lit > 100, "{lit} lit face pixels");
+    rig.step(63);
+    let words = cache_words(&rig.level, &rig.frame);
+    for (_, k) in &keyed {
+        assert!(cache_count(&words, *k) >= 64, "key {k:?} is capped");
+    }
+    let a0 = vxe_render::readback::read_float(
+        &rig.level.device,
+        &rig.level.queue,
+        rig.frame.accumulated(),
+    );
+    for f in 0..64 {
+        rig.step(1);
+        let (d, q) = (&rig.level.device, &rig.level.queue);
+        let a = vxe_render::readback::read_float(d, q, rig.frame.accumulated());
+        for &(i, _) in &keyed {
+            assert_eq!(a[i][0..3], a0[i][0..3], "frame {f}: pixel {i} moved");
+        }
+    }
+}
+
+/// A hit with no face (behind a translucent slab) takes the fallback: on the box with a glass
+/// layer over the rock block's top, a translucent hit's emissive part after 8 frames equals the
+/// closed-form blend of its own samples, `e += max(0.2, 1 / (age + 1)) (s - e)`, within 1 %,
+/// and its key holds no cell.
+#[test]
+fn a_hit_with_no_face_takes_the_fallback() {
+    use vxe_world::*;
+    let table =
+        flythrough::castle_materials(&flythrough::with_emissive_ore(&flythrough::cave_materials()));
+    let (world, camera) = cache_box_in(&table);
+    world
+        .apply(&EditOp::box_(
+            Fixed3([40, 40, 64].map(|v| v * FIXED_ONE)),
+            Fixed3([64, 64, 65].map(|v| v * FIXED_ONE)),
+            Mode::Fill(flythrough::castle::material(flythrough::castle::GLASS)),
+        ))
+        .expect("the slab is resident");
+    let Some(mut rig) = cache_box_rig_on(world, camera, 4096, [64, 36], None) else {
+        return;
+    };
+    let mut expect: Vec<[f64; 3]> = Vec::new();
+    let mut glass: Vec<usize> = Vec::new();
+    for f in 0..8 {
+        rig.step(1);
+        let (d, q) = (&rig.level.device, &rig.level.queue);
+        let s = vxe_render::readback::read_float(d, q, rig.frame.irradiance());
+        if f == 0 {
+            let info = vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records());
+            glass = (0..info.len())
+                .filter(|&i| info[i][3] & 1 == 1 && info[i][3] & 4 != 0 && s[i][0] > 0.0)
+                .collect();
+            assert!(glass.len() > 20, "{} lit translucent hits", glass.len());
+            expect = glass
+                .iter()
+                .map(|&i| [0, 1, 2].map(|c| f64::from(s[i][c])))
+                .collect();
+        } else {
+            let a = (1.0f64 / (f as f64 + 1.0)).max(0.2);
+            for (e, &i) in expect.iter_mut().zip(&glass) {
+                for c in 0..3 {
+                    e[c] += a * (f64::from(s[i][c]) - e[c]);
+                }
+            }
+        }
+    }
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let acc = vxe_render::readback::read_float(d, q, rig.frame.accumulated());
+    let pos = vxe_render::readback::read_float(d, q, rig.frame.hit_positions());
+    let info = vxe_render::readback::read_rgba16u(d, q, rig.frame.hit_records());
+    let words = cache_words(&rig.level, &rig.frame);
+    for (e, &i) in expect.iter().zip(&glass) {
+        for c in 0..3 {
+            let got = f64::from(acc[i][c]);
+            assert!(
+                (got - e[c]).abs() <= 0.01 * e[c].abs().max(1e-4),
+                "pixel {i} channel {c}: {got} against the blend's {}",
+                e[c]
+            );
+        }
+        let mut bare = info[i];
+        bare[3] &= !4;
+        let k = face_key(rig.camera.position, pos[i], bare).expect("a cube face under the glass");
+        assert!(cache_cell(&words, k).is_none(), "key {k:?} holds a cell");
+    }
+}
+
+/// The sweep frees the cells beyond the light radius: on the box with a second rock box in the
+/// chunk the camera moves into and `light_radius` 1, after
+/// the camera moves one chunk along +x, a face whose chunk lies beyond one chunk of the new
+/// camera chunk counts only this frame's pixels (0 out of view), and one within it its old count
+/// plus them.
+#[test]
+fn the_sweep_clears_cells_beyond_the_light_radius() {
+    use vxe_world::*;
+    let (world, camera) = cache_box();
+    // A rock box in chunk (1, 0, 1), in view: within the radius of the camera's chunk after the
+    // move, while the block's chunk (0, 0, 0) lies beyond it.
+    world
+        .apply(&EditOp::box_(
+            Fixed3([66, 30, 64].map(|v| v * FIXED_ONE)),
+            Fixed3([70, 40, 66].map(|v| v * FIXED_ONE)),
+            Mode::Fill(flythrough::cave::ROCK),
+        ))
+        .expect("the box is resident");
+    let Some(mut rig) = cache_box_rig_on(world, camera, 4096, [64, 36], Some(1)) else {
+        return;
+    };
+    rig.step(4);
+    let before = cache_words(&rig.level, &rig.frame);
+    let keys: Vec<FaceKey> = rig.keys().into_keys().collect();
+    rig.camera.position.x += 64.0;
+    rig.step(1);
+    let now = rig.keys();
+    let words = cache_words(&rig.level, &rig.frame);
+    let cam = rig
+        .camera
+        .position
+        .to_array()
+        .map(|v| (v / 64.0).floor() as i32);
+    let (mut far, mut near) = (0, 0);
+    for k in &keys {
+        let d2: i32 = (0..3)
+            .map(|a| (k.0[a].div_euclid(64) - cam[a]).pow(2))
+            .sum();
+        let here = now.get(k).copied().unwrap_or(0);
+        if d2 > 1 {
+            far += 1;
+            assert_eq!(
+                cache_count(&words, *k),
+                here,
+                "key {k:?} beyond the radius restarts"
+            );
+        } else {
+            near += 1;
+            assert_eq!(
+                cache_count(&words, *k),
+                cache_count(&before, *k) + here,
+                "key {k:?} within the radius keeps its count"
+            );
+        }
+    }
+    assert!(
+        far > 0 && near > 0,
+        "{far} faces beyond the radius, {near} within"
+    );
+}
+
+/// A full table counts its misses: at 64 cells, a view of more than 64 faces reads a miss
+/// count equal to the lighting pixels whose key found no cell, and those pixels show their own
+/// sample (the fallback, on the first frame the accumulation itself), some of it lit.
+#[test]
+fn a_full_table_counts_its_misses() {
+    let Some(mut rig) = cache_box_rig(4096) else {
+        return;
+    };
+    rig.frame.set_lighting(Lighting {
+        table_cells: 64,
+        ..rig.frame.lighting()
+    });
+    rig.step(1);
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let keyed = keyed_pixels(&rig);
+    let words = cache_words(&rig.level, &rig.frame);
+    assert_eq!(cache_cells(&words), 64);
+    let faces: std::collections::HashSet<FaceKey> = keyed.iter().map(|&(_, k)| k).collect();
+    assert!(faces.len() > 64, "{} faces in view", faces.len());
+    let missed: Vec<usize> = keyed
+        .iter()
+        .filter(|&&(_, k)| cache_cell(&words, k).is_none())
+        .map(|&(i, _)| i)
+        .collect();
+    let missed_faces: std::collections::HashSet<FaceKey> = keyed
+        .iter()
+        .filter(|&&(_, k)| cache_cell(&words, k).is_none())
+        .map(|&(_, k)| k)
+        .collect();
+    let stats = rig.frame.read_table_stats(d, q);
+    println!(
+        "full table: {} faces in view, {} occupied, {} missed pixels on {} faces, counter {}",
+        faces.len(),
+        stats.occupied,
+        missed.len(),
+        missed_faces.len(),
+        stats.misses
+    );
+    assert_eq!(stats.cells, 64);
+    assert_eq!(stats.occupied, 64, "every cell holds a key");
+    assert_eq!(
+        stats.misses as usize,
+        missed.len(),
+        "the counter counts the missed pixels"
+    );
+    let acc = vxe_render::readback::read_float(d, q, rig.frame.accumulated());
+    let raw = vxe_render::readback::read_float(d, q, rig.frame.irradiance());
+    for &i in &missed {
+        assert_eq!(acc[i][0..3], raw[i][0..3], "pixel {i} shows its own sample");
+    }
+    assert!(
+        missed.iter().any(|&i| acc[i][0] > 0.0),
+        "the missed pixels' fallback is lit"
+    );
+}
+
+/// The words of the table with `cells` cells after `keys` are each written with a count of 9 at
+/// its first free probed slot.
+fn table_with(cells: u32, keys: &[FaceKey]) -> Vec<u32> {
+    use vxe_render::marcher::{
+        CACHE_CELL_WORDS, CACHE_COUNT_WORD, CACHE_PROBES, cache_key, cache_slot,
+    };
+    let n = CACHE_CELL_WORDS as usize;
+    let mut words = vec![0u32; cells as usize * n];
+    for k in keys {
+        let slot = cache_slot(k.0, u32::from(k.1), cells);
+        let w = (0..CACHE_PROBES)
+            .map(|i| (slot.wrapping_add(i) & (cells - 1)) as usize * n)
+            .find(|&w| words[w + 1] == 0)
+            .expect("a free slot");
+        let key = cache_key(k.0, u32::from(k.1));
+        words[w] = key[0];
+        words[w + 1] = key[1];
+        words[w + CACHE_COUNT_WORD] = 9;
+    }
+    words
+}
+
+/// An edit box of any size clears every cell: with the table's dispatch rows capped at 4
+/// groups, a box of 10 x 10 x 10 voxels (12^3 dilated, 27 groups, so 7 rows) clears all 6000
+/// cells of its voxels' faces, and a cell two voxels past the dilation keeps its count.
+#[test]
+fn a_large_edit_box_clears_every_cell() {
+    let Some(mut rig) = cache_box_rig(4096) else {
+        return;
+    };
+    rig.frame.set_table_dispatch_cap(4);
+    // Out of view: behind and below the camera, in air.
+    let lo = [100, 100, 10];
+    let mut keys = Vec::new();
+    for x in 0..10 {
+        for y in 0..10 {
+            for z in 0..10 {
+                for f in 0..6u8 {
+                    keys.push(([lo[0] + x, lo[1] + y, lo[2] + z], f));
+                }
+            }
+        }
+    }
+    let outside = ([lo[0] + 12, lo[1], lo[2]], 0u8);
+    let mut all = keys.clone();
+    all.push(outside);
+    rig.step(1);
+    let cells = rig.frame.lighting().cells();
+    let bytes: Vec<u8> = table_with(cells, &all)
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    rig.level
+        .queue
+        .write_buffer(rig.frame.emissive_table(), 0, &bytes);
+    rig.frame.invalidate(lo, [lo[0] + 9, lo[1] + 9, lo[2] + 9]);
+    rig.step(1);
+    let words = cache_words(&rig.level, &rig.frame);
+    assert_eq!(keys.len(), 6000);
+    for k in &keys {
+        assert_eq!(cache_count(&words, *k), 0, "key {k:?} cleared");
+        assert!(cache_cell(&words, *k).is_some(), "key {k:?} keeps its slot");
+    }
+    assert_eq!(
+        cache_count(&words, outside),
+        9,
+        "the cell past the box keeps its count"
+    );
+}
+
+/// A frame with more than `MAX_EDITS` boxes clears the whole table: after 8 frames on the box,
+/// `MAX_EDITS + 1` one-voxel boxes out of view and a frame looking out of the world from its
+/// corner (no hit adds a sample) leave every cell at count 0.
+#[test]
+fn an_overflowed_edit_frame_clears_the_table() {
+    let Some(mut rig) = cache_box_rig(4096) else {
+        return;
+    };
+    rig.step(8);
+    let words = cache_words(&rig.level, &rig.frame);
+    assert!(
+        cache_census(&words, 1, 4096)[0] > 100,
+        "the view fills cells"
+    );
+    for i in 0..=vxe_render::MAX_EDITS as i32 {
+        rig.frame.invalidate([100 + i, 100, 10], [100 + i, 100, 10]);
+    }
+    // In the world's corner, facing out of it: every ray leaves the window.
+    rig.camera = Camera {
+        position: [4.5, 4.5, 30.5].into(),
+        yaw: 225f32.to_radians(),
+        pitch: 0.0,
+        ..rig.camera
+    };
+    rig.step(1);
+    assert!(
+        rig.keys().is_empty(),
+        "the view out of the world holds no face"
+    );
+    let words = cache_words(&rig.level, &rig.frame);
+    let n = vxe_render::marcher::CACHE_COUNT_WORD;
+    let held = words
+        .chunks_exact(vxe_render::marcher::CACHE_CELL_WORDS as usize)
+        .filter(|c| c[n] != 0)
+        .count();
+    assert_eq!(held, 0, "{held} cells kept a count");
+}
+
+/// The display's excess dots in frames 1 to 60 after a 90 degree yaw onto `VEIN_POSE` over 10
+/// frames, lamp on, indirect off, FSR 2 at 1.5, exposure pinned, the table's read `table`:
+/// settled 192 frames at the pose, its floor read over 64 more; then 64 frames at the yaw's
+/// start, the yaw, and the 60 dot frames. The excess, the floor's mean and its spread.
+fn fast_yaw_excess(level: &stillness::VeinLevel, table: bool) -> (f64, f64, f64) {
+    let setting = Setting {
+        lamp: true,
+        indirect: false,
+        auto: false,
+        upscaler: true,
+        bridge: false,
+        steady: Steady {
+            table,
+            ..Steady::default()
+        },
+    };
+    let mut frame = make_frame(level, &VEIN_POSE, setting);
+    let light = LightParams::headlamp();
+    let still = VEIN_POSE.camera();
+    let step = |frame: &mut Frame, c: &Camera| {
+        frame.step(&level.device, &level.queue, &level.gpu, c, &light)
+    };
+    for _ in 0..192 {
+        step(&mut frame, &still);
+    }
+    let mut floor = Vec::new();
+    for _ in 0..64 {
+        step(&mut frame, &still);
+        floor.push(dots_of(&read_dots(level, &frame, still)) as f64);
+    }
+    for _ in 0..64 {
+        step(&mut frame, &yawed(&VEIN_POSE, -90.0));
+    }
+    for i in 1..=10 {
+        step(&mut frame, &yawed(&VEIN_POSE, -90.0 + 9.0 * i as f32));
+    }
+    let mean = floor.iter().sum::<f64>() / floor.len() as f64;
+    let spread =
+        (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
+    let mut excess = 0.0;
+    for _ in 1..=DOT_FRAMES {
+        step(&mut frame, &still);
+        excess += dots_of(&read_dots(level, &frame, still)) as f64 - mean;
+    }
+    (excess, mean, spread)
+}
+
+/// A fast yaw reads an excess with the table's read off and none from the table: at
+/// `VEIN_POSE`, lamp on, indirect off, after a 90 degree yaw over 10 frames (the run Phase 1 of
+/// Plan 0057 read today's excess at), the run with the read off reads more excess dots over 60
+/// frames than 60 floor spreads, and the default's excess is at most 10 % of it.
+#[test]
+fn a_fast_yaw_reads_an_excess_today_and_none_from_the_table() {
     let Some(level) = vein_level() else {
         return;
     };
-    let run = |b: Option<vxe_render::marcher::EmissiveCache>| {
-        let setting = Setting {
-            lamp: false,
-            indirect: false,
-            auto: false,
-            upscaler: true,
-            bridge: false,
-            steady: Steady {
-                b,
-                ..Steady::default()
-            },
-        };
-        let mut frame = make_frame(&level, &VEIN_POSE, setting);
-        let light = LightParams::headlamp();
-        let still = VEIN_POSE.camera();
-        let step = |frame: &mut Frame, c: &Camera| {
-            frame.step(&level.device, &level.queue, &level.gpu, c, &light)
-        };
-        for _ in 0..192 {
-            step(&mut frame, &still);
-        }
-        let mut floor = Vec::new();
-        for _ in 0..64 {
-            step(&mut frame, &still);
-            floor.push(dots_of(&read_dots(&level, &frame, still)) as f64);
-        }
-        for i in 1..=10 {
-            step(&mut frame, &yawed(&VEIN_POSE, 9.0 * i as f32));
-        }
-        for i in (0..10).rev() {
-            step(&mut frame, &yawed(&VEIN_POSE, 9.0 * i as f32));
-        }
-        let mut excess = 0.0;
-        let mean = floor.iter().sum::<f64>() / floor.len() as f64;
-        let spread =
-            (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
-        let mut young = Vec::new();
-        for f in 1..=60 {
-            step(&mut frame, &still);
-            let px = read_dots(&level, &frame, still);
-            excess += dots_of(&px) as f64 - mean;
-            if b.is_some() && f % 12 == 1 {
-                let words = cache_words(&level, &frame);
-                young.push(format!("{f}:{:.3}", young_share(&px, &words, 16).0));
-            }
-        }
-        (excess, mean, spread, young)
-    };
-    let (today, tf, ts, _) = run(None);
-    let (cached, cf, cs, young) = run(Some(Default::default()));
+    let (off, off_floor, off_sd) = fast_yaw_excess(&level, false);
+    let (on, on_floor, on_sd) = fast_yaw_excess(&level, true);
     println!(
-        "excess dots 1-60 after the return: today {today:.1} (floor {tf:.1}, sd {ts:.1}); cache {cached:.1} (floor {cf:.1}, sd {cs:.1}); young share {young:?}"
+        "fast yaw excess dots 1-60: read off {off:.1} (floor {off_floor:.1}, sd {off_sd:.1}); table {on:.1} (floor {on_floor:.1}, sd {on_sd:.1})"
     );
-    // The floor's spread per frame, over the 60 frames: under it, today reads none.
-    let none = 60.0 * ts.max(cs);
-    let bar = if today > none { 0.1 * today } else { none };
+    let none = DOT_FRAMES as f64 * off_sd;
     assert!(
-        cached <= bar,
-        "the cache's excess {cached:.1} against today's {today:.1}, bar {bar:.1}"
+        off > none,
+        "the read off reads an excess: {off:.1} against {none:.1}"
+    );
+    assert!(
+        on <= 0.1 * off,
+        "the table's excess {on:.1} against {off:.1}"
     );
 }
