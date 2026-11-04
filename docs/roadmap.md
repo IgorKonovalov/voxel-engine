@@ -234,6 +234,11 @@ reads 0.525, and no arm holds still within the owner's five seconds. In the owne
 small yellow dots on fast motion stayed in every arm. The owner's verdict: B with indirect off,
 the nearest read, the probes shrunk to a lamp-bounce channel whose logic is redone, exposure
 unchanged. The ADR and the plan the verdict names follow; Plan 0056 hunts the dots first.
+ADR-0043 (proposed, 2026-11-04) records the verdict: the per-face table is the only emissive
+store, faces are sampled and guarded in world space, and the probe volume becomes a lamp-bounce
+channel that keeps its scaffolding for a later per-source indirect light. Plan 0057 (draft)
+builds it in six phases, the first a reading of the verdict's open questions (the fast turn, the
+dug hole); Plan 0048 is moot under it and awaits the owner's "drop".
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
@@ -468,6 +473,8 @@ work), and the light (real-time GI standing in for the baked occlusion).
   keeps the winner and today's clamp, and returns the furnace test to pi. The order is Plan
   0051, Plan 0056 (the aliasing spike) from the verdict, the verdict plan, Plans 0044 and 0045, Plan 0048 if it stands, then M10 (amended
   2026-11-03, owner): 0048 holds whatever settle, dot and shimmer tests the verdict plan asserts.
+  The verdict plan is Plan 0057 (ADR-0043, 2026-11-04); under it 0048 is moot and awaits the
+  owner's "drop".
 - Indirect light that settles fast, light that holds still in flight, and young pixels
   without dots (the owner at Plan 0047's windowed check, 2026-10-28 and 2026-10-29): seconds
   of settling after a fly-in, a lamp toggle or a dig, bright dots after a fast turn or a dig,
@@ -476,8 +483,9 @@ work), and the light (real-time GI standing in for the baked occlusion).
   plan under `done/`. The rule of 2026-10-29 stands: every other plan stays parked until the
   owner accepts the light. **Plan 0051** closed 2026-11-04 (v0.41.0): the owner's window picked
   the world-space emissive table keyed by cube face with no indirect gather, and the probes
-  shrink to a lamp-bounce channel. The ADR and the plan the verdict names follow, after Plan
-  0056 reads the dots that no arm removed.
+  shrink to a lamp-bounce channel. **ADR-0043** (proposed) and **Plan 0057** (draft, 2026-11-04)
+  build it: the table as the only emissive store, faces sampled and guarded in world space, the
+  lamp channel; Plan 0056 reads the dots that no arm removed beside it and hands over their class.
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
