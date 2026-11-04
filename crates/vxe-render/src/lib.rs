@@ -31,8 +31,8 @@ pub use light::LightParams;
 pub use marcher::{
     CrackShares, DEFAULT_TABLE_CELLS, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting,
     LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, RenderScale, Sampler, ShadowWalk, SurfaceTuning, TableStats, ToneMap,
-    ViewMode, jitter_at,
+    NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning, TableStats, ToneMap, ViewMode,
+    jitter_at,
 };
 pub use present::Presenter;
 pub use probes::ProbeVolume;

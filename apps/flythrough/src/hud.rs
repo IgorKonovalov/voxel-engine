@@ -1801,58 +1801,6 @@ mod mode_tests {
     }
 }
 
-/// The steady light spike's presets, before ADR-0043. The fly-through refuses `--steady`; the
-/// type is kept only so the strip test of Plan 0056 builds until that plan closes, and every
-/// preset now applies nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SteadyMode {
-    Off,
-    A,
-    C,
-    Ac,
-    B,
-    Ab,
-    Abc,
-}
-
-impl SteadyMode {
-    pub const ALL: [Self; 7] = [
-        Self::Off,
-        Self::A,
-        Self::C,
-        Self::Ac,
-        Self::B,
-        Self::Ab,
-        Self::Abc,
-    ];
-
-    /// The name `--steady` parses and the banner shows.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::A => "a",
-            Self::C => "c",
-            Self::Ac => "ac",
-            Self::B => "b",
-            Self::Ab => "ab",
-            Self::Abc => "abc",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-
-    /// `lighting` unchanged: the presets' mechanisms are gone (ADR-0043).
-    pub fn apply(
-        self,
-        lighting: vxe_render::Lighting,
-        _read: vxe_render::marcher::CacheRead,
-    ) -> vxe_render::Lighting {
-        lighting
-    }
-}
-
 /// The upscaler the window's `F10` cycles (`--upscaler`): Plan 0024's frame, the upscaler of
 /// ADR-0024, or FSR 2 (ADR-0034).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

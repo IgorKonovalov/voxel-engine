@@ -21,7 +21,8 @@
 //!   vertical neighbour `|dY|` is printed for each.
 //! - `VXE_STRIP_LAMP`: `on` or `off` at the start (default off on the showcase, on on the level).
 //! - `VXE_STRIP_INDIRECT`, `VXE_STRIP_FILTER`: `on` (default) or `off`.
-//! - `VXE_STRIP_SAMPLER`: `reuse` (default) or `list` (no reservoir reuse).
+//! - `VXE_STRIP_SAMPLER` and `VXE_STRIP_STEADY`: refused (the reservoir sampler and the steady
+//!   presets are gone, ADR-0043).
 //! - `VXE_STRIP_CANDIDATES`: emissive candidates per pixel (default 8).
 //! - `VXE_STRIP_SHADOW`: the shadow walk, `coarse` (default) or `full`.
 //! - `VXE_STRIP_MEAN`: `on` writes `mean.png` (and its crop), the run's frames averaged.
@@ -42,8 +43,6 @@
 //!   emission scaled to 0). Given at all, the probe spacing defaults to the hero's 32.
 //! - `VXE_STRIP_LIGHT_RADIUS`: the mirror's `light_radius` (default: 0 under `eye`, else the
 //!   source's). `VXE_STRIP_PROBE_SPACING`: the probe volume's spacing.
-//! - `VXE_STRIP_STEADY`: a `--steady` preset (`off`, `a`, `c`, `ac`, `b`, `ab`, `abc`), the
-//!   cache read nearest.
 //! - `VXE_STRIP_SHARPEN`: the upscaler's sharpening (default 0.5).
 //! - FSR 2's candidate knobs (`Fsr2Settings`): `VXE_STRIP_JITTER_PHASES` (the jitter's phase
 //!   count; the fold's default follows it), `VXE_STRIP_EMITTER_CAP` (a pre-exposed level) and
@@ -854,11 +853,6 @@ fn strip_run() {
         lamp: on_off("VXE_STRIP_LAMP", scene.lamp),
         indirect: on_off("VXE_STRIP_INDIRECT", true),
         filter: on_off("VXE_STRIP_FILTER", true),
-        sampler: match env("VXE_STRIP_SAMPLER").as_deref() {
-            Some("list") => vxe_render::Sampler::List,
-            Some("reuse") | None => vxe_render::Sampler::Reuse,
-            Some(v) => panic!("VXE_STRIP_SAMPLER takes reuse or list, not {v}"),
-        },
         candidates: env_or("VXE_STRIP_CANDIDATES", 8),
         shadow_walk: match env("VXE_STRIP_SHADOW").as_deref() {
             Some("full") => vxe_render::ShadowWalk::Full,
@@ -869,12 +863,11 @@ fn strip_run() {
         ..Lighting::default()
     };
     let light_mode = env("VXE_STRIP_LIGHT");
-    let steady = env("VXE_STRIP_STEADY").map(|v| {
-        flythrough::hud::SteadyMode::from_name(&v)
-            .unwrap_or_else(|| panic!("VXE_STRIP_STEADY takes a --steady preset, not {v}"))
-    });
-    if let Some(m) = steady {
-        lighting = m.apply(lighting, vxe_render::marcher::CacheRead::Nearest);
+    for gone in ["VXE_STRIP_SAMPLER", "VXE_STRIP_STEADY"] {
+        assert!(
+            env(gone).is_none(),
+            "{gone} is gone: the emissive table is the only emissive store (ADR-0043)"
+        );
     }
     let lamp_power: f32 = env_or("VXE_STRIP_LAMP_POWER", 4000.0);
     let light = match light_mode.as_deref() {
@@ -923,24 +916,22 @@ fn strip_run() {
     let tag = env("VXE_STRIP_TAG").unwrap_or_else(|| "strip".to_owned());
     let dir = out_dir(&tag);
     println!(
-        "strip {tag}: {} | {w}x{h} {upscaler} | look {} {}{look_source} | lamp {} indirect {} filter {} sampler {:?} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
+        "strip {tag}: {} | {w}x{h} {upscaler} | look {} {}{look_source} | lamp {} indirect {} filter {} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
         scene.name,
         preset.name,
         LookPreset::far_normal_words(preset.normal_mode, preset.far_normal),
         lighting.lamp,
         lighting.indirect,
         lighting.filter,
-        lighting.sampler,
         lighting.candidates,
         lighting.exposure
     );
     println!(
-        "strip {tag}: light {} (lamp power {}, light radius {}, light samples {}), steady {}, probe spacing {spacing}, sharpen {sharpen}, internal {}x{}, jitter phases {phases}",
+        "strip {tag}: light {} (lamp power {}, light radius {}, light samples {}), probe spacing {spacing}, sharpen {sharpen}, internal {}x{}, jitter phases {phases}",
         light_mode.as_deref().unwrap_or("hero"),
         light.intensity,
         scene.light_radius,
         scene.gpu.light_samples(),
-        steady.map_or("off", |m| m.name()),
         internal[0],
         internal[1]
     );

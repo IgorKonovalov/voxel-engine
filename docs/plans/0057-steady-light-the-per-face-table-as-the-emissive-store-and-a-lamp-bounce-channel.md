@@ -1110,7 +1110,7 @@ Open at draft: the "go".
 |---|---|---|---|
 | 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](logs/0057.md)) | edee79b |
 | 2: The table is the only emissive store, and the default | dev | done: code at d940f32; done-when 7 a reading (amended f107977, test 84f5c60); 9's predictions not met on the patch's scale-1 `sv`, the hall's native drift and the patch's misses; 10 not met (`Lighting::sampler` kept) ([log](logs/0057.md)) | b9b9b3b |
-| 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](logs/0057.md)) | committed with this row |
+| 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](logs/0057.md)) | 64a6598 |
 | 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
 | 5: The lamp-bounce channel | dev | not started | |
 | 6: The owner's window, with digs | human | not started | |
@@ -1140,6 +1140,7 @@ each. Empty is fine.)_
 - Phase 3: done-whens 1 to 3 read the far wall's faces with at least 9 pixels as the wall's cells within reach.
 - Phase 3: `a_reveal_behind_a_plug_follows_within_seventy_three_frames` reads 57.3 s and is on the soak list.
 - Phase 3: done-when 5's predictions not met: gradient 0.092 / 0.053 ms on the RTX at rest; 4 reopens over 1024 still frames at the patch.
+- Phase 4 (refactor after a337f76, Plan 0056 closed): `Sampler`, `Lighting::sampler`, `CacheRead` and `hud::SteadyMode` removed; `strip.rs` refuses `VXE_STRIP_SAMPLER` and `VXE_STRIP_STEADY`; Phase 2's done-when 10 met there.
 
 ### Close triggers
 

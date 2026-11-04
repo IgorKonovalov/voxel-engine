@@ -476,15 +476,6 @@ impl ShadowWalk {
     }
 }
 
-/// How the light pass picked its emissive sample before ADR-0043. Unread: kept only so the
-/// strip test of Plan 0056 builds until that plan closes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Sampler {
-    List,
-    #[default]
-    Reuse,
-}
-
 /// What kills the temporal pass's history.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HistoryKill {
@@ -832,14 +823,6 @@ pub struct TableStats {
     pub misses: u32,
 }
 
-/// How the spike's temporal pass read its table, before ADR-0043. Unread: kept only so the
-/// strip test of Plan 0056 builds until that plan closes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CacheRead {
-    Nearest,
-    Smooth,
-}
-
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -854,9 +837,6 @@ pub struct Lighting {
     /// The a-trous filter runs over the lamp's part (and a fallback hit's emissive part); off,
     /// the composite shows the light pass's raw irradiance.
     pub filter: bool,
-    /// Unread ([`Sampler`]): kept only so the strip test of Plan 0056 builds until that plan
-    /// closes.
-    pub sampler: Sampler,
     pub history: HistoryKill,
     /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
     /// their irradiance, in the shaded view outside the cutaway. Off by default.
@@ -913,7 +893,6 @@ impl Default for Lighting {
             candidates: 8,
             shadow_walk: ShadowWalk::default(),
             filter: true,
-            sampler: Sampler::default(),
             history: HistoryKill::default(),
             indirect: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
