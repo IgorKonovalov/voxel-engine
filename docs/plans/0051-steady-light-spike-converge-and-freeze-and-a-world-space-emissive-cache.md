@@ -1,6 +1,6 @@
 # 0051: The steady-light spike: static light that converges and freezes, and a world-space emissive cache, each read against the wander, the dots and the shimmer
 
-> **Status:** in-progress (approved 2026-10-29, amended 2026-11-03)
+> **Status:** in-progress (2026-11-04): every phase implemented; awaiting the fresh-session close review (approved 2026-10-29, amended 2026-11-03)
 > **Created:** 2026-10-29
 > **Amended 2026-11-03 (owner):** "amend". The plan as drafted could not start: its cache keyed
 > on `contour_attr`'s popcount index, which Plans 0053 and 0054 removed (v0.39.0), and its rig
@@ -671,7 +671,7 @@ Determinism is not touched: everything is in `vxe-render`.
 | 1: The rig on main, and today's light on the default look | dev | done; stop rule read on both adapters, not tripped; cost at rest loaded, not the three quiet rounds | ab48bd3 (code), 34084fc, 363890c (records), the rest committed with this row |
 | 2: Experiment A, converge and freeze | dev | done but for done-when 13's flicker map (unmet) and 6's noise by frame (not read as stated) | 6fb183e (code), c933a31 (tables) |
 | 3: Experiment B, the world-space emissive cache | dev | done; tables in; gate at the tip green | 7313d0a, c9ce8c9 (code), 42e2934 (digests), committed with this row |
-| 4: The owner's call in the window | human | not started | |
+| 4: The owner's call in the window | human | done; verdict in the log | committed with this row |
 
 Readings and attempts: [`logs/0051.md`](logs/0051.md).
 
@@ -692,12 +692,12 @@ Predictions that read as misses: Phase 2 done-when 5's second (the indirect-off 
 
 ### Close triggers
 
-Phase 4 is open, so the plan does not close at this record.
+Phase 4's verdict is recorded in the log, so the plan now awaits its fresh-session close review.
 
 - **What shipped:** behind settings, all off by default: A1 to A4, C and B; `--steady` and `--cache-read` on the fly-through, `--steady` on `hero`; the settle rig in `apps/flythrough/tests/`.
 - **Public API changed:** `Lighting::{probe_freeze, skip_inside_probes, skip_converged_draw, probe_lamp, emissive_cache}`, `EmissiveCache`, `CacheRead`, the presets' builders, `Frame::{set_composite_capture, composite_capture}`.
 - **Budget readings:** in the log, every one loaded (indicative), load 1.49 to 5.79, both adapters, 1920 x 1080 from 720p, the level. RTX 3080 Laptop at rest at the spawn, frame ms: off 4.944 (5.224 at Phase 3), a 3.174, ac 3.193, b 4.290, ab 3.118, b no indirect 3.255. AMD Cezanne on RADV, the same: off 35.438 (34.579), a 23.392, ac 23.395, b 28.704, ab 22.252, b no indirect 21.053. `frame_bytes` with the cache off reads main's; with it on, 89 617 600 B at the rig's setting.
-- **Gate at the tip:** at the tree of c933a31 (code c9ce8c9), lavapipe, `--profile gate`: 704 run, 704 passed, 67 skipped, exit 0. Doctests, clippy, fmt, deny and the doc and tier gates exit 0.
-- **Outstanding `human` phases:** Phase 4.
+- **Gate at the tip:** at the tree of c933a31 (code c9ce8c9), lavapipe, `--profile gate`: 704 run, 704 passed, 67 skipped, exit 0. Doctests, clippy, fmt, deny and the doc and tier gates exit 0. After merging main (715d0d8): 700 run, 700 passed, 71 skipped, exit 0; build, clippy, fmt exit 0.
+- **Outstanding `human` phases:** none.
 
 ## Followups
