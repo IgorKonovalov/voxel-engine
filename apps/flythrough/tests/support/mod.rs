@@ -3,6 +3,7 @@
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
 pub mod rigs;
+pub mod settle;
 pub mod stillness;
 
 use std::path::PathBuf;
@@ -129,6 +130,8 @@ pub fn reading_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue, Str
         info.name, info.backend, info.driver, info.driver_info
     );
     let desc = wgpu::DeviceDescriptor {
+        // The per-pass readings time the frame where the adapter can.
+        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
         required_limits: vxe_render::limits_for(&adapter, pool_bytes)
             .expect("the frame's limits on the chosen adapter"),
         ..Default::default()

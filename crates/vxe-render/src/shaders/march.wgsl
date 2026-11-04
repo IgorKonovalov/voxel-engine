@@ -159,7 +159,8 @@ struct Params {
     lod1_r2: i32,
     lod2_r2: i32,
     exposure: f32,
-    _pad4: u32,
+    // The emissive cache: bit 0 on, bit 1 the smooth read, bits 2..14 C_MIN, bits 14..28 C_CAP.
+    cache: u32,
     candidates: u32,
     // The slot of light_samples where the frame's candidate table starts (light.wgsl).
     light_table_base: u32,
@@ -188,7 +189,9 @@ struct Params {
     // `far_hi <= far_lo` is off.
     far_lo: f32,
     far_hi: f32,
-    _pad10: u32,
+    // The history age at which the light pass stops drawing (`Lighting::skip_converged_draw`);
+    // 0 never.
+    converged_age: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -1270,6 +1273,73 @@ fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
         return q;
     }
     return q - j;
+}
+
+// The emissive cache's table (`Lighting::emissive_cache`): CACHE_CELLS cells of CACHE_WORDS u32s:
+// a check word (0 a free cell), the count of samples, then the three sums of the absolute
+// emissive irradiance in Q17.15. A key is a voxel and an entry face (2 axis + 1 toward +axis);
+// it lives in the first of CACHE_PROBES slots from `cache_slot` holding its check word.
+const CACHE_CELLS: u32 = 4194304u;
+const CACHE_WORDS: u32 = 5u;
+const CACHE_PROBES: u32 = 4u;
+const CACHE_Q: f32 = 32768.0;
+
+fn cache_on() -> bool {
+    return (params.cache & 1u) != 0u;
+}
+
+fn cache_c_min() -> u32 {
+    return (params.cache >> 2u) & 0xFFFu;
+}
+
+fn cache_c_cap() -> u32 {
+    return (params.cache >> 14u) & 0x3FFFu;
+}
+
+fn cache_mix(v: vec3<i32>, face: u32, a: u32, b: u32) -> u32 {
+    let c = bitcast<vec3<u32>>(v);
+    var h = (c.x * a) ^ (c.y * 0xD8163841u) ^ (c.z * b) ^ ((face + 1u) * 0x165667B1u);
+    h ^= h >> 15u;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12u;
+    h *= 0x297A2D39u;
+    h ^= h >> 15u;
+    return h;
+}
+
+// The first slot of the key (`marcher::cache_slot_check`).
+fn cache_slot(v: vec3<i32>, face: u32) -> u32 {
+    return cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & (CACHE_CELLS - 1u);
+}
+
+// The key's non-zero check word.
+fn cache_check(v: vec3<i32>, face: u32) -> u32 {
+    return cache_mix(v, face, 0x9E3779B1u, 0x85EBCA77u) | 1u;
+}
+
+// Whether a hit takes the cache's path: an opaque cube face entered from air.
+fn cacheable(rec: HitRecord) -> bool {
+    return rec.found && rec.axis >= 0 && !rec.field && !rec.translucent;
+}
+
+// The voxel behind hit point `p` with face normal `nf`.
+fn cache_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
+    return vec3<i32>(floor(p - 0.5 * nf));
+}
+
+// The entry face of a hit on `axis` with face normal `nf`.
+fn cache_face(axis: i32, nf: vec3<f32>) -> u32 {
+    return 2u * u32(axis) + select(0u, 1u, nf[axis] > 0.0);
+}
+
+// The offset of a skipped pixel's mark in the light pass's emissive part: `-(L + mark)`, so a
+// last estimate of 0 still reads negative.
+const CONVERGED_MARK: f32 = 1e-4;
+
+// The emissive estimate's luminance a light-pass output of luminance `y` stands for: `y`, or
+// a skipped pixel's mark's `L` (`converged_draw_skip`).
+fn drawn_estimate(y: f32) -> f32 {
+    return select(y, max(-y - CONVERGED_MARK, 0.0), y < 0.0);
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

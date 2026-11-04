@@ -8,7 +8,8 @@
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
 //! [--lamp on|off] [--filter on|off] [--emissive-history N]
-//! [--emissive-guard on|off] [--look PRESET]`.
+//! [--emissive-guard on|off] [--look PRESET] [--steady off|a|c|ac|b|ab|abc]
+//! [--cache-read nearest|smooth]`.
 //!
 //! `--source showcase` (the default) generates `flythrough::showcase` and frames one of its
 //! shots (`--shot`, default `hall`); `--at`, `--yaw`, `--pitch` and `--exposure` override the
@@ -80,6 +81,10 @@ struct Args {
     light_radius: Option<i32>,
     adapter: Option<String>,
     look: flythrough::LookPreset,
+    /// `--steady`, the fly-through's presets; off is today's light.
+    steady: flythrough::hud::SteadyMode,
+    /// `--cache-read`: how the `b` presets read the table.
+    cache_read: vxe_render::marcher::CacheRead,
 }
 
 impl Args {
@@ -125,6 +130,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         light_radius: None,
         adapter: None,
         look: flythrough::LookPreset::DEFAULT,
+        steady: flythrough::hud::SteadyMode::Off,
+        cache_read: vxe_render::marcher::CacheRead::Nearest,
     };
     let mut shot_given = false;
     let on_off = |flag: &str, v: &str| match v {
@@ -188,6 +195,18 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "--look takes {}, not {v}",
                     flythrough::LookPreset::names()
                 ))?
+            }
+            "--steady" => {
+                args.steady = flythrough::hud::SteadyMode::from_name(&v).ok_or(format!(
+                    "--steady takes off, a, c, ac, b, ab or abc, not {v}"
+                ))?;
+            }
+            "--cache-read" => {
+                args.cache_read = match v.as_str() {
+                    "nearest" => vxe_render::marcher::CacheRead::Nearest,
+                    "smooth" => vxe_render::marcher::CacheRead::Smooth,
+                    _ => return Err(format!("--cache-read takes nearest or smooth, not {v}")),
+                };
             }
             "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
             "--indirect" => args.lighting.indirect = on_off(&flag, &v)?,
@@ -504,10 +523,13 @@ fn main() -> Result<(), String> {
             frame.set_jitter(&device, args.jitter());
             frame.set_sharpness(&queue, args.sharpen);
         }
-        frame.set_lighting(Lighting {
-            exposure: still.exposure,
-            ..args.lighting
-        });
+        frame.set_lighting(args.steady.apply(
+            Lighting {
+                exposure: still.exposure,
+                ..args.lighting
+            },
+            args.cache_read,
+        ));
         frame.set_look(vxe_render::LookParams {
             normal_mode: args.look.normal_mode,
             tuning: args.look.tuning,

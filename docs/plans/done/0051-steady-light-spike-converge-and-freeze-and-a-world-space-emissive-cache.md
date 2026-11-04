@@ -1,6 +1,9 @@
 # 0051: The steady-light spike: static light that converges and freezes, and a world-space emissive cache, each read against the wander, the dots and the shimmer
 
-> **Status:** approved (2026-10-29), amended 2026-11-03
+> **Status:** done (2026-11-04, v0.41.0): closed clean as a spike; A, B and C built behind settings, all off by
+> default, and read on both adapters; the owner's verdict is B with indirect off, the nearest read, the probes
+> shrunk to a lamp-bounce channel whose logic is redone, exposure unchanged; the ADR and the plan the verdict
+> names follow
 > **Created:** 2026-10-29
 > **Amended 2026-11-03 (owner):** "amend". The plan as drafted could not start: its cache keyed
 > on `contour_attr`'s popcount index, which Plans 0053 and 0054 removed (v0.39.0), and its rig
@@ -42,31 +45,41 @@
 >    reads them by eye.
 > 6. The far-wall blotches of the showcase are converged direct light, a look item the owner
 >    keeps open outside this plan.
+> **Amended 2026-11-03, night (owner: "yes, amend it and pass to the lane"):** the hero's pixel
+> differences (`LIGHT-FEEDBACK.md`, "The hero that never settled") read the showcase's `hall` still
+> over 8192 frames. About 70 % of the drift's mean survives with no probes and no upscaler, and one
+> frame's change is about a twelfth of the drift, so the view-mean wander and `K` at the level's poses
+> may not see what the owner objected to. What changed, readings only, no new mechanism:
+> 1. **Phase 3 reads the hall per arm:** drift per pixel on the final image, and the frames to settle
+>    (done-when 10). `hero` gains `--steady`.
+> 2. **Phase 4's window session adds the hall.**
+> 3. Hard patches, dark holes, floor rings and blocky emitters remain at 8192 frames, so they are not
+>    this plan's to remove; no arm is judged on them.
 > **Approved:** 2026-10-29 (owner): "we will start as soon as 50 is done". The lane runs alone.
 > The amendment keeps the plan's question and its two experiments; dev starts it on the owner's
 > "go" as usual.
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
-> **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
+> **Related ADRs:** [ADR-0036](../../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
 > (its Alternative A, the world-space cache, is this spike's second experiment; its Outcome
 > names Plan 0049, dropped, and "any mechanism beyond this decision or ADR-0023 is a new ADR",
 > which is this spike's),
-> [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe update
-> whose blend the first experiment changes), [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
-> (the estimator, the screen history, the firefly clamp), [ADR-0037](../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
+> [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe update
+> whose blend the first experiment changes), [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> (the estimator, the screen history, the firefly clamp), [ADR-0037](../../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
 > (proposed; Plan 0048, which waits for this spike's answer),
-> [ADR-0041](../adrs/0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) (honest
+> [ADR-0041](../../adrs/0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) (honest
 > cubes the default, the attribute gone). No ADR at draft: see Decision.
 > **Source:** the architect's assessment of 2026-10-29, after Plan 0049's live session 2
-> ([`LIGHT-FEEDBACK.md`](../../LIGHT-FEEDBACK.md); the Phase 1 readings in
-> [Plan 0049](done/0049-light-settles-fast-and-young-pixels-hold-no-dots.md)'s Implementation
+> ([`LIGHT-FEEDBACK.md`](../../../LIGHT-FEEDBACK.md); the Phase 1 readings in
+> [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md)'s Implementation
 > log). The owner: "clearly something is wrong and we need to understand why", and, agreeing with
 > the assessment "mostly", a lean toward "simplification of lights, but steadiness".
-> **Starts after:** [Plan 0055](done/0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md)
+> **Starts after:** [Plan 0055](0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md)
 > closes (amended 2026-11-03, evening). It runs alone on main. The next
 > light plans wait for Phase 4's call: the plan the ADR names, if any, then
-> [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md), then
-> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md).
+> [Plan 0048](../0048-probe-rays-direct-light-without-the-clamp-bias.md), then
+> [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md).
 
 ## TL;DR
 
@@ -457,7 +470,22 @@ the log, and stops being a gate.
   - `K` at the yaw and the flight;
   - the table's occupancy, and the full-table share, at each pose and after the flight; the light
     and temporal pass times at rest and in the flight, both adapters.
-- **Files touched:** `crates/vxe-render/src/shaders/light.wgsl`,
+- **The hall (amended 2026-11-03, night).** `hero --exposure 8 --adapter NVIDIA --steady S --frames N`
+  from a fresh start each N: the showcase's `hall`, 1920 x 1080, the default look, FSR 2 at 1.5, lamp
+  off, a still camera. `S`: `off`, `a`, `b`, `ab`, and `b --indirect off`, each with `--internal-scale 1`
+  beside it to separate the upscaler. `N`: 64, 128, 256, 512, 1024, 2048, 4096, 8192. About 3 minutes a
+  preset on the RTX, a guess from the hero runs at 4bf567f. The difference at a pixel is the largest of
+  its three 8-bit channels' absolute differences. The rules:
+  - **Drift:** 4096 against 8192, since A's pixels can freeze only past frame 2047: mean, p99, the
+    share over 2 and over 8, and the mean on a 12 x 7 grid of the frame.
+  - **Frames to settle:** each `N` against that preset's own 8192: mean and the share over 8.
+  - **One frame:** 8192 against 8193, mean and max.
+  - **Images:** the 4096-against-8192 difference times 8 per preset, under the gitignored `renders/`.
+  - These readings are unasserted, on the RTX under lane rule 9c, and a repeat of one preset's 2048
+    must read 0 at every pixel, or the table says so. C is not a row: the lamp is off, so it should
+    change nothing here, which `--steady c` at 2048 against `off` at 2048 reads once.
+- **Files touched:** `apps/flythrough/examples/hero.rs` (`--steady`, as the fly-through's),
+  `crates/vxe-render/src/shaders/light.wgsl`,
   `crates/vxe-render/src/shaders/temporal.wgsl`, `crates/vxe-render/src/shaders/probe_update.wgsl`
   (B2), `crates/vxe-render/src/marcher.rs`, `crates/vxe-render/src/lib.rs`
   (`STORAGE_BUFFERS_NEEDED`), `apps/flythrough/src/main.rs` and `hud.rs`,
@@ -494,6 +522,11 @@ the log, and stops being a gate.
   9. `a_dig_clears_its_cells` asserts, on the hand-built box of item 3, that an edit box over
      one voxel clears that voxel's six cells and leaves a neighbour two voxels away capped, and
      that the cleared cells refill to `C_MIN` within `C_MIN` frames at scale 1. Under 10 s.
+  10. The hall's drift, frames-to-settle and one-frame tables are in the readings log, per preset,
+     beside today's from `LIGHT-FEEDBACK.md`: at 2048 against 8192, mean 2.36, share over 2 27.8 %, on
+     the hero's tree. The predictions: with A or B the drift's mean at native falls under 0.5, a guess,
+     and A's settle runs up to frame 2047 while B's reaches its floor sooner. A miss is a reading, and
+     the log names any arm that holds still only after more frames than the owner's "I can count to 5".
 
 ### Phase 4: The owner's call in the window
 - **Owner skill:** human
@@ -506,6 +539,10 @@ the log, and stops being a gate.
   `--cache-read nearest` and with `smooth`, to judge the step at a voxel edge and the missing
   detail. Beside the window, the rig's filmstrips and tables. The owner also states whether
   exposure's own settle should change (ADR-0033's constants; another plan).
+  **The hall (amended 2026-11-03, night):** the same six flag sets at
+  `flythrough --source showcase --shot hall --exposure 8`, lamp off, from a fresh start: watch it
+  settle, then a still minute, then a turn and back. Beside it, Phase 3's hall tables and difference
+  images. The verdict names what still moves in the hall under the chosen direction.
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's verdict: which of A, B, C, a combination or none is the
   direction; which read mode, if B; whether the probes stay, shrink to a lamp-bounce channel, or
@@ -620,6 +657,9 @@ Determinism is not touched: everything is in `vxe-render`.
    settle is the probes, so a third arm C (the headlamp does not feed the probes) joins the
    spike, B is read on turns, flights and digs and gains the edit-box reset, and the rig must
    reproduce the owner's dots. The blotches "stay" a look item. The plan starts after Plan 0055.
+4. **Stillness, the hall (owner, 2026-11-03, night).** "light that never settles when objects are
+   not moving + not natural flickering light (flame eg) - are super unsettling"; on the hall's drift
+   readings, "yes, amend it and pass to the lane". Phases 3 and 4 read and show the hall.
 
 ## Implementation log
 
@@ -631,19 +671,64 @@ Determinism is not touched: everything is in `vxe-render`.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The rig on main, and today's light on the default look | dev | not started | |
-| 2: Experiment A, converge and freeze | dev | not started | |
-| 3: Experiment B, the world-space emissive cache | dev | not started | |
-| 4: The owner's call in the window | human | not started | |
+| 1: The rig on main, and today's light on the default look | dev | done; stop rule read on both adapters, not tripped; cost at rest loaded, not the three quiet rounds | ab48bd3 (code), 34084fc, 363890c (records), the rest committed with this row |
+| 2: Experiment A, converge and freeze | dev | done but for done-when 13's flicker map (unmet) and 6's noise by frame (not read as stated) | 6fb183e (code), c933a31 (tables) |
+| 3: Experiment B, the world-space emissive cache | dev | done; tables in; gate at the tip green | 7313d0a, c9ce8c9 (code), 42e2934 (digests), committed with this row |
+| 4: The owner's call in the window | human | done; verdict in the log | committed with this row |
+
+Readings and attempts: [`logs/0051.md`](../logs/0051.md).
 
 ### Notes
 
+Each phase's deviations are listed under it in the readings log. Unmet or not read as stated:
+
+- **Phase 2, done-when 13, the toggle's flicker map: unmet.** It needs a `--steady` knob in `apps/flythrough/tests/strip.rs`, outside the phase's `Files touched`.
+- Phase 2, done-when 13, `S90` 0: reads 1, as today with indirect off. The rig's first frame after an event is frame 1.
+- Phase 2, done-when 6, "noise keeps falling to frame 512": the rig prints no noise by frame.
+- Phase 2, `a1=128`: no frozen-frame reading; `freeze_census` compares with 128, the renderer clamps to 127.
+- Phase 3, done-when 5, the full-table share: not read apart from the no-cell share.
+- Phase 3, B2: not built (optional).
+
+Predictions that read as misses: Phase 2 done-when 5's second (the indirect-off composite rises 1.63 to 3.96 times); Phase 3 done-when 4's `K` with the lamp off in the flight (rises to 2.2 to 2.6 times today's); Phase 3 done-when 10's native guess at `b-native` (1.472). Every hall arm holds still past 300 frames.
+
+`a_turn_reads_converged_cells` reads 30.9 s and 33.1 s, loaded, against the 30 s quiet line; it stays in the gate. Its assertion takes the plan's second branch, since today reads no excess at that run.
+
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+Phase 4's verdict is recorded in the log, so the plan now awaits its fresh-session close review.
+
+- **What shipped:** behind settings, all off by default: A1 to A4, C and B; `--steady` and `--cache-read` on the fly-through, `--steady` on `hero`; the settle rig in `apps/flythrough/tests/`.
+- **Public API changed:** `Lighting::{probe_freeze, skip_inside_probes, skip_converged_draw, probe_lamp, emissive_cache}`, `EmissiveCache`, `CacheRead`, the presets' builders, `Frame::{set_composite_capture, composite_capture}`.
+- **Budget readings:** in the log, every one loaded (indicative), load 1.49 to 5.79, both adapters, 1920 x 1080 from 720p, the level. RTX 3080 Laptop at rest at the spawn, frame ms: off 4.944 (5.224 at Phase 3), a 3.174, ac 3.193, b 4.290, ab 3.118, b no indirect 3.255. AMD Cezanne on RADV, the same: off 35.438 (34.579), a 23.392, ac 23.395, b 28.704, ab 22.252, b no indirect 21.053. `frame_bytes` with the cache off reads main's; with it on, 89 617 600 B at the rig's setting.
+- **Gate at the tip:** at the tree of c933a31 (code c9ce8c9), lavapipe, `--profile gate`: 704 run, 704 passed, 67 skipped, exit 0. Doctests, clippy, fmt, deny and the doc and tier gates exit 0. After merging main (715d0d8): 700 run, 700 passed, 71 skipped, exit 0; build, clippy, fmt exit 0.
+- **Outstanding `human` phases:** none.
 
 ## Followups
+
+Recorded at the close review (2026-11-04, fresh session). Each is for the plan the verdict names
+(the ADR and that plan follow), not a fix to this spike's code, which is thrown away with it.
+
+- **The settle under B is not "count to 5".** At the hall, `b --indirect off` at native reads a
+  mean 3.22 at 64 frames and 1.13 at 512 against its own 8192 (Phase 3's settle table); the
+  verdict plan states a settle bar in frames and the fill mechanism that meets it (pre-warming,
+  coarser far cells, or a lower `C_MIN`), and the owner's dug-hole settle joins that bar.
+- **FSR 2 moves the verdict's light.** `b --indirect off` drifts 0.525 under FSR 2 against 0.004
+  native, and every `up` row's one-frame max reads 99 to 107 against 1 to 7 native. Plan 0056
+  reads the class; the verdict plan takes its answer as an input.
+- **The owner's dots are not reproduced headless.** `a_turn_reads_converged_cells` takes its
+  second branch: today reads no excess at that run (-116.4 against a floor of 31.4), so it defends
+  only that B adds none. The verdict plan's dots test must read an excess for today first, from
+  Plan 0056's fast-yaw rows.
+- **The edit-box reset is a spike's.** `clear_cells` dispatches the dilated boxes' summed volume
+  over 64 in one dimension, with no cap at the workgroup limit (65 535, about 4.19 M voxels) and a
+  `u32` product; and an overflowed frame (more than `MAX_EDITS` boxes) flushes the screen history
+  but leaves the table's cells. Invalidation proper (and a world-space guard) is the ADR's.
+- **The lamp-bounce channel needs its own reach.** `LAMP_REACH` from `intensity / d^2 < 1/256`
+  is 554 voxels, past the volume's far corner (about 443), so a moving lamp holds every probe
+  open; the channel's design sets a reach the volume can bound, or none.
+- **Readings owed on the verdict's arm:** the full-table share (slot-probe failures, apart from
+  the no-cell share), the table's size from its occupancy (0.0142 at most here), `b --indirect
+  off` in flight on both adapters, and quiet rounds at rest. `--steady ab --indirect off` is the
+  verdict's first question (Phase 4, item 1).
+- **The toggle's flicker map** (Phase 2, done-when 13) was never made; it matters again only if
+  the lamp-bounce channel can move the image on a toggle.

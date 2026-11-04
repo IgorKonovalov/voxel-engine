@@ -26,7 +26,8 @@
 // estimate, `luminance(prev_light.xyz)`, through a dead zone: `max(lambda - LAMBDA_FLOOR, 0) /
 // (1 - LAMBDA_FLOOR)`, so the bfloat16 W rounding (about 0.004) of a still scene reads 0 and a
 // change of 10 % or more still registers. Outside the gradient mode the lamp's re-shade and its
-// shadow ray are skipped.
+// shadow ray are skipped. A pixel that skipped its draw holds a mark of its last estimate's luminance
+// (`drawn_estimate`).
 //
 // Both are compared pre-exposed (ADR-0033): the re-shade, computed in absolute units, times this
 // frame's exposure, and last frame's estimate times `exposure_ratio()`; the 1e-4 floor acts on
@@ -88,13 +89,13 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
             let prev_light = textureLoad(grad_prev_light, qi, 0);
             if (combined) {
                 let e = (lamp + emissive) * exposure_now();
-                let old = (luminance(prev_light.xyz) + prev_light.w) * exposure_ratio();
+                let old = (drawn_estimate(luminance(prev_light.xyz)) + prev_light.w) * exposure_ratio();
                 let lambda = abs(e - old) / max(max(e, old), 1e-4);
                 out = vec4<f32>(lambda, e, old, 0.0);
             }
             if ((params.lighting & LIGHTING_EMISSIVE_GUARD) != 0u) {
                 let e = emissive * exposure_now();
-                let old = luminance(prev_light.xyz) * exposure_ratio();
+                let old = drawn_estimate(luminance(prev_light.xyz)) * exposure_ratio();
                 let lambda = abs(e - old) / max(max(e, old), 1e-4);
                 out.w = max(lambda - LAMBDA_FLOOR, 0.0) / (1.0 - LAMBDA_FLOOR);
             }

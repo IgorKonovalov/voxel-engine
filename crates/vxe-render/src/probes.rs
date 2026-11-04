@@ -72,6 +72,22 @@ pub const MAX_AGE: u32 = 127;
 /// age restarts at 1.
 pub const TOUCHED_BIT: u32 = 1 << 31;
 
+/// [`ProbeUniform::steady`] bit: a probe inside rock returns at once from the probe passes.
+pub const STEADY_SKIP_INSIDE: u32 = 1 << 8;
+/// [`ProbeUniform::steady`] bit: the lamp's position or direction changed this frame.
+pub const STEADY_LAMP_MOVED: u32 = 1 << 9;
+/// [`ProbeUniform::steady`] bit: the probe rays leave the headlamp out of their hits.
+pub const STEADY_NO_LAMP: u32 = 1 << 10;
+/// The age a moving lamp caps the probes in its reach at, and at most half the visits a probe
+/// freezes at: it freezes again after the rest of its visits with the lamp still.
+pub const LAMP_MOVED_AGE: u32 = 32;
+
+/// The radius in voxels within which a lamp of radiance `intensity` at one voxel still lights
+/// a surface: `intensity / d^2` falls under `1 / 256` beyond it.
+pub fn lamp_reach(intensity: f32) -> f32 {
+    (intensity * 256.0).sqrt()
+}
+
 /// Texels of one irradiance tile and one visibility tile, borders included.
 const IRR_TILE: u32 = (IRRADIANCE_TEXELS + 2) * (IRRADIANCE_TEXELS + 2);
 const VIS_TILE: u32 = (VISIBILITY_TEXELS + 2) * (VISIBILITY_TEXELS + 2);
@@ -100,7 +116,10 @@ pub struct ProbeUniform {
     /// 1 while a light-change window is open: every probe this frame's update visits blends
     /// at hysteresis 0 and its age restarts at 1.
     pub light_window: u32,
-    pub _pad: u32,
+    /// The steady settings: bits 0..8 the visits a probe freezes at, 0 never
+    /// ([`crate::Lighting::probe_freeze`]), then [`STEADY_SKIP_INSIDE`], [`STEADY_LAMP_MOVED`]
+    /// and [`STEADY_NO_LAMP`].
+    pub steady: u32,
 }
 
 /// One probe as [`ProbeVolume::write_test_irradiance`] presets it.

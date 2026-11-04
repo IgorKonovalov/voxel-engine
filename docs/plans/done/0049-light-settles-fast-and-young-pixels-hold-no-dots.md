@@ -2,7 +2,7 @@
 
 > **Status:** abandoned (2026-11-03, owner: "drop"). Phase 1 ran and its readings stand in the
 > Implementation log below; Phases 2 to 8 were never built, and bars B0, B1 and B2 stayed
-> proposals the owner never set. [Plan 0051](../0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)
+> proposals the owner never set. [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)
 > takes the wander, the settle, the dots and the shimmer, on a mechanism this plan's candidate
 > list did not hold. This file is the plan as it stood at tag `archive/plan-0049` (121737f),
 > with the links repaired: every amendment and the only Implementation log. The branch and

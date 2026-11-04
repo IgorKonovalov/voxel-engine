@@ -1348,6 +1348,8 @@ pub struct Modes {
     /// Voxels between the probe volume's probes: the line names it (`probes 16`) while
     /// indirect light is on.
     probe_spacing: u32,
+    /// `--steady`'s preset when the flag was given: the banner's row `steady NAME`.
+    steady: Option<SteadyMode>,
 }
 
 impl Modes {
@@ -1371,7 +1373,14 @@ impl Modes {
             look: None,
             view: None,
             probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
+            steady: None,
         }
+    }
+
+    /// Names `--steady`'s preset in the banner, when the flag was given.
+    pub fn with_steady(mut self, steady: Option<SteadyMode>) -> Self {
+        self.steady = steady;
+        self
     }
 
     /// These modes with the line starting `source NAME` when `source` is given.
@@ -1562,6 +1571,18 @@ impl Modes {
             let mut look: Vec<&str> = self.look.iter().flat_map(|l| l.split(", ")).collect();
             let view = self.view.map(|v| format!("view {v}"));
             look.extend(view.as_deref());
+            let steady = self.steady.map(|s| format!("steady {}", s.name()));
+            look.extend(steady.as_deref());
+            let cache = self.lighting.emissive_cache.map(|c| {
+                format!(
+                    "cache read {}",
+                    match c.read {
+                        vxe_render::marcher::CacheRead::Nearest => "nearest",
+                        vxe_render::marcher::CacheRead::Smooth => "smooth",
+                    }
+                )
+            });
+            look.extend(cache.as_deref());
             let mut rows = wrap(&look);
             rows.extend(wrap(&self.line().split(", ").collect::<Vec<_>>()));
             rows.join("\n")
@@ -1591,6 +1612,48 @@ fn wrap(parts: &[&str]) -> Vec<String> {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    /// Every `--steady` preset names itself in the banner and parses from its name; no flag,
+    /// no row.
+    #[test]
+    fn the_steady_presets_show_in_the_banner() {
+        use vxe_render::marcher::CacheRead::{Nearest, Smooth};
+        for mode in SteadyMode::ALL {
+            let m = Modes::new(
+                mode.apply(vxe_render::Lighting::default(), Nearest),
+                vxe_render::LightingResolution::default(),
+                0.0,
+            )
+            .with_steady(Some(mode));
+            let banner = m.banner(0.0).expect("the banner shows at the start");
+            assert!(
+                banner.contains(&format!("steady {}", mode.name())),
+                "{banner}"
+            );
+            assert_eq!(SteadyMode::from_name(mode.name()), Some(mode));
+        }
+        let plain = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        assert!(!plain.banner(0.0).unwrap().contains("steady"));
+        let off = SteadyMode::Off.apply(vxe_render::Lighting::default(), Nearest);
+        assert_eq!(off, vxe_render::Lighting::default(), "off is today's frame");
+        let smooth = Modes::new(
+            SteadyMode::Ab.apply(vxe_render::Lighting::default(), Smooth),
+            vxe_render::LightingResolution::default(),
+            0.0,
+        )
+        .with_steady(Some(SteadyMode::Ab));
+        assert!(smooth.banner(0.0).unwrap().contains("cache read smooth"));
+        let c = SteadyMode::Ac.apply(vxe_render::Lighting::default(), Nearest);
+        assert_eq!(
+            c.probe_freeze,
+            Some(vxe_render::marcher::DEFAULT_PROBE_FREEZE)
+        );
+        assert!(!c.probe_lamp);
+    }
 
     /// Each of `F3` to `F7` and `M` changes the banner's text to the new mode; the banner is
     /// empty 3 s after the last change and shows again on the next one.
@@ -1759,6 +1822,70 @@ mod mode_tests {
             m.banner(9000.0).as_deref(),
             Some(format!("look field, far normal off\n{lighting}").as_str())
         );
+    }
+}
+
+/// The steady light spike's presets (`--steady`): today's frame, static light that converges
+/// and freezes (`a`), the lamp out of the probes (`c`), emissive light read from a per-face
+/// table (`b`), or the combinations Phase 4 of the spike compares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SteadyMode {
+    Off,
+    A,
+    C,
+    Ac,
+    B,
+    Ab,
+    Abc,
+}
+
+impl SteadyMode {
+    pub const ALL: [Self; 7] = [
+        Self::Off,
+        Self::A,
+        Self::C,
+        Self::Ac,
+        Self::B,
+        Self::Ab,
+        Self::Abc,
+    ];
+
+    /// The name `--steady` parses and the banner shows.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::A => "a",
+            Self::C => "c",
+            Self::Ac => "ac",
+            Self::B => "b",
+            Self::Ab => "ab",
+            Self::Abc => "abc",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// `lighting` under this preset: `a` converges and freezes, `c` leaves the lamp out of the
+    /// probes, `b` reads emissive light from the per-face table at `read`.
+    pub fn apply(
+        self,
+        lighting: vxe_render::Lighting,
+        read: vxe_render::marcher::CacheRead,
+    ) -> vxe_render::Lighting {
+        let name = self.name();
+        let mut l = lighting;
+        if name.contains('a') {
+            l = l.converge_and_freeze();
+        }
+        if name.contains('c') {
+            l = l.lamp_out_of_probes();
+        }
+        if name.contains('b') {
+            l = l.world_space_cache(read);
+        }
+        l
     }
 }
 
