@@ -1042,6 +1042,7 @@ pub struct Frame {
     temporal_layout: wgpu::BindGroupLayout,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
+    gradient_cache_layout: wgpu::BindGroupLayout,
     gradient: wgpu::ComputePipeline,
     variance_layout: wgpu::BindGroupLayout,
     variance: wgpu::ComputePipeline,
@@ -1551,11 +1552,22 @@ impl Frame {
             ],
         );
         let gradient_layout = io_layout(device, "gradient", &[Io::Float, Io::Uint, Io::Float, f16]);
+        // The guard's group 2: light.wgsl's table and counters at their bindings there.
+        let gradient_cache_layout = io_layout_at(
+            device,
+            "gradient cache",
+            &[(3, Io::Storage), (4, Io::Storage)],
+        );
         let gradient = compute_pipeline(
             device,
             "gradient",
             format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{GRADIENT_WGSL}"),
-            &[Some(&world_layout), None, None, Some(&gradient_layout)],
+            &[
+                Some(&world_layout),
+                None,
+                Some(&gradient_cache_layout),
+                Some(&gradient_layout),
+            ],
             "gradient",
         );
         let downsample_layout = io_layout(
@@ -1737,6 +1749,7 @@ impl Frame {
             temporal_layout,
             temporal,
             gradient_layout,
+            gradient_cache_layout,
             gradient,
             variance_layout,
             variance,
@@ -2154,6 +2167,13 @@ impl Frame {
             occupied: w[1],
             misses: w[0],
         }
+    }
+
+    /// The cells the table's guard reopened since the table was last cleared, after the last
+    /// submitted encode: a blocking read.
+    pub fn read_table_reopens(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> u32 {
+        let bytes = crate::readback::read_buffer(device, queue, &self.cache_stats, 8, 4);
+        bytemuck::cast_slice::<u8, u32>(&bytes)[0]
     }
 
     /// Encodes and submits one frame of `camera` over `world` with history, after advancing
@@ -2891,8 +2911,15 @@ impl Frame {
                 ],
             )
         });
-        // The gradient pass runs for the gradient mode's lambda.
-        let gradient_on = self.look.view.shades() && self.lighting.history == HistoryKill::Gradient;
+        // The gradient pass runs for the gradient mode's lambda and the table's guard, in
+        // every shaded view.
+        let gradient_on = self.look.view.shades();
+        let gradient_cache_bind = bind_io_at(
+            device,
+            &self.gradient_cache_layout,
+            &[3, 4],
+            &[Res::Buf(&self.cache), Res::Buf(&self.cache_stats)],
+        );
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
@@ -3008,7 +3035,9 @@ impl Frame {
             ));
         }
         if gradient_on {
-            gradient.push(frame_pass(&self.gradient, &gradient_bind, 3, strata));
+            let mut pass = frame_pass(&self.gradient, &gradient_bind, 3, strata);
+            pass.groups[2] = Some(&gradient_cache_bind);
+            gradient.push(pass);
         }
         let mut atrous: Vec<Dispatch<'_>> = Vec::new();
         if filtering {

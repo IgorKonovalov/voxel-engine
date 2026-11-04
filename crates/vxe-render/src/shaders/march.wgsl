@@ -1273,8 +1273,8 @@ fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
 // The emissive table (ADR-0043, `Lighting::table_cells`): `params.cache_mask + 1` cells of
 // CACHE_WORDS u32s, in a storage buffer of its own. A cell: the key in words 0 and 1
 // (`cache_key`; word 1 is 0 in a free cell), the count of samples, the three sums of the
-// absolute emissive irradiance in Q17.15, then the kept emitter's voxel and face (two words),
-// its luminance (f32 bits) and a frame stamp, the last four reserved. A key is a voxel and an
+// absolute emissive irradiance in Q17.15, then the kept emitter's face key (two words) and its
+// packed luminance (light.wgsl's `cache_offer`, the guard's), and a frame stamp (reserved). A key is a voxel and an
 // entry face (2 axis + 1 toward +axis) and lives in the first of CACHE_PROBES slots from
 // `cache_slot` holding it. The table's counters live in a second buffer (`CacheStats`).
 const CACHE_WORDS: u32 = 10u;
@@ -1284,11 +1284,12 @@ const CACHE_Q: f32 = 32768.0;
 const CACHE_COUNT: u32 = 2u;
 
 // The table's counters: lighting pixels whose key found neither its cell nor a free slot this
-// frame (cleared each encode), and the cells holding a key.
+// frame (cleared each encode), the cells holding a key, and the cells the guard reopened
+// (gradient.wgsl) since the table was last cleared.
 struct CacheStats {
     misses: atomic<u32>,
     occupied: atomic<u32>,
-    _pad0: u32,
+    reopens: atomic<u32>,
     _pad1: u32,
 };
 

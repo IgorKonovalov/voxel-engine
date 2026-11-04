@@ -904,6 +904,136 @@ fn a_moving_lamp_leaves_the_static_lights_history_alone() {
     }
 }
 
+/// The emitter cell and the far cell of the reveal: in one rock chunk, a cell at x 4..14 (y and
+/// z 20..40) with a `glow` wall at x = 3 facing +x, a one-voxel partition at x = 14, and a cell
+/// at x 15..60 behind it. The plug is the partition's voxels with y and z in `lo .. 60 - lo`:
+/// at 20 the whole partition, at 25 a 10 x 10 window. Returns the world and the plug's carve.
+fn reveal_cells(table: &MaterialTable, glow: MaterialId, lo: i64) -> (World, EditOp) {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(flythrough::cave::ROCK),
+        table,
+    );
+    world
+        .apply(&box_op([4, 20, 20], [14, 40, 40], Mode::Carve))
+        .unwrap();
+    world
+        .apply(&box_op(
+            [3, 20, 20],
+            [4, 40, 40],
+            Mode::Replace {
+                from: flythrough::cave::ROCK,
+                to: glow,
+            },
+        ))
+        .unwrap();
+    world
+        .apply(&box_op([15, 20, 20], [60, 40, 40], Mode::Carve))
+        .unwrap();
+    (
+        world,
+        box_op([14, lo, lo], [15, 60 - lo, 60 - lo], Mode::Carve),
+    )
+}
+
+/// The reveal's frames after the carve of the plug `lo` (`reveal_cells`) until the far wall's
+/// centre-region mean emissive accumulation has risen 90 % of the way from its value before
+/// the carve to its value 600 frames after; and those two values.
+fn reveal_frames(lo: i64) -> Option<(usize, f64, f64)> {
+    let (table, glow, _) = glow_table();
+    let (world, plug) = reveal_cells(&table, glow, lo);
+    let mut rig = LookRig::new(&world, None)?;
+    rig.frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        exposure: vxe_render::Exposure::Manual(1.0),
+        ..vxe_render::Lighting::default()
+    });
+    // In the far cell 21 voxels past the partition, facing its far wall at x = 60.
+    let camera = vxe_render::Camera {
+        position: [35.0, 30.0, 30.0].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 50f32.to_radians(),
+    };
+    let light = vxe_render::LightParams::headlamp();
+    for _ in 0..256 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    }
+    // The centre third of the frame, where the hit lies on the far wall.
+    let f = read_frame(&rig.device, &rig.queue, &rig.frame);
+    let (w, h) = (WIDTH as usize, HEIGHT as usize);
+    let region: Vec<usize> = (h / 3..2 * h / 3)
+        .flat_map(|y| (w / 3..2 * w / 3).map(move |x| y * w + x))
+        .filter(|&i| f.info[i][3] & 1 == 1 && f.pos[i][0] >= 59.0)
+        .collect();
+    assert!(
+        region.len() * 2 >= (w / 3) * (h / 3),
+        "{} far-wall pixels",
+        region.len()
+    );
+    let mean = |rig: &LookRig| {
+        let acc = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+        region
+            .iter()
+            .map(|&i| {
+                0.2126 * f64::from(acc[i][0])
+                    + 0.7152 * f64::from(acc[i][1])
+                    + 0.0722 * f64::from(acc[i][2])
+            })
+            .sum::<f64>()
+            / region.len() as f64
+    };
+    let start = mean(&rig);
+    let r = world.apply(&plug).unwrap();
+    let aabb = r.aabb.expect("the carve removes the plug");
+    rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
+    rig.frame.invalidate(aabb.0.0, aabb.1.0);
+    let mut series = Vec::with_capacity(600);
+    for _ in 0..600 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        series.push(mean(&rig));
+    }
+    let end = series[599];
+    let k = series
+        .iter()
+        .position(|&v| v - start >= 0.9 * (end - start))
+        .map_or(601, |k| k + 1);
+    Some((k, start, end))
+}
+
+/// A reveal follows on the table: the one-voxel rock plug between an emitter's closed cell and
+/// a far cell (the whole partition, `reveal_cells` at 20) is carved after 256 settled frames
+/// (lamp off, filter on, `Manual(1)`), outside the dilated edit box of every far-wall pixel.
+/// The far wall's centre-region mean emissive accumulation rises 90 % of the way to its value
+/// 600 frames after the carve within 16 frames, the table guard's bar at arm's length
+/// (`a_revealed_emitter_reopens_the_cells_it_lights` in `settle.rs`: every lit cell reopens
+/// within 9 frames and reads within 10 % of a fresh run's by frame 16). The frame count with
+/// the plug a 10 x 10 window (`reveal_cells` at 25, which leaves most cells' fresh samples
+/// behind rock) is a `reading:` line.
+#[test]
+fn a_reveal_behind_a_plug_follows_within_seventy_three_frames() {
+    let mut whole = 0;
+    for lo in [20, 25] {
+        let Some((k, start, end)) = reveal_frames(lo) else {
+            return;
+        };
+        println!(
+            "reading: reveal, plug {0} x {0}: 90 % after {k} frames ({start:.5} to {end:.5})",
+            60 - 2 * lo
+        );
+        assert!(
+            end > 4.0 * start.max(1e-6),
+            "the reveal lights the wall: {start} to {end}"
+        );
+        if lo == 20 {
+            whole = k;
+        }
+    }
+    assert!(whole <= 16, "the whole plug: {whole} frames");
+}
+
 /// An emission-scale step from 1.0 to 0.25 on Phase 3's emissive-ceiling box, the filter off,
 /// in the edit-box mode: the floor centre's accumulated irradiance has under 10 % of the change
 /// left after 11 frames, as plain accumulation at 0.2 (0.8^11 = 0.086).

@@ -741,8 +741,8 @@ Open at draft: the "go".
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](logs/0057.md)) | edee79b |
-| 2: The table is the only emissive store, and the default | dev | done: code at d940f32; done-when 7 a reading (amended f107977, test 84f5c60); 9's predictions not met on the patch's scale-1 `sv`, the hall's native drift and the patch's misses; 10 not met (`Lighting::sampler` kept) ([log](logs/0057.md)) | committed with this row |
-| 3: The world-space guard | dev | not started | |
+| 2: The table is the only emissive store, and the default | dev | done: code at d940f32; done-when 7 a reading (amended f107977, test 84f5c60); 9's predictions not met on the patch's scale-1 `sv`, the hall's native drift and the patch's misses; 10 not met (`Lighting::sampler` kept) ([log](logs/0057.md)) | b9b9b3b |
+| 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](logs/0057.md)) | committed with this row |
 | 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
 | 5: The lamp-bounce channel | dev | not started | |
 | 6: The owner's window, with digs | human | not started | |
@@ -765,6 +765,13 @@ each. Empty is fine.)_
 - Phase 2 (d940f32): `apps/flythrough/tests/look.rs`'s `DEFAULT_FRAME_BYTES` changed, outside the phase's files.
 - Phase 2: done-when 7 is a reading (amended at f107977); the table reads +552.5 over its floor after the fast yaw, the read-off arm none.
 - Phase 2: done-when 9's predictions not met: patch scale-1 emissive `sv` 0.0002 / 0.0003, the hall's native drift 0.257, the patch's full-table share 0.00029 (misses above 0: the size goes to the architect).
+- Phase 3: the kept luminance is the centre-to-centre irradiance with its shadow ray, not the sample's contribution.
+- Phase 3: no compare-exchange on the kept point; a 16-bit key tag in the packed luminance word detects a torn store.
+- Phase 3: the fresh-sample re-verify runs only for capped cells whose sums are 0.
+- Phase 3: the gradient pass runs in every shaded view; `Frame::read_table_reopens` is new public API.
+- Phase 3: done-whens 1 to 3 read the far wall's faces with at least 9 pixels as the wall's cells within reach.
+- Phase 3: `a_reveal_behind_a_plug_follows_within_seventy_three_frames` reads 57.3 s and is on the soak list.
+- Phase 3: done-when 5's predictions not met: gradient 0.092 / 0.053 ms on the RTX at rest; 4 reopens over 1024 still frames at the patch.
 
 ### Close triggers
 

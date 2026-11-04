@@ -620,6 +620,43 @@ fn occupancy_readings() {
     }
 }
 
+/// The table guard's reopens on a still camera: at each pose and setting the filters pick,
+/// `VXE_STILL_FRAMES` (default 1024) still frames from a fresh frame, the guard's reopen count
+/// since the start printed every 256 frames.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn still_reopen_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let frames: usize = std::env::var("VXE_STILL_FRAMES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024);
+    let light = LightParams::headlamp();
+    for pose in poses() {
+        for setting in settings() {
+            let mut frame = make_frame(&level, &pose, setting);
+            let camera = pose.camera();
+            let mut line = Vec::new();
+            for f in 1..=frames {
+                frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
+                if f % 256 == 0 || f == frames {
+                    let n = frame.read_table_reopens(&level.device, &level.queue);
+                    line.push(format!("{f}: {n}"));
+                }
+            }
+            println!(
+                "reading[{adapter}]: still reopens {} {}: {}",
+                pose.name,
+                setting.name(),
+                line.join(", ")
+            );
+        }
+    }
+}
+
 /// A long series after an event: the gather's and the composite's mean tile log2 over the
 /// full tiles every 128 frames to `VXE_LONG_FRAMES` (default 8192), still camera, at each
 /// pose and setting the filters pick (events toggle or dig).
@@ -2028,4 +2065,269 @@ fn the_fast_yaw_excess_by_table_read() {
         );
         assert_eq!(ran, DOT_FRAMES, "{name}: the dot frames run");
     }
+}
+
+/// The guard's box: in one rock chunk, an emitter cell at x 4..14 (y and z 20..40) with an ore
+/// wall at x = 3 facing +x, a one-voxel rock partition at x = 14 when `plug`, and a far cell at
+/// x 15..60 behind it; the camera 8 voxels from the far wall at x = 60, facing it (arm's
+/// length: a voxel face covers about 200 pixels at the rig's 192 x 108). Returns the world, the
+/// plug's carve, the emitter wall's replacement by rock and the camera.
+fn guard_box(
+    plug: bool,
+) -> (
+    vxe_world::World,
+    vxe_world::EditOp,
+    vxe_world::EditOp,
+    Camera,
+) {
+    use flythrough::cave::{ORE, ROCK};
+    use vxe_world::*;
+    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
+    let op = |min: [i64; 3], max: [i64; 3], mode| {
+        EditOp::box_(
+            Fixed3(min.map(|v| v * FIXED_ONE)),
+            Fixed3(max.map(|v| v * FIXED_ONE)),
+            mode,
+        )
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(ROCK),
+        &table,
+    );
+    let carve = op([14, 20, 20], [15, 40, 40], Mode::Carve);
+    let edits = [
+        op([4, 20, 20], [14, 40, 40], Mode::Carve),
+        op(
+            [3, 20, 20],
+            [4, 40, 40],
+            Mode::Replace {
+                from: ROCK,
+                to: ORE,
+            },
+        ),
+        op([15, 20, 20], [60, 40, 40], Mode::Carve),
+    ];
+    for e in &edits {
+        world.apply(e).expect("the box is resident");
+    }
+    if !plug {
+        world.apply(&carve).expect("the box is resident");
+    }
+    let to_rock = op(
+        [3, 20, 20],
+        [4, 40, 40],
+        Mode::Replace {
+            from: ORE,
+            to: ROCK,
+        },
+    );
+    let camera = Camera {
+        position: [52.0, 30.0, 30.0].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 50f32.to_radians(),
+    };
+    (world, carve, to_rock, camera)
+}
+
+/// Cells in the guard box's table: few, so a frame's read of the table stays small.
+const GUARD_CELLS: u32 = 1 << 14;
+
+/// The guard box (`guard_box`) under a frame at the rig's 192 x 108, scale 1, lamp off, the
+/// table at GUARD_CELLS cells and its cap `cap`.
+fn guard_rig(plug: bool, cap: u32) -> Option<(CacheBox, vxe_world::EditOp, vxe_world::EditOp)> {
+    let (world, carve, to_rock, camera) = guard_box(plug);
+    let mut rig = cache_box_rig_on(world, camera, cap, [192, 108], None)?;
+    rig.frame.set_lighting(Lighting {
+        lamp: false,
+        indirect: false,
+        exposure: Exposure::Manual(1.0),
+        table_cap: cap,
+        table_cells: GUARD_CELLS,
+        ..Lighting::default()
+    });
+    Some((rig, carve, to_rock))
+}
+
+/// The far wall's face keys in view with at least one gradient stratum's 9 pixels each.
+fn far_wall_keys(rig: &CacheBox) -> Vec<FaceKey> {
+    let mut keys: Vec<FaceKey> = rig
+        .keys()
+        .into_iter()
+        .filter(|&((v, f), n)| v[0] == 60 && f == 0 && n >= 9)
+        .map(|(k, _)| k)
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// A cell's mean luminance (`cell_mean`), 0 for a key with no cell or no sample.
+fn cell_lum(words: &[u32], key: FaceKey, cap: u32) -> f64 {
+    match cache_cell(words, key) {
+        Some(w) if words[w + vxe_render::marcher::CACHE_COUNT_WORD] > 0 => {
+            let m = cell_mean(words, w, cap);
+            0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]
+        }
+        _ => 0.0,
+    }
+}
+
+/// The mean over `keys` of their cells' mean luminance.
+fn wall_lum(words: &[u32], keys: &[FaceKey], cap: u32) -> f64 {
+    keys.iter().map(|&k| cell_lum(words, k, cap)).sum::<f64>() / keys.len() as f64
+}
+
+/// Applies `op` to the rig's world, syncs the mirror and invalidates the edit's box.
+fn guard_edit(rig: &mut CacheBox, op: &vxe_world::EditOp) {
+    let r = rig.level.world.apply(op).expect("the box is resident");
+    let aabb = r.aabb.expect("the edit changes voxels");
+    rig.level
+        .gpu
+        .sync_now(&rig.level.world, &rig.level.device, &rig.level.queue)
+        .expect("the mirror fits");
+    rig.frame.invalidate(aabb.0.0, aabb.1.0);
+}
+
+/// Steps the rig `frames` frames after an edit, reading the table each frame: the frame (1 on)
+/// each key's count first fell below the frame before's (a reopen), and the words after each
+/// frame.
+fn reopen_series(
+    rig: &mut CacheBox,
+    keys: &[FaceKey],
+    frames: usize,
+) -> (Vec<Option<usize>>, Vec<Vec<u32>>) {
+    let mut prev: Vec<u32> = {
+        let w = cache_words(&rig.level, &rig.frame);
+        keys.iter().map(|&k| cache_count(&w, k)).collect()
+    };
+    let mut at = vec![None; keys.len()];
+    let mut series = Vec::with_capacity(frames);
+    for f in 1..=frames {
+        rig.step(1);
+        let w = cache_words(&rig.level, &rig.frame);
+        for (i, &k) in keys.iter().enumerate() {
+            let c = cache_count(&w, k);
+            if c < prev[i] && at[i].is_none() {
+                at[i] = Some(f);
+            }
+            prev[i] = c;
+        }
+        series.push(w);
+    }
+    (at, series)
+}
+
+/// The guard box's cap: the far wall's faces of about 200 pixels cap within two frames.
+const GUARD_CAP: u32 = 256;
+
+/// A revealed emitter reopens the cells it lights (ADR-0043's guard): on the guard box with
+/// the plug in, lamp off, scale 1, the far wall's cells at arm's length (the faces with at
+/// least 9 pixels) are capped and dark after 64 frames; after the plug's carve, which lies
+/// outside every far-wall cell's edit box, every one of them reopens within 9 frames, and the
+/// wall's mean luminance reads within 10 % of a fresh run's (the plug carved before the first
+/// frame, 64 frames) by frame 16. About 2 x 80 frames.
+#[test]
+fn a_revealed_emitter_reopens_the_cells_it_lights() {
+    let Some((mut fresh, _, _)) = guard_rig(false, GUARD_CAP) else {
+        return;
+    };
+    fresh.step(64);
+    let keys = far_wall_keys(&fresh);
+    assert!(keys.len() >= 40, "{} far-wall keys", keys.len());
+    let target = wall_lum(&cache_words(&fresh.level, &fresh.frame), &keys, GUARD_CAP);
+    assert!(target > 0.0, "the fresh run lights the wall");
+    drop(fresh);
+    let (mut rig, carve, _) = guard_rig(true, GUARD_CAP).expect("the device opened once");
+    rig.step(64);
+    assert_eq!(far_wall_keys(&rig), keys, "the same faces in view");
+    let words = cache_words(&rig.level, &rig.frame);
+    for &k in &keys {
+        assert!(cache_count(&words, k) >= GUARD_CAP, "key {k:?} is capped");
+        assert_eq!(cell_lum(&words, k, GUARD_CAP), 0.0, "key {k:?} is dark");
+    }
+    guard_edit(&mut rig, &carve);
+    let (at, series) = reopen_series(&mut rig, &keys, 16);
+    let lums: Vec<f64> = series
+        .iter()
+        .map(|w| wall_lum(w, &keys, GUARD_CAP))
+        .collect();
+    let last = at.iter().map(|a| a.unwrap_or(17)).max().unwrap_or(0);
+    let within = lums
+        .iter()
+        .position(|l| (l - target).abs() <= 0.1 * target)
+        .map(|f| f + 1);
+    println!(
+        "reading: reveal at arm's length, {} keys: the last reopens at frame {last}; the wall's mean within 10 % of the fresh run's {target:.5} at frame {within:?}; means {lums:.5?}",
+        keys.len()
+    );
+    assert!(
+        last <= 9,
+        "every far-wall cell reopens within 9 frames: {at:?}"
+    );
+    let l16 = lums[15];
+    assert!(
+        (l16 - target).abs() <= 0.1 * target,
+        "the wall's mean at frame 16 {l16:.5} against the fresh run's {target:.5}"
+    );
+}
+
+/// A removed emitter darkens the cells it lit: on the guard box without the plug, lamp off,
+/// scale 1, after 64 frames the far wall's cells at arm's length are lit; replacing the emitter
+/// wall with rock reopens every one of them within 9 frames, and by frame 16 each one's mean
+/// reads under 1 % of its lit value. About 80 frames.
+#[test]
+fn a_removed_emitter_darkens_the_cells_it_lit() {
+    let Some((mut rig, _, to_rock)) = guard_rig(false, GUARD_CAP) else {
+        return;
+    };
+    rig.step(64);
+    let keys = far_wall_keys(&rig);
+    assert!(keys.len() >= 40, "{} far-wall keys", keys.len());
+    let words = cache_words(&rig.level, &rig.frame);
+    let lit: Vec<f64> = keys
+        .iter()
+        .map(|&k| cell_lum(&words, k, GUARD_CAP))
+        .collect();
+    for (k, l) in keys.iter().zip(&lit) {
+        assert!(*l > 0.0, "key {k:?} is lit");
+    }
+    guard_edit(&mut rig, &to_rock);
+    let (at, series) = reopen_series(&mut rig, &keys, 16);
+    let last = at.iter().map(|a| a.unwrap_or(17)).max().unwrap_or(0);
+    let worst = keys
+        .iter()
+        .zip(&lit)
+        .map(|(&k, l)| cell_lum(&series[15], k, GUARD_CAP) / l)
+        .fold(0.0, f64::max);
+    println!(
+        "reading: removed emitter at arm's length, {} keys: the last reopens at frame {last}; the largest share of its lit value at frame 16 {worst:.5}",
+        keys.len()
+    );
+    assert!(
+        last <= 9,
+        "every far-wall cell reopens within 9 frames: {at:?}"
+    );
+    assert!(worst < 0.01, "a cell keeps {worst:.4} of its lit value");
+}
+
+/// A still scene reopens no cell: on the guard box without the plug, lamp off, scale 1, the
+/// default cap, over 64 still frames from the first every cell in view's count only grows and
+/// the table's reopen counter reads 0. About 64 frames.
+#[test]
+fn a_still_scene_reopens_no_cell() {
+    let Some((mut rig, _, _)) = guard_rig(false, vxe_render::marcher::DEFAULT_TABLE_CAP) else {
+        return;
+    };
+    rig.step(1);
+    let mut keys: Vec<FaceKey> = rig.keys().into_keys().collect();
+    keys.sort_unstable();
+    assert!(keys.len() >= 100, "{} keys in view", keys.len());
+    let (at, _) = reopen_series(&mut rig, &keys, 63);
+    let fell: Vec<_> = keys.iter().zip(&at).filter(|(_, a)| a.is_some()).collect();
+    assert!(fell.is_empty(), "counts fell: {fell:?}");
+    let reopens = rig
+        .frame
+        .read_table_reopens(&rig.level.device, &rig.level.queue);
+    assert_eq!(reopens, 0, "the guard reopened {reopens} cells");
 }

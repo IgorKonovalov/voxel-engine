@@ -17,8 +17,10 @@
 //                                        HDR_MAX); 0 on a miss. In the steps view the lamp
 //                                        shadow ray's counters instead (see `shade`)
 //   3  storage           cache_cells     the emissive table (march.wgsl): a hit on a cube face
-//                                        finds or claims its cell and adds its emissive sample
-//                                        to it; a capped cell's pixel draws nothing
+//                                        finds or claims its cell, adds its emissive sample to
+//                                        it and offers the sample's emitter as the cell's kept
+//                                        emitter (`cache_offer`); a capped cell's pixel draws
+//                                        nothing
 //   4  storage           cache_stats     the table's counters (`CacheStats`)
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
@@ -113,9 +115,13 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             // A capped cell's pixel casts no emissive shadow ray: the temporal pass reads the
             // cell's mean.
             if (!capped) {
-                emissive = emissive_estimate(gid.xy, rec.p, n, ns);
+                let r = draw_candidates(gid.xy, rec.p, n);
+                emissive = resolve_emissive(r, rec.p, ns);
                 if (cell >= 0) {
                     cache_add(u32(cell), emissive);
+                    if (luminance(emissive) > 0.0) {
+                        cache_offer(u32(cell), cache_voxel(rec.p, ns), cache_face(rec.axis, ns), r);
+                    }
                 }
             }
         }
@@ -179,6 +185,103 @@ fn cache_add(slot: u32, emissive: vec3<f32>) {
         atomicAdd(&cache_cells[word + 2u], q.y);
         atomicAdd(&cache_cells[word + 3u], q.z);
     }
+}
+
+// The cell's words of its kept emitter (ADR-0043's guard): the emitter face's key
+// (`cache_key`, two words; word 1 is 0 while none is kept), then the packed luminance
+// (`kept_pack`).
+const CACHE_KEPT: u32 = 6u;
+const CACHE_KEPT_LUM: u32 = 8u;
+
+// The low 16 bits of a kept emitter's packed word: a hash of its key's two words.
+fn kept_tag(k: vec2<u32>) -> u32 {
+    return hash_u32(k.x ^ hash_u32(k.y)) & 0xFFFFu;
+}
+
+// A kept emitter's packed word: the luminance's f32 bits truncated to their high 16 (sign,
+// exponent, seven mantissa bits, so a u32 `atomicMax` orders non-negative luminances), the
+// key's tag in the low 16. A store of the key's two words that raced another winner's leaves
+// a key whose tag differs from the packed word's, which the guard detects (`guard_cell`).
+fn kept_pack(lum: f32, k: vec2<u32>) -> u32 {
+    return (bitcast<u32>(max(lum, 0.0)) & 0xFFFF0000u) | kept_tag(k);
+}
+
+fn kept_lum(w: u32) -> f32 {
+    return bitcast<f32>(w & 0xFFFF0000u);
+}
+
+// The unit face `face` of voxel `v`'s centre.
+fn face_centre(v: vec3<i32>, face: u32) -> vec3<f32> {
+    return vec3<f32>(v) + vec3<f32>(0.5) + 0.5 * face_dir(face);
+}
+
+// The luminance of the irradiance at the centre of face `face` of voxel `v` from the centre of
+// the emitter face `ef` of voxel `ev`, with the emitter voxel's material's emission now:
+// `lum(Le) cos cos / d^2`, 0 when the emitter voxel emits nothing, either face looks away
+// from the other, or the shadow ray between the centres finds rock; also 0, with no shadow
+// ray cast, when the unshadowed value is at most `above`. The light pass keeps it and the
+// gradient pass re-shades it with the same arithmetic, so nothing changed reads the same
+// value.
+fn kept_irradiance(v: vec3<i32>, face: u32, ev: vec3<i32>, ef: u32, above: f32) -> f32 {
+    let le = emission_of(lookup(ev).material);
+    let l = luminance(le);
+    if (l <= 0.0) {
+        return 0.0;
+    }
+    let n = face_dir(face);
+    let c = face_centre(v, face);
+    let x = face_centre(ev, ef);
+    let to = x - c;
+    let d2 = max(dot(to, to), 1e-4);
+    let dir = to * inverseSqrt(d2);
+    let g = max(dot(n, dir), 0.0) * max(dot(face_dir(ef), -dir), 0.0);
+    let e = l * g / d2;
+    if (g <= 0.0 || e <= above) {
+        return 0.0;
+    }
+    let o = shadow_origin(c, n);
+    let ray = x - o;
+    let dist = length(ray);
+    if (shadowed(o, ray / dist, dist - 1e-3)) {
+        return 0.0;
+    }
+    return e;
+}
+
+// Offers the emitter of a lit sample `r` at the cell `slot` of face `face` of voxel `v` as its
+// kept emitter: kept when its centre-to-centre irradiance (`kept_irradiance`) is above the
+// cell's kept luminance (`atomicMax` on the packed word, then the key's two words stored; a
+// lost race keeps the other winner).
+fn cache_offer(slot: u32, v: vec3<i32>, face: u32, r: Reservoir) {
+    let word = CACHE_WORDS * slot;
+    let ef = r.face;
+    let ev = vec3<i32>(floor(r.x - 0.5 * face_dir(ef)));
+    let cur = kept_lum(atomicLoad(&cache_cells[word + CACHE_KEPT_LUM]));
+    let e = kept_irradiance(v, face, ev, ef, cur);
+    let k = cache_key(ev, ef);
+    let packed = kept_pack(e, k);
+    if (kept_lum(packed) <= cur) {
+        return;
+    }
+    let old = atomicMax(&cache_cells[word + CACHE_KEPT_LUM], packed);
+    if (old < packed) {
+        atomicStore(&cache_cells[word + CACHE_KEPT], k.x);
+        atomicStore(&cache_cells[word + CACHE_KEPT + 1u], k.y);
+    }
+}
+
+// The slot holding the key `(v, face)`, without claiming one; -1 when none does.
+fn cache_find(v: vec3<i32>, face: u32) -> i32 {
+    let base = cache_slot(v, face);
+    let key = cache_key(v, face);
+    for (var i = 0u; i < CACHE_PROBES; i++) {
+        let slot = (base + i) & params.cache_mask;
+        let word = CACHE_WORDS * slot;
+        if (atomicLoad(&cache_cells[word + 1u]) == key.y && atomicLoad(&cache_cells[word]) == key.x) {
+            return i32(slot);
+        }
+    }
+    return -1;
 }
 
 // The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p` with shading normal `n`,
