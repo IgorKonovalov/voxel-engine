@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0058** (ADRs are a separate sequence; next free there is **0044**).
+**Next free number: 0059** (ADRs are a separate sequence; next free there is **0046**).
 
 ## Active roster
 
@@ -20,6 +20,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before Plan 0048 and M10 (owner, 2026-11-03). |
 | [0056](0056-aliasing-spike-what-moves-on-the-final-image.md) | The aliasing spike: what moves on the final image with the light held still, by class; FSR 2, `own`, native and the far normal in one window | approved | M2, no ADR at draft. Beside 0057, read-only against it. Before 0044. |
 | [0057](0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) | Steady light: the per-face table as the only emissive store, faces sampled and guarded, the probes a lamp-bounce channel | approved | M2, ADR-0043 (proposed). Beside 0056, before 0044. |
+| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: a list of eight analytic lights, exact, dropped and carried; scaled emission over the table; a bounce flag | draft | M2, ADR-0044 and ADR-0045 (proposed). After 0057. |
 <!-- roster:end -->
 
 ## Recently closed

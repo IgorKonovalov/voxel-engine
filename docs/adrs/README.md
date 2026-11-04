@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0044.**
+**Next free number: 0046.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -58,6 +58,8 @@ the status.
 | [0041](0041-the-surface-is-the-trilinear-zero-set-of-the-27-count-field.md) | The default surface is honest cubes; the trilinear zero set of the 27-count field is an opt-in look for smooth materials | accepted, Outcome (Plan 0054); supersedes ADR-0011's surface, ADR-0038, ADR-0039; detail fell with Plan 0055 |
 | [0042](0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md) | The far shading normal blends from the face normal to the 27-count gradient by the voxel's size on screen | accepted (Plan 0055); `[2, 6]` provisional, reopened by Plan 0056 |
 | [0043](0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md) | Emissive light is read from a world-space table of per-face irradiance, and the probe volume becomes a lamp-bounce channel | proposed (Plan 0057); amends ADR-0018, ADR-0023, ADR-0036; makes ADR-0037 moot |
+| [0044](0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md) | Direct light from dynamic sources comes from a fixed list of analytic lights the consumer hands the frame, shaded exactly with one shadow ray each | proposed (Plan 0058) |
+| [0045](0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md) | A per-face table cell stores irradiance at unit emission, and the read multiplies by its kept emitter's emission scale now | proposed (Plan 0058); refines ADR-0043 |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
