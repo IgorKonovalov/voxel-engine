@@ -21,6 +21,38 @@
 > against this plan and hands it the yellow dots' class (0056 Phase 2, done-when 4); this plan
 > takes that answer as an input at its Phase 1 and Phase 4. Then Plans 0044 and 0045; Plan 0048
 > is moot under ADR-0043 and awaits the owner's "drop".
+>
+> **Amended 2026-11-04 (architect, for the owner):** Phase 1's stop rule read **stop** (the
+> young-cell share of the fast yaws' excess is 0.005 to 0.099 in every positive row,
+> `logs/0057.md` Phase 1), and Plan 0056's class answer is **light, not the upscaler, on creases,
+> mostly new each frame** (`logs/0056.md` Phase 2). Phase 4 is rewritten: it **drops the warm
+> rays and the fill of every young face in view**, and **builds two things only where a reading
+> on Phase 3's tree says they are owed**: a fill pass for the cells an edit or the guard
+> reopened (the dug hole), against a settle bar of **60 frames at arm's length and 120 at 100
+> voxels**, and the composite reading a full-resolution pixel's emissive from its own face's cell
+> (the creases), if the half-resolution upsample is read to carry the dots. Phases 1 to 3, 5 and
+> 6 stand, with Phase 6's done-when gaining the creases. ADR-0043's fill-pass paragraph is
+> amended in its Outcome at the close, as the plan provided.
+>
+> **Amended 2026-11-04 (architect, for the owner), Phase 2 done-when 7:** Phase 2's fast yaw read
+> the opposite of the bar's premise (`logs/0057.md` Phase 2, done-when 7): with the table's read
+> off the screen path reads no excess (-911.7 over a floor of 69.3, sd 11.6), and the table reads
+> +552.5 over a floor of 27.6 (sd 2.0). The table's read, not the screen path, puts the dots on
+> the screen after a yaw. Done-when 7 becomes a reading whose two excesses feed Phase 4's crease
+> rule, and the bar it carried (the table puts no excess over its own floor after a yaw) moves to
+> Phase 4 as done-when 7, asserted if the own-face read is built. Phase 2 is not held.
+>
+> **Amended 2026-11-04 (architect, for the owner), from Phase 2 and 3's missed predictions**
+> (`logs/0057.md` at bd627c7, Phase 2 done-when 9 and Phase 3 done-when 5). Three decisions:
+> (1) the patch's misses at 4 % load are the hash's or the claim's, not the size's: the size
+> stays 2^20 and dev reads the slot distribution on the CPU, fixes what it names, and the bar is
+> 0 misses; (2) the still hall that moves (native drift 0.257, one frame 0.137, max 175 levels,
+> against Plan 0051's 0.004 and 0.001) is a defect against the owner's first rule, attributed by
+> class in Phase 4's Part 1 and fixed in a new Part 1b before Parts 2 and 3, with the native
+> figures as a bar; (3) the still reopens (4 in 1024 frames at the patch) are a defect, fixed in
+> Part 1b by letting the guard reopen only while the world has changed, and the gradient's cost
+> (0.092 ms) is a reading against a prediction that compared with a pass Phase 2 did not run: the
+> prediction is restated, the cost accepted under `docs/nfr.md` section 2's 6.0 ms line.
 
 ## TL;DR
 
@@ -28,10 +60,11 @@ Plan 0051's spike ended with the owner's verdict: emissive light from the world-
 table, read nearest, no indirect gather, exposure unchanged, the probes shrunk to a lamp-bounce
 channel whose logic is redone. ADR-0043 records it. This plan makes it the renderer. **The table
 becomes the only emissive store** (no screen history, read from the first sample, the a-trous for
-the lamp alone), sized and swept so it holds the surfaces around the camera. **Faces are
-sampled, not only pixels:** a fill pass draws a fixed number of samples a frame for each young
-face in view, and warm rays from the eye find the faces about to come into view, so a far face
-or a dug hole converges in frames, not in its screen footprint. **Invalidation is an edit box
+the lamp alone), sized and swept so it holds the surfaces around the camera. **A reopened face
+is sampled, not only its pixels** (amended): where Phase 3's tree still misses the dug hole's
+settle bar, a fill pass draws a fixed number of samples a frame for each cell an edit or the
+guard reopened, and where the creases' dots are read to come through the half-resolution
+upsample, the composite reads each pixel's own face. **Invalidation is an edit box
 plus a world-space guard:** each cell keeps the emitter that lit it most, and the gradient pass
 re-shades that point from the face and reopens the cell where the light changed. **The probe
 volume becomes a lamp-bounce channel:** lamp-only rays within the lamp's reach, a running mean
@@ -91,9 +124,11 @@ Build ADR-0043 in six phases, the first a reading. **The table** (Phase 2) carri
 2^20 cells by default, reads from the first sample, is swept beyond the light radius when the
 camera's chunk changes, and replaces the screen's emissive history, reservoirs and guard; the
 default flips and the spike's presets go in the same phase. **The guard** (Phase 3) stores the
-kept emitter per cell and re-shades it from the face at the stratum cadence. **The fill pass and
-the warm rays** (Phase 4) sample faces, built only if Phase 1 attributes the fast turn and the
-hole to the young faces. **The lamp channel** (Phase 5) redoes the probe update as lamp-only rays
+kept emitter per cell and re-shades it from the face at the stratum cadence. **The hole and the
+creases** (Phase 4, amended) are read again on Phase 3's tree, then a fill pass for reopened
+cells and an own-face emissive read in the composite are built each only where its reading
+says so; the warm rays and the fill of every young face in view are dropped, because Phase 1
+read the fast turn's excess outside the young cells. **The lamp channel** (Phase 5) redoes the probe update as lamp-only rays
 within a read reach over a running mean that freezes, and keeps the volume's scaffolding. **The
 window** (Phase 6) is the owner's, with digs.
 
@@ -112,12 +147,13 @@ itself are ADR-0043's.
 flowchart LR
     subgraph vxe-render
         LP[light pass: lamp NEE + one emissive sample per pixel; adds to the face's cell; capped face draws nothing] --> T[(table: key, count, 3 sums Q17.15, kept emitter, stamp; 2^20 cells)]
-        FP[fill pass: F samples a frame per young face in view; warm rays from the eye] --> T
+        FP[fill pass, if read owed: F samples a frame per reopened cell in view] --> T
         G[gradient pass: re-shades each cell's kept emitter from its face; reopens a changed cell] --> T
         E[edit boxes: clear the dilated box's cells; overflow clears the table] --> T
         S[sweep on a chunk change: clear cells beyond the light radius] --> T
         T --> TP[temporal pass: emissive = cell mean x exposure; lamp part blends as today]
-        TP --> AT[a-trous: lamp part only] --> C[composite]
+        TP --> AT[a-trous: lamp part only] --> C[composite; if read owed: a cacheable pixel's emissive from its own cell]
+        T -.-> C
         PU[lamp channel: lamp-only rays, probes in reach, running mean that freezes] --> PG[gather] --> C
     end
     subgraph flythrough tests
@@ -270,14 +306,22 @@ in its log, or the orchestrator agrees the order; the log names which.
      at the default equals main's 130 267 216 B minus the `f32` pair's excess (3 686 400 B,
      ADR-0036's figure) minus the reservoir textures' bytes (dev computes and records) plus
      41 943 040 B, with the arithmetic in the test's comment. Under 5 s.
-  7. `a_fast_yaw_reads_an_excess_today_and_none_from_the_table` asserts, at `VEIN_POSE` with the
-     lamp on, indirect off, at the yaw and the run Phase 1 found today's excess at (the plan's
-     guess: `yaw 90 10 f`; the log names it), that **a build with the table's read disabled by a
-     test-only setting reads an excess over its floor** (the test fails first), and that the
-     default's excess at frames 1 to 60 is at most 10 % of it. If Phase 1 finds no run where
-     today reads an excess, the test asserts the default reads none over its floor and the log
-     says the first half could not be written. Two runs of about 200 frames: about 25 s, on the
-     soak list from birth.
+  7. **Amended 2026-11-04 (architect, for the owner): a reading, not a bar.**
+     `a_fast_yaw_reads_an_excess_today_and_none_from_the_table` is renamed
+     `the_fast_yaw_excess_by_table_read` and stays on the soak list (two runs of about 200
+     frames, 29.0 s read on lavapipe). At `VEIN_POSE`, lamp on, indirect off, FSR 2 at 1.5,
+     pinned, `yaw 90 10 f`, frames 1 to 60 after, it runs the default and the test-only
+     `table_read: false` arm and prints each arm's excess, floor and floor sd, and the noise
+     line (60 x the floor's sd) the old assertion used. It asserts only that each arm's floor
+     is measured (a non-zero still-frame dot count with its sd) and that the 60 frames ran; it
+     asserts no excess. Phase 2's reading stands as its first row: **read off -911.7 (floor
+     69.3, sd 11.6, line 696.6); table +552.5 (floor 27.6, sd 2.0, line 120)**. Beside it the
+     log sets Phase 1's rows at the same pose, lamp and yaw (`off` +252, the spike's `b` +158;
+     one seed, Phase 1's tree), so the table's excess reads against v0.41.0's. The test's
+     first premise (the screen path alone reads an excess) did not hold, and Plan 0051's Phase
+     3 read the same; the bar the test carried, that the default puts no excess over its own
+     floor after a fast yaw, is the owner's want and is Phase 4's done-when 7, where the
+     mechanism that could meet it is built.
   8. The banner and the HUD show the table row (`the_banner_names_the_table`, `hud.rs`, no GPU,
      under 1 s), and `--steady`, `--cache-read`, `--emissive-guard`, `--reuse-m-cap` and
      `--sampler` are refused with a message that names this plan's number.
@@ -286,6 +330,12 @@ in its log, or the orchestrator agrees the order; the log names which.
      against 8192 reads under 0.01; occupancy after four flights stays under 0.25 of 2^20 (the
      spike read 59 697 cells after one, so about 240 000 is the guess) and the miss count 0. A
      miss is a reading, and a miss count above 0 sends the size to the architect.
+     **Amended 2026-11-04 (architect, for the owner):** read, three predictions missed (the
+     patch's emissive `sv` 0.0002 and 0.0003 at scale 1; the patch's full-table share 0.00029
+     at 0.0424 occupancy; the hall's native drift 0.257). The first is under the hall's bar
+     below and stands as a reading. The misses go to Phase 4's Part 1 (the table's census) and
+     the hall to Part 1 (the still hall's attribution); both are fixed in Part 1b. Phase 2 is
+     not held.
   10. With every deleted mechanism gone, `cargo build` has no dead `Lighting` field, and the
      gate's test count in the log names each removed and each re-pointed test.
 
@@ -298,7 +348,7 @@ in its log, or the orchestrator agrees the order; the log names which.
   - **The kept emitter.** When the light pass adds a sample whose contribution's luminance is
     above the cell's stored kept luminance, it stores the sample's emitter voxel and face and
     that luminance (`atomicMax` on the luminance word, then a compare-exchange on the point; a
-    lost race keeps the other winner, which is as good). The fill pass (Phase 4) does the same.
+    lost race keeps the other winner, which is as good). The fill pass (Phase 4), if built, does the same.
   - **The re-shade.** The gradient pass, for each 3 x 3 stratum of lighting pixels, picks one
     pixel by its hash of stratum and frame as today, takes its cell, and re-shades the cell's
     kept emitter from the face's centre: one shadow ray toward the emitter face's centre and
@@ -335,60 +385,293 @@ in its log, or the orchestrator agrees the order; the log names which.
      length). Its time in the log.
   5. The readings are in the log. The prediction: the gradient pass's cost stays within 0.02 ms
      of Phase 2's on the RTX (it casts the same one ray a stratum).
+     **Amended 2026-11-04 (architect, for the owner):** read, both predictions missed. The
+     cost: the prediction compared with Phase 2's pass, which Phase 2's default did not encode
+     (0.000); against Phase 1's `b --indirect off`, which ran it (0.017 spawn, 0.018 vein), the
+     guard reads 0.092 and 0.053 on the RTX and 0.395 and 0.236 on the Cezanne (loaded,
+     indicative). That is light plus gradient 0.239 ms of `docs/nfr.md` section 2's 6.0 ms
+     lighting line on the RTX and 1.147 ms on the Cezanne, and the frame at the spawn 3.285
+     against the Budgets row's guess of 3.555: the cost is accepted, and the prediction is
+     restated for Part 1b's tree in Phase 4's done-when 10. The still reopens (patch 0 / 2 / 2 /
+     4 at 256 / 512 / 768 / 1024 frames, lamp on and off alike; vein 0) break the owner's first
+     rule, are not a reading to accept, and are fixed in Phase 4's Part 1b against Phase 4's
+     done-when 9.
 
-### Phase 4: Faces are sampled: the fill pass and the warm rays
+### Phase 4: The dug hole and the creases, read on the table, then fixed where read
 - **Owner skill:** dev
-- **What:** a fill pass that draws a fixed number of samples a frame for every young face in view,
-  and warm rays from the eye that find the faces about to come into view. **Built only if Phase
-  1's stop rule says proceed**; otherwise this phase is skipped, its row in the Implementation
-  log says why, and the architect amends ADR-0043's Outcome at the close.
-- **The fill:**
-  - **The list.** A pixel whose cell is under the cap and whose frame stamp is not this frame's
-    sets the stamp (compare-exchange) and appends the cell's index to the frame's fill list (a
-    storage buffer of at most `FILL_LIST_MAX` entries, 65 536 a guess; a full list drops the
-    rest and counts them).
+- **Amended 2026-11-04 (architect, for the owner).** Phase 1's stop rule read stop, so the phase
+  as first written (a fill of every young face in view and warm rays from the eye) is not built.
+  What it now builds, and what it drops, with the readings that decide each:
+  - **Dropped: the warm rays, and the fill of every young face in view.** Both served the fast
+    turn's young faces. Phase 1 read the young-cell share of the excess dots at the fast yaws at
+    0.005 to 0.099 in every positive row (`b` and `ab`, both poses, lamp on and off, `up1.5` and
+    scale 1), and the young dots at most 171 over 60 frames in any row. Plan 0056 read the
+    yellow dots as light on creases (90.6 to 96.7 % at 10 px a frame), present native and under
+    FSR 2, 19 to 35 % world-anchored and the rest new each frame. Neither describes a face that
+    has too few samples, so sampling the faces in view buys the turn nothing, and its burst (the
+    first draft's guess: about 150 000 samples at a turn's first frame) is cost the screen does
+    not show. `W`, `warm_rays` and the 0-4096-16 384 sweep go with it.
+  - **Dropped as a bar: the hall from a fresh start** (the first draft's 256 against 8192 under
+    0.5). A fresh start is not a reopened cell, so nothing here fills it; Phase 2's hall rows are
+    read again on this phase's tree and the owner judges them in Phase 6's run 1.
+  - **Kept, if read owed: a fill pass for reopened cells (the dug hole).** Phase 1 read the hole
+    slow at both distances (`S90` 335 frames at arm's length and 2031 at 100 voxels, scale 1;
+    `up1.5` reads none), with the young share 0 by frame 16 at arm's length and `b1` (`C_MIN` 1)
+    reading the same as `b`, and lamp on and off alike: the hole's cells leave the young class
+    fast and their means then converge at the samples the hole's pixels give them. On the spike
+    the screen's emissive history and reservoirs still sat in that path, and Phase 2 removes
+    them, so the hole is read again before anything is built.
+  - **Kept, if read owed: the composite reads a pixel's emissive from its own face (the creases).**
+    Plan 0056 puts the dots on creases at both upscalers, and Phases 2 and 3 do not reach the
+    crease: Phase 2 removes the screen history, reservoirs and the a-trous on the cached part,
+    Phase 3 reopens changed cells, but the composite still builds each full-resolution pixel's
+    light from the four half-resolution lighting pixels around it (`composite.wgsl`, `lit_at`),
+    weighting by normal and plane, and takes the nearest tap's value when every weight vanishes.
+    At a crease, with the camera moving, that nearest tap can lie on the other face, so a pixel
+    shows its neighbour face's cell for one frame. This is a candidate the readings below
+    attribute or refute, not yet a reading.
+  - **Amended 2026-11-04 (architect, for the owner), from Phase 2's done-when 7.** The fast
+    yaw's excess is now measured headless on the table: +552.5 over a floor of 27.6 (sd 2.0)
+    with the table's read on, and none (-911.7 over 69.3) with it off (`logs/0057.md` Phase 2).
+    So the table's read is what puts the dots up after a yaw, and they fall on mature cells
+    (Phase 1). The rig's row joins the crease reading as a fifth row, its default taken from
+    that reading until Phase 3's tree re-reads it, and the bar Phase 2's done-when 7 carried
+    lands here as done-when 7. A second candidate is named, not built: at a true face edge FSR
+    2's jitter moves a pixel between two faces' cells each frame, a hard step that Phase 2's
+    removal of the screen history no longer smooths (v0.41.0 read +252 at the row, the spike's
+    `b` +158). The rig row at scale 1 and at `--lighting full` splits the two.
+- **The settle bar for the dug hole, stated.** The owner: "I can count to 5 when light settles"
+  (`LIGHT-FEEDBACK.md`) and "when i dig it takes some time for light to settle in hole"
+  (`logs/0051.md`, Phase 4, note 6). Five counts is the fault, so the bar is one count, one
+  second, at `docs/nfr.md`'s 60 fps target, the slowest rate the budget allows (the fly-through
+  presents without vsync, so the RTX reaches it in about a fifth of that): **the rig's dig at
+  `VEIN_POSE` at arm's length (`[723, 646, 208]`, 5 voxels from the eye), scale 1, lamp off:
+  the hole's emissive `S90` at most 60 frames**; the dig 100 voxels down the passage (Phase 1's
+  `dig100`), scale 1, lamp off: **at most 120 frames**, two counts, since the owner sees it from
+  range. `up1.5` is read at both and is not asserted (Phase 1 read `S90` none there: the step
+  lies within FSR 2's noise).
+- **Part 1, the readings first, on Phase 3's tree** (the rig, lavapipe for asserted figures and
+  the RTX through `VXE_TEST_ADAPTER=rtx` for the rest, lane rule 9c):
+  - **The hole:** `dig_box_readings` at both distances, scale 1 and `up1.5`, lamp on and off:
+    `S90`, mean90, settled % and the young share, beside Phase 1's rows. **The rule:** if both
+    distances meet the bar at scale 1, the fill pass is not built and the log says so; if either
+    misses, Part 2 builds it.
+  - **The creases:** Plan 0056's fast yaw (90 degrees at ten display pixels a frame, 240 frames)
+    at the vein and the patch, FSR 2 and native, lamp off, at the default and at `--lighting
+    full`: the yellow dots a frame by 0056's rule (a dot by the settle rig's rule whose red and
+    green are both over twice its blue and green over half of red; dev writes it in
+    `support/settle.rs` from `logs/0056.md`, without touching 0056's files), with 0056's `H` rows
+    beside (131.95, 253.66, 61.39 and 63.30 a frame: patch FSR 2, patch native, vein FSR 2, vein
+    native), and for each yellow dot whether its displayed emissive lies more than 10 % from its
+    own face's cell mean times the exposure (the cell read back on the CPU as Phase 1's rig
+    does). **The rig's row (amended 2026-11-04):** `the_fast_yaw_excess_by_table_read`'s run
+    (vein, lamp on, `yaw 90 10 f`, frames 1 to 60) at the default and at `--lighting full`, each
+    at `up1.5` and scale 1, with the excess dots split the same way (displayed emissive more
+    than 10 % from its own cell or not); the default at `up1.5` is Phase 2's +552.5 over 27.6
+    until this tree re-reads it, and the log sets both beside. **The rule:** if `--lighting full`
+    reads at most half the default's yellow dots (the rig's row: half its excess) in at least
+    three of the five rows, the rig's row among them, and over half of the default's yellow
+    dots (the rig's row: its excess dots) lie more than 10 % from their own cell, Part 3 builds
+    the own-face read; otherwise it is not built, and the log carries the split, the rig row's
+    scale-1 figure with it, to the plan's Followups. The rig's row is required because it is
+    the one row where the table's read was shown to carry the excess.
+  - **Amended 2026-11-04 (architect, for the owner): three more readings, on Phase 3's tree,
+    before Part 1b, Part 2 or Part 3 is built.** They come first because the owner's one
+    priority is a still image, and every later reading (the hole's settle, the creases' dots)
+    is read against a frame that must first hold still.
+  - **The still hall, by class (the attribution run).** Phase 2 read the hall at native drift
+    0.257 (p99 4, max 203, over 8 0.52 %) and one frame 8192/8193 0.137 (max 175, over 2
+    0.78 %), against Plan 0051's `b-noind-native` 0.004 and 0.001 (max 1) with the same cell
+    arithmetic; at `up` 0.707 and 0.255 against 0.525 and 0.178. A one-frame step of 175 levels
+    with nothing moving is not a mean of a thousand samples converging; it is a pixel whose
+    value is redrawn. The run repeats the hall (`hero --exposure 8 --adapter NVIDIA`, `N` 4096,
+    8192 and 8193, native and `up`, lamp off) with a per-pixel class mask written beside each
+    image (a test-only output of the composite or the temporal pass, dev's choice), and splits
+    the drift's and the one frame's sums, means, maxima and over-2 and over-8 shares by class.
+    The classes, each a candidate the run must keep apart:
+    1. **The fallback, no face** (`rec.field`, translucent, `rec.axis < 0`): one sample a
+       frame blended at `ALPHA` 0.2, which redraws every frame by construction. The leading
+       candidate for the one-frame steps.
+    2. **The fallback, a missed key** (a cacheable hit whose key found no slot): the same
+       redraw, on a face the table should hold. Its share joins the census below.
+    3. **A cell under the cap** (count under `C_CAP` at frame 4096): still accumulating, so
+       its mean moves by about its noise over `sqrt(count)` between 4096 and 8192, a broad,
+       small drift; it cannot carry a 175-level step in one frame. Read its share of the drift
+       against its count.
+    4. **A capped cell** (count at `C_CAP`): bit-identical by construction; any change in this
+       class is a defect (a duplicate key's second cell, a race in the claim), named as such.
+    5. **A reopened cell:** the guard's reopen counter over the run, and the pixels whose cell
+       reopened between the two frames (the reopen bit or a count that fell); on Phase 3's tree
+       this includes a torn-store tag that reopens.
+    6. **The half-resolution upsample at a crease:** at a still native camera the taps are
+       fixed, so this class can only pass on a change in classes 1 to 5; the run reads the
+       pixels whose four taps span two cells apart, to confirm it carries nothing still.
+    7. **FSR 2's jitter across face edges:** `up` only; its share is the `up` row minus the
+       native row, class by class, and it is Plan 0056's to judge (this plan asserts native).
+    Also counted over the run: whole-table clears (the emission-scale clear of Phase 2's
+    deviation, the edit overflow, the sweep), each of which would reset every class at once.
+    **The rule:** the class or classes carrying over half of the native one frame's sum, and
+    over half of the native drift's, are Part 1b's to fix. If class 3 alone carries the drift
+    and the one-frame bar is met without it, the drift is the cells' settle and goes to the
+    owner in Phase 6 (a) with its count-by-frames table, not to a mechanism.
+  - **The table's census (the misses).** The patch read a full-table share of 0.00029 at an
+    occupancy of 0.0424; the vein 0 at 0.0576. Four linear probes at a load of 0.04 under a
+    uniform hash leave a key without a slot with a probability near `0.04^4`, about 3 x 10^-6,
+    so the 44 448 keys would expect under one missed key in the whole table; a share of pixels
+    of 0.00029 is a near face, or many keys. A size change does not answer that; the hash's
+    spread or the claim does. Dev reads, on the CPU, the patch's and the vein's key sets (the
+    cells dumped after the four flights, by key) through `marcher::cache_slot`: the slot runs'
+    lengths against a seeded uniform assignment of the same keys, the keys with no free slot
+    in four, and duplicate keys (one key held in two cells, which `cache_claim`'s exchange of
+    word 1 before word 0 allows when a second pixel reads word 0 before it is stored). **The
+    rule:** whichever of the hash, the claim or the counting (a pixel counted twice, a miss
+    counted during a clear) the census names, Part 1b fixes; the size stays 2^20 unless the
+    census reads uniform runs and the misses persist, which comes back to the architect.
+  - **The still reopens, by cause.** Phase 3 read 4 reopens over 1024 still frames at the
+    patch, lamp on and off alike. Dev logs each reopen's branch in `gradient.wgsl`: a kept
+    emitter whose re-shade left the dead zone (with `e_old`, `e_new`), a torn-store tag that
+    found its key lighting nothing, or a dark capped cell whose fresh sample drew light (a rare
+    path a cell of 4096 zero samples has not met, which the scene's stillness does not stop).
+    Its verdict line names the cause or causes for Part 1b.
+- **Part 1b, the still image, fixed (amended 2026-11-04, architect, for the owner; built before
+  Parts 2 and 3).**
+  - **The guard reopens only while the world has changed.** With nothing edited, no chunk of
+    the light radius uploaded and no emission scale changed (which clears the table already),
+    no cell's emissive light can change, so a reopen is noise. The gradient pass's re-shade and
+    its fresh sample run, and may reopen a cell, only within `GUARD_WINDOW` frames of such an
+    event (a frame counter in the params, reset by the edit boxes, the mirror's uploads within
+    `light_radius` and the emission scales; 256 a guess, at least the far face's re-verify
+    cadence of about 26 frames ten times over; dev states the events in a comment). Outside the
+    window the guard does nothing and the gradient pass encodes the lamp's lambda only. Dev
+    also fixes, inside the window, any cause the reopens' attribution names that is not a
+    change (a torn tag read as a reopen, a dead zone crossed by the packed luminance's 16-bit
+    rounding). Phase 3's done-whens 1 to 4 still hold (the reveal and the removal open the
+    window by their edit).
+  - **The still hall's attributed class, fixed.** If class 1 or 2 carries it: the fallback
+    becomes a running mean that freezes while its pixel's reprojection holds (1 / n up to a
+    cap, then held; restarted where the reprojection fails, an edit box touches the pixel or
+    the lamp part's reset fires), so a still fallback pixel holds still; the lamp's own `ALPHA`
+    is untouched. If class 4 or 5 carries it: the defect the census or the reopens' cause
+    names. Any other attribution comes back to the architect with the table before a mechanism
+    is built.
+  - **The table's misses, fixed** as the census names (a hash that mixes the key's two words
+    whole, a claim that stores the key before it publishes it, or a corrected counter); the
+    size stays 2^20.
+  - **Order:** the guard window, then the misses, then the fallback, each with its test; then
+    the hall and the still reopens are re-read on Part 1b's tip before Part 2 starts.
+- **Part 2, the reopened fill (if the hole's rule says build):**
+  - **The list.** The edit-box clear and the guard's reopen set a `reopened` bit in the cell's
+    stamp word; a pixel whose cell carries the bit, is under `C_FILL` samples (swept 64, 256;
+    the default is the reading's) and whose stamp is not this frame's sets the stamp
+    (compare-exchange) and appends the cell's index to the frame's fill list (at most
+    `FILL_LIST_MAX` entries, 16 384 a guess; a full list drops the rest and counts them). A cell
+    reaching `C_FILL` clears the bit. A face seen for the first time, with no edit, is never
+    listed.
   - **The pass.** One workgroup of `F` lanes per listed cell (`F` swept 4, 8, 16; the default is
-    the reading's), each lane drawing one resampled emissive sample from a random point on the
-    face (the voxel and face from the key, the point jittered in the face), with its shadow ray,
-    added to the cell and offered as the kept emitter. The pass runs after the light pass and
-    before the temporal pass, so the frame reads the filled mean.
-  - **The warm rays.** `W` rays a frame (swept 0, 4096, 16 384) from the eye over the full
-    sphere (the probe set's Fibonacci directions, rotated per frame), through the full walk; each
-    hit on a cube face under its cap appends its cell to the fill list. A hit behind the camera
-    warms the face a turn will reveal. `W` is a `Lighting` setting; 0 turns it off.
-  - **Cost by arithmetic.** After a 90-degree turn at the vein the spike saw about 10 000 to
-    18 000 keys in view, so a turn's first frame lists at most that many young faces: at `F` 8,
-    about 150 000 samples, about two thirds of a 720p lighting pass's emissive work, falling to
-    near nothing at rest. The warm rays at 16 384 are about a fourteenth of a 720p hit pass.
-    Both are guesses the readings replace.
-- **The settle bar, stated.** At the hall (`hero`, native, lamp off, a fresh start), the mean per
-  pixel at 256 frames against the same arm's 8192 reads **under 0.5** and the share over 8 levels
-  under 0.5 %, against Phase 2's reading (the spike's B with indirect off read 1.691 and 3.20 %).
-  A dug hole at arm's length and at 100 voxels (Phase 1's events) reaches within 10 % of its
-  settled mean **within 60 frames**. The fast yaw's excess dots in young-cell pixels fall to at
-  most 10 % of Phase 1's. A miss is a reading the owner judges in Phase 6.
-- **The readings:** the young share, `K` and the dots at the rig's yaws and Plan 0056's fast
-  yaw, both poses, lamp on and off; the hall at 256, 512, 4096, 8192, native and `up`; the hole
-  at both distances; the fill and warm passes' cost at rest, at the turn's first frames and in
-  the flight, both adapters, for each `F` and `W`.
-- **Files touched:** `crates/vxe-render/src/shaders/cache_fill.wgsl` (new), `light.wgsl`,
+    the smallest that meets the bar), each lane drawing one resampled emissive sample from a
+    random point on the face, with its shadow ray, added to the cell and offered as the kept
+    emitter (Phase 3). It runs after the light pass and before the temporal pass.
+  - **Cost by arithmetic.** The list is bounded by the reopened faces in view: the rig's dig of
+    radius 10 exposes a sphere's surface, 4 pi 10^2, about 1260 faces, about 1900 with the
+    voxels' stair (a guess of 1.5), so at `F` 8 about 15 000 samples on the dig's first frame,
+    under a tenth of a 720p lighting pass's emissive work, falling as the cells reach `C_FILL`;
+    nothing at rest and nothing on a turn. A guess the readings replace.
+- **Part 3, the own-face read (if the creases' rule says build):** the composite, for a
+  full-resolution pixel whose hit has a face key and a cell, takes the emissive part as that
+  cell's mean times `exposure_now()`; the lamp part and the fallback's emissive are upsampled as
+  today, and a pixel whose face has no cell takes today's upsample. One table lookup a
+  full-resolution pixel, at most four probes: **a guess** of under 0.1 ms on the RTX at
+  1280 x 720 internal, read.
+- **The readings, at the end** (on the phase's tip, whatever was built): the hole at both
+  distances against the bar; the creases' yellow dots at 0056's fast yaw, four rows, against
+  0056's `H` rows; the rig's dots and `K` at its yaws, both poses, lamp on and off; the hall at
+  256, 512, 4096, 8192, native and `up`; the fill and the composite's cost at rest, on the dig's
+  first frames and in the flight, both adapters, for each `F` and `C_FILL`; amended 2026-11-04:
+  the still hall's class table, the still reopens and the occupancy with misses, against
+  done-whens 8, 9 and 11, so a fill or an own-face read that moves a still frame shows there.
+- **Files touched:** `crates/vxe-render/src/shaders/cache_fill.wgsl` (new, Part 2),
+  `temporal.wgsl` (the fallback's mean, Part 1b), `crates/vxe-render/src/marcher.rs`'s
+  `cache_slot` and its CPU test (Part 1b),
+  `cache_clear.wgsl`, `gradient.wgsl` (the reopened bit), `composite.wgsl` (Part 3), `light.wgsl`,
   `march.wgsl`, `crates/vxe-render/src/marcher.rs`, `apps/flythrough/src/main.rs`, `hud.rs`,
-  `apps/flythrough/tests/settle.rs`, `upscale.rs` (`frame_bytes`), `docs/plans/logs/0057.md`.
+  `apps/flythrough/tests/settle.rs`, `support/settle.rs`, `lights.rs`, `upscale.rs`
+  (`frame_bytes`), `docs/plans/logs/0057.md`.
 - **Done when:**
-  1. `a_young_face_fills_at_the_fill_rate` asserts, on `cache_box` with the camera 100 voxels
-     from a one-voxel face at scale 1 (the face covers under one lighting pixel), that at `F` 8
-     the cell's count reads at least 8 after frame 1 and at least 16 after frame 2, and that
-     with the fill off it reads at most 2 after frame 2. About 4 s.
-  2. `warm_rays_fill_faces_behind_the_camera` asserts, on a box with a lit wall behind the
-     camera, that with `W` 4096 the wall's cells hold samples after 8 still frames and with `W`
-     0 they hold none. About 4 s.
-  3. `a_dug_hole_refills_within_sixty_frames` asserts, on the box at both camera distances, that
-     after a dig the hole's cells read within 10 % of their frame-512 means by frame 60. About
-     600 frames on a box: about 20 s.
-  4. The fill and warm settings show in the banner and the HUD (`hud.rs`'s banner test, no GPU).
-  5. The readings are in the log against the bar above; the defaults for `F` and `W` are the
-     smallest that meet it, named in the log, or the log says no setting did.
-  6. `frame_bytes` reads Phase 2's plus the fill list's bytes, asserted in `upscale.rs`.
+  1. The log holds Part 1's tables and two verdict lines, the hole's (build or not, with the
+     `S90`s) and the creases' (build or not, with the shares); amended 2026-11-04, and three
+     more: the still hall's (the classes over half, with their shares), the census's (hash,
+     claim or counting) and the reopens' (the cause by branch).
+  2. If Part 2 is built: `a_dug_hole_settles_within_the_bar` asserts, on `cache_box` at scale 1,
+     lamp off, with the camera 5 voxels and 100 voxels from a dig of radius 10, that the hole's
+     emissive `S90` reads at most 60 and at most 120 frames, and that with `F` 0 the 100-voxel
+     dig reads over 120 (the test fails first; if it does not, the log says so and the fill's
+     need rests on the level's reading). About 2 x 300 frames: about 20 s.
+  3. If Part 2 is built: `a_reopened_face_fills_and_a_new_face_does_not` asserts, on `cache_box`
+     at scale 1 with a one-voxel face 100 voxels away (under one lighting pixel), that after an
+     edit box clears its cell the count reads at least `F` after frame 1 and at least `2F` after
+     frame 2, and that the same face first seen with no edit reads at most 2 after frame 2.
+     About 4 s.
+  4. If Part 3 is built: `a_crease_pixel_reads_its_own_face` asserts, on `cache_box` at half
+     lighting with an emitter lighting one wall of an L crease and not the other, the camera
+     stepped one full pixel a frame for 16 frames, that every full-resolution pixel whose hit
+     has a cell shows its own cell's mean times the exposure within one `f16` step; and that
+     with the read disabled by a test-only setting at least one pixel of the dark wall shows the
+     lit wall's value in some frame (the test fails first). Under 5 s.
+  5. What was built shows in the banner and the HUD (`F`, `C_FILL`, `own-face read`; `hud.rs`'s
+     banner test, no GPU, under 1 s), and `frame_bytes` reads Phase 3's plus the fill list's
+     bytes if Part 2 is built, asserted in `upscale.rs`.
+  6. The end readings are in the log. The predictions: the hole meets the bar at `F` 8; with
+     Part 3 the yellow dots a frame read under half of 0056's `H` rows in every row. A miss is a
+     reading the owner judges in Phase 6.
+  7. **Added 2026-11-04 (architect, for the owner), from Phase 2's done-when 7.** If Part 3 is
+     built: `a_fast_yaw_reads_no_excess_from_the_table` asserts, on the rig's row (`VEIN_POSE`,
+     lamp on, indirect off, FSR 2 at 1.5, pinned, `yaw 90 10 f`, frames 1 to 60), that the
+     default's excess over its floor is at most its noise line (60 x the floor's sd; 120 at
+     Phase 2's sd 2.0, under v0.41.0's +252 at the row), and that with the own-face read
+     disabled by a test-only setting it reads over that line (the test fails first; Phase 2
+     read +552.5). Two runs of about 200 frames: about 30 s, on the soak list from birth. If
+     Part 3 is not built, the test is not written and `the_fast_yaw_excess_by_table_read`'s
+     row on this phase's tip goes to the log and the Followups.
+  8. **Added 2026-11-04 (architect, for the owner), the still hall.** The log holds Part 1's
+     class table (native and `up`, drift and one frame, by class, with the clears counted) and
+     its verdict line, and the same table re-read on Part 1b's tip and on the phase's tip. The
+     bar, at native on the RTX (a reading against a bar, not asserted, since the hall at 8192
+     frames does not run on lavapipe): **the one frame 8192/8193 mean at most 0.005 with no
+     pixel over 8 levels, and the drift 4096/8192 mean under 0.01** (Plan 0051's arm read 0.001,
+     max 1, and 0.004). The asserted half, on lavapipe: if the fallback is fixed,
+     `a_still_fallback_pixel_holds_still` asserts, on the translucent-slab box of Phase 2's
+     done-when 2, scale 1, lamp off, that after 64 frames the slab's pixels are bit-identical
+     over the next 64, and that a one-voxel edit box over the slab restarts them (their value
+     changes within 2 frames). About 140 frames: about 6 s. A miss of the native bar goes to
+     the owner in Phase 6 (a) with the class table; `up` is a reading for Plan 0056.
+  9. **Added 2026-11-04 (architect, for the owner), the still reopens.**
+     `a_still_world_never_reopens_a_cell` asserts, on `guard_box` (Phase 3's) with the cause
+     the reopens' attribution names built into it (for a rare path: a dark wall lit by an
+     emitter seen through a gap small enough that a capped cell drew no light; dev records the
+     geometry), scale 1, lamp off, `C_CAP` 256, that over 512 still frames after every cell in
+     view is capped the reopen counter reads 0 and every count is monotone, and that with the
+     guard window forced open for the whole run (a test-only setting) the counter reads above 0
+     (the test fails first; if it does not, the log says so and the bar rests on the level's
+     reading). About 600 frames: about 20 s. On the level, `still_reopen_readings` at both
+     poses, lamp on and off, 1024 frames, reads **0 at 256, 512, 768 and 1024** on Part 1b's
+     tip (RTX, a reading against a bar); Phase 3's done-whens 1 to 4 still pass.
+  10. **Added 2026-11-04 (architect, for the owner), the gradient's cost restated.** The
+     prediction Phase 3's done-when 5 carried compared with a pass Phase 2 did not encode. On
+     Part 1b's tip, RTX, at rest at the spawn and the vein: with the guard window closed the
+     gradient pass reads within 0.02 ms of Phase 1's `b --indirect off` (0.017 and 0.018), and
+     in the window, read on the dig's first frames, it reads Phase 3's 0.092 and 0.053 within
+     0.02 ms (loaded figures, indicative). A miss is a reading; the lighting line's 6.0 ms is
+     the bar.
+  11. **Added 2026-11-04 (architect, for the owner), the table's census.**
+     `the_table_hash_spreads_a_levels_keys` (no GPU, under 5 s) asserts, on the key set of
+     every air-facing face within a 128-voxel cube around the patch and around the vein, built
+     headless from `vxe-world` at seed 1 (dev's enumeration and the key count, recorded), that
+     at 2^20 cells and four probes no key lacks a slot, and that at the power of two nearest a
+     load of 0.5 the share of keys without a slot is within twice a seeded uniform
+     assignment's of the same keys at the same size. The GPU half: after Part 1b,
+     `occupancy_readings` reads a full-table share of **0 at both poses after four flights**
+     and no duplicate key in the dump. A miss above 0 at 2^20 comes back to the architect with
+     the census before the size changes.
 
 ### Phase 5: The lamp-bounce channel
 - **Owner skill:** dev
@@ -457,6 +740,13 @@ in its log, or the orchestrator agrees the order; the log names which.
      `b --indirect off` 3.255 ms plus 0.3; Cezanne under 21.053 plus 2.0. `frame_bytes` falls by
      seven eighths of the atlases and state (about 44 MB of the 58 837 024 B, arithmetic) at a
      side of 16.
+  8. **Added 2026-11-04 (architect, for the owner), the still image holds through the
+     channel.** On Phase 5's tip the hall's native row (lamp off, so no probe pass runs) meets
+     Phase 4's done-when 8 bar again, and `still_reopen_readings` reads 0 at both poses with the
+     lamp on and still (the lamp channel uploads nothing that opens the guard's window). With
+     the lamp on and still at the vein, the composite reads bit-identical over 64 frames once
+     `probe_freeze` visits have passed (scale 1, the rig, RTX reading; lavapipe asserts it
+     through done-when 3's frozen texels). A miss goes to the owner in Phase 6 (a).
 
 ### Phase 6: The owner's window, with digs
 - **Owner skill:** human
@@ -487,8 +777,14 @@ in its log, or the orchestrator agrees the order; the log names which.
   ```
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's words on: (a) whether anything moves at rest, hall
-  and level; (b) the fast turn, against v0.41.0 and against the spike's session; (c) the dug hole
-  at arm's length and at range, in frames or seconds by eye; (d) the lamp bounce's look and lag,
+  and level, with Phase 4's still-hall class table (native and `up`, Part 1 and the phase's
+  tip) and the still reopens at hand (amended 2026-11-04); if the drift left is the uncapped
+  cells' settle (class 3), whether that settle is acceptable is the owner's call here, and the
+  `up` drift over native is judged as Plan 0056's; (b) the fast turn, against v0.41.0 and against the spike's session, and the small
+  yellow dots on creases while turning (Phase 4's verdict on the own-face read and the rig's
+  fast-yaw row, against v0.41.0's, beside it); (c) the
+  dug hole at arm's length and at range, in frames or seconds by eye, against Phase 4's bar (60
+  and 120 frames); (d) the lamp bounce's look and lag,
   and whether `lamp_bounce` stays on by default; (e) the step at voxel edges; (f) what remains
   visible, by run and pose; (g) whether the default is accepted. A "no" on (g) names the run and
   goes to the architect with the tables. The plan closes with that record.
@@ -500,8 +796,9 @@ in its log, or the orchestrator agrees the order; the log names which.
 pub struct Lighting {
     // ... the lamp, candidates, shadow walk, filter, exposure, tone map as today ...
     pub table_cells: u32,          // 2^20 by default; a power of two
-    pub fill_samples: u32,         // F: samples a frame per young face in view; 0 off
-    pub warm_rays: u32,            // W: rays a frame from the eye; 0 off
+    pub fill_samples: u32,         // F: samples a frame per reopened cell in view; 0 off (if built)
+    pub fill_until: u32,           // C_FILL: a reopened cell leaves the list at this count (if built)
+    pub own_face_read: bool,       // the composite reads a pixel's own cell (if built)
     pub lamp_bounce: bool,         // the probe channel; on by default, nothing runs lamp-off
     pub probe_freeze: u32,         // visits to converge; the only blend
     pub probe_side: u32,           // PROBES_PER_AXIS, from the reach
@@ -522,10 +819,10 @@ Base figures are Plan 0051's cost tables (`logs/0051.md`, Phases 2 and 3), the l
 
 | `nfr.md` figure | Base (read, indicative) | Expected | How the close measures it |
 |---|---|---|---|
-| §2 GPU frame | RTX `off` 4.944 ms, `b --indirect off` 3.255; Cezanne 35.438, 21.053 | The default (table, guard, fill, lamp channel): **a guess** of the `b --indirect off` figure plus 0.3 ms on the RTX and 2.0 ms on the Cezanne, lamp on; at a turn's first frames the fill adds its burst (Phase 4's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD [--pose vein]`, three quiet rounds alternated with the v0.41.0 binary, the perf lock, the memory cap; and the rig's flight on both adapters |
-| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; fill and warm **guesses** in Phase 4 | the same runs, per pass |
+| §2 GPU frame | RTX `off` 4.944 ms, `b --indirect off` 3.255; Cezanne 35.438, 21.053 | The default (table, guard, lamp channel, and whatever Phase 4 builds): **a guess** of the `b --indirect off` figure plus 0.3 ms on the RTX and 2.0 ms on the Cezanne, lamp on; on a dig's first frames the reopened fill adds its burst, nothing on a turn (Phase 4's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD [--pose vein]`, three quiet rounds alternated with the v0.41.0 binary, the perf lock, the memory cap; and the rig's flight on both adapters |
+| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10) | the same runs, per pass |
 | §2 denoise line (3.0 ms): temporal + a-trous | RTX 0.086 + 0.497 | unchanged or lower (the a-trous over one channel) | the same runs |
-| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list, - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
+| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
 
 Determinism is not touched: everything is in `vxe-render`. The table's integer sums make a
 face's mean independent of the order its pixels add, which the close reads as a bit-identical
@@ -533,21 +830,39 @@ cell dump across two runs of the same still frame on lavapipe.
 
 ## Risks & open questions
 
-- **The young faces may not be the fast-turn fault.** The yellow dots survived every arm of the
-  spike, including no probes and native. Phase 1's stop rule and Plan 0056's class answer decide
-  Phase 4; if the dots are the upscaler's or geometry's, this plan still settles the hall and the
-  hole and leaves the dots to 0056's followup.
+- **The young faces are not the fast-turn fault** (read, Phase 1; Plan 0056: light on creases).
+  The crease candidate (the half-resolution upsample's nearest tap on the other face) is
+  unread until Phase 4's Part 1; if it is refuted, the dots have no mechanism in this plan and
+  go to the Followups with the split.
+- **The table's read raises the fast yaw's dots over v0.41.0's** (read, Phase 2: +552.5 over
+  27.6 at the rig's row, where Phase 1 read v0.41.0 at +252 and the spike's `b` at +158). Phase
+  2 lands with it; Phase 4's done-when 7 is the bar, and if Part 3 is not built or misses it,
+  the default ships to Phase 6 with that excess, and the owner judges it there (item b).
 - **The guard sees one point a cell.** A second emitter behind the first changes a face's light
   without moving the kept point's re-shade; the cell is caught only when a new sample lands. The
   reveal test is the bar; a two-emitter test is a reading.
-- **The fill pass's burst on a turn into a new cave.** Its cost is the young faces in view times
-  `F`; a flight through unseen rock keeps it high. The flight reading and `F`'s sweep bound it,
-  and the warm rays trade a steady small cost for a smaller burst.
+- **The reopened fill's burst on a large dig.** Its cost is the reopened faces in view times
+  `F`, bounded by `FILL_LIST_MAX`; a collapse or a wide carve lists more than the rig's dig. The
+  dig's first-frame reading and `F`'s sweep bound it. A turn lists nothing.
+- **The hall from a fresh start is not filled** (amended): it converges at its pixels' rate, as
+  Phase 2 reads it. If the owner calls it slow in Phase 6's run 1, it is a Followup.
 - **One value a face at a lit wall's edge.** The step is the accepted look (owner, the verdict);
   the owner sees it again in Phase 6 with digs.
 - **The fallback flickers.** The field look, translucent hits and rays from inside rock blend one
   sample a frame at `ALPHA` with no table. The field look is opt-in; a smooth material's key is a
-  later plan.
+  later plan. **Amended 2026-11-04:** the leading candidate for the still hall's one-frame steps
+  (Phase 2: 0.137, max 175, against 0.001); Phase 4's Part 1 attributes it and Part 1b's
+  freezing mean fixes it if it carries them. The freezing mean in motion is today's blend.
+- **The guard window misses a change** (amended 2026-11-04). With the guard gated to frames after
+  an edit, an upload within the light radius or an emission change, a change that is none of
+  these goes unseen until the next window. Nothing in the engine changes emissive light otherwise
+  today; a later moving emitter (an entity's light) must open the window, and its plan says so.
+- **The still hall's drift is the cells' settle** (amended 2026-11-04). If Phase 4's attribution
+  puts the drift on uncapped cells, no mechanism here removes it at 4096 frames (about 68 s at
+  60 fps); the owner judges it in Phase 6 (a), and a fill for those cells is the Followup below.
+- **The census refutes the hash and the misses persist at a uniform spread** (amended
+  2026-11-04): then the size or `CACHE_PROBES` comes back to the architect with the census, and
+  ADR-0043's Outcome records it.
 - **The table fills in a dense scene.** The sweep bounds it to the light radius; the castle's
   92 % air stamps and the showcase's pillars are the dense cases to read occupancy on. A miss
   count above 0 at the default size goes to the architect.
@@ -560,8 +875,11 @@ cell dump across two runs of the same still frame on lavapipe.
 
 ## What this plan does NOT do
 
-- Fix the yellow dots if Plan 0056 attributes them to the upscaler or to geometry: 0056's
-  followup plan.
+- Fix the yellow dots beyond the crease's own-face read (Phase 4, Part 3, if read owed): any
+  other light mechanism the split leaves is a Followup for the architect, and an upscaler or
+  geometry share is 0056's followup plan.
+- Warm rays from the eye, or a fill of every young face in view: dropped by the amendment of
+  2026-11-04 on Phase 1's stop rule.
 - Set a display-level drift or flicker bar under FSR 2, or change the upscaler, sharpening or
   the far normal: Plan 0056.
 - Indirect light from emissive sources: a per-source feed into the lamp channel, a later plan
@@ -627,3 +945,22 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:** which, or none
 
 ## Followups
+
+- **The yellow dots, if Phase 4's Part 1 refutes the crease candidate** (amended 2026-11-04,
+  architect): light on creases, mostly new each frame, not young cells (Phase 1) and not the
+  upscaler (Plan 0056 Phase 2), with no mechanism yet attributed. It belongs to no plan yet: the
+  architect takes Phase 4's split and drafts the spike for the plan after this one. The same
+  holds if Part 3 is built and Phase 4's done-when 7 misses (amended 2026-11-04, from Phase 2's
+  done-when 7): the spike starts from the rig's fast-yaw row (table read on and off, `up1.5` and
+  scale 1, `--lighting full`) and the second candidate, a pixel at a true face edge moving
+  between two cells under FSR 2's jitter with no screen history to smooth the step.
+- **The hall's settle from a fresh start**, if the owner calls it slow in Phase 6: a fill for
+  cells opened after a table clear, the same list as Phase 4's Part 2; no plan yet. Amended
+  2026-11-04: the same fill answers a still hall's drift if Phase 4 puts it on uncapped cells
+  and the owner calls it visible.
+- **ADR-0043's table-sizing input, for its Outcome at the close** (amended 2026-11-04,
+  architect): the occupancy after four flights (Phase 2: 0.0576 vein, 0.0424 patch of 2^20),
+  the dense cases the Risks name (the castle, the showcase hall) read once on Phase 4's tip, the
+  census's verdict (hash, claim or counting) and its fix, and the misses at 0 after it. The size
+  stays 2^20 at this plan's close unless a dense case reads over 0.25; shrinking it to save
+  memory is not this plan's, since the image comes first.
