@@ -1102,6 +1102,9 @@ pub struct Frame {
     /// The table clears at the next encode: [`Frame::reset_history`] asked, or the table was
     /// rebuilt.
     cache_clear_requested: std::sync::atomic::AtomicBool,
+    /// Whole-table clears and sweeps encoded since the frame was made, for readings.
+    cache_clears: std::sync::atomic::AtomicU32,
+    cache_sweeps: std::sync::atomic::AtomicU32,
     cache_clear: wgpu::ComputePipeline,
     cache_clear_layout: wgpu::BindGroupLayout,
     cache_sweep: wgpu::ComputePipeline,
@@ -1520,7 +1523,7 @@ impl Frame {
         let cache = table_buffer(device, DEFAULT_TABLE_CELLS);
         let cache_stats = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("emissive table counters"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -1840,6 +1843,8 @@ impl Frame {
             // The new table's words are zero on creation; clear them once anyway with the
             // counters.
             cache_clear_requested: std::sync::atomic::AtomicBool::new(true),
+            cache_clears: std::sync::atomic::AtomicU32::new(0),
+            cache_sweeps: std::sync::atomic::AtomicU32::new(0),
             cache_clear,
             cache_clear_layout,
             cache_sweep,
@@ -2167,6 +2172,34 @@ impl Frame {
             occupied: w[1],
             misses: w[0],
         }
+    }
+
+    /// The whole-table clears (the first frame's, an emission-scale change, a lighting change
+    /// that drops it, an overflowed or oversized edit frame) and the sweeps encoded since the
+    /// frame was made.
+    pub fn table_clears_and_sweeps(&self) -> (u32, u32) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (
+            self.cache_clears.load(Relaxed),
+            self.cache_sweeps.load(Relaxed),
+        )
+    }
+
+    /// The guard's reopens since the table was last cleared by branch (a kept emitter's
+    /// re-shade out of the dead zone, a torn tag whose key lights nothing, a dark capped cell
+    /// whose fresh sample drew light), and the last re-shade reopen's kept and new
+    /// luminances. A blocking read.
+    pub fn read_table_reopens_by(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> ([u32; 3], [f32; 2]) {
+        let bytes = crate::readback::read_buffer(device, queue, &self.cache_stats, 0, 32);
+        let w: &[u32] = bytemuck::cast_slice(&bytes);
+        (
+            [w[4], w[5], w[6]],
+            [f32::from_bits(w[3]), f32::from_bits(w[7])],
+        )
     }
 
     /// The cells the table's guard reopened since the table was last cleared, after the last
@@ -2760,6 +2793,8 @@ impl Frame {
         {
             encoder.clear_buffer(cache_table, 0, None);
             encoder.clear_buffer(&self.cache_stats, 0, None);
+            self.cache_clears
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         } else {
             // The misses count this frame's.
             encoder.clear_buffer(&self.cache_stats, 0, Some(4));
@@ -2777,6 +2812,8 @@ impl Frame {
             moved
         };
         if sweep {
+            self.cache_sweeps
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let r = world.light_radius();
             queue.write_buffer(
                 &self.sweep_params,

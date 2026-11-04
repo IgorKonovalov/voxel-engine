@@ -80,8 +80,8 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
 const GUARD_DEAD_ZONE: f32 = 0.05;
 
 // Clears the cell at `word`'s count, sums, kept key and luminance (its key and stamp stay),
-// counting the reopen when the cell held a sample.
-fn reopen_cell(word: u32) {
+// counting the reopen, and its cause (`CacheStats::reopens_by`), when the cell held a sample.
+fn reopen_cell(word: u32, cause: u32) {
     if (atomicExchange(&cache_cells[word + CACHE_COUNT], 0u) == 0u) {
         return;
     }
@@ -89,6 +89,7 @@ fn reopen_cell(word: u32) {
         atomicStore(&cache_cells[word + k], 0u);
     }
     atomicAdd(&cache_stats.reopens, 1u);
+    atomicAdd(&cache_stats.reopens_by[cause], 1u);
 }
 
 // The guard at last frame's hit `rec` of lighting pixel `q` (shadow normal `ns`).
@@ -115,12 +116,14 @@ fn guard_cell(q: vec2<u32>, rec: HitRecord, ns: vec3<f32>) {
             if (e_new > 0.0) {
                 atomicStore(&cache_cells[word + CACHE_KEPT_LUM], kept_pack(e_new, k));
             } else {
-                reopen_cell(word);
+                reopen_cell(word, 1u);
             }
             return;
         }
         if (abs(e_new - e_old) > GUARD_DEAD_ZONE * max(e_new, e_old)) {
-            reopen_cell(word);
+            cache_stats.last_e_old = bitcast<u32>(e_old);
+            cache_stats.last_e_new = bitcast<u32>(e_new);
+            reopen_cell(word, 0u);
         }
         return;
     }
@@ -132,6 +135,6 @@ fn guard_cell(q: vec2<u32>, rec: HitRecord, ns: vec3<f32>) {
     // Lit by nothing: one fresh sample, its random numbers apart from the light pass's.
     let e = emissive_estimate(q + vec2<u32>(37u, 91u), rec.p, rec.n, ns);
     if (luminance(e) > 0.0) {
-        reopen_cell(word);
+        reopen_cell(word, 2u);
     }
 }

@@ -1290,7 +1290,13 @@ struct CacheStats {
     misses: atomic<u32>,
     occupied: atomic<u32>,
     reopens: atomic<u32>,
-    _pad1: u32,
+    // The last re-shade reopen's kept luminance, as f32 bits (a reading; racing stores).
+    last_e_old: u32,
+    // The reopens by the guard's branch: a kept emitter's re-shade out of the dead zone, a
+    // torn tag whose key lights nothing, a dark capped cell whose fresh sample drew light.
+    reopens_by: array<atomic<u32>, 3>,
+    // The last re-shade reopen's new luminance, as f32 bits.
+    last_e_new: u32,
 };
 
 fn cache_read_on() -> bool {

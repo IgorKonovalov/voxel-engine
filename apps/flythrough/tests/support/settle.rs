@@ -2749,5 +2749,508 @@ pub fn occupancy_run(
             cache_cells(&words)
         ));
     }
+    out.push(table_census(&cache_words(level, &frame)));
     out
+}
+
+// ---- The creases: yellow dots and their own face's cell ----
+
+/// A yellow display pixel (Plan 0056's rule): red and green both over twice blue, and green
+/// over half of red.
+pub fn yellow(p: &[u8]) -> bool {
+    let (r, g, b) = (u32::from(p[0]), u32::from(p[1]), u32::from(p[2]));
+    r > 2 * b && g > 2 * b && 2 * g > r
+}
+
+/// The emissive part the composite builds for internal pixel `(ix, iy)` (`composite.wgsl`'s
+/// `lit_at`), pre-exposed: at full lighting resolution its own lighting pixel's emissive, at
+/// half the four lighting pixels around it under bilinear weights times
+/// `max(n.n', 0)^32 exp(-plane distance)`, or the nearest tap when every weight vanishes. A
+/// lighting pixel's emissive is the temporal pass's accumulation rgb, which the a-trous adds
+/// back unfiltered where it is the table's (`atrous.wgsl`). `None` for a miss.
+fn shown_emissive(px: &Pixels, ix: u32, iy: u32) -> Option<Vec3> {
+    let (p, info) = hit(px, ix, iy)?;
+    let [gw, gh] = px.grid;
+    let e_at = |q: (u32, u32)| Vec3::from_slice(&px.accum[(q.1 * gw + q.0) as usize][..3]);
+    let s = px.scale();
+    if s == 1 {
+        return Some(e_at((ix, iy)));
+    }
+    let n = oct_normal(info);
+    let o = HALF_OFFSET.map(|v| v as f32);
+    let c = [(ix as f32 - o[0]) / s as f32, (iy as f32 - o[1]) / s as f32];
+    let base = c.map(|v| v.floor() as i32);
+    let f = [c[0] - c[0].floor(), c[1] - c[1].floor()];
+    let (mut sum, mut w_sum) = (Vec3::ZERO, 0.0f32);
+    let (mut nearest, mut nearest_w) = (Vec3::ZERO, -1.0f32);
+    for i in 0..4 {
+        let d = [i & 1, i >> 1];
+        let tap = [base[0] + d[0], base[1] + d[1]];
+        if tap[0] < 0 || tap[1] < 0 || tap[0] >= gw as i32 || tap[1] >= gh as i32 {
+            continue;
+        }
+        let tap = (tap[0] as u32, tap[1] as u32);
+        let full = (
+            (tap.0 * s + HALF_OFFSET[0]).min(SIZE[0] - 1),
+            (tap.1 * s + HALF_OFFSET[1]).min(SIZE[1] - 1),
+        );
+        let Some((op, oinfo)) = hit(px, full.0, full.1) else {
+            continue;
+        };
+        let bil =
+            if d[0] == 1 { f[0] } else { 1.0 - f[0] } * if d[1] == 1 { f[1] } else { 1.0 - f[1] };
+        let cosn = n.dot(oct_normal(oinfo)).max(0.0).powi(32);
+        let w = bil * cosn * (-(n.dot(op - p)).abs()).exp();
+        let e = e_at(tap);
+        sum += w * e;
+        w_sum += w;
+        if bil > nearest_w {
+            nearest_w = bil;
+            nearest = e;
+        }
+    }
+    Some(if w_sum > 1e-6 { sum / w_sum } else { nearest })
+}
+
+/// The mean of a key's cell in rgb (`temporal.wgsl`'s `cache_mean`: the sums over
+/// `min(count, cap)` samples at `CACHE_Q`), `None` with no cell or no sample.
+fn cell_mean(words: &[u32], key: FaceKey) -> Option<Vec3> {
+    use vxe_render::marcher::{CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP};
+    let w = cache_cell(words, key)?;
+    let count = words[w + CACHE_COUNT_WORD];
+    if count == 0 {
+        return None;
+    }
+    let n = count.min(DEFAULT_TABLE_CAP) as f32 * CACHE_Q;
+    let s = |k: usize| words[w + CACHE_COUNT_WORD + k] as f32 / n;
+    Some(Vec3::new(s(1), s(2), s(3)))
+}
+
+/// The classes of [`own_class`]: no face key or no cell, the shown emissive more than 10 % from
+/// its own cell's mean times the exposure, within 10 %.
+pub const OWN_CLASSES: [&str; 3] = ["no cell", "off own", "own"];
+
+/// The class of display pixel `i` against its own face's cell: the internal pixel under it, its
+/// hit's face key and cell, and whether the emissive the composite builds there
+/// ([`shown_emissive`]) lies more than 10 % (in luma) from that cell's mean times `exposure`.
+pub fn own_class(px: &Pixels, words: &[u32], exposure: f32, i: usize) -> usize {
+    let [ow, _] = px.display_size;
+    let (x, y) = (i as u32 % ow, i as u32 / ow);
+    let (ix, iy) = px.internal_of(px.display_size, x, y);
+    let j = (iy * SIZE[0] + ix) as usize;
+    let Some(key) = face_key(px.camera.position, px.hit_pos[j], px.hit_info[j]) else {
+        return 0;
+    };
+    let (Some(mean), Some(shown)) = (cell_mean(words, key), shown_emissive(px, ix, iy)) else {
+        return 0;
+    };
+    let l = |v: Vec3| 0.2126 * v.x + 0.7152 * v.y + 0.0722 * v.z;
+    let (own, shown) = (l(mean) * exposure, l(shown));
+    if (shown - own).abs() > 0.1 * own {
+        1
+    } else {
+        2
+    }
+}
+
+/// A frame's display dots (the settle rig's rule), its yellow dots, and each set split by
+/// [`own_class`].
+pub fn crease_frame(px: &Pixels, words: &[u32], exposure: f32) -> ([usize; 3], [usize; 3]) {
+    let (mut all, mut yel) = ([0usize; 3], [0usize; 3]);
+    for i in frame_dots(px).0 {
+        let c = own_class(px, words, exposure, i);
+        all[c] += 1;
+        if yellow(&px.display[i * 4..i * 4 + 4]) {
+            yel[c] += 1;
+        }
+    }
+    (all, yel)
+}
+
+/// The yaw in radians that moves the image centre one display pixel, for a view `height`
+/// pixels high (Plan 0056's pan: `atan(1 / focal) / cos(pitch)`).
+pub fn yaw_per_pixel(height: u32, vfov: f32, pitch: f32) -> f32 {
+    let focal = height as f32 * 0.5 / (vfov * 0.5).tan();
+    (1.0 / focal).atan() / pitch.cos()
+}
+
+/// Plan 0056's fast yaw on the rig: settled `settle` frames at the pose (lighting at `lighting`),
+/// then `frames` frames of a pure yaw to the left at `rate` display pixels a frame. The still
+/// frame's dots and yellow dots, and summed over the yaw's frames the dots and the yellow dots
+/// by [`own_class`]; one line.
+pub fn crease_yaw_run(
+    level: &VeinLevel,
+    pose: &Pose,
+    setting: Setting,
+    lighting: vxe_render::marcher::LightingResolution,
+    settle: usize,
+    rate: f32,
+    frames: usize,
+) -> String {
+    let mut frame = make_frame(level, pose, setting);
+    frame.set_resolution(&level.device, lighting);
+    let mut cam = pose.camera();
+    render(level, &mut frame, &cam, settle);
+    let px = read_dots(level, &frame, cam);
+    let words = cache_words(level, &frame);
+    let (s_all, s_yel) = crease_frame(&px, &words, pose.exposure);
+    let step = yaw_per_pixel(frame.target().height(), cam.vfov, cam.pitch);
+    let light = LightParams::headlamp();
+    let (mut all, mut yel) = ([0u64; 3], [0u64; 3]);
+    for _ in 0..frames {
+        cam.yaw += rate * step;
+        frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+        let px = read_dots(level, &frame, cam);
+        let words = cache_words(level, &frame);
+        let (a, y) = crease_frame(&px, &words, pose.exposure);
+        for k in 0..3 {
+            all[k] += a[k] as u64;
+            yel[k] += y[k] as u64;
+        }
+    }
+    let n = frames.max(1) as f64;
+    let per = |v: [u64; 3]| v.iter().sum::<u64>() as f64 / n;
+    let split = |v: [u64; 3]| {
+        let t = v.iter().sum::<u64>().max(1) as f64;
+        format!(
+            "{} {:.3}, {} {:.3}, {} {:.3}",
+            OWN_CLASSES[0],
+            v[0] as f64 / t,
+            OWN_CLASSES[1],
+            v[1] as f64 / t,
+            OWN_CLASSES[2],
+            v[2] as f64 / t
+        )
+    };
+    format!(
+        "{:.5} deg a frame; still dots {} yellow {}; over {frames} frames: yellow {:.2} a frame ({}), all {:.2} a frame ({})",
+        (rate * step).to_degrees(),
+        s_all.iter().sum::<usize>(),
+        s_yel.iter().sum::<usize>(),
+        per(yel),
+        split(yel),
+        per(all),
+        split(all)
+    )
+}
+
+// ---- The table's census ----
+
+/// A cell's key words decoded to its voxel and face (`cache_key`'s inverse for coordinates in
+/// `0 .. 2^20`).
+pub fn key_of(w0: u32, w1: u32) -> ([i32; 3], u32) {
+    let x = w0 & 0xF_FFFF;
+    let y = (w0 >> 20) | (w1 & 0xFF) << 12;
+    let z = (w1 >> 8) & 0xF_FFFF;
+    ([x as i32, y as i32, z as i32], (w1 >> 28) & 7)
+}
+
+/// Linear-probe insertion of keys whose first slots are `bases` into `cells` cells, four probes
+/// each, in order: the keys left without a slot, and the occupied runs' count, mean and longest.
+pub fn probe_insert(bases: &[u32], cells: u32) -> (usize, usize, f64, usize) {
+    use vxe_render::marcher::CACHE_PROBES;
+    let mut used = vec![false; cells as usize];
+    let mut missed = 0;
+    for &b in bases {
+        match (0..CACHE_PROBES)
+            .map(|i| (b.wrapping_add(i) & (cells - 1)) as usize)
+            .find(|&s| !used[s])
+        {
+            Some(s) => used[s] = true,
+            None => missed += 1,
+        }
+    }
+    let (n, mean, max) = runs(&used);
+    (missed, n, mean, max)
+}
+
+/// The runs of consecutive set entries (cyclic ends not joined): count, mean length, longest.
+fn runs(used: &[bool]) -> (usize, f64, usize) {
+    let (mut n, mut sum, mut max, mut cur) = (0usize, 0usize, 0usize, 0usize);
+    for &u in used.iter().chain(std::iter::once(&false)) {
+        if u {
+            cur += 1;
+        } else if cur > 0 {
+            n += 1;
+            sum += cur;
+            max = max.max(cur);
+            cur = 0;
+        }
+    }
+    (n, sum as f64 / n.max(1) as f64, max)
+}
+
+/// A seeded uniform first slot for key `i` in `cells` cells (splitmix64).
+pub fn uniform_slot(seed: u64, i: u64, cells: u32) -> u32 {
+    let mut z = seed.wrapping_add(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    ((z ^ (z >> 31)) as u32) & (cells - 1)
+}
+
+/// The census of a table dump: its keys, the duplicate keys (one key in two or more cells) and
+/// the cells they hold, each cell's probe distance from its key's first slot (0 to 3, and any
+/// cell outside its probes), the occupied runs, and the same keys inserted again on the CPU
+/// through `cache_slot` and through a seeded uniform assignment (keys without a slot, runs).
+pub fn table_census(words: &[u32]) -> String {
+    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_PROBES, cache_slot};
+    let cells = cache_cells(words);
+    let mut seen: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut used = vec![false; cells as usize];
+    let mut dist = [0usize; 5];
+    for (s, c) in words.chunks_exact(CACHE_CELL_WORDS as usize).enumerate() {
+        if c[1] == 0 {
+            continue;
+        }
+        used[s] = true;
+        *seen.entry((c[0], c[1])).or_default() += 1;
+        let (v, f) = key_of(c[0], c[1]);
+        let d = (s as u32).wrapping_sub(cache_slot(v, f, cells)) & (cells - 1);
+        dist[(d.min(CACHE_PROBES)) as usize] += 1;
+    }
+    let dups = seen.values().filter(|&&n| n > 1).count();
+    let dup_cells: u32 = seen.values().filter(|&&n| n > 1).sum();
+    let (rn, rmean, rmax) = runs(&used);
+    let mut keys: Vec<(u32, u32)> = seen.keys().copied().collect();
+    keys.sort_unstable();
+    let bases: Vec<u32> = keys
+        .iter()
+        .map(|&(a, b)| {
+            let (v, f) = key_of(a, b);
+            cache_slot(v, f, cells)
+        })
+        .collect();
+    let (hm, hn, hmean, hmax) = probe_insert(&bases, cells);
+    let ubases: Vec<u32> = (0..keys.len() as u64)
+        .map(|i| uniform_slot(0x0057, i, cells))
+        .collect();
+    let (um, un, umean, umax) = probe_insert(&ubases, cells);
+    format!(
+        "census: cells {cells}, used {}, keys {}, duplicate keys {dups} in {dup_cells} cells; probe distance 0/1/2/3/outside {:?}; runs {rn} mean {rmean:.3} max {rmax}; CPU cache_slot: no slot {hm}, runs {hn} mean {hmean:.3} max {hmax}; CPU uniform: no slot {um}, runs {un} mean {umean:.3} max {umax}",
+        used.iter().filter(|&&u| u).count(),
+        keys.len(),
+        dist
+    )
+}
+
+// ---- The still hall by pixel class ----
+
+/// The classes of [`hall_class_run`]: a miss; the fallback with no face (a field, translucent or
+/// in-rock hit); the fallback on a face whose key has no cell; a cell reopened between the two
+/// frames (its count fell); a pixel whose four half-resolution lighting taps hold two or more
+/// cells (the upsample at a crease); a cell capped at the earlier frame; a cell under the cap.
+pub const HALL_CLASSES: [&str; 7] = [
+    "miss",
+    "no face",
+    "missed key",
+    "reopened",
+    "crease taps",
+    "capped",
+    "under cap",
+];
+
+/// One captured frame of the hall: the display, the internal hits and the table.
+struct HallCapture {
+    display: Vec<u8>,
+    hit_pos: Vec<[f32; 4]>,
+    hit_info: Vec<[u16; 4]>,
+    words: Vec<u32>,
+}
+
+/// The class of display pixel `(x, y)` between captures `a` (earlier) and `b` (later), from
+/// `b`'s hits ([`HALL_CLASSES`]).
+/// The hall's view for [`hall_class`]: the eye, the internal and display sizes, and whether the
+/// lighting runs at half resolution.
+#[derive(Clone, Copy)]
+struct HallView {
+    eye: Vec3,
+    size: [u32; 2],
+    out: [u32; 2],
+    half: bool,
+}
+
+fn hall_class(view: HallView, a: &HallCapture, b: &HallCapture, x: u32, y: u32) -> usize {
+    let cap = vxe_render::marcher::DEFAULT_TABLE_CAP;
+    let HallView {
+        eye,
+        size,
+        out,
+        half,
+    } = view;
+    let (ix, iy) = (x * size[0] / out[0], y * size[1] / out[1]);
+    let j = (iy * size[0] + ix) as usize;
+    if b.hit_info[j][3] & 1 == 0 {
+        return 0;
+    }
+    let Some(key) = face_key(eye, b.hit_pos[j], b.hit_info[j]) else {
+        return 1;
+    };
+    if cache_cell(&b.words, key).is_none() {
+        return 2;
+    }
+    let (ca, cb) = (cache_count(&a.words, key), cache_count(&b.words, key));
+    if cb < ca {
+        return 3;
+    }
+    if half {
+        let (lx, ly) = (
+            (ix.saturating_sub(HALF_OFFSET[0])) / 2,
+            (iy.saturating_sub(HALF_OFFSET[1])) / 2,
+        );
+        let mut keys = Vec::with_capacity(4);
+        for d in 0..4u32 {
+            let (tx, ty) = (lx + (d & 1), ly + (d >> 1));
+            let (fx, fy) = (
+                (tx * 2 + HALF_OFFSET[0]).min(size[0] - 1),
+                (ty * 2 + HALF_OFFSET[1]).min(size[1] - 1),
+            );
+            let k = (fy * size[0] + fx) as usize;
+            if let Some(tk) = face_key(eye, b.hit_pos[k], b.hit_info[k])
+                && !keys.contains(&tk)
+            {
+                keys.push(tk);
+            }
+        }
+        if keys.len() >= 2 {
+            return 4;
+        }
+    }
+    if ca >= cap { 5 } else { 6 }
+}
+
+/// The per-class difference between two display images, `classes` per pixel: per class the
+/// pixels, the sum of the largest channel difference, its share of the whole sum, the class's
+/// mean, its max and its pixels over 2 and over 8 levels; one line a class and a total.
+fn class_table(a: &[u8], b: &[u8], classes: &[usize]) -> String {
+    let mut px = [0u64; 7];
+    let mut sum = [0u64; 7];
+    let mut max = [0u32; 7];
+    let mut o2 = [0u64; 7];
+    let mut o8 = [0u64; 7];
+    for (i, &c) in classes.iter().enumerate() {
+        let d = (0..3)
+            .map(|k| u32::from(a[i * 4 + k].abs_diff(b[i * 4 + k])))
+            .max()
+            .unwrap_or(0);
+        px[c] += 1;
+        sum[c] += u64::from(d);
+        max[c] = max[c].max(d);
+        o2[c] += u64::from(d > 2);
+        o8[c] += u64::from(d > 8);
+    }
+    let total: u64 = sum.iter().sum();
+    let n = classes.len() as f64;
+    let mut s = format!(
+        "all: mean {:.4}, max {}, over 2 {:.3} %, over 8 {:.3} %",
+        total as f64 / n,
+        max.iter().max().unwrap_or(&0),
+        100.0 * o2.iter().sum::<u64>() as f64 / n,
+        100.0 * o8.iter().sum::<u64>() as f64 / n
+    );
+    for c in 0..7 {
+        s.push_str(&format!(
+            "\n  {}: pixels {} ({:.3} %), sum {} ({:.3} of all), mean {:.4}, max {}, over 2 {}, over 8 {}",
+            HALL_CLASSES[c],
+            px[c],
+            100.0 * px[c] as f64 / n,
+            sum[c],
+            sum[c] as f64 / total.max(1) as f64,
+            sum[c] as f64 / px[c].max(1) as f64,
+            max[c],
+            o2[c],
+            o8[c]
+        ));
+    }
+    s
+}
+
+/// The showcase hall as `hero --exposure 8` renders it (1920 x 1080, lamp off, FSR 2 at 1.5,
+/// or native with `native`), read at frames 4096, 8192 and 8193: the drift (4096 against 8192)
+/// and the one frame (8192 against 8193) by pixel class, with the whole-table clears, sweeps
+/// and the guard's reopens over the run.
+pub fn hall_class_run(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &vxe_render::gpu_world::GpuWorld,
+    camera: Camera,
+    native: bool,
+) -> String {
+    use vxe_render::RenderScale;
+    let out = [1920u32, 1080];
+    let scale = if native {
+        RenderScale::One
+    } else {
+        RenderScale::OneHalf
+    };
+    let size = scale.internal(out);
+    let mut frame = Frame::with_sizes(device, size, out);
+    frame.set_probe_spacing(device, 32);
+    if native {
+        frame.set_jitter(device, false);
+        frame.set_sharpness(queue, 0.5);
+    } else {
+        frame.set_upscaler_kind(
+            device,
+            UpscalerKind::Fsr2(Fsr2Settings {
+                sharpness: 0.5,
+                ..Fsr2Settings::default()
+            }),
+        );
+    }
+    frame.set_lighting(Lighting {
+        lamp: false,
+        exposure: Exposure::Manual(8.0),
+        ..Lighting::default()
+    });
+    frame.set_look(LookParams::default());
+    let view = HallView {
+        eye: camera.position,
+        size,
+        out,
+        half: frame.resolution().scale() > 1,
+    };
+    let light = LightParams::headlamp();
+    let capture = |frame: &Frame| HallCapture {
+        display: readback::read_rgba8(device, queue, frame.target()),
+        hit_pos: readback::read_float(device, queue, frame.hit_positions()),
+        hit_info: readback::read_rgba16u(device, queue, frame.hit_records()),
+        words: {
+            let t = frame.emissive_table();
+            readback::read_buffer(device, queue, t, 0, t.size())
+                .chunks_exact(4)
+                .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
+                .collect()
+        },
+    };
+    let mut caps = Vec::new();
+    let mut reopens = Vec::new();
+    for f in 1..=8193 {
+        frame.step(device, queue, gpu, &camera, &light);
+        if f == 4096 || f == 8192 || f == 8193 {
+            caps.push(capture(&frame));
+            reopens.push(frame.read_table_reopens(device, queue));
+        }
+    }
+    let (clears, sweeps) = frame.table_clears_and_sweeps();
+    let stats = frame.read_table_stats(device, queue);
+    let classes = |a: &HallCapture, b: &HallCapture| -> Vec<usize> {
+        (0..out[1])
+            .flat_map(|y| (0..out[0]).map(move |x| (x, y)))
+            .map(|(x, y)| hall_class(view, a, b, x, y))
+            .collect()
+    };
+    let drift = class_table(
+        &caps[0].display,
+        &caps[1].display,
+        &classes(&caps[0], &caps[1]),
+    );
+    let one = class_table(
+        &caps[1].display,
+        &caps[2].display,
+        &classes(&caps[1], &caps[2]),
+    );
+    format!(
+        "clears {clears}, sweeps {sweeps}, reopens at 4096/8192/8193 {reopens:?}, occupied {}, misses {}\n drift 4096/8192 {drift}\n one 8192/8193 {one}",
+        stats.occupied, stats.misses
+    )
 }

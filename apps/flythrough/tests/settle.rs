@@ -21,6 +21,7 @@ use support::settle::*;
 use support::stillness::{Pose, VEIN_POSE, vein_level, vein_level_on};
 use support::{SyncNow, reading_device, stillness};
 use vxe_render::glam::Vec3;
+use vxe_render::marcher::LightingResolution;
 use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, RenderScale};
 
 /// Frames the window tests settle before their change.
@@ -644,7 +645,11 @@ fn still_reopen_readings() {
                 frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
                 if f % 256 == 0 || f == frames {
                     let n = frame.read_table_reopens(&level.device, &level.queue);
-                    line.push(format!("{f}: {n}"));
+                    let (by, e) = frame.read_table_reopens_by(&level.device, &level.queue);
+                    line.push(format!(
+                        "{f}: {n} (re-shade {}, torn {}, dark {}; last re-shade e_old {:.5}, e_new {:.5})",
+                        by[0], by[1], by[2], e[0], e[1]
+                    ));
                 }
             }
             println!(
@@ -1991,17 +1996,35 @@ fn an_overflowed_edit_frame_clears_the_table() {
     assert_eq!(held, 0, "{held} cells kept a count");
 }
 
+/// The fast yaw's figures ([`fast_yaw_excess`]): the excess dots over frames 1 to 60, the
+/// floor's mean and spread, the floor's frame count, the dot frames run, and the excess split
+/// by `own_class` (no cell, off its own cell, own), each class's floor mean taken off its count.
+struct FastYaw {
+    excess: f64,
+    floor: f64,
+    sd: f64,
+    floor_frames: usize,
+    ran: usize,
+    by_own: [f64; 3],
+}
+
 /// The display's excess dots in frames 1 to 60 after a 90 degree yaw onto `VEIN_POSE` over 10
-/// frames, lamp on, indirect off, FSR 2 at 1.5, exposure pinned, the table's read `table`:
-/// settled 192 frames at the pose, its floor read over 64 more; then 64 frames at the yaw's
-/// start, the yaw, and the 60 dot frames. The excess, the floor's mean and its spread, the
-/// floor's frame count and the dot frames run.
-fn fast_yaw_excess(level: &stillness::VeinLevel, table: bool) -> (f64, f64, f64, usize, usize) {
+/// frames, lamp on, indirect off, exposure pinned, FSR 2 at 1.5 when `upscaler` (else scale
+/// 1), lighting at `lighting`, the table's read `table`: settled 192 frames at the pose, its
+/// floor read over 64 more; then 64 frames at the yaw's start, the yaw, and the 60 dot frames.
+/// With `split` each read frame's dots are split by `own_class` too.
+fn fast_yaw_excess(
+    level: &stillness::VeinLevel,
+    table: bool,
+    upscaler: bool,
+    lighting: LightingResolution,
+    split: bool,
+) -> FastYaw {
     let setting = Setting {
         lamp: true,
         indirect: false,
         auto: false,
-        upscaler: true,
+        upscaler,
         bridge: false,
         steady: Steady {
             table,
@@ -2009,18 +2032,33 @@ fn fast_yaw_excess(level: &stillness::VeinLevel, table: bool) -> (f64, f64, f64,
         },
     };
     let mut frame = make_frame(level, &VEIN_POSE, setting);
+    frame.set_resolution(&level.device, lighting);
     let light = LightParams::headlamp();
     let still = VEIN_POSE.camera();
     let step = |frame: &mut Frame, c: &Camera| {
         frame.step(&level.device, &level.queue, &level.gpu, c, &light)
     };
+    let read = |frame: &Frame| -> (f64, [f64; 3]) {
+        let px = read_dots(level, frame, still);
+        if !split {
+            return (dots_of(&px) as f64, [0.0; 3]);
+        }
+        let words = cache_words(level, frame);
+        let (all, _) = crease_frame(&px, &words, VEIN_POSE.exposure);
+        (all.iter().sum::<usize>() as f64, all.map(|v| v as f64))
+    };
     for _ in 0..192 {
         step(&mut frame, &still);
     }
     let mut floor = Vec::new();
+    let mut floor_own = [0.0f64; 3];
     for _ in 0..64 {
         step(&mut frame, &still);
-        floor.push(dots_of(&read_dots(level, &frame, still)) as f64);
+        let (d, o) = read(&frame);
+        floor.push(d);
+        for k in 0..3 {
+            floor_own[k] += o[k] / 64.0;
+        }
     }
     for _ in 0..64 {
         step(&mut frame, &yawed(&VEIN_POSE, -90.0));
@@ -2032,13 +2070,25 @@ fn fast_yaw_excess(level: &stillness::VeinLevel, table: bool) -> (f64, f64, f64,
     let spread =
         (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
     let mut excess = 0.0;
+    let mut by_own = [0.0f64; 3];
     let mut ran = 0;
     for _ in 1..=DOT_FRAMES {
         step(&mut frame, &still);
-        excess += dots_of(&read_dots(level, &frame, still)) as f64 - mean;
+        let (d, o) = read(&frame);
+        excess += d - mean;
+        for k in 0..3 {
+            by_own[k] += o[k] - floor_own[k];
+        }
         ran += 1;
     }
-    (excess, mean, spread, floor.len(), ran)
+    FastYaw {
+        excess,
+        floor: mean,
+        sd: spread,
+        floor_frames: floor.len(),
+        ran,
+        by_own,
+    }
 }
 
 /// The fast yaw's excess dots by the table's read, a reading: at `VEIN_POSE`, lamp on, indirect
@@ -2053,7 +2103,14 @@ fn the_fast_yaw_excess_by_table_read() {
         return;
     };
     for (name, table) in [("table", true), ("read off", false)] {
-        let (excess, floor, sd, floor_frames, ran) = fast_yaw_excess(&level, table);
+        let FastYaw {
+            excess,
+            floor,
+            sd,
+            floor_frames,
+            ran,
+            ..
+        } = fast_yaw_excess(&level, table, true, LightingResolution::Half, false);
         println!(
             "reading: fast yaw excess dots 1-60, {name}: {excess:.1} (floor {floor:.1}, sd {sd:.1}, line {:.1})",
             DOT_FRAMES as f64 * sd
@@ -2064,6 +2121,73 @@ fn the_fast_yaw_excess_by_table_read() {
             "{name}: the floor was measured: {floor} (sd {sd})"
         );
         assert_eq!(ran, DOT_FRAMES, "{name}: the dot frames run");
+    }
+}
+
+/// The creases (Plan 0057 Phase 4 Part 1), a reading: Plan 0056's fast yaw (`crease_yaw_run`,
+/// settle 512, 240 frames at 10 display pixels a frame) at each pose of `VXE_SETTLE_POSES`
+/// (default both), FSR 2 at 1.5 and scale 1, lamp off, indirect off, pinned, lighting half (the
+/// default) and full: the yellow dots a frame and their split by their own face's cell.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn crease_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let want = list("VXE_SETTLE_POSES", &["patch", "vein"]);
+    for pose in POSES.iter().filter(|p| want.iter().any(|w| w == p.name)) {
+        for (up, upscaler) in [("fsr2", true), ("native", false)] {
+            for lighting in [LightingResolution::Half, LightingResolution::Full] {
+                let setting = Setting {
+                    lamp: false,
+                    indirect: false,
+                    auto: false,
+                    upscaler,
+                    bridge: false,
+                    steady: Steady::default(),
+                };
+                let line = crease_yaw_run(&level, pose, setting, lighting, 512, 10.0, 240);
+                println!(
+                    "reading[{adapter}]: crease {} {up} lighting {}: {line}",
+                    pose.name,
+                    lighting.name()
+                );
+            }
+        }
+    }
+}
+
+/// The rig's row of the creases, a reading: `the_fast_yaw_excess_by_table_read`'s default run
+/// (table read on) at FSR 2 at 1.5 and scale 1, lighting half and full, its excess dots split by
+/// their own face's cell (`own_class`).
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn fast_yaw_split_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    for (up, upscaler) in [("up1.5", true), ("scale1", false)] {
+        for lighting in [LightingResolution::Half, LightingResolution::Full] {
+            let r = fast_yaw_excess(&level, true, upscaler, lighting, true);
+            println!(
+                "reading[{adapter}]: fast yaw split {up} lighting {}: excess {:.1} (floor {:.1}, sd {:.1}, line {:.1}, frames {}/{}); by own: {} {:.1}, {} {:.1}, {} {:.1}",
+                lighting.name(),
+                r.excess,
+                r.floor,
+                r.sd,
+                DOT_FRAMES as f64 * r.sd,
+                r.floor_frames,
+                r.ran,
+                OWN_CLASSES[0],
+                r.by_own[0],
+                OWN_CLASSES[1],
+                r.by_own[1],
+                OWN_CLASSES[2],
+                r.by_own[2]
+            );
+        }
     }
 }
 
@@ -2330,4 +2454,55 @@ fn a_still_scene_reopens_no_cell() {
         .frame
         .read_table_reopens(&rig.level.device, &rig.level.queue);
     assert_eq!(reopens, 0, "the guard reopened {reopens} cells");
+}
+
+/// The still hall by pixel class (Plan 0057 Phase 4 Part 1), a reading: the showcase's `hall`
+/// shot as `hero --exposure 8` renders it, native and FSR 2 at 1.5 (`VXE_HALL_SCALES`, default
+/// both), lamp off, the drift and the one frame split by `HALL_CLASSES` (`hall_class_run`).
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn hall_class_readings() {
+    use flythrough::showcase::{SHOTS, ShowcaseSource};
+    use vxe_render::gpu_world::{GpuWorld, MirrorConfig};
+    let source = ShowcaseSource::new(1);
+    let world = vxe_world::World::generate(
+        source.extent(),
+        &source,
+        &flythrough::with_showcase_rows(&flythrough::with_emissive_ore(
+            &flythrough::cave_materials(),
+        )),
+    );
+    let pool = flythrough::level_pool_units(&world, false) * vxe_render::gpu_world::UNIT_BYTES;
+    let Some((device, queue, adapter)) = reading_device(pool) else {
+        return;
+    };
+    let chunks = world.extent().len() as u64;
+    let cfg = MirrorConfig {
+        budget_bytes: flythrough::level_mirror_budget(&world, chunks, false),
+        light_radius: 19,
+        ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    let shot = &SHOTS[0];
+    gpu.set_focus(shot.eye);
+    let mut last = None;
+    for _ in 0..256 {
+        gpu.sync_now(&world, &device, &queue)
+            .expect("mirror fits the adapter");
+        let n = gpu.light_samples();
+        if last == Some(n) {
+            break;
+        }
+        last = Some(n);
+    }
+    let camera = Camera {
+        position: shot.eye.0.map(|v| v as f32 + 0.5).into(),
+        yaw: (shot.yaw_deg as f32).to_radians(),
+        pitch: (shot.pitch_deg as f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    };
+    for scale in list("VXE_HALL_SCALES", &["native", "up"]) {
+        let line = hall_class_run(&device, &queue, &gpu, camera, scale == "native");
+        println!("reading[{adapter}]: hall classes {scale}: {line}");
+    }
 }
