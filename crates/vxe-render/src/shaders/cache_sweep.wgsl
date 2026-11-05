@@ -158,6 +158,10 @@ fn walk_args() {
             atomicStore(&state.evicted_pass, 0u);
         }
     }
+    // A walk frees cells a kernel may read; over the mark the blend's seen stamps must go on.
+    if (state.tests != 0u || atomicLoad(&cache_stats.occupied) >= sweep.evict_load) {
+        cache_cells[CACHE_WORDS * sweep.cells + CACHE_BLEND_DIRTY] = 1u;
+    }
     if (state.tests != 0u) {
         state.base = state.cursor;
         state.n = min(state.left, sweep.slice);

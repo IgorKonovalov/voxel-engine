@@ -1080,7 +1080,8 @@ struct BlendUniform {
     pool_min: u32,
     wide: u32,
     frame: u32,
-    _pad: [u32; 3],
+    force: u32,
+    _pad: [u32; 2],
 }
 
 /// What the temporal pass reads of a table cell (`cache_blend.wgsl`): a pool of its face's samples
@@ -1628,10 +1629,16 @@ pub struct Frame {
     walk_dispatch: wgpu::Buffer,
     /// The table's cells as allocated ([`Frame::table_cells`]).
     table_cells: u32,
-    /// The blend pass (`cache_blend.wgsl`), its layout and uniform.
+    /// The blend pass (`cache_blend.wgsl`): its args pass and layout, the pass and layout, its
+    /// uniform and indirect dispatch, and whether the next encode runs it whatever the table
+    /// did (the mode changed).
+    cache_blend_args: wgpu::ComputePipeline,
+    cache_blend_args_layout: wgpu::BindGroupLayout,
     cache_blend: wgpu::ComputePipeline,
     cache_blend_layout: wgpu::BindGroupLayout,
     blend_params: wgpu::Buffer,
+    blend_dispatch: wgpu::Buffer,
+    blend_force: std::sync::atomic::AtomicBool,
     /// The chunk sweeps requested: the walk takes a new one when it moves.
     sweep_requests: std::sync::atomic::AtomicU32,
     /// The table's edit-box reset by cells (`clear_box_cells`), for a frame whose boxes' voxel
@@ -1712,8 +1719,8 @@ pub fn table_bytes(cells: u32, list: u32) -> u64 {
     u64::from(cells) * CACHE_CELL_WORDS * 4 + BLEND_HEADER_BYTES + 4 * u64::from(list)
 }
 
-/// The blend list's header past the table's cells: the entries listed this frame and three
-/// words of padding.
+/// The blend list's header past the table's cells: the entries listed this frame, the dirty
+/// word, the last frame's and a word of padding.
 pub const BLEND_HEADER_BYTES: u64 = 16;
 
 /// A dispatch of `groups` workgroups in rows of at most `cap`: `[x, y]` with `x * y >= groups`.
@@ -2187,6 +2194,24 @@ impl Frame {
             "walk_cells",
         );
         let cache_blend_layout = io_layout(device, "cache blend", &[Io::Uniform, Io::Storage]);
+        let cache_blend_args_layout = io_layout(
+            device,
+            "cache blend args",
+            &[Io::Uniform, Io::Storage, Io::Storage],
+        );
+        let cache_blend_args = compute_pipeline(
+            device,
+            "cache blend args",
+            format!("{CACHE_CELL_WGSL}\n{CACHE_BLEND_WGSL}"),
+            &[None, None, Some(&cache_blend_args_layout)],
+            "blend_args",
+        );
+        let blend_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("emissive table blend dispatch"),
+            size: 12,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
         let cache_blend = compute_pipeline(
             device,
             "cache blend",
@@ -2561,9 +2586,13 @@ impl Frame {
             probes: std::sync::OnceLock::new(),
             cache,
             table_cells,
+            cache_blend_args,
+            cache_blend_args_layout,
             cache_blend,
             cache_blend_layout,
             blend_params,
+            blend_dispatch,
+            blend_force: std::sync::atomic::AtomicBool::new(false),
             cache_stats,
             // The new table's words are zero on creation; clear them once anyway with the
             // counters.
@@ -3175,6 +3204,16 @@ impl Frame {
     /// Sets the lighting knobs; a change of [`Lighting::cells`] rebuilds the emissive table
     /// empty.
     pub fn set_lighting(&mut self, lighting: Lighting) {
+        let blend_changed = (lighting.blend, lighting.blend_pool_min, lighting.table_cap)
+            != (
+                self.lighting.blend,
+                self.lighting.blend_pool_min,
+                self.lighting.table_cap,
+            );
+        if blend_changed {
+            self.blend_force
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.lighting = lighting;
         self.fit_table();
         self.rebuild_probes();
@@ -3302,6 +3341,7 @@ impl Frame {
             + self.cache.size()
             + WALK_STATE_BYTES
             + self.blend_params.size()
+            + self.blend_dispatch.size()
             + self.walk_dispatch.size()
             + FILL_LIST_BYTES
             + self.fill_dispatch.size()
@@ -4259,21 +4299,38 @@ impl Frame {
                     pool_min: self.lighting.blend_pool_min,
                     wide: u32::from(self.lighting.blend == TableBlend::Wide),
                     frame: p.frame.wrapping_add(1),
-                    _pad: [0; 3],
+                    force: u32::from(
+                        self.blend_force
+                            .swap(false, std::sync::atomic::Ordering::Relaxed),
+                    ),
+                    _pad: [0; 2],
                 }),
             );
-            bind_io(
-                device,
-                &self.cache_blend_layout,
-                &[Res::Buf(&self.blend_params), Res::Buf(cache_table)],
+            (
+                bind_io(
+                    device,
+                    &self.cache_blend_args_layout,
+                    &[
+                        Res::Buf(&self.blend_params),
+                        Res::Buf(cache_table),
+                        Res::Buf(&self.blend_dispatch),
+                    ],
+                ),
+                bind_io(
+                    device,
+                    &self.cache_blend_layout,
+                    &[Res::Buf(&self.blend_params), Res::Buf(cache_table)],
+                ),
             )
         });
         let mut blend: Vec<Dispatch<'_>> = Vec::new();
-        if let Some(b) = &blend_bind {
-            let [w, h] = t.light_size();
-            let rows = dispatch_rows((w * h).div_ceil(64), self.table_dispatch_cap);
-            let mut d = frame_pass(&self.cache_blend, b, 2, rows);
+        if let Some((args, cells)) = &blend_bind {
+            let mut a = frame_pass(&self.cache_blend_args, args, 2, [1, 1]);
+            a.groups[0] = None;
+            blend.push(a);
+            let mut d = frame_pass(&self.cache_blend, cells, 2, [0, 0]);
             d.groups[0] = None;
+            d.indirect = Some((&self.blend_dispatch, 0));
             blend.push(d);
         }
         let mut fill: Vec<Dispatch<'_>> = Vec::new();

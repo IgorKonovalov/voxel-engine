@@ -5364,7 +5364,9 @@ fn preload_level_readings() {
         vxe_render::marcher::FRAME_PASSES
             .iter()
             .zip(ms)
-            .filter(|(n, _)| ["preload", "light", "fill", "blend", "temporal"].contains(n))
+            .filter(|(n, _)| {
+                ["gradient", "preload", "light", "fill", "blend", "temporal"].contains(n)
+            })
             .map(|(n, v)| {
                 let mut v = v.clone();
                 v.sort_by(f64::total_cmp);
@@ -5506,9 +5508,14 @@ fn preload_level_readings() {
                         agree.join(" ")
                     );
                 }
-                // At rest: 256 more still frames after the list first reads empty.
+                // At rest: 256 more still frames after the list first reads empty, or
+                // `VXE_PRELOAD_REST` (4352 caps every face in view).
                 if empty_at.is_some() {
-                    for _ in 0..256 {
+                    let rest = std::env::var("VXE_PRELOAD_REST")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(256);
+                    for _ in 0..rest {
                         frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
                     }
                 }

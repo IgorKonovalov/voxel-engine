@@ -448,6 +448,7 @@ fn cache_add_sums(slot: u32, q: vec3<u32>, n: u32) {
     let word = CACHE_WORDS * slot + CACHE_COUNT;
     let before = atomicAdd(&cache_cells[word], n);
     if (before < cache_c_cap()) {
+        blend_dirty();
         atomicAdd(&cache_cells[word + 1u], q.x);
         atomicAdd(&cache_cells[word + 2u], q.y);
         atomicAdd(&cache_cells[word + 3u], q.z);

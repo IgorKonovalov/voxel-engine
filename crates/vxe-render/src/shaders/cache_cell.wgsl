@@ -56,6 +56,14 @@ fn cache_key_voxel(k: vec2<u32>) -> vec3<i32> {
     return bitcast<vec3<i32>>(vec3<u32>(x, y, z) << vec3<u32>(12u)) >> vec3<u32>(12u);
 }
 
+// The blend list's dirty word past the entry count: set by whatever changes a value the blend
+// reads (a claim, a sample added under the cap, a clear or a reopen, a walk that frees cells), by
+// a cell in the list that was not in the last frame's, and by a load over the age-out's mark,
+// where the blend's seen stamps must go on; `blend_args` takes it. Unset for two frames, the blend
+// words stand and the pass does not run.
+const CACHE_BLEND_DIRTY: u32 = 1u;
+const CACHE_BLEND_WAS_DIRTY: u32 = 2u;
+
 // The blend word's exponent bias and the smallest colour it holds, 2^-26: under it, black.
 const BLEND_EXP_BIAS: i32 = 26;
 const BLEND_MIN: f32 = 1.4901161e-8;

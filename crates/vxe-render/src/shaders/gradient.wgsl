@@ -90,6 +90,7 @@ fn reopen_cell(word: u32, cause: u32) {
     for (var k = CACHE_COUNT + 1u; k <= CACHE_KEPT_LUM; k++) {
         atomicStore(&cache_cells[word + k], 0u);
     }
+    atomicStore(&cache_cells[CACHE_WORDS * (params.cache_mask + 1u) + CACHE_BLEND_DIRTY], 1u);
     // Reopened: the fill samples it until C_FILL (cache_fill.wgsl).
     atomicOr(&cache_cells[word + CACHE_STAMP], CACHE_REOPENED);
     atomicAdd(&cache_stats.reopens, 1u);

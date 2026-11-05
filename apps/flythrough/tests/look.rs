@@ -1485,13 +1485,13 @@ fn the_split_walk_moves_no_hit_record() {
 /// a render in its default look over the thin rig mirrored without band slots: main 28948a5's
 /// figure (DEFAULT_MAIN) plus the split walk's 32-byte stub list and 16-byte dispatch words,
 /// no hand-off list, and the emissive table of ADR-0043 in place of the screen's emissive
-/// history and reservoirs (TABLE_DELTA: + lavapipe's 2^21 cells' 100 663 296 + the blend list's 921 616 + the walk's 92 + the blend's uniform's 32 - 3 686 400 -
+/// history and reservoirs (TABLE_DELTA: + lavapipe's 2^21 cells' 100 663 296 + the blend list's 921 616 + the walk's 92 + the blend's uniform and dispatch's 44 - 3 686 400 -
 /// 7 372 800, `upscale.rs`'s `frame_bytes_hold_the_table_and_no_emissive_history`), the reopened fill's list and
 /// dispatch words (+ 65 564), and the preload's store, uniform, dispatch words and idle
 /// readback slots (+ 2 271 860).
-const DEFAULT_FRAME_BYTES: u64 = 223_130_476;
+const DEFAULT_FRAME_BYTES: u64 = 223_130_488;
 const DEFAULT_MAIN: u64 = 130_267_168;
-const TABLE_DELTA: u64 = 100_663_296 + 921_616 + 92 + 32 - 3_686_400 - 7_372_800;
+const TABLE_DELTA: u64 = 100_663_296 + 921_616 + 92 + 44 - 3_686_400 - 7_372_800;
 const FILL_BYTES: u64 = 16 + 4 * 16_384 + 12;
 const PRELOAD_BYTES: u64 = 152
     + 512

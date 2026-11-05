@@ -235,6 +235,7 @@ fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
             if (r.exchanged) {
                 atomicStore(&cache_cells[word], key.x);
                 atomicStore(&cache_cells[word + 1u], key.y);
+                blend_dirty();
                 atomicAdd(&cache_stats.occupied, 1u);
                 return i32(slot);
             }
@@ -250,6 +251,11 @@ fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
         }
     }
     return -1;
+}
+
+// Marks the table changed for the blend (cache_cell.wgsl's CACHE_BLEND_DIRTY).
+fn blend_dirty() {
+    atomicStore(&cache_cells[CACHE_WORDS * (params.cache_mask + 1u) + CACHE_BLEND_DIRTY], 1u);
 }
 
 // Appends `slot` to the blend list past the table's cells (cache_blend.wgsl).
@@ -268,6 +274,10 @@ fn cache_seen(slot: u32) -> bool {
     loop {
         if (old == now) {
             return false;
+        }
+        // A cell that was not in the last frame's list has no blend of this frame's table.
+        if (old != now - 1u) {
+            blend_dirty();
         }
         let r = atomicCompareExchangeWeak(&cache_cells[word], old, now);
         if (r.exchanged) {
@@ -305,6 +315,7 @@ fn cache_add(slot: u32, emissive: vec3<f32>) {
     let word = CACHE_WORDS * slot + CACHE_COUNT;
     let before = atomicAdd(&cache_cells[word], 1u);
     if (before < cache_c_cap()) {
+        blend_dirty();
         let q = vec3<u32>(emissive * CACHE_Q + 0.5);
         atomicAdd(&cache_cells[word + 1u], q.x);
         atomicAdd(&cache_cells[word + 2u], q.y);

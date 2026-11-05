@@ -28,6 +28,7 @@ struct Edits {
 
 // Clears the cell at `word`: its count, sums, kept emitter and blend; its key and seen word stay.
 fn reset_cell(word: u32) {
+    atomicStore(&cache_cells[CACHE_WORDS * (params.cache_mask + 1u) + CACHE_BLEND_DIRTY], 1u);
     for (var k = CACHE_COUNT; k < CACHE_STAMP; k++) {
         atomicStore(&cache_cells[word + k], 0u);
     }
