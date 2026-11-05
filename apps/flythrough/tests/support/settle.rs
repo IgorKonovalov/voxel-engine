@@ -2643,6 +2643,15 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
     let mut pixels: Vec<usize> = Vec::new();
     let mut series: Vec<Vec<f32>> = Vec::new();
     let mut young = Vec::new();
+    // `Q90`: the last frame in the dense reads with under 90 % of the hole's pixels still, moving
+    // under `STILL_LEVEL` through the display transform since the frame before.
+    let level_of = |v: f32| {
+        let x = v.max(0.0);
+        let m = ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0);
+        m.powf(1.0 / 2.2) * 255.0
+    };
+    let mut last_levels: Vec<f32> = Vec::new();
+    let mut q90 = 0usize;
     for f in 1..=REF.1 {
         frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
         let sampled = settle_sampled(f) || f >= REF.0;
@@ -2668,6 +2677,21 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
         }
         let (_, v) = px.values(Part::Emissive, false);
         series.push(pixels.iter().map(|&i| meter_log2(v[i])).collect());
+        if f <= SETTLE_DENSE {
+            let (_, seen) = px.values(Part::Emissive, true);
+            let levels: Vec<f32> = pixels.iter().map(|&i| level_of(seen[i])).collect();
+            if !last_levels.is_empty() {
+                let still = levels
+                    .iter()
+                    .zip(&last_levels)
+                    .filter(|(a, b)| (*a - *b).abs() < 1.0)
+                    .count();
+                if still * 10 < levels.len() * 9 {
+                    q90 = f;
+                }
+            }
+            last_levels = levels;
+        }
         if table && dig_table_frame(f) {
             let words = cache_words(level, &frame);
             let g = px.grid;
@@ -2713,7 +2737,7 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
         })
         .collect();
     format!(
-        "{} hole pixels ({} counted); emissive S90 {} mean90 {} (step {:+.3}, noise {:.4}); settled % at frame {}; young/no-cell share in the hole and its pixels' cell counts at frame {}",
+        "{} hole pixels ({} counted); Q90 {q90}; emissive S90 {} mean90 {} (step {:+.3}, noise {:.4}); settled % at frame {}; young/no-cell share in the hole and its pixels' cell counts at frame {}",
         pixels.len(),
         s.counted,
         s.frames.map_or("none".into(), |f| f.to_string()),

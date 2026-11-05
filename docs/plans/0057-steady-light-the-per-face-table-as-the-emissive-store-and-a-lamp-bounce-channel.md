@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** in-progress (Phases 1 to 6 done, 2026-11-05; amended with Phases 7 and 8; Phase 7 Part 0, the before rows, read); Plan 0056's Phase 2 readings are in its log (e678ae7)
+> **Status:** in-progress (Phases 1 to 7 done, 2026-11-05; Phase 8, the owner's second window, owed); Plan 0056's Phase 2 readings are in its log (e678ae7)
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
@@ -1788,7 +1788,8 @@ Open at draft: the "go".
 | 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](logs/0057.md)) | 64a6598 |
 | 4: The dug hole and the creases, read on the table, then fixed where read | dev | done: Part 1 verdicts (hole: build; creases: Part 3 not built, done-whens 4 and 7 unwritten; still hall: class 2; census: the claim; reopens: the dark capped cell); Parts 1b, 2, 2b built, deviations in the log (the guard window's event and counter, pixel samples at face points, the preload's band-ordered fill, slab stamps, fill and probes in the light dispatch, idle in place of the trickle, the idle skip, the done slab re-read within r0, r0 32 from the sweep); not met: 2 and 15's off arms on the box, 14 and 16 on the level (two 4096-sample references agree within 10 % on 0.08 to 0.66 of cells), 15 on the level (S90 271), 11's vein share 0.00019 ([log](logs/0057.md)) | 4de5c4e |
 | 5: The lamp-bounce channel | dev | done, committed before Phase 4's row (the orchestrator's order); deviations: the moving lamp carried per probe (`MOVED_BIT`), the window sets the schedule only, `Lighting::default()` keeps `lamp_bounce` off (the fly-through on), side 8 from the reach of 64; done-when 5's timers unread on lavapipe; 8 not met (the still composite moves, bounce on and off alike) ([log](logs/0057.md)) | 12a9178 |
-| 6: The owner's window, with digs | human | done; verdict in the log; direction questioned ([log](logs/0057.md)) | committed with this row |
+| 6: The owner's window, with digs | human | done; verdict in the log; direction questioned ([log](logs/0057.md)) | a23b73d |
+| 7: The grain, the young cells and the table | dev | done; size 2^22, probes 16; not met: done-when 4's level bars at the vein, done-when 5's first frame ([log](logs/0057.md)) | committed with this row |
 
 ### Notes
 
@@ -1826,6 +1827,20 @@ each. Empty is fine.)_
 - Phase 4 (52ada45): the reference walks at the run's largest R (96), not 128.
 - Phase 4: `look.rs`, `shader_portability.rs` and the golden baselines changed, outside the phase's files.
 - Phase 4 (refactor after a337f76, Plan 0056 closed): `Sampler`, `Lighting::sampler`, `CacheRead` and `hud::SteadyMode` removed; `strip.rs` refuses `VXE_STRIP_SAMPLER` and `VXE_STRIP_STEADY`; Phase 2's done-when 10 met there.
+
+- Phase 7 (41cda0c): the age-out re-runs `age` frames after a pass that left the load over the mark having freed a cell or started on growth: not in the plan, done-when 2 needs it; the open architect question, option (a), taken without the architect.
+- Phase 7 (41cda0c): the table is clamped to the device's storage binding: 2^21 on lavapipe (128 MiB), so `frame_bytes` asserts the 2^21 figure, not the plan's 2^22.
+- Phase 7: `cache_cell.wgsl` (new), `.gitattributes`, `golden.rs`, `shader_portability.rs` and the table-key fixtures changed, outside the phase's files.
+- Phase 7: the blend word is a shared exponent over square-root mantissas, not RGB9E5; a neighbour's lookup ends at its first free slot.
+- Phase 7 (82af332): a skip of the whole pass on a quiet table and an alternate-frame refresh in place of the `final` bit.
+- Phase 7: `a_young_face_reads_its_walls_light` clears eight faces, its off arm asserts at least one over 2 levels; the age-out test adds 16 frames at the sky for the preload's cells.
+- Phase 7: `the_table_hash_spreads_a_levels_keys` reads its spread at a load of 0.9, not 0.5, at 16 probes.
+- Phase 7: `showcase_hall_golden_is_lit_by_its_four_ores`'s luma floor loosened from 12 to 11 (it reads 11.97); `dark_cave_golden`'s far bar tightened to 1 in 10 000.
+- Phase 7: done-when 4's level bars not met at the vein: `G_noise` 2.23 / 9.79 (fsr2) and 2.07 / 7.97 (native) against 1 / 2; `G_plane` p90 0.59 and 0.77 of its before row against 0.5. Met in the hall.
+- Phase 7: done-when 5's first frame not met: 0.64 (fsr2) and 0.62 (native) within 4 against 0.9, at any `POOL_MIN`, blend on or off. Frame +16 and the strip's frame 120 at scale 1 are met. Faces hold 256 samples and up on that frame; fsr2's strip reads 0.9928 at frame 120.
+- Phase 7: done-when 8: Radeon lighting is over the 6.0 ms line walking, in the base too; the walk's slice frames are not read on their own; the light pass's excess reads within the runs' spread, on loaded runs.
+- Phase 7: the vein's `B` presses (78 to 87 carves) stay over `MAX_EDITS` and clear the whole table; the hall's no longer do.
+- Phase 7: `castle_gate_golden` fails its RSS bar on a cold Mesa shader cache (also on the tree before this phase) and passes warm.
 
 ### Close triggers
 
