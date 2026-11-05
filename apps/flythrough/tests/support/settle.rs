@@ -128,16 +128,13 @@ pub struct Setting {
     pub steady: Steady,
 }
 
-/// The probe knobs a run reads (the steady spike's A1, A2 and C), and whether the temporal pass
-/// reads the emissive table (ADR-0043; off, every hit takes the fallback).
+/// The probe knob a run reads (the steady spike's A1: the freeze count, now the channel's only
+/// blend), and whether the temporal pass reads the emissive table (ADR-0043; off, every hit
+/// takes the fallback).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Steady {
-    /// A1: the probes' freeze count.
+    /// A1: the probes' freeze count; `None` is the default (`DEFAULT_PROBE_FREEZE`).
     pub a1: Option<u32>,
-    /// A2: inside probes skipped.
-    pub a2: bool,
-    /// C: the lamp out of the probes.
-    pub c: bool,
     /// The table's read (on by default).
     pub table: bool,
 }
@@ -146,42 +143,20 @@ impl Default for Steady {
     fn default() -> Self {
         Self {
             a1: None,
-            a2: false,
-            c: false,
             table: true,
         }
     }
 }
 
 impl Steady {
-    /// `table` (the default; `off` and `b` name it too, as the readings before ADR-0043 did),
-    /// `noread` (the table's read off), `a` (A1 and A2), `c`, `ac`, `a1`, `a2`, and `aN` with a
-    /// freeze of `N`.
+    /// `table` (the default; `off`, `b`, `a` and `a1` name it too, as the readings before
+    /// ADR-0043's lamp channel did), `noread` (the table's read off), and `aN` with a freeze of
+    /// `N`.
     pub fn named(name: &str) -> Steady {
-        let a1 = Some(vxe_render::marcher::DEFAULT_PROBE_FREEZE);
-        let all = Steady {
-            a1,
-            a2: true,
-            ..Steady::default()
-        };
         match name {
-            "table" | "off" | "b" => Steady::default(),
+            "table" | "off" | "b" | "a" | "a1" => Steady::default(),
             "noread" => Steady {
                 table: false,
-                ..Steady::default()
-            },
-            "a" => all,
-            "ac" => Steady { c: true, ..all },
-            "c" => Steady {
-                c: true,
-                ..Steady::default()
-            },
-            "a1" => Steady {
-                a1,
-                ..Steady::default()
-            },
-            "a2" => Steady {
-                a2: true,
                 ..Steady::default()
             },
             other => {
@@ -199,9 +174,7 @@ impl Steady {
 
     pub fn apply(self, lighting: Lighting) -> Lighting {
         Lighting {
-            probe_freeze: self.a1,
-            skip_inside_probes: self.a2,
-            probe_lamp: !self.c,
+            probe_freeze: self.a1.unwrap_or(vxe_render::marcher::DEFAULT_PROBE_FREEZE),
             table_read: self.table,
             ..lighting
         }
@@ -215,12 +188,6 @@ impl Steady {
         let mut w = Vec::new();
         if let Some(f) = self.a1 {
             w.push(format!("a1={f}"));
-        }
-        if self.a2 {
-            w.push("a2".to_owned());
-        }
-        if self.c {
-            w.push("c".to_owned());
         }
         if !self.table {
             w.push("noread".to_owned());
@@ -320,7 +287,12 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
     };
     setting.steady.apply(Lighting {
         lamp: setting.lamp,
-        indirect: setting.indirect,
+        lamp_bounce: setting.indirect,
+        // The moving lamp's blend: `VXE_PROBE_MOVE` (h_move).
+        probe_move_blend: std::env::var("VXE_PROBE_MOVE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(vxe_render::probes::DEFAULT_H_MOVE),
         exposure: if setting.auto {
             Exposure::Auto(AutoExposure::eye())
         } else {
@@ -2320,13 +2292,14 @@ pub fn eye_after_lamp_off(level: &VeinLevel, pose: &Pose) -> f32 {
 /// The probe volume's state at rest: of the slots holding their probe (traced), how many are
 /// inside rock.
 pub fn probe_census(level: &VeinLevel, frame: &Frame) -> (u32, u32) {
-    use vxe_render::probes::{MAX_AGE, PROBE_COUNT, STATE_BASE};
+    use vxe_render::probes::MAX_AGE;
+    let v = frame.probes();
     let b = readback::read_buffer(
         &level.device,
         &level.queue,
-        frame.probes().data(),
-        u64::from(STATE_BASE) * 4,
-        u64::from(PROBE_COUNT) * 4,
+        v.data(),
+        u64::from(v.state_base()) * 4,
+        u64::from(v.count()) * 4,
     );
     let (mut traced, mut inside) = (0, 0);
     for c in b.chunks_exact(4) {
@@ -2356,13 +2329,14 @@ pub fn freeze_census(
     camera: &Camera,
     freeze: u32,
 ) -> FreezeCensus {
-    use vxe_render::probes::{MAX_AGE, PROBE_COUNT, PROBES_PER_AXIS, STATE_BASE, probe_slot};
+    use vxe_render::probes::MAX_AGE;
+    let v = frame.probes();
     let b = readback::read_buffer(
         &level.device,
         &level.queue,
-        frame.probes().data(),
-        u64::from(STATE_BASE) * 4,
-        u64::from(PROBE_COUNT) * 4,
+        v.data(),
+        u64::from(v.state_base()) * 4,
+        u64::from(v.count()) * 4,
     );
     let word = |s: u32| {
         u32::from_le_bytes(
@@ -2372,7 +2346,7 @@ pub fn freeze_census(
         )
     };
     let origin = frame.probes().origin_for(camera.position.to_array());
-    let n = PROBES_PER_AXIS as i32;
+    let n = v.axis() as i32;
     let mut c = FreezeCensus {
         all: [0; 3],
         in_view: [0; 3],
@@ -2381,7 +2355,7 @@ pub fn freeze_census(
         for y in 0..n {
             for x in 0..n {
                 let w = [origin[0] + x, origin[1] + y, origin[2] + z];
-                let s = word(probe_slot(w));
+                let s = word(v.slot(w));
                 let age = (s >> 1) & MAX_AGE;
                 if age == 0 {
                     continue;

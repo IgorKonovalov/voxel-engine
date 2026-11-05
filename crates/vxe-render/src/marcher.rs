@@ -118,8 +118,8 @@ pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
 /// `Params::lighting` bit: the temporal pass also shortens history by A-SVGF's gradient
 /// ([`History::Gradient`]).
 pub const LIGHTING_GRADIENT: u32 = 1 << 3;
-/// [`Lighting::probe_freeze`] in the steady presets: where a running mean's noise, `1 / n`,
-/// roughly equals hysteresis 0.97's steady noise, `0.03 / 1.97`.
+/// [`Lighting::probe_freeze`] by default: where a running mean's noise, `1 / n`, roughly
+/// equals hysteresis 0.97's steady noise, `0.03 / 1.97`.
 pub const DEFAULT_PROBE_FREEZE: u32 = 64;
 /// Frames after an emission-scale change (the frame of the change too) during which the
 /// emissive part blends at no less
@@ -152,7 +152,7 @@ pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 /// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
-/// irradiance ([`Lighting::indirect`]).
+/// irradiance ([`Lighting::lamp_bounce`]).
 pub const LIGHTING_INDIRECT: u32 = 1 << 12;
 /// `Params::lighting` bit: the exposure is automatic ([`Exposure::Auto`]): the frame's is the
 /// exposure state's `current`.
@@ -961,9 +961,13 @@ pub struct Lighting {
     /// the composite shows the light pass's raw irradiance.
     pub filter: bool,
     pub history: HistoryKill,
-    /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
-    /// their irradiance, in the shaded view outside the cutaway. Off by default.
-    pub indirect: bool,
+    /// The lamp's bounce from the probe volume (ADR-0043's lamp channel over ADR-0023's
+    /// volume): with the lamp on, the probes within [`Lighting::lamp_reach`] of it trace the
+    /// headlamp's light and the gather adds their irradiance, in the shaded view outside the
+    /// cutaway. With the lamp off no probe pass is encoded and the gather is skipped (a volume
+    /// whose updates are off, a test's preset, is still gathered). Off by default here; the
+    /// fly-through turns it on.
+    pub lamp_bounce: bool,
     /// Rays each updated probe traces, clamped to 1 ..= 64 (default 64): fewer rays cost less
     /// and blend a noisier estimate.
     pub probe_rays: u32,
@@ -971,17 +975,21 @@ pub struct Lighting {
     /// window ([`Frame::probe_light_window`]), rounded up to a power of two in 8 ..= 32
     /// (default 8): more slices cost less and lag longer.
     pub probe_slices: u32,
-    /// A probe blends as a running mean over this many visits since its restart, at most
-    /// `probes::MAX_AGE`, then stops tracing and blending until a restart (a light-change
-    /// window, an edit touching it, a scroll bringing a new probe into its slot); a moving lamp
-    /// holds the probes in its reach open (`probes::lamp_reach`). `None` is the fixed
-    /// hysteresis.
-    pub probe_freeze: Option<u32>,
-    /// A probe known to be inside rock returns at once from the probe passes until a restart.
-    pub skip_inside_probes: bool,
-    /// The probe rays shade their hits with the headlamp; off, the volume holds static light
-    /// alone, a lamp switch opens no light-change window and the lamp's bounce is lost.
-    pub probe_lamp: bool,
+    /// A probe blends as a running mean over this many visits since its restart, 1 ..=
+    /// `probes::MAX_AGE` (default [`DEFAULT_PROBE_FREEZE`]), then stops tracing and blending
+    /// until a restart: the channel's first fill (the lamp switched on, its parameters changed,
+    /// or the channel turned on), an edit touching it, a scroll bringing a new probe into its
+    /// slot, the probe entering the lamp's reach, or the lamp moving. A probe inside rock
+    /// returns at once from the probe passes until a restart.
+    pub probe_freeze: u32,
+    /// The lamp's reach in voxels (default [`crate::probes::LAMP_REACH`]): only the probes
+    /// within it of the lamp are updated, and the gather reads the others as zero. The volume's
+    /// side is the smallest power of two whose half covers it
+    /// ([`crate::probes::probes_per_axis`]); 0 or less is no cut.
+    pub lamp_reach: f32,
+    /// A probe's blend in reach while the lamp moves, `h old + (1 - h) new` (default
+    /// [`crate::probes::DEFAULT_H_MOVE`]); its running mean restarts once the lamp is still.
+    pub probe_move_blend: f32,
     /// Cells of the emissive table (ADR-0043), a power of two (default
     /// [`DEFAULT_TABLE_CELLS`]): the emissive direct irradiance per cube face, its only store.
     /// The light pass adds each sample to the hit face's cell and draws nothing on a capped
@@ -1040,12 +1048,12 @@ impl Default for Lighting {
             shadow_walk: ShadowWalk::default(),
             filter: true,
             history: HistoryKill::default(),
-            indirect: false,
+            lamp_bounce: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
             probe_slices: crate::probes::SLICES,
-            probe_freeze: None,
-            skip_inside_probes: false,
-            probe_lamp: true,
+            probe_freeze: DEFAULT_PROBE_FREEZE,
+            lamp_reach: crate::probes::LAMP_REACH,
+            probe_move_blend: crate::probes::DEFAULT_H_MOVE,
             table_cells: DEFAULT_TABLE_CELLS,
             table_cap: DEFAULT_TABLE_CAP,
             table_read: true,
@@ -1089,28 +1097,9 @@ impl Lighting {
         u32::from(self.table_read) | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14
     }
 
-    /// The word of `ProbeUniform::steady` this frame, `lamp_moved` the lamp's position or
-    /// direction changed since the last encode with the lamp on.
-    fn probe_steady(&self, lamp_moved: bool) -> u32 {
-        let freeze = self
-            .probe_freeze
-            .map_or(0, |f| f.clamp(1, crate::probes::MAX_AGE));
-        freeze
-            | if self.skip_inside_probes {
-                crate::probes::STEADY_SKIP_INSIDE
-            } else {
-                0
-            }
-            | if lamp_moved && self.lamp && self.probe_lamp {
-                crate::probes::STEADY_LAMP_MOVED
-            } else {
-                0
-            }
-            | if self.probe_lamp {
-                0
-            } else {
-                crate::probes::STEADY_NO_LAMP
-            }
+    /// The word of `ProbeUniform::steady`: the freeze count.
+    fn probe_steady(&self) -> u32 {
+        self.probe_freeze.clamp(1, crate::probes::MAX_AGE)
     }
 
     /// [`Lighting::probe_rays`] as the probe passes take it.
@@ -1143,7 +1132,11 @@ impl Lighting {
             } else {
                 0
             }
-            | if self.indirect { LIGHTING_INDIRECT } else { 0 }
+            | if self.lamp_bounce {
+                LIGHTING_INDIRECT
+            } else {
+                0
+            }
             | if matches!(self.exposure, Exposure::Auto(_)) {
                 LIGHTING_AUTO_EXPOSURE
             } else {
@@ -1306,8 +1299,10 @@ pub struct Frame {
     frame: u32,
     /// The frame index of the last emission-scale change.
     emission_changed_at: Option<u32>,
-    /// The frame index of the last change of a scale the probe rays sample.
-    probe_emission_changed_at: Option<u32>,
+    /// Whether the last encode ran the probe update (the lamp channel).
+    probe_channel_ran: std::sync::atomic::AtomicBool,
+    /// The probe trace, blend and gather dispatches the last encode recorded.
+    probe_dispatches: std::sync::atomic::AtomicU32,
     /// The copy of the double-buffered targets the next `encode` writes.
     cur: usize,
     resolution: LightingResolution,
@@ -1324,8 +1319,8 @@ pub struct Frame {
     upscale_params: wgpu::Buffer,
     upscaler: Upscaler,
     history: std::sync::Mutex<History>,
-    /// The probe volume, built on first use (an encode with indirect light, [`Frame::probes`],
-    /// [`Frame::probes_mut`] or a spacing change), at `probe_spacing`; its passes' group-3
+    /// The probe volume, built on first use (an encode with the lamp channel running,
+    /// [`Frame::probes`] or [`Frame::probes_mut`]), at `probe_spacing`; its passes' group-3
     /// layout; the gather's group-2 layout. The device builds the volume.
     probes: std::sync::OnceLock<ProbeVolume>,
     /// The emissive table (ADR-0043): [`Lighting::cells`] cells of [`CACHE_CELL_WORDS`]
@@ -1354,6 +1349,8 @@ pub struct Frame {
     /// The guard runs in every frame, its window ignored ([`Frame::force_guard_window`]).
     guard_forced: bool,
     probe_spacing: u32,
+    /// The probe volume's side, if fixed ([`Frame::set_probe_axis`]).
+    probe_axis_fixed: Option<u32>,
     device: wgpu::Device,
     probe_layout: wgpu::BindGroupLayout,
     gather_layout: wgpu::BindGroupLayout,
@@ -1451,16 +1448,12 @@ struct History {
 /// What a frame's static light depends on, as the probe volume's light-change window compares
 /// it between encodes: the lamp's switch and its parameters (not `masks` or `skips`, which
 /// leave the walk byte-identical, and not its pose, which follows the camera), the shadow walk
-/// the lamp's shadow rays take, the emissive candidate count (0 is emissive light off) and the
-/// frame of the last change of an emission scale the probe rays sample. Exposure and the tone
-/// map come after the light.
+/// the lamp's shadow rays take. Exposure and the tone map come after the light.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LightKey {
     lamp: bool,
     params: LampKey,
     shadow_walk: ShadowWalk,
-    candidates: u32,
-    emission_changed_at: Option<u32>,
 }
 
 /// The lamp's parameters as a frame's [`Params`] carry them: its camera-relative pose
@@ -1494,14 +1487,6 @@ impl LightKey {
         self.lamp != other.lamp
             || self.params != other.params
             || self.shadow_walk != other.shadow_walk
-    }
-
-    /// Whether anything but the lamp's own light differs: what the probes see with the lamp
-    /// out of them.
-    fn static_differs(&self, other: &Self) -> bool {
-        self.shadow_walk != other.shadow_walk
-            || self.candidates != other.candidates
-            || self.emission_changed_at != other.emission_changed_at
     }
 }
 
@@ -2154,7 +2139,8 @@ impl Frame {
             blue_noise_written: std::sync::atomic::AtomicBool::new(false),
             frame: 0,
             emission_changed_at: None,
-            probe_emission_changed_at: None,
+            probe_channel_ran: std::sync::atomic::AtomicBool::new(false),
+            probe_dispatches: std::sync::atomic::AtomicU32::new(0),
             cur: 0,
             downsample_layout,
             downsample,
@@ -2206,6 +2192,7 @@ impl Frame {
             table_dispatch_cap: MAX_DISPATCH_GROUPS,
             guard_forced: false,
             probe_spacing: DEFAULT_PROBE_SPACING,
+            probe_axis_fixed: None,
             device: device.clone(),
             probe_layout,
             gather_layout,
@@ -2276,19 +2263,25 @@ impl Frame {
     }
 
     /// Probe rays the last encode dispatched (update-list entries times
-    /// [`Lighting::probe_rays`]); 0 with indirect light off or the update off.
+    /// [`Lighting::probe_rays`]); 0 with the channel or the lamp off, or the update off.
     pub fn traced_probe_rays(&self) -> u64 {
         self.traced_probe_rays
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Whether the last encode's probe update ran inside a light-change window: a change of
-    /// the lamp's switch or parameters, the shadow walk, the emissive candidate count or an
-    /// emission scale opens one for [`crate::probes::WINDOW_FRAMES`] encoded frames with a
-    /// probe update, and a change inside it restarts it. In the window the update refreshes
-    /// one probe in [`crate::probes::WINDOW_SLICES`] a frame, every visit blends at
-    /// hysteresis 0 and restarts the probe's age at 1, so the young updates after it smooth
-    /// the noise back down.
+    /// The probe trace, blend and gather dispatches the last encode recorded: 0 with the lamp
+    /// off or the channel off.
+    pub fn probe_dispatches(&self) -> u32 {
+        self.probe_dispatches
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether the last encode's probe update ran inside a light-change window: the channel
+    /// starting (the lamp switched on, the channel turned on, the volume rebuilt) or a change of
+    /// the lamp's parameters or shadow walk clears every probe's state and opens one for
+    /// [`crate::probes::WINDOW_FRAMES`] encoded frames with a probe update; a change inside it
+    /// restarts it. In the window the update refreshes one probe in
+    /// [`crate::probes::WINDOW_SLICES`] a frame, so the channel fills from zero faster.
     pub fn probe_light_window(&self) -> bool {
         self.probe_light_window
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -2301,12 +2294,54 @@ impl Frame {
         self.lamp_changed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The probe volume (ADR-0023), built here if no encode with indirect light, no
-    /// [`Frame::probes_mut`] and no spacing change has built it yet. Until then the frame
-    /// holds none of its buffers.
+    /// The probe volume (ADR-0023), built here if no encode with the lamp channel running, no
+    /// [`Frame::probes_mut`] and no spacing change has built it yet, at
+    /// [`Frame::probe_axis`] probes a side. Until then the frame holds none of its buffers.
     pub fn probes(&self) -> &ProbeVolume {
         self.probes
-            .get_or_init(|| ProbeVolume::new(&self.device, self.probe_spacing))
+            .get_or_init(|| ProbeVolume::new(&self.device, self.probe_spacing, self.probe_axis()))
+    }
+
+    /// The probe volume's side: the one [`Frame::set_probe_axis`] fixed, or the smallest power
+    /// of two whose half covers [`Lighting::lamp_reach`] at the spacing
+    /// ([`crate::probes::probes_per_axis`]).
+    pub fn probe_axis(&self) -> u32 {
+        self.probe_axis_fixed.unwrap_or_else(|| {
+            crate::probes::probes_per_axis(self.lighting.lamp_reach, self.probe_spacing)
+        })
+    }
+
+    /// Fixes the probe volume's side at `axis` probes (a power of two in 4 ..= 32), or with
+    /// `None` lets it follow the lamp's reach; a built volume of another side is rebuilt as
+    /// [`Frame::set_probe_spacing`] does.
+    pub fn set_probe_axis(&mut self, axis: Option<u32>) {
+        self.probe_axis_fixed = axis;
+        self.rebuild_probes();
+    }
+
+    /// Replaces a built probe volume whose spacing or side differs from the frame's, every
+    /// probe never traced; the old volume's pinned origin and switches carry over, and it is
+    /// dropped before the new one is built.
+    fn rebuild_probes(&mut self) {
+        let (spacing, axis) = (self.probe_spacing, self.probe_axis());
+        if self
+            .probes
+            .get()
+            .is_none_or(|v| v.spacing() == spacing && v.axis() == axis)
+        {
+            return;
+        }
+        let old = self.probes.take();
+        let carried = old.as_ref().map(|o| (o.pinned_origin(), o.updates()));
+        drop(old);
+        let mut v = ProbeVolume::new(&self.device, spacing, axis);
+        if let Some((origin, updates)) = carried {
+            v.set_origin(origin);
+            v.set_updates(updates);
+        }
+        self.probe_channel_ran
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.probes.set(v);
     }
 
     /// The probe volume, built here as [`Frame::probes`] does.
@@ -2316,21 +2351,12 @@ impl Frame {
     }
 
     /// Replaces the probe volume with one of probes `spacing` voxels apart, every probe never
-    /// traced, when the spacing changes; the old volume's pinned origin and switches carry
-    /// over, and it is dropped before the new one is built.
-    pub fn set_probe_spacing(&mut self, device: &wgpu::Device, spacing: u32) {
-        if spacing != self.probe_spacing {
-            let old = self.probes.take();
-            let carried = old.as_ref().map(|o| (o.pinned_origin(), o.updates()));
-            drop(old);
-            let mut v = ProbeVolume::new(device, spacing);
-            if let Some((origin, updates)) = carried {
-                v.set_origin(origin);
-                v.set_updates(updates);
-            }
-            self.probe_spacing = spacing;
-            let _ = self.probes.set(v);
-        }
+    /// traced, when the spacing changes (its side follows, see [`Frame::probe_axis`]); the old
+    /// volume's pinned origin and switches carry over, and it is dropped before the new one is
+    /// built. A volume not yet built is built at the new spacing on first use.
+    pub fn set_probe_spacing(&mut self, _device: &wgpu::Device, spacing: u32) {
+        self.probe_spacing = spacing;
+        self.rebuild_probes();
     }
 
     /// The gather's indirect irradiance on the lighting grid (rgba16float, rgb).
@@ -2484,9 +2510,9 @@ impl Frame {
 
     /// Kills the history of every pixel whose hit lies in the voxels `min ..= max` dilated by
     /// one voxel, in the next encoded frame: an edit's `EditResult::aabb`. More than
-    /// [`MAX_EDITS`] boxes in one frame flush all history. With indirect light on, the next
-    /// encoded frame also updates every probe whose cell the box touches
-    /// ([`ProbeVolume::touched`]) at the young hysteresis, its age restarting at 1; boxes past
+    /// [`MAX_EDITS`] boxes in one frame flush all history. With the lamp channel running, the
+    /// next encoded frame also restarts every probe within the lamp's reach whose cell the box
+    /// touches ([`ProbeVolume::touched`]): it blends at hysteresis 0, its age at 1; boxes past
     /// [`MAX_EDITS`] touch no probe, which then refresh in their slices.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
         let h = self.history();
@@ -2629,7 +2655,7 @@ impl Frame {
     }
 
     /// Scales material `material`'s emission by `scale` from the next frame on, in the
-    /// pixels' light and the probes' alike: a visual knob that leaves the world untouched
+    /// pixels' light (and the probe rows, see [`Frame::set_emission_scales`]): a visual knob that leaves the world untouched
     /// (an authoritative change is a `Replace` op).
     pub fn set_emission_scale(&mut self, queue: &wgpu::Queue, material: u16, scale: f32) {
         self.set_emission_scales(queue, material, scale, scale);
@@ -2638,8 +2664,8 @@ impl Frame {
     /// Scales material `material`'s emission by `pixels` in the light the frame's pixels
     /// sample (the light pass, the composite) and by `probes` in the light the probe rays
     /// sample. An emitter that varies over time passes its current scale and its time
-    /// average: the pixels follow it at full amplitude, and while `probes` holds still the
-    /// probe volume sees no light change (no light-change window opens).
+    /// average. The probe rows are kept for a per-source bounce channel; the lamp channel
+    /// (ADR-0043) reads none of them, so `probes` changes nothing a frame shows.
     pub fn set_emission_scales(
         &mut self,
         queue: &wgpu::Queue,
@@ -2656,8 +2682,6 @@ impl Frame {
                     // The table's cells hold the old emission's light: they restart.
                     self.cache_clear_requested
                         .store(true, std::sync::atomic::Ordering::Relaxed);
-                } else {
-                    self.probe_emission_changed_at = Some(self.frame);
                 }
                 queue.write_buffer(
                     &self.emission_scale,
@@ -2726,6 +2750,7 @@ impl Frame {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.lighting = lighting;
+        self.rebuild_probes();
     }
 
     /// Caps a dispatch row of the table's edit-box reset and sweep at `groups` workgroups (at
@@ -3010,12 +3035,22 @@ impl Frame {
         keep_history: bool,
     ) {
         let mut p = *params;
-        // The probe passes run in the shaded and cracks views outside the cutaway, with indirect
-        // light on.
-        let indirect = self.lighting.indirect && self.look.view.shades() && !self.look.cutaway;
-        // The volume exists from the first encode with indirect light on.
+        // The probe passes run in the shaded and cracks views outside the cutaway, with the
+        // lamp's bounce on and the lamp on (or a preset volume, whose updates are off).
+        let presets = self.probes.get().is_some_and(|v| !v.updates());
+        let indirect = self.lighting.lamp_bounce
+            && (self.lighting.lamp || presets)
+            && self.look.view.shades()
+            && !self.look.cutaway;
+        // The volume exists from the first encode with the channel running.
         let volume = indirect.then(|| self.probes());
         let probe_update = volume.is_some_and(ProbeVolume::updates);
+        // The channel starts from zero when it was not running at the last encode or the
+        // lamp's light changed: every probe's state is cleared and a window opens.
+        let channel_was = self
+            .probe_channel_ran
+            .swap(probe_update, std::sync::atomic::Ordering::Relaxed);
+        let mut probe_restart = probe_update && !channel_was;
         let mut light_window = false;
         let mut lamp_moved = false;
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
@@ -3076,8 +3111,6 @@ impl Frame {
                 lamp: self.lighting.lamp,
                 params: LampKey::of(params),
                 shadow_walk: self.lighting.shadow_walk,
-                candidates: self.lighting.candidates,
-                emission_changed_at: self.probe_emission_changed_at,
             };
             let lamp_changed = h.light_key.is_some_and(|k| k.lamp_differs(&key));
             if lamp_changed {
@@ -3085,15 +3118,9 @@ impl Frame {
             }
             self.lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
-            // With the lamp out of the probes only static light opens a window.
-            let probes_changed = h.light_key.is_some_and(|k| {
-                if self.lighting.probe_lamp {
-                    k != key
-                } else {
-                    k.static_differs(&key)
-                }
-            });
-            if probes_changed {
+            // The probes see the lamp alone: its switch, parameters or shadow walk restart them.
+            probe_restart |= probe_update && lamp_changed;
+            if probe_restart {
                 h.light_window = crate::probes::WINDOW_FRAMES;
             }
             h.light_key = Some(key);
@@ -3733,7 +3760,19 @@ impl Frame {
                     .iter()
                     .flat_map(|&[min, max]| volume.touched(origin, min, max))
                     .collect();
-                let list = volume.update_list(p.frame, slices, &touched);
+                if probe_restart {
+                    let base = u64::from(volume.state_base()) * 4;
+                    encoder.clear_buffer(volume.data(), base, Some(volume.state_bytes()));
+                    volume.forget_reach();
+                }
+                let reach = self.lighting.lamp_reach;
+                let lamp = p.light_pos;
+                let moved = lamp_moved && self.lighting.lamp;
+                let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
+                    let q = volume.probe_position(w);
+                    let d2: f32 = (0..3).map(|k| (q[k] - lamp[k]).powi(2)).sum();
+                    reach <= 0.0 || d2 <= reach * reach
+                });
                 queue.write_buffer(volume.scratch(), 0, bytemuck::cast_slice(&list));
                 updates = list.len() as u32;
             }
@@ -3741,7 +3780,7 @@ impl Frame {
                 u64::from(updates) * u64::from(self.lighting.rays()),
                 std::sync::atomic::Ordering::Relaxed,
             );
-            self.write_probe_uniform(queue, volume, &p, updates, light_window, lamp_moved);
+            self.write_probe_uniform(queue, volume, &p, updates);
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("probes"),
                 layout: &self.probe_layout,
@@ -3775,6 +3814,10 @@ impl Frame {
                 probes.push(frame_pass(&self.probe_blend, b, 3, [updates, 1]));
             }
         }
+        self.probe_dispatches.store(
+            (gather.len() + probes.len()) as u32,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         let mut upscale: Vec<Dispatch<'_>> = Vec::new();
         let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
@@ -3898,24 +3941,29 @@ impl Frame {
     }
 
     /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
-    /// view's eye, `updates` entries in the update list, and whether the light-change window
-    /// is open.
+    /// view's eye, `updates` entries in the update list, the freeze count, the side, the lamp's
+    /// reach (0 for a preset volume) and the moving lamp's blend.
     fn write_probe_uniform(
         &self,
         queue: &wgpu::Queue,
         volume: &ProbeVolume,
         p: &Params,
         updates: u32,
-        window: bool,
-        lamp_moved: bool,
     ) {
         let u = ProbeUniform {
             origin: volume.origin_for(p.views[0].origin),
             spacing: volume.spacing(),
             updates,
             rays: self.lighting.rays(),
-            light_window: u32::from(window),
-            steady: self.lighting.probe_steady(lamp_moved),
+            steady: self.lighting.probe_steady(),
+            axis: volume.axis(),
+            reach: if volume.updates() {
+                self.lighting.lamp_reach.max(0.0)
+            } else {
+                0.0
+            },
+            h_move: self.lighting.probe_move_blend.clamp(0.0, 1.0),
+            _pad: [0; 2],
         };
         queue.write_buffer(volume.uniform(), 0, bytemuck::bytes_of(&u));
     }

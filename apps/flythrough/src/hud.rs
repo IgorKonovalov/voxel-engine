@@ -410,8 +410,8 @@ impl fmt::Display for ExposureRow {
 }
 
 /// The frame passes' GPU times (name and milliseconds, in pass order), the light samples the
-/// mirror holds, the probe volume's live probes at the last sample (`None` with indirect light
-/// off), the emissive table's cells, occupied cells and last misses at the last sample, and the
+/// mirror holds, the probe volume's live probes at the last sample (`None` with the lamp's
+/// bounce off), the emissive table's cells, occupied cells and last misses at the last sample, and the
 /// lighting modes in words.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LightingRow {
@@ -1317,8 +1317,8 @@ pub enum ModeKey {
     Resolution,
     /// `F7`: the headlamp.
     Lamp,
-    /// `F8`: indirect light from the probe volume.
-    Indirect,
+    /// `F8`: the lamp's bounce from the probe volume.
+    LampBounce,
     /// `M`: the ore's emission pulse.
     Pulse,
     /// `Q`: the exposure: auto with the start's preset, auto symmetric, manual.
@@ -1391,8 +1391,8 @@ pub struct Modes {
     /// The view's name after the look's words, from [`Modes::show_view`] with any view but
     /// `shaded`.
     view: Option<&'static str>,
-    /// Voxels between the probe volume's probes: the line names it (`probes 16`) while
-    /// indirect light is on.
+    /// Voxels between the probe volume's probes: the line names it (`probes 16`) while the
+    /// lamp's bounce is on.
     probe_spacing: u32,
     /// The preload's radius `F4` turns it back on at.
     preload_on: u32,
@@ -1516,7 +1516,7 @@ impl Modes {
                     l.preload_radius = self.preload_on;
                 }
             }
-            ModeKey::Indirect => l.indirect = !l.indirect,
+            ModeKey::LampBounce => l.lamp_bounce = !l.lamp_bounce,
             ModeKey::Pulse => self.pulse = !self.pulse,
             ModeKey::Exposure => {
                 use vxe_render::Exposure;
@@ -1564,9 +1564,9 @@ impl Modes {
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
-    /// indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to
+    /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to
     /// 256, preload R 64 B 128 C 256, exposure auto eye +1.53 EV` (the probe rays per update,
-    /// the share of probes refreshed a frame, while indirect light is on the voxels between
+    /// the share of probes refreshed a frame, while the lamp's bounce is on the voxels between
     /// probes, the emissive table's cells, the reopened fill's samples a frame and the count it
     /// fills to, or `off`, the preload's radius in voxels, bricks a frame and the count it fills
     /// to, or `preload off` (`F4`), and the exposure in EV, `log2 e`), after `source NAME, ` when
@@ -1577,18 +1577,18 @@ impl Modes {
         let source = self
             .source
             .map_or_else(String::new, |s| format!("source {s}, "));
-        let probes = if l.indirect {
+        let probes = if l.lamp_bounce {
             format!(", probes {}", self.probe_spacing)
         } else {
             String::new()
         };
         format!(
-            "{source}lighting {}, shadow walk {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {}, fill {}, {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {}, fill {}, {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.history.name(),
             on(l.lamp),
-            on(l.indirect),
+            on(l.lamp_bounce),
             l.rays(),
             l.slices(),
             on(l.filter),
@@ -1736,7 +1736,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, table 1048576\nfill 8 to 256, preload R 64 B 128 C 256\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off, table 1048576\nfill 8 to 256, preload R 64 B 128 C 256\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -1747,7 +1747,7 @@ mod mode_tests {
             (ModeKey::Resolution, "lighting full"),
             (ModeKey::Lamp, "lamp off"),
             (ModeKey::Preload, "preload off"),
-            (ModeKey::Indirect, "indirect on"),
+            (ModeKey::LampBounce, "lamp bounce on"),
             (ModeKey::Pulse, "ore pulse on"),
         ] {
             m.press(key, t);

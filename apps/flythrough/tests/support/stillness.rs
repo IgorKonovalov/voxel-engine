@@ -38,6 +38,8 @@ pub const WINDOW: (usize, usize) = (120, 720);
 pub const STEP: usize = 30;
 /// The composite's (and a part's) tile mean a full tile lies above, in log2.
 pub const FULL_LOG2: f32 = -15.0;
+/// The ages a trace counts as young: the eight updates after a restart.
+const YOUNG_AGES: u32 = 8;
 /// The meter's tile edge in internal pixels.
 pub const TILE: u32 = 8;
 /// The bar's frame size.
@@ -349,7 +351,7 @@ fn run_inner(
 ) -> (Reading, Vec<TraceFrame>) {
     let (device, queue) = (&level.device, &level.queue);
     let lit = Lighting {
-        indirect: true,
+        lamp_bounce: true,
         exposure: Exposure::Manual(pose.exposure),
         ..lighting
     };
@@ -389,7 +391,7 @@ fn run_inner(
                 let restarts = ages.iter().zip(&ages_before).filter(|(a, b)| a < b).count() as u32;
                 let young = ages
                     .iter()
-                    .filter(|&&a| (1..=vxe_render::probes::YOUNG_UPDATES).contains(&a))
+                    .filter(|&&a| (1..=YOUNG_AGES).contains(&a))
                     .count() as u32;
                 trace.push(TraceFrame {
                     off,

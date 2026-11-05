@@ -31,7 +31,7 @@ fn window_frame(level: &stillness::VeinLevel, lamp: bool) -> Frame {
     let mut frame = Frame::new(&level.device, 64, 36);
     frame.set_lighting(Lighting {
         lamp,
-        indirect: true,
+        lamp_bounce: true,
         exposure: Exposure::Manual(VEIN_POSE.exposure),
         ..Lighting::default()
     });
@@ -39,9 +39,10 @@ fn window_frame(level: &stillness::VeinLevel, lamp: bool) -> Frame {
     frame
 }
 
-/// Switching the lamp opens the probe volume's light-change window on the first frame after
-/// the switch (every frame with indirect light on updates probes) and holds it for exactly
-/// `WINDOW_FRAMES` (16) such frames, both ways.
+/// Switching the lamp on opens the probe volume's light-change window on its first frame and
+/// holds it for exactly `WINDOW_FRAMES` (16) frames, every one updating probes (the channel
+/// fills from zero); switching it off runs no probe pass, so no frame traces a ray or opens a
+/// window.
 #[test]
 fn the_lamp_toggle_opens_the_light_window() {
     let Some(level) = vein_level() else {
@@ -65,12 +66,16 @@ fn the_lamp_toggle_opens_the_light_window() {
         let mut open = Vec::new();
         for _ in 0..32 {
             frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
-            assert!(frame.traced_probe_rays() > 0, "every frame updates probes");
+            assert_eq!(
+                frame.traced_probe_rays() > 0,
+                !from,
+                "probes update while the lamp is on, and only then"
+            );
             open.push(frame.probe_light_window());
         }
         println!("lamp {from} -> {}: window per frame {open:?}", !from);
         let want: Vec<bool> = (0..32)
-            .map(|i| i < vxe_render::probes::WINDOW_FRAMES as usize)
+            .map(|i| !from && i < vxe_render::probes::WINDOW_FRAMES as usize)
             .collect();
         assert_eq!(open, want, "lamp {from} -> {}", !from);
     }
@@ -1423,7 +1428,7 @@ fn flight_cost_readings() {
         {
             let lighting = steady.apply(Lighting {
                 lamp: true,
-                indirect,
+                lamp_bounce: indirect,
                 exposure: Exposure::Manual(pose.exposure),
                 ..Lighting::default()
             });
@@ -1499,13 +1504,278 @@ fn frozen_share_readings() {
     }
 }
 
-// ---- Experiments A and C: the asserted tests ----
+/// The lamp channel's reach, read: under the lamp (on, no emissive light, the channel over the
+/// whole 32-probe volume with no reach cut, its freeze 64), still for 600 frames at the
+/// `cache_box` camera and at the level's spawn facing +x, the direct lamp irradiance `D` at the
+/// wall the lamp lights at arm's length (the light pass's lamp part over the central 8 x 8
+/// lighting pixels), then by 16-voxel band of the lamp-to-probe distance the brightest interior texel of
+/// any traced probe outside rock, and by band of the lamp-to-hit distance the brightest gather
+/// over the hit pixels, each over `D`. `probes::LAMP_REACH` is the band edge past which every
+/// probe band reads under 0.01, rounded up to whole spacings. `VXE_TEST_ADAPTER` picks the
+/// adapter.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn lamp_reach_readings() {
+    use vxe_render::readback;
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let (device, queue) = (&level.device, &level.queue);
+    let (box_world, box_camera) = cache_box();
+    let mut box_gpu = vxe_render::GpuWorld::with_config(
+        device,
+        vxe_render::MirrorConfig {
+            budget_bytes: 64 << 20,
+            ..vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(box_world.extent()))
+        },
+    );
+    for _ in 0..2 {
+        box_gpu
+            .sync_now(&box_world, device, queue)
+            .expect("the mirror fits");
+    }
+    let spawn = spawn_pose(VEIN_POSE.exposure).camera();
+    let light = LightParams::headlamp();
+    const BAND: f32 = 16.0;
+    const BANDS: usize = 16;
+    for (name, gpu, camera) in [
+        ("cache_box", &box_gpu, box_camera),
+        ("spawn", &level.gpu, spawn),
+    ] {
+        let size = [160u32, 90];
+        let mut frame = Frame::new(device, size[0], size[1]);
+        frame.set_resolution(device, vxe_render::LightingResolution::Full);
+        frame.set_lighting(Lighting {
+            lamp: true,
+            candidates: 0,
+            lamp_bounce: true,
+            lamp_reach: 0.0,
+            exposure: Exposure::Manual(1.0),
+            ..Lighting::default()
+        });
+        frame.set_dt(1.0 / 60.0);
+        for _ in 0..600 {
+            frame.step(device, queue, gpu, &camera, &light);
+        }
+        let params = frame.params(gpu, &camera, &light);
+        let lamp = Vec3::from(params.light_pos);
+        let irr = readback::read_float(device, queue, frame.irradiance());
+        let (cx, cy) = (size[0] / 2, size[1] / 2);
+        let mut d_sum = 0.0f64;
+        for y in cy - 4..cy + 4 {
+            for x in cx - 4..cx + 4 {
+                // The light pass's lamp part is its alpha (the emissive part is its rgb).
+                d_sum += f64::from(irr[(y * size[0] + x) as usize][3]);
+            }
+        }
+        let d = d_sum / 64.0;
+        let v = frame.probes();
+        let origin = v.origin_for(camera.position.to_array());
+        let mut probe_band = [0.0f64; BANDS];
+        let mut probe_count = [0u32; BANDS];
+        for s in 0..v.count() {
+            let w = v.slot_probe(origin, s);
+            let p = v.read_probe(device, queue, s);
+            if p.inside() || p.age() == 0 {
+                continue;
+            }
+            let r = (Vec3::from(v.probe_position(w)) - lamp).length();
+            let b = ((r / BAND) as usize).min(BANDS - 1);
+            let hi = p
+                .interior_irradiance()
+                .iter()
+                .map(|t| f64::from(t[0]))
+                .fold(0.0, f64::max);
+            probe_band[b] = probe_band[b].max(hi);
+            probe_count[b] += 1;
+        }
+        let pos = readback::read_float(device, queue, frame.hit_positions());
+        let info = readback::read_rgba16u(device, queue, frame.hit_records());
+        let gather = readback::read_float(device, queue, frame.indirect_irradiance());
+        let mut hit_band = [0.0f64; BANDS];
+        for ((p, i), g) in pos.iter().zip(&info).zip(&gather) {
+            if i[3] & 1 == 0 {
+                continue;
+            }
+            let r = (Vec3::new(p[0], p[1], p[2]) - lamp).length();
+            let b = ((r / BAND) as usize).min(BANDS - 1);
+            hit_band[b] = hit_band[b].max(f64::from(g[0]));
+        }
+        let under = (0..BANDS)
+            .find(|&b| probe_band[b..].iter().all(|&e| e < 0.01 * d))
+            .map(|b| b as f32 * BAND);
+        let fmt = |v: &[f64]| {
+            v.iter()
+                .map(|e| format!("{:.4}", e / d))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        println!(
+            "reading[{adapter}]: lamp reach {name}: D {d:.4} at the central pixels; probe bands of {BAND} voxels (brightest texel / D) {}; probes per band {probe_count:?}; gather bands (brightest hit / D) {}; every probe band under 0.01 from {under:?} voxels",
+            fmt(&probe_band),
+            fmt(&hit_band)
+        );
+    }
+}
 
-/// `freeze`'s frame for the lavapipe tests: 64 x 36, indirect on, 8 slices, at the vein.
+/// The rig's setting for the lamp channel's readings: the lamp and its bounce on, the pose's
+/// pinned exposure, scale 1 with no upscaler.
+fn channel_setting() -> Setting {
+    Setting {
+        lamp: true,
+        indirect: true,
+        auto: false,
+        upscaler: false,
+        bridge: false,
+        steady: Steady::default(),
+    }
+}
+
+/// The lamp step at each `h_move` (`VXE_PROBE_MOVES`, default 0.5, 0.8 and 0.9): at each pose
+/// (`VXE_SETTLE_POSES`) with the lamp channel on, 600 still frames (every probe in reach
+/// frozen), then the camera (and the lamp with it) stepped 2 voxels to its right in one frame
+/// and held, for 600 frames (a step of the lamp's offset instead is a change of its parameters,
+/// which restarts the channel): the gather's mean over the hit pixels each frame, the frames until it has moved 90 %
+/// of the way from its value before the step to its value at the end, and the largest
+/// overshoot past the end value as a share of the step.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn lamp_step_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let moves: Vec<f32> = list("VXE_PROBE_MOVES", &["0.5", "0.8", "0.9"])
+        .iter()
+        .map(|s| s.parse().expect("an h_move"))
+        .collect();
+    let mean_gather = |frame: &Frame| -> f64 {
+        let (d, q) = (&level.device, &level.queue);
+        let g = vxe_render::readback::read_float(d, q, frame.indirect_irradiance());
+        let info = vxe_render::readback::read_rgba16u(d, q, frame.hit_records());
+        let (mut sum, mut n) = (0.0f64, 0u32);
+        for (g, i) in g.iter().zip(&info) {
+            if i[3] & 1 != 0 {
+                sum += f64::from(g[0] + g[1] + g[2]) / 3.0;
+                n += 1;
+            }
+        }
+        sum / f64::from(n.max(1))
+    };
+    for pose in poses() {
+        for &h in &moves {
+            let mut frame = make_frame(&level, &pose, channel_setting());
+            frame.set_lighting(Lighting {
+                probe_move_blend: h,
+                ..frame.lighting()
+            });
+            let mut cam = pose.camera();
+            let light = LightParams::headlamp();
+            for _ in 0..600 {
+                frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+            }
+            let before = mean_gather(&frame);
+            let freeze = frame.lighting().probe_freeze;
+            let frozen =
+                |frame: &Frame, cam: &Camera| freeze_census(&level, frame, cam, freeze).all[2];
+            let mut census = vec![(0, frozen(&frame, &cam))];
+            let (_, right, _) = cam.basis();
+            cam.position += right * 2.0;
+            let mut series = Vec::new();
+            for f in 1..=600 {
+                frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+                series.push(mean_gather(&frame));
+                if [1, 8, 16, 64, 600].contains(&f) {
+                    census.push((f, frozen(&frame, &cam)));
+                }
+            }
+            let end = *series.last().expect("frames ran");
+            let step = end - before;
+            let to90 = series
+                .iter()
+                .position(|&v| (v - before) / step >= 0.9)
+                .map(|i| i + 1);
+            let over = series
+                .iter()
+                .map(|&v| (v - end) / step)
+                .fold(0.0f64, f64::max);
+            println!(
+                "reading[{adapter}]: lamp step {} h_move {h}: gather mean {before:.5} -> {end:.5} ({:+.1} %); frames to 90 % {to90:?}; overshoot {:.3} of the step; frozen probes at frames {census:?}; frames 1..=24 {:?}",
+                pose.name,
+                step / before * 100.0,
+                over,
+                series[..24]
+                    .iter()
+                    .map(|v| format!("{v:.5}"))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+/// The still image through the channel: at each pose with the lamp on and still and its bounce
+/// on and off (scale 1, pinned exposure), after `VXE_STILL_SETTLE` frames (default 1200: the freeze's 64
+/// visits at 8 slices with room), the output's pixels that differ from the last frame's over
+/// the next 64 frames, per frame, and the probe rays dispatched then.
+#[test]
+#[ignore = "reading only: run with --ignored"]
+fn still_lamp_composite_readings() {
+    let Some(level) = reading_level() else {
+        return;
+    };
+    let adapter = level.adapter.clone();
+    let settle: usize = std::env::var("VXE_STILL_SETTLE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1200);
+    for (pose, bounce) in poses()
+        .into_iter()
+        .flat_map(|p| [true, false].map(move |b| (p, b)))
+    {
+        let setting = Setting {
+            indirect: bounce,
+            ..channel_setting()
+        };
+        let mut frame = make_frame(&level, &pose, setting);
+        let cam = pose.camera();
+        let light = LightParams::headlamp();
+        for _ in 0..settle {
+            frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+        }
+        let read = |frame: &Frame| {
+            vxe_render::readback::read_rgba8(&level.device, &level.queue, frame.target())
+        };
+        let mut last = read(&frame);
+        let mut moved = Vec::new();
+        let mut rays = 0u64;
+        for _ in 0..64 {
+            frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
+            rays += frame.traced_probe_rays();
+            let now = read(&frame);
+            moved.push(
+                now.chunks(4)
+                    .zip(last.chunks(4))
+                    .filter(|(a, b)| a[..3] != b[..3])
+                    .count(),
+            );
+            last = now;
+        }
+        println!(
+            "reading[{adapter}]: still lamp {} bounce {bounce}: after {settle} frames, pixels moved per frame over 64 {moved:?} (of {}); probe rays dispatched over them {rays} (a frozen probe returns at once)",
+            pose.name,
+            last.len() / 4
+        );
+    }
+}
+
+// ---- The lamp channel's blend: the asserted tests ----
+
+/// `freeze`'s frame for the lavapipe tests: 64 x 36, the lamp channel on, 8 slices, at the vein.
 fn steady_frame(level: &stillness::VeinLevel, lighting: Lighting) -> Frame {
     let mut frame = Frame::new(&level.device, 64, 36);
     frame.set_lighting(Lighting {
-        indirect: true,
+        lamp_bounce: true,
         probe_slices: 8,
         exposure: Exposure::Manual(VEIN_POSE.exposure),
         ..lighting
@@ -1528,26 +1798,20 @@ fn traced_probe(
     lit: bool,
     keep: impl Fn(Vec3) -> bool,
 ) -> u32 {
-    use vxe_render::probes::{PROBES_PER_AXIS, probe_slot};
-    let origin = frame.probes().origin_for(camera.position.to_array());
-    let n = PROBES_PER_AXIS as i32;
+    let v = frame.probes();
+    let origin = v.origin_for(camera.position.to_array());
     let mut all = Vec::new();
-    for z in 0..n {
-        for y in 0..n {
-            for x in 0..n {
-                let w = [origin[0] + x, origin[1] + y, origin[2] + z];
-                let p = Vec3::from(frame.probes().probe_position(w));
-                if keep(p) {
-                    all.push(((p - camera.position).length(), probe_slot(w)));
-                }
-            }
+    for s in 0..v.count() {
+        let p = Vec3::from(v.probe_position(v.slot_probe(origin, s)));
+        if keep(p) {
+            all.push(((p - camera.position).length(), s));
         }
     }
     all.sort_by(|a, b| a.0.total_cmp(&b.0));
     all.iter()
         .map(|&(_, s)| s)
         .find(|&s| {
-            let r = frame.probes().read_probe(&level.device, &level.queue, s);
+            let r = v.read_probe(&level.device, &level.queue, s);
             !r.inside()
                 && r.age() > 0
                 && (!lit
@@ -1558,11 +1822,12 @@ fn traced_probe(
         .expect("a traced probe outside rock")
 }
 
-/// A probe that has reached its freeze count is not traced: at `probe_freeze` 8 and 8 slices,
-/// after 8 visits (64 frames) with no restart every probe's words are bit-identical across the
-/// next 64 encoded frames, and a lamp toggle restarts a lit probe on the first visit after.
+/// A still lamp freezes the channel: at `probe_freeze` 8 and 8 slices with the lamp on and still
+/// at the vein, after the channel's start and 8 visits of every probe in reach (72 frames)
+/// every probe's texels and state are bit-identical across the next 64 encoded frames, and a
+/// probe in reach with light in it reached the freeze.
 #[test]
-fn a_frozen_probe_is_not_traced() {
+fn a_still_lamp_freezes_the_channel() {
     let Some(level) = vein_level() else {
         return;
     };
@@ -1571,7 +1836,7 @@ fn a_frozen_probe_is_not_traced() {
     let mut frame = steady_frame(
         &level,
         Lighting {
-            probe_freeze: Some(8),
+            probe_freeze: 8,
             ..Lighting::default()
         },
     );
@@ -1580,50 +1845,47 @@ fn a_frozen_probe_is_not_traced() {
             frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
         }
     };
-    step(&mut frame, 64);
+    step(&mut frame, 72);
     let frozen = probe_words(&level, &frame);
+    let slot = traced_probe(&level, &frame, &camera, true, |_| true);
+    let age = frame
+        .probes()
+        .read_probe(&level.device, &level.queue, slot)
+        .age();
     step(&mut frame, 64);
+    println!("lamp still: the nearest lit probe (slot {slot}) at age {age} after 72 frames");
+    assert!(age >= 8, "age {age}");
     assert!(
         probe_words(&level, &frame) == frozen,
         "the atlases and states moved over 64 frames after the freeze"
     );
-    let slot = traced_probe(&level, &frame, &camera, true, |_| true);
-    let before = frame.probes().read_probe(&level.device, &level.queue, slot);
-    frame.set_lighting(Lighting {
-        lamp: false,
-        ..frame.lighting()
-    });
-    step(&mut frame, 4);
-    assert!(frame.probe_light_window(), "the toggle opened the window");
-    let after = frame.probes().read_probe(&level.device, &level.queue, slot);
-    assert_ne!(
-        after.irradiance, before.irradiance,
-        "the window's first visit moved the texels"
-    );
 }
 
-/// With a frozen volume pinned so that the far corner is out of `lamp_reach`, a lamp moved each
-/// frame changes a near probe's texels within 8 frames, keeps a probe beyond the reach
-/// bit-identical, and the near probe freezes again once the lamp holds still.
+/// A lamp step moves the probes in reach only: with the volume pinned so that the eye sits in
+/// its lowest cell (its far corner beyond `lamp_reach`), after the channel froze at
+/// `probe_freeze` 8, a lamp moved each frame for 8 frames changes a near probe's texels within
+/// them (blending at `h_move`, its age restarting at 1) and keeps a probe beyond the reach
+/// bit-identical (never listed), and the near probe freezes again once the lamp holds still.
 #[test]
-fn a_moving_lamp_unfreezes_the_probes_it_reaches() {
+fn a_lamp_step_moves_the_probes_in_reach_only() {
     let Some(level) = vein_level() else {
         return;
     };
     let light = LightParams::headlamp();
-    let reach = vxe_render::probes::lamp_reach(light.intensity);
     let camera = VEIN_POSE.camera();
     let mut frame = steady_frame(
         &level,
         Lighting {
-            probe_freeze: Some(8),
+            probe_freeze: 8,
             ..Lighting::default()
         },
     );
+    let reach = frame.lighting().lamp_reach;
     // The eye in the volume's lowest cell on every axis.
     let mut origin = frame.probes().origin_for(VEIN_POSE.position);
+    let axis = frame.probes().axis() as i32;
     for o in &mut origin {
-        *o += vxe_render::probes::PROBES_PER_AXIS as i32 / 2 - 1;
+        *o += axis / 2 - 1;
     }
     frame.probes_mut().set_origin(Some(origin));
     let step = |frame: &mut Frame, cam: &Camera, n: usize| {
@@ -1631,16 +1893,18 @@ fn a_moving_lamp_unfreezes_the_probes_it_reaches() {
             frame.step(&level.device, &level.queue, &level.gpu, cam, &light);
         }
     };
-    step(&mut frame, &camera, 64);
+    step(&mut frame, &camera, 72);
     let near = traced_probe(&level, &frame, &camera, true, |_| true);
-    // Beyond the reach no emitter need be in range: its state word still shows a probe held
-    // open, whose age the moving lamp would cap.
-    let far = traced_probe(&level, &frame, &camera, false, |p| {
-        (p - camera.position).length() > reach + 8.0
-    });
+    let v = frame.probes();
+    let far = (0..v.count())
+        .find(|&s| {
+            let p = Vec3::from(v.probe_position(v.slot_probe(origin, s)));
+            (p - camera.position).length() > reach + 8.0
+        })
+        .expect("a probe beyond the reach");
     let read = |frame: &Frame, s: u32| frame.probes().read_probe(&level.device, &level.queue, s);
     let (near0, far0) = (read(&frame, near), read(&frame, far));
-    assert!(near0.age() >= 8 && far0.age() >= 8, "both froze");
+    assert!(near0.age() >= 8, "the near probe froze: {}", near0.age());
     // A turn moves the lamp's position and direction together; it opens no window.
     for i in 1..=8 {
         let c = Camera {
@@ -1651,26 +1915,28 @@ fn a_moving_lamp_unfreezes_the_probes_it_reaches() {
         assert!(!frame.probe_light_window());
     }
     let near1 = read(&frame, near);
-    assert_ne!(near1.irradiance, near0.irradiance, "the near probe moved");
-    assert!(
-        near1.age() <= 4,
-        "the moving lamp caps its age: {}",
-        near1.age()
+    println!(
+        "near probe slot {near}: age {} -> {}; far probe slot {far}: age {}",
+        near0.age(),
+        near1.age(),
+        far0.age()
     );
-    assert_eq!(read(&frame, far), far0, "the far probe stayed frozen");
-    // The lamp holds still: the rest of the visits, then frozen again.
+    assert_ne!(near1.irradiance, near0.irradiance, "the near probe moved");
+    assert_eq!(near1.age(), 1, "the moving lamp restarts its age");
+    assert_eq!(read(&frame, far), far0, "the far probe stayed as it was");
+    // The lamp holds still: 8 more visits, then frozen again.
     let held = Camera {
         yaw: camera.yaw + 0.016,
         ..camera
     };
-    step(&mut frame, &held, 40);
+    step(&mut frame, &held, 72);
     let settled = read(&frame, near);
     assert!(settled.age() >= 8, "it refroze at age {}", settled.age());
     step(&mut frame, &held, 16);
     assert_eq!(read(&frame, near), settled, "and holds");
 }
 
-/// With A2 a probe inside rock keeps its texels and its state bit-identical over 64 frames.
+/// A probe inside rock keeps its texels and its state bit-identical over 64 frames.
 #[test]
 fn an_inside_probe_is_not_traced() {
     let Some(level) = vein_level() else {
@@ -1678,13 +1944,7 @@ fn an_inside_probe_is_not_traced() {
     };
     let light = LightParams::headlamp();
     let camera = VEIN_POSE.camera();
-    let mut frame = steady_frame(
-        &level,
-        Lighting {
-            skip_inside_probes: true,
-            ..Lighting::default()
-        },
-    );
+    let mut frame = steady_frame(&level, Lighting::default());
     for _ in 0..8 {
         frame.step(&level.device, &level.queue, &level.gpu, &camera, &light);
     }
@@ -1693,8 +1953,8 @@ fn an_inside_probe_is_not_traced() {
         inside > 0 && traced > inside,
         "{traced} traced, {inside} inside"
     );
-    use vxe_render::probes::PROBE_COUNT;
-    let slots: Vec<u32> = (0..PROBE_COUNT)
+    let count = frame.probes().count();
+    let slots: Vec<u32> = (0..count)
         .filter(|&s| {
             frame
                 .probes()
@@ -1717,61 +1977,6 @@ fn an_inside_probe_is_not_traced() {
             "slot {s}"
         );
     }
-}
-
-/// With C on, a lamp toggle both ways and a lamp moved each frame leave every probe's words
-/// bit-identical to a run with no lamp change at the same frames (the rays' random numbers go
-/// with the frame, so nothing else differs); an emission scale change still restarts them.
-#[test]
-fn the_lamp_leaves_the_probes_alone_under_c() {
-    let Some(level) = vein_level() else {
-        return;
-    };
-    let camera = VEIN_POSE.camera();
-    let lighting = Lighting {
-        probe_lamp: false,
-        ..Lighting::default()
-    };
-    let run = |changes: bool| {
-        let mut frame = steady_frame(&level, lighting);
-        let mut light = LightParams::headlamp();
-        for f in 0..64 {
-            if changes {
-                if f == 8 || f == 32 {
-                    let l = frame.lighting();
-                    frame.set_lighting(Lighting { lamp: !l.lamp, ..l });
-                }
-                light.offset_right += 0.01;
-            }
-            let c = if changes {
-                Camera {
-                    yaw: camera.yaw + 0.001 * f as f32,
-                    ..camera
-                }
-            } else {
-                camera
-            };
-            frame.step(&level.device, &level.queue, &level.gpu, &c, &light);
-            assert!(!frame.probe_light_window(), "frame {f} opened a window");
-        }
-        (frame, light)
-    };
-    let (still, _) = run(false);
-    let (mut moved, light) = run(true);
-    assert!(
-        probe_words(&level, &still) == probe_words(&level, &moved),
-        "the lamp reached the probes"
-    );
-    let before = probe_words(&level, &moved);
-    moved.set_emission_scale(&level.queue, flythrough::cave::ORE, 0.5);
-    moved.set_emission_scale(&level.queue, flythrough::cave::ORE, 0.5);
-    let mut opened = false;
-    for _ in 0..8 {
-        moved.step(&level.device, &level.queue, &level.gpu, &camera, &light);
-        opened |= moved.probe_light_window();
-    }
-    assert!(opened, "an emission change still opens the window");
-    assert!(probe_words(&level, &moved) != before);
 }
 
 // ---- Experiment B: the asserted tests ----
@@ -1854,7 +2059,7 @@ fn cache_box_rig_on(
     frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     frame.set_lighting(Lighting {
         lamp: false,
-        indirect: false,
+        lamp_bounce: false,
         exposure: Exposure::Manual(1.0),
         table_cap: cap,
         ..Lighting::default()
@@ -2836,7 +3041,7 @@ fn guard_rig_on(world: vxe_world::World, camera: Camera, cap: u32) -> Option<Cac
     let mut rig = cache_box_rig_on(world, camera, cap, [192, 108], None)?;
     rig.frame.set_lighting(Lighting {
         lamp: false,
-        indirect: false,
+        lamp_bounce: false,
         exposure: Exposure::Manual(1.0),
         table_cap: cap,
         table_cells: GUARD_CELLS,
@@ -3663,7 +3868,7 @@ fn a_near_dig_settles_from_the_preload_alone() {
         "reading: near dig, F 0: preload on S90 {:?} shares at 1/4/16 {:?} over {}; both off S90 {:?} shares {:?}",
         on.s90, on.shares, on.lit, off.s90, off.shares
     );
-    // At 24 x 14 a hole face covers about one lighting pixel, so the pixels alone no longer
+    // At 24 x 14 a hole face covers about one lighting pixel, so the pixels alone do not
     // settle it in a few frames (at 192 x 108 they cover hundreds, and both off read `S90` 4).
     let small = |preload_radius| {
         dug_hole_run_at(false, NEAR_DIG_SMALL, |l| Lighting {
@@ -3933,7 +4138,7 @@ fn preload_lighting(pose: &Pose, radius: u32) -> Lighting {
     };
     Lighting {
         lamp: false,
-        indirect: false,
+        lamp_bounce: false,
         exposure: Exposure::Manual(pose.exposure),
         preload_radius: radius,
         preload_bricks: env("VXE_PRELOAD_BRICKS", DEFAULT_PRELOAD_BRICKS),

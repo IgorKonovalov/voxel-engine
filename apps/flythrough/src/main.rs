@@ -25,7 +25,7 @@
 //! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]
 //! [--history edits|gradient] [--lighting full|half]
-//! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off]
+//! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
 //! [--exposure auto|E]
@@ -106,14 +106,15 @@
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
 //! emissive light is read from the per-face table from a face's first sample (ADR-0043), and
 //! `--steady`, `--cache-read`, `--sampler`, `--emissive-history`, `--emissive-guard` and
-//! `--reuse-m-cap` are refused, naming Plan 0057; `--indirect on` turns the probe volume's
-//! indirect light on (off by default, ADR-0043); `--probe-spacing N` sets the voxels between its probes
+//! `--reuse-m-cap` are refused, naming Plan 0057; `--lamp-bounce off` turns the lamp's bounce
+//! from the probe volume off (on by default, ADR-0043's lamp channel; `--indirect on|off` is its
+//! alias); `--probe-spacing N` sets the voxels between its probes
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
 //! default, 16 or 32); `--preload VOXELS|off` sets the camera-radius preload's radius (default
 //! 64, rounded down to whole bricks, at most 128) or turns it off. In a window
 //! `F3` toggles the shadow walk, `F4` the preload, `F5` the history killer, `F6` the lighting
-//! resolution, `F7` the lamp, `F8` indirect light and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
+//! resolution, `F7` the lamp, `F8` the lamp's bounce and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets, naming the look on the banner.
 //! `--vault` places a 16-voxel room with an indestructible
@@ -459,8 +460,9 @@ struct Args {
     history: HistoryKill,
     /// `--lighting full|half`: the lighting passes' resolution.
     lighting: LightingResolution,
-    /// `--indirect on|off`: indirect light from the probe volume (on by default).
-    indirect: bool,
+    /// `--lamp-bounce on|off` (alias `--indirect`): the lamp's bounce from the probe volume (on
+    /// by default).
+    lamp_bounce: bool,
     /// `--preload VOXELS|off`: the camera-radius preload's radius in voxels, 0 off (default
     /// `DEFAULT_PRELOAD_RADIUS`).
     preload: u32,
@@ -590,7 +592,7 @@ impl Args {
 
     /// The lighting modes at the start, the banner shown from `now_ms`, the auto exposure's
     /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
-    /// and the probe spacing while indirect light is on, and the look's rows `--view`'s view.
+    /// and the probe spacing while the lamp's bounce is on, and the look's rows `--view`'s view.
     fn start_modes(&self, now_ms: f64) -> hud::Modes {
         let mut m = hud::Modes::new(self.start_lighting(), self.lighting, now_ms)
             .with_source(self.showcase.then_some("showcase"))
@@ -654,7 +656,7 @@ impl Args {
             shadow_walk: self.shadow_walk,
             filter: self.filter,
             history: self.history,
-            indirect: self.indirect,
+            lamp_bounce: self.lamp_bounce,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
             preload_radius: self.preload,
@@ -732,7 +734,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp: true,
         lamp_toggle: None,
         fade_reading: false,
-        indirect: false,
+        lamp_bounce: true,
         preload: vxe_render::marcher::DEFAULT_PRELOAD_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -1006,11 +1008,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     },
                 }
             }
-            "--indirect" => {
-                args.indirect = match value()?.as_str() {
+            "--lamp-bounce" | "--indirect" => {
+                args.lamp_bounce = match value()?.as_str() {
                     "on" => true,
                     "off" => false,
-                    v => return Err(format!("--indirect takes on or off, not {v}")),
+                    v => return Err(format!("{flag} takes on or off, not {v}")),
                 }
             }
             "--emissive-ore" => {
@@ -2228,7 +2230,7 @@ struct Hud {
     pass_ms: Option<Vec<f64>>,
     hud_ms: Option<f32>,
     cpu_ms: f32,
-    /// The probe volume's live probes at the last world sample, with indirect light on.
+    /// The probe volume's live probes at the last world sample, with the lamp's bounce on.
     live_probes: Option<u32>,
     /// The emissive table's counters at the last sample.
     table: Option<vxe_render::TableStats>,
@@ -2921,7 +2923,7 @@ impl Run {
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
-    /// Reads the emissive table's counters and, with indirect light on, counts the probe
+    /// Reads the emissive table's counters and, with the lamp's bounce on, counts the probe
     /// volume's live probes for the HUD: blocking reads, paid at the world sample's cadence.
     fn sample_probes(&mut self, gpu: &Gpu) {
         self.hud.table = self
@@ -2933,7 +2935,7 @@ impl Run {
                 .then(|| g.frame.read_preload_stats(&gpu.device, &gpu.queue))
         });
         self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
-            g.frame.lighting().indirect.then(|| {
+            g.frame.lighting().lamp_bounce.then(|| {
                 let probes = g.frame.probes();
                 let states = probes.read_states(&gpu.device, &gpu.queue);
                 let origin = probes.origin_for(self.fly.camera.position.to_array());
@@ -2969,7 +2971,7 @@ impl Run {
                 live_probes: self
                     .hud
                     .live_probes
-                    .filter(|_| self.modes.lighting.indirect),
+                    .filter(|_| self.modes.lighting.lamp_bounce),
                 table: self.hud.table,
                 preload: self.hud.preload,
                 modes: self.modes.line(),
@@ -4174,7 +4176,7 @@ impl Run {
             (KeyCode::F5, hud::ModeKey::History),
             (KeyCode::F6, hud::ModeKey::Resolution),
             (KeyCode::F7, hud::ModeKey::Lamp),
-            (KeyCode::F8, hud::ModeKey::Indirect),
+            (KeyCode::F8, hud::ModeKey::LampBounce),
             (KeyCode::KeyM, hud::ModeKey::Pulse),
             (KeyCode::KeyQ, hud::ModeKey::Exposure),
         ] {
@@ -7290,11 +7292,11 @@ mod tests {
         assert!(level.start_modes(0.0).line().starts_with("lighting "));
     }
 
-    /// While indirect light is on the banner names the probe spacing, `probes 16` by default
-    /// and `probes 32` with `--probe-spacing 32`, in every mode and source; with indirect light
-    /// off it names none.
+    /// While the lamp's bounce is on (the default) the banner names it and the probe spacing,
+    /// `probes 16` by default and `probes 32` with `--probe-spacing 32`, in every mode and
+    /// source; with it off (`--lamp-bounce off`, or its alias `--indirect off`) it names none.
     #[test]
-    fn the_banner_names_the_probe_spacing_while_indirect_light_is_on() {
+    fn the_banner_names_the_probe_spacing_while_the_lamp_bounce_is_on() {
         for source in [&["--level"][..], &["--source", "showcase"][..], &[][..]] {
             let banner = |extra: &[&str]| {
                 let mut v = source.to_vec();
@@ -7304,27 +7306,33 @@ mod tests {
                     .banner(0.0)
                     .expect("the banner shows at the start")
             };
-            let default = banner(&["--indirect", "on"]);
-            assert!(default.contains("probes 16"), "{source:?}: {default}");
+            let default = banner(&[]);
             assert!(
-                !banner(&[]).contains("probes"),
-                "indirect light is off by default"
+                default.contains("lamp bounce on") && default.contains("probes 16"),
+                "the lamp's bounce is on by default: {source:?}: {default}"
             );
-            let wide = banner(&["--probe-spacing", "32", "--indirect", "on"]);
+            for flag in ["--lamp-bounce", "--indirect"] {
+                let off = banner(&[flag, "off"]);
+                assert!(
+                    off.contains("lamp bounce off") && !off.contains("probes"),
+                    "{flag}: {off}"
+                );
+            }
+            let wide = banner(&["--probe-spacing", "32", "--lamp-bounce", "on"]);
             assert!(
                 wide.contains("probes 32") && !wide.contains("probes 16"),
                 "{source:?}: {wide}"
             );
             assert!(wide.lines().all(|l| l.len() <= hud::BANNER_COLS));
-            let off = banner(&["--probe-spacing", "32", "--indirect", "off"]);
+            let off = banner(&["--probe-spacing", "32", "--lamp-bounce", "off"]);
             assert!(!off.contains("probes"), "{source:?}: {off}");
         }
-        let a =
-            parse_args_from(argv(&["--probe-spacing", "32", "--indirect", "on"])).expect("parses");
+        let a = parse_args_from(argv(&["--probe-spacing", "32"])).expect("parses");
         let mut m = a.start_modes(0.0);
-        m.press(hud::ModeKey::Indirect, 1000.0);
-        assert!(!m.banner(1000.0).unwrap().contains("probes"));
-        m.press(hud::ModeKey::Indirect, 2000.0);
+        m.press(hud::ModeKey::LampBounce, 1000.0);
+        let off = m.banner(1000.0).unwrap();
+        assert!(off.contains("lamp bounce off") && !off.contains("probes"));
+        m.press(hud::ModeKey::LampBounce, 2000.0);
         assert!(m.banner(2000.0).unwrap().contains("probes 32"));
     }
 
@@ -7361,11 +7369,11 @@ mod tests {
             "off",
             "--filter",
             "off",
-            "--indirect",
+            "--lamp-bounce",
             "off",
         ])
         .unwrap();
-        assert!(!a.emissive_ore && !a.lamp && !a.filter && !a.indirect);
+        assert!(!a.emissive_ore && !a.lamp && !a.filter && !a.lamp_bounce);
         let a = parse(&[
             "--shadow-walk",
             "coarse",
@@ -7382,10 +7390,10 @@ mod tests {
         assert_eq!(a.lighting, LightingResolution::Full);
         assert_eq!(a.light_radius, 6);
         let d = parse(&[]).unwrap();
-        assert!(d.emissive_ore && d.lamp && d.filter && !d.indirect);
+        assert!(d.emissive_ore && d.lamp && d.filter && d.lamp_bounce);
         assert!(
-            !d.start_lighting().indirect,
-            "indirect light is off by default"
+            d.start_lighting().lamp_bounce,
+            "the lamp's bounce is on by default"
         );
         assert_eq!(
             d.start_lighting().table_cells,
@@ -7411,11 +7419,12 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, indirect off at 64 rays 1/8, filter on, ore pulse off, table 1048576, fill 8 to 256, preload R 64 B 128 C 256, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to 256, preload R 64 B 128 C 256, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
             ("--lamp", "--lamp takes on or off, not x"),
+            ("--lamp-bounce", "--lamp-bounce takes on or off, not x"),
             ("--indirect", "--indirect takes on or off, not x"),
             (
                 "--probe-spacing",

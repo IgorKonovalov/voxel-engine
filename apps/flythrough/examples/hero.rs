@@ -4,7 +4,7 @@
 //! `cargo run --release -p flythrough --example hero -- [--source showcase|level]
 //! [--shot hall|chasm|crystals|all] [--seed N] [--size WxH] [--at X,Y,Z] [--yaw DEG]
 //! [--pitch DEG] [--exposure auto|E] [--carve R] [--out PATH] [--out-dir DIR] [--frames N]
-//! [--indirect on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
+//! [--lamp-bounce on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--history edits|gradient]
 //! [--lamp on|off] [--filter on|off] [--look PRESET]`.
@@ -17,8 +17,9 @@
 //! `hero-hall-spacing16.png`, the review set. `--source level` frames the bounded level from
 //! its spawn (`--at`, `--yaw`, `--pitch`), with no shots. `--carve R` digs a sphere of radius
 //! `R` voxels where the view ray meets rock before the frame is drawn. The lamp is off by
-//! default for both sources; indirect light is off (`--indirect on` runs it at the hero's
-//! probe spacing, `HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it), emissive
+//! default for both sources; the lamp's bounce is off (`--lamp-bounce on`, or its alias
+//! `--indirect on`, runs ADR-0043's lamp channel with the lamp on at the hero's probe spacing,
+//! `HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it), emissive
 //! light is read from the per-face table (ADR-0043; `--steady`, `--cache-read`, `--sampler`,
 //! `--emissive-history` and `--emissive-guard` are refused, naming Plan 0057), and the upscaler at
 //! the fly-through's defaults (`--internal-scale 1.5`: FSR 2; `--jitter` starts our upscaler,
@@ -196,7 +197,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 ));
             }
             "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
-            "--indirect" => args.lighting.indirect = on_off(&flag, &v)?,
+            "--lamp-bounce" | "--indirect" => args.lighting.lamp_bounce = on_off(&flag, &v)?,
             "--probe-spacing" => {
                 args.probe_spacing = v
                     .parse()
@@ -544,8 +545,8 @@ mod tests {
         parse_args_from(v.iter().map(|s| s.to_string()))
     }
 
-    /// The defaults are the showcase's `hall` shot at 1920 x 1080 with the lamp off and
-    /// indirect light on; `--shot` takes each preset and `all`, `--source` the level, and an
+    /// The defaults are the showcase's `hall` shot at 1920 x 1080 with the lamp and its bounce
+    /// off; `--shot` takes each preset and `all`, `--source` the level, and an
     /// unknown shot or source is refused with the names it takes.
     #[test]
     fn hero_parses_its_shots_and_sources() {
@@ -553,7 +554,7 @@ mod tests {
         assert_eq!(d.source, Source::Showcase);
         assert_eq!(d.shots, Shots::One(SHOTS[0]));
         assert_eq!(d.size, [1920, 1080]);
-        assert!(!d.lighting.lamp && !d.lighting.indirect);
+        assert!(!d.lighting.lamp && !d.lighting.lamp_bounce);
         assert_eq!(
             (d.internal_scale, d.jitter(), d.fsr2()),
             (RenderScale::OneHalf, false, true)

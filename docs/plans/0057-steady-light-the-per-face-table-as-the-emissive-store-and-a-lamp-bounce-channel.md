@@ -1200,7 +1200,7 @@ Open at draft: the "go".
 | 2: The table is the only emissive store, and the default | dev | done: code at d940f32; done-when 7 a reading (amended f107977, test 84f5c60); 9's predictions not met on the patch's scale-1 `sv`, the hall's native drift and the patch's misses; 10 not met (`Lighting::sampler` kept) ([log](logs/0057.md)) | b9b9b3b |
 | 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](logs/0057.md)) | 64a6598 |
 | 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
-| 5: The lamp-bounce channel | dev | not started | |
+| 5: The lamp-bounce channel | dev | done, committed before Phase 4's row (the orchestrator's order); deviations: the moving lamp carried per probe (`MOVED_BIT`), the window sets the schedule only, `Lighting::default()` keeps `lamp_bounce` off (the fly-through on), side 8 from the reach of 64; done-when 5's timers unread on lavapipe; 8 not met (the still composite moves, bounce on and off alike) ([log](logs/0057.md)) | committed with this row |
 | 6: The owner's window, with digs | human | not started | |
 
 ### Notes

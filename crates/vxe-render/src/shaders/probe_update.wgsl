@@ -1,52 +1,47 @@
 // The probe update (ADR-0023): the frame's update list of probes each traces `probe.rays` rays
 // (at most RAYS, the workgroup's size) and
 // blends what they saw into its irradiance and visibility maps. Compiled after march.wgsl,
-// light.wgsl and probe_gather.wgsl, whose walk, direct estimator, probe bindings (group 3)
+// light.wgsl and probe_gather.wgsl, whose walk, lamp term, probe bindings (group 3)
 // and probe reads it uses.
+//
+// The volume is the lamp's bounce channel (ADR-0043): the rays see the headlamp's light and
+// nothing else, and the passes run only with the lamp on.
 //
 // `probe_trace`, one workgroup per list entry and one invocation per ray: ray i leaves the
 // probe along the i-th of `probe.rays` spherical Fibonacci directions turned by the frame's random
 // rotation, through the full walk. A ray that starts inside rock is a back face: signed
 // distance -1 and no radiance. A ray that hits a face returns its distance and the radiance
-// the face reflects toward the probe, `albedo / PI (E_direct + E_probes)`: E_direct the light
-// pass's estimate at the hit (the headlamp by next-event estimation, one emissive sample, each
-// with its shadow ray in the frame's shadow walk, every emitter at its probe emission scale),
-// E_probes the probes' irradiance there as
-// they stood before this frame's blend (`probe_irradiance`). The hit's own emission is left out,
-// since the direct estimate samples every emissive face. A miss returns PROBE_MISS_DISTANCE
-// spacings and no radiance. Each ray's radiance and signed distance go to the scratch buffer.
+// the face reflects toward the probe, `albedo / PI E_lamp`: E_lamp the headlamp's irradiance at
+// the hit by next-event estimation, with its shadow ray in the frame's shadow walk. No
+// emissive light, no hit emission and no earlier bounce enter it. A miss returns
+// PROBE_MISS_DISTANCE spacings and no radiance. Each ray's radiance and signed distance go to
+// the scratch buffer.
 //
 // `probe_blend`, one workgroup per entry, after every trace: interior irradiance texel t takes
 // `PI sum(L max(0, d_t . w)) / sum(max(0, d_t . w))` over the front-face rays, interior
 // visibility texel t the `max(0, d_t . w)^VIS_SHARPNESS`-weighted mean (rays under VIS_CUTOFF
 // in cosine left out) of the ray distance
 // (clamped to [0, PROBE_MISS_DISTANCE spacings]) and of its square; each blends with the
-// previous texel as `h old + (1 - h) new`. h is 0 for a slot holding another probe or one never
-// traced (age 0), YOUNG_HYSTERESIS for the YOUNG_UPDATES updates after the first and for a
-// probe an edit touched (whose age restarts at 1), HYSTERESIS after. While a light-change
-// window is open (`probe.light_window`, one probe in 4 a frame for four visits each), every
-// update blends at 0 and the visited probe's age restarts at 1, so a light switched off fades
-// by about the room's albedo per visit rather than at HYSTERESIS, and the young updates after
-// the window smooth the noise back down. The border texels then
-// repeat the interior ones the octahedral fold puts beside them. The probe is inside rock when
-// more than a quarter of its rays met a back face; the state word takes the inside flag, the
-// age plus one (capped) and the probe's tag, and its texels are left as they were.
-//
-// `probe.steady` (`probes.rs`) changes the blend and the schedule. With a freeze count, h is
-// `age / (age + 1)`, a running mean since the restart, and a probe that has reached the count
-// returns at once from both passes (`probe_idle`) until a window, a touch or a scroll restarts
-// it. While the lamp moves, a probe within `lamp_reach` of it stays open, blending at no more
-// than HYSTERESIS with its age capped at LAMP_MOVED_AGE or half the count; it freezes again
-// once the lamp is still. With the inside bit a probe inside rock returns at once too. With the
-// no-lamp bit the rays leave the headlamp out of their hits.
+// previous texel as `h old + (1 - h) new`. h is a running mean, `age / (age + 1)`, since the
+// probe's restart: 0 for a slot holding another probe or one never traced (age 0) and for a
+// restarted entry (an edit touched it or it entered the lamp's reach), whose age restarts at
+// 1. A probe the lamp moved past since its last visit (MOVED_BIT: the lamp moved while the probe
+// lay within its reach) blends at `probe.h_move` and its age restarts at 1, so it runs a fresh
+// mean once the lamp is still. A probe whose age reached the freeze count (`probe.steady` bits
+// 0..8) returns at once from both passes (`probe_idle`) until a restart or a lamp move; a probe
+// inside rock returns at once too. The
+// border texels then repeat the interior ones the octahedral fold puts beside them. The probe
+// is inside rock when more than a quarter of its rays met a back face; the state word takes
+// the inside flag, the age plus one (capped) and the probe's tag, and its texels are left as
+// they were.
 
 const RAYS: u32 = 64u;
 // Words of the update list at the front of the scratch buffer (`probes::MAX_UPDATES`).
 const UPDATE_LIST_WORDS: u32 = 8192u;
 const TOUCHED_BIT: u32 = 0x80000000u;
-const YOUNG_UPDATES: u32 = 8u;
-const YOUNG_HYSTERESIS: f32 = 0.5;
-const HYSTERESIS: f32 = 0.97;
+// The update-list flag of a probe the lamp moved past since its last visit (`probes::MOVED_BIT`).
+const MOVED_BIT: u32 = 0x40000000u;
+const SLOT_MASK: u32 = 0x3FFFFFFFu;
 const VIS_SHARPNESS: f32 = 50.0;
 const VIS_CUTOFF: f32 = 0.83;
 // A missing ray's distance, and the ceiling of every visibility distance, in spacings.
@@ -57,16 +52,13 @@ const GOLDEN_ANGLE: f32 = 2.39996322972865;
 const PROBE_ROTATION_DIMS: u32 = 3000u;
 
 const STEADY_FREEZE_MASK: u32 = 0xFFu;
-const STEADY_SKIP_INSIDE: u32 = 256u;
-const STEADY_LAMP_MOVED: u32 = 512u;
-const STEADY_NO_LAMP: u32 = 1024u;
-// `probes::LAMP_MOVED_AGE`.
-const LAMP_MOVED_AGE: u32 = 32u;
 
 // World probe of slot `slot` in the volume at `probe.origin`.
 fn slot_probe(slot: u32) -> vec3<i32> {
-    let m = vec3<i32>(vec3<u32>(slot % 32u, (slot / 32u) % 32u, slot / 1024u));
-    return probe.origin + (((m - probe.origin) % PROBE_AXIS) + PROBE_AXIS) % PROBE_AXIS;
+    let a = probe.axis;
+    let n = probe_axis();
+    let m = vec3<i32>(vec3<u32>(slot % a, (slot / a) % a, slot / (a * a)));
+    return probe.origin + (((m - probe.origin) % n) + n) % n;
 }
 
 // The frame's rotation as a unit quaternion (Shoemake's uniform random rotation).
@@ -89,36 +81,24 @@ fn probe_ray_dir(i: u32) -> vec3<f32> {
     return normalize(v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v));
 }
 
-// Whether the moving lamp keeps world probe `w` open: `probes::lamp_reach` of it.
-fn lamp_holds_open(w: vec3<i32>) -> bool {
-    if ((probe.steady & STEADY_LAMP_MOVED) == 0u) {
-        return false;
-    }
-    let reach2 = params.light_intensity * 256.0;
-    let to = probe_position(w) - params.light_pos;
-    return dot(to, to) < reach2;
-}
-
-// Whether list entry `entry`'s probe has nothing to do this frame: converged or inside rock,
-// and no restart.
+// Whether list entry `entry`'s probe has nothing to do this frame: frozen or inside rock, and
+// no restart.
 fn probe_idle(entry: u32) -> bool {
-    let steady = probe.steady;
-    if ((steady & (STEADY_FREEZE_MASK | STEADY_SKIP_INSIDE)) == 0u || probe.light_window != 0u
-        || (entry & TOUCHED_BIT) != 0u) {
+    if ((entry & (TOUCHED_BIT | MOVED_BIT)) != 0u) {
         return false;
     }
-    let slot = entry & ~TOUCHED_BIT;
+    let slot = entry & SLOT_MASK;
     let w = slot_probe(slot);
-    let state = probe_data[STATE_BASE + slot];
+    let state = probe_data[state_base() + slot];
     let age = (state >> 1u) & PROBE_MAX_AGE;
     if ((state >> 8u) != probe_tag(w) || age == 0u) {
         return false;
     }
-    if ((state & 1u) != 0u && (steady & STEADY_SKIP_INSIDE) != 0u) {
+    if ((state & 1u) != 0u) {
         return true;
     }
-    let freeze = steady & STEADY_FREEZE_MASK;
-    return freeze > 0u && age >= freeze && !lamp_holds_open(w);
+    let freeze = max(probe.steady & STEADY_FREEZE_MASK, 1u);
+    return age >= freeze;
 }
 
 fn ray_word(k: u32, lane: u32) -> u32 {
@@ -131,9 +111,7 @@ fn probe_trace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     if (k >= probe.updates || lane >= probe.rays || probe_idle(probe_scratch[k])) {
         return;
     }
-    // The probe rays see each emitter at its probe scale (a pulsing one at its average).
-    emission_base = EMISSION_ROWS;
-    let slot = probe_scratch[k] & ~TOUCHED_BIT;
+    let slot = probe_scratch[k] & SLOT_MASK;
     let w = slot_probe(slot);
     let o = probe_position(w);
     let d = probe_ray_dir(lane);
@@ -147,13 +125,9 @@ fn probe_trace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
             dist = h.t;
             let p = o + d * h.t;
             let n = shadow_normal(d, h);
-            var e = vec3<f32>(0.0);
-            if ((params.lighting & LIGHTING_LAMP) != 0u && (probe.steady & STEADY_NO_LAMP) == 0u) {
-                e += vec3<f32>(PI * lamp_lit(p, n, n));
-            }
-            let px = vec2<u32>(lane + RAYS * (slot & 1u), slot >> 1u);
-            e += emissive_estimate(px, p, n, n);
-            e += probe_irradiance(p, n);
+            // `lamp_lit` is the lamp's radiance times the cosine over d^2: PI of it is the
+            // irradiance convention the light pass's `lamp` part carries.
+            let e = PI * lamp_lit(p, n, n);
             radiance = materials[h.material * 4u].xyz * (1.0 / PI) * e;
         }
     }
@@ -215,27 +189,17 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     }
     let inside = backs * 4u > probe.rays;
     let entry = probe_scratch[k];
-    let slot = entry & ~TOUCHED_BIT;
+    let slot = entry & SLOT_MASK;
     let w = slot_probe(slot);
-    let state = probe_data[STATE_BASE + slot];
+    let state = probe_data[state_base() + slot];
     let age = select(0u, (state >> 1u) & PROBE_MAX_AGE, (state >> 8u) == probe_tag(w));
-    let touched = (entry & TOUCHED_BIT) != 0u;
-    let window = probe.light_window != 0u;
-    let freeze = probe.steady & STEADY_FREEZE_MASK;
-    var age_cap = PROBE_MAX_AGE;
-    var h = HYSTERESIS;
-    if (age == 0u || window) {
+    let restart = (entry & TOUCHED_BIT) != 0u || age == 0u;
+    let moving = !restart && (entry & MOVED_BIT) != 0u;
+    var h = f32(age) / f32(age + 1u);
+    if (restart) {
         h = 0.0;
-    } else if (touched) {
-        h = YOUNG_HYSTERESIS;
-    } else if (freeze > 0u) {
-        h = f32(age) / f32(age + 1u);
-        if (lamp_holds_open(w)) {
-            h = min(h, HYSTERESIS);
-            age_cap = min(LAMP_MOVED_AGE, freeze / 2u);
-        }
-    } else if (age <= YOUNG_UPDATES) {
-        h = YOUNG_HYSTERESIS;
+    } else if (moving) {
+        h = probe.h_move;
     }
     let max_dist = PROBE_MISS_DISTANCE * f32(probe.spacing);
     if (!inside && lane < IRR_N * IRR_N) {
@@ -290,11 +254,11 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         let ve = VIS_N + 2u;
         for (var t = lane; t < ve * ve; t += 64u) {
             let vv = new_visibility[border_source(t % ve, t / ve, VIS_N)];
-            probe_data[VIS_BASE + slot * VIS_EDGE * VIS_EDGE + t] = pack_half2(vv);
+            probe_data[vis_base() + slot * VIS_EDGE * VIS_EDGE + t] = pack_half2(vv);
         }
     }
     if (lane == 0u) {
-        let next = select(min(age + 1u, age_cap), 1u, touched || window);
-        probe_data[STATE_BASE + slot] = select(0u, 1u, inside) | (next << 1u) | (probe_tag(w) << 8u);
+        let next = select(min(age + 1u, PROBE_MAX_AGE), 1u, restart || moving);
+        probe_data[state_base() + slot] = select(0u, 1u, inside) | (next << 1u) | (probe_tag(w) << 8u);
     }
 }

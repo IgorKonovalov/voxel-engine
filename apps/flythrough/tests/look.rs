@@ -881,7 +881,7 @@ fn pose_box_reading(
     let mut rig = pose_rig_on(device.clone(), queue.clone(), level, pose);
     rig.frame.set_lighting(vxe_render::Lighting {
         exposure: Exposure::Manual(pose.exposure),
-        indirect: false,
+        lamp_bounce: false,
         lamp,
         ..rig.frame.lighting()
     });

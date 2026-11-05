@@ -253,7 +253,7 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
         let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
         frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
         let lighting = vxe_render::Lighting {
-            indirect,
+            lamp_bounce: indirect,
             ..Default::default()
         };
         frame.set_lighting(vxe_render::Lighting {

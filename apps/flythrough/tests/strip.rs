@@ -851,7 +851,7 @@ fn strip_run() {
     };
     let mut lighting = Lighting {
         lamp: on_off("VXE_STRIP_LAMP", scene.lamp),
-        indirect: on_off("VXE_STRIP_INDIRECT", true),
+        lamp_bounce: on_off("VXE_STRIP_INDIRECT", true),
         filter: on_off("VXE_STRIP_FILTER", true),
         candidates: env_or("VXE_STRIP_CANDIDATES", 8),
         shadow_walk: match env("VXE_STRIP_SHADOW").as_deref() {
@@ -921,7 +921,7 @@ fn strip_run() {
         preset.name,
         LookPreset::far_normal_words(preset.normal_mode, preset.far_normal),
         lighting.lamp,
-        lighting.indirect,
+        lighting.lamp_bounce,
         lighting.filter,
         lighting.candidates,
         lighting.exposure
