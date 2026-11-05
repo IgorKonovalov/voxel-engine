@@ -1572,7 +1572,7 @@ impl Modes {
 
     /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
     /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to
-    /// 256, preload R 64 r0 24 B 128 C 256, exposure auto eye +1.53 EV` (the probe rays per update,
+    /// 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +1.53 EV` (the probe rays per update,
     /// the share of probes refreshed a frame, while the lamp's bounce is on the voxels between
     /// probes, the emissive table's cells, the reopened fill's samples a frame and the count it
     /// fills to, or `off`, the preload's radius in voxels, bricks a frame and the count it fills
@@ -1671,7 +1671,7 @@ mod mode_tests {
     use super::*;
 
     /// The banner and the modes' line name the emissive table, its cells, the reopened fill
-    /// and the preload (`preload R 64 r0 24 B 128 C 256`, or `preload off`); `F4` turns the preload
+    /// and the preload (`preload R 64 r0 32 B 128 C 256`, or `preload off`); `F4` turns the preload
     /// off and back on at its radius.
     #[test]
     fn the_banner_names_the_table() {
@@ -1702,7 +1702,7 @@ mod mode_tests {
         );
         assert!(off.line().contains("fill off,"), "{}", off.line());
         assert!(
-            banner.contains("preload R 64 r0 24 B 128 C 256"),
+            banner.contains("preload R 64 r0 32 B 128 C 256"),
             "{banner}"
         );
         let mut wide = Modes::new(
@@ -1748,7 +1748,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off, table 1048576\nfill 8 to 256\npreload R 64 r0 24 B 128 C 256\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off, table 1048576\nfill 8 to 256\npreload R 64 r0 32 B 128 C 256\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

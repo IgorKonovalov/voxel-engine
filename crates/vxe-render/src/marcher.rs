@@ -790,7 +790,7 @@ pub const PRELOAD_RADIUS_MAX: u32 = 128;
 /// [`Lighting::preload_bricks`] by default.
 pub const DEFAULT_PRELOAD_BRICKS: u32 = 128;
 /// [`Lighting::preload_claim_radius`] by default (r0), in voxels.
-pub const DEFAULT_PRELOAD_CLAIM_RADIUS: u32 = 24;
+pub const DEFAULT_PRELOAD_CLAIM_RADIUS: u32 = 32;
 /// [`Lighting::preload_until`] by default (C_PRE).
 pub const DEFAULT_PRELOAD_UNTIL: u32 = 256;
 /// [`Lighting::preload_samples`] by default (S_PRE).
@@ -944,6 +944,9 @@ enum IdleSlot {
     Copied(u64),
     Mapping(u64, std::sync::Arc<std::sync::atomic::AtomicU8>),
 }
+
+/// C_PRE, the preload's radius in bricks and its claim radius: a change raises the epoch.
+type PreloadKey = (u32, u32, u32);
 
 /// The preload's state words the idle skip reads: `pre_n_in` on (`CacheStats` words 5 to 12 of
 /// the preload's header, of which `pre_n_in`, `pre_visit` and `pre_probe_n`), and the ring's
@@ -1394,8 +1397,9 @@ pub struct Frame {
     /// The preload's sweep (`preload_sweep`), its own dispatch after the args pass.
     preload_sweep: wgpu::ComputePipeline,
     /// The preload's epoch (the slab stamps', `cache_fill.wgsl`), raised on every encode whose
-    /// world or table changed as a whole, and C_PRE and the radius in bricks at the last encode.
-    preload_epoch: std::sync::Mutex<(u32, Option<(u32, u32, u32)>)>,
+    /// world or table changed as a whole, and C_PRE, the radius in bricks and the claim radius
+    /// at the last encode.
+    preload_epoch: std::sync::Mutex<(u32, Option<PreloadKey>)>,
     preload_layout: wgpu::BindGroupLayout,
     preload_args_layout: wgpu::BindGroupLayout,
     preload_uniform: wgpu::Buffer,

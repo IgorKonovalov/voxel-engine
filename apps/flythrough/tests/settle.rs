@@ -1749,23 +1749,82 @@ fn still_lamp_composite_readings() {
         let mut last = read(&frame);
         let mut moved = Vec::new();
         let mut rays = 0u64;
+        // The moved pixels by class (`VXE_STILL_CLASSES`): no face key (a miss, the field, a
+        // hit behind translucent layers: the fallback), a face with no cell (a missed key),
+        // a cell under the cap (young), a capped cell; each split interior / edge (a 4-neighbour
+        // pixel's face key differs from its own). The largest step of a moved pixel's channels.
+        let classes = std::env::var("VXE_STILL_CLASSES").is_ok();
+        let mut tally = [[0usize; 2]; 4];
+        let mut step_max = 0u8;
+        let cap = frame.lighting().table_cap;
+        let [w, h] = frame.internal_size();
+        assert_eq!(
+            frame.internal_size(),
+            frame.output_size(),
+            "scale 1: a hit pixel is an output pixel"
+        );
         for _ in 0..64 {
             frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
             rays += frame.traced_probe_rays();
             let now = read(&frame);
-            moved.push(
-                now.chunks(4)
-                    .zip(last.chunks(4))
-                    .filter(|(a, b)| a[..3] != b[..3])
-                    .count(),
-            );
+            let changed: Vec<usize> = now
+                .chunks(4)
+                .zip(last.chunks(4))
+                .enumerate()
+                .filter(|(_, (a, b))| a[..3] != b[..3])
+                .map(|(i, (a, b))| {
+                    for c in 0..3 {
+                        step_max = step_max.max(a[c].abs_diff(b[c]));
+                    }
+                    i
+                })
+                .collect();
+            moved.push(changed.len());
+            if classes && !changed.is_empty() {
+                let (d, q) = (&level.device, &level.queue);
+                let pos = vxe_render::readback::read_float(d, q, frame.hit_positions());
+                let info = vxe_render::readback::read_rgba16u(d, q, frame.hit_records());
+                let keys: Vec<Option<FaceKey>> = pos
+                    .iter()
+                    .zip(&info)
+                    .map(|(p, i)| face_key(cam.position, *p, *i))
+                    .collect();
+                let words = cache_words(&level, &frame);
+                for &i in &changed {
+                    let (x, y) = ((i as u32 % w) as i64, (i as u32 / w) as i64);
+                    let k = keys[i];
+                    let edge = [(-1, 0), (1, 0), (0, -1), (0, 1)].iter().any(|(dx, dy)| {
+                        let (nx, ny) = (x + dx, y + dy);
+                        nx >= 0
+                            && ny >= 0
+                            && nx < i64::from(w)
+                            && ny < i64::from(h)
+                            && keys[(ny * i64::from(w) + nx) as usize] != k
+                    });
+                    let class = match k {
+                        None => 0,
+                        Some(k) => match cache_count(&words, k) {
+                            0 => 1,
+                            n if n < cap => 2,
+                            _ => 3,
+                        },
+                    };
+                    tally[class][usize::from(edge)] += 1;
+                }
+            }
             last = now;
         }
         println!(
-            "reading[{adapter}]: still lamp {} bounce {bounce}: after {settle} frames, pixels moved per frame over 64 {moved:?} (of {}); probe rays dispatched over them {rays} (a frozen probe returns at once)",
+            "reading[{adapter}]: still lamp {} bounce {bounce}: after {settle} frames, pixels moved per frame over 64 {moved:?} (of {}); probe rays dispatched over them {rays} (a frozen probe returns at once); largest channel step {step_max}",
             pose.name,
             last.len() / 4
         );
+        if classes {
+            println!(
+                "reading[{adapter}]: still lamp {} bounce {bounce}: moved pixels by class [interior, edge]: no face key {:?}, no cell {:?}, cell under the cap {:?}, capped cell {:?}",
+                pose.name, tally[0], tally[1], tally[2], tally[3]
+            );
+        }
     }
 }
 
@@ -4526,7 +4585,7 @@ fn preload_band_of(k: &FaceKey, eye: Vec3, r0: f32) -> usize {
 fn band_lines(t: &[RefTally; 5], r0: f32) -> String {
     let names = [
         format!("within r0 {r0}"),
-        format!("r0..64"),
+        "r0..64".to_owned(),
         "64..96".to_owned(),
         "96..128".to_owned(),
         "beyond".to_owned(),
@@ -4542,7 +4601,7 @@ fn band_lines(t: &[RefTally; 5], r0: f32) -> String {
 /// The preload on the level (Plan 0057 Phase 4 Part 2b, done-whens 12, 14, 16 and 17), lamp
 /// off, scale 1, full-resolution lighting at `stillness::SIZE`, each pose of
 /// `VXE_SETTLE_POSES`, each radius of `VXE_PRELOAD_RADII` (default 64 and 0), the claim radius
-/// `VXE_PRELOAD_CLAIM` (r0, default 24), the runs of `VXE_PRELOAD_RUNS` (default all). The
+/// `VXE_PRELOAD_CLAIM` (r0, default 32), the runs of `VXE_PRELOAD_RUNS` (default all). The
 /// shares are against `preload_reference` (cells at C_CAP; a pixel whose face has none counts
 /// as not settled), by band of the face's voxel centre's distance from the eye (within r0,
 /// r0..64, 64..96, 96..128, beyond) and, for lit faces, by decile of the reference mean:
@@ -4768,7 +4827,11 @@ fn preload_level_readings() {
                 }
                 println!(
                     "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering pixels within 10 % on their first frame: {} (reference held {}, refused {}); in flight: {}; a frame: {:.0} samples, {:.1} faces probed, {:.1} listed, {:.1} claimed",
-                    band_lines(&bands, r0),
+                    if preload_cost_only() {
+                        "not read (cost only)".to_owned()
+                    } else {
+                        band_lines(&bands, r0)
+                    },
                     reference.held,
                     reference.refused,
                     costs(&ms),
