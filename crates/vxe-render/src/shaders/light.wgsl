@@ -265,7 +265,7 @@ fn blend_list(slot: u32) {
     atomicStore(&cache_cells[list + 4u + entry], slot);
 }
 
-// Stamps `slot` seen this frame (march.wgsl's CACHE_SEEN, `params.frame + 1`): the first pixel
+// Stamps `slot` seen this frame (cache_cell.wgsl's CACHE_SEEN, `params.frame + 1`): the first pixel
 // of the frame to take the cell exchanges the word; returns whether this invocation did.
 fn cache_seen(slot: u32) -> bool {
     let word = CACHE_WORDS * slot + CACHE_SEEN;

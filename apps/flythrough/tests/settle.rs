@@ -3124,6 +3124,151 @@ fn a_young_face_reads_its_walls_light() {
     assert!(off.iter().any(|&d| d > 2.0), "{off:?}");
 }
 
+/// A cell past a hole keeps its own light. Two lit faces at the cap of 64, the fill off: one of a
+/// wall, its sums raised fourfold so its own share of the kernel shows, and the top of a floating
+/// voxel, which has no kernel neighbours. Each is rewritten to its key's second probe behind a
+/// far key on its first; the far key's slot is then cleared, the hole a walk leaves, and the
+/// dirty word set as a walk sets it. Over the two frames every parity refreshes in, each face
+/// shows within 1 level of its value before the hole, and the floating voxel's is not 0.
+#[test]
+fn a_cell_past_a_hole_keeps_its_own_light() {
+    use vxe_render::marcher::{
+        CACHE_CELL_WORDS, CACHE_COUNT_WORD, TableBlend, cache_key, cache_slot,
+    };
+    use vxe_world::{EditOp, FIXED_ONE, Fixed3, Mode};
+    // cache_cell.wgsl's CACHE_BLEND_DIRTY, in the header past the cells.
+    const DIRTY: u64 = 1;
+    let cap = 64;
+    let lone = ([35, 33, 66], 5u8);
+    let (world, camera) = cache_box();
+    world
+        .apply(&EditOp::box_(
+            Fixed3(lone.0.map(|v| i64::from(v) * FIXED_ONE)),
+            Fixed3(lone.0.map(|v| i64::from(v + 1) * FIXED_ONE)),
+            Mode::Fill(flythrough::cave::ROCK),
+        ))
+        .expect("the voxel is resident");
+    let Some(mut rig) = cache_box_rig_on(world, camera, cap, [64, 36], None) else {
+        return;
+    };
+    rig.frame.set_lighting(Lighting {
+        table_cells: 1 << 16,
+        blend: TableBlend::Narrow,
+        preload_radius: 0,
+        fill_samples: 16,
+        fill_until: cap,
+        ..rig.frame.lighting()
+    });
+    blend_fill(&mut rig, cap);
+    let l = rig.frame.lighting();
+    rig.frame.set_lighting(Lighting {
+        fill_samples: 0,
+        ..l
+    });
+    rig.step(1);
+    let cells = rig.frame.table_cells();
+    let n = CACHE_CELL_WORDS as usize;
+    let words = cache_words(&rig.level, &rig.frame);
+    let keys = rig.keys();
+    let base_of = |k: FaceKey| cache_slot(k.0, u32::from(k.1), cells) as usize * n;
+    // Sits on its first probe, with its second free.
+    let movable = |k: FaceKey| {
+        let b = base_of(k);
+        b + n < words.len() && cache_cell(&words, k) == Some(b) && words[b + n + 1] == 0
+    };
+    assert!(
+        movable(lone) && keys.contains_key(&lone),
+        "the floating top"
+    );
+    let mut sorted: Vec<FaceKey> = keys.keys().copied().collect();
+    sorted.sort_unstable();
+    let wall = sorted
+        .into_iter()
+        .find(|&k| {
+            let axis = usize::from(k.1 / 2);
+            k != lone
+                && k.0[axis] != lone.0[axis]
+                && movable(k)
+                && (-1..=1).all(|i| {
+                    (-1..=1).all(|j| {
+                        let mut o = k.0;
+                        o[(axis + 1) % 3] += i;
+                        o[(axis + 2) % 3] += j;
+                        cache_cell(&words, (o, k.1))
+                            .is_some_and(|w| luma3d(cell_mean(&words, w, cap)) > 0.01)
+                    })
+                })
+        })
+        .expect("a lit face with lit neighbours");
+    let write = |rig: &CacheBox, word: usize, data: &[u32]| {
+        let bytes: Vec<u8> = data.iter().flat_map(|w| w.to_le_bytes()).collect();
+        rig.level
+            .queue
+            .write_buffer(rig.frame.emissive_table(), word as u64 * 4, &bytes);
+    };
+    let dirty = |rig: &CacheBox| {
+        let word = u64::from(cells) * CACHE_CELL_WORDS + DIRTY;
+        write(rig, word as usize, &[1]);
+    };
+    let shown = |rig: &CacheBox, k: FaceKey| {
+        let (d, q) = (&rig.level.device, &rig.level.queue);
+        let accum = vxe_render::readback::read_float(d, q, rig.frame.accumulated());
+        let (i, _) = keyed_pixels(rig)
+            .into_iter()
+            .find(|(_, o)| *o == k)
+            .expect("a pixel on the face");
+        let t = support::rigs::tone_bytes(
+            [accum[i][0], accum[i][1], accum[i][2], 1.0],
+            &rig.frame.lighting(),
+        );
+        0.2126 * f64::from(t[0]) + 0.7152 * f64::from(t[1]) + 0.0722 * f64::from(t[2])
+    };
+    // Behind the camera, in air: no view takes it and no kernel reads it.
+    let far_on = |base: usize| {
+        (0..20)
+            .flat_map(|x| (0..20).flat_map(move |y| (0..128).map(move |z| [x, y, z])))
+            .flat_map(|v| (0..6u8).map(move |f| (v, f)))
+            .find(|&k| base_of(k) == base)
+            .expect("a far key on the slot")
+    };
+    for k in [wall, lone] {
+        let b = base_of(k);
+        let mut cell = words[b..b + n].to_vec();
+        if k == wall {
+            for sum in &mut cell[CACHE_COUNT_WORD + 1..CACHE_COUNT_WORD + 4] {
+                *sum *= 4;
+            }
+        }
+        let far = far_on(b);
+        let far_key = cache_key(far.0, u32::from(far.1));
+        write(&rig, b, &far_key);
+        write(&rig, b + n, &cell);
+    }
+    dirty(&rig);
+    rig.step(2);
+    let before = [shown(&rig, wall), shown(&rig, lone)];
+    let counts = [wall, lone].map(|k| cache_count(&words, k));
+    for k in [wall, lone] {
+        write(&rig, base_of(k), &vec![0; n]);
+    }
+    dirty(&rig);
+    rig.step(2);
+    let after = [shown(&rig, wall), shown(&rig, lone)];
+    println!("a cell past a hole, wall and floating top: before {before:.2?}, after {after:.2?}");
+    let words = cache_words(&rig.level, &rig.frame);
+    for (k, count) in [wall, lone].into_iter().zip(counts) {
+        let b = base_of(k);
+        assert_eq!(words[b + 1], 0, "{k:?}: the hole stays open");
+        assert_eq!(cache_cell(&words, k), Some(b + n), "{k:?}: past the hole");
+        assert_eq!(cache_count(&words, k), count, "{k:?}: not reopened");
+    }
+    assert!(before[1] > 0.0, "the floating top is lit: {before:?}");
+    assert!(after[1] > 0.0, "the lone cell reads 0: {after:?}");
+    for (b, a) in before.iter().zip(&after) {
+        assert!((b - a).abs() <= 1.0, "before {before:?}, after {after:?}");
+    }
+}
+
 /// The voxel and face of a cell's key words (`cache_key_voxel` in `march.wgsl`).
 fn cell_key(cell: &[u32]) -> FaceKey {
     let sign = |c: u32| ((c << 12) as i32) >> 12;

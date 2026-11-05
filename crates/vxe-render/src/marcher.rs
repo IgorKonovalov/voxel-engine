@@ -762,7 +762,8 @@ pub const CACHE_COUNT_WORD: usize = 2;
 /// The cell's seen word: `frame + 1` of the last frame a lighting pixel took the cell or a seen
 /// cell's blend read it; 0 never.
 pub const CACHE_SEEN_WORD: usize = 10;
-/// The cell's blended mean, RGB9E5 (`cache_blend.wgsl`).
+/// The cell's blended mean, each channel's square root over a shared exponent (`blend_unpack`,
+/// `cache_cell.wgsl`; written by `cache_blend.wgsl`).
 pub const CACHE_BLEND_WORD: usize = 11;
 /// Slots a key probes linearly: the smallest of 4, 8 and 16 under which the hall's, the
 /// vein's and the patch's key sets at the window's size, inserted at a load of 0.25 of
@@ -1690,7 +1691,6 @@ pub struct Frame {
     composite_capture: Option<wgpu::Texture>,
 }
 
-/// The emissive table's buffer of `cells` cells.
 /// The emissive table's buffer: `cells` cells, then the blend list's header
 /// ([`BLEND_HEADER_BYTES`]) and `list` slots of 4 B (`cache_blend.wgsl`).
 fn table_buffer(device: &wgpu::Device, cells: u32, list: u32) -> wgpu::Buffer {

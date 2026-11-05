@@ -10,7 +10,7 @@
 //   by `evict_step` since the last pass while still over, and again `age` frames after a pass
 //   that left them over having freed a cell or started on that growth (the cells it found new
 //   have aged by then), a walk over every cell frees each whose voxel's centre lies beyond the
-//   preload's radius of the eye (`reach2`, squared) and whose seen word (march.wgsl's
+//   preload's radius of the eye (`reach2`, squared) and whose seen word (cache_cell.wgsl's
 //   CACHE_SEEN) is older than `age` frames or 0. A pass that leaves the occupied cells over the
 //   mark halves `age`, down to `age_min`; once under it returns to `age_max`. A still camera
 //   over the mark so ends on a re-run that freed nothing, and runs no pass after it.

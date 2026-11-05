@@ -1842,6 +1842,7 @@ each. Empty is fine.)_
 - Phase 7: done-when 8: Radeon lighting is over the 6.0 ms line walking, in the base too; the walk's slice frames are not read on their own; the light pass's excess reads within the runs' spread, on loaded runs.
 - Phase 7: the vein's `B` presses (78 to 87 carves) stay over `MAX_EDITS` and clear the whole table; the hall's no longer do.
 - Phase 7: `castle_gate_golden` fails its RSS bar on a cold Mesa shader cache (also on the tree before this phase) and passes warm.
+- Fix pass (review major, a cell past a hole dropped out of its own blend): `fix(render): plan 0057, the blend's centre takes no lookup`; the test writes the hole through `write_buffer` ([log](logs/0057.md)).
 
 ### Close triggers
 

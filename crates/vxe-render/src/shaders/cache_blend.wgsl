@@ -20,10 +20,11 @@
 // (1 4 6 4 1) takes its place. Every cell read is stamped seen: the age-out does not free a face
 // a seen face's kernel reads.
 //
-// A neighbour's lookup ends at the first free slot of its probes, though a claim steps over one
-// (light.wgsl): a sweep's hole before a neighbour's slot hides that neighbour from this kernel
-// until a claim fills it, a fixed result that does not move; a table of the blend's size is
-// mostly free, so an absent neighbour costs one slot, not CACHE_PROBES.
+// The kernel's centre is the listed cell itself, read from its own slot with no lookup: no hole
+// hides a cell from its own blend. A neighbour's lookup ends at the first free slot of its probes,
+// though a claim steps over one (light.wgsl): a sweep's hole before a neighbour's slot hides that
+// neighbour from this kernel until a claim fills it, a fixed result that does not move; a table of
+// the blend's size is mostly free, so an absent neighbour costs one slot, not CACHE_PROBES.
 //
 // The result is `blend_pack`ed into the cell's CACHE_BLEND word.
 //
@@ -51,7 +52,19 @@ struct Blend {
 @group(2) @binding(1) var<storage, read_write> cache_cells: array<atomic<u32>>;
 @group(2) @binding(2) var<storage, read_write> blend_dispatch: array<u32, 3>;
 
-// The sums and the count of the key's cell, its seen word stamped; a w of -1 with no cell.
+// The sums and the count of the cell at `word`, its seen word stamped.
+fn cell_at(word: u32) -> vec4<f32> {
+    atomicStore(&cache_cells[word + CACHE_SEEN], blend.frame);
+    let n = min(atomicLoad(&cache_cells[word + CACHE_COUNT]), blend.c_cap);
+    return vec4<f32>(
+        f32(atomicLoad(&cache_cells[word + CACHE_COUNT + 1u])),
+        f32(atomicLoad(&cache_cells[word + CACHE_COUNT + 2u])),
+        f32(atomicLoad(&cache_cells[word + CACHE_COUNT + 3u])),
+        f32(n),
+    );
+}
+
+// The sums and the count of the key's cell (`cell_at`); a w of -1 with no cell.
 fn cell_read(v: vec3<i32>, face: u32) -> vec4<f32> {
     let base = cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & blend.cache_mask;
     let key = cache_key(v, face);
@@ -62,14 +75,7 @@ fn cell_read(v: vec3<i32>, face: u32) -> vec4<f32> {
             break;
         }
         if (w1 == key.y && atomicLoad(&cache_cells[word]) == key.x) {
-            atomicStore(&cache_cells[word + CACHE_SEEN], blend.frame);
-            let n = min(atomicLoad(&cache_cells[word + CACHE_COUNT]), blend.c_cap);
-            return vec4<f32>(
-                f32(atomicLoad(&cache_cells[word + CACHE_COUNT + 1u])),
-                f32(atomicLoad(&cache_cells[word + CACHE_COUNT + 2u])),
-                f32(atomicLoad(&cache_cells[word + CACHE_COUNT + 3u])),
-                f32(n),
-            );
+            return cell_at(word);
         }
     }
     return vec4<f32>(0.0, 0.0, 0.0, -1.0);
@@ -145,7 +151,12 @@ fn blend_cells(@builtin(global_invocation_id) gid: vec3<u32>) {
     var raw = 0.0;
     for (var dw = -1; dw <= 1; dw++) {
         for (var du = -1; du <= 1; du++) {
-            let c = max(neighbour(v + u * du + w * dw, air, face), vec4<f32>(0.0));
+            var c: vec4<f32>;
+            if (du == 0 && dw == 0) {
+                c = cell_at(word);
+            } else {
+                c = max(neighbour(v + u * du + w * dw, air, face), vec4<f32>(0.0));
+            }
             inner[u32((dw + 1) * 3 + du + 1)] = c;
             raw += c.w;
             pool += c * tent3(du) * tent3(dw);
