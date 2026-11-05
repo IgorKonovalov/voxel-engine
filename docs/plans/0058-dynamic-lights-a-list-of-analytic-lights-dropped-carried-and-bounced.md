@@ -9,7 +9,7 @@
 > [ADR-0045](../adrs/0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md)
 > (proposed; the table's sums at unit emission). Both are accepted at this plan's close. Rests
 > on [ADR-0043](../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
-> (the table and the lamp channel [Plan 0057](0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) builds)
+> (the table and the lamp channel [Plan 0057](done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) builds)
 > and [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the lamp's exact estimate and its reset).
 > **Source:** the owner, 2026-11-04: "I want to be able to for example light cavern by dropping

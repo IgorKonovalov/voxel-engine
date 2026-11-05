@@ -4,7 +4,7 @@
 > **Date:** 2026-11-04
 > **Related plan(s):** [Plan 0058](../plans/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)
 > (builds it, in its emission-scale phase, on the table
-> [Plan 0057](../plans/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)
+> [Plan 0057](../plans/done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)
 > builds). Refines
 > [ADR-0043](0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
 > (what a cell's sums hold and what the guard compares); leaves its key, its fill, its

@@ -371,3 +371,4 @@ The fly-through's `frame targets` line at scale 1.5: 1080p FSR 2 309 377 468 B a
 output (`frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`, lavapipe): FSR 2
 254 687 644 B against ours 130 267 216 B.
 
+**`frame_bytes` with the table as the emissive store (Plan 0057 Phase 7, 2de29c6, `frame_bytes_hold_the_table_and_no_emissive_history`, lavapipe).** 223 130 488 B asserted at the default, where lavapipe's 128 MiB storage binding holds the table at 2^21 cells; 323 793 784 B at 2^22, the size on the RTX (+ 100 663 296, arithmetic). Against Phase 6's 163 488 480 B: the table + 58 720 256 at 2^21 (+ 159 383 552 at 2^22, 201 326 592 B in all), the blend list 921 616, the walk's 92, the blend's 44. About 22 % of section 3's 1.5 GB line for everything else in VRAM at 2^22. The owner gave no words on the figure.

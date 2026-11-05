@@ -70,6 +70,24 @@ named the edge dots left at `[1, 2]` the next aliasing item. Owed: a plan whose 
 makes `[1, 2]` the default with ADR-0042's Outcome, then the edge dots, and removes the emitter
 cap knob (Plan 0056's Followups). Draft it after Plan 0057's merge.
 
+### The table's edges, if the owner's verdict keeps it
+
+Parked 2026-11-05 at Plan 0057's close. All of this goes if Plan 0059's Phase 13 picks the bake, and
+is owed if it picks the table: a frame over `MAX_EDITS` clears the whole table (the vein's `B`
+presses, 78 to 87 carves); a cell out of view past the guard's 256-frame window stays stale; a
+capped cell can show a blend word from before a neighbour's last change when it enters view; the
+parity skip can age out a far cell only an off-parity cell's kernel reads; the walk's slice frames
+were never read on their own; Radeon lighting reads over the 6.0 ms line walking, the blend adding
+0.64 to 1.38 ms. Pick up at that verdict.
+
+### The lamp channel's faults
+
+Parked 2026-11-05 at Plan 0057's close. `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` takes
+its `D` from the shader's output, so it does not defend the albedo: `D` wants an independent reading
+of the lamp's irradiance at the rays' hits. Inside probes are traced while the lamp moves
+(`probe_update.wgsl`'s `probe_idle` returns on `MOVED_BIT` before its inside check): cost only, unread on
+the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Pick up with Plan 0058's Phase 4.
+
 ### Slow-pan verdict for FSR 2 (ADR-0034)
 
 The slow pan ADR-0034 named as FSR 2's verdict ran in Plan 0056's window (2026-11-04, steps 2
@@ -85,11 +103,18 @@ milliseconds, both adapters), then try wgpu subgroups and `shader-f16` on the wa
 C for the CPU side was asked and answered no (GPU about 9 of 10.6 ms, CPU about 1 ms). Run when
 no lane holds the GPU.
 
-### Dev-reference reading of the re-cut test tiers
+### `castle_gate_golden`'s RSS bar on a cold shader cache
 
-Owed since the harness-speed merge of 2026-11-03: the quick, gpu and gate wall times on the dev
-box, read by the first lane that runs them with `--status-level pass` followed by
-`node scripts/test-times.mjs`, recorded in `nfr.md` section 7.
+Parked 2026-11-05 at Plan 0057's close. It fails its 1 GiB bar on a cold Mesa shader cache and passes
+warm: 1 166 766 080 and 1 162 387 456 B cold, 993 193 984 B warm, and 1 104 261 120 B cold on the tree
+before Plan 0057's Phase 7. So the first GPU run after any shader change fails locally. Whether CI's
+cold run does was not seen: main's last CI failed on three tests over the 60 s line first. What it takes: read
+the peak with the shader cache's share apart, then set the bar on that or warm the pipelines first.
+Pick up at the first red run from it, or with Plan 0044.
+
+### The gate tier is over its wall-time budget
+
+Read 2026-11-05 at Plan 0057's close (`docs/nfr.md` section 7): 1300.7 s, about 22 minutes, nearly quiet, against the 12 min proposal; dev's earlier run read 924.7 s. `flythrough::settle` is the largest binary at 358 s. Owed: move the two tests over the 30 s line to the soak list (`a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips`, `a_dug_hole_settles_within_the_bar`), then either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. CI's main has been red on three tests over its 60 s line since before this plan. Pick up as a dev chore when the owner next wants the gate faster or CI green.
 
 ## Later apps
 
