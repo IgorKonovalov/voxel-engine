@@ -319,6 +319,11 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
             "VXE_PRELOAD_SAMPLES",
             vxe_render::marcher::DEFAULT_PRELOAD_SAMPLES,
         ),
+        // `VXE_PRELOAD_CLAIM` (r0).
+        preload_claim_radius: env(
+            "VXE_PRELOAD_CLAIM",
+            vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
+        ),
         ..Lighting::default()
     })
 }

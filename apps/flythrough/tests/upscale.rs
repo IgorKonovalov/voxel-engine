@@ -702,7 +702,8 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// its fill lists' 2 x 64 distance bands of 4 B; two fill lists of 32 768 entries of 8 B, the
 /// sweep's offsets at the largest radius, 17 077 of 4 B, two probe lists of 16 384 faces of
 /// 8 B, the left and claimed lists of 32 768 slots of 4 B and the slab stamps, 33^3 x 8 of
-/// 4 B: 2 267 532 B), its 4 160 B uniform and its 24-byte indirect dispatches: 163 488 336 B.
+/// 4 B: 2 267 532 B), its 4 176 B uniform, its 24-byte indirect dispatches and its idle skip's
+/// four 32-byte readback slots: 163 488 480 B.
 #[test]
 fn frame_bytes_hold_the_table_and_no_emissive_history() {
     let Some((device, _queue)) = software_device(64 << 20) else {
@@ -716,11 +717,12 @@ fn frame_bytes_hold_the_table_and_no_emissive_history() {
     let preload = 152
         + 512
         + 4 * (4 * 32_768 + 17_077 + 4 * 16_384 + 2 * 32_768 + 33 * 33 * 33 * 8)
-        + 4_160
-        + 24;
+        + 4_176
+        + 24
+        + 4 * 32;
     let expected = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + 41_943_040 + fill + preload;
     println!("frame_bytes at the default: {bytes} B");
-    assert_eq!(expected, 163_488_336);
+    assert_eq!(expected, 163_488_480);
     assert_eq!(bytes, expected);
 }
 

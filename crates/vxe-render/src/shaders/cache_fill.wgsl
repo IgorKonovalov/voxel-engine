@@ -39,9 +39,14 @@
 //                    set, never of the order its entries were appended in; a drawing entry's
 //                    FILL_LANES lanes each draw one sample into the cell (`fill_face`);
 //                  - the probes (`preload_probe_group`), eight input faces a workgroup, a lane
-//                    a sample: the faces with no cell the sweep found, which claim a cell only
-//                    if a sample is lit, the last frame's table held under `load_max` cells and
-//                    its light pass counted no miss.
+//                    a sample: the faces with no cell the sweep found, which claim a cell when
+//                    the last frame's table held under `load_max` cells and its light pass
+//                    counted no miss, and, beyond the claim radius, only if a sample is lit.
+//
+// The claim radius (`preload.claim`, r0 voxels from the eye to the face's voxel centre): a face
+// within it claims a cell whatever its probes read and is filled to C_PRE lit or unlit, so a
+// face no emitter reaches is filled once with zeros and then skipped, not probed again each
+// epoch; from r0 to the radius a face claims a cell only if one of its probes is lit.
 
 // Random numbers: `rand` at a pseudo-pixel hashed from the slot (or the key) and the lane (or
 // the sample), so each lane of each cell draws its own sequence each frame.
@@ -83,7 +88,8 @@ fn fill(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
 // draws (`probe`, at most PRELOAD_PROBE_LANES), the world's epoch (`epoch`, the low
 // PRELOAD_EPOCH_BITS of a count the CPU raises on every frame the world or the table changes
 // as a whole: an edit, an upload, a table clear, the table's chunk sweep, a C_PRE change), and
-// the light pass's grid of workgroups (`light_cols` by `light_rows`).
+// the light pass's grid of workgroups (`light_cols` by `light_rows`), the eye in voxels and the
+// claim radius r0 in voxels (`claim`, 0 none).
 struct Preload {
     eye_brick: vec3<i32>,
     edit_bricks: u32,
@@ -99,6 +105,8 @@ struct Preload {
     light_cols: u32,
     light_rows: u32,
     _pad1: u32,
+    eye: vec3<f32>,
+    claim: f32,
     brick_list: array<vec4<i32>, 256>,
 };
 
@@ -147,6 +155,11 @@ const PRELOAD_STAMP_EDGE: i32 = 33;
 const PRELOAD_EPOCH_BITS: u32 = 18u;
 const PRELOAD_PROBED: u32 = 1u;
 const PRELOAD_DONE: u32 = 2u;
+// Done whatever the eye: the slab has no face the sweep reads, or every face of it lay within
+// the claim radius when it was read and holds a cell the sweep does not list. A slab stamped
+// PRELOAD_DONE that comes within the claim radius is read again (`PRELOAD_SWEEP_NEAR`), since
+// its faces beyond r0 were left without a cell when unlit.
+const PRELOAD_ALL: u32 = 3u;
 
 fn preload_stamp_index(b: vec3<i32>, slab: u32) -> u32 {
     let m = ((b % PRELOAD_STAMP_EDGE) + PRELOAD_STAMP_EDGE) % PRELOAD_STAMP_EDGE;
@@ -300,6 +313,22 @@ fn preload_band(v: vec3<i32>) -> u32 {
     return min(u32(d / PRELOAD_BAND_VOXELS), PRELOAD_BANDS - 1u);
 }
 
+// Whether voxel `v`'s faces lie within the claim radius: the eye's distance to its centre at
+// most r0 (the same test on every frame for the same eye).
+fn preload_near(v: vec3<i32>) -> bool {
+    let d = vec3<f32>(v) + vec3<f32>(0.5) - preload.eye;
+    return preload.claim > 0.0 && dot(d, d) <= preload.claim * preload.claim;
+}
+
+// Whether the last frame's table and light pass let a face claim a cell: 0 yes, else the cause
+// (1 the table's load, 2 a miss).
+fn preload_guard() -> u32 {
+    if (cache_stats.pre_last_occupied >= preload.load_max) {
+        return 1u;
+    }
+    return select(0u, 2u, cache_stats.pre_last_misses > 0u);
+}
+
 // The draws a cell holding `count` samples takes to reach C_PRE, FILL_LANES at a time.
 fn preload_draws_for(count: u32) -> u32 {
     return (preload.until - min(count, preload.until) + FILL_LANES - 1u) / FILL_LANES;
@@ -426,10 +455,11 @@ fn cache_add_sums(slot: u32, q: vec3<u32>, n: u32) {
 }
 
 // The probes: workgroup `g`'s eight input faces (the faces with no cell the sweep found),
-// PRELOAD_PROBE_LANES lanes each, a lane one sample (`face_sample`). A face whose samples are
-// all dark takes no cell; else it takes a cell (its own if the light pass has claimed it since,
-// else a claimed one) when the last frame's table held under `load_max` cells and its light
-// pass counted no miss, takes the samples (summed as `cache_add` would add them one by one),
+// PRELOAD_PROBE_LANES lanes each, a lane one sample (`face_sample`). A face beyond the claim
+// radius whose samples are all dark takes no cell; any other takes a cell (its own if the light
+// pass has claimed it since, else a claimed one) when the last frame's table held under
+// `load_max` cells and its light pass counted no miss, takes the samples (summed as `cache_add`
+// would add them one by one),
 // is offered each lit sample's emitter (the cell keeps the brightest) and is listed for the
 // fill with the draws that bring `probe` samples to C_PRE; its bit is set by the next args pass.
 fn preload_probe_group(g: u32, lane: u32) {
@@ -471,11 +501,14 @@ fn preload_probe_group(g: u32, lane: u32) {
     if (has && j == 0u) {
         atomicAdd(&cache_stats.pre_probed, 1u);
         atomicAdd(&cache_stats.pre_samples, n);
-        if (atomicLoad(&probe_lit[f]) == 0u) {
+        let lit = atomicLoad(&probe_lit[f]) != 0u;
+        let near = preload_near(v);
+        let guard = preload_guard();
+        if (!lit && !near) {
             atomicAdd(&cache_stats.pre_refused_unlit, 1u);
-        } else if (cache_stats.pre_last_occupied >= preload.load_max) {
+        } else if (guard == 1u) {
             atomicAdd(&cache_stats.pre_refused_load, 1u);
-        } else if (cache_stats.pre_last_misses > 0u) {
+        } else if (guard == 2u) {
             atomicAdd(&cache_stats.pre_refused_miss, 1u);
         } else {
             let c = cache_claim(v, face);
@@ -490,6 +523,9 @@ fn preload_probe_group(g: u32, lane: u32) {
                 );
                 cache_add_sums(slot, q, n);
                 atomicAdd(&cache_stats.pre_claimed, 1u);
+                if (near) {
+                    atomicAdd(&cache_stats.pre_claimed_near[u32(!lit)], 1u);
+                }
                 if (preload_append(slot, v, preload_draws_for(n))) {
                     preload_note(true, slot);
                 }
@@ -561,41 +597,69 @@ fn preload_air(v: vec3<i32>) -> bool {
     return c.size != 0 && c.air && tlookup(v).size != 0;
 }
 
-// Whether the sweep lists the cell `slot`: under C_PRE, and lit (it holds a kept emitter,
-// which only a lit sample offers; a test of the sums would depend on the emission's scale),
-// or holding fewer samples than a probe draws. A cell whose first `probe` samples or more were
-// all dark (the light pass's cell of a face in view that no emitter reaches) is a face the
-// probes would refuse, and is left to the light pass.
-fn preload_wants(slot: u32) -> bool {
+// Whether the sweep lists the cell `slot` of voxel `v`'s face: under C_PRE, and within the claim
+// radius (lit or not), or lit (it holds a kept emitter, which only a lit sample offers; a test of
+// the sums would depend on the emission's scale), or holding fewer samples than a probe draws.
+// Beyond r0 a cell whose first `probe` samples or more were all dark (the light pass's cell of a
+// face in view that no emitter reaches) is a face the probes would refuse, and is left to the
+// light pass.
+fn preload_wants(slot: u32, v: vec3<i32>) -> bool {
     let word = CACHE_WORDS * slot;
     let count = atomicLoad(&cache_cells[word + CACHE_COUNT]);
     if (count >= preload.until) {
         return false;
+    }
+    if (preload_near(v)) {
+        return true;
     }
     let dark = atomicLoad(&cache_cells[word + CACHE_KEPT_LUM]) == 0u;
     return !dark || count < min(preload.probe, PRELOAD_PROBE_LANES);
 }
 
 // The sweep's per-slab state in a workgroup: its mode (0 skip, PRELOAD_SWEEP_PROBE,
-// PRELOAD_SWEEP_CHECK) and what its lanes found (PRELOAD_FOUND_*).
+// PRELOAD_SWEEP_CHECK, PRELOAD_SWEEP_NEAR), whether every voxel of the slab lies within the
+// claim radius, the claim guard's cause (`preload_guard`) and what its lanes found
+// (PRELOAD_FOUND_*).
 var<workgroup> sweep_mode: u32;
+var<workgroup> sweep_all_near: u32;
+var<workgroup> sweep_guard: u32;
 var<workgroup> sweep_found: atomic<u32>;
+// Probe every face with no cell (a slab's first read this epoch); probe only the faces with no
+// cell within the claim radius (a slab probed this epoch, or done and come within r0).
 const PRELOAD_SWEEP_PROBE: u32 = 1u;
 const PRELOAD_SWEEP_CHECK: u32 = 2u;
-// A cell under C_PRE; a face sent to the probes; a face the full probe list dropped.
+const PRELOAD_SWEEP_NEAR: u32 = 3u;
+// A cell under C_PRE; a face sent to the probes; a face the full probe list dropped; a face
+// within the claim radius with no cell the guard kept from the probes.
 const PRELOAD_FOUND_CELL: u32 = 1u;
 const PRELOAD_FOUND_PROBE: u32 = 2u;
 const PRELOAD_FOUND_DROP: u32 = 4u;
+const PRELOAD_FOUND_HELD: u32 = 8u;
+
+// The eye's least and greatest distance squared to the voxel centres of slab `slab` of brick
+// `b`.
+fn preload_slab_reach(b: vec3<i32>, slab: u32) -> vec2<f32> {
+    let lo = vec3<f32>(b * 8 + vec3<i32>(0, 0, i32(slab))) + vec3<f32>(0.5);
+    let hi = lo + vec3<f32>(7.0, 7.0, 0.0);
+    let e = preload.eye;
+    let near = clamp(e, lo, hi) - e;
+    let far = max(abs(lo - e), abs(hi - e));
+    return vec2<f32>(dot(near, near), dot(far, far));
+}
 
 // The sweep: workgroup `g` takes slab `g % 8` of the frame's brick `g / 8` (the edit boxes'
 // bricks first, then the table's offsets from the cursor), a lane per voxel. Lane 0 reads the
-// slab's stamp: done at this epoch, the slab is skipped; probed, its lanes only list the cells
-// under C_PRE they find; none, and a brick the early-out leaves (air, absent, LOD-only, or
-// uniform solid inside six uniform solid neighbours) is stamped done, else its lanes also send
-// every face with no cell to the probes. Each opaque voxel's face toward air (the light
-// pass's cacheable faces) is looked up (`cache_find`). Then lane 0 stamps the slab: done when
-// it found no cell under C_PRE and sent no face, probed when it sent all it found, else (the
-// probe list dropped one) unchanged.
+// slab's stamp: all done, or done beyond the claim radius, the slab is skipped; done within it,
+// its lanes list the cells under C_PRE and probe the faces with no cell within r0; probed, the
+// same; none, and a brick the early-out leaves (air, absent, LOD-only, or uniform solid inside
+// six uniform solid neighbours) is stamped all done, else its lanes also send every face with
+// no cell to the probes. Each opaque voxel's face toward air (the light pass's cacheable faces)
+// is looked up (`cache_find`). A face within r0 with no cell goes to the probes only while the
+// guard lets it claim (else it is counted refused by cause, and the slab is read again on a
+// later pass). Then lane 0 stamps the slab: when it found nothing, all done if every voxel lay
+// within r0, else done; probed when it was a first read and the probe list dropped none; else
+// unchanged. A slab counts toward the sweep's busy cycle when it was a first read or listed or
+// sent a face.
 fn preload_sweep_group(g: u32, lane: u32) {
     reset_walk();
     let bi = g / 8u;
@@ -611,31 +675,36 @@ fn preload_sweep_group(g: u32, lane: u32) {
     if (lane == 0u) {
         atomicStore(&sweep_found, 0u);
         let state = preload_stamp_state(b, slab);
+        let reach = preload_slab_reach(b, slab);
+        let r2 = preload.claim * preload.claim;
+        let near = preload.claim > 0.0 && reach.x <= r2;
         var mode = 0u;
-        if (state == PRELOAD_DONE) {
+        if (state == PRELOAD_ALL || (state == PRELOAD_DONE && !near)) {
             atomicAdd(&cache_stats.pre_done, 1u);
+        } else if (state == PRELOAD_DONE) {
+            mode = PRELOAD_SWEEP_NEAR;
+        } else if (state == PRELOAD_PROBED) {
+            mode = PRELOAD_SWEEP_CHECK;
+        } else if (preload_brick_open(b)) {
+            mode = PRELOAD_SWEEP_PROBE;
         } else {
-            // Any slab not done keeps the sweep's cycle from reading idle.
-            atomicAdd(&cache_stats.pre_busy, 1u);
-            if (state == PRELOAD_PROBED) {
-                mode = PRELOAD_SWEEP_CHECK;
-            } else if (preload_brick_open(b)) {
-                mode = PRELOAD_SWEEP_PROBE;
-            } else {
-                preload_stamp(b, slab, PRELOAD_DONE);
-            }
+            preload_stamp(b, slab, PRELOAD_ALL);
         }
         if (mode != 0u) {
             atomicAdd(&cache_stats.pre_scanned, 1u);
         }
         sweep_mode = mode;
+        sweep_all_near = u32(preload.claim > 0.0 && reach.y <= r2);
+        sweep_guard = preload_guard();
     }
     let mode = workgroupUniformLoad(&sweep_mode);
     if (mode == 0u) {
         return;
     }
+    let guard = sweep_guard;
     let v = b * 8 + vec3<i32>(i32(lane % 8u), i32(lane / 8u), i32(slab));
     if (lookup(v).size == 0) {
+        let near = preload_near(v);
         for (var face = 0u; face < 6u; face++) {
             if (!preload_air(v + vec3<i32>(face_dir(face)))) {
                 continue;
@@ -643,11 +712,18 @@ fn preload_sweep_group(g: u32, lane: u32) {
             let found = cache_find(v, face);
             if (found >= 0) {
                 let slot = u32(found);
-                if (preload_wants(slot)) {
+                if (preload_wants(slot, v)) {
                     atomicOr(&sweep_found, PRELOAD_FOUND_CELL);
                     preload_list(slot, v);
                 }
-            } else if (mode == PRELOAD_SWEEP_PROBE) {
+            } else if (near && guard != 0u) {
+                atomicOr(&sweep_found, PRELOAD_FOUND_HELD);
+                if (guard == 1u) {
+                    atomicAdd(&cache_stats.pre_refused_load, 1u);
+                } else {
+                    atomicAdd(&cache_stats.pre_refused_miss, 1u);
+                }
+            } else if (mode == PRELOAD_SWEEP_PROBE || near) {
                 if (preload_probe_append(v, face)) {
                     atomicOr(&sweep_found, PRELOAD_FOUND_PROBE);
                 } else {
@@ -659,11 +735,15 @@ fn preload_sweep_group(g: u32, lane: u32) {
     workgroupBarrier();
     if (lane == 0u) {
         let found = atomicLoad(&sweep_found);
+        // Any slab with work keeps the sweep's cycle from reading idle.
+        if (mode == PRELOAD_SWEEP_PROBE || (found & (PRELOAD_FOUND_CELL | PRELOAD_FOUND_PROBE | PRELOAD_FOUND_DROP)) != 0u) {
+            atomicAdd(&cache_stats.pre_busy, 1u);
+        }
         if ((found & PRELOAD_FOUND_DROP) != 0u) {
             return;
         }
         if (found == 0u) {
-            preload_stamp(b, slab, PRELOAD_DONE);
+            preload_stamp(b, slab, select(PRELOAD_DONE, PRELOAD_ALL, sweep_all_near != 0u));
         } else if (mode == PRELOAD_SWEEP_PROBE) {
             preload_stamp(b, slab, PRELOAD_PROBED);
         }

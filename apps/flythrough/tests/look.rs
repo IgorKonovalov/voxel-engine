@@ -1487,9 +1487,9 @@ fn the_split_walk_moves_no_hit_record() {
 /// no hand-off list, and the emissive table of ADR-0043 in place of the screen's emissive
 /// history and reservoirs (TABLE_DELTA: + 41 943 040 - 3 686 400 - 7 372 800, `upscale.rs`'s
 /// `frame_bytes_hold_the_table_and_no_emissive_history`), the reopened fill's list and
-/// dispatch words (+ 65 564), and the preload's store, uniform and dispatch words
-/// (+ 2 271 716).
-const DEFAULT_FRAME_BYTES: u64 = 163_488_336;
+/// dispatch words (+ 65 564), and the preload's store, uniform, dispatch words and idle
+/// readback slots (+ 2 271 860).
+const DEFAULT_FRAME_BYTES: u64 = 163_488_480;
 const DEFAULT_MAIN: u64 = 130_267_168;
 const TABLE_DELTA: u64 = 41_943_040 - 3_686_400 - 7_372_800;
 const FILL_BYTES: u64 = 16 + 4 * 16_384 + 12;

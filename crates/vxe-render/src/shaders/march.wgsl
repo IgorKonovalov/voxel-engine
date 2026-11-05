@@ -1375,7 +1375,9 @@ struct CacheStats {
     // The last frame's light-pass misses and occupied cells (`preload_args`), for the probes.
     pre_last_misses: u32,
     pre_last_occupied: u32,
-    _pre_pad: array<u32, 2>,
+    // The frame's cells claimed within the claim radius: lit (a probe sample drew light), then
+    // unlit (cleared with the frame's counts).
+    pre_claimed_near: array<atomic<u32>, 2>,
     // Kept across frames: the cells whose fill entries ran out of draws and the cells the
     // probes claimed, counted while the light pass runs and taken by the next args pass,
     // which applies their bits.

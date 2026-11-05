@@ -603,11 +603,16 @@ impl HudStats {
             });
             let table = match l.preload {
                 Some(p) => format!(
-                    "{table}, preload {} bricks {} listed {} claimed {} refused {} samples",
+                    "{table}, preload {} bricks {} listed, claimed r0 {} lit {} unlit, to R {}, refused load {} miss {} unlit {}, {} samples",
                     p.edit_bricks + p.visited,
                     p.listed,
-                    p.claimed,
-                    p.refused_load + p.refused_miss + p.refused_unlit,
+                    p.claimed_near_lit,
+                    p.claimed_near_unlit,
+                    p.claimed
+                        .saturating_sub(p.claimed_near_lit + p.claimed_near_unlit),
+                    p.refused_load,
+                    p.refused_miss,
+                    p.refused_unlit,
                     p.samples
                 ),
                 None => table,
@@ -1124,6 +1129,8 @@ mod tests {
                 visited: 128,
                 listed: 40,
                 claimed: 12,
+                claimed_near_lit: 3,
+                claimed_near_unlit: 2,
                 refused_load: 1,
                 refused_unlit: 5,
                 samples: 20_000,
@@ -1141,7 +1148,7 @@ mod tests {
         );
         assert_eq!(
             lines[4],
-            "lights 18522 samples, 9876 probes live, table 1048576 59724 3, preload 130 bricks 40 listed 12 claimed 6 refused 20000 samples; lighting full"
+            "lights 18522 samples, 9876 probes live, table 1048576 59724 3, preload 130 bricks 40 listed, claimed r0 3 lit 2 unlit, to R 7, refused load 1 miss 0 unlit 5, 20000 samples; lighting full"
         );
         assert_eq!(colours[3], HudColour::White);
         s.lighting.as_mut().unwrap().passes[5].1 = 1.25;
@@ -1565,7 +1572,7 @@ impl Modes {
 
     /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
     /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to
-    /// 256, preload R 64 B 128 C 256, exposure auto eye +1.53 EV` (the probe rays per update,
+    /// 256, preload R 64 r0 24 B 128 C 256, exposure auto eye +1.53 EV` (the probe rays per update,
     /// the share of probes refreshed a frame, while the lamp's bounce is on the voxels between
     /// probes, the emissive table's cells, the reopened fill's samples a frame and the count it
     /// fills to, or `off`, the preload's radius in voxels, bricks a frame and the count it fills
@@ -1603,8 +1610,9 @@ impl Modes {
                 "preload off".to_owned()
             } else {
                 format!(
-                    "preload R {} B {} C {}",
+                    "preload R {} r0 {} B {} C {}",
                     8 * l.preload_brick_radius(),
+                    l.preload_claim_radius.min(8 * l.preload_brick_radius()),
                     l.preload_bricks,
                     l.preload_cap()
                 )
@@ -1663,7 +1671,7 @@ mod mode_tests {
     use super::*;
 
     /// The banner and the modes' line name the emissive table, its cells, the reopened fill
-    /// and the preload (`preload R 64 B 128 C 256`, or `preload off`); `F4` turns the preload
+    /// and the preload (`preload R 64 r0 24 B 128 C 256`, or `preload off`); `F4` turns the preload
     /// off and back on at its radius.
     #[test]
     fn the_banner_names_the_table() {
@@ -1693,18 +1701,22 @@ mod mode_tests {
             0.0,
         );
         assert!(off.line().contains("fill off,"), "{}", off.line());
-        assert!(banner.contains("preload R 64 B 128 C 256"), "{banner}");
+        assert!(
+            banner.contains("preload R 64 r0 24 B 128 C 256"),
+            "{banner}"
+        );
         let mut wide = Modes::new(
             vxe_render::Lighting {
                 preload_radius: 100,
                 preload_until: 1024,
+                preload_claim_radius: 32,
                 ..vxe_render::Lighting::default()
             },
             vxe_render::LightingResolution::default(),
             0.0,
         );
         assert!(
-            wide.line().contains("preload R 96 B 128 C 1024,"),
+            wide.line().contains("preload R 96 r0 32 B 128 C 1024,"),
             "{}",
             wide.line()
         );
@@ -1736,7 +1748,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off, table 1048576\nfill 8 to 256, preload R 64 B 128 C 256\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off, table 1048576\nfill 8 to 256\npreload R 64 r0 24 B 128 C 256\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

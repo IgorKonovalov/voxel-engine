@@ -3839,6 +3839,149 @@ fn a_face_behind_the_camera_is_settled_before_the_turn() {
     assert!(off < 0.5, "preload off: {off}");
 }
 
+/// The claim box (done-when 14's asserted half): a rock wall at x 70..72 over all of y and z,
+/// and behind it an enclosure (x 72..96, y and z 52..78, walls 4 thick) split at x 80..81 into
+/// a pocket (x 72..80) and an emitter chamber (x 81..92) by a divider whose only opening is the
+/// one voxel (80, 64, 64); an ore block at x 88..92, y and z 56..74, faces the gap. The eye at
+/// (63.5, 64.5, 64.5) faces -x, away from the wall. Face A, the pocket's back wall at the gap's
+/// height ([71, 64, 64] toward +x), lies 8.0 voxels from the eye and is lit only through the
+/// gap; face B ([70, 64, 60] toward -x, 8.1 voxels) and face C ([70, 104, 64] toward -x, 40.1
+/// voxels) lie on the wall's open side, which no emitter reaches.
+fn claim_box() -> (vxe_world::World, Camera) {
+    use flythrough::cave::{ORE, ROCK};
+    let world = air_box_with(&[
+        ([88, 56, 56], [92, 74, 74], ORE),
+        ([70, 0, 0], [72, 128, 128], ROCK),
+        ([72, 52, 52], [96, 56, 78], ROCK),
+        ([72, 74, 52], [96, 78, 78], ROCK),
+        ([72, 56, 52], [96, 74, 56], ROCK),
+        ([72, 56, 74], [96, 74, 78], ROCK),
+        ([92, 56, 56], [96, 74, 74], ROCK),
+        ([80, 56, 56], [81, 64, 74], ROCK),
+        ([80, 65, 56], [81, 74, 74], ROCK),
+        ([80, 64, 56], [81, 65, 64], ROCK),
+        ([80, 64, 65], [81, 65, 74], ROCK),
+    ]);
+    (world, camera_at([63.5, 64.5, 64.5], 180.0, 0.0))
+}
+
+const CLAIM_GAP_LIT: FaceKey = ([71, 64, 64], 1);
+const CLAIM_NEAR_UNLIT: FaceKey = ([70, 64, 60], 0);
+const CLAIM_FAR_UNLIT: FaceKey = ([70, 104, 64], 0);
+
+/// Whether the segment from `p` to `q` first meets the claim box's ore (x 88..92), on the CPU.
+fn claim_clear(world: &vxe_world::World, p: Vec3, q: Vec3) -> bool {
+    let d = q - p;
+    vis_cast(world, p, d.normalize(), d.length() + 1.0)
+        .is_some_and(|((v, _), _)| (88..92).contains(&v.0[0]))
+}
+
+/// The claim box's run: the preload at its default radius, C_PRE 256 and the claim radius
+/// `r0`, the random numbers from frame `seed`, one sweep (`ceil(offsets / B)` frames) and 32
+/// still frames; returns the three faces' cells as (count, mean luminance), `None` for no cell.
+fn claim_run(rig: &mut CacheBox, r0: u32, seed: u32) -> [Option<(u32, f64)>; 3] {
+    use vxe_render::marcher::{DEFAULT_PRELOAD_BRICKS, DEFAULT_PRELOAD_RADIUS, preload_offsets};
+    let l = rig.frame.lighting();
+    rig.frame.reset_history();
+    rig.frame.set_frame_index(seed);
+    rig.frame.set_lighting(Lighting {
+        preload_radius: DEFAULT_PRELOAD_RADIUS,
+        preload_until: 256,
+        preload_claim_radius: r0,
+        ..l
+    });
+    let sweep = preload_offsets(DEFAULT_PRELOAD_RADIUS / 8)
+        .len()
+        .div_ceil(DEFAULT_PRELOAD_BRICKS as usize);
+    rig.step(sweep + 32);
+    let words = cache_words(&rig.level, &rig.frame);
+    [CLAIM_GAP_LIT, CLAIM_NEAR_UNLIT, CLAIM_FAR_UNLIT].map(|k| {
+        cache_cell(&words, k).map(|w| {
+            (
+                words[w + vxe_render::marcher::CACHE_COUNT_WORD],
+                cells_mean(&words, &[k]),
+            )
+        })
+    })
+}
+
+/// A face near the eye is claimed lit or not (Plan 0057 Phase 4 Part 2b, done-when 14's
+/// asserted half): on the claim box (`claim_box`), r0 24, C_PRE 256, scale 1, lamp off, after
+/// one sweep and 32 still frames facing away from the three faces, the gap-lit face A and the
+/// unlit face B, both 8 voxels from the eye, hold cells of C_PRE samples, B's mean 0, and the
+/// unlit face C, 40 voxels away, holds no cell; with the claim radius 0 face A holds a cell in
+/// under half of 16 seeds (the 8-probe rule alone). Face A's lit share: the share of uniform
+/// pairs of points on it and on the ore's face toward it that are clear on the CPU
+/// (`World::raycast`), under one in 16; face B's and C's: no ray from them reaches any ore voxel.
+#[test]
+fn a_face_near_the_eye_is_claimed_lit_or_not() {
+    let (world, camera) = claim_box();
+    // The faces' lit shares on the CPU.
+    let mut rng = 0x2545_F491_u32;
+    let mut next = || {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        f32::from(u16::try_from(rng >> 16).expect("16 bits")) / 65536.0
+    };
+    let pairs = 4096;
+    let clear = (0..pairs)
+        .filter(|_| {
+            let p = Vec3::new(72.01, 64.0 + next(), 64.0 + next());
+            let q = Vec3::new(87.99, 56.0 + 18.0 * next(), 56.0 + 18.0 * next());
+            claim_clear(&world, p, q)
+        })
+        .count();
+    let lit_share = clear as f64 / f64::from(pairs);
+    let ore: Vec<Vec3> = (88..92)
+        .flat_map(|x| {
+            (56..74).flat_map(move |y| {
+                (56..74).map(move |z| Vec3::new(x as f32, y as f32, z as f32) + Vec3::splat(0.5))
+            })
+        })
+        .collect();
+    for (name, p) in [
+        ("B", Vec3::new(69.99, 64.5, 60.5)),
+        ("C", Vec3::new(69.99, 104.5, 64.5)),
+    ] {
+        assert!(
+            ore.iter().all(|&q| !claim_clear(&world, p, q)),
+            "no emitter reaches face {name}"
+        );
+    }
+    let Some(mut rig) = cache_box_rig_on(world, camera, 1024, [64, 36], None) else {
+        return;
+    };
+    let near = claim_run(&mut rig, 24, 1);
+    let keys = rig.keys();
+    assert!(
+        [CLAIM_GAP_LIT, CLAIM_NEAR_UNLIT, CLAIM_FAR_UNLIT]
+            .iter()
+            .all(|k| !keys.contains_key(k)),
+        "the three faces are out of view"
+    );
+    let off: Vec<bool> = (0..16)
+        .map(|seed| claim_run(&mut rig, 0, 1 + 7919 * seed)[0].is_some())
+        .collect();
+    let claimed_off = off.iter().filter(|&&c| c).count();
+    println!(
+        "reading: claim box: face A lit share {lit_share:.4} ({clear} of {pairs} pairs clear); r0 24: A {:?}, B {:?}, C {:?}; r0 0: A claimed in {claimed_off} of 16 seeds",
+        near[0], near[1], near[2]
+    );
+    assert!(lit_share > 0.0 && lit_share < 1.0 / 16.0, "{lit_share}");
+    let [a, b, c] = near;
+    assert!(a.is_some_and(|(n, _)| n >= 256), "face A: {a:?}");
+    assert!(
+        b.is_some_and(|(n, m)| n >= 256 && m == 0.0),
+        "face B: {b:?}"
+    );
+    assert!(c.is_none(), "face C: {c:?}");
+    assert!(
+        claimed_off < 8,
+        "r0 0: face A claimed in {claimed_off} of 16"
+    );
+}
+
 /// The near dig settles from the preload alone (Plan 0057 Phase 4 Part 2b, done-when 15): on
 /// the dig box with the camera 5 voxels from the dig (`dig_case`), the reopened fill off (F 0)
 /// and the preload at its default, the dig's frame visits the edit box's bricks and lists
@@ -4124,8 +4267,8 @@ fn a_face_hidden_from_every_eye_is_settled_before_it_is_seen() {
 }
 
 /// The preload readings' lighting at `pose`: lamp off, indirect off, the pose's exposure,
-/// the preload at `radius` voxels and `VXE_PRELOAD_BRICKS`, `VXE_PRELOAD_UNTIL` and
-/// `VXE_PRELOAD_SAMPLES` (else the defaults).
+/// the preload at `radius` voxels and `VXE_PRELOAD_BRICKS`, `VXE_PRELOAD_UNTIL`,
+/// `VXE_PRELOAD_SAMPLES` and `VXE_PRELOAD_CLAIM` (r0; else the defaults).
 fn preload_lighting(pose: &Pose, radius: u32) -> Lighting {
     let env = |name: &str, default: u32| {
         std::env::var(name)
@@ -4134,7 +4277,8 @@ fn preload_lighting(pose: &Pose, radius: u32) -> Lighting {
             .unwrap_or(default)
     };
     use vxe_render::marcher::{
-        DEFAULT_PRELOAD_BRICKS, DEFAULT_PRELOAD_SAMPLES, DEFAULT_PRELOAD_UNTIL,
+        DEFAULT_PRELOAD_BRICKS, DEFAULT_PRELOAD_CLAIM_RADIUS, DEFAULT_PRELOAD_SAMPLES,
+        DEFAULT_PRELOAD_UNTIL,
     };
     Lighting {
         lamp: false,
@@ -4144,6 +4288,7 @@ fn preload_lighting(pose: &Pose, radius: u32) -> Lighting {
         preload_bricks: env("VXE_PRELOAD_BRICKS", DEFAULT_PRELOAD_BRICKS),
         preload_until: env("VXE_PRELOAD_UNTIL", DEFAULT_PRELOAD_UNTIL),
         preload_samples: env("VXE_PRELOAD_SAMPLES", DEFAULT_PRELOAD_SAMPLES),
+        preload_claim_radius: env("VXE_PRELOAD_CLAIM", DEFAULT_PRELOAD_CLAIM_RADIUS),
         ..Lighting::default()
     }
 }
@@ -4213,24 +4358,27 @@ fn preload_cost_only() -> bool {
     std::env::var("VXE_PRELOAD_COST_ONLY").is_ok()
 }
 
-/// The least count a cell of `preload_reference` holds to stand as a face's settled mean:
-/// at 1024 samples a face of relative spread 1 reads within about 3 % of its mean.
-const PRELOAD_REFERENCE_COUNT: u32 = 1024;
+/// The settled cell means a run's faces read (the reference of done-whens 14 and 16).
+struct PreloadRef {
+    /// The table's mean luminance of each cell at C_CAP, times the pose's exposure, by key
+    /// (0 for a face no emitter reaches).
+    means: std::collections::HashMap<FaceKey, f64>,
+    /// The nine decile edges of the lit (above 1e-6) means.
+    deciles: Vec<f64>,
+    /// Frames held, and the claims the load and miss guards refused over the run.
+    held: usize,
+    refused: u32,
+}
 
-/// The settled cell means a run's faces read (the reference of done-whens 14 and 16): a fresh
-/// frame walks `cameras` with the preload at its largest radius (`PRELOAD_RADIUS_MAX`), C_PRE
-/// at C_CAP (4096) and S_PRE at 524 288, holding every 16th camera and the last until the
-/// preload's lists read empty (at most 512 frames, the last at most 4096), so every lit face
-/// within 128 voxels of the path is filled; the table's mean luminance of each cell holding at
-/// least `PRELOAD_REFERENCE_COUNT` samples, times `exposure`, by key; the least count among
-/// them; and the frames held. A face whose cell holds fewer (beyond 128 voxels of every held
-/// camera, or refused by the claim rule and seen by few pixels) has no reference, and the
-/// readings count it apart.
-fn preload_reference(
-    level: &stillness::VeinLevel,
-    pose: &Pose,
-    cameras: &[Camera],
-) -> (std::collections::HashMap<FaceKey, f64>, u32, usize) {
+/// The reference: a fresh frame walks `cameras` with the preload at its largest radius
+/// (`PRELOAD_RADIUS_MAX`), every face within it claimed whatever its probes read (the claim
+/// radius at the same 128 voxels; the load and miss guards still apply, and their refusals are
+/// counted), C_PRE at C_CAP (4096) and S_PRE at 524 288, holding every 16th camera and the last
+/// until the preload's lists read empty (at most 4096 frames each), so every face within 128
+/// voxels of the path is filled to C_CAP. A reference cell is one at C_CAP; a face without one
+/// (beyond 128 voxels of every held camera, or refused by a guard) has none, and the readings
+/// count its pixels as not settled.
+fn preload_reference(level: &stillness::VeinLevel, pose: &Pose, cameras: &[Camera]) -> PreloadRef {
     use vxe_render::marcher::{
         CACHE_CELL_WORDS, CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP, PRELOAD_RADIUS_MAX,
     };
@@ -4239,21 +4387,28 @@ fn preload_reference(
         Lighting {
             preload_until: DEFAULT_TABLE_CAP,
             preload_samples: 1 << 19,
+            preload_claim_radius: PRELOAD_RADIUS_MAX,
             ..preload_lighting(pose, PRELOAD_RADIUS_MAX)
         },
     );
     let light = LightParams::headlamp();
     let mut held = 0;
-    for (i, c) in cameras.iter().enumerate() {
+    let mut refused = 0;
+    let mut step = |frame: &mut Frame, c: &Camera| {
         frame.step(&level.device, &level.queue, &level.gpu, c, &light);
+        let s = frame.read_preload_stats(&level.device, &level.queue);
+        refused += s.refused_load + s.refused_miss;
+        s
+    };
+    for (i, c) in cameras.iter().enumerate() {
+        step(&mut frame, c);
         let last = i + 1 == cameras.len();
         if i % 16 != 15 && !last {
             continue;
         }
-        for f in 0..if last { 4096 } else { 512 } {
-            frame.step(&level.device, &level.queue, &level.gpu, c, &light);
+        for f in 0..4096 {
+            let s = step(&mut frame, c);
             held += 1;
-            let s = frame.read_preload_stats(&level.device, &level.queue);
             if f > 16 && s.list == 0 && s.probes == 0 && s.listed == 0 {
                 break;
             }
@@ -4261,10 +4416,9 @@ fn preload_reference(
     }
     let words = cache_words(level, &frame);
     let w = CACHE_CELL_WORDS as usize;
-    let mut out = std::collections::HashMap::new();
-    let mut least = u32::MAX;
+    let mut means = std::collections::HashMap::new();
     for cell in words.chunks_exact(w) {
-        if cell[1] & 0x8000_0000 == 0 || cell[CACHE_COUNT_WORD] == 0 {
+        if cell[1] & 0x8000_0000 == 0 || cell[CACHE_COUNT_WORD] < DEFAULT_TABLE_CAP {
             continue;
         }
         let k = (cell[0], cell[1]);
@@ -4273,47 +4427,140 @@ fn preload_reference(
         let z = ((k.1 >> 8) & 0xF_FFFF) as i32;
         let sx = |c: i32| (c << 12) >> 12;
         let face = ((k.1 >> 28) & 7) as u8;
-        let n = cell[CACHE_COUNT_WORD].min(DEFAULT_TABLE_CAP);
-        if n < PRELOAD_REFERENCE_COUNT {
-            continue;
-        }
-        least = least.min(n);
-        let c = |i: usize| {
-            f64::from(cell[CACHE_COUNT_WORD + 1 + i]) / f64::from(CACHE_Q) / f64::from(n)
-        };
+        let n = f64::from(DEFAULT_TABLE_CAP);
+        let c = |i: usize| f64::from(cell[CACHE_COUNT_WORD + 1 + i]) / f64::from(CACHE_Q) / n;
         let lum = 0.2126 * c(0) + 0.7152 * c(1) + 0.0722 * c(2);
-        out.insert(
+        means.insert(
             ([sx(x), sx(y), sx(z)], face),
             lum * f64::from(pose.exposure),
         );
     }
-    (out, least, held)
+    let mut lit: Vec<f64> = means.values().copied().filter(|&v| v > 1e-6).collect();
+    lit.sort_by(f64::total_cmp);
+    let deciles = (1..10)
+        .map(|d| lit.get(lit.len() * d / 10).copied().unwrap_or(0.0))
+        .collect();
+    PreloadRef {
+        means,
+        deciles,
+        held,
+        refused,
+    }
 }
 
-/// Whether `now` lies within a factor 1.1 of `reference` (above 1e-6).
+/// Whether `now` lies within a factor 1.1 of `reference` (above 1e-6), or reads 0 (at most
+/// 1e-6) where the reference does.
 fn within_tenth(now: f64, reference: f64) -> bool {
-    reference > 1e-6 && (now / reference).log2().abs() <= 1.1f64.log2()
+    if reference <= 1e-6 {
+        return now <= 1e-6;
+    }
+    (now / reference).log2().abs() <= 1.1f64.log2()
+}
+
+/// A band's tally of pixels against the reference: pixels, within 10 %, pixels with no
+/// reference cell (counted as not settled), unlit-reference pixels and those reading 0, and the
+/// lit pixels by the decile of their reference mean (pixels, within 10 %).
+#[derive(Clone, Default)]
+struct RefTally {
+    n: usize,
+    ok: usize,
+    noref: usize,
+    unlit: [usize; 2],
+    deciles: [[usize; 2]; 10],
+}
+
+impl RefTally {
+    fn add(&mut self, r: &PreloadRef, k: &FaceKey, lum: f64) {
+        self.n += 1;
+        let Some(&rf) = r.means.get(k) else {
+            self.noref += 1;
+            return;
+        };
+        let ok = within_tenth(lum, rf);
+        self.ok += usize::from(ok);
+        if rf <= 1e-6 {
+            self.unlit[0] += 1;
+            self.unlit[1] += usize::from(ok);
+        } else {
+            let d = r.deciles.iter().filter(|&&e| rf >= e).count().min(9);
+            self.deciles[d][0] += 1;
+            self.deciles[d][1] += usize::from(ok);
+        }
+    }
+
+    fn line(&self) -> String {
+        let deciles: Vec<String> = self
+            .deciles
+            .iter()
+            .map(|d| format!("{:.2}/{}", d[1] as f64 / d[0].max(1) as f64, d[0]))
+            .collect();
+        format!(
+            "{:.3} of {} (no reference {}{}; unlit {}/{}; lit by decile {})",
+            self.ok as f64 / self.n.max(1) as f64,
+            self.n,
+            self.noref,
+            if self.noref * 100 > self.n {
+                ", over 1 %: not a reading"
+            } else {
+                ""
+            },
+            self.unlit[1],
+            self.unlit[0],
+            deciles.join(" ")
+        )
+    }
+}
+
+/// The preload readings' bands of a face's voxel centre's distance from the eye: within the
+/// claim radius r0, r0..64, 64..96, 96..128 and beyond.
+fn preload_band_of(k: &FaceKey, eye: Vec3, r0: f32) -> usize {
+    let c = Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32) + Vec3::splat(0.5);
+    let d = (c - eye).length();
+    [r0, 64.0, 96.0, 128.0]
+        .iter()
+        .position(|&e| d <= e)
+        .unwrap_or(4)
+}
+
+/// The five bands' tallies in a line.
+fn band_lines(t: &[RefTally; 5], r0: f32) -> String {
+    let names = [
+        format!("within r0 {r0}"),
+        format!("r0..64"),
+        "64..96".to_owned(),
+        "96..128".to_owned(),
+        "beyond".to_owned(),
+    ];
+    names
+        .iter()
+        .zip(t)
+        .map(|(n, t)| format!("{n}: {}", t.line()))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// The preload on the level (Plan 0057 Phase 4 Part 2b, done-whens 12, 14, 16 and 17), lamp
 /// off, scale 1, full-resolution lighting at `stillness::SIZE`, each pose of
-/// `VXE_SETTLE_POSES`, each radius of `VXE_PRELOAD_RADII` (default 64 and 0), the runs of
-/// `VXE_PRELOAD_RUNS` (default all):
+/// `VXE_SETTLE_POSES`, each radius of `VXE_PRELOAD_RADII` (default 64 and 0), the claim radius
+/// `VXE_PRELOAD_CLAIM` (r0, default 24), the runs of `VXE_PRELOAD_RUNS` (default all). The
+/// shares are against `preload_reference` (cells at C_CAP; a pixel whose face has none counts
+/// as not settled), by band of the face's voxel centre's distance from the eye (within r0,
+/// r0..64, 64..96, 96..128, beyond) and, for lit faces, by decile of the reference mean:
 /// - `fill`: from a fresh table at the pose, still: frames until the list first reads empty,
-///   the cells claimed and refused (load, miss, unlit) and the list's drops over them, the
-///   occupancy and misses then, and the passes' median GPU time over 120 frames at rest after.
+///   the cells claimed by band (within r0 lit and unlit, r0 to R) and refused (load, miss,
+///   unlit) and the list's drops over them, the occupancy and misses then, and the passes'
+///   median GPU time over 120 frames at rest after.
 /// - `turn`: 120 still frames, then the rig's `yaw 90 10 f` and 10 still frames: of the pixels
-///   whose face was not in view in the 120 frames, the share within 10 % of the face's settled
-///   mean (`preload_reference`) on the face's first frame in view, and on the tenth frame after
-///   the yaw ends.
+///   whose face was not in view in the 120 frames, the share within 10 % of the face's
+///   reference on the face's first frame in view, and on the tenth frame after the yaw ends.
 /// - `walk` and `shift`: the steady flight at 0.5 and 2 voxels a frame: of the entering pixels
-///   (a face no pixel hit in the 60 frames before) within 64 voxels, the share within 10 % on
-///   their first frame, and the shares in the bands 64..96, 96..128 and beyond; the passes'
-///   median GPU time over the flight.
+///   (a face no pixel hit in the 60 frames before), the share within 10 % on their first
+///   frame; the passes' median GPU time over the flight.
 /// - `corner`: `VEIN_CORNER` (the lit faces within 24 voxels of the eye and above it in the
 ///   lowest tenth of their settled means, vein only): the 60 voxels of the path into the pose
 ///   at 0.5 voxel a frame heading 180 degrees from the corner, then `yaw 180 20 f`; on each
-///   frame the corner is in view, the share of its pixels within 10 %.
+///   frame the corner is in view, the share of its pixels within 10 %, and the frames each
+///   corner face lay within r0 of the eye before its first frame in view.
 #[test]
 #[ignore = "reading only: run with --ignored"]
 fn preload_level_readings() {
@@ -4351,13 +4598,16 @@ fn preload_level_readings() {
     };
     for pose in poses() {
         for &r in &radii {
+            let lighting = preload_lighting(&pose, r);
+            let r0 = lighting.preload_claim_radius.min(r) as f32;
             let tag = format!(
-                "{} R {r} {}",
+                "{} R {r} r0 {r0} C {} {}",
                 pose.name,
+                lighting.preload_until,
                 std::env::var("VXE_PRELOAD_TAG").unwrap_or_default()
             );
             if runs.iter().any(|x| x == "fill") {
-                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let mut frame = preload_frame(&level, lighting);
                 let cam = pose.camera();
                 let mut sum = vxe_render::marcher::PreloadStats::default();
                 let mut empty_at = None;
@@ -4365,12 +4615,14 @@ fn preload_level_readings() {
                     frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
                     let s = frame.read_preload_stats(&level.device, &level.queue);
                     sum.claimed += s.claimed;
+                    sum.claimed_near_lit += s.claimed_near_lit;
+                    sum.claimed_near_unlit += s.claimed_near_unlit;
                     sum.refused_load += s.refused_load;
                     sum.refused_miss += s.refused_miss;
                     sum.refused_unlit += s.refused_unlit;
                     sum.drops += s.drops;
                     sum.samples += s.samples;
-                    if f > 1 && s.list == 0 && s.listed == 0 {
+                    if f > 1 && s.list == 0 && s.listed == 0 && s.probes == 0 {
                         empty_at = Some(f);
                         break;
                     }
@@ -4395,8 +4647,10 @@ fn preload_level_readings() {
                     }
                 }
                 println!(
-                    "reading[{adapter}]: preload fill {tag}: list empty at frame {empty_at:?}; claimed {}, refused load {} miss {} unlit {}, drops {}, samples {}; occupied {} of {} ({:.4}), misses {}; at rest: {}",
-                    sum.claimed,
+                    "reading[{adapter}]: preload fill {tag}: list empty at frame {empty_at:?}; claimed within r0 lit {} unlit {}, r0 to R {}; refused load {} miss {} unlit {}, drops {}, samples {}; occupied {} of {} ({:.4}), misses {}; at rest: {}",
+                    sum.claimed_near_lit,
+                    sum.claimed_near_unlit,
+                    sum.claimed - sum.claimed_near_lit - sum.claimed_near_unlit,
                     sum.refused_load,
                     sum.refused_miss,
                     sum.refused_unlit,
@@ -4412,11 +4666,12 @@ fn preload_level_readings() {
             if runs.iter().any(|x| x == "turn") {
                 let mut cams: Vec<Camera> = vec![KRun::Yaw.camera(&pose, 0); 120];
                 cams.extend((1..=20).map(|f| KRun::Yaw.camera(&pose, f)));
-                let (reference, least, held) = preload_reference(&level, &pose, &cams);
-                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let reference = preload_reference(&level, &pose, &cams);
+                let mut frame = preload_frame(&level, lighting);
                 let mut seen: HashSet<FaceKey> = HashSet::new();
                 let mut first: HashSet<FaceKey> = HashSet::new();
-                let (mut n1, mut ok1, mut n10, mut ok10, mut noref) = (0, 0, 0, 0, 0);
+                let mut at1: [RefTally; 5] = Default::default();
+                let mut at10: [RefTally; 5] = Default::default();
                 for (f, c) in cams.iter().enumerate() {
                     frame.step(&level.device, &level.queue, &level.gpu, c, &light);
                     let px = preload_pixels(&level, &frame, c.position);
@@ -4429,29 +4684,26 @@ fn preload_level_readings() {
                         if seen.contains(&k) {
                             continue;
                         }
-                        let Some(&rf) = reference.get(&k) else {
-                            noref += 1;
-                            continue;
-                        };
-                        if rf <= 1e-6 {
-                            continue;
-                        }
+                        let b = preload_band_of(&k, c.position, r0);
                         if !first.contains(&k) {
                             new_keys.insert(k);
-                            n1 += 1;
-                            ok1 += usize::from(within_tenth(lum, rf));
+                            at1[b].add(&reference, &k, lum);
                         }
                         if f == 139 {
-                            n10 += 1;
-                            ok10 += usize::from(within_tenth(lum, rf));
+                            at10[b].add(&reference, &k, lum);
                         }
                     }
                     first.extend(new_keys);
                 }
                 println!(
-                    "reading[{adapter}]: preload turn {tag}: entering lit pixels within 10 % on the face's first frame {:.3} of {n1}, on the tenth frame after the yaw {:.3} of {n10} (no reference {noref}; reference least count {least}, held {held})",
-                    ok1 as f64 / n1.max(1) as f64,
-                    ok10 as f64 / n10.max(1) as f64
+                    "reading[{adapter}]: preload turn {tag}: entering pixels within 10 % on the face's first frame: {}",
+                    band_lines(&at1, r0)
+                );
+                println!(
+                    "reading[{adapter}]: preload turn {tag}: on the tenth frame after the yaw: {} (reference held {}, refused {})",
+                    band_lines(&at10, r0),
+                    reference.held,
+                    reference.refused
                 );
             }
             for (run, speed) in [("walk", 0.5f32), ("shift", 2.0)] {
@@ -4470,20 +4722,22 @@ fn preload_level_readings() {
                         c
                     })
                     .collect();
-                let (reference, least, held) = if preload_cost_only() {
-                    Default::default()
+                let reference = if preload_cost_only() {
+                    PreloadRef {
+                        means: HashMap::new(),
+                        deciles: Vec::new(),
+                        held: 0,
+                        refused: 0,
+                    }
                 } else {
                     preload_reference(&level, &pose, &cams)
                 };
-                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let mut frame = preload_frame(&level, lighting);
                 let mut last_seen: HashMap<FaceKey, usize> = HashMap::new();
-                // Bands: within 64, 64..96, 96..128, beyond: [entering, within 10 %].
-                let mut bands = [[0usize; 2]; 4];
+                let mut bands: [RefTally; 5] = Default::default();
                 let mut ms = vec![Vec::new(); vxe_render::marcher::FRAME_PASSES.len()];
                 // The preload's samples, faces probed, faces listed and cells claimed, summed.
                 let mut pre_sum = [0u64; 4];
-                // Entering pixels within 64 voxels whose face has no reference.
-                let mut noref = 0usize;
                 for (f, c) in cams.iter().enumerate() {
                     match &timer {
                         Some(t) if f > 0 => {
@@ -4502,35 +4756,21 @@ fn preload_level_readings() {
                         continue;
                     }
                     let px = preload_pixels(&level, &frame, c.position);
-                    for &(k, d, lum) in px.iter().flatten() {
+                    for &(k, _, lum) in px.iter().flatten() {
                         let entering = f >= 60 && last_seen.get(&k).is_none_or(|&s| f - s > 60);
-                        if entering && d <= 64.0 && !reference.contains_key(&k) {
-                            noref += 1;
-                        }
-                        if entering
-                            && let Some(&rf) = reference.get(&k)
-                            && rf > 1e-6
-                        {
-                            let b = [64.0, 96.0, 128.0]
-                                .iter()
-                                .position(|&e| d <= e)
-                                .unwrap_or(3);
-                            bands[b][0] += 1;
-                            bands[b][1] += usize::from(within_tenth(lum, rf));
+                        if entering {
+                            bands[preload_band_of(&k, c.position, r0)].add(&reference, &k, lum);
                         }
                     }
                     for &(k, ..) in px.iter().flatten() {
                         last_seen.insert(k, f);
                     }
                 }
-                let share =
-                    |b: [usize; 2]| format!("{:.3} of {}", b[1] as f64 / b[0].max(1) as f64, b[0]);
                 println!(
-                    "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering lit pixels within 10 % on their first frame: within 64 {}; 64..96 {}; 96..128 {}; beyond {} (no reference within 64 {noref}; reference least count {least}, held {held}); in flight: {}; a frame: {:.0} samples, {:.1} faces probed, {:.1} listed, {:.1} claimed",
-                    share(bands[0]),
-                    share(bands[1]),
-                    share(bands[2]),
-                    share(bands[3]),
+                    "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering pixels within 10 % on their first frame: {} (reference held {}, refused {}); in flight: {}; a frame: {:.0} samples, {:.1} faces probed, {:.1} listed, {:.1} claimed",
+                    band_lines(&bands, r0),
+                    reference.held,
+                    reference.refused,
                     costs(&ms),
                     pre_sum[0] as f64 / cams.len() as f64,
                     pre_sum[1] as f64 / cams.len() as f64,
@@ -4540,8 +4780,9 @@ fn preload_level_readings() {
             }
             if runs.iter().any(|x| x == "corner") && pose.name == VEIN_POSE.name {
                 let eye = Vec3::from(pose.position);
-                let (probe, ..) = preload_reference(&level, &pose, &[pose.camera()]);
+                let probe = preload_reference(&level, &pose, &[pose.camera()]);
                 let mut lit: Vec<(FaceKey, f64)> = probe
+                    .means
                     .iter()
                     .filter(|(k, v)| {
                         let c = Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32)
@@ -4577,33 +4818,63 @@ fn preload_level_readings() {
                     let t = (f.min(20) as f32) / 20.0;
                     camera_at(pose.position, away - 180.0 * t, corner_pitch * t)
                 }));
-                let (reference, least, held) = preload_reference(&level, &pose, &cams);
-                let mut frame = preload_frame(&level, preload_lighting(&pose, r));
+                let reference = preload_reference(&level, &pose, &cams);
+                let mut frame = preload_frame(&level, lighting);
                 let mut line = Vec::new();
+                // Each corner face's frames within r0 of the eye before its first in view.
+                let mut lead: HashMap<FaceKey, usize> = HashMap::new();
+                let mut leads: Vec<usize> = Vec::new();
                 for (f, c) in cams.iter().enumerate() {
                     frame.step(&level.device, &level.queue, &level.gpu, c, &light);
-                    if f < 120 {
-                        continue;
-                    }
-                    let px = preload_pixels(&level, &frame, c.position);
-                    let (mut n, mut ok) = (0, 0);
-                    for &(k, _, lum) in px.iter().flatten() {
-                        if corner.contains(&k)
-                            && let Some(&rf) = reference.get(&k)
-                            && rf > 1e-6
-                        {
-                            n += 1;
-                            ok += usize::from(within_tenth(lum, rf));
+                    let px = (f >= 120).then(|| preload_pixels(&level, &frame, c.position));
+                    let in_view: HashSet<FaceKey> = px
+                        .iter()
+                        .flatten()
+                        .flatten()
+                        .map(|p| p.0)
+                        .filter(|k| corner.contains(k))
+                        .collect();
+                    for k in &corner {
+                        if lead.get(k) == Some(&usize::MAX) {
+                            continue;
+                        }
+                        if in_view.contains(k) {
+                            leads.push(lead.get(k).copied().unwrap_or(0));
+                            lead.insert(*k, usize::MAX);
+                        } else if preload_band_of(k, c.position, r0) == 0 {
+                            *lead.entry(*k).or_insert(0) += 1;
                         }
                     }
-                    if n > 0 {
-                        line.push(format!("{}: {:.3}/{n}", f - 120, ok as f64 / n as f64));
+                    let Some(px) = px else {
+                        continue;
+                    };
+                    let mut t = RefTally::default();
+                    for &(k, _, lum) in px.iter().flatten() {
+                        if corner.contains(&k) {
+                            t.add(&reference, &k, lum);
+                        }
+                    }
+                    if t.n > 0 {
+                        line.push(format!(
+                            "{}: {:.3}/{} (no ref {})",
+                            f - 120,
+                            t.ok as f64 / t.n as f64,
+                            t.n,
+                            t.noref
+                        ));
                     }
                 }
+                leads.sort_unstable();
                 println!(
-                    "reading[{adapter}]: preload corner {tag}: VEIN_CORNER {} faces, box {lo:?}..{hi:?}, yaw {corner_yaw:.1} pitch {corner_pitch:.1}; per frame in view (frame after the walk: share/pixels): {} (reference least count {least}, held {held})",
+                    "reading[{adapter}]: preload corner {tag}: VEIN_CORNER {} faces, box {lo:?}..{hi:?}, yaw {corner_yaw:.1} pitch {corner_pitch:.1}; per frame in view (frame after the walk: share/pixels): {}; frames within r0 before the first in view, of {} faces seen: least {}, median {}, most {} (reference held {}, refused {})",
                     corner.len(),
-                    line.join(" ")
+                    line.join(" "),
+                    leads.len(),
+                    leads.first().copied().unwrap_or(0),
+                    leads.get(leads.len() / 2).copied().unwrap_or(0),
+                    leads.last().copied().unwrap_or(0),
+                    reference.held,
+                    reference.refused
                 );
             }
         }

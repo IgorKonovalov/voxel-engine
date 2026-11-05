@@ -25,7 +25,7 @@
 //! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]
 //! [--history edits|gradient] [--lighting full|half]
-//! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off]
+//! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off] [--preload-claim VOXELS]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
 //! [--exposure auto|E]
@@ -112,7 +112,9 @@
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
 //! default, 16 or 32); `--preload VOXELS|off` sets the camera-radius preload's radius (default
-//! 64, rounded down to whole bricks, at most 128) or turns it off. In a window
+//! 64, rounded down to whole bricks, at most 128) or turns it off, and `--preload-claim VOXELS`
+//! its claim radius r0 (default 24, 0 to 128; at most the radius), within which every face is
+//! filled lit or not. In a window
 //! `F3` toggles the shadow walk, `F4` the preload, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp, `F8` the lamp's bounce and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
@@ -466,6 +468,9 @@ struct Args {
     /// `--preload VOXELS|off`: the camera-radius preload's radius in voxels, 0 off (default
     /// `DEFAULT_PRELOAD_RADIUS`).
     preload: u32,
+    /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
+    /// `DEFAULT_PRELOAD_CLAIM_RADIUS`).
+    preload_claim: u32,
     /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
     probe_spacing: u32,
     /// `--probe-rays N`: rays each updated probe traces (default 64).
@@ -660,6 +665,7 @@ impl Args {
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
             preload_radius: self.preload,
+            preload_claim_radius: self.preload_claim,
             ..Lighting::default()
         }
     }
@@ -736,6 +742,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         fade_reading: false,
         lamp_bounce: true,
         preload: vxe_render::marcher::DEFAULT_PRELOAD_RADIUS,
+        preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
         probe_slices: vxe_render::probes::SLICES,
@@ -1007,6 +1014,18 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                         }
                     },
                 }
+            }
+            "--preload-claim" => {
+                let v = value()?;
+                args.preload_claim = match v.parse::<u32>() {
+                    Ok(r) if r <= vxe_render::marcher::PRELOAD_RADIUS_MAX => r,
+                    _ => {
+                        return Err(format!(
+                            "--preload-claim takes a radius of 0 to {} voxels, not {v}",
+                            vxe_render::marcher::PRELOAD_RADIUS_MAX
+                        ));
+                    }
+                };
             }
             "--lamp-bounce" | "--indirect" => {
                 args.lamp_bounce = match value()?.as_str() {
@@ -7419,7 +7438,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to 256, preload R 64 B 128 C 256, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to 256, preload R 64 r0 24 B 128 C 256, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -7464,6 +7483,19 @@ mod tests {
             96
         );
         assert!(parse(&["--preload", "4"]).is_err());
+        // The claim radius: 24 by default, a radius sets it, past 128 is refused.
+        assert_eq!(
+            parse(&[]).unwrap().start_lighting().preload_claim_radius,
+            24
+        );
+        assert_eq!(
+            parse(&["--preload-claim", "32"])
+                .unwrap()
+                .start_lighting()
+                .preload_claim_radius,
+            32
+        );
+        assert!(parse(&["--preload-claim", "200"]).is_err());
         // The steady spike's flags and the screen path's are refused, naming Plan 0057.
         for flag in [
             "--steady",

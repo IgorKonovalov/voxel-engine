@@ -789,6 +789,8 @@ pub const DEFAULT_PRELOAD_RADIUS: u32 = 64;
 pub const PRELOAD_RADIUS_MAX: u32 = 128;
 /// [`Lighting::preload_bricks`] by default.
 pub const DEFAULT_PRELOAD_BRICKS: u32 = 128;
+/// [`Lighting::preload_claim_radius`] by default (r0), in voxels.
+pub const DEFAULT_PRELOAD_CLAIM_RADIUS: u32 = 24;
 /// [`Lighting::preload_until`] by default (C_PRE).
 pub const DEFAULT_PRELOAD_UNTIL: u32 = 256;
 /// [`Lighting::preload_samples`] by default (S_PRE).
@@ -889,10 +891,15 @@ pub struct PreloadStats {
     pub scanned: u32,
     /// Faces put on the list (a cell under C_PRE not yet on it, or a cell just claimed).
     pub listed: u32,
-    /// Cells the sweep claimed for faces with none.
+    /// Cells the sweep claimed for faces with none, in every band.
     pub claimed: u32,
-    /// Faces with no cell refused one: the table's load, a miss (this frame's light pass or
-    /// the claim), no lit probe sample.
+    /// Of `claimed`, the cells within the claim radius whose probes drew light, and those whose
+    /// probes were all dark; the rest (`claimed - near_lit - near_unlit`) lay from r0 to R.
+    pub claimed_near_lit: u32,
+    pub claimed_near_unlit: u32,
+    /// Faces with no cell refused one: the table's load, a miss (the last frame's light pass
+    /// or the claim), no lit probe sample (beyond the claim radius only). A face within r0
+    /// that the load or a miss holds back is counted on each pass of the sweep that finds it.
     pub refused_load: u32,
     pub refused_miss: u32,
     pub refused_unlit: u32,
@@ -913,6 +920,130 @@ pub struct PreloadStats {
     pub probes: u32,
 }
 
+/// The preload's idle skip: while the args pass of some encode read the sweep idle (both lists
+/// empty and no brick visited), and every encode since was quiet (the camera still to the
+/// preload's test and in the same brick, the guard's window closed, no edit box, no world or
+/// table change, no chunk sweep, the same C_PRE, radius, claim radius and lighting grid), the
+/// preload's passes would change nothing and draw nothing, so the frame runs without them (as
+/// with the preload off) until an encode is not quiet. The args pass's words are copied into a
+/// small ring of mappable buffers and read back without blocking, a frame or more late.
+struct PreloadIdle {
+    slots: Vec<(wgpu::Buffer, IdleSlot)>,
+    /// Encodes with the preload wanted, and the first of the run of quiet ones.
+    encodes: u64,
+    quiet_since: Option<u64>,
+    /// A readback of an encode in the quiet run read idle.
+    confirmed: bool,
+    /// The last encode's eye brick and lighting grid.
+    eye_brick: Option<[i32; 3]>,
+    grid: Option<[u32; 2]>,
+}
+
+enum IdleSlot {
+    Free,
+    Copied(u64),
+    Mapping(u64, std::sync::Arc<std::sync::atomic::AtomicU8>),
+}
+
+/// The preload's state words the idle skip reads: `pre_n_in` on (`CacheStats` words 5 to 12 of
+/// the preload's header, of which `pre_n_in`, `pre_visit` and `pre_probe_n`), and the ring's
+/// slots.
+const PRELOAD_IDLE_WORDS_AT: u64 = 20;
+const PRELOAD_IDLE_BYTES: u64 = 32;
+const PRELOAD_IDLE_SLOTS: usize = 4;
+
+impl PreloadIdle {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            slots: (0..PRELOAD_IDLE_SLOTS)
+                .map(|_| {
+                    (
+                        device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("preload idle"),
+                            size: PRELOAD_IDLE_BYTES,
+                            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                            mapped_at_creation: false,
+                        }),
+                        IdleSlot::Free,
+                    )
+                })
+                .collect(),
+            encodes: 0,
+            quiet_since: None,
+            confirmed: false,
+            eye_brick: None,
+            grid: None,
+        }
+    }
+
+    /// The encode's decision: whether it skips the preload's passes, given whether it is
+    /// quiet, after a non-blocking poll of the slots copied before it.
+    fn decide(&mut self, device: &wgpu::Device, quiet: bool) -> bool {
+        let now = self.encodes;
+        self.encodes += 1;
+        if !quiet {
+            self.quiet_since = None;
+            self.confirmed = false;
+        } else if self.quiet_since.is_none() {
+            self.quiet_since = Some(now);
+        }
+        for (buf, slot) in &mut self.slots {
+            // Copied two encodes back or more: the encoder that copied it has been submitted.
+            if let IdleSlot::Copied(at) = *slot
+                && at + 1 < now
+            {
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+                let flag = done.clone();
+                buf.map_async(wgpu::MapMode::Read, .., move |r| {
+                    flag.store(
+                        if r.is_ok() { 1 } else { 2 },
+                        std::sync::atomic::Ordering::Release,
+                    );
+                });
+                *slot = IdleSlot::Mapping(at, done);
+            }
+        }
+        let _ = device.poll(wgpu::PollType::Poll);
+        for (buf, slot) in &mut self.slots {
+            let IdleSlot::Mapping(at, done) = slot else {
+                continue;
+            };
+            match done.load(std::sync::atomic::Ordering::Acquire) {
+                0 => continue,
+                1 => {
+                    let idle = {
+                        let bytes = buf
+                            .get_mapped_range(..PRELOAD_IDLE_BYTES)
+                            .expect("the idle words are mapped");
+                        let w: &[u32] = bytemuck::cast_slice(&bytes);
+                        // n_in, visit and probe_n (words 5, 8 and 11 of the header).
+                        w[0] == 0 && w[3] == 0 && w[6] == 0
+                    };
+                    buf.unmap();
+                    if idle && self.quiet_since.is_some_and(|q| *at >= q) {
+                        self.confirmed = true;
+                    }
+                }
+                _ => {}
+            }
+            *slot = IdleSlot::Free;
+        }
+        quiet && self.confirmed
+    }
+
+    /// A free slot to copy this encode's words into, marked copied.
+    fn take_slot(&mut self) -> Option<&wgpu::Buffer> {
+        let at = self.encodes.saturating_sub(1);
+        self.slots
+            .iter_mut()
+            .find(|(_, s)| matches!(s, IdleSlot::Free))
+            .map(|(b, s)| {
+                *s = IdleSlot::Copied(at);
+                &*b
+            })
+    }
+}
+
 /// The preload's uniform (`Preload` in `cache_fill.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -931,6 +1062,8 @@ struct PreloadUniform {
     light_cols: u32,
     light_rows: u32,
     _pad1: u32,
+    eye: [f32; 3],
+    claim: f32,
     brick_list: [[i32; 4]; PRELOAD_EDIT_BRICKS_MAX],
 }
 
@@ -1032,6 +1165,13 @@ pub struct Lighting {
     /// The count to which the preload fills a listed cell (C_PRE; default
     /// [`DEFAULT_PRELOAD_UNTIL`], at most [`Lighting::table_cap`]).
     pub preload_until: u32,
+    /// The preload's claim radius in voxels (r0; default [`DEFAULT_PRELOAD_CLAIM_RADIUS`], at
+    /// most the radius; 0 none): a face whose voxel centre lies within it of the eye claims a
+    /// cell whatever its probes read (the load and miss guards still apply) and is filled to
+    /// [`Lighting::preload_until`] lit or unlit, so a face no emitter reaches is filled once with
+    /// zeros and then skipped for the life of its cell. From r0 to the radius a face claims a
+    /// cell only when a probe sample is lit.
+    pub preload_claim_radius: u32,
     /// The preload fill's samples a frame at most (S_PRE; default
     /// [`DEFAULT_PRELOAD_SAMPLES`]), [`FILL_SAMPLES_MAX`] a listed cell, so the list's first
     /// `S_PRE / 16` cells draw each frame.
@@ -1062,6 +1202,7 @@ impl Default for Lighting {
             preload_radius: DEFAULT_PRELOAD_RADIUS,
             preload_bricks: DEFAULT_PRELOAD_BRICKS,
             preload_until: DEFAULT_PRELOAD_UNTIL,
+            preload_claim_radius: DEFAULT_PRELOAD_CLAIM_RADIUS,
             preload_samples: DEFAULT_PRELOAD_SAMPLES,
         }
     }
@@ -1254,7 +1395,7 @@ pub struct Frame {
     preload_sweep: wgpu::ComputePipeline,
     /// The preload's epoch (the slab stamps', `cache_fill.wgsl`), raised on every encode whose
     /// world or table changed as a whole, and C_PRE and the radius in bricks at the last encode.
-    preload_epoch: std::sync::Mutex<(u32, Option<(u32, u32)>)>,
+    preload_epoch: std::sync::Mutex<(u32, Option<(u32, u32, u32)>)>,
     preload_layout: wgpu::BindGroupLayout,
     preload_args_layout: wgpu::BindGroupLayout,
     preload_uniform: wgpu::Buffer,
@@ -1266,6 +1407,9 @@ pub struct Frame {
     preload_edit_bricks: std::sync::atomic::AtomicU32,
     /// The last encode ran the preload.
     preload_ran: std::sync::atomic::AtomicBool,
+    /// The preload's idle skip ([`PreloadIdle`]), and the encodes it skipped.
+    preload_idle: std::sync::Mutex<PreloadIdle>,
+    preload_skips: std::sync::atomic::AtomicU32,
     temporal_layout: wgpu::BindGroupLayout,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
@@ -2085,6 +2229,8 @@ impl Frame {
             preload_offsets_radius: std::sync::Mutex::new(None),
             preload_edit_bricks: std::sync::atomic::AtomicU32::new(0),
             preload_ran: std::sync::atomic::AtomicBool::new(false),
+            preload_idle: std::sync::Mutex::new(PreloadIdle::new(device)),
+            preload_skips: std::sync::atomic::AtomicU32::new(0),
             light: std::sync::OnceLock::new(),
             temporal_layout,
             temporal,
@@ -2616,6 +2762,8 @@ impl Frame {
             scanned: w[16],
             listed: w[17],
             claimed: w[18],
+            claimed_near_lit: w[30],
+            claimed_near_unlit: w[31],
             refused_load: w[19],
             refused_miss: w[20],
             refused_unlit: w[21],
@@ -2628,6 +2776,12 @@ impl Frame {
             drawn: w[6],
             probes: w[11],
         }
+    }
+
+    /// The encodes the preload's idle skip has run without the preload's passes.
+    pub fn preload_skips(&self) -> u32 {
+        self.preload_skips
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The cells the table's guard reopened since the table was last cleared, after the last
@@ -2855,6 +3009,7 @@ impl Frame {
             + PRELOAD_BYTES
             + self.preload_uniform.size()
             + self.preload_dispatch.size()
+            + PRELOAD_IDLE_SLOTS as u64 * PRELOAD_IDLE_BYTES
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -3258,9 +3413,9 @@ impl Frame {
         let cells = (cache_table.size() / (CACHE_CELL_WORDS * 4)) as u32;
         let clear_whole = edits_overflowed || cache_clear_voxels * 6 > u64::from(cells);
         // The preload runs where the fill could (a shaded view outside the cutaway) with its
-        // radius and emissive candidates above 0.
+        // radius and emissive candidates above 0, unless the idle skip holds (`PreloadIdle`).
         let preload_r = self.lighting.preload_brick_radius();
-        let preload_on = self.look.view.shades()
+        let preload_want = self.look.view.shades()
             && !self.look.cutaway
             && preload_r > 0
             && self.lighting.candidates > 0;
@@ -3268,22 +3423,6 @@ impl Frame {
             .cache_clear_requested
             .swap(false, std::sync::atomic::Ordering::Relaxed)
             || clear_whole;
-        if table_cleared {
-            encoder.clear_buffer(cache_table, 0, None);
-            // The counters, the fill list and the preload's header: its lists' entries name
-            // cleared cells, which their check drops, and the sweep's offsets stay.
-            encoder.clear_buffer(
-                &self.cache_stats,
-                0,
-                Some(CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_HEADER_BYTES),
-            );
-            self.cache_clears
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        } else if !preload_on {
-            // The misses count this frame's (with the preload on, its args pass takes the last
-            // frame's and clears them, before the light pass).
-            encoder.clear_buffer(&self.cache_stats, 0, Some(4));
-        }
         // The sweep runs on the frame the camera's chunk changes, before the light pass.
         let eye = p.views[0].origin;
         let chunk = eye.map(|v| (v / 64.0).floor() as i32);
@@ -3305,6 +3444,63 @@ impl Frame {
                 0,
                 bytemuck::cast_slice(&[chunk[0], chunk[1], chunk[2], r.saturating_mul(r)]),
             );
+        }
+        let eye_brick = eye.map(|c| (c / 8.0).floor() as i32);
+        let preload_key = (
+            self.lighting.preload_cap(),
+            preload_r,
+            self.lighting.preload_claim_radius,
+        );
+        let grid = t.light_size();
+        // The camera is still to the preload: under a voxel and a degree since the last encode,
+        // in the same brick, with the guard's window closed.
+        let (preload_still, preload_skip) = {
+            let mut idle = self
+                .preload_idle
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let still = camera_still
+                && p.lighting & LIGHTING_GUARD == 0
+                && idle.eye_brick == Some(eye_brick);
+            let quiet = preload_want
+                && still
+                && boxes.is_empty()
+                && !edits_overflowed
+                && !world_changed
+                && !table_cleared
+                && !sweep
+                && idle.grid == Some(grid)
+                && self
+                    .preload_epoch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .1
+                    == Some(preload_key);
+            idle.eye_brick = Some(eye_brick);
+            idle.grid = Some(grid);
+            let skip = preload_want && idle.decide(device, quiet);
+            (still, skip)
+        };
+        let preload_on = preload_want && !preload_skip;
+        self.preload_skips.fetch_add(
+            u32::from(preload_skip),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        if table_cleared {
+            encoder.clear_buffer(cache_table, 0, None);
+            // The counters, the fill list and the preload's header: its lists' entries name
+            // cleared cells, which their check drops, and the sweep's offsets stay.
+            encoder.clear_buffer(
+                &self.cache_stats,
+                0,
+                Some(CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_HEADER_BYTES),
+            );
+            self.cache_clears
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else if !preload_on {
+            // The misses count this frame's (with the preload on, its args pass takes the last
+            // frame's and clears them, before the light pass).
+            encoder.clear_buffer(&self.cache_stats, 0, Some(4));
         }
         let light_bind = bind_io(
             device,
@@ -3381,14 +3577,12 @@ impl Frame {
                     .preload_epoch
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let until = (self.lighting.preload_cap(), preload_r);
-                if world_changed || table_cleared || sweep || e.1 != Some(until) {
+                if world_changed || table_cleared || sweep || e.1 != Some(preload_key) {
                     e.0 = e.0.wrapping_add(1);
                 }
-                e.1 = Some(until);
+                e.1 = Some(preload_key);
                 e.0
             };
-            let eye_brick = p.views[0].origin.map(|c| (c / 8.0).floor() as i32);
             let r2 = (preload_r * preload_r) as i32;
             let mut u = PreloadUniform {
                 eye_brick,
@@ -3396,15 +3590,17 @@ impl Frame {
                 offsets,
                 bricks: self.lighting.preload_bricks.clamp(1, 4096),
                 _pad0: 0,
-                still: u32::from(camera_still && p.lighting & LIGHTING_GUARD == 0),
+                still: u32::from(preload_still),
                 until: self.lighting.preload_cap(),
                 draw_cells: self.lighting.preload_samples / FILL_SAMPLES_MAX,
                 load_max: cells / PRELOAD_LOAD_DIVISOR,
                 probe: PRELOAD_PROBE_SAMPLES,
                 epoch,
-                light_cols: t.light_size()[0].div_ceil(WORKGROUP),
-                light_rows: t.light_size()[1].div_ceil(WORKGROUP),
+                light_cols: grid[0].div_ceil(WORKGROUP),
+                light_rows: grid[1].div_ceil(WORKGROUP),
                 _pad1: 0,
+                eye: p.views[0].origin,
+                claim: self.lighting.preload_claim_radius.min(8 * preload_r) as f32,
                 brick_list: [[0; 4]; PRELOAD_EDIT_BRICKS_MAX],
             };
             // The edit boxes' bricks, dilated by a voxel as the reset's are, within the radius.
@@ -3884,6 +4080,22 @@ impl Frame {
                     t.output.as_image_copy(),
                     capture.as_image_copy(),
                     capture.size(),
+                );
+            }
+        }
+        // The args pass's words, for the idle skip.
+        if preload_bind.is_some() {
+            let mut idle = self
+                .preload_idle
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(slot) = idle.take_slot() {
+                encoder.copy_buffer_to_buffer(
+                    &self.cache_stats,
+                    CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_IDLE_WORDS_AT,
+                    slot,
+                    0,
+                    PRELOAD_IDLE_BYTES,
                 );
             }
         }
