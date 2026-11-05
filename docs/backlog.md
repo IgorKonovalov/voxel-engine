@@ -104,18 +104,13 @@ milliseconds, both adapters), then try wgpu subgroups and `shader-f16` on the wa
 C for the CPU side was asked and answered no (GPU about 9 of 10.6 ms, CPU about 1 ms). Run when
 no lane holds the GPU.
 
-### `castle_gate_golden`'s RSS bar on a cold shader cache
+### `castle_gate_golden`'s RSS bar measures little of the castle
 
-Parked 2026-11-05 at Plan 0057's close. It fails its 1 GiB bar on a cold Mesa shader cache and passes
-warm: 1 166 766 080 and 1 162 387 456 B cold, 993 193 984 B warm, and 1 104 261 120 B cold on the tree
-before Plan 0057's Phase 7. So the first GPU run after any shader change fails locally. Whether CI's
-cold run does was not seen: main's last CI failed on three tests over the 60 s line first. What it takes: read
-the peak with the shader cache's share apart, then set the bar on that or warm the pipelines first.
-Pick up at the first red run from it, or with Plan 0044.
+Read 2026-11-05 on 7cd77ad, which keeps the shader compiler out of the peak with a warm-up render in a child process (about 1 002 400 000 B cold and warm; the bar stays at 1 GiB). Of that peak, 655 MiB is shared memory, and the small pillar world's frame reads the same 655 MiB, so the bar mostly measures the frame. The rest is about 222 MiB of heap and 100 MiB of file pages. What makes up the 655 MiB was not read. The bar still fails with `MESA_SHADER_CACHE_DISABLE=true` (1 172 004 864 B), and CI's cold run has not been seen. What it takes: decide what the bar should defend, then read that quantity. Pick up with Plan 0044 or at the first red run from it.
 
 ### The gate tier is over its wall-time budget
 
-Read 2026-11-05 at Plan 0057's close (`docs/nfr.md` section 7): 1300.7 s, about 22 minutes, nearly quiet, against the 12 min proposal; dev's earlier run read 924.7 s. `flythrough::settle` is the largest binary at 358 s. Owed: move the two tests over the 30 s line to the soak list (`a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips`, `a_dug_hole_settles_within_the_bar`), then either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. CI's main has been red on three tests over its 60 s line since before this plan. Pick up as a dev chore when the owner next wants the gate faster or CI green.
+Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Owed: rule on the four tests that read just over the line in that run (section 7 names them; `castle_gate_golden` only on a cold cache), then either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green.
 
 ## Later apps
 
