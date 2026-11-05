@@ -1476,3 +1476,656 @@ fn hall_floor_terraces() {
         println!("  {e}");
     }
 }
+
+/// Plan 0057 Phase 7's light strip and window-size table runs: reading-only, `#[ignore]`d,
+/// on the adapter `VXE_TEST_ADAPTER` picks. Written under the worktree's
+/// `live/strip-0057/<VXE_LIGHT_TAG>/` (default `tree`).
+///
+/// - `light_strip`: `VXE_LIGHT_SOURCE` `vein` (default; the level at `VEIN_POSE`) or `hall`
+///   (the showcase's hall shot); `VXE_LIGHT_ROW` `fsr2` (default; the owner's window,
+///   2530 x 1378 from 1687 x 919, FSR 2 at 1.5, sharpening 0.5) or `native` (1687 x 919 at
+///   scale 1, no upscaler). Half-resolution lighting, the fly-through's default light with
+///   the lamp off, manual exposure `VXE_LIGHT_EXPOSURE` (default 8), nothing moving, a fresh
+///   frame. Frames `STRIP_AT` are saved with a x8 difference image against frame 4096 and
+///   the shares within 1, 2 and 4 levels of it (the worst channel). Then four bench inputs
+///   (`flythrough_logic::bench_ops` at the camera's voxel, seeds as the fly-through's `B`
+///   draws them from `--seed 1`), each followed by frames +1, +4, +16, +64 and +256 against
+///   the frame before the press, and the share of the carved region's pixels within 2 levels
+///   of frame +256. A second run at light seed 1 (`set_frame_index(SEED_STRIDE)`) gives the
+///   grain figures at each strip frame from the cell dump: over the faces with a pixel in
+///   view, `D_f` the luma of the cell's mean irradiance times the exposure through the
+///   display transform (`rigs::tone_bytes`), in levels; `G_plane` p50 and p90 of
+///   `|D_f - mean(D_n)|` over faces with at least two coplanar edge neighbours, the
+///   neighbours the 3 x 3 of the same axis and side (the coplanar voxel, then one toward the
+///   air, then one into the rock, the first with a sampled cell); `G_noise` p50 and p90 of
+///   `|D_f(seed 0) - D_f(seed 1)| / sqrt 2`.
+/// - `light_table`: `VXE_LIGHT_POSE` `hall`, `vein` or `patch`, at the window's size under
+///   FSR 2, the fly-through's default light (the lamp on on the level, off in the hall; auto
+///   exposure on the level, 8 in the hall): 600 still frames, four turns of 90 degrees over 10
+///   frames each held 50, a slow 360 over 600, and the flight there and back (the rig's
+///   `flight_path` on the level; in the hall along the shot's forward ray to 10 voxels short
+///   of rock, at most 160) at 30 voxels a second facing the travel. Per 60 frames the occupied
+///   cells, the most misses in a frame, and the preload's claims and refusals summed; the
+///   peak; the occupied keys at the end dumped as little-endian word pairs to `keys-<pose>.bin`.
+mod light_strip {
+    use super::*;
+    use std::collections::HashMap;
+    use support::SyncNow;
+    use support::settle::{FaceKey, SEED_STRIDE, cache_cell, face_key, flight_path};
+    use vxe_render::glam::Vec3;
+    use vxe_render::{LightingResolution, marcher};
+
+    const WINDOW: [u32; 2] = [2530, 1378];
+    const STRIP_AT: [usize; 7] = [1, 4, 16, 64, 256, 1024, 4096];
+    const AFTER_PRESS: [usize; 5] = [1, 4, 16, 64, 256];
+    const PRESSES: u64 = 4;
+
+    struct Rig {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        gpu: GpuWorld,
+        world: World,
+        emits: Vec<u16>,
+        adapter: String,
+    }
+
+    /// The source's world mirrored whole, focused at `focus`.
+    fn rig(hall: bool, focus: [f32; 3]) -> Option<Rig> {
+        let base = flythrough::with_emissive_ore(&flythrough::cave_materials());
+        let (world, table, radius) = if hall {
+            let source = ShowcaseSource::new(1);
+            let table = flythrough::with_showcase_rows(&base);
+            (World::generate(source.extent(), &source, &table), table, 19)
+        } else {
+            let source = flythrough::cave::CaveSource::new(
+                1,
+                ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+            );
+            let w = World::generate(source.extent, &source, &base);
+            (w, base, vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS)
+        };
+        let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+        let (device, queue, adapter) = reading_device(pool)?;
+        let cfg = MirrorConfig {
+            budget_bytes: flythrough::level_mirror_budget(
+                &world,
+                world.extent().len() as u64,
+                false,
+            ),
+            light_radius: radius,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        };
+        let mut gpu = GpuWorld::with_config(&device, cfg);
+        gpu.set_focus(VoxelCoord(focus.map(|v| v.floor() as i32)));
+        let mut last = None;
+        for _ in 0..256 {
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+            queue.submit([enc.finish()]);
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("device poll after a sync");
+            if last == Some(gpu.light_samples()) {
+                break;
+            }
+            last = Some(gpu.light_samples());
+        }
+        println!(
+            "light strip: {} on {adapter}, light radius {radius}, {} light samples",
+            if hall { "hall" } else { "level" },
+            gpu.light_samples()
+        );
+        Some(Rig {
+            device,
+            queue,
+            gpu,
+            world,
+            emits: emitting(&table),
+            adapter,
+        })
+    }
+
+    fn hall_camera() -> Camera {
+        let s = SHOTS[0];
+        Camera {
+            position: s.eye.0.map(|v| v as f32 + 0.5).into(),
+            yaw: (s.yaw_deg as f32).to_radians(),
+            pitch: (s.pitch_deg as f32).to_radians(),
+            vfov: 70f32.to_radians(),
+        }
+    }
+
+    fn make_frame(rig: &Rig, fsr2: bool, lighting: Lighting) -> Frame {
+        let device = &rig.device;
+        let internal = RenderScale::OneHalf.internal(WINDOW);
+        let mut f = if fsr2 {
+            let mut f = Frame::with_sizes(device, internal, WINDOW);
+            f.set_upscaler_kind(
+                device,
+                UpscalerKind::Fsr2(Fsr2Settings {
+                    sharpness: 0.5,
+                    ..Fsr2Settings::default()
+                }),
+            );
+            f
+        } else {
+            Frame::new(device, internal[0], internal[1])
+        };
+        f.set_probe_spacing(device, vxe_render::probes::DEFAULT_PROBE_SPACING);
+        f.set_lighting(lighting);
+        let p = LookPreset::DEFAULT;
+        f.set_look(LookParams {
+            normal_mode: p.normal_mode,
+            tuning: p.tuning,
+            far_normal: p.far_normal,
+            ..LookParams::default()
+        });
+        f.set_resolution(device, LightingResolution::Half);
+        f.set_dt(1.0 / 60.0);
+        f
+    }
+
+    fn worst(a: &[u8], b: &[u8], i: usize) -> u8 {
+        (0..3)
+            .map(|k| a[i * 4 + k].abs_diff(b[i * 4 + k]))
+            .max()
+            .unwrap()
+    }
+
+    /// Shares of pixels (all, or those `keep` names) within 1, 2 and 4 levels; the mean.
+    fn shares(a: &[u8], b: &[u8], keep: Option<&[bool]>) -> ([f64; 3], f64, usize) {
+        let (mut w, mut n, mut s) = ([0usize; 3], 0usize, 0u64);
+        for i in 0..a.len() / 4 {
+            if keep.is_some_and(|k| !k[i]) {
+                continue;
+            }
+            let d = worst(a, b, i);
+            n += 1;
+            s += u64::from(d);
+            for (j, lim) in [1, 2, 4].into_iter().enumerate() {
+                w[j] += usize::from(d <= lim);
+            }
+        }
+        let n1 = n.max(1) as f64;
+        (w.map(|v| v as f64 / n1), s as f64 / n1, n)
+    }
+
+    fn diff_x8(a: &[u8], b: &[u8]) -> Vec<u8> {
+        a.chunks(4)
+            .zip(b.chunks(4))
+            .flat_map(|(p, q)| {
+                let c = |k: usize| p[k].abs_diff(q[k]).saturating_mul(8);
+                [c(0), c(1), c(2), 255]
+            })
+            .collect()
+    }
+
+    fn table_words(rig: &Rig, frame: &Frame) -> Vec<u32> {
+        let t = frame.emissive_table();
+        let b = readback::read_buffer(&rig.device, &rig.queue, t, 0, t.size());
+        b.chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
+            .collect()
+    }
+
+    /// `D_f` of a key's cell in levels, `None` with no sampled cell.
+    fn d_of(words: &[u32], key: FaceKey, lighting: &Lighting, exposure: f32) -> Option<f32> {
+        let w = cache_cell(words, key)?;
+        let c = marcher::CACHE_COUNT_WORD;
+        let count = words[w + c];
+        if count == 0 {
+            return None;
+        }
+        let n = count.min(lighting.table_cap) as f32 * marcher::CACHE_Q;
+        let rgb = [1, 2, 3].map(|k| words[w + c + k] as f32 / n * exposure);
+        let t = support::rigs::tone_bytes([rgb[0], rgb[1], rgb[2], 1.0], lighting);
+        Some(0.2126 * f32::from(t[0]) + 0.7152 * f32::from(t[1]) + 0.0722 * f32::from(t[2]))
+    }
+
+    /// The faces with a pixel in view, emitters excluded, and their `D_f`.
+    fn faces_in_view(
+        rig: &Rig,
+        frame: &Frame,
+        words: &[u32],
+        eye: Vec3,
+        lighting: &Lighting,
+        exposure: f32,
+    ) -> HashMap<FaceKey, f32> {
+        let pos = readback::read_float(&rig.device, &rig.queue, frame.hit_positions());
+        let info = readback::read_rgba16u(&rig.device, &rig.queue, frame.hit_records());
+        let mut out = HashMap::new();
+        for (p, i) in pos.iter().zip(&info) {
+            if rig.emits.contains(&i[2]) {
+                continue;
+            }
+            if let Some(k) = face_key(eye, *p, *i)
+                && !out.contains_key(&k)
+                && let Some(d) = d_of(words, k, lighting, exposure)
+            {
+                out.insert(k, d);
+            }
+        }
+        out
+    }
+
+    fn p50_p90(mut v: Vec<f32>) -> String {
+        if v.is_empty() {
+            return "- / - (0)".to_owned();
+        }
+        v.sort_by(f32::total_cmp);
+        let q = |f: f64| v[((v.len() - 1) as f64 * f).round() as usize];
+        format!("{:.2} / {:.2} ({})", q(0.5), q(0.9), v.len())
+    }
+
+    /// `G_plane` over the faces in view.
+    fn g_plane(
+        words: &[u32],
+        faces: &HashMap<FaceKey, f32>,
+        lighting: &Lighting,
+        exposure: f32,
+    ) -> String {
+        let mut out = Vec::new();
+        for (&(v, side), &d) in faces {
+            let axis = usize::from(side / 2);
+            let sign = if side % 2 == 1 { 1 } else { -1 };
+            let (u, w) = ((axis + 1) % 3, (axis + 2) % 3);
+            let (mut sum, mut n, mut edges) = (0f32, 0u32, 0u32);
+            for du in -1..=1i32 {
+                for dw in -1..=1i32 {
+                    if du == 0 && dw == 0 {
+                        continue;
+                    }
+                    for (step, off) in [0, sign, -sign].into_iter().enumerate() {
+                        let mut c = v;
+                        c[u] += du;
+                        c[w] += dw;
+                        c[axis] += off;
+                        if let Some(dn) = d_of(words, (c, side), lighting, exposure) {
+                            sum += dn;
+                            n += 1;
+                            edges += u32::from(step == 0 && du.abs() + dw.abs() == 1);
+                            break;
+                        }
+                    }
+                }
+            }
+            if edges >= 2 {
+                out.push((d - sum / n as f32).abs());
+            }
+        }
+        p50_p90(out)
+    }
+
+    fn g_noise(a: &HashMap<FaceKey, f32>, b: &HashMap<FaceKey, f32>) -> String {
+        p50_p90(
+            a.iter()
+                .filter_map(|(k, &da)| b.get(k).map(|&db| (da - db).abs() / 2f32.sqrt()))
+                .collect(),
+        )
+    }
+
+    fn stats(rig: &Rig, frame: &Frame) -> (marcher::TableStats, marcher::PreloadStats) {
+        (
+            frame.read_table_stats(&rig.device, &rig.queue),
+            frame.read_preload_stats(&rig.device, &rig.queue),
+        )
+    }
+
+    fn stats_line(t: &marcher::TableStats, p: &marcher::PreloadStats) -> String {
+        format!(
+            "table {} {} {} ({:.4}), preload {} bricks {} listed, claimed r0 {} lit {} unlit, to R {}, refused load {} miss {} unlit {}",
+            t.cells,
+            t.occupied,
+            t.misses,
+            f64::from(t.occupied) / f64::from(t.cells),
+            p.edit_bricks + p.visited,
+            p.listed,
+            p.claimed_near_lit,
+            p.claimed_near_unlit,
+            p.claimed
+                .saturating_sub(p.claimed_near_lit + p.claimed_near_unlit),
+            p.refused_load,
+            p.refused_miss,
+            p.refused_unlit
+        )
+    }
+
+    fn out_dir(sub: &str) -> PathBuf {
+        let tag = env("VXE_LIGHT_TAG").unwrap_or_else(|| "tree".to_owned());
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../live/strip-0057")
+            .join(tag)
+            .join(sub);
+        std::fs::create_dir_all(&d).expect("create the strip directory");
+        d
+    }
+
+    fn display(rig: &Rig, frame: &Frame) -> Vec<u8> {
+        readback::read_rgba8(&rig.device, &rig.queue, frame.target())
+    }
+
+    #[test]
+    #[ignore = "reading only: run with --ignored"]
+    fn light_strip() {
+        let hall = env("VXE_LIGHT_SOURCE").as_deref() == Some("hall");
+        let fsr2 = env("VXE_LIGHT_ROW").as_deref() != Some("native");
+        let exposure: f32 = env_or("VXE_LIGHT_EXPOSURE", 8.0);
+        let camera = if hall {
+            hall_camera()
+        } else {
+            flythrough::VEIN_POSE.camera()
+        };
+        let Some(mut rig) = rig(hall, camera.position.to_array()) else {
+            println!("light strip: no adapter; skipped");
+            return;
+        };
+        let name = format!(
+            "{}-{}",
+            if hall { "hall" } else { "vein" },
+            if fsr2 { "fsr2" } else { "native" }
+        );
+        let dir = out_dir(&name);
+        let lighting = Lighting {
+            exposure: Exposure::Manual(exposure),
+            lamp: false,
+            lamp_bounce: true,
+            ..Lighting::default()
+        };
+        let light = LightParams::headlamp();
+        // Seed 1 first: its faces at each strip frame, for G_noise.
+        let mut seed1 = Vec::new();
+        {
+            let mut f = make_frame(&rig, fsr2, lighting);
+            f.set_frame_index(SEED_STRIDE);
+            for n in 1..=*STRIP_AT.last().unwrap() {
+                f.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+                if STRIP_AT.contains(&n) {
+                    let words = table_words(&rig, &f);
+                    seed1.push(faces_in_view(
+                        &rig,
+                        &f,
+                        &words,
+                        camera.position,
+                        &lighting,
+                        exposure,
+                    ));
+                }
+            }
+        }
+        let mut frame = make_frame(&rig, fsr2, lighting);
+        let size = frame.target().size();
+        let (w, h) = (size.width, size.height);
+        println!(
+            "light strip {name}: {w} x {h}, internal {:?}",
+            frame.internal_size()
+        );
+        let mut shots = Vec::new();
+        for n in 1..=*STRIP_AT.last().unwrap() {
+            frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+            if STRIP_AT.contains(&n) {
+                let img = display(&rig, &frame);
+                let (t, p) = stats(&rig, &frame);
+                let words = table_words(&rig, &frame);
+                let faces =
+                    faces_in_view(&rig, &frame, &words, camera.position, &lighting, exposure);
+                let gp = g_plane(&words, &faces, &lighting, exposure);
+                let gn = g_noise(&faces, &seed1[shots.len()]);
+                write_png(&dir.join(format!("f{n:04}.png")), &img, w, h);
+                shots.push((n, img, stats_line(&t, &p), gp, gn));
+            } else if n % 64 == 0 {
+                rig.device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll");
+            }
+        }
+        let reference = shots.last().unwrap().1.clone();
+        for (n, img, st, gp, gn) in &shots {
+            let (s, mean, _) = shares(img, &reference, None);
+            if *n != 4096 {
+                write_png(
+                    &dir.join(format!("diff-x8-f{n:04}-vs-f4096.png")),
+                    &diff_x8(img, &reference),
+                    w,
+                    h,
+                );
+            }
+            println!(
+                "light strip {name} frame {n}: within 1/2/4 {:.4} / {:.4} / {:.4}, mean {mean:.3}; G_plane {gp}; G_noise {gn}; {st}",
+                s[0], s[1], s[2]
+            );
+        }
+        // The owner's B: bench inputs from frame 4096.
+        let mut before = reference;
+        let mut frames_done = 4096usize;
+        for k in 0..PRESSES {
+            let origin = camera.position.to_array().map(|v| v.floor() as i64);
+            let seed = 1u64 ^ k.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let mut boxes = Vec::new();
+            let mut changed = 0u64;
+            for op in flythrough_logic::bench_ops(origin, seed) {
+                let r = rig.world.apply(&op).expect("the bench carve applies");
+                changed += r.changed_from.iter().map(|c| u64::from(c.1)).sum::<u64>();
+                if let Some((min, max)) = r.aabb {
+                    boxes.push((min.0, max.0));
+                }
+            }
+            rig.gpu
+                .sync_now(&rig.world, &rig.device, &rig.queue)
+                .expect("mirror fits");
+            for &(min, max) in &boxes {
+                frame.invalidate(min, max);
+            }
+            let mut after = Vec::new();
+            for n in 1..=*AFTER_PRESS.last().unwrap() {
+                frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+                if AFTER_PRESS.contains(&n) {
+                    let img = display(&rig, &frame);
+                    let (t, p) = stats(&rig, &frame);
+                    write_png(&dir.join(format!("b{k}-p{n:03}.png")), &img, w, h);
+                    write_png(
+                        &dir.join(format!("diff-x8-b{k}-p{n:03}-vs-before.png")),
+                        &diff_x8(&img, &before),
+                        w,
+                        h,
+                    );
+                    after.push((n, img, stats_line(&t, &p)));
+                }
+            }
+            frames_done += AFTER_PRESS.last().unwrap();
+            // The carved region: display pixels whose hit (under them) lies in a box.
+            let pos = readback::read_float(&rig.device, &rig.queue, frame.hit_positions());
+            let [iw, ih] = frame.internal_size();
+            let mut carved = vec![false; (w * h) as usize];
+            for y in 0..h {
+                let iy = aliasing::under(y, h, ih) as u32;
+                for x in 0..w {
+                    let ix = aliasing::under(x, w, iw) as u32;
+                    let p = pos[(iy * iw + ix) as usize];
+                    if p[3] > 1e30 {
+                        continue;
+                    }
+                    carved[(y * w + x) as usize] = boxes.iter().any(|(a, b)| {
+                        (0..3).all(|c| p[c] >= a[c] as f32 - 1.0 && p[c] <= b[c] as f32 + 2.0)
+                    });
+                }
+            }
+            let last = after.last().unwrap().1.clone();
+            for (n, img, st) in &after {
+                let (s, mean, px) = shares(img, &last, Some(&carved));
+                let (sb, _, _) = shares(img, &before, None);
+                println!(
+                    "light strip {name} press {k} (seed {seed:#x}, {} carves changing {changed} voxels, frame {}) +{n}: carved region {px} px within 2 of +256 {:.4} (1/4: {:.4} / {:.4}, mean {mean:.3}); whole frame within 2 of before {:.4}; {st}",
+                    boxes.len(),
+                    frames_done,
+                    s[1],
+                    s[0],
+                    s[2],
+                    sb[1]
+                );
+            }
+            before = last;
+        }
+        println!(
+            "light strip {name}: on {}, frames under {}",
+            rig.adapter,
+            dir.display()
+        );
+    }
+
+    #[test]
+    #[ignore = "reading only: run with --ignored"]
+    fn light_table() {
+        let pose = env("VXE_LIGHT_POSE").unwrap_or_else(|| "vein".to_owned());
+        let hall = pose == "hall";
+        let start = if hall {
+            hall_camera()
+        } else {
+            Pose::named(&pose)
+                .expect("VXE_LIGHT_POSE takes hall, vein or patch")
+                .camera()
+        };
+        let Some(rig) = rig(hall, start.position.to_array()) else {
+            println!("light table: no adapter; skipped");
+            return;
+        };
+        let lighting = Lighting {
+            exposure: if hall {
+                Exposure::Manual(8.0)
+            } else {
+                Exposure::Auto(AutoExposure::eye())
+            },
+            lamp: !hall,
+            lamp_bounce: true,
+            ..Lighting::default()
+        };
+        // The flight's ends.
+        let (a, b) = if hall {
+            let (dir, _, _) = start.basis();
+            let o = centre_of_voxel(VoxelCoord(
+                start.position.to_array().map(|v| v.floor() as i32),
+            ));
+            let d = [dir.x, dir.y, dir.z].map(|c| (c * FIXED_ONE as f32).round() as i64);
+            let t = rig
+                .world
+                .raycast(o, d, 400 * FIXED_ONE)
+                .expect("the ray is valid")
+                .map_or(160.0, |hit| hit.t as f32 / FIXED_ONE as f32);
+            let len = (t - 10.0).clamp(0.0, 160.0);
+            (start.position, start.position + dir * len)
+        } else {
+            let (a, b) = flight_path(&Pose::named(&pose).unwrap());
+            (Vec3::from(a), Vec3::from(b))
+        };
+        let len = (b - a).length();
+        let step = support::settle::FLY_SPEED / 60.0;
+        let leg = (len / step).ceil() as usize;
+        let mut cams: Vec<Camera> = Vec::new();
+        cams.extend(std::iter::repeat_n(start, 600));
+        let yawed = |deg: f32| Camera {
+            yaw: start.yaw + deg.to_radians(),
+            ..start
+        };
+        for turn in 0..4 {
+            for f in 1..=10 {
+                cams.push(yawed(90.0 * turn as f32 + 9.0 * f as f32));
+            }
+            cams.extend(std::iter::repeat_n(yawed(90.0 * (turn + 1) as f32), 50));
+        }
+        for f in 1..=600 {
+            cams.push(yawed(360.0 * f as f32 / 600.0));
+        }
+        for (from, to) in [(a, b), (b, a)] {
+            let dir = (to - from).normalize_or_zero();
+            for f in 1..=leg {
+                cams.push(Camera {
+                    position: from + dir * (step * f as f32).min(len),
+                    yaw: dir.y.atan2(dir.x),
+                    pitch: dir.z.clamp(-1.0, 1.0).asin(),
+                    vfov: 70f32.to_radians(),
+                });
+            }
+        }
+        let mut frame = make_frame(&rig, true, lighting);
+        let light = LightParams::headlamp();
+        println!(
+            "light table {pose}: {} frames (600 still, 240 turns, 600 slow, flight {len:.0} voxels {leg} frames each way), window {:?} from {:?}, on {}",
+            cams.len(),
+            WINDOW,
+            frame.internal_size(),
+            rig.adapter
+        );
+        let (mut peak, mut peak_at, mut peak_miss, mut miss_at) = (0u32, 0usize, 0u32, 0usize);
+        let mut block = [0u64; 7];
+        let mut totals = [0u64; 7];
+        for (i, cam) in cams.iter().enumerate() {
+            frame.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
+            let (t, p) = stats(&rig, &frame);
+            if t.occupied > peak {
+                (peak, peak_at) = (t.occupied, i + 1);
+            }
+            if t.misses > peak_miss {
+                (peak_miss, miss_at) = (t.misses, i + 1);
+            }
+            let v = [
+                u64::from(t.misses),
+                u64::from(p.claimed_near_lit),
+                u64::from(p.claimed_near_unlit),
+                u64::from(
+                    p.claimed
+                        .saturating_sub(p.claimed_near_lit + p.claimed_near_unlit),
+                ),
+                u64::from(p.refused_load),
+                u64::from(p.refused_miss),
+                u64::from(p.refused_unlit),
+            ];
+            block[0] = block[0].max(v[0]);
+            for k in 1..7 {
+                block[k] += v[k];
+                totals[k] += v[k];
+            }
+            totals[0] += v[0];
+            if (i + 1) % 60 == 0 || i + 1 == cams.len() {
+                println!(
+                    "light table {pose} frame {}: occupied {} ({:.4}), misses max {}, claimed r0 lit {} unlit {} to R {}, refused load {} miss {} unlit {}",
+                    i + 1,
+                    t.occupied,
+                    f64::from(t.occupied) / f64::from(t.cells),
+                    block[0],
+                    block[1],
+                    block[2],
+                    block[3],
+                    block[4],
+                    block[5],
+                    block[6]
+                );
+                block = [0; 7];
+            }
+        }
+        let words = table_words(&rig, &frame);
+        let keys: Vec<u32> = words
+            .chunks_exact(marcher::CACHE_CELL_WORDS as usize)
+            .filter(|c| c[1] != 0)
+            .flat_map(|c| [c[0], c[1]])
+            .collect();
+        let path = out_dir("").join(format!("keys-{pose}.bin"));
+        std::fs::write(
+            &path,
+            keys.iter()
+                .flat_map(|k| k.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        )
+        .expect("write the keys");
+        println!(
+            "light table {pose}: peak occupied {peak} at frame {peak_at}, misses peak {peak_miss} at frame {miss_at}, misses summed {}; claimed r0 lit {} unlit {} to R {}, refused load {} miss {} unlit {} summed; {} keys at the end to {}",
+            totals[0],
+            totals[1],
+            totals[2],
+            totals[3],
+            totals[4],
+            totals[5],
+            totals[6],
+            keys.len() / 2,
+            path.display()
+        );
+    }
+}

@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** in-progress (Phases 1 to 6 done, 2026-11-05; the owner questions the direction; awaits the owner's decision and the close review); Plan 0056's Phase 2 readings are in its log (e678ae7)
+> **Status:** in-progress (Phases 1 to 6 done, 2026-11-05; amended with Phases 7 and 8; Phase 7 Part 0, the before rows, read); Plan 0056's Phase 2 readings are in its log (e678ae7)
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
