@@ -26,6 +26,12 @@
 > judges it before any budget work starts. The old Phases 1 to 8 are Phases 4 to 14, re-cut around
 > that; everything after Phase 3 is provisional and the architect re-reads it at the verdict.
 
+> **Amended 2026-11-05 (architect, for the owner), glass at rest.** The owner asked that Phase 3's window look at glass at
+> rest. A translucent hit has no face, so it keeps the fallback, and on 299b5c8 a fallback whose accumulation holds
+> bit-identical still reads 51.10 composite patches a step at the patch pose, with every hit a fallback (`docs/backlog.md`,
+> "A held fallback still moves on screen"). The reference's two worlds hold no glass: its only row is the castle's, and
+> `--reference` refuses the streamed world the castle lives in. So Phase 2 gains a key that places a pane, and Phase 3 a step.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -366,6 +372,12 @@ whole world in a test.
   - The frame's passes at rest and in flight, so the owner knows the frame rate the window will show. If the mean frame is over
     33 ms the runner says so and offers the owner a smaller window, since a low rate could read as a motion fault.
   - The dig: a 5-voxel dig, a dig at 100 voxels and each of the four `B` presses at the vein (78 to 87 carves): faces, samples, ms.
+  - Glass at rest: a pane placed by the key below at the hall, 600 still frames, the lamp off and then on: the pixels of the
+    accumulation that changed from first to last, and the composite's patches a step on the tiles the pane fills. No bar.
+- **The glass pane.** Under `--reference` only, a free key (dev's choice; the banner names the panes placed) stamps a pane of the
+  castle's glass row, 2 voxels thick and about 40 x 40, 6 voxels ahead of the eye, on air voxels only, through the world's edit
+  ops. It goes through the dig's re-bake, so no bake file changes. An unused glass row in the reference's material table changes
+  no frame until the key is pressed. No key removes a pane.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`, `shaders/temporal.wgsl`, `marcher.rs`, `gpu_world.rs`,
   `lib.rs`, `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/bake.rs`, `.config/nextest.toml`, `.gitignore`,
   `docs/plans/logs/0059.md`.
@@ -387,12 +399,16 @@ whole world in a test.
      bit-identical, and a file with another seed, `light_radius` or stop is refused with the field's name.
   7. `the_reference_flag_sets_its_look_and_refuses_a_streamed_world` and the mode key's banner (`hud.rs` and `main.rs`, no GPU, under 1 s).
   8. The readings above in the log, the `G_noise` bar met, and the runner `live/session3.sh` written with its files baked.
+  9. `the_glass_key_places_a_pane_under_the_reference` (`main.rs` or `hud.rs`, no GPU, under 1 s): the key's edit returns the
+     pane's voxel count in the glass row and changes no solid voxel, the banner names the pane, and outside `--reference` the
+     key does nothing.
 
 ### Phase 3: The owner's verdict on the reference
 - **Owner skill:** human
 - **What:** the window, on Phase 2's tree, from the files, on the RTX; the orchestrator runs it with stdout visible and pings when ready. The
   owner's steps of Plan 0057's second window, with the mode key in each: the hall, the vein, the patch, the distant caves down the
-  passage, moving fast, turning fast, standing; the lamp on and off; a dig at arm's length; then `B` at the vein. **The runner says first:**
+  passage, moving fast, turning fast, standing; the lamp on and off; a dig at arm's length; then `B` at the vein; then, at the hall, a glass
+  pane placed by Phase 2's key, standing still with the lamp off and on. **The runner says first:**
   silhouettes are not antialiased (that is next), a dig hitches (nothing is budgeted), and beyond 32 voxels a dig does not reach. The loading
   wait is the file's, and the real bake's minutes are printed beside it.
 - **Files touched:** this plan's log.
@@ -400,7 +416,9 @@ whole world in a test.
   the second window's complaint; (b) anything moving at rest, Plan 0057's unanswered (a); (c) the grain at rest, its unanswered (d);
   (d) the fast turn: **what survives here is not the light store**, and goes to the antialiasing plan; (e) a face's flat value at a
   voxel step and at a shadow edge, with no filter, against the owner's "nearest"; (f) the lamp and its bounce over the bake; (g) the dug
-  hole at arm's length, and the hitch; (h) `B` at the vein; (i) **the verdict: is this the look to cut down from?** A "no" names the step and goes
+  hole at arm's length, and the hitch; (h) `B` at the vein; (i) glass at rest: does the pane or what shows through it move while nothing moves? A "yes" takes
+  `docs/backlog.md`'s "A held fallback still moves on screen" to the architect with the words and Phase 2's reading, and does
+  not by itself decide (j); (j) **the verdict: is this the look to cut down from?** A "no" names the step and goes
   to the architect with the words, and nothing below runs. **Nothing in Part 2 starts before a "yes".** A "yes" hands to the architect, who drafts
   the antialiasing plan from `docs/backlog.md` and re-reads Part 2.
 
