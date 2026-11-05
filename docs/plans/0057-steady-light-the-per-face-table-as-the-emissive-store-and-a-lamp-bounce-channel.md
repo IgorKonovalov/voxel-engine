@@ -1298,8 +1298,8 @@ Open at draft: the "go".
 | 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](logs/0057.md)) | edee79b |
 | 2: The table is the only emissive store, and the default | dev | done: code at d940f32; done-when 7 a reading (amended f107977, test 84f5c60); 9's predictions not met on the patch's scale-1 `sv`, the hall's native drift and the patch's misses; 10 not met (`Lighting::sampler` kept) ([log](logs/0057.md)) | b9b9b3b |
 | 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](logs/0057.md)) | 64a6598 |
-| 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
-| 5: The lamp-bounce channel | dev | done, committed before Phase 4's row (the orchestrator's order); deviations: the moving lamp carried per probe (`MOVED_BIT`), the window sets the schedule only, `Lighting::default()` keeps `lamp_bounce` off (the fly-through on), side 8 from the reach of 64; done-when 5's timers unread on lavapipe; 8 not met (the still composite moves, bounce on and off alike) ([log](logs/0057.md)) | committed with this row |
+| 4: The dug hole and the creases, read on the table, then fixed where read | dev | done: Part 1 verdicts (hole: build; creases: Part 3 not built, done-whens 4 and 7 unwritten; still hall: class 2; census: the claim; reopens: the dark capped cell); Parts 1b, 2, 2b built, deviations in the log (the guard window's event and counter, pixel samples at face points, the preload's band-ordered fill, slab stamps, fill and probes in the light dispatch, idle in place of the trickle, the idle skip, the done slab re-read within r0, r0 32 from the sweep); not met: 2 and 15's off arms on the box, 14 and 16 on the level (two 4096-sample references agree within 10 % on 0.08 to 0.66 of cells), 15 on the level (S90 271), 11's vein share 0.00019 ([log](logs/0057.md)) | committed with this row |
+| 5: The lamp-bounce channel | dev | done, committed before Phase 4's row (the orchestrator's order); deviations: the moving lamp carried per probe (`MOVED_BIT`), the window sets the schedule only, `Lighting::default()` keeps `lamp_bounce` off (the fly-through on), side 8 from the reach of 64; done-when 5's timers unread on lavapipe; 8 not met (the still composite moves, bounce on and off alike) ([log](logs/0057.md)) | 12a9178 |
 | 6: The owner's window, with digs | human | not started | |
 
 ### Notes
@@ -1327,6 +1327,16 @@ each. Empty is fine.)_
 - Phase 3: done-whens 1 to 3 read the far wall's faces with at least 9 pixels as the wall's cells within reach.
 - Phase 3: `a_reveal_behind_a_plug_follows_within_seventy_three_frames` reads 57.3 s and is on the soak list.
 - Phase 3: done-when 5's predictions not met: gradient 0.092 / 0.053 ms on the RTX at rest; 4 reopens over 1024 still frames at the patch.
+- Phase 4: Part 3 not built (the creases' rule read do not build); done-whens 4 and 7 are not written; the rig's fast-yaw row goes to the Followups.
+- Phase 4: done-when 2's F 0 arm and done-when 15's both-off arm do not read over their bars on the 192 x 108 box; 15's is asserted at 24 x 14 (`NEAR_DIG_SMALL`).
+- Phase 4: done-when 14 and 16's bars (90 % within 10 %) are not met on the level at C_PRE 256 or 1024, preload on or off; two references of 4096 samples agree within 10 % on 0.08 to 0.66 of lit cells within r0 by decile.
+- Phase 4: done-when 15's level bar (S90 at most 60 at 5 voxels) not met: 271 with the preload, 303 off.
+- Phase 4: done-when 11's "0 at both poses after four flights" not met at the vein with the preload on (full-table share 0.00019).
+- Phase 4: done-when 14's lamp-on and `up1.5` rows are not read.
+- Phase 4 (52ada45): the preload's passes are skipped while a non-blocking readback confirms the sweep idle and every encode since is quiet (`Frame::preload_skips`, new public API); `Preload::still` also needs the eye's brick unchanged.
+- Phase 4 (52ada45): a done slab within r0 is read again, and a fourth stamp state ends it; a face within r0 is held back, not probed, while a guard is shut.
+- Phase 4 (52ada45): the reference walks at the run's largest R (96), not 128.
+- Phase 4: `look.rs`, `shader_portability.rs` and the golden baselines changed, outside the phase's files.
 - Phase 4 (refactor after a337f76, Plan 0056 closed): `Sampler`, `Lighting::sampler`, `CacheRead` and `hud::SteadyMode` removed; `strip.rs` refuses `VXE_STRIP_SAMPLER` and `VXE_STRIP_STEADY`; Phase 2's done-when 10 met there.
 
 ### Close triggers

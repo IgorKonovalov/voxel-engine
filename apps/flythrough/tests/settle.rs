@@ -4429,27 +4429,44 @@ struct PreloadRef {
     refused: u32,
 }
 
-/// The reference: a fresh frame walks `cameras` with the preload at its largest radius
-/// (`PRELOAD_RADIUS_MAX`), every face within it claimed whatever its probes read (the claim
-/// radius at the same 128 voxels; the load and miss guards still apply, and their refusals are
-/// counted), C_PRE at C_CAP (4096) and S_PRE at 524 288, holding every 16th camera and the last
-/// until the preload's lists read empty (at most 4096 frames each), so every face within 128
-/// voxels of the path is filled to C_CAP. A reference cell is one at C_CAP; a face without one
-/// (beyond 128 voxels of every held camera, or refused by a guard) has none, and the readings
-/// count its pixels as not settled.
-fn preload_reference(level: &stillness::VeinLevel, pose: &Pose, cameras: &[Camera]) -> PreloadRef {
-    use vxe_render::marcher::{
-        CACHE_CELL_WORDS, CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP, PRELOAD_RADIUS_MAX,
-    };
+/// The reference: a fresh frame walks `cameras` with the preload at `radius` (the largest the
+/// readings read), every face within it claimed whatever its probes read (the claim radius at
+/// the same radius; the load and miss guards still apply, and their refusals are counted), C_PRE
+/// at C_CAP (4096) and S_PRE at 524 288, holding every 16th camera and the last until the
+/// preload's lists read empty (at most 4096 frames each), so every face within `radius` of the
+/// path is filled to C_CAP. A reference cell is one at C_CAP; a face without one (beyond the
+/// radius of every held camera, or refused by a guard) has none, and the readings count its
+/// pixels as not settled.
+fn preload_reference(
+    level: &stillness::VeinLevel,
+    pose: &Pose,
+    cameras: &[Camera],
+    radius: u32,
+) -> PreloadRef {
+    preload_reference_seeded(level, pose, cameras, radius, None)
+}
+
+/// `preload_reference` with its random numbers from frame `seed` when given.
+fn preload_reference_seeded(
+    level: &stillness::VeinLevel,
+    pose: &Pose,
+    cameras: &[Camera],
+    radius: u32,
+    seed: Option<u32>,
+) -> PreloadRef {
+    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP};
     let mut frame = preload_frame(
         level,
         Lighting {
             preload_until: DEFAULT_TABLE_CAP,
             preload_samples: 1 << 19,
-            preload_claim_radius: PRELOAD_RADIUS_MAX,
-            ..preload_lighting(pose, PRELOAD_RADIUS_MAX)
+            preload_claim_radius: radius,
+            ..preload_lighting(pose, radius)
         },
     );
+    if let Some(seed) = seed {
+        frame.set_frame_index(seed);
+    }
     let light = LightParams::headlamp();
     let mut held = 0;
     let mut refused = 0;
@@ -4600,11 +4617,13 @@ fn band_lines(t: &[RefTally; 5], r0: f32) -> String {
 
 /// The preload on the level (Plan 0057 Phase 4 Part 2b, done-whens 12, 14, 16 and 17), lamp
 /// off, scale 1, full-resolution lighting at `stillness::SIZE`, each pose of
-/// `VXE_SETTLE_POSES`, each radius of `VXE_PRELOAD_RADII` (default 64 and 0), the claim radius
+/// `VXE_SETTLE_POSES`, each radius of `VXE_PRELOAD_RADII` (default 64 and 0) and C_PRE of
+/// `VXE_PRELOAD_UNTILS` (default `VXE_PRELOAD_UNTIL`, else 256), the claim radius
 /// `VXE_PRELOAD_CLAIM` (r0, default 32), the runs of `VXE_PRELOAD_RUNS` (default all). The
-/// shares are against `preload_reference` (cells at C_CAP; a pixel whose face has none counts
-/// as not settled), by band of the face's voxel centre's distance from the eye (within r0,
-/// r0..64, 64..96, 96..128, beyond) and, for lit faces, by decile of the reference mean:
+/// shares are against `preload_reference` at the largest radius read (at least 64; one reference
+/// a run, shared by its radii and C_PRE; cells at C_CAP; a pixel whose face has none counts as
+/// not settled), by band of the face's voxel centre's distance from the eye (within r0, r0..64,
+/// 64..96, 96..128, beyond) and, for lit faces, by decile of the reference mean:
 /// - `fill`: from a fresh table at the pose, still: frames until the list first reads empty,
 ///   the cells claimed by band (within r0 lit and unlit, r0 to R) and refused (load, miss,
 ///   unlit) and the list's drops over them, the occupancy and misses then, and the passes'
@@ -4633,6 +4652,24 @@ fn preload_level_readings() {
         .iter()
         .map(|r| r.parse().expect("a radius"))
         .collect();
+    let until_default = std::env::var("VXE_PRELOAD_UNTIL").unwrap_or_else(|_| "256".to_owned());
+    let untils: Vec<u32> = list("VXE_PRELOAD_UNTILS", &[until_default.as_str()])
+        .iter()
+        .map(|c| c.parse().expect("a count"))
+        .collect();
+    let ref_radius = radii.iter().copied().max().unwrap_or(64).max(64);
+    let combos: Vec<(u32, u32)> = radii
+        .iter()
+        .flat_map(|&r| {
+            // Off reads once: C_PRE does not apply.
+            let cs: Vec<u32> = if r == 0 {
+                untils[..1].to_vec()
+            } else {
+                untils.clone()
+            };
+            cs.into_iter().map(move |c| (r, c))
+        })
+        .collect();
     let runs = list(
         "VXE_PRELOAD_RUNS",
         &["fill", "turn", "walk", "shift", "corner"],
@@ -4655,17 +4692,23 @@ fn preload_level_readings() {
             .collect::<Vec<_>>()
             .join(", ")
     };
+    let setup = |pose: &Pose, r: u32, c: u32| {
+        let lighting = Lighting {
+            preload_until: c,
+            ..preload_lighting(pose, r)
+        };
+        let r0 = lighting.preload_claim_radius.min(r) as f32;
+        let tag = format!(
+            "{} R {r} r0 {r0} C {c} {}",
+            pose.name,
+            std::env::var("VXE_PRELOAD_TAG").unwrap_or_default()
+        );
+        (lighting, r0, tag)
+    };
     for pose in poses() {
-        for &r in &radii {
-            let lighting = preload_lighting(&pose, r);
-            let r0 = lighting.preload_claim_radius.min(r) as f32;
-            let tag = format!(
-                "{} R {r} r0 {r0} C {} {}",
-                pose.name,
-                lighting.preload_until,
-                std::env::var("VXE_PRELOAD_TAG").unwrap_or_default()
-            );
-            if runs.iter().any(|x| x == "fill") {
+        if runs.iter().any(|x| x == "fill") {
+            for &(r, c) in &combos {
+                let (lighting, _, tag) = setup(&pose, r, c);
                 let mut frame = preload_frame(&level, lighting);
                 let cam = pose.camera();
                 let mut sum = vxe_render::marcher::PreloadStats::default();
@@ -4690,12 +4733,105 @@ fn preload_level_readings() {
                     }
                 }
                 let t = frame.read_table_stats(&level.device, &level.queue);
+                // The cells against the reference (`VXE_PRELOAD_CELLCHECK`): of the lit
+                // reference cells within r0 that the frame holds, by decile of the reference
+                // mean, the median ratio of the frame's mean to the reference's and the share
+                // within 10 %; and two references' agreement, a second at another seed.
+                if r > 0 && std::env::var("VXE_PRELOAD_CELLCHECK").is_ok() {
+                    let r0 = lighting.preload_claim_radius.min(r) as f32;
+                    let reference =
+                        preload_reference(&level, &pose, std::slice::from_ref(&cam), ref_radius);
+                    let words = cache_words(&level, &frame);
+                    let eye = cam.position;
+                    let mut by: Vec<Vec<f64>> = vec![Vec::new(); 10];
+                    for (k, &rf) in &reference.means {
+                        if rf <= 1e-6 || preload_band_of(k, eye, r0) != 0 {
+                            continue;
+                        }
+                        let Some(w) = cache_cell(&words, *k) else {
+                            continue;
+                        };
+                        let n = words[w + vxe_render::marcher::CACHE_COUNT_WORD]
+                            .min(vxe_render::marcher::DEFAULT_TABLE_CAP);
+                        if n == 0 {
+                            continue;
+                        }
+                        let q = |i: usize| {
+                            f64::from(words[w + vxe_render::marcher::CACHE_COUNT_WORD + 1 + i])
+                                / f64::from(vxe_render::marcher::CACHE_Q)
+                                / f64::from(n)
+                        };
+                        let m = (0.2126 * q(0) + 0.7152 * q(1) + 0.0722 * q(2))
+                            * f64::from(pose.exposure);
+                        let d = reference
+                            .deciles
+                            .iter()
+                            .filter(|&&e| rf >= e)
+                            .count()
+                            .min(9);
+                        by[d].push(m / rf);
+                    }
+                    let line: Vec<String> = by
+                        .iter_mut()
+                        .map(|v| {
+                            v.sort_by(f64::total_cmp);
+                            let within = v.iter().filter(|&&x| within_tenth(x, 1.0)).count();
+                            format!(
+                                "{:.3}/{:.2}/{}",
+                                v.get(v.len() / 2).copied().unwrap_or(0.0),
+                                within as f64 / v.len().max(1) as f64,
+                                v.len()
+                            )
+                        })
+                        .collect();
+                    let second = preload_reference_seeded(
+                        &level,
+                        &pose,
+                        std::slice::from_ref(&cam),
+                        ref_radius,
+                        Some(0x5EED_0001),
+                    );
+                    let mut agree: Vec<Vec<f64>> = vec![Vec::new(); 10];
+                    for (k, &rf) in &reference.means {
+                        if let Some(&r2) = second.means.get(k)
+                            && rf > 1e-6
+                            && preload_band_of(k, eye, r0) == 0
+                        {
+                            let d = reference
+                                .deciles
+                                .iter()
+                                .filter(|&&e| rf >= e)
+                                .count()
+                                .min(9);
+                            agree[d].push(r2 / rf);
+                        }
+                    }
+                    let agree: Vec<String> = agree
+                        .iter_mut()
+                        .map(|v| {
+                            v.sort_by(f64::total_cmp);
+                            let within = v.iter().filter(|&&x| within_tenth(x, 1.0)).count();
+                            format!(
+                                "{:.3}/{:.2}/{}",
+                                v.get(v.len() / 2).copied().unwrap_or(0.0),
+                                within as f64 / v.len().max(1) as f64,
+                                v.len()
+                            )
+                        })
+                        .collect();
+                    println!(
+                        "reading[{adapter}]: preload cells {tag}: lit cells within r0 by reference decile (median ratio / share within 10 % / cells): {}; a second reference against the first: {}",
+                        line.join(" "),
+                        agree.join(" ")
+                    );
+                }
                 // At rest: 256 more still frames after the list first reads empty.
                 if empty_at.is_some() {
                     for _ in 0..256 {
                         frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
                     }
                 }
+                let skips_before = frame.preload_skips();
                 let mut ms = vec![Vec::new(); vxe_render::marcher::FRAME_PASSES.len()];
                 if let Some(timer) = &timer {
                     for _ in 0..120 {
@@ -4706,7 +4842,7 @@ fn preload_level_readings() {
                     }
                 }
                 println!(
-                    "reading[{adapter}]: preload fill {tag}: list empty at frame {empty_at:?}; claimed within r0 lit {} unlit {}, r0 to R {}; refused load {} miss {} unlit {}, drops {}, samples {}; occupied {} of {} ({:.4}), misses {}; at rest: {}",
+                    "reading[{adapter}]: preload fill {tag}: list empty at frame {empty_at:?}; claimed within r0 lit {} unlit {}, r0 to R {}; refused load {} miss {} unlit {}, drops {}, samples {}; occupied {} of {} ({:.4}), misses {}; at rest: {} (idle skips {} of 120)",
                     sum.claimed_near_lit,
                     sum.claimed_near_unlit,
                     sum.claimed - sum.claimed_near_lit - sum.claimed_near_unlit,
@@ -4719,13 +4855,17 @@ fn preload_level_readings() {
                     t.cells,
                     f64::from(t.occupied) / f64::from(t.cells),
                     t.misses,
-                    costs(&ms)
+                    costs(&ms),
+                    frame.preload_skips() - skips_before
                 );
             }
-            if runs.iter().any(|x| x == "turn") {
-                let mut cams: Vec<Camera> = vec![KRun::Yaw.camera(&pose, 0); 120];
-                cams.extend((1..=20).map(|f| KRun::Yaw.camera(&pose, f)));
-                let reference = preload_reference(&level, &pose, &cams);
+        }
+        if runs.iter().any(|x| x == "turn") {
+            let mut cams: Vec<Camera> = vec![KRun::Yaw.camera(&pose, 0); 120];
+            cams.extend((1..=20).map(|f| KRun::Yaw.camera(&pose, f)));
+            let reference = preload_reference(&level, &pose, &cams, ref_radius);
+            for &(r, c) in &combos {
+                let (lighting, r0, tag) = setup(&pose, r, c);
                 let mut frame = preload_frame(&level, lighting);
                 let mut seen: HashSet<FaceKey> = HashSet::new();
                 let mut first: HashSet<FaceKey> = HashSet::new();
@@ -4759,38 +4899,41 @@ fn preload_level_readings() {
                     band_lines(&at1, r0)
                 );
                 println!(
-                    "reading[{adapter}]: preload turn {tag}: on the tenth frame after the yaw: {} (reference held {}, refused {})",
+                    "reading[{adapter}]: preload turn {tag}: on the tenth frame after the yaw: {} (reference R {ref_radius} held {}, refused {})",
                     band_lines(&at10, r0),
                     reference.held,
                     reference.refused
                 );
             }
-            for (run, speed) in [("walk", 0.5f32), ("shift", 2.0)] {
-                if !runs.iter().any(|x| x == run) {
-                    continue;
+        }
+        for (run, speed) in [("walk", 0.5f32), ("shift", 2.0)] {
+            if !runs.iter().any(|x| x == run) {
+                continue;
+            }
+            let (start, end) = flight_path(&pose);
+            let (start, end) = (Vec3::from(start), Vec3::from(end));
+            let dir = (end - start).normalize();
+            let len = (end - start).length();
+            let frames = (len / speed) as usize;
+            let cams: Vec<Camera> = (0..=frames)
+                .map(|f| {
+                    let mut c = KRun::Path.camera(&pose, 0);
+                    c.position = start + dir * (speed * f as f32).min(len);
+                    c
+                })
+                .collect();
+            let reference = if preload_cost_only() {
+                PreloadRef {
+                    means: HashMap::new(),
+                    deciles: Vec::new(),
+                    held: 0,
+                    refused: 0,
                 }
-                let (start, end) = flight_path(&pose);
-                let (start, end) = (Vec3::from(start), Vec3::from(end));
-                let dir = (end - start).normalize();
-                let len = (end - start).length();
-                let frames = (len / speed) as usize;
-                let cams: Vec<Camera> = (0..=frames)
-                    .map(|f| {
-                        let mut c = KRun::Path.camera(&pose, 0);
-                        c.position = start + dir * (speed * f as f32).min(len);
-                        c
-                    })
-                    .collect();
-                let reference = if preload_cost_only() {
-                    PreloadRef {
-                        means: HashMap::new(),
-                        deciles: Vec::new(),
-                        held: 0,
-                        refused: 0,
-                    }
-                } else {
-                    preload_reference(&level, &pose, &cams)
-                };
+            } else {
+                preload_reference(&level, &pose, &cams, ref_radius)
+            };
+            for &(r, c) in &combos {
+                let (lighting, r0, tag) = setup(&pose, r, c);
                 let mut frame = preload_frame(&level, lighting);
                 let mut last_seen: HashMap<FaceKey, usize> = HashMap::new();
                 let mut bands: [RefTally; 5] = Default::default();
@@ -4826,7 +4969,7 @@ fn preload_level_readings() {
                     }
                 }
                 println!(
-                    "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering pixels within 10 % on their first frame: {} (reference held {}, refused {}); in flight: {}; a frame: {:.0} samples, {:.1} faces probed, {:.1} listed, {:.1} claimed",
+                    "reading[{adapter}]: preload {run} {tag} at {speed} voxels a frame: entering pixels within 10 % on their first frame: {} (reference R {ref_radius} held {}, refused {}); in flight: {}; a frame: {:.0} samples, {:.1} faces probed, {:.1} listed, {:.1} claimed",
                     if preload_cost_only() {
                         "not read (cost only)".to_owned()
                     } else {
@@ -4841,47 +4984,48 @@ fn preload_level_readings() {
                     pre_sum[3] as f64 / cams.len() as f64,
                 );
             }
-            if runs.iter().any(|x| x == "corner") && pose.name == VEIN_POSE.name {
-                let eye = Vec3::from(pose.position);
-                let probe = preload_reference(&level, &pose, &[pose.camera()]);
-                let mut lit: Vec<(FaceKey, f64)> = probe
-                    .means
-                    .iter()
-                    .filter(|(k, v)| {
-                        let c = Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32)
-                            + Vec3::splat(0.5);
-                        **v > 1e-6 && (c - eye).length() <= 24.0 && c.z > eye.z
-                    })
-                    .map(|(k, v)| (*k, *v))
-                    .collect();
-                lit.sort_by(|a, b| a.1.total_cmp(&b.1));
-                let corner: HashSet<FaceKey> = lit[..lit.len() / 10].iter().map(|p| p.0).collect();
-                let lo = corner
-                    .iter()
-                    .fold([i32::MAX; 3], |a, k| [0, 1, 2].map(|i| a[i].min(k.0[i])));
-                let hi = corner
-                    .iter()
-                    .fold([i32::MIN; 3], |a, k| [0, 1, 2].map(|i| a[i].max(k.0[i])));
-                let centre: Vec3 = corner
-                    .iter()
-                    .map(|k| Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32))
-                    .sum::<Vec3>()
-                    / corner.len().max(1) as f32;
-                let to = centre - eye;
-                let corner_yaw = to.y.atan2(to.x).to_degrees();
-                let corner_pitch = (to.z / to.length()).asin().to_degrees();
-                let away = corner_yaw + 180.0;
-                let back = Vec3::new(away.to_radians().cos(), away.to_radians().sin(), 0.0);
-                let mut cams: Vec<Camera> = (0..=120)
-                    .map(|f| {
-                        camera_at((eye - back * (60.0 - 0.5 * f as f32)).to_array(), away, 0.0)
-                    })
-                    .collect();
-                cams.extend((1..=30).map(|f| {
-                    let t = (f.min(20) as f32) / 20.0;
-                    camera_at(pose.position, away - 180.0 * t, corner_pitch * t)
-                }));
-                let reference = preload_reference(&level, &pose, &cams);
+        }
+        if runs.iter().any(|x| x == "corner") && pose.name == VEIN_POSE.name {
+            let eye = Vec3::from(pose.position);
+            let probe = preload_reference(&level, &pose, &[pose.camera()], ref_radius);
+            let mut lit: Vec<(FaceKey, f64)> = probe
+                .means
+                .iter()
+                .filter(|(k, v)| {
+                    let c =
+                        Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32) + Vec3::splat(0.5);
+                    **v > 1e-6 && (c - eye).length() <= 24.0 && c.z > eye.z
+                })
+                .map(|(k, v)| (*k, *v))
+                .collect();
+            lit.sort_by(|a, b| a.1.total_cmp(&b.1));
+            let corner: HashSet<FaceKey> = lit[..lit.len() / 10].iter().map(|p| p.0).collect();
+            let lo = corner
+                .iter()
+                .fold([i32::MAX; 3], |a, k| [0, 1, 2].map(|i| a[i].min(k.0[i])));
+            let hi = corner
+                .iter()
+                .fold([i32::MIN; 3], |a, k| [0, 1, 2].map(|i| a[i].max(k.0[i])));
+            let centre: Vec3 = corner
+                .iter()
+                .map(|k| Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32))
+                .sum::<Vec3>()
+                / corner.len().max(1) as f32;
+            let to = centre - eye;
+            let corner_yaw = to.y.atan2(to.x).to_degrees();
+            let corner_pitch = (to.z / to.length()).asin().to_degrees();
+            let away = corner_yaw + 180.0;
+            let back = Vec3::new(away.to_radians().cos(), away.to_radians().sin(), 0.0);
+            let mut cams: Vec<Camera> = (0..=120)
+                .map(|f| camera_at((eye - back * (60.0 - 0.5 * f as f32)).to_array(), away, 0.0))
+                .collect();
+            cams.extend((1..=30).map(|f| {
+                let t = (f.min(20) as f32) / 20.0;
+                camera_at(pose.position, away - 180.0 * t, corner_pitch * t)
+            }));
+            let reference = preload_reference(&level, &pose, &cams, ref_radius);
+            for &(r, c) in &combos {
+                let (lighting, r0, tag) = setup(&pose, r, c);
                 let mut frame = preload_frame(&level, lighting);
                 let mut line = Vec::new();
                 // Each corner face's frames within r0 of the eye before its first in view.
@@ -4929,7 +5073,7 @@ fn preload_level_readings() {
                 }
                 leads.sort_unstable();
                 println!(
-                    "reading[{adapter}]: preload corner {tag}: VEIN_CORNER {} faces, box {lo:?}..{hi:?}, yaw {corner_yaw:.1} pitch {corner_pitch:.1}; per frame in view (frame after the walk: share/pixels): {}; frames within r0 before the first in view, of {} faces seen: least {}, median {}, most {} (reference held {}, refused {})",
+                    "reading[{adapter}]: preload corner {tag}: VEIN_CORNER {} faces, box {lo:?}..{hi:?}, yaw {corner_yaw:.1} pitch {corner_pitch:.1}; per frame in view (frame after the walk: share/pixels): {}; frames within r0 before the first in view, of {} faces seen: least {}, median {}, most {} (reference R {ref_radius} held {}, refused {})",
                     corner.len(),
                     line.join(" "),
                     leads.len(),

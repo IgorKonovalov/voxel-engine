@@ -2671,6 +2671,7 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
             let words = cache_words(level, &frame);
             let g = px.grid;
             let (mut y, mut a, mut n) = (0u32, 0u32, 0u32);
+            let mut counts: Vec<u32> = Vec::new();
             for &l in &pixels {
                 let (ix, iy) = px.internal_of(g, l as u32 % g[0], l as u32 / g[0]);
                 let i = (iy * SIZE[0] + ix) as usize;
@@ -2685,9 +2686,12 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
                     cache_cell(&words, k).map(|w| words[w + vxe_render::marcher::CACHE_COUNT_WORD]);
                 a += u32::from(c.is_none());
                 y += u32::from(c.is_none_or(|c| c < YOUNG_COUNT));
+                counts.push(c.unwrap_or(0));
             }
             let n = f64::from(n.max(1));
-            young.push((f, f64::from(y) / n, f64::from(a) / n));
+            counts.sort_unstable();
+            let q = |p: usize| counts.get(counts.len() * p / 100).copied().unwrap_or(0);
+            young.push((f, f64::from(y) / n, f64::from(a) / n, [q(10), q(50), q(90)]));
         }
     }
     series[0] = series[1].clone();
@@ -2699,11 +2703,16 @@ pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bo
         .collect();
     let young: Vec<String> = young
         .iter()
-        .filter(|(f, _, _)| at.contains(f))
-        .map(|(f, y, a)| format!("{f}:{y:.3}/{a:.3}"))
+        .filter(|(f, ..)| at.contains(f))
+        .map(|(f, y, a, c)| {
+            format!(
+                "{f}:{y:.3}/{a:.3} counts p10/50/90 {}/{}/{}",
+                c[0], c[1], c[2]
+            )
+        })
         .collect();
     format!(
-        "{} hole pixels ({} counted); emissive S90 {} mean90 {} (step {:+.3}, noise {:.4}); settled % at frame {}; young/no-cell share in the hole at frame {}",
+        "{} hole pixels ({} counted); emissive S90 {} mean90 {} (step {:+.3}, noise {:.4}); settled % at frame {}; young/no-cell share in the hole and its pixels' cell counts at frame {}",
         pixels.len(),
         s.counted,
         s.frames.map_or("none".into(), |f| f.to_string()),

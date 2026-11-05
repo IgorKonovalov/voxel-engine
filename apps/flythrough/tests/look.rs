@@ -1493,8 +1493,12 @@ const DEFAULT_FRAME_BYTES: u64 = 163_488_480;
 const DEFAULT_MAIN: u64 = 130_267_168;
 const TABLE_DELTA: u64 = 41_943_040 - 3_686_400 - 7_372_800;
 const FILL_BYTES: u64 = 16 + 4 * 16_384 + 12;
-const PRELOAD_BYTES: u64 =
-    152 + 512 + 4 * (4 * 32_768 + 17_077 + 4 * 16_384 + 2 * 32_768 + 33 * 33 * 33 * 8) + 4_160 + 24;
+const PRELOAD_BYTES: u64 = 152
+    + 512
+    + 4 * (4 * 32_768 + 17_077 + 4 * 16_384 + 2 * 32_768 + 33 * 33 * 33 * 8)
+    + 4_176
+    + 24
+    + 4 * 32;
 
 /// The split walk's hand-off list (16 B of header and 16 B a pixel) is allocated only by a
 /// frame that splits: on lavapipe the default frame (internal 1280 x 720, output 1920 x 1080)
