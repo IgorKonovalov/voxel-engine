@@ -1,6 +1,7 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later)
+> **Status:** in-progress (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05
+> (owner) to a bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes,
 > emissive voxels as the light")
@@ -35,11 +36,31 @@
 > **Amended 2026-11-05 (architect, for the owner), an early look.** The owner asked to see the light sooner, so Phase 1b puts
 > Phase 1's bake in a window before the whole-world work starts. It is a first look, not Phase 3's verdict.
 
+> **Amended 2026-11-05 (owner), a bounded piece and the stop's submits.** Phase 1's stop rule fired (`logs/0059.md`,
+> Phase 1). The kept arm (32 candidates, clamp off) meets the `G_noise` bars at all four views at 65 536 samples, but the
+> census read the level at 21 316 662 faces (surface share 0.990, not 0.5) and a sample costs 36 to 64 ns in its own
+> dispatch (not 4.6), so a whole level projects at about 15 h on the RTX. The stop's own path ran at 310 ns a sample,
+> because a chunk's last faces took one waited submit a round. The owner's answers, verbatim: on the reference, "Bounded
+> piece, bars kept"; on Phase 1b, "Fix submits, radius 1". So the bars, `BAKE_SE`, `N_MIN`, `N_MAX` and the kept arm
+> stand. The reference becomes a baked piece of the world around each of the window's poses, not a whole world (TL;DR,
+> Context, Decision, Phases 1b to 3). A new dev Phase 1a makes the stop's submits efficient before 1b, and 1b runs at
+> `--bake-radius 1`. Part 2 is unchanged, and its numbers (4.6 ns, the share of 0.5) are re-read at the verdict as before.
+>
+> **Phase 1's departures, ruled (architect).** Each is accepted as the Notes state it. (1) The deepest count is 65 536,
+> and the reference is the mean of a view's four 65 536 runs: the bars compare seed with seed and never read the
+> reference, and the clamp's bias is a paired difference against it. (2) The clamp arms reuse the unclamped arms'
+> samples, which gives a paired difference, tighter than separate runs. (3) The zero share is read on the views' faces,
+> since no phase bakes a whole world now. (4) The stop was read at the vein only: Phase 1a reads it there again, and
+> Phase 2 reads it at every view. (5) The pool is clamped to 220 MiB: a radius-2 piece takes under 10 MB, and even the
+> whole level's 177 MB fits. (6) The running sums, the stop and the packing run on the CPU in f64, which Phase 1a may
+> change under its rule. (7) `--light baked` is refused without `--level` or `--source showcase`, and Phase 8 lifts that.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
-of every chunk of a bounded world, before the first frame, until each face's own noise is under
-half a display level, however long that takes. It renders at native resolution with full-resolution
+of every chunk in a bounded piece of the world around each of the window's poses, before the first
+frame, until each face's own noise is under half a display level, however long that takes. (A
+whole level would take about 15 h on the RTX, by Phase 1's census.) It renders at native resolution with full-resolution
 lighting and no FSR 2. A pixel reads its face's value and draws nothing, so moving fast cannot
 outrun the light and nothing moves at rest. A dug hole is re-baked in the frame it appears, at a
 hitch nobody budgets. **The owner judges that in the window (Phase 3) before anything else is
@@ -92,22 +113,26 @@ before the whole world is baked. The light pass's sampler also clamps a sample's
 lum(Le)` (`FIREFLY_CLAMP`, `light.wgsl`), which biases faces beside an emitter dark and exists to spare a
 history from a firefly. A bake has no history, so Phase 1 reads it off.
 
-**The reference's arithmetic** (a guess until Phase 1 reads it; 4.6 ns a sample on the RTX was read
-inside the light pass near the camera, and a long ray costs more). The reference stands on bounded
-worlds, which is what the window's steps use: the level is `LEVEL_CHUNKS` 20 x 20 x 8, 3200 chunks, and
-the showcase `SHOWCASE_CHUNKS` 14 x 12 x 7, 1176. At a surface share of 0.5 and the densest reading of
-each (6 900 faces a chunk at the vein, 4 300 at the hall, so an upper bound):
+**The reference's arithmetic** (Phase 1's readings, RTX 3080 Laptop at 5bb8c11, `logs/0059.md`; the
+first draft's 4.6 ns a sample and surface share of 0.5 are refuted). At the kept arm a sample costs 36
+to 64 ns in its own dispatch. Its shadow rays run 141 to 161 voxels on the level and 275 in the
+showcase. The stop spends about 60 954 samples a face at the vein. The census, CPU, whole worlds:
 
-| World | Faces, at most | Store: 8 B a face, 2 KB a chunk | At 26 896 samples a face (`(82 / 0.5)^2`) |
-|---|---|---|---|
-| level | 11.0 M | 92 MB | 3.0 x 10^11 samples, about 23 minutes |
-| showcase | 2.5 M | 21 MB | 6.8 x 10^10 samples, about 5 minutes |
+| World | Chunks, surface share | Faces (p50 / p99 / max a surface chunk) | Store | At 60 954 samples a face |
+|---|---|---|---|---|
+| level, `LEVEL_CHUNKS` 20 x 20 x 8 | 3200, 0.990 | 21 316 662 (6 948 / 14 275 / 18 026) | 177 MB | about 15 h at 42 ns |
+| showcase, `SHOWCASE_CHUNKS` 14 x 12 x 7 | 1176, 0.378 | 2 005 240 (4 047 / 13 117 / 14 663) | 17 MB | about 2.0 h at 60 ns |
 
-An unlit face stops far sooner and a face beside the vein far later, so these are orders of size. A
-bake that long is run once, before the owner's window, and written to a file the window loads (Phase 2).
+**So the reference is a piece:** the `(2r + 1)^3` chunks within `--bake-radius r` of a pose's chunk.
+The rest of the world is mirrored whole and left unbaked. At the level's p50, r = 1 is 27 chunks,
+about 1.9 x 10^5 faces and about 8 minutes at 42 ns. r = 2 is 125 chunks, about 8.7 x 10^5 faces
+and about 37 minutes. These are guesses from the census and the vein's stop mean, and an unlit face
+stops sooner, at `N_MIN`. A piece is baked once per tree and pose, and written to a file the window
+loads (Phase 2).
 
 **The arithmetic the cuts rest on** (the first draft's, RTX 3080 Laptop and AMD Cezanne, derived from
-Plan 0057's readings; every row a guess until read, **and none of it binds the reference**). `S` =
+Plan 0057's readings; every row a guess until read, **and none of it binds the reference**; Phase 1
+refuted its 4.6 ns and its surface share of 0.5, above, and Part 2's rows are re-read at the verdict). `S` =
 samples a second, a frame at 60 fps.
 
 Cost of one surface chunk at the vein's density (6 900 faces, 187 surface bricks), 4.6 ns and about
@@ -165,7 +190,7 @@ is 1.5 GB.
 Build ADR-0046 from the far end: **the look first, the cost after.**
 
 **The reference (Phases 1 to 3).** One store, one job, one read: every face a cell, every chunk of a
-bounded world baked before the first frame, each face to its own spread, native resolution, full-resolution
+bounded piece around the pose baked before the first frame, each face to its own spread, native resolution, full-resolution
 lighting, no upscaler. Nothing else is built ahead of it. **What leaves the front of the plan:** the
 spike's seed arms and filter, its stop rule and cost bars, the budgets table, the brick level, the
 rings, the queue, the fade and the worker hook. All of them answer "what does this cost", which the
@@ -192,10 +217,11 @@ owner's verdict.
 **Digging in the reference.** The owner's requirement that a dug hole settle quickly is in it: the box
 and the bricks within 32 voxels (ADR-0046's rings 1 and 2) re-bake in the frame the edit reaches the
 mirror, to the reference's stop, ahead of the read, so the hole is final on its first frame. The cost is
-a hitch, printed, not budgeted. **Deliberately out of the first look:** ring 3. Beyond 32 voxels a face
+a hitch, printed, not budgeted: at Phase 1's rate, a 1 m dig at the vein takes about half a minute (a guess:
+about 11 000 faces at the stop's mean and 42 ns). **Deliberately out of the first look:** ring 3. Beyond 32 voxels a face
 keeps its value after a dig, so light through a new opening does not reach a far room, and a far wall
 lit by a dug-away emitter stays lit. The HUD says so, the runner says so, and the owner does not judge
-that here. Re-baking every face in reach (about 1.6 million) is about 30 s a dig even at `N_MIN`, and it would
+that here. Re-baking every face in reach (about 1.6 million) is about 4.6 minutes a dig even at `N_MIN` (at Phase 1's 42 ns), and it would
 make every dig a wait for a fault that is the budgeted queue's to answer (Phase 9).
 
 **The lamp and the bounce stay as built**: the composite adds the store's value to the lamp's part and
@@ -251,12 +277,19 @@ doctests, clippy, fmt, deny, and the doc and tier gates. A new test file that op
 
 **Test times.** On lavapipe a hand-built box (`cache_box`) runs 2 to 3 s and the level loads in about 5 s.
 A bake's times below assume a box of under 2 000 faces and test-set sample counts. A test over 30 s is
-born on the soak list and named in its phase.
+born on the soak list and named in its phase. **A test's stated time is a quiet machine's** (one-minute load
+under about 2, the test alone or in the tier). It is not a gate bar, because the gate's line is `docs/nfr.md`
+section 7's 30 s. Ruled at the 2026-11-05 amendment: `a_baked_view_is_final_on_its_first_frame` read 3.7 s alone
+and 5.8 s in the gpu tier, against "under 5 s". `a_moving_camera_reads_what_a_still_one_reads` read 6.9 s alone
+and 13.2 s in the tier, against "under 10 s". Both runs were at load 12.4, so both tests stay in the gpu tier
+and off the soak list, and no stated time moves. The plan's tip gate reads them again on a quiet machine with
+`node scripts/test-times.mjs`. A quiet reading over the stated time goes to the architect, which corrects the
+time by an owner-visible amendment. A reading over 30 s moves the test to the soak list.
 
 **A long bake.** A bake holds the GPU at full load for minutes, on a laptop whose RTX has fallen off the
 bus under load (2026-10-16). It runs under the perf lock and only with no other GPU work, in submits of
-at most 10 M samples (about 46 ms on the RTX) with a wait between, and it prints progress. Nothing bakes a
-whole world in a test.
+at most 10 M samples (about 0.4 s on the RTX at Phase 1's 42 ns) with a wait between, and it prints
+progress. Nothing bakes a whole world in a test, and no phase bakes a whole level.
 
 ## Part 1: the reference
 
@@ -344,13 +377,44 @@ whole world in a test.
      the chunks within `N` of the eye's chunk and is refused without it; unset, the pre-roll takes the whole extent. The runner
      `live/session1b.sh` is written.
 
+### Phase 1a: The stop's submits
+- **Owner skill:** dev
+- **What:** the stop's path made about as fast as a fixed count's, so that a piece bakes at the dispatch rate. Phase 1's stop
+  ran at 310 ns a sample, against 42 ns in a fixed run at the same view, because a chunk's last faces each took one waited submit
+  a round. This is a dev efficiency change, and it moves no bar, constant or arm.
+  - **Batches across chunks.** A submit is filled with the live faces of as many jobs as fit under `SUBMIT_SAMPLES`, rather than
+    with one chunk's tail. Each face still samples its own job's candidate table. Dev states in the log how: tables for several
+    jobs in one buffer indexed from the face, or the jobs grouped by table.
+  - **Several rounds a submit.** A submit runs `k` rounds of each live face before its readback, `k` being dev's choice and
+    stated. The stop is still decided round by round from each round's sums. A round past a face's stop inside a submit is
+    thrown away and counted as waste.
+  - **The rule it keeps.** A face's stop and its cell depend only on its own samples. The round it stops at, its samples and its
+    cell are what one face alone at one round a submit would give.
+- **Files touched:** `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`, `apps/flythrough/tests/bake.rs`,
+  `docs/plans/logs/0059.md`; the runner `live/session1b.sh` (untracked).
+- **Done when:**
+  1. `a_bake_does_not_depend_on_its_slicing_or_order` (lavapipe, under 10 s) also bakes `cache_box` to a test stop
+     (`the_stop_spends_where_the_noise_is`'s constants) four ways: at one round a submit, at several, with all its jobs in one
+     submit, and with each job alone. The four read bit-identical cells and bit-identical samples a face.
+  2. **The stop's rate on the RTX** (`bake_count_readings`'s stop part, seed 0, the vein's faces within 96 voxels, exclusive
+     perf lock, about 5 minutes): the wall time over the samples kept is at most 1.25 times the rate of a fixed 16 384-sample
+     c32 run of the same faces in the same session (Phase 1 read 42.1 ns at 65 536, so about 53 ns). The waste share (samples
+     thrown away over samples kept) is read beside it. If the stop's arithmetic is unchanged, the samples spent and the faces at
+     `N_MIN` and at `N_MAX` equal Phase 1's seed-0 row exactly (5.9696 x 10^9, 3698 and 460). If dev changes the arithmetic, the
+     log says how, and the stop's `G_noise` at the vein, with both seeds, meets the bars again.
+  3. If the rate misses 1.25 times, the log records the miss and its cause. Phase 1b still runs if its `--bake-radius 1` launch
+     at the vein projects under 20 minutes at the measured rate. Otherwise the miss goes to the architect.
+  4. `live/session1b.sh` runs every stop at `--bake-radius 1`, and its first lines print the projected minutes of a launch at
+     the measured rate.
+
 ### Phase 1b: The owner's first look
 - **Owner skill:** human
-- **What:** a short window on Phase 1's tree, on the RTX, with stdout visible and a ping when ready. It runs at the settings
+- **What:** a short window on Phase 1a's tree, on the RTX, with stdout visible and a ping when ready. It runs at the settings
   Phase 2's `--reference` will name, set by hand: `--light baked --internal-scale 1 --upscaler off --lighting full --far-normal 1,2`,
-  no jitter, at Phase 1's kept arm, with `--bake-radius 2`. That covers the census's 96 voxels. At most 125 chunks of at most 6 900
-  faces at a surface share of 0.5 is about 430 000 faces, about a minute at 26 896 samples and 4.6 ns (a guess, and a long ray costs
-  more). There is no bake file yet, so each launch waits for its bake and prints its progress. Stops: the vein, the patch and the
+  no jitter, at Phase 1's kept arm, with `--bake-radius 1` (the owner, 2026-11-05: "Fix submits, radius 1"). That bakes at least 64
+  voxels around the eye in every direction, and up to 128. At the level it is 27 chunks, about 1.9 x 10^5 faces at the census's p50,
+  so about 8 minutes a launch at the stop's 60 954 samples a face and 42 ns. That figure is a guess, and the runner prints the
+  projection at Phase 1a's measured rate. There is no bake file yet, so each launch waits for its bake and prints its progress. Stops: the vein, the patch and the
   hall, each standing, then turning and walking a little, the lamp off and on, and the mode key against `--light table` if Phase 1
   has one. **The runner says first:** this is a small piece of the world, so beyond it faces read dark and `store_missing` counts
   them (that is the unbaked edge, not the light); silhouettes are not antialiased; there is no dig yet; the verdict is Phase 3's.
@@ -359,10 +423,24 @@ whole world in a test.
   vein; (c) dark patches inside the baked piece while turning; (d) **whether Phase 2 should go on.** Only "no" stops the lane: it
   goes to the architect with the words and Phase 1's table. A remark on the look does not stop it, and Phase 3 still asks every question.
 
-### Phase 2: The whole reference: a world to walk and a hole to dig
+### Phase 2: The reference: a piece to walk and a hole to dig
 - **Owner skill:** dev
-- **What:** the bake over a whole bounded world, the file that spares the wait, the dig, and the settings the
-  window runs under.
+- **What:** the bake of a bounded piece around each of the window's poses, the file that spares the wait, the dig, and the
+  settings the window runs under.
+- **The piece** (amended 2026-11-05, the owner: "Bounded piece, bars kept"). `--reference` bakes the chunks within
+  `--bake-radius` of the pose's chunk, with a default of 2 under `--reference` (125 chunks, about 37 minutes at the vein at
+  Phase 1's rate, a guess). An explicit radius overrides the default. The world is still mirrored whole, and a piece's job samples
+  every emitter within `light_radius` of its chunk, whether it lies inside the piece or not. So a piece's cell is the cell a
+  whole-world bake gives that face, and `light_radius` limits the far light at a piece's edge exactly as it does anywhere else. A
+  chunk outside the piece has no block: its hits read 0, count in `store_missing`, and are the **unbaked edge**, not the light.
+  The HUD's store row names the piece (`piece r<radius> at <chunk>`). The window's files are the vein, the patch and the hall,
+  the hall's being in the showcase. Dev may serve two poses from one file if its piece covers both poses' radius. **The whole
+  showcase** (the owner's "and/or"): after the hall's piece is baked, dev projects the whole showcase from that piece's samples a
+  face and its rate. If the projection is at most 60 minutes, the hall's file is the whole showcase. If it is over, the hall's
+  piece stands and the log says so.
+- **The stop rule, restated for the piece.** Dev projects each file at Phase 1a's rate and the census's faces before baking it.
+  A file that projects over 60 minutes on the RTX goes to the architect before it is baked. So does a miss of the `G_noise`
+  bar below.
 - **`--reference`** (fly-through): `--light baked`, `--internal-scale 1 --upscaler off`, `--lighting full`, `--far-normal 1,2` (the owner's pick in Plan 0056's window; the fly-through's default stays `[2, 6]`
   until the far-normal plan), no
   jitter, the clamp and candidates of the kept arm. The banner names it. It takes `--level` and `--source showcase`,
@@ -370,34 +448,44 @@ whole world in a test.
   A free key (dev's choice; the banner and the HUD name the mode) swaps the temporal pass's read between the store
   and the table in place, so the owner compares one pose.
 - **The store file.** `--bake-file PATH` writes the pool after a bake and loads it instead of baking when its header
-  matches: the world's seed and extent, `light_radius`, the arm and stop, and the `bake.wgsl` source's hash. Otherwise
+  matches: the world's seed and extent, the piece's centre chunk and radius, `light_radius`, the arm and stop, and the
+  `bake.wgsl` source's hash. It holds the piece's blocks only. Otherwise
   it refuses with a message naming the field. Files under `live/bake/` (gitignored). This is the testbed's, for a
   window and for Phase 4's comparison; a product's bake on disk stays out of this plan.
 - **The dig.** On `Frame::invalidate`'s box, in the frame the mirror receives the edit and ahead of the temporal pass: the
   bricks of the box dilated by one voxel and those within 32 voxels of it are re-listed, their blocks rebuilt, and their
   faces baked to the same stop with `N_MAX` 65 536, by the same submits and waits, inside the frame. The emitter ranges
   and each job's candidate table are refreshed first, as `sync` gives them. A frame's several boxes are merged by brick.
-  Nothing beyond that ring moves. **The hitch is printed per dig on stdout** (faces, samples, ms) and shown on the HUD.
+  Nothing beyond that ring moves. The ring is clipped to the piece: its bricks in a chunk outside the piece gain no block, and
+  a dig wholly outside the piece re-bakes nothing and prints `dig outside the baked piece`.
+  **The hitch is printed per dig on stdout** (faces, samples, ms) and shown on the HUD.
   The HUD's row says `far light stale after a dig` once one has happened.
 - **A scale change** moves nothing: the read multiplies by the dominant material's scale now.
 - **The readings** (`reference_readings`, ignored, RTX, exclusive perf lock, the window's 2530 x 1378 native, level at the
   vein and patch, showcase at the hall, each from its file; no bars but the first):
-  - **`G_noise` on the whole world's cells at Phase 1's views: p50 at most 0.5 and p90 at most 1 level.** A miss goes to the
-    architect.
-  - The whole-world pre-roll: minutes, samples, faces at `N_MAX`, the file's bytes.
+  - **`G_noise` at Phase 1's four views, on each view's faces within 96 voxels of its eye that lie inside its file's piece: the
+    file's cells against a second seed's stop bake of the same faces, p50 at most 0.5 and p90 at most 1 level.** A miss goes to
+    the architect.
+  - Each file's pre-roll: minutes, samples, samples a face, faces at `N_MIN` and at `N_MAX`, ns a sample, and the file's bytes.
+    Beside it, for Part 2 and with no bar, the whole level and the whole showcase projected at that rate.
   - A strip beside the table's frame 4096 of the same tree: the share within 1, 2 and 4 levels, `G_plane`, and the back view's
-    dark share of hits beyond 64 voxels (the table's frame 1: 0.4389 under FSR 2, frame 64: 0.0180).
+    dark share of hits beyond 64 voxels (the table's frame 1: 0.4389 under FSR 2, frame 64: 0.0180), over the hits inside the
+    piece, with the share of hits outside it beside.
   - The rig's fast yaw (`the_fast_yaw_excess_by_table_read`'s row) at the reference with the lamp off and on, beside the table's
-    at native and at FSR 2, and the rig's flight at 30 and 120 voxels/s: `store_missing` per frame, and the same counts. **What
-    remains here is not the light store, and the antialiasing plan starts from it.**
+    at native and at FSR 2. The rig's flight at 30 and 120 voxels/s, on the part of its path whose eye stays inside the piece:
+    `store_missing` per frame as the piece's edge, and the same counts. **What remains here is not the light store, and the
+    antialiasing plan starts from it.**
   - The frame's passes at rest and in flight, so the owner knows the frame rate the window will show. If the mean frame is over
     33 ms the runner says so and offers the owner a smaller window, since a low rate could read as a motion fault.
   - The dig: a 5-voxel dig, a dig at 100 voxels and each of the four `B` presses at the vein (78 to 87 carves): faces, samples, ms.
+    The runner states each step's measured hitch before it. A `B` press over 5 minutes leaves Phase 3's `B` step at one press,
+    the lightest, unless the owner asks for more.
   - Glass at rest: a pane placed by the key below at the hall, 600 still frames, the lamp off and then on: the pixels of the
     accumulation that changed from first to last, and the composite's patches a step on the tiles the pane fills. No bar.
 - **The glass pane.** Under `--reference` only, a free key (dev's choice; the banner names the panes placed) stamps a pane of the
   castle's glass row, 2 voxels thick and about 40 x 40, 6 voxels ahead of the eye, on air voxels only, through the world's edit
-  ops. It goes through the dig's re-bake, so no bake file changes. An unused glass row in the reference's material table changes
+  ops. A pane that would reach outside the piece is refused, and the banner says so. It goes through the dig's re-bake, so no
+  bake file changes. An unused glass row in the reference's material table changes
   no frame until the key is pressed. No key removes a pane.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`, `shaders/temporal.wgsl`, `marcher.rs`, `gpu_world.rs`,
   `lib.rs`, `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/bake.rs`, `.config/nextest.toml`, `.gitignore`,
@@ -417,12 +505,17 @@ whole world in a test.
   5. `the_lamp_adds_over_the_bake` (lavapipe, under 10 s): with the lamp on, a frame's emissive part equals the lamp-off frame's and the
      cells are unchanged; off again, the frame is bit-identical to the first lamp-off frame after the lamp's history empties (the test states the frames).
   6. `a_store_file_loads_the_same_light` (lavapipe, under 10 s): a written file loaded into a new `Frame` gives every cell and a frame
-     bit-identical, and a file with another seed, `light_radius` or stop is refused with the field's name.
-  7. `the_reference_flag_sets_its_look_and_refuses_a_streamed_world` and the mode key's banner (`hud.rs` and `main.rs`, no GPU, under 1 s).
+     bit-identical, and a file with another seed, piece, `light_radius` or stop is refused with the field's name.
+  7. `the_reference_flag_sets_its_look_and_refuses_a_streamed_world` (with its default bake radius of 2) and the mode key's banner
+     (`hud.rs` and `main.rs`, no GPU, under 1 s).
   8. The readings above in the log, the `G_noise` bar met, and the runner `live/session3.sh` written with its files baked.
   9. `the_glass_key_places_a_pane_under_the_reference` (`main.rs` or `hud.rs`, no GPU, under 1 s): the key's edit returns the
      pane's voxel count in the glass row and changes no solid voxel, the banner names the pane, and outside `--reference` the
      key does nothing.
+  10. `a_piece_reads_what_the_whole_world_reads` (lavapipe, under 15 s, test counts): take a box of at least two chunks whose
+      emitter lies outside a one-chunk piece. The piece's cells are bit-identical to a whole bake's, the chunk outside has no
+      block, and its hit pixels count in `store_missing`. A carve that straddles the piece's edge re-bakes only cells inside it,
+      bit-identical to a fresh piece bake of the edited world, and creates no block outside.
 
 ### Phase 3: The owner's verdict on the reference
 - **Owner skill:** human
@@ -430,10 +523,12 @@ whole world in a test.
   owner's steps of Plan 0057's second window, with the mode key in each: the hall, the vein, the patch, the distant caves down the
   passage, moving fast, turning fast, standing; the lamp on and off; a dig at arm's length; then `B` at the vein; then, at the hall, a glass
   pane placed by Phase 2's key, standing still with the lamp off and on. **The runner says first:**
-  silhouettes are not antialiased (that is next), a dig hitches (nothing is budgeted), and beyond 32 voxels a dig does not reach. The loading
-  wait is the file's, and the real bake's minutes are printed beside it.
+  silhouettes are not antialiased (that is next), a dig hitches (nothing is budgeted, and each step's measured hitch is stated before it),
+  and beyond 32 voxels a dig does not reach. Each pose is a baked piece of the world, launched from its file, and moving between poses is a
+  relaunch. Beyond the piece, faces read dark and `store_missing` counts them: that is the unbaked edge, not the light. The loading wait is
+  the file's, and the real bake's minutes are printed beside it.
 - **Files touched:** this plan's log.
-- **Done when:** the log records the owner's words, with the strips beside, on: (a) dark patches while moving fast and in the distant caves,
+- **Done when:** the log records the owner's words, with the strips beside, on: (a) dark patches while moving fast and in the distant caves inside the piece,
   the second window's complaint; (b) anything moving at rest, Plan 0057's unanswered (a); (c) the grain at rest, its unanswered (d);
   (d) the fast turn: **what survives here is not the light store**, and goes to the antialiasing plan; (e) a face's flat value at a
   voxel step and at a shadow edge, with no filter, against the owner's "nearest"; (f) the lamp and its bounce over the bake; (g) the dug
@@ -734,7 +829,7 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 
 | `docs/nfr.md` figure | Today | Expected (a guess until read) | How the close measures it |
 |---|---|---|---|
-| The reference (read, no bar) | none | Whole level at most 11.0 M faces and about 92 MB in the pool; a pre-roll in the tens of minutes on the RTX; a dig's hitch of seconds at worst | Phase 2's `reference_readings` |
+| The reference (read, no bar) | none | A radius-2 piece: about 8.7 x 10^5 faces, about 7 MB in the pool and about 37 minutes a file on the RTX (guesses from Phase 1's census and rate; the whole level read 21.3 M faces and 177 MB, about 15 h); a 1 m dig's hitch of about half a minute at the vein | Phase 2's `reference_readings` |
 | §2 lighting line 6.0 ms | RTX in the window: light 1.33 to 3.18, gradient 0.00 to 0.17, preload 0.00 to 0.04; Cezanne walking at 1280 x 720: light 4.2 to 6.9 | RTX: slice mean at most 1.5 walking, lamp pass about 0.11 (Plan 0051), gradient as lamp only. Cezanne: 4 ms slice at a quarter's samples plus about 0.3 | `cost` rows in `settle.rs` on both adapters at rest, walking and Shift, quiet where the machine allows; Phase 12 done-when 1; `docs/nfr/02-frame-budget.md` |
 | §2 denoise line 3.0 ms (the temporal pass's read) | The table's read at the window's size | Within 0.1 ms of it: a directory read and at most about six in a run of 34 faces | The same rows |
 | §2 streaming line 1.0 ms (a recorded miss) | p50 about 5 ms over a flight | Adds under about 25 KB a frame of copies walking (1.4 MB/s: face chunks 12/s x 62 KB, brick chunks 106/s x 6.5 KB), and the free list. Listing on workers | The autopilot's streaming CPU, the worker hook's list time per chunk; Phase 12 done-when 4 |
@@ -748,13 +843,13 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 - **The count may not reach the eye's line at any wait.** Plan 0057's vein row extrapolates to about 780 000 samples a face beside the emitters, and `1 / sqrt(N)` is an extrapolation. Phase 1's arms read `params.candidates` and the clamp, its stop spends only where the noise is, and its stop rule brings a miss to the architect. A heavy-tailed sample can also make a face's own spread read small before its rare bright samples arrive, so the `G_noise` bars across two seed sets are the check, not the stop's own estimate.
 - **Dev's reading of the vein's first frame was not tested** (Plan 0057's done-when 5, estimator variance beside the emitters). If the reference's vein still reads dark or noisy at a low `G_noise`, the cause is elsewhere, and Phase 1's rows by distance to the nearest emitter are where that shows.
 - **Turning the clamp off changes the look beside emitters.** It should, since the clamp biased them dark, but the owner has never seen those faces without it. Phase 3 (e) covers it, and the setting is one word.
-- **A long bake on this laptop.** See "A long bake" above. A level bake of tens of minutes at full GPU load is the longest sustained load this box has had from this repo. It is run once per tree, alone, under the lock, with the owner told, and the file spares repeats.
+- **A long bake on this laptop.** See "A long bake" above. A piece's bake of up to an hour at full GPU load is the longest sustained load this box has had from this repo. It is run once per tree, alone, under the lock, with the owner told, and the file spares repeats.
 - **The window's frame rate.** Native at the owner's 2530 x 1378 with full-resolution lighting marches about 2.25 times the pixels of today's 1687 x 919 and runs the lamp's passes at about 9 times the lighting pixels of today's 843 x 459. A low rate could read as a motion fault. Phase 2 reads it and the runner says so.
-- **A dig's hitch at `B`.** 78 to 87 carves at the vein, each about 11 000 faces in its ring at the guessed count, at most about 3.6 x 10^9 samples at `N_MIN` before overlap: about 17 s frozen at worst. The bake's waits keep the window's events pumped so the compositor does not call it hung. Stated before the step, and accepted for this look.
+- **A dig's hitch at `B`.** 78 to 87 carves at the vein, each about 11 000 faces in its ring at the guessed count, at most about 3.6 x 10^9 samples at `N_MIN` before overlap: at Phase 1's 42 ns about 2.5 minutes frozen at `N_MIN`, and up to about 35 minutes at the stop's mean, before overlap (arithmetic on a guess; Phase 2 reads each press, and a press over 5 minutes leaves the step at one press). The bake's waits keep the window's events pumped so the compositor does not call it hung. Stated before the step, and accepted for this look.
 - **What the owner sees after a dig is not the whole truth.** Ring 3 is out and the runner says so; the far light is stale until Phase 9.
 - **The cuts may fall short of the frame.** The reference says nothing about whether a cut version meets 60 fps on the Cezanne. The first draft's arithmetic is the only evidence so far, and it now carries the vein's correction: `82 / sqrt(N)` understates the grain beside emitters, so the same samples read worse there than the first draft said. Phase 4 reads it, and the owner chooses.
 - **Shared seeds might not beat their seam.** Phase 4; independent seeds at 1024 are the fallback and Phase 8's slice then needs a re-read.
-- **The 4.6 ns may not hold.** It was read inside the light pass near the camera, with a camera-centred table and short rays. A far job's rays may be longer, and a separate dispatch has a floor. Phase 1 reads it for the reference and Phase 4 for the cuts.
+- **The 4.6 ns may not hold.** It was read inside the light pass near the camera, with a camera-centred table and short rays. A far job's rays may be longer, and a separate dispatch has a floor. Phase 1 reads it for the reference and Phase 4 for the cuts. **Phase 1: it did not hold** (36 to 64 ns at 32 candidates, 141 to 275 voxels of shadow ray).
 - **The brick level may look blocky.** Interpolation helps, and the owner sees it in Phase 7 before the queue exists, when moving the ring is a one-line change. The cost: ring 6 at 32 samples is 2.25 times ring 4's.
 - **Faces lit through a gap cost as many samples as bright ones,** and so do the unlit, a share Phase 1 reads. Under the cuts, an early out on a brick whose 32-sample tier found nothing would save its later tiers. It is a Followup, because it can miss a face lit on one sample in 32 about 36 % of the time at 32 samples (`(1 - 1/32)^32`).
 - **Fading vs nothing moves.** A tier change moves a still face for 16 frames. Tier changes happen when the camera crosses a ring and so only after motion, with one exception: a queue still behind when the camera stops. The queue empties in seconds on the RTX, and the owner judges it in Phase 13 (d).
@@ -792,7 +887,9 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The reference bake, and the count it needs | dev | stopped at its stop rule: the kept arm (32 candidates, clamp off, 65 536) meets the `G_noise` bars and projects a whole level at about 15 h on the RTX; readings in [`logs/0059.md`](logs/0059.md) | committed with this row |
-| 2: The whole reference: a world to walk and a hole to dig | dev | not started | |
+| 1a: The stop's submits | dev | not started | |
+| 1b: The owner's first look | human | not started | |
+| 2: The reference: a piece to walk and a hole to dig | dev | not started | |
 | 3: The owner's verdict on the reference | human | not started | |
 | 4: The samples cut, the shared seeds and the filter | dev | not started | |
 | 5: The owner's look at the samples cut | human | not started | |

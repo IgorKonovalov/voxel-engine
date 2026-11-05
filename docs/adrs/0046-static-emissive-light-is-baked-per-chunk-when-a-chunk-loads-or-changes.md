@@ -73,8 +73,9 @@ build something that would look really polished, then we will see where we can c
 its scope: "agreed, only light. antializing next".
 
 **The first thing built is a reference with no budget**, and the owner judges it before any budget
-work starts. It is this ADR's store at its limit: a face cell for every face of every chunk of a bounded
-world (no brick level, no rings, no queue), baked before the first frame with independent seeds and no
+work starts. It is this ADR's store at its limit: a face cell for every face of every chunk in a bounded
+piece of the world around each of the window's poses (no brick level, no rings, no queue; Plan 0059's census
+put a whole level at about 15 h on the RTX, so the owner, 2026-11-05: "Bounded piece, bars kept"), baked before the first frame with independent seeds and no
 filter, each face sampled until its own standard error through the display transform is under half a
 level (at least 4096 samples, at most 2^20), read at native resolution with full-resolution lighting
 and no upscaler. A dig re-bakes the box and the bricks within 32 voxels, in the frame, at a hitch nobody
@@ -191,7 +192,7 @@ replaces them as a cache. On a no, the store comes out and this ADR is supersede
   The cost at rest is one lookup a lighting pixel.
 - No load, no misses, no cap. Memory is about 49 MB at the vein's density against the table's
   201 326 592 B at 2^22 (452 near chunks at 62 KB plus 3 167 far at 6.5 KB, surface share 0.5 a
-  guess).
+  guess; Plan 0059's census read 0.990 on the level and 0.378 in the showcase, so this is re-read).
 - The dug hole has a value in its first frame, and the far faces no longer wait on their footprint.
 - A bake is hit-centred: a face far from the camera samples its own emitters, which removes
   ADR-0025's
