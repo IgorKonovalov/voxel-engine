@@ -783,15 +783,73 @@ fn preload_face_census() {
     }
 }
 
+/// The keys of a table fixture under `tests/fixtures/` (`table-keys-<name>.bin`: the keys a
+/// run's table held, sorted as `z << 43 | y << 23 | x << 3 | face` with each coordinate's 20
+/// bits, stored as the varint deltas between them), as voxels and faces.
+fn fixture_keys(name: &str) -> Vec<([i32; 3], u32)> {
+    let path = format!(
+        "{}/tests/fixtures/table-keys-{name}.bin",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let (mut out, mut prev, mut d, mut shift) = (Vec::new(), 0u64, 0u64, 0);
+    for b in bytes {
+        d |= u64::from(b & 0x7F) << shift;
+        shift += 7;
+        if b & 0x80 == 0 {
+            prev += d;
+            let c = |at: u32| ((prev >> at) & 0xF_FFFF) as i32;
+            out.push(([c(3), c(23), c(43)], (prev & 7) as u32));
+            (d, shift) = (0, 0);
+        }
+    }
+    out
+}
+
+/// The probe count holds a window's key sets (Plan 0057 Phase 7 Part A): the keys the table
+/// held at the end of the hall's, the vein's and the patch's runs at the window's size (2530 x
+/// 1378 from 1687 x 919, half-resolution lighting; `strip.rs`'s `light_table` at df5158b,
+/// `tests/fixtures/`), their union in key order cut at a load of 0.25 of
+/// `DEFAULT_TABLE_CELLS`, inserted by linear probing through `marcher::cache_slot` at
+/// `CACHE_PROBES`: no key is left without a slot (`the_table_hash_spreads_a_levels_keys`).
+fn the_probe_count_holds_a_windows_keys() {
+    use vxe_render::marcher::{CACHE_PROBES, DEFAULT_TABLE_CELLS, cache_slot};
+    let mut keys: Vec<([i32; 3], u32)> = ["hall", "vein", "patch"]
+        .iter()
+        .flat_map(|n| fixture_keys(n))
+        .collect();
+    let counts: Vec<usize> = ["hall", "vein", "patch"]
+        .iter()
+        .map(|n| fixture_keys(n).len())
+        .collect();
+    assert_eq!(counts, [789_657, 193_409, 128_127], "the fixtures' keys");
+    keys.sort_unstable_by_key(|&(v, f)| vxe_render::marcher::cache_key(v, f));
+    keys.dedup();
+    let n = DEFAULT_TABLE_CELLS as usize / 4;
+    assert!(keys.len() >= n, "{} keys", keys.len());
+    keys.truncate(n);
+    let bases: Vec<u32> = keys
+        .iter()
+        .map(|&(v, f)| cache_slot(v, f, DEFAULT_TABLE_CELLS))
+        .collect();
+    let (missed, runs, mean, max) = probe_insert(&bases, DEFAULT_TABLE_CELLS);
+    println!(
+        "reading: {n} keys at {DEFAULT_TABLE_CELLS} cells, {CACHE_PROBES} probes: no slot {missed}; runs {runs} mean {mean:.3} max {max}"
+    );
+    assert_eq!(missed, 0, "keys without a slot");
+}
+
 /// The table's hash spreads a level's keys (ADR-0043's table): the key set of every opaque
 /// face toward air within a 128-voxel cube around `PATCH_POSE` and around `VEIN_POSE` on the
 /// level at seed 1 (`air_faces`), inserted in key order by linear probing through
-/// `marcher::cache_slot`, four probes: at `DEFAULT_TABLE_CELLS` no key lacks a slot, and at the
-/// power of two nearest a load of 0.5 the share of keys left without a slot is at most twice a
-/// seeded uniform assignment's of the same keys at that size (`uniform_slot`, seed 0x0057).
+/// `marcher::cache_slot` at `CACHE_PROBES`: at `DEFAULT_TABLE_CELLS` no key lacks a slot, and
+/// at the power of two nearest a load of 0.5 the share of keys left without a slot is at most
+/// twice a seeded uniform assignment's of the same keys at that size (`uniform_slot`, seed
+/// 0x0057); and the window's key sets find a slot (`the_probe_count_holds_a_windows_keys`).
 /// No GPU.
 #[test]
 fn the_table_hash_spreads_a_levels_keys() {
+    the_probe_count_holds_a_windows_keys();
     use vxe_render::marcher::{DEFAULT_TABLE_CELLS, cache_slot};
     let source = flythrough::cave::CaveSource::new(
         1,

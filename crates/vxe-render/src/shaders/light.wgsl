@@ -168,6 +168,7 @@ fn shade_px(gid: vec3<u32>) {
                 if (cell < 0) {
                     atomicAdd(&cache_stats.misses, 1u);
                 } else {
+                    cache_seen(u32(cell));
                     capped = atomicLoad(&cache_cells[CACHE_WORDS * u32(cell) + CACHE_COUNT]) >= cache_c_cap();
                     if (fill_samples() > 0u) {
                         if (light_edits.count > 0u && in_light_edit(rec.p)) {
@@ -247,6 +248,25 @@ fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
         }
     }
     return -1;
+}
+
+// Stamps `slot` seen this frame (march.wgsl's CACHE_SEEN, `params.frame + 1`): the first pixel
+// of the frame to take the cell exchanges the word; returns whether this invocation did.
+fn cache_seen(slot: u32) -> bool {
+    let word = CACHE_WORDS * slot + CACHE_SEEN;
+    let now = params.frame + 1u;
+    var old = atomicLoad(&cache_cells[word]);
+    loop {
+        if (old == now) {
+            return false;
+        }
+        let r = atomicCompareExchangeWeak(&cache_cells[word], old, now);
+        if (r.exchanged) {
+            return true;
+        }
+        old = r.old_value;
+    }
+    return false;
 }
 
 // A claim's busy word 1 for `key`: a hash of both words with the valid bit clear and bit 0 set,

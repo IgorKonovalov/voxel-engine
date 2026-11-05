@@ -29,7 +29,7 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    CrackShares, DEFAULT_TABLE_CELLS, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting,
+    AgeStats, CrackShares, DEFAULT_TABLE_CELLS, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting,
     LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
     NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning, TableStats, ToneMap, ViewMode,
     jitter_at,
@@ -90,6 +90,11 @@ impl std::error::Error for LimitsError {}
 pub const STORAGE_BUFFERS_NEEDED: u32 =
     gpu_world::MAX_SHARDS + gpu_world::OTHER_STORAGE_BUFFERS + probes::PROBE_STORAGE_BUFFERS;
 
+/// The bytes the emissive table binds at [`DEFAULT_TABLE_CELLS`], with the blend list of a
+/// lighting grid of up to 2^22 pixels past its cells (`Frame`'s table buffer), rounded up to a
+/// MiB: 220 MiB.
+pub const TABLE_BINDING_BYTES: u64 = 220 << 20;
+
 /// Limits to request from `adapter`: [`limits_within`] its offered limits.
 pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> Result<wgpu::Limits, LimitsError> {
     limits_within(&adapter.limits(), pool_bytes)
@@ -97,7 +102,8 @@ pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> Result<wgpu::Limi
 
 /// Limits to request from an adapter offering `offered`: the defaults, with the
 /// storage-binding and buffer-size limits raised toward what a brick pool of `pool_bytes`
-/// needs in one shard and the storage buffers per stage raised to
+/// needs in one shard, and at least toward the emissive table at its default size
+/// ([`TABLE_BINDING_BYTES`]), and the storage buffers per stage raised to
 /// [`STORAGE_BUFFERS_NEEDED`], each capped at what is offered; a pool past the size cap
 /// spreads over the shards (`ShardLayout`). `Err` names the storage-buffer count when the
 /// offer is below what the shaders bind.
@@ -106,12 +112,13 @@ pub fn limits_within(offered: &wgpu::Limits, pool_bytes: u64) -> Result<wgpu::Li
     let needed = l
         .max_storage_buffers_per_shader_stage
         .max(STORAGE_BUFFERS_NEEDED);
+    let want = pool_bytes.max(TABLE_BINDING_BYTES);
     l.max_storage_buffer_binding_size = offered
         .max_storage_buffer_binding_size
-        .min(pool_bytes.max(l.max_storage_buffer_binding_size));
+        .min(want.max(l.max_storage_buffer_binding_size));
     l.max_buffer_size = offered
         .max_buffer_size
-        .min(pool_bytes.max(l.max_buffer_size));
+        .min(want.max(l.max_buffer_size));
     l.max_storage_buffers_per_shader_stage =
         needed.min(offered.max_storage_buffers_per_shader_stage);
     if offered.max_storage_buffers_per_shader_stage < STORAGE_BUFFERS_NEEDED {
@@ -149,10 +156,9 @@ mod tests {
         assert_eq!(l.max_buffer_size, 1 << 30);
         let l = limits_within(&offer(11, 1 << 30), 16 << 20).expect("11 storage buffers");
         assert_eq!(l.max_storage_buffers_per_shader_stage, 11);
-        assert_eq!(
-            l.max_storage_buffer_binding_size,
-            wgpu::Limits::default().max_storage_buffer_binding_size
-        );
+        assert_eq!(l.max_storage_buffer_binding_size, TABLE_BINDING_BYTES);
+        let l = limits_within(&offer(11, 128 << 20), 16 << 20).expect("11 storage buffers");
+        assert_eq!(l.max_storage_buffer_binding_size, 128 << 20);
     }
 
     #[test]

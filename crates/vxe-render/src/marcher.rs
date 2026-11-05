@@ -748,16 +748,38 @@ impl Upscaler {
     }
 }
 
-/// Cells of the emissive table by default ([`Lighting::table_cells`]): 40 B a cell, so
-/// 41 943 040 B.
-pub const DEFAULT_TABLE_CELLS: u32 = 1 << 20;
+/// Cells of the emissive table by default ([`Lighting::table_cells`]): 48 B a cell, so
+/// 201 326 592 B.
+pub const DEFAULT_TABLE_CELLS: u32 = 1 << 22;
 /// `u32`s of a cell: the key (two words), the count, the three sums (Q17.15), the kept
-/// emitter's voxel and face (two words), its luminance and a frame stamp.
-pub const CACHE_CELL_WORDS: u64 = 10;
+/// emitter's voxel and face (two words), its luminance, a frame stamp, the frame it was last
+/// seen ([`CACHE_SEEN_WORD`]) and its blended mean ([`CACHE_BLEND_WORD`]).
+pub const CACHE_CELL_WORDS: u64 = 12;
 /// The cell's word of the count; the three sums follow it.
 pub const CACHE_COUNT_WORD: usize = 2;
-/// Slots a key probes linearly.
-pub const CACHE_PROBES: u32 = 4;
+/// The cell's seen word: `frame + 1` of the last frame a lighting pixel took the cell or a seen
+/// cell's blend read it; 0 never.
+pub const CACHE_SEEN_WORD: usize = 10;
+/// The cell's blended mean, RGB9E5 (`cache_blend.wgsl`).
+pub const CACHE_BLEND_WORD: usize = 11;
+/// Slots a key probes linearly: the smallest of 4, 8 and 16 under which the hall's, the
+/// vein's and the patch's key sets at the window's size, inserted at a load of 0.25 of
+/// [`DEFAULT_TABLE_CELLS`], leave no key without a slot (Plan 0057 Phase 7's census: 1356 at
+/// 4, 12 at 8).
+pub const CACHE_PROBES: u32 = 16;
+/// [`Lighting::table_age`] by default, in frames: ten seconds at 60 fps.
+pub const DEFAULT_TABLE_AGE: u32 = 600;
+/// [`Lighting::table_age_min`] by default, in frames.
+pub const DEFAULT_TABLE_AGE_MIN: u32 = 60;
+/// The occupied share over which the age-out runs (EVICT_LOAD), as sixteenths: 3/16.
+pub const EVICT_LOAD_SIXTEENTHS: u32 = 3;
+/// The occupied cells' growth over the mark that runs the age-out again, as a divisor of the
+/// cells: 1/32.
+pub const EVICT_STEP_DIVISOR: u32 = 32;
+/// Cells the table's walk (the chunk sweep and the age-out) visits a frame at most.
+pub const TABLE_WALK_SLICE: u32 = 1 << 20;
+/// The walk's state buffer (`Walk` in `cache_sweep.wgsl`): 20 words.
+const WALK_STATE_BYTES: u64 = 80;
 /// The fixed point of the sums.
 pub const CACHE_Q: f32 = 32768.0;
 /// Samples at which a cell stops adding, and its pixels stop drawing, by default
@@ -1047,6 +1069,42 @@ impl PreloadIdle {
     }
 }
 
+/// The table walk's uniform (`Sweep` in `cache_sweep.wgsl`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct SweepUniform {
+    chunk: [i32; 3],
+    r2: i32,
+    eye: [f32; 3],
+    reach2: f32,
+    request: u32,
+    cells: u32,
+    evict_load: u32,
+    evict_step: u32,
+    age_max: u32,
+    age_min: u32,
+    slice: u32,
+    frame: u32,
+    age_out: u32,
+    _pad: [u32; 3],
+}
+
+/// The table's age-out after the last submitted encode ([`Frame::read_age_stats`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AgeStats {
+    /// Age-out passes started since the frame was made.
+    pub passes: u32,
+    /// Cells the age-out has freed since the frame was made, and in the last encode.
+    pub evicted: u32,
+    pub evicted_frame: u32,
+    /// Cells the chunk sweep has freed since the frame was made.
+    pub swept: u32,
+    /// The age the next pass takes, in frames.
+    pub age: u32,
+    /// Cells the running walk has left (0 idle).
+    pub walk_left: u32,
+}
+
 /// The preload's uniform (`Preload` in `cache_fill.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1132,14 +1190,27 @@ pub struct Lighting {
     /// one; the temporal pass shows the cell's mean from its first sample. A hit with no face
     /// (the field look, a translucent hit, a ray from inside rock) or whose key finds no slot
     /// blends its own sample as the lamp's part does. An edit box clears its cells, an
-    /// emission-scale change ([`Frame::set_emission_scales`]) the whole table, and the camera
-    /// entering another chunk frees the cells beyond the light radius.
+    /// emission-scale change ([`Frame::set_emission_scales`]) the whole table, the camera
+    /// entering another chunk frees the cells beyond the light radius, and the age-out
+    /// ([`Lighting::table_age_out`]) frees the cells far and long unseen.
     pub table_cells: u32,
     /// Samples at which a cell stops adding, at most 4096 (default [`DEFAULT_TABLE_CAP`]).
     pub table_cap: u32,
     /// The temporal pass reads the table (default on). Off, every hit takes the fallback: for
     /// tests that compare against the table.
     pub table_read: bool,
+    /// The table's age-out (default on): when the occupied cells cross 3/16 of the table
+    /// upward, again once they have grown by 1/32 of it since the last pass while still over,
+    /// and again [`Lighting::table_age`] frames after a pass that freed a cell and left them
+    /// over, a walk frees every cell whose voxel lies beyond the preload's radius of the eye
+    /// and that no lighting pixel nor a seen cell's blend has read in its age. Off is for
+    /// tests that count what the table holds without it.
+    pub table_age_out: bool,
+    /// The age-out's age in frames (default [`DEFAULT_TABLE_AGE`]): halved by each pass that
+    /// leaves the occupied cells over the mark, down to [`Lighting::table_age_min`] (default
+    /// [`DEFAULT_TABLE_AGE_MIN`]), and back once they are under it.
+    pub table_age: u32,
+    pub table_age_min: u32,
     /// The reopened fill's samples a frame per listed cell, at most [`FILL_SAMPLES_MAX`]
     /// (default [`DEFAULT_FILL_SAMPLES`]); 0 is off. A cell an edit box or the guard reopened
     /// is listed by the first of its pixels each frame, and the fill draws this many emissive
@@ -1200,6 +1271,9 @@ impl Default for Lighting {
             table_cells: DEFAULT_TABLE_CELLS,
             table_cap: DEFAULT_TABLE_CAP,
             table_read: true,
+            table_age_out: true,
+            table_age: DEFAULT_TABLE_AGE,
+            table_age_min: DEFAULT_TABLE_AGE_MIN,
             fill_samples: DEFAULT_FILL_SAMPLES,
             fill_until: DEFAULT_FILL_UNTIL,
             preload_radius: DEFAULT_PRELOAD_RADIUS,
@@ -1486,8 +1560,18 @@ pub struct Frame {
     cache_clear_layout: wgpu::BindGroupLayout,
     cache_sweep: wgpu::ComputePipeline,
     cache_sweep_layout: wgpu::BindGroupLayout,
-    /// The sweep's uniform (`Sweep` in `cache_sweep.wgsl`).
+    /// The walk's args pass (`walk_args`), its layout shared with the walk.
+    cache_walk_args: wgpu::ComputePipeline,
+    /// The walk's uniform (`Sweep` in `cache_sweep.wgsl`), its state across frames (`Walk`,
+    /// read back by [`Frame::read_age_stats`]) and its slice's indirect dispatch.
     sweep_params: wgpu::Buffer,
+    walk_state: wgpu::Buffer,
+    walk_dispatch: wgpu::Buffer,
+    /// The chunk sweeps requested: the walk takes a new one when it moves.
+    sweep_requests: std::sync::atomic::AtomicU32,
+    /// The table's edit-box reset by cells (`clear_box_cells`), for a frame whose boxes' voxel
+    /// faces outnumber the cells.
+    cache_clear_cells: wgpu::ComputePipeline,
     /// The camera's chunk at the last encode, `None` before the first: the sweep runs when it
     /// changes.
     sweep_chunk: std::sync::Mutex<Option<[i32; 3]>>,
@@ -1535,16 +1619,27 @@ pub struct Frame {
 }
 
 /// The emissive table's buffer of `cells` cells.
-fn table_buffer(device: &wgpu::Device, cells: u32) -> wgpu::Buffer {
+/// The emissive table's buffer: `cells` cells, then the blend list's header
+/// ([`BLEND_HEADER_BYTES`]) and `list` slots of 4 B (`cache_blend.wgsl`).
+fn table_buffer(device: &wgpu::Device, cells: u32, list: u32) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("emissive table"),
-        size: u64::from(cells) * CACHE_CELL_WORDS * 4,
+        size: table_bytes(cells, list),
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
 }
+
+/// [`table_buffer`]'s bytes.
+pub fn table_bytes(cells: u32, list: u32) -> u64 {
+    u64::from(cells) * CACHE_CELL_WORDS * 4 + BLEND_HEADER_BYTES + 4 * u64::from(list)
+}
+
+/// The blend list's header past the table's cells: the entries listed this frame and three
+/// words of padding.
+pub const BLEND_HEADER_BYTES: u64 = 16;
 
 /// A dispatch of `groups` workgroups in rows of at most `cap`: `[x, y]` with `x * y >= groups`.
 pub fn dispatch_rows(groups: u32, cap: u32) -> [u32; 2] {
@@ -1982,13 +2077,65 @@ impl Frame {
             "clear_cells",
             &[Io::Uniform, Io::Storage],
         );
-        let (cache_sweep_layout, cache_sweep) = pass(
-            "cache sweep",
-            CACHE_SWEEP_WGSL,
-            "sweep_cells",
-            &[Io::Uniform, Io::Storage, Io::Storage],
+        let cache_clear_cells = compute_pipeline(
+            device,
+            "cache clear by cells",
+            format!("{MARCH_WGSL}\n{CACHE_CLEAR_WGSL}"),
+            &[Some(&world_layout), None, Some(&cache_clear_layout)],
+            "clear_box_cells",
         );
-        let cache = table_buffer(device, DEFAULT_TABLE_CELLS);
+        // The walk binds no world: its table, counters, state and dispatch are four of the
+        // stage's storage buffers.
+        let cache_sweep_layout = io_layout(
+            device,
+            "cache walk",
+            &[
+                Io::Uniform,
+                Io::Storage,
+                Io::Storage,
+                Io::Storage,
+                Io::Storage,
+            ],
+        );
+        let walk_source = format!("{MARCH_WGSL}\n{CACHE_SWEEP_WGSL}");
+        let cache_walk_args = compute_pipeline(
+            device,
+            "cache walk args",
+            walk_source.clone(),
+            &[None, None, Some(&cache_sweep_layout)],
+            "walk_args",
+        );
+        let cache_sweep = compute_pipeline(
+            device,
+            "cache walk",
+            walk_source,
+            &[None, None, Some(&cache_sweep_layout)],
+            "walk_cells",
+        );
+        let walk_state = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("emissive table walk"),
+            size: WALK_STATE_BYTES,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let walk_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("emissive table walk dispatch"),
+            size: 12,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
+        let targets = Targets::new(
+            device,
+            width,
+            height,
+            LightingResolution::default().scale(),
+            (internal != output).then_some(output),
+            true,
+        );
+        let [lw, lh] = targets.light_size();
+        let cache = table_buffer(device, DEFAULT_TABLE_CELLS, lw * lh);
         let cache_stats = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("emissive table counters"),
             size: CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_BYTES,
@@ -1999,7 +2146,7 @@ impl Frame {
         });
         let sweep_params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("emissive table sweep"),
-            size: 16,
+            size: size_of::<SweepUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -2250,14 +2397,7 @@ impl Frame {
             composite,
             params,
             edits,
-            targets: Targets::new(
-                device,
-                width,
-                height,
-                LightingResolution::default().scale(),
-                (internal != output).then_some(output),
-                true,
-            ),
+            targets,
             resolution: LightingResolution::default(),
             lod: LodParams::default(),
             look: LookParams::default(),
@@ -2337,7 +2477,12 @@ impl Frame {
             cache_clear_layout,
             cache_sweep,
             cache_sweep_layout,
+            cache_walk_args,
             sweep_params,
+            walk_state,
+            walk_dispatch,
+            sweep_requests: std::sync::atomic::AtomicU32::new(0),
+            cache_clear_cells,
             sweep_chunk: std::sync::Mutex::new(None),
             table_dispatch_cap: MAX_DISPATCH_GROUPS,
             guard_forced: false,
@@ -2697,14 +2842,28 @@ impl Frame {
         let bytes = crate::readback::read_buffer(device, queue, &self.cache_stats, 0, 16);
         let w: &[u32] = bytemuck::cast_slice(&bytes);
         TableStats {
-            cells: (self.cache.size() / (CACHE_CELL_WORDS * 4)) as u32,
+            cells: self.table_cells(),
             occupied: w[1],
             misses: w[0],
         }
     }
 
+    /// The table's age-out and sweep after the last submitted encode: a blocking read.
+    pub fn read_age_stats(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> AgeStats {
+        let bytes = crate::readback::read_buffer(device, queue, &self.walk_state, 0, 64);
+        let w: &[u32] = bytemuck::cast_slice(&bytes);
+        AgeStats {
+            passes: w[10],
+            evicted: w[12],
+            evicted_frame: w[13],
+            swept: w[14],
+            age: w[6],
+            walk_left: w[1],
+        }
+    }
+
     /// The whole-table clears (the first frame's, an emission-scale change, a lighting change
-    /// that drops it, an overflowed or oversized edit frame) and the sweeps encoded since the
+    /// that drops it, an overflowed edit frame) and the sweeps encoded since the
     /// frame was made.
     pub fn table_clears_and_sweeps(&self) -> (u32, u32) {
         use std::sync::atomic::Ordering::Relaxed;
@@ -2901,14 +3060,26 @@ impl Frame {
     /// Sets the lighting knobs; a change of [`Lighting::cells`] rebuilds the emissive table
     /// empty.
     pub fn set_lighting(&mut self, lighting: Lighting) {
-        let cells = lighting.cells();
-        if u64::from(cells) * CACHE_CELL_WORDS * 4 != self.cache.size() {
-            self.cache = table_buffer(&self.device, cells);
+        self.lighting = lighting;
+        self.fit_table();
+        self.rebuild_probes();
+    }
+
+    /// The table's cells as allocated: [`Lighting::cells`].
+    pub fn table_cells(&self) -> u32 {
+        self.lighting.cells()
+    }
+
+    /// Rebuilds the emissive table empty where its cells or the lighting grid's pixels (the
+    /// blend list's slots, one a lighting pixel) changed.
+    fn fit_table(&mut self) {
+        let [w, h] = self.targets.light_size();
+        let bytes = table_bytes(self.lighting.cells(), w * h);
+        if bytes != self.cache.size() {
+            self.cache = table_buffer(&self.device, self.lighting.cells(), w * h);
             self.cache_clear_requested
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
-        self.lighting = lighting;
-        self.rebuild_probes();
     }
 
     /// Caps a dispatch row of the table's edit-box reset and sweep at `groups` workgroups (at
@@ -3008,6 +3179,8 @@ impl Frame {
             + self.exposure.bytes()
             + self.fsr.as_ref().map_or(0, Fsr2::bytes)
             + self.cache.size()
+            + WALK_STATE_BYTES
+            + self.walk_dispatch.size()
             + FILL_LIST_BYTES
             + self.fill_dispatch.size()
             + PRELOAD_BYTES
@@ -3042,6 +3215,7 @@ impl Frame {
         if self.composite_capture.is_some() {
             self.composite_capture = Some(composite_capture_texture(device, internal));
         }
+        self.fit_table();
         self.reset_history();
     }
 
@@ -3128,7 +3302,7 @@ impl Frame {
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.manual_exposure(),
-            cache_mask: (self.cache.size() / (CACHE_CELL_WORDS * 4)) as u32 - 1,
+            cache_mask: self.table_cells() - 1,
             cache: self.lighting.cache_word(),
             fill: self.lighting.fill_word(),
             emitter_cap: fsr.and_then(|f| f.emitter_cap).unwrap_or(0.0),
@@ -3404,8 +3578,9 @@ impl Frame {
             ],
         );
         let cache_table = &self.cache;
-        // The edit boxes' dilated voxels, in u64: a box past 2^32 voxels or with more faces
-        // than the table has cells clears the whole table, as an overflowed frame does.
+        // The edit boxes' dilated voxels, in u64: boxes whose voxels' faces outnumber the
+        // table's cells are cleared by a walk over the cells instead (`clear_box_cells`), the
+        // same cells; only a frame of more than MAX_EDITS boxes clears the whole table.
         let cache_clear_voxels: u64 = boxes
             .iter()
             .map(|[min, max]| {
@@ -3414,8 +3589,9 @@ impl Frame {
                     .product::<u64>()
             })
             .sum();
-        let cells = (cache_table.size() / (CACHE_CELL_WORDS * 4)) as u32;
-        let clear_whole = edits_overflowed || cache_clear_voxels * 6 > u64::from(cells);
+        let cells = self.table_cells();
+        let clear_whole = edits_overflowed;
+        let clear_by_cells = cache_clear_voxels * 6 > u64::from(cells);
         // The preload runs where the fill could (a shaded view outside the cutaway) with its
         // radius and emissive candidates above 0, unless the idle skip holds (`PreloadIdle`).
         let preload_r = self.lighting.preload_brick_radius();
@@ -3442,12 +3618,32 @@ impl Frame {
         if sweep {
             self.cache_sweeps
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.sweep_requests
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        {
             let r = world.light_radius();
-            queue.write_buffer(
-                &self.sweep_params,
-                0,
-                bytemuck::cast_slice(&[chunk[0], chunk[1], chunk[2], r.saturating_mul(r)]),
-            );
+            let reach = (8 * preload_r) as f32;
+            let age_max = self.lighting.table_age.max(1);
+            let u = SweepUniform {
+                chunk,
+                r2: r.saturating_mul(r),
+                eye,
+                reach2: reach * reach,
+                request: self
+                    .sweep_requests
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                cells,
+                evict_load: cells / 16 * EVICT_LOAD_SIXTEENTHS,
+                evict_step: cells / EVICT_STEP_DIVISOR,
+                age_max,
+                age_min: self.lighting.table_age_min.clamp(1, age_max),
+                slice: TABLE_WALK_SLICE,
+                frame: p.frame.wrapping_add(1),
+                age_out: u32::from(self.lighting.table_age_out),
+                _pad: [0; 3],
+            };
+            queue.write_buffer(&self.sweep_params, 0, bytemuck::bytes_of(&u));
         }
         let eye_brick = eye.map(|c| (c / 8.0).floor() as i32);
         let preload_key = (
@@ -3875,34 +4071,46 @@ impl Frame {
             )
         });
         if let Some(b) = &cache_clear_bind {
-            gradient.push(frame_pass(
-                &self.cache_clear,
-                b,
-                2,
-                dispatch_rows(
-                    cache_clear_voxels.div_ceil(64) as u32,
-                    self.table_dispatch_cap,
-                ),
-            ));
+            gradient.push(if clear_by_cells {
+                frame_pass(
+                    &self.cache_clear_cells,
+                    b,
+                    2,
+                    dispatch_rows(cells.div_ceil(64), self.table_dispatch_cap),
+                )
+            } else {
+                frame_pass(
+                    &self.cache_clear,
+                    b,
+                    2,
+                    dispatch_rows(
+                        cache_clear_voxels.div_ceil(64) as u32,
+                        self.table_dispatch_cap,
+                    ),
+                )
+            });
         }
-        let sweep_bind = sweep.then(|| {
-            bind_io(
-                device,
-                &self.cache_sweep_layout,
-                &[
-                    Res::Buf(&self.sweep_params),
-                    Res::Buf(cache_table),
-                    Res::Buf(&self.cache_stats),
-                ],
-            )
-        });
-        if let Some(b) = &sweep_bind {
-            gradient.push(frame_pass(
-                &self.cache_sweep,
-                b,
-                2,
-                dispatch_rows(cells.div_ceil(64), self.table_dispatch_cap),
-            ));
+        // The walk (the chunk sweep and the age-out): its args pass every frame, then the
+        // slice it sets, none while idle.
+        let walk_bind = bind_io(
+            device,
+            &self.cache_sweep_layout,
+            &[
+                Res::Buf(&self.sweep_params),
+                Res::Buf(cache_table),
+                Res::Buf(&self.cache_stats),
+                Res::Buf(&self.walk_state),
+                Res::Buf(&self.walk_dispatch),
+            ],
+        );
+        {
+            let mut a = frame_pass(&self.cache_walk_args, &walk_bind, 2, [1, 1]);
+            a.groups[0] = None;
+            gradient.push(a);
+            let mut w = frame_pass(&self.cache_sweep, &walk_bind, 2, [0, 0]);
+            w.groups[0] = None;
+            w.indirect = Some((&self.walk_dispatch, 0));
+            gradient.push(w);
         }
         if gradient_on {
             let mut pass = frame_pass(&self.gradient, &gradient_bind, 3, strata);

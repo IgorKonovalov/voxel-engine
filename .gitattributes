@@ -17,3 +17,4 @@
 *.ttf  binary
 *.otf  binary
 *.woff2 binary
+*.bin  binary

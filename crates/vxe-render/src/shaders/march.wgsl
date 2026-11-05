@@ -1284,11 +1284,12 @@ fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
 // CACHE_WORDS u32s, in a storage buffer of its own. A cell: the key in words 0 and 1
 // (`cache_key`; word 1 is 0 in a free cell), the count of samples, the three sums of the
 // absolute emissive irradiance in Q17.15, then the kept emitter's face key (two words) and its
-// packed luminance (light.wgsl's `cache_offer`, the guard's), and a frame stamp (reserved). A key is a voxel and an
-// entry face (2 axis + 1 toward +axis) and lives in the first of CACHE_PROBES slots from
-// `cache_slot` holding it. The table's counters live in a second buffer (`CacheStats`).
-const CACHE_WORDS: u32 = 10u;
-const CACHE_PROBES: u32 = 4u;
+// packed luminance (light.wgsl's `cache_offer`, the guard's), a frame stamp, the frame the cell
+// was last seen (CACHE_SEEN) and its blended mean (CACHE_BLEND). A key is a voxel and an entry
+// face (2 axis + 1 toward +axis) and lives in the first of CACHE_PROBES slots from `cache_slot`
+// holding it. The table's counters live in a second buffer (`CacheStats`).
+const CACHE_WORDS: u32 = 12u;
+const CACHE_PROBES: u32 = 16u;
 const CACHE_Q: f32 = 32768.0;
 // The cell's word of the count; the sums follow it.
 const CACHE_COUNT: u32 = 2u;
@@ -1300,6 +1301,12 @@ const CACHE_STAMP: u32 = 9u;
 const CACHE_REOPENED: u32 = 0x80000000u;
 const CACHE_PRELOADING: u32 = 0x40000000u;
 const CACHE_STAMP_FRAME: u32 = 0x3FFFFFFFu;
+// The cell's seen word: `params.frame + 1` of the last frame a lighting pixel's hit took the
+// cell (light.wgsl's `cache_seen`) or a seen cell's blend read it (cache_blend.wgsl); 0 never.
+// The age-out (cache_sweep.wgsl) frees a cell beyond its radius unseen for its age.
+const CACHE_SEEN: u32 = 10u;
+// The cell's blended mean (cache_blend.wgsl), RGB9E5; the temporal pass reads it.
+const CACHE_BLEND: u32 = 11u;
 
 // The reopened fill's samples a frame per listed cell (F, 0 off) and the count at which a
 // reopened cell leaves the list (C_FILL).
