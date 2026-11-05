@@ -437,7 +437,7 @@ progress. Nothing bakes a whole world in a test, and no phase bakes a whole leve
   the hall's being in the showcase. Dev may serve two poses from one file if its piece covers both poses' radius. **The whole
   showcase** (the owner's "and/or"): after the hall's piece is baked, dev projects the whole showcase from that piece's samples a
   face and its rate. If the projection is at most 60 minutes, the hall's file is the whole showcase. If it is over, the hall's
-  piece stands and the log says so.
+  piece stands and the log says so. The owner kept this 60-minute rule over a one-time bake of up to 3 hours (2026-11-05).
 - **The stop rule, restated for the piece.** Dev projects each file at Phase 1a's rate and the census's faces before baking it.
   A file that projects over 60 minutes on the RTX goes to the architect before it is baked. So does a miss of the `G_noise`
   bar below.
@@ -479,7 +479,8 @@ progress. Nothing bakes a whole world in a test, and no phase bakes a whole leve
     33 ms the runner says so and offers the owner a smaller window, since a low rate could read as a motion fault.
   - The dig: a 5-voxel dig, a dig at 100 voxels and each of the four `B` presses at the vein (78 to 87 carves): faces, samples, ms.
     The runner states each step's measured hitch before it. A `B` press over 5 minutes leaves Phase 3's `B` step at one press,
-    the lightest, unless the owner asks for more.
+    the lightest, unless the owner asks for more. A dig keeps the reference's stop: the owner chose this over a fixed 4096
+    samples for dug faces and over dropping `B` (2026-11-05).
   - Glass at rest: a pane placed by the key below at the hall, 600 still frames, the lamp off and then on: the pixels of the
     accumulation that changed from first to last, and the composite's patches a step on the tiles the pane fills. No bar.
 - **The glass pane.** Under `--reference` only, a free key (dev's choice; the banner names the panes placed) stamps a pane of the
