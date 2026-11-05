@@ -32,6 +32,9 @@
 > "A held fallback still moves on screen"). The reference's two worlds hold no glass: its only row is the castle's, and
 > `--reference` refuses the streamed world the castle lives in. So Phase 2 gains a key that places a pane, and Phase 3 a step.
 
+> **Amended 2026-11-05 (architect, for the owner), an early look.** The owner asked to see the light sooner, so Phase 1b puts
+> Phase 1's bake in a window before the whole-world work starts. It is a first look, not Phase 3's verdict.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -337,6 +340,24 @@ whole world in a test.
      machine, commit and load.
   8. `the_banner_names_the_light` (`hud.rs`, no GPU, under 1 s). With `--light table` the goldens and `frame_bytes`
      pass untouched.
+  9. `the_bake_radius_flag_sets_the_extent` (`main.rs`, no GPU, under 1 s): `--bake-radius N`, under `--light baked` only, bakes
+     the chunks within `N` of the eye's chunk and is refused without it; unset, the pre-roll takes the whole extent. The runner
+     `live/session1b.sh` is written.
+
+### Phase 1b: The owner's first look
+- **Owner skill:** human
+- **What:** a short window on Phase 1's tree, on the RTX, with stdout visible and a ping when ready. It runs at the settings
+  Phase 2's `--reference` will name, set by hand: `--light baked --internal-scale 1 --upscaler off --lighting full --far-normal 1,2`,
+  no jitter, at Phase 1's kept arm, with `--bake-radius 2`. That covers the census's 96 voxels. At most 125 chunks of at most 6 900
+  faces at a surface share of 0.5 is about 430 000 faces, about a minute at 26 896 samples and 4.6 ns (a guess, and a long ray costs
+  more). There is no bake file yet, so each launch waits for its bake and prints its progress. Stops: the vein, the patch and the
+  hall, each standing, then turning and walking a little, the lamp off and on, and the mode key against `--light table` if Phase 1
+  has one. **The runner says first:** this is a small piece of the world, so beyond it faces read dark and `store_missing` counts
+  them (that is the unbaked edge, not the light); silhouettes are not antialiased; there is no dig yet; the verdict is Phase 3's.
+- **Files touched:** this plan's log.
+- **Done when:** the log records the owner's words on: (a) the flat, settled look of a face at rest; (b) grain, above all beside the
+  vein; (c) dark patches inside the baked piece while turning; (d) **whether Phase 2 should go on.** Only "no" stops the lane: it
+  goes to the architect with the words and Phase 1's table. A remark on the look does not stop it, and Phase 3 still asks every question.
 
 ### Phase 2: The whole reference: a world to walk and a hole to dig
 - **Owner skill:** dev
