@@ -153,13 +153,55 @@ fn mirrored(world: &vxe_world::World) -> Option<(wgpu::Device, wgpu::Queue, GpuW
     Some((device, queue, gpu))
 }
 
-/// The tone move is lossless: on the primary, headlamp, translucent and LOD golden poses at
-/// scale 1, jitter off, the composite's
-/// linear target put through the tone pass (the upscaler bypassed) is the composite's direct
-/// rgba8 image byte for byte.
+/// The composite's linear target put through the tone pass (the upscaler bypassed) at scale 1,
+/// jitter off, against the composite's direct rgba8 image: every byte the same, and something
+/// lit. A machine with no software adapter skips.
+fn assert_the_tone_pass_is_lossless(
+    name: &str,
+    world: &vxe_world::World,
+    camera: &vxe_render::Camera,
+    light: &LightParams,
+    lod: vxe_render::LodParams,
+) {
+    let Some((device, queue, gpu)) = mirrored(world) else {
+        return;
+    };
+    let mut plain = Frame::new(&device, WIDTH, HEIGHT);
+    let mut toned = Frame::new(&device, WIDTH, HEIGHT);
+    toned.set_upscaler_kind(&device, fsr2_kind());
+    toned.fsr2_mut().expect("FSR mode").set_bypass(true);
+    for f in [&mut plain, &mut toned] {
+        f.set_resolution(&device, vxe_render::LightingResolution::Full);
+        f.set_lod(lod);
+        f.render(&device, &queue, &gpu, camera, light);
+    }
+    let want = readback::read_rgba8(&device, &queue, plain.target());
+    let got = readback::read_rgba8(&device, &queue, toned.target());
+    let differing = want.iter().zip(&got).filter(|(a, b)| a != b).count();
+    let lit = want.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    println!("{name}: {differing} bytes differ, {lit} lit pixels");
+    assert!(lit > 0, "{name} renders something");
+    assert_eq!(
+        differing, 0,
+        "{name}: the tone pass differs from the composite"
+    );
+}
+
+/// The tone move is lossless on the primary golden pose.
+#[test]
+fn the_tone_pass_reproduces_the_composites_bytes() {
+    assert_the_tone_pass_is_lossless(
+        "primary",
+        &support::carved_world(),
+        &scene_camera(),
+        &LightParams::at_eye(),
+        Default::default(),
+    );
+}
+
+/// The tone move is lossless on the primary, headlamp, translucent and LOD golden poses.
 #[test]
 fn the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose() {
-    let carved = support::carved_world();
     let poses: [(
         &str,
         vxe_world::World,
@@ -169,7 +211,7 @@ fn the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose() {
     ); 4] = [
         (
             "primary",
-            carved,
+            support::carved_world(),
             scene_camera(),
             LightParams::at_eye(),
             Default::default(),
@@ -197,28 +239,7 @@ fn the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose() {
         ),
     ];
     for (name, world, camera, light, lod) in poses {
-        let Some((device, queue, gpu)) = mirrored(&world) else {
-            return;
-        };
-        let mut plain = Frame::new(&device, WIDTH, HEIGHT);
-        let mut toned = Frame::new(&device, WIDTH, HEIGHT);
-        toned.set_upscaler_kind(&device, fsr2_kind());
-        toned.fsr2_mut().expect("FSR mode").set_bypass(true);
-        for f in [&mut plain, &mut toned] {
-            f.set_resolution(&device, vxe_render::LightingResolution::Full);
-            f.set_lod(lod);
-            f.render(&device, &queue, &gpu, &camera, &light);
-        }
-        let want = readback::read_rgba8(&device, &queue, plain.target());
-        let got = readback::read_rgba8(&device, &queue, toned.target());
-        let differing = want.iter().zip(&got).filter(|(a, b)| a != b).count();
-        let lit = want.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
-        println!("{name}: {differing} bytes differ, {lit} lit pixels");
-        assert!(lit > 0, "{name} renders something");
-        assert_eq!(
-            differing, 0,
-            "{name}: the tone pass differs from the composite"
-        );
+        assert_the_tone_pass_is_lossless(name, &world, &camera, &light, lod);
     }
 }
 

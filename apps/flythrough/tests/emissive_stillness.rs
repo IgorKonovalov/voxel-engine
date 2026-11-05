@@ -7,9 +7,16 @@ mod support;
 use support::stillness::*;
 use vxe_render::{HistoryKill, Lighting};
 
-/// The harness sees patches where they exist: none with the emissive candidates off at either
-/// pose, at least 100 a step at the patch pose with the table's read off, where every hit blends
-/// its own emissive sample at the lamp's rate.
+/// The off frame at which `the_vein_wall_patches_are_counted` halves the emission, inside
+/// patch step 5 (off frames 270 to 300).
+const HALVED_AT: usize = 285;
+
+/// The harness sees light that really moves, on the step where it moves, and nothing where
+/// nothing moves. With the emissive candidates off no step at either pose reads a patch. At the
+/// patch pose, halving every emissive material's emission at off frame `HALVED_AT` moves an
+/// emissive-lit tile by 1 log2 against the patch threshold of `log2 1.1`: steps 0 to 4, before
+/// the change, read at most 8 patches each and step 5, which holds it, at least 250. The steps
+/// after it are the cleared table refilling and carry no bar.
 #[test]
 fn the_vein_wall_patches_are_counted() {
     let Some(level) = vein_level() else {
@@ -33,118 +40,61 @@ fn the_vein_wall_patches_are_counted() {
             off.composite.patches
         );
     }
-    let short = run(
-        &level,
-        &PATCH_POSE,
-        Lighting {
-            table_read: false,
-            ..Lighting::default()
-        },
-        SIZE,
-    );
-    short.print("patch table read off");
+    let halved = run_halved_at(&level, &PATCH_POSE, Lighting::default(), SIZE, HALVED_AT);
+    halved.print("patch halved");
+    let patches = &halved.composite.patches;
     assert!(
-        short.composite.mean_patches() >= 100.0,
-        "the fallback's blend reads at least 100 patches a step at the patch pose: {:.2}",
-        short.composite.mean_patches()
+        patches[..5].iter().all(|&p| p <= 8),
+        "before the emission halves, no step may read over 8 patches: {patches:?}"
+    );
+    assert!(
+        patches[5] >= 250,
+        "the step that halves the emission reads at least 250 patches: {patches:?}"
     );
 }
 
-/// The probe gather's bars at one pose: its mean and largest patches a step, its sudden steps
-/// per second and its tile flicker.
-struct GatherBar {
-    mean: f64,
-    max: usize,
-    sudden_per_s: f64,
-    flicker: f64,
-}
-
-/// Static ore light holds still with the lamp off at the defaults, at both poses. The light the
-/// gather does not explain (`Direct`) averages at most 3 patches a step (1 % of the patch pose's
-/// 312 full tiles), none over 8, and at most 1 sudden step a second. The composite's tile
-/// flicker is at most `sqrt(0.002^2 + G^2)` and its display luma's at most
-/// `0.06 sqrt(1 + (G / 0.002)^2)` /255, `G` the gather's tile flicker in the same run: 0.002
-/// and 0.06/255 for the direct light, the gather's own noise added in quadrature. The gather
-/// itself stays within its bars: at the patch pose its readings with the probe slices spread
-/// by a hash (8.15 a step, 44 at most, 21.0 sudden steps a second) plus 10 %, at `VEIN_POSE`
-/// 1, 3 and 1; at both its flicker no higher than with the slices by `slot mod slices`
-/// (0.00430 and 0.00341). The patch pose's composite stays under its 77.10 patches a step at
-/// a 32-frame history.
+/// Static ore light holds still with the lamp off at the defaults, at both poses. The composite
+/// averages at most 3 patches a step (1 % of the patch pose's 309 full tiles), none over 8, and
+/// at most 1 sudden step a second, with a tile flicker of at most 0.002 and a display luma
+/// flicker of at most 0.06/255.
 #[test]
 fn the_vein_wall_holds_still_with_the_lamp_off() {
     let Some(level) = vein_level() else {
         return;
     };
-    for (pose, bar) in [
-        (
-            PATCH_POSE,
-            GatherBar {
-                mean: 9.0,
-                max: 48,
-                sudden_per_s: 23.0,
-                flicker: 0.00430,
-            },
-        ),
-        (
-            VEIN_POSE,
-            GatherBar {
-                mean: 1.0,
-                max: 3,
-                sudden_per_s: 1.0,
-                flicker: 0.00341,
-            },
-        ),
-    ] {
+    for pose in [PATCH_POSE, VEIN_POSE] {
         let r = run(&level, &pose, Lighting::default(), SIZE);
         r.print(&format!("{} default", pose.name));
         let name = pose.name;
-        let d = &r.direct;
-        assert!(
-            d.mean_patches() <= 3.0 && d.max_patches() <= 8,
-            "{name}: direct-attributed patches {}",
-            d.line()
-        );
-        assert!(
-            d.sudden_per_s <= 1.0,
-            "{name}: direct-attributed sudden steps {}",
-            d.line()
-        );
-        let g = r.gather.flicker;
-        let flicker = (0.002f64.powi(2) + g * g).sqrt();
-        let luma = 0.06 * (1.0 + (g / 0.002).powi(2)).sqrt();
         let c = &r.composite;
         assert!(
-            c.flicker <= flicker,
-            "{name}: composite flicker {:.5} over {flicker:.5}",
+            c.mean_patches() <= 3.0 && c.max_patches() <= 8,
+            "{name}: composite patches {}",
+            c.line()
+        );
+        assert!(
+            c.sudden_per_s <= 1.0,
+            "{name}: composite sudden steps {}",
+            c.line()
+        );
+        assert!(
+            c.flicker <= 0.002,
+            "{name}: composite flicker {:.5} over 0.002",
             c.flicker
         );
         let l = c.luma_flicker.expect("the composite reads its luma");
-        assert!(l <= luma, "{name}: luma flicker {l:.3} over {luma:.3}");
-        let ga = &r.gather;
-        assert!(
-            ga.mean_patches() <= bar.mean
-                && ga.max_patches() <= bar.max
-                && ga.sudden_per_s <= bar.sudden_per_s
-                && ga.flicker <= bar.flicker,
-            "{name}: gather {}",
-            ga.line()
-        );
-        if name == PATCH_POSE.name {
-            assert!(c.mean_patches() <= 77.10, "{name}: composite {}", c.line());
-        }
+        assert!(l <= 0.06, "{name}: luma flicker {l:.3} over 0.06");
     }
 }
 
 /// One variant of the sweep: a `;`-separated list in `STILL_SWEEP`, each a `,`-separated list
 /// of `key=value`: `pose` (patch, vein or both; default both), `cand` (candidates), `read`
 /// (the table's read, on or off), `kill` (edits or gradient), `size` (`WxH`), `probe_rays` and `probe_slices` (the probe
-/// volume's rays per update and slices), `trace` (on: the gather's per-frame trace, printed
-/// around each gather step over 8 patches). Unset keys keep `Lighting::default()`.
-fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2], bool) {
+/// volume's rays per update and slices). Unset keys keep `Lighting::default()`.
+fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2]) {
     let mut lit = Lighting::default();
     let mut poses = vec![PATCH_POSE, VEIN_POSE];
     let mut size = SIZE;
-    let mut trace = false;
     for kv in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let (k, v) = kv.split_once('=').expect("key=value");
         match k {
@@ -160,7 +110,6 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2], bool) {
             "read" => lit.table_read = v == "on",
             "probe_rays" => lit.probe_rays = v.parse().expect("probe_rays"),
             "probe_slices" => lit.probe_slices = v.parse().expect("probe_slices"),
-            "trace" => trace = v == "on",
             "size" => {
                 let (w, h) = v.split_once('x').expect("WxH");
                 size = [w.parse().expect("W"), h.parse().expect("H")];
@@ -168,7 +117,7 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2], bool) {
             _ => panic!("unknown sweep key {k}"),
         }
     }
-    (poses, lit, size, trace)
+    (poses, lit, size)
 }
 
 /// The statistics of each variant in `STILL_SWEEP` (see `variant`), printed as `reading:`
@@ -181,7 +130,7 @@ fn emissive_patch_sweep() {
     };
     let specs = std::env::var("STILL_SWEEP").unwrap_or_else(|_| ";pose=patch,size=384x216".into());
     for spec in specs.split(';') {
-        let (poses, lit, size, traced) = variant(spec);
+        let (poses, lit, size) = variant(spec);
         for pose in poses {
             let name = format!(
                 "{} [{spec}] {}x{} cand {} table read {} rays {} slices {}",
@@ -193,13 +142,7 @@ fn emissive_patch_sweep() {
                 lit.rays(),
                 lit.slices()
             );
-            if traced {
-                let (r, trace) = run_traced(&level, &pose, lit, size);
-                r.print(&name);
-                print_trace(&name, &r.gather, &trace, 8);
-            } else {
-                run(&level, &pose, lit, size).print(&name);
-            }
+            run(&level, &pose, lit, size).print(&name);
         }
     }
 }
