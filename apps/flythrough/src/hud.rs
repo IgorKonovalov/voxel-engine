@@ -419,6 +419,8 @@ pub struct LightingRow {
     pub light_samples: u64,
     pub live_probes: Option<u32>,
     pub table: Option<vxe_render::TableStats>,
+    /// The table's age-out at the last sample: the row's `evicted <cells> in <passes>`.
+    pub age: Option<vxe_render::AgeStats>,
     /// The preload's counts at the last sample (`None` while it is off).
     pub preload: Option<vxe_render::marcher::PreloadStats>,
     pub modes: String,
@@ -601,6 +603,10 @@ impl HudStats {
             let table = l.table.map_or_else(String::new, |t| {
                 format!(", table {} {} {}", t.cells, t.occupied, t.misses)
             });
+            let table = match l.age.filter(|_| l.table.is_some()) {
+                Some(a) => format!("{table}, evicted {} in {}", a.evicted, a.passes),
+                None => table,
+            };
             let table = match l.preload {
                 Some(p) => format!(
                     "{table}, preload {} bricks {} listed, claimed r0 {} lit {} unlit, to R {}, refused load {} miss {} unlit {}, {} samples",
@@ -1124,6 +1130,11 @@ mod tests {
                 occupied: 59_724,
                 misses: 3,
             }),
+            age: Some(vxe_render::AgeStats {
+                passes: 2,
+                evicted: 4_096,
+                ..Default::default()
+            }),
             preload: Some(vxe_render::marcher::PreloadStats {
                 edit_bricks: 2,
                 visited: 128,
@@ -1148,7 +1159,7 @@ mod tests {
         );
         assert_eq!(
             lines[4],
-            "lights 18522 samples, 9876 probes live, table 1048576 59724 3, preload 130 bricks 40 listed, claimed r0 3 lit 2 unlit, to R 7, refused load 1 miss 0 unlit 5, 20000 samples; lighting full"
+            "lights 18522 samples, 9876 probes live, table 1048576 59724 3, evicted 4096 in 2, preload 130 bricks 40 listed, claimed r0 3 lit 2 unlit, to R 7, refused load 1 miss 0 unlit 5, 20000 samples; lighting full"
         );
         assert_eq!(colours[3], HudColour::White);
         s.lighting.as_mut().unwrap().passes[5].1 = 1.25;
@@ -1187,6 +1198,7 @@ mod tests {
             light_samples: 0,
             live_probes: None,
             table: None,
+            age: None,
             preload: None,
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
@@ -1256,6 +1268,7 @@ mod tests {
             light_samples: 0,
             live_probes: None,
             table: None,
+            age: None,
             preload: None,
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
@@ -1571,7 +1584,7 @@ impl Modes {
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
-    /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to
+    /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 2^22 probes 16, fill 8
     /// 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +1.53 EV` (the probe rays per update,
     /// the share of probes refreshed a frame, while the lamp's bounce is on the voxels between
     /// probes, the emissive table's cells, the reopened fill's samples a frame and the count it
@@ -1590,7 +1603,7 @@ impl Modes {
             String::new()
         };
         format!(
-            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {}, fill {}, {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {} probes {}, fill {}, {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.history.name(),
@@ -1600,7 +1613,8 @@ impl Modes {
             l.slices(),
             on(l.filter),
             on(self.pulse),
-            l.cells(),
+            table_size(l.cells()),
+            vxe_render::marcher::CACHE_PROBES,
             if l.fill_samples == 0 {
                 "off".to_owned()
             } else {
@@ -1666,6 +1680,11 @@ fn wrap(parts: &[&str]) -> Vec<String> {
     rows
 }
 
+/// The table's cells in the banner's words: `2^22`.
+fn table_size(cells: u32) -> String {
+    format!("2^{}", cells.trailing_zeros())
+}
+
 #[cfg(test)]
 mod mode_tests {
     use super::*;
@@ -1681,7 +1700,7 @@ mod mode_tests {
             0.0,
         );
         let banner = m.banner(0.0).expect("the banner shows at the start");
-        assert!(banner.contains("table 1048576"), "{banner}");
+        assert!(banner.contains("table 2^22 probes 16"), "{banner}");
         assert!(banner.contains("fill 8 to 256"), "{banner}");
         let small = Modes::new(
             vxe_render::Lighting {
@@ -1691,7 +1710,11 @@ mod mode_tests {
             vxe_render::LightingResolution::default(),
             0.0,
         );
-        assert!(small.line().contains("table 64,"), "{}", small.line());
+        assert!(
+            small.line().contains("table 2^6 probes 16,"),
+            "{}",
+            small.line()
+        );
         let off = Modes::new(
             vxe_render::Lighting {
                 fill_samples: 0,
@@ -1748,7 +1771,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off, table 1048576\nfill 8 to 256\npreload R 64 r0 32 B 128 C 256\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off\ntable 2^22 probes 16, fill 8 to 256\npreload R 64 r0 32 B 128 C 256\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

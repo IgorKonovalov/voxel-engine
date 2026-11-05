@@ -1662,7 +1662,8 @@ mod light_strip {
 
     fn table_words(rig: &Rig, frame: &Frame) -> Vec<u32> {
         let t = frame.emissive_table();
-        let b = readback::read_buffer(&rig.device, &rig.queue, t, 0, t.size());
+        let bytes = u64::from(frame.table_cells()) * vxe_render::marcher::CACHE_CELL_WORDS * 4;
+        let b = readback::read_buffer(&rig.device, &rig.queue, t, 0, bytes);
         b.chunks_exact(4)
             .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
             .collect()
@@ -2115,6 +2116,11 @@ mod light_strip {
                 .collect::<Vec<u8>>(),
         )
         .expect("write the keys");
+        let age = frame.read_age_stats(&rig.device, &rig.queue);
+        println!(
+            "light table {pose}: evicted {} in {} passes, swept {}",
+            age.evicted, age.passes, age.swept
+        );
         println!(
             "light table {pose}: peak occupied {peak} at frame {peak_at}, misses peak {peak_miss} at frame {miss_at}, misses summed {}; claimed r0 lit {} unlit {} to R {}, refused load {} miss {} unlit {} summed; {} keys at the end to {}",
             totals[0],

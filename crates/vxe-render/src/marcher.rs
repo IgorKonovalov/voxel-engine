@@ -22,6 +22,7 @@ pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
 /// The sharpening pass (RCAS), compiled after [`MARCH_WGSL`].
 pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
 const CACHE_CLEAR_WGSL: &str = include_str!("shaders/cache_clear.wgsl");
+const CACHE_CELL_WGSL: &str = include_str!("shaders/cache_cell.wgsl");
 const CACHE_SWEEP_WGSL: &str = include_str!("shaders/cache_sweep.wgsl");
 const CACHE_FILL_WGSL: &str = include_str!("shaders/cache_fill.wgsl");
 
@@ -778,7 +779,7 @@ pub const EVICT_LOAD_SIXTEENTHS: u32 = 3;
 pub const EVICT_STEP_DIVISOR: u32 = 32;
 /// Cells the table's walk (the chunk sweep and the age-out) visits a frame at most.
 pub const TABLE_WALK_SLICE: u32 = 1 << 20;
-/// The walk's state buffer (`Walk` in `cache_sweep.wgsl`): 20 words.
+/// The walk's state buffer (`TableWalk` in `cache_sweep.wgsl`): 20 words.
 const WALK_STATE_BYTES: u64 = 80;
 /// The fixed point of the sums.
 pub const CACHE_Q: f32 = 32768.0;
@@ -1201,8 +1202,8 @@ pub struct Lighting {
     pub table_read: bool,
     /// The table's age-out (default on): when the occupied cells cross 3/16 of the table
     /// upward, again once they have grown by 1/32 of it since the last pass while still over,
-    /// and again [`Lighting::table_age`] frames after a pass that freed a cell and left them
-    /// over, a walk frees every cell whose voxel lies beyond the preload's radius of the eye
+    /// and again [`Lighting::table_age`] frames after a pass that left them over having freed a
+    /// cell or started on their growth, a walk frees every cell whose voxel lies beyond the preload's radius of the eye
     /// and that no lighting pixel nor a seen cell's blend has read in its age. Off is for
     /// tests that count what the table holds without it.
     pub table_age_out: bool,
@@ -1560,18 +1561,21 @@ pub struct Frame {
     cache_clear_layout: wgpu::BindGroupLayout,
     cache_sweep: wgpu::ComputePipeline,
     cache_sweep_layout: wgpu::BindGroupLayout,
-    /// The walk's args pass (`walk_args`), its layout shared with the walk.
+    /// The walk's args pass (`walk_args`, on `cache_sweep_layout`) and the slice's layout.
     cache_walk_args: wgpu::ComputePipeline,
-    /// The walk's uniform (`Sweep` in `cache_sweep.wgsl`), its state across frames (`Walk`,
+    cache_walk_layout: wgpu::BindGroupLayout,
+    /// The walk's uniform (`Sweep` in `cache_sweep.wgsl`), its state across frames (`TableWalk`,
     /// read back by [`Frame::read_age_stats`]) and its slice's indirect dispatch.
     sweep_params: wgpu::Buffer,
     walk_state: wgpu::Buffer,
     walk_dispatch: wgpu::Buffer,
+    /// The table's cells as allocated ([`Frame::table_cells`]).
+    table_cells: u32,
     /// The chunk sweeps requested: the walk takes a new one when it moves.
     sweep_requests: std::sync::atomic::AtomicU32,
     /// The table's edit-box reset by cells (`clear_box_cells`), for a frame whose boxes' voxel
-    /// faces outnumber the cells.
-    cache_clear_cells: wgpu::ComputePipeline,
+    /// faces outnumber the cells; built on its first use.
+    cache_clear_cells: std::sync::OnceLock<wgpu::ComputePipeline>,
     /// The camera's chunk at the last encode, `None` before the first: the sweep runs when it
     /// changes.
     sweep_chunk: std::sync::Mutex<Option<[i32; 3]>>,
@@ -1630,6 +1634,16 @@ fn table_buffer(device: &wgpu::Device, cells: u32, list: u32) -> wgpu::Buffer {
             | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
+}
+
+/// The cells a device binds: `want`, halved until the table with its `list` slots fits the
+/// device's storage binding size (lavapipe's is 128 MiB, under the default table).
+pub fn table_cells_within(limit: u64, want: u32, list: u32) -> u32 {
+    let mut cells = want;
+    while cells > 64 && table_bytes(cells, list) > limit {
+        cells /= 2;
+    }
+    cells
 }
 
 /// [`table_buffer`]'s bytes.
@@ -2077,13 +2091,6 @@ impl Frame {
             "clear_cells",
             &[Io::Uniform, Io::Storage],
         );
-        let cache_clear_cells = compute_pipeline(
-            device,
-            "cache clear by cells",
-            format!("{MARCH_WGSL}\n{CACHE_CLEAR_WGSL}"),
-            &[Some(&world_layout), None, Some(&cache_clear_layout)],
-            "clear_box_cells",
-        );
         // The walk binds no world: its table, counters, state and dispatch are four of the
         // stage's storage buffers.
         let cache_sweep_layout = io_layout(
@@ -2097,7 +2104,13 @@ impl Frame {
                 Io::Storage,
             ],
         );
-        let walk_source = format!("{MARCH_WGSL}\n{CACHE_SWEEP_WGSL}");
+        // The slice reads no dispatch words: the buffer is its indirect argument there.
+        let cache_walk_layout = io_layout(
+            device,
+            "cache walk slice",
+            &[Io::Uniform, Io::Storage, Io::Storage, Io::Storage],
+        );
+        let walk_source = format!("{CACHE_CELL_WGSL}\n{CACHE_SWEEP_WGSL}");
         let cache_walk_args = compute_pipeline(
             device,
             "cache walk args",
@@ -2109,7 +2122,7 @@ impl Frame {
             device,
             "cache walk",
             walk_source,
-            &[None, None, Some(&cache_sweep_layout)],
+            &[None, None, Some(&cache_walk_layout)],
             "walk_cells",
         );
         let walk_state = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2135,7 +2148,12 @@ impl Frame {
             true,
         );
         let [lw, lh] = targets.light_size();
-        let cache = table_buffer(device, DEFAULT_TABLE_CELLS, lw * lh);
+        let table_cells = table_cells_within(
+            device.limits().max_storage_buffer_binding_size,
+            DEFAULT_TABLE_CELLS,
+            lw * lh,
+        );
+        let cache = table_buffer(device, table_cells, lw * lh);
         let cache_stats = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("emissive table counters"),
             size: CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_BYTES,
@@ -2467,6 +2485,7 @@ impl Frame {
             composite_capture: None,
             probes: std::sync::OnceLock::new(),
             cache,
+            table_cells,
             cache_stats,
             // The new table's words are zero on creation; clear them once anyway with the
             // counters.
@@ -2478,11 +2497,12 @@ impl Frame {
             cache_sweep,
             cache_sweep_layout,
             cache_walk_args,
+            cache_walk_layout,
             sweep_params,
             walk_state,
             walk_dispatch,
             sweep_requests: std::sync::atomic::AtomicU32::new(0),
-            cache_clear_cells,
+            cache_clear_cells: std::sync::OnceLock::new(),
             sweep_chunk: std::sync::Mutex::new(None),
             table_dispatch_cap: MAX_DISPATCH_GROUPS,
             guard_forced: false,
@@ -2853,10 +2873,10 @@ impl Frame {
         let bytes = crate::readback::read_buffer(device, queue, &self.walk_state, 0, 64);
         let w: &[u32] = bytemuck::cast_slice(&bytes);
         AgeStats {
-            passes: w[10],
-            evicted: w[12],
-            evicted_frame: w[13],
-            swept: w[14],
+            passes: w[11],
+            evicted: w[13],
+            evicted_frame: w[14],
+            swept: w[15],
             age: w[6],
             walk_left: w[1],
         }
@@ -2888,6 +2908,23 @@ impl Frame {
             [w[4], w[5], w[6]],
             [f32::from_bits(w[3]), f32::from_bits(w[7])],
         )
+    }
+
+    /// The edit-box reset by cells (`clear_box_cells`), built on its first use.
+    fn cache_clear_cells_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
+        self.cache_clear_cells.get_or_init(|| {
+            compute_pipeline(
+                device,
+                "cache clear by cells",
+                format!("{MARCH_WGSL}\n{CACHE_CLEAR_WGSL}"),
+                &[
+                    Some(&self.world_layout),
+                    None,
+                    Some(&self.cache_clear_layout),
+                ],
+                "clear_box_cells",
+            )
+        })
     }
 
     /// The light pass's pipeline without the preload (`shade`), built on its first use.
@@ -3065,18 +3102,24 @@ impl Frame {
         self.rebuild_probes();
     }
 
-    /// The table's cells as allocated: [`Lighting::cells`].
+    /// The table's cells as allocated: [`Lighting::cells`], or fewer where the device's storage
+    /// binding cannot hold them ([`table_cells_within`]).
     pub fn table_cells(&self) -> u32 {
-        self.lighting.cells()
+        self.table_cells
     }
 
     /// Rebuilds the emissive table empty where its cells or the lighting grid's pixels (the
     /// blend list's slots, one a lighting pixel) changed.
     fn fit_table(&mut self) {
         let [w, h] = self.targets.light_size();
-        let bytes = table_bytes(self.lighting.cells(), w * h);
-        if bytes != self.cache.size() {
-            self.cache = table_buffer(&self.device, self.lighting.cells(), w * h);
+        let cells = table_cells_within(
+            self.device.limits().max_storage_buffer_binding_size,
+            self.lighting.cells(),
+            w * h,
+        );
+        if cells != self.table_cells || table_bytes(cells, w * h) != self.cache.size() {
+            self.table_cells = cells;
+            self.cache = table_buffer(&self.device, cells, w * h);
             self.cache_clear_requested
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -4073,7 +4116,7 @@ impl Frame {
         if let Some(b) = &cache_clear_bind {
             gradient.push(if clear_by_cells {
                 frame_pass(
-                    &self.cache_clear_cells,
+                    self.cache_clear_cells_pipeline(device),
                     b,
                     2,
                     dispatch_rows(cells.div_ceil(64), self.table_dispatch_cap),
@@ -4103,11 +4146,21 @@ impl Frame {
                 Res::Buf(&self.walk_dispatch),
             ],
         );
+        let walk_slice_bind = bind_io(
+            device,
+            &self.cache_walk_layout,
+            &[
+                Res::Buf(&self.sweep_params),
+                Res::Buf(cache_table),
+                Res::Buf(&self.cache_stats),
+                Res::Buf(&self.walk_state),
+            ],
+        );
         {
             let mut a = frame_pass(&self.cache_walk_args, &walk_bind, 2, [1, 1]);
             a.groups[0] = None;
             gradient.push(a);
-            let mut w = frame_pass(&self.cache_sweep, &walk_bind, 2, [0, 0]);
+            let mut w = frame_pass(&self.cache_sweep, &walk_slice_bind, 2, [0, 0]);
             w.groups[0] = None;
             w.indirect = Some((&self.walk_dispatch, 0));
             gradient.push(w);

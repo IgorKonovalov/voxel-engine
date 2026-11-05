@@ -29,8 +29,8 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    AgeStats, CrackShares, DEFAULT_TABLE_CELLS, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting,
-    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    AgeStats, CrackShares, DEFAULT_TABLE_CELLS, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill,
+    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
     NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning, TableStats, ToneMap, ViewMode,
     jitter_at,
 };
@@ -40,7 +40,11 @@ pub use {glam, wgpu};
 
 /// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
 /// after; for headless validation.
-pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
+pub const MARCH_WGSL: &str = concat!(
+    include_str!("shaders/march.wgsl"),
+    "\n",
+    include_str!("shaders/cache_cell.wgsl")
+);
 /// The light pass, compiled after [`MARCH_WGSL`].
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 /// The gradient pass, compiled after [`MARCH_WGSL`] and [`LIGHT_WGSL`].
@@ -116,9 +120,7 @@ pub fn limits_within(offered: &wgpu::Limits, pool_bytes: u64) -> Result<wgpu::Li
     l.max_storage_buffer_binding_size = offered
         .max_storage_buffer_binding_size
         .min(want.max(l.max_storage_buffer_binding_size));
-    l.max_buffer_size = offered
-        .max_buffer_size
-        .min(want.max(l.max_buffer_size));
+    l.max_buffer_size = offered.max_buffer_size.min(want.max(l.max_buffer_size));
     l.max_storage_buffers_per_shader_stage =
         needed.min(offered.max_storage_buffers_per_shader_stage);
     if offered.max_storage_buffers_per_shader_stage < STORAGE_BUFFERS_NEEDED {

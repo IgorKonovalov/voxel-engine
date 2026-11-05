@@ -843,9 +843,9 @@ fn the_probe_count_holds_a_windows_keys() {
 /// face toward air within a 128-voxel cube around `PATCH_POSE` and around `VEIN_POSE` on the
 /// level at seed 1 (`air_faces`), inserted in key order by linear probing through
 /// `marcher::cache_slot` at `CACHE_PROBES`: at `DEFAULT_TABLE_CELLS` no key lacks a slot, and
-/// at the power of two nearest a load of 0.5 the share of keys left without a slot is at most
-/// twice a seeded uniform assignment's of the same keys at that size (`uniform_slot`, seed
-/// 0x0057); and the window's key sets find a slot (`the_probe_count_holds_a_windows_keys`).
+/// at a load of 0.9 of the largest power of two that takes it, where 16 probes first leave keys
+/// out, the share of keys left without a slot is at most twice a seeded uniform assignment's of
+/// the same keys at that size (`uniform_slot`, seed 0x0057); and the window's key sets find a slot (`the_probe_count_holds_a_windows_keys`).
 /// No GPU.
 #[test]
 fn the_table_hash_spreads_a_levels_keys() {
@@ -864,23 +864,26 @@ fn the_table_hash_spreads_a_levels_keys() {
         let keys = air_faces(&world, pose.position, 64);
         let n = keys.len();
         assert!(n > 10_000, "{}: {n} keys", pose.name);
-        let bases = |cells: u32| -> Vec<u32> {
-            keys.iter().map(|&(v, f)| cache_slot(v, f, cells)).collect()
+        let bases = |cells: u32, n: usize| -> Vec<u32> {
+            keys[..n]
+                .iter()
+                .map(|&(v, f)| cache_slot(v, f, cells))
+                .collect()
         };
-        let (full_missed, ..) = probe_insert(&bases(DEFAULT_TABLE_CELLS), DEFAULT_TABLE_CELLS);
-        // The power of two nearest 2 n, in log2.
-        let half_cells = 1u32 << ((2.0 * n as f64).log2().round() as u32);
-        let (hash_missed, _, hmean, hmax) = probe_insert(&bases(half_cells), half_cells);
-        let ubases: Vec<u32> = (0..n as u64)
-            .map(|i| uniform_slot(0x0057, i, half_cells))
+        let (full_missed, ..) = probe_insert(&bases(DEFAULT_TABLE_CELLS, n), DEFAULT_TABLE_CELLS);
+        // The largest power of two whose 0.9 the keys fill, and the keys that fill it.
+        let dense_cells = 1u32 << ((n as f64 / 0.9).log2().floor() as u32);
+        let dense = (f64::from(dense_cells) * 0.9) as usize;
+        let (hash_missed, _, hmean, hmax) = probe_insert(&bases(dense_cells, dense), dense_cells);
+        let ubases: Vec<u32> = (0..dense as u64)
+            .map(|i| uniform_slot(0x0057, i, dense_cells))
             .collect();
-        let (uni_missed, _, umean, umax) = probe_insert(&ubases, half_cells);
+        let (uni_missed, _, umean, umax) = probe_insert(&ubases, dense_cells);
         println!(
-            "reading: {} keys {n}; at {DEFAULT_TABLE_CELLS} cells no slot {full_missed}; at {half_cells} cells (load {:.3}) no slot: hash {hash_missed} ({:.5}, runs mean {hmean:.3} max {hmax}), uniform {uni_missed} ({:.5}, runs mean {umean:.3} max {umax})",
+            "reading: {} keys {n}; at {DEFAULT_TABLE_CELLS} cells no slot {full_missed}; {dense} keys at {dense_cells} cells no slot: hash {hash_missed} ({:.5}, runs mean {hmean:.3} max {hmax}), uniform {uni_missed} ({:.5}, runs mean {umean:.3} max {umax})",
             pose.name,
-            n as f64 / f64::from(half_cells),
-            hash_missed as f64 / n as f64,
-            uni_missed as f64 / n as f64
+            hash_missed as f64 / dense as f64,
+            uni_missed as f64 / dense as f64
         );
         assert_eq!(full_missed, 0, "{}: keys without a slot", pose.name);
         assert!(
@@ -2680,6 +2683,11 @@ fn the_sweep_clears_cells_beyond_the_light_radius() {
         return;
     };
     rig.preload_off();
+    // The walk visits a table of 2^20 cells in one frame.
+    rig.frame.set_lighting(Lighting {
+        table_cells: vxe_render::marcher::TABLE_WALK_SLICE,
+        ..rig.frame.lighting()
+    });
     rig.step(4);
     let before = cache_words(&rig.level, &rig.frame);
     let keys: Vec<FaceKey> = rig.keys().into_keys().collect();
@@ -2717,6 +2725,225 @@ fn the_sweep_clears_cells_beyond_the_light_radius() {
     assert!(
         far > 0 && near > 0,
         "{far} faces beyond the radius, {near} within"
+    );
+}
+
+/// The voxel and face of a cell's key words (`cache_key_voxel` in `march.wgsl`).
+fn cell_key(cell: &[u32]) -> FaceKey {
+    let sign = |c: u32| ((c << 12) as i32) >> 12;
+    let (x, y) = (cell[0] & 0xF_FFFF, cell[0] >> 20 | (cell[1] & 0xFF) << 12);
+    (
+        [sign(x), sign(y), sign((cell[1] >> 8) & 0xF_FFFF)],
+        ((cell[1] >> 28) & 7) as u8,
+    )
+}
+
+/// The keys of every occupied cell in the table's words, duplicates kept.
+fn cell_keys(words: &[u32]) -> Vec<FaceKey> {
+    words
+        .chunks_exact(vxe_render::marcher::CACHE_CELL_WORDS as usize)
+        .filter(|c| c[1] != 0)
+        .map(cell_key)
+        .collect()
+}
+
+/// The age-out's eye, its radius and its table (test sizes).
+const AGE_EYE: [f32; 3] = [64.5, 64.5, 64.5];
+const AGE_R: i32 = 16;
+const AGE_CELLS: u32 = 16_384;
+
+/// Whether a voxel's centre lies within the age-out's radius of its eye.
+fn age_near(v: [i32; 3]) -> bool {
+    let d: f32 = (0..3)
+        .map(|a| (v[a] as f32 + 0.5 - AGE_EYE[a]).powi(2))
+        .sum();
+    d <= (AGE_R * AGE_R) as f32
+}
+
+/// The age-out's box under its rig, at the eye looking at the sky: walls at x 105 and x 22, a
+/// floor at z 22, a 6-voxel rock block within `AGE_R` beside the views and an ore plate above
+/// them; 192 x 108, full-resolution lighting, cap 64, `AGE_CELLS` cells, age 8 down to 4.
+fn age_rig(age_out: bool) -> Option<CacheBox> {
+    use vxe_world::*;
+    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(AIR),
+        &table,
+    );
+    let fill = |min: [i64; 3], max: [i64; 3], m| {
+        world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v| v * FIXED_ONE)),
+                Fixed3(max.map(|v| v * FIXED_ONE)),
+                Mode::Fill(m),
+            ))
+            .expect("the box is resident");
+    };
+    fill([105, 0, 0], [108, 128, 128], flythrough::cave::ROCK);
+    fill([20, 0, 0], [23, 128, 128], flythrough::cave::ROCK);
+    fill([0, 0, 20], [128, 128, 23], flythrough::cave::ROCK);
+    fill([64, 73, 58], [70, 79, 64], flythrough::cave::ROCK);
+    fill([40, 40, 118], [50, 50, 120], flythrough::cave::ORE);
+    let mut rig = cache_box_rig_on(world, age_view(89.0, 0.0), 64, [192, 108], None)?;
+    rig.frame.set_lighting(Lighting {
+        table_cells: AGE_CELLS,
+        table_age_out: age_out,
+        table_age: 8,
+        table_age_min: 4,
+        preload_radius: AGE_R as u32,
+        preload_claim_radius: AGE_R as u32,
+        ..rig.frame.lighting()
+    });
+    Some(rig)
+}
+
+/// The age-out's eye at `pitch` and `yaw`, in degrees.
+fn age_view(pitch: f32, yaw: f32) -> Camera {
+    Camera {
+        position: AGE_EYE.into(),
+        yaw: yaw.to_radians(),
+        pitch: pitch.to_radians(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The three views the age-out's test holds in turn: x 105's wall, x 22's and the floor.
+const AGE_VIEWS: [(f32, f32); 3] = [(0.0, 0.0), (0.0, 180.0), (-89.0, 0.0)];
+
+/// The age-out (ADR-0043's table): three views of about 6000 faces each beyond `AGE_R`, held 32
+/// frames in turn in `AGE_CELLS` cells, after 16 frames of looking at the sky in which the
+/// preload claims the block's faces within `AGE_R`: after the third view the table holds only
+/// that view's cells, those within `AGE_R` and those a kernel of its cells reads (two faces
+/// along the plane, one across it); every cell within `AGE_R` keeps its count; no key has two
+/// cells; and with the age-out off the third view does not fit and counts misses. The second
+/// view's cells are the re-arm's: one frame old at the third view's first pass, they go in the
+/// pass `age` frames after it.
+#[test]
+fn an_unseen_far_cell_ages_out_and_a_near_one_stays() {
+    let Some(mut rig) = age_rig(true) else {
+        return;
+    };
+    rig.step(16);
+    let near: std::collections::HashMap<FaceKey, u32> = {
+        let words = cache_words(&rig.level, &rig.frame);
+        cell_keys(&words)
+            .into_iter()
+            .filter(|k| age_near(k.0))
+            .map(|k| (k, cache_count(&words, k)))
+            .collect()
+    };
+    let mut faces = Vec::new();
+    let mut view3 = std::collections::HashSet::new();
+    for (pitch, yaw) in AGE_VIEWS {
+        rig.camera = age_view(pitch, yaw);
+        rig.step(32);
+        let keys = rig.keys();
+        faces.push(keys.keys().filter(|k| !age_near(k.0)).count());
+        view3 = keys.into_keys().collect();
+    }
+    let words = cache_words(&rig.level, &rig.frame);
+    let cells = cell_keys(&words);
+    let unique: std::collections::HashSet<FaceKey> = cells.iter().copied().collect();
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let age = rig.frame.read_age_stats(d, q);
+    let kernel = |k: &FaceKey| {
+        let axis = usize::from(k.1 / 2);
+        view3.iter().any(|o| {
+            o.1 == k.1 && (0..3).all(|a| (k.0[a] - o.0[a]).abs() <= if a == axis { 1 } else { 2 })
+        })
+    };
+    let beyond: Vec<&FaceKey> = unique
+        .iter()
+        .filter(|k| !view3.contains(k) && !age_near(k.0) && !kernel(k))
+        .collect();
+    println!(
+        "age-out: faces beyond R by view {faces:?}, within R {} (seen by preload {}), view 3 {}, occupied {}, unexplained {}, {age:?}",
+        unique.iter().filter(|k| age_near(k.0)).count(),
+        near.len(),
+        view3.len(),
+        cells.len(),
+        beyond.len(),
+    );
+    assert!(
+        faces.iter().all(|&n| (4000..8000).contains(&n)),
+        "about 6000 faces a view: {faces:?}"
+    );
+    assert!(near.len() >= 100, "{} cells within R", near.len());
+    assert_eq!(cells.len(), unique.len(), "no key has two cells");
+    assert_eq!(
+        beyond.len(),
+        0,
+        "cells left by the first two views: {beyond:?}"
+    );
+    for (k, n) in &near {
+        assert!(*n > 0, "the preload's cell {k:?} holds samples");
+        assert!(
+            cache_count(&words, *k) >= *n,
+            "the cell {k:?} within R keeps its count"
+        );
+    }
+    assert!(age.evicted > 0, "{age:?}");
+
+    let Some(mut rig) = age_rig(false) else {
+        return;
+    };
+    rig.step(16);
+    for (pitch, yaw) in AGE_VIEWS {
+        rig.camera = age_view(pitch, yaw);
+        rig.step(32);
+    }
+    let (d, q) = (&rig.level.device, &rig.level.queue);
+    let stats = rig.frame.read_table_stats(d, q);
+    println!("age-out off: {stats:?}");
+    assert!(stats.misses > 0, "the third view does not fit: {stats:?}");
+}
+
+/// A bench press in budget clears only its boxes' cells: 63 boxes of 21^3 voxels, whose dilated
+/// voxels' faces outnumber the table's cells, out of the view, leave the view's cells their
+/// counts and open no whole-table clear, while a cell written inside the first box is cleared
+/// with its key kept.
+#[test]
+fn a_bench_press_clears_its_boxes_not_the_table() {
+    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_COUNT_WORD, cache_key, cache_slot};
+    let Some(mut rig) = cache_box_rig(64) else {
+        return;
+    };
+    rig.preload_off();
+    rig.step(80);
+    let keys: Vec<FaceKey> = rig.keys().into_keys().collect();
+    let before = cache_words(&rig.level, &rig.frame);
+    let clears = rig.frame.table_clears_and_sweeps().0;
+    let v = [10_010, 10_010, 10_010];
+    let word = u64::from(cache_slot(v, 0, rig.frame.table_cells())) * CACHE_CELL_WORDS * 4;
+    let k = cache_key(v, 0);
+    let cell: Vec<u8> = [k[0], k[1], 64]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    rig.level
+        .queue
+        .write_buffer(rig.frame.emissive_table(), word, &cell);
+    for i in 0..63 {
+        let min = [10_000 + 30 * i, 10_000, 10_000];
+        rig.frame.invalidate(min, min.map(|c| c + 20));
+    }
+    rig.step(1);
+    let words = cache_words(&rig.level, &rig.frame);
+    assert_eq!(
+        rig.frame.table_clears_and_sweeps().0,
+        clears,
+        "no whole-table clear"
+    );
+    for k in &keys {
+        assert_eq!(cache_count(&before, *k), 64, "key {k:?} is capped before");
+        assert_eq!(cache_count(&words, *k), 64, "key {k:?} keeps its count");
+    }
+    let w = cache_cell(&words, (v, 0)).expect("the written cell keeps its key");
+    assert_eq!(
+        words[w + CACHE_COUNT_WORD],
+        0,
+        "the written cell is cleared"
     );
 }
 
@@ -2823,7 +3050,7 @@ fn a_large_edit_box_clears_every_cell() {
     let mut all = keys.clone();
     all.push(outside);
     rig.step(1);
-    let cells = rig.frame.lighting().cells();
+    let cells = rig.frame.table_cells();
     let bytes: Vec<u8> = table_with(cells, &all)
         .iter()
         .flat_map(|w| w.to_le_bytes())

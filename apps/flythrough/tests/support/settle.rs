@@ -2448,10 +2448,11 @@ pub fn flight_cost(
     )
 }
 
-/// The emissive table as words.
+/// The emissive table's cells as words (the blend list past them left out).
 pub fn cache_words(level: &VeinLevel, frame: &Frame) -> Vec<u32> {
     let table = frame.emissive_table();
-    let b = readback::read_buffer(&level.device, &level.queue, table, 0, table.size());
+    let bytes = u64::from(frame.table_cells()) * vxe_render::marcher::CACHE_CELL_WORDS * 4;
+    let b = readback::read_buffer(&level.device, &level.queue, table, 0, bytes);
     b.chunks_exact(4)
         .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
         .collect()
@@ -3236,7 +3237,8 @@ pub fn hall_class_run(
         hit_info: readback::read_rgba16u(device, queue, frame.hit_records()),
         words: {
             let t = frame.emissive_table();
-            readback::read_buffer(device, queue, t, 0, t.size())
+            let bytes = u64::from(frame.table_cells()) * vxe_render::marcher::CACHE_CELL_WORDS * 4;
+            readback::read_buffer(device, queue, t, 0, bytes)
                 .chunks_exact(4)
                 .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
                 .collect()

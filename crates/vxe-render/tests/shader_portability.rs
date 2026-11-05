@@ -4,7 +4,7 @@
 use vxe_render::fsr2::fsr2_source;
 use vxe_render::wgpu::naga::{self, Block, Expression, Statement, TypeInner};
 
-const MARCH: &str = include_str!("../src/shaders/march.wgsl");
+use vxe_render::MARCH_WGSL as MARCH;
 
 /// Every shader the renderer compiles, the frame's passes each after `march.wgsl`.
 fn shaders() -> Vec<(&'static str, String)> {
@@ -32,6 +32,14 @@ fn shaders() -> Vec<(&'static str, String)> {
                 "{MARCH}\n{}\n{}",
                 include_str!("../src/shaders/light.wgsl"),
                 include_str!("../src/shaders/gradient.wgsl")
+            ),
+        ),
+        (
+            "cache_sweep.wgsl",
+            format!(
+                "{}\n{}",
+                include_str!("../src/shaders/cache_cell.wgsl"),
+                include_str!("../src/shaders/cache_sweep.wgsl")
             ),
         ),
         (

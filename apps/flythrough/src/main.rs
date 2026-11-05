@@ -2253,6 +2253,8 @@ struct Hud {
     live_probes: Option<u32>,
     /// The emissive table's counters at the last sample.
     table: Option<vxe_render::TableStats>,
+    /// The table's age-out at the last sample.
+    age: Option<vxe_render::AgeStats>,
     /// The preload's counts at the last sample, while it is on.
     preload: Option<vxe_render::marcher::PreloadStats>,
     /// The last frame's steps view, read back while that view and the HUD are on.
@@ -2287,6 +2289,7 @@ impl Hud {
             cpu_ms: 0.0,
             live_probes: None,
             table: None,
+            age: None,
             preload: None,
             steps: None,
             cracks: None,
@@ -2949,6 +2952,10 @@ impl Run {
             .gfx
             .as_ref()
             .map(|g| g.frame.read_table_stats(&gpu.device, &gpu.queue));
+        self.hud.age = self
+            .gfx
+            .as_ref()
+            .map(|g| g.frame.read_age_stats(&gpu.device, &gpu.queue));
         self.hud.preload = self.gfx.as_ref().and_then(|g| {
             (g.frame.lighting().preload_radius > 0)
                 .then(|| g.frame.read_preload_stats(&gpu.device, &gpu.queue))
@@ -2992,6 +2999,7 @@ impl Run {
                     .live_probes
                     .filter(|_| self.modes.lighting.lamp_bounce),
                 table: self.hud.table,
+                age: self.hud.age,
                 preload: self.hud.preload,
                 modes: self.modes.line(),
                 upscale: g
@@ -7316,14 +7324,18 @@ mod tests {
     /// source; with it off (`--lamp-bounce off`, or its alias `--indirect off`) it names none.
     #[test]
     fn the_banner_names_the_probe_spacing_while_the_lamp_bounce_is_on() {
+        // The table's own `probes` (the slots a key probes) is not the spacing.
+        let spacing = |b: String| b.replace("table 2^22 probes 16", "table");
         for source in [&["--level"][..], &["--source", "showcase"][..], &[][..]] {
             let banner = |extra: &[&str]| {
                 let mut v = source.to_vec();
                 v.extend_from_slice(extra);
                 let a = parse_args_from(argv(&v)).expect("parses");
-                a.start_modes(0.0)
-                    .banner(0.0)
-                    .expect("the banner shows at the start")
+                spacing(
+                    a.start_modes(0.0)
+                        .banner(0.0)
+                        .expect("the banner shows at the start"),
+                )
             };
             let default = banner(&[]);
             assert!(
@@ -7349,10 +7361,10 @@ mod tests {
         let a = parse_args_from(argv(&["--probe-spacing", "32"])).expect("parses");
         let mut m = a.start_modes(0.0);
         m.press(hud::ModeKey::LampBounce, 1000.0);
-        let off = m.banner(1000.0).unwrap();
+        let off = spacing(m.banner(1000.0).unwrap());
         assert!(off.contains("lamp bounce off") && !off.contains("probes"));
         m.press(hud::ModeKey::LampBounce, 2000.0);
-        assert!(m.banner(2000.0).unwrap().contains("probes 32"));
+        assert!(spacing(m.banner(2000.0).unwrap()).contains("probes 32"));
     }
 
     #[test]
@@ -7438,7 +7450,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 1048576, fill 8 to 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 2^22 probes 16, fill 8 to 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
