@@ -68,7 +68,8 @@ Plan 0055 shipped `[2, 6]` as a provisional pick. Plan 0056's window (2026-11-04
 by eye, against a headless reading of about 7 times `[2, 6]`'s still jumps under FSR 2, and
 named the edge dots left at `[1, 2]` the next aliasing item. Owed: a plan whose first phase
 makes `[1, 2]` the default with ADR-0042's Outcome, then the edge dots, and removes the emitter
-cap knob (Plan 0056's Followups). Draft it after Plan 0057's merge.
+cap knob (Plan 0056's Followups). Draft it with the antialiasing plan at Plan 0059's Phase 3 verdict;
+Plan 0059's reference runs at `[1, 2]` by flag meanwhile.
 
 ### The table's edges, if the owner's verdict keeps it
 

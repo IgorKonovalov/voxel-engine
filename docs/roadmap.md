@@ -212,7 +212,7 @@ small yellow dots on fast turns are light on creases, mostly new each frame (han
 `[1, 2]` by eye (about 7 times `[2, 6]`'s still jumps headless, recorded beside it), called the
 emitter cap a fault, and routed the remaining complaint, slow light settle, to Plan 0057 as a
 camera-radius preload. Owed: a plan whose first phase makes `[1, 2]` the default with
-ADR-0042's Outcome and whose next item is the edge dots left at `[1, 2]`, after Plan 0057.
+ADR-0042's Outcome and whose next item is the edge dots left at `[1, 2]`, drafted with the antialiasing plan at Plan 0059's Phase 3 verdict; the reference runs at `[1, 2]` by flag.
 
 Plans 0053 and 0054, the surface-look decision, closed 2026-11-03 (v0.39.0, ADR-0041 accepted
 with an Outcome, ADR-0040 rejected): the majority fit and the normal field failed the owner's
@@ -686,7 +686,7 @@ set by the game, never by a wall clock in the engine.
 **Order (owner, 2026-11-03):** Plan 0051, Plan 0056 (the aliasing spike) from its verdict, the verdict plan, Plans 0044 and 0045, Plan 0048 if it
 stands (the verdict shrinks it to scheme A or C, or drops it), then this milestone. As of
 2026-11-05: 0051, 0056 and the verdict plan 0057 are closed, Plan 0059's reference and an antialiasing plan come next (owner), the far-normal plan Plan 0056
-owes is still owed, and 0048 was dropped under
+owes comes with the antialiasing plan, and 0048 was dropped under
 ADR-0043 (owner, 2026-11-04). Its first plan
 is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
 the budget and comes before Plan 0032. It is owed, not drafted, and takes its number when it is.

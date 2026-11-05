@@ -336,7 +336,8 @@ whole world in a test.
 - **Owner skill:** dev
 - **What:** the bake over a whole bounded world, the file that spares the wait, the dig, and the settings the
   window runs under.
-- **`--reference`** (fly-through): `--light baked`, `--internal-scale 1 --upscaler off`, `--lighting full`, no
+- **`--reference`** (fly-through): `--light baked`, `--internal-scale 1 --upscaler off`, `--lighting full`, `--far-normal 1,2` (the owner's pick in Plan 0056's window; the fly-through's default stays `[2, 6]`
+  until the far-normal plan), no
   jitter, the clamp and candidates of the kept arm. The banner names it. It takes `--level` and `--source showcase`,
   and refuses a streamed world with a message naming this plan's Phase 8: a streamed world has no "every chunk".
   A free key (dev's choice; the banner and the HUD name the mode) swaps the temporal pass's read between the store
@@ -733,7 +734,7 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 - A bake to disk as a product feature, or across runs for a consumer. `--bake-file` is the testbed's. Per-frame refinement past a stop: a still face stops at it.
 - A per-emitter delta on an emission add. An edit opens ring 3.
 - LOD or far-field light beyond the bake radius, and sky light (Plan 0032).
-- Change the exposure or the far normal (Plan 0056's owed plan).
+- Change the exposure or the fly-through's default far normal (Plan 0056's owed plan). The reference runs at `[1, 2]`, the owner's pick, by flag.
 - Move the rings by adapter speed beyond the one `BakeProfile::Low`. The settings surface is `docs/backlog.md`'s.
 - Entities shadowing the bake (M6).
 
@@ -785,7 +786,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- **The antialiasing plan** (architect, at Phase 3's "yes"): from `docs/backlog.md`, Phase 2's fast-yaw rows and Phase 3 (d). This plan's Part 2 resumes after its window.
+- **The antialiasing plan** (architect, at Phase 3's "yes"): from `docs/backlog.md`, Phase 2's fast-yaw rows and Phase 3 (d), together with the far-normal plan Plan 0056 owes, since the edge dots left at `[1, 2]` are its next item. This plan's Part 2 resumes after its window.
 - **Plan 0058's refresh** (architect, at this plan's Phase 14 on "baked"): its emission-scale phase
   and ADR-0045's kept emitter become the dominant material of this plan. Its analytic lights stand.
 - **ADR-0043's Outcome and supersession,** at this plan's close, on "baked": the table, fill,
