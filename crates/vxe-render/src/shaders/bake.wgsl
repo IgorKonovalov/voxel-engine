@@ -1,14 +1,20 @@
-// The bake's sampler (ADR-0046): one round of emissive samples for each listed cube face of a
-// chunk, at unit emission (EMISSION_UNIT), with its own random sequence (RAND_HASHED). Compiled
-// after march.wgsl and light.wgsl, whose bindings (group 0), candidates (`draw_candidates`,
-// `face_point`), shadow ray (`shadowed`) and the frame's candidate-table slots it uses: the job's
-// table is written there before its submit (`bake::job_table`). The CPU keeps the running sums
-// and decides each face's stop (`bake::Bake`); this pass only returns one round's sums.
+// The bake's sampler (ADR-0046): one round of emissive samples for each entry, a listed cube face
+// of some job's chunk, at unit emission (EMISSION_UNIT), with its own random sequence
+// (RAND_HASHED). Compiled after march.wgsl and light.wgsl, whose bindings (group 0), candidates
+// (`draw_candidates`, `face_point`) and shadow ray (`shadowed`) it uses, with two of their reads
+// replaced in the bake's module (`bake::bake_source`): the candidate table comes from the entry's
+// job slot (`bake_table_slot`, the job's `bake::job_table`) and the LOD walk's camera chunk is the
+// job's chunk (`bake_origin_chunk`). So one dispatch serves faces of many jobs. The CPU keeps the
+// running sums and decides each face's stop (`bake::run`); this pass only returns each entry's
+// round of sums.
 //
 // Bindings, group 3:
-//   0  uniform  job    the submit's uniform (`bake::JobUniform`)
-//   1  storage  faces  `job.count` faces (`bake::FaceWords`): voxel, face, the first sample and
-//                      the samples of this round in; the sums out
+//   0  uniform  job    the dispatch's job: its entries' count and first, seed, radius, clamp
+//   1  storage  faces  the submit's entries, one round of one face each (`FaceState::input` in
+//                      `bake.rs`): voxel, face, the round's first sample and its samples in;
+//                      the round's sums out; `slot` names the entry's job slot
+//   2  storage  tables the open jobs' slots, TABLE_SLOT words each: the candidate table's
+//                      header and entries, then the job's chunk (xyz)
 //
 // A face's samples are a function of its key, `job.seed` and the sample's index alone, and one
 // invocation adds them in index order, so a result does not depend on the batching or on the
@@ -22,6 +28,10 @@ struct BakeJob {
     radius: f32,
     // 1: the second moment and the kept emitter read the clamped estimate.
     clamp: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
 };
 
 struct BakeFace {
@@ -45,21 +55,40 @@ struct BakeFace {
     best_material: u32,
     rays: u32,
     ray_len: f32,
-    _pad0: u32,
+    // In: the entry's job slot in `tables`.
+    slot: u32,
     _pad1: u32,
     _pad2: u32,
 };
 
 @group(3) @binding(0) var<uniform> job: BakeJob;
 @group(3) @binding(1) var<storage, read_write> faces: array<BakeFace>;
+@group(3) @binding(2) var<storage, read> tables: array<vec4<u32>>;
+
+// A slot's words: the table's header and LIGHT_TABLE_ENTRIES entries (1024, `marcher.rs`), then
+// the job's chunk.
+const TABLE_SLOT: u32 = 1026u;
+
+// The entry's slot, set by `bake_round` before any sample.
+var<private> bake_slot: u32;
+
+fn bake_table_slot(i: u32) -> vec4<u32> {
+    return tables[bake_slot * TABLE_SLOT + i];
+}
+
+fn bake_origin_chunk() -> vec3<i32> {
+    return bitcast<vec3<i32>>(tables[bake_slot * TABLE_SLOT + TABLE_SLOT - 1u].xyz);
+}
 
 @compute @workgroup_size(64, 1, 1)
 fn bake_round(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= job.count) {
         return;
     }
+    let at = gid.x;
+    var f = faces[at];
+    bake_slot = f.slot;
     reset_walk();
-    var f = faces[gid.x];
     let v = vec3<i32>(f.voxel_x, f.voxel_y, f.voxel_z);
     let key = cache_key(v, f.face);
     let stream = hash_u32(job.seed ^ hash_u32(key.x ^ hash_u32(key.y)));
@@ -116,5 +145,5 @@ fn bake_round(@builtin(global_invocation_id) gid: vec3<u32>) {
     f.best_material = best_material;
     f.rays = rays;
     f.ray_len = ray_len;
-    faces[gid.x] = f;
+    faces[at] = f;
 }

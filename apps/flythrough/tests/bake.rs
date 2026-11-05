@@ -217,7 +217,8 @@ fn test_counts(n_min: u32, n_max: u32) -> BakeSettings {
 }
 
 /// The cells depend on a face's own samples alone: one batch, batches of 7 faces and the jobs
-/// reversed read bit-identical, with the stop in play (64 to 256 samples a face).
+/// reversed read bit-identical, with the stop in play (64 to 256 samples a face); and baked to a
+/// test stop, [`four_ways`] on the box and on a slab whose faces end at different counts.
 #[test]
 fn a_bake_does_not_depend_on_its_slicing_or_order() {
     let (world, _) = small_box();
@@ -248,6 +249,112 @@ fn a_bake_does_not_depend_on_its_slicing_or_order() {
         ..one.clone()
     });
     assert_eq!(rig.blocks(), first, "the jobs reversed");
+
+    // To a test stop, four ways: cache_box, where every face ends at `N_MIN`, then a two-chunk
+    // slab under a small emitter at the chunk border, where the faces end at different counts.
+    four_ways(&mut rig, false);
+    let mut t = MaterialTable::new();
+    for (id, row) in flythrough::cave_materials()
+        .rows()
+        .iter()
+        .enumerate()
+        .skip(1)
+    {
+        let mut m = row.clone();
+        if id == usize::from(ORE) {
+            m.emission = [0.05, 0.05, 0.05];
+        }
+        assert_eq!(usize::from(t.push(m)), id);
+    }
+    let world = air_world([2, 1, 1], &t);
+    fill(&world, [40, 16, 20], [88, 48, 21], ROCK);
+    fill(&world, [63, 30, 21], [64, 31, 22], ORE);
+    let Some(mut rig) = rig_on(world, [16, 16], Light::Baked, None) else {
+        return;
+    };
+    four_ways(&mut rig, true);
+}
+
+/// Bakes `rig` to `the_stop_spends_where_the_noise_is`'s constants (64 to 4096, rounds of 64)
+/// four ways, one round a submit, several rounds with every job in one submit, each job alone,
+/// each job alone at one round a submit, and asserts bit-identical cells and samples a face. A
+/// face can take several rounds in a submit only where the stop is in play.
+fn four_ways(rig: &mut Rig, stop_in_play: bool) {
+    let stop = BakeSettings {
+        keep_faces: true,
+        ..test_counts(64, 4096)
+    };
+    let samples_of = |r: &bake::BakeReport| -> HashMap<([i32; 3], u8), u32> {
+        r.outcomes
+            .iter()
+            .map(|o| ((o.voxel, o.face), o.samples))
+            .collect()
+    };
+    let several = rig.bake(&stop);
+    let spent = samples_of(&several);
+    let counts: std::collections::BTreeSet<u32> = spent.values().copied().collect();
+    println!(
+        "{} jobs, {} faces, {} samples, {} wasted, {} submits, most rounds a submit {}, ends at {} counts from {:?} to {:?}",
+        several.chunks,
+        several.faces,
+        several.samples,
+        several.wasted,
+        several.submits,
+        several.max_rounds_in_submit,
+        counts.len(),
+        counts.first(),
+        counts.last()
+    );
+    assert!(several.chunks > 1, "{} jobs", several.chunks);
+    assert_eq!(
+        several.max_jobs_in_submit, several.chunks,
+        "every job in one submit"
+    );
+    assert_eq!(spent.len() as u64, several.faces);
+    if stop_in_play {
+        assert!(counts.len() > 2, "the stop is in play: {counts:?}");
+        assert!(
+            several.max_rounds_in_submit > 1,
+            "several rounds a submit: {}",
+            several.max_rounds_in_submit
+        );
+    }
+    let stopped = rig.blocks();
+    let one_round = rig.bake(&BakeSettings {
+        submit_rounds: 1,
+        ..stop.clone()
+    });
+    assert_eq!(one_round.max_rounds_in_submit, 1);
+    assert_eq!(
+        one_round.wasted, 0,
+        "one round a submit throws nothing away"
+    );
+    assert_eq!(rig.blocks(), stopped, "one round a submit");
+    assert_eq!(samples_of(&one_round), spent, "one round a submit");
+    let alone = rig.bake(&BakeSettings {
+        jobs_alone: true,
+        ..stop.clone()
+    });
+    assert_eq!(alone.max_jobs_in_submit, 1);
+    assert!(!stop_in_play || alone.max_rounds_in_submit > 1);
+    assert_eq!(rig.blocks(), stopped, "each job alone");
+    assert_eq!(samples_of(&alone), spent, "each job alone");
+    let alone_one = rig.bake(&BakeSettings {
+        jobs_alone: true,
+        submit_rounds: 1,
+        ..stop
+    });
+    assert_eq!(alone_one.max_jobs_in_submit, 1);
+    assert_eq!(alone_one.max_rounds_in_submit, 1);
+    assert_eq!(rig.blocks(), stopped, "each job alone, one round a submit");
+    assert_eq!(
+        samples_of(&alone_one),
+        spent,
+        "each job alone, one round a submit"
+    );
+    for r in [&one_round, &alone, &alone_one] {
+        assert_eq!(r.samples, several.samples);
+    }
 }
 
 /// The irradiance at `p` (normal +z) from a unit-radiance polygon: Lambert's formula.
@@ -720,10 +827,12 @@ impl Log {
     }
 }
 
-/// `VXE_BAKE_PART`: `census` (CPU), `grid` (fixed counts, candidates, the clamp, two seed sets),
+/// `VXE_BAKE_PART`: `census` (CPU, the whole worlds and each view's piece at `VXE_BAKE_RADIUS`), `grid` (fixed counts, candidates, the clamp, two seed sets),
 /// `stop` (the stop at `VXE_BAKE_CANDIDATES` and `VXE_BAKE_CLAMP`), each to `live/bake-count/`.
 /// `VXE_BAKE_VIEWS` names the views (default all), `VXE_BAKE_N` the deepest count (default 262144)
-/// and `VXE_BAKE_CANDIDATE_ARMS` the candidates of the grid (default `8,32`).
+/// and `VXE_BAKE_CANDIDATE_ARMS` the candidates of the grid (default `8,32`). The stop takes
+/// `VXE_BAKE_SEEDS` (default `0,0x5EED0001`) and `VXE_BAKE_FIXED`, a fixed count run first for
+/// the stop's rate.
 #[test]
 #[ignore = "a reading on the RTX, minutes an arm: VXE_TEST_ADAPTER=rtx, under the perf lock"]
 fn bake_count_readings() {
@@ -781,6 +890,39 @@ fn census() {
             at(0.99),
             at(1.0),
             (words + table) * 4
+        ));
+    }
+    // Each view's piece at `VXE_BAKE_RADIUS` (default 1): the chunks within it of the eye's
+    // chunk on each axis, inside the world, as the fly-through's `--bake-radius` takes them.
+    let r: i32 = std::env::var("VXE_BAKE_RADIUS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    for view in read_views() {
+        let world = scene_world(view.scene);
+        let opaque = bake::opaque_table(world.materials());
+        let e = world.extent();
+        let size = e.size();
+        let c = view.eye.map(|v| (v / 64.0).floor() as i32);
+        let lo = [0, 1, 2].map(|k| (c[k] - r).max(e.min.0[k]));
+        let hi = [0, 1, 2].map(|k| (c[k] + r + 1).min(e.min.0[k] + size[k]));
+        let (mut chunks, mut surface, mut faces) = (0u32, 0u32, 0u64);
+        for z in lo[2]..hi[2] {
+            for y in lo[1]..hi[1] {
+                for x in lo[0]..hi[0] {
+                    chunks += 1;
+                    if let Some(f) = bake::list_world_chunk(&world, ChunkCoord([x, y, z]), &opaque)
+                        && f.faces() > 0
+                    {
+                        surface += 1;
+                        faces += f.faces() as u64;
+                    }
+                }
+            }
+        }
+        log.line(&format!(
+            "piece {} r{r} at chunk {c:?}: {chunks} chunks, {surface} surface, faces {faces}",
+            view.name
         ));
     }
 }
@@ -1117,8 +1259,57 @@ fn stop_view(view: &ReadView) {
         extent.min.0,
         extent.size()
     ));
+    // `VXE_BAKE_FIXED`: a fixed count's run of the same faces first, seed 0, for the stop's rate.
+    if let Some(n) = std::env::var("VXE_BAKE_FIXED")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
+        let settings = BakeSettings {
+            candidates,
+            clamp,
+            n_min: n,
+            n_max: n,
+            filter: Some(within_96(view.eye)),
+            ..BakeSettings::default()
+        };
+        let start = std::time::Instant::now();
+        let report = rig
+            .frame
+            .bake_until(
+                &rig.device,
+                &rig.queue,
+                &mut rig.gpu,
+                &rig.world,
+                extent,
+                &settings,
+                &mut |_| {},
+            )
+            .expect("the bake runs");
+        let wall = start.elapsed().as_secs_f64();
+        log.line(&format!(
+            "fixed n{n} seed 0x0: faces {} samples {} wasted {} submits {}, wall {:.1} s, wall ns a sample kept {:.2}, submit ns a sample {:.2}",
+            report.faces,
+            report.samples,
+            report.wasted,
+            report.submits,
+            wall,
+            wall * 1e9 / report.samples.max(1) as f64,
+            report.gpu_seconds * 1e9 / report.samples.max(1) as f64,
+        ));
+    }
+    // `VXE_BAKE_SEEDS`: the seeds (default both); `G_noise` needs two.
+    let seeds: Vec<u32> = std::env::var("VXE_BAKE_SEEDS")
+        .unwrap_or_else(|_| "0,0x5EED0001".to_owned())
+        .split(',')
+        .map(|v| {
+            let v = v.trim();
+            v.strip_prefix("0x")
+                .map_or_else(|| v.parse(), |h| u32::from_str_radix(h, 16))
+                .expect("a seed")
+        })
+        .collect();
     let mut seeded = Vec::new();
-    for seed in [0u32, 0x5EED_0001] {
+    for seed in seeds {
         let settings = BakeSettings {
             candidates,
             clamp,
@@ -1150,6 +1341,7 @@ fn stop_view(view: &ReadView) {
                 },
             )
             .expect("the bake runs");
+        let wall = start.elapsed().as_secs_f64();
         log.line(&format!(
             "seed {seed:#x}: faces {} samples {:.4e} ({:.0} a face), at N_MIN {} at N_MAX {}, wall {:.1} s, ns a sample {:.2}, mean shadow ray {:.1}",
             report.faces,
@@ -1157,11 +1349,24 @@ fn stop_view(view: &ReadView) {
             report.samples as f64 / report.faces.max(1) as f64,
             report.faces_at_min,
             report.faces_at_max,
-            start.elapsed().as_secs_f64(),
+            wall,
             report.gpu_seconds * 1e9 / report.samples.max(1) as f64,
             report.ray_len / report.rays.max(1) as f64,
         ));
+        log.line(&format!(
+            "seed {seed:#x} submits: samples kept {} wasted {} (share {:.4}), submits {}, most jobs a submit {}, most rounds a face a submit {}, wall ns a sample kept {:.2}",
+            report.samples,
+            report.wasted,
+            report.wasted as f64 / report.samples.max(1) as f64,
+            report.submits,
+            report.max_jobs_in_submit,
+            report.max_rounds_in_submit,
+            wall * 1e9 / report.samples.max(1) as f64,
+        ));
         seeded.push(report.outcomes);
+    }
+    if seeded.len() < 2 {
+        return;
     }
     let world = &rig.world;
     let emits: Vec<bool> = world

@@ -11,17 +11,25 @@
 //! cell, its [`rgb9e5_pack`] irradiance, then `key | flags << 12 | dominant material << 16`, with
 //! the key `voxel in the brick << 3 | face`, sorted by key.
 //!
-//! **The job** ([`Frame::bake_until`](crate::Frame::bake_until)): for each chunk, its own candidate
-//! table ([`job_table`], written where the frame's goes), then rounds over the faces still running.
-//! A submit holds at most [`SUBMIT_SAMPLES`] samples and is waited on. `bake.wgsl` returns a round's
-//! sums; the running sums are kept here in `f64`, and the stop reads only the face's own samples,
-//! so a result depends neither on the batching nor on the jobs' order.
+//! **The job** ([`Frame::bake_until`](crate::Frame::bake_until)): a chunk's faces, its own
+//! candidate table ([`job_table`]) and its frame parameters, staged once in a slot when the job
+//! opens. A submit holds the live faces of up to [`OPEN_JOBS`] open jobs, at most
+//! [`SUBMIT_SAMPLES`] samples, and is waited on. Each job is one dispatch, preceded by copies of
+//! its slot to where the frame's table, the frame's parameters and the job uniform go, so every
+//! face samples its own job's table. An entry of the working buffer is one round of one face: a
+//! face takes the rounds that cannot end it (those up to `n_min`) at once, one round past that,
+//! and, when the submit still has room and no job is left to open, further rounds speculatively.
+//! `bake.wgsl` returns each entry's sums; the running sums are kept here in `f64` and added round
+//! by round in order, the stop is read after each round, and a round past a face's stop is thrown
+//! away ([`BakeReport::wasted`]). A face's samples are a function of its key and the sample's
+//! index alone, so its rounds, its stop and its cell depend neither on the batching, nor on the
+//! rounds a submit, nor on which jobs share a submit, nor on the jobs' order.
 //!
 //! The stop ([`se_levels`]): a face ends when the standard error of its mean luminance, through the
 //! display transform at [`BAKE_EXPOSURE`], is at most [`BAKE_SE`] levels, not before `n_min` samples
 //! and not after `n_max`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -30,7 +38,7 @@ use vxe_world::{
     brick_of_slot, brick_slot,
 };
 
-use crate::gpu_world::{GpuWorld, LIGHT_SAMPLE_BYTES};
+use crate::gpu_world::GpuWorld;
 use crate::marcher::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
 use crate::readback;
 
@@ -39,8 +47,17 @@ pub const BAKE_WGSL: &str = include_str!("shaders/bake.wgsl");
 
 /// Samples a face takes between two looks at its stop.
 pub const BAKE_ROUND: u32 = 1024;
-/// Faces one submit's working buffer holds at most.
+/// Entries (one round of one face) one submit's working buffer holds at most.
 pub const BAKE_BATCH_FACES: usize = 65_536;
+/// Jobs open at once, each with a slot of the tables buffer.
+pub const OPEN_JOBS: usize = 256;
+/// The bytes of the job uniform (`BakeJob` in `bake.wgsl`).
+const JOB_BYTES: u64 = 32;
+/// A slot's 16-byte words (`TABLE_SLOT` in `bake.wgsl`): the candidate table (a header, then
+/// [`LIGHT_TABLE_ENTRIES`] entries), then the job's chunk.
+const TABLE_SLOT_WORDS: u64 = 2 + LIGHT_TABLE_ENTRIES as u64;
+const TABLE_SLOT_BYTES: u64 = TABLE_SLOT_WORDS * 16;
+const _: () = assert!(TABLE_SLOT_WORDS == 1026, "TABLE_SLOT in bake.wgsl");
 /// The stop's standard error, in display levels.
 pub const BAKE_SE: f32 = 0.5;
 /// Samples a face takes at least.
@@ -296,8 +313,13 @@ pub struct BakeSettings {
     pub n_max: u32,
     /// The stop's standard error, in display levels.
     pub se: f32,
-    /// Faces a submit holds at most; `SUBMIT_SAMPLES / round` and [`BAKE_BATCH_FACES`] cap it too.
+    /// Entries (one round of one face) a submit holds at most; `SUBMIT_SAMPLES / round` and
+    /// [`BAKE_BATCH_FACES`] cap it too.
     pub batch_faces: usize,
+    /// Rounds one face takes in a submit at most; 0 is as many as the submit's room allows.
+    pub submit_rounds: u32,
+    /// A submit holds one job's faces only.
+    pub jobs_alone: bool,
     /// The chunks in descending coordinate order, for the test that a result ignores the order.
     pub reversed: bool,
     /// [`BakeReport::faces`] holds every face.
@@ -324,6 +346,8 @@ impl Default for BakeSettings {
             n_max: N_MAX,
             se: BAKE_SE,
             batch_faces: BAKE_BATCH_FACES,
+            submit_rounds: 0,
+            jobs_alone: false,
             reversed: false,
             keep_faces: false,
             snapshots: Vec::new(),
@@ -353,8 +377,15 @@ pub struct FaceOutcome {
 pub struct BakeReport {
     pub chunks: u64,
     pub faces: u64,
+    /// Samples kept: the rounds up to each face's stop.
     pub samples: u64,
+    /// Samples of rounds drawn past a face's stop in the same submit, thrown away.
+    pub wasted: u64,
     pub submits: u64,
+    /// The most jobs one submit held.
+    pub max_jobs_in_submit: u64,
+    /// The most rounds one face took in one submit.
+    pub max_rounds_in_submit: u32,
     /// Seconds from each submit to its readback, over the bake.
     pub gpu_seconds: f64,
     pub faces_at_min: u64,
@@ -463,6 +494,35 @@ pub struct BakePipeline {
     pipeline: wgpu::ComputePipeline,
     job: wgpu::Buffer,
     faces: wgpu::Buffer,
+    /// [`OPEN_JOBS`] slots of [`TABLE_SLOT_BYTES`]: an open job's candidate table and chunk.
+    tables: wgpu::Buffer,
+}
+
+/// The light pass's table read, which the bake's module reads from the face's slot instead.
+const TABLE_READ: &str = "return bitcast<vec4<u32>>(light_samples[params.light_table_base + i]);";
+/// The LOD walk's camera chunk, which the bake's module takes from the face's job instead.
+const LOD_ORIGIN: &str = "let d = chunk - floor_div(vec3<i32>(floor(params.views[0].origin)), 64);";
+
+fn replace_once(source: &str, from: &str, to: &str) -> String {
+    assert_eq!(
+        source.matches(from).count(),
+        1,
+        "the bake's module replaces `{from}` once"
+    );
+    source.replace(from, to)
+}
+
+/// The bake's module: march.wgsl and light.wgsl, with the candidate table and the LOD walk's
+/// camera chunk read from the face's job slot (`bake_table_slot`, `bake_origin_chunk`), so one
+/// dispatch serves faces of many jobs; then bake.wgsl.
+pub fn bake_source() -> String {
+    let march = replace_once(
+        crate::MARCH_WGSL,
+        LOD_ORIGIN,
+        "let d = chunk - bake_origin_chunk();",
+    );
+    let light = replace_once(crate::LIGHT_WGSL, TABLE_READ, "return bake_table_slot(i);");
+    format!("{march}\n{light}\n{BAKE_WGSL}")
 }
 
 impl BakePipeline {
@@ -482,13 +542,12 @@ impl BakePipeline {
             entries: &[
                 entry(0, wgpu::BufferBindingType::Uniform),
                 entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
+                entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bake"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!("{}\n{}\n{BAKE_WGSL}", crate::MARCH_WGSL, crate::LIGHT_WGSL).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(bake_source().into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bake"),
@@ -508,8 +567,14 @@ impl BakePipeline {
         });
         let job = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bake job"),
-            size: 16,
+            size: JOB_BYTES,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let tables = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bake job tables"),
+            size: OPEN_JOBS as u64 * TABLE_SLOT_BYTES,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let faces = device.create_buffer(&wgpu::BufferDescriptor {
@@ -525,6 +590,7 @@ impl BakePipeline {
             pipeline,
             job,
             faces,
+            tables,
         }
     }
 }
@@ -616,16 +682,44 @@ impl FaceState {
         se_levels(u64::from(self.n), lum3(self.kept(clamp)), self.lum2)
     }
 
-    /// The first words of the working buffer's entry: `BakeFace` in `bake.wgsl`.
-    fn input(&self, samples: u32) -> [u32; 20] {
+    /// The first words of the working buffer's entry (`BakeFace` in `bake.wgsl`) for the round
+    /// from sample `first`.
+    fn input(&self, first: u32, samples: u32, slot: usize) -> [u32; 20] {
         let mut w = [0u32; 20];
         w[0] = self.voxel[0] as u32;
         w[1] = self.voxel[1] as u32;
         w[2] = self.voxel[2] as u32;
         w[3] = u32::from(self.face);
-        w[4] = self.n;
+        w[4] = first;
         w[5] = samples;
+        w[17] = slot as u32;
         w
+    }
+
+    /// The rounds left before `n_max`.
+    fn rounds_left(&self, round: u32, n_max: u32) -> u32 {
+        (n_max - self.n).div_ceil(round)
+    }
+
+    /// The rounds its stop is expected to need, from its standard error now, which falls as
+    /// `1 / sqrt(n)`: 0 before its first round or once it reads under the stop.
+    fn expected_rounds(&self, round: u32, n_max: u32, clamp: bool, se: f32) -> u32 {
+        if self.n == 0 {
+            return 0;
+        }
+        let ratio = self.se(clamp) / f64::from(se);
+        let wanted = (f64::from(self.n) * ratio * ratio).min(f64::from(n_max));
+        let more = (wanted - f64::from(self.n)).max(0.0);
+        (more / f64::from(round)).ceil() as u32
+    }
+
+    /// The rounds none of which can end the face before the last: those up to `n_min`, or one.
+    fn certain_rounds(&self, round: u32, n_min: u32) -> u32 {
+        if self.n < n_min {
+            (n_min - self.n).div_ceil(round)
+        } else {
+            1
+        }
     }
 
     fn add(&mut self, out: &[u32], samples: u32) {
@@ -723,8 +817,15 @@ pub(crate) fn run(
                 binding: 1,
                 resource: run.pipeline.faces.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: run.pipeline.tables.as_entire_binding(),
+            },
         ],
     });
+    // The frame's parameters, once: the bake reads no view but the LOD walk's camera chunk,
+    // which it takes from the face's job.
+    queue.write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
     let mut report = BakeReport {
         chunks: jobs.len() as u64,
         ..BakeReport::default()
@@ -741,37 +842,229 @@ pub(crate) fn run(
         .batch_faces
         .clamp(1, BAKE_BATCH_FACES)
         .min(per_submit);
-    let job_uniform = |count: u32| -> [u32; 4] {
-        [
+    let n_max = settings.n_max.max(1);
+    let rounds_cap = if settings.submit_rounds == 0 {
+        u32::MAX
+    } else {
+        settings.submit_rounds
+    };
+    let ctx = JobCtx {
+        run,
+        settings,
+        round,
+        n_max,
+        rounds_cap,
+        window_min: window.min,
+        size,
+    };
+    // The blocks lie in the jobs' order, whatever order the jobs end in.
+    let mut pending: VecDeque<(ChunkCoord, ChunkFaces, u64)> = VecDeque::new();
+    let mut at = store.used_words;
+    for (coord, faces) in jobs {
+        let words = faces.block_words();
+        pending.push_back((coord, faces, at));
+        at += words;
+    }
+    let open_cap = if settings.jobs_alone { 1 } else { OPEN_JOBS };
+    let mut free: Vec<usize> = (0..open_cap).rev().collect();
+    let mut open: Vec<OpenJob> = Vec::new();
+    loop {
+        // The rounds each live face takes in this submit: first those that cannot end it.
+        let mut entries = 0usize;
+        let mut plan: Vec<Vec<(usize, u32)>> = open
+            .iter()
+            .map(|job| ctx.plan(job, batch, &mut entries))
+            .collect();
+        while entries < batch {
+            let Some(slot) = free.pop() else { break };
+            let Some((coord, faces, first_word)) = pending.pop_front() else {
+                free.push(slot);
+                break;
+            };
+            let job = ctx.open(coord, faces, first_word, slot);
+            if job.live.is_empty() {
+                free.push(slot);
+                ctx.close(store, job, &mut report, &mut done);
+                progress(&done);
+                continue;
+            }
+            plan.push(ctx.plan(&job, batch, &mut entries));
+            open.push(job);
+        }
+        // Room left and no job to open: further rounds, a layer at a time, in order, each face
+        // up to the rounds its standard error now expects it to need.
+        while entries < batch {
+            let before = entries;
+            for (job, p) in open.iter().zip(&mut plan) {
+                for (i, r) in p.iter_mut() {
+                    if entries == batch {
+                        break;
+                    }
+                    let s = &job.states[*i];
+                    let expected = s
+                        .expected_rounds(round, n_max, settings.clamp, settings.se)
+                        .max(1);
+                    if *r < s.rounds_left(round, n_max).min(rounds_cap).min(expected) {
+                        *r += 1;
+                        entries += 1;
+                    }
+                }
+            }
+            if entries == before {
+                break;
+            }
+        }
+        if entries == 0 {
+            break;
+        }
+        // One dispatch: each entry names its job's slot.
+        let mut input: Vec<[u32; 20]> = Vec::with_capacity(entries);
+        let mut jobs_in = 0u64;
+        for (job, p) in open.iter().zip(&plan) {
+            jobs_in += u64::from(!p.is_empty());
+            for &(i, r) in p {
+                let s = &job.states[i];
+                report.max_rounds_in_submit = report.max_rounds_in_submit.max(r);
+                for k in 0..r {
+                    let first = s.n + k * round;
+                    input.push(s.input(first, round.min(n_max - first), job.slot));
+                }
+            }
+        }
+        let count = input.len() as u32;
+        let uniform = [
             count,
             settings.seed,
             ((run.gpu.light_radius() * 64) as f32).to_bits(),
             u32::from(settings.clamp),
-        ]
-    };
-    for (coord, faces) in &jobs {
-        let mut params = run.params;
-        let centre = coord.0.map(|v| (v * 64 + 32) as f32);
-        for view in &mut params.views {
-            view.origin = centre;
+            0,
+            0,
+            0,
+            0,
+        ];
+        queue.write_buffer(&run.pipeline.job, 0, bytemuck::cast_slice(&uniform));
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            pass.set_pipeline(&run.pipeline.pipeline);
+            pass.set_bind_group(0, run.world_bind, &[]);
+            pass.set_bind_group(3, &bind, &[]);
+            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
         }
-        queue.write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&params));
-        let table = job_table(run.gpu, *coord);
+        report.max_jobs_in_submit = report.max_jobs_in_submit.max(jobs_in);
+        queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(&input));
+        let t = stopwatch();
+        queue.submit([enc.finish()]);
+        let bytes = readback::read_buffer(
+            device,
+            queue,
+            &run.pipeline.faces,
+            0,
+            input.len() as u64 * FACE_BYTES,
+        );
+        report.gpu_seconds += seconds_since(t);
+        report.submits += 1;
+        // Each face's rounds in order: the stop is read after each, and a round past it is waste.
+        let out: &[u32] = bytemuck::cast_slice(&bytes);
+        let mut e = 0usize;
+        for (job, p) in open.iter_mut().zip(&plan) {
+            for &(i, r) in p {
+                let s = &mut job.states[i];
+                for _ in 0..r {
+                    let words = &out[e * 20..(e + 1) * 20];
+                    e += 1;
+                    let samples = words[5];
+                    if s.done {
+                        report.wasted += u64::from(samples);
+                        continue;
+                    }
+                    report.rays += u64::from(words[15]);
+                    report.ray_len += f64::from(f32::from_bits(words[16]));
+                    report.samples += u64::from(samples);
+                    s.add(words, samples);
+                    if settings.snapshots.contains(&s.n) {
+                        let (a, b) = (s.mean(s.sum), s.mean(s.clamped));
+                        s.snapshots.push((s.n, a, b));
+                    }
+                    let reached =
+                        s.n >= settings.n_min && s.se(settings.clamp) <= f64::from(settings.se);
+                    if reached || s.n >= n_max {
+                        s.done = true;
+                        report.faces_at_min += u64::from(s.n <= settings.n_min);
+                        report.faces_at_max += u64::from(s.n >= n_max);
+                        done.faces_done += 1;
+                    }
+                }
+            }
+        }
+        done.samples = report.samples;
+        done.gpu_seconds = report.gpu_seconds;
+        for job in &mut open {
+            let states = &job.states;
+            job.live.retain(|&i| !states[i].done);
+        }
+        let mut k = 0;
+        while k < open.len() {
+            if open[k].live.is_empty() {
+                let job = open.remove(k);
+                free.push(job.slot);
+                ctx.close(store, job, &mut report, &mut done);
+            } else {
+                k += 1;
+            }
+        }
+        progress(&done);
+    }
+    queue.submit([]);
+    Ok(report)
+}
+
+/// A chunk's job while its faces run.
+struct OpenJob {
+    coord: ChunkCoord,
+    faces: ChunkFaces,
+    first_word: u64,
+    states: Vec<FaceState>,
+    /// The faces still running.
+    live: Vec<usize>,
+    slot: usize,
+}
+
+/// What opening, planning and closing a job read of the bake.
+struct JobCtx<'a, 'b> {
+    run: &'a BakeRun<'b>,
+    settings: &'a BakeSettings,
+    round: u32,
+    n_max: u32,
+    rounds_cap: u32,
+    window_min: ChunkCoord,
+    size: [i32; 3],
+}
+
+impl JobCtx<'_, '_> {
+    /// The job at `coord`: its faces' states, and its parameters and table staged in `slot`.
+    fn open(&self, coord: ChunkCoord, faces: ChunkFaces, first_word: u64, slot: usize) -> OpenJob {
+        let table = job_table(self.run.gpu, coord);
         let used = (1 + table.count as usize) * 16;
+        let at = slot as u64 * TABLE_SLOT_BYTES;
+        let tables = &self.run.pipeline.tables;
+        let queue = self.run.queue;
+        queue.write_buffer(tables, at, &bytemuck::bytes_of(&table)[..used]);
+        let chunk = [coord.0[0], coord.0[1], coord.0[2], 0];
         queue.write_buffer(
-            run.gpu.light_buffer(),
-            u64::from(run.gpu.light_table_base()) * LIGHT_SAMPLE_BYTES,
-            &bytemuck::bytes_of(&table)[..used],
+            tables,
+            at + (TABLE_SLOT_WORDS - 1) * 16,
+            bytemuck::cast_slice(&chunk),
         );
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
-        for (slot, keys) in &faces.bricks {
-            let b = brick_of_slot(usize::from(*slot));
+        for (brick_at, keys) in &faces.bricks {
+            let b = brick_of_slot(usize::from(*brick_at));
             for &key in keys {
                 let i = i32::from(key >> 3);
                 let l = [i % 8, i / 8 % 8, i / 64];
                 let voxel = [0, 1, 2].map(|k| coord.0[k] * 64 + b[k] * 8 + l[k]);
                 let face = (key & 7) as u8;
-                let wanted = settings.filter.as_ref().is_none_or(|f| f(voxel, face));
+                let wanted = self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
                 states.push(FaceState {
                     voxel,
                     face,
@@ -787,111 +1080,85 @@ pub(crate) fn run(
                 });
             }
         }
-        let mut active: Vec<usize> = (0..states.len()).filter(|&i| !states[i].done).collect();
-        let n_max = settings.n_max.max(1);
-        while !active.is_empty() {
-            for slice in active.chunks(batch) {
-                let input: Vec<[u32; 20]> = slice
-                    .iter()
-                    .map(|&i| {
-                        let s = &states[i];
-                        s.input(round.min(n_max - s.n))
-                    })
-                    .collect();
-                queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(&input));
-                queue.write_buffer(
-                    &run.pipeline.job,
-                    0,
-                    bytemuck::cast_slice(&job_uniform(slice.len() as u32)),
-                );
-                let mut enc =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-                {
-                    let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-                    pass.set_pipeline(&run.pipeline.pipeline);
-                    pass.set_bind_group(0, run.world_bind, &[]);
-                    pass.set_bind_group(3, &bind, &[]);
-                    pass.dispatch_workgroups((slice.len() as u32).div_ceil(64), 1, 1);
-                }
-                let t = stopwatch();
-                queue.submit([enc.finish()]);
-                let bytes = readback::read_buffer(
-                    device,
-                    queue,
-                    &run.pipeline.faces,
-                    0,
-                    slice.len() as u64 * FACE_BYTES,
-                );
-                report.gpu_seconds += seconds_since(t);
-                report.submits += 1;
-                let out: &[u32] = bytemuck::cast_slice(&bytes);
-                let mut submit_samples = 0u64;
-                for (j, &i) in slice.iter().enumerate() {
-                    let words = &out[j * 20..(j + 1) * 20];
-                    let samples = words[5];
-                    report.rays += u64::from(words[15]);
-                    report.ray_len += f64::from(f32::from_bits(words[16]));
-                    submit_samples += u64::from(samples);
-                    let s = &mut states[i];
-                    s.add(words, samples);
-                    if settings.snapshots.contains(&s.n) {
-                        let (a, b) = (s.mean(s.sum), s.mean(s.clamped));
-                        s.snapshots.push((s.n, a, b));
-                    }
-                    let reached =
-                        s.n >= settings.n_min && s.se(settings.clamp) <= f64::from(settings.se);
-                    if reached || s.n >= n_max {
-                        s.done = true;
-                        report.faces_at_min += u64::from(s.n <= settings.n_min);
-                        report.faces_at_max += u64::from(s.n >= n_max);
-                        done.faces_done += 1;
-                    }
-                }
-                report.samples += submit_samples;
-                done.samples = report.samples;
-                done.gpu_seconds = report.gpu_seconds;
-                progress(&done);
-            }
-            active.retain(|&i| !states[i].done);
+        let live = (0..states.len()).filter(|&i| !states[i].done).collect();
+        OpenJob {
+            coord,
+            faces,
+            first_word,
+            states,
+            live,
+            slot,
         }
-        // The chunk's block: the directory, then its cells in key order.
-        let first = store.used_words;
-        let mut block: Vec<u32> = faces.directory();
-        block.reserve(states.len() * 2);
-        for s in &states {
-            let mean = s.mean(s.kept(settings.clamp));
+    }
+
+    /// The rounds of `job`'s live faces that cannot end them, while `entries` is under `batch`.
+    fn plan(&self, job: &OpenJob, batch: usize, entries: &mut usize) -> Vec<(usize, u32)> {
+        let mut p = Vec::new();
+        for &i in &job.live {
+            if *entries == batch {
+                break;
+            }
+            let s = &job.states[i];
+            let r = s
+                .certain_rounds(self.round, self.settings.n_min)
+                .min(s.rounds_left(self.round, self.n_max))
+                .min(self.rounds_cap)
+                .min((batch - *entries) as u32);
+            p.push((i, r));
+            *entries += r as usize;
+        }
+        p
+    }
+
+    /// Writes the ended job's block, the directory then its cells in key order, at its place.
+    fn close(
+        &self,
+        store: &mut Store,
+        job: OpenJob,
+        report: &mut BakeReport,
+        done: &mut BakeProgress,
+    ) {
+        let queue = self.run.queue;
+        let mut block: Vec<u32> = job.faces.directory();
+        block.reserve(job.states.len() * 2);
+        for s in &job.states {
+            let mean = s.mean(s.kept(self.settings.clamp));
             block.push(rgb9e5_pack(mean));
             block.push(u32::from(s.key) | u32::from(s.material) << 16);
         }
-        queue.write_buffer(&store.pool, first * 4, bytemuck::cast_slice(&block));
-        let w = [0, 1, 2].map(|k| i64::from(coord.0[k]) - i64::from(window.min.0[k]));
-        let index = w[0] + i64::from(size[0]) * (w[1] + i64::from(size[1]) * w[2]);
+        debug_assert_eq!(block.len() as u64, job.faces.block_words());
+        queue.write_buffer(
+            &store.pool,
+            job.first_word * 4,
+            bytemuck::cast_slice(&block),
+        );
+        let w = [0, 1, 2].map(|k| i64::from(job.coord.0[k]) - i64::from(self.window_min.0[k]));
+        let index = w[0] + i64::from(self.size[0]) * (w[1] + i64::from(self.size[1]) * w[2]);
         queue.write_buffer(
             &store.pool,
             (STORE_TABLE + index as u64) * 4,
-            bytemuck::bytes_of(&(first as u32)),
+            bytemuck::bytes_of(&(job.first_word as u32)),
         );
-        store.blocks.insert(coord.0, (first, block.len() as u64));
+        store
+            .blocks
+            .insert(job.coord.0, (job.first_word, block.len() as u64));
         store.used_words += block.len() as u64;
-        report.faces += states.iter().filter(|s| s.n > 0).count() as u64;
-        if settings.keep_faces {
+        report.faces += job.states.iter().filter(|s| s.n > 0).count() as u64;
+        if self.settings.keep_faces {
             report
                 .outcomes
-                .extend(states.iter().filter(|s| s.n > 0).map(|s| FaceOutcome {
+                .extend(job.states.iter().filter(|s| s.n > 0).map(|s| FaceOutcome {
                     voxel: s.voxel,
                     face: s.face,
                     samples: s.n,
                     mean: [s.mean(s.sum), s.mean(s.clamped)],
-                    se: s.se(settings.clamp) as f32,
+                    se: s.se(self.settings.clamp) as f32,
                     material: s.material,
                     snapshots: s.snapshots.clone(),
                 }));
         }
         done.chunks_done += 1;
-        progress(&done);
     }
-    queue.submit([]);
-    Ok(report)
 }
 
 #[cfg(test)]
@@ -948,6 +1215,21 @@ mod tests {
         chunk
             .brick(brick_slot(b))
             .get((i[0] + 8 * (i[1] + 8 * i[2])) as usize)
+    }
+
+    /// The bake's module, with the table and LOD reads replaced, parses and validates.
+    #[test]
+    fn the_bake_module_reads_the_entrys_job() {
+        let source = bake_source();
+        assert!(!source.contains(TABLE_READ) && !source.contains(LOD_ORIGIN));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("the bake's module validates");
     }
 
     #[test]

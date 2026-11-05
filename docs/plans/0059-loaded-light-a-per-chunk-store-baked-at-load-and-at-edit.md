@@ -887,8 +887,8 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The reference bake, and the count it needs | dev | stopped at its stop rule: the kept arm (32 candidates, clamp off, 65 536) meets the `G_noise` bars and projects a whole level at about 15 h on the RTX; readings in [`logs/0059.md`](logs/0059.md) | committed with this row |
-| 1a: The stop's submits | dev | not started | |
+| 1: The reference bake, and the count it needs | dev | stopped at its stop rule: the kept arm (32 candidates, clamp off, 65 536) meets the `G_noise` bars and projects a whole level at about 15 h on the RTX; readings in [`logs/0059.md`](logs/0059.md) | 70305ba |
+| 1a: The stop's submits | dev | done: one dispatch a submit across jobs, rounds a submit by the stop's expectation; the stop reads 13.51 ns a sample kept against the fixed run's 14.23 on the RTX; the runner at `--bake-radius 1` | committed with this row |
 | 1b: The owner's first look | human | not started | |
 | 2: The reference: a piece to walk and a hole to dig | dev | not started | |
 | 3: The owner's verdict on the reference | human | not started | |
@@ -918,6 +918,12 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 1: the count reading's deepest count is 65 536 (not 262 144), the reference is the mean of a view's four 65 536 runs, the clamp arms share the unclamped arms' samples, the zero share is read on the views' faces, and the stop was read at the vein only.
 - Phase 1: the runner's comparison against the table is a separate `--light table` launch (no mode key in Phase 1).
 - Phase 1, noticed: the stop's wall rate (310 ns a sample against 42 in fixed runs) is set by one waited submit a round for a chunk's last faces.
+- Phase 1a (this row's commit): the bake's module is march.wgsl and light.wgsl with two lines replaced in `bake.rs` (`bake_source`): the candidate table read (`table_slot`) and the LOD walk's camera chunk (`lod_level`) come from the entry's job slot. The two files are not edited.
+- Phase 1a: a face takes its rounds to `N_MIN` in one submit, then one; past that, rounds up to the count its standard error expects (`1 / sqrt(n)`) fill a submit's room once no job is left to open. The stop's arithmetic is unchanged.
+- Phase 1a: the slicing test's four ways run on `cache_box`, where every face ends at its first round at the test stop, and again on a two-chunk slab under a small emitter at the chunk border, where faces end at 9 counts.
+- Phase 1a: the count reading's stop part takes `VXE_BAKE_SEEDS` and `VXE_BAKE_FIXED`; the census part prints each view's piece at `VXE_BAKE_RADIUS`.
+- Phase 1a, noticed: Phase 1's log reads `the_stop_spends_where_the_noise_is`'s face beside the emitter at se 1.673; 70305ba's tree prints 1.168, as this tree does.
+- Phase 1a, noticed: in `apps/flythrough/src/main.rs`, `start_camera`'s doc comment sits above `bake_extent`.
 
 ### Close triggers
 
