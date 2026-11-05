@@ -107,6 +107,44 @@
 > patch walk's 6 349 entering pixels had none: it now claims every face unconditionally, holds
 > until every cell reaches `C_CAP`, and a pixel with no reference counts as not settled. Part
 > 2b's claim, done-whens 12, 14, 16 and 17, the Budgets, Risks and Phase 6 (h) follow.
+>
+> **Amended 2026-11-05 (architect, for the owner), the settle bars, from the dig and reference
+> readings** (`logs/0057.md` at 693cc90, Part 2b's level on r0 32). Two readings say the level's
+> bars measured noise, not settle: the 5-voxel dig's `S90` reads 271 (preload on, 303 off)
+> while its cells hold p50 488 samples at frame 16 and 1048 at 60, and two independent
+> 4096-sample references agree within 10 % on only 0.08 to 0.66 of the lit cells within `r0`
+> by decile. A cell's mean is off the truth by about `sigma / sqrt(n)` of itself, `sigma` one
+> sample's relative spread, so a face lit on one sample in 32 (`sigma` about 5.6) needs about
+> 8 500 samples to sit within 10 % of the truth nine times in ten (`(1.645 x 5.6 / 0.1)^2`;
+> about 2 800 against a 4096-sample reference that holds them), and no frame budget reaches
+> 10 % of the truth on the dim deciles. What the owner reported in Plan 0056's window ("once light settles
+> it is not flickering anymore") is a value that stops moving, and a running mean's step per
+> frame falls as `sigma sqrt(k) / n` (`k` samples a frame). **Decision: the level's settle bars
+> become stop-moving bars in display levels.** A pixel is **still** at a frame when its
+> emissive part, through the display transform at the run's fixed exposure (`rigs.rs`'s
+> `tone_bytes` arithmetic unrounded: ACES, the 2.2 encode, in 8-bit levels), moves by under
+> `STILL_LEVEL` = **1 level** (1/255 of full scale) since the frame before; **`Q90`** is the
+> last frame at which under 90 % of the counted pixels are still. The derivation is in
+> Phase 4's settle bar: the display's encode cancels the dim faces' spread (`D sigma` is within
+> 1.2 times from a lit wall to a face lit on 1 in 32), so a cell is still at about
+> `n > 135 sqrt(k)` samples whatever its decile, and the hole's fill rate puts `Q90` near 16 to
+> 32 frames at arm's length and 47 to 60 at 100 voxels: **the 60 and 120 bars stand, on
+> `Q90`** (done-when 15's level half). **Done-whens 14 and 16's level rows** keep their 90 %
+> and 99 % on the same criterion (the face's cell through the display transform, frame to
+> frame); their distance to the reference becomes a reading per decile beside the two
+> references' agreement, its floor. `S90` against the late mean is kept beside every `Q90` as a
+> reading, with the **travel after the stop** (levels a pixel moves from `Q90` to `C_CAP`), so
+> the slow crawl that a still-moving-under-a-level cell keeps is on the owner's table. **The
+> sum of squares stays a Followup** (one or two words a cell, 4 to 8 MB at 2^20): the stop bar
+> reads from the rig's readback with no store, and the spread stop is a mechanism the readings
+> have not yet asked for. Rejected: option (c) of question 1 (a burst or a larger `C_PRE` for
+> the dig), since the derivation says the dig's cells are still by about frame 32 without it;
+> a 16 384-sample reference (question 2's (a)), which halves the reference's noise and leaves
+> the 10 % bar out of the frame's reach on the dim deciles; and keeping the bars as misses
+> (option (a) of both), which would hand the owner a miss the eye cannot see. The box tests'
+> asserted halves (done-whens 2, 13, 15 and 16) stand as written: they pass on bright faces.
+> Phase 4's settle bar, done-whens 14 to 16, Phase 6 (c) and (h), the Budgets, Risks and
+> Followups follow.
 
 ## TL;DR
 
@@ -530,6 +568,30 @@ in its log, or the orchestrator agrees the order; the log names which.
   `dig100`), scale 1, lamp off: **at most 120 frames**, two counts, since the owner sees it from
   range. `up1.5` is read at both and is not asserted (Phase 1 read `S90` none there: the step
   lies within FSR 2's noise).
+  - **Amended 2026-11-05 (architect, for the owner): on the level the bar is `Q90`, not `S90`.**
+    `S90` asks each pixel to sit within `log2 1.1` of its mean over frames 2048 to 2111, a
+    capped cell's 4096-sample estimate, which a dim face reaches only near `C_CAP` (the log's
+    settled share 36 % at 16, 51 % at 60, 89 % at 256 while p50 holds 488, 1048 and 3400).
+    `Q90` (the header's amendment) asks that the pixel stop moving. **The derivation, a guess
+    the reading replaces.** A cell of `n` samples gaining `k` a frame moves its mean by about
+    `sigma sqrt(k) / n` of itself (rms). ACES's toe is linear and the encode a power of 1/2.2,
+    so a relative change `r` moves a pixel at level `D` by about `D r / 2.2` levels (the
+    shoulder only lowers it), and nine frames in ten move under one level when `1.645 D sigma
+    sqrt(k) / (2.2 n) < 1`, that is **`n > 0.75 D sigma sqrt(k)`**. A face lit on a share `p`
+    of its samples has `sigma` about `sqrt(1 / p)` and `D` about `p^(1/2.2)` times a lit wall's,
+    so `D sigma` goes as `p^-0.05`: 1.19 times at `p` 1/32. Take `D sigma` 180 (a lit wall at
+    level 180; 255 the bound): **`n > 135 sqrt(k)`**. At arm's length, preload on, the hole's
+    cells gain about 7, 13 and 30 samples a frame from frame 16 to 60 at p10, p50 and p90
+    (704 - 408, 1048 - 488 and 2052 - 744 over 44) and need 351, 487 and 740; they hold 408,
+    488 and 744 at frame 16: **`Q90` about 16 frames, about 32 at the bound** (p50 reaching 690
+    at 12.7 a frame). Preload off: p50 296 at 16 gaining 12 a frame, about frame 30. At 100
+    voxels: p50 144 at 16 gaining about 3.4 a frame needs 248, **about frame 47, about 60 at the
+    bound** (after frame 60 the cells gain about 1 a frame and need 191, under their 292). Frames 1 to 16 cannot be still (about 31 samples a frame into cells of 20). So
+    the 60 and 120 frame bars stand with a margin of about 2 at the bound; the
+    criterion is tightened in kind (every frame after `Q90` still), not loosened. A face
+    still under a level a frame keeps crawling until `C_CAP`, by about `D sigma / (2.2
+    sqrt(n))` levels in all, about 4 at `n` 500 (a guess): the **travel after `Q90`** is read
+    beside it for the owner.
 - **Part 1, the readings first, on Phase 3's tree** (the rig, lavapipe for asserted figures and
   the RTX through `VXE_TEST_ADAPTER=rtx` for the rest, lane rule 9c):
   - **The hole:** `dig_box_readings` at both distances, scale 1 and `up1.5`, lamp on and off:
@@ -918,6 +980,34 @@ in its log, or the orchestrator agrees the order; the log names which.
      no cell; and with `preload_claim_radius` 0 the gap-lit face holds a cell in under half of
      16 seeds (the test fails first; if it does not, the log says so and the rule's need rests
      on the level's reading). About 2 x 60 frames: about 6 s.
+     **Amended 2026-11-05 (architect, for the owner), the rows on the stop-moving criterion.**
+     The level rows' "within 10 % of the face's reference mean" is replaced by **still**: the
+     face's cell mean, read back as the rig reads cells, through the display transform at the
+     run's exposure (the header's amendment), moves by under `STILL_LEVEL` 1 level from the frame
+     to the next; a pixel with no cell, or whose cell reopened, counts as moving. The numbers
+     stand: **at least 90 % of the turn's pixels within `r0` still on the first frame each face
+     is in view, and 99 % by the tenth frame after the yaw ends; on the walk at 0.5 voxel a frame,
+     90 % of the entering pixels within `r0` still on their first frame**; `Shift` read. The
+     no-reference rule no longer gates a row (the bar needs no reference), so the walk rows the
+     log marked "not a reading" are readings. **The prediction, a guess.** By Phase 4's settle
+     derivation a face is still when `n > 135 sqrt(k)`, `k` the samples its cell gains a frame
+     in view, mostly from its own lighting pixels. On the first frame `n` is `C_PRE`: still at
+     256 for `k` up to about 3, at 1024 up to about 57. A voxel face at 192 x 108 covers about
+     230 lighting pixels at 8 voxels and 26 at 24 (0.0082 rad a pixel, a 90-degree field, a
+     guess; `k` 57 at about 16 voxels, 3 at about 64), so on their first frame faces within about
+     16 voxels are not still at 1024 and within about 64 not at 256, and their own pixels quiet
+     them after `(135 sqrt(k) - C_PRE) / k` frames: about 8 and 4 at 8 voxels, 17 and 0 at 24
+     voxels, at 256 and 1024. So at 1024 the tenth-frame 99 % is predicted met and the
+     first-frame 90 % met where faces within about 16 voxels carry under a tenth of the pixels;
+     at 256 the first frame is predicted missed and the tenth frame missed where faces between
+     about 11 and 55 voxels (`k` 5 to 125, over ten frames to quiet) carry over 1 %. The
+     `C_PRE` the bar picks is then a cost question (the Budgets). Each row is split by `k` band (1, 2 to 3, 4 to 57, 58
+     and up) as well as by decile, so a miss names the near faces' share. **The reference
+     becomes a reading:** each row prints, by decile, the share within 10 % of the reference
+     beside the cell check's two-reference share at the same decile (its floor) and their ratio;
+     a row at or over its floor is as near the truth as a 4096-sample reference can tell. The
+     travel after the stop (levels from the first still frame to the reference) is printed by
+     decile beside it. A miss goes to the owner in Phase 6 (h) with the tables.
   15. **Added 2026-11-04 (owner), the dig at arm's length and at range; amended 2026-11-04
      (architect, for the owner).** `a_near_dig_settles_from_the_preload_alone` asserts, on
      done-when 2's box with the camera 5 voxels from the dig, `F` 0 (Part 2 off) and the
@@ -930,6 +1020,15 @@ in its log, or the orchestrator agrees the order; the log names which.
      `dig_box_readings` at both distances with the preload on and off, beside Part 2's rows: the
      5-voxel dig's share within 10 % at frames 1, 4 and 16 and its `S90` at most 60 (scale 1,
      lamp off, against the bar); the 100-voxel dig lies beyond `R` and stays Part 2's bar of 120.
+     **Amended 2026-11-05 (architect, for the owner), the level half on `Q90`.** On the level the
+     bar is **`Q90` at most 60 frames** for the 5-voxel dig and **at most 120** for the
+     100-voxel dig, preload on (Phase 4's settle bar, with the derivation: predicted about 16 to
+     32 and 47 to 60); `dig_box_readings` prints per row `Q90`, the still share at frames 1, 4,
+     16, 60, 128 and 256, `S90` and mean90 as today (readings), the hole pixels' cell counts and
+     samples a frame at p10, p50 and p90, and the travel after `Q90` (levels from `Q90` to the
+     mean of frames 2048 to 2111, p50 and p90). Preload off is read beside it and not asserted
+     (predicted about 30 at arm's length, so the preload's gain on the level dig is a reading,
+     not a bar). The box test's asserts above stand.
   16. **Added 2026-11-04 (owner), the dark corner and the walk round a pillar.**
      `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` asserts, on a box with an
      emitter and a pillar, and a lit face behind the pillar that no eye on the path sees until
@@ -953,6 +1052,17 @@ in its log, or the orchestrator agrees the order; the log names which.
      the corner's faces lay within `r0` of the eye before its first frame in view, against the
      lead the preload needs (one sweep, 17 frames at `B` 128, plus 16 frames of fill); a miss
      with a shorter lead is the lead's, named so, not the claim rule's.
+     **Amended 2026-11-05 (architect, for the owner), the corner on the stop-moving criterion.**
+     `VEIN_CORNER` is still picked from the reference (its lowest tenth), and its bar becomes
+     done-when 14's: **on every frame the corner is in view, at least 90 % of its pixels still**
+     (the face's cell through the display transform, under 1 level to the next frame), preload
+     off beside it, `Shift` read. By the derivation the corner's dim faces need no more samples
+     than a lit wall's to be still (`D sigma` within 1.2 times), and its faces lay within `r0` 74
+     to 124 frames before the first in view, so at `C_PRE` 256 or 1024 they enter view with
+     their fill done; the prediction is met where the corner's faces gain under about 3 (256) or
+     57 (1024) samples a frame in view. The share within 10 % of the reference (read: 0.000 to
+     0.381) becomes the decile reading beside the two references' floor, as in done-when 14, with
+     the travel after the stop.
   17. **Added 2026-11-04 (owner), the preload's cost, memory and show; amended 2026-11-04
      (architect, for the owner); amended 2026-11-05 (architect, for the owner).** The banner and
      the HUD show `preload R <R> r0 <r0> B <B> C <C_PRE>` or `preload off` (`--preload-claim
@@ -1094,7 +1204,10 @@ in its log, or the orchestrator agrees the order; the log names which.
   yellow dots on creases while turning (Phase 4's verdict on the own-face read and the rig's
   fast-yaw row, against v0.41.0's, beside it); (c) the
   dug hole at arm's length and at range, in frames or seconds by eye, against Phase 4's bar (60
-  and 120 frames); (d) the lamp bounce's look and lag,
+  and 120 frames); amended 2026-11-05 (architect, for the owner): with done-when 15's `Q90`
+  (when the hole stops moving), `S90` (when it reaches its late mean) and the travel after
+  `Q90` at hand, so the owner says whether the hole still visibly "loads" after it stops, and
+  whether the slow crawl under a level a frame shows; (d) the lamp bounce's look and lag,
   and whether `lamp_bounce` stays on by default; (e) the step at voxel edges; (f) what remains
   visible, by run and pose; (h) (amended 2026-11-04, owner; amended the same day, architect)
   run 6: whether the light still "loads" in the dark corner, round the pillar at walking speed
@@ -1105,7 +1218,13 @@ in its log, or the orchestrator agrees the order; the log names which.
   corner and after a fast turn, and whether the dim faces from `r0` to `R` that the 8-probe rule
   still refuses are visible, with done-when 12's lit-share table and done-when 14's bands and
   deciles at hand, so a wider `r0` (its cost by the Budgets' `r0^2` arithmetic) or a larger
-  `C_PRE` near the eye for the darkest faces is the owner's call, not raised unasked; whether its off-screen cost (the sweep and fill of faces the view
+  `C_PRE` near the eye for the darkest faces is the owner's call, not raised unasked;
+  (amended 2026-11-05, architect, for the owner) with done-whens 14 and 16's still shares by `k`
+  band and decile, the reference shares beside the two references' floor, and the travel after
+  the stop: whether a face that has stopped moving but sits off its neighbours (the static grain
+  of a cell of a few hundred samples, up to a few tens of percent on the dim deciles) or keeps
+  a slow crawl is visible in the dark corner, which is the trigger for the Followups' stop by a
+  cell's spread; and which `C_PRE` (256 or 1024) at its cost; whether its off-screen cost (the sweep and fill of faces the view
   does not show, done-when 17's figures) is acceptable against the rule that the cost matches
   what is on screen; whether the faces beyond `R` that still settle at their footprint are
   visible; and, since the hall's table sits near or over `PRE_LOAD_MAX` (0.185 native, 0.260
@@ -1147,9 +1266,9 @@ Base figures are Plan 0051's cost tables (`logs/0051.md`, Phases 2 and 3), the l
 | `nfr.md` figure | Base (read, indicative) | Expected | How the close measures it |
 |---|---|---|---|
 | §2 GPU frame | RTX `off` 4.944 ms, `b --indirect off` 3.255; Cezanne 35.438, 21.053 | The default (table, guard, lamp channel, and whatever Phase 4 builds): **a guess** of the `b --indirect off` figure plus 0.3 ms on the RTX and 2.0 ms on the Cezanne, lamp on; on a dig's first frames the reopened fill adds its burst, nothing on a turn (Phase 4's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD [--pose vein]`, three quiet rounds alternated with the v0.41.0 binary, the perf lock, the memory cap; and the rig's flight on both adapters |
-| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10). **Amended 2026-11-04 (owner; the form amended the same day, architect), the preload, guesses by arithmetic:** a sample with its shadow ray costs about 3.5 ns on the RTX (v0.41.0's light pass, 0.802 ms over 640 x 360 lighting pixels), so `S_PRE` 32 768 is about 0.11 ms; the walk's demand, about 19 000 samples a frame at 30 voxels a second, about 0.07 ms, and `Shift` binds at `S_PRE`. The sweep at `B` 128: most bricks end on their entry word, a surface brick's 512 voxels test six neighbours each through the mirror's lookup, a guess of under 0.01 ms; at rest the trickle (`B / 16`) and an empty list, under 0.01 ms. About 0.12 ms in flight. The Cezanne at Phase 3's light ratio (5.1) about 0.6 ms. The line then reads about 0.36 ms RTX and 1.8 ms Cezanne of 6.0 (6 % and 30 %), before Part 2's fill. **Amended 2026-11-05 (architect, for the owner), read and guessed:** the walk read 0.062 (patch) and 0.094 ms (vein), about 4.6 ns a sample in the light pass's excess (0.059 ms over 12 798 samples at the vein), at rest 0.015 and 0.012 (loaded; a quiet re-read owed against 0.01). The claim within `r0` 24 adds, **a guess**, the faces probed a frame (444 and 211, read) times `(24 / 64)^2` times their refused share (0.94 and 0.75, read) times the 248 samples to `C_PRE`: about 14 500 and 5 600 samples, **+0.07 and +0.03 ms, about 0.13 and 0.12 ms walking**; at `r0` 32 the patch is about 0.18, over the bar, so the sweep picks; at rest nothing once the faces within `r0` hold `C_PRE` (their slabs are done); at `Shift` `S_PRE` binds (about 0.19 ms, read, not a bar) | the same runs, per pass; the preload's cost at rest, in flight and on a turn (done-when 17), at each `r0` |
+| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10). **Amended 2026-11-04 (owner; the form amended the same day, architect), the preload, guesses by arithmetic:** a sample with its shadow ray costs about 3.5 ns on the RTX (v0.41.0's light pass, 0.802 ms over 640 x 360 lighting pixels), so `S_PRE` 32 768 is about 0.11 ms; the walk's demand, about 19 000 samples a frame at 30 voxels a second, about 0.07 ms, and `Shift` binds at `S_PRE`. The sweep at `B` 128: most bricks end on their entry word, a surface brick's 512 voxels test six neighbours each through the mirror's lookup, a guess of under 0.01 ms; at rest the trickle (`B / 16`) and an empty list, under 0.01 ms. About 0.12 ms in flight. The Cezanne at Phase 3's light ratio (5.1) about 0.6 ms. The line then reads about 0.36 ms RTX and 1.8 ms Cezanne of 6.0 (6 % and 30 %), before Part 2's fill. **Amended 2026-11-05 (architect, for the owner), read and guessed:** the walk read 0.062 (patch) and 0.094 ms (vein), about 4.6 ns a sample in the light pass's excess (0.059 ms over 12 798 samples at the vein), at rest 0.015 and 0.012 (loaded; a quiet re-read owed against 0.01). The claim within `r0` 24 adds, **a guess**, the faces probed a frame (444 and 211, read) times `(24 / 64)^2` times their refused share (0.94 and 0.75, read) times the 248 samples to `C_PRE`: about 14 500 and 5 600 samples, **+0.07 and +0.03 ms, about 0.13 and 0.12 ms walking**; at `r0` 32 the patch is about 0.18, over the bar, so the sweep picks; at rest nothing once the faces within `r0` hold `C_PRE` (their slabs are done); at `Shift` `S_PRE` binds (about 0.19 ms, read, not a bar). **Amended 2026-11-05 (architect, for the owner), `C_PRE` under the stop bar, a guess:** if done-when 14 picks 1024, the claim within `r0` draws about 1016 samples a face instead of 248, about 4.1 times the 14 500 and 5 600 above, about 59 000 and 23 000 a frame walking, over `S_PRE` 32 768 at the patch, so the cost stays near `S_PRE`'s 0.15 ms (4.6 ns a sample) and the fill lags instead: the lead done-when 16 reads (the fill-time table read 226 and 323 frames at 1024 against 57 and 83 at 256). `C_PRE` 1024 is the default only if done-when 17's walking bar holds; otherwise 256 stays and the choice is the owner's in Phase 6 (h) | the same runs, per pass; the preload's cost at rest, in flight and on a turn (done-when 17), at each `r0` |
 | §2 denoise line (3.0 ms): temporal + a-trous | RTX 0.086 + 0.497 | unchanged or lower (the a-trous over one channel) | the same runs |
-| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, + the preload list (`PRELOAD_LIST_MAX` 32 768 entries ping-ponged, about 256 KiB, a guess) and its stats words (amended 2026-11-04: no other store; it fills the table, about 15 000 to 25 000 faces within `R` 64 at the level, half lit, 0.007 to 0.012 of 2^20 by the census, mostly cells the view also makes, and claims none past `PRE_LOAD_MAX` 0.25 or after a frame's miss; amended 2026-11-05: the claim within `r0` adds no store, only a uniform word, and its cells, the faces within 24 voxels of a walked path inside the 256-voxel light radius, are about 23 000 on a straight 512-voxel walk at the vein's density, about 0.022 of 2^20, **a guess**, beside today's read 0.010 and 0.024), - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
+| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, + the preload list (`PRELOAD_LIST_MAX` 32 768 entries ping-ponged, about 256 KiB, a guess) and its stats words (amended 2026-11-04: no other store; it fills the table, about 15 000 to 25 000 faces within `R` 64 at the level, half lit, 0.007 to 0.012 of 2^20 by the census, mostly cells the view also makes, and claims none past `PRE_LOAD_MAX` 0.25 or after a frame's miss; amended 2026-11-05: the claim within `r0` adds no store, only a uniform word, and its cells, the faces within 24 voxels of a walked path inside the 256-voxel light radius, are about 23 000 on a straight 512-voxel walk at the vein's density, about 0.022 of 2^20, **a guess**, beside today's read 0.010 and 0.024; amended 2026-11-05: the stop-moving bars add no store, and a sum of squares a cell for a spread stop stays a Followup: one word is + 4 194 304 B at 2^20 (cells of 11 words), two if the integer squares need 64 bits to stay order-independent at 4096 samples, + 8 388 608 B), - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
 
 Determinism is not touched: everything is in `vxe-render`. The table's integer sums make a
 face's mean independent of the order its pixels add, which the close reads as a bit-identical
@@ -1216,6 +1335,17 @@ cell dump across two runs of the same still frame on lavapipe.
   (h) with the table, not to a larger budget unasked. Amended 2026-11-05: done-when 14 reads
   the band within `r0` at `C_PRE` 256 and 1024, split by the reference mean's decile, and the
   reference at `C_CAP` 4096 is itself about 0.09 noisy for a face lit on one sample in 32.
+  Amended 2026-11-05 (architect, for the owner): read so (two references agree within 10 % on
+  0.08 to 0.66 of the lit cells by decile); the level bars are now stop-moving bars in display
+  levels, under which a dim face needs about as many samples as a lit wall, and the distance to
+  the reference is a reading against that floor.
+- **A still face can sit off the truth** (amended 2026-11-05, architect, for the owner). The
+  stop bar passes a cell whose mean has stopped moving under a level a frame while it is still
+  `sigma / sqrt(n)` off its true value, and it then crawls by its residual (about 4 levels in
+  all at `n` 500, a guess) until `C_CAP`. Neighbouring faces of one wall may then differ by a
+  few levels at rest. The travel after the stop is read beside every stop bar; whether it
+  shows is the owner's in Phase 6 (c) and (h), and a stop by a cell's spread that caps a cell
+  once it is still (the Followups) is the answer if it does.
 - **The claim within `r0` fills unlit faces** (amended 2026-11-05, architect, for the owner).
   A face within `r0` that no emitter reaches takes a cell and `C_PRE` samples of zero, once for
   the cell's life: about 248 samples wasted a face, a guess of up to 0.07 ms walking at the
@@ -1339,7 +1469,13 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   view, if done-when 14's misses split mostly to faces with no cell yet (the sweep's latency);
   a larger table for the hall, if the owner asks in Phase 6 (h); a stop rule by a cell's spread
   instead of its count (the cell holds no sum of squares today), if the dark faces' `C_PRE`
-  reading says a count is the wrong stop; and, for static emitters, a store kept per chunk and
+  reading says a count is the wrong stop (amended 2026-11-05, architect, for the owner: not
+  built in this plan; its triggers are the stop bars' readings showing a `k` band or decile
+  still moving at the default `C_PRE` while the others are still at a quarter of it, or the
+  owner calling the still faces' grain or crawl visible in Phase 6 (c) or (h); its form then
+  caps a cell, bit-identical as at `C_CAP`, once its standard error through the display
+  transform is under `STILL_LEVEL`, and ends the preload's fill there, at one or two words a
+  cell, the Budgets' figure); and, for static emitters, a store kept per chunk and
   filled once per upload, so a face is lit before it can be seen at any range, the strongest
   form of the owner's "loaded", which needs a store the table is not (a later ADR, if the faces
   beyond `R` are called visible in Phase 6 (h)).
