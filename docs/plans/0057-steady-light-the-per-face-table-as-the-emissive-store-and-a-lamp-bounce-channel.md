@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** in-progress (Phases 1 to 8 run, 2026-11-05; Phase 8's item (i) open: direction with the owner); Plan 0056's Phase 2 readings are in its log (e678ae7)
+> **Status:** in-progress (Phases 1 to 8 run, 2026-11-05; awaits a fresh-session close review; the owner moved the direction to a look-first Plan 0059); Plan 0056's Phase 2 readings are in its log (e678ae7)
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
@@ -1790,7 +1790,7 @@ Open at draft: the "go".
 | 5: The lamp-bounce channel | dev | done, committed before Phase 4's row (the orchestrator's order); deviations: the moving lamp carried per probe (`MOVED_BIT`), the window sets the schedule only, `Lighting::default()` keeps `lamp_bounce` off (the fly-through on), side 8 from the reach of 64; done-when 5's timers unread on lavapipe; 8 not met (the still composite moves, bounce on and off alike) ([log](logs/0057.md)) | 12a9178 |
 | 6: The owner's window, with digs | human | done; verdict in the log; direction questioned ([log](logs/0057.md)) | a23b73d |
 | 7: The grain, the young cells and the table | dev | done; size 2^22, probes 16; not met: done-when 4's level bars at the vein, done-when 5's first frame ([log](logs/0057.md)) | 131de41 |
-| 8: The owner's second window | human | run; words on (b), (c), (e), (f); none on (a), (d), (g), (h); (i) open: the owner asks about a look-first direction ([log](logs/0057.md)) | committed with this row |
+| 8: The owner's second window | human | run; words on (b), (c), (e), (f); none on (a), (d), (g), (h); (i) the owner moves the direction to a look-first bake and closes this plan as it stands ([log](logs/0057.md)) | committed with this row |
 
 ### Notes
 

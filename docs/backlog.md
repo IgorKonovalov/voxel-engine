@@ -99,3 +99,10 @@ Decided 2026-10-16: a WebGPU and wasm demo for blog interactivity is a later, fo
 its own app under `apps/`. The fly-through and the native paths never change or lose performance
 for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
 materials, a sky and a way to build interesting architecture.
+
+### Antialiasing after the look-first light
+
+Decided 2026-11-05 (owner, Plan 0057's second window): "antializing next", after the emissive-only
+reference of the look-first Plan 0059. The owner's fast turn "still has artifacts" (step 1); the
+reference runs with no upscaler, so it tells the light's part from the image's. Picks up when
+the owner has judged the reference.
