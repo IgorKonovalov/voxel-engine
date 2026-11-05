@@ -104,10 +104,6 @@ milliseconds, both adapters), then try wgpu subgroups and `shader-f16` on the wa
 C for the CPU side was asked and answered no (GPU about 9 of 10.6 ms, CPU about 1 ms). Run when
 no lane holds the GPU.
 
-### `castle_gate_golden`'s RSS bar measures little of the castle
-
-Ruled 2026-11-05 (architect); a dev chore carries it and removes this entry. The bar's claim is Plan 0042's: the golden builds only the tiles that meet its extent. A whole-process peak cannot see that: `gate_world` frees the prefabs before the device opens, so its peak is the frame's. Read on 299b5c8: the world's build peaks at about 172 000 kB, all tiles at 458 000 kB, the frame at 978 000 kB. The child warm-up goes; a bar of 300 MiB is read right after `gate_world`, before any device. The whole-process peak stays a printed reading with no bar. The 655 MiB of shared memory is not chased: it is software-driver memory, and `frame_bytes` and `docs/nfr.md` section 3 hold the real budgets.
-
 ### A held fallback still moves on screen
 
 Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With the table's read off at the patch pose on 299b5c8, the accumulation is bit-identical over the window (0 pixels changed), yet the filter's output reads 90.95 patches a step and the composite 51.10. The lamp is off and the gather is not added, so the filter is the only part left that moves. By reading the code (not isolated): `temporal.wgsl` keeps blending each frame's noisy sample into the moments after the emissive part holds, and `atrous.wgsl` weights its taps by that variance. `a_still_fallback_pixel_holds_still` reads the accumulation, so it does not see this. Plan 0059 keeps the fallback for no-face hits, so glass and the field look may shimmer at rest. That patch-pose run makes every hit a fallback, so it is an extreme case; a translucent surface has not been read. What it takes: a spike that reads a translucent wall's composite at rest, then a fix that holds the moments with the mean, or passes a held part around the filter as the table's part does. Pick up if Plan 0059's Phase 3 window shows glass moving at rest, or with the antialiasing plan.
