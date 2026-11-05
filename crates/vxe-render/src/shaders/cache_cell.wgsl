@@ -26,7 +26,7 @@ const CACHE_STAMP_FRAME: u32 = 0x3FFFFFFFu;
 // cell (light.wgsl's `cache_seen`) or a seen cell's blend read it (cache_blend.wgsl); 0 never.
 // The age-out (cache_sweep.wgsl) frees a cell beyond its radius unseen for its age.
 const CACHE_SEEN: u32 = 10u;
-// The cell's blended mean (cache_blend.wgsl), RGB9E5; the temporal pass reads it.
+// The cell's blended mean (cache_blend.wgsl; `blend_unpack`); the temporal pass reads it.
 const CACHE_BLEND: u32 = 11u;
 
 fn cache_mix(v: vec3<i32>, face: u32, a: u32, b: u32) -> u32 {
@@ -54,4 +54,16 @@ fn cache_key_voxel(k: vec2<u32>) -> vec3<i32> {
     let y = (k.x >> 20u) | ((k.y & 0xFFu) << 12u);
     let z = (k.y >> 8u) & 0xFFFFFu;
     return bitcast<vec3<i32>>(vec3<u32>(x, y, z) << vec3<u32>(12u)) >> vec3<u32>(12u);
+}
+
+// The blend word's exponent bias and the smallest colour it holds, 2^-26: under it, black.
+const BLEND_EXP_BIAS: i32 = 26;
+const BLEND_MIN: f32 = 1.4901161e-8;
+
+// A blend word (`marcher::blend_unpack`): nine bits of each channel's square root over a shared
+// power of two, the exponent in the top five. Display levels are about even in the square root,
+// so a step is about half a level through any channel, at any share of the largest.
+fn blend_unpack(word: u32) -> vec3<f32> {
+    let q = vec3<f32>(vec3<u32>(word & 511u, (word >> 9u) & 511u, (word >> 18u) & 511u)) / 511.0;
+    return q * q * ldexp(1.0, i32(word >> 27u) - BLEND_EXP_BIAS);
 }

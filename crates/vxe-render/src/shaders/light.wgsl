@@ -168,7 +168,9 @@ fn shade_px(gid: vec3<u32>) {
                 if (cell < 0) {
                     atomicAdd(&cache_stats.misses, 1u);
                 } else {
-                    cache_seen(u32(cell));
+                    if (cache_seen(u32(cell)) && cache_blend_on()) {
+                        blend_list(u32(cell));
+                    }
                     capped = atomicLoad(&cache_cells[CACHE_WORDS * u32(cell) + CACHE_COUNT]) >= cache_c_cap();
                     if (fill_samples() > 0u) {
                         if (light_edits.count > 0u && in_light_edit(rec.p)) {
@@ -248,6 +250,13 @@ fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
         }
     }
     return -1;
+}
+
+// Appends `slot` to the blend list past the table's cells (cache_blend.wgsl).
+fn blend_list(slot: u32) {
+    let list = CACHE_WORDS * (params.cache_mask + 1u);
+    let entry = atomicAdd(&cache_cells[list], 1u);
+    atomicStore(&cache_cells[list + 4u + entry], slot);
 }
 
 // Stamps `slot` seen this frame (march.wgsl's CACHE_SEEN, `params.frame + 1`): the first pixel

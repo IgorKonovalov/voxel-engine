@@ -1388,6 +1388,11 @@ fn cache_read_on() -> bool {
     return (params.cache & 1u) != 0u;
 }
 
+// Whether the temporal pass reads a cell's blend (cache_blend.wgsl) in place of its own mean.
+fn cache_blend_on() -> bool {
+    return (params.cache & 2u) != 0u;
+}
+
 fn cache_c_cap() -> u32 {
     return (params.cache >> 14u) & 0x3FFFu;
 }

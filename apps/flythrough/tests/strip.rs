@@ -1498,7 +1498,8 @@ fn hall_floor_terraces() {
 ///   `|D_f - mean(D_n)|` over faces with at least two coplanar edge neighbours, the
 ///   neighbours the 3 x 3 of the same axis and side (the coplanar voxel, then one toward the
 ///   air, then one into the rock, the first with a sampled cell); `G_noise` p50 and p90 of
-///   `|D_f(seed 0) - D_f(seed 1)| / sqrt 2`.
+///   `|D_f(seed 0) - D_f(seed 1)| / sqrt 2`. `VXE_LIGHT_BLEND` (`off`, `3x3`, `5x5`) and
+///   `VXE_LIGHT_POOL` set the blend; `D_f` is the value the temporal pass reads under it.
 /// - `light_table`: `VXE_LIGHT_POSE` `hall`, `vein` or `patch`, at the window's size under
 ///   FSR 2, the fly-through's default light (the lamp on on the level, off in the hall; auto
 ///   exposure on the level, 8 in the hall): 600 still frames, four turns of 90 degrees over 10
@@ -1507,6 +1508,7 @@ fn hall_floor_terraces() {
 ///   of rock, at most 160) at 30 voxels a second facing the travel. Per 60 frames the occupied
 ///   cells, the most misses in a frame, and the preload's claims and refusals summed; the
 ///   peak; the occupied keys at the end dumped as little-endian word pairs to `keys-<pose>.bin`.
+/// - `light_yaw`: see the test.
 mod light_strip {
     use super::*;
     use std::collections::HashMap;
@@ -1516,7 +1518,7 @@ mod light_strip {
     use vxe_render::{LightingResolution, marcher};
 
     const WINDOW: [u32; 2] = [2530, 1378];
-    const STRIP_AT: [usize; 7] = [1, 4, 16, 64, 256, 1024, 4096];
+    const STRIP_AT: [usize; 8] = [1, 4, 16, 64, 120, 256, 1024, 4096];
     const AFTER_PRESS: [usize; 5] = [1, 4, 16, 64, 256];
     const PRESSES: u64 = 4;
 
@@ -1678,7 +1680,12 @@ mod light_strip {
             return None;
         }
         let n = count.min(lighting.table_cap) as f32 * marcher::CACHE_Q;
-        let rgb = [1, 2, 3].map(|k| words[w + c + k] as f32 / n * exposure);
+        let mean = if lighting.blend == marcher::TableBlend::Off {
+            [1, 2, 3].map(|k| words[w + c + k] as f32 / n)
+        } else {
+            marcher::blend_unpack(words[w + marcher::CACHE_BLEND_WORD])
+        };
+        let rgb = mean.map(|v| v * exposure);
         let t = support::rigs::tone_bytes([rgb[0], rgb[1], rgb[2], 1.0], lighting);
         Some(0.2126 * f32::from(t[0]) + 0.7152 * f32::from(t[1]) + 0.0722 * f32::from(t[2]))
     }
@@ -1709,6 +1716,33 @@ mod light_strip {
         out
     }
 
+    /// The faces with a pixel in view, emitters excluded: their `D_f` and pixels.
+    fn faces_with_pixels(
+        rig: &Rig,
+        frame: &Frame,
+        words: &[u32],
+        eye: Vec3,
+        lighting: &Lighting,
+        exposure: f32,
+    ) -> HashMap<FaceKey, (f32, u32)> {
+        let pos = readback::read_float(&rig.device, &rig.queue, frame.hit_positions());
+        let info = readback::read_rgba16u(&rig.device, &rig.queue, frame.hit_records());
+        let mut out: HashMap<FaceKey, (f32, u32)> = HashMap::new();
+        for (p, i) in pos.iter().zip(&info) {
+            if rig.emits.contains(&i[2]) {
+                continue;
+            }
+            if let Some(k) = face_key(eye, *p, *i) {
+                if let Some(e) = out.get_mut(&k) {
+                    e.1 += 1;
+                } else if let Some(d) = d_of(words, k, lighting, exposure) {
+                    out.insert(k, (d, 1));
+                }
+            }
+        }
+        out
+    }
+
     fn p50_p90(mut v: Vec<f32>) -> String {
         if v.is_empty() {
             return "- / - (0)".to_owned();
@@ -1716,6 +1750,40 @@ mod light_strip {
         v.sort_by(f32::total_cmp);
         let q = |f: f64| v[((v.len() - 1) as f64 * f).round() as usize];
         format!("{:.2} / {:.2} ({})", q(0.5), q(0.9), v.len())
+    }
+
+    /// The blend mode and pool from `VXE_LIGHT_BLEND` (`off`, `3x3`, `5x5`; default the
+    /// lighting's) and `VXE_LIGHT_POOL`.
+    fn with_blend(lighting: Lighting) -> Lighting {
+        let blend = match env("VXE_LIGHT_BLEND").as_deref() {
+            Some("off") => marcher::TableBlend::Off,
+            Some("3x3") => marcher::TableBlend::Narrow,
+            Some("5x5") => marcher::TableBlend::Wide,
+            _ => lighting.blend,
+        };
+        Lighting {
+            blend,
+            blend_pool_min: env_or("VXE_LIGHT_POOL", lighting.blend_pool_min),
+            ..lighting
+        }
+    }
+
+    /// `G_noise` by the faces' count band: under 256, 256 to 1023, 1024 to 4095, capped.
+    fn g_noise_bands(
+        words: &[u32],
+        a: &HashMap<FaceKey, f32>,
+        b: &HashMap<FaceKey, f32>,
+    ) -> String {
+        let mut bands: [Vec<f32>; 4] = Default::default();
+        for (k, &da) in a {
+            if let (Some(&db), Some(w)) = (b.get(k), cache_cell(words, *k)) {
+                let n = words[w + marcher::CACHE_COUNT_WORD];
+                let band = usize::from(n >= 256) + usize::from(n >= 1024) + usize::from(n >= 4096);
+                bands[band].push((da - db).abs() / 2f32.sqrt());
+            }
+        }
+        let [low, mid, high, capped] = bands.map(p50_p90);
+        format!("under 256 {low}, to 1023 {mid}, to 4095 {high}, capped {capped}")
     }
 
     /// `G_plane` over the faces in view.
@@ -1826,12 +1894,12 @@ mod light_strip {
             if fsr2 { "fsr2" } else { "native" }
         );
         let dir = out_dir(&name);
-        let lighting = Lighting {
+        let lighting = with_blend(Lighting {
             exposure: Exposure::Manual(exposure),
             lamp: false,
             lamp_bounce: true,
             ..Lighting::default()
-        };
+        });
         let light = LightParams::headlamp();
         // Seed 1 first: its faces at each strip frame, for G_noise.
         let mut seed1 = Vec::new();
@@ -1870,7 +1938,11 @@ mod light_strip {
                 let faces =
                     faces_in_view(&rig, &frame, &words, camera.position, &lighting, exposure);
                 let gp = g_plane(&words, &faces, &lighting, exposure);
-                let gn = g_noise(&faces, &seed1[shots.len()]);
+                let gn = format!(
+                    "{}; bands {}",
+                    g_noise(&faces, &seed1[shots.len()]),
+                    g_noise_bands(&words, &faces, &seed1[shots.len()])
+                );
                 write_png(&dir.join(format!("f{n:04}.png")), &img, w, h);
                 shots.push((n, img, stats_line(&t, &p), gp, gn));
             } else if n % 64 == 0 {
@@ -1971,6 +2043,94 @@ mod light_strip {
             rig.adapter,
             dir.display()
         );
+    }
+
+    /// The young faces: at `VEIN_POSE` from a fresh table (`fsr2` unless `VXE_LIGHT_ROW` is
+    /// `native`, the lamp off, exposure 8), 120 still frames, then a yaw of 90 degrees over 10
+    /// frames. Of the faces first in view during the yaw, their pixels' shares (each face weighs
+    /// its pixels on its first frame) whose `D_f` lies within 2 and 4 levels of its own `D_f`
+    /// after the view has held 4096 frames, on the first frame in view and on the 16th frame
+    /// after the yaw ends; within `R` and beyond it.
+    #[test]
+    #[ignore = "reading only: run with --ignored"]
+    fn light_yaw() {
+        let fsr2 = env("VXE_LIGHT_ROW").as_deref() != Some("native");
+        let exposure: f32 = env_or("VXE_LIGHT_EXPOSURE", 8.0);
+        let mut camera = flythrough::VEIN_POSE.camera();
+        let Some(rig) = rig(false, camera.position.to_array()) else {
+            println!("light yaw: no adapter; skipped");
+            return;
+        };
+        let lighting = with_blend(Lighting {
+            exposure: Exposure::Manual(exposure),
+            lamp: false,
+            lamp_bounce: true,
+            ..Lighting::default()
+        });
+        let light = LightParams::headlamp();
+        let mut frame = make_frame(&rig, fsr2, lighting);
+        let reach = lighting.preload_radius as f32;
+        let eye = camera.position;
+        let view = |f: &Frame| {
+            let words = table_words(&rig, f);
+            (
+                faces_with_pixels(&rig, f, &words, eye, &lighting, exposure),
+                words,
+            )
+        };
+        for _ in 0..120 {
+            frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        }
+        let (before, _) = view(&frame);
+        let mut first: HashMap<FaceKey, (f32, u32)> = HashMap::new();
+        for _ in 0..10 {
+            camera.yaw += 9f32.to_radians();
+            frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+            let (now, _) = view(&frame);
+            for (k, (d, n)) in now {
+                if !before.contains_key(&k) {
+                    first.entry(k).or_insert((d, n));
+                }
+            }
+        }
+        for _ in 0..16 {
+            frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        }
+        let after16 = table_words(&rig, &frame);
+        for _ in 0..4096 {
+            frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        }
+        let settled = table_words(&rig, &frame);
+        let mut rows = [[0u64; 5]; 2];
+        for (k, &(d0, n)) in &first {
+            let Some(s) = d_of(&settled, *k, &lighting, exposure) else {
+                continue;
+            };
+            let c = Vec3::new(k.0[0] as f32, k.0[1] as f32, k.0[2] as f32) + Vec3::splat(0.5);
+            let row = &mut rows[usize::from(c.distance(eye) > reach)];
+            let n = u64::from(n);
+            row[0] += n;
+            row[1] += n * u64::from((d0 - s).abs() <= 2.0);
+            row[2] += n * u64::from((d0 - s).abs() <= 4.0);
+            let d16 = d_of(&after16, *k, &lighting, exposure).unwrap_or(0.0);
+            row[3] += n * u64::from((d16 - s).abs() <= 2.0);
+            row[4] += n * u64::from((d16 - s).abs() <= 4.0);
+        }
+        for (name, row) in ["within R", "beyond R"].into_iter().zip(rows) {
+            let share = |v: u64| v as f64 / row[0].max(1) as f64;
+            println!(
+                "light yaw {} {} pool {}: {name}: {} pixels on {} new faces; first frame within 2/4 {:.4} / {:.4}; frame +16 within 2/4 {:.4} / {:.4}",
+                if fsr2 { "fsr2" } else { "native" },
+                lighting.blend.name(),
+                lighting.blend_pool_min,
+                row[0],
+                first.len(),
+                share(row[1]),
+                share(row[2]),
+                share(row[3]),
+                share(row[4]),
+            );
+        }
     }
 
     #[test]

@@ -25,7 +25,7 @@
 //! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]
 //! [--history edits|gradient] [--lighting full|half]
-//! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off] [--preload-claim VOXELS]
+//! [--blend off|3x3|5x5|on] [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off] [--preload-claim VOXELS]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
 //! [--exposure auto|E]
@@ -111,7 +111,8 @@
 //! alias); `--probe-spacing N` sets the voxels between its probes
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
-//! default, 16 or 32); `--preload VOXELS|off` sets the camera-radius preload's radius (default
+//! default, 16 or 32); `--blend off|3x3|5x5|on` sets what the temporal pass reads of a table cell, its own mean, the 3 x 3 pool or
+//! the widening 5 x 5 (default; `C` cycles them); `--preload VOXELS|off` sets the camera-radius preload's radius (default
 //! 64, rounded down to whole bricks, at most 128) or turns it off, and `--preload-claim VOXELS`
 //! its claim radius r0 (default 32, 0 to 128; at most the radius), within which every face is
 //! filled lit or not. In a window
@@ -465,6 +466,8 @@ struct Args {
     /// `--lamp-bounce on|off` (alias `--indirect`): the lamp's bounce from the probe volume (on
     /// by default).
     lamp_bounce: bool,
+    /// `--blend off|3x3|5x5|on`: what the temporal pass reads of a table cell (default on, 5x5).
+    blend: vxe_render::marcher::TableBlend,
     /// `--preload VOXELS|off`: the camera-radius preload's radius in voxels, 0 off (default
     /// `DEFAULT_PRELOAD_RADIUS`).
     preload: u32,
@@ -664,6 +667,7 @@ impl Args {
             lamp_bounce: self.lamp_bounce,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
+            blend: self.blend,
             preload_radius: self.preload,
             preload_claim_radius: self.preload_claim,
             ..Lighting::default()
@@ -741,6 +745,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp_toggle: None,
         fade_reading: false,
         lamp_bounce: true,
+        blend: vxe_render::marcher::TableBlend::default(),
         preload: vxe_render::marcher::DEFAULT_PRELOAD_RADIUS,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
@@ -1000,6 +1005,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 return Err(format!(
                     "{flag} is gone since Plan 0057: emissive light is read from the per-face table (ADR-0043)"
                 ));
+            }
+            "--blend" => {
+                use vxe_render::marcher::TableBlend;
+                args.blend = match value()?.as_str() {
+                    "off" => TableBlend::Off,
+                    "3x3" => TableBlend::Narrow,
+                    "5x5" | "on" => TableBlend::Wide,
+                    v => return Err(format!("--blend takes off, 3x3, 5x5 or on, not {v}")),
+                };
             }
             "--preload" => {
                 args.preload = match value()?.as_str() {
@@ -4200,6 +4214,7 @@ impl Run {
         for (key, mode) in [
             (KeyCode::F3, hud::ModeKey::ShadowWalk),
             (KeyCode::F4, hud::ModeKey::Preload),
+            (KeyCode::KeyC, hud::ModeKey::Blend),
             (KeyCode::F5, hud::ModeKey::History),
             (KeyCode::F6, hud::ModeKey::Resolution),
             (KeyCode::F7, hud::ModeKey::Lamp),
@@ -7450,7 +7465,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 2^22 probes 16, fill 8 to 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 2^22 probes 16, blend 5x5, fill 8 to 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

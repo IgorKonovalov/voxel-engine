@@ -90,6 +90,9 @@ fn cache_mean(v: vec3<i32>, face: u32) -> vec4<f32> {
             if (count == 0u) {
                 break;
             }
+            if (cache_blend_on()) {
+                return vec4<f32>(blend_unpack(cache_cells[word + CACHE_BLEND]), 1.0);
+            }
             let n = f32(min(count, cache_c_cap())) * CACHE_Q;
             let sums = vec3<f32>(
                 f32(cache_cells[word + CACHE_COUNT + 1u]),

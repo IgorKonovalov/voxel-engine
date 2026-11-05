@@ -2182,6 +2182,7 @@ fn cache_box_rig_on(
         lamp_bounce: false,
         exposure: Exposure::Manual(1.0),
         table_cap: cap,
+        blend: vxe_render::marcher::TableBlend::Off,
         ..Lighting::default()
     });
     frame.set_dt(1.0 / 60.0);
@@ -2726,6 +2727,401 @@ fn the_sweep_clears_cells_beyond_the_light_radius() {
         far > 0 && near > 0,
         "{far} faces beyond the radius, {near} within"
     );
+}
+
+/// A rig for the blend's tests: `world` from `camera` at 128 x 72, `cap` samples, `blend`, 2^16
+/// cells, no preload, the reopened fill at 16 samples a frame up to the cap.
+fn blend_rig(
+    world: vxe_world::World,
+    camera: Camera,
+    cap: u32,
+    blend: vxe_render::marcher::TableBlend,
+) -> Option<CacheBox> {
+    let mut rig = cache_box_rig_on(world, camera, cap, [128, 72], None)?;
+    rig.frame.set_lighting(Lighting {
+        table_cells: 1 << 16,
+        blend,
+        preload_radius: 0,
+        fill_samples: 16,
+        fill_until: cap,
+        ..rig.frame.lighting()
+    });
+    Some(rig)
+}
+
+/// Brings every cell in view to `cap`: a frame claims the view's cells, a box over the world
+/// reopens them, and the fill draws its samples whatever pixels they cover.
+fn blend_fill(rig: &mut CacheBox, cap: u32) {
+    rig.step(1);
+    rig.frame.invalidate([0, 0, 0], [127, 127, 127]);
+    for _ in 0..64 {
+        rig.step(8);
+        let words = cache_words(&rig.level, &rig.frame);
+        if rig.keys().keys().all(|k| cache_count(&words, *k) >= cap) {
+            return;
+        }
+    }
+    panic!("the view's cells did not reach {cap} samples");
+}
+
+/// A key's blend word, in linear light; `None` with no cell.
+fn blend_of(words: &[u32], key: FaceKey) -> Option<[f32; 3]> {
+    cache_cell(words, key).map(|w| {
+        vxe_render::marcher::blend_unpack(words[w + vxe_render::marcher::CACHE_BLEND_WORD])
+    })
+}
+
+fn luma3(c: [f32; 3]) -> f64 {
+    0.2126 * f64::from(c[0]) + 0.7152 * f64::from(c[1]) + 0.0722 * f64::from(c[2])
+}
+
+fn luma3d(c: [f64; 3]) -> f64 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// Whether a straight line from `from` to `to`, in voxels, leaves the world's voxels clear until
+/// the voxel holding `to`.
+fn line_clear(world: &vxe_world::World, from: [f64; 3], to: [f64; 3]) -> bool {
+    use vxe_world::{FIXED_ONE, Fixed3};
+    let fixed = |v: f64| (v * FIXED_ONE as f64).round() as i64;
+    let d: [i64; 3] = [0, 1, 2].map(|k| fixed(to[k] - from[k]));
+    let hit = world
+        .raycast(Fixed3(from.map(fixed)), d, FIXED_ONE)
+        .expect("in range");
+    hit.is_none_or(|h| (0..3).all(|k| h.voxel.0[k] == to[k].floor() as i32))
+}
+
+/// A blend stops at a crease and keeps a shadow edge. An L's two walls, a block's +x and +y faces
+/// with an emitter off the +x side that reaches no face of the +y wall (checked here against
+/// every emitter voxel): every cell of the unlit wall reads exactly 0, the row along the crease
+/// included, while the lit wall beside it does not. A floor under a slab that hides a one-voxel
+/// emitter from `x < 57` (the slab's edge at x 60, z 43; the emitter at x 99, z 83, its shadow
+/// edge on the floor at z 40 between x 57 and x 57.15): the face two from the edge on the dark
+/// side reads exactly 0, and the face beside the edge a quarter of the lit face's mean (at
+/// least 0.15 and at most 0.35). At the cap of 1024, scale 1, the widening off.
+#[test]
+fn the_blend_stops_at_a_crease_and_keeps_a_shadow_edge() {
+    use vxe_render::marcher::TableBlend;
+    use vxe_world::*;
+    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
+    let empty = || {
+        World::generate(
+            ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+            &UniformSource(AIR),
+            &table,
+        )
+    };
+    let fill = |world: &World, min: [i64; 3], max: [i64; 3], m| {
+        world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v| v * FIXED_ONE)),
+                Fixed3(max.map(|v| v * FIXED_ONE)),
+                Mode::Fill(m),
+            ))
+            .expect("the box is resident");
+    };
+    let cap = 1024;
+
+    // The crease.
+    let world = empty();
+    fill(&world, [20, 20, 30], [50, 50, 90], flythrough::cave::ROCK);
+    fill(&world, [70, 10, 60], [72, 12, 62], flythrough::cave::ORE);
+    let camera = Camera {
+        position: [66.5, 66.5, 60.5].into(),
+        yaw: 225f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let Some(mut rig) = blend_rig(world, camera, cap, TableBlend::Narrow) else {
+        return;
+    };
+    blend_fill(&mut rig, cap);
+    let words = cache_words(&rig.level, &rig.frame);
+    let keys = rig.keys();
+    let unlit: Vec<FaceKey> = keys
+        .keys()
+        .filter(|(v, f)| *f == 3 && v[1] == 49)
+        .copied()
+        .collect();
+    let lit: Vec<FaceKey> = keys
+        .keys()
+        .filter(|(v, f)| *f == 1 && v[0] == 49)
+        .copied()
+        .collect();
+    assert!(unlit.len() > 100 && lit.len() > 100, "{unlit:?} {lit:?}");
+    for k in &unlit {
+        let at = [
+            f64::from(k.0[0]) + 0.5,
+            f64::from(k.0[1]) + 1.01,
+            f64::from(k.0[2]) + 0.5,
+        ];
+        for e in [[70, 10], [71, 10], [70, 11], [71, 11]] {
+            for z in [60, 61] {
+                let to = [
+                    f64::from(e[0]) + 0.5,
+                    f64::from(e[1]) + 0.5,
+                    f64::from(z) + 0.5,
+                ];
+                assert!(!line_clear(&rig.level.world, at, to), "{k:?} sees {to:?}");
+            }
+        }
+        let w = cache_cell(&words, *k).expect("a cell");
+        assert_eq!(
+            words[w + vxe_render::marcher::CACHE_BLEND_WORD],
+            0,
+            "the unlit wall's {k:?}"
+        );
+    }
+    let along = lit.iter().filter(|(v, _)| v[1] == 49).count();
+    let lit_along = lit
+        .iter()
+        .filter(|(v, _)| v[1] == 49)
+        .filter(|k| blend_of(&words, **k).is_some_and(|c| luma3(c) > 0.0))
+        .count();
+    println!(
+        "crease: {} unlit, {} lit, {lit_along} of {along} lit along it",
+        unlit.len(),
+        lit.len()
+    );
+    assert!(along > 0 && lit_along == along, "{lit_along} of {along}");
+
+    // The shadow edge.
+    let world = empty();
+    fill(&world, [0, 0, 36], [128, 128, 40], flythrough::cave::ROCK);
+    fill(&world, [20, 0, 43], [60, 128, 45], flythrough::cave::ROCK);
+    fill(&world, [99, 64, 83], [100, 65, 84], flythrough::cave::ORE);
+    let camera = Camera {
+        position: [66.5, 64.5, 46.5].into(),
+        yaw: 180f32.to_radians(),
+        pitch: (-31.8f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    };
+    let Some(mut rig) = blend_rig(world, camera, cap, TableBlend::Narrow) else {
+        return;
+    };
+    blend_fill(&mut rig, cap);
+    let words = cache_words(&rig.level, &rig.frame);
+    let row = |x: i32| ([x, 64, 39], 5u8);
+    let mean = |x: i32| {
+        let w = cache_cell(&words, row(x)).unwrap_or_else(|| panic!("row {x} has a cell"));
+        luma3d(cell_mean(&words, w, cap))
+    };
+    let blended = |x: i32| luma3(blend_of(&words, row(x)).expect("a cell"));
+    println!(
+        "shadow edge: means at x 55..58 {:?}, blended {:?}",
+        [55, 56, 57, 58].map(mean),
+        [55, 56, 57, 58].map(blended)
+    );
+    assert_eq!(mean(56), 0.0, "x 56 lies in the shadow");
+    assert!(mean(57) > 0.0, "x 57 lies in the light");
+    assert_eq!(blended(55), 0.0, "two from the edge on the dark side");
+    let share = blended(56) / mean(57);
+    assert!((0.15..=0.35).contains(&share), "beside the edge: {share}");
+}
+
+/// A blend quiets a lit wall: on the box at the cap of 256, the per-face spread between two light
+/// seeds over faces that are lit with their whole kernel in view falls to at most half of the
+/// cells' own means' (the arithmetic: 0.375). With the blend off no blend word is written.
+#[test]
+fn a_blend_quiets_a_lit_wall() {
+    use vxe_render::marcher::TableBlend;
+    let cap = 256;
+    let run = |seed: u32, blend| {
+        let (world, camera) = cache_box();
+        let mut rig = blend_rig(world, camera, cap, blend)?;
+        rig.frame.set_frame_index(seed * SEED_STRIDE);
+        blend_fill(&mut rig, cap);
+        let words = cache_words(&rig.level, &rig.frame);
+        let keys = rig.keys();
+        Some((words, keys))
+    };
+    let Some((a, keys)) = run(0, TableBlend::Narrow) else {
+        return;
+    };
+    let (b, _) = run(1, TableBlend::Narrow).expect("the adapter");
+    let (off, _) = run(0, TableBlend::Off).expect("the adapter");
+    // The block's lit walls: every in-plane neighbour held by both tables.
+    let inner: Vec<FaceKey> = keys
+        .keys()
+        .filter(|(v, f)| {
+            let axis = usize::from(*f / 2);
+            (v[axis] == 39 || v[axis] == 40 || v[axis] == 63 || v[axis] == 64)
+                && (-1..=1).all(|i: i32| {
+                    (-1..=1).all(|j: i32| {
+                        let mut o = *v;
+                        o[(axis + 1) % 3] += i;
+                        o[(axis + 2) % 3] += j;
+                        cache_cell(&a, (o, *f)).is_some() && cache_cell(&b, (o, *f)).is_some()
+                    })
+                })
+        })
+        .filter(|k| {
+            cache_cell(&a, **k).is_some_and(|w| luma3d(cell_mean(&a, w, cap)) > 0.0)
+                && blend_of(&a, **k).is_some_and(|c| luma3(c) > 0.0)
+        })
+        .copied()
+        .collect();
+    assert!(inner.len() > 20, "{} faces", inner.len());
+    let rms = |d: Vec<f64>| (d.iter().map(|v| v * v).sum::<f64>() / d.len() as f64).sqrt();
+    let spread = |f: &dyn Fn(&[u32], FaceKey) -> f64| {
+        rms(inner
+            .iter()
+            .map(|&k| (f(&a, k) - f(&b, k)) / 2f64.sqrt())
+            .collect())
+    };
+    let own = spread(&|w, k| luma3d(cell_mean(w, cache_cell(w, k).expect("a cell"), cap)));
+    let pooled = spread(&|w, k| luma3(blend_of(w, k).expect("a cell")));
+    println!(
+        "a lit wall's spread over {} faces: own {own:.6}, blended {pooled:.6}, ratio {:.3}",
+        inner.len(),
+        pooled / own
+    );
+    assert!(own > 0.0);
+    assert!(pooled <= 0.5 * own, "own {own}, blended {pooled}");
+    for k in &inner {
+        let w = cache_cell(&off, *k).expect("a cell");
+        assert_eq!(
+            off[w + vxe_render::marcher::CACHE_BLEND_WORD],
+            0,
+            "{k:?} with the blend off"
+        );
+    }
+}
+
+/// A still blend is bit-identical: 64 still frames after every cell in view is capped read every
+/// blend word and every pixel unchanged, with the widening on.
+#[test]
+fn a_still_blend_is_bit_identical() {
+    use vxe_render::marcher::TableBlend;
+    let (world, camera) = cache_box();
+    let Some(mut rig) = blend_rig(world, camera, 64, TableBlend::Wide) else {
+        return;
+    };
+    blend_fill(&mut rig, 64);
+    rig.step(1);
+    let keys: Vec<FaceKey> = rig.keys().into_keys().collect();
+    let read = |rig: &CacheBox| {
+        let words = cache_words(&rig.level, &rig.frame);
+        let blends: Vec<u32> = keys
+            .iter()
+            .map(|k| {
+                words[cache_cell(&words, *k).expect("a cell")
+                    + vxe_render::marcher::CACHE_BLEND_WORD]
+            })
+            .collect();
+        let (d, q) = (&rig.level.device, &rig.level.queue);
+        (
+            blends,
+            vxe_render::readback::read_rgba8(d, q, rig.frame.target()),
+        )
+    };
+    let (blends, pixels) = read(&rig);
+    assert!(blends.iter().any(|&b| b != 0), "the plate lights the block");
+    for f in 0..64 {
+        rig.step(1);
+        let (b, p) = read(&rig);
+        assert_eq!(b, blends, "a blend word moved at frame {f}");
+        assert_eq!(p, pixels, "a pixel moved at frame {f}");
+    }
+}
+
+/// A young face reads its wall's light: on the box at the cap of 1024, eight faces of a lit wall,
+/// three apart, their cells' counts and sums written to 0: on the next frame each shows, through
+/// the display transform, within 2 levels of the mean of its eight neighbours' blends; with the
+/// blend off at least one of them does not.
+#[test]
+fn a_young_face_reads_its_walls_light() {
+    use vxe_render::marcher::{CACHE_COUNT_WORD, TableBlend};
+    let cap = 1024;
+    let run = |blend| -> Option<(Vec<f64>, usize)> {
+        let (world, camera) = cache_box();
+        let mut rig = blend_rig(world, camera, cap, TableBlend::Narrow)?;
+        blend_fill(&mut rig, cap);
+        let l = rig.frame.lighting();
+        rig.frame.set_lighting(Lighting {
+            blend,
+            fill_samples: 0,
+            ..l
+        });
+        rig.step(1);
+        let words = cache_words(&rig.level, &rig.frame);
+        let keys = rig.keys();
+        let plane = |k: &FaceKey, i: i32, j: i32| {
+            let axis = usize::from(k.1 / 2);
+            let mut o = k.0;
+            o[(axis + 1) % 3] += i;
+            o[(axis + 2) % 3] += j;
+            (o, k.1)
+        };
+        let around: Vec<(i32, i32)> = (-1..=1)
+            .flat_map(|i| (-1..=1).map(move |j| (i, j)))
+            .filter(|&o| o != (0, 0))
+            .collect();
+        let mut picked: Vec<FaceKey> = Vec::new();
+        let mut sorted: Vec<FaceKey> = keys.keys().copied().collect();
+        sorted.sort_unstable();
+        for k in sorted {
+            let full = around.iter().all(|&(i, j)| {
+                let n = plane(&k, i, j);
+                cache_cell(&words, n).is_some_and(|w| luma3d(cell_mean(&words, w, cap)) > 0.01)
+            });
+            let apart = picked
+                .iter()
+                .all(|p| (0..3).any(|a| (p.0[a] - k.0[a]).abs() >= 3));
+            if full && apart && picked.len() < 8 {
+                picked.push(k);
+            }
+        }
+        assert_eq!(picked.len(), 8, "eight lit faces");
+        let table = rig.frame.emissive_table();
+        for k in &picked {
+            let w = cache_cell(&words, *k).expect("a cell") + CACHE_COUNT_WORD;
+            rig.level
+                .queue
+                .write_buffer(table, w as u64 * 4, &[0u8; 16]);
+        }
+        rig.step(1);
+        let (d, q) = (&rig.level.device, &rig.level.queue);
+        let accum = vxe_render::readback::read_float(d, q, rig.frame.accumulated());
+        let keyed = keyed_pixels(&rig);
+        let lighting = rig.frame.lighting();
+        let level = |c: [f32; 3]| {
+            let t = support::rigs::tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
+            0.2126 * f64::from(t[0]) + 0.7152 * f64::from(t[1]) + 0.0722 * f64::from(t[2])
+        };
+        let words = cache_words(&rig.level, &rig.frame);
+        let mut off_by = Vec::new();
+        for k in &picked {
+            let (i, _) = keyed
+                .iter()
+                .find(|(_, o)| o == k)
+                .expect("a pixel on the face");
+            let shown = accum[*i];
+            let mut sum = [0f32; 3];
+            for &(a, b) in &around {
+                let n = plane(k, a, b);
+                let c = match blend {
+                    TableBlend::Off => {
+                        let w = cache_cell(&words, n).expect("a cell");
+                        cell_mean(&words, w, cap).map(|v| v as f32)
+                    }
+                    _ => blend_of(&words, n).expect("a cell"),
+                };
+                for m in 0..3 {
+                    sum[m] += c[m] / 8.0;
+                }
+            }
+            off_by.push((level([shown[0], shown[1], shown[2]]) - level(sum)).abs());
+        }
+        Some((off_by, picked.len()))
+    };
+    let Some((on, n)) = run(TableBlend::Narrow) else {
+        return;
+    };
+    let (off, _) = run(TableBlend::Off).expect("the adapter");
+    println!("young faces ({n}), levels off their neighbours: blend {on:.2?}, none {off:.2?}");
+    assert!(on.iter().all(|&d| d <= 2.0), "{on:?}");
+    assert!(off.iter().any(|&d| d > 2.0), "{off:?}");
 }
 
 /// The voxel and face of a cell's key words (`cache_key_voxel` in `march.wgsl`).
@@ -4968,7 +5364,7 @@ fn preload_level_readings() {
         vxe_render::marcher::FRAME_PASSES
             .iter()
             .zip(ms)
-            .filter(|(n, _)| ["preload", "light", "fill", "temporal"].contains(n))
+            .filter(|(n, _)| ["preload", "light", "fill", "blend", "temporal"].contains(n))
             .map(|(n, v)| {
                 let mut v = v.clone();
                 v.sort_by(f64::total_cmp);

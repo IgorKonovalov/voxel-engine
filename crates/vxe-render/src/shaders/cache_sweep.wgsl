@@ -115,6 +115,8 @@ fn end_evict() {
 
 @compute @workgroup_size(1, 1, 1)
 fn walk_args() {
+    // The blend list past the cells starts each frame empty (cache_blend.wgsl).
+    cache_cells[CACHE_WORDS * sweep.cells] = 0u;
     if (state.n > 0u) {
         state.cursor += state.n;
         state.left -= state.n;

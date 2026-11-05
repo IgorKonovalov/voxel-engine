@@ -579,6 +579,7 @@ impl HudStats {
             };
             let colour = if ms("light")
                 + ms("fill")
+                + ms("blend")
                 + ms("preload")
                 + ms("temporal")
                 + ms("probes")
@@ -1326,6 +1327,8 @@ pub const BANNER_ROWS: usize = 9;
 /// A key that changes the lighting mode: `F3` to `F7` and `M`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeKey {
+    /// `C`: the table's blend, 5x5, 3x3 then off.
+    Blend,
     /// `F3`: full or coarse shadow walk.
     ShadowWalk,
     /// `F4`: the camera-radius preload, off or at the start's radius (or the default's when
@@ -1537,6 +1540,14 @@ impl Modes {
                 }
             }
             ModeKey::LampBounce => l.lamp_bounce = !l.lamp_bounce,
+            ModeKey::Blend => {
+                use vxe_render::marcher::TableBlend;
+                l.blend = match l.blend {
+                    TableBlend::Wide => TableBlend::Narrow,
+                    TableBlend::Narrow => TableBlend::Off,
+                    TableBlend::Off => TableBlend::Wide,
+                };
+            }
             ModeKey::Pulse => self.pulse = !self.pulse,
             ModeKey::Exposure => {
                 use vxe_render::Exposure;
@@ -1603,7 +1614,7 @@ impl Modes {
             String::new()
         };
         format!(
-            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {} probes {}, fill {}, {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {} probes {}, blend {}, fill {}, {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.history.name(),
@@ -1615,6 +1626,7 @@ impl Modes {
             on(self.pulse),
             table_size(l.cells()),
             vxe_render::marcher::CACHE_PROBES,
+            l.blend.name(),
             if l.fill_samples == 0 {
                 "off".to_owned()
             } else {
@@ -1771,7 +1783,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off\ntable 2^22 probes 16, fill 8 to 256\npreload R 64 r0 32 B 128 C 256\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off\ntable 2^22 probes 16, blend 5x5\nfill 8 to 256\npreload R 64 r0 32 B 128 C 256\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -1782,6 +1794,7 @@ mod mode_tests {
             (ModeKey::Resolution, "lighting full"),
             (ModeKey::Lamp, "lamp off"),
             (ModeKey::Preload, "preload off"),
+            (ModeKey::Blend, "blend 3x3"),
             (ModeKey::LampBounce, "lamp bounce on"),
             (ModeKey::Pulse, "ore pulse on"),
         ] {

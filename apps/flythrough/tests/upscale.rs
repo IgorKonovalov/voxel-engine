@@ -699,13 +699,13 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// textures (2 x 16 B x 640 x 360 = 7 372 800 B), plus the table's cells of 48 B, 2^21 on
 /// lavapipe, whose storage binding stops at 128 MiB (100 663 296 B; 2^22 elsewhere, 201 326 592 B),
 /// and past them the blend list (16 B of header and a slot of 4 B a lighting
-/// pixel, 921 616 B), plus the walk's state and dispatch (80 + 12 B), plus the reopened fill's list (16 B of header and 16 384 slots of 4 B,
+/// pixel, 921 616 B), plus the walk's state and dispatch and the blend's uniform (80 + 12 + 32 B), plus the reopened fill's list (16 B of header and 16 384 slots of 4 B,
 /// 65 552 B) and its 12-byte indirect dispatch, plus the preload's store (its 152 B header and
 /// its fill lists' 2 x 64 distance bands of 4 B; two fill lists of 32 768 entries of 8 B, the
 /// sweep's offsets at the largest radius, 17 077 of 4 B, two probe lists of 16 384 faces of
 /// 8 B, the left and claimed lists of 32 768 slots of 4 B and the slab stamps, 33^3 x 8 of
 /// 4 B: 2 267 532 B), its 4 176 B uniform, its 24-byte indirect dispatches and its idle skip's
-/// four 32-byte readback slots: 223 130 444 B.
+/// four 32-byte readback slots: 223 130 476 B.
 #[test]
 fn frame_bytes_hold_the_table_and_no_emissive_history() {
     let Some((device, _queue)) = software_device(64 << 20) else {
@@ -723,11 +723,11 @@ fn frame_bytes_hold_the_table_and_no_emissive_history() {
         + 24
         + 4 * 32;
     let table = 100_663_296 + 16 + 4 * lighting;
-    let walk = 80 + 12;
+    let walk = 80 + 12 + 32;
     let expected =
         130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + table + walk + fill + preload;
     println!("frame_bytes at the default: {bytes} B");
-    assert_eq!(expected, 223_130_444);
+    assert_eq!(expected, 223_130_476);
     assert_eq!(bytes, expected);
 }
 

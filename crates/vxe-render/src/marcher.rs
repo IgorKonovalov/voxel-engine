@@ -24,6 +24,7 @@ pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
 const CACHE_CLEAR_WGSL: &str = include_str!("shaders/cache_clear.wgsl");
 const CACHE_CELL_WGSL: &str = include_str!("shaders/cache_cell.wgsl");
 const CACHE_SWEEP_WGSL: &str = include_str!("shaders/cache_sweep.wgsl");
+const CACHE_BLEND_WGSL: &str = include_str!("shaders/cache_blend.wgsl");
 const CACHE_FILL_WGSL: &str = include_str!("shaders/cache_fill.wgsl");
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
@@ -1070,6 +1071,54 @@ impl PreloadIdle {
     }
 }
 
+/// The blend's uniform (`Blend` in `cache_blend.wgsl`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BlendUniform {
+    cache_mask: u32,
+    c_cap: u32,
+    pool_min: u32,
+    wide: u32,
+    frame: u32,
+    _pad: [u32; 3],
+}
+
+/// What the temporal pass reads of a table cell (`cache_blend.wgsl`): a pool of its face's samples
+/// and its coplanar neighbours', or its own mean.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TableBlend {
+    /// The cell's own mean.
+    Off,
+    /// The 3 x 3 pool.
+    Narrow,
+    /// The 3 x 3 pool, and the 5 x 5's where it holds under [`Lighting::blend_pool_min`] samples.
+    #[default]
+    Wide,
+}
+
+impl TableBlend {
+    /// The mode's word in the banner and on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Narrow => "3x3",
+            Self::Wide => "5x5",
+        }
+    }
+}
+
+/// [`Lighting::blend_pool_min`] by default.
+pub const DEFAULT_BLEND_POOL_MIN: u32 = 16_384;
+
+/// A blend word's colour (`blend_unpack` in `cache_cell.wgsl`).
+pub fn blend_unpack(word: u32) -> [f32; 3] {
+    let scale = 2f32.powi((word >> 27) as i32 - 26);
+    [word & 511, (word >> 9) & 511, (word >> 18) & 511].map(|m| {
+        let q = m as f32 / 511.0;
+        q * q * scale
+    })
+}
+
 /// The table walk's uniform (`Sweep` in `cache_sweep.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1200,6 +1249,10 @@ pub struct Lighting {
     /// The temporal pass reads the table (default on). Off, every hit takes the fallback: for
     /// tests that compare against the table.
     pub table_read: bool,
+    /// What the temporal pass reads of a cell (default [`TableBlend::Wide`]).
+    pub blend: TableBlend,
+    /// The samples under which a 3 x 3 pool widens to the 5 x 5 under [`TableBlend::Wide`].
+    pub blend_pool_min: u32,
     /// The table's age-out (default on): when the occupied cells cross 3/16 of the table
     /// upward, again once they have grown by 1/32 of it since the last pass while still over,
     /// and again [`Lighting::table_age`] frames after a pass that left them over having freed a
@@ -1272,6 +1325,8 @@ impl Default for Lighting {
             table_cells: DEFAULT_TABLE_CELLS,
             table_cap: DEFAULT_TABLE_CAP,
             table_read: true,
+            blend: TableBlend::default(),
+            blend_pool_min: DEFAULT_BLEND_POOL_MIN,
             table_age_out: true,
             table_age: DEFAULT_TABLE_AGE,
             table_age_min: DEFAULT_TABLE_AGE_MIN,
@@ -1313,7 +1368,9 @@ impl Lighting {
 
     /// `Params::cache`.
     fn cache_word(&self) -> u32 {
-        u32::from(self.table_read) | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14
+        u32::from(self.table_read)
+            | u32::from(self.blend != TableBlend::Off) << 1
+            | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14
     }
 
     /// The word of `ProbeUniform::steady`: the freeze count.
@@ -1571,6 +1628,10 @@ pub struct Frame {
     walk_dispatch: wgpu::Buffer,
     /// The table's cells as allocated ([`Frame::table_cells`]).
     table_cells: u32,
+    /// The blend pass (`cache_blend.wgsl`), its layout and uniform.
+    cache_blend: wgpu::ComputePipeline,
+    cache_blend_layout: wgpu::BindGroupLayout,
+    blend_params: wgpu::Buffer,
     /// The chunk sweeps requested: the walk takes a new one when it moves.
     sweep_requests: std::sync::atomic::AtomicU32,
     /// The table's edit-box reset by cells (`clear_box_cells`), for a frame whose boxes' voxel
@@ -2125,6 +2186,20 @@ impl Frame {
             &[None, None, Some(&cache_walk_layout)],
             "walk_cells",
         );
+        let cache_blend_layout = io_layout(device, "cache blend", &[Io::Uniform, Io::Storage]);
+        let cache_blend = compute_pipeline(
+            device,
+            "cache blend",
+            format!("{CACHE_CELL_WGSL}\n{CACHE_BLEND_WGSL}"),
+            &[None, None, Some(&cache_blend_layout)],
+            "blend_cells",
+        );
+        let blend_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("emissive table blend"),
+            size: size_of::<BlendUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let walk_state = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("emissive table walk"),
             size: WALK_STATE_BYTES,
@@ -2486,6 +2561,9 @@ impl Frame {
             probes: std::sync::OnceLock::new(),
             cache,
             table_cells,
+            cache_blend,
+            cache_blend_layout,
+            blend_params,
             cache_stats,
             // The new table's words are zero on creation; clear them once anyway with the
             // counters.
@@ -3223,6 +3301,7 @@ impl Frame {
             + self.fsr.as_ref().map_or(0, Fsr2::bytes)
             + self.cache.size()
             + WALK_STATE_BYTES
+            + self.blend_params.size()
             + self.walk_dispatch.size()
             + FILL_LIST_BYTES
             + self.fill_dispatch.size()
@@ -4170,6 +4249,33 @@ impl Frame {
             pass.groups[2] = Some(&gradient_cache_bind);
             gradient.push(pass);
         }
+        let blend_bind = (self.lighting.blend != TableBlend::Off).then(|| {
+            queue.write_buffer(
+                &self.blend_params,
+                0,
+                bytemuck::bytes_of(&BlendUniform {
+                    cache_mask: cells - 1,
+                    c_cap: self.lighting.table_cap.clamp(1, DEFAULT_TABLE_CAP),
+                    pool_min: self.lighting.blend_pool_min,
+                    wide: u32::from(self.lighting.blend == TableBlend::Wide),
+                    frame: p.frame.wrapping_add(1),
+                    _pad: [0; 3],
+                }),
+            );
+            bind_io(
+                device,
+                &self.cache_blend_layout,
+                &[Res::Buf(&self.blend_params), Res::Buf(cache_table)],
+            )
+        });
+        let mut blend: Vec<Dispatch<'_>> = Vec::new();
+        if let Some(b) = &blend_bind {
+            let [w, h] = t.light_size();
+            let rows = dispatch_rows((w * h).div_ceil(64), self.table_dispatch_cap);
+            let mut d = frame_pass(&self.cache_blend, b, 2, rows);
+            d.groups[0] = None;
+            blend.push(d);
+        }
         let mut fill: Vec<Dispatch<'_>> = Vec::new();
         if let Some((list, stats, args)) = &fill_bind {
             let mut a = frame_pass(&self.fill_args, stats, 2, [1, 1]);
@@ -4305,6 +4411,7 @@ impl Frame {
                 None => vec![frame_pass(self.light_pipeline(device), &light_bind, 2, lw)],
             },
             fill,
+            blend,
             vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
             probes,
@@ -4564,12 +4671,13 @@ fn composite_capture_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Tex
 /// probes in one dispatch.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
 /// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 22] = [
+pub const FRAME_PASSES: [&str; 23] = [
     "hit",
     "gradient",
     "preload",
     "light",
     "fill",
+    "blend",
     "temporal",
     "atrous",
     "probes",
