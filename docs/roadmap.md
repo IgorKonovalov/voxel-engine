@@ -249,7 +249,12 @@ ADR-0043 (proposed, 2026-11-04) records the verdict: the per-face table is the o
 store, faces are sampled and guarded in world space, and the probe volume becomes a lamp-bounce
 channel that keeps its scaffolding for a later per-source indirect light. Plan 0057 (draft)
 builds it in six phases, the first a reading of the verdict's open questions (the fast turn, the
-dug hole); Plan 0048 is moot under it and was dropped (owner, 2026-11-04).
+dug hole); Plan 0048 is moot under it and was dropped (owner, 2026-11-04). After Plan 0057's window
+of 2026-11-05 ("it feels like this is wrong way") the owner asked for light that is already there:
+ADR-0046 (proposed) and Plan 0059 (approved, after 0057's close) bake static emissive light per chunk.
+After Plan 0057's second window the owner set the order (2026-11-05): a reference with no budget first,
+emissive light only, judged in the window, then antialiasing, then cuts one at a time by eye. The
+owner's verdict in Plan 0059's Phase 13 keeps the bake or the table.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the

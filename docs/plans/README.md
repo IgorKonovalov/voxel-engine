@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0059** (ADRs are a separate sequence; next free there is **0046**).
+**Next free number: 0060** (ADRs are a separate sequence; next free there is **0047**).
 
 ## Active roster
 
@@ -19,7 +19,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0057, before 0045 (owner, 2026-11-03). |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before Plan 0048 and M10 (owner, 2026-11-03). |
 | [0057](0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) | Steady light: the per-face table as the only emissive store, faces sampled and guarded, the probes a lamp-bounce channel | in-progress | M2, ADR-0043 (proposed). Phase 7 fix pass added 2026-11-05. Before 0044. |
-| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: a list of eight analytic lights, exact, dropped and carried; scaled emission over the table; a bounce flag | draft | M2, ADR-0044 and ADR-0045 (proposed). After 0057. |
+| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: a list of eight analytic lights, exact, dropped and carried; scaled emission over the table; a bounce flag | draft | M2, ADR-0044 and ADR-0045 (proposed). After 0059; its scale phase needs a refresh. |
+| [0059](0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md) | Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye | approved | M2, ADR-0046. After 0057's close, on a go; owner's verdict at Phase 3; before 0058. |
 <!-- roster:end -->
 
 ## Recently closed
