@@ -7,8 +7,7 @@
 //! is off. From off frame `WINDOW.0` to `WINDOW.1` it reads, per frame, the exposure meter's
 //! 8 x 8 tiles (`Frame::exposure_tiles`: the sum of the clamped log2 luminance of the shaded
 //! radiance and the pixel count), the display image, and on the lighting grid the emissive
-//! accumulation (`Frame::accumulated`, rgb) and the probe gather
-//! (`Frame::indirect_irradiance`), each reduced to the same tiles: the mean over the tile's
+//! accumulation (`Frame::accumulated`, rgb), reduced to the same tiles: the mean over the tile's
 //! lighting pixels of `clamp(log2(max(Y / exposure, 2^-16)), -16, 16)`, the meter's own
 //! transform of the absolute value.
 //!
@@ -38,8 +37,6 @@ pub const WINDOW: (usize, usize) = (120, 720);
 pub const STEP: usize = 30;
 /// The composite's (and a part's) tile mean a full tile lies above, in log2.
 pub const FULL_LOG2: f32 = -15.0;
-/// The ages a trace counts as young: the eight updates after a restart.
-const YOUNG_AGES: u32 = 8;
 /// The meter's tile edge in internal pixels.
 pub const TILE: u32 = 8;
 /// The bar's frame size.
@@ -141,50 +138,11 @@ impl Stats {
     }
 }
 
-/// The composite's events the gather does not explain: a **direct-attributed patch** is a
-/// composite patch on a tile whose gather tile is no patch on the same step, and a
-/// **direct-attributed sudden step** a composite sudden step on a tile and frame where the
-/// gather's tile makes none. Two parts that each move under `log2 1.1` but cross it together
-/// count as direct.
-#[derive(Clone, Debug)]
-pub struct Direct {
-    /// Direct-attributed patches on each of the window's steps.
-    pub patches: Vec<usize>,
-    /// Direct-attributed sudden steps over the window, per second at 60 fps.
-    pub sudden_per_s: f64,
-}
-
-impl Direct {
-    pub fn mean_patches(&self) -> f64 {
-        self.patches.iter().sum::<usize>() as f64 / self.patches.len().max(1) as f64
-    }
-
-    pub fn max_patches(&self) -> usize {
-        self.patches.iter().copied().max().unwrap_or(0)
-    }
-
-    pub fn line(&self) -> String {
-        let steps: Vec<String> = self.patches.iter().map(usize::to_string).collect();
-        format!(
-            "patches/step mean {:.2} max {} [{}], sudden {:.2}/s",
-            self.mean_patches(),
-            self.max_patches(),
-            steps.join(" "),
-            self.sudden_per_s,
-        )
-    }
-}
-
-/// A run's statistics: the composite's tiles, the emissive accumulation's and the gather's,
-/// and the composite's events not on a gather event.
+/// A run's statistics: the composite's tiles and the emissive accumulation's.
 #[derive(Clone, Debug)]
 pub struct Reading {
     pub composite: Stats,
     pub emissive: Stats,
-    pub gather: Stats,
-    pub direct: Direct,
-    /// The gather's mean linear luminance over the lighting grid and the window's frames.
-    pub gather_luminance: f64,
 }
 
 impl Reading {
@@ -192,12 +150,6 @@ impl Reading {
     pub fn print(&self, name: &str) {
         println!("reading: {name} composite: {}", self.composite.line());
         println!("reading: {name} emissive: {}", self.emissive.line());
-        println!("reading: {name} gather: {}", self.gather.line());
-        println!("reading: {name} direct-attributed: {}", self.direct.line());
-        println!(
-            "reading: {name} gather mean luminance {:.6}",
-            self.gather_luminance
-        );
     }
 }
 
@@ -295,41 +247,10 @@ fn stats(tiles: &[Tiles], full: &[Vec<bool>], images: Option<&[Vec<u8>]>) -> Sta
     }
 }
 
-/// The composite's direct-attributed events against the gather's (see [`Direct`]).
-fn direct(composite: &[Tiles], gather: &[Tiles], full: &[Vec<bool>]) -> Direct {
-    let n = composite.len();
-    let count = |a: usize, b: usize| {
-        (0..composite[0].len())
-            .filter(|&t| patch(composite, full, a, b, t) && !patch(gather, full, a, b, t))
-            .count()
-    };
-    let patches = (0..(n - 1) / STEP)
-        .map(|k| count(k * STEP, (k + 1) * STEP))
-        .collect();
-    let sudden: usize = (1..n).map(|f| count(f - 1, f)).sum();
-    Direct {
-        patches,
-        sudden_per_s: sudden as f64 / ((n - 1) as f64 / 60.0),
-    }
-}
-
-/// One off frame of a traced run (`run_traced`): whether the probe volume's light-change
-/// window was open, how many probes' ages restarted (an age below the slot's last frame's),
-/// how many probes are young (age 1 to `YOUNG_UPDATES`), and the gather's tile mean |d log2|
-/// from the frame before over the tiles full in both.
-#[derive(Clone, Copy, Debug)]
-pub struct TraceFrame {
-    pub off: usize,
-    pub window: bool,
-    pub restarts: u32,
-    pub young: u32,
-    pub gather_dlog2: f64,
-}
-
 /// One run at `pose` with `lighting` (indirect light on and the pose's manual exposure
 /// imposed), `size` internal pixels, the lamp switched off after `LAMP_ON` frames.
 pub fn run(level: &VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -> Reading {
-    run_inner(level, pose, lighting, size, false, None).0
+    run_inner(level, pose, lighting, size, None)
 }
 
 /// `run` that halves every emissive material's emission just before off frame `off`.
@@ -340,17 +261,7 @@ pub fn run_halved_at(
     size: [u32; 2],
     off: usize,
 ) -> Reading {
-    run_inner(level, pose, lighting, size, false, Some(off)).0
-}
-
-/// `run`, plus a `TraceFrame` for every off frame of the window.
-pub fn run_traced(
-    level: &VeinLevel,
-    pose: &Pose,
-    lighting: Lighting,
-    size: [u32; 2],
-) -> (Reading, Vec<TraceFrame>) {
-    run_inner(level, pose, lighting, size, true, None)
+    run_inner(level, pose, lighting, size, Some(off))
 }
 
 fn run_inner(
@@ -358,9 +269,8 @@ fn run_inner(
     pose: &Pose,
     lighting: Lighting,
     size: [u32; 2],
-    traced: bool,
     halve_at: Option<usize>,
-) -> (Reading, Vec<TraceFrame>) {
+) -> Reading {
     let (device, queue) = (&level.device, &level.queue);
     let lit = Lighting {
         lamp_bounce: true,
@@ -377,12 +287,7 @@ fn run_inner(
     let mut composite: Vec<Tiles> = Vec::new();
     let mut full: Vec<Vec<bool>> = Vec::new();
     let mut emissive: Vec<Tiles> = Vec::new();
-    let mut gather: Vec<Tiles> = Vec::new();
     let mut images: Vec<Vec<u8>> = Vec::new();
-    let mut gather_lum = 0.0f64;
-    let mut trace: Vec<TraceFrame> = Vec::new();
-    let mut ages_before: Vec<u32> = Vec::new();
-    let age_of = |w: u32| (w >> 1) & vxe_render::probes::MAX_AGE;
     for i in 0..LAMP_ON + LAMP_OFF {
         if i == LAMP_ON {
             frame.set_lighting(Lighting { lamp: false, ..lit });
@@ -399,29 +304,6 @@ fn run_inner(
             continue;
         }
         let off = i + 1 - LAMP_ON;
-        if traced && off + 1 >= WINDOW.0 && off <= WINDOW.1 {
-            let ages: Vec<u32> = frame
-                .probes()
-                .read_states(device, queue)
-                .iter()
-                .map(|&w| age_of(w))
-                .collect();
-            if off >= WINDOW.0 {
-                let restarts = ages.iter().zip(&ages_before).filter(|(a, b)| a < b).count() as u32;
-                let young = ages
-                    .iter()
-                    .filter(|&&a| (1..=YOUNG_AGES).contains(&a))
-                    .count() as u32;
-                trace.push(TraceFrame {
-                    off,
-                    window: frame.probe_light_window(),
-                    restarts,
-                    young,
-                    gather_dlog2: 0.0,
-                });
-            }
-            ages_before = ages;
-        }
         if off < WINDOW.0 || off > WINDOW.1 {
             continue;
         }
@@ -441,25 +323,7 @@ fn run_inner(
         let scale = size[0].div_ceil(grid[0]);
         let e = readback::read_float(device, queue, acc);
         emissive.push(grid_tiles(&e, grid, size, scale, pose.exposure));
-        let g = readback::read_float(device, queue, frame.indirect_irradiance());
-        gather_lum += g
-            .iter()
-            .map(|p| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]))
-            .sum::<f64>()
-            / g.len() as f64;
-        gather.push(grid_tiles(&g, grid, size, scale, pose.exposure));
         images.push(readback::read_rgba8(device, queue, frame.target()));
-    }
-    for f in 1..trace.len().min(gather.len()) {
-        let (mut s, mut c) = (0.0f64, 0u32);
-        for t in 0..tiles_n {
-            let ok = |k: usize| full[k][t] && gather[k][t].1 && gather[k][t].0 > FULL_LOG2;
-            if ok(f) && ok(f - 1) {
-                s += f64::from((gather[f][t].0 - gather[f - 1][t].0).abs());
-                c += 1;
-            }
-        }
-        trace[f].gather_dlog2 = s / f64::from(c.max(1));
     }
     if let Some(tag) = std::env::var("STILL_FILMSTRIP")
         .ok()
@@ -485,53 +349,11 @@ fn run_inner(
             &full,
             None,
         );
-        filmstrip(&tag, &format!("{name}-gather"), size, &gather, &full, None);
     }
-    (
-        Reading {
-            composite: stats(&composite, &full, Some(&images)),
-            emissive: stats(&emissive, &full, None),
-            gather: stats(&gather, &full, None),
-            direct: direct(&composite, &gather, &full),
-            gather_luminance: gather_lum / gather.len().max(1) as f64,
-        },
-        trace,
-    )
-}
-
-/// The trace's lines for each gather step over `over` patches: the 30 frames before the step
-/// and the step's own, one `off:window/restarts/young/dlog2` entry a frame.
-pub fn print_trace(name: &str, gather: &Stats, trace: &[TraceFrame], over: usize) {
-    for (k, &p) in gather.patches.iter().enumerate() {
-        if p <= over {
-            continue;
-        }
-        let (a, b) = (WINDOW.0 + k * STEP, WINDOW.0 + (k + 1) * STEP);
-        let rows: Vec<String> = trace
-            .iter()
-            .filter(|t| t.off + STEP >= a && t.off <= b)
-            .map(|t| {
-                format!(
-                    "{}:{}/{}/{}/{:.4}",
-                    t.off,
-                    u8::from(t.window),
-                    t.restarts,
-                    t.young,
-                    t.gather_dlog2
-                )
-            })
-            .collect();
-        println!(
-            "reading: {name} trace, gather step {k} (off {a} to {b}, {p} patches): {}",
-            rows.join(" ")
-        );
+    Reading {
+        composite: stats(&composite, &full, Some(&images)),
+        emissive: stats(&emissive, &full, None),
     }
-    let windows = trace.iter().filter(|t| t.window).count();
-    let restarts: u32 = trace.iter().map(|t| t.restarts).sum();
-    println!(
-        "reading: {name} trace over off {} to {}: window open on {windows} frames, {restarts} probe age restarts",
-        WINDOW.0, WINDOW.1
-    );
 }
 
 /// Columns of a filmstrip sheet; the frames run row by row.
