@@ -1,5 +1,4 @@
-# ADR-0046: Static emissive light is baked per chunk when the chunk loads or changes, into a store
-of per-face cells over per-brick values
+# ADR-0046: Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values
 
 > **Status:** proposed
 > **Date:** 2026-11-05

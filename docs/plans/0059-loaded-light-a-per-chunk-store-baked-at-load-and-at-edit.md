@@ -1,5 +1,4 @@
-# 0059: Loaded light: a per-chunk store of face and brick values, baked when a chunk loads or
-changes
+# 0059: Loaded light: a per-chunk store of face and brick values, baked when a chunk loads or changes
 
 > **Status:** approved (owner, 2026-11-05; starts after Plan 0057's close)
 > **Created:** 2026-11-05
