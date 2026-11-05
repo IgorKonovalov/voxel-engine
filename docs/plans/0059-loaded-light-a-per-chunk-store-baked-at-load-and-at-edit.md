@@ -1,6 +1,6 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** approved (owner, 2026-11-05), amended 2026-11-05 to look first, cut later; its lane starts on the owner's "go"
+> **Status:** in-progress (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later)
 > **Created:** 2026-11-05
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes,
 > emissive voxels as the light")
