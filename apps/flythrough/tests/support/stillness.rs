@@ -329,7 +329,18 @@ pub struct TraceFrame {
 /// One run at `pose` with `lighting` (indirect light on and the pose's manual exposure
 /// imposed), `size` internal pixels, the lamp switched off after `LAMP_ON` frames.
 pub fn run(level: &VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -> Reading {
-    run_inner(level, pose, lighting, size, false).0
+    run_inner(level, pose, lighting, size, false, None).0
+}
+
+/// `run` that halves every emissive material's emission just before off frame `off`.
+pub fn run_halved_at(
+    level: &VeinLevel,
+    pose: &Pose,
+    lighting: Lighting,
+    size: [u32; 2],
+    off: usize,
+) -> Reading {
+    run_inner(level, pose, lighting, size, false, Some(off)).0
 }
 
 /// `run`, plus a `TraceFrame` for every off frame of the window.
@@ -339,7 +350,7 @@ pub fn run_traced(
     lighting: Lighting,
     size: [u32; 2],
 ) -> (Reading, Vec<TraceFrame>) {
-    run_inner(level, pose, lighting, size, true)
+    run_inner(level, pose, lighting, size, true, None)
 }
 
 fn run_inner(
@@ -348,6 +359,7 @@ fn run_inner(
     lighting: Lighting,
     size: [u32; 2],
     traced: bool,
+    halve_at: Option<usize>,
 ) -> (Reading, Vec<TraceFrame>) {
     let (device, queue) = (&level.device, &level.queue);
     let lit = Lighting {
@@ -374,6 +386,13 @@ fn run_inner(
     for i in 0..LAMP_ON + LAMP_OFF {
         if i == LAMP_ON {
             frame.set_lighting(Lighting { lamp: false, ..lit });
+        }
+        if halve_at.is_some_and(|off| i + 1 == LAMP_ON + off) {
+            for (m, row) in level.world.materials().rows().iter().enumerate() {
+                if row.emission != [0.0; 3] {
+                    frame.set_emission_scale(queue, m as u16, 0.5);
+                }
+            }
         }
         frame.step(device, queue, &level.gpu, &camera, &light);
         if i < LAMP_ON {

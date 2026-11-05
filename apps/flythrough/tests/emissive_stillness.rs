@@ -7,9 +7,16 @@ mod support;
 use support::stillness::*;
 use vxe_render::{HistoryKill, Lighting};
 
-/// The harness sees patches where they exist: none with the emissive candidates off at either
-/// pose, at least 100 a step at the patch pose with the table's read off, where every hit blends
-/// its own emissive sample at the lamp's rate.
+/// The off frame at which `the_vein_wall_patches_are_counted` halves the emission, inside
+/// patch step 5 (off frames 270 to 300).
+const HALVED_AT: usize = 285;
+
+/// The harness sees light that really moves, on the step where it moves, and nothing where
+/// nothing moves. With the emissive candidates off no step at either pose reads a patch. At the
+/// patch pose, halving every emissive material's emission at off frame `HALVED_AT` moves an
+/// emissive-lit tile by 1 log2 against the patch threshold of `log2 1.1`: steps 0 to 4, before
+/// the change, read at most 8 patches each and step 5, which holds it, at least 250. The steps
+/// after it are the cleared table refilling and carry no bar.
 #[test]
 fn the_vein_wall_patches_are_counted() {
     let Some(level) = vein_level() else {
@@ -33,20 +40,16 @@ fn the_vein_wall_patches_are_counted() {
             off.composite.patches
         );
     }
-    let short = run(
-        &level,
-        &PATCH_POSE,
-        Lighting {
-            table_read: false,
-            ..Lighting::default()
-        },
-        SIZE,
-    );
-    short.print("patch table read off");
+    let halved = run_halved_at(&level, &PATCH_POSE, Lighting::default(), SIZE, HALVED_AT);
+    halved.print("patch halved");
+    let patches = &halved.composite.patches;
     assert!(
-        short.composite.mean_patches() >= 100.0,
-        "the fallback's blend reads at least 100 patches a step at the patch pose: {:.2}",
-        short.composite.mean_patches()
+        patches[..5].iter().all(|&p| p <= 8),
+        "before the emission halves, no step may read over 8 patches: {patches:?}"
+    );
+    assert!(
+        patches[5] >= 250,
+        "the step that halves the emission reads at least 250 patches: {patches:?}"
     );
 }
 
