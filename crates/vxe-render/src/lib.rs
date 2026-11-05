@@ -5,6 +5,7 @@
 //! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Frame`] draws it
 //! (its hit pass is the [`Marcher`]) and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
 
+pub mod bake;
 pub mod camera;
 pub mod exposure;
 pub mod field;
@@ -18,6 +19,7 @@ pub mod present;
 pub mod probes;
 pub mod readback;
 
+pub use bake::{BakeError, BakeProgress, BakeReport, BakeSettings, StoreStats};
 pub use camera::{Camera, View};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
@@ -30,9 +32,9 @@ pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
     AgeStats, CrackShares, DEFAULT_TABLE_CELLS, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill,
-    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning, TableStats, ToneMap, ViewMode,
-    jitter_at,
+    Light, Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer,
+    Marcher, NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning, TableStats, ToneMap,
+    ViewMode, jitter_at,
 };
 pub use present::Presenter;
 pub use probes::ProbeVolume;

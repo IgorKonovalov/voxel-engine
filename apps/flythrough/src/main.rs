@@ -471,6 +471,11 @@ struct Args {
     /// `--preload VOXELS|off`: the camera-radius preload's radius in voxels, 0 off (default
     /// `DEFAULT_PRELOAD_RADIUS`).
     preload: u32,
+    /// `--light`: where a cube face's emissive light comes from.
+    light: vxe_render::Light,
+    /// `--bake-radius`: the chunks the pre-roll bakes around the eye's chunk; `None` every chunk
+    /// of the world.
+    bake_radius: Option<i32>,
     /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
     /// `DEFAULT_PRELOAD_CLAIM_RADIUS`).
     preload_claim: u32,
@@ -670,6 +675,7 @@ impl Args {
             blend: self.blend,
             preload_radius: self.preload,
             preload_claim_radius: self.preload_claim,
+            light: self.light,
             ..Lighting::default()
         }
     }
@@ -747,6 +753,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp_bounce: true,
         blend: vxe_render::marcher::TableBlend::default(),
         preload: vxe_render::marcher::DEFAULT_PRELOAD_RADIUS,
+        light: vxe_render::Light::Table,
+        bake_radius: None,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -1041,6 +1049,20 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     }
                 };
             }
+            "--light" => {
+                let v = value()?;
+                args.light = vxe_render::Light::from_name(&v)
+                    .ok_or(format!("--light takes baked or table, not {v}"))?;
+            }
+            "--bake-radius" => {
+                let v = value()?;
+                args.bake_radius = Some(
+                    v.parse()
+                        .ok()
+                        .filter(|r| (0..=64).contains(r))
+                        .ok_or(format!("--bake-radius takes 0 to 64 chunks, not {v}"))?,
+                );
+            }
             "--lamp-bounce" | "--indirect" => {
                 args.lamp_bounce = match value()?.as_str() {
                     "on" => true,
@@ -1143,6 +1165,16 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     // The showcase starts at its shot's manual exposure unless `--exposure` is given.
     if args.showcase && !exposure_flag {
         args.exposure = Some(args.shot.exposure_milli as f32 / 1000.0);
+    }
+    if args.bake_radius.is_some() && args.light != vxe_render::Light::Baked {
+        return Err("--bake-radius sets the bake's extent; it needs --light baked".to_owned());
+    }
+    if args.light == vxe_render::Light::Baked && !(args.level || args.showcase) {
+        return Err(
+            "--light baked bakes a bounded world before its first frame; it needs --level or \
+             --source showcase"
+                .to_owned(),
+        );
     }
     if args.pose.is_some() && !args.level {
         let names: Vec<&str> = flythrough::POSES.iter().map(|p| p.name).collect();
@@ -2271,6 +2303,7 @@ struct Hud {
     age: Option<vxe_render::AgeStats>,
     /// The preload's counts at the last sample, while it is on.
     preload: Option<vxe_render::marcher::PreloadStats>,
+    store: Option<vxe_render::StoreStats>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
     /// The last frame's cracks view, read back while that view and the HUD are on.
@@ -2305,6 +2338,7 @@ impl Hud {
             table: None,
             age: None,
             preload: None,
+            store: None,
             steps: None,
             cracks: None,
             exposure: None,
@@ -2970,6 +3004,10 @@ impl Run {
             .gfx
             .as_ref()
             .map(|g| g.frame.read_age_stats(&gpu.device, &gpu.queue));
+        self.hud.store = self.gfx.as_ref().and_then(|g| {
+            (g.frame.lighting().light == vxe_render::Light::Baked)
+                .then(|| g.frame.read_store_stats(&gpu.device, &gpu.queue))
+        });
         self.hud.preload = self.gfx.as_ref().and_then(|g| {
             (g.frame.lighting().preload_radius > 0)
                 .then(|| g.frame.read_preload_stats(&gpu.device, &gpu.queue))
@@ -3015,6 +3053,7 @@ impl Run {
                 table: self.hud.table,
                 age: self.hud.age,
                 preload: self.hud.preload,
+                store: self.hud.store,
                 modes: self.modes.line(),
                 upscale: g
                     .frame
@@ -3587,6 +3626,10 @@ impl Run {
             }
             mirror
         };
+        let mut mirror = mirror;
+        if self.modes.lighting.light == vxe_render::Light::Baked {
+            self.bake_pre_roll(gpu, &mut frame, &mut mirror);
+        }
         let mut gfx = Gfx {
             mirror,
             frame,
@@ -3604,6 +3647,65 @@ impl Run {
             println!("{}", band_census_line(&self.world, &gfx.mirror));
         }
         self.gfx = Some(gfx);
+    }
+
+    /// The pre-roll under `--light baked`: every chunk of the extent baked before the first frame,
+    /// its progress on stdout. The window maps with its first frame, so nothing waits on it here.
+    fn bake_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
+        let eye = start_camera(&self.args, self.spawn).position.to_array();
+        let extent = bake_extent(self.world.extent(), eye, self.args.bake_radius);
+        println!(
+            "bake: {:?} chunks from {:?}, every face to a standard error of {} levels, {} to {} samples",
+            extent.size(),
+            extent.min.0,
+            vxe_render::bake::BAKE_SE,
+            vxe_render::bake::N_MIN,
+            vxe_render::bake::N_MAX,
+        );
+        let start = now();
+        let mut last = 0.0;
+        let settings = vxe_render::BakeSettings::default();
+        let report = frame.bake_until(
+            &gpu.device,
+            &gpu.queue,
+            mirror,
+            &self.world,
+            extent,
+            &settings,
+            &mut |p| {
+                let ms = ms_since(start);
+                if ms - last >= 2000.0 {
+                    last = ms;
+                    println!(
+                        "bake: {} of {} chunks, {} of {} faces, {:.2e} samples, {:.0} s",
+                        p.chunks_done,
+                        p.chunks,
+                        p.faces_done,
+                        p.faces,
+                        p.samples as f64,
+                        ms / 1e3
+                    );
+                }
+            },
+        );
+        match report {
+            Ok(r) => {
+                let s = frame.read_store_stats(&gpu.device, &gpu.queue);
+                println!(
+                    "bake: done, {} chunks, {} faces, {:.3e} samples, {} faces at {} and {} at {}, {:.1} s, store {:.1} MB",
+                    r.chunks,
+                    r.faces,
+                    r.samples as f64,
+                    r.faces_at_min,
+                    settings.n_min,
+                    r.faces_at_max,
+                    settings.n_max,
+                    ms_since(start) / 1e3,
+                    s.bytes as f64 / 1e6
+                );
+            }
+            Err(e) => self.failure.set(format!("bake failed: {e}")),
+        }
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -5362,6 +5464,19 @@ fn shot_camera(shot: &Shot) -> Camera {
 
 /// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
 /// camera, or the spawn facing +x.
+/// The chunks a `--bake-radius` pre-roll bakes: within `radius` of the eye's chunk on each axis,
+/// inside `world`; all of `world` without a radius.
+fn bake_extent(world: ChunkExtent, eye: [f32; 3], radius: Option<i32>) -> ChunkExtent {
+    let Some(r) = radius else {
+        return world;
+    };
+    let size = world.size();
+    let c = eye.map(|v| (v / 64.0).floor() as i32);
+    let lo = [0, 1, 2].map(|k| (c[k] - r).max(world.min.0[k]));
+    let hi = [0, 1, 2].map(|k| (c[k] + r + 1).min(world.min.0[k] + size[k]));
+    ChunkExtent::new(lo, [0, 1, 2].map(|k| hi[k].max(lo[k])))
+}
+
 fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     if args.castle {
         castle_camera(args.castle_shot)
@@ -5811,6 +5926,39 @@ mod tests {
         assert_eq!(hud.strip.len(), 100);
     }
     use flythrough::cave::SHELL;
+
+    /// `--bake-radius N` needs `--light baked`, which needs a bounded world, and sets the chunks
+    /// within `N` of the eye's chunk; unset, the pre-roll takes the whole extent.
+    #[test]
+    fn the_bake_radius_flag_sets_the_extent() {
+        let a = parse_args_from(argv(&["--level", "--light", "baked", "--bake-radius", "2"]))
+            .expect("parses");
+        assert_eq!(a.light, vxe_render::Light::Baked);
+        assert_eq!(a.bake_radius, Some(2));
+        assert_eq!(a.start_lighting().light, vxe_render::Light::Baked);
+        let refused = parse_args_from(argv(&["--level", "--bake-radius", "2"]));
+        assert_eq!(
+            refused.err().as_deref(),
+            Some("--bake-radius sets the bake's extent; it needs --light baked")
+        );
+        let table = parse_args_from(argv(&["--level", "--light", "table", "--bake-radius", "2"]));
+        assert!(table.is_err());
+        assert!(parse_args_from(argv(&["--light", "baked"])).is_err());
+        assert_eq!(
+            parse_args_from(argv(&["--level"])).expect("parses").light,
+            vxe_render::Light::Table
+        );
+
+        let world = ChunkExtent::new([0, 0, 0], [20, 20, 8]);
+        let near = bake_extent(world, [660.0, 900.0, 390.0], Some(2));
+        assert_eq!(near.min.0, [8, 12, 4]);
+        assert_eq!(near.size(), [5, 5, 4], "z 6 clipped at the top of 8");
+        let edge = bake_extent(world, [10.0, 10.0, 10.0], Some(2));
+        assert_eq!(edge.min.0, [0, 0, 0]);
+        assert_eq!(edge.size(), [3, 3, 3]);
+        let whole = bake_extent(world, [660.0, 900.0, 390.0], None);
+        assert_eq!(whole, world);
+    }
 
     fn argv(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| (*s).to_owned()).collect()

@@ -163,7 +163,10 @@ fn shade_px(gid: vec3<u32>) {
             }
             var cell = -1;
             var capped = false;
-            if (cacheable(rec)) {
+            if (cacheable(rec) && store_on()) {
+                // The temporal pass reads the face's store cell: no sample, no shadow ray.
+                capped = true;
+            } else if (cacheable(rec)) {
                 cell = cache_claim(cache_voxel(rec.p, ns), cache_face(rec.axis, ns));
                 if (cell < 0) {
                     atomicAdd(&cache_stats.misses, 1u);

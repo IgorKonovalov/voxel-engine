@@ -26,8 +26,13 @@
 //                                        over the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
 //  11  storage           cache_cells     the emissive table (march.wgsl), only read
+//  12  storage           store           the loaded store (ADR-0046, `bake::Store`), read under
+//                                        `store_on`; word 0 counts this frame's cacheable hits
+//                                        with no cell (`store_missing`)
 //
-// The emissive part (ADR-0043): a hit on a cube face whose cell holds a sample takes the
+// Under `store_on` a cube face's emissive part is its store cell times the dominant material's
+// emission scale now and this frame's exposure, 0 for a face with no cell, again with no screen
+// history. The emissive part (ADR-0043): a hit on a cube face whose cell holds a sample takes the
 // cell's mean times this frame's exposure, with no screen history, the same value at every
 // pixel of the face. Any other hit (no face: the field look, a translucent hit, a ray from
 // inside rock; or a key with no cell, the table full) is a fallback: its own emissive samples'
@@ -78,6 +83,68 @@ struct Edits {
 @group(2) @binding(9) var<uniform> edits: Edits;
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
 @group(2) @binding(11) var<storage, read_write> cache_cells: array<u32>;
+@group(2) @binding(12) var<storage, read_write> store: array<atomic<u32>>;
+
+// The store's words (`bake::Store`): the missing count, the window's origin and size in chunks,
+// then a word per window chunk, its block's first word or 0. A block is 512 directory words
+// (a brick's run offset from the block's start << 11 | its faces; 0 none), then the runs: two
+// words a cell, its rgb9e5 irradiance at unit emission, then key (voxel 9 << 3 | face 3) | flags
+// 4 << 12 | dominant material << 16, sorted by key.
+const STORE_ORIGIN: u32 = 4u;
+const STORE_SIZE: u32 = 8u;
+const STORE_TABLE: u32 = 16u;
+
+// The value of an rgb9e5 word: three 9-bit mantissas over a shared exponent, biased by 15 + 9.
+fn rgb9e5_decode(w: u32) -> vec3<f32> {
+    let m = vec3<u32>(w & 511u, (w >> 9u) & 511u, (w >> 18u) & 511u);
+    return vec3<f32>(m) * ldexp(1.0, i32(w >> 27u) - 24);
+}
+
+// Face `face` of voxel `v`'s cell in the store: its irradiance times its dominant material's
+// emission scale now in rgb, with a 1 in a; 0 for a face with no cell.
+fn store_value(v: vec3<i32>, face: u32) -> vec4<f32> {
+    let origin = vec3<i32>(
+        i32(atomicLoad(&store[STORE_ORIGIN])),
+        i32(atomicLoad(&store[STORE_ORIGIN + 1u])),
+        i32(atomicLoad(&store[STORE_ORIGIN + 2u])),
+    );
+    let size = vec3<i32>(
+        i32(atomicLoad(&store[STORE_SIZE])),
+        i32(atomicLoad(&store[STORE_SIZE + 1u])),
+        i32(atomicLoad(&store[STORE_SIZE + 2u])),
+    );
+    let c = (v >> vec3<u32>(6u)) - origin;
+    if (any(c < vec3<i32>(0)) || any(c >= size)) {
+        return vec4<f32>(0.0);
+    }
+    let block = atomicLoad(&store[STORE_TABLE + u32(c.x + size.x * (c.y + size.y * c.z))]);
+    if (block == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let local = v & vec3<i32>(63);
+    let brick = local >> vec3<u32>(3u);
+    let dir = atomicLoad(&store[block + u32(brick.x + 8 * (brick.y + 8 * brick.z))]);
+    let inner = local & vec3<i32>(7);
+    let key = (u32(inner.x + 8 * (inner.y + 8 * inner.z)) << 3u) | face;
+    let run = block + (dir >> 11u);
+    var lo = 0u;
+    var hi = dir & 0x7FFu;
+    while (lo < hi) {
+        let mid = (lo + hi) / 2u;
+        let tail = atomicLoad(&store[run + 2u * mid + 1u]);
+        let k = tail & 0xFFFu;
+        if (k == key) {
+            let word = atomicLoad(&store[run + 2u * mid]);
+            return vec4<f32>(rgb9e5_decode(word) * emission_scale[tail >> 16u], 1.0);
+        }
+        if (k < key) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return vec4<f32>(0.0);
+}
 
 // The mean of the key's cell in rgb, with a 1 in a; 0 for a key with no cell or no sample.
 fn cache_mean(v: vec3<i32>, face: u32) -> vec4<f32> {
@@ -167,7 +234,16 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The emissive irradiance in rgb, the lamp's (white) in a.
     var sample = textureLoad(irradiance_in, px, 0);
     var cached = false;
-    if (cache_read_on() && cacheable(rec)) {
+    if (store_on() && cacheable(rec)) {
+        let ray = pixel_ray(full_px(gid.xy));
+        let nf = shadow_normal_of(rec, ray.d);
+        let c = store_value(cache_voxel(rec.p, nf), cache_face(rec.axis, nf));
+        if (c.w == 0.0) {
+            atomicAdd(&store[0], 1u);
+        }
+        cached = true;
+        sample = vec4<f32>(c.xyz * exposure_now(), sample.w);
+    } else if (cache_read_on() && cacheable(rec)) {
         let ray = pixel_ray(full_px(gid.xy));
         let nf = shadow_normal_of(rec, ray.d);
         let c = cache_mean(cache_voxel(rec.p, nf), cache_face(rec.axis, nf));

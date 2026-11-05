@@ -423,6 +423,8 @@ pub struct LightingRow {
     pub age: Option<vxe_render::AgeStats>,
     /// The preload's counts at the last sample (`None` while it is off).
     pub preload: Option<vxe_render::marcher::PreloadStats>,
+    /// The loaded store's counts at the last sample (`None` under the table).
+    pub store: Option<vxe_render::StoreStats>,
     pub modes: String,
     /// The internal and output sizes while the upscaler runs: a row then reads its passes.
     pub upscale: Option<[[u32; 2]; 2]>,
@@ -621,6 +623,15 @@ impl HudStats {
                     p.refused_miss,
                     p.refused_unlit,
                     p.samples
+                ),
+                None => table,
+            };
+            let table = match l.store {
+                Some(s) => format!(
+                    "{table}, store {} {:.1} MB missing {}",
+                    s.chunks,
+                    s.bytes as f64 / 1e6,
+                    s.missing
                 ),
                 None => table,
             };
@@ -1108,6 +1119,33 @@ mod tests {
         assert!(colours.iter().all(|&c| c != HudColour::Red));
     }
 
+    /// The lighting row shows the store's chunks, megabytes and missing pixels under the store.
+    #[test]
+    fn the_store_row_reads_its_counts() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.lighting = Some(LightingRow {
+            passes: vec![("light", 0.5)],
+            light_samples: 7,
+            live_probes: None,
+            table: None,
+            age: None,
+            preload: None,
+            store: Some(vxe_render::StoreStats {
+                chunks: 12,
+                bytes: 3_400_000,
+                missing: 56,
+            }),
+            modes: "light baked".to_owned(),
+            upscale: None,
+        });
+        s.write_rows(&mut out, &mut colours);
+        assert!(
+            out.contains("store 12 3.4 MB missing 56; light baked"),
+            "{out}"
+        );
+    }
+
     /// The lighting rows follow the march row: every pass's time, yellow when light,
     /// temporal and the probe update and gather pass the 6.0 ms line or the filter the 3.0 ms
     /// one, then the light samples, the live probes and the modes.
@@ -1126,6 +1164,7 @@ mod tests {
             ],
             light_samples: 18_522,
             live_probes: Some(9_876),
+            store: None,
             table: Some(vxe_render::TableStats {
                 cells: 1 << 20,
                 occupied: 59_724,
@@ -1198,6 +1237,7 @@ mod tests {
             passes: vec![("composite", 0.2), ("upscale", 0.5), ("sharpen", 0.12)],
             light_samples: 0,
             live_probes: None,
+            store: None,
             table: None,
             age: None,
             preload: None,
@@ -1268,6 +1308,7 @@ mod tests {
             ],
             light_samples: 0,
             live_probes: None,
+            store: None,
             table: None,
             age: None,
             preload: None,
@@ -1613,8 +1654,34 @@ impl Modes {
         } else {
             String::new()
         };
+        let light = if l.light == vxe_render::Light::Baked {
+            "light baked".to_owned()
+        } else {
+            format!(
+                "table {} probes {}, blend {}, fill {}, {}",
+                table_size(l.cells()),
+                vxe_render::marcher::CACHE_PROBES,
+                l.blend.name(),
+                if l.fill_samples == 0 {
+                    "off".to_owned()
+                } else {
+                    format!("{} to {}", l.fill_samples, l.fill_until)
+                },
+                if l.preload_brick_radius() == 0 {
+                    "preload off".to_owned()
+                } else {
+                    format!(
+                        "preload R {} r0 {} B {} C {}",
+                        8 * l.preload_brick_radius(),
+                        l.preload_claim_radius.min(8 * l.preload_brick_radius()),
+                        l.preload_bricks,
+                        l.preload_cap()
+                    )
+                }
+            )
+        };
         format!(
-            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, table {} probes {}, blend {}, fill {}, {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, {light}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.history.name(),
@@ -1624,25 +1691,6 @@ impl Modes {
             l.slices(),
             on(l.filter),
             on(self.pulse),
-            table_size(l.cells()),
-            vxe_render::marcher::CACHE_PROBES,
-            l.blend.name(),
-            if l.fill_samples == 0 {
-                "off".to_owned()
-            } else {
-                format!("{} to {}", l.fill_samples, l.fill_until)
-            },
-            if l.preload_brick_radius() == 0 {
-                "preload off".to_owned()
-            } else {
-                format!(
-                    "preload R {} r0 {} B {} C {}",
-                    8 * l.preload_brick_radius(),
-                    l.preload_claim_radius.min(8 * l.preload_brick_radius()),
-                    l.preload_bricks,
-                    l.preload_cap()
-                )
-            },
             self.exposure_mode(),
             self.exposure_ev()
         )
@@ -1700,6 +1748,31 @@ fn table_size(cells: u32) -> String {
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    /// The banner names the light: `light baked` under the store, the table's own words under
+    /// the table.
+    #[test]
+    fn the_banner_names_the_light() {
+        let table = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::Full,
+            0.0,
+        );
+        let banner = table.banner(0.0).expect("shown from the start");
+        assert!(banner.contains("table 2^22"), "{banner}");
+        assert!(!banner.contains("light baked"), "{banner}");
+        let baked = Modes::new(
+            vxe_render::Lighting {
+                light: vxe_render::Light::Baked,
+                ..vxe_render::Lighting::default()
+            },
+            vxe_render::LightingResolution::Full,
+            0.0,
+        );
+        let banner = baked.banner(0.0).expect("shown from the start");
+        assert!(banner.contains("light baked"), "{banner}");
+        assert!(!banner.contains("table 2^"), "{banner}");
+    }
 
     /// The banner and the modes' line name the emissive table, its cells, the reopened fill
     /// and the preload (`preload R 64 r0 32 B 128 C 256`, or `preload off`); `F4` turns the preload

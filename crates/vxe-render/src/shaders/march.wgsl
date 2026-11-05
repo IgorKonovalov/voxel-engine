@@ -160,7 +160,7 @@ struct Params {
     lod2_r2: i32,
     exposure: f32,
     // The emissive table (`Lighting::table_cells`): bit 0 the temporal pass reads it (off only in
-    // a test), bits 14..28 C_CAP.
+    // a test), bit 2 the store replaces it (`store_on`), bits 14..28 C_CAP.
     cache: u32,
     candidates: u32,
     // The slot of light_samples where the frame's candidate table starts (light.wgsl).
@@ -1397,6 +1397,12 @@ fn cache_c_cap() -> u32 {
     return (params.cache >> 14u) & 0x3FFFu;
 }
 
+// Whether a cube face's emissive part comes from the loaded store (`Light::Baked`): the light pass
+// draws none for it and the temporal pass reads its cell (temporal.wgsl's `store_value`).
+fn store_on() -> bool {
+    return (params.cache & 4u) != 0u;
+}
+
 // The first slot of the key (`marcher::cache_slot`).
 fn cache_slot(v: vec3<i32>, face: u32) -> u32 {
     return cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & params.cache_mask;
@@ -1417,6 +1423,10 @@ fn cache_face(axis: i32, nf: vec3<f32>) -> u32 {
     return 2u * u32(axis) + select(0u, 1u, nf[axis] > 0.0);
 }
 
+// The bake's random numbers (bake.wgsl): `rand` reads `px` as a stream and a sample's index and
+// hashes them with the dimension, with no blue noise and no frame.
+override RAND_HASHED: bool = false;
+
 // A 32-bit integer hash (Wellons' lowbias32).
 fn hash_u32(x: u32) -> u32 {
     var h = x;
@@ -1434,6 +1444,9 @@ fn hash_u32(x: u32) -> u32 {
 // in time). A function of (pixel, frame, dim) alone, so a frame is deterministic on one
 // adapter.
 fn rand(px: vec2<u32>, dim: u32) -> f32 {
+    if (RAND_HASHED) {
+        return f32(hash_u32(px.x ^ hash_u32(px.y ^ (dim * 0x9E3779B9u))) >> 8u) / 16777216.0;
+    }
     let h = hash_u32(dim * 0x9E3779B9u + 0x632BE5ABu);
     let at = (px + vec2<u32>(h & 127u, (h >> 7u) & 127u)) & vec2<u32>(127u);
     let texel = u32(textureLoad(blue_noise, vec2<i32>(at), 0).x * 255.0 + 0.5);
@@ -1471,8 +1484,14 @@ const EMISSION_ROWS: u32 = 65536u;
 // EMISSION_ROWS once an entry point (the probe trace) sets it for the probe rays' light.
 var<private> emission_base: u32 = 0u;
 
+// The bake's light (bake.wgsl) is at unit emission: `emission_of` leaves the scale out.
+override EMISSION_UNIT: bool = false;
+
 // A material's emitted radiance under the frame's emission scale.
 fn emission_of(m: u32) -> vec3<f32> {
+    if (EMISSION_UNIT) {
+        return materials[m * 4u + 1u].xyz;
+    }
     return materials[m * 4u + 1u].xyz * emission_scale[emission_base + m];
 }
 

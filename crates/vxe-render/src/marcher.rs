@@ -1192,6 +1192,33 @@ pub struct TableStats {
     pub misses: u32,
 }
 
+/// Where a cube face's emissive light comes from (ADR-0046).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Light {
+    /// The view-driven per-face table (ADR-0043).
+    #[default]
+    Table,
+    /// The loaded store, baked ahead of the frames that read it ([`Frame::bake_until`]).
+    Baked,
+}
+
+impl Light {
+    /// The name `--light` takes and the modes' line shows.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Table => "table",
+            Self::Baked => "baked",
+        }
+    }
+
+    /// The light named `name`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Table, Self::Baked]
+            .into_iter()
+            .find(|l| l.name() == name)
+    }
+}
+
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -1306,6 +1333,14 @@ pub struct Lighting {
     /// [`DEFAULT_PRELOAD_SAMPLES`]), [`FILL_SAMPLES_MAX`] a listed cell, so the list's first
     /// `S_PRE / 16` cells draw each frame.
     pub preload_samples: u32,
+    /// Where a cube face's emissive light comes from (default [`Light::Table`]). Under
+    /// [`Light::Baked`] the temporal pass reads the store, the light pass draws no emissive sample
+    /// for a cube face, and [`Frame::set_lighting`] turns off the table's blend, fill, preload and
+    /// age-out; a hit with no face keeps the fallback.
+    pub light: Light,
+    /// The store's pool under [`Light::Baked`], clamped to the device's storage binding (default
+    /// [`crate::bake::DEFAULT_BAKE_POOL_BYTES`]). [`Light::Table`] allocates a minimal one.
+    pub bake_pool_bytes: u64,
 }
 
 impl Default for Lighting {
@@ -1339,6 +1374,8 @@ impl Default for Lighting {
             preload_until: DEFAULT_PRELOAD_UNTIL,
             preload_claim_radius: DEFAULT_PRELOAD_CLAIM_RADIUS,
             preload_samples: DEFAULT_PRELOAD_SAMPLES,
+            light: Light::Table,
+            bake_pool_bytes: crate::bake::DEFAULT_BAKE_POOL_BYTES,
         }
     }
 }
@@ -1370,6 +1407,9 @@ impl Lighting {
 
     /// `Params::cache`.
     fn cache_word(&self) -> u32 {
+        if self.light == Light::Baked {
+            return 4 | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14;
+        }
         u32::from(self.table_read)
             | u32::from(self.blend != TableBlend::Off) << 1
             | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14
@@ -1549,6 +1589,10 @@ pub struct Frame {
     preload_idle: std::sync::Mutex<PreloadIdle>,
     preload_skips: std::sync::atomic::AtomicU32,
     temporal_layout: wgpu::BindGroupLayout,
+    /// The loaded store (minimal under [`Light::Table`]) and the bake's pipeline, built on the
+    /// first bake.
+    store: crate::bake::Store,
+    bake: Option<crate::bake::BakePipeline>,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
     gradient_cache_layout: wgpu::BindGroupLayout,
@@ -1823,11 +1867,11 @@ pub const LIGHT_TABLE_ENTRIES: usize = 1024;
 /// entry `start, len`, the cumulative weight (f32 bits) and a pad.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct LightTableUniform {
-    count: u32,
-    total: f32,
-    _pad: [u32; 2],
-    chunks: [[u32; 4]; LIGHT_TABLE_ENTRIES],
+pub(crate) struct LightTableUniform {
+    pub(crate) count: u32,
+    pub(crate) total: f32,
+    pub(crate) _pad: [u32; 2],
+    pub(crate) chunks: [[u32; 4]; LIGHT_TABLE_ENTRIES],
 }
 
 /// The candidate table for a camera at `eye` over `world`: the chunks holding a range within
@@ -2285,6 +2329,7 @@ impl Frame {
                 Io::Uniform,
                 Io::Float,
                 Io::Storage,
+                Io::Storage,
             ],
         );
         let gradient_layout = io_layout(device, "gradient", &[Io::Float, Io::Uint, Io::Float, f16]);
@@ -2502,6 +2547,8 @@ impl Frame {
             preload_skips: std::sync::atomic::AtomicU32::new(0),
             light: std::sync::OnceLock::new(),
             temporal_layout,
+            store: crate::bake::Store::new(device, crate::bake::MINIMAL_POOL_BYTES),
+            bake: None,
             temporal,
             gradient_layout,
             gradient_cache_layout,
@@ -3034,6 +3081,147 @@ impl Frame {
         })
     }
 
+    /// Group 0 of the frame's shaders over `world`.
+    fn world_bind(&self, device: &wgpu::Device, world: &GpuWorld) -> wgpu::BindGroup {
+        let noise = view(&self.blue_noise);
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("world"),
+            layout: &self.world_layout,
+            entries: &[
+                buffer_entry(0, &self.params),
+                buffer_entry(1, world.pool_shard(0)),
+                buffer_entry(7, world.pool_shard(1)),
+                buffer_entry(8, world.pool_shard(2)),
+                buffer_entry(9, world.pool_shard(3)),
+                buffer_entry(2, world.records()),
+                buffer_entry(3, world.table()),
+                buffer_entry(4, world.materials()),
+                buffer_entry(10, world.light_buffer()),
+                buffer_entry(11, &self.emission_scale),
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(&noise),
+                },
+                buffer_entry(13, self.exposure.state_uniform()),
+            ],
+        })
+    }
+
+    /// Bakes every chunk of `extent` into the store, emptied first, before any frame reads it,
+    /// blocking: submits of at most [`crate::bake::SUBMIT_SAMPLES`] samples, each waited on, with
+    /// `progress` after each. The light-sample buffer's ranges are first held and written out to
+    /// the bake's reach. `world` is the voxels `gpu` mirrors, which `gpu` must hold already.
+    /// `Err` without [`Light::Baked`], or when the pool or the light samples cannot hold the
+    /// extent.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the device and queue, the two forms of the world, the extent, the settings and the progress are all independent"
+    )]
+    pub fn bake_until(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu: &mut GpuWorld,
+        world: &vxe_world::World,
+        extent: vxe_world::ChunkExtent,
+        settings: &crate::bake::BakeSettings,
+        progress: &mut dyn FnMut(&crate::bake::BakeProgress),
+    ) -> Result<crate::bake::BakeReport, crate::bake::BakeError> {
+        if self.lighting.light != Light::Baked {
+            return Err(crate::bake::BakeError::NotBaked);
+        }
+        // Every chunk's whole reach: the extent's farthest corner from the focus chunk, plus the
+        // light radius (and one, for a job's box).
+        let f = gpu.focus().0;
+        let size = extent.size();
+        let far: i64 = (0..3)
+            .map(|k| {
+                let lo = i64::from(extent.min.0[k] - f[k]).abs();
+                let hi = i64::from(extent.min.0[k] + size[k] - 1 - f[k]).abs();
+                lo.max(hi).pow(2)
+            })
+            .sum();
+        let reach = (far as f64).sqrt().ceil() as i32 + gpu.light_radius() + 1;
+        gpu.hold_lights(reach);
+        let mut refused = 0;
+        loop {
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let synced = gpu.sync(world, queue, &mut enc);
+            queue.submit([enc.finish()]);
+            if let Ok(s) = synced {
+                refused += s.light_refused;
+            }
+            if gpu.lights_settled() || refused > 0 {
+                break;
+            }
+        }
+        if refused > 0 {
+            return Err(crate::bake::BakeError::LightsRefused(refused));
+        }
+        let camera = Camera {
+            position: [0.0, 0.0, 0.0].into(),
+            yaw: 0.0,
+            pitch: 0.0,
+            vfov: 1.0,
+        };
+        let mut params = self.params(gpu, &camera, &LightParams::default());
+        params.flags = FLAG_SHADOWS | FLAG_MASKS | FLAG_SKIPS;
+        params.lighting = 0;
+        params.cache = 0;
+        params.fill = 0;
+        params.history = 0;
+        params.forced_level = 0;
+        params.candidates = settings.candidates;
+        let world_bind = self.world_bind(device, gpu);
+        let pipeline = self
+            .bake
+            .get_or_insert_with(|| crate::bake::BakePipeline::new(device, &self.world_layout));
+        let run = crate::bake::BakeRun {
+            device,
+            queue,
+            gpu,
+            world,
+            pipeline,
+            world_bind: &world_bind,
+            params_buffer: &self.params,
+            params,
+        };
+        crate::bake::run(&run, &mut self.store, extent, settings, progress)
+    }
+
+    /// The store's counters; `missing` is a blocking read of the last submitted encode's count.
+    pub fn read_store_stats(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> crate::bake::StoreStats {
+        let missing = if self.lighting.light == Light::Baked {
+            let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 4);
+            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        } else {
+            0
+        };
+        self.store.stats(missing)
+    }
+
+    /// The store.
+    pub fn store(&self) -> &crate::bake::Store {
+        &self.store
+    }
+
+    /// `coord`'s block in the pool as its words, the directory first: a blocking read.
+    pub fn read_store_block(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        coord: ChunkCoord,
+    ) -> Option<Vec<u32>> {
+        let (first, words) = self.store.block(coord)?;
+        let bytes =
+            crate::readback::read_buffer(device, queue, self.store.pool(), first * 4, words * 4);
+        Some(bytemuck::pod_collect_to_vec(&bytes))
+    }
+
     /// The light pass's pipeline without the preload (`shade`), built on its first use.
     fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         self.light.get_or_init(|| {
@@ -3215,8 +3403,34 @@ impl Frame {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.lighting = lighting;
+        if self.lighting.light == Light::Baked {
+            self.lighting.blend = TableBlend::Off;
+            self.lighting.fill_samples = 0;
+            self.lighting.preload_radius = 0;
+            self.lighting.table_age_out = false;
+        }
+        self.fit_store();
         self.fit_table();
         self.rebuild_probes();
+    }
+
+    /// Rebuilds the store empty where its pool's size changes: a minimal one under
+    /// [`Light::Table`], else [`Lighting::bake_pool_bytes`] within the device's storage binding.
+    fn fit_store(&mut self) {
+        let limits = self.device.limits();
+        let bytes = match self.lighting.light {
+            Light::Table => crate::bake::MINIMAL_POOL_BYTES,
+            Light::Baked => {
+                self.lighting
+                    .bake_pool_bytes
+                    .min(limits.max_storage_buffer_binding_size)
+                    .min(limits.max_buffer_size)
+                    & !3
+            }
+        };
+        if bytes != self.store.pool().size() {
+            self.store = crate::bake::Store::new(&self.device, bytes);
+        }
     }
 
     /// The table's cells as allocated: [`Lighting::cells`], or fewer where the device's storage
@@ -3349,6 +3563,11 @@ impl Frame {
             + self.preload_uniform.size()
             + self.preload_dispatch.size()
             + PRELOAD_IDLE_SLOTS as u64 * PRELOAD_IDLE_BYTES
+            + if self.lighting.light == Light::Baked {
+                self.store.pool().size()
+            } else {
+                0
+            }
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -3590,7 +3809,9 @@ impl Frame {
             h.guard_bytes = Some(bytes);
             let within =
                 |f: Option<u32>| f.is_some_and(|f| self.frame.wrapping_sub(f) < GUARD_WINDOW);
-            if self.guard_forced || within(h.guard_event) || within(self.emission_changed_at) {
+            if self.lighting.light == Light::Table
+                && (self.guard_forced || within(h.guard_event) || within(self.emission_changed_at))
+            {
                 p.lighting |= LIGHTING_GUARD;
             }
             let (was, now) = (h.last_views[0], params.views[0]);
@@ -3673,29 +3894,8 @@ impl Frame {
                 self.blue_noise.size(),
             );
         }
-        let noise = view(&self.blue_noise);
         let t = &self.targets;
-        let world_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("world"),
-            layout: &self.world_layout,
-            entries: &[
-                buffer_entry(0, &self.params),
-                buffer_entry(1, world.pool_shard(0)),
-                buffer_entry(7, world.pool_shard(1)),
-                buffer_entry(8, world.pool_shard(2)),
-                buffer_entry(9, world.pool_shard(3)),
-                buffer_entry(2, world.records()),
-                buffer_entry(3, world.table()),
-                buffer_entry(4, world.materials()),
-                buffer_entry(10, world.light_buffer()),
-                buffer_entry(11, &self.emission_scale),
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: wgpu::BindingResource::TextureView(&noise),
-                },
-                buffer_entry(13, self.exposure.state_uniform()),
-            ],
-        });
+        let world_bind = self.world_bind(device, world);
         // The cutaway and a mirror without band slots walk the voxels.
         let field = self.look.normal_mode == NormalMode::Contour
             && !self.look.cutaway
@@ -3775,7 +3975,7 @@ impl Frame {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let moved = last.is_some_and(|c| c != chunk);
             *last = Some(chunk);
-            moved
+            moved && self.lighting.light == Light::Table
         };
         if sweep {
             self.cache_sweeps
@@ -3848,6 +4048,9 @@ impl Frame {
             u32::from(preload_skip),
             std::sync::atomic::Ordering::Relaxed,
         );
+        if self.lighting.light == Light::Baked {
+            encoder.clear_buffer(self.store.pool(), 0, Some(4));
+        }
         if table_cleared {
             encoder.clear_buffer(cache_table, 0, None);
             // The counters, the fill list and the preload's header: its lists' entries name
@@ -4038,6 +4241,7 @@ impl Frame {
                 Res::Buf(&self.edits),
                 Res::Tex(&t.strata),
                 Res::Buf(cache_table),
+                Res::Buf(self.store.pool()),
             ],
         );
         // The filter runs in the shaded and cracks views unless switched off; the variance pass
