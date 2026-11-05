@@ -1848,11 +1848,11 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** none; direction decision pending
+- **What shipped:** feature
+- **Public API changed:** `CHANGELOG.md`'s 0.43.0 entry
+- **Budget readings:** `docs/nfr/02-frame-budget.md` and `docs/nfr/03-memory.md`, last entries (2de29c6)
+- **Gate at the tip:** at bb5fa9d, the close review's run: nextest gate 731 passed, 82 skipped, exit 0; doctests, clippy, fmt, deny and the doc gates exit 0
+- **Outstanding `human` phases:** none; Phase 8's direction went to Plan 0059
 - **Phase 7 (amended 2026-11-05, owner):** the table's size and `CACHE_PROBES` chosen, with the
   peak occupancy at the window's resolution; the before and after rows of the strips, `G_noise`
   and `G_plane`; Phase 4's done-whens 8 and 9 re-read; `frame_bytes` at the chosen size

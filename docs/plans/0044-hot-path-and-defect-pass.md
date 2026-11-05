@@ -32,6 +32,8 @@
 > violation of clean code principles, duplications, mega files ... a plan addressing issues
 > that goes after all plans that are active are finished". The review ran at `87e4b67`; its
 > structural findings are Plan 0045.
+> **Amended 2026-11-05 (architect, for the owner):** Plan 0057 closed and Plan 0059 runs next, so this plan waits for Plan 0059's Phase 3 verdict, where its order against that plan's cuts is set: both change the frame.
+>
 > **After:** Plan 0051 and its verdict plan, and before Plan 0045, Plan 0048 and M10 (amended
 > 2026-11-03, owner; see "Owner answers"; as of 2026-11-04 the verdict plan is Plan 0057 and
 > Plan 0048 is dropped). Before that: after Plan 0051, before the M10 batch
