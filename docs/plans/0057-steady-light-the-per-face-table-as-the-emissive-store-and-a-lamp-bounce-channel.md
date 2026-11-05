@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** in-progress (Phase 4, 2026-11-04); Plan 0056's Phase 2 readings are in its log (e678ae7)
+> **Status:** in-progress (Phases 1 to 6 done, 2026-11-05; the owner questions the direction; awaits the owner's decision and the close review); Plan 0056's Phase 2 readings are in its log (e678ae7)
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
@@ -1300,7 +1300,7 @@ Open at draft: the "go".
 | 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](logs/0057.md)) | 64a6598 |
 | 4: The dug hole and the creases, read on the table, then fixed where read | dev | done: Part 1 verdicts (hole: build; creases: Part 3 not built, done-whens 4 and 7 unwritten; still hall: class 2; census: the claim; reopens: the dark capped cell); Parts 1b, 2, 2b built, deviations in the log (the guard window's event and counter, pixel samples at face points, the preload's band-ordered fill, slab stamps, fill and probes in the light dispatch, idle in place of the trickle, the idle skip, the done slab re-read within r0, r0 32 from the sweep); not met: 2 and 15's off arms on the box, 14 and 16 on the level (two 4096-sample references agree within 10 % on 0.08 to 0.66 of cells), 15 on the level (S90 271), 11's vein share 0.00019 ([log](logs/0057.md)) | 4de5c4e |
 | 5: The lamp-bounce channel | dev | done, committed before Phase 4's row (the orchestrator's order); deviations: the moving lamp carried per probe (`MOVED_BIT`), the window sets the schedule only, `Lighting::default()` keeps `lamp_bounce` off (the fly-through on), side 8 from the reach of 64; done-when 5's timers unread on lavapipe; 8 not met (the still composite moves, bounce on and off alike) ([log](logs/0057.md)) | 12a9178 |
-| 6: The owner's window, with digs | human | not started | |
+| 6: The owner's window, with digs | human | done; verdict in the log; direction questioned ([log](logs/0057.md)) | committed with this row |
 
 ### Notes
 
@@ -1347,7 +1347,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
 - **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **Outstanding `human` phases:** none; direction decision pending
 
 ## Followups
 
