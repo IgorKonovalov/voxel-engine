@@ -1108,7 +1108,7 @@ impl TableBlend {
 }
 
 /// [`Lighting::blend_pool_min`] by default.
-pub const DEFAULT_BLEND_POOL_MIN: u32 = 16_384;
+pub const DEFAULT_BLEND_POOL_MIN: u32 = 4_096;
 
 /// A blend word's colour (`blend_unpack` in `cache_cell.wgsl`).
 pub fn blend_unpack(word: u32) -> [f32; 3] {

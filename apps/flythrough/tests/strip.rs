@@ -2083,13 +2083,18 @@ mod light_strip {
         }
         let (before, _) = view(&frame);
         let mut first: HashMap<FaceKey, (f32, u32)> = HashMap::new();
+        // Pixels by the count a new face holds on its first frame in view, and their signed error.
+        let mut counts: HashMap<FaceKey, u32> = HashMap::new();
         for _ in 0..10 {
             camera.yaw += 9f32.to_radians();
             frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
-            let (now, _) = view(&frame);
+            let (now, words) = view(&frame);
             for (k, (d, n)) in now {
                 if !before.contains_key(&k) {
                     first.entry(k).or_insert((d, n));
+                    counts.entry(k).or_insert_with(|| {
+                        cache_cell(&words, k).map_or(0, |w| words[w + marcher::CACHE_COUNT_WORD])
+                    });
                 }
             }
         }
@@ -2101,6 +2106,35 @@ mod light_strip {
             frame.step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
         }
         let settled = table_words(&rig, &frame);
+        let mut bands = [[0f64; 4]; 5];
+        for (k, &(d0, n)) in &first {
+            let Some(s) = d_of(&settled, *k, &lighting, exposure) else {
+                continue;
+            };
+            let c = counts.get(k).copied().unwrap_or(0);
+            let b = usize::from(c >= 16)
+                + usize::from(c >= 64)
+                + usize::from(c >= 256)
+                + usize::from(c >= 1024);
+            let n = f64::from(n);
+            bands[b][0] += n;
+            bands[b][1] += n * f64::from(d0 - s);
+            bands[b][2] += n * f64::from((d0 - s).abs());
+            bands[b][3] += n * f64::from((d0 - s).abs() <= 4.0);
+        }
+        for (name, b) in ["under 16", "to 63", "to 255", "to 1023", "1024 up"]
+            .into_iter()
+            .zip(bands)
+        {
+            let n = b[0].max(1.0);
+            println!(
+                "light yaw count on the first frame {name}: {} pixels, mean error {:+.2}, mean |error| {:.2}, within 4 {:.4}",
+                b[0],
+                b[1] / n,
+                b[2] / n,
+                b[3] / n
+            );
+        }
         let mut rows = [[0u64; 5]; 2];
         for (k, &(d0, n)) in &first {
             let Some(s) = d_of(&settled, *k, &lighting, exposure) else {
