@@ -16,7 +16,7 @@
 > **Source:** the owner's windows of 2026-11-05 (`docs/plans/logs/0057.md`, Phases 6 and 8)
 > and this design's interview of the same day.
 > **Starts after:** [Plan
-> 0057](0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)'s
+> 0057](done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)'s
 > close. Before Plan 0058, whose emission-scale phase needs a refresh (Followups).
 >
 > **Amended 2026-11-05 (architect, for the owner), the order.** The owner, after Plan 0057's second

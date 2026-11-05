@@ -18,9 +18,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0057, before 0045 (owner, 2026-11-03). |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before Plan 0048 and M10 (owner, 2026-11-03). |
-| [0057](0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) | Steady light: the per-face table as the only emissive store, faces sampled and guarded, the probes a lamp-bounce channel | in-progress | M2, ADR-0043 (proposed). Phase 7 fix pass added 2026-11-05. Before 0044. |
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: a list of eight analytic lights, exact, dropped and carried; scaled emission over the table; a bounce flag | draft | M2, ADR-0044 and ADR-0045 (proposed). After 0059; its scale phase needs a refresh. |
-| [0059](0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md) | Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye | approved | M2, ADR-0046. After 0057's close, on a go; owner's verdict at Phase 3; before 0058. |
+| [0059](0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md) | Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye | approved | M2, ADR-0046. Awaits the owner's go; owner's verdict at Phase 3; before 0058. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -28,6 +27,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0057](done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) | Steady light: the table holds still, the lamp channel stands; the owner moved to a look-first bake, vein bars left to it | 2026-11-05, v0.43.0 |
 | [0056](done/0056-aliasing-spike-what-moves-on-the-final-image.md) | The aliasing spike: FSR 2's jumps are jitter on silhouettes, the dots light on creases; FSR 2 at 1.5 stays, far normal `[1, 2]` picked by eye (next plan) | 2026-11-04, v0.42.0 |
 | [0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: A, B and C read behind settings; the owner picked B with indirect off, nearest read, the probes to a lamp-bounce channel | 2026-11-04, v0.41.0 |
 | [0048](done/0048-probe-rays-direct-light-without-the-clamp-bias.md) | Dropped by the owner: moot under ADR-0043, the probe rays gather no emissive light; nothing was built | 2026-11-04, abandoned |

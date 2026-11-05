@@ -1,23 +1,23 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** in-progress (Phases 1 to 6 done on the lane, 2026-11-05; amended 2026-11-05 (owner) with Phase 7, a fix pass for the grain, the young cells and the table, and Phase 8, a second window; Phase 7 not started); Plan 0056's Phase 2 readings are in its log
+> **Status:** done (closed 2026-11-05, v0.43.0). The table holds still and its bars met in the hall; the vein's level bars and the first frame missed, left to the bake on the owner's word; Phase 8 (a), (d), (g), (h) have no words and (i) moved the direction to Plan 0059's reference.
 > **Created:** 2026-11-04
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
-> **Related ADRs:** [ADR-0043](../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
+> **Related ADRs:** [ADR-0043](../../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
 > (proposed; this plan builds it and its close accepts it), which amends
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md),
-> [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) and
-> [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
-> and makes [ADR-0037](../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
-> moot. [ADR-0033](../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md),
+> [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) and
+> [ADR-0036](../../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
+> and makes [ADR-0037](../../adrs/0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md)
+> moot. [ADR-0033](../../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
 > is untouched (owner, the verdict's item 5).
-> **Source:** [Plan 0051](done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
+> **Source:** [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
 > Phase 4 verdict (owner, 2026-11-04) and its close review's Followups; the readings in
-> [`logs/0051.md`](logs/0051.md); [`LIGHT-FEEDBACK.md`](../../LIGHT-FEEDBACK.md), "What the owner
+> [`logs/0051.md`](../logs/0051.md); [`LIGHT-FEEDBACK.md`](../../../LIGHT-FEEDBACK.md), "What the owner
 > wants".
 > **Starts after:** Plan 0051's close (v0.41.0, on main). Runs beside
-> [Plan 0056](done/0056-aliasing-spike-what-moves-on-the-final-image.md)'s lane, which is read-only
+> [Plan 0056](0056-aliasing-spike-what-moves-on-the-final-image.md)'s lane, which is read-only
 > against this plan and hands it the yellow dots' class (0056 Phase 2, done-when 4); this plan
 > takes that answer as an input at its Phase 1 and Phase 4. Then Plans 0044 and 0045; Plan 0048
 > is moot under ADR-0043 and awaits the owner's "drop".
@@ -1783,18 +1783,66 @@ Open at draft: the "go".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The open questions, read | dev | not started | |
-| 2: The table is the only emissive store, and the default | dev | not started | |
-| 3: The world-space guard | dev | not started | |
-| 4: Faces are sampled: the fill pass and the warm rays | dev | not started | |
-| 5: The lamp-bounce channel | dev | not started | |
-| 6: The owner's window, with digs | human | not started | |
+| 1: The open questions, read | dev | done: code at 1a4d8c9; stop rule read stop; Plan 0056's class: light ([log](../logs/0057.md)) | edee79b |
+| 2: The table is the only emissive store, and the default | dev | done: code at d940f32; done-when 7 a reading (amended f107977, test 84f5c60); 9's predictions not met on the patch's scale-1 `sv`, the hall's native drift and the patch's misses; 10 not met (`Lighting::sampler` kept) ([log](../logs/0057.md)) | b9b9b3b |
+| 3: The world-space guard | dev | done; done-when 5's predictions not met (gradient 0.092 / 0.053 ms RTX against 0.017; 4 still reopens at the patch) ([log](../logs/0057.md)) | 64a6598 |
+| 4: The dug hole and the creases, read on the table, then fixed where read | dev | done: Part 1 verdicts (hole: build; creases: Part 3 not built, done-whens 4 and 7 unwritten; still hall: class 2; census: the claim; reopens: the dark capped cell); Parts 1b, 2, 2b built, deviations in the log (the guard window's event and counter, pixel samples at face points, the preload's band-ordered fill, slab stamps, fill and probes in the light dispatch, idle in place of the trickle, the idle skip, the done slab re-read within r0, r0 32 from the sweep); not met: 2 and 15's off arms on the box, 14 and 16 on the level (two 4096-sample references agree within 10 % on 0.08 to 0.66 of cells), 15 on the level (S90 271), 11's vein share 0.00019 ([log](../logs/0057.md)) | 4de5c4e |
+| 5: The lamp-bounce channel | dev | done, committed before Phase 4's row (the orchestrator's order); deviations: the moving lamp carried per probe (`MOVED_BIT`), the window sets the schedule only, `Lighting::default()` keeps `lamp_bounce` off (the fly-through on), side 8 from the reach of 64; done-when 5's timers unread on lavapipe; 8 not met (the still composite moves, bounce on and off alike) ([log](../logs/0057.md)) | 12a9178 |
+| 6: The owner's window, with digs | human | done; verdict in the log; direction questioned ([log](../logs/0057.md)) | a23b73d |
+| 7: The grain, the young cells and the table | dev | done; size 2^22, probes 16; not met: done-when 4's level bars at the vein, done-when 5's first frame ([log](../logs/0057.md)) | 131de41 |
+| 8: The owner's second window | human | run; words on (b), (c), (e), (f); none on (a), (d), (g), (h); (i) the owner moves the direction to a look-first bake and closes this plan as it stands ([log](../logs/0057.md)) | committed with this row |
 
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the dig at 100 voxels is seen from the steady flight's start facing its travel, not from `VEIN_POSE` (no hit near 100 voxels in that view's central half).
+- Phase 1: `the_dots_split_by_cell_age_sums_to_the_excess` reads 5.2 to 7.6 s on lavapipe, loaded, against the plan's "under 5 s".
+- Phase 1: the hall re-ran `ab --indirect off` only; the `b --indirect off` rows are Plan 0051's.
+- Phase 1: `ab_with_indirect_off_applies_both` checks the preset over `indirect: false`; the flag parse in `main.rs` is outside the phase's files and was read, not tested.
+- Phase 2 (d940f32): the table's counters live in a 16 B buffer of their own (`CacheStats`), not in its header.
+- Phase 2 (d940f32): the miss counter counts lighting pixels whose key found no slot, not faces.
+- Phase 2 (d940f32): an edit frame whose dilated boxes hold more faces than the table has cells clears the whole table.
+- Phase 2 (d940f32): an emission-scale change clears the whole table.
+- Phase 2 (d940f32): `vxe_render::Sampler`, `Lighting::sampler`, `marcher::CacheRead` and `hud::SteadyMode` stay, unread, for Plan 0056's `strip.rs`; done-when 10 not met.
+- Phase 2 (d940f32): `apps/flythrough/tests/look.rs`'s `DEFAULT_FRAME_BYTES` changed, outside the phase's files.
+- Phase 2: done-when 7 is a reading (amended at f107977); the table reads +552.5 over its floor after the fast yaw, the read-off arm none.
+- Phase 2: done-when 9's predictions not met: patch scale-1 emissive `sv` 0.0002 / 0.0003, the hall's native drift 0.257, the patch's full-table share 0.00029 (misses above 0: the size goes to the architect).
+- Phase 3: the kept luminance is the centre-to-centre irradiance with its shadow ray, not the sample's contribution.
+- Phase 3: no compare-exchange on the kept point; a 16-bit key tag in the packed luminance word detects a torn store.
+- Phase 3: the fresh-sample re-verify runs only for capped cells whose sums are 0.
+- Phase 3: the gradient pass runs in every shaded view; `Frame::read_table_reopens` is new public API.
+- Phase 3: done-whens 1 to 3 read the far wall's faces with at least 9 pixels as the wall's cells within reach.
+- Phase 3: `a_reveal_behind_a_plug_follows_within_seventy_three_frames` reads 57.3 s and is on the soak list.
+- Phase 3: done-when 5's predictions not met: gradient 0.092 / 0.053 ms on the RTX at rest; 4 reopens over 1024 still frames at the patch.
+- Phase 4: Part 3 not built (the creases' rule read do not build); done-whens 4 and 7 are not written; the rig's fast-yaw row goes to the Followups.
+- Phase 4: done-when 2's F 0 arm and done-when 15's both-off arm do not read over their bars on the 192 x 108 box; 15's is asserted at 24 x 14 (`NEAR_DIG_SMALL`).
+- Phase 4: done-when 14 and 16's bars (90 % within 10 %) are not met on the level at C_PRE 256 or 1024, preload on or off; two references of 4096 samples agree within 10 % on 0.08 to 0.66 of lit cells within r0 by decile.
+- Phase 4: done-when 15's level bar (S90 at most 60 at 5 voxels) not met: 271 with the preload, 303 off.
+- Phase 4: done-when 11's "0 at both poses after four flights" not met at the vein with the preload on (full-table share 0.00019).
+- Phase 4: done-when 14's lamp-on and `up1.5` rows are not read.
+- Phase 4 (52ada45): the preload's passes are skipped while a non-blocking readback confirms the sweep idle and every encode since is quiet (`Frame::preload_skips`, new public API); `Preload::still` also needs the eye's brick unchanged.
+- Phase 4 (52ada45): a done slab within r0 is read again, and a fourth stamp state ends it; a face within r0 is held back, not probed, while a guard is shut.
+- Phase 4 (52ada45): the reference walks at the run's largest R (96), not 128.
+- Phase 4: `look.rs`, `shader_portability.rs` and the golden baselines changed, outside the phase's files.
+- Phase 4 (refactor after a337f76, Plan 0056 closed): `Sampler`, `Lighting::sampler`, `CacheRead` and `hud::SteadyMode` removed; `strip.rs` refuses `VXE_STRIP_SAMPLER` and `VXE_STRIP_STEADY`; Phase 2's done-when 10 met there.
+
+- Phase 7 (41cda0c): the age-out re-runs `age` frames after a pass that left the load over the mark having freed a cell or started on growth: not in the plan, done-when 2 needs it; the open architect question, option (a), taken without the architect.
+- Phase 7 (41cda0c): the table is clamped to the device's storage binding: 2^21 on lavapipe (128 MiB), so `frame_bytes` asserts the 2^21 figure, not the plan's 2^22.
+- Phase 7: `cache_cell.wgsl` (new), `.gitattributes`, `golden.rs`, `shader_portability.rs` and the table-key fixtures changed, outside the phase's files.
+- Phase 7: the blend word is a shared exponent over square-root mantissas, not RGB9E5; a neighbour's lookup ends at its first free slot.
+- Phase 7 (82af332): a skip of the whole pass on a quiet table and an alternate-frame refresh in place of the `final` bit.
+- Phase 7: `a_young_face_reads_its_walls_light` clears eight faces, its off arm asserts at least one over 2 levels; the age-out test adds 16 frames at the sky for the preload's cells.
+- Phase 7: `the_table_hash_spreads_a_levels_keys` reads its spread at a load of 0.9, not 0.5, at 16 probes.
+- Phase 7: `showcase_hall_golden_is_lit_by_its_four_ores`'s luma floor loosened from 12 to 11 (it reads 11.97); `dark_cave_golden`'s far bar tightened to 1 in 10 000.
+- Phase 7: done-when 4's level bars not met at the vein: `G_noise` 2.23 / 9.79 (fsr2) and 2.07 / 7.97 (native) against 1 / 2; `G_plane` p90 0.59 and 0.77 of its before row against 0.5. Met in the hall.
+- Phase 7: done-when 5's first frame not met: 0.64 (fsr2) and 0.62 (native) within 4 against 0.9, at any `POOL_MIN`, blend on or off. Frame +16 and the strip's frame 120 at scale 1 are met. Faces hold 256 samples and up on that frame; fsr2's strip reads 0.9928 at frame 120.
+- Phase 7: done-when 8: Radeon lighting is over the 6.0 ms line walking, in the base too; the walk's slice frames are not read on their own; the light pass's excess reads within the runs' spread, on loaded runs.
+- Phase 7: the vein's `B` presses (78 to 87 carves) stay over `MAX_EDITS` and clear the whole table; the hall's no longer do.
+- Phase 7: `castle_gate_golden` fails its RSS bar on a cold Mesa shader cache (also on the tree before this phase) and passes warm.
+- Fix pass (review major, a cell past a hole dropped out of its own blend): `fix(render): plan 0057, the blend's centre takes no lookup`; the test writes the hole through `write_buffer` ([log](../logs/0057.md)).
 
 ### Close triggers
 
@@ -1804,7 +1852,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
 - **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **Outstanding `human` phases:** none; direction decision pending
 - **Phase 7 (amended 2026-11-05, owner):** the table's size and `CACHE_PROBES` chosen, with the
   peak occupancy at the window's resolution; the before and after rows of the strips, `G_noise`
   and `G_plane`; Phase 4's done-whens 8 and 9 re-read; `frame_bytes` at the chosen size

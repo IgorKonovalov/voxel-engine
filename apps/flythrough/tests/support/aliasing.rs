@@ -643,7 +643,7 @@ pub fn eye_lamp(intensity: f32) -> vxe_render::LightParams {
 pub fn eye_lighting(base: vxe_render::Lighting) -> vxe_render::Lighting {
     vxe_render::Lighting {
         lamp: true,
-        indirect: false,
+        lamp_bounce: false,
         candidates: 0,
         ..base
     }

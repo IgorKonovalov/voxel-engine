@@ -1,5 +1,5 @@
 //! What a `Frame` holds and decides between encodes: the probe volume exists only once
-//! indirect light needs it, and the lamp an encode compares is the one its `Params` carry.
+//! the lamp's bounce needs it, and the lamp an encode compares is the one its `Params` carry.
 
 use vxe_render::{Camera, Frame, GpuWorld, LightParams, Lighting, glam::Vec3, wgpu};
 use vxe_world::*;
@@ -62,41 +62,43 @@ fn camera() -> Camera {
     }
 }
 
-/// A frame with indirect light off (the default) holds no probe volume, before any encode
-/// and after one; the first encode with indirect light on builds it, and `frame_bytes` grows
-/// by exactly the volume, 54 689 824 B: its atlases, state and scratch (12 615 680 +
-/// 1 056 768 words, 54 689 792 B) and its 32-byte uniform.
+/// A frame with the lamp's bounce off (the default) holds no probe volume, before any encode
+/// and after one; the first encode with it on (the lamp on) builds it, and `frame_bytes` grows
+/// by exactly the volume at its default side of 8 probes (the lamp's reach of 64 voxels at the
+/// spacing of 16), 5 015 600 B: its atlases and state (512 x 385 words, 788 480 B), its scratch
+/// (8192 + 8192 x 128 words, 4 227 072 B) and its 48-byte uniform.
 #[test]
-fn the_probe_volume_is_built_on_the_first_encode_with_indirect_light() {
+fn the_probe_volume_is_built_on_the_first_encode_with_the_lamp_bounce() {
     let Some((device, queue)) = device() else {
         return;
     };
     let gpu = mirrored(&device, &queue);
     let mut frame = Frame::new(&device, 64, 64);
     assert!(
-        !frame.lighting().indirect,
-        "indirect light is off by default"
+        !frame.lighting().lamp_bounce,
+        "the lamp's bounce is off by default"
     );
     let before = frame.frame_bytes();
     frame.step(&device, &queue, &gpu, &camera(), &LightParams::headlamp());
     assert_eq!(
         frame.frame_bytes(),
         before,
-        "an encode without indirect light"
+        "an encode without the lamp's bounce"
     );
     frame.set_lighting(Lighting {
-        indirect: true,
+        lamp_bounce: true,
         ..frame.lighting()
     });
     frame.step(&device, &queue, &gpu, &camera(), &LightParams::headlamp());
     let uniform = size_of::<vxe_render::probes::ProbeUniform>() as u64;
-    assert_eq!(uniform, 32);
+    assert_eq!(uniform, 48);
     let grown = frame.frame_bytes() - before;
     println!(
-        "frame_bytes {before} B with indirect off, {} B after an encode with it on (+{grown} B)",
+        "frame_bytes {before} B with the lamp's bounce off, {} B after an encode with it on (+{grown} B)",
         frame.frame_bytes()
     );
-    assert_eq!(grown, 54_689_824);
+    assert_eq!(frame.probes().axis(), 8);
+    assert_eq!(grown, 5_015_600);
     assert_eq!(grown, frame.probes().bytes());
 }
 

@@ -1,11 +1,15 @@
 // The spatial filter: an a-trous wavelet filter (Dammertz 2010) over the accumulated
 // irradiance, weighted by the hits' positions and normals and by the luminance variance
 // estimated from the temporal moments (SVGF, Schied 2017). Irradiance only: the composite
-// multiplies the albedo back after it, so a material edge never blurs. Compiled after
-// march.wgsl, whose bindings (group 0) and hit-record helpers it uses.
+// multiplies the albedo back after it, so a material edge never blurs. It filters the lamp's
+// part and a fallback hit's emissive part; a pixel whose emissive part is the table's (the
+// moments' w, temporal.wgsl) carries a cell's mean, whose variance is the cell's and not the
+// pixel's, so that part passes around the filter and the last iteration adds it back
+// (ADR-0043). Compiled after march.wgsl, whose bindings (group 0) and hit-record helpers it
+// uses.
 //
 // Two entry points:
-//   `variance` writes each hit's irradiance and its luminance variance: from the moments
+//   `variance` writes each hit's filtered irradiance and its luminance variance: from the moments
 //   (`m2 - m1^2`) once the pixel has VARIANCE_AGE frames of history, else from the moments of
 //   its 7 x 7 neighbourhood under the same edge weights as the filter.
 //   `atrous` is one iteration with the 5 x 5 B3-spline kernel at stride `step.size` (1, 2, 4,
@@ -18,7 +22,7 @@
 //   0  texture_2d<f32>   hit_pos_in      this frame's hit positions
 //   1  texture_2d<u32>   hit_info_in     this frame's hit records
 //   2  texture_2d<f32>   accum_in        the temporal pass's accumulated irradiance
-//                                        (rgba32float)
+//                                        (rgba16float)
 //   3  texture_2d<f32>   moments_in      the temporal pass's moments and age
 //   4  storage texture   filter_out      rgba16float: irradiance rgb, variance a
 // Bindings, group 2 of `atrous`:
@@ -26,7 +30,11 @@
 //   1  texture_2d<u32>   hit_info_in
 //   2  texture_2d<f32>   filter_in       the previous iteration's irradiance and variance
 //   5  storage texture   filter_out      rgba16float, the same
-//   6  uniform           step            the iteration's stride in pixels
+//   6  uniform           step            the iteration's stride in pixels, and whether it is
+//                                        the last
+//   7  texture_2d<f32>   accum_pass_in   the temporal pass's accumulation, read by the last
+//                                        iteration for the table's emissive part
+//   8  texture_2d<f32>   moments_pass_in the temporal pass's moments (w: the part is the table's)
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -34,7 +42,8 @@
 
 struct Step {
     size: u32,
-    _pad0: u32,
+    // 1 on the last iteration, which adds the table's emissive part back.
+    last: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -76,10 +85,12 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(gid.xy);
-    // The accumulation's emissive rgb plus its lamp's white a: the filter's irradiance.
+    // The accumulation's lamp white a, plus its emissive rgb where that is a fallback's: the
+    // filter's irradiance.
     let acc = textureLoad(src_in, px, 0);
-    let c = acc.xyz + vec3<f32>(acc.w);
-    let m = textureLoad(moments_in, px, 0).xyz;
+    let mw = textureLoad(moments_in, px, 0);
+    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + vec3<f32>(acc.w);
+    let m = mw.xyz;
     let rec = load_hit(px);
     var v = max(m.y - m.x * m.x, 0.0);
     if (rec.found && m.z < VARIANCE_AGE) {
@@ -125,6 +136,11 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureStore(filter_out_atrous, px, centre);
         return;
     }
+    // The table's emissive part, added back after the last iteration.
+    var passed = vec3<f32>(0.0);
+    if (step.last != 0u && textureLoad(moments_pass_in, px, 0).w > 0.5) {
+        passed = textureLoad(accum_pass_in, px, 0).xyz;
+    }
     // The pixel's variance under a 3 x 3 Gaussian.
     var var_sum = 0.0;
     var var_w = 0.0;
@@ -163,7 +179,9 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     // The centre tap always weighs its kernel weight, so w_sum > 0.
-    textureStore(filter_out_atrous, px, min(vec4<f32>(c_sum / w_sum, v_sum / (w_sum * w_sum)), vec4<f32>(HDR_MAX)));
+    textureStore(filter_out_atrous, px, min(vec4<f32>(c_sum / w_sum + passed, v_sum / (w_sum * w_sum)), vec4<f32>(HDR_MAX)));
 }
 
 @group(2) @binding(5) var filter_out_atrous: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(7) var accum_pass_in: texture_2d<f32>;
+@group(2) @binding(8) var moments_pass_in: texture_2d<f32>;

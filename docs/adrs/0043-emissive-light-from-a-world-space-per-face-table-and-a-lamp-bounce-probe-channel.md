@@ -1,8 +1,8 @@
 # ADR-0043: Emissive light is read from a world-space table of per-face irradiance, and the probe volume becomes a lamp-bounce channel
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-05, Plan 0057's close; the table, fill, preload and guard are expected to be superseded by ADR-0046 on the owner's verdict in Plan 0059's Phase 13)
 > **Date:** 2026-11-04
-> **Related plan(s):** [Plan 0057](../plans/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)
+> **Related plan(s):** [Plan 0057](../plans/done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)
 > (builds it); [Plan 0051](../plans/done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)
 > (the spike whose Phase 4 verdict this records; its readings are in `docs/plans/logs/0051.md`).
 > Amends [ADR-0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
@@ -211,4 +211,21 @@ Whether that is the whole of the fast-turn fault is Plan 0057's first reading.
 
 ## Outcome
 
-_(Added at acceptance, at Plan 0057's close, if implementation falsified something above.)_
+Accepted 2026-11-05 at Plan 0057's close, v0.43.0, because it describes what ships. Readings are in `docs/plans/logs/0057.md`.
+
+**The owner did not accept the table as the destination.** First window, 2026-11-05: "there is no flicker nether when i turn or go forward/backward", and "it feels like this is wrong way". Second window: "quite a few of dark patches when moving fast, but it seems they are gone after stabilization", and then "no matter performance, but build something that would look really polished". **What held:** a still face read from a settled value in world space, and the empty screen history. **What failed:** a fill that follows the view, because a face's light depends on when someone looked. The table stays the working default until a bake replaces it (ADR-0046, Plan 0059). The lamp channel and the face-keyed read outlive it.
+
+**What implementation changed against the Decision above:**
+
+- **"The read is nearest: one value a face, no blend across faces" is reversed.** The owner's first window showed grain at voxel scale, so a count-weighted 3 x 3 coplanar blend (5 x 5 where the pool is under 4096 samples) is the default, computed once a seen cell a frame, with `--blend off` beside it. It still reads one value a face. The window gave no words on its softening of edges; that question moves to Plan 0059's Phase 5.
+- **Faces are sampled, as read.** The fill of every young face in view and the warm rays are dropped (Phase 1's stop rule: the young-cell share of the fast yaws' excess read 0.005 to 0.099). A fill for cells an edit or the guard reopened is built, and the settle is a camera-radius brick sweep around the eye (the preload, `R` 64, `r0` 32) instead of rays from the eye. The owner: "preload doesnt really change anything - or it should be much much bigger".
+- **The fallback is a frozen mean,** not a short screen history, so a still fallback pixel holds still and this ADR's "the fallback flickers" no longer holds.
+- **The guard runs only within 256 frames of an event** (the still reopens were a defect against the owner's first rule). So "a cell out of view is re-verified when it is next seen" is true only inside that window: a cell whose emitter changed while it was out of view, first seen later, stays stale until the next event. Inferred from the code, not read on a rig. No test covers it, and it goes with the table.
+- **Size, eviction, the full table.** 2^20 fell to the window: 993 304 cells and 194 079 missed pixels a frame at the hall. Now 2^22 cells of 48 B (201 326 592 B), fewer where the device's storage binding stops short (2^21 on lavapipe), 16 probes, a sweep and an age-out in slices of 2^20 cells. Peak 833 237 cells at the hall with 0 misses at the window's size.
+- **The age-out's re-arm is not in the plan's text and is accepted at this close.** A pass that leaves the load over the mark, having freed a cell or started on growth, runs again `age` frames later, and a re-run that frees nothing ends it. The literal rule could not clear a second view (Plan 0057's done-when 2). It frees only cells beyond `R` that nothing has read in `age` frames, so it touches nothing in view, and a still camera ends after a bounded number of passes.
+- **A frame over `MAX_EDITS` still clears the whole table:** the vein's `B` presses (78 to 87 carves). A frame in budget clears by a walk over the cells.
+- **The lamp channel** is side 8, not the guessed 16 (a reach read from the brightest probe texel over `D`, not from the gather at a lit wall), and `Lighting::default()` keeps it off with the fly-through on. Two faults stay: inside probes are traced while the lamp moves (cost only, the gather ignores them), and `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` takes its `D` from the shader's own output, so it defends the running mean and not the albedo. Plan 0058 owes the fix when it touches the channel.
+
+**Bars the owner closed as missed:** the vein's `G_noise` p50 / p90 2.23 / 9.79 (FSR 2) and 2.07 / 7.97 (native) against 1 / 2, and `G_plane` p90 at 0.59 and 0.77 of before against 0.5; the first frame within 4 levels at 0.62 to 0.64 against 0.9, at any `POOL_MIN`, blend on or off. New faces hold 256 to over 1024 samples on that frame, so the reading is estimator variance beside the emitters, not young cells; this was not tested directly, and Plan 0059's Phase 1 reads it. **Unread:** the amended still shares of Phase 4's done-whens 14 and 16 (the notes cite the old bar); moot if the preload goes. **Worse than before:** the carved region within 2 levels at +1 reads 0.55 against 0.83 native, on the blend's tree, not attributed further; its `Q90` of 52 frames meets the bar.
+
+**A close-review fix:** a cell past a hole in its probe run dropped out of its own blend and could read black with no neighbours. The centre now reads its own slot (6738b9f, `a_cell_past_a_hole_keeps_its_own_light`).

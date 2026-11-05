@@ -75,7 +75,7 @@ fn lamp_off_states(
     exposure: Exposure,
 ) -> Vec<ExposureState> {
     let lit = Lighting {
-        indirect: true,
+        lamp_bounce: true,
         exposure,
         ..Lighting::default()
     };

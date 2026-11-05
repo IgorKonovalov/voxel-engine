@@ -1,15 +1,13 @@
 //! Renders the README's still: by default the showcase cavern's `hall` shot, lit by its four
-//! ores alone (the lamp off), with indirect light and the fly-through's upscaler defaults.
+//! ores alone (the lamp off), with the fly-through's lighting and upscaler defaults.
 //!
 //! `cargo run --release -p flythrough --example hero -- [--source showcase|level]
 //! [--shot hall|chasm|crystals|all] [--seed N] [--size WxH] [--at X,Y,Z] [--yaw DEG]
 //! [--pitch DEG] [--exposure auto|E] [--carve R] [--out PATH] [--out-dir DIR] [--frames N]
-//! [--indirect on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
+//! [--lamp-bounce on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
-//! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
-//! [--lamp on|off] [--filter on|off] [--emissive-history N]
-//! [--emissive-guard on|off] [--look PRESET] [--steady off|a|c|ac|b|ab|abc]
-//! [--cache-read nearest|smooth]`.
+//! [--shadow-walk full|coarse] [--history edits|gradient]
+//! [--lamp on|off] [--filter on|off] [--look PRESET]`.
 //!
 //! `--source showcase` (the default) generates `flythrough::showcase` and frames one of its
 //! shots (`--shot`, default `hall`); `--at`, `--yaw`, `--pitch` and `--exposure` override the
@@ -19,8 +17,11 @@
 //! `hero-hall-spacing16.png`, the review set. `--source level` frames the bounded level from
 //! its spawn (`--at`, `--yaw`, `--pitch`), with no shots. `--carve R` digs a sphere of radius
 //! `R` voxels where the view ray meets rock before the frame is drawn. The lamp is off by
-//! default for both sources; indirect light is on at the hero's probe spacing
-//! (`HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it) and the upscaler at
+//! default for both sources; the lamp's bounce is off (`--lamp-bounce on`, or its alias
+//! `--indirect on`, runs ADR-0043's lamp channel with the lamp on at the hero's probe spacing,
+//! `HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it), emissive
+//! light is read from the per-face table (ADR-0043; `--steady`, `--cache-read`, `--sampler`,
+//! `--emissive-history` and `--emissive-guard` are refused, naming Plan 0057), and the upscaler at
 //! the fly-through's defaults (`--internal-scale 1.5`: FSR 2; `--jitter` starts our upscaler,
 //! jittered or not; `--internal-scale 1` without `--jitter on` is the native frame).
 //! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face` with the
@@ -39,7 +40,7 @@ use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::showcase::{SHOTS, Shot, ShowcaseSource};
 use vxe_render::{
     AutoExposure, Camera, Exposure, Frame, GpuWorld, HistoryKill, LightParams, Lighting,
-    LightingResolution, MirrorConfig, RenderScale, Sampler, ShadowWalk, readback, wgpu,
+    LightingResolution, MirrorConfig, RenderScale, ShadowWalk, readback, wgpu,
 };
 use vxe_world::*;
 
@@ -81,10 +82,6 @@ struct Args {
     light_radius: Option<i32>,
     adapter: Option<String>,
     look: flythrough::LookPreset,
-    /// `--steady`, the fly-through's presets; off is today's light.
-    steady: flythrough::hud::SteadyMode,
-    /// `--cache-read`: how the `b` presets read the table.
-    cache_read: vxe_render::marcher::CacheRead,
 }
 
 impl Args {
@@ -120,7 +117,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         resolution: LightingResolution::default(),
         lighting: Lighting {
             lamp: false,
-            indirect: true,
             ..Lighting::default()
         },
         probe_spacing: HERO_PROBE_SPACING,
@@ -130,8 +126,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         light_radius: None,
         adapter: None,
         look: flythrough::LookPreset::DEFAULT,
-        steady: flythrough::hud::SteadyMode::Off,
-        cache_read: vxe_render::marcher::CacheRead::Nearest,
     };
     let mut shot_given = false;
     let on_off = |flag: &str, v: &str| match v {
@@ -196,20 +190,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     flythrough::LookPreset::names()
                 ))?
             }
-            "--steady" => {
-                args.steady = flythrough::hud::SteadyMode::from_name(&v).ok_or(format!(
-                    "--steady takes off, a, c, ac, b, ab or abc, not {v}"
-                ))?;
-            }
-            "--cache-read" => {
-                args.cache_read = match v.as_str() {
-                    "nearest" => vxe_render::marcher::CacheRead::Nearest,
-                    "smooth" => vxe_render::marcher::CacheRead::Smooth,
-                    _ => return Err(format!("--cache-read takes nearest or smooth, not {v}")),
-                };
+            "--steady" | "--cache-read" | "--sampler" | "--emissive-history"
+            | "--emissive-guard" => {
+                return Err(format!(
+                    "{flag} is gone since Plan 0057: emissive light is read from the per-face table (ADR-0043)"
+                ));
             }
             "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
-            "--indirect" => args.lighting.indirect = on_off(&flag, &v)?,
+            "--lamp-bounce" | "--indirect" => args.lighting.lamp_bounce = on_off(&flag, &v)?,
             "--probe-spacing" => {
                 args.probe_spacing = v
                     .parse()
@@ -246,20 +234,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.lighting.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
             }
-            "--sampler" => {
-                args.lighting.sampler = Sampler::from_name(&v)
-                    .ok_or(format!("--sampler takes list or reuse, not {v}"))?;
-            }
             "--history" => {
                 args.lighting.history = HistoryKill::from_name(&v)
                     .ok_or(format!("--history takes edits or gradient, not {v}"))?;
             }
             "--lamp" => args.lighting.lamp = on_off(&flag, &v)?,
             "--filter" => args.lighting.filter = on_off(&flag, &v)?,
-            "--emissive-history" => {
-                args.lighting.emissive_history = v.parse().map_err(|e| bad(&e))?;
-            }
-            "--emissive-guard" => args.lighting.emissive_guard = on_off(&flag, &v)?,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -523,13 +503,10 @@ fn main() -> Result<(), String> {
             frame.set_jitter(&device, args.jitter());
             frame.set_sharpness(&queue, args.sharpen);
         }
-        frame.set_lighting(args.steady.apply(
-            Lighting {
-                exposure: still.exposure,
-                ..args.lighting
-            },
-            args.cache_read,
-        ));
+        frame.set_lighting(Lighting {
+            exposure: still.exposure,
+            ..args.lighting
+        });
         frame.set_look(vxe_render::LookParams {
             normal_mode: args.look.normal_mode,
             tuning: args.look.tuning,
@@ -568,8 +545,8 @@ mod tests {
         parse_args_from(v.iter().map(|s| s.to_string()))
     }
 
-    /// The defaults are the showcase's `hall` shot at 1920 x 1080 with the lamp off and
-    /// indirect light on; `--shot` takes each preset and `all`, `--source` the level, and an
+    /// The defaults are the showcase's `hall` shot at 1920 x 1080 with the lamp and its bounce
+    /// off; `--shot` takes each preset and `all`, `--source` the level, and an
     /// unknown shot or source is refused with the names it takes.
     #[test]
     fn hero_parses_its_shots_and_sources() {
@@ -577,7 +554,7 @@ mod tests {
         assert_eq!(d.source, Source::Showcase);
         assert_eq!(d.shots, Shots::One(SHOTS[0]));
         assert_eq!(d.size, [1920, 1080]);
-        assert!(!d.lighting.lamp && d.lighting.indirect);
+        assert!(!d.lighting.lamp && !d.lighting.lamp_bounce);
         assert_eq!(
             (d.internal_scale, d.jitter(), d.fsr2()),
             (RenderScale::OneHalf, false, true)

@@ -6,6 +6,16 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-11-05
+
+Plan 0057 (a minor bump: public API added and removed, the default emissive light changed; ADR-0043 accepted with an Outcome). The per-face table is the only emissive store: no screen history, read from the first sample, with a world-space guard, a fill for reopened cells, a camera-radius preload, and a count-weighted coplanar blend over each seen face. The probe volume is a lamp-bounce channel. At 2^22 cells the table reads no misses at the window's size, 201 326 592 B on the RTX. The owner: "there is no flicker nether when i turn or go forward/backward", but dark patches stay when moving fast and in distant caves until they settle, and the owner moved the direction to a look-first bake (Plan 0059, ADR-0046). The table stays the default until a bake replaces it. **Bars closed as missed on the owner's word:** the vein's grain and the first frame after a yaw. Goldens re-blessed once on lavapipe. Windows and readings on the RTX 3080 Laptop and the Radeon on RADV, loaded where marked.
+
+- **Added: `Lighting::{table_read, table_age, table_age_min, table_age_out, blend, blend_pool_min}` and the preload and fill settings, `TableBlend`, `Frame::{read_table_stats, read_age_stats, read_preload_stats, read_table_reopens, preload_skips, table_cells}`, `table_cells_within`, `table_bytes`; new shaders `cache_fill.wgsl`, `cache_blend.wgsl`, `cache_cell.wgsl`.**
+- **Changed: the emissive history, its `f32` store and reservoir textures are gone; the a-trous filters the lamp's part alone; the probes shade the lamp only, a running mean that freezes, nothing with the lamp off.**
+- **Removed: `Sampler`, `Lighting::sampler`, `CacheRead`, the spike's presets and `--steady`, `--cache-read` (the fly-through refuses them).**
+- **Added (fly-through): `--blend off|3x3|5x5|on` and `C`, `F4` preload, the table's row on the HUD with `evicted`, the banner's `table 2^22 probes 16`.**
+- **Fixed: a cell past a hole in its probe run keeps its own light in the blend (close review).**
+
 ## [0.42.0] - 2026-11-04
 
 Plan 0056 (a minor bump: public API added, every default unchanged; no ADR, the far-normal plan follows). The aliasing spike. The final image read after the upscaler under an eye lamp with no samples and no probes, which holds a native frame bit-identical: FSR 2's jumps at 1.5 sit on silhouettes and emitters, locked to its jitter (`J` 0.64 to 0.76), and survive the frozen light; the floor's rings are its 1-voxel terraces; the yellow dots on fast turns are light on creases, mostly new each frame. Candidates read behind off-by-default knobs on the RTX 3080 Laptop and lavapipe, costed on the RTX and the Radeon on RADV (loaded, indicative). The owner's window kept FSR 2 at 1.5, picked far normal `[1, 2]` by eye (about 7 times `[2, 6]`'s still jumps headless), had no preference on sharpening, called the emitter cap a fault, and routed slow light settle to Plan 0057. The hero image matches main byte for byte on lavapipe with every knob off; goldens and `frame_bytes` unchanged.

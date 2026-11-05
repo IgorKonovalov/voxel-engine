@@ -1,21 +1,24 @@
-//! Indirect light from the probe volume (ADR-0023), on the software adapter (lavapipe).
+//! The probe volume (ADR-0023) as ADR-0043's lamp-bounce channel, on the software adapter
+//! (lavapipe): the gather over preset probes, and the update fed by the headlamp alone.
 
 mod support;
 
 use support::*;
 use vxe_render::GpuWorld;
-use vxe_render::probes::{PROBE_COUNT, TestProbe, WINDOW_FRAMES, probe_slot};
+use vxe_render::probes::{TestProbe, WINDOW_FRAMES};
 use vxe_render::{LightParams, Lighting, ToneMap, readback};
 use vxe_world::*;
 
-/// The lighting of the probe-preset tests: no lamp, no filter, the identity tone map, indirect
-/// light on (the cavity's table has no emissive row).
+/// The lighting of the probe-preset tests: no lamp, no filter, the identity tone map, the
+/// channel on over the whole 32-probe volume (no reach cut; the cavity's table has no emissive
+/// row). A preset volume (its updates off) is gathered with the lamp off.
 fn preset_lighting(indirect: bool) -> Lighting {
     Lighting {
         lamp: false,
         filter: false,
         tone_map: ToneMap::Identity,
-        indirect,
+        lamp_bounce: indirect,
+        lamp_reach: 0.0,
         ..Lighting::default()
     }
 }
@@ -189,6 +192,10 @@ struct FloorProbe {
     light: LightParams,
 }
 
+/// The lamp of [`FloorProbe::wall_lamp`]: at voxel x 30, y 32, z 37 of either box's frame,
+/// pointing +x at the lit box's x = 44 wall (the divider of `two_boxes`), 14 voxels away.
+const WALL_LAMP: [f32; 3] = [30.0, 32.0, 37.0];
+
 impl FloorProbe {
     fn new(device: &vxe_render::wgpu::Device, x0: i64) -> Self {
         let mut frame = vxe_render::Frame::new(device, 1, 1);
@@ -196,7 +203,7 @@ impl FloorProbe {
         frame.set_lighting(Lighting {
             lamp: false,
             filter: false,
-            indirect: true,
+            lamp_bounce: true,
             ..Lighting::default()
         });
         let camera = vxe_render::Camera {
@@ -210,6 +217,30 @@ impl FloorProbe {
             camera,
             light: LightParams::headlamp(),
         }
+    }
+
+    /// The lamp channel's floor probe: lamp on at [`WALL_LAMP`] (a fixed point whatever box the
+    /// camera is in), the camera at the floor centre of the box from `x0` looking down, pitched
+    /// 5 degrees off the vertical toward +y (yaw 90 degrees, so the camera's right is +x), the
+    /// lamp turned 90 degrees onto +x. The floor centre's upper hemisphere sees the lit wall, so
+    /// the channel's one bounce reaches it.
+    fn wall_lamp(device: &vxe_render::wgpu::Device, x0: i64) -> Self {
+        let mut f = Self::new(device, x0);
+        f.frame.set_lighting(Lighting {
+            lamp: true,
+            ..f.frame.lighting()
+        });
+        f.camera.yaw = std::f32::consts::FRAC_PI_2;
+        f.camera.pitch = -std::f32::consts::FRAC_PI_2 + 5f32.to_radians();
+        let (_, right, up) = f.camera.basis();
+        let to = vxe_render::glam::Vec3::from(WALL_LAMP) - f.camera.position;
+        f.light = LightParams {
+            offset_right: to.dot(right),
+            offset_down: -to.dot(up),
+            turn: std::f32::consts::FRAC_PI_2,
+            ..LightParams::headlamp()
+        };
+        f
     }
 
     /// Steps `n` frames.
@@ -237,141 +268,171 @@ impl FloorProbe {
     }
 }
 
-/// The probe rays' own direct mean `D` at their hits in the furnace, and its standard error:
-/// with the centre probe's irradiance tile zeroed before every frame, its rays' probe term at
-/// their hits is 0 (the box holds one live probe), so a settled visit leaves
-/// `(1 - HYSTERESIS) x albedo x D_t` in texel `t`. `D` is the mean of the texels over that
-/// factor across the interior texels of `visits` visits; the error is the standard deviation
-/// of the per-visit means over the square root of the visits.
-fn furnace_direct_mean(
-    f: &mut FloorProbe,
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
-    gpu: &GpuWorld,
-    visits: usize,
-) -> (f64, f64) {
-    let slot = probe_slot([2, 2, 2]);
-    let scale = f64::from(1.0 - vxe_render::probes::HYSTERESIS) * 0.5;
-    let mut means = Vec::new();
-    while means.len() < visits {
-        f.frame.probes().write_test_tile(queue, slot, [0.0; 3]);
-        f.run(device, queue, gpu, 1);
-        let probe = f.frame.probes().read_probe(device, queue, slot);
-        assert!(
-            probe.age() > vxe_render::probes::YOUNG_UPDATES,
-            "{}",
-            probe.age()
-        );
-        let texels = probe.interior_irradiance();
-        if texels.iter().all(|t| t[0] == 0.0) {
-            continue;
-        }
-        let sum: f64 = texels.iter().map(|t| f64::from(t[0]) / scale).sum();
-        means.push(sum / texels.len() as f64);
-    }
-    let n = means.len() as f64;
-    let d = means.iter().sum::<f64>() / n;
-    let var = means.iter().map(|m| (m - d) * (m - d)).sum::<f64>() / (n - 1.0);
-    (d, (var / n).sqrt())
+/// The lamp furnace: the dull box (albedo 0.5, nothing emissive) under a 1 x 1 frame at the
+/// centre of voxel (32, 32, 32), its centre probe `(2, 2, 2)`'s position, with the lamp at the
+/// eye lighting every direction (cone 172 to 180 degrees, no shadow ray: from the eye every
+/// lit point is visible), the channel over the whole volume, its freeze at the cap.
+fn lamp_furnace(device: &vxe_render::wgpu::Device) -> FloorProbe {
+    let mut f = FloorProbe::new(device, BOX_MIN[0]);
+    f.frame.set_lighting(Lighting {
+        lamp: true,
+        lamp_reach: 0.0,
+        probe_freeze: vxe_render::probes::MAX_AGE,
+        ..f.frame.lighting()
+    });
+    f.camera.position = [32.5, 32.5, 32.5].into();
+    f.light = LightParams {
+        inner: 3.0,
+        outer: std::f32::consts::PI,
+        ..LightParams::at_eye()
+    };
+    f
 }
 
-/// The furnace: in the closed box of 24 x 24 x 12 interior voxels whose six walls emit
-/// `[1, 1, 1]` at albedo 0.5, lamp off, the probe update converges to its fixed point within
-/// 256 frames. The fixed point is the probe rays' own direct mean `D` at their hits
-/// ([`furnace_direct_mean`], over 256 visits, its standard error at most 0.5 % of `D`): a probe
-/// reads `0.5 (D + E)`, so `E = D`, which the firefly clamp of the emissive estimate puts
-/// about 8.5 % under `PI L_e = PI` here (printed, not asserted). After 256 frames every
-/// channel of the floor centre's gathered indirect irradiance and every interior texel of
-/// the box's centre probe lie within 7 % of `D`, and the centre probe's texel mean within 4 %.
-/// Every probe whose position lies in solid reads the inside flag after its first update (8
-/// frames).
+/// The lamp furnace's fixed point (M2's headless proof, restated for the lamp channel): the
+/// probe rays shade a hit with `albedo / PI E_lamp` and nothing else, so a probe's irradiance
+/// texel `t` reads `0.5 D_t`, `D_t` its rays' lamp irradiance at their hits. After 256 frames
+/// (32 visits of the running mean) the centre probe's texel mean reads within 4 % of `0.5 D`
+/// and every texel within 7 % of its `0.5 D_t`, `D_t` read over the 64 visits after: before
+/// each visit the tile is zeroed, so the visit leaves `new / (age + 1)` (the running mean's
+/// weight), and `D_t = 2 x texel x age` after it.
 #[test]
-fn the_furnace_box_reads_pi_of_indirect_irradiance() {
+fn the_lamp_furnace_reads_its_albedo_times_the_direct_mean() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
-    let (world, _) = furnace_world();
+    let world = dull_box_world();
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
-    let origin = f.frame.probes().origin_for(f.camera.position.to_array());
-    f.run(&device, &queue, &gpu, 8);
-    let states = f.frame.probes().read_states(&device, &queue);
-    let mut inside = 0;
-    for &w in &[[1, 2, 2], [2, 2, 1], [3, 3, 3], [0, 0, 0], [2, 2, 3]] {
-        let s = states[probe_slot(w) as usize];
-        assert_eq!(s & 1, 1, "probe {w:?} in solid: state {s:#x}");
-        assert!((s >> 1) & 127 >= 1, "probe {w:?} traced");
-        inside += 1;
-    }
-    let centre = states[probe_slot([2, 2, 2]) as usize];
-    assert_eq!(centre & 1, 0, "the centre probe is live: {centre:#x}");
-    println!("after 8 frames: {inside} solid probes flagged inside, origin {origin:?}");
-    let mut series = Vec::new();
-    let mut direct = Vec::new();
-    for _ in 0..31 {
-        for _ in 0..8 {
-            f.run(&device, &queue, &gpu, 1);
-            direct.push(f64::from(
-                readback::read_rgba16f(&device, &queue, f.frame.irradiance())[0][0],
-            ));
-        }
-        series.push(f.indirect(&device, &queue)[0]);
-    }
-    let pi = std::f64::consts::PI;
-    // The light pass's direct estimate at the floor-centre pixel (filter off: its emissive
-    // part); it sees almost none of the clamp the probe rays' hits near the box's edges do.
-    let direct_mean = direct.iter().sum::<f64>() / direct.len() as f64;
-    println!(
-        "the light pass's floor-centre direct over 248 frames: mean {direct_mean:.4} ({:+.2} % of pi)",
-        (direct_mean / pi - 1.0) * 100.0
-    );
-    let e = f.indirect(&device, &queue).map(f64::from);
-    let probe = f
-        .frame
-        .probes()
-        .read_probe(&device, &queue, probe_slot([2, 2, 2]));
-    let texels: Vec<f64> = probe
+    let mut f = lamp_furnace(&device);
+    f.run(&device, &queue, &gpu, 256);
+    let slot = f.frame.probes().slot([2, 2, 2]);
+    let probe = f.frame.probes().read_probe(&device, &queue, slot);
+    assert!(!probe.inside() && probe.age() >= 30, "age {}", probe.age());
+    let m: Vec<f64> = probe
         .interior_irradiance()
         .iter()
-        .flatten()
-        .map(|&v| f64::from(v))
+        .map(|t| f64::from(t[0]))
         .collect();
-    let (lo, hi) = texels
+    let age0 = probe.age();
+    let mut sums = vec![0.0f64; m.len()];
+    let mut visits = 0;
+    let mut age = age0;
+    while visits < 64 {
+        f.frame.probes().write_test_tile(&queue, slot, [0.0; 3]);
+        let mut p = f.frame.probes().read_probe(&device, &queue, slot);
+        while p.age() == age {
+            f.run(&device, &queue, &gpu, 1);
+            p = f.frame.probes().read_probe(&device, &queue, slot);
+        }
+        age = p.age();
+        for (s, t) in sums.iter_mut().zip(p.interior_irradiance()) {
+            *s += 2.0 * f64::from(t[0]) * f64::from(age);
+        }
+        visits += 1;
+    }
+    let d: Vec<f64> = sums.iter().map(|s| s / f64::from(visits)).collect();
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let (mm, dm) = (mean(&m), mean(&d));
+    let worst = m
         .iter()
-        .fold((f64::MAX, f64::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    let mean = texels.iter().sum::<f64>() / texels.len() as f64;
-    let (d, err) = furnace_direct_mean(&mut f, &device, &queue, &gpu, 256);
-    let pct = |v: f64, of: f64| (v / of - 1.0) * 100.0;
+        .zip(&d)
+        .map(|(a, b)| (a / (0.5 * b) - 1.0).abs())
+        .fold(0.0f64, f64::max);
     println!(
-        "the probe rays' direct mean D {d:.4} (standard error {:.3} %, {:+.2} % of pi)",
-        err / d * 100.0,
-        pct(d, pi)
+        "lamp furnace: centre probe age {age0} after 256 frames; texel mean {mm:.4}, 0.5 D {:.4} ({:+.2} %), D over {visits} visits {dm:.4}; worst texel {:.2} %; D_t {:.3} ..= {:.3}",
+        0.5 * dm,
+        (mm / (0.5 * dm) - 1.0) * 100.0,
+        worst * 100.0,
+        d.iter().copied().fold(f64::MAX, f64::min),
+        d.iter().copied().fold(f64::MIN, f64::max)
     );
-    println!(
-        "floor centre after 256 frames {e:?}: {:+.2} % of D, {:+.2} % of pi; every 8 frames {series:?}",
-        pct(e[0], d),
-        pct(e[0], pi)
-    );
-    println!(
-        "centre probe: age {}, texels {lo:.4} ..= {hi:.4} ({:+.2} ..= {:+.2} % of D), mean {mean:.4} ({:+.2} % of D, {:+.2} % of pi)",
-        probe.age(),
-        pct(lo, d),
-        pct(hi, d),
-        pct(mean, d),
-        pct(mean, pi)
-    );
-    assert!(err <= 0.005 * d, "D {d} error {err}");
-    for c in e {
-        assert!((c / d - 1.0).abs() <= 0.07, "floor {e:?} against D {d}");
-    }
-    for &c in &texels {
-        assert!((c / d - 1.0).abs() <= 0.07, "texel {c} against D {d}");
-    }
+    assert!(dm > 0.0, "{dm}");
     assert!(
-        (mean / d - 1.0).abs() <= 0.04,
-        "texel mean {mean} against D {d}"
+        (mm / (0.5 * dm) - 1.0).abs() <= 0.04,
+        "{mm} against {}",
+        0.5 * dm
     );
+    assert!(worst <= 0.07, "worst texel {worst}");
+}
+
+/// The channel holds the lamp's bounce and nothing else: in the furnace (its six walls emit
+/// `[1, 1, 1]`) under the wall lamp, with the lamp off every probe texel and state word reads
+/// exactly 0 over 64 frames (no pass runs); with the lamp on, every probe within the lamp's
+/// reach reads, after 64 frames, within 10 % of the same run in the dull box (the walls'
+/// emission 0), texel for texel.
+#[test]
+fn the_channel_holds_the_lamps_bounce_only() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let words = |f: &FloorProbe| -> Vec<f32> {
+        let v = f.frame.probes();
+        (0..v.count())
+            .flat_map(|s| {
+                let p = v.read_probe(&device, &queue, s);
+                p.irradiance
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .chain(std::iter::once(p.state as f32))
+                    .collect::<Vec<f32>>()
+            })
+            .collect()
+    };
+    let (glow_world, _) = furnace_world();
+    let mut glow = GpuWorld::new(&device, glow_world.extent());
+    glow.sync_now(&glow_world, &device, &queue).unwrap();
+    let mut off = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    off.frame.set_lighting(Lighting {
+        lamp: false,
+        ..off.frame.lighting()
+    });
+    for i in 0..64 {
+        off.run(&device, &queue, &glow, 1);
+        if i % 16 == 15 {
+            assert!(
+                words(&off).iter().all(|&w| w == 0.0),
+                "lamp off: a probe word moved by frame {}",
+                i + 1
+            );
+            assert_eq!(off.frame.traced_probe_rays(), 0);
+        }
+    }
+    let dull_world = dull_box_world();
+    let mut dull = GpuWorld::new(&device, dull_world.extent());
+    dull.sync_now(&dull_world, &device, &queue).unwrap();
+    let mut lit = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    let mut dark = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    lit.run(&device, &queue, &glow, 64);
+    dark.run(&device, &queue, &dull, 64);
+    let v = lit.frame.probes();
+    let origin = v.origin_for(lit.camera.position.to_array());
+    let reach = lit.frame.lighting().lamp_reach;
+    let lamp = vxe_render::glam::Vec3::from(WALL_LAMP);
+    let (mut compared, mut worst, mut lit_texels) = (0, 0.0f32, 0);
+    for s in 0..v.count() {
+        let w = v.slot_probe(origin, s);
+        if (vxe_render::glam::Vec3::from(v.probe_position(w)) - lamp).length() > reach {
+            continue;
+        }
+        let a = v.read_probe(&device, &queue, s);
+        let b = dark.frame.probes().read_probe(&device, &queue, s);
+        assert_eq!(a.state, b.state, "slot {s}");
+        for (x, y) in a.interior_irradiance().iter().zip(b.interior_irradiance()) {
+            for k in 0..3 {
+                let d = (x[k] - y[k]).abs();
+                lit_texels += usize::from(y[k] > 0.0);
+                worst = worst.max(if y[k] > 0.0 { d / y[k] } else { d });
+                assert!(d <= 0.1 * y[k].abs(), "slot {s}: {x:?} against {y:?}");
+            }
+        }
+        compared += 1;
+    }
+    println!(
+        "lamp off: every word 0 over 64 frames; lamp on: {compared} probes in reach compared, {lit_texels} lit texel channels, worst relative difference {worst}"
+    );
+    assert!(compared > 0 && lit_texels > 0);
 }
 
 /// Two boxes side by side, separated by a 2-voxel wall, only the first with emissive walls:
@@ -410,6 +471,9 @@ fn two_boxes() -> World {
 /// The dark box's lowest interior x.
 const DARK_X0: i64 = 46;
 
+/// The two boxes under the wall lamp in the lit box, aimed at the divider: after 256 frames
+/// the dark box's floor-centre gather is under 2 % of the lit box's (no leak through the wall:
+/// the dark box's probes see no lamp light, and the lit box's are not gathered through it).
 #[test]
 fn no_light_leaks_through_a_two_voxel_wall() {
     let world = two_boxes();
@@ -419,8 +483,8 @@ fn no_light_leaks_through_a_two_voxel_wall() {
     };
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut lit = FloorProbe::new(&device, BOX_MIN[0]);
-    let mut dark = FloorProbe::new(&device, DARK_X0);
+    let mut lit = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    let mut dark = FloorProbe::wall_lamp(&device, DARK_X0);
     lit.run(&device, &queue, &gpu, 256);
     dark.run(&device, &queue, &gpu, 256);
     let l = lit.indirect(&device, &queue)[0];
@@ -429,13 +493,14 @@ fn no_light_leaks_through_a_two_voxel_wall() {
         "lit floor {l:.4}, dark floor {d:.6}: {:.4} % of the lit",
         d / l * 100.0
     );
-    assert!(l > 0.5, "{l}");
+    assert!(l > 0.0, "{l}");
     assert!(d < 0.02 * l, "{d} against {l}");
 }
 
-/// An inside probe's texels are never read by the gather: after the furnace converges, with
-/// the update off, every probe flagged inside (the chunk's 63 in solid) is overwritten with irradiance 1000 and the
-/// floor centre's indirect irradiance reads exactly what it read before.
+/// An inside probe's texels are never read by the gather: after 64 frames of the wall lamp in
+/// the furnace, with the update off, every probe flagged inside (the chunk's 63 in solid, all
+/// within the lamp's reach) is overwritten with irradiance 1000 and the floor centre's indirect
+/// irradiance reads exactly what it read before.
 #[test]
 fn an_inside_probe_s_texels_are_never_gathered() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -444,7 +509,7 @@ fn an_inside_probe_s_texels_are_never_gathered() {
     let (world, _) = furnace_world();
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    let mut f = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
     f.run(&device, &queue, &gpu, 64);
     f.frame.probes_mut().set_updates(false);
     f.run(&device, &queue, &gpu, 1);
@@ -464,14 +529,15 @@ fn an_inside_probe_s_texels_are_never_gathered() {
     );
     // The chunk's 4 x 4 x 4 probes (voxels 0.5 to 48.5) less the box's centre probe.
     assert_eq!(poked.len(), 63);
-    assert!(before[0] > 1.0, "{before:?}");
+    assert!(before[0] > 0.0, "{before:?}");
     assert_eq!(before, after);
 }
 
 // ---- Scrolling and edits ----
 
-/// After 16 updated frames at the cavity's centre, a camera jump of 20 probe steps along x
-/// (the update off for the jump's frame) leaves the 12 x 32 x 32 probes that stay in the
+/// After 16 updated frames at the cavity's centre (the lamp on, the channel over the whole
+/// 32-probe volume), a camera jump of 20 probe steps along x (the update off for the jump's
+/// frame) leaves the 12 x 32 x 32 probes that stay in the
 /// volume texel for texel as they were, at the same slots, and every one of the 20 x 32 x 32
 /// probes that enter reads age 0.
 #[test]
@@ -482,7 +548,8 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
     };
     let mut camera = cavity_camera();
     rig.frame.set_lighting(Lighting {
-        indirect: true,
+        lamp_bounce: true,
+        lamp_reach: 0.0,
         ..Lighting::default()
     });
     let light = LightParams::headlamp();
@@ -523,7 +590,7 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
         for y in 0..32 {
             for x in 0..32 {
                 let w = [origin[0] + x, origin[1] + y, origin[2] + z];
-                let slot = probe_slot(w);
+                let slot = probes.slot(w);
                 if w[0] < before_origin[0] + 32 {
                     assert_eq!(
                         probe_bytes(&after, slot),
@@ -531,10 +598,9 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
                         "probe {w:?}"
                     );
                     stayed += 1;
-                    live_before +=
-                        u32::from(vxe_render::ProbeVolume::age(states[slot as usize], w) > 0);
+                    live_before += u32::from(probes.age(states[slot as usize], w) > 0);
                 } else {
-                    let age = vxe_render::ProbeVolume::age(states[slot as usize], w);
+                    let age = probes.age(states[slot as usize], w);
                     assert_eq!(age, 0, "entering probe {w:?}");
                     entered += 1;
                 }
@@ -546,15 +612,16 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
     assert!(live_before > 0);
 }
 
-/// Slot `slot`'s irradiance tile, visibility tile and state word, as bytes of the data buffer
-/// read back whole in `data`.
+/// Slot `slot`'s irradiance tile, visibility tile and state word, as bytes of the 32-probe
+/// volume's data buffer read back whole in `data`.
 fn probe_bytes(data: &[u8], slot: u32) -> Vec<u8> {
-    use vxe_render::probes::{STATE_BASE, VIS_BASE};
+    let count = 32 * 32 * 32;
+    let (vis_base, state_base) = (count * 128, count * 128 + count * 256);
     let s = slot as usize;
     let mut out = data[s * 512..(s + 1) * 512].to_vec();
-    let v = VIS_BASE as usize * 4 + s * 1024;
+    let v = vis_base * 4 + s * 1024;
     out.extend_from_slice(&data[v..v + 1024]);
-    let st = STATE_BASE as usize * 4 + s * 4;
+    let st = state_base * 4 + s * 4;
     out.extend_from_slice(&data[st..st + 4]);
     out
 }
@@ -564,8 +631,9 @@ fn probe_bytes(data: &[u8], slot: u32) -> Vec<u8> {
 /// rises by about 12 %).
 const HOLE_SETTLED_FRAMES: usize = 2048;
 
-/// In the two-box scene after 256 frames, a radius-4 carve through the dividing wall makes the
-/// dark box's floor-centre indirect irradiance reach, within 32 frames, at least 52 % of its
+/// In the two-box scene under the wall lamp (in the lit box, aimed at the divider) after 256
+/// frames, a radius-4 carve through the dividing wall, inside the lamp's beam, makes the dark
+/// box's floor-centre indirect irradiance reach, within 32 frames, at least 52 % of its
 /// settled value (its reading [`HOLE_SETTLED_FRAMES`] frames after the carve) and at least 10
 /// times its pre-carve value (the probes the edit box touches refresh at once, the rest in
 /// their slices). The 52 % is the probe update with its slices taken by `slot mod slices`
@@ -581,8 +649,8 @@ fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
     };
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut lit = FloorProbe::new(&device, BOX_MIN[0]);
-    let mut dark = FloorProbe::new(&device, DARK_X0);
+    let mut lit = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    let mut dark = FloorProbe::wall_lamp(&device, DARK_X0);
     lit.run(&device, &queue, &gpu, 256);
     dark.run(&device, &queue, &gpu, 256);
     let d0 = dark.indirect(&device, &queue)[0];
@@ -633,9 +701,11 @@ fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
     assert!(closed[63] < 0.05, "{closed:?}");
 }
 
-/// The probe settings scale the update's dispatch: in the furnace, the default (64 rays, one
-/// probe in 8) dispatches 4096 x 64 rays a frame, 32 rays half that, one in 16 half that, and
-/// both a quarter; at 32 rays and one in 16 the box's centre probe is live after 16 frames.
+/// The probe settings scale the update's dispatch: in the furnace under the wall lamp, the
+/// channel over the whole 32-probe volume (no reach cut), the default (64 rays, one probe in 8)
+/// dispatches 4096 x 64 rays a frame after the start's window, 32 rays half that, one in 16
+/// half that, and both a quarter; at 32 rays and one in 16 the box's centre probe is live after
+/// 16 frames, its texels toward the lit wall above 0.
 #[test]
 fn the_probe_settings_scale_the_rays_a_frame_traces() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -644,7 +714,12 @@ fn the_probe_settings_scale_the_rays_a_frame_traces() {
     let (world, _) = furnace_world();
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    let mut f = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    f.frame.set_lighting(Lighting {
+        lamp_reach: 0.0,
+        ..f.frame.lighting()
+    });
+    f.run(&device, &queue, &gpu, WINDOW_FRAMES);
     let base = f.frame.lighting();
     let mut traced = Vec::new();
     for (rays, slices, want) in [
@@ -668,21 +743,19 @@ fn the_probe_settings_scale_the_rays_a_frame_traces() {
     assert_eq!(traced[2] * 2, traced[0]);
     assert_eq!(traced[3] * 4, traced[0]);
     f.run(&device, &queue, &gpu, 16);
-    let probe = f
-        .frame
-        .probes()
-        .read_probe(&device, &queue, probe_slot([2, 2, 2]));
-    let lo = probe
+    let slot = f.frame.probes().slot([2, 2, 2]);
+    let probe = f.frame.probes().read_probe(&device, &queue, slot);
+    let hi = probe
         .interior_irradiance()
         .iter()
         .flatten()
-        .fold(f32::MAX, |a, &v| a.min(v));
+        .fold(0.0f32, |a, &v| a.max(v));
     println!(
-        "at 32 rays, one in 16: centre probe age {}, lowest texel {lo:.4}",
+        "at 32 rays, one in 16: centre probe age {}, brightest texel {hi:.4} (toward the lit wall)",
         probe.age()
     );
     assert!(!probe.inside() && probe.age() >= 1);
-    assert!(lo > 0.5, "{lo}");
+    assert!(hi > 0.0, "{hi}");
 }
 
 // ---- Light changes (the light-change window) ----
@@ -704,112 +777,144 @@ fn dull_box_world() -> World {
     world
 }
 
-/// The first frame (1-based) of `series` under `bar`.
-fn first_under(series: &[f32], bar: f32) -> Option<usize> {
-    series.iter().position(|&v| v < bar).map(|i| i + 1)
-}
-
-/// The dull box lit by the lamp from its centre, looking at the floor, for 256 frames; then
-/// the lamp switched off through `Frame::set_lighting` and `frames` more frames: the
-/// floor-centre indirect before the switch and at each frame after it, and whether each
-/// frame's update ran inside the light-change window.
-fn lamp_off_fade(frames: u32) -> Option<(f32, Vec<f32>, Vec<bool>)> {
+/// The dull box under the wall lamp for 256 frames; then the lamp switched off through
+/// `Frame::set_lighting` for `frames` frames, and on again for `frames` more: the floor-centre
+/// indirect before the switch, and after each switch at each frame the floor-centre indirect,
+/// the frame's output pixel (its brightest channel), whether the frame's update ran inside the
+/// light-change window, and the probe dispatches the frame recorded.
+fn lamp_switch_run(frames: u32) -> Option<(f32, [SwitchSeries; 2])> {
     let world = dull_box_world();
     let (device, queue) = software_device(64 << 20)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
-    f.camera.position.z = 32.0;
-    let on = Lighting {
-        lamp: true,
-        ..f.frame.lighting()
-    };
-    f.frame.set_lighting(on);
+    let mut f = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    let on = f.frame.lighting();
     f.run(&device, &queue, &gpu, 256);
     let f0 = f.indirect(&device, &queue)[0];
-    f.frame.set_lighting(Lighting { lamp: false, ..on });
-    let mut series = Vec::new();
-    let mut window = Vec::new();
-    for _ in 0..frames {
-        f.run(&device, &queue, &gpu, 1);
-        series.push(f.indirect(&device, &queue)[0]);
-        window.push(f.frame.probe_light_window());
-    }
-    Some((f0, series, window))
+    let mut run = |lamp: bool| {
+        f.frame.set_lighting(Lighting { lamp, ..on });
+        let mut s = SwitchSeries::default();
+        for _ in 0..frames {
+            f.run(&device, &queue, &gpu, 1);
+            s.indirect.push(f.indirect(&device, &queue)[0]);
+            let px = readback::read_rgba8(&device, &queue, f.frame.target());
+            s.output.push(px[..3].iter().copied().max().unwrap_or(0));
+            s.window.push(f.frame.probe_light_window());
+            s.dispatches.push(f.frame.probe_dispatches());
+        }
+        s
+    };
+    let off = run(false);
+    let back = run(true);
+    Some((f0, [off, back]))
 }
 
-/// Lamp off: in the closed dull box (24 x 24 x 12 interior voxels, albedo 0.5, nothing
-/// emissive) lit by the lamp from its centre at the defaults (64 rays, one probe in 8), the
-/// floor-centre indirect `F0` after 256 frames is above 0; with the lamp switched off it is
-/// under 10 % of `F0` at every frame from frame 24 after the switch on. The switch opens the
-/// light-change window for exactly its 16 frames, which trace one probe in 4 a frame.
+/// One switch's frames in [`lamp_switch_run`].
+#[derive(Default)]
+struct SwitchSeries {
+    indirect: Vec<f32>,
+    output: Vec<u8>,
+    window: Vec<bool>,
+    dispatches: Vec<u32>,
+}
+
+/// Lamp off, then on: in the closed dull box (24 x 24 x 12 interior voxels, albedo 0.5, nothing
+/// emissive) under the wall lamp at the defaults (64 rays, one probe in 8), the floor-centre
+/// indirect `F0` after 256 frames is above 0. With the lamp switched off no probe pass and no
+/// gather is recorded and the composite adds no bounce: the floor pixel reads black from the
+/// first frame (nothing else lights the box), with no window. Switched back on, the channel fills from zero: the light-change window opens for
+/// exactly its 16 frames, and the floor reaches 90 % of `F0` within them.
 #[test]
 fn switching_the_lamp_off_drops_the_probe_history() {
-    let Some((f0, series, window)) = lamp_off_fade(160) else {
+    let Some((f0, [off, on])) = lamp_switch_run(48) else {
         return;
     };
-    let first = first_under(&series, 0.1 * f0);
+    let w = WINDOW_FRAMES as usize;
     println!(
-        "lamp off: F0 {f0:.5}; first frame under 10 %: {first:?}; frames 1..=48 {:?}",
-        &series[..48]
+        "lamp off: F0 {f0:.5}; off, the output pixel {:?}; back on, frames 1..=24 {:?}; first at 90 %: {:?}",
+        &off.output[..8],
+        &on.indirect[..24],
+        on.indirect
+            .iter()
+            .position(|&v| v >= 0.9 * f0)
+            .map(|i| i + 1)
     );
     assert!(f0 > 0.0, "{f0}");
-    let w = WINDOW_FRAMES as usize;
-    assert_eq!(window[..w], vec![true; w], "{window:?}");
-    assert!(window[w..].iter().all(|&w| !w), "{window:?}");
-    for (i, &v) in series.iter().enumerate().skip(23) {
-        assert!(v < 0.1 * f0, "frame {}: {v} against F0 {f0}", i + 1);
-    }
+    assert!(off.output.iter().all(|&v| v == 0), "{:?}", off.output);
+    assert!(off.window.iter().all(|&o| !o), "{:?}", off.window);
+    assert!(
+        off.dispatches.iter().all(|&d| d == 0),
+        "{:?}",
+        off.dispatches
+    );
+    assert_eq!(on.window[..w], vec![true; w], "{:?}", on.window);
+    assert!(on.window[w..].iter().all(|&o| !o), "{:?}", on.window);
+    assert!(
+        on.indirect[..w].iter().any(|&v| v >= 0.9 * f0),
+        "{:?} against F0 {f0}",
+        on.indirect
+    );
 }
 
-/// Emission step: in the furnace after 256 frames (floor-centre indirect `F0` near pi),
-/// `set_emission_scale(glow, 0)` brings the floor-centre indirect under 10 % of `F0` at every
-/// frame from frame 24 after the step on; stepping the scale back to 1 brings it to at least
-/// 90 % of `F0` by frame 64.
+/// The lamp off encodes no probe pass: under the wall lamp with the lamp off for 16 frames, the
+/// frame records no probe trace, blend or gather dispatch, traces no ray, and (where the
+/// adapter has timestamps) the `probes` and `gather` passes' timers read 0; with the lamp on the
+/// same frame records all three.
 #[test]
-fn an_emission_step_drops_the_probe_history() {
+fn the_lamp_off_encodes_no_probe_pass() {
+    use vxe_render::marcher::FRAME_PASSES;
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
-    let (world, glow) = furnace_world();
+    let world = dull_box_world();
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
-    f.run(&device, &queue, &gpu, 256);
-    let f0 = f.indirect(&device, &queue)[0];
-    f.frame.set_emission_scale(&queue, glow, 0.0);
-    let mut off = Vec::new();
-    for _ in 0..96 {
-        f.run(&device, &queue, &gpu, 1);
-        off.push(f.indirect(&device, &queue)[0]);
+    let mut f = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    let timer = vxe_render::PassTimer::with_passes(&device, &queue, FRAME_PASSES.len() as u32);
+    let slot = |name: &str| FRAME_PASSES.iter().position(|&n| n == name).expect(name);
+    let (probes, gather) = (slot("probes"), slot("gather"));
+    let step = |f: &mut FloorProbe| -> Option<(f64, f64)> {
+        f.frame.advance();
+        let params = f.frame.params(&gpu, &f.camera, &f.light);
+        let mut enc = device.create_command_encoder(&Default::default());
+        f.frame
+            .encode(&device, &queue, &mut enc, &gpu, &params, timer.as_ref());
+        if let Some(t) = &timer {
+            t.resolve(&mut enc);
+        }
+        queue.submit([enc.finish()]);
+        timer.as_ref().map(|t| {
+            let ms = t.read_all_ms(&device);
+            (ms[probes], ms[gather])
+        })
+    };
+    let lit = f.frame.lighting();
+    f.frame.set_lighting(Lighting { lamp: false, ..lit });
+    let mut off_ms = Vec::new();
+    for i in 0..16 {
+        off_ms.extend(step(&mut f));
+        assert_eq!(f.frame.probe_dispatches(), 0, "frame {}", i + 1);
+        assert_eq!(f.frame.traced_probe_rays(), 0, "frame {}", i + 1);
     }
-    f.frame.set_emission_scale(&queue, glow, 1.0);
-    let mut on = Vec::new();
-    for _ in 0..64 {
-        f.run(&device, &queue, &gpu, 1);
-        on.push(f.indirect(&device, &queue)[0]);
-    }
+    f.frame.set_lighting(lit);
+    let on_ms = step(&mut f);
+    let on_dispatches = f.frame.probe_dispatches();
     println!(
-        "emission 0: F0 {f0:.4}; first frame under 10 %: {:?}; frames 1..=64 {:?}",
-        first_under(&off, 0.1 * f0),
-        &off[..64]
+        "lamp off: probes and gather ms per frame {off_ms:?}; lamp on: {on_dispatches} dispatches, {on_ms:?} ms"
     );
-    println!(
-        "emission back to 1: frame 64 {:.4} = {:.1} % of F0; first frame at 90 %: {:?}",
-        on[63],
-        on[63] / f0 * 100.0,
-        on.iter().position(|&v| v >= 0.9 * f0).map(|i| i + 1)
+    assert!(
+        off_ms.iter().all(|&(p, g)| p == 0.0 && g == 0.0),
+        "{off_ms:?}"
     );
-    for (i, &v) in off.iter().enumerate().skip(23) {
-        assert!(v < 0.1 * f0, "frame {}: {v} against F0 {f0}", i + 1);
-    }
-    assert!(on[63] >= 0.9 * f0, "{} against F0 {f0}", on[63]);
+    assert_eq!(on_dispatches, 3, "trace, blend and gather");
 }
 
-/// No signal, no change: in the furnace, 256 frames with the lamp, its parameters and the
-/// scales unchanged open no light-change window, nor do 16 frames of camera motion; a change
-/// of the lamp's intensity or of the candidate count opens one at the next frame, which
-/// traces one probe in 4, and it closes after its 16 frames.
+/// No lamp change, no window: in the furnace under the wall lamp over the whole 32-probe
+/// volume (no reach cut), the channel's start opens the light-change window for its 16 frames
+/// and the 240 still frames after it open none, nor do 16 frames of camera motion (the lamp
+/// moves with the camera) or a change of the candidate count (the probes see no emissive
+/// light); a change of the lamp's intensity opens one at the next frame, which traces one
+/// probe in 4, and it closes after its 16 frames, one probe in 8 a frame again.
 #[test]
 fn no_light_change_opens_no_window() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -818,10 +923,20 @@ fn no_light_change_opens_no_window() {
     let (world, _) = furnace_world();
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    let mut f = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+    f.frame.set_lighting(Lighting {
+        lamp_reach: 0.0,
+        ..f.frame.lighting()
+    });
+    let count = 32 * 32 * 32u64;
     for i in 0..256 {
         f.run(&device, &queue, &gpu, 1);
-        assert!(!f.frame.probe_light_window(), "frame {}", i + 1);
+        assert_eq!(
+            f.frame.probe_light_window(),
+            i < WINDOW_FRAMES,
+            "frame {}",
+            i + 1
+        );
     }
     for i in 0..16 {
         f.camera.position.x += 0.37;
@@ -829,20 +944,20 @@ fn no_light_change_opens_no_window() {
         f.run(&device, &queue, &gpu, 1);
         assert!(!f.frame.probe_light_window(), "moving, frame {}", i + 1);
     }
+    let l = f.frame.lighting();
+    f.frame.set_lighting(Lighting { candidates: 4, ..l });
+    f.run(&device, &queue, &gpu, 1);
+    assert!(!f.frame.probe_light_window(), "the candidate count");
     f.light.intensity *= 0.5;
     f.run(&device, &queue, &gpu, 1);
     assert!(f.frame.probe_light_window(), "the lamp's intensity");
-    assert_eq!(f.frame.traced_probe_rays(), u64::from(PROBE_COUNT / 4) * 64);
+    assert_eq!(f.frame.traced_probe_rays(), count / 4 * 64);
     f.run(&device, &queue, &gpu, WINDOW_FRAMES);
     assert!(
         !f.frame.probe_light_window(),
         "the window closes after its frames"
     );
-    assert_eq!(f.frame.traced_probe_rays(), u64::from(PROBE_COUNT / 8) * 64);
-    let l = f.frame.lighting();
-    f.frame.set_lighting(Lighting { candidates: 4, ..l });
-    f.run(&device, &queue, &gpu, 1);
-    assert!(f.frame.probe_light_window(), "the candidate count");
+    assert_eq!(f.frame.traced_probe_rays(), count / 8 * 64);
 }
 
 /// Lamp switch, the direct light's history: in the dull box lit by the lamp from its centre
@@ -863,7 +978,7 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
     let on = Lighting {
         lamp: true,
         filter: true,
-        indirect: false,
+        lamp_bounce: false,
         ..f.frame.lighting()
     };
     let lamp_part = |f: &FloorProbe| {
@@ -887,136 +1002,4 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
     assert!(settled > 0.0, "{settled}");
     assert_eq!(off, vec![0.0; 4]);
     assert!(raw > 0.0 && back == raw, "{back} against {raw}");
-}
-
-/// The vein box: the dull box with an 8 x 8 patch of `glow` in its -x wall (the wall voxels
-/// at x = 19, y and z from 28 and 27), its table's glow emitting `[1, 1, 1]`.
-fn vein_box_world() -> (World, MaterialId) {
-    let (table, glow, dull) = furnace_table();
-    let world = World::generate(
-        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &UniformSource(dull),
-        &table,
-    );
-    world
-        .apply(&box_op(
-            [19, 28, 27],
-            [20, 36, 35],
-            Mode::Replace {
-                from: dull,
-                to: glow,
-            },
-        ))
-        .unwrap();
-    world.apply(&box_op(BOX_MIN, BOX_MAX, Mode::Carve)).unwrap();
-    (world, glow)
-}
-
-/// The pulse's period in frames (1.5 s at 60 frames a second) and the frames a pulse run
-/// steps.
-const PULSE_PERIOD: u32 = 90;
-const PULSE_FRAMES: u32 = 256;
-
-/// How a pulse run sets the vein's emission each frame.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Pulse {
-    /// The scale stays 1.
-    Off,
-    /// The pixels' scale pulses between 0.25 and 1.75 about 1; the probes' stays at 1.
-    AtMean,
-    /// Both scales pulse (`set_emission_scale`).
-    Everywhere,
-}
-
-/// The floor beside the vein (x = 24) after each of PULSE_FRAMES frames with the lamp off and
-/// the vein pulsing as `pulse` says: the gathered indirect and the temporal pass's emissive
-/// direct irradiance (luminance), and whether a light-change window was open.
-fn pulse_run(pulse: Pulse) -> Option<(Vec<f64>, Vec<f64>, Vec<bool>)> {
-    let (world, glow) = vein_box_world();
-    let (device, queue) = software_device(64 << 20)?;
-    let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync_now(&world, &device, &queue).unwrap();
-    let mut f = FloorProbe::new(&device, 12);
-    let lum = |e: [f32; 4]| {
-        0.2126 * f64::from(e[0]) + 0.7152 * f64::from(e[1]) + 0.0722 * f64::from(e[2])
-    };
-    let (mut indirect, mut direct, mut window) = (Vec::new(), Vec::new(), Vec::new());
-    for i in 0..PULSE_FRAMES {
-        let s = 1.0 + 0.75 * (i as f32 / PULSE_PERIOD as f32 * std::f32::consts::TAU).sin();
-        match pulse {
-            Pulse::Off => f.frame.set_emission_scale(&queue, glow, 1.0),
-            Pulse::AtMean => f.frame.set_emission_scales(&queue, glow, s, 1.0),
-            Pulse::Everywhere => f.frame.set_emission_scale(&queue, glow, s),
-        }
-        f.run(&device, &queue, &gpu, 1);
-        let e = f.indirect(&device, &queue);
-        indirect.push(lum([e[0], e[1], e[2], 0.0]));
-        direct.push(lum(readback::read_float(
-            &device,
-            &queue,
-            f.frame.accumulated(),
-        )[0]));
-        window.push(f.frame.probe_light_window());
-    }
-    Some((indirect, direct, window))
-}
-
-/// The mean frame-to-frame change of `v` over its second half.
-fn mean_step(v: &[f64]) -> f64 {
-    let h = &v[v.len() / 2..];
-    h.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f64>() / (h.len() - 1) as f64
-}
-
-/// Max over min of `v` over its last pulse period.
-fn swing(v: &[f64]) -> f64 {
-    let p = &v[v.len() - PULSE_PERIOD as usize..];
-    let (lo, hi) = p
-        .iter()
-        .fold((f64::MAX, f64::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
-    hi / lo
-}
-
-/// The pulse feeds the probes at its mean: in the vein box with the camera still for 256
-/// frames, a vein whose pixel scale pulses while its probe scale holds at the pulse's mean
-/// opens no light-change window; the floor beside it reads a gathered indirect whose
-/// frame-to-frame change is no more than with the pulse off plus 1 % of that run's mean; and
-/// its direct light's max-to-min ratio over the last pulse period matches, within 5 %, the run
-/// whose probes pulse too.
-#[test]
-fn a_pulse_at_its_mean_leaves_the_probes_still() {
-    let Some((ind_off, _, _)) = pulse_run(Pulse::Off) else {
-        return;
-    };
-    let Some((ind_mean, dir_mean, window)) = pulse_run(Pulse::AtMean) else {
-        return;
-    };
-    let Some((ind_all, dir_all, window_all)) = pulse_run(Pulse::Everywhere) else {
-        return;
-    };
-    let half = &ind_off[ind_off.len() / 2..];
-    let mean_off = half.iter().sum::<f64>() / half.len() as f64;
-    let (step_off, step_mean, step_all) = (
-        mean_step(&ind_off),
-        mean_step(&ind_mean),
-        mean_step(&ind_all),
-    );
-    let (swing_mean, swing_all) = (swing(&dir_mean), swing(&dir_all));
-    println!(
-        "indirect beside the vein: mean {mean_off:.5} with the pulse off; frame-to-frame change {step_off:.6} off, {step_mean:.6} at the mean, {step_all:.6} everywhere (windows open {} of {PULSE_FRAMES} frames)",
-        window_all.iter().filter(|&&w| w).count()
-    );
-    println!(
-        "direct swing over the last period: {swing_mean:.4} at the mean, {swing_all:.4} everywhere"
-    );
-    assert!(window.iter().all(|&w| !w), "{window:?}");
-    assert!(mean_off > 0.0, "{mean_off}");
-    assert!(
-        step_mean <= step_off + 0.01 * mean_off,
-        "{step_mean} against {step_off} + 1 % of {mean_off}"
-    );
-    assert!(swing_mean > 2.0, "{swing_mean}");
-    assert!(
-        (swing_mean / swing_all - 1.0).abs() <= 0.05,
-        "{swing_mean} against {swing_all}"
-    );
 }

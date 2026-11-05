@@ -159,7 +159,8 @@ struct Params {
     lod1_r2: i32,
     lod2_r2: i32,
     exposure: f32,
-    // The emissive cache: bit 0 on, bit 1 the smooth read, bits 2..14 C_MIN, bits 14..28 C_CAP.
+    // The emissive table (`Lighting::table_cells`): bit 0 the temporal pass reads it (off only in
+    // a test), bits 14..28 C_CAP.
     cache: u32,
     candidates: u32,
     // The slot of light_samples where the frame's candidate table starts (light.wgsl).
@@ -178,20 +179,18 @@ struct Params {
     light_scale: u32,
     light_offset: u32,
     prev_light_offset: u32,
-    // The emissive part's history length in frames (`Lighting::emissive_history`).
-    emissive_history: f32,
+    // The table's cells less one (a power of two less one): a slot index's mask.
+    cache_mask: u32,
     // The size of the frame's image (the upscale pass's output); `size` without the upscaler.
     output_size: vec2<u32>,
-    // A reservoir's M is capped at this many times the frame's candidates
-    // (`Lighting::reuse_m_cap`, at least 1).
-    reuse_m_cap: u32,
+    // The reopened fill (`Lighting::fill_samples`, `fill_until`): F in bits 0..8, C_FILL in
+    // bits 8..21; F 0 is off.
+    fill: u32,
     // The face look's far shading normal (`LookParams::far_normal`), in pixels per voxel:
     // `far_hi <= far_lo` is off.
     far_lo: f32,
     far_hi: f32,
-    // The history age at which the light pass stops drawing (`Lighting::skip_converged_draw`);
-    // 0 never.
-    converged_age: u32,
+    _pad9: u32,
     // FSR 2's cap on an emitting hit's pre-exposed colour (`Fsr2Settings::emitter_cap`; 0 is
     // none) and its tone pass's static dither (1 on), both 0 without FSR 2.
     emitter_cap: f32,
@@ -305,12 +304,12 @@ const VIEW_CRACKS: u32 = 5u;
 // Params.lighting bits.
 const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
-const LIGHTING_REUSE: u32 = 4u;
 const LIGHTING_GRADIENT: u32 = 8u;
 const LIGHTING_FILTER_OFF: u32 = 32u;
 const LIGHTING_EMISSION_CHANGED: u32 = 256u;
 const LIGHTING_LAMP_CHANGED: u32 = 512u;
-const LIGHTING_EMISSIVE_GUARD: u32 = 1024u;
+// The table's guard runs this frame (`marcher::LIGHTING_GUARD`, `GUARD_WINDOW`).
+const LIGHTING_GUARD: u32 = 1024u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 // The exposure is automatic: this frame's is the state's `current`, not `params.exposure`.
 const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
@@ -1281,49 +1280,129 @@ fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
     return q - j;
 }
 
-// The emissive cache's table (`Lighting::emissive_cache`): CACHE_CELLS cells of CACHE_WORDS u32s:
-// a check word (0 a free cell), the count of samples, then the three sums of the absolute
-// emissive irradiance in Q17.15. A key is a voxel and an entry face (2 axis + 1 toward +axis);
-// it lives in the first of CACHE_PROBES slots from `cache_slot` holding its check word.
-const CACHE_CELLS: u32 = 4194304u;
-const CACHE_WORDS: u32 = 5u;
-const CACHE_PROBES: u32 = 4u;
-const CACHE_Q: f32 = 32768.0;
+// The emissive table's layout and keys are cache_cell.wgsl's, compiled with this file.
 
-fn cache_on() -> bool {
+// The reopened fill's samples a frame per listed cell (F, 0 off) and the count at which a
+// reopened cell leaves the list (C_FILL).
+fn fill_samples() -> u32 {
+    return params.fill & 0xFFu;
+}
+
+fn fill_until() -> u32 {
+    return (params.fill >> 8u) & 0x1FFFu;
+}
+
+// The table's counters: lighting pixels whose key found neither its cell nor a free slot this
+// frame (cleared each encode), the cells holding a key, and the cells the guard reopened
+// (gradient.wgsl) since the table was last cleared.
+struct CacheStats {
+    misses: atomic<u32>,
+    occupied: atomic<u32>,
+    reopens: atomic<u32>,
+    // The last re-shade reopen's kept luminance, as f32 bits (a reading; racing stores).
+    last_e_old: u32,
+    // The reopens by the guard's branch: a kept emitter's re-shade out of the dead zone, a
+    // torn tag whose key lights nothing, a dark capped cell whose fresh sample drew light.
+    reopens_by: array<atomic<u32>, 3>,
+    // The last re-shade reopen's new luminance, as f32 bits.
+    last_e_new: u32,
+    // The reopened fill's list for this frame (cache_fill.wgsl; cleared each encode with the
+    // fill on): the cells offered (past FILL_LIST_MAX they are dropped, and the excess is their
+    // count), three words of padding, then the listed slots.
+    fill_offered: atomic<u32>,
+    _fill_pad: array<u32, 3>,
+    fill_cells: array<u32, FILL_LIST_MAX>,
+    // The preload (cache_fill.wgsl), kept across frames: the sweep's next offset, which of the
+    // two lists of each kind is the next frame's input, and each fill list's entries (past
+    // PRELOAD_LIST_MAX the excess is the dropped count).
+    pre_cursor: u32,
+    pre_parity: u32,
+    pre_count: array<atomic<u32>, 2>,
+    // Set by the args pass each frame: the input lists, the fill's input entries, the cells
+    // drawn this frame, the first offset the sweep visits and how many offsets it visits.
+    pre_in: u32,
+    pre_n_in: u32,
+    pre_draw: u32,
+    pre_base: u32,
+    pre_visit: u32,
+    // The fill's cut (cache_fill.wgsl's `preload_draws`): the entries of the bands under
+    // `pre_cut` draw, and `pre_rest` of band `pre_cut`'s.
+    pre_cut: u32,
+    pre_rest: u32,
+    // The probe list's input faces.
+    pre_probe_n: u32,
+    // Each probe list's faces (past PRELOAD_PROBE_LIST_MAX the excess is dropped).
+    pre_probe_count: array<atomic<u32>, 2>,
+    // The dispatch's split: the fill's workgroups, then the probes'.
+    pre_fill_groups: u32,
+    pre_probe_groups: u32,
+    // The frame's counts (cleared each encode with the preload on; `marcher::PreloadStats`):
+    // slabs read past their stamp, faces listed, cells claimed, faces refused a cell (the
+    // table's load, a miss this frame or by the claim, no lit sample), samples drawn, fill list
+    // entries dropped, faces probed, slabs skipped as done, probe list entries dropped.
+    pre_scanned: atomic<u32>,
+    pre_listed: atomic<u32>,
+    pre_claimed: atomic<u32>,
+    pre_refused_load: atomic<u32>,
+    pre_refused_miss: atomic<u32>,
+    pre_refused_unlit: atomic<u32>,
+    pre_samples: atomic<u32>,
+    pre_drops: atomic<u32>,
+    pre_probed: atomic<u32>,
+    pre_done: atomic<u32>,
+    pre_probe_drops: atomic<u32>,
+    // The preload's workgroups this frame (`preload_args`).
+    pre_groups: u32,
+    // The last frame's light-pass misses and occupied cells (`preload_args`), for the probes.
+    pre_last_misses: u32,
+    pre_last_occupied: u32,
+    // The frame's cells claimed within the claim radius: lit (a probe sample drew light), then
+    // unlit (cleared with the frame's counts).
+    pre_claimed_near: array<atomic<u32>, 2>,
+    // Kept across frames: the cells whose fill entries ran out of draws and the cells the
+    // probes claimed, counted while the light pass runs and taken by the next args pass,
+    // which applies their bits.
+    pre_left_n: atomic<u32>,
+    pre_claims_n: atomic<u32>,
+    // The sweep's idle test (cache_fill.wgsl's `preload_args`): slabs found other than done
+    // since the current cycle began, the offsets the cycle has left to visit, and the epochs
+    // (plus 1; 0 is none) of the cycle and of the last cycle that found every slab done.
+    pre_busy: atomic<u32>,
+    pre_cycle_left: u32,
+    pre_cycle_epoch: u32,
+    pre_idle_epoch: u32,
+    // Each list's entries by distance band (cache_fill.wgsl's `preload_band`).
+    pre_hist: array<array<atomic<u32>, 64>, 2>,
+    // The two fill lists of entries (list k at k * PRELOAD_LIST_MAX), then the sweep's offsets
+    // (`marcher::preload_offsets`, each component plus 512 in ten bits, x low), the two probe
+    // lists and the slab stamps (cache_fill.wgsl's PRELOAD_OFFSETS_AT and after).
+    pre_lists: array<u32>,
+};
+
+// Cells the fill list holds; `marcher::FILL_LIST_MAX`.
+const FILL_LIST_MAX: u32 = 16384u;
+// Cells a preload list holds; `marcher::PRELOAD_LIST_MAX`.
+const PRELOAD_LIST_MAX: u32 = 32768u;
+
+fn cache_read_on() -> bool {
     return (params.cache & 1u) != 0u;
 }
 
-fn cache_c_min() -> u32 {
-    return (params.cache >> 2u) & 0xFFFu;
+// Whether the temporal pass reads a cell's blend (cache_blend.wgsl) in place of its own mean.
+fn cache_blend_on() -> bool {
+    return (params.cache & 2u) != 0u;
 }
 
 fn cache_c_cap() -> u32 {
     return (params.cache >> 14u) & 0x3FFFu;
 }
 
-fn cache_mix(v: vec3<i32>, face: u32, a: u32, b: u32) -> u32 {
-    let c = bitcast<vec3<u32>>(v);
-    var h = (c.x * a) ^ (c.y * 0xD8163841u) ^ (c.z * b) ^ ((face + 1u) * 0x165667B1u);
-    h ^= h >> 15u;
-    h *= 0x2C1B3C6Du;
-    h ^= h >> 12u;
-    h *= 0x297A2D39u;
-    h ^= h >> 15u;
-    return h;
-}
-
-// The first slot of the key (`marcher::cache_slot_check`).
+// The first slot of the key (`marcher::cache_slot`).
 fn cache_slot(v: vec3<i32>, face: u32) -> u32 {
-    return cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & (CACHE_CELLS - 1u);
+    return cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & params.cache_mask;
 }
 
-// The key's non-zero check word.
-fn cache_check(v: vec3<i32>, face: u32) -> u32 {
-    return cache_mix(v, face, 0x9E3779B1u, 0x85EBCA77u) | 1u;
-}
-
-// Whether a hit takes the cache's path: an opaque cube face entered from air.
+// Whether a hit takes the table's path: an opaque cube face entered from air.
 fn cacheable(rec: HitRecord) -> bool {
     return rec.found && rec.axis >= 0 && !rec.field && !rec.translucent;
 }
@@ -1336,16 +1415,6 @@ fn cache_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
 // The entry face of a hit on `axis` with face normal `nf`.
 fn cache_face(axis: i32, nf: vec3<f32>) -> u32 {
     return 2u * u32(axis) + select(0u, 1u, nf[axis] > 0.0);
-}
-
-// The offset of a skipped pixel's mark in the light pass's emissive part: `-(L + mark)`, so a
-// last estimate of 0 still reads negative.
-const CONVERGED_MARK: f32 = 1e-4;
-
-// The emissive estimate's luminance a light-pass output of luminance `y` stands for: `y`, or
-// a skipped pixel's mark's `L` (`converged_draw_skip`).
-fn drawn_estimate(y: f32) -> f32 {
-    return select(y, max(-y - CONVERGED_MARK, 0.0), y < 0.0);
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

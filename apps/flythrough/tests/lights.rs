@@ -673,143 +673,9 @@ fn light_ranges_follow_the_radius_and_evict_the_farthest() {
     assert_eq!(ranged(&gpu), [0, 1]);
 }
 
-/// Phase 3's closed box (interior x and y `[22, 42)`, z `[20, 30)`, rock all round) with a
-/// vein in its +y wall instead of an emissive ceiling: a staircase band of `glow` in the rock
-/// layer y = 42, x `[24, 40)`, two voxels tall rising one voxel every four, seen from inside
-/// the box looking +x with the lamp off, no filter.
-fn vein_rig(sampler: vxe_render::Sampler) -> Option<(LookRig, vxe_render::Camera, MaterialId)> {
-    let (table, glow, _) = glow_table();
-    let world = World::generate(
-        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &UniformSource(flythrough::cave::ROCK),
-        &table,
-    );
-    world
-        .apply(&box_op([22, 22, 20], [42, 42, 30], Mode::Carve))
-        .unwrap();
-    for x in 24..40 {
-        let z = 22 + (x - 24) / 4;
-        world
-            .apply(&box_op(
-                [x, 42, z],
-                [x + 1, 43, z + 2],
-                Mode::Replace {
-                    from: flythrough::cave::ROCK,
-                    to: glow,
-                },
-            ))
-            .unwrap();
-    }
-    let mut rig = LookRig::new(&world, None)?;
-    rig.frame.set_lighting(vxe_render::Lighting {
-        lamp: false,
-        filter: false,
-        sampler,
-        ..vxe_render::Lighting::default()
-    });
-    let camera = vxe_render::Camera {
-        position: [23.0, 28.0, 25.0].into(),
-        yaw: 0.35,
-        pitch: -0.2,
-        vfov: 70f32.to_radians(),
-    };
-    Some((rig, camera, glow))
-}
-
-/// The luminance of each pixel of `frame`'s raw irradiance.
-fn irradiance_lum(rig: &LookRig) -> Vec<f64> {
-    readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.irradiance())
-        .iter()
-        .map(|e| 0.2126 * f64::from(e[0]) + 0.7152 * f64::from(e[1]) + 0.0722 * f64::from(e[2]))
-        .collect()
-}
-
-/// Reservoir reuse against the flat list on the box with a vein at 320 x 180: one frame's
-/// relative RMSE of the irradiance (over the hit pixels that do not show the vein, whose own
-/// faces light each other at contact) against a 1024-frame average of the flat list is lower
-/// with reuse on (after 16 frames of history) than with it off, at one shadow ray per pixel.
-#[test]
-fn reservoir_reuse_lowers_one_frames_error() {
-    let Some((list, camera, glow)) = vein_rig(vxe_render::Sampler::List) else {
-        return;
-    };
-    let light = vxe_render::LightParams::headlamp();
-    let mut list = list;
-    let mut reference = vec![0.0f64; (WIDTH * HEIGHT) as usize];
-    let frames = 1024;
-    for i in 0..frames {
-        list.frame.set_frame_index(i);
-        list.frame
-            .render(&list.device, &list.queue, &list.gpu, &camera, &light);
-        for (r, v) in reference.iter_mut().zip(irradiance_lum(&list)) {
-            *r += v / f64::from(frames);
-        }
-    }
-    let info = readback::read_rgba16u(&list.device, &list.queue, list.frame.hit_records());
-    let lit: Vec<usize> = (0..info.len())
-        .filter(|&i| info[i][3] & 1 == 1 && info[i][2] != glow)
-        .collect();
-    let mean_ref = lit.iter().map(|&i| reference[i]).sum::<f64>() / lit.len() as f64;
-    let rel_rmse = |x: &[f64]| {
-        (lit.iter()
-            .map(|&i| (x[i] - reference[i]).powi(2))
-            .sum::<f64>()
-            / lit.len() as f64)
-            .sqrt()
-            / mean_ref
-    };
-    list.frame.set_frame_index(frames + 16);
-    list.frame
-        .render(&list.device, &list.queue, &list.gpu, &camera, &light);
-    let off = rel_rmse(&irradiance_lum(&list));
-
-    let (mut reuse, _, _) = vein_rig(vxe_render::Sampler::Reuse).unwrap();
-    reuse.frame.set_frame_index(frames);
-    for _ in 0..=16 {
-        reuse
-            .frame
-            .step(&reuse.device, &reuse.queue, &reuse.gpu, &camera, &light);
-    }
-    let on = rel_rmse(&irradiance_lum(&reuse));
-    println!(
-        "reference mean irradiance {mean_ref:.4} over {frames} frames and {} pixels; one frame's relative RMSE: list {off:.4}, reuse {on:.4}, ratio {:.3}",
-        lit.len(),
-        on / off
-    );
-    assert!(on < off, "{on:.4} against {off:.4}");
-}
-
-/// The dark cave of `golden.rs` (the golden scene with its carve, the ore emissive) lit by
-/// `lighting`, and the pose facing a vein; no frame rendered yet.
-fn dark_cave(lighting: vxe_render::Lighting) -> Option<(LookRig, vxe_render::Camera)> {
-    let source = scene_source();
-    let world = World::generate(
-        source.extent,
-        &source,
-        &flythrough::with_emissive_ore(&cave_materials()),
-    );
-    world.apply(&scene_carve(&world)).unwrap();
-    let mut rig = LookRig::new(&world, None)?;
-    rig.gpu.set_focus(VoxelCoord([264, 120, 376]));
-    for _ in 0..4 {
-        rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
-    }
-    rig.frame.set_lighting(lighting);
-    let camera = vxe_render::Camera {
-        position: [264.5, 120.5, 376.5].into(),
-        yaw: 15f32.to_radians(),
-        pitch: 0.0,
-        vfov: 70f32.to_radians(),
-    };
-    Some((rig, camera))
-}
-
 /// The dark cave of `golden.rs` (the golden scene with its carve, the ore emissive, the pose
-/// facing a vein) with the lamp on, `history` and `sampler`, settled over 32 frames.
-fn lamp_cave(
-    history: vxe_render::HistoryKill,
-    sampler: vxe_render::Sampler,
-) -> Option<(LookRig, vxe_render::Camera)> {
+/// facing a vein) with the lamp on and `history`, settled over 32 frames.
+fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::Camera)> {
     let source = scene_source();
     let world = World::generate(
         source.extent,
@@ -824,7 +690,6 @@ fn lamp_cave(
     }
     rig.frame.set_lighting(vxe_render::Lighting {
         history,
-        sampler,
         ..vxe_render::Lighting::default()
     });
     let camera = vxe_render::Camera {
@@ -856,13 +721,12 @@ fn accumulated_lum(rig: &LookRig) -> Vec<f64> {
 /// A static camera in the dark cave and the headlamp's cone turned 30 degrees in one frame,
 /// read on the lamp's part of each pixel's accumulated light (the light that left the cone;
 /// the veins' steady emissive light, which the turn does not change, is out of the ratio),
-/// with the flat list and with reservoir reuse. The pixels that left the cone have a lamp
+/// on the emissive table's path. The pixels that left the cone have a lamp
 /// part of 0.5 or more before and under 5 % of that 40 frames after. In the edit-box mode at
 /// least two thirds are under 10 % of their lamp part before at frame 11 and all by frame 22,
 /// where plain accumulation at alpha 0.2 needs about 11 (0.8^11 = 0.086). In the gradient
-/// mode 99 % are under 10 % by frame 2 and all by frame 7 (list) or 9 (reuse), not all by 2:
-/// lambda is read on the whole light, so where a pixel's steady emissive light is one to two
-/// times the lamp's the turn reads as a partial change and part of the lamp's history stays.
+/// mode 99 % are under 10 % by frame 2 and all by frame 9 (reservoir reuse's bar, the default
+/// before ADR-0043, when lambda was read on the whole light).
 /// The whole light's frames are printed for the log.
 #[test]
 fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
@@ -870,12 +734,14 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
         turn: 30f32.to_radians(),
         ..vxe_render::LightParams::headlamp()
     };
-    for sampler in [vxe_render::Sampler::List, vxe_render::Sampler::Reuse] {
+    // One emissive path since ADR-0043: the name labels the messages.
+    {
+        let sampler = "table";
         for history in [
             vxe_render::HistoryKill::Gradient,
             vxe_render::HistoryKill::Edits,
         ] {
-            let Some((mut rig, camera)) = lamp_cave(history, sampler) else {
+            let Some((mut rig, camera)) = lamp_cave(history) else {
                 return;
             };
             let lamp_part = |rig: &LookRig| -> Vec<f64> {
@@ -931,10 +797,8 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
                         "{sampler:?}: {at2} of {} at frame 2",
                         left.len()
                     );
-                    let all_by = match sampler {
-                        vxe_render::Sampler::List => 7,
-                        vxe_render::Sampler::Reuse => 9,
-                    };
+                    // Reservoir reuse's bar, the default sampler's before ADR-0043.
+                    let all_by = 9;
                     assert!(k <= all_by, "{sampler:?}, gradient: {k} frames");
                 }
                 vxe_render::HistoryKill::Edits => {
@@ -953,11 +817,13 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
 
 /// A still camera in the gradient mode, where nothing changes: the gradient reads only f16 and
 /// bfloat16 rounding, and the history keeps growing. After the 32 settling frames every hit
-/// pixel reads age 31 (0 on the first frame), with either sampler.
+/// pixel reads age 31 (0 on the first frame).
 #[test]
 fn the_gradient_keeps_history_where_nothing_changed() {
-    for sampler in [vxe_render::Sampler::List, vxe_render::Sampler::Reuse] {
-        let Some((rig, _)) = lamp_cave(vxe_render::HistoryKill::Gradient, sampler) else {
+    // One emissive path since ADR-0043: the name labels the messages.
+    {
+        let sampler = "table";
+        let Some((rig, _)) = lamp_cave(vxe_render::HistoryKill::Gradient) else {
             return;
         };
         let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
@@ -980,55 +846,8 @@ fn the_gradient_keeps_history_where_nothing_changed() {
     }
 }
 
-/// The emissive guard keeps static light's history: on the dark cave's pose with the lamp off,
-/// the edit-box mode, the guard on and an emissive history of 256, at least 99 % of hit pixels
-/// read age 63 after 64 still frames (0 on the first), with either sampler, as they do with the
-/// guard off.
-#[test]
-fn the_emissive_guard_keeps_history_where_nothing_changed() {
-    for sampler in [vxe_render::Sampler::List, vxe_render::Sampler::Reuse] {
-        for guard in [true, false] {
-            let Some((mut rig, camera)) = dark_cave(vxe_render::Lighting {
-                lamp: false,
-                emissive_history: 256,
-                emissive_guard: guard,
-                history: vxe_render::HistoryKill::Edits,
-                sampler,
-                ..vxe_render::Lighting::default()
-            }) else {
-                return;
-            };
-            let light = vxe_render::LightParams::headlamp();
-            for _ in 0..64 {
-                rig.frame
-                    .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
-            }
-            let f = read_frame(&rig.device, &rig.queue, &rig.frame);
-            let ages: Vec<f32> = (0..f.age.len())
-                .filter(|&i| f.info[i][3] & 1 == 1)
-                .map(|i| f.age[i])
-                .collect();
-            let full = ages.iter().filter(|&&a| a == 63.0).count();
-            let mut hist = std::collections::BTreeMap::new();
-            for a in &ages {
-                *hist.entry(*a as u32).or_insert(0u32) += 1;
-            }
-            println!(
-                "{sampler:?}, guard {guard}: {full} of {} hit pixels at age 63 ({:.3} %); ages {hist:?}",
-                ages.len(),
-                100.0 * full as f64 / ages.len() as f64
-            );
-            assert!(
-                full * 100 >= 99 * ages.len(),
-                "{sampler:?}, guard {guard}: {full} of {} at age 63",
-                ages.len()
-            );
-        }
-    }
-}
-
 /// A moving lamp leaves static light alone: on the dark cave's pose (a vein in view), the
-/// edit-box mode and the guard on, the headlamp's cone turns 30 degrees in one frame. The
+/// edit-box mode, the headlamp's cone turns 30 degrees in one frame. The
 /// pixels the vein lights (an emissive part of at least a tenth of the frame's largest before
 /// the turn) keep their age rising: on each of the 40 frames after the turn at least 95 % read
 /// their pre-turn age plus the frames elapsed.
@@ -1038,11 +857,12 @@ fn a_moving_lamp_leaves_the_static_lights_history_alone() {
         turn: 30f32.to_radians(),
         ..vxe_render::LightParams::headlamp()
     };
-    for sampler in [vxe_render::Sampler::List, vxe_render::Sampler::Reuse] {
-        let Some((mut rig, camera)) = lamp_cave(vxe_render::HistoryKill::Edits, sampler) else {
+    // One emissive path since ADR-0043: the name labels the messages.
+    {
+        let sampler = "table";
+        let Some((mut rig, camera)) = lamp_cave(vxe_render::HistoryKill::Edits) else {
             return;
         };
-        assert!(rig.frame.lighting().emissive_guard);
         let before = read_frame(&rig.device, &rig.queue, &rig.frame);
         let acc = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
         let lum = |e: &[f32; 4]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
@@ -1118,16 +938,14 @@ fn reveal_cells(table: &MaterialTable, glow: MaterialId, lo: i64) -> (World, Edi
 
 /// The reveal's frames after the carve of the plug `lo` (`reveal_cells`) until the far wall's
 /// centre-region mean emissive accumulation has risen 90 % of the way from its value before
-/// the carve to its value 600 frames after, with the guard `guard`; and those two values.
-fn reveal_frames(lo: i64, guard: bool) -> Option<(usize, f64, f64)> {
+/// the carve to its value 600 frames after; and those two values.
+fn reveal_frames(lo: i64) -> Option<(usize, f64, f64)> {
     let (table, glow, _) = glow_table();
     let (world, plug) = reveal_cells(&table, glow, lo);
     let mut rig = LookRig::new(&world, None)?;
     rig.frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         exposure: vxe_render::Exposure::Manual(1.0),
-        emissive_history: 256,
-        emissive_guard: guard,
         ..vxe_render::Lighting::default()
     });
     // In the far cell 21 voxels past the partition, facing its far wall at x = 60.
@@ -1185,153 +1003,35 @@ fn reveal_frames(lo: i64, guard: bool) -> Option<(usize, f64, f64)> {
     Some((k, start, end))
 }
 
-/// A reveal follows: the one-voxel rock plug between an emitter's closed cell and a far cell
-/// (the whole partition, `reveal_cells` at 20) is carved after 256 settled frames (lamp off,
-/// filter on, emissive history 256, `Manual(1)`), outside the dilated edit box of every
-/// far-wall pixel. With the guard on the far wall's centre-region mean emissive accumulation
-/// rises 90 % of the way to its value 600 frames after the carve within 73 frames, no slower
-/// than a 32-frame history (`ln 0.1 / ln(31/32)` = 72.5). The frame counts with the guard off,
-/// and with the plug a 10 x 10 window (`reveal_cells` at 25, which leaves most kept emitter
-/// points still behind rock), are `reading:` lines.
+/// A reveal follows on the table: the one-voxel rock plug between an emitter's closed cell and
+/// a far cell (the whole partition, `reveal_cells` at 20) is carved after 256 settled frames
+/// (lamp off, filter on, `Manual(1)`), outside the dilated edit box of every far-wall pixel.
+/// The far wall's centre-region mean emissive accumulation rises 90 % of the way to its value
+/// 600 frames after the carve within 16 frames, the table guard's bar at arm's length
+/// (`a_revealed_emitter_reopens_the_cells_it_lights` in `settle.rs`: every lit cell reopens
+/// within 9 frames and reads within 10 % of a fresh run's by frame 16). The frame count with
+/// the plug a 10 x 10 window (`reveal_cells` at 25, which leaves most cells' fresh samples
+/// behind rock) is a `reading:` line.
 #[test]
 fn a_reveal_behind_a_plug_follows_within_seventy_three_frames() {
-    let mut on = 0;
+    let mut whole = 0;
     for lo in [20, 25] {
-        for guard in [true, false] {
-            let Some((k, start, end)) = reveal_frames(lo, guard) else {
-                return;
-            };
-            println!(
-                "reading: reveal, plug {0} x {0}, guard {guard}: 90 % after {k} frames ({start:.5} to {end:.5})",
-                60 - 2 * lo
-            );
-            assert!(
-                end > 4.0 * start.max(1e-6),
-                "the reveal lights the wall: {start} to {end}"
-            );
-            if lo == 20 && guard {
-                on = k;
-            }
-        }
-    }
-    assert!(on <= 73, "guard on: {on} frames");
-}
-
-/// The dark cave's golden pose with the lamp off and the filter on, at `resolution` with
-/// `sampler`, settled over 64 still frames; then 32 more composited frames read back. Returns
-/// the mean over hit pixels and the 31 consecutive pairs of the largest channel difference,
-/// and the share of (pixel, pair) values above 4/255.
-fn still_vein_flicker(
-    resolution: vxe_render::LightingResolution,
-    sampler: vxe_render::Sampler,
-) -> Option<(f64, f64)> {
-    let source = scene_source();
-    let world = World::generate(
-        source.extent,
-        &source,
-        &flythrough::with_emissive_ore(&cave_materials()),
-    );
-    world.apply(&scene_carve(&world)).unwrap();
-    let mut rig = LookRig::new(&world, None)?;
-    rig.gpu.set_focus(VoxelCoord([264, 120, 376]));
-    for _ in 0..4 {
-        rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
-    }
-    rig.frame.set_resolution(&rig.device, resolution);
-    rig.frame.set_lighting(vxe_render::Lighting {
-        lamp: false,
-        sampler,
-        ..vxe_render::Lighting::default()
-    });
-    let camera = vxe_render::Camera {
-        position: [264.5, 120.5, 376.5].into(),
-        yaw: 15f32.to_radians(),
-        pitch: 0.0,
-        vfov: 70f32.to_radians(),
-    };
-    let light = vxe_render::LightParams::headlamp();
-    for _ in 0..64 {
-        rig.frame
-            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
-    }
-    let mut frames = Vec::new();
-    let mut hits = Vec::new();
-    for _ in 0..32 {
-        rig.frame
-            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
-        frames.push(readback::read_rgba8(
-            &rig.device,
-            &rig.queue,
-            rig.frame.target(),
-        ));
-        if hits.is_empty() {
-            hits = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records())
-                .iter()
-                .map(|r| r[3] & 1 == 1)
-                .collect();
-        }
-    }
-    let (mut sum, mut over, mut n) = (0.0f64, 0usize, 0usize);
-    for pair in frames.windows(2) {
-        for (i, &hit) in hits.iter().enumerate() {
-            if !hit {
-                continue;
-            }
-            let d = (0..3)
-                .map(|k| pair[0][4 * i + k].abs_diff(pair[1][4 * i + k]))
-                .max()
-                .unwrap_or(0);
-            sum += f64::from(d);
-            over += usize::from(d > 4);
-            n += 1;
-        }
-    }
-    Some((sum / n as f64, over as f64 / n as f64))
-}
-
-/// The vein holds still: on the dark cave's golden pose with the lamp off and the filter on, a
-/// still camera's composited frames change in each of full and half resolution, with the flat
-/// list and with reuse, by a mean of at most a quarter of the single-history renderer's
-/// (a59199d) reading of the same configuration, with at most 0.1 % of (pixel, pair) values
-/// above 4/255; half with reuse reads no higher than that renderer's full with reuse. Full
-/// with reuse misses its quarter (Plan 0024's log): its mean is printed, not asserted.
-#[test]
-fn static_emissive_light_holds_still() {
-    use vxe_render::LightingResolution::{Full, Half};
-    use vxe_render::Sampler::{List, Reuse};
-    // a59199d's readings: mean step and share above 4/255.
-    let base = [
-        ((Full, List), 0.6617),
-        ((Full, Reuse), 0.5655),
-        ((Half, List), 0.9759),
-        ((Half, Reuse), 1.0420),
-    ];
-    let mut means = Vec::new();
-    for ((res, sampler), before) in base {
-        let Some((mean, over)) = still_vein_flicker(res, sampler) else {
+        let Some((k, start, end)) = reveal_frames(lo) else {
             return;
         };
         println!(
-            "flicker {} {}: mean {mean:.4}/255 (a59199d {before:.4}, ratio {:.3}), share over 4/255 {:.4} %",
-            res.name(),
-            sampler.name(),
-            mean / before,
-            over * 100.0
+            "reading: reveal, plug {0} x {0}: 90 % after {k} frames ({start:.5} to {end:.5})",
+            60 - 2 * lo
         );
-        means.push((res, sampler, mean, before, over));
-    }
-    for &(res, sampler, mean, before, over) in &means {
-        let what = format!("{} {}", res.name(), sampler.name());
-        assert!(over <= 0.001, "{what}: {:.4} % over 4/255", over * 100.0);
-        if (res, sampler) != (Full, Reuse) {
-            assert!(
-                mean <= before / 4.0,
-                "{what}: {mean:.4} against {:.4}",
-                before / 4.0
-            );
+        assert!(
+            end > 4.0 * start.max(1e-6),
+            "the reveal lights the wall: {start} to {end}"
+        );
+        if lo == 20 {
+            whole = k;
         }
     }
-    assert!(means[3].2 <= 0.5655, "half reuse {:.4}", means[3].2);
+    assert!(whole <= 16, "the whole plug: {whole} frames");
 }
 
 /// An emission-scale step from 1.0 to 0.25 on Phase 3's emissive-ceiling box, the filter off,
@@ -1381,67 +1081,4 @@ fn an_emission_step_settles_within_eleven_frames() {
     let left = (series[10] - target).abs() / (before - target);
     println!("emission step: {left:.3} of the change left after 11 frames");
     assert!(left <= 0.1, "{left:.3}");
-}
-
-/// The emissive history keeps its mean over a long window: on the emissive-ceiling box (1 x 1
-/// target, lamp off, filter on, full-resolution lighting, the flat list, `Manual(1)`) with an
-/// emissive history of 512, the temporal pass's emissive accumulation agrees within 0.1 % at
-/// every frame from 1 to 2048 with a replay in `f64` of its blend rule,
-/// `max(1 / (age + 1), 1 / 512)` from age 0, over the light pass's irradiance read back each
-/// frame. The largest gap is printed.
-#[test]
-fn the_emissive_history_keeps_its_mean_over_a_long_window() {
-    let Some((device, queue)) = software_device(64 << 20) else {
-        return;
-    };
-    let (table, glow, _) = glow_table();
-    let world = ceiling_box(&table, glow);
-    let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync_now(&world, &device, &queue).unwrap();
-    let camera = vxe_render::Camera {
-        position: [32.0, 32.0, 29.0].into(),
-        yaw: 0.0,
-        pitch: -std::f32::consts::FRAC_PI_2,
-        vfov: 0.5,
-    };
-    const H: u32 = 512;
-    let mut frame = vxe_render::Frame::new(&device, 1, 1);
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    frame.set_lighting(vxe_render::Lighting {
-        lamp: false,
-        sampler: vxe_render::Sampler::List,
-        exposure: vxe_render::Exposure::Manual(1.0),
-        emissive_history: H,
-        ..vxe_render::Lighting::default()
-    });
-    let light = vxe_render::LightParams::headlamp();
-    let mut replay = 0.0f64;
-    let mut worst = (0.0f64, 0usize, 0.0f64, 0.0f64);
-    for i in 1..=2048usize {
-        frame.step(&device, &queue, &gpu, &camera, &light);
-        let sample = f64::from(readback::read_float(&device, &queue, frame.irradiance())[0][0]);
-        let gpu_acc = f64::from(readback::read_float(&device, &queue, frame.accumulated())[0][0]);
-        // Age i - 1 on frame i: the first frame resets, each one after reuses one more.
-        let age = (i - 1) as f64;
-        let a = (1.0 / (age + 1.0)).max(1.0 / f64::from(H));
-        replay += a * (sample - replay);
-        let gap = (gpu_acc / replay - 1.0).abs();
-        if gap > worst.0 {
-            worst = (gap, i, gpu_acc, replay);
-        }
-    }
-    println!(
-        "reading: emissive accumulation ({:?}) against the f64 replay at H {H}: largest gap {:.4} % at frame {} ({:.5} against {:.5})",
-        frame.accumulated().format(),
-        worst.0 * 100.0,
-        worst.1,
-        worst.2,
-        worst.3
-    );
-    assert!(
-        worst.0 <= 1e-3,
-        "the accumulation drifts {:.4} % from the replay at frame {}",
-        worst.0 * 100.0,
-        worst.1
-    );
 }
