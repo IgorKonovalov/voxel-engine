@@ -1,6 +1,6 @@
 # 0057: Steady light: the per-face table as the only emissive store, faces sampled and guarded in world space, and the probes as a lamp-bounce channel
 
-> **Status:** approved (2026-11-04, owner: "go"), not started; Phase 2 lands after Plan 0056's Phase 2 readings
+> **Status:** in-progress (Phases 1 to 6 done on the lane, 2026-11-05; amended 2026-11-05 (owner) with Phase 7, a fix pass for the grain, the young cells and the table, and Phase 8, a second window; Phase 7 not started); Plan 0056's Phase 2 readings are in its log
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
@@ -145,6 +145,37 @@
 > asserted halves (done-whens 2, 13, 15 and 16) stand as written: they pass on bright faces.
 > Phase 4's settle bar, done-whens 14 to 16, Phase 6 (c) and (h), the Budgets, Risks and
 > Followups follow.
+>
+> **Amended 2026-11-05 (owner), a fix pass: Phase 7, then a second window as Phase 8.** The
+> owner's Phase 6 window (`logs/0057.md`, Phase 6) met the stability goal ("there is no flicker
+> nether when i turn or go forward/backward") and failed the look on three counts, which the
+> owner chose to fix in this plan ("Both: fix now, design in parallel") while a separate
+> architect session designs a baked per-chunk light store. **The three faults and the three
+> decisions:** (1) **grain at voxel scale**, one value a face with no spatial filter since the
+> a-trous left the emissive part in Phase 2: **a world-space blend over each seen cell's
+> coplanar neighbour faces, weighted by their sample counts, computed once a cell a frame into a
+> word the read takes** (Phase 7 Part B); (2) **young cells show dark**: **the same blend, so a
+> young cell is outweighed by its wall's samples, widened from 3 x 3 to 5 x 5 faces where the
+> pool is thin** (Part C); (3) **the table too small and its cap off**: in the level the view
+> alone loaded the table to 0.257, over `PRE_LOAD_MAX` 0.25, so the preload refused every claim
+> (`refused load 364`, the patch's HUD), and the hall read 993 304 of 2^20 cells with 194 079
+> missed lighting pixels, about half the view at the window's 843 x 459 lighting grid: **2^22
+> cells by default, set by a reading at the window's resolution, an age-out of cells unseen
+> beyond `R`, and every load threshold a share of the size** (Part A). The headless occupancy
+> readings ran at 192 x 108, a lighting grid about 19 times smaller than the window's, and
+> understated the view's load by that much. Phase 7 is built **strip first**: the vein strip
+> on the current tree is the before picture, before any mechanism. Phase 6 stands as recorded;
+> Phase 8 restates its items. **What the parallel design would also solve:** a store filled at
+> chunk load for static emitters lights every face before it can be seen at any range (fault
+> 2, beyond `R` too, where the preload cannot reach), and a per-chunk store sized with
+> residency has no hash load, misses or cap (fault 3, for static light). **What it would not
+> solve:** the grain (fault 1) is the variance of a per-face estimate of `n` samples,
+> `sigma / sqrt(n)` of itself, whichever store holds it; a baked face shows the same grain
+> unless it is read through a filter, and Part B's blend is that filter, written to read from
+> either store. So Part B carries over to the baked design, Part A is the cheapest form that
+> lets the window be judged now and may be moot after it, and Part C is the bridge until a
+> baked store fills faces beyond `R`. Phase 7, Phase 8, the Decision, the Budgets, Risks,
+> Followups, Data shapes and the Status line follow.
 
 ## TL;DR
 
@@ -170,7 +201,11 @@ for a later per-source indirect light. Phase 1 reads the two questions the verdi
 (`--steady ab --indirect off`, and the dug hole) and whether the young faces are the fast-turn
 fault, before any mechanism. The first thing anyone sees is the hall holding still from frame 1
 of its first turn, and a dug hole lit within a second. The owner judges the default in the
-window at the end, this time with digs.
+window at the end, this time with digs. **Amended 2026-11-05 (owner):** the window held still
+but showed grain at voxel scale and dark young faces, and the table overflowed at the window's
+resolution; Phase 7 fixes the three (a count-weighted blend over each face's coplanar
+neighbours, read through by a young face too, and a 2^22 table with an age-out), the vein strip
+first, and Phase 8 is the owner's second window.
 
 ## Context & problem
 
@@ -258,6 +293,25 @@ the camera comes near. The brick sweep was rejected first for its cost (a scan o
 frame); the census refutes that: about 2145 bricks within 64 voxels, a sweep of 17 frames at 128
 a frame, and 15 000 to 25 000 faces. Prewarming at a dig from the edit's box is Part 2 itself;
 the sweep visits a dig's bricks first within `R`, and Part 2 covers the one beyond.
+
+For the fix pass (amended 2026-11-05, owner; Phase 7) we rejected **a blend at read time in the
+temporal pass**, per lighting pixel, because its lookups scale with the pixels (about 388 000
+at the window's lighting grid) times the kernel, every frame, while a face at arm's length
+covers about 54 of them, so the per-cell pass does the same arithmetic once a face. We rejected
+**the a-trous back on the emissive part**, because a screen filter's footprint moves with the
+view, which is the motion the owner called met ("no flicker ... when i turn"). We rejected
+**a filter pass over the whole table**, because most of its 2^22 cells are not in view; the
+chosen pass is that filter restricted to the cells seen this frame. We rejected **coarser
+storage** (a cell per 2 x 2 faces or per brick face), because a coarse cell straddles shadow
+edges and creases, so it needs a second per-face occlusion store to stay honest, and it changes
+the key the parallel baked design is choosing. For the young faces we rejected **a per-brick
+prior** (a brick mixes every orientation it holds, so a dark wall inherits a lit wall's light
+across the crease, and it is a second store) and **seeding the fallback's mean from the screen
+neighbourhood** (a screen quantity that moves with the view, and the fallback is for faceless
+hits). For the table we rejected **2^21 without an age-out** (the hall's window read 993 304
+cells with half the view missing, so the demand is over 2^20 and plausibly over 2^21 while
+every cell within the light radius stays) and **no load cap with eviction alone** (the miss
+guard then trips first at the hall, which stops the preload as surely as the cap did).
 
 ## Architecture diagram
 
@@ -1230,6 +1284,281 @@ in its log, or the orchestrator agrees the order; the log names which.
   visible; and, since the hall's table sits near or over `PRE_LOAD_MAX` (0.185 native, 0.260
   up), whether a larger table is wanted there; (g) whether the default is accepted. A "no" on (g) names the run and
   goes to the architect with the tables. The plan closes with that record.
+  **Amended 2026-11-05 (owner):** recorded (`logs/0057.md`, Phase 6): no flicker on turning or
+  moving; grain and dark faces everywhere else; the direction questioned. The plan no longer
+  closes on this record: Phase 7 fixes the three faults and Phase 8 is the second window.
+
+### Phase 7: The grain, the young cells and the table (amended 2026-11-05, owner)
+- **Owner skill:** dev
+- **What:** the three faults the Phase 6 window showed, inside the table's design: the table
+  sized and aged for the window's resolution, a count-weighted blend over each seen face's
+  coplanar neighbours, and the same blend widened where a young face's pool is thin. **The vein
+  strip is rendered first, on the current tree, as the before picture, before any mechanism.**
+  Nothing here touches the stability the owner called met: every input of the blend is a cell
+  sum, so a still world reads bit-identical frames, and the still-hall and still-reopen bars
+  (Phase 4's done-whens 8 and 9) are re-read on the tip.
+- **What the window showed, attributed from the HUD** (`logs/0057.md`, Phase 6; RTX, the
+  owner's 2530 x 1378 from 1687 x 919, FSR 2 at 1.5, half-resolution lighting, 843 x 459):
+  - **The hall** held 993 304 of 2^20 cells and missed 194 079 lighting pixels a frame, about
+    half the view; a missed pixel shows its raw sample through the fallback, so most of the
+    hall's grain in `owner-step6d` is the table's, not the estimator's. The headless hall read
+    194 194 cells at 192 x 108 (Phase 4, the hall's census): the demand grows with the lighting
+    grid, about 19 times larger in the window, and with the path, since no cell inside the
+    light radius (256 voxels) leaves before a chunk change sweeps it.
+  - **The patch** held 269 051 (0.2566) with 1519 misses: over `PRE_LOAD_MAX`, so the
+    preload listed 4 bricks, claimed 0 and refused 364 for load. With the preload claiming
+    nothing, every face the view had not filled is young, which is the owner's "dark patches
+    everywhere ... it settles slowly" and "preload doesnt really change anything".
+  - **The grain in a filled view** is each face's estimate on its own: by Phase 4's settle
+    derivation a face of `n` samples sits about `D sigma / (2.2 sqrt(n))` display levels off its
+    truth (rms; `D sigma` about 180 from a lit wall to a face lit on one sample in 32), so **5.1
+    levels at `C_PRE` 256, 2.6 at 1024 and 1.3 at `C_CAP` 4096**, independently per face:
+    salt and pepper at voxel scale even when every cell is capped, and blotches where the
+    young faces read 0 (a face lit on one sample in 32 shows 0 until its first lit sample, and
+    a mean of few samples of a skewed variable reads under its truth most of the time).
+- **Part 0, the before picture (first, on the current tree).**
+  - **The vein strip** (`light_strip` in `apps/flythrough/tests/strip.rs`, which Plan 0056 closed
+    and this plan now extends; RTX through `VXE_TEST_ADAPTER=rtx`, ignored, a reading): at
+    `VEIN_POSE`, from a fresh table, the owner's window size (2530 x 1378 from 1687 x 919, FSR
+    2 at 1.5) and at scale 1 (1687 x 919 native, the pixel figures' reference), half-resolution
+    lighting, the pose's fixed exposure, lamp off, preload on, nothing moving: the frames **1,
+    4, 16, 64, 256, 1024 and 4096** saved as PNG under `live/strip-0057/<commit>/`
+    (gitignored), a difference image of each against frame 4096 (amplified, dev's gain, named
+    in the file), and per frame **the share of pixels within 1, 2 and 4 display levels of
+    frame 4096** (the display transform at the fixed exposure, `rigs.rs`'s `tone_bytes`
+    arithmetic). The hall is read the same way after the vein (the owner: "Only the vein" first,
+    "the hall later").
+  - **The owner's B strip.** The owner's note 6c ("take a screenshot strip after multiple press
+    of B button ... compare each screen") names the fly-through's `B` key, which is the edit
+    bench (`DigInput::Bench`: carves of radius 1 m within 10 m of the eye, seeded by the press
+    count), not a settle. So the strip continues from frame 4096: four bench inputs with the
+    window's seeds (`bench_runs` 0 to 3), each followed by frames +1, +4, +16, +64 and +256
+    saved beside a difference image against the frame before the press, and per press the
+    share of the carved region's pixels within 2 levels of the frame +256.
+  - **The grain figures** from the cell dump at each strip frame (the rig reads cells as Phase
+    4's do), over the faces with a pixel in view, each face's displayed emissive value `D_f`
+    (the value the temporal pass reads, through the display transform at the fixed exposure):
+    **`G_plane`**, p50 and p90 over faces with at least two in-plane edge neighbours in the
+    dump of `|D_f - mean(D_n)|`, the neighbours as Part B defines them; and **`G_noise`**, p50
+    and p90 of `|D_f(seed A) - D_f(seed B)| / sqrt 2` between two runs of the same strip at two
+    light seeds, which carries the estimator's noise with the true light cancelled.
+    `G_noise` is the bar (it cannot be met by a true gradient); `G_plane` is the figure the
+    owner sees, read beside it.
+  - **The table at the window's resolution:** the runner's step 1 and step 3 paths scripted
+    headless (dev transcribes them from `live/session1.sh`: the hall from a fresh start, 600
+    still frames, the rig's `yaw 90 10 f` four times round, a slow `yaw 360 600 f`, the rig's
+    flight; the vein and patch the same with the flight down the passage and back), at the
+    window's size, preload on: per 60 frames the occupied cells, the misses, the preload's
+    claims and refusals by cause, and the peak. This is the input to Part A's size rule. About
+    a minute a run on the RTX.
+- **Part A, the table (fault 3; built first, because a missed pixel shows its raw sample and
+  would confound every grain figure after it).**
+  - **The probe count, from a CPU census.** `the_table_hash_spreads_a_levels_keys` gains the
+    key sets of Part 0's hall and vein runs (dumped at their peak) inserted at a load of 0.25
+    of 2^22 through `marcher::cache_slot`; `CACHE_PROBES` is **the smallest of 4, 8 and 16 that
+    leaves no key without a slot** (the hall's census at 2^20 already left 66 and 256 of its
+    194 194 and 272 838 keys without a slot at 4 probes and loads 0.185 and 0.260, so 4 is
+    expected to fail). None meeting it comes back to the architect with the run lengths.
+  - **The size: 2^22 by default**, a `Lighting` setting as today. After the age-out below is
+    built, Part 0's runs are repeated: if the peak occupied cells at both poses and the hall
+    stay under the eviction mark of 2^21 (3/16 of it, 393 216 cells), the default becomes 2^21;
+    if any run's peak is over the mark of 2^22 (786 432) with nothing left to evict (every cell
+    seen within `AGE_MIN` or within `R`), it comes back to the architect with the table. The
+    cell is at most **12 words, 48 B** (today's ten, plus `seen` and `blend`, Part B; dev may
+    pack `seen` into the stamp word if Part 2's listing still reads correctly, and says so):
+    **201 326 592 B at 2^22, + 159 383 552 B over today's 41 943 040**; 100 663 296 B at 2^21
+    (+ 58 720 256), arithmetic.
+  - **The age-out.** The light pass stores the frame into a cell's `seen` word on its first
+    touch of the frame (the compare-exchange that also lists it for Part B), and Part B's
+    pass stores it into every neighbour cell it reads, so a face only a seen face's kernel
+    reads is not aged out from under it. **The eviction pass** runs when the occupancy crosses
+    `EVICT_LOAD` (3/16 of the size) upward, and again only after it has grown by 1/32 of the
+    size since the last pass while still over, so a still camera over the mark runs it never;
+    it clears every cell whose voxel lies beyond `R` (the preload's radius, so the preload's
+    cells are never aged out) and whose `seen` is older than `AGE` frames (600, ten seconds at
+    60 fps; halved by each pass that leaves the load over the mark, down to `AGE_MIN` 60, and
+    reset to 600 once under). It reuses the chunk-change sweep's dispatch, and both walk **at
+    most 2^20 cells a frame** (a quarter of the table a frame at 2^22), so no frame pays a whole
+    table. A cleared cell leaves a hole in a probe run as the sweep's already do: dev confirms
+    in the log that `cache_claim` reads every probe for the key before it takes a free slot, and
+    the census reads 0 duplicate keys after an eviction. An eviction is not a world change and
+    does not open the guard's window.
+  - **The load cap, a share of the size.** `PRE_LOAD_MAX` stays a quarter of the table
+    (`PRELOAD_LOAD_DIVISOR` 4), now 1 048 576 cells at 2^22, above the eviction mark, so a
+    view whose working set sits under the mark never refuses the preload; the miss guard (no
+    claim the frame after a miss) stands.
+  - The HUD's table row gains `evicted <cells>` and the pass count; the banner names
+    `table 2^22 probes <n>`.
+- **Part B, the blend (fault 1).** A world-space interpolation over the table, computed once a
+  seen cell a frame, not a screen filter: the inputs are cell sums, which do not move while the
+  world and the light do not.
+  - **The kernel.** For a cell of face `(v, axis, sign)` with tangent axes `u` and `w`, each
+    offset `(du, dw)` of the 3 x 3 around it looks for one neighbour face of the **same axis and
+    sign** (a face of another orientation is never a candidate, so no light crosses a crease):
+    first the coplanar voxel `v + du u + dw w`, then the one a voxel toward the air
+    (`+ sign axis`), then the one a voxel into the rock (`- sign axis`), the first with a cell
+    taken; the two stepped candidates follow a voxel staircase, which is how a cave wall at an
+    angle is made, and weigh half. The weights are the binomial tent (4 at the centre, 2 at an
+    edge, 1 at a corner) times the cell's count (capped at `C_CAP`), so the blended mean is
+    `sum(t_i s_i) / sum(t_i n_i)` over the present cells, `s_i` the sums: a pool of the faces'
+    samples, not a mean of their means. No material test: the table holds irradiance with the
+    albedo divided out (ADR-0018; the composite multiplies it back), so a material boundary on
+    one wall is not a light boundary.
+  - **What it costs the look.** Where every neighbour is coplanar and equally sampled, the
+    tent's variance factor is `sum t^2 / (sum t)^2 = 36 / 256`, so a face's noise falls to
+    **0.375 of itself**: 1.9 levels at 256 samples, 0.96 at 1024, 0.48 at 4096 (the
+    derivation above; a guess the readings replace). A true edge is softened by one face each
+    side: at a hard shadow edge between equal counts the dark face beside it reads a quarter of
+    the lit side and the lit face three quarters, and a face two away reads its own side. A
+    one-voxel step in a lit floor blends with its neighbours at half weight; a pit one voxel
+    wide and deep is locally the same geometry as a step, so its bottom takes part of the rim's
+    light (a reading, the Risks). The voxel-edge step the owner accepted with nearest (Plan
+    0051) becomes a one-face ramp: the owner's to judge in Phase 8.
+  - **The pass.** The blend list: the light pass's first touch of a cell in the frame (the
+    `seen` compare-exchange) appends its index, at most one entry a lighting pixel, so the list
+    is sized from the lighting grid and never drops. `cache_blend` (new, in `cache_fill.wgsl`
+    or its own file, dev's choice) runs after the light pass, Part 2's fill and the preload, and
+    before the temporal pass: one lane per listed cell, the kernel's lookups through
+    `cache_slot`, the result into the cell's `blend` word (a shared-exponent RGB or dev's
+    packing, its error stated through the display transform, under a quarter of a level). The
+    temporal pass reads `blend` where it read the mean; a pixel whose own cell is absent (a
+    miss, which Part A brings to 0) takes the fallback as today. `--blend on|off` and a free key
+    toggle it in the window (dev's choice, named in the banner, `blend 3x3|5x5|off` in the
+    HUD), on by default.
+  - **At rest.** The pass recomputes a bit-identical value each frame for a still world. If its
+    cost at rest reads over 0.02 ms on the RTX at the window's size (done-when 8), dev adds a
+    `final` bit (set when the cell and every cell its kernel read are at `C_CAP`; a final
+    cell's lane returns at once; cleared by an edit box's clear dilated by the kernel's reach of
+    two voxels plus one, by the guard's reopen on the reopened cell's kernel neighbours, and by
+    the sweep or the age-out of any cell), and says so in the log.
+- **Part C, the young cells (fault 2).** The blend already outweighs a young cell by its wall's
+  samples: a cell of 4 samples among eight neighbours of 1024 contributes 16 of about 12 300
+  weighted samples, so it reads its wall's light from its first frame. What it cannot do is
+  help a wall that is young everywhere, the faces beyond `R` and the faces a refused preload
+  left (fault 3's), which pool few samples. **The widening:** where the 3 x 3 pool holds under
+  `POOL_MIN` samples (`sum n_i`, 16 384 a guess, swept 4096, 16 384 and 65 536; the default the
+  smallest that meets done-when 5), the lane adds the 5 x 5 ring (the binomial 1-4-6-4-1 tent,
+  the same candidates and half weight for the stepped ones), a variance factor of `4900 /
+  65536`, **0.273** for an equally sampled wall. Nothing else: no prior store, no seed from the
+  screen. With Part A the preload claims again, so within `R` the faces hold `C_PRE` before the
+  view reaches them, and the blend is what turns those 256 samples a face into a wall's pool.
+- **Order:** Part 0 (the strips, the grain figures and the window-resolution table runs on the
+  current tree, committed to the log as the before rows), then Part A with its tests and the
+  table runs re-read, then Part B with its tests, then Part C, then the end readings: the same
+  strips and figures on the tip, beside the before rows.
+- **Files touched:** `crates/vxe-render/src/shaders/cache_fill.wgsl` (or a new `cache_blend.wgsl`),
+  `light.wgsl` (the `seen` touch and the list), `temporal.wgsl` (the `blend` read),
+  `cache_sweep.wgsl` (the age-out and the slices), `march.wgsl` (`CACHE_PROBES`, the cell
+  layout), `crates/vxe-render/src/marcher.rs`, `lib.rs`, `apps/flythrough/src/main.rs`, `hud.rs`,
+  `apps/flythrough/tests/strip.rs`, `settle.rs`, `support/settle.rs`, `lights.rs`, `upscale.rs`
+  (`frame_bytes`), the golden baselines if the blend moves them (re-blessed once on lavapipe,
+  the difference in the log), `.config/nextest.toml`, `docs/plans/logs/0057.md`.
+- **Done when:**
+  1. **The before rows.** The log holds Part 0's tables on the current tree (the commit
+     named): the vein strip's shares within 1, 2 and 4 levels of frame 4096 at each of the
+     seven frames, at the window's size and at scale 1; the B strip's shares per press; `G_plane`
+     and `G_noise` at each frame; the window-resolution table runs (occupancy by 60 frames, the
+     peak, the misses, the claims and refusals); and the strips' PNG paths. Nothing is built
+     before these rows are committed.
+  2. **The table, asserted** (lavapipe): `an_unseen_far_cell_ages_out_and_a_near_one_stays`
+     asserts, on a box with three views of about 6000 faces each beyond `R` (test: 16 voxels)
+     and a few hundred within it (dev records the geometry and the counts), `CACHE_CELLS`
+     16 384 (test; its mark 3072), `AGE` 8 and `AGE_MIN` 4 (test), each view held 32 frames in
+     turn: after the third view's 32 frames the occupied cells read at most the third view's
+     cells plus those within `R` plus those its kernels read (the first two views' cells beyond
+     `R` cleared), every cell within `R` keeps its count, and the census reads 0 duplicate keys;
+     and with the age-out disabled (test-only) the third view counts misses, about 18 000 faces
+     in 16 384 cells (the test fails first). About 3 x 32 frames: about 6 s.
+     `the_table_hash_spreads_a_levels_keys` asserts the probe count's census (no key without a
+     slot at 0.25 of 2^22 at the chosen `CACHE_PROBES`; under 5 s, no GPU).
+  3. **The table on the window, readings against bars** (RTX, the window's size, the scripted
+     paths of Part 0): **0 misses in every frame at the hall with the preload on**, and **at the
+     vein and the patch `refused load` 0 in every frame and claims within `r0` above 0 on the
+     fresh start**; the peak occupancy, the cells evicted and the eviction passes per run
+     printed; the size rule's verdict (2^21 or 2^22) one line in the log. A miss above 0 at the
+     hall comes back to the architect with the census.
+  4. **The grain** (fault 1). **Asserted** (lavapipe): `the_blend_stops_at_a_crease_and_keeps_a_shadow_edge`,
+     on a box with an L crease whose one wall an emitter lights and whose other wall no emitter
+     reaches (checked on the CPU through `World::raycast` against every emitter voxel), and a
+     flat wall half under a slab that hides every emitter, scale 1, lamp off, `C_CAP` 1024, the
+     widening off (test): after every cell in view is capped, every cell of the unlit wall
+     reads `blend` exactly 0, the row along the crease included; on the flat wall the face two
+     from the shadow edge on the dark side reads exactly 0 and the face beside the edge between
+     0.15 and 0.35 of the lit face beside it (the arithmetic: 0.25 at equal counts); about 4 s.
+     `a_blend_quiets_a_lit_wall`, on `cache_box` at `C_CAP` 256, two light seeds: the per-face
+     spread `G_noise` over a lit wall falls to at most half with the blend on (the arithmetic:
+     0.375), and with the blend off it reads the unblended spread (the test fails first); about
+     2 x 4 s. `a_still_blend_is_bit_identical`: 64 still frames after every cell is capped read
+     every `blend` word and every pixel bit-identical; about 4 s. **On the level, readings
+     against bars** (RTX, the window's size, frame 4096 of the vein strip and of the hall's):
+     **`G_noise` p50 at most 1 level (`STILL_LEVEL`) and p90 at most 2 levels**, against the
+     before rows; `G_plane` p90 at most half its before row. The prediction, a guess: met where
+     under a tenth of the faces in view hold under 1024 samples at frame 4096 (a face at 1024
+     reads 0.96 levels rms after the blend, so p90 about 1.6); the rows split by the faces'
+     count band (under 256, 256 to 1023, 1024 to 4095, capped) so a miss names its band.
+  5. **The young cells** (fault 2). **Asserted** (lavapipe): `a_young_face_reads_its_walls_light`,
+     on `cache_box` with a lit wall of capped cells (`C_CAP` 1024) and one face's cell cleared
+     by a test-only hook (an edit box would clear its neighbours too): on the next frame the
+     face's displayed emissive lies within 2 levels of its eight neighbours' blended mean, and
+     with the blend off it does not (the test fails first); about 4 s. **On the level, readings
+     against bars** (RTX, the window's size, preload on, fixed exposure, lamp off): the vein
+     strip's **share of pixels within 4 levels of frame 4096 is at least 0.9 by frame 120** at
+     scale 1 (two counts at 60 fps, the dig's bar at range); and at `VEIN_POSE` from a fresh
+     table, 120 still frames then the rig's `yaw 90 10 f` (done-when 14's row), of the pixels
+     whose face was not in view in the 120 frames and lies within `R`, **at least 90 % within 4
+     levels of the same pixel at a settled frame (the view held 4096 frames after the yaw) on
+     their first frame in view, and 90 % within 2 levels by the 16th frame after the yaw ends**;
+     beyond `R` read, not asserted (the baked design's band). The prediction, a guess: within
+     `R` a face enters view with `C_PRE` 256 samples, 1.9 levels rms after the blend against
+     about 0.5 settled, so about 0.96 of pixels within 4 levels; by the 16th frame its pixels
+     add about 50 a frame at arm's length, about 1000 in all, so about 0.93 within 2. Each row
+     beside its before row and the blend off; `POOL_MIN`'s sweep in the same table.
+  6. **The B strip after.** Per bench press, the carved region's share within 2 levels of frame
+     +256 at frames +1, +4, +16 and +64, beside the before rows, and the 5-voxel dig's `Q90`
+     (done-when 15's level row) re-read: at most 60 frames, as before.
+  7. **The still image holds.** On Phase 7's tip, Phase 4's done-when 8 (the hall native one
+     frame mean at most 0.005, no pixel over 8 levels; the drift under 0.01) and done-when 9
+     (`still_reopen_readings` 0 at 256, 512, 768 and 1024 at both poses) read again with the
+     blend and the age-out on, and the rig's fast yaw row (`the_fast_yaw_excess_by_table_read`)
+     is read beside Phase 4's. A miss of either bar is a defect of this phase, not a reading.
+  8. **The cost and the memory.** On the RTX at the window's size, quiet where the machine
+     allows, at rest and walking at both poses: `cache_blend`'s slot, the light pass's excess
+     over Phase 6's tree (the `seen` touch and the list), the age-out's slices on the frames
+     they run and the preload's cost. **The bar: Phase 7's passes add at most 0.25 ms to the
+     frame at rest and walking** (the guess: 0.05 to 0.15 ms for the blend, a few hundredths
+     for the touch), and **at rest the blend pass at most 0.02 ms or the `final` bit built**;
+     a frame with a sweep or eviction slice read, not barred (the guess: about 0.1 to 0.15 ms
+     a slice of 2^20 cells). The Cezanne read against `docs/nfr.md` section 2's 6.0 ms lighting
+     line. `frame_bytes` in `upscale.rs` asserts Phase 6's tree's figure plus the table's delta
+     at the chosen size (+ 159 383 552 B at 2^22, + 58 720 256 at 2^21) plus the blend list, the
+     arithmetic in the test's comment; under 5 s.
+  9. The banner and the HUD show `table <cells> probes <n>`, `evicted`, and `blend
+     3x3|5x5|off` (`hud.rs`'s banner test, no GPU, under 1 s); the toggle key works in the
+     window and the HUD names the mode.
+
+### Phase 8: The owner's second window (amended 2026-11-05, owner)
+- **Owner skill:** human
+- **What:** Phase 6's runner steps (`live/session1.sh`), the orchestrator rebuilding it on Phase
+  7's tip, with Phase 6's binary beside it (built from the lane's tree before Phase 7 as
+  `target/release/flythrough-p6`) for the comparison, the blend's toggle key in both runs, and
+  Phase 7's strips at hand: the vein strip and the B strip before and after, their difference
+  images, and the grain, young-cell and table tables. The owner's step 6c is run as the owner
+  asked it: in the window, press `B` several times at the vein and compare the screens.
+- **Files touched:** this plan's log.
+- **Done when:** the log records the owner's words, with the strips beside, on: (a) whether
+  anything moves at rest, hall and level; (b) whether turning and moving still show no flicker
+  (the stability Phase 6 met must hold); (c) the dark patches on faces not looked at when the
+  scene loaded (step 1) and in the caves while moving (steps 3 and 3b): gone, or how long they
+  take; (d) the grain at rest at the hall and the vein (steps 1 and 6d), blend on against off;
+  (e) the distant caves (step 5), which beyond `R` are Part C's widening only and the parallel
+  baked design's to fill; (f) the preload: whether it now changes anything at the vein and the
+  hall (steps 6 to 6d), with the HUD's claims and refusals in view, and the `B` presses (6c);
+  (g) the blend's look: the voxel step and the shadow edges softened by one face, against the
+  nearest read the owner kept in Plan 0051, and whether a pit's lit rim shows; (h) the table's
+  memory at the size Phase 7 chose (+ 159 383 552 B at 2^22) against `docs/nfr.md` section 3's
+  1.5 GB line; (i) whether the default is accepted, or the direction moves to the baked
+  per-chunk design. A "no" on (i) names the step and goes to the architect with the tables,
+  beside the parallel design. The plan closes with that record.
 
 ## Data shapes
 
@@ -1248,6 +1577,9 @@ pub struct Lighting {
     pub lamp_bounce: bool,         // the probe channel; on by default, nothing runs lamp-off
     pub probe_freeze: u32,         // visits to converge; the only blend
     pub probe_side: u32,           // PROBES_PER_AXIS, from the reach
+    // amended 2026-11-05 (owner), Phase 7:
+    pub blend: Blend,              // Off | Tent3 | Tent3Widened { pool_min: u32 }; widened by default
+    pub evict_age: u32,            // AGE: frames unseen before a cell beyond R may go; 600
 }
 ```
 
@@ -1255,6 +1587,7 @@ pub struct Lighting {
 // illustrative: a cell is 10 u32s, table[slot * 10 + i]
 // 0..1 key (voxel xyz and face, valid bit)   2 count   3..5 sums Q17.15
 // 6..7 kept emitter (voxel and face)          8 kept luminance (f32 bits)   9 frame stamp
+// Phase 7 (amended 2026-11-05): 10 seen (the last frame a pixel or a kernel read it)   11 blend (packed RGB)
 ```
 
 ## Budgets
@@ -1266,9 +1599,9 @@ Base figures are Plan 0051's cost tables (`logs/0051.md`, Phases 2 and 3), the l
 | `nfr.md` figure | Base (read, indicative) | Expected | How the close measures it |
 |---|---|---|---|
 | §2 GPU frame | RTX `off` 4.944 ms, `b --indirect off` 3.255; Cezanne 35.438, 21.053 | The default (table, guard, lamp channel, and whatever Phase 4 builds): **a guess** of the `b --indirect off` figure plus 0.3 ms on the RTX and 2.0 ms on the Cezanne, lamp on; on a dig's first frames the reopened fill adds its burst, nothing on a turn (Phase 4's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD [--pose vein]`, three quiet rounds alternated with the v0.41.0 binary, the perf lock, the memory cap; and the rig's flight on both adapters |
-| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10). **Amended 2026-11-04 (owner; the form amended the same day, architect), the preload, guesses by arithmetic:** a sample with its shadow ray costs about 3.5 ns on the RTX (v0.41.0's light pass, 0.802 ms over 640 x 360 lighting pixels), so `S_PRE` 32 768 is about 0.11 ms; the walk's demand, about 19 000 samples a frame at 30 voxels a second, about 0.07 ms, and `Shift` binds at `S_PRE`. The sweep at `B` 128: most bricks end on their entry word, a surface brick's 512 voxels test six neighbours each through the mirror's lookup, a guess of under 0.01 ms; at rest the trickle (`B / 16`) and an empty list, under 0.01 ms. About 0.12 ms in flight. The Cezanne at Phase 3's light ratio (5.1) about 0.6 ms. The line then reads about 0.36 ms RTX and 1.8 ms Cezanne of 6.0 (6 % and 30 %), before Part 2's fill. **Amended 2026-11-05 (architect, for the owner), read and guessed:** the walk read 0.062 (patch) and 0.094 ms (vein), about 4.6 ns a sample in the light pass's excess (0.059 ms over 12 798 samples at the vein), at rest 0.015 and 0.012 (loaded; a quiet re-read owed against 0.01). The claim within `r0` 24 adds, **a guess**, the faces probed a frame (444 and 211, read) times `(24 / 64)^2` times their refused share (0.94 and 0.75, read) times the 248 samples to `C_PRE`: about 14 500 and 5 600 samples, **+0.07 and +0.03 ms, about 0.13 and 0.12 ms walking**; at `r0` 32 the patch is about 0.18, over the bar, so the sweep picks; at rest nothing once the faces within `r0` hold `C_PRE` (their slabs are done); at `Shift` `S_PRE` binds (about 0.19 ms, read, not a bar). **Amended 2026-11-05 (architect, for the owner), `C_PRE` under the stop bar, a guess:** if done-when 14 picks 1024, the claim within `r0` draws about 1016 samples a face instead of 248, about 4.1 times the 14 500 and 5 600 above, about 59 000 and 23 000 a frame walking, over `S_PRE` 32 768 at the patch, so the cost stays near `S_PRE`'s 0.15 ms (4.6 ns a sample) and the fill lags instead: the lead done-when 16 reads (the fill-time table read 226 and 323 frames at 1024 against 57 and 83 at 256). `C_PRE` 1024 is the default only if done-when 17's walking bar holds; otherwise 256 stays and the choice is the owner's in Phase 6 (h) | the same runs, per pass; the preload's cost at rest, in flight and on a turn (done-when 17), at each `r0` |
-| §2 denoise line (3.0 ms): temporal + a-trous | RTX 0.086 + 0.497 | unchanged or lower (the a-trous over one channel) | the same runs |
-| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, + the preload list (`PRELOAD_LIST_MAX` 32 768 entries ping-ponged, about 256 KiB, a guess) and its stats words (amended 2026-11-04: no other store; it fills the table, about 15 000 to 25 000 faces within `R` 64 at the level, half lit, 0.007 to 0.012 of 2^20 by the census, mostly cells the view also makes, and claims none past `PRE_LOAD_MAX` 0.25 or after a frame's miss; amended 2026-11-05: the claim within `r0` adds no store, only a uniform word, and its cells, the faces within 24 voxels of a walked path inside the 256-voxel light radius, are about 23 000 on a straight 512-voxel walk at the vein's density, about 0.022 of 2^20, **a guess**, beside today's read 0.010 and 0.024; amended 2026-11-05: the stop-moving bars add no store, and a sum of squares a cell for a spread stop stays a Followup: one word is + 4 194 304 B at 2^20 (cells of 11 words), two if the integer squares need 64 bits to stay order-independent at 4096 samples, + 8 388 608 B), - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
+| §2 lighting line (6.0 ms): light + gradient + probes + gather | RTX `off` 0.802 + 0.086 + 1.058 + 0.092; `b --indirect off` 0.122 + 0.017 + 0 + 0 | light near the arm's (a capped view draws nothing); gradient within 0.02 ms of the arm's (one ray a stratum); probes **a prediction** under 0.2 ms RTX with the lamp still, the moving case Phase 5's reading; the reopened fill and the own-face read **guesses** in Phase 4, each only if built. **Amended 2026-11-04:** the guard read (Phase 3, loaded) light + gradient 0.147 + 0.092 ms RTX and 0.752 + 0.395 Cezanne at the spawn, 4 % and 19 % of the line, accepted; with Part 1b's window closed at rest the gradient returns to about Phase 1's 0.017 (a prediction, Phase 4 done-when 10). **Amended 2026-11-04 (owner; the form amended the same day, architect), the preload, guesses by arithmetic:** a sample with its shadow ray costs about 3.5 ns on the RTX (v0.41.0's light pass, 0.802 ms over 640 x 360 lighting pixels), so `S_PRE` 32 768 is about 0.11 ms; the walk's demand, about 19 000 samples a frame at 30 voxels a second, about 0.07 ms, and `Shift` binds at `S_PRE`. The sweep at `B` 128: most bricks end on their entry word, a surface brick's 512 voxels test six neighbours each through the mirror's lookup, a guess of under 0.01 ms; at rest the trickle (`B / 16`) and an empty list, under 0.01 ms. About 0.12 ms in flight. The Cezanne at Phase 3's light ratio (5.1) about 0.6 ms. The line then reads about 0.36 ms RTX and 1.8 ms Cezanne of 6.0 (6 % and 30 %), before Part 2's fill. **Amended 2026-11-05 (architect, for the owner), read and guessed:** the walk read 0.062 (patch) and 0.094 ms (vein), about 4.6 ns a sample in the light pass's excess (0.059 ms over 12 798 samples at the vein), at rest 0.015 and 0.012 (loaded; a quiet re-read owed against 0.01). The claim within `r0` 24 adds, **a guess**, the faces probed a frame (444 and 211, read) times `(24 / 64)^2` times their refused share (0.94 and 0.75, read) times the 248 samples to `C_PRE`: about 14 500 and 5 600 samples, **+0.07 and +0.03 ms, about 0.13 and 0.12 ms walking**; at `r0` 32 the patch is about 0.18, over the bar, so the sweep picks; at rest nothing once the faces within `r0` hold `C_PRE` (their slabs are done); at `Shift` `S_PRE` binds (about 0.19 ms, read, not a bar). **Amended 2026-11-05 (architect, for the owner), `C_PRE` under the stop bar, a guess:** if done-when 14 picks 1024, the claim within `r0` draws about 1016 samples a face instead of 248, about 4.1 times the 14 500 and 5 600 above, about 59 000 and 23 000 a frame walking, over `S_PRE` 32 768 at the patch, so the cost stays near `S_PRE`'s 0.15 ms (4.6 ns a sample) and the fill lags instead: the lead done-when 16 reads (the fill-time table read 226 and 323 frames at 1024 against 57 and 83 at 256). `C_PRE` 1024 is the default only if done-when 17's walking bar holds; otherwise 256 stays and the choice is the owner's in Phase 6 (h). **Amended 2026-11-05 (owner), Phase 7, read and guessed:** the readings the fix pass starts from are light plus gradient about 0.24 ms on the RTX (Phase 3, 0.147 + 0.092, loaded) and 1.147 on the Cezanne, and the preload 0.080 and 0.106 ms walking at `r0` 32 (patch, vein; RTX, loaded) and 0.414 and 0.668 on the Cezanne; the window's HUD at the hall read light 3.18 ms with half the view missed (each missed pixel draws its own sample every frame), which Part A's 0 misses should return toward the level's figure (a guess). Phase 7 adds, **guesses**: the blend pass 0.05 to 0.15 ms RTX at the window's size (one lane per seen cell, eight to 24 neighbour lookups of one to `CACHE_PROBES` slots each, against the temporal pass's 0.065 to 0.12 ms for one lookup a lighting pixel), a few hundredths for the `seen` touch, and about five times that on the Cezanne (Phase 3's light ratio), 0.25 to 0.75 ms; the age-out and the sweep 0.1 to 0.15 ms on a frame that runs a slice of 2^20 cells, none at rest. The bar (done-when 8): at most 0.25 ms added on the RTX at rest and walking. The line then reads about 0.6 ms RTX and about 3 ms Cezanne walking of 6.0 (guesses) | the same runs, per pass; the preload's cost at rest, in flight and on a turn (done-when 17), at each `r0`; Phase 7's done-when 8 at the window's size |
+| §2 denoise line (3.0 ms): temporal + a-trous | RTX 0.086 + 0.497 | unchanged or lower (the a-trous over one channel). **Amended 2026-11-05 (owner), Phase 7:** the window read temporal 0.12 and 0.18 ms, a-trous 0.77 and 0.76 (patch, hall; HUD, RTX, loaded); Phase 7 adds nothing here (the blend is its own pass, under the lighting line) and the a-trous over the fallback should fall with the misses (a guess) | the same runs |
+| §3 `Frame::frame_bytes` | main 130 267 216 B; the spike's table on, 89 617 600 B at the rig's setting | **arithmetic:** + 41 943 040 (table) + the fill list if Phase 4 builds it, + the preload list (`PRELOAD_LIST_MAX` 32 768 entries ping-ponged, about 256 KiB, a guess) and its stats words (amended 2026-11-04: no other store; it fills the table, about 15 000 to 25 000 faces within `R` 64 at the level, half lit, 0.007 to 0.012 of 2^20 by the census, mostly cells the view also makes, and claims none past `PRE_LOAD_MAX` 0.25 or after a frame's miss; amended 2026-11-05: the claim within `r0` adds no store, only a uniform word, and its cells, the faces within 24 voxels of a walked path inside the 256-voxel light radius, are about 23 000 on a straight 512-voxel walk at the vein's density, about 0.022 of 2^20, **a guess**, beside today's read 0.010 and 0.024; amended 2026-11-05: the stop-moving bars add no store, and a sum of squares a cell for a spread stop stays a Followup: one word is + 4 194 304 B at 2^20 (cells of 11 words), two if the integer squares need 64 bits to stay order-independent at 4096 samples, + 8 388 608 B), - 3 686 400 (the `f32` pair) - the reservoir textures - about 44 MB of the probe atlases and state at a side of 16, lamp on; dev records the exact sum in the test's comment. **Amended 2026-11-05 (owner), Phase 7, arithmetic:** the cell grows to at most 12 words (48 B: `seen` and `blend`) and the default to 2^22 cells, 201 326 592 B, **+ 159 383 552 B** over the 41 943 040 table (2^21 if Part A's rule picks it: 100 663 296 B, + 58 720 256), plus the blend list at 4 B a lighting pixel (921 600 B at 640 x 360, 1 552 960 at the window's 844 x 460). Against Phase 5's tip (Phase 4's 163 488 480 B less the probes' 49 674 240, about 113.8 MB, derived; dev records the exact figure) the default reads about 274 MB, about 18 % of `docs/nfr.md` section 3's 1.5 GB line for everything else in VRAM | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close; Phase 7's done-when 8 | `frame_bytes` asserted in `upscale.rs` at the default, printed at the close |
 
 Determinism is not touched: everything is in `vxe-render`. The table's integer sums make a
 face's mean independent of the order its pixels add, which the close reads as a bit-identical
@@ -1372,6 +1705,28 @@ cell dump across two runs of the same still frame on lavapipe.
   the orchestrator's; the log names it.
 - **FSR 2 moves the final image** (0.525 against 0.004 native in the spike). This plan asserts at
   scale 1; the display-level bar is Plan 0056's.
+- **The blend softens true light** (amended 2026-11-05, owner). A shadow edge and the voxel-edge
+  step become a one-face ramp, and a one-voxel pit's bottom takes part of its rim's light,
+  since a pit and a step are the same local geometry to the kernel. The crease test bars the
+  crease (no light across orientations); the pit and the ramp are the owner's in Phase 8 (g),
+  and the half weight of the stepped candidates is the knob if they show.
+- **The grain is not all the estimator's** (amended 2026-11-05, owner). Half the hall's view
+  missed the table in the window, so its grain was mostly the fallback's raw samples; if the
+  hall still reads grainy at 0 misses, the estimator's share is what is left, and `G_noise`
+  splits it by count band. A band under 256 samples at frame 4096 (faces beyond `R` at their
+  footprint) that misses the bar after the widening is the parallel baked design's to fill, not
+  a larger kernel unasked.
+- **An aged-out cell comes back young** (amended 2026-11-05, owner). A face beyond `R` unseen
+  for `AGE` frames (down to `AGE_MIN` 60 at a hall over the mark) restarts from no samples when
+  the view returns to it, and reads through the blend's pool until its own fill; the hall's
+  turn-back is read in Part 0's scripted path.
+- **The demand outgrows 2^22** (amended 2026-11-05, owner). If the hall's working set at the
+  window's resolution, after the age-out at `AGE_MIN`, stays over 3/16 of 2^22, the table at
+  this design cannot hold the view; it goes to the architect beside the parallel design, whose
+  per-chunk store has no such load.
+- **Probe holes and duplicates after eviction** (amended 2026-11-05, owner). Clearing cells
+  mid-run is what the chunk-change sweep already does; Part 1b's census found the claim's
+  duplicate keys once (fixed). Done-when 2 reads 0 duplicates after an eviction.
 
 ## What this plan does NOT do
 
@@ -1397,6 +1752,9 @@ cell dump across two runs of the same still frame on lavapipe.
   or re-basing the frame ledger in `docs/nfr/02-frame-budget.md`: readings go there, the
   re-base is Plan 0044's.
 - The Radeon's walk-speed spike, or any change to the surface.
+- (amended 2026-11-05, owner) A store filled at chunk load for static emitters, or any change to
+  the key: the parallel architect session designs it with its own ADR, and Phase 7 stays inside
+  ADR-0043's table. A screen-space filter on the emissive part, or coarser cells (Decision).
 
 ## Owner answers
 
@@ -1447,6 +1805,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
 - **Outstanding `human` phases:** which, or none
+- **Phase 7 (amended 2026-11-05, owner):** the table's size and `CACHE_PROBES` chosen, with the
+  peak occupancy at the window's resolution; the before and after rows of the strips, `G_noise`
+  and `G_plane`; Phase 4's done-whens 8 and 9 re-read; `frame_bytes` at the chosen size
 
 ## Followups
 
@@ -1487,4 +1848,14 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   the dense cases the Risks name (the castle, the showcase hall) read once on Phase 4's tip, the
   census's verdict (hash, claim or counting) and its fix, and the misses at 0 after it. The size
   stays 2^20 at this plan's close unless a dense case reads over 0.25; shrinking it to save
-  memory is not this plan's, since the image comes first.
+  memory is not this plan's, since the image comes first. Amended 2026-11-05 (owner): the
+  window read a dense case over 0.25 at the patch (0.2566) and 0.947 at the hall, so the size is
+  Phase 7 Part A's (2^22 by default, 2^21 by its rule), with `CACHE_PROBES`, the age-out and the
+  load cap as a share of the size; the Outcome records them and the window-resolution occupancy.
+- **The parallel baked per-chunk store** (amended 2026-11-05, owner): a separate architect
+  session's design and ADR. If it lands, Part A's size and age-out may be moot for static light
+  (it carries the faces' light without a hash), Part C's widening is the bridge it replaces
+  beyond `R`, and Part B's blend is read through by either store; the plan that builds it
+  states which of the three it keeps.
+- **A stop rule by a cell's spread** (amended 2026-11-05, owner): the existing Followup's
+  trigger includes Phase 8 (d) calling the grain visible after the blend.
