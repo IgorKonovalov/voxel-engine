@@ -4,8 +4,10 @@
 > **Date:** 2026-11-05
 > **Related plan(s):** [Plan
 > 0059](../plans/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md)
-> (builds it; its close accepts this ADR, and its Phase 1 and Phase 7 can overturn it).
-> Replaces, on the owner's verdict in that plan's window, the table, fill, preload and guard of
+> (builds it; its close accepts this ADR, and the owner's verdicts in its Phases 3 and 13 can
+> overturn it).
+> Amended 2026-11-05 while proposed: the order, look first and cut later (the section below).
+> Replaces, on the owner's verdict in that plan's Phase 13, the table, fill, preload and guard of
 > [ADR-0043](0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md),
 > and keeps its nearest read, its empty screen history and its lamp-bounce channel. Refines
 > [ADR-0025](0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
@@ -48,8 +50,11 @@ indicative where the machine was loaded):
   50 ns on the Cezanne (0.337 and 0.607 ms, assuming the same samples, which its row does not
   print).
 - **The grain is the estimator's.** A face of `n` samples sits about `82 / sqrt(n)` display levels
-  rms off its truth, whatever its brightness (Plan 0057's settle derivation), independently per
-  face. One level needs about 6 700 samples. A 3 x 3 coplanar tent multiplies this by 0.375.
+  rms off its truth (Plan 0057's settle derivation), independently per face. One level needs about
+  6 700 samples. A 3 x 3 coplanar tent multiplies this by 0.375. **That holds in the hall and not
+  beside emitters:** at 4096 samples a face, `G_noise` p50 / p90 reads 0.91 / 2.92 in the hall and
+  3.18 / 13.78 at the vein (Plan 0057's Phase 7 "before" rows, native), about six times the hall's
+  p90. By `1 / sqrt(n)` the vein's p90 reaches 1 level at about 780 000 samples.
 
 Plan 0057 rejected "a fill at chunk upload" on 2026-11-04 for four reasons. This design answers
 each: the work is GPU work in the frame (a bounded slice, and it removes the light pass's emissive
@@ -61,13 +66,34 @@ comes near (quality rises by distance from a queue, and the upload only starts i
 `wgpu` exposes one queue, so "off the frame" cannot mean a separate compute queue. It means a slice
 with a budget inside each frame.
 
+## The order: look first, cut later
+
+The owner, after Plan 0057's second window: "what if we go differently - no matter performance, but
+build something that would look really polished, then we will see where we can cut performance?"; on
+its scope: "agreed, only light. antializing next".
+
+**The first thing built is a reference with no budget**, and the owner judges it before any budget
+work starts. It is this ADR's store at its limit: a face cell for every face of every chunk of a bounded
+world (no brick level, no rings, no queue), baked before the first frame with independent seeds and no
+filter, each face sampled until its own standard error through the display transform is under half a
+level (at least 4096 samples, at most 2^20), read at native resolution with full-resolution lighting
+and no upscaler. A dig re-bakes the box and the bricks within 32 voxels, in the frame, at a hitch nobody
+budgets; ring 3 is deliberately out of that first look and says so on screen.
+
+**Everything else in the Decision below is the expected destination, not the commitment.** The brick level,
+the rings and their samples, the shared seeds and the filter, the slice, the fade and the fresh start's
+seconds are cuts from the reference: each is read against it, shown beside it, and kept or refused by the
+owner, one at a time. A cut the owner refuses changes this ADR's Decision before it is accepted, and
+"a guess" below means a guess. Antialiasing comes between the reference's verdict and the first cut, in
+its own plan, and the resolution cut needs its answer.
+
 ## Decision
 
 **Each resident chunk within a bake radius holds its static emissive irradiance in a store the
 renderer owns, computed for every face of the chunk by a budgeted GPU job when the chunk becomes
 bakeable and when an edit changes it, and a pixel reads its face's value from that store. There is
 no view-driven fill, no per-frame emissive sampling for a cube face and no screen history.** The
-values below marked "a guess" are read in Plan 0059's Phase 1.
+values below marked "a guess" are read in Plan 0059's cut phases, against the reference.
 
 - **Two levels, in one pool.** A surface brick holds six direction values, each the mean of that
   direction's faces: the **brick level**. A chunk near the camera also holds one 8-byte **face
@@ -99,7 +125,7 @@ values below marked "a guess" are read in Plan 0059's Phase 1.
   radius today, at three times the distance.
 - **The scheduler is one queue on the render thread** (ADR-0017), nearest first, edits ahead of
   loads, with a slice set from the previous frames' timestamp readings: **1.5 ms on the RTX, 4 ms
-  on the Cezanne with `N` and the brick samples a quarter** (guesses, read in Phase 1). A chunk
+  on the Cezanne with `N` and the brick samples a quarter** (guesses, read in Phase 4). A chunk
   enters only when every chunk within `light_radius` of it is mirrored or known empty, so a later
   upload cannot change its light. Faces are listed on the stream workers from the masks of the chunk
   and its six neighbours, a pure function through ADR-0017's hook, and the render thread alone
@@ -123,7 +149,7 @@ values below marked "a guess" are read in Plan 0059's Phase 1.
   stepped neighbour at half weight) runs once in the job and is stored, with no per-frame pass and
   no read-time cost. Independent seeds through the filter read 1.4 levels rms at 512 samples, by
   arithmetic; **shared seeds have no reading yet, and their cost is a seam at chunk borders**, where
-  two different random sequences meet. Plan 0059's Phase 1 reads the seed arms, with a stop rule.
+  two different random sequences meet. Plan 0059's Phase 4 reads the seed arms against the reference.
 - **Invalidation by brick, in three rings.**
   1. **The box** (the edit's box dilated by one voxel): relisted and baked at 32 samples in the
      frame
@@ -153,7 +179,7 @@ values below marked "a guess" are read in Plan 0059's Phase 1.
   stay blessed on lavapipe as they are today.
 
 **The table goes only on the owner's verdict.** `--light baked|table` holds both until Plan 0059's
-window. On a yes, the table, its fill, preload, guard, sweep and age-out are deleted, and nothing
+Phase 13. On a yes, the table, its fill, preload, guard, sweep and age-out are deleted, and nothing
 replaces them as a cache. On a no, the store comes out and this ADR is superseded.
 
 ## Consequences
@@ -187,7 +213,7 @@ replaces them as a cache. On a no, the store comes out and this ADR is supersede
   a
   one-face ramp, and a pit's bottom takes part of its rim's light.
 - **Shared seeds may trade grain for seams,** and a low-frequency error of a few levels may cover a
-  whole wall at the 32-sample tier. Phase 1 can send this back to independent seeds at twice the
+  whole wall at the 32-sample tier. Plan 0059's Phase 4 can send this back to independent seeds at twice the
   cost.
 - **Staleness at reach.** After a dig, a far face lit through the new opening keeps its old value
   for
@@ -199,7 +225,7 @@ replaces them as a cache. On a no, the store comes out and this ADR is supersede
 - **Emitter samples for a larger radius.** Ranges must exist within bake radius plus light radius
   (16
   chunks), not 4. ADR-0025 read 997 740 of 1 048 576 samples at the streamed window under its
-  uniform pool, so it fits narrowly and extraction grows; Phase 1 reads it.
+  uniform pool, so it fits narrowly and extraction grows; Plan 0059's Phase 1 reads it.
 - **Dynamic geometry casts no emissive shadow.** A future voxel entity does not shadow baked light,
   as it does not shadow the table's settled cells. M6 is the place to say otherwise.
 - **Plan 0058 needs a refresh:** its emission-scale phase reads a cell's kept emitter, which is
@@ -229,6 +255,8 @@ ADR-0018 and ADR-0036, already rejected in ADR-0043: a pixel's history is lost o
 good", "still settles for a long time".
 
 ### Alternative D: Faces only, no brick level
+This is the reference's form, with no budget, and rejected here as the destination only; the reach cut
+(Plan 0059's Phases 6 and 7) tests the rejection against the owner's eye.
 Every chunk within 12 holds face cells: about 220 MB at the vein's density and the sharpest far
 field.
 A chunk not yet baked has nothing to show, which is the young cell again, far faces under a pixel
@@ -245,18 +273,20 @@ A second sampler in Rust, off the frame and bit-identical everywhere. At a guess
 the
 walking load of 11 M samples a second is about 5.5 cores, over the floor's 4, and a dig's light
 arrives
-frames late. It also doubles the sampler to keep equal with WGSL's. Phase 1 reads the real figure
+frames late. It also doubles the sampler to keep equal with WGSL's. Plan 0059's Phase 4 reads the real figure
 once,
 and a reading under about 100 ns a sample reopens this. **Both** (CPU far, GPU near) pays for both
 samplers
 and adds a seam between them.
 
 ### Alternative G: The sample count alone, no filter or shared seeds
+The reference is this at no budget, with the count set per face by its spread; rejected here as the
+destination only.
 One level needs about 6 700 samples a face: about 210 ms a chunk at 6 900 faces on the RTX. It is
 out of
 reach within any budget above. A brute count of 1024 through the filter (0.96 levels, arithmetic)
 takes the
-walking cost to about 1.5 ms a frame, the whole slice, and stays the fallback if Phase 1's stop rule
+walking cost to about 1.5 ms a frame, the whole slice, and stays the fallback if Plan 0059's Phase 4
 refuses shared seeds.
 
 ### Alternative H: Emitter-out rays
@@ -280,6 +310,22 @@ the bake is behind. The brick level does that job in 24 B a brick.
 A second march in integer WGSL at a speed cost, for a property nothing consumes: goldens are blessed
 on one adapter and
 no gameplay reads light.
+
+### Alternative L: The budgets first, the owner's look on the way (this ADR's first order)
+The plan as first approved: a spike with a stop rule, a still bake at the budgeted tiers shown at its third
+phase, then the queue and the rings. Its first look would be grain and softening from counts picked for a
+frame budget, so a fault could be the design or the cut, and Plan 0057 spent eight phases fitting a design to
+budgets before the owner called it the wrong way. Rejected by the owner's direction.
+
+### Alternative M: Cut down from the table
+Raise the table's count, radius and table size until it looks right, with no new store. It keeps the view-driven
+fill the owner rejected: however deep, a face is young the first time it is seen, and "dark patches when moving
+fast" is that fault.
+
+### Alternative N: A still reference offline, and no window
+Path-trace reference images headless, and compare strips. It is the cheapest reference, and it cannot show what the
+owner is judging: moving fast, turning and digging. Plan 0057's strips met several bars the window did not agree with.
+The owner also said of this kind of evidence that the judgement is in the app (Plan 0055).
 
 ## Outcome
 
