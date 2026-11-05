@@ -5949,6 +5949,43 @@ mod tests {
             vxe_render::Light::Table
         );
 
+        // The first look's flags, as `live/session1b.sh` passes them.
+        for world_flags in [
+            &["--level", "--pose", "vein"][..],
+            &["--level", "--pose", "patch"][..],
+            &["--source", "showcase", "--shot", "hall"][..],
+        ] {
+            let mut flags = world_flags.to_vec();
+            flags.extend([
+                "--adapter",
+                "NVIDIA",
+                "--light",
+                "baked",
+                "--internal-scale",
+                "1",
+                "--upscaler",
+                "off",
+                "--jitter",
+                "off",
+                "--lighting",
+                "full",
+                "--far-normal",
+                "1,2",
+                "--bake-radius",
+                "2",
+                "--exposure",
+                "8",
+                "--lamp",
+                "off",
+                "--hud",
+            ]);
+            let a = parse_args_from(argv(&flags)).expect("the runner's flags parse");
+            assert_eq!(a.bake_radius, Some(2));
+            assert_eq!(a.lighting, LightingResolution::Full);
+            assert_eq!(a.look.far_normal, [1.0, 2.0]);
+            assert!(!a.upscaler_settings(hud::UpscalerMode::Off).2, "no jitter");
+        }
+
         let world = ChunkExtent::new([0, 0, 0], [20, 20, 8]);
         let near = bake_extent(world, [660.0, 900.0, 390.0], Some(2));
         assert_eq!(near.min.0, [8, 12, 4]);

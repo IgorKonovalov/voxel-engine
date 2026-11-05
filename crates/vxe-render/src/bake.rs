@@ -309,7 +309,7 @@ pub struct BakeSettings {
 }
 
 /// Candidates a sample resamples in the reference: the arm the count reading keeps.
-pub const KEPT_CANDIDATES: u32 = 8;
+pub const KEPT_CANDIDATES: u32 = 32;
 /// Whether the reference clamps a sample: the arm the count reading keeps.
 pub const KEPT_CLAMP: bool = false;
 

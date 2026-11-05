@@ -791,7 +791,7 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The reference bake, and the count it needs | dev | not started | |
+| 1: The reference bake, and the count it needs | dev | stopped at its stop rule: the kept arm (32 candidates, clamp off, 65 536) meets the `G_noise` bars and projects a whole level at about 15 h on the RTX; readings in [`logs/0059.md`](logs/0059.md) | committed with this row |
 | 2: The whole reference: a world to walk and a hole to dig | dev | not started | |
 | 3: The owner's verdict on the reference | human | not started | |
 | 4: The samples cut, the shared seeds and the filter | dev | not started | |
@@ -811,6 +811,15 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what
 was done instead. Followups noticed and not acted on. One line each. Empty is fine.)_
+
+- Phase 1 (this row's commit): the stop rule fired (done-when 7: the kept arm projects a whole level over 60 minutes); Phase 1b is not run.
+- Phase 1: the running sums, the stop and the `rgb9e5` packing live on the CPU in f64; the working buffer holds one round's sums (layout in the log).
+- Phase 1: the pool's binding is clamped to what `limits_within` requests, 220 MiB (`TABLE_BINDING_BYTES`), not 256 MiB; lavapipe's 128 MiB.
+- Phase 1: `--light baked` is refused without `--level` or `--source showcase`; `--bake-radius` without `--light baked`.
+- Phase 1: under `Light::Baked`, `Frame::set_lighting` turns off the table's blend, fill, preload and age-out, and the encode skips the guard and the chunk sweep.
+- Phase 1: the count reading's deepest count is 65 536 (not 262 144), the reference is the mean of a view's four 65 536 runs, the clamp arms share the unclamped arms' samples, the zero share is read on the views' faces, and the stop was read at the vein only.
+- Phase 1: the runner's comparison against the table is a separate `--light table` launch (no mode key in Phase 1).
+- Phase 1, noticed: the stop's wall rate (310 ns a sample against 42 in fixed runs) is set by one waited submit a round for a chunk's last faces.
 
 ### Close triggers
 
