@@ -445,11 +445,20 @@ pub struct StoreStats {
     pub missing: u32,
 }
 
-/// The pool and where its blocks lie.
+/// The pool and where its blocks lie, with a copy of every block's words for a dig's kept cells
+/// and the store file.
 pub struct Store {
     pool: wgpu::Buffer,
     blocks: BTreeMap<[i32; 3], (u64, u64)>,
-    used_words: u64,
+    words: BTreeMap<[i32; 3], Vec<u32>>,
+    /// The header's and the chunk table's words.
+    head_words: u64,
+    /// The first word no block holds: a block that outgrows its place moves here.
+    end_words: u64,
+    /// The chunks the last bake or load covered; a dig re-bakes only inside them.
+    piece: Option<ChunkExtent>,
+    /// The mirror window the chunk table indexes.
+    window: Option<ChunkExtent>,
 }
 
 impl Store {
@@ -465,7 +474,11 @@ impl Store {
         Self {
             pool,
             blocks: BTreeMap::new(),
-            used_words: 0,
+            words: BTreeMap::new(),
+            head_words: 0,
+            end_words: 0,
+            piece: None,
+            window: None,
         }
     }
 
@@ -474,10 +487,11 @@ impl Store {
         &self.pool
     }
 
-    pub(crate) fn stats(&self, missing: u32) -> StoreStats {
+    /// The counters, `missing` as the caller read it.
+    pub fn stats(&self, missing: u32) -> StoreStats {
         StoreStats {
             chunks: self.blocks.len() as u64,
-            bytes: self.used_words * 4,
+            bytes: (self.head_words + self.blocks.values().map(|b| b.1).sum::<u64>()) * 4,
             missing,
         }
     }
@@ -485,6 +499,263 @@ impl Store {
     /// `coord`'s block: its first word and its words.
     pub fn block(&self, coord: ChunkCoord) -> Option<(u64, u64)> {
         self.blocks.get(&coord.0).copied()
+    }
+
+    /// `coord`'s block as its words, the directory first, from the store's own copy.
+    pub fn block_words(&self, coord: ChunkCoord) -> Option<&[u32]> {
+        self.words.get(&coord.0).map(Vec::as_slice)
+    }
+
+    /// The chunks the last bake or load covered.
+    pub fn piece(&self) -> Option<ChunkExtent> {
+        self.piece
+    }
+
+    /// Empties the store for `window`'s chunk table: the header written, no block.
+    fn reset(&mut self, queue: &wgpu::Queue, window: ChunkExtent) {
+        let size = window.size();
+        let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
+        let mut header = vec![0u32; (STORE_TABLE + table_words) as usize];
+        for k in 0..3 {
+            header[4 + k] = window.min.0[k] as u32;
+            header[8 + k] = size[k] as u32;
+        }
+        queue.write_buffer(&self.pool, 0, bytemuck::cast_slice(&header));
+        self.blocks.clear();
+        self.words.clear();
+        self.head_words = STORE_TABLE + table_words;
+        self.end_words = self.head_words;
+        self.piece = None;
+        self.window = Some(window);
+    }
+
+    /// The chunk table's word for `coord`.
+    fn table_word(&self, coord: ChunkCoord) -> u64 {
+        let window = self.window.expect("a reset store");
+        let size = window.size();
+        let w = [0, 1, 2].map(|k| i64::from(coord.0[k]) - i64::from(window.min.0[k]));
+        let index = w[0] + i64::from(size[0]) * (w[1] + i64::from(size[1]) * w[2]);
+        STORE_TABLE + index as u64
+    }
+
+    /// Writes `block` as `coord`'s at `first`, and points the chunk table at it.
+    fn put(&mut self, queue: &wgpu::Queue, coord: ChunkCoord, first: u64, block: Vec<u32>) {
+        queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(&block));
+        queue.write_buffer(
+            &self.pool,
+            self.table_word(coord) * 4,
+            bytemuck::bytes_of(&(first as u32)),
+        );
+        self.end_words = self.end_words.max(first + block.len() as u64);
+        self.blocks.insert(coord.0, (first, block.len() as u64));
+        self.words.insert(coord.0, block);
+    }
+
+    /// Drops `coord`'s block: the chunk table reads none.
+    fn remove(&mut self, queue: &wgpu::Queue, coord: ChunkCoord) {
+        if self.blocks.remove(&coord.0).is_some() {
+            self.words.remove(&coord.0);
+            queue.write_buffer(
+                &self.pool,
+                self.table_word(coord) * 4,
+                bytemuck::bytes_of(&0u32),
+            );
+        }
+    }
+
+    /// Where a block of `words` for `coord` goes: its old place when it fits, else at `end`,
+    /// which moves past it.
+    fn place(&self, coord: ChunkCoord, words: u64, end: &mut u64) -> Result<u64, BakeError> {
+        if let Some(&(first, old)) = self.blocks.get(&coord.0)
+            && words <= old
+        {
+            return Ok(first);
+        }
+        let capacity = self.pool.size();
+        if (*end + words) * 4 > capacity {
+            return Err(BakeError::PoolFull {
+                needed: (*end + words) * 4,
+                capacity,
+            });
+        }
+        let first = *end;
+        *end += words;
+        Ok(first)
+    }
+}
+
+/// What a store file was baked from: a file loads only where every field matches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreKey {
+    /// The world's generator seed.
+    pub world_seed: u64,
+    /// The world's chunks, `min` and exclusive `max`.
+    pub world: [[i32; 3]; 2],
+    /// The piece's chunks, `min` and exclusive `max`.
+    pub piece: [[i32; 3]; 2],
+    /// The piece's centre chunk and its radius in chunks.
+    pub centre: [i32; 3],
+    pub radius: i32,
+    /// The mirror's light radius, in chunks.
+    pub light_radius: i32,
+    /// The arm: candidates and the clamp.
+    pub candidates: u32,
+    pub clamp: bool,
+    /// The stop: the standard error's bits, `n_min`, `n_max`, the round and the seed.
+    pub se_bits: u32,
+    pub n_min: u32,
+    pub n_max: u32,
+    pub round: u32,
+    pub seed: u32,
+    /// [`source_hash`].
+    pub source_hash: u64,
+}
+
+const STORE_MAGIC: &[u8; 8] = b"VXEBAKE1";
+
+/// The hash a store file keys the bake's module by: FNV-1a of [`bake_source`].
+pub fn source_hash() -> u64 {
+    let mut h = vxe_world::hash::Fnv1a::default();
+    h.write(bake_source().as_bytes());
+    h.finish()
+}
+
+impl StoreKey {
+    /// The fields in file order, each with its name.
+    fn fields(&self) -> Vec<(&'static str, u64)> {
+        let w = |v: i32| u64::from(v as u32);
+        let mut f = vec![("world seed", self.world_seed)];
+        for (name, v) in [("world", self.world), ("piece", self.piece)] {
+            f.extend(v.iter().flatten().map(|x| (name, w(*x))));
+        }
+        f.extend(self.centre.map(|v| ("piece centre", w(v))));
+        f.extend([
+            ("piece radius", w(self.radius)),
+            ("light radius", w(self.light_radius)),
+            ("candidates", u64::from(self.candidates)),
+            ("clamp", u64::from(self.clamp)),
+            ("stop's standard error", u64::from(self.se_bits)),
+            ("n_min", u64::from(self.n_min)),
+            ("n_max", u64::from(self.n_max)),
+            ("round", u64::from(self.round)),
+            ("seed", u64::from(self.seed)),
+            ("bake source hash", self.source_hash),
+        ]);
+        f
+    }
+}
+
+/// Why a store file did not load.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StoreFileError {
+    /// The file could not be read or written.
+    Io(String),
+    /// Not a store file, or cut short.
+    Malformed,
+    /// The named field differs from what this run would bake.
+    Mismatch(&'static str),
+    /// The blocks do not fit the pool.
+    PoolFull { needed: u64, capacity: u64 },
+}
+
+impl std::fmt::Display for StoreFileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "store file: {e}"),
+            Self::Malformed => write!(f, "store file: not a store file, or cut short"),
+            Self::Mismatch(field) => write!(f, "store file: the {field} differs"),
+            Self::PoolFull { needed, capacity } => {
+                write!(
+                    f,
+                    "store file: the blocks need {needed} B and the pool holds {capacity} B"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for StoreFileError {}
+
+impl Store {
+    /// The store as a file's bytes: the magic, `key`'s fields, then each block's chunk, words and
+    /// words, in chunk order.
+    pub fn to_file_bytes(&self, key: &StoreKey) -> Vec<u8> {
+        let mut out = STORE_MAGIC.to_vec();
+        for (_, v) in key.fields() {
+            out.extend(v.to_le_bytes());
+        }
+        out.extend((self.words.len() as u64).to_le_bytes());
+        for (c, block) in &self.words {
+            for v in c {
+                out.extend(v.to_le_bytes());
+            }
+            out.extend((block.len() as u64).to_le_bytes());
+            out.extend(bytemuck::cast_slice::<u32, u8>(block));
+        }
+        out
+    }
+
+    /// `bytes`' blocks, where its fields match `key`; else the first field that differs.
+    pub(crate) fn parse_file(
+        key: &StoreKey,
+        bytes: &[u8],
+    ) -> Result<Vec<(ChunkCoord, Vec<u32>)>, StoreFileError> {
+        let mut at = 0usize;
+        let mut take = |n: usize| -> Result<&[u8], StoreFileError> {
+            let s = bytes.get(at..at + n).ok_or(StoreFileError::Malformed)?;
+            at += n;
+            Ok(s)
+        };
+        if take(8)? != STORE_MAGIC {
+            return Err(StoreFileError::Malformed);
+        }
+        let u64_of = |b: &[u8]| u64::from_le_bytes(b.try_into().expect("8 bytes"));
+        for (name, want) in key.fields() {
+            if u64_of(take(8)?) != want {
+                return Err(StoreFileError::Mismatch(name));
+            }
+        }
+        let count = u64_of(take(8)?);
+        let mut blocks = Vec::new();
+        for _ in 0..count {
+            let mut c = [0i32; 3];
+            for v in &mut c {
+                *v = i32::from_le_bytes(take(4)?.try_into().expect("4 bytes"));
+            }
+            let words = u64_of(take(8)?) as usize;
+            let raw = take(words * 4)?;
+            blocks.push((ChunkCoord(c), bytemuck::pod_collect_to_vec(raw)));
+        }
+        Ok(blocks)
+    }
+
+    /// Empties the store for `window` and loads `blocks` ([`Store::parse_file`]), laid in chunk
+    /// order, as `key`'s piece.
+    pub(crate) fn load_blocks(
+        &mut self,
+        queue: &wgpu::Queue,
+        window: ChunkExtent,
+        key: &StoreKey,
+        blocks: Vec<(ChunkCoord, Vec<u32>)>,
+    ) -> Result<(), StoreFileError> {
+        let size = window.size();
+        let head = STORE_TABLE + (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
+        let needed = (head + blocks.iter().map(|(_, b)| b.len() as u64).sum::<u64>()) * 4;
+        if needed > self.pool.size() {
+            return Err(StoreFileError::PoolFull {
+                needed,
+                capacity: self.pool.size(),
+            });
+        }
+        self.reset(queue, window);
+        let mut first = self.head_words;
+        for (c, block) in blocks {
+            let words = block.len() as u64;
+            self.put(queue, c, first, block);
+            first += words;
+        }
+        self.piece = Some(ChunkExtent::new(key.piece[0], key.piece[1]));
+        Ok(())
     }
 }
 
@@ -662,6 +933,8 @@ struct FaceState {
     material: u16,
     snapshots: Vec<(u32, [f32; 3], [f32; 3])>,
     done: bool,
+    /// The cell kept from the block before, unbaked.
+    keep: Option<[u32; 2]>,
 }
 
 fn lum3(c: [f64; 3]) -> f64 {
@@ -750,17 +1023,39 @@ pub(crate) struct BakeRun<'a> {
     pub params: Params,
 }
 
-/// Bakes `extent`'s chunks into `store`, emptied first.
-pub(crate) fn run(
-    run: &BakeRun<'_>,
-    store: &mut Store,
+/// A chunk's job: its faces, where its block goes, and the cells it keeps from the block before
+/// (by brick slot and key), which it does not bake.
+pub(crate) struct Job {
+    pub coord: ChunkCoord,
+    pub faces: ChunkFaces,
+    pub first_word: u64,
+    pub kept: Option<KeptCells>,
+}
+
+/// The cells a re-baked job keeps: by brick slot and key, the two words of the cell before, for
+/// every face outside the ring that the block before holds.
+pub(crate) type KeptCells = std::collections::HashMap<(u16, u16), [u32; 2]>;
+
+/// The cells of `block` by brick slot and key.
+fn cells_of(block: &[u32]) -> KeptCells {
+    let mut out = KeptCells::new();
+    for slot in 0..CHUNK_BRICKS {
+        let dir = block[slot];
+        let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
+        for i in 0..n {
+            let cell = [block[run + 2 * i], block[run + 2 * i + 1]];
+            out.insert((slot as u16, (cell[1] & 0xFFF) as u16), cell);
+        }
+    }
+    out
+}
+
+/// The surface chunks of `extent` and their faces, in coordinate order.
+fn list_extent(
+    world: &World,
     extent: ChunkExtent,
-    settings: &BakeSettings,
-    progress: &mut dyn FnMut(&BakeProgress),
-) -> Result<BakeReport, BakeError> {
-    let (device, queue) = (run.device, run.queue);
-    let opaque = opaque_table(run.world.materials());
-    // The list, first: the pool's blocks are known before a sample is drawn.
+    opaque: &[bool],
+) -> Vec<(ChunkCoord, ChunkFaces)> {
     let mut jobs: Vec<(ChunkCoord, ChunkFaces)> = Vec::new();
     let [ex, ey, ez] = extent.size();
     for z in 0..ez {
@@ -771,7 +1066,7 @@ pub(crate) fn run(
                     extent.min.0[1] + y,
                     extent.min.0[2] + z,
                 ]);
-                if let Some(faces) = list_world_chunk(run.world, c, &opaque)
+                if let Some(faces) = list_world_chunk(world, c, opaque)
                     && faces.faces() > 0
                 {
                     jobs.push((c, faces));
@@ -780,14 +1075,28 @@ pub(crate) fn run(
         }
     }
     jobs.sort_unstable_by_key(|(c, _)| c.0);
+    jobs
+}
+
+/// Bakes `extent`'s chunks into `store`, emptied first.
+pub(crate) fn run(
+    run: &BakeRun<'_>,
+    store: &mut Store,
+    extent: ChunkExtent,
+    settings: &BakeSettings,
+    progress: &mut dyn FnMut(&BakeProgress),
+) -> Result<BakeReport, BakeError> {
+    let opaque = opaque_table(run.world.materials());
+    // The list, first: the pool's blocks are known before a sample is drawn.
+    let mut listed = list_extent(run.world, extent, &opaque);
     if settings.reversed {
-        jobs.reverse();
+        listed.reverse();
     }
     let window = run.gpu.window();
     let size = window.size();
     let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
     let needed_words =
-        STORE_TABLE + table_words + jobs.iter().map(|(_, f)| f.block_words()).sum::<u64>();
+        STORE_TABLE + table_words + listed.iter().map(|(_, f)| f.block_words()).sum::<u64>();
     let capacity = store.pool.size();
     if needed_words * 4 > capacity {
         return Err(BakeError::PoolFull {
@@ -795,16 +1104,143 @@ pub(crate) fn run(
             capacity,
         });
     }
-    // The header and an empty table.
-    let mut header = vec![0u32; (STORE_TABLE + table_words) as usize];
-    for k in 0..3 {
-        header[4 + k] = window.min.0[k] as u32;
-        header[8 + k] = size[k] as u32;
-    }
-    queue.write_buffer(&store.pool, 0, bytemuck::cast_slice(&header));
-    store.blocks.clear();
-    store.used_words = STORE_TABLE + table_words;
+    store.reset(run.queue, window);
+    // The blocks lie in the jobs' order, whatever order the jobs end in.
+    let mut at = store.head_words;
+    let jobs: Vec<Job> = listed
+        .into_iter()
+        .map(|(coord, faces)| {
+            let words = faces.block_words();
+            let job = Job {
+                coord,
+                faces,
+                first_word: at,
+                kept: None,
+            };
+            at += words;
+            job
+        })
+        .collect();
+    let report = run_jobs(run, store, jobs, settings, progress)?;
+    store.piece = Some(extent);
+    Ok(report)
+}
 
+/// The bricks a dig re-bakes, by chunk: those whose voxels lie within [`DIG_REACH`] voxels of a
+/// box dilated by one voxel, clipped to `piece`. A box is `min ..= max` in voxels.
+pub fn dig_ring(boxes: &[[[i32; 3]; 2]], piece: ChunkExtent) -> BTreeMap<[i32; 3], Vec<u16>> {
+    let mut ring: BTreeMap<[i32; 3], std::collections::BTreeSet<u16>> = BTreeMap::new();
+    let pmin = piece.min.0;
+    let psize = piece.size();
+    for [min, max] in boxes {
+        let lo = min.map(|v| v - 1);
+        let hi = max.map(|v| v + 1);
+        let r = DIG_REACH;
+        // Bricks whose box can lie within the reach, by axis.
+        let blo = [0, 1, 2].map(|k| (lo[k] - r).div_euclid(8));
+        let bhi = [0, 1, 2].map(|k| (hi[k] + r).div_euclid(8));
+        for bz in blo[2]..=bhi[2] {
+            for by in blo[1]..=bhi[1] {
+                for bx in blo[0]..=bhi[0] {
+                    let b = [bx, by, bz];
+                    let gap2: i64 = (0..3)
+                        .map(|k| {
+                            let (b0, b1) = (b[k] * 8, b[k] * 8 + 7);
+                            let g = i64::from((lo[k] - b1).max(b0 - hi[k]).max(0));
+                            g * g
+                        })
+                        .sum();
+                    if gap2 > i64::from(r * r) {
+                        continue;
+                    }
+                    let c = b.map(|v| v.div_euclid(8));
+                    if (0..3).any(|k| c[k] < pmin[k] || c[k] >= pmin[k] + psize[k]) {
+                        continue;
+                    }
+                    let inner = b.map(|v| v.rem_euclid(8));
+                    ring.entry(c).or_default().insert(brick_slot(inner) as u16);
+                }
+            }
+        }
+    }
+    ring.into_iter()
+        .map(|(c, s)| (c, s.into_iter().collect()))
+        .collect()
+}
+
+/// Voxels from a dig's box within which bricks re-bake (ADR-0046's rings 1 and 2).
+pub const DIG_REACH: i32 = 32;
+/// Samples a dug face takes at most.
+pub const DIG_N_MAX: u32 = 1 << 16;
+
+/// What a dig's re-bake did.
+#[derive(Clone, Debug, Default)]
+pub struct DigReport {
+    /// The ring's bricks inside the piece; 0 is a dig wholly outside it.
+    pub bricks: u64,
+    pub bake: BakeReport,
+}
+
+/// Re-bakes the ring of `boxes` ([`dig_ring`]) in `store`: each chunk the ring reaches is listed
+/// again, its faces in the ring's bricks baked, every other face keeping its cell, and its block
+/// rewritten in its place when it fits, else at the pool's end. A chunk left with no face drops
+/// its block.
+pub(crate) fn rebake(
+    run: &BakeRun<'_>,
+    store: &mut Store,
+    boxes: &[[[i32; 3]; 2]],
+    settings: &BakeSettings,
+    progress: &mut dyn FnMut(&BakeProgress),
+) -> Result<DigReport, BakeError> {
+    let Some(piece) = store.piece else {
+        return Ok(DigReport::default());
+    };
+    let ring = dig_ring(boxes, piece);
+    let opaque = opaque_table(run.world.materials());
+    let mut jobs = Vec::new();
+    let mut end = store.end_words;
+    let mut bricks = 0u64;
+    for (c, slots) in &ring {
+        bricks += slots.len() as u64;
+        let coord = ChunkCoord(*c);
+        let faces = list_world_chunk(run.world, coord, &opaque).unwrap_or_default();
+        if faces.faces() == 0 {
+            store.remove(run.queue, coord);
+            continue;
+        }
+        let old = store.words.get(c).map(|b| cells_of(b)).unwrap_or_default();
+        let mut kept = KeptCells::new();
+        for (slot, keys) in &faces.bricks {
+            if slots.binary_search(slot).is_ok() {
+                continue;
+            }
+            for &key in keys {
+                if let Some(cell) = old.get(&(*slot, key)) {
+                    kept.insert((*slot, key), *cell);
+                }
+            }
+        }
+        let first_word = store.place(coord, faces.block_words(), &mut end)?;
+        jobs.push(Job {
+            coord,
+            faces,
+            first_word,
+            kept: Some(kept),
+        });
+    }
+    let bake = run_jobs(run, store, jobs, settings, progress)?;
+    Ok(DigReport { bricks, bake })
+}
+
+/// Bakes `jobs` into `store`, each block written at its `first_word` as its job ends.
+fn run_jobs(
+    run: &BakeRun<'_>,
+    store: &mut Store,
+    jobs: Vec<Job>,
+    settings: &BakeSettings,
+    progress: &mut dyn FnMut(&BakeProgress),
+) -> Result<BakeReport, BakeError> {
+    let (device, queue) = (run.device, run.queue);
     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bake"),
         layout: &run.pipeline.layout,
@@ -830,7 +1266,7 @@ pub(crate) fn run(
         chunks: jobs.len() as u64,
         ..BakeReport::default()
     };
-    let total_faces: u64 = jobs.iter().map(|(_, f)| f.faces() as u64).sum();
+    let total_faces: u64 = jobs.iter().map(|j| j.faces.faces() as u64).sum();
     let mut done = BakeProgress {
         chunks: jobs.len() as u64,
         faces: total_faces,
@@ -854,17 +1290,8 @@ pub(crate) fn run(
         round,
         n_max,
         rounds_cap,
-        window_min: window.min,
-        size,
     };
-    // The blocks lie in the jobs' order, whatever order the jobs end in.
-    let mut pending: VecDeque<(ChunkCoord, ChunkFaces, u64)> = VecDeque::new();
-    let mut at = store.used_words;
-    for (coord, faces) in jobs {
-        let words = faces.block_words();
-        pending.push_back((coord, faces, at));
-        at += words;
-    }
+    let mut pending: VecDeque<Job> = jobs.into();
     let open_cap = if settings.jobs_alone { 1 } else { OPEN_JOBS };
     let mut free: Vec<usize> = (0..open_cap).rev().collect();
     let mut open: Vec<OpenJob> = Vec::new();
@@ -877,11 +1304,11 @@ pub(crate) fn run(
             .collect();
         while entries < batch {
             let Some(slot) = free.pop() else { break };
-            let Some((coord, faces, first_word)) = pending.pop_front() else {
+            let Some(next) = pending.pop_front() else {
                 free.push(slot);
                 break;
             };
-            let job = ctx.open(coord, faces, first_word, slot);
+            let job = ctx.open(next, slot);
             if job.live.is_empty() {
                 free.push(slot);
                 ctx.close(store, job, &mut report, &mut done);
@@ -1037,13 +1464,17 @@ struct JobCtx<'a, 'b> {
     round: u32,
     n_max: u32,
     rounds_cap: u32,
-    window_min: ChunkCoord,
-    size: [i32; 3],
 }
 
 impl JobCtx<'_, '_> {
     /// The job at `coord`: its faces' states, and its parameters and table staged in `slot`.
-    fn open(&self, coord: ChunkCoord, faces: ChunkFaces, first_word: u64, slot: usize) -> OpenJob {
+    fn open(&self, job: Job, slot: usize) -> OpenJob {
+        let Job {
+            coord,
+            faces,
+            first_word,
+            kept,
+        } = job;
         let table = job_table(self.run.gpu, coord);
         let used = (1 + table.count as usize) * 16;
         let at = slot as u64 * TABLE_SLOT_BYTES;
@@ -1064,7 +1495,11 @@ impl JobCtx<'_, '_> {
                 let l = [i % 8, i / 8 % 8, i / 64];
                 let voxel = [0, 1, 2].map(|k| coord.0[k] * 64 + b[k] * 8 + l[k]);
                 let face = (key & 7) as u8;
-                let wanted = self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
+                let keep = kept
+                    .as_ref()
+                    .and_then(|k| k.get(&(*brick_at, key)).copied());
+                let wanted =
+                    keep.is_none() && self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
                 states.push(FaceState {
                     voxel,
                     face,
@@ -1077,6 +1512,7 @@ impl JobCtx<'_, '_> {
                     material: 0,
                     snapshots: Vec::new(),
                     done: !wanted,
+                    keep,
                 });
             }
         }
@@ -1122,27 +1558,16 @@ impl JobCtx<'_, '_> {
         let mut block: Vec<u32> = job.faces.directory();
         block.reserve(job.states.len() * 2);
         for s in &job.states {
+            if let Some(cell) = s.keep {
+                block.extend(cell);
+                continue;
+            }
             let mean = s.mean(s.kept(self.settings.clamp));
             block.push(rgb9e5_pack(mean));
             block.push(u32::from(s.key) | u32::from(s.material) << 16);
         }
         debug_assert_eq!(block.len() as u64, job.faces.block_words());
-        queue.write_buffer(
-            &store.pool,
-            job.first_word * 4,
-            bytemuck::cast_slice(&block),
-        );
-        let w = [0, 1, 2].map(|k| i64::from(job.coord.0[k]) - i64::from(self.window_min.0[k]));
-        let index = w[0] + i64::from(self.size[0]) * (w[1] + i64::from(self.size[1]) * w[2]);
-        queue.write_buffer(
-            &store.pool,
-            (STORE_TABLE + index as u64) * 4,
-            bytemuck::bytes_of(&(job.first_word as u32)),
-        );
-        store
-            .blocks
-            .insert(job.coord.0, (job.first_word, block.len() as u64));
-        store.used_words += block.len() as u64;
+        store.put(queue, job.coord, job.first_word, block);
         report.faces += job.states.iter().filter(|s| s.n > 0).count() as u64;
         if self.settings.keep_faces {
             report

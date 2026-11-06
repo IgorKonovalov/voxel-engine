@@ -476,6 +476,17 @@ struct Args {
     /// `--bake-radius`: the chunks the pre-roll bakes around the eye's chunk; `None` every chunk
     /// of the world.
     bake_radius: Option<i32>,
+    /// `--bake-radius` was given (`all` is every chunk); unset, `--reference` bakes
+    /// [`REFERENCE_BAKE_RADIUS`].
+    bake_radius_set: bool,
+    /// `--reference`: the loaded light's reference look (Plan 0059 Phase 2): `--light baked`,
+    /// native resolution, no upscaler, no jitter, full-resolution lighting, far normal 1..2, a
+    /// piece of [`REFERENCE_BAKE_RADIUS`] chunks; `F` swaps the read between the store and the
+    /// table, `1` places a glass pane.
+    reference: bool,
+    /// `--bake-file PATH`: the store is loaded from `PATH` where its key matches this run's bake,
+    /// else baked and written there.
+    bake_file: Option<std::path::PathBuf>,
     /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
     /// `DEFAULT_PRELOAD_CLAIM_RADIUS`).
     preload_claim: u32,
@@ -676,6 +687,7 @@ impl Args {
             preload_radius: self.preload,
             preload_claim_radius: self.preload_claim,
             light: self.light,
+            keep_store: self.reference,
             ..Lighting::default()
         }
     }
@@ -755,6 +767,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         preload: vxe_render::marcher::DEFAULT_PRELOAD_RADIUS,
         light: vxe_render::Light::Table,
         bake_radius: None,
+        bake_radius_set: false,
+        reference: false,
+        bake_file: None,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -1056,13 +1071,22 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--bake-radius" => {
                 let v = value()?;
-                args.bake_radius = Some(
-                    v.parse()
-                        .ok()
-                        .filter(|r| (0..=64).contains(r))
-                        .ok_or(format!("--bake-radius takes 0 to 64 chunks, not {v}"))?,
-                );
+                args.bake_radius_set = true;
+                args.bake_radius = if v == "all" {
+                    None
+                } else {
+                    Some(
+                        v.parse()
+                            .ok()
+                            .filter(|r| (0..=64).contains(r))
+                            .ok_or(format!(
+                                "--bake-radius takes 0 to 64 chunks or all, not {v}"
+                            ))?,
+                    )
+                };
             }
+            "--reference" => args.reference = true,
+            "--bake-file" => args.bake_file = Some(value()?.into()),
             "--lamp-bounce" | "--indirect" => {
                 args.lamp_bounce = match value()?.as_str() {
                     "on" => true,
@@ -1166,8 +1190,30 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if args.showcase && !exposure_flag {
         args.exposure = Some(args.shot.exposure_milli as f32 / 1000.0);
     }
-    if args.bake_radius.is_some() && args.light != vxe_render::Light::Baked {
+    if args.reference {
+        if !(args.level || args.showcase) {
+            return Err(
+                "--reference bakes every chunk of a bounded piece; a streamed world has no \"every \
+                 chunk\" until Plan 0059 Phase 8: give --level or --source showcase"
+                    .to_owned(),
+            );
+        }
+        args.light = vxe_render::Light::Baked;
+        args.internal_scale = RenderScale::from_name("1").expect("scale 1");
+        args.upscaler = Some(hud::UpscalerMode::Off);
+        args.lighting = LightingResolution::Full;
+        args.jitter = false;
+        args.jitter_set = true;
+        far_normal = Some([1.0, 2.0]);
+        if !args.bake_radius_set {
+            args.bake_radius = Some(REFERENCE_BAKE_RADIUS);
+        }
+    }
+    if args.bake_radius_set && args.light != vxe_render::Light::Baked {
         return Err("--bake-radius sets the bake's extent; it needs --light baked".to_owned());
+    }
+    if args.bake_file.is_some() && args.light != vxe_render::Light::Baked {
+        return Err("--bake-file holds a baked store; it needs --light baked".to_owned());
     }
     if args.light == vxe_render::Light::Baked && !(args.level || args.showcase) {
         return Err(
@@ -2901,6 +2947,14 @@ impl SettleClock {
 }
 
 /// The running fly-through, once the world exists.
+/// The reference's state: the baked piece in words and chunks, the last dig's hitch, the panes.
+#[derive(Clone, Debug, Default)]
+struct Reference {
+    piece: Option<(String, ChunkExtent)>,
+    last_dig: Option<hud::DigHitch>,
+    panes: u32,
+}
+
 struct Run {
     start: Instant,
     /// Set by every error path that ends the session; see [`Failure`].
@@ -2943,6 +2997,8 @@ struct Run {
     /// `L2` and `R2` held, for their press edges.
     triggers: [bool; 2],
     bench_runs: u64,
+    /// The reference's piece, last dig and panes (`--reference`, and any `--light baked` run).
+    reference: Reference,
     frame: u32,
     gfx: Option<Gfx>,
     samples: Option<Samples>,
@@ -3054,6 +3110,10 @@ impl Run {
                 age: self.hud.age,
                 preload: self.hud.preload,
                 store: self.hud.store,
+                store_note: hud::store_note(
+                    self.reference.piece.as_ref().map(|p| p.0.as_str()),
+                    self.reference.last_dig,
+                ),
                 modes: self.modes.line(),
                 upscale: g
                     .frame
@@ -3125,8 +3185,10 @@ impl Run {
             .filter(|(_, at)| now - at < hud::BANNER_MS)
             .map(|(s, _)| s.to_owned());
         let pose = self.pose.as_ref().map(|(s, _)| s.to_owned());
+        let reference = self.args.reference.then(|| self.reference_row());
         let rows: Vec<String> = [
             pose,
+            reference,
             scene,
             self.modes.banner(now),
             self.upscaler.banner(now),
@@ -3650,12 +3712,45 @@ impl Run {
     }
 
     /// The pre-roll under `--light baked`: every chunk of the extent baked before the first frame,
-    /// its progress on stdout. The window maps with its first frame, so nothing waits on it here.
+    /// its progress on stdout, or under `--bake-file` loaded from the file where its key matches
+    /// (else baked and written there). The window maps with its first frame, so nothing waits on
+    /// it here.
     fn bake_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
         let eye = start_camera(&self.args, self.spawn).position.to_array();
-        let extent = bake_extent(self.world.extent(), eye, self.args.bake_radius);
+        let world_extent = self.world.extent();
+        let extent = bake_extent(world_extent, eye, self.args.bake_radius);
+        let centre = ChunkCoord(eye.map(|v| (v / 64.0).floor() as i32));
+        let label = piece_label(extent, world_extent, centre, self.args.bake_radius);
+        self.reference.piece = Some((label.clone(), extent));
+        let settings = vxe_render::BakeSettings::default();
+        let key = Frame::store_key(
+            mirror,
+            world_extent,
+            self.args.seed,
+            extent,
+            centre,
+            self.args.bake_radius.unwrap_or(-1),
+            &settings,
+        );
+        if let Some(path) = self.args.bake_file.clone() {
+            let start = now();
+            match frame.load_store_file(&gpu.device, &gpu.queue, mirror, &self.world, &path, &key) {
+                Ok(()) => {
+                    let s = frame.store().stats(0);
+                    println!(
+                        "bake file: loaded {} in {:.0} ms, {label}, {} chunks, store {:.1} MB",
+                        path.display(),
+                        ms_since(start),
+                        s.chunks,
+                        s.bytes as f64 / 1e6
+                    );
+                    return;
+                }
+                Err(e) => println!("bake file: {} refused ({e}); baking", path.display()),
+            }
+        }
         println!(
-            "bake: {:?} chunks from {:?}, every face to a standard error of {} levels, {} to {} samples",
+            "bake: {:?} chunks from {:?} ({label}), every face to a standard error of {} levels, {} to {} samples",
             extent.size(),
             extent.min.0,
             vxe_render::bake::BAKE_SE,
@@ -3664,7 +3759,6 @@ impl Run {
         );
         let start = now();
         let mut last = 0.0;
-        let settings = vxe_render::BakeSettings::default();
         let report = frame.bake_until(
             &gpu.device,
             &gpu.queue,
@@ -3703,9 +3797,103 @@ impl Run {
                     ms_since(start) / 1e3,
                     s.bytes as f64 / 1e6
                 );
+                if let Some(path) = &self.args.bake_file {
+                    match frame.write_store_file(path, &key) {
+                        Ok(bytes) => println!("bake file: wrote {} ({bytes} B)", path.display()),
+                        Err(e) => println!("bake file: {} not written ({e})", path.display()),
+                    }
+                }
             }
             Err(e) => self.failure.set(format!("bake failed: {e}")),
         }
+    }
+
+    /// A dig's re-bake, ahead of this frame's encode: the ring of every box since the last frame
+    /// to the reference's stop with `n_max` [`vxe_render::bake::DIG_N_MAX`]. `enc` holds the
+    /// sync's copies, so it is submitted first and a new one returned. The hitch is printed.
+    fn rebake_digs(&mut self, gpu: &Gpu, enc: wgpu::CommandEncoder) -> wgpu::CommandEncoder {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return enc;
+        };
+        if !gfx.frame.digs_pending() {
+            return enc;
+        }
+        gpu.queue.submit([enc.finish()]);
+        let settings = vxe_render::BakeSettings {
+            n_max: vxe_render::bake::DIG_N_MAX,
+            ..vxe_render::BakeSettings::default()
+        };
+        let t = now();
+        let result = gfx.frame.rebake_digs(
+            &gpu.device,
+            &gpu.queue,
+            &mut gfx.mirror,
+            &self.world,
+            &settings,
+            &mut |_| {},
+        );
+        let ms = ms_since(t);
+        match result {
+            Some(Ok(r)) => {
+                let hitch = hud::DigHitch {
+                    faces: r.bake.faces,
+                    samples: r.bake.samples,
+                    ms,
+                    outside: r.bricks == 0,
+                };
+                if hitch.outside {
+                    println!("{}", hitch.line());
+                } else {
+                    println!(
+                        "{} ({} bricks, {} chunks, {} at {} and {} at {})",
+                        hitch.line(),
+                        r.bricks,
+                        r.bake.chunks,
+                        r.bake.faces_at_min,
+                        settings.n_min,
+                        r.bake.faces_at_max,
+                        settings.n_max
+                    );
+                }
+                self.reference.last_dig = Some(hitch);
+            }
+            Some(Err(e)) => println!("dig re-bake failed: {e}"),
+            None => {}
+        }
+        gpu.device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
+    }
+
+    /// The reference's banner row: the read and the panes placed, with their keys.
+    fn reference_row(&self) -> String {
+        let read = match self.modes.lighting.light {
+            vxe_render::Light::Baked => "store",
+            vxe_render::Light::Table => "table",
+        };
+        format!(
+            "reference: light {read} (F swaps), {} panes (1 places one)",
+            self.reference.panes
+        )
+    }
+
+    /// `1` under `--reference`: a glass pane ahead of the eye ([`glass_pane`]), re-baked as a dig;
+    /// its line on stdout and in the banner. Elsewhere nothing.
+    fn place_pane(&mut self) {
+        if !self.args.reference {
+            return;
+        }
+        let piece = self.reference.piece.as_ref().map(|p| p.1);
+        let line = match glass_pane(&self.world, &self.fly.camera, piece) {
+            Ok(r) => {
+                self.reference.panes += 1;
+                let n: u32 = r.changed_from.iter().map(|c| c.1).sum();
+                self.edited(&r);
+                format!("pane {}: {n} voxels of glass", self.reference.panes)
+            }
+            Err(e) => format!("pane refused: {e}"),
+        };
+        println!("{line}");
+        self.scene = Some((line, ms_since(self.start)));
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -4385,6 +4573,14 @@ impl Run {
         if input.pressed(KeyCode::KeyB) {
             self.bench();
         }
+        if self.args.reference && input.pressed(KeyCode::KeyF) {
+            self.modes
+                .press(hud::ModeKey::LightRead, ms_since(self.start));
+            println!("{}", self.modes.line());
+        }
+        if input.pressed(KeyCode::Digit1) {
+            self.place_pane();
+        }
         if input.pressed(KeyCode::KeyP) {
             self.stamp();
         }
@@ -4652,6 +4848,7 @@ impl Run {
                 Err(e) => return self.mirror_failed(e),
             }
         }
+        let mut enc = self.rebake_digs(gpu, enc);
         self.pilot_sample();
         let hud = self.hud.visible;
         if self.hud.cadence.due(hud) {
@@ -5189,6 +5386,7 @@ impl App for Flythrough {
                 scroll: ScrollSteps::default(),
                 triggers: [false; 2],
                 bench_runs: 0,
+                reference: Reference::default(),
                 frame: 0,
                 gfx: None,
                 samples: None,
@@ -5462,8 +5660,6 @@ fn shot_camera(shot: &Shot) -> Camera {
     }
 }
 
-/// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
-/// camera, or the spawn facing +x.
 /// The chunks a `--bake-radius` pre-roll bakes: within `radius` of the eye's chunk on each axis,
 /// inside `world`; all of `world` without a radius.
 fn bake_extent(world: ChunkExtent, eye: [f32; 3], radius: Option<i32>) -> ChunkExtent {
@@ -5477,6 +5673,98 @@ fn bake_extent(world: ChunkExtent, eye: [f32; 3], radius: Option<i32>) -> ChunkE
     ChunkExtent::new(lo, [0, 1, 2].map(|k| hi[k].max(lo[k])))
 }
 
+/// The bake's piece in words: `piece whole` when it is the world, else `piece r<radius> at
+/// <centre chunk>`.
+fn piece_label(
+    piece: ChunkExtent,
+    world: ChunkExtent,
+    centre: ChunkCoord,
+    radius: Option<i32>,
+) -> String {
+    match radius {
+        Some(r) if piece != world => format!("piece r{r} at {:?}", centre.0),
+        _ => "piece whole".to_owned(),
+    }
+}
+
+/// The castle's glass row as `flythrough::castle_materials` builds it.
+fn castle_glass() -> vxe_world::Material {
+    flythrough::castle_materials(&cave_materials())
+        .get(castle::material(castle::GLASS))
+        .expect("the castle's table holds its glass")
+        .clone()
+}
+
+/// `table` with [`castle_glass`] appended: the reference's pane row, which no voxel uses until a
+/// pane is placed.
+fn with_glass_row(table: &MaterialTable) -> MaterialTable {
+    let mut t = table.clone();
+    t.push(castle_glass());
+    t
+}
+
+/// The id of `table`'s glass row as [`with_glass_row`] appends it, if it has one.
+fn glass_row(table: &MaterialTable) -> Option<vxe_world::MaterialId> {
+    let glass = castle_glass();
+    table
+        .rows()
+        .iter()
+        .rposition(|m| m.name == glass.name && m.is_translucent())
+        .map(|i| i as vxe_world::MaterialId)
+}
+
+/// `--reference`'s default bake radius in chunks.
+const REFERENCE_BAKE_RADIUS: i32 = 2;
+/// The glass pane's square edge, thickness and distance ahead of the eye, in voxels.
+const PANE_EDGE: i32 = 40;
+const PANE_THICK: i32 = 2;
+const PANE_AHEAD: i32 = 6;
+
+/// The reference's glass pane: [`PANE_EDGE`] square and [`PANE_THICK`] thick, its near face
+/// [`PANE_AHEAD`] voxels ahead of the eye along the horizontal axis the camera faces most,
+/// filling air only with the table's glass row ([`glass_row`]). Refused without a glass
+/// row, or where the pane would reach outside `piece`.
+fn glass_pane(
+    world: &World,
+    camera: &Camera,
+    piece: Option<ChunkExtent>,
+) -> Result<EditResult, String> {
+    let glass = glass_row(world.materials()).ok_or("the table has no glass row")?;
+    let e = camera.position.to_array().map(|v| v.floor() as i32);
+    let (fwd, _, _) = camera.basis();
+    let k = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
+    let j = 1 - k;
+    let ahead = if fwd.to_array()[k] >= 0.0 { 1 } else { -1 };
+    let mut min = [0i32; 3];
+    let mut max = [0i32; 3];
+    let near = e[k] + ahead * PANE_AHEAD;
+    (min[k], max[k]) = if ahead > 0 {
+        (near, near + PANE_THICK)
+    } else {
+        (near - PANE_THICK + 1, near + 1)
+    };
+    for a in [j, 2] {
+        min[a] = e[a] - PANE_EDGE / 2;
+        max[a] = e[a] + PANE_EDGE / 2;
+    }
+    if let Some(p) = piece {
+        let size = p.size();
+        let inside =
+            (0..3).all(|a| min[a] >= p.min.0[a] * 64 && max[a] <= (p.min.0[a] + size[a]) * 64);
+        if !inside {
+            return Err("the pane would reach outside the baked piece".to_owned());
+        }
+    }
+    let op = EditOp::box_(
+        Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
+        Mode::Fill(glass),
+    );
+    world.apply(&op).map_err(|e| e.to_string())
+}
+
+/// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
+/// camera, or the spawn facing +x.
 fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     if args.castle {
         castle_camera(args.castle_shot)
@@ -5670,6 +5958,11 @@ fn main() {
     } else if args.showcase {
         let source = ShowcaseSource::new(seed);
         let table = flythrough::with_showcase_rows(&materials(&args));
+        let table = if args.reference {
+            with_glass_row(&table)
+        } else {
+            table
+        };
         let generation = std::thread::spawn(move || {
             let t = now();
             let extent = source.extent();
@@ -5691,6 +5984,11 @@ fn main() {
             );
         }
         let table = materials(&args);
+        let table = if args.reference {
+            with_glass_row(&table)
+        } else {
+            table
+        };
         let with_vault = args.vault;
         let generation = std::thread::spawn(move || {
             let t = now();
@@ -5926,6 +6224,146 @@ mod tests {
         assert_eq!(hud.strip.len(), 100);
     }
     use flythrough::cave::SHELL;
+
+    /// `--reference` sets the reference's look (baked light, scale 1, no upscaler, no jitter, full
+    /// lighting, far normal 1..2) and a bake radius of 2 that `--bake-radius` overrides, takes the
+    /// level and the showcase and refuses a streamed world naming Plan 0059 Phase 8; `F` swaps the
+    /// read in place, the banner and the modes' line naming it.
+    #[test]
+    fn the_reference_flag_sets_its_look_and_refuses_a_streamed_world() {
+        for world_flags in [
+            &["--level"][..],
+            &["--source", "showcase", "--shot", "hall"],
+        ] {
+            let mut flags = world_flags.to_vec();
+            flags.push("--reference");
+            let a = parse_args_from(argv(&flags)).expect("--reference parses");
+            assert_eq!(a.light, vxe_render::Light::Baked);
+            assert_eq!(a.bake_radius, Some(2));
+            assert_eq!(a.lighting, LightingResolution::Full);
+            assert_eq!(a.look.far_normal, [1.0, 2.0]);
+            assert_eq!(a.upscaler, Some(hud::UpscalerMode::Off));
+            let (_, scale, jitter) = a.upscaler_settings(hud::UpscalerMode::Off);
+            assert_eq!(scale.name(), "1");
+            assert!(!jitter, "no jitter");
+            assert!(a.start_lighting().keep_store, "the store kept for the swap");
+            assert_eq!(
+                vxe_render::bake::BakeSettings::default().candidates,
+                vxe_render::bake::KEPT_CANDIDATES
+            );
+            assert_eq!(
+                vxe_render::bake::BakeSettings::default().clamp,
+                vxe_render::bake::KEPT_CLAMP
+            );
+            flags.extend(["--bake-radius", "1"]);
+            assert_eq!(
+                parse_args_from(argv(&flags)).expect("parses").bake_radius,
+                Some(1)
+            );
+            flags.extend(["--bake-radius", "all"]);
+            assert_eq!(
+                parse_args_from(argv(&flags)).expect("parses").bake_radius,
+                None
+            );
+        }
+        let streamed = parse_args_from(argv(&["--reference"]))
+            .err()
+            .expect("a streamed world is refused");
+        assert!(streamed.contains("Plan 0059 Phase 8"), "{streamed}");
+        assert!(parse_args_from(argv(&["--level", "--bake-file", "a.bin"])).is_err());
+        let a = parse_args_from(argv(&["--level", "--reference", "--bake-file", "a.bin"]))
+            .expect("parses");
+        assert_eq!(a.bake_file.as_deref(), Some(std::path::Path::new("a.bin")));
+
+        let mut run = bare_run(carved_rock());
+        run.args.reference = true;
+        run.modes = run.args.start_modes(0.0);
+        run.modes.lighting.light = vxe_render::Light::Baked;
+        let mut input = Input::default();
+        for (want_row, want_line) in [("light table", "table 2^"), ("light store", "light baked")] {
+            input.end_frame();
+            input.key_up(KeyCode::KeyF);
+            input.key_down(KeyCode::KeyF);
+            run.handle_input(&input);
+            let banner = run.banner().expect("the reference row");
+            assert!(
+                banner.contains(&format!("reference: {want_row} (F swaps)")),
+                "{banner}"
+            );
+            assert!(banner.contains(want_line), "{want_line}: {banner}");
+        }
+        assert_eq!(
+            piece_label(
+                ChunkExtent::new([9, 8, 1], [14, 13, 6]),
+                ChunkExtent::new([0, 0, 0], [20, 20, 8]),
+                ChunkCoord([11, 10, 3]),
+                Some(2)
+            ),
+            "piece r2 at [11, 10, 3]"
+        );
+    }
+
+    /// `1` under `--reference` stamps a glass pane through an edit: its voxels all air before, in
+    /// the glass row after, no solid voxel changed; the banner names it, a pane reaching outside
+    /// the piece is refused, and outside `--reference` the key does nothing.
+    #[test]
+    fn the_glass_key_places_a_pane_under_the_reference() {
+        let table = with_glass_row(&cave_materials());
+        let glass = glass_row(&table).expect("the glass row");
+        assert_eq!(usize::from(glass), cave_materials().len());
+        let world = World::generate(
+            ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &vxe_world::UniformSource(ROCK),
+            &table,
+        );
+        world
+            .apply(&EditOp::box_(
+                Fixed3([-8 * FIXED_ONE; 3]),
+                Fixed3([8 * FIXED_ONE; 3]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        let mut run = bare_run(world);
+        let press = |run: &mut Run| {
+            let mut input = Input::default();
+            input.key_up(KeyCode::Digit1);
+            input.key_down(KeyCode::Digit1);
+            run.handle_input(&input);
+        };
+        let hash = run.world.voxel_hash();
+        press(&mut run);
+        assert_eq!(run.reference.panes, 0, "no pane outside --reference");
+        assert_eq!(
+            run.world.voxel_hash(),
+            hash,
+            "the world outside --reference"
+        );
+
+        run.args.reference = true;
+        run.reference.piece = Some(("piece whole".to_owned(), run.world.extent()));
+        let r = glass_pane(&run.world, &run.fly.camera, Some(run.world.extent()))
+            .expect("the pane fits");
+        // The camera at 0.5 faces +x: the pane fills x 6..8, y and z -20..20, air only.
+        assert_eq!(r.changed_from, vec![(vxe_world::AIR, 2 * 16 * 16)]);
+        let at = |v: [i32; 3]| run.world.material_at(VoxelCoord(v));
+        assert_eq!(at([6, 0, 0]), Some(glass));
+        assert_eq!(at([7, -8, 7]), Some(glass));
+        assert_eq!(at([5, 0, 0]), Some(vxe_world::AIR));
+        assert_eq!(at([7, 10, 0]), Some(ROCK), "no solid voxel changed");
+        press(&mut run);
+        assert_eq!(run.reference.panes, 1);
+        let banner = run.banner().expect("the pane's row");
+        assert!(banner.contains("pane 1: 0 voxels of glass"), "{banner}");
+        assert!(banner.contains("1 panes (1 places one)"), "{banner}");
+        run.reference.piece = Some(("piece".to_owned(), ChunkExtent::new([0, 0, 0], [1, 1, 1])));
+        press(&mut run);
+        let banner = run.banner().expect("the refusal's row");
+        assert!(
+            banner.contains("pane refused: the pane would reach outside the baked piece"),
+            "{banner}"
+        );
+        assert_eq!(run.reference.panes, 1);
+    }
 
     /// `--bake-radius N` needs `--light baked`, which needs a bounded world, and sets the chunks
     /// within `N` of the eye's chunk; unset, the pre-roll takes the whole extent.
@@ -6664,6 +7102,7 @@ mod tests {
             scroll: ScrollSteps::default(),
             triggers: [false; 2],
             bench_runs: 0,
+            reference: Reference::default(),
             frame: 0,
             gfx: None,
             samples: None,

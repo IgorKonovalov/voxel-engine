@@ -19,7 +19,10 @@ pub mod present;
 pub mod probes;
 pub mod readback;
 
-pub use bake::{BakeError, BakeProgress, BakeReport, BakeSettings, StoreStats};
+pub use bake::{
+    BakeError, BakeProgress, BakeReport, BakeSettings, DigReport, StoreFileError, StoreKey,
+    StoreStats,
+};
 pub use camera::{Camera, View};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,

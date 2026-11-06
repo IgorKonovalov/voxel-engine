@@ -1341,6 +1341,9 @@ pub struct Lighting {
     /// The store's pool under [`Light::Baked`], clamped to the device's storage binding (default
     /// [`crate::bake::DEFAULT_BAKE_POOL_BYTES`]). [`Light::Table`] allocates a minimal one.
     pub bake_pool_bytes: u64,
+    /// Under [`Light::Table`], the store's pool is kept as it is rather than shrunk, so a
+    /// comparison can swap the read between the table and a baked store in place (default off).
+    pub keep_store: bool,
 }
 
 impl Default for Lighting {
@@ -1376,6 +1379,7 @@ impl Default for Lighting {
             preload_samples: DEFAULT_PRELOAD_SAMPLES,
             light: Light::Table,
             bake_pool_bytes: crate::bake::DEFAULT_BAKE_POOL_BYTES,
+            keep_store: false,
         }
     }
 }
@@ -1593,6 +1597,9 @@ pub struct Frame {
     /// first bake.
     store: crate::bake::Store,
     bake: Option<crate::bake::BakePipeline>,
+    /// The edit boxes since the last dig re-bake ([`Frame::rebake_digs`]), every one, while the
+    /// store holds a piece.
+    dig_boxes: Vec<[[i32; 3]; 2]>,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
     gradient_cache_layout: wgpu::BindGroupLayout,
@@ -2549,6 +2556,7 @@ impl Frame {
             temporal_layout,
             store: crate::bake::Store::new(device, crate::bake::MINIMAL_POOL_BYTES),
             bake: None,
+            dig_boxes: Vec::new(),
             temporal,
             gradient_layout,
             gradient_cache_layout,
@@ -2983,7 +2991,11 @@ impl Frame {
     /// next encoded frame also restarts every probe within the lamp's reach whose cell the box
     /// touches ([`ProbeVolume::touched`]): it blends at hysteresis 0, its age at 1; boxes past
     /// [`MAX_EDITS`] touch no probe, which then refresh in their slices.
+    /// A store holding a piece also keeps the box for [`Frame::rebake_digs`].
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
+        if self.store.piece().is_some() {
+            self.dig_boxes.push([min, max]);
+        }
         let h = self.history();
         if h.edits.len() == MAX_EDITS {
             h.overflow = true;
@@ -3130,34 +3142,29 @@ impl Frame {
         if self.lighting.light != Light::Baked {
             return Err(crate::bake::BakeError::NotBaked);
         }
-        // Every chunk's whole reach: the extent's farthest corner from the focus chunk, plus the
-        // light radius (and one, for a job's box).
-        let f = gpu.focus().0;
-        let size = extent.size();
-        let far: i64 = (0..3)
-            .map(|k| {
-                let lo = i64::from(extent.min.0[k] - f[k]).abs();
-                let hi = i64::from(extent.min.0[k] + size[k] - 1 - f[k]).abs();
-                lo.max(hi).pow(2)
-            })
-            .sum();
-        let reach = (far as f64).sqrt().ceil() as i32 + gpu.light_radius() + 1;
-        gpu.hold_lights(reach);
-        let mut refused = 0;
-        loop {
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            let synced = gpu.sync(world, queue, &mut enc);
-            queue.submit([enc.finish()]);
-            if let Ok(s) = synced {
-                refused += s.light_refused;
-            }
-            if gpu.lights_settled() || refused > 0 {
-                break;
-            }
+        hold_reach(device, queue, gpu, world, extent)?;
+        self.dig_boxes.clear();
+        let params = self.bake_params(gpu, settings);
+        let world_bind = self.world_bind(device, gpu);
+        if self.bake.is_none() {
+            self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
         }
-        if refused > 0 {
-            return Err(crate::bake::BakeError::LightsRefused(refused));
-        }
+        let run = crate::bake::BakeRun {
+            device,
+            queue,
+            gpu,
+            world,
+            pipeline: self.bake.as_ref().expect("built above"),
+            world_bind: &world_bind,
+            params_buffer: &self.params,
+            params,
+        };
+        crate::bake::run(&run, &mut self.store, extent, settings, progress)
+    }
+
+    /// The frame parameters a bake dispatches with: no view but the LOD walk's camera chunk,
+    /// which each face takes from its job.
+    fn bake_params(&self, gpu: &GpuWorld, settings: &crate::bake::BakeSettings) -> Params {
         let camera = Camera {
             position: [0.0, 0.0, 0.0].into(),
             yaw: 0.0,
@@ -3172,23 +3179,127 @@ impl Frame {
         params.history = 0;
         params.forced_level = 0;
         params.candidates = settings.candidates;
+        params
+    }
+
+    /// Whether edit boxes wait for [`Frame::rebake_digs`].
+    pub fn digs_pending(&self) -> bool {
+        !self.dig_boxes.is_empty()
+    }
+
+    /// Re-bakes the ring of every edit box since the last call (ADR-0046's rings 1 and 2,
+    /// [`crate::bake::dig_ring`]) to `settings`' stop, blocking, ahead of the next encode: the
+    /// light-sample ranges are first held out to the piece's reach from the focus and synced.
+    /// `gpu` must already mirror the edits. `None` when no box waits or the store holds no piece.
+    pub fn rebake_digs(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu: &mut GpuWorld,
+        world: &vxe_world::World,
+        settings: &crate::bake::BakeSettings,
+        progress: &mut dyn FnMut(&crate::bake::BakeProgress),
+    ) -> Option<Result<crate::bake::DigReport, crate::bake::BakeError>> {
+        if self.dig_boxes.is_empty() {
+            return None;
+        }
+        let piece = self.store.piece()?;
+        let boxes = std::mem::take(&mut self.dig_boxes);
+        if let Err(e) = hold_reach(device, queue, gpu, world, piece) {
+            return Some(Err(e));
+        }
+        let params = self.bake_params(gpu, settings);
         let world_bind = self.world_bind(device, gpu);
-        let pipeline = self
-            .bake
-            .get_or_insert_with(|| crate::bake::BakePipeline::new(device, &self.world_layout));
+        if self.bake.is_none() {
+            self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
+        }
         let run = crate::bake::BakeRun {
             device,
             queue,
             gpu,
             world,
-            pipeline,
+            pipeline: self.bake.as_ref().expect("built above"),
             world_bind: &world_bind,
             params_buffer: &self.params,
             params,
         };
-        crate::bake::run(&run, &mut self.store, extent, settings, progress)
+        Some(crate::bake::rebake(
+            &run,
+            &mut self.store,
+            &boxes,
+            settings,
+            progress,
+        ))
     }
 
+    /// The store file's key for the store a bake of `piece` at `settings` gives on `gpu`, with the
+    /// world's seed and extent and the piece's centre and radius as the caller names them.
+    pub fn store_key(
+        gpu: &GpuWorld,
+        world: vxe_world::ChunkExtent,
+        world_seed: u64,
+        piece: vxe_world::ChunkExtent,
+        centre: ChunkCoord,
+        radius: i32,
+        settings: &crate::bake::BakeSettings,
+    ) -> crate::bake::StoreKey {
+        let span = |e: vxe_world::ChunkExtent| {
+            let size = e.size();
+            [e.min.0, [0, 1, 2].map(|k| e.min.0[k] + size[k])]
+        };
+        crate::bake::StoreKey {
+            world_seed,
+            world: span(world),
+            piece: span(piece),
+            centre: centre.0,
+            radius,
+            light_radius: gpu.light_radius(),
+            candidates: settings.candidates,
+            clamp: settings.clamp,
+            se_bits: settings.se.to_bits(),
+            n_min: settings.n_min,
+            n_max: settings.n_max,
+            round: settings.round,
+            seed: settings.seed,
+            source_hash: crate::bake::source_hash(),
+        }
+    }
+
+    /// Writes the store's blocks under `key` to `path`.
+    pub fn write_store_file(
+        &self,
+        path: &std::path::Path,
+        key: &crate::bake::StoreKey,
+    ) -> Result<u64, crate::bake::StoreFileError> {
+        let bytes = self.store.to_file_bytes(key);
+        std::fs::write(path, &bytes).map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+
+    /// Loads `path`'s blocks into the store, emptied first, in place of a bake, where its key
+    /// matches `key`; the light-sample ranges are held and synced as a bake's are, so a dig can
+    /// re-bake. `Err` names the field that differs.
+    pub fn load_store_file(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu: &mut GpuWorld,
+        world: &vxe_world::World,
+        path: &std::path::Path,
+        key: &crate::bake::StoreKey,
+    ) -> Result<(), crate::bake::StoreFileError> {
+        if self.lighting.light != Light::Baked {
+            return Err(crate::bake::StoreFileError::Mismatch("light"));
+        }
+        let bytes =
+            std::fs::read(path).map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
+        let blocks = crate::bake::Store::parse_file(key, &bytes)?;
+        let piece = vxe_world::ChunkExtent::new(key.piece[0], key.piece[1]);
+        hold_reach(device, queue, gpu, world, piece)
+            .map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
+        self.dig_boxes.clear();
+        self.store.load_blocks(queue, gpu.window(), key, blocks)
+    }
     /// The store's counters; `missing` is a blocking read of the last submitted encode's count.
     pub fn read_store_stats(
         &self,
@@ -3419,6 +3530,7 @@ impl Frame {
     fn fit_store(&mut self) {
         let limits = self.device.limits();
         let bytes = match self.lighting.light {
+            Light::Table if self.lighting.keep_store => self.store.pool().size(),
             Light::Table => crate::bake::MINIMAL_POOL_BYTES,
             Light::Baked => {
                 self.lighting
@@ -3563,7 +3675,7 @@ impl Frame {
             + self.preload_uniform.size()
             + self.preload_dispatch.size()
             + PRELOAD_IDLE_SLOTS as u64 * PRELOAD_IDLE_BYTES
-            + if self.lighting.light == Light::Baked {
+            + if self.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
                 self.store.pool().size()
             } else {
                 0
@@ -5358,6 +5470,44 @@ impl PassTimer {
             .map(|t| t as f64 * f64::from(self.period_ns) / 1.0e6)
             .collect()
     }
+}
+
+/// Holds the light-sample ranges out to every chunk of `extent`'s reach (its farthest corner from
+/// the focus chunk, plus the light radius and one, for a job's box) and syncs until they settle.
+fn hold_reach(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &mut GpuWorld,
+    world: &vxe_world::World,
+    extent: vxe_world::ChunkExtent,
+) -> Result<(), crate::bake::BakeError> {
+    let f = gpu.focus().0;
+    let size = extent.size();
+    let far: i64 = (0..3)
+        .map(|k| {
+            let lo = i64::from(extent.min.0[k] - f[k]).abs();
+            let hi = i64::from(extent.min.0[k] + size[k] - 1 - f[k]).abs();
+            lo.max(hi).pow(2)
+        })
+        .sum();
+    let reach = (far as f64).sqrt().ceil() as i32 + gpu.light_radius() + 1;
+    gpu.hold_lights(reach);
+    let mut refused = 0;
+    loop {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let synced = gpu.sync(world, queue, &mut enc);
+        queue.submit([enc.finish()]);
+        if let Ok(s) = synced {
+            refused += s.light_refused;
+        }
+        if gpu.lights_settled() || refused > 0 {
+            break;
+        }
+    }
+    if refused > 0 {
+        return Err(crate::bake::BakeError::LightsRefused(refused));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -425,9 +425,54 @@ pub struct LightingRow {
     pub preload: Option<vxe_render::marcher::PreloadStats>,
     /// The loaded store's counts at the last sample (`None` under the table).
     pub store: Option<vxe_render::StoreStats>,
+    /// The store's piece and last dig in words ([`store_note`]), after its counts.
+    pub store_note: String,
     pub modes: String,
     /// The internal and output sizes while the upscaler runs: a row then reads its passes.
     pub upscale: Option<[[u32; 2]; 2]>,
+}
+
+/// A dig's re-bake, as the HUD and stdout state it: the faces and samples baked and its wall
+/// time, or a dig wholly outside the baked piece.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DigHitch {
+    pub faces: u64,
+    pub samples: u64,
+    pub ms: f64,
+    pub outside: bool,
+}
+
+impl DigHitch {
+    /// `dig 3120 faces, 1.2e8 samples, 1890 ms`, or `dig outside the baked piece`.
+    pub fn line(&self) -> String {
+        if self.outside {
+            "dig outside the baked piece".to_owned()
+        } else {
+            format!(
+                "dig {} faces, {:.2e} samples, {:.0} ms",
+                self.faces, self.samples as f64, self.ms
+            )
+        }
+    }
+}
+
+/// The store's piece (`piece r2 at [11, 10, 3]`, or `piece whole`) and the last dig's hitch, each
+/// after a comma; once a dig has re-baked, `far light stale after a dig`: beyond
+/// `vxe_render::bake::DIG_REACH` voxels a dig moves no cell.
+pub fn store_note(piece: Option<&str>, last_dig: Option<DigHitch>) -> String {
+    let mut out = String::new();
+    if let Some(p) = piece {
+        out.push_str(", ");
+        out.push_str(p);
+    }
+    if let Some(d) = last_dig {
+        out.push_str(", ");
+        out.push_str(&d.line());
+        if !d.outside {
+            out.push_str(", far light stale after a dig");
+        }
+    }
+    out
 }
 
 /// The mirror's pressure (the fuller of its pool units and records), its reservation in bytes,
@@ -628,10 +673,11 @@ impl HudStats {
             };
             let table = match l.store {
                 Some(s) => format!(
-                    "{table}, store {} {:.1} MB missing {}",
+                    "{table}, store {} {:.1} MB missing {}{}",
                     s.chunks,
                     s.bytes as f64 / 1e6,
-                    s.missing
+                    s.missing,
+                    l.store_note
                 ),
                 None => table,
             };
@@ -1136,12 +1182,23 @@ mod tests {
                 bytes: 3_400_000,
                 missing: 56,
             }),
+            store_note: store_note(
+                Some("piece r2 at [11, 10, 3]"),
+                Some(DigHitch {
+                    faces: 3120,
+                    samples: 120_000_000,
+                    ms: 1890.0,
+                    outside: false,
+                }),
+            ),
             modes: "light baked".to_owned(),
             upscale: None,
         });
         s.write_rows(&mut out, &mut colours);
         assert!(
-            out.contains("store 12 3.4 MB missing 56; light baked"),
+            out.contains(
+                "store 12 3.4 MB missing 56, piece r2 at [11, 10, 3], dig 3120 faces, 1.20e8 samples, 1890 ms, far light stale after a dig; light baked"
+            ),
             "{out}"
         );
     }
@@ -1165,6 +1222,7 @@ mod tests {
             light_samples: 18_522,
             live_probes: Some(9_876),
             store: None,
+            store_note: String::new(),
             table: Some(vxe_render::TableStats {
                 cells: 1 << 20,
                 occupied: 59_724,
@@ -1238,6 +1296,7 @@ mod tests {
             light_samples: 0,
             live_probes: None,
             store: None,
+            store_note: String::new(),
             table: None,
             age: None,
             preload: None,
@@ -1309,6 +1368,7 @@ mod tests {
             light_samples: 0,
             live_probes: None,
             store: None,
+            store_note: String::new(),
             table: None,
             age: None,
             preload: None,
@@ -1387,6 +1447,8 @@ pub enum ModeKey {
     Pulse,
     /// `Q`: the exposure: auto with the start's preset, auto symmetric, manual.
     Exposure,
+    /// `F` under `--reference`: the temporal pass reads the store or the table, in place.
+    LightRead,
 }
 
 /// The auto exposure's preset, as `--adaptation` names it.
@@ -1572,6 +1634,12 @@ impl Modes {
                 }
             }
             ModeKey::Lamp => l.lamp = !l.lamp,
+            ModeKey::LightRead => {
+                l.light = match l.light {
+                    vxe_render::Light::Baked => vxe_render::Light::Table,
+                    vxe_render::Light::Table => vxe_render::Light::Baked,
+                }
+            }
             ModeKey::Preload => {
                 if l.preload_radius > 0 {
                     self.preload_on = l.preload_radius;

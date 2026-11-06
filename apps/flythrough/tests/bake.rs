@@ -34,6 +34,7 @@ struct Rig {
     gpu: GpuWorld,
     world: World,
     frame: Frame,
+    cfg: MirrorConfig,
 }
 
 fn fill(world: &World, min: [i64; 3], max: [i64; 3], m: vxe_world::MaterialId) {
@@ -95,6 +96,7 @@ fn rig_on(world: World, size: [u32; 2], light: Light, light_radius: Option<i32>)
         gpu,
         world,
         frame,
+        cfg,
     })
 }
 
@@ -132,46 +134,123 @@ impl Rig {
 
     /// Every chunk's block, for a comparison of the cells.
     fn blocks(&self) -> BTreeMap<[i32; 3], Vec<u32>> {
-        let e = self.world.extent();
-        let s = e.size();
-        let mut out = BTreeMap::new();
-        for z in 0..s[2] {
-            for y in 0..s[1] {
-                for x in 0..s[0] {
-                    let c = [e.min.0[0] + x, e.min.0[1] + y, e.min.0[2] + z];
-                    if let Some(b) =
-                        self.frame
-                            .read_store_block(&self.device, &self.queue, ChunkCoord(c))
-                    {
-                        out.insert(c, b);
-                    }
-                }
-            }
-        }
-        out
+        frame_blocks(&self.device, &self.queue, &self.frame, self.world.extent())
     }
 
     /// Every cell of the store by voxel and face: the `rgb9e5` word and the tail word.
     fn cells(&self) -> HashMap<([i32; 3], u8), [u32; 2]> {
-        let mut out = HashMap::new();
-        for (c, block) in self.blocks() {
-            for slot in 0..512usize {
-                let dir = block[slot];
-                let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
-                let b = vxe_world::brick_of_slot(slot);
-                for i in 0..n {
-                    let [word, tail] = [block[run + 2 * i], block[run + 2 * i + 1]];
-                    let key = (tail & 0xFFF) as i32;
-                    let l = key >> 3;
-                    let inner = [l % 8, l / 8 % 8, l / 64];
-                    let v = [0, 1, 2].map(|k| c[k] * 64 + b[k] * 8 + inner[k]);
-                    out.insert((v, (key & 7) as u8), [word, tail]);
+        cells_of(&self.blocks())
+    }
+
+    /// Applies `op`, mirrors it, and re-bakes its ring to `settings` as the window's frame does:
+    /// the report and the edit's box.
+    fn dig(&mut self, op: &EditOp, settings: &BakeSettings) -> (bake::DigReport, [[i32; 3]; 2]) {
+        let r = self.world.apply(op).expect("the dig is resident");
+        let (min, max) = r.aabb.expect("the dig changed voxels");
+        self.gpu
+            .sync_now(&self.world, &self.device, &self.queue)
+            .expect("the mirror fits");
+        self.frame.invalidate(min.0, max.0);
+        let report = self
+            .frame
+            .rebake_digs(
+                &self.device,
+                &self.queue,
+                &mut self.gpu,
+                &self.world,
+                settings,
+                &mut |_| {},
+            )
+            .expect("a box waits")
+            .expect("the ring fits");
+        (report, [min.0, max.0])
+    }
+
+    /// A fresh mirror and frame of the world as it is now, `piece` baked to `settings`: its cells.
+    fn fresh_cells(
+        &self,
+        piece: ChunkExtent,
+        settings: &BakeSettings,
+    ) -> HashMap<([i32; 3], u8), [u32; 2]> {
+        let (_, frame) = self.fresh_bake(piece, settings);
+        cells_of(&frame_blocks(
+            &self.device,
+            &self.queue,
+            &frame,
+            self.world.extent(),
+        ))
+    }
+
+    fn fresh_bake(&self, piece: ChunkExtent, settings: &BakeSettings) -> (GpuWorld, Frame) {
+        let mut gpu = GpuWorld::with_config(&self.device, self.cfg);
+        for _ in 0..2 {
+            gpu.sync_now(&self.world, &self.device, &self.queue)
+                .expect("the mirror fits");
+        }
+        let mut frame = new_frame(&self.device, [16, 16], Light::Baked);
+        frame
+            .bake_until(
+                &self.device,
+                &self.queue,
+                &mut gpu,
+                &self.world,
+                piece,
+                settings,
+                &mut |_| {},
+            )
+            .expect("the box fits the pool");
+        (gpu, frame)
+    }
+
+    fn accum(&self) -> Vec<[f32; 4]> {
+        readback::read_float(&self.device, &self.queue, self.frame.accumulated())
+    }
+}
+
+/// `frame`'s block of every chunk of `extent` that has one.
+fn frame_blocks(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &Frame,
+    e: ChunkExtent,
+) -> BTreeMap<[i32; 3], Vec<u32>> {
+    let s = e.size();
+    let mut out = BTreeMap::new();
+    for z in 0..s[2] {
+        for y in 0..s[1] {
+            for x in 0..s[0] {
+                let c = [e.min.0[0] + x, e.min.0[1] + y, e.min.0[2] + z];
+                if let Some(b) = frame.read_store_block(device, queue, ChunkCoord(c)) {
+                    out.insert(c, b);
                 }
             }
         }
-        out
     }
+    out
+}
 
+/// The cells of `blocks` by voxel and face: the `rgb9e5` word and the tail word.
+fn cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> HashMap<([i32; 3], u8), [u32; 2]> {
+    let mut out = HashMap::new();
+    for (&c, block) in blocks {
+        for slot in 0..512usize {
+            let dir = block[slot];
+            let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
+            let b = vxe_world::brick_of_slot(slot);
+            for i in 0..n {
+                let [word, tail] = [block[run + 2 * i], block[run + 2 * i + 1]];
+                let key = (tail & 0xFFF) as i32;
+                let l = key >> 3;
+                let inner = [l % 8, l / 8 % 8, l / 64];
+                let v = [0, 1, 2].map(|k| c[k] * 64 + b[k] * 8 + inner[k]);
+                out.insert((v, (key & 7) as u8), [word, tail]);
+            }
+        }
+    }
+    out
+}
+
+impl Rig {
     fn step(&mut self, camera: &Camera) {
         self.frame.step(
             &self.device,
@@ -667,6 +746,439 @@ fn a_moving_camera_reads_what_a_still_one_reads() {
     let b = rig.display();
     let b = faced(&rig, &turned, &b);
     assert_ne!(a, b, "the table's moved frame against its fresh one");
+}
+
+// ---- The dig, the scale, the lamp, the file and the piece (Phase 2) ----
+
+/// A dig's settings beside a bake's: the test counts, the dig's `n_max` the same.
+fn dig_counts() -> BakeSettings {
+    test_counts(64, 256)
+}
+
+fn sphere(c: [i64; 3], r: i64, mode: Mode) -> EditOp {
+    EditOp::sphere(Fixed3(c.map(|v| v * FIXED_ONE)), r * FIXED_ONE, mode)
+}
+
+fn box_op(min: [i64; 3], max: [i64; 3], mode: Mode) -> EditOp {
+    EditOp::box_(
+        Fixed3(min.map(|v| v * FIXED_ONE)),
+        Fixed3(max.map(|v| v * FIXED_ONE)),
+        mode,
+    )
+}
+
+/// The cells of `cells` whose voxel lies in a brick of `ring`.
+fn in_ring(
+    cells: &HashMap<([i32; 3], u8), [u32; 2]>,
+    ring: &BTreeMap<[i32; 3], Vec<u16>>,
+) -> BTreeMap<([i32; 3], u8), [u32; 2]> {
+    cells
+        .iter()
+        .filter(|((v, _), _)| {
+            let c = v.map(|x| x.div_euclid(64));
+            let b = v.map(|x| x.rem_euclid(64) / 8);
+            ring.get(&c)
+                .is_some_and(|s| s.contains(&(vxe_world::brick_slot(b) as u16)))
+        })
+        .map(|(k, v)| (*k, *v))
+        .collect()
+}
+
+/// A lit wall, a radius 3 carve: on the first frame the hole is on screen, every cell of the ring
+/// is bit-identical to a fresh bake of the edited world (the same `n_max`), every cell beyond it
+/// is as before, and that frame and frame +64 are bit-identical.
+#[test]
+fn a_dug_hole_is_final_on_its_first_frame() {
+    let (world, camera) = small_box();
+    let Some(mut rig) = rig_on(world, [64, 36], Light::Baked, None) else {
+        return;
+    };
+    rig.bake(&dig_counts());
+    let before = rig.cells();
+    let (dig, aabb) = rig.dig(&sphere([48, 48, 56], 3, Mode::Carve), &dig_counts());
+    assert!(dig.bake.faces > 0, "the dig baked no face");
+    let piece = rig.world.extent();
+    let ring = bake::dig_ring(&[aabb], piece);
+    let after = rig.cells();
+    let fresh = rig.fresh_cells(piece, &dig_counts());
+    let (a, f) = (in_ring(&after, &ring), in_ring(&fresh, &ring));
+    assert!(a.len() > 100, "{} cells in the ring", a.len());
+    assert_eq!(a, f, "the ring against a fresh bake");
+    for (k, v) in &after {
+        if !a.contains_key(k) {
+            assert_eq!(before.get(k), Some(v), "{k:?} beyond the ring moved");
+        }
+    }
+    // The hole's new faces: voxels within the carve's reach that had no cell before.
+    let new: Vec<_> = after.keys().filter(|k| !before.contains_key(k)).collect();
+    assert!(!new.is_empty(), "the carve exposed no face");
+    rig.step(&camera);
+    let first = rig.display();
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let eye = camera.position.to_array();
+    let on_screen = (0..pos.len())
+        .filter_map(|i| hit_face(eye, pos[i], info[i]))
+        .filter(|k| !before.contains_key(k))
+        .count();
+    println!(
+        "dig: {} chunks, {} faces, {} samples; {} new faces, {} hole pixels",
+        dig.bake.chunks,
+        dig.bake.faces,
+        dig.bake.samples,
+        new.len(),
+        on_screen
+    );
+    assert!(on_screen > 0, "the hole is on screen");
+    let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
+    assert_eq!(stats.missing, 0, "store_missing");
+    for _ in 0..64 {
+        rig.step(&camera);
+    }
+    assert_eq!(rig.display(), first, "frame +64 against the dig's frame");
+}
+
+/// Carving the box's one emitter brings every cell of the ring to exactly 0 on that frame,
+/// bit-identical to a fresh bake.
+#[test]
+fn a_dug_emitter_leaves_the_near_ring_at_once() {
+    let world = air_world([1, 1, 1], &table());
+    fill(&world, [8, 8, 20], [40, 40, 21], ROCK);
+    fill(&world, [22, 22, 30], [24, 24, 32], ORE);
+    let Some(mut rig) = rig_on(world, [16, 16], Light::Baked, None) else {
+        return;
+    };
+    rig.bake(&dig_counts());
+    let lit = rig.cells().values().filter(|c| c[0] != 0).count();
+    assert!(lit > 100, "{lit} lit cells before");
+    let (_, aabb) = rig.dig(
+        &box_op([22, 22, 30], [24, 24, 32], Mode::Carve),
+        &dig_counts(),
+    );
+    let piece = rig.world.extent();
+    let ring = bake::dig_ring(&[aabb], piece);
+    let after = in_ring(&rig.cells(), &ring);
+    assert!(after.len() > 1000, "{} cells in the ring", after.len());
+    let lit: Vec<_> = after.iter().filter(|(_, c)| c[0] != 0).collect();
+    assert!(
+        lit.is_empty(),
+        "{} cells still lit, first {:?}",
+        lit.len(),
+        lit.first()
+    );
+    let fresh = in_ring(&rig.fresh_cells(piece, &dig_counts()), &ring);
+    assert_eq!(after, fresh, "the ring against a fresh bake");
+}
+
+/// A tunnel: an emitter, a plug, and the tunnel's far end beyond [`bake::DIG_REACH`] of the plug.
+/// After a window is carved in the plug, the far end's cells are bit-identical to before (where
+/// a fresh bake lights them), and the HUD names the limit.
+#[test]
+fn the_far_light_stays_as_the_reference_states() {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 1, 1]),
+        &UniformSource(ROCK),
+        &table(),
+    );
+    world
+        .apply(&box_op([8, 28, 28], [110, 34, 34], Mode::Carve))
+        .expect("the tunnel");
+    fill(&world, [10, 30, 30], [12, 32, 32], ORE);
+    fill(&world, [30, 28, 28], [32, 34, 34], ROCK);
+    let Some(mut rig) = rig_on(world, [16, 16], Light::Baked, Some(2)) else {
+        return;
+    };
+    rig.bake(&dig_counts());
+    let far = |cells: &HashMap<([i32; 3], u8), [u32; 2]>| -> BTreeMap<([i32; 3], u8), [u32; 2]> {
+        cells
+            .iter()
+            .filter(|((v, _), _)| v[0] >= 72)
+            .map(|(k, v)| (*k, *v))
+            .collect()
+    };
+    let before = far(&rig.cells());
+    assert!(before.len() > 500, "{} far cells", before.len());
+    let (dig, _) = rig.dig(
+        &box_op([30, 30, 30], [32, 32, 32], Mode::Carve),
+        &dig_counts(),
+    );
+    let after = far(&rig.cells());
+    assert_eq!(after, before, "the far end beyond the ring");
+    let fresh = far(&rig.fresh_cells(rig.world.extent(), &dig_counts()));
+    let lit = fresh.values().filter(|c| c[0] != 0).count();
+    println!("far cells {}, lit in a fresh bake {lit}", before.len());
+    assert!(
+        lit > 0,
+        "a fresh bake lights the far end through the window"
+    );
+    let note = flythrough::hud::store_note(
+        None,
+        Some(flythrough::hud::DigHitch {
+            faces: dig.bake.faces,
+            samples: dig.bake.samples,
+            ms: 1.0,
+            outside: false,
+        }),
+    );
+    assert!(note.contains("far light stale after a dig"), "{note}");
+}
+
+/// `Frame::set_emission_scales` at 0.5 halves a lit wall's displayed irradiance on that frame,
+/// within one `rgb9e5` step, the cells unchanged; a material at 0 when baked reads its light when
+/// raised.
+#[test]
+fn a_scale_change_moves_no_bake() {
+    let (world, camera) = small_box();
+    let Some(mut rig) = rig_on(world, [64, 36], Light::Baked, None) else {
+        return;
+    };
+    rig.frame.set_emission_scale(&rig.queue, ORE, 0.0);
+    rig.bake(&test_counts(128, 128));
+    let cells = rig.cells();
+    rig.step(&camera);
+    let dark = rig.accum();
+    assert!(
+        dark.iter()
+            .all(|p| p[0] == 0.0 && p[1] == 0.0 && p[2] == 0.0),
+        "the ore at 0 lights nothing"
+    );
+    rig.frame.set_emission_scale(&rig.queue, ORE, 1.0);
+    rig.step(&camera);
+    let full = rig.accum();
+    rig.frame.set_emission_scale(&rig.queue, ORE, 0.5);
+    rig.step(&camera);
+    let half = rig.accum();
+    assert_eq!(rig.cells(), cells, "the cells after the scale changes");
+    let mut lit = 0;
+    for i in 0..full.len() {
+        for k in 0..3 {
+            let step = (full[i][k].abs() / 512.0).max(1.0 / 16384.0);
+            assert!(
+                (half[i][k] - 0.5 * full[i][k]).abs() <= step,
+                "pixel {i} channel {k}: {} against half of {}",
+                half[i][k],
+                full[i][k]
+            );
+        }
+        lit += usize::from(full[i][0] > 0.0);
+    }
+    assert!(lit > 100, "{lit} lit pixels at scale 1");
+}
+
+/// With the lamp on a frame's emissive part equals the lamp-off frame's and the cells are
+/// unchanged; off again, the frame is bit-identical to the first lamp-off frame once the lamp's
+/// history has emptied, [`LAMP_EMPTY_FRAMES`] frames after the lamp goes off.
+#[test]
+fn the_lamp_adds_over_the_bake() {
+    let (world, camera) = small_box();
+    let Some(mut rig) = rig_on(world, [64, 36], Light::Baked, None) else {
+        return;
+    };
+    rig.bake(&test_counts(128, 128));
+    let cells = rig.cells();
+    rig.step(&camera);
+    let off = rig.display();
+    let off_accum = rig.accum();
+    let lighting = |lamp: bool| Lighting {
+        lamp,
+        lamp_bounce: false,
+        exposure: Exposure::Manual(8.0),
+        light: Light::Baked,
+        bake_pool_bytes: 16 << 20,
+        ..Lighting::default()
+    };
+    rig.frame.set_lighting(lighting(true));
+    for _ in 0..4 {
+        rig.step(&camera);
+    }
+    assert_ne!(rig.display(), off, "the lamp shows");
+    let rgb = |a: &[[f32; 4]]| -> Vec<[f32; 3]> { a.iter().map(|p| [p[0], p[1], p[2]]).collect() };
+    let differ = rgb(&rig.accum())
+        .iter()
+        .zip(rgb(&off_accum))
+        .filter(|(a, b)| **a != *b)
+        .count();
+    assert_eq!(differ, 0, "pixels whose emissive part moved under the lamp");
+    assert_eq!(rig.cells(), cells, "the cells under the lamp");
+    rig.frame.set_lighting(lighting(false));
+    let mut at = None;
+    for n in 1..=256 {
+        rig.step(&camera);
+        if rig.display() == off {
+            at = Some(n);
+            break;
+        }
+    }
+    println!("lamp off: the first lamp-off frame again at +{at:?}");
+    assert_eq!(
+        at,
+        Some(LAMP_EMPTY_FRAMES),
+        "frames after the lamp goes off"
+    );
+}
+
+/// Frames after the lamp goes off at which the frame is the lamp-off frame again.
+const LAMP_EMPTY_FRAMES: u32 = 1;
+
+/// A written store file loads into a new frame with every cell and a frame bit-identical; a file
+/// with another seed, piece, light radius or stop is refused with the field's name.
+#[test]
+fn a_store_file_loads_the_same_light() {
+    let (world, camera) = small_box();
+    let Some(mut rig) = rig_on(world, [64, 36], Light::Baked, None) else {
+        return;
+    };
+    let settings = test_counts(64, 256);
+    rig.bake(&settings);
+    let cells = rig.cells();
+    rig.step(&camera);
+    let frame = rig.display();
+    let extent = rig.world.extent();
+    let key = |seed: u64, piece: ChunkExtent, settings: &BakeSettings, gpu: &GpuWorld| {
+        Frame::store_key(gpu, extent, seed, piece, ChunkCoord([0, 0, 0]), 2, settings)
+    };
+    let k = key(1, extent, &settings, &rig.gpu);
+    let dir = std::env::temp_dir().join(format!("vxe-store-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a temp dir");
+    let path = dir.join("store.bin");
+    let bytes = rig.frame.write_store_file(&path, &k).expect("written");
+    assert!(bytes > 0);
+    let mut loaded = new_frame(&rig.device, [64, 36], Light::Baked);
+    loaded
+        .load_store_file(&rig.device, &rig.queue, &mut rig.gpu, &rig.world, &path, &k)
+        .expect("the file loads");
+    std::mem::swap(&mut rig.frame, &mut loaded);
+    assert_eq!(rig.cells(), cells, "the loaded cells");
+    rig.step(&camera);
+    assert_eq!(rig.display(), frame, "a frame from the loaded store");
+    let one = ChunkExtent::new([0, 0, 0], [1, 1, 1]);
+    let other_light = MirrorConfig {
+        light_radius: rig.cfg.light_radius + 1,
+        ..rig.cfg
+    };
+    let other_gpu = GpuWorld::with_config(&rig.device, other_light);
+    let mut f = new_frame(&rig.device, [16, 16], Light::Baked);
+    for (bad, field) in [
+        (key(2, extent, &settings, &rig.gpu), "world seed"),
+        (key(1, one, &settings, &rig.gpu), "piece"),
+        (key(1, extent, &settings, &other_gpu), "light radius"),
+        (
+            key(
+                1,
+                extent,
+                &BakeSettings {
+                    n_max: 512,
+                    ..settings.clone()
+                },
+                &rig.gpu,
+            ),
+            "n_max",
+        ),
+        (
+            key(
+                1,
+                extent,
+                &BakeSettings {
+                    se: 0.25,
+                    ..settings.clone()
+                },
+                &rig.gpu,
+            ),
+            "stop's standard error",
+        ),
+    ] {
+        let e = f
+            .load_store_file(
+                &rig.device,
+                &rig.queue,
+                &mut rig.gpu,
+                &rig.world,
+                &path,
+                &bad,
+            )
+            .expect_err("refused");
+        assert!(e.to_string().contains(field), "{e} names {field}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A box of two chunks whose emitter lies outside a one-chunk piece: the piece's cells are a whole
+/// bake's, the chunk outside has no block and its hits count in `store_missing`; a carve that
+/// straddles the piece's edge re-bakes only cells inside it, bit-identical to a fresh piece bake
+/// of the edited world, and makes no block outside.
+#[test]
+fn a_piece_reads_what_the_whole_world_reads() {
+    let mut t = MaterialTable::new();
+    for (id, row) in flythrough::cave_materials()
+        .rows()
+        .iter()
+        .enumerate()
+        .skip(1)
+    {
+        let mut m = row.clone();
+        if id == usize::from(ORE) {
+            m.emission = [0.05, 0.05, 0.05];
+        }
+        assert_eq!(usize::from(t.push(m)), id);
+    }
+    let world = air_world([2, 1, 1], &t);
+    fill(&world, [40, 16, 20], [88, 48, 21], ROCK);
+    fill(&world, [60, 30, 21], [61, 31, 22], ORE);
+    let Some(mut rig) = rig_on(world, [64, 36], Light::Baked, None) else {
+        return;
+    };
+    let settings = dig_counts();
+    rig.bake(&settings);
+    let whole = rig.cells();
+    let piece = ChunkExtent::new([1, 0, 0], [2, 1, 1]);
+    rig.frame
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            piece,
+            &settings,
+            &mut |_| {},
+        )
+        .expect("the piece fits");
+    let blocks = rig.blocks();
+    assert!(
+        !blocks.contains_key(&[0, 0, 0]),
+        "a block outside the piece"
+    );
+    let cells = cells_of(&blocks);
+    let inside: BTreeMap<_, _> = whole.iter().filter(|((v, _), _)| v[0] >= 64).collect();
+    let lit = cells.values().filter(|c| c[0] != 0).count();
+    assert!(lit > 50, "{lit} lit cells in the piece");
+    assert_eq!(
+        cells.iter().collect::<BTreeMap<_, _>>(),
+        inside,
+        "the piece against the whole bake"
+    );
+    let camera = Camera {
+        position: [64.0, 32.0, 40.0].into(),
+        yaw: 0.0,
+        pitch: (-80f32).to_radians(),
+        vfov: 90f32.to_radians(),
+    };
+    rig.step(&camera);
+    let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
+    println!("store_missing {} over the chunk outside", stats.missing);
+    assert!(stats.missing > 100, "store_missing {}", stats.missing);
+    let (dig, _) = rig.dig(&sphere([64, 30, 20], 3, Mode::Carve), &settings);
+    assert!(dig.bake.faces > 0);
+    let blocks = rig.blocks();
+    assert!(
+        !blocks.contains_key(&[0, 0, 0]),
+        "a block outside after the dig"
+    );
+    let fresh = rig.fresh_cells(piece, &settings);
+    assert_eq!(
+        cells_of(&blocks),
+        fresh,
+        "the dug piece against a fresh piece bake"
+    );
 }
 
 // ---- The count reading ----
