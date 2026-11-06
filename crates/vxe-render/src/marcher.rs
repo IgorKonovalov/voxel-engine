@@ -3149,6 +3149,10 @@ impl Frame {
         if self.bake.is_none() {
             self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
         }
+        self.bake
+            .as_mut()
+            .expect("built above")
+            .ensure(device, settings.form);
         let run = crate::bake::BakeRun {
             device,
             queue,
@@ -3213,6 +3217,10 @@ impl Frame {
         if self.bake.is_none() {
             self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
         }
+        self.bake
+            .as_mut()
+            .expect("built above")
+            .ensure(device, settings.form);
         let run = crate::bake::BakeRun {
             device,
             queue,
@@ -3261,7 +3269,9 @@ impl Frame {
             n_max: settings.n_max,
             round: settings.round,
             seed: settings.seed,
-            source_hash: crate::bake::source_hash(),
+            source_hash: crate::bake::source_hash_for(settings.form),
+            form: settings.form,
+            tent: settings.tent,
         }
     }
 
@@ -3293,12 +3303,40 @@ impl Frame {
         }
         let bytes =
             std::fs::read(path).map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
-        let blocks = crate::bake::Store::parse_file(key, &bytes)?;
+        let image = crate::bake::Store::parse_file(key, &bytes)?;
         let piece = vxe_world::ChunkExtent::new(key.piece[0], key.piece[1]);
         hold_reach(device, queue, gpu, world, piece)
             .map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
         self.dig_boxes.clear();
-        self.store.load_blocks(queue, gpu.window(), key, blocks)
+        self.store.load_blocks(queue, gpu.window(), image)
+    }
+
+    /// Writes `image` into the store in place of what it holds, and returns what it held: one
+    /// pool read by the temporal pass, several stores swapped by a key (Plan 0059 Phase 4's
+    /// cut against the reference). Edit boxes waiting for [`Frame::rebake_digs`] stay. `Err`
+    /// where the pool cannot hold `image`, the store unchanged.
+    pub fn swap_store_image(
+        &mut self,
+        queue: &wgpu::Queue,
+        gpu: &GpuWorld,
+        image: crate::bake::StoreImage,
+    ) -> Result<crate::bake::StoreImage, crate::bake::StoreFileError> {
+        let held = self.store.image();
+        self.store.load_blocks(queue, gpu.window(), image)?;
+        Ok(held)
+    }
+
+    /// The edit boxes waiting for [`Frame::rebake_digs`], `min ..= max` in voxels.
+    pub fn pending_digs(&self) -> &[[[i32; 3]; 2]] {
+        &self.dig_boxes
+    }
+
+    /// Adds boxes for [`Frame::rebake_digs`], as [`Frame::invalidate`] keeps them while the store
+    /// holds a piece: a swapped-in store's re-bake of the digs it missed.
+    pub fn queue_digs(&mut self, boxes: &[[[i32; 3]; 2]]) {
+        if self.store.piece().is_some() {
+            self.dig_boxes.extend_from_slice(boxes);
+        }
     }
     /// The store's counters; `missing` is a blocking read of the last submitted encode's count.
     pub fn read_store_stats(

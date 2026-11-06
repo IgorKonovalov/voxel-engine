@@ -20,8 +20,8 @@ pub mod probes;
 pub mod readback;
 
 pub use bake::{
-    BakeError, BakeProgress, BakeReport, BakeSettings, DigReport, StoreFileError, StoreKey,
-    StoreStats,
+    BakeError, BakeProgress, BakeReport, BakeSettings, DigReport, SeedForm, StoreFileError,
+    StoreImage, StoreKey, StoreStats,
 };
 pub use camera::{Camera, View};
 pub use exposure::{

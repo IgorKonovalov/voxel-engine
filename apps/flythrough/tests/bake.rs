@@ -546,6 +546,199 @@ fn a_wall_reads_its_analytic_light() {
     }
 }
 
+/// `G_local` over the coplanar neighbour pairs `(f, n)` of `keys` in `a` and `b` (two seed sets'
+/// display values): `|(D_f - D_n)_A - (D_f - D_n)_B| / sqrt 2`, each pair once (`n` one voxel
+/// along a tangent's positive direction), the pair's two faces in one chunk (`seam` false) or in
+/// two (`seam` true).
+fn g_local(
+    a: &HashMap<([i32; 3], u8), f32>,
+    b: &HashMap<([i32; 3], u8), f32>,
+    seam: bool,
+) -> Vec<f32> {
+    let mut out = Vec::new();
+    for (&(v, side), &da) in a {
+        let Some(&db) = b.get(&(v, side)) else {
+            continue;
+        };
+        let axis = usize::from(side / 2);
+        for t in [(axis + 1) % 3, (axis + 2) % 3] {
+            let mut n = v;
+            n[t] += 1;
+            let (Some(&na), Some(&nb)) = (a.get(&(n, side)), b.get(&(n, side))) else {
+                continue;
+            };
+            let crosses = v[t].div_euclid(64) != n[t].div_euclid(64);
+            if crosses == seam {
+                out.push(((da - na) - (db - nb)).abs() / 2f32.sqrt());
+            }
+        }
+    }
+    out
+}
+
+/// A cut's settings: `n` samples a face in one round, the seed form and the filter.
+fn cut_counts(n: u32, form: bake::SeedForm, tent: bool, seed: u32) -> BakeSettings {
+    BakeSettings {
+        round: n,
+        n_min: n,
+        n_max: n,
+        form,
+        tent,
+        seed,
+        ..BakeSettings::default()
+    }
+}
+
+/// The shared seeds do what their name says: on a wall lit through a slit at 16 samples a face,
+/// two coplanar faces of one chunk read closer to each other under chunk-side seeds than under
+/// independent ones, by `G_local` over two seed sets each; the independent arm is the failure
+/// case.
+#[test]
+fn the_seed_forms_differ_as_named() {
+    let world = air_world([1, 1, 1], &table());
+    // The wall's top at z 20; a plate at z 30 with a slit at x 30..34; the emitter at z 45.
+    fill(&world, [8, 8, 19], [56, 56, 20], ROCK);
+    fill(&world, [0, 0, 30], [30, 64, 31], ROCK);
+    fill(&world, [34, 0, 30], [64, 64, 31], ROCK);
+    fill(&world, [16, 16, 45], [48, 48, 46], ORE);
+    let Some(mut rig) = rig_on(world, [16, 16], Light::Baked, Some(1)) else {
+        return;
+    };
+    let wall: bake::FaceFilter = Arc::new(|v, f| f == 5 && v[2] == 19);
+    let l = Lighting::default();
+    let mut runs = Vec::new();
+    for form in [bake::SeedForm::Independent, bake::SeedForm::ChunkSide] {
+        let mut seeds = Vec::new();
+        for seed in [0u32, 0x5EED_0001] {
+            rig.bake(&BakeSettings {
+                filter: Some(wall.clone()),
+                ..cut_counts(16, form, false, seed)
+            });
+            let d: HashMap<([i32; 3], u8), f32> = rig
+                .cells()
+                .into_iter()
+                .filter(|((v, f), _)| wall(*v, *f))
+                .map(|(k, c)| (k, d_of(bake::rgb9e5_unpack(c[0]), &l)))
+                .collect();
+            seeds.push(d);
+        }
+        runs.push(seeds);
+    }
+    // The pairs any run reads lit.
+    let lit = |k: &([i32; 3], u8)| runs.iter().flatten().any(|d| d[k] > 0.0);
+    let keep = |d: &HashMap<([i32; 3], u8), f32>| -> HashMap<([i32; 3], u8), f32> {
+        d.iter()
+            .filter(|(k, _)| lit(k))
+            .map(|(k, v)| (*k, *v))
+            .collect()
+    };
+    let mut g = Vec::new();
+    for (form, seeds) in ["independent", "chunk-side"].iter().zip(&runs) {
+        let mut v = g_local(&keep(&seeds[0]), &keep(&seeds[1]), false);
+        let mean = v.iter().sum::<f32>() / v.len() as f32;
+        let (p50, p90) = (q(&mut v, 0.5), q(&mut v, 0.9));
+        println!(
+            "{form}: G_local p50 {p50:.2} p90 {p90:.2} mean {mean:.2} over {} pairs",
+            v.len()
+        );
+        assert!(v.len() > 200, "{form}: {} lit pairs", v.len());
+        g.push((p50, p90, mean));
+    }
+    let (independent, chunk_side) = (g[0], g[1]);
+    assert!(
+        chunk_side.0 < independent.0
+            && chunk_side.1 < independent.1
+            && chunk_side.2 < independent.2,
+        "chunk-side {chunk_side:?} against independent {independent:?}"
+    );
+}
+
+/// The filter (`bake::tent`, the table's blend kernel) keeps light off the far side of a crease
+/// and softens a shadow edge by one face (Plan 0057's arithmetic): an unlit wall's row along an
+/// L crease reads exactly 0 beside a lit floor; on a floor half under a slab, the face two from the
+/// edge on the dark side reads exactly 0 and the face beside the edge reads between 0.15 and 0.35
+/// of the lit face beside it (the tent's 4 of 16).
+#[test]
+fn the_filter_stops_at_a_crease_and_softens_a_shadow_by_one_face() {
+    let world = air_world([3, 1, 1], &table());
+    // Chunk 0, the shadow: a floor's top at z 10, a slab at z 11 over x 32..64, an emitter row
+    // above the slab's edge at x 32, so every point of a face from x 32 on is in its shadow.
+    fill(&world, [0, 0, 0], [64, 64, 10], ROCK);
+    fill(&world, [32, 0, 11], [64, 64, 12], ROCK);
+    fill(&world, [32, 16, 40], [33, 48, 41], ORE);
+    // Chunk 2, the crease: a floor's top at z 10, a wall one voxel high at x 168, its -x face
+    // turned away from an emitter row at x 178 and z 40 that lights the floor before it.
+    fill(&world, [128, 0, 0], [192, 64, 10], ROCK);
+    fill(&world, [168, 0, 10], [169, 64, 11], ROCK);
+    fill(&world, [178, 20, 40], [180, 44, 41], ORE);
+    let Some(mut rig) = rig_on(world, [16, 16], Light::Baked, Some(1)) else {
+        return;
+    };
+    // The faces read and their kernels' neighbours: the floor's rows y 28..37 by the shadow's
+    // edge and the crease, and the wall's -x faces.
+    let near: bake::FaceFilter = Arc::new(|v, f| {
+        let rows = (28..37).contains(&v[1]);
+        let floor = f == 5 && v[2] == 9 && ((26..40).contains(&v[0]) || (160..169).contains(&v[0]));
+        let wall = f == 0 && v[0] == 168 && v[2] == 10;
+        rows && (floor || wall)
+    });
+    let at = |rig: &Rig| -> HashMap<([i32; 3], u8), f32> {
+        rig.cells()
+            .into_iter()
+            .map(|(k, c)| (k, bake::rgb9e5_unpack(c[0])[0]))
+            .collect()
+    };
+    rig.bake(&BakeSettings {
+        filter: Some(near.clone()),
+        ..cut_counts(1024, bake::SeedForm::Independent, false, 0)
+    });
+    let raw = at(&rig);
+    rig.bake(&BakeSettings {
+        filter: Some(near.clone()),
+        ..cut_counts(1024, bake::SeedForm::Independent, true, 0)
+    });
+    let tent = at(&rig);
+    for y in 30..35 {
+        let row = |m: &HashMap<([i32; 3], u8), f32>| -> Vec<String> {
+            (29..36)
+                .map(|x| format!("{:.4}", m[&([x, y, 9], 5)]))
+                .collect()
+        };
+        println!(
+            "shadow row y {y}, x 29..35: raw {:?}, filtered {:?}",
+            row(&raw),
+            row(&tent)
+        );
+        // The bake's own edge: x 31 lit, x 32 on in shadow.
+        assert!(raw[&([31, y, 9], 5)] > 0.0, "the lit face beside the edge");
+        for x in 32..36 {
+            assert_eq!(raw[&([x, y, 9], 5)], 0.0, "unfiltered dark face {x} {y}");
+        }
+        assert_eq!(
+            tent[&([33, y, 9], 5)],
+            0.0,
+            "two from the edge, filtered, {y}"
+        );
+        let beside = tent[&([32, y, 9], 5)] / raw[&([31, y, 9], 5)];
+        println!("  beside the edge, filtered, over the lit face: {beside:.3}");
+        assert!(
+            (0.15..=0.35).contains(&beside),
+            "beside the edge {beside} at {y}"
+        );
+        // The crease: the floor before the wall is lit; the wall's -x face reads exactly 0.
+        assert!(
+            tent[&([167, y, 9], 5)] > 0.0,
+            "the floor beside the crease at {y}"
+        );
+        assert_eq!(raw[&([168, y, 10], 0)], 0.0, "the wall, unfiltered, {y}");
+        assert_eq!(
+            tent[&([168, y, 10], 0)],
+            0.0,
+            "the wall's row, filtered, {y}"
+        );
+    }
+}
+
 /// After the bake the first frame is the final one: frame 1 and frame 64 are bit-identical, its
 /// emissive part is the cell's value times the exposure within one half step, the light pass drew
 /// nothing and the table took nothing, and no face misses the store.
@@ -2707,5 +2900,651 @@ fn ref_glass(view: &ReadView) {
             mask.iter().filter(|m| **m).count(),
             steps.iter().max().copied().unwrap_or(0)
         ));
+    }
+}
+
+// Plan 0059 Phase 4: the samples cut, the shared seeds and the filter, read against the
+// reference's files.
+
+/// A face: its voxel and side.
+type FaceKey = ([i32; 3], u8);
+
+/// The cut's grain counts and the deepest of them, every run's length.
+const CUT_COUNTS: [u32; 5] = [32, 128, 512, 1024, 2048];
+
+/// `VXE_CUT_PART`: `grain` (every seed form at `CUT_COUNTS`, two seed sets, the filter on and off,
+/// against the view's file; the vein's back view, the patch and the hall), `cost` (ns a sample in
+/// one dispatch of 1 000 to 1 000 000 samples at the vein and the hall, on the adapter
+/// `VXE_TEST_ADAPTER` names), `cpu` (a sampler over `World::raycast` on one thread at the vein),
+/// `glass` (the pane's bright pixels at the hall). `VXE_BAKE_VIEWS` names the views. Each part
+/// logs to `live/bake-count/cut-<part>.txt`.
+#[test]
+#[ignore = "a reading on the RTX (and the Radeon for cost) from live/bake/'s files, under the perf lock"]
+fn cut_readings() {
+    let parts = std::env::var("VXE_CUT_PART").unwrap_or_else(|_| "grain".to_owned());
+    let names =
+        std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,back,patch,hall".to_owned());
+    for part in parts.split(',') {
+        for view in read_views() {
+            if !names.split(',').any(|n| n == view.name) {
+                continue;
+            }
+            match part {
+                "grain" if view.name != "vein" => cut_grain(&view),
+                "cost" if view.name == "vein" || view.name == "hall" => cut_cost(&view),
+                "cpu" if view.name == "vein" => cut_cpu(&view),
+                "glass" if view.name == "hall" => cut_glass(&view),
+                "grain" | "cost" | "cpu" | "glass" => {}
+                _ => panic!("VXE_CUT_PART takes grain, cost, cpu or glass"),
+            }
+        }
+    }
+}
+
+/// Faces within `r` voxels of `eye`, by voxel centre.
+fn within(eye: [f32; 3], r: f32) -> impl Fn([i32; 3]) -> bool + Send + Sync + Clone {
+    move |v: [i32; 3]| {
+        (0..3)
+            .map(|k| (v[k] as f32 + 0.5 - eye[k]).powi(2))
+            .sum::<f32>()
+            <= r * r
+    }
+}
+
+/// The value of `f`'s face at `n` samples (the unclamped mean), by key.
+fn means_at(faces: &[bake::FaceOutcome], n: u32) -> HashMap<([i32; 3], u8), [f32; 3]> {
+    faces
+        .iter()
+        .filter_map(|o| {
+            let s = o.snapshots.iter().find(|s| s.0 == n)?;
+            Some((key_of(o), s.1))
+        })
+        .collect()
+}
+
+/// `m` through the bake's filter, over `m`'s own faces.
+fn tented(m: &HashMap<([i32; 3], u8), [f32; 3]>) -> HashMap<([i32; 3], u8), [f32; 3]> {
+    let get = |v: [i32; 3], f: u8| m.get(&(v, f)).copied();
+    m.keys()
+        .filter_map(|&(v, f)| Some(((v, f), bake::tent(&get, v, f)?)))
+        .collect()
+}
+
+/// `G_patch`: over 8 x 8 coplanar patches (same side and plane, the tangents' coordinates over
+/// 8), holding at least 32 faces in both sets, `|mean_A - mean_B| / sqrt 2`.
+fn g_patch(a: &HashMap<([i32; 3], u8), f32>, b: &HashMap<([i32; 3], u8), f32>) -> Vec<f32> {
+    type Patch = (u8, i32, i32, i32);
+    let mut patches: HashMap<Patch, (f64, f64, u32)> = HashMap::new();
+    for (&(v, side), &da) in a {
+        let Some(&db) = b.get(&(v, side)) else {
+            continue;
+        };
+        let axis = usize::from(side / 2);
+        let (u, w) = ((axis + 1) % 3, (axis + 2) % 3);
+        let e = patches
+            .entry((side, v[axis], v[u].div_euclid(8), v[w].div_euclid(8)))
+            .or_default();
+        e.0 += f64::from(da);
+        e.1 += f64::from(db);
+        e.2 += 1;
+    }
+    patches
+        .values()
+        .filter(|p| p.2 >= 32)
+        .map(|p| ((p.0 - p.1).abs() / f64::from(p.2) / 2f64.sqrt()) as f32)
+        .collect()
+}
+
+/// A row of 7 coplanar faces across the reference's sharpest flat shadow edge in `r` (a lit face
+/// over 20 levels beside one at most 1, three coplanar faces on each side, each lit face at least
+/// 0.8 of the edge's, each dark face at most 1 level), and the crease pair (a face and the
+/// concave face across from it) whose reference differs most, as rows of 3 faces each side.
+#[allow(clippy::type_complexity)]
+fn harm_rows(
+    r: &HashMap<([i32; 3], u8), f32>,
+) -> (Option<Vec<([i32; 3], u8)>>, Option<Vec<([i32; 3], u8)>>) {
+    let mut edge: Option<(f32, Vec<([i32; 3], u8)>)> = None;
+    let mut crease: Option<(f32, Vec<([i32; 3], u8)>)> = None;
+    let mut keys: Vec<_> = r.keys().copied().collect();
+    keys.sort_unstable();
+    for &(v, side) in &keys {
+        let axis = usize::from(side / 2);
+        let air = if side % 2 == 1 { 1 } else { -1 };
+        for t in [(axis + 1) % 3, (axis + 2) % 3] {
+            for dir in [1, -1] {
+                let at = |k: i32| {
+                    let mut c = v;
+                    c[t] += dir * k;
+                    (c, side)
+                };
+                let row: Vec<_> = (-2..=4).map(at).collect();
+                if row.iter().all(|k| r.contains_key(k)) {
+                    let lit = r[&at(0)];
+                    let ok = lit > 20.0
+                        && (-2..=0).all(|k| r[&at(k)] >= 0.8 * lit)
+                        && (1..=4).all(|k| r[&at(k)] <= 1.0);
+                    if ok && edge.as_ref().is_none_or(|e| lit > e.0) {
+                        edge = Some((lit, row));
+                    }
+                }
+                // The concave face across: the voxel a step along the tangent and a step toward
+                // the air, its face turned back along the tangent.
+                let mut w = v;
+                w[t] += dir;
+                w[axis] += air;
+                let wside = (2 * t) as u8 + u8::from(dir < 0);
+                let floor: Vec<_> = (0..3)
+                    .rev()
+                    .map(|k| {
+                        let mut c = v;
+                        c[t] -= dir * k;
+                        (c, side)
+                    })
+                    .collect();
+                let wall: Vec<_> = (0..3)
+                    .map(|k| {
+                        let mut c = w;
+                        c[axis] += air * k;
+                        (c, wside)
+                    })
+                    .collect();
+                if floor.iter().chain(&wall).all(|k| r.contains_key(k)) {
+                    let d = (r[&(v, side)] - r[&(w, wside)]).abs();
+                    if crease.as_ref().is_none_or(|c| d > c.0) {
+                        crease = Some((d, floor.into_iter().chain(wall).collect()));
+                    }
+                }
+            }
+        }
+    }
+    (edge.map(|e| e.1), crease.map(|c| c.1))
+}
+
+fn cut_grain(view: &ReadView) {
+    let mut log = Log::open("cut-grain.txt");
+    let (mut rig, piece) = reference_rig(view, [16, 16]);
+    let file = store_cells(&rig.frame, piece);
+    let eye = view.eye;
+    let near98 = within(eye, 98.0);
+    let near96 = within(eye, 96.0);
+    let filter: bake::FaceFilter = Arc::new(move |v, _| near98(v) && inside(piece, v));
+    let extent = extent_within(rig.world.extent(), eye, 98.0);
+    let emitter = emitter_test(&rig.world);
+    let l = Lighting::default();
+    let reference: HashMap<([i32; 3], u8), f32> = file
+        .iter()
+        .filter(|((v, _), _)| near96(*v) && inside(piece, *v) && !emitter(*v))
+        .map(|(k, c)| (*k, d_of(bake::rgb9e5_unpack(c[0]), &l)))
+        .collect();
+    let (edge, crease) = harm_rows(&reference);
+    let mut cut = Frame::new(&rig.device, 16, 16);
+    cut.set_lighting(reference_lighting(false, Light::Baked));
+    for form in bake::SeedForm::ALL {
+        let mut runs = Vec::new();
+        for seed in [0u32, 0x5EED_0001] {
+            let settings = BakeSettings {
+                round: 32,
+                n_min: 2048,
+                n_max: 2048,
+                form,
+                seed,
+                keep_faces: true,
+                snapshots: CUT_COUNTS.to_vec(),
+                filter: Some(filter.clone()),
+                ..BakeSettings::default()
+            };
+            let report = cut
+                .bake_until(
+                    &rig.device,
+                    &rig.queue,
+                    &mut rig.gpu,
+                    &rig.world,
+                    extent,
+                    &settings,
+                    &mut |_| {},
+                )
+                .expect("the cut bakes");
+            log.line(&format!(
+                "grain {} {} seed {seed:#x} adapter {}: {} faces, {:.3e} samples, submit ns a sample {:.2}",
+                view.name,
+                form.name(),
+                rig.adapter,
+                report.faces,
+                report.samples as f64,
+                report.gpu_seconds * 1e9 / report.samples.max(1) as f64
+            ));
+            runs.push(report.outcomes);
+        }
+        for n in CUT_COUNTS {
+            let raw = [means_at(&runs[0], n), means_at(&runs[1], n)];
+            for tent in [false, true] {
+                let m: Vec<HashMap<FaceKey, [f32; 3]>> = if tent {
+                    raw.iter().map(tented).collect()
+                } else {
+                    raw.to_vec()
+                };
+                let d: Vec<HashMap<([i32; 3], u8), f32>> = m
+                    .iter()
+                    .map(|m| {
+                        m.iter()
+                            .filter(|(k, _)| reference.contains_key(k))
+                            .map(|(k, c)| (*k, d_of(*c, &l)))
+                            .collect()
+                    })
+                    .collect();
+                let mut local = g_local(&d[0], &d[1], false);
+                let mut seam = g_local(&d[0], &d[1], true);
+                let mut patch = g_patch(&d[0], &d[1]);
+                let mut noise: Vec<f32> = d[0]
+                    .iter()
+                    .filter_map(|(k, a)| Some((a - d[1].get(k)?).abs() / 2f32.sqrt()))
+                    .collect();
+                // The dark share and the bias by decile against the reference, seed set A.
+                let lit: Vec<_> = reference.iter().filter(|(_, r)| **r > 1.0).collect();
+                let dark = lit
+                    .iter()
+                    .filter(|(k, _)| m[0].get(k).is_some_and(|c| *c == [0.0; 3]))
+                    .count();
+                let mut by: Vec<(f32, f32)> = reference
+                    .iter()
+                    .filter_map(|(k, r)| Some((*r, d[0].get(k)? - r)))
+                    .collect();
+                by.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let deciles: Vec<String> = (0..10)
+                    .map(|i| {
+                        let s = &by[i * by.len() / 10..(i + 1) * by.len() / 10];
+                        let mean = s.iter().map(|x| x.1).sum::<f32>() / s.len().max(1) as f32;
+                        let sd = (s.iter().map(|x| (x.1 - mean).powi(2)).sum::<f32>()
+                            / s.len().max(1) as f32)
+                            .sqrt();
+                        format!("{mean:+.2}/{sd:.2}")
+                    })
+                    .collect();
+                log.line(&format!(
+                    "grain {} {} N {n} filter {}: G_local {:.2} / {:.2} ({} pairs); G_seam {:.2} / {:.2} ({} pairs); G_patch p90 {:.2} ({} patches); G_noise {:.2} / {:.2}; dark {:.4} ({dark} of {}); bias by decile mean/sd {}",
+                    view.name,
+                    form.name(),
+                    if tent { "on" } else { "off" },
+                    q(&mut local, 0.5),
+                    q(&mut local, 0.9),
+                    local.len(),
+                    q(&mut seam, 0.5),
+                    q(&mut seam, 0.9),
+                    seam.len(),
+                    q(&mut patch, 0.9),
+                    patch.len(),
+                    q(&mut noise, 0.5),
+                    q(&mut noise, 0.9),
+                    dark as f64 / lit.len().max(1) as f64,
+                    lit.len(),
+                    deciles.join(" ")
+                ));
+                if n == 512 && !tent {
+                    let f = tented(&raw[0]);
+                    for (name, row) in [("shadow edge", &edge), ("crease", &crease)] {
+                        let Some(row) = row else {
+                            log.line(&format!("harm {} {name}: none found", view.name));
+                            continue;
+                        };
+                        let vals = |m: &dyn Fn(&FaceKey) -> Option<f32>| -> String {
+                            row.iter()
+                                .map(|k| m(k).map_or("-".to_owned(), |x| format!("{x:.1}")))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        };
+                        log.line(&format!(
+                            "harm {} {name} {} N 512 at {:?}: reference [{}] cut [{}] filtered [{}]",
+                            view.name,
+                            form.name(),
+                            row[0],
+                            vals(&|k| reference.get(k).copied()),
+                            vals(&|k| raw[0].get(k).map(|c| d_of(*c, &l))),
+                            vals(&|k| f.get(k).map(|c| d_of(*c, &l))),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The faces within 96 voxels of `eye`, in a hashed order: a ring's faces without its order.
+fn shuffled_faces(world: &World, eye: [f32; 3]) -> Vec<([i32; 3], u8)> {
+    let opaque = bake::opaque_table(world.materials());
+    let near = within(eye, 96.0);
+    let e = extent_within(world.extent(), eye, 96.0);
+    let s = e.size();
+    let mut out = Vec::new();
+    for z in 0..s[2] {
+        for y in 0..s[1] {
+            for x in 0..s[0] {
+                let c = [e.min.0[0] + x, e.min.0[1] + y, e.min.0[2] + z];
+                let Some(f) = bake::list_world_chunk(world, ChunkCoord(c), &opaque) else {
+                    continue;
+                };
+                for (slot, keys) in &f.bricks {
+                    let b = vxe_world::brick_of_slot(usize::from(*slot));
+                    for &key in keys {
+                        let i = i32::from(key >> 3);
+                        let l = [i % 8, i / 8 % 8, i / 64];
+                        let v = [0, 1, 2].map(|k| c[k] * 64 + b[k] * 8 + l[k]);
+                        if near(v) {
+                            out.push((v, (key & 7) as u8));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let h = |k: &([i32; 3], u8)| {
+        let mut x = (k.0[0] as u64) ^ ((k.0[1] as u64) << 21) ^ ((k.0[2] as u64) << 42);
+        x ^= u64::from(k.1) << 61;
+        x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        x ^ (x >> 29)
+    };
+    out.sort_unstable_by_key(h);
+    out
+}
+
+fn cut_cost(view: &ReadView) {
+    let mut log = Log::open("cut-cost.txt");
+    let (mut rig, _) = reference_rig(view, [16, 16]);
+    let timer = vxe_render::marcher::PassTimer::new(&rig.device, &rig.queue).map(Arc::new);
+    let faces = shuffled_faces(&rig.world, view.eye);
+    let extent = extent_within(rig.world.extent(), view.eye, 96.0);
+    let mut cut = Frame::new(&rig.device, 16, 16);
+    cut.set_lighting(reference_lighting(false, Light::Baked));
+    let arms = [
+        (bake::SeedForm::Independent, 32u32),
+        (bake::SeedForm::ChunkSide, 32),
+        (bake::SeedForm::GlobalSide, 32),
+        (bake::SeedForm::Lattice, 32),
+        (bake::SeedForm::Independent, 512),
+    ];
+    for (form, entry) in arms {
+        for size in [1_000u64, 10_000, 100_000, 300_000, 1_000_000] {
+            let k = (size.div_ceil(u64::from(entry)) as usize).min(faces.len());
+            let set: std::collections::HashSet<([i32; 3], u8)> =
+                faces[..k].iter().copied().collect();
+            let set = Arc::new(set);
+            let filter: bake::FaceFilter = Arc::new(move |v, f| set.contains(&(v, f)));
+            let settings = BakeSettings {
+                round: entry,
+                n_min: entry,
+                n_max: entry,
+                form,
+                filter: Some(filter),
+                timer: timer.clone(),
+                ..BakeSettings::default()
+            };
+            // `VXE_CUT_WARM`: before each timed run, a bake of every face at 32 samples (about
+            // 2 M samples) on the same faces' chunks, so the GPU is not idle into the run.
+            let warm = std::env::var("VXE_CUT_WARM").is_ok_and(|v| v == "1");
+            let warm_settings = BakeSettings {
+                round: 32,
+                n_min: 32,
+                n_max: 32,
+                form,
+                ..BakeSettings::default()
+            };
+            let (mut wall, mut gpu, mut len) = (Vec::new(), Vec::new(), 0.0);
+            let mut samples = 0;
+            for _ in 0..6 {
+                if warm {
+                    cut.bake_until(
+                        &rig.device,
+                        &rig.queue,
+                        &mut rig.gpu,
+                        &rig.world,
+                        extent,
+                        &warm_settings,
+                        &mut |_| {},
+                    )
+                    .expect("the warm-up bakes");
+                }
+                let r = cut
+                    .bake_until(
+                        &rig.device,
+                        &rig.queue,
+                        &mut rig.gpu,
+                        &rig.world,
+                        extent,
+                        &settings,
+                        &mut |_| {},
+                    )
+                    .expect("the cost run bakes");
+                assert_eq!(r.submits, 1, "one dispatch");
+                samples = r.samples;
+                wall.push((r.gpu_seconds * 1e9 / r.samples as f64) as f32);
+                gpu.push((r.dispatch_seconds * 1e9 / r.samples as f64) as f32);
+                len = r.ray_len / r.rays.max(1) as f64;
+            }
+            // The first run warms the pipeline; the median of the other five.
+            let each: Vec<String> = gpu.iter().map(|g| format!("{g:.1}")).collect();
+            let (mut wall, mut gpu) = (wall[1..].to_vec(), gpu[1..].to_vec());
+            log.line(&format!(
+                "cost {} {} entry {entry} warm {warm} adapter {}: {samples} samples ({k} faces), ns a sample wall {:.2} gpu {:.2} (median of 5; gpu each {}), mean shadow ray {len:.1}",
+                view.name,
+                form.name(),
+                rig.adapter,
+                q(&mut wall, 0.5),
+                q(&mut gpu, 0.5),
+                each.join(" "),
+            ));
+        }
+    }
+}
+
+/// A CPU sampler over `World::raycast` on this thread: per sample a uniform point of the face,
+/// 32 candidates drawn uniformly from the emitter voxels within the light radius' box around
+/// the face's chunk, resampled by `cos / d^2`, and one ray to the kept emitter's centre.
+fn cut_cpu(view: &ReadView) {
+    let mut log = Log::open("cut-cpu.txt");
+    let world = reference_world(view.scene);
+    let faces = shuffled_faces(&world, view.eye);
+    let e = extent_within(world.extent(), view.eye, 96.0);
+    let emitters: Vec<[i32; 3]> = emitters_by_chunk(&world, e)
+        .into_values()
+        .flatten()
+        .collect();
+    assert!(!emitters.is_empty());
+    let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+    let mut next = || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    let (n_faces, n) = (2000usize, 64u32);
+    let (mut visible, mut rays) = (0u64, 0u64);
+    let t = std::time::Instant::now();
+    for &(v, face) in faces.iter().take(n_faces) {
+        let axis = usize::from(face / 2);
+        let sign = if face % 2 == 1 { 1.0 } else { -1.0 };
+        for _ in 0..n {
+            let mut p = v.map(|x| f64::from(x) + 0.5);
+            p[axis] += 0.5 * sign + 1e-3 * sign;
+            for k in [(axis + 1) % 3, (axis + 2) % 3] {
+                p[k] += (next() % 1024) as f64 / 1024.0 - 0.5;
+            }
+            let (mut w_sum, mut kept) = (0f64, None);
+            for _ in 0..32 {
+                let c = emitters[(next() % emitters.len() as u64) as usize];
+                let d = [0, 1, 2].map(|k| f64::from(c[k]) + 0.5 - p[k]);
+                let d2 = d.iter().map(|x| x * x).sum::<f64>();
+                let cos = (d[axis] * sign / d2.sqrt()).max(0.0);
+                let w = cos / d2.max(1.0);
+                w_sum += w;
+                if w > 0.0 && (next() % 1_000_000) as f64 / 1e6 * w_sum < w {
+                    kept = Some(c);
+                }
+            }
+            let Some(c) = kept else { continue };
+            let o = Fixed3(p.map(|x| (x * FIXED_ONE as f64) as i64));
+            let dir = [0, 1, 2].map(|k| (i64::from(c[k]) * FIXED_ONE + FIXED_ONE / 2) - o.0[k]);
+            rays += 1;
+            if let Ok(Some(hit)) = world.raycast(o, dir, 255)
+                && hit.voxel.0 == c
+            {
+                visible += 1;
+            }
+        }
+    }
+    let secs = t.elapsed().as_secs_f64();
+    let samples = n_faces as u64 * u64::from(n);
+    log.line(&format!(
+        "cpu {}: {samples} samples on one thread ({n_faces} faces x {n}), {rays} rays, {visible} reached the emitter, {:.1} s, ns a sample {:.0}",
+        view.name,
+        secs,
+        secs * 1e9 / samples as f64
+    ));
+}
+
+/// The pane's display pixels over 250 (luma) at the hall, at exposure 8 and 16 (the HUD's +4 EV),
+/// lamp off and on, with their count and centroid against the frame's centre (the lamp's cone
+/// axis along the view); and the same with the store swapped for the table, and with the lamp's
+/// bounce on as the window runs it.
+fn cut_glass(view: &ReadView) {
+    let mut log = Log::open("cut-glass.txt");
+    let size = NATIVE;
+    let (mut rig, piece) = reference_rig(view, size);
+    let camera = view_camera(view);
+    let glass = (rig.world.materials().len() - 1) as vxe_world::MaterialId;
+    let e = camera.position.to_array().map(|v| v.floor() as i32);
+    let (fwd, _, _) = camera.basis();
+    let k = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
+    let ahead = if fwd.to_array()[k] >= 0.0 { 1 } else { -1 };
+    let near = e[k] + ahead * 6;
+    let mut min = [0i32; 3];
+    let mut max = [0i32; 3];
+    (min[k], max[k]) = if ahead > 0 {
+        (near, near + 2)
+    } else {
+        (near - 1, near + 1)
+    };
+    for a in [1 - k, 2] {
+        min[a] = e[a] - 20;
+        max[a] = e[a] + 20;
+    }
+    assert!(inside(piece, min) && inside(piece, max.map(|v| v - 1)));
+    let lp_off = LightParams::default();
+    let frame_at = |rig: &mut ReadRig, lighting: Lighting, lp: &LightParams| -> Vec<u8> {
+        rig.frame.set_lighting(lighting);
+        for _ in 0..64 {
+            rig.frame
+                .step(&rig.device, &rig.queue, &rig.gpu, &camera, lp);
+        }
+        readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+    };
+    let before = frame_at(&mut rig, reference_lighting(false, Light::Baked), &lp_off);
+    let accum_before = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+    let op = EditOp::box_(
+        Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
+        Mode::Fill(glass),
+    );
+    let dig = timed_dig(&mut rig, &[op], "pane");
+    log.line(&format!("glass hall adapter {}: {dig}", rig.adapter));
+    let after = frame_at(&mut rig, reference_lighting(false, Light::Baked), &lp_off);
+    let mask: Vec<bool> = before
+        .chunks(4)
+        .zip(after.chunks(4))
+        .map(|(a, b)| a != b)
+        .collect();
+    let pane = mask.iter().filter(|m| **m).count();
+    // What the pane's pixels showed before it, and the accumulated lighting (before the display)
+    // there before and after it, lamp off, exposure 8.
+    let accum_after = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+    let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+    let y0 = luma(&before);
+    let bright_before = mask
+        .iter()
+        .enumerate()
+        .filter(|(i, m)| **m && y0[*i] > 250.0)
+        .count();
+    let mut a0: Vec<f32> = accum_before
+        .iter()
+        .zip(&mask)
+        .filter(|(_, m)| **m)
+        .map(|(p, _)| lum(p))
+        .collect();
+    let mut a1: Vec<f32> = accum_after
+        .iter()
+        .zip(&mask)
+        .filter(|(_, m)| **m)
+        .map(|(p, _)| lum(p))
+        .collect();
+    let mut y_before: Vec<f32> = y0
+        .iter()
+        .zip(&mask)
+        .filter(|(_, m)| **m)
+        .map(|(v, _)| *v)
+        .collect();
+    log.line(&format!(
+        "glass hall before the pane, same pixels: over 250 {bright_before} ({:.4}), luma p50 {:.0} p90 {:.0}; accumulated lighting luminance p50 / p90 / max before {:.4} / {:.4} / {:.4}, with the pane {:.4} / {:.4} / {:.4}",
+        bright_before as f64 / pane.max(1) as f64,
+        q(&mut y_before, 0.5),
+        q(&mut y_before, 0.9),
+        q(&mut a0, 0.5),
+        q(&mut a0, 0.9),
+        q(&mut a0, 1.0),
+        q(&mut a1, 0.5),
+        q(&mut a1, 0.9),
+        q(&mut a1, 1.0),
+    ));
+    for (light, lname) in [(Light::Baked, "store"), (Light::Table, "table")] {
+        for bounce in [false, true] {
+            if light == Light::Table && bounce {
+                continue;
+            }
+            for exposure in [8.0f32, 16.0] {
+                for (lamp, lp) in [
+                    (false, LightParams::default()),
+                    (true, LightParams::headlamp()),
+                ] {
+                    let lighting = Lighting {
+                        exposure: Exposure::Manual(exposure),
+                        lamp_bounce: bounce,
+                        ..reference_lighting(lamp, light)
+                    };
+                    let img = frame_at(&mut rig, lighting, &lp);
+                    let y = luma(&img);
+                    let (mut n, mut sx, mut sy) = (0u64, 0f64, 0f64);
+                    for (i, m) in mask.iter().enumerate() {
+                        if *m && y[i] > 250.0 {
+                            n += 1;
+                            sx += f64::from(i as u32 % size[0]);
+                            sy += f64::from(i as u32 / size[0]);
+                        }
+                    }
+                    let mut pane_y: Vec<f32> = y
+                        .iter()
+                        .zip(&mask)
+                        .filter(|(_, m)| **m)
+                        .map(|(v, _)| *v)
+                        .collect();
+                    let centroid = if n > 0 {
+                        format!(
+                            "({:.0}, {:.0}), off centre by ({:+.0}, {:+.0}) px",
+                            sx / n as f64,
+                            sy / n as f64,
+                            sx / n as f64 - f64::from(size[0]) / 2.0,
+                            sy / n as f64 - f64::from(size[1]) / 2.0
+                        )
+                    } else {
+                        "-".to_owned()
+                    };
+                    log.line(&format!(
+                        "glass hall {lname} bounce {} exposure {exposure} lamp {}: pane pixels {pane}, over 250 {n} ({:.4}), centroid {centroid}; pane luma p50 {:.0} p90 {:.0} max {:.0}",
+                        if bounce { "on" } else { "off" },
+                        if lamp { "on" } else { "off" },
+                        n as f64 / pane.max(1) as f64,
+                        q(&mut pane_y, 0.5),
+                        q(&mut pane_y, 0.9),
+                        q(&mut pane_y, 1.0),
+                    ));
+                }
+            }
+        }
     }
 }

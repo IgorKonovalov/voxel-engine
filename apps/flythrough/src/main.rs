@@ -487,6 +487,10 @@ struct Args {
     /// `--bake-file PATH`: the store is loaded from `PATH` where its key matches this run's bake,
     /// else baked and written there.
     bake_file: Option<std::path::PathBuf>,
+    /// `--cut FORM:N[:off],...` under `--reference`: stores baked beside the reference at `N`
+    /// samples a face, seed form `FORM`, through the filter unless `:off` (Plan 0059 Phase 4);
+    /// `F` cycles the reference, each cut and the table.
+    cuts: Vec<CutArm>,
     /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
     /// `DEFAULT_PRELOAD_CLAIM_RADIUS`).
     preload_claim: u32,
@@ -770,6 +774,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_radius_set: false,
         reference: false,
         bake_file: None,
+        cuts: Vec::new(),
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -1087,6 +1092,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--reference" => args.reference = true,
             "--bake-file" => args.bake_file = Some(value()?.into()),
+            "--cut" => {
+                for arm in value()?.split(',') {
+                    args.cuts.push(CutArm::parse(arm)?);
+                }
+            }
             "--lamp-bounce" | "--indirect" => {
                 args.lamp_bounce = match value()?.as_str() {
                     "on" => true,
@@ -1208,6 +1218,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         if !args.bake_radius_set {
             args.bake_radius = Some(REFERENCE_BAKE_RADIUS);
         }
+    }
+    if !args.cuts.is_empty() && !args.reference {
+        return Err("--cut bakes a cut beside the reference; it needs --reference".to_owned());
     }
     if args.bake_radius_set && args.light != vxe_render::Light::Baked {
         return Err("--bake-radius sets the bake's extent; it needs --light baked".to_owned());
@@ -2947,12 +2960,108 @@ impl SettleClock {
 }
 
 /// The running fly-through, once the world exists.
-/// The reference's state: the baked piece in words and chunks, the last dig's hitch, the panes.
+/// The reference's state: the baked piece in words and chunks, the last dig's hitch, the panes,
+/// and the stores `F` cycles (the reference first, then each `--cut`).
 #[derive(Clone, Debug, Default)]
 struct Reference {
     piece: Option<(String, ChunkExtent)>,
     last_dig: Option<hud::DigHitch>,
     panes: u32,
+    stores: Vec<StoreSlot>,
+    /// The store in the pool, an index of `stores`.
+    active: usize,
+    /// The store `F` selected, swapped into the pool at the next frame ([`Run::sync_store`]).
+    selected: usize,
+}
+
+/// A cut of Plan 0059 Phase 4: a seed form, the samples a face and the filter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CutArm {
+    form: vxe_render::SeedForm,
+    samples: u32,
+    tent: bool,
+}
+
+impl CutArm {
+    /// `FORM:N` or `FORM:N:off`.
+    fn parse(s: &str) -> Result<Self, String> {
+        let bad = || {
+            format!(
+                "--cut takes FORM:N or FORM:N:off (FORM one of independent, chunk-side, global-side, lattice; N 1 to 1048576), not {s}"
+            )
+        };
+        let mut it = s.split(':');
+        let form = it
+            .next()
+            .and_then(vxe_render::SeedForm::parse)
+            .ok_or_else(bad)?;
+        let samples = it
+            .next()
+            .and_then(|n| n.parse().ok())
+            .filter(|n| (1..=1 << 20).contains(n))
+            .ok_or_else(bad)?;
+        let tent = match it.next() {
+            None => true,
+            Some("off") => false,
+            Some(_) => return Err(bad()),
+        };
+        if it.next().is_some() {
+            return Err(bad());
+        }
+        Ok(Self {
+            form,
+            samples,
+            tent,
+        })
+    }
+
+    /// Its name on the banner, the HUD and its file: `chunk-side 512` (`... raw` without the filter).
+    fn name(self) -> String {
+        format!(
+            "{} {}{}",
+            self.form.name(),
+            self.samples,
+            if self.tent { "" } else { " raw" }
+        )
+    }
+
+    /// The bake's settings: every face at `samples`, in rounds of at most `BAKE_ROUND`.
+    fn settings(self) -> vxe_render::BakeSettings {
+        vxe_render::BakeSettings {
+            round: self.samples.min(vxe_render::bake::BAKE_ROUND),
+            n_min: self.samples,
+            n_max: self.samples,
+            form: self.form,
+            tent: self.tent,
+            ..vxe_render::BakeSettings::default()
+        }
+    }
+
+    /// The cut's file beside the reference's `path`: `vein.bin` gives `vein.chunk-side-512.bin`.
+    fn file(self, path: &std::path::Path) -> std::path::PathBuf {
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("bake");
+        path.with_file_name(format!("{stem}.{}.bin", self.name().replace(' ', "-")))
+    }
+}
+
+/// One store `F` cycles: its name, its bake's settings, its blocks while another store is in the
+/// pool, and the dig boxes it has not re-baked yet (re-baked when it is swapped in).
+#[derive(Clone)]
+struct StoreSlot {
+    name: String,
+    settings: vxe_render::BakeSettings,
+    image: Option<vxe_render::StoreImage>,
+    pending: Vec<[[i32; 3]; 2]>,
+}
+
+impl std::fmt::Debug for StoreSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoreSlot")
+            .field("name", &self.name)
+            .field("held", &self.image.is_some())
+            .field("pending", &self.pending.len())
+            .finish()
+    }
 }
 
 struct Run {
@@ -3713,8 +3822,9 @@ impl Run {
 
     /// The pre-roll under `--light baked`: every chunk of the extent baked before the first frame,
     /// its progress on stdout, or under `--bake-file` loaded from the file where its key matches
-    /// (else baked and written there). The window maps with its first frame, so nothing waits on
-    /// it here.
+    /// (else baked and written there). Then each `--cut`, from its file beside the reference's
+    /// ([`CutArm::file`]) or baked, held off the pool for `F`; the reference stays in the pool.
+    /// The window maps with its first frame, so nothing waits on it here.
     fn bake_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
         let eye = start_camera(&self.args, self.spawn).position.to_array();
         let world_extent = self.world.extent();
@@ -3723,39 +3833,124 @@ impl Run {
         let label = piece_label(extent, world_extent, centre, self.args.bake_radius);
         self.reference.piece = Some((label.clone(), extent));
         let settings = vxe_render::BakeSettings::default();
+        let path = self.args.bake_file.clone();
+        if !self.load_or_bake(
+            gpu,
+            frame,
+            mirror,
+            extent,
+            centre,
+            &label,
+            &settings,
+            path.as_deref(),
+            "reference",
+        ) {
+            return;
+        }
+        self.reference.stores = vec![StoreSlot {
+            name: "reference".to_owned(),
+            settings,
+            image: None,
+            pending: Vec::new(),
+        }];
+        self.reference.active = 0;
+        self.reference.selected = 0;
+        if self.args.cuts.is_empty() {
+            return;
+        }
+        let reference = frame.store().image();
+        for cut in self.args.cuts.clone() {
+            let settings = cut.settings();
+            let file = path.as_deref().map(|p| cut.file(p));
+            if !self.load_or_bake(
+                gpu,
+                frame,
+                mirror,
+                extent,
+                centre,
+                &label,
+                &settings,
+                file.as_deref(),
+                &cut.name(),
+            ) {
+                return;
+            }
+            self.reference.stores.push(StoreSlot {
+                name: cut.name(),
+                settings,
+                image: Some(frame.store().image()),
+                pending: Vec::new(),
+            });
+        }
+        if let Err(e) = frame.swap_store_image(&gpu.queue, mirror, reference) {
+            self.failure.set(format!(
+                "the reference's store did not return to the pool: {e}"
+            ));
+        }
+        println!("{}", self.reference_row());
+    }
+
+    /// `extent` loaded into `frame`'s store from `path` where its key matches `settings`' bake,
+    /// else baked to `settings` (and written to `path`), its lines on stdout naming `what`;
+    /// false (and the session's failure set) when the bake fails.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the device, the frame, the mirror, the piece and the bake's settings and file are independent"
+    )]
+    fn load_or_bake(
+        &mut self,
+        gpu: &Gpu,
+        frame: &mut Frame,
+        mirror: &mut GpuWorld,
+        extent: ChunkExtent,
+        centre: ChunkCoord,
+        label: &str,
+        settings: &vxe_render::BakeSettings,
+        path: Option<&std::path::Path>,
+        what: &str,
+    ) -> bool {
         let key = Frame::store_key(
             mirror,
-            world_extent,
+            self.world.extent(),
             self.args.seed,
             extent,
             centre,
             self.args.bake_radius.unwrap_or(-1),
-            &settings,
+            settings,
         );
-        if let Some(path) = self.args.bake_file.clone() {
+        if let Some(path) = path {
             let start = now();
-            match frame.load_store_file(&gpu.device, &gpu.queue, mirror, &self.world, &path, &key) {
+            match frame.load_store_file(&gpu.device, &gpu.queue, mirror, &self.world, path, &key) {
                 Ok(()) => {
                     let s = frame.store().stats(0);
                     println!(
-                        "bake file: loaded {} in {:.0} ms, {label}, {} chunks, store {:.1} MB",
+                        "bake file ({what}): loaded {} in {:.0} ms, {label}, {} chunks, store {:.1} MB",
                         path.display(),
                         ms_since(start),
                         s.chunks,
                         s.bytes as f64 / 1e6
                     );
-                    return;
+                    return true;
                 }
-                Err(e) => println!("bake file: {} refused ({e}); baking", path.display()),
+                Err(e) => println!(
+                    "bake file ({what}): {} refused ({e}); baking",
+                    path.display()
+                ),
             }
         }
         println!(
-            "bake: {:?} chunks from {:?} ({label}), every face to a standard error of {} levels, {} to {} samples",
+            "bake ({what}): {:?} chunks from {:?} ({label}), {}{} to {} samples a face, seeds {}, filter {}",
             extent.size(),
             extent.min.0,
-            vxe_render::bake::BAKE_SE,
-            vxe_render::bake::N_MIN,
-            vxe_render::bake::N_MAX,
+            if settings.n_min == settings.n_max {
+                String::new()
+            } else {
+                format!("every face to a standard error of {} levels, ", settings.se)
+            },
+            settings.n_min,
+            settings.n_max,
+            settings.form.name(),
+            if settings.tent { "on" } else { "off" },
         );
         let start = now();
         let mut last = 0.0;
@@ -3765,13 +3960,13 @@ impl Run {
             mirror,
             &self.world,
             extent,
-            &settings,
+            settings,
             &mut |p| {
                 let ms = ms_since(start);
                 if ms - last >= 2000.0 {
                     last = ms;
                     println!(
-                        "bake: {} of {} chunks, {} of {} faces, {:.2e} samples, {:.0} s",
+                        "bake ({what}): {} of {} chunks, {} of {} faces, {:.2e} samples, {:.0} s",
                         p.chunks_done,
                         p.chunks,
                         p.faces_done,
@@ -3786,7 +3981,7 @@ impl Run {
             Ok(r) => {
                 let s = frame.read_store_stats(&gpu.device, &gpu.queue);
                 println!(
-                    "bake: done, {} chunks, {} faces, {:.3e} samples, {} faces at {} and {} at {}, {:.1} s, store {:.1} MB",
+                    "bake ({what}): done, {} chunks, {} faces, {:.3e} samples, {} faces at {} and {} at {}, {:.1} s, store {:.1} MB",
                     r.chunks,
                     r.faces,
                     r.samples as f64,
@@ -3797,15 +3992,75 @@ impl Run {
                     ms_since(start) / 1e3,
                     s.bytes as f64 / 1e6
                 );
-                if let Some(path) = &self.args.bake_file {
+                if let Some(path) = path {
                     match frame.write_store_file(path, &key) {
-                        Ok(bytes) => println!("bake file: wrote {} ({bytes} B)", path.display()),
-                        Err(e) => println!("bake file: {} not written ({e})", path.display()),
+                        Ok(bytes) => {
+                            println!("bake file ({what}): wrote {} ({bytes} B)", path.display())
+                        }
+                        Err(e) => {
+                            println!("bake file ({what}): {} not written ({e})", path.display())
+                        }
                     }
                 }
+                true
             }
-            Err(e) => self.failure.set(format!("bake failed: {e}")),
+            Err(e) => {
+                self.failure.set(format!("bake ({what}) failed: {e}"));
+                false
+            }
         }
+    }
+
+    /// `F` under `--reference`: the next of the reference, each cut and the table. The store is
+    /// selected here and swapped into the pool at the next frame ([`Run::sync_store`]).
+    fn cycle_light(&mut self) {
+        let baked = self.modes.lighting.light == vxe_render::Light::Baked;
+        let count = self.reference.stores.len().max(1);
+        let next = self.reference.selected + 1;
+        if baked && next < count {
+            self.reference.selected = next;
+        } else {
+            if !baked {
+                self.reference.selected = 0;
+            }
+            self.modes
+                .press(hud::ModeKey::LightRead, ms_since(self.start));
+        }
+        println!("{}", self.modes.line());
+        println!("{}", self.reference_row());
+    }
+
+    /// Puts the selected store in the pool, ahead of this frame's re-bake and encode: its blocks
+    /// written in place of the active one's, which is held, and the digs it missed queued.
+    fn sync_store(&mut self, gpu: &Gpu) {
+        let (from, to) = (self.reference.active, self.reference.selected);
+        if from == to {
+            return;
+        }
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        let Some(image) = self.reference.stores[to].image.take() else {
+            return;
+        };
+        let t = now();
+        match gfx.frame.swap_store_image(&gpu.queue, &gfx.mirror, image) {
+            Ok(held) => self.reference.stores[from].image = Some(held),
+            Err(e) => {
+                println!("store swap refused: {e}");
+                self.reference.selected = from;
+                return;
+            }
+        }
+        let pending = std::mem::take(&mut self.reference.stores[to].pending);
+        gfx.frame.queue_digs(&pending);
+        self.reference.active = to;
+        println!(
+            "store: {} in the pool ({:.0} ms), {} digs to re-bake",
+            self.reference.stores[to].name,
+            ms_since(t),
+            pending.len()
+        );
     }
 
     /// A dig's re-bake, ahead of this frame's encode: the ring of every box since the last frame
@@ -3819,9 +4074,21 @@ impl Run {
             return enc;
         }
         gpu.queue.submit([enc.finish()]);
-        let settings = vxe_render::BakeSettings {
-            n_max: vxe_render::bake::DIG_N_MAX,
-            ..vxe_render::BakeSettings::default()
+        // The stores out of the pool re-bake these boxes when they are swapped in.
+        let active = self.reference.active;
+        let boxes = gfx.frame.pending_digs().to_vec();
+        for (i, slot) in self.reference.stores.iter_mut().enumerate() {
+            if i != active {
+                slot.pending.extend_from_slice(&boxes);
+            }
+        }
+        // The reference re-bakes to its stop with `DIG_N_MAX`; a cut to its own count.
+        let settings = match self.reference.stores.get(active) {
+            Some(slot) if active > 0 => slot.settings.clone(),
+            _ => vxe_render::BakeSettings {
+                n_max: vxe_render::bake::DIG_N_MAX,
+                ..vxe_render::BakeSettings::default()
+            },
         };
         let t = now();
         let result = gfx.frame.rebake_digs(
@@ -3864,14 +4131,25 @@ impl Run {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
     }
 
-    /// The reference's banner row: the read and the panes placed, with their keys.
+    /// The reference's banner row: the read (the store's name among the cuts), what `F` cycles,
+    /// and the panes placed, with their keys.
     fn reference_row(&self) -> String {
+        let stores = &self.reference.stores;
         let read = match self.modes.lighting.light {
-            vxe_render::Light::Baked => "store",
-            vxe_render::Light::Table => "table",
+            vxe_render::Light::Table => "table".to_owned(),
+            vxe_render::Light::Baked if stores.len() > 1 => {
+                format!("store {}", stores[self.reference.selected].name)
+            }
+            vxe_render::Light::Baked => "store".to_owned(),
+        };
+        let keys = if stores.len() > 1 {
+            let names: Vec<&str> = stores.iter().map(|s| s.name.as_str()).collect();
+            format!("F cycles {}, table", names.join(", "))
+        } else {
+            "F swaps".to_owned()
         };
         format!(
-            "reference: light {read} (F swaps), {} panes (1 places one)",
+            "reference: light {read} ({keys}), {} panes (1 places one)",
             self.reference.panes
         )
     }
@@ -4574,9 +4852,7 @@ impl Run {
             self.bench();
         }
         if self.args.reference && input.pressed(KeyCode::KeyF) {
-            self.modes
-                .press(hud::ModeKey::LightRead, ms_since(self.start));
-            println!("{}", self.modes.line());
+            self.cycle_light();
         }
         if input.pressed(KeyCode::Digit1) {
             self.place_pane();
@@ -4848,6 +5124,7 @@ impl Run {
                 Err(e) => return self.mirror_failed(e),
             }
         }
+        self.sync_store(gpu);
         let mut enc = self.rebake_digs(gpu, enc);
         self.pilot_sample();
         let hud = self.hud.visible;
@@ -6301,6 +6578,91 @@ mod tests {
             ),
             "piece r2 at [11, 10, 3]"
         );
+    }
+
+    /// `--cut FORM:N[:off]` parses under `--reference` only, names its file beside the reference's,
+    /// and `F` cycles the reference, each cut and the table, the read's name in the banner.
+    #[test]
+    fn the_cut_flag_and_the_mode_key_cycle_the_stores() {
+        let a = parse_args_from(argv(&[
+            "--level",
+            "--reference",
+            "--bake-file",
+            "live/bake/vein.bin",
+            "--cut",
+            "chunk-side:512,independent:1024:off",
+        ]))
+        .expect("--cut parses");
+        assert_eq!(
+            a.cuts,
+            vec![
+                CutArm {
+                    form: vxe_render::SeedForm::ChunkSide,
+                    samples: 512,
+                    tent: true
+                },
+                CutArm {
+                    form: vxe_render::SeedForm::Independent,
+                    samples: 1024,
+                    tent: false
+                },
+            ]
+        );
+        assert_eq!(
+            a.cuts[0].file(std::path::Path::new("live/bake/vein.bin")),
+            std::path::Path::new("live/bake/vein.chunk-side-512.bin")
+        );
+        let s = a.cuts[1].settings();
+        assert_eq!((s.n_min, s.n_max, s.round), (1024, 1024, 1024));
+        assert!(!s.tent && s.form == vxe_render::SeedForm::Independent);
+        for bad in ["chunk:512", "chunk-side", "chunk-side:0", "lattice:64:on"] {
+            assert!(
+                parse_args_from(argv(&["--level", "--reference", "--cut", bad])).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(parse_args_from(argv(&["--level", "--cut", "lattice:64"])).is_err());
+
+        let mut run = bare_run(carved_rock());
+        run.args.reference = true;
+        run.modes = run.args.start_modes(0.0);
+        run.modes.lighting.light = vxe_render::Light::Baked;
+        let slot = |name: &str| StoreSlot {
+            name: name.to_owned(),
+            settings: vxe_render::BakeSettings::default(),
+            image: None,
+            pending: Vec::new(),
+        };
+        run.reference.stores = vec![
+            slot("reference"),
+            slot("chunk-side 512"),
+            slot("independent 1024"),
+        ];
+        let keys = "F cycles reference, chunk-side 512, independent 1024, table";
+        assert!(
+            run.reference_row()
+                .contains(&format!("light store reference ({keys})")),
+            "{}",
+            run.reference_row()
+        );
+        let mut input = Input::default();
+        for (want_row, selected) in [
+            ("light store chunk-side 512", 1),
+            ("light store independent 1024", 2),
+            ("light table", 2),
+            ("light store reference", 0),
+        ] {
+            input.end_frame();
+            input.key_up(KeyCode::KeyF);
+            input.key_down(KeyCode::KeyF);
+            run.handle_input(&input);
+            let banner = run.banner().expect("the reference row");
+            assert!(
+                banner.contains(&format!("reference: {want_row} ({keys})")),
+                "{banner}"
+            );
+            assert_eq!(run.reference.selected, selected, "{want_row}");
+        }
     }
 
     /// `1` under `--reference` stamps a glass pane through an edit: its voxels all air before, in
