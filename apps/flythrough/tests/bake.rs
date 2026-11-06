@@ -1057,7 +1057,7 @@ fn a_store_file_loads_the_same_light() {
         ..rig.cfg
     };
     let other_gpu = GpuWorld::with_config(&rig.device, other_light);
-    let mut f = new_frame(&rig.device, [16, 16], Light::Baked);
+    // A refused file leaves the store untouched: the key is read before anything is loaded.
     for (bad, field) in [
         (key(2, extent, &settings, &rig.gpu), "world seed"),
         (key(1, one, &settings, &rig.gpu), "piece"),
@@ -1087,7 +1087,8 @@ fn a_store_file_loads_the_same_light() {
             "stop's standard error",
         ),
     ] {
-        let e = f
+        let e = rig
+            .frame
             .load_store_file(
                 &rig.device,
                 &rig.queue,
@@ -1099,6 +1100,7 @@ fn a_store_file_loads_the_same_light() {
             .expect_err("refused");
         assert!(e.to_string().contains(field), "{e} names {field}");
     }
+    assert_eq!(rig.cells(), cells, "the cells after the refusals");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1916,4 +1918,736 @@ fn stop_view(view: &ReadView) {
         q(&mut plane, 0.5),
         q(&mut plane, 0.9),
     ));
+}
+
+// ---- The reference's readings (Phase 2) ----
+
+/// The window's native size (the owner's 2530 x 1378).
+const NATIVE: [u32; 2] = [2530, 1378];
+
+/// A view's store file: the file's name, the piece's centre eye and its radius (`None`: the whole
+/// world), as `live/session3.sh` bakes them.
+fn file_of(view: &ReadView) -> (&'static str, [f32; 3], Option<i32>) {
+    let vein = flythrough::VEIN_POSE.position;
+    match view.name {
+        "vein" | "back" => ("vein", vein, Some(2)),
+        "patch" => ("patch", view.eye, Some(2)),
+        _ => (
+            if std::env::var("VXE_REF_HALL").is_ok_and(|v| v == "r2") {
+                "hall-r2"
+            } else {
+                "hall"
+            },
+            view.eye,
+            std::env::var("VXE_REF_HALL")
+                .is_ok_and(|v| v == "r2")
+                .then_some(2),
+        ),
+    }
+}
+
+/// The fly-through's `bake_extent`: the chunks within `radius` of the eye's chunk, in `world`.
+fn piece_of(world: ChunkExtent, eye: [f32; 3], radius: Option<i32>) -> ChunkExtent {
+    let Some(r) = radius else {
+        return world;
+    };
+    let size = world.size();
+    let c = eye.map(|v| (v / 64.0).floor() as i32);
+    let lo = [0, 1, 2].map(|k| (c[k] - r).max(world.min.0[k]));
+    let hi = [0, 1, 2].map(|k| (c[k] + r + 1).min(world.min.0[k] + size[k]));
+    ChunkExtent::new(lo, hi)
+}
+
+/// The reading's world: the scene's, with the reference's glass row appended as the fly-through
+/// does under `--reference`.
+fn reference_world(scene: Scene) -> World {
+    let glass = flythrough::castle_materials(&flythrough::cave_materials())
+        .get(flythrough::castle::material(flythrough::castle::GLASS))
+        .expect("the castle's glass")
+        .clone();
+    let mut table = match scene {
+        Scene::Level => table(),
+        Scene::Showcase => flythrough::showcase_materials(),
+    };
+    table.push(glass);
+    match scene {
+        Scene::Level => {
+            let source = flythrough::cave::CaveSource::new(
+                1,
+                ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+            );
+            World::generate(source.extent, &source, &table)
+        }
+        Scene::Showcase => {
+            let source = flythrough::showcase::ShowcaseSource::new(1);
+            World::generate(source.extent(), &source, &table)
+        }
+    }
+}
+
+/// A rig on the RTX over `view`'s world at `size`, native and full-resolution lighting, no jitter,
+/// lamp off, exposure 8, its store loaded from `view`'s file: the rig and the piece.
+fn reference_rig(view: &ReadView, size: [u32; 2]) -> (ReadRig, ChunkExtent) {
+    let world = reference_world(view.scene);
+    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let (device, queue, adapter) = reading_device(pool).expect("a device");
+    let cfg = MirrorConfig {
+        budget_bytes: 512 << 20,
+        light_radius: if view.scene == Scene::Showcase { 19 } else { 4 },
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    let (name, centre_eye, radius) = file_of(view);
+    gpu.set_focus(vxe_world::VoxelCoord(view.eye.map(|v| v as i32)));
+    for _ in 0..8 {
+        gpu.sync_now(&world, &device, &queue)
+            .expect("the mirror fits the adapter");
+    }
+    let mut frame = Frame::new(&device, size[0], size[1]);
+    frame.set_jitter(&device, false);
+    frame.set_resolution(&device, LightingResolution::Full);
+    frame.set_lighting(reference_lighting(false, Light::Baked));
+    frame.set_dt(1.0 / 60.0);
+    let piece = piece_of(world.extent(), centre_eye, radius);
+    let key = Frame::store_key(
+        &gpu,
+        world.extent(),
+        1,
+        piece,
+        ChunkCoord(centre_eye.map(|v| (v / 64.0).floor() as i32)),
+        radius.unwrap_or(-1),
+        &BakeSettings::default(),
+    );
+    let path = format!("{}/../../live/bake/{name}.bin", env!("CARGO_MANIFEST_DIR"));
+    let t = std::time::Instant::now();
+    frame
+        .load_store_file(
+            &device,
+            &queue,
+            &mut gpu,
+            &world,
+            std::path::Path::new(&path),
+            &key,
+        )
+        .unwrap_or_else(|e| panic!("{path}: {e}"));
+    println!("loaded {path} in {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+    (
+        ReadRig {
+            device,
+            queue,
+            gpu,
+            world,
+            frame,
+            adapter,
+        },
+        piece,
+    )
+}
+
+fn reference_lighting(lamp: bool, light: Light) -> Lighting {
+    Lighting {
+        lamp,
+        lamp_bounce: false,
+        exposure: Exposure::Manual(8.0),
+        light,
+        keep_store: true,
+        ..Lighting::default()
+    }
+}
+
+/// The cells of `frame`'s store by voxel and face, from its own copy.
+fn store_cells(frame: &Frame, piece: ChunkExtent) -> HashMap<([i32; 3], u8), [u32; 2]> {
+    let mut blocks = BTreeMap::new();
+    let s = piece.size();
+    for z in 0..s[2] {
+        for y in 0..s[1] {
+            for x in 0..s[0] {
+                let c = [piece.min.0[0] + x, piece.min.0[1] + y, piece.min.0[2] + z];
+                if let Some(b) = frame.store().block_words(ChunkCoord(c)) {
+                    blocks.insert(c, b.to_vec());
+                }
+            }
+        }
+    }
+    cells_of(&blocks)
+}
+
+fn inside(piece: ChunkExtent, v: [i32; 3]) -> bool {
+    let s = piece.size();
+    (0..3).all(|k| {
+        let c = v[k].div_euclid(64);
+        c >= piece.min.0[k] && c < piece.min.0[k] + s[k]
+    })
+}
+
+/// `VXE_REF_PART`: `noise` (the bar: `G_noise` of each view's file against a second seed's stop
+/// bake of the same faces), `strip` (the reference's frame against the table's frame 4096),
+/// `yaw` (the rig's fast yaw), `flight` (30 and 120 voxels/s), `dig` (a 5-voxel dig, a dig at 100
+/// voxels and four `B` presses at the vein), `glass` (a pane at the hall, 600 still frames lamp
+/// off then on). `VXE_BAKE_VIEWS` names the views. Each part logs to `live/bake-count/`.
+#[test]
+#[ignore = "a reading on the RTX from live/bake/'s files: VXE_TEST_ADAPTER=rtx, under the perf lock"]
+fn reference_readings() {
+    let parts = std::env::var("VXE_REF_PART").unwrap_or_else(|_| "noise".to_owned());
+    let names =
+        std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,back,patch,hall".to_owned());
+    for part in parts.split(',') {
+        for view in read_views() {
+            if !names.split(',').any(|n| n == view.name) {
+                continue;
+            }
+            match part {
+                "noise" => ref_noise(&view),
+                "strip" => ref_strip(&view),
+                "yaw" if view.name == "vein" => ref_yaw(&view),
+                "flight" if view.name != "back" => ref_flight(&view),
+                "dig" if view.name == "vein" => ref_dig(&view),
+                "glass" if view.name == "hall" => ref_glass(&view),
+                "yaw" | "flight" | "dig" | "glass" => {}
+                _ => panic!("VXE_REF_PART takes noise, strip, yaw, flight, dig or glass"),
+            }
+        }
+    }
+}
+
+fn emitter_test(world: &World) -> impl Fn([i32; 3]) -> bool + '_ {
+    let emits: Vec<bool> = world
+        .materials()
+        .rows()
+        .iter()
+        .map(|m| m.emission.iter().any(|&e| e > 0.0))
+        .collect();
+    move |v| {
+        world
+            .material_at(v)
+            .and_then(|m| emits.get(usize::from(m)).copied())
+            .unwrap_or(false)
+    }
+}
+
+fn ref_noise(view: &ReadView) {
+    let mut log = Log::open("reference-noise.txt");
+    let (mut rig, piece) = reference_rig(view, [16, 16]);
+    let file = store_cells(&rig.frame, piece);
+    let eye = view.eye;
+    let near = within_96(eye);
+    let filter: bake::FaceFilter = Arc::new(move |v, f| near(v, f) && inside(piece, v));
+    let extent = extent_within(rig.world.extent(), eye, 96.0);
+    let settings = BakeSettings {
+        seed: 0x5EED_0001,
+        keep_faces: true,
+        filter: Some(filter),
+        ..BakeSettings::default()
+    };
+    let mut second = Frame::new(&rig.device, 16, 16);
+    second.set_lighting(reference_lighting(false, Light::Baked));
+    let t = std::time::Instant::now();
+    let report = second
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            extent,
+            &settings,
+            &mut |_| {},
+        )
+        .expect("the second seed bakes");
+    let wall = t.elapsed().as_secs_f64();
+    let emitter = emitter_test(&rig.world);
+    let l = Lighting::default();
+    let mut da = HashMap::new();
+    let mut all = Vec::new();
+    for o in report.outcomes.iter().filter(|o| !emitter(o.voxel)) {
+        let Some(cell) = file.get(&key_of(o)) else {
+            continue;
+        };
+        let a = d_of(bake::rgb9e5_unpack(cell[0]), &l);
+        let b = d_of(o.mean[0], &l);
+        da.insert(key_of(o), a);
+        all.push((a - b).abs() / 2f32.sqrt());
+    }
+    let mut plane = g_plane(&da);
+    let n = all.len();
+    let (p50, p90) = (q(&mut all, 0.5), q(&mut all, 0.9));
+    log.line(&format!(
+        "noise {} (file {}) adapter {}: G_noise {p50:.2} / {p90:.2} ({n} faces) bar p50 0.5 p90 1: {}; G_plane {:.2} / {:.2}; second seed {} faces {:.4e} samples, at N_MIN {} at N_MAX {}, {wall:.1} s, ns a sample {:.2}",
+        view.name,
+        file_of(view).0,
+        rig.adapter,
+        if p50 <= 0.5 && p90 <= 1.0 { "met" } else { "MISSED" },
+        q(&mut plane, 0.5),
+        q(&mut plane, 0.9),
+        report.faces,
+        report.samples as f64,
+        report.faces_at_min,
+        report.faces_at_max,
+        wall * 1e9 / report.samples.max(1) as f64
+    ));
+}
+
+/// The display luma of every pixel of `rgba` and, by pixel, its hit's distance from `eye` and
+/// whether the hit lies inside `piece` (`None` for no hit).
+fn hits_of(rig: &ReadRig, eye: [f32; 3], piece: ChunkExtent) -> Vec<Option<(f32, bool)>> {
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    (0..pos.len())
+        .map(|i| {
+            (info[i][3] & 1 != 0).then(|| {
+                let p = [pos[i][0], pos[i][1], pos[i][2]];
+                let d = (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
+                (d, inside(piece, p.map(|v| v.floor() as i32)))
+            })
+        })
+        .collect()
+}
+
+fn luma(rgba: &[u8]) -> Vec<f32> {
+    rgba.chunks(4)
+        .map(|p| 0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]))
+        .collect()
+}
+
+fn view_camera(view: &ReadView) -> Camera {
+    match view.name {
+        "vein" => flythrough::VEIN_POSE.camera(),
+        "patch" => flythrough::PATCH_POSE.camera(),
+        "back" => support::settle::KRun::Path.camera(&flythrough::VEIN_POSE, 0),
+        _ => {
+            let shot = &flythrough::showcase::SHOTS[0];
+            Camera {
+                position: shot.eye.0.map(|v| v as f32 + 0.5).into(),
+                yaw: (shot.yaw_deg as f32).to_radians(),
+                pitch: (shot.pitch_deg as f32).to_radians(),
+                vfov: 70f32.to_radians(),
+            }
+        }
+    }
+}
+
+fn ref_strip(view: &ReadView) {
+    let mut log = Log::open("reference-strip.txt");
+    let (mut rig, piece) = reference_rig(view, NATIVE);
+    let camera = view_camera(view);
+    let eye = camera.position.to_array();
+    let light = LightParams::default();
+    rig.frame
+        .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    let reference = luma(&readback::read_rgba8(
+        &rig.device,
+        &rig.queue,
+        rig.frame.target(),
+    ));
+    let missing = rig.frame.read_store_stats(&rig.device, &rig.queue).missing;
+    let hits = hits_of(&rig, eye, piece);
+    rig.frame
+        .set_lighting(reference_lighting(false, Light::Table));
+    rig.frame.reset_history();
+    let t = std::time::Instant::now();
+    for _ in 0..4096 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    }
+    let table = luma(&readback::read_rgba8(
+        &rig.device,
+        &rig.queue,
+        rig.frame.target(),
+    ));
+    let (mut n, mut within, mut far, mut dark, mut outside) = (0usize, [0usize; 3], 0, 0, 0);
+    for i in 0..reference.len() {
+        let Some((d, ins)) = hits[i] else { continue };
+        if !ins {
+            outside += 1;
+            continue;
+        }
+        n += 1;
+        let diff = (reference[i] - table[i]).abs();
+        for (k, lv) in [1.0, 2.0, 4.0].iter().enumerate() {
+            within[k] += usize::from(diff <= *lv);
+        }
+        if d > 64.0 {
+            far += 1;
+            dark += usize::from(table[i] - reference[i] > 8.0);
+        }
+    }
+    let share = |v: usize| v as f64 / n.max(1) as f64;
+    log.line(&format!(
+        "strip {} adapter {}: hits in the piece {n}, outside {outside} ({:.4} of hits), store_missing {missing}; reference against the table's frame 4096 ({:.0} s): within 1/2/4 {:.4} / {:.4} / {:.4}; beyond 64 voxels {far} hits, reference over 8 levels darker than the table {:.4}",
+        view.name,
+        rig.adapter,
+        outside as f64 / (n + outside).max(1) as f64,
+        t.elapsed().as_secs_f64(),
+        share(within[0]),
+        share(within[1]),
+        share(within[2]),
+        dark as f64 / far.max(1) as f64,
+    ));
+}
+
+/// Frames of a yaw's read, as the settle rig's fast yaw.
+const YAW_DOT_FRAMES: usize = 60;
+
+fn ref_yaw(view: &ReadView) {
+    let mut log = Log::open("reference-yaw.txt");
+    let size = [192, 108];
+    let (mut rig, _) = reference_rig(view, size);
+    let pose = flythrough::VEIN_POSE;
+    let still = pose.camera();
+    let yawed = |deg: f32| Camera {
+        yaw: still.yaw + deg.to_radians(),
+        ..still
+    };
+    for (name, lamp, light) in [
+        ("reference lamp off", false, Light::Baked),
+        ("reference lamp on", true, Light::Baked),
+        ("table native lamp on", true, Light::Table),
+    ] {
+        rig.frame.set_lighting(reference_lighting(lamp, light));
+        rig.frame.reset_history();
+        let lp = if lamp {
+            LightParams::headlamp()
+        } else {
+            LightParams::default()
+        };
+        let step = |rig: &mut ReadRig, c: &Camera| {
+            rig.frame.step(&rig.device, &rig.queue, &rig.gpu, c, &lp);
+        };
+        let dots = |rig: &ReadRig| -> f64 {
+            let px = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+            support::aliasing::dots(&px, size[0], size[1])
+                .iter()
+                .filter(|d| **d)
+                .count() as f64
+        };
+        for _ in 0..192 {
+            step(&mut rig, &still);
+        }
+        let mut floor = Vec::new();
+        for _ in 0..64 {
+            step(&mut rig, &still);
+            floor.push(dots(&rig));
+        }
+        for _ in 0..64 {
+            step(&mut rig, &yawed(-90.0));
+        }
+        for i in 1..=10 {
+            step(&mut rig, &yawed(-90.0 + 9.0 * i as f32));
+        }
+        let mean = floor.iter().sum::<f64>() / floor.len() as f64;
+        let sd =
+            (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
+        let mut excess = 0.0;
+        for _ in 0..YAW_DOT_FRAMES {
+            step(&mut rig, &still);
+            excess += dots(&rig) - mean;
+        }
+        log.line(&format!(
+            "yaw vein {name} adapter {} 192x108 scale 1 no upscaler: excess dots 1-60 {excess:+.1} (floor {mean:.1}, sd {sd:.1}, line {:.1})",
+            rig.adapter,
+            YAW_DOT_FRAMES as f64 * sd
+        ));
+    }
+}
+
+/// One timed frame: the passes' milliseconds by name.
+fn timed_step(rig: &mut ReadRig, timer: &vxe_render::marcher::PassTimer, c: &Camera) -> Vec<f64> {
+    rig.frame.advance();
+    let params = rig.frame.params(&rig.gpu, c, &LightParams::default());
+    let mut enc = rig
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    rig.frame.encode(
+        &rig.device,
+        &rig.queue,
+        &mut enc,
+        &rig.gpu,
+        &params,
+        Some(timer),
+    );
+    timer.resolve(&mut enc);
+    rig.queue.submit([enc.finish()]);
+    timer.read_all_ms(&rig.device)
+}
+
+fn pass_line(sum: &[f64], frames: usize) -> String {
+    let total: f64 = sum.iter().sum::<f64>() / frames as f64;
+    let mut parts: Vec<String> = vxe_render::marcher::FRAME_PASSES
+        .iter()
+        .zip(sum)
+        .filter(|(_, ms)| **ms / frames as f64 >= 0.05)
+        .map(|(n, ms)| format!("{n} {:.2}", ms / frames as f64))
+        .collect();
+    parts.insert(0, format!("total {total:.2} ms"));
+    parts.join(", ")
+}
+
+fn ref_flight(view: &ReadView) {
+    let mut log = Log::open("reference-flight.txt");
+    let (mut rig, piece) = reference_rig(view, NATIVE);
+    let timer = vxe_render::marcher::PassTimer::with_passes(
+        &rig.device,
+        &rig.queue,
+        vxe_render::marcher::FRAME_PASSES.len() as u32,
+    )
+    .expect("timestamps on the RTX");
+    let still = view_camera(view);
+    let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+    for _ in 0..32 {
+        timed_step(&mut rig, &timer, &still);
+    }
+    for _ in 0..120 {
+        for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
+            *s += ms;
+        }
+    }
+    log.line(&format!(
+        "frame {} at rest adapter {} {}x{}: {}",
+        view.name,
+        rig.adapter,
+        NATIVE[0],
+        NATIVE[1],
+        pass_line(&sum, 120)
+    ));
+    let dir = [
+        still.yaw.cos() * still.pitch.cos(),
+        still.yaw.sin() * still.pitch.cos(),
+        still.pitch.sin(),
+    ];
+    for speed in [30.0f32, 120.0] {
+        let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+        let (mut frames, mut missing, mut most) = (0usize, 0u64, 0u32);
+        let mut cam = still;
+        for f in 0..600 {
+            let t = f as f32 / 60.0;
+            let p = [0, 1, 2].map(|k| still.position.to_array()[k] + dir[k] * speed * t);
+            if !inside(piece, p.map(|v| v.floor() as i32))
+                || rig
+                    .world
+                    .material_at(vxe_world::VoxelCoord(p.map(|v| v.floor() as i32)))
+                    .is_some_and(|m| m != AIR)
+            {
+                break;
+            }
+            cam.position = p.into();
+            for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &cam)) {
+                *s += ms;
+            }
+            let m = rig.frame.read_store_stats(&rig.device, &rig.queue).missing;
+            missing += u64::from(m);
+            most = most.max(m);
+            frames += 1;
+        }
+        log.line(&format!(
+            "flight {} {speed} voxels/s adapter {}: {frames} frames inside the piece before the edge or rock ({:.1} voxels); store_missing a frame mean {:.0} max {most} of {} pixels; {}",
+            view.name,
+            rig.adapter,
+            frames as f32 * speed / 60.0,
+            missing as f64 / frames.max(1) as f64,
+            NATIVE[0] * NATIVE[1],
+            pass_line(&sum, frames.max(1))
+        ));
+        rig.frame.reset_history();
+    }
+}
+
+/// The hit under pixel `(x, y)` of the last frame.
+fn hit_at(rig: &ReadRig, size: [u32; 2], x: u32, y: u32) -> Option<[f32; 3]> {
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let i = (y * size[0] + x) as usize;
+    (info[i][3] & 1 != 0).then(|| [pos[i][0], pos[i][1], pos[i][2]])
+}
+
+/// Applies `ops`, mirrors them and times the re-bake of their boxes: the line.
+fn timed_dig(rig: &mut ReadRig, ops: &[EditOp], what: &str) -> String {
+    let mut changed = 0u64;
+    let mut boxes = 0;
+    for op in ops {
+        let r = rig.world.apply(op).expect("the carve applies");
+        changed += r.changed_from.iter().map(|c| u64::from(c.1)).sum::<u64>();
+        if let Some((min, max)) = r.aabb {
+            rig.frame.invalidate(min.0, max.0);
+            boxes += 1;
+        }
+    }
+    rig.gpu
+        .sync_now(&rig.world, &rig.device, &rig.queue)
+        .expect("the mirror fits");
+    let settings = BakeSettings {
+        n_max: bake::DIG_N_MAX,
+        ..BakeSettings::default()
+    };
+    let t = std::time::Instant::now();
+    let r = rig
+        .frame
+        .rebake_digs(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            &settings,
+            &mut |_| {},
+        )
+        .map(|r| r.expect("the ring fits"))
+        .unwrap_or_default();
+    let ms = t.elapsed().as_secs_f64() * 1e3;
+    format!(
+        "{what}: {} ops, {boxes} boxes, {changed} voxels; ring {} bricks, {} chunks, {} faces, {:.4e} samples, at N_MIN {} at DIG_N_MAX {}, {ms:.0} ms ({:.2} min), ns a sample {:.2}",
+        ops.len(),
+        r.bricks,
+        r.bake.chunks,
+        r.bake.faces,
+        r.bake.samples as f64,
+        r.bake.faces_at_min,
+        r.bake.faces_at_max,
+        ms / 60e3,
+        ms * 1e6 / r.bake.samples.max(1) as f64
+    )
+}
+
+fn ref_dig(view: &ReadView) {
+    let mut log = Log::open("reference-dig.txt");
+    let size = [192, 108];
+    let (mut rig, _) = reference_rig(view, size);
+    let camera = flythrough::VEIN_POSE.camera();
+    rig.frame.step(
+        &rig.device,
+        &rig.queue,
+        &rig.gpu,
+        &camera,
+        &LightParams::default(),
+    );
+    let eye = camera.position.to_array();
+    let near = hit_at(&rig, size, size[0] / 2, size[1] / 2).expect("the view's centre hits rock");
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let far = pos
+        .iter()
+        .map(|p| [p[0], p[1], p[2]])
+        .filter(|p| p.iter().all(|v| v.is_finite()))
+        .min_by(|a, b| {
+            let d = |p: &[f32; 3]| {
+                ((0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt() - 100.0).abs()
+            };
+            d(a).total_cmp(&d(b))
+        })
+        .expect("a hit near 100 voxels");
+    let dist = |p: [f32; 3]| (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
+    for (what, p) in [
+        ("5-voxel dig at arm's length", near),
+        ("5-voxel dig at 100 voxels", far),
+    ] {
+        let c = p.map(|v| i64::from(v.floor() as i32) * FIXED_ONE + FIXED_ONE / 2);
+        let op = EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve);
+        let line = timed_dig(&mut rig, &[op], &format!("{what} ({:.1} voxels)", dist(p)));
+        log.line(&format!("dig vein adapter {}: {line}", rig.adapter));
+    }
+    let origin = eye.map(|v| v.floor() as i64);
+    for k in 0..4u64 {
+        let seed = 1u64 ^ k.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        let ops = flythrough_logic::bench_ops(origin, seed);
+        let line = timed_dig(&mut rig, &ops, &format!("B press {}", k + 1));
+        log.line(&format!("dig vein adapter {}: {line}", rig.adapter));
+    }
+}
+
+fn ref_glass(view: &ReadView) {
+    let mut log = Log::open("reference-glass.txt");
+    let size = NATIVE;
+    let (mut rig, piece) = reference_rig(view, size);
+    let camera = view_camera(view);
+    let glass = (rig.world.materials().len() - 1) as vxe_world::MaterialId;
+    // The fly-through's pane: 40 x 40, 2 thick, 6 voxels ahead along the axis faced most.
+    let e = camera.position.to_array().map(|v| v.floor() as i32);
+    let (fwd, _, _) = camera.basis();
+    let k = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
+    let ahead = if fwd.to_array()[k] >= 0.0 { 1 } else { -1 };
+    let near = e[k] + ahead * 6;
+    let mut min = [0i32; 3];
+    let mut max = [0i32; 3];
+    (min[k], max[k]) = if ahead > 0 {
+        (near, near + 2)
+    } else {
+        (near - 1, near + 1)
+    };
+    for a in [1 - k, 2] {
+        min[a] = e[a] - 20;
+        max[a] = e[a] + 20;
+    }
+    assert!(inside(piece, min) && inside(piece, max.map(|v| v - 1)));
+    let light = LightParams::default();
+    rig.frame
+        .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    let before = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let op = EditOp::box_(
+        Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
+        Mode::Fill(glass),
+    );
+    let dig = timed_dig(&mut rig, &[op], "pane");
+    log.line(&format!("glass hall adapter {}: {dig}", rig.adapter));
+    for (name, lamp, lp) in [
+        ("lamp off", false, LightParams::default()),
+        ("lamp on", true, LightParams::headlamp()),
+    ] {
+        rig.frame
+            .set_lighting(reference_lighting(lamp, Light::Baked));
+        let mut frames = Vec::new();
+        let mut first_accum = None;
+        for f in 0..600 {
+            rig.frame
+                .step(&rig.device, &rig.queue, &rig.gpu, &camera, &lp);
+            if f % 30 == 0 || f == 599 {
+                frames.push(readback::read_rgba8(
+                    &rig.device,
+                    &rig.queue,
+                    rig.frame.target(),
+                ));
+            }
+            if f == 0 {
+                first_accum = Some(readback::read_float(
+                    &rig.device,
+                    &rig.queue,
+                    rig.frame.accumulated(),
+                ));
+            }
+        }
+        let last_accum = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+        let first_accum = first_accum.expect("frame 0");
+        // The pane's pixels: those the pane changed in the first frame after it.
+        let mask: Vec<bool> = before
+            .chunks(4)
+            .zip(frames[0].chunks(4))
+            .map(|(a, b)| a != b)
+            .collect();
+        let changed = first_accum
+            .iter()
+            .zip(&last_accum)
+            .zip(&mask)
+            .filter(|((a, b), m)| **m && a != b)
+            .count();
+        // Patches a step: 8 x 8 tiles over the pane holding a pixel that moved between two
+        // reads 30 frames apart, the mean over the steps.
+        let tiles = |a: &[u8], b: &[u8]| -> usize {
+            let mut moved = std::collections::HashSet::new();
+            for (i, m) in mask.iter().enumerate() {
+                if *m && a[4 * i..4 * i + 3] != b[4 * i..4 * i + 3] {
+                    let (x, y) = (i as u32 % size[0], i as u32 / size[0]);
+                    moved.insert((x / 8, y / 8));
+                }
+            }
+            moved.len()
+        };
+        let steps: Vec<usize> = frames
+            .windows(2)
+            .skip(1)
+            .map(|w| tiles(&w[0], &w[1]))
+            .collect();
+        let mean = steps.iter().sum::<usize>() as f64 / steps.len().max(1) as f64;
+        log.line(&format!(
+            "glass hall {name} adapter {}: pane pixels {}, accumulation pixels over the pane changed from the first to the last of 600 frames {changed}; composite patches a step (8x8 tiles, 30 frames apart, frames 30 to 599) mean {mean:.2} max {}",
+            rig.adapter,
+            mask.iter().filter(|m| **m).count(),
+            steps.iter().max().copied().unwrap_or(0)
+        ));
+    }
 }
