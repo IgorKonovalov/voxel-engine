@@ -1213,6 +1213,76 @@ fn the_lamp_adds_over_the_bake() {
 /// Frames after the lamp goes off at which the frame is the lamp-off frame again.
 const LAMP_EMPTY_FRAMES: u32 = 1;
 
+/// A pane of opacity 0.6 and a dark albedo, one voxel thick, 2.5 voxels ahead of
+/// [`small_box`]'s eye, over the block lit by its ore plate: with the lamp off (the headlamp's
+/// parameters set, as the window's frames pass them), every pixel and channel reads no brighter
+/// than the larger of the block alone and the pane drawn opaque (its own lit face).
+#[test]
+fn a_glass_pane_does_not_brighten_what_it_covers() {
+    let frame_of = |pane: Option<bool>| -> Option<(Vec<u8>, usize)> {
+        let mut t = table();
+        if let Some(translucent) = pane {
+            let rock = t.get(ROCK).expect("rock").clone();
+            let flags = if translucent {
+                rock.flags | vxe_world::MaterialFlags::TRANSLUCENT
+            } else {
+                rock.flags
+            };
+            t.push(vxe_world::Material {
+                name: "pane".to_owned(),
+                albedo: [0.10, 0.10, 0.14],
+                emission: [0.0; 3],
+                opacity: 0.6,
+                flags,
+                ..rock
+            });
+        }
+        let (_, camera) = small_box();
+        let world = air_world([2, 2, 2], &t);
+        fill(&world, [40, 40, 40], [56, 56, 56], ROCK);
+        fill(&world, [42, 42, 72], [54, 54, 74], ORE);
+        if pane.is_some() {
+            let glass = (t.len() - 1) as vxe_world::MaterialId;
+            fill(&world, [33, 0, 0], [34, 128, 128], glass);
+        }
+        let mut rig = rig_on(world, [64, 36], Light::Baked, None)?;
+        rig.bake(&test_counts(128, 128));
+        for _ in 0..16 {
+            rig.step(&camera);
+        }
+        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let covered = info.iter().filter(|r| r[3] & 4 != 0).count();
+        Some((rig.display(), covered))
+    };
+    let Some((wall, _)) = frame_of(None) else {
+        return;
+    };
+    let (glass, covered) = frame_of(Some(true)).expect("the device");
+    let (opaque, _) = frame_of(Some(false)).expect("the device");
+    assert!(covered > 1000, "{covered} pixels behind the pane");
+    let lit = wall.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    assert!(lit > 100, "{lit} lit pixels of the block alone");
+    let mut over = 0;
+    let mut first = None;
+    for (i, ((g, w), o)) in glass
+        .chunks(4)
+        .zip(wall.chunks(4))
+        .zip(opaque.chunks(4))
+        .enumerate()
+    {
+        for k in 0..3 {
+            if g[k] > w[k].max(o[k]) {
+                over += 1;
+                first.get_or_insert((i, k, g[k], w[k], o[k]));
+            }
+        }
+    }
+    assert_eq!(
+        over, 0,
+        "channels brighter behind the pane than the block alone and the pane's own face; the first (pixel, channel, pane, block, own face): {first:?}"
+    );
+}
+
 /// A written store file loads into a new frame with every cell and a frame bit-identical; a file
 /// with another seed, piece, light radius or stop is refused with the field's name.
 #[test]
@@ -2916,7 +2986,8 @@ const CUT_COUNTS: [u32; 5] = [32, 128, 512, 1024, 2048];
 /// against the view's file; the vein's back view, the patch and the hall), `cost` (ns a sample in
 /// one dispatch of 1 000 to 1 000 000 samples at the vein and the hall, on the adapter
 /// `VXE_TEST_ADAPTER` names), `cpu` (a sampler over `World::raycast` on one thread at the vein),
-/// `glass` (the pane's bright pixels at the hall). `VXE_BAKE_VIEWS` names the views. Each part
+/// `glass` (the pane's bright pixels at the hall), `parts` (the composite's parts at the pane,
+/// at the hall's shot and the owner's eye). `VXE_BAKE_VIEWS` names the views. Each part
 /// logs to `live/bake-count/cut-<part>.txt`.
 #[test]
 #[ignore = "a reading on the RTX (and the Radeon for cost) from live/bake/'s files, under the perf lock"]
@@ -2934,8 +3005,9 @@ fn cut_readings() {
                 "cost" if view.name == "vein" || view.name == "hall" => cut_cost(&view),
                 "cpu" if view.name == "vein" => cut_cpu(&view),
                 "glass" if view.name == "hall" => cut_glass(&view),
-                "grain" | "cost" | "cpu" | "glass" => {}
-                _ => panic!("VXE_CUT_PART takes grain, cost, cpu or glass"),
+                "parts" if view.name == "hall" => cut_glass_parts(&view),
+                "grain" | "cost" | "cpu" | "glass" | "parts" => {}
+                _ => panic!("VXE_CUT_PART takes grain, cost, cpu, glass or parts"),
             }
         }
     }
@@ -3409,24 +3481,7 @@ fn cut_glass(view: &ReadView) {
     let size = NATIVE;
     let (mut rig, piece) = reference_rig(view, size);
     let camera = view_camera(view);
-    let glass = (rig.world.materials().len() - 1) as vxe_world::MaterialId;
-    let e = camera.position.to_array().map(|v| v.floor() as i32);
-    let (fwd, _, _) = camera.basis();
-    let k = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
-    let ahead = if fwd.to_array()[k] >= 0.0 { 1 } else { -1 };
-    let near = e[k] + ahead * 6;
-    let mut min = [0i32; 3];
-    let mut max = [0i32; 3];
-    (min[k], max[k]) = if ahead > 0 {
-        (near, near + 2)
-    } else {
-        (near - 1, near + 1)
-    };
-    for a in [1 - k, 2] {
-        min[a] = e[a] - 20;
-        max[a] = e[a] + 20;
-    }
-    assert!(inside(piece, min) && inside(piece, max.map(|v| v - 1)));
+    let op = pane_op(&rig, &camera, piece);
     let lp_off = LightParams::default();
     let frame_at = |rig: &mut ReadRig, lighting: Lighting, lp: &LightParams| -> Vec<u8> {
         rig.frame.set_lighting(lighting);
@@ -3438,11 +3493,6 @@ fn cut_glass(view: &ReadView) {
     };
     let before = frame_at(&mut rig, reference_lighting(false, Light::Baked), &lp_off);
     let accum_before = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
-    let op = EditOp::box_(
-        Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
-        Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
-        Mode::Fill(glass),
-    );
     let dig = timed_dig(&mut rig, &[op], "pane");
     log.line(&format!("glass hall adapter {}: {dig}", rig.adapter));
     let after = frame_at(&mut rig, reference_lighting(false, Light::Baked), &lp_off);
@@ -3545,6 +3595,191 @@ fn cut_glass(view: &ReadView) {
                     ));
                 }
             }
+        }
+    }
+}
+
+/// The glass pane of the readings: `PANE_EDGE` square, 2 voxels thick, 6 voxels ahead of
+/// `camera`'s eye along the larger of its forward's x and y, as the fly-through's `1` places it.
+fn pane_op(rig: &ReadRig, camera: &Camera, piece: ChunkExtent) -> EditOp {
+    let glass = (rig.world.materials().len() - 1) as vxe_world::MaterialId;
+    let e = camera.position.to_array().map(|v| v.floor() as i32);
+    let (fwd, _, _) = camera.basis();
+    let k = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
+    let ahead = if fwd.to_array()[k] >= 0.0 { 1 } else { -1 };
+    let near = e[k] + ahead * 6;
+    let mut min = [0i32; 3];
+    let mut max = [0i32; 3];
+    (min[k], max[k]) = if ahead > 0 {
+        (near, near + 2)
+    } else {
+        (near - 1, near + 1)
+    };
+    for a in [1 - k, 2] {
+        min[a] = e[a] - 20;
+        max[a] = e[a] + 20;
+    }
+    assert!(inside(piece, min) && inside(piece, max.map(|v| v - 1)));
+    EditOp::box_(
+        Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
+        Mode::Fill(glass),
+    )
+}
+
+/// The owner's eye in the glass screenshot (its HUD's `fly at`), chunk [2, 5, 3].
+const OWNER_GLASS_EYE: [f32; 3] = [169.0, 359.7, 222.7];
+
+/// The parts the composite sums at a pane pixel, read from the frame's own textures before the
+/// display: the layer walk's premultiplied glass term (times the exposure, as the composite
+/// adds it) and its transmittance; the hit behind (its material, the irradiance the composite
+/// reads, its Lambertian term and its emission); the composite rebuilt from them against the
+/// displayed pixel (any term outside both). At the hall's shot and at the owner's eye with the
+/// shot's heading, exposure 8, the store: the lamp off, the lamp off with the headlamp's
+/// intensity at 0, and the lamp on. Then done-when 2's figures: the pane's pixels over 250
+/// against the share before the pane, and each pixel against `(1 - a) * behind + a * albedo *
+/// light_at_glass` with `a` 0.6, `light_at_glass` the layer's own light per voxel.
+/// `VXE_PARTS_POSES` (`shot`, `owner`) and `VXE_PARTS_ROWS` (`off`, `dark`, `on`) narrow it.
+fn cut_glass_parts(view: &ReadView) {
+    let mut log = Log::open("cut-glass-parts.txt");
+    let size = NATIVE;
+    let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let poses = std::env::var("VXE_PARTS_POSES").unwrap_or_else(|_| "shot,owner".to_owned());
+    let rows = std::env::var("VXE_PARTS_ROWS").unwrap_or_else(|_| "off,dark,on".to_owned());
+    for (key, pose, eye) in [
+        ("shot", "hall shot", None),
+        ("owner", "owner eye", Some(OWNER_GLASS_EYE)),
+    ] {
+        if !poses.split(',').any(|p| p == key) {
+            continue;
+        }
+        let (mut rig, piece) = reference_rig(view, size);
+        let mut camera = view_camera(view);
+        if let Some(e) = eye {
+            camera.position = e.into();
+        }
+        let op = pane_op(&rig, &camera, piece);
+        let mats = rig.world.materials().clone();
+        let glass = (mats.len() - 1) as vxe_world::MaterialId;
+        let g = mats.get(glass).expect("the glass row");
+        let (ga, galb) = (g.opacity, g.albedo);
+        let frame_at = |rig: &mut ReadRig, lighting: Lighting, lp: &LightParams| -> Vec<u8> {
+            rig.frame.set_lighting(lighting);
+            for _ in 0..64 {
+                rig.frame
+                    .step(&rig.device, &rig.queue, &rig.gpu, &camera, lp);
+            }
+            readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+        };
+        let base = reference_lighting(false, Light::Baked);
+        let before = frame_at(&mut rig, base, &LightParams::default());
+        let y0 = luma(&before);
+        let dig = timed_dig(&mut rig, &[op], "pane");
+        log.line(&format!(
+            "parts {pose} adapter {}: eye {:?}, glass opacity {ga} albedo {galb:?}; {dig}",
+            rig.adapter,
+            camera.position.to_array()
+        ));
+        let dark = LightParams {
+            intensity: 0.0,
+            ..LightParams::default()
+        };
+        for (row, lname, lamp, lp) in [
+            ("off", "lamp off", false, LightParams::default()),
+            ("dark", "lamp off, intensity 0", false, dark),
+            ("on", "lamp on", true, LightParams::default()),
+        ] {
+            if !rows.split(',').any(|r| r == row) {
+                continue;
+            }
+            let lighting = reference_lighting(lamp, Light::Baked);
+            let ex = 8.0f32;
+            let img = frame_at(&mut rig, lighting, &lp);
+            let y = luma(&img);
+            let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+            let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+            let lit_tex = if lighting.filter {
+                rig.frame.filtered()
+            } else {
+                rig.frame.irradiance()
+            };
+            let lit = readback::read_float(&rig.device, &rig.queue, lit_tex);
+            let (mut n, mut over, mut over_before) = (0u64, 0u64, 0u64);
+            let (mut g_l, mut w, mut b_l, mut e_l, mut res, mut dw2) =
+                (vec![], vec![], vec![], vec![], vec![], vec![]);
+            let (mut d_glass, mut d_trans, mut d_behind, mut d_act) =
+                (vec![], vec![], vec![], vec![]);
+            let mut light_glass = vec![];
+            let (mut emitters, mut layer_counts) = (0u64, BTreeMap::<u32, u64>::new());
+            for i in 0..info.len() {
+                let f = info[i][3];
+                if f & 1 == 0 || f & 4 == 0 {
+                    continue;
+                }
+                n += 1;
+                let m = mats.get(info[i][2]).expect("a material");
+                let l = layer[i];
+                let gt = [l[0] * ex, l[1] * ex, l[2] * ex];
+                let mut e = [lit[i][0], lit[i][1], lit[i][2]];
+                if !lighting.filter {
+                    e = e.map(|v| v + lit[i][3]);
+                }
+                let s = rig.frame.emission_scale(info[i][2]);
+                let em = [0, 1, 2].map(|k| m.emission[k] * s * ex);
+                if em.iter().any(|v| *v > 0.0) {
+                    emitters += 1;
+                }
+                let behind = [0, 1, 2].map(|k| m.albedo[k] * e[k] / std::f32::consts::PI + em[k]);
+                let model = [0, 1, 2].map(|k| gt[k] + l[3] * behind[k]);
+                let dl = |c: [f32; 3]| {
+                    let b = tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
+                    0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
+                };
+                // Layers entered: transmittance (1 - a)^k.
+                let k = ((l[3].max(1e-6)).ln() / (1.0 - ga).ln()).round() as u32;
+                *layer_counts.entry(k).or_default() += 1;
+                // The layer's light per voxel, taken equal across the k voxels entered:
+                // gt = a * albedo * L * sum_{j<k} (1 - a)^j.
+                let sum: f32 = (0..k).map(|j| (1.0 - ga).powi(j as i32)).sum();
+                let lg = [0, 1, 2].map(|c| {
+                    if sum > 0.0 && galb[c] > 0.0 {
+                        gt[c] / (ga * galb[c] * sum)
+                    } else {
+                        0.0
+                    }
+                });
+                let target = [0, 1, 2].map(|c| (1.0 - ga) * behind[c] + ga * galb[c] * lg[c]);
+                g_l.push(lum(gt));
+                w.push(l[3]);
+                b_l.push(lum(behind));
+                e_l.push(lum(e));
+                light_glass.push(lum(lg));
+                d_glass.push(dl(gt));
+                d_trans.push(dl(behind.map(|v| v * l[3])));
+                d_behind.push(dl(behind));
+                d_act.push(y[i]);
+                res.push((y[i] - dl(model)).abs());
+                dw2.push((y[i] - dl(target)).abs());
+                over += u64::from(y[i] > 250.0);
+                over_before += u64::from(y0[i] > 250.0);
+            }
+            let p = |v: &mut Vec<f32>| {
+                format!("{:.4} / {:.4} / {:.4}", q(v, 0.5), q(v, 0.9), q(v, 1.0))
+            };
+            log.line(&format!(
+                "parts {pose} {lname}: pane pixels {n} (emitting hits behind {emitters}, layers entered {layer_counts:?}); glass term (layer x exposure) luminance p50/p90/max {}; transmittance {}; light at the glass per voxel {}; behind: irradiance {}, radiance {}",
+                p(&mut g_l), p(&mut w), p(&mut light_glass), p(&mut e_l), p(&mut b_l)
+            ));
+            log.line(&format!(
+                "parts {pose} {lname}: display luma p50/p90/max: glass term alone {}, transmitted behind {}, behind alone {}, the pixel {}; |pixel - rebuilt composite| {}",
+                p(&mut d_glass), p(&mut d_trans), p(&mut d_behind), p(&mut d_act), p(&mut res)
+            ));
+            log.line(&format!(
+                "parts {pose} {lname}: over 250 with the pane {over} ({:.4}), before it {over_before} ({:.4}); |pixel - ((1 - a) behind + a albedo light_at_glass)| p50/p90/max {}",
+                over as f64 / n.max(1) as f64,
+                over_before as f64 / n.max(1) as f64,
+                p(&mut dw2)
+            ));
         }
     }
 }
