@@ -79,6 +79,23 @@
 >   not, it goes to `docs/backlog.md` beside the held fallback. No cut fixes it.
 > - The owner did not answer Phase 3's (e) and (f). Phase 5 asks them again beside the filter.
 
+> **Amended 2026-11-06 (owner), Phase 4's stops.** Two of Phase 4's stops fired (`logs/0059.md`, Phase 4, at 8df5c6c). The
+> owner's answers:
+> - **No seed form met the offer's bars at 512 samples.** The shared forms pass `G_local`, but their `G_seam` p90 is 3.0 to
+>   5.1 and their `G_patch` p90 4.4 to 9.9, against independent's 0.7. Independent and lattice miss `G_local` p90 by 0.02 to 0.32.
+>   The owner picked "Independent 1024". **The arm offered at Phase 5 is independent seeds at `N` 1024 through the filter**
+>   (`G_local` p90 1.46 to 1.61, `G_seam` p90 1.46 to 1.66), with independent 512 filtered beside it as the cheaper step down.
+>   The shared and lattice forms are dropped. Later phases' arithmetic at 512 doubles where it costs samples: Phase 8's
+>   radius-1 ring reads about 2.6 s of bake at 13.5 ns, inside its 3 s bar but with less room, and Phase 9's arm's-length
+>   ring takes about 46 frames to settle, not 23. Each phase re-reads its own.
+> - **The RTX read 23.5 ns a sample at 300 000 at the hall**, against the 20 ns stop (the vein 15.5; at 1 000 000 a dispatch,
+>   7.6 to 11.8). The owner picked "Go on, Phase 8 judges". The 23.5 is recorded as a reading, not a stop. Phase 8's
+>   3 s first-frame bar is the time bar, and its dispatch size is chosen there.
+> - **The glass blob is the composite, not the light.** With the lamp off, 44 % of the pane's pixels read over 250 at
+>   exposure 8. Before the pane, 0.8 % of the same pixels did. The accumulated lighting at those pixels is unchanged.
+>   The owner picked "Fix inside 0059", so the first amendment's "no cut fixes it" is withdrawn. **Phase 4a** fixes it
+>   before the Phase 5 window, and Phase 5 looks at the pane.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -607,6 +624,31 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
      of the lit face beside it.
   4. Store files for the offered arm at the window's poses, and the mode key cycles the reference and the cut, its name in the banner and HUD.
 
+### Phase 4a: The glass composite (amended 2026-11-06, owner)
+- **Owner skill:** dev
+- **What:** the translucent row's composite brightens what is behind it.
+  - At the hall's shot, the pane is 0.6 opacity, albedo 0.25 0.35 0.85, with no emission. The pixels behind it read luma
+    p50 24 before the pane and 146 with it, while the lighting accumulated there is the same (Phase 4's glass reading).
+  - A blue glass at 0.6 cannot brighten what it covers above its own lit face. Measure first:
+    - At the same pixels, read each part the composite sums for a translucent hit: the glass face's own light (store or
+      fallback, and which of the two), its weight, the transmitted hit's light and its weight, and any term outside both.
+    - Read them before the display, at the hall's shot and at the owner's screenshot pose (eye in chunk [2, 5, 3]).
+  - The log names the part that carries the excess. Then fix that part in the composite or in the face's light lookup.
+  - If the fix needs a choice between mechanisms (for example, a store cell for translucent faces against a fallback
+    rule), dev stops with the readings for an architect amendment.
+  - No other material's composite changes.
+- **Files touched:** the shader that composites translucent hits under `crates/vxe-render/src/shaders/`, `crates/vxe-render/src/`
+  as the reading finds, `apps/flythrough/tests/bake.rs`, `docs/plans/logs/0059.md`.
+- **Done when:**
+  1. The log holds the parts table at both poses, names the part, and records the fix.
+  2. At the hall's shot, lamp off, exposure 8: the pane's pixels over 250 are at most twice the share before the pane
+     (0.8 %). Each pixel's composite is within 2 levels at p90 of `(1 - a) * behind + a * albedo * light_at_glass`, built from
+     the reading's own parts, with `a` = 0.6.
+  3. `a_glass_pane_does_not_brighten_what_it_covers` (lavapipe, `cache_box`, under 5 s) asserts that a 0.6 pane of a dark
+     albedo over a lit wall reads no brighter, per pixel, than the larger of the wall alone and the pane's own lit face.
+     The brightening before the fix is the failure case.
+  4. The gpu tier's goldens that hold no translucent material are unchanged.
+
 ### Phase 5: The owner's look at the samples cut
 - **Owner skill:** human
 - **What:** a short window, standing and turning, the reference and the offered arm at one pose by the key, at the vein, the patch and the hall. Plan 0057's unanswered
@@ -615,6 +657,8 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **Done when:** the log records the owner's words on: (a) the grain against the reference; (b) a slow error across a wall, and seams at chunk borders; (c) the filter's
   softening, shadows and a pit's lit rim; (d) **which arm stands, or how many samples to go back up.** A refusal of every arm comes to the architect.
   Phase 3's unanswered (e) and (f) are asked again here: a face's flat value at a voxel step and a shadow edge in the reference, and the lamp and its bounce over the bake.
+  The arms are independent 1024 and 512, filtered (the amendment of 2026-11-06, Phase 4's stops), and (g) asks whether the
+  glass pane at the hall, after Phase 4a, still shows a white blob.
 
 ### Phase 6: The reach cut, the brick level and the rings
 - **Owner skill:** dev
