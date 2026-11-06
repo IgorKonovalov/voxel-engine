@@ -1,7 +1,7 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress: Phase 3 done 2026-11-06 with the verdict yes; Part 2 re-read by the amendment of 2026-11-06,
-> its lane awaits the owner's go (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
+> **Status:** in-progress: Phase 4 done 2026-11-06 under the amendment of its stops, Phase 4a next (Phase 3 done 2026-11-06 with
+> the verdict yes; Part 2 re-read by the amendment of 2026-11-06; owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
 > bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes,
@@ -971,8 +971,8 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | 1a: The stop's submits | dev | done: one dispatch a submit across jobs, rounds a submit by the stop's expectation; the stop reads 13.51 ns a sample kept against the fixed run's 14.23 on the RTX; the runner at `--bake-radius 1` | c7e1bb9 |
 | 1b: The owner's first look | human | done 2026-11-05/06 on 9394ad5's release binary, RTX, `live/session1b.sh`: (a), (b) and (c) "all good" at the vein, the patch and the hall; (d) no "no", Phase 2 goes on; a remark: the load of the small piece is too long (words and bakes in the log) | ab7855f |
 | 2: The reference: a piece to walk and a hole to dig | dev | done: the piece, the store file, the dig's re-bake, `F` and the pane; `G_noise` met at all four views; the files baked (the whole showcase as the hall's); the readings and `live/session3.sh` in [`logs/0059.md`](logs/0059.md) | 9a55841, ba46603, 595e568 |
-| 3: The owner's verdict on the reference | human | done 2026-11-06 (`live/session3.sh`, then `live/session3b.sh` for glass and `B`): (j) yes, the look to cut down from; a dig froze 3-5 s, `B` about 2 min; new: a white blob on the glass pane; words and mapping in the log | committed with this row |
-| 4: The samples cut, the shared seeds and the filter | dev | stopped at its stop rule: no arm meets the offer's bars with the filter on (independent misses `G_local` p90 at 512, 2.07 to 2.32, and `G_seam`; the shared forms miss `G_seam` p90 at 512, 3.03 to 5.10), and the RTX reads 23.5 ns a sample at 300 000 at the hall (warm); CPU 2805 ns; tables in [`logs/0059.md`](logs/0059.md) | wip, this row's commit |
+| 3: The owner's verdict on the reference | human | done 2026-11-06 (`live/session3.sh`, then `live/session3b.sh` for glass and `B`): (j) yes, the look to cut down from; a dig froze 3-5 s, `B` about 2 min; new: a white blob on the glass pane; words and mapping in the log | 12446af |
+| 4: The samples cut, the shared seeds and the filter | dev | done under the amendment of 2026-11-06 (d029596): the stop rule fired (no arm meets the offer's bars; the RTX 23.5 ns at 300 000 at the hall), and the owner picked independent 1024 filtered, 512 beside it; the cut files wait for 4a's re-bake; tables in [`logs/0059.md`](logs/0059.md) | 8df5c6c (code), committed with this row |
 | 5: The owner's look at the samples cut | human | not started | |
 | 6: The reach cut, the brick level and the rings | dev | not started | |
 | 7: The owner's look at the reach cut | human | not started | |
@@ -1019,12 +1019,14 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 3: the first window exercised neither the pane nor `B` (no pane or bench line in its logs); a rerun (`live/session3b.sh`) took both, one press each, and a second pane press placed 0 voxels.
 - Phase 3, for the architect: a big white blob on the glass pane when looked at directly (`live/session3b-glass-blob.png`, untracked); not the parked held-fallback item.
 - Phase 3, not answered: (d) the fast turn on the store, (e) the voxel step and shadow edge, (f) the lamp and its bounce by name; (a) to (c) read from "everything looks good".
-- Phase 4 (this row's commit): two of the stop rule's three stops fired: no arm meets the offer's bars, and the RTX reads over 20 ns a sample at 300 000 at the hall. No cut files, window binary or `live/session5.sh`; `--profile gpu` not run.
+- Phase 4 (8df5c6c): two of the stop rule's three stops fired: no arm meets the offer's bars, and the RTX reads over 20 ns a sample at 300 000 at the hall; the owner's answers are the amendment of 2026-11-06 (d029596).
 - Phase 4: the lattice form is a Cranley-Patterson rotation of the global-side sequence by the R2 lattice point of the face's plane coordinates; the filter runs on the CPU after the bake, and a dig re-filters around its ring.
 - Phase 4: the grain's counts come from one 2048-sample run's snapshots (32 to 2048), and the filter is applied to the f32 means, not to packed cells.
 - Phase 4: the cost reading times the dispatch by GPU timestamps beside the wall, cold and after a warm-up bake; entries of 32 and 512 samples.
 - Phase 4, the glass blob (for `docs/backlog.md`, beside "A held fallback still moves on screen"): not the lamp's spot. 44 % of the pane's pixels read over 250 with the lamp off, 407 px off the lamp's axis; the store, the table and the bounce read alike; the accumulated lighting there is unchanged by the pane, so the brightness comes from the composite of the translucent glass row.
 - Phase 4, noticed: on the patch the filter lifts a one-face-wide dark row from 0 to 39 to 50 levels (the harm rows).
+- Phase 4 (this row's commit): done-when 3's "under 5 s" is not met: `the_filter_stops_at_a_crease_and_softens_a_shadow_by_one_face` read 5.99 s solo at load 1.36, 4.2 to 4.3 s at load 2.2, 3.65 s in the gpu tier; the test is unchanged.
+- Phase 4: done-when 4's cut files are baked after Phase 4a, whose fix edits march.wgsl (`bake::source_hash()` covers it); the glass blob went to Phase 4a, not to `docs/backlog.md`, as the amendment of 2026-11-06 says.
 
 ### Close triggers
 
