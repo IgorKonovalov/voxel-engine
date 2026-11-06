@@ -86,7 +86,10 @@ inherits = "gate"
 
 [[profile.ci.overrides]]
 filter = 'all()'
-test-group = '@global'
+# DIAGNOSTIC, one push: `test-group = '@global'` is off, so the GPU tests fall back to the
+# default profile's `lavapipe` group (one at a time) while CPU tests stay parallel. It tells
+# concurrency apart from a driver crash in the llvmpipe SIGSEGV of CI run 42062512872. Put the
+# line back once the next push's CI has read it.
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 # The soak tier for CI's weekly run (.github/workflows/soak.yml), GPU tests in parallel as above.
