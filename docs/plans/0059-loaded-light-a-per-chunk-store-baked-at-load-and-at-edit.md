@@ -1,7 +1,8 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05
-> (owner) to a bounded piece and the stop's submits after Phase 1's stop rule)
+> **Status:** in-progress: Phase 3 done 2026-11-06 with the verdict yes; awaiting the architect's antialiasing plan and
+> re-read of Part 2 (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
+> bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes,
 > emissive voxels as the light")
@@ -890,8 +891,8 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | 1: The reference bake, and the count it needs | dev | stopped at its stop rule: the kept arm (32 candidates, clamp off, 65 536) meets the `G_noise` bars and projects a whole level at about 15 h on the RTX; readings in [`logs/0059.md`](logs/0059.md) | 70305ba |
 | 1a: The stop's submits | dev | done: one dispatch a submit across jobs, rounds a submit by the stop's expectation; the stop reads 13.51 ns a sample kept against the fixed run's 14.23 on the RTX; the runner at `--bake-radius 1` | c7e1bb9 |
 | 1b: The owner's first look | human | done 2026-11-05/06 on 9394ad5's release binary, RTX, `live/session1b.sh`: (a), (b) and (c) "all good" at the vein, the patch and the hall; (d) no "no", Phase 2 goes on; a remark: the load of the small piece is too long (words and bakes in the log) | ab7855f |
-| 2: The reference: a piece to walk and a hole to dig | dev | done: the piece, the store file, the dig's re-bake, `F` and the pane; `G_noise` met at all four views; the files baked (the whole showcase as the hall's); the readings and `live/session3.sh` in [`logs/0059.md`](logs/0059.md) | 9a55841, ba46603, committed with this row |
-| 3: The owner's verdict on the reference | human | not started | |
+| 2: The reference: a piece to walk and a hole to dig | dev | done: the piece, the store file, the dig's re-bake, `F` and the pane; `G_noise` met at all four views; the files baked (the whole showcase as the hall's); the readings and `live/session3.sh` in [`logs/0059.md`](logs/0059.md) | 9a55841, ba46603, 595e568 |
+| 3: The owner's verdict on the reference | human | done 2026-11-06 (`live/session3.sh`, then `live/session3b.sh` for glass and `B`): (j) yes, the look to cut down from; a dig froze 3-5 s, `B` about 2 min; new: a white blob on the glass pane; words and mapping in the log | committed with this row |
 | 4: The samples cut, the shared seeds and the filter | dev | not started | |
 | 5: The owner's look at the samples cut | human | not started | |
 | 6: The reach cut, the brick level and the rings | dev | not started | |
@@ -936,6 +937,9 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 2: the glass reading's pane fills the view at the hall (3 486 320 of 3 486 340 pixels changed by it), so its counts are the whole frame's.
 - Phase 2: the strip's last views and the hall's flight lines were read at a load up to 4.8 (a browser outside this lane), labelled loaded.
 - Phase 2: no `B` press is over 5 minutes (1.9 to 2.5); Phase 3's `B` step offers up to four presses, each hitch stated.
+- Phase 3: the first window exercised neither the pane nor `B` (no pane or bench line in its logs); a rerun (`live/session3b.sh`) took both, one press each, and a second pane press placed 0 voxels.
+- Phase 3, for the architect: a big white blob on the glass pane when looked at directly (`live/session3b-glass-blob.png`, untracked); not the parked held-fallback item.
+- Phase 3, not answered: (d) the fast turn on the store, (e) the voxel step and shadow edge, (f) the lamp and its bounce by name; (a) to (c) read from "everything looks good".
 
 ### Close triggers
 
