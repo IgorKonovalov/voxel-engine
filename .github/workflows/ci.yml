@@ -20,6 +20,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # A hung step fails the job instead of holding the runner for six hours. Warm, the Linux
+    # job took 13 min and the Windows one 26 (CI run 41886647253); the cap leaves room for a
+    # cold cache. The gate step has its own cap below, and nextest's ci profile kills a single
+    # test at 600 s.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       # winit's Wayland and X11 backends need the xkbcommon and wayland headers;
@@ -62,6 +67,7 @@ jobs:
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
       # Per-test times go to a log, so the budget step below can read them.
       - name: Gate tier
+        timeout-minutes: 45
         shell: bash
         run: |
           set -o pipefail

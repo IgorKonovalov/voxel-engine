@@ -76,12 +76,21 @@ slow-timeout = { period = "30s" }
 # win over the default profile's, setting by setting, so the soak list's timeout still applies.
 # A dedicated runner has no other lane to crowd, and serialising the GPU tests there roughly
 # doubles the Linux test step.
+#
+# A test still running at 600 s is killed and fails by name, so a hang or a runaway slows one
+# test, not the job: ten times the 60 s line, over the slowest gate test either arm has read
+# (238 s on Windows' WARP, CI run 41886647253). Set in the override because a profile's
+# overrides outrank every profile-level setting.
 [profile.ci]
 inherits = "gate"
 
 [[profile.ci.overrides]]
 filter = 'all()'
-test-group = '@global'
+# DIAGNOSTIC, one push: `test-group = '@global'` is off, so the GPU tests fall back to the
+# default profile's `lavapipe` group (one at a time) while CPU tests stay parallel. It tells
+# concurrency apart from a driver crash in the llvmpipe SIGSEGV of CI run 42062512872. Put the
+# line back once the next push's CI has read it.
+slow-timeout = { period = "60s", terminate-after = 10 }
 
 # The soak tier for CI's weekly run (.github/workflows/soak.yml), GPU tests in parallel as above.
 [profile.ci-soak]
