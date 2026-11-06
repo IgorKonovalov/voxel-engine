@@ -888,8 +888,8 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The reference bake, and the count it needs | dev | stopped at its stop rule: the kept arm (32 candidates, clamp off, 65 536) meets the `G_noise` bars and projects a whole level at about 15 h on the RTX; readings in [`logs/0059.md`](logs/0059.md) | 70305ba |
-| 1a: The stop's submits | dev | done: one dispatch a submit across jobs, rounds a submit by the stop's expectation; the stop reads 13.51 ns a sample kept against the fixed run's 14.23 on the RTX; the runner at `--bake-radius 1` | committed with this row |
-| 1b: The owner's first look | human | not started | |
+| 1a: The stop's submits | dev | done: one dispatch a submit across jobs, rounds a submit by the stop's expectation; the stop reads 13.51 ns a sample kept against the fixed run's 14.23 on the RTX; the runner at `--bake-radius 1` | c7e1bb9 |
+| 1b: The owner's first look | human | done 2026-11-05/06 on 9394ad5's release binary, RTX, `live/session1b.sh`: (a), (b) and (c) "all good" at the vein, the patch and the hall; (d) no "no", Phase 2 goes on; a remark: the load of the small piece is too long (words and bakes in the log) | committed with this row |
 | 2: The reference: a piece to walk and a hole to dig | dev | not started | |
 | 3: The owner's verdict on the reference | human | not started | |
 | 4: The samples cut, the shared seeds and the filter | dev | not started | |
@@ -924,6 +924,7 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 1a: the count reading's stop part takes `VXE_BAKE_SEEDS` and `VXE_BAKE_FIXED`; the census part prints each view's piece at `VXE_BAKE_RADIUS`.
 - Phase 1a, noticed: Phase 1's log reads `the_stop_spends_where_the_noise_is`'s face beside the emitter at se 1.673; 70305ba's tree prints 1.168, as this tree does.
 - Phase 1a, noticed: in `apps/flythrough/src/main.rs`, `start_camera`'s doc comment sits above `bake_extent`.
+- Phase 1b, the owner's remark (for the architect at Phase 3): the comparison against the table is "striking", but the load of even the small piece takes too long; Part 2's cuts.
 
 ### Close triggers
 
