@@ -1,7 +1,7 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress: Phase 3 done 2026-11-06 with the verdict yes; awaiting the architect's antialiasing plan and
-> re-read of Part 2 (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
+> **Status:** in-progress: Phase 3 done 2026-11-06 with the verdict yes; Part 2 re-read by the amendment of 2026-11-06,
+> its lane awaits the owner's go (owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
 > bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes,
@@ -56,6 +56,29 @@
 > whole level's 177 MB fits. (6) The running sums, the stop and the packing run on the CPU in f64, which Phase 1a may
 > change under its rule. (7) `--light baked` is refused without `--level` or `--source showcase`, and Phase 8 lifts that.
 
+> **Amended 2026-11-06 (owner), Part 2 re-read at the verdict.** Phase 3's verdict was yes (`logs/0059.md`, Phase 3). The
+> owner's answers to the architect's interview the same day, verbatim. On edges and the fast turn in the reference: "Barely
+> noticed". On load time: "Playable in seconds, light refines". On digging: "No freeze, settles fast". On the order: "Cuts
+> first, then AA". So:
+> - **No antialiasing plan comes next.** It goes back to `docs/backlog.md` as polish, and Part 2 runs now. Phase 10 no
+>   longer waits for it: it reads native and FSR 2 at 1.5 (the fly-through's default) against the reference.
+> - **Two of the owner's targets become bars,** set in the phases that build them. **A fresh start** (Phase 8): the first
+>   frame within 3 s of the world's load on the RTX, with every pixel whose hit is within 64 voxels at a face cell. The
+>   rest bakes in the background behind the fade, with no visible pop. 3 s is the architect's reading of "seconds" (a
+>   proposal). The arithmetic: a radius-1 ring is about 1.9 x 10^5 faces (Phase 1b), and at 512 samples and 13.5 ns
+>   (Phase 1a) that is about 1.3 s of bake. **A dig** (Phase 9): no hitch, meaning no frame on the dig frame or the 30
+>   after it over 33 ms, and the bake's slots in each of those frames at most `bake_slice_ms` plus the edit cap. The
+>   hole's faces settle within 2 levels (p90) of a fresh bake within 0.5 s of wall time. The arithmetic: an arm's-length
+>   ring of about 11 000 faces (Phase 2's reading) at 512 samples is about 5.6 x 10^6 samples, about 76 ms of GPU time,
+>   which the slice and the edit cap together (about 2.4 x 10^5 samples a frame at 13.5 ns) clear in about 23 frames.
+>   A `B` press (about 3.3 x 10^5 faces) then settles over about 10 s. That is read, not barred.
+> - **The first draft's guessed rates move to Phase 1a's 13.5 ns.** `BAKE_EDIT_SAMPLES` falls from 400 000 to 133 000
+>   (1.8 ms), and Phase 4's cost stop moves from 8 ns to 20 ns a sample. Both are re-read in their phases.
+> - **The glass pane's white blob** (Phase 3's rerun, `live/session3b-glass-blob.png`, the HUD at manual +4 EV) is read
+>   in Phase 4 with the lamp off and on. If it is the lamp's spot at 60 cm, the log says so and the entry is closed; if
+>   not, it goes to `docs/backlog.md` beside the held fallback. No cut fixes it.
+> - The owner did not answer Phase 3's (e) and (f). Phase 5 asks them again beside the filter.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -65,7 +88,7 @@ whole level would take about 15 h on the RTX, by Phase 1's census.) It renders a
 lighting and no FSR 2. A pixel reads its face's value and draws nothing, so moving fast cannot
 outrun the light and nothing moves at rest. A dug hole is re-baked in the frame it appears, at a
 hitch nobody budgets. **The owner judges that in the window (Phase 3) before anything else is
-built.** After the verdict comes antialiasing, in its own plan, and then cuts, one at a time:
+built.** After the verdict come the cuts (antialiasing is parked, the owner's answer of 2026-11-06), one at a time:
 samples, reach, resolution, each read against the reference and each shown to the owner beside it.
 The queue, the rings and the budgets of the first draft are what the cuts are expected to need, and
 they are built only once a cut asks for them. The table stays the default until Phase 12, and is
@@ -540,7 +563,7 @@ progress. Nothing bakes a whole world in a test, and no phase bakes a whole leve
   to the architect with the words, and nothing below runs. **Nothing in Part 2 starts before a "yes".** A "yes" hands to the architect, who drafts
   the antialiasing plan from `docs/backlog.md` and re-reads Part 2.
 
-## Part 2: the cuts (after the verdict, then the antialiasing plan's window; provisional)
+## Part 2: the cuts (after the verdict; re-read 2026-11-06 around the owner's load and dig targets)
 
 **The rule of every cut.** A setting, one at a time. The headless read is the cut's distance from the reference, on the same poses, as the share
 of pixels within 1, 2 and 4 levels, `G_plane`, and `G_noise`, beside what it saves. The owner sees the cut and the reference at one pose, from
@@ -566,10 +589,12 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
   hall, with the shadow rays' mean length (Plan 0057 read a floor of about 0.4 ms for a separate pass at 192 x 108, and the 4.6 ns was read inside the light
   pass near the camera). One read of a CPU sampler over `World::raycast` on one worker thread, ns a sample, for ADR-0046's Alternative F. Whether the kept
   arm's spread stop still earns its second moment at these counts.
+- **The glass blob.** At the hall with Phase 2's pane, at the runner's exposure and at manual +4 EV, the lamp off and then on: the pane's pixels over
+  250 in the display and their centroid against the lamp cone's axis. The log names what the blob is, and Notes route it as the amendment of 2026-11-06 says.
 - **What goes to the owner.** The arm that is the cheapest to meet, at all three poses with the filter on: `G_local` p90 at most 2 levels and p50 at most 1 at
   512; p90 at most 5 at 128 and at most 10 at 32; and `G_seam` p90 at most 2 at 512. Ties go to chunk-side. Beside it, the next arm up in samples, and
   `N` 1024 independent through the filter (the first draft's fallback). **Dev stops for an architect amendment, with the tables, if:** no arm meets it; the RTX
-  reads over 8 ns a sample at 300 000 at any pose; or the CPU reads under 100 ns a sample.
+  reads over 20 ns a sample at 300 000 at any pose (Phase 1a read 13.5 at the vein's stop); or the CPU reads under 100 ns a sample.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`, `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/bake.rs`,
   `.config/nextest.toml`, `docs/plans/logs/0059.md`.
 - **Done when:**
@@ -589,6 +614,7 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's words on: (a) the grain against the reference; (b) a slow error across a wall, and seams at chunk borders; (c) the filter's
   softening, shadows and a pit's lit rim; (d) **which arm stands, or how many samples to go back up.** A refusal of every arm comes to the architect.
+  Phase 3's unanswered (e) and (f) are asked again here: a face's flat value at a voxel step and a shadow edge in the reference, and the lamp and its bounce over the bake.
 
 ### Phase 6: The reach cut, the brick level and the rings
 - **Owner skill:** dev
@@ -669,6 +695,10 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
      of hits beyond 64 voxels is at most 0.01** (Plan 0057's rows, frame 1: 0.4389 under FSR 2,
      frame 64: 0.0180). The slice's mean is at most 1.5 ms. At 120 voxels/s the same rows are read,
      not barred. A miss comes to the architect with the queue's depth.
+  8. **The owner's fresh start, on the RTX, a bar** (amendment of 2026-11-06): at the vein, the patch and the hall from a
+     cold start with no store file, **the first frame within 3 s of the world's load**, with every pixel whose hit is within
+     64 voxels at a face cell. The seconds until the queue first empties are read beside it, as is the same start on the
+     Cezanne, which is not barred. A miss comes to the architect with the samples spent before the first frame.
   7. `frame_bytes` in `upscale.rs` asserts the base's figure plus `bake_pool_bytes` plus the working
      buffer (1 MiB) plus the chunk table's, the arithmetic in its comment, under 5 s, while `--light
      table` allocates a minimal pool.
@@ -678,8 +708,8 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **What:** the three rings of ADR-0046, driven by the box `Frame::invalidate` receives. They replace the reference's in-frame re-bake of Phase 2, and ring 3 is what the reference left out; `the_far_light_stays_as_the_reference_states` goes. The owner's eye on it is Phase 13 (e).
 - **Ring 1,** the box dilated by one voxel. In the frame the mirror receives the edit, ahead of the
   temporal pass: a brick's run is relisted (surviving keys keep their value until replaced) and
-  baked at 32 samples within a per-frame cap of `BAKE_EDIT_SAMPLES` (400 000 RTX, about 1.8 ms, on
-  top of the slice in that frame only, a tenth of it on `BakeProfile::Low`; a guess). What the cap
+  baked at 32 samples within a per-frame cap of `BAKE_EDIT_SAMPLES` (133 000 RTX, about 1.8 ms at Phase 1a's
+  13.5 ns, on top of the slice in that frame only, a tenth of it on `BakeProfile::Low`; a guess). What the cap
   postpones is first in the queue and reads the brick's old direction value. Then the ring's tier at
   edit priority. A face with no value takes its first value directly, without the fade.
 - **Ring 2,** bricks within 32 voxels of the box: at the ring's tier, at edit priority, fading in.
@@ -724,10 +754,15 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
      fly-through's bench): the carved region's share within 2 levels of +256 at +1, +4, +16, +64,
      against that plan's before rows (0.8317 and 0.9814 at +1 and +4 native at the vein), and the
      whole frame's jobs and seconds to an empty queue. Read, not barred.
+  9. **The owner's "no freeze, settles fast", on the RTX, bars** (amendment of 2026-11-06; the same two digs at the window's
+     size): **no frame from the dig frame to dig + 30 over 33 ms**, with the bake's slots in each at most `bake_slice_ms`
+     plus the edit cap; and **the hole's faces at p90 within 2 levels of a fresh bake within 0.5 s of wall time** (the
+     arithmetic is in the amendment: about 23 frames). A `B` press: the same frame bar, and the seconds to settle read,
+     not barred (about 10 s by the arithmetic). A miss comes to the architect with the per-frame samples.
 
 ### Phase 10: The resolution cut
 - **Owner skill:** dev
-- **What:** lighting and internal resolution against the reference, on the antialiasing plan's answer. `--internal-scale` and the upscaler are that plan's choice; what is cut here is
+- **What:** lighting and internal resolution against the reference, read at native and at FSR 2 at 1.5 (the fly-through's default; the antialiasing plan is parked, amendment of 2026-11-06); what is cut here is
   `--lighting half` under the store, and whether a half-resolution read needs the own-face read of Plan 0057's unbuilt Part 3 at face edges. Each setting is read against the reference at
   the same poses, standing and on the rig's fast yaw.
 - **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl` and the composite if the own-face read is built, `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/bake.rs`,
@@ -954,7 +989,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- **The antialiasing plan** (architect, at Phase 3's "yes"): from `docs/backlog.md`, Phase 2's fast-yaw rows and Phase 3 (d), together with the far-normal plan Plan 0056 owes, since the edge dots left at `[1, 2]` are its next item. This plan's Part 2 resumes after its window.
+- **The antialiasing plan**, parked by the owner on 2026-11-06 ("Barely noticed" at native): `docs/backlog.md` keeps it, with Phase 2's fast-yaw rows, together with the far-normal plan Plan 0056 owes.
 - **Plan 0058's refresh** (architect, at this plan's Phase 14 on "baked"): its emission-scale phase
   and ADR-0045's kept emitter become the dominant material of this plan. Its analytic lights stand.
 - **ADR-0043's Outcome and supersession,** at this plan's close, on "baked": the table, fill,

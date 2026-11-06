@@ -125,5 +125,9 @@ materials, a sky and a way to build interesting architecture.
 
 Decided 2026-11-05 (owner, Plan 0057's second window): "antializing next", after the emissive-only
 reference of the look-first Plan 0059. The owner's fast turn "still has artifacts" (step 1); the
-reference runs with no upscaler, so it tells the light's part from the image's. Picks up when
-the owner has judged the reference.
+reference runs with no upscaler, so it tells the light's part from the image's. Parked again
+2026-11-06 at Plan 0059's Phase 3 verdict. Asked whether the reference's edges or fast turn
+bothered them (baked, native, no upscaler, no jitter), the owner answered "Barely noticed", and on
+the order, "Cuts first, then AA". So Plan 0059's Part 2 runs first. Phase 2's fast-yaw rows
+(`docs/plans/logs/0059.md`) are the starting reading. Pick up when the owner calls it, or when
+Plan 0059's Phase 10 or 11 reads edges as the remaining fault.
