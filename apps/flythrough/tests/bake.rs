@@ -2408,23 +2408,59 @@ fn ref_flight(view: &ReadView) {
         NATIVE[1],
         pass_line(&sum, 120)
     ));
-    let dir = [
-        still.yaw.cos() * still.pitch.cos(),
-        still.yaw.sin() * still.pitch.cos(),
-        still.pitch.sin(),
-    ];
+    // The rig's steady flight (`settle::flight_path`, 180 clear voxels facing the travel) at
+    // the level's poses; the hall has no rig path, so it flies along its view.
+    let (start, dir, len) = match view.name {
+        "vein" | "patch" => {
+            let pose = if view.name == "vein" {
+                &flythrough::VEIN_POSE
+            } else {
+                &flythrough::PATCH_POSE
+            };
+            let (a, b) = support::settle::flight_path(pose);
+            let d = [0, 1, 2].map(|k| b[k] - a[k]);
+            let len = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+            (a, d.map(|v| v / len), len)
+        }
+        _ => (
+            still.position.to_array(),
+            [
+                still.yaw.cos() * still.pitch.cos(),
+                still.yaw.sin() * still.pitch.cos(),
+                still.pitch.sin(),
+            ],
+            f32::INFINITY,
+        ),
+    };
+    let cam0 = Camera {
+        position: start.into(),
+        yaw: dir[1].atan2(dir[0]),
+        pitch: dir[2].asin(),
+        ..still
+    };
     for speed in [30.0f32, 120.0] {
         let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
         let (mut frames, mut missing, mut most) = (0usize, 0u64, 0u32);
-        let mut cam = still;
+        let mut cam = cam0;
+        rig.frame.reset_history();
         for f in 0..600 {
-            let t = f as f32 / 60.0;
-            let p = [0, 1, 2].map(|k| still.position.to_array()[k] + dir[k] * speed * t);
-            if !inside(piece, p.map(|v| v.floor() as i32))
-                || rig
-                    .world
-                    .material_at(vxe_world::VoxelCoord(p.map(|v| v.floor() as i32)))
-                    .is_some_and(|m| m != AIR)
+            let s = speed * f as f32 / 60.0;
+            if s > len {
+                break;
+            }
+            let p = [0, 1, 2].map(|k| start[k] + dir[k] * s);
+            let v = p.map(|v| v.floor() as i32);
+            if !inside(piece, v) {
+                // Frames before the path enters the piece are skipped; leaving it ends the run.
+                if frames > 0 {
+                    break;
+                }
+                continue;
+            }
+            if rig
+                .world
+                .material_at(vxe_world::VoxelCoord(v))
+                .is_some_and(|m| m != AIR)
             {
                 break;
             }
@@ -2446,7 +2482,6 @@ fn ref_flight(view: &ReadView) {
             NATIVE[0] * NATIVE[1],
             pass_line(&sum, frames.max(1))
         ));
-        rig.frame.reset_history();
     }
 }
 
@@ -2518,29 +2553,52 @@ fn ref_dig(view: &ReadView) {
         &LightParams::default(),
     );
     let eye = camera.position.to_array();
+    let dist = |e: [f32; 3], p: [f32; 3]| (0..3).map(|k| (p[k] - e[k]).powi(2)).sum::<f32>().sqrt();
+    let carve = |p: [f32; 3]| {
+        let c = p.map(|v| i64::from(v.floor() as i32) * FIXED_ONE + FIXED_ONE / 2);
+        EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve)
+    };
     let near = hit_at(&rig, size, size[0] / 2, size[1] / 2).expect("the view's centre hits rock");
+    let line = timed_dig(
+        &mut rig,
+        &[carve(near)],
+        &format!(
+            "5-voxel dig at arm's length ({:.1} voxels)",
+            dist(eye, near)
+        ),
+    );
+    log.line(&format!("dig vein adapter {}: {line}", rig.adapter));
+    // The settle rig's far dig (`settle::dig_camera` for `DigFar`): from the steady flight's
+    // start facing its travel, the hit in the view's central half nearest 100 voxels.
+    let down = support::settle::KRun::Path.camera(&flythrough::VEIN_POSE, 0);
+    rig.frame.step(
+        &rig.device,
+        &rig.queue,
+        &rig.gpu,
+        &down,
+        &LightParams::default(),
+    );
+    let from = down.position.to_array();
     let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let far = pos
-        .iter()
-        .map(|p| [p[0], p[1], p[2]])
-        .filter(|p| p.iter().all(|v| v.is_finite()))
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let far = (size[1] / 4..3 * size[1] / 4)
+        .flat_map(|y| (size[0] / 4..3 * size[0] / 4).map(move |x| (y * size[0] + x) as usize))
+        .filter(|&i| info[i][3] & 1 != 0)
+        .map(|i| [pos[i][0], pos[i][1], pos[i][2]])
         .min_by(|a, b| {
-            let d = |p: &[f32; 3]| {
-                ((0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt() - 100.0).abs()
-            };
+            let d = |p: &[f32; 3]| (dist(from, *p) - 100.0).abs();
             d(a).total_cmp(&d(b))
         })
-        .expect("a hit near 100 voxels");
-    let dist = |p: [f32; 3]| (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
-    for (what, p) in [
-        ("5-voxel dig at arm's length", near),
-        ("5-voxel dig at 100 voxels", far),
-    ] {
-        let c = p.map(|v| i64::from(v.floor() as i32) * FIXED_ONE + FIXED_ONE / 2);
-        let op = EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve);
-        let line = timed_dig(&mut rig, &[op], &format!("{what} ({:.1} voxels)", dist(p)));
-        log.line(&format!("dig vein adapter {}: {line}", rig.adapter));
-    }
+        .expect("a hit near 100 voxels down the passage");
+    let line = timed_dig(
+        &mut rig,
+        &[carve(far)],
+        &format!(
+            "5-voxel dig at 100 voxels, from the flight's start ({:.1} voxels)",
+            dist(from, far)
+        ),
+    );
+    log.line(&format!("dig vein adapter {}: {line}", rig.adapter));
     let origin = eye.map(|v| v.floor() as i64);
     for k in 0..4u64 {
         let seed = 1u64 ^ k.wrapping_mul(0x9e37_79b9_7f4a_7c15);

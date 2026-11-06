@@ -889,8 +889,8 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 |---|---|---|---|
 | 1: The reference bake, and the count it needs | dev | stopped at its stop rule: the kept arm (32 candidates, clamp off, 65 536) meets the `G_noise` bars and projects a whole level at about 15 h on the RTX; readings in [`logs/0059.md`](logs/0059.md) | 70305ba |
 | 1a: The stop's submits | dev | done: one dispatch a submit across jobs, rounds a submit by the stop's expectation; the stop reads 13.51 ns a sample kept against the fixed run's 14.23 on the RTX; the runner at `--bake-radius 1` | c7e1bb9 |
-| 1b: The owner's first look | human | done 2026-11-05/06 on 9394ad5's release binary, RTX, `live/session1b.sh`: (a), (b) and (c) "all good" at the vein, the patch and the hall; (d) no "no", Phase 2 goes on; a remark: the load of the small piece is too long (words and bakes in the log) | committed with this row |
-| 2: The reference: a piece to walk and a hole to dig | dev | not started | |
+| 1b: The owner's first look | human | done 2026-11-05/06 on 9394ad5's release binary, RTX, `live/session1b.sh`: (a), (b) and (c) "all good" at the vein, the patch and the hall; (d) no "no", Phase 2 goes on; a remark: the load of the small piece is too long (words and bakes in the log) | ab7855f |
+| 2: The reference: a piece to walk and a hole to dig | dev | done: the piece, the store file, the dig's re-bake, `F` and the pane; `G_noise` met at all four views; the files baked (the whole showcase as the hall's); the readings and `live/session3.sh` in [`logs/0059.md`](logs/0059.md) | 9a55841, ba46603, committed with this row |
 | 3: The owner's verdict on the reference | human | not started | |
 | 4: The samples cut, the shared seeds and the filter | dev | not started | |
 | 5: The owner's look at the samples cut | human | not started | |
@@ -925,6 +925,17 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 1a, noticed: Phase 1's log reads `the_stop_spends_where_the_noise_is`'s face beside the emitter at se 1.673; 70305ba's tree prints 1.168, as this tree does.
 - Phase 1a, noticed: in `apps/flythrough/src/main.rs`, `start_camera`'s doc comment sits above `bake_extent`.
 - Phase 1b, the owner's remark (for the architect at Phase 3): the comparison against the table is "striking", but the load of even the small piece takes too long; Part 2's cuts.
+- Phase 2 (9a55841): the dig's re-bake runs inside the frame and does not pump window events, so a long hitch (a `B` press, about 2 minutes) may draw a compositor "not responding".
+- Phase 2 (9a55841): the glass key's helpers live in `apps/flythrough/src/main.rs`; the plan's files do not name the fly-through's `lib.rs`.
+- Phase 2 (9a55841): a `--bake-file` refused by its key bakes and rewrites the file (the message names the field).
+- Phase 2: `.gitignore` is unchanged; `live/` is already ignored.
+- Phase 2: the whole showcase's pre-roll (24.5 min) was read loaded (load to 29); not retaken, it has no bar.
+- Phase 2: the strip's `G_plane` is the store's cells only (the noise part's); the strip reads display luma against the table's frame 4096.
+- Phase 2 (this row's commit): the flight reading flies the settle rig's steady flight at the vein and the patch and the hall's view line; the far dig is the rig's (from the flight's start, the hit nearest 100 voxels); a first run of each read the pose's own view and is in the log.
+- Phase 2: the yaw reading's table row is native from empty (192 + 64 frames before the yaw); the FSR 2 row is Plan 0057's, not re-read.
+- Phase 2: the glass reading's pane fills the view at the hall (3 486 320 of 3 486 340 pixels changed by it), so its counts are the whole frame's.
+- Phase 2: the strip's last views and the hall's flight lines were read at a load up to 4.8 (a browser outside this lane), labelled loaded.
+- Phase 2: no `B` press is over 5 minutes (1.9 to 2.5); Phase 3's `B` step offers up to four presses, each hitch stated.
 
 ### Close triggers
 
