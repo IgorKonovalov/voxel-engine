@@ -1,6 +1,6 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress: Phase 4a done 2026-11-07 under the amendment of its glass bar, Phase 5's files and runner next; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
+> **Status:** in-progress: Phase 4a done 2026-11-07 under the amendment of its glass bar; Phase 5 (human) ready, `live/session5.sh`; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
 > the verdict yes; Part 2 re-read by the amendment of 2026-11-06; owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
 > bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
@@ -987,7 +987,7 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | 1b: The owner's first look | human | done 2026-11-05/06 on 9394ad5's release binary, RTX, `live/session1b.sh`: (a), (b) and (c) "all good" at the vein, the patch and the hall; (d) no "no", Phase 2 goes on; a remark: the load of the small piece is too long (words and bakes in the log) | ab7855f |
 | 2: The reference: a piece to walk and a hole to dig | dev | done: the piece, the store file, the dig's re-bake, `F` and the pane; `G_noise` met at all four views; the files baked (the whole showcase as the hall's); the readings and `live/session3.sh` in [`logs/0059.md`](logs/0059.md) | 9a55841, ba46603, 595e568 |
 | 3: The owner's verdict on the reference | human | done 2026-11-06 (`live/session3.sh`, then `live/session3b.sh` for glass and `B`): (j) yes, the look to cut down from; a dig froze 3-5 s, `B` about 2 min; new: a white blob on the glass pane; words and mapping in the log | 12446af |
-| 4: The samples cut, the shared seeds and the filter | dev | done under the amendment of 2026-11-06 (d029596): the stop rule fired (no arm meets the offer's bars; the RTX 23.5 ns at 300 000 at the hall), and the owner picked independent 1024 filtered, 512 beside it; the cut files wait for 4a's re-bake; tables in [`logs/0059.md`](logs/0059.md) | 8df5c6c (code), b663570 |
+| 4: The samples cut, the shared seeds and the filter | dev | done under the amendment of 2026-11-06 (d029596): the stop rule fired (no arm meets the offer's bars; the RTX 23.5 ns at 300 000 at the hall), and the owner picked independent 1024 filtered, 512 beside it; the cut files wait for 4a's re-bake; tables in [`logs/0059.md`](logs/0059.md) | 8df5c6c (code), b663570, the cut files with 4a's close |
 | 4a: The glass composite | dev | done under the amendment of 2026-11-07 (0511c86): the part is the glass layer's headlamp light with the lamp off; fixed (`translucent_march` reads `LIGHTING_LAMP`); over 250 at 0.0000 against 0.0077 before the pane; the k-layer model reads p90 0.00 levels (lavapipe); [`logs/0059.md`](logs/0059.md) | a2cb48a (fix), committed with this row |
 | 5: The owner's look at the samples cut | human | not started | |
 | 6: The reach cut, the brick level and the rings | dev | not started | |
@@ -1047,6 +1047,7 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 4a: the glass face has no light but the headlamp's (no store cell, no fallback); with the lamp off the pane reads black over a dimmed scene, and with the lamp on the lamp's spot on the glass is unchanged (0.4358 over 250 at the shot).
 - Phase 4a: `a_glass_pane_does_not_brighten_what_it_covers` moved to one rig and a pane of the view's size (the claim and assertions unchanged); it reads 5.50 s solo quiet as a series' first run, 3.93 s the next, 5.73 s in the gpu tier loaded.
 - Phase 4a: the hall's reference file was re-baked under the new source hash for the readings; its blocks are bit-identical to the file before the fix. The vein's and the patch's files, the cut files, the Phase 5 binary and `live/session5.sh` wait for 4a's close.
+- Phase 4, done-when 4 (after 4a, 2026-11-07): the cut files (independent 1024 and 512, filtered) at the vein, the patch and the hall, baked at 72d44f9's binary, with the reference files re-baked under the new source hash (blocks bit-identical); `live/session5.sh` written. Times in the log.
 - Phase 4a (this row's commit): the k-layer model's `k` is counted by a CPU voxel walk of the pane's box (`layers_on_ray`), not read from the frame; the layers' own terms are the glass term read, their sum.
 
 ### Close triggers
