@@ -3622,6 +3622,16 @@ fn cut_glass(view: &ReadView) {
 /// `camera`'s eye along the larger of its forward's x and y, as the fly-through's `1` places it.
 fn pane_op(rig: &ReadRig, camera: &Camera, piece: ChunkExtent) -> EditOp {
     let glass = (rig.world.materials().len() - 1) as vxe_world::MaterialId;
+    let (min, max) = pane_box(camera, piece);
+    EditOp::box_(
+        Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
+        Mode::Fill(glass),
+    )
+}
+
+/// [`pane_op`]'s box in voxels, `[min, max)`.
+fn pane_box(camera: &Camera, piece: ChunkExtent) -> ([i32; 3], [i32; 3]) {
     let e = camera.position.to_array().map(|v| v.floor() as i32);
     let (fwd, _, _) = camera.basis();
     let k = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
@@ -3639,11 +3649,81 @@ fn pane_op(rig: &ReadRig, camera: &Camera, piece: ChunkExtent) -> EditOp {
         max[a] = e[a] + 20;
     }
     assert!(inside(piece, min) && inside(piece, max.map(|v| v - 1)));
-    EditOp::box_(
-        Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
-        Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
-        Mode::Fill(glass),
-    )
+    (min, max)
+}
+
+/// The translucent voxels of `glass` a ray from `eye` through `hit` enters inside `[min, max)`
+/// before `hit`, up to `cap`: the layers the composite's walk counts, by a CPU voxel walk.
+fn layers_on_ray(
+    world: &World,
+    glass: vxe_world::MaterialId,
+    (min, max): ([i32; 3], [i32; 3]),
+    eye: [f32; 3],
+    hit: [f32; 3],
+    cap: u32,
+) -> u32 {
+    let to = [0, 1, 2].map(|k| f64::from(hit[k] - eye[k]));
+    let t_hit = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
+    let d = to.map(|v| v / t_hit);
+    let o = eye.map(f64::from);
+    let (mut t0, mut t1) = (0.0f64, t_hit);
+    for k in 0..3 {
+        let (lo, hi) = (f64::from(min[k]), f64::from(max[k]));
+        if d[k] == 0.0 {
+            if o[k] < lo || o[k] >= hi {
+                return 0;
+            }
+            continue;
+        }
+        let (a, b) = ((lo - o[k]) / d[k], (hi - o[k]) / d[k]);
+        t0 = t0.max(a.min(b));
+        t1 = t1.min(a.max(b));
+    }
+    if t1 <= t0 {
+        return 0;
+    }
+    let p = [0, 1, 2].map(|k| o[k] + d[k] * (t0 + 1e-6));
+    let mut v = [0, 1, 2].map(|k| (p[k].floor() as i32).clamp(min[k], max[k] - 1));
+    let step = d.map(|x| if x > 0.0 { 1 } else { -1 });
+    let mut next = [0, 1, 2].map(|k| {
+        if d[k] == 0.0 {
+            f64::INFINITY
+        } else {
+            let edge = f64::from(v[k] + i32::from(d[k] > 0.0));
+            (edge - o[k]) / d[k]
+        }
+    });
+    let delta = d.map(|x| {
+        if x == 0.0 {
+            f64::INFINITY
+        } else {
+            1.0 / x.abs()
+        }
+    });
+    let mut n = 0;
+    loop {
+        if world.material_at(vxe_world::VoxelCoord(v)) == Some(glass) {
+            n += 1;
+            if n >= cap {
+                return n;
+            }
+        }
+        let k = if next[0] <= next[1] && next[0] <= next[2] {
+            0
+        } else if next[1] <= next[2] {
+            1
+        } else {
+            2
+        };
+        if next[k] >= t1 {
+            return n;
+        }
+        v[k] += step[k];
+        next[k] += delta[k];
+        if v[k] < min[k] || v[k] >= max[k] {
+            return n;
+        }
+    }
 }
 
 /// The owner's eye in the glass screenshot (its HUD's `fly at`), chunk [2, 5, 3].
@@ -3657,7 +3737,9 @@ const OWNER_GLASS_EYE: [f32; 3] = [169.0, 359.7, 222.7];
 /// shot's heading, exposure 8, the store: the lamp off, the lamp off with the headlamp's
 /// intensity at 0, and the lamp on. Then done-when 2's figures: the pane's pixels over 250
 /// against the share before the pane, and each pixel against `(1 - a) * behind + a * albedo *
-/// light_at_glass` with `a` 0.6, `light_at_glass` the layer's own light per voxel.
+/// light_at_glass` with `a` 0.6, `light_at_glass` the layer's own light per voxel; and against the
+/// k-layer model `(1 - a)^k * behind` plus the layers' own terms (the glass term read), `k` counted
+/// by a CPU walk of the pane's voxels along the pixel's ray up to the composite's layer cap.
 /// `VXE_PARTS_POSES` (`shot`, `owner`) and `VXE_PARTS_ROWS` (`off`, `dark`, `on`) narrow it.
 fn cut_glass_parts(view: &ReadView) {
     let mut log = Log::open("cut-glass-parts.txt");
@@ -3678,6 +3760,9 @@ fn cut_glass_parts(view: &ReadView) {
             camera.position = e.into();
         }
         let op = pane_op(&rig, &camera, piece);
+        let pbox = pane_box(&camera, piece);
+        let cap = vxe_render::marcher::LookParams::default().translucent_layers;
+        let eye = camera.position.to_array();
         let mats = rig.world.materials().clone();
         let glass = (mats.len() - 1) as vxe_world::MaterialId;
         let g = mats.get(glass).expect("the glass row");
@@ -3723,6 +3808,8 @@ fn cut_glass_parts(view: &ReadView) {
                 rig.frame.irradiance()
             };
             let lit = readback::read_float(&rig.device, &rig.queue, lit_tex);
+            let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+            let (mut dk, mut k_walk, mut k_off) = (vec![], BTreeMap::<u32, u64>::new(), 0u64);
             let (mut n, mut over, mut over_before) = (0u64, 0u64, 0u64);
             let (mut g_l, mut w, mut b_l, mut e_l, mut res, mut dw2) =
                 (vec![], vec![], vec![], vec![], vec![], vec![]);
@@ -3778,6 +3865,22 @@ fn cut_glass_parts(view: &ReadView) {
                 d_behind.push(dl(behind));
                 d_act.push(y[i]);
                 res.push((y[i] - dl(model)).abs());
+                // The k-layer model: k from a CPU walk of the pane's voxels along the pixel's
+                // ray, the layers' own terms the glass term read (their sum, by the walk's
+                // definition: a * (1 - a)^(i - 1) * albedo * light at layer i).
+                let kw = layers_on_ray(
+                    &rig.world,
+                    glass,
+                    pbox,
+                    eye,
+                    [pos[i][0], pos[i][1], pos[i][2]],
+                    cap,
+                );
+                *k_walk.entry(kw).or_default() += 1;
+                let tk = (1.0 - ga).powi(kw as i32);
+                k_off += u64::from((l[3] - tk).abs() > 1e-3);
+                let model_k = [0, 1, 2].map(|c| gt[c] + tk * behind[c]);
+                dk.push((y[i] - dl(model_k)).abs());
                 dw2.push((y[i] - dl(target)).abs());
                 over += u64::from(y[i] > 250.0);
                 over_before += u64::from(y0[i] > 250.0);
@@ -3798,6 +3901,10 @@ fn cut_glass_parts(view: &ReadView) {
                 over as f64 / n.max(1) as f64,
                 over_before as f64 / n.max(1) as f64,
                 p(&mut dw2)
+            ));
+            log.line(&format!(
+                "parts {pose} {lname}: k-layer model, k by a CPU walk of the pane (cap {cap}): layers {k_walk:?}, transmittance off (1 - a)^k by over 1e-3 at {k_off} pixels; |pixel - ((1 - a)^k behind + glass term)| p50/p90/max {}",
+                p(&mut dk)
             ));
         }
     }

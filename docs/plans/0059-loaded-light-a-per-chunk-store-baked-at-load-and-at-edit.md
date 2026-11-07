@@ -1,6 +1,6 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress: Phase 4a stopped at done-when 2 on 2026-11-07, awaiting the architect; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
+> **Status:** in-progress: Phase 4a done 2026-11-07 under the amendment of its glass bar, Phase 5's files and runner next; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
 > the verdict yes; Part 2 re-read by the amendment of 2026-11-06; owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
 > bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
@@ -988,7 +988,7 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | 2: The reference: a piece to walk and a hole to dig | dev | done: the piece, the store file, the dig's re-bake, `F` and the pane; `G_noise` met at all four views; the files baked (the whole showcase as the hall's); the readings and `live/session3.sh` in [`logs/0059.md`](logs/0059.md) | 9a55841, ba46603, 595e568 |
 | 3: The owner's verdict on the reference | human | done 2026-11-06 (`live/session3.sh`, then `live/session3b.sh` for glass and `B`): (j) yes, the look to cut down from; a dig froze 3-5 s, `B` about 2 min; new: a white blob on the glass pane; words and mapping in the log | 12446af |
 | 4: The samples cut, the shared seeds and the filter | dev | done under the amendment of 2026-11-06 (d029596): the stop rule fired (no arm meets the offer's bars; the RTX 23.5 ns at 300 000 at the hall), and the owner picked independent 1024 filtered, 512 beside it; the cut files wait for 4a's re-bake; tables in [`logs/0059.md`](logs/0059.md) | 8df5c6c (code), b663570 |
-| 4a: The glass composite | dev | stopped at done-when 2: the part is the glass layer's headlamp light with the lamp off; fixed (`translucent_march` reads `LIGHTING_LAMP`); over 250 at 0.0000 against 0.0077 before the pane; the single-layer model reads p90 19.69 levels, the pane walking 2 to 4 layers; done-when 3 and 4 read; [`logs/0059.md`](logs/0059.md) | committed with this row |
+| 4a: The glass composite | dev | done under the amendment of 2026-11-07 (0511c86): the part is the glass layer's headlamp light with the lamp off; fixed (`translucent_march` reads `LIGHTING_LAMP`); over 250 at 0.0000 against 0.0077 before the pane; the k-layer model reads p90 0.00 levels (lavapipe); [`logs/0059.md`](logs/0059.md) | a2cb48a (fix), committed with this row |
 | 5: The owner's look at the samples cut | human | not started | |
 | 6: The reach cut, the brick level and the rings | dev | not started | |
 | 7: The owner's look at the reach cut | human | not started | |
@@ -1043,10 +1043,11 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 4, noticed: on the patch the filter lifts a one-face-wide dark row from 0 to 39 to 50 levels (the harm rows).
 - Phase 4 (b663570): `the_filter_stops_at_a_crease_and_softens_a_shadow_by_one_face` read 5.99 s solo at load 1.36 (a series' first run), 4.2 to 4.3 s at load 2.2, 3.65 s in the gpu tier, and 3.55 s twice at load 0.6 (2026-11-07); the test is unchanged.
 - Phase 4: done-when 4's cut files are baked after Phase 4a, whose fix edits march.wgsl (`bake::source_hash()` covers it); the glass blob went to Phase 4a, not to `docs/backlog.md`, as the amendment of 2026-11-06 says.
-- Phase 4a (this row's commit): done-when 2's second half cannot be read as written: the pane is 2 voxels thick and its pixels enter 2 to 4 layers (transmittance p50 0.0256), and with the lamp off the glass has no light of its own, so the pixel is `0.4^k * behind`; `|pixel - ((1 - a) behind + a albedo light_at_glass)|` reads p90 19.69 levels against 2. Stopped for the architect.
+- Phase 4a (this row's commit): done-when 2's second half cannot be read as written: the pane is 2 voxels thick and its pixels enter 2 to 4 layers (transmittance p50 0.0256), and with the lamp off the glass has no light of its own, so the pixel is `0.4^k * behind`; `|pixel - ((1 - a) behind + a albedo light_at_glass)|` reads p90 19.69 levels against 2. Stopped for the architect; read against the k-layer model after the amendment of 2026-11-07 (this row's commit).
 - Phase 4a: the glass face has no light but the headlamp's (no store cell, no fallback); with the lamp off the pane reads black over a dimmed scene, and with the lamp on the lamp's spot on the glass is unchanged (0.4358 over 250 at the shot).
 - Phase 4a: `a_glass_pane_does_not_brighten_what_it_covers` moved to one rig and a pane of the view's size (the claim and assertions unchanged); it reads 5.50 s solo quiet as a series' first run, 3.93 s the next, 5.73 s in the gpu tier loaded.
 - Phase 4a: the hall's reference file was re-baked under the new source hash for the readings; its blocks are bit-identical to the file before the fix. The vein's and the patch's files, the cut files, the Phase 5 binary and `live/session5.sh` wait for 4a's close.
+- Phase 4a (this row's commit): the k-layer model's `k` is counted by a CPU voxel walk of the pane's box (`layers_on_ray`), not read from the frame; the layers' own terms are the glass term read, their sum.
 
 ### Close triggers
 
