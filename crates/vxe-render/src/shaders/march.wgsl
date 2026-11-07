@@ -100,8 +100,8 @@
 // (`translucent_march`): it skips the same empty cells, an unflagged brick as a whole, and a
 // flagged Full brick's clear 2^3 blocks from its two translucent words, and composites the
 // translucent voxels it enters front to back, each albedo times opacity under the lamp's cone
-// and distance term with no shadow ray, up to `translucent_layers` of them; what remains of
-// the transmittance carries the opaque hit's colour.
+// and distance term with no shadow ray (0 while the lamp is off), up to `translucent_layers` of
+// them; what remains of the transmittance carries the opaque hit's colour.
 //
 // Cutaway (flag bit 10): the primary ray starts in a `passing` state that steps through solid
 // cells (a uniform solid brick as one 8^3 cell, scaled by the mip cell; a solid voxel of a Full
@@ -918,9 +918,11 @@ fn lamp(p: vec3<f32>) -> f32 {
 // it enters front to back, nearest first, up to `params.translucent_layers` of them. Returns
 // the accumulated colour, premultiplied, in xyz and the transmittance left for what lies
 // behind in w. A layer is albedo times opacity, under the lamp's cone and distance term when
-// `lit` and unlit otherwise; a thick volume contributes one layer per voxel entered.
+// `lit` and the lamp is on (`LIGHTING_LAMP`), 0 when `lit` and the lamp is off, and unlit (1)
+// otherwise; a thick volume contributes one layer per voxel entered.
 fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> vec4<f32> {
     var acc = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let lamp_on = (params.lighting & LIGHTING_LAMP) != 0u;
     let bmin_i = params.window_min * 64;
     let bmax_i = (params.window_min + params.window_size) * 64;
     let bmin = vec3<f32>(bmin_i);
@@ -958,7 +960,7 @@ fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> vec4<
             let opacity = clamp(materials[row + 2u].z, 0.0, 1.0);
             var light = 1.0;
             if (lit) {
-                light = lamp(o + d * t);
+                light = select(0.0, lamp(o + d * t), lamp_on);
             }
             acc = vec4<f32>(acc.xyz + acc.w * opacity * albedo * light, acc.w * (1.0 - opacity));
             layers += 1u;

@@ -1216,49 +1216,68 @@ const LAMP_EMPTY_FRAMES: u32 = 1;
 /// A pane of opacity 0.6 and a dark albedo, one voxel thick, 2.5 voxels ahead of
 /// [`small_box`]'s eye, over the block lit by its ore plate: with the lamp off (the headlamp's
 /// parameters set, as the window's frames pass them), every pixel and channel reads no brighter
-/// than the larger of the block alone and the pane drawn opaque (its own lit face).
+/// than the larger of the block alone and the pane drawn opaque (its own lit face). One rig: the
+/// block alone, then the pane dug in as translucent glass, then the same box's glass replaced by its
+/// opaque twin, each dig re-baking its ring as the window's frame does.
 #[test]
 fn a_glass_pane_does_not_brighten_what_it_covers() {
-    let frame_of = |pane: Option<bool>| -> Option<(Vec<u8>, usize)> {
-        let mut t = table();
-        if let Some(translucent) = pane {
-            let rock = t.get(ROCK).expect("rock").clone();
-            let flags = if translucent {
-                rock.flags | vxe_world::MaterialFlags::TRANSLUCENT
-            } else {
-                rock.flags
-            };
-            t.push(vxe_world::Material {
-                name: "pane".to_owned(),
-                albedo: [0.10, 0.10, 0.14],
-                emission: [0.0; 3],
-                opacity: 0.6,
-                flags,
-                ..rock
-            });
-        }
-        let (_, camera) = small_box();
-        let world = air_world([2, 2, 2], &t);
-        fill(&world, [40, 40, 40], [56, 56, 56], ROCK);
-        fill(&world, [42, 42, 72], [54, 54, 74], ORE);
-        if pane.is_some() {
-            let glass = (t.len() - 1) as vxe_world::MaterialId;
-            fill(&world, [33, 0, 0], [34, 128, 128], glass);
-        }
-        let mut rig = rig_on(world, [64, 36], Light::Baked, None)?;
-        rig.bake(&test_counts(128, 128));
+    let mut t = table();
+    let rock = t.get(ROCK).expect("rock").clone();
+    for translucent in [true, false] {
+        let flags = if translucent {
+            rock.flags | vxe_world::MaterialFlags::TRANSLUCENT
+        } else {
+            rock.flags
+        };
+        t.push(vxe_world::Material {
+            name: format!("pane {}", if translucent { "glass" } else { "opaque" }),
+            albedo: [0.10, 0.10, 0.14],
+            emission: [0.0; 3],
+            opacity: 0.6,
+            flags,
+            ..rock.clone()
+        });
+    }
+    let (glass_id, opaque_id) = (
+        (t.len() - 2) as vxe_world::MaterialId,
+        (t.len() - 1) as vxe_world::MaterialId,
+    );
+    let (_, camera) = small_box();
+    let world = air_world([2, 2, 2], &t);
+    fill(&world, [40, 40, 40], [56, 56, 56], ROCK);
+    fill(&world, [42, 42, 72], [54, 54, 74], ORE);
+    let Some(mut rig) = rig_on(world, [64, 36], Light::Baked, None) else {
+        return;
+    };
+    let settings = test_counts(128, 128);
+    rig.bake(&settings);
+    let frame_of = |rig: &mut Rig, name: &str| -> (Vec<u8>, usize) {
         for _ in 0..16 {
             rig.step(&camera);
         }
         let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let covered = info.iter().filter(|r| r[3] & 4 != 0).count();
-        Some((rig.display(), covered))
+        println!("{name}: {covered} pixels behind a translucent voxel");
+        (rig.display(), covered)
     };
-    let Some((wall, _)) = frame_of(None) else {
-        return;
+    let pane = |mode: Mode| {
+        EditOp::box_(
+            Fixed3([33, 16, 40].map(|v: i64| v * FIXED_ONE)),
+            Fixed3([34, 72, 80].map(|v: i64| v * FIXED_ONE)),
+            mode,
+        )
     };
-    let (glass, covered) = frame_of(Some(true)).expect("the device");
-    let (opaque, _) = frame_of(Some(false)).expect("the device");
+    let (wall, _) = frame_of(&mut rig, "the block alone");
+    rig.dig(&pane(Mode::Fill(glass_id)), &settings);
+    let (glass, covered) = frame_of(&mut rig, "the glass pane");
+    rig.dig(
+        &pane(Mode::Replace {
+            from: glass_id,
+            to: opaque_id,
+        }),
+        &settings,
+    );
+    let (opaque, _) = frame_of(&mut rig, "the opaque pane");
     assert!(covered > 1000, "{covered} pixels behind the pane");
     let lit = wall.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
     assert!(lit > 100, "{lit} lit pixels of the block alone");
