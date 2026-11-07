@@ -96,6 +96,18 @@
 >   The owner picked "Fix inside 0059", so the first amendment's "no cut fixes it" is withdrawn. **Phase 4a** fixes it
 >   before the Phase 5 window, and Phase 5 looks at the pane.
 
+> **Amended 2026-11-07 (owner), Phase 4a's glass bar.** Phase 4a's fix is at a2cb48a: translucent layers honour the lamp
+> switch, and with the lamp off 10 of the pane's pixels read over 250 (`logs/0059.md`, Phase 4a). Done-when 2's model assumed
+> one layer, but the pane is 2 voxels thick and its pixels enter 2 to 4 layers. The owner's answers:
+> - **"k-layer model".** Done-when 2 is read against `(1 - a)^k` of what is behind plus each layer's own term, with `k` the
+>   layers the walk counts. It is the same check at the pane's real thickness.
+> - **Glass's own light: "Judge at Phase 5".** With the lamp off, glass has no store cell and no fallback, so a pane reads dark
+>   over a dimmed scene. Phase 5 asks (h). A fault there comes to the architect, who then chooses between a store cell for
+>   translucent faces and a fallback rule.
+> - **The lamp's spot on glass at 60 cm: "Judge at Phase 5".** It is unchanged by the fix (0.436 of the pane over 250). Phase 5 asks (i).
+> - **The stated test times stay** ("Keep, note the readings"). The filter test and the glass test read 3.55 s and 3.93 s
+>   quiet, and 5.5 to 6.0 s on a series' first run or loaded. The readings are logged, and "under 5 s" is the quiet steady figure.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -642,8 +654,9 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **Done when:**
   1. The log holds the parts table at both poses, names the part, and records the fix.
   2. At the hall's shot, lamp off, exposure 8: the pane's pixels over 250 are at most twice the share before the pane
-     (0.8 %). Each pixel's composite is within 2 levels at p90 of `(1 - a) * behind + a * albedo * light_at_glass`, built from
-     the reading's own parts, with `a` = 0.6.
+     (0.8 %). Each pixel's composite is within 2 levels at p90 of the k-layer model, built from the reading's own parts:
+     `(1 - a)^k * behind + sum over layers i of a * (1 - a)^(i - 1) * albedo * light_at_layer_i`, with `a` = 0.6 and `k` the
+     layers the walk entered at that pixel (amended 2026-11-07, owner: the pane is 2 voxels thick and walks 2 to 4 layers).
   3. `a_glass_pane_does_not_brighten_what_it_covers` (lavapipe, `cache_box`, under 5 s) asserts that a 0.6 pane of a dark
      albedo over a lit wall reads no brighter, per pixel, than the larger of the wall alone and the pane's own lit face.
      The brightening before the fix is the failure case.
@@ -657,8 +670,10 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **Done when:** the log records the owner's words on: (a) the grain against the reference; (b) a slow error across a wall, and seams at chunk borders; (c) the filter's
   softening, shadows and a pit's lit rim; (d) **which arm stands, or how many samples to go back up.** A refusal of every arm comes to the architect.
   Phase 3's unanswered (e) and (f) are asked again here: a face's flat value at a voxel step and a shadow edge in the reference, and the lamp and its bounce over the bake.
-  The arms are independent 1024 and 512, filtered (the amendment of 2026-11-06, Phase 4's stops), and (g) asks whether the
-  glass pane at the hall, after Phase 4a, still shows a white blob.
+  The arms are independent 1024 and 512, filtered (the amendment of 2026-11-06, Phase 4's stops). (h) The glass pane at the
+  hall with the lamp off: no white blob after Phase 4a, and the pane reads dark, since glass has no light of its own. Is that
+  right, or should glass get baked light? (i) With the lamp on, the lamp's spot on the pane at 60 cm saturates about 44 % of it:
+  is that the lamp, or a fault? A fault in (h) or (i) comes to the architect (the amendment of 2026-11-07).
 
 ### Phase 6: The reach cut, the brick level and the rings
 - **Owner skill:** dev
