@@ -130,6 +130,26 @@
 >
 >   These are the architect's calls, under the owner's standing rule that technical questions take the recommended option.
 
+> **Amended 2026-11-08 (owner), exploration until the pick.** The owner: "we are moving very slowly with lighting atm...
+> maybe it is more effective to skip tests while we decide what to do with lighting, and once result is more or less
+> stable, fix/write tests on top". The architect's proposal, and the owner's word on it, "i agree". From Phase 5a through
+> Phase 13's pick, these rules **override every remaining phase's Done when and stop rules**:
+> - **The owner's eye is the gate.** A dev phase is done when its change is built, behind a key or flag, named in the
+>   banner, and ready for the next owner window. Its numeric bars become readings, taken only when cheap, and a miss
+>   is reported without stopping. Named lavapipe tests are written only where one costs little, and they do not gate.
+> - **A dev stop is for a design choice the plan does not make, or for code that cannot work** (a device limit, a crash).
+>   It is never for a bar.
+> - **Two figures are kept as readings at every window,** the owner's targets: the first frame after a fresh start, against
+>   3 s on the RTX, and the longest frame around a dig, against 33 ms.
+> - **The checks per step are build, clippy, fmt and the quick tier,** with no GPU. The gpu tier runs once before the
+>   merge into main, and at the close.
+> - **Measure to diagnose.** A headless reading is taken when the owner's eye names a fault whose cause is not obvious,
+>   as Phase 4's glass reading found the lamp switch.
+> - **Bake small.** Windows use the radius-1 pieces at the vein and the patch. The whole showcase is re-baked only when
+>   a window needs the hall.
+> - **Tests come after the pick.** Phase 12 (budgets, the default) and the close write the tests and goldens against the
+>   mechanism that stands, with the bars this plan names as their first draft.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
