@@ -3917,6 +3917,9 @@ impl Frame {
                 ),
             )
         });
+        // DIAGNOSTIC (`DiagPreload::direct_sweep`): the sweep's workgroups as the args pass
+        // writes them when the sweep is not idle. Out with the fix for the WARP preload hang.
+        let mut diag_sweep_groups = 0u32;
         let preload_bind = preload_on.then(|| {
             let offsets = {
                 let mut written = self
@@ -3999,6 +4002,7 @@ impl Frame {
                 }
             }
             u.edit_bricks = n as u32;
+            diag_sweep_groups = 8 * (u.edit_bricks + u.bricks.min(u.offsets));
             self.preload_edit_bricks
                 .store(u.edit_bricks, std::sync::atomic::Ordering::Relaxed);
             queue.write_buffer(&self.preload_uniform, 0, bytemuck::bytes_of(&u));
@@ -4356,13 +4360,30 @@ impl Frame {
             });
         }
         // DIAGNOSTIC (`DiagPreload`): out with the fix for the WARP preload hang.
-        let (diag_skip_sweep, diag_shade, mut diag_split) = {
+        let (diag_skip_sweep, diag_shade, diag_empty_sweep, diag_direct_sweep, mut diag_split) = {
             let mut d = self
                 .diag_preload
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (d.skip_sweep, d.shade, d.split_next.take())
+            (
+                d.skip_sweep,
+                d.shade,
+                d.empty_sweep,
+                d.direct_sweep,
+                d.split_next.take(),
+            )
         };
+        // DIAGNOSTIC (`DiagPreload::empty_sweep`): indirect words of zero workgroups.
+        let diag_zero_args = diag_empty_sweep.then(|| {
+            wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("diag empty sweep"),
+                    contents: bytemuck::cast_slice(&[0u32, 1, 1]),
+                    usage: wgpu::BufferUsages::INDIRECT,
+                },
+            )
+        });
         let mut preload: Vec<Dispatch<'_>> = Vec::new();
         if let Some((cells, uniform, args)) = &preload_bind {
             let mut a = frame_pass(&self.preload_args, cells, 2, [1, 1]);
@@ -4372,6 +4393,12 @@ impl Frame {
             let mut w = frame_pass(&self.preload_sweep, cells, 2, [0, 0]);
             w.groups[3] = Some(uniform);
             w.indirect = Some((&self.preload_dispatch, 0));
+            if let Some(zero) = &diag_zero_args {
+                w.indirect = Some((zero, 0));
+            } else if diag_direct_sweep {
+                w.indirect = None;
+                w.workgroups = [diag_sweep_groups, 1];
+            }
             if !diag_skip_sweep {
                 preload.push(w);
             }
@@ -4810,6 +4837,12 @@ pub struct DiagPreload {
     /// Runs the plain light pass (`shade`) in place of `shade_preload`, the args pass and the
     /// sweep kept.
     pub shade: bool,
+    /// Records the sweep's dispatch, its pipeline and bind groups, indirect from a buffer of
+    /// zero workgroups: the dispatch without any of its writes.
+    pub empty_sweep: bool,
+    /// Dispatches the sweep directly, with the workgroups the args pass writes when the sweep
+    /// is not idle (8 per edit brick and per visited brick), rather than from its indirect words.
+    pub direct_sweep: bool,
     /// For the next encode only: the encoder is submitted and the GPU waited for before the
     /// preload's passes and after each of its args pass, its sweep and the light pass, each
     /// in a compute pass of its own, and this is called with the stage's name after each
