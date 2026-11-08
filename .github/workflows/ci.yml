@@ -181,9 +181,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo nextest run --workspace --profile ci --status-level pass 2>&1 | tee target/nextest-gate.log
+          cargo nextest run --workspace --profile "$GATE_PROFILE" --status-level pass 2>&1 | tee target/nextest-gate.log
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
+          # Windows runs every CPU test and a GPU smoke set (.config/nextest.toml, ci-windows).
+          GATE_PROFILE: ${{ runner.os == 'Windows' && 'ci-windows' || 'ci' }}
       # docs/nfr.md section 7: no gate test over 60 s on this arm. A test over the line is a
       # warning annotation, not a failure: the GPU tests run in parallel on four cores, so one
       # test's time moves 25 to 40 % between runs (runs 42470428595 and 42477325818) and a hard
