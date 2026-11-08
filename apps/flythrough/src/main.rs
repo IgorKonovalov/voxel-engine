@@ -3579,22 +3579,29 @@ impl Run {
             frame.frame_bytes()
         ));
         // DIAGNOSTIC: CI's WARP runs place the frame-0 hang among the preload's dispatches.
-        // `VXE_DIAG_PRELOAD` is `skip-sweep`, `shade`, `empty-sweep` (the sweep's dispatch
-        // recorded with zero workgroups) or `direct-sweep` (the sweep dispatched directly, not
-        // indirectly), `DiagPreload`'s switches, and
-        // `VXE_DIAG_SPLIT_FRAME0=1` submits frame 0's preload and light passes one at a time
-        // with a `diag:` line after each wait. Out with the fix for the WARP preload hang.
+        // `VXE_DIAG_PRELOAD` is a comma-separated list of `DiagPreload`'s switches:
+        // `skip-sweep`, `shade`, `empty-sweep` (the sweep's dispatch recorded with zero
+        // workgroups), `direct-sweep` (the sweep dispatched directly, not indirectly),
+        // `scratch-sweep` (the empty sweep bound to scratch buffers), `read-args` (frame 0's
+        // indirect words read back before the light pass) and `direct-shade` (`shade_preload`
+        // dispatched directly with the words read back). `VXE_DIAG_SPLIT_FRAME0=1` submits
+        // frame 0's preload and light passes one at a time with a `diag:` line after each
+        // wait. Out with the fix for the WARP preload hang.
         let diag_preload = std::env::var("VXE_DIAG_PRELOAD").unwrap_or_default();
+        let diag_on = |s: &str| diag_preload.split(',').any(|d| d.trim() == s);
         let diag_split = std::env::var("VXE_DIAG_SPLIT_FRAME0").as_deref() == Ok("1");
         if diag_split || !diag_preload.is_empty() {
             diag(format_args!(
                 "preload switches {diag_preload:?}, frame 0 split {diag_split}"
             ));
             frame.set_diag_preload(vxe_render::DiagPreload {
-                skip_sweep: diag_preload == "skip-sweep",
-                shade: diag_preload == "shade",
-                empty_sweep: diag_preload == "empty-sweep",
-                direct_sweep: diag_preload == "direct-sweep",
+                skip_sweep: diag_on("skip-sweep"),
+                shade: diag_on("shade"),
+                empty_sweep: diag_on("empty-sweep"),
+                direct_sweep: diag_on("direct-sweep"),
+                scratch_sweep: diag_on("scratch-sweep"),
+                read_args: diag_on("read-args"),
+                direct_shade: diag_on("direct-shade"),
                 split_next: diag_split.then(|| {
                     Box::new(|stage: &str| diag(format_args!("frame 0 split: {stage} done")))
                         as vxe_render::DiagReport

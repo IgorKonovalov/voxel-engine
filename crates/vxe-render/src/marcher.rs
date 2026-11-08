@@ -2149,10 +2149,14 @@ impl Frame {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // DIAGNOSTIC: `COPY_SRC` for `DiagPreload::read_args`; out with the fix for the WARP
+        // preload hang.
         let preload_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("preload dispatch"),
             size: PRELOAD_DISPATCH_BYTES,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let (cache_clear_layout, cache_clear) = pass(
@@ -3057,6 +3061,29 @@ impl Frame {
             .diag_preload
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = diag;
+    }
+
+    /// DIAGNOSTIC (`DiagPreload::read_args`): the preload's six indirect words (the sweep's,
+    /// then the light pass's), then the counters' `pre_fill_groups` and `pre_groups`, as the
+    /// GPU holds them now: a blocking read. Out with the fix for the WARP preload hang.
+    fn diag_read_preload_words(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> [u32; 8] {
+        let args = crate::readback::read_buffer(
+            device,
+            queue,
+            &self.preload_dispatch,
+            0,
+            PRELOAD_DISPATCH_BYTES,
+        );
+        let stats = crate::readback::read_buffer(
+            device,
+            queue,
+            &self.cache_stats,
+            CACHE_STATS_BYTES + FILL_LIST_BYTES,
+            PRELOAD_STATE_BYTES,
+        );
+        let a: &[u32] = bytemuck::cast_slice(&args);
+        let w: &[u32] = bytemuck::cast_slice(&stats);
+        [a[0], a[1], a[2], a[3], a[4], a[5], w[14], w[27]]
     }
 
     /// The preload's counts of the last submitted encode (zero where it did not run): a
@@ -4360,19 +4387,42 @@ impl Frame {
             });
         }
         // DIAGNOSTIC (`DiagPreload`): out with the fix for the WARP preload hang.
-        let (diag_skip_sweep, diag_shade, diag_empty_sweep, diag_direct_sweep, mut diag_split) = {
+        let diag = {
             let mut d = self
                 .diag_preload
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (
-                d.skip_sweep,
-                d.shade,
-                d.empty_sweep,
-                d.direct_sweep,
-                d.split_next.take(),
-            )
+            DiagPreload {
+                split_next: d.split_next.take(),
+                ..*d
+            }
         };
+        let (diag_skip_sweep, diag_shade, diag_direct_sweep) =
+            (diag.skip_sweep, diag.shade, diag.direct_sweep);
+        let diag_empty_sweep = diag.empty_sweep || diag.scratch_sweep;
+        let (diag_read_args, diag_direct_shade, diag_scratch_sweep) =
+            (diag.read_args, diag.direct_shade, diag.scratch_sweep);
+        let mut diag_split = diag.split_next;
+        // DIAGNOSTIC (`DiagPreload::scratch_sweep`): the sweep's group 2 on buffers of its own,
+        // the table's and the counters' layout, which no other pass binds.
+        let diag_scratch_cells = (diag_scratch_sweep && preload_bind.is_some()).then(|| {
+            let scratch = |label, size| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage: wgpu::BufferUsages::STORAGE,
+                    mapped_at_creation: false,
+                })
+            };
+            let table = scratch("diag scratch table", 256);
+            let stats = scratch("diag scratch counters", self.cache_stats.size());
+            bind_io_at(
+                device,
+                &self.fill_layout,
+                &[3, 4],
+                &[Res::Buf(&table), Res::Buf(&stats)],
+            )
+        });
         // DIAGNOSTIC (`DiagPreload::empty_sweep`): indirect words of zero workgroups.
         let diag_zero_args = diag_empty_sweep.then(|| {
             wgpu::util::DeviceExt::create_buffer_init(
@@ -4393,6 +4443,9 @@ impl Frame {
             let mut w = frame_pass(&self.preload_sweep, cells, 2, [0, 0]);
             w.groups[3] = Some(uniform);
             w.indirect = Some((&self.preload_dispatch, 0));
+            if let Some(scratch) = &diag_scratch_cells {
+                w.groups[2] = Some(scratch);
+            }
             if let Some(zero) = &diag_zero_args {
                 w.indirect = Some((zero, 0));
             } else if diag_direct_sweep {
@@ -4528,7 +4581,7 @@ impl Frame {
         ]
         .into_iter()
         .chain(fsr_passes);
-        for (i, dispatches) in passes.enumerate() {
+        for (i, mut dispatches) in passes.enumerate() {
             // DIAGNOSTIC (`DiagPreload::split_next`): the preload's and the light pass's
             // dispatches each in a submission of their own, the GPU waited for after each.
             if let Some(report) = diag_split.as_mut()
@@ -4538,14 +4591,36 @@ impl Frame {
                     diag_submit_wait(device, queue, encoder);
                     report("before the preload");
                 }
-                let light_name = if preload_bind.is_some() && !diag_shade {
-                    "light pass (shade_preload)"
+                let shade_preload = preload_bind.is_some() && !diag_shade;
+                let mut light_name = if shade_preload {
+                    "light pass (shade_preload)".to_string()
                 } else {
-                    "light pass (shade)"
+                    "light pass (shade)".to_string()
                 };
+                // DIAGNOSTIC (`DiagPreload::read_args`, `direct_shade`): the indirect words
+                // after the args pass and the sweep, before the light pass is recorded.
+                if FRAME_PASSES[i] == "light"
+                    && shade_preload
+                    && (diag_read_args || diag_direct_shade)
+                {
+                    let w = self.diag_read_preload_words(device, queue);
+                    report(&format!(
+                        "args read back: sweep [{}, {}, {}], shade_preload [{}, {}, {}], \
+                         fill groups {}, preload groups {}",
+                        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]
+                    ));
+                    if diag_direct_shade && let Some(d) = dispatches.first_mut() {
+                        d.indirect = None;
+                        d.workgroups = [w[3], w[4]];
+                        light_name = format!(
+                            "light pass (shade_preload, direct {} x {} x 1, words z {})",
+                            w[3], w[4], w[5]
+                        );
+                    }
+                }
                 for (k, d) in dispatches.iter().enumerate() {
                     let name = match (FRAME_PASSES[i], k) {
-                        ("light", _) => light_name,
+                        ("light", _) => light_name.as_str(),
                         (_, 0) => "preload args",
                         _ => "preload sweep",
                     };
@@ -4843,6 +4918,17 @@ pub struct DiagPreload {
     /// Dispatches the sweep directly, with the workgroups the args pass writes when the sweep
     /// is not idle (8 per edit brick and per visited brick), rather than from its indirect words.
     pub direct_sweep: bool,
+    /// Records the empty sweep (as `empty_sweep`) with its group 2, the table and the counters,
+    /// bound to scratch buffers no other pass binds, so the sweep's bind groups share no
+    /// read-write buffer with `shade_preload`'s.
+    pub scratch_sweep: bool,
+    /// On the split encode (`split_next`): reads back the preload's indirect words and the
+    /// dispatch's split in the counters after the args pass and the sweep, before the light
+    /// pass is recorded, and reports them.
+    pub read_args: bool,
+    /// On the split encode: reads back as `read_args` does, then dispatches `shade_preload`
+    /// directly with the x and y workgroups read back, rather than indirectly.
+    pub direct_shade: bool,
     /// For the next encode only: the encoder is submitted and the GPU waited for before the
     /// preload's passes and after each of its args pass, its sweep and the light pass, each
     /// in a compute pass of its own, and this is called with the stage's name after each
