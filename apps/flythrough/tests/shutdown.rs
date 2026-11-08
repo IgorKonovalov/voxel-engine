@@ -118,8 +118,7 @@ fn headless_run_trace() -> Option<String> {
 
 /// The exit status and stderr of `--headless --frames 3` at 64x36 with `extra` arguments, or
 /// `None` with a printed skip when the machine has no adapter. The run is killed past
-/// `RUN_BOUND`, and the panic then prints both of the run's streams: its stdout names the
-/// adapter and each start-up stage it finished, which its stderr's log lines do not.
+/// `RUN_BOUND`.
 fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
     const RUN_BOUND: Duration = Duration::from_secs(120);
     // The default look: the teardown trace needs no band slots, and a mirror without them
@@ -129,19 +128,16 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
         .args(["--headless", "--frames", "3", "--render", "64x36"])
         .args(extra)
         .env("RUST_LOG", "flythrough=info")
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("the fly-through starts");
-    let read_all = |mut r: Box<dyn Read + Send>| {
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            let _ = r.read_to_string(&mut s);
-            s
-        })
-    };
-    let reader = read_all(Box::new(child.stderr.take().expect("stderr is piped")));
-    let out_reader = read_all(Box::new(child.stdout.take().expect("stdout is piped")));
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stderr.read_to_string(&mut s);
+        s
+    });
     let t = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().expect("the fly-through can be waited on") {
@@ -151,15 +147,11 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
             let _ = child.kill();
             let _ = child.wait();
             let err = reader.join().unwrap_or_default();
-            let out = out_reader.join().unwrap_or_default();
-            panic!(
-                "the headless fly-through ran over {RUN_BOUND:?}; stdout:\n{out}\nstderr:\n{err}"
-            );
+            panic!("the headless fly-through ran over {RUN_BOUND:?}; stderr:\n{err}");
         }
         std::thread::sleep(Duration::from_millis(20));
     };
     let err = reader.join().expect("stderr is read");
-    let _ = out_reader.join();
     if !status.success() && err.contains("no adapter") {
         if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
             panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {err}");
