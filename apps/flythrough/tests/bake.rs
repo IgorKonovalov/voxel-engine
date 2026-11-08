@@ -3037,6 +3037,20 @@ fn hit_at(rig: &ReadRig, size: [u32; 2], x: u32, y: u32) -> Option<[f32; 3]> {
 
 /// Applies `ops`, mirrors them and times the re-bake of their boxes: the line.
 fn timed_dig(rig: &mut ReadRig, ops: &[EditOp], what: &str) -> String {
+    let settings = BakeSettings {
+        n_max: bake::DIG_N_MAX,
+        ..BakeSettings::default()
+    };
+    timed_dig_with(rig, ops, what, &settings)
+}
+
+/// [`timed_dig`] re-baking to `settings`.
+fn timed_dig_with(
+    rig: &mut ReadRig,
+    ops: &[EditOp],
+    what: &str,
+    settings: &BakeSettings,
+) -> String {
     let mut changed = 0u64;
     let mut boxes = 0;
     for op in ops {
@@ -3050,10 +3064,6 @@ fn timed_dig(rig: &mut ReadRig, ops: &[EditOp], what: &str) -> String {
     rig.gpu
         .sync_now(&rig.world, &rig.device, &rig.queue)
         .expect("the mirror fits");
-    let settings = BakeSettings {
-        n_max: bake::DIG_N_MAX,
-        ..BakeSettings::default()
-    };
     let t = std::time::Instant::now();
     let r = rig
         .frame
@@ -3062,7 +3072,7 @@ fn timed_dig(rig: &mut ReadRig, ops: &[EditOp], what: &str) -> String {
             &rig.queue,
             &mut rig.gpu,
             &rig.world,
-            &settings,
+            settings,
             &mut |_| {},
         )
         .map(|r| r.expect("the ring fits"))
@@ -3267,8 +3277,8 @@ const CUT_COUNTS: [u32; 5] = [32, 128, 512, 1024, 2048];
 /// `VXE_TEST_ADAPTER` names), `cpu` (a sampler over `World::raycast` on one thread at the vein),
 /// `glass` (the pane's bright pixels at the hall), `parts` (the composite's parts at the pane,
 /// at the hall's shot and the owner's eye, under the per-layer composite: historical),
-/// `filter` (ADR-0047's filter at the hall's shot, [`cut_glass_filter`]). `VXE_BAKE_VIEWS`
-/// names the views. Each part
+/// `filter` (ADR-0047's filter at the hall's shot, [`cut_glass_filter`]), `rings` (the reach
+/// cut's stores against the reference, [`cut_rings`]). `VXE_BAKE_VIEWS` names the views. Each part
 /// logs to `live/bake-count/cut-<part>.txt`.
 #[test]
 #[ignore = "a reading on the RTX (and the Radeon for cost) from live/bake/'s files, under the perf lock"]
@@ -3288,11 +3298,207 @@ fn cut_readings() {
                 "glass" if view.name == "hall" => cut_glass(&view),
                 "parts" if view.name == "hall" => cut_glass_parts(&view),
                 "filter" if view.name == "hall" => cut_glass_filter(&view),
-                "grain" | "cost" | "cpu" | "glass" | "parts" | "filter" => {}
-                _ => panic!("VXE_CUT_PART takes grain, cost, cpu, glass, parts or filter"),
+                "rings" if view.name != "back" => cut_rings(&view),
+                "grain" | "cost" | "cpu" | "glass" | "parts" | "filter" | "rings" => {}
+                _ => panic!("VXE_CUT_PART takes grain, cost, cpu, glass, parts, filter or rings"),
             }
         }
     }
+}
+
+/// The fly-through's `--cut` arms Phase 6 offers: `independent:512`, `rings:12/4/2/1` and
+/// `bricks:12`, by their file names and settings around `centre`.
+fn ring_cuts(centre: [i32; 3]) -> Vec<(&'static str, BakeSettings)> {
+    let cut = |rings: Option<bake::Rings>| BakeSettings {
+        round: 512,
+        n_min: 512,
+        n_max: 512,
+        tent: true,
+        rings,
+        ..BakeSettings::default()
+    };
+    let rings = |faces: Vec<(i32, u32)>| {
+        Some(bake::Rings {
+            centre,
+            brick: 12,
+            faces,
+        })
+    };
+    vec![
+        ("reference again", BakeSettings::default()),
+        ("independent-512", cut(None)),
+        (
+            "rings-12-4-2-1",
+            cut(rings(vec![(1, 512), (2, 128), (4, 32)])),
+        ),
+        ("bricks-12", cut(rings(Vec::new()))),
+    ]
+}
+
+/// The reach cut against the reference at `view` (Plan 0059 Phase 6's strip): each cut's file
+/// loaded in turn and one frame read, against the reference's frame, over the hits inside the
+/// reference's piece: the share within 1, 2 and 4 levels by the hit chunk's ring (Chebyshev
+/// distance from the piece's centre chunk), the share over 8 levels darker, the store's
+/// pixels at the brick level and with no value, and the store's bytes. Each frame is read with
+/// no history; the reference read again is the floor.
+fn cut_rings(view: &ReadView) {
+    let mut log = Log::open("cut-rings.txt");
+    let (mut rig, piece) = reference_rig(view, NATIVE);
+    let (name, centre_eye, radius) = file_of(view);
+    let centre = centre_eye.map(|v| (v / 64.0).floor() as i32);
+    let camera = view_camera(view);
+    let eye = camera.position.to_array();
+    let light = LightParams::default();
+    rig.frame.reset_history();
+    rig.frame
+        .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    let reference = luma(&readback::read_rgba8(
+        &rig.device,
+        &rig.queue,
+        rig.frame.target(),
+    ));
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let hits = hits_of(&rig, eye, piece);
+    let ring_of = |i: usize| {
+        let c = [0, 1, 2].map(|k| (pos[i][k].floor() as i32).div_euclid(64));
+        (0..3).map(|k| (c[k] - centre[k]).abs()).max().unwrap_or(0)
+    };
+    let ref_stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
+    log.line(&format!(
+        "rings {} adapter {}: reference {} chunks {} B, store_missing {}",
+        view.name, rig.adapter, ref_stats.chunks, ref_stats.bytes, ref_stats.missing
+    ));
+    let world = rig.world.extent();
+    for (cut, settings) in ring_cuts(centre) {
+        let extent = settings.rings.as_ref().map_or(piece, |r| r.extent(world));
+        let key = Frame::store_key(
+            &rig.gpu,
+            world,
+            1,
+            extent,
+            ChunkCoord(centre),
+            radius.unwrap_or(-1),
+            &settings,
+        );
+        let file = if cut == "reference again" {
+            format!("{name}.bin")
+        } else {
+            format!("{name}.{cut}.bin")
+        };
+        let load_ms = load_cut(&mut rig, &file, &key);
+        rig.frame.reset_history();
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        let frame = luma(&readback::read_rgba8(
+            &rig.device,
+            &rig.queue,
+            rig.frame.target(),
+        ));
+        let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
+        // By ring 0, 1, 2 and beyond, and all: hits, within 1/2/4, over 8 darker.
+        let mut rows = [[0usize; 5]; 5];
+        for i in 0..frame.len() {
+            let Some((_, true)) = hits[i] else { continue };
+            let diff = frame[i] - reference[i];
+            let ring = ring_of(i).min(3) as usize;
+            for row in [ring, 4] {
+                rows[row][0] += 1;
+                for (k, lv) in [1.0, 2.0, 4.0].iter().enumerate() {
+                    rows[row][1 + k] += usize::from(diff.abs() <= *lv);
+                }
+                rows[row][4] += usize::from(diff < -8.0);
+            }
+        }
+        let row = |r: &[usize; 5]| {
+            let n = r[0].max(1) as f64;
+            format!(
+                "{} hits, within 1/2/4 {:.4} / {:.4} / {:.4}, darker over 8 {:.4}",
+                r[0],
+                r[1] as f64 / n,
+                r[2] as f64 / n,
+                r[3] as f64 / n,
+                r[4] as f64 / n
+            )
+        };
+        let pixels = frame.len() as f64;
+        log.line(&format!(
+            "  {cut}: loaded in {load_ms:.0} ms, {} chunks {} B ({:.2} of the reference's); pixels at the brick level {:.4}, with no value {:.4}; in the piece: all {}; ring 0 {}; ring 1 {}; ring 2 {}; ring 3 on {}",
+            stats.chunks,
+            stats.bytes,
+            stats.bytes as f64 / ref_stats.bytes.max(1) as f64,
+            f64::from(stats.brick_reads) / pixels,
+            f64::from(stats.missing) / pixels,
+            row(&rows[4]),
+            row(&rows[0]),
+            row(&rows[1]),
+            row(&rows[2]),
+            row(&rows[3]),
+        ));
+    }
+    // A dig on each ring store, re-baked to its own settings: a 5-voxel carve at the view's
+    // centre (a face ring) and one 6 chunks along x from the centre chunk (the brick level). The
+    // world keeps the first store's digs when the second loads.
+    let carve = |v: [i32; 3]| {
+        let c = v.map(|x| i64::from(x) * FIXED_ONE + FIXED_ONE / 2);
+        EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve)
+    };
+    for (cut, settings) in ring_cuts(centre) {
+        let Some(rings) = &settings.rings else {
+            continue;
+        };
+        let extent = rings.extent(world);
+        let key = Frame::store_key(
+            &rig.gpu,
+            world,
+            1,
+            extent,
+            ChunkCoord(centre),
+            radius.unwrap_or(-1),
+            &settings,
+        );
+        load_cut(&mut rig, &format!("{name}.{cut}.bin"), &key);
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        let near = hit_at(&rig, NATIVE, NATIVE[0] / 2, NATIVE[1] / 2)
+            .expect("the view's centre hits rock")
+            .map(|v| v.floor() as i32);
+        let far = [0, 1, 2].map(|k| (centre[k] + [6, 0, 0][k]) * 64 + 32);
+        let line = timed_dig_with(
+            &mut rig,
+            &[carve(near), carve(far)],
+            &format!("{cut}: digs at {near:?} and {far:?}"),
+            &settings,
+        );
+        rig.frame.reset_history();
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
+        let pixels = f64::from(NATIVE[0] * NATIVE[1]);
+        log.line(&format!(
+            "  {line}; then {} chunks {} B, pixels at the brick level {:.4}, with no value {:.4}",
+            stats.chunks,
+            stats.bytes,
+            f64::from(stats.brick_reads) / pixels,
+            f64::from(stats.missing) / pixels,
+        ));
+    }
+}
+
+/// Loads `live/bake/<file>` into `rig`'s store under `key`; its milliseconds.
+fn load_cut(rig: &mut ReadRig, file: &str, key: &bake::StoreKey) -> f64 {
+    let path = format!("{}/../../live/bake/{file}", env!("CARGO_MANIFEST_DIR"));
+    let t = std::time::Instant::now();
+    rig.frame
+        .load_store_file(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            std::path::Path::new(&path),
+            key,
+        )
+        .unwrap_or_else(|e| panic!("{path}: {e}"));
+    t.elapsed().as_secs_f64() * 1e3
 }
 
 /// Faces within `r` voxels of `eye`, by voxel centre.

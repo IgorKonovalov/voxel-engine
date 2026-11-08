@@ -3280,6 +3280,7 @@ impl Frame {
             source_hash: crate::bake::source_hash_for(settings.form),
             form: settings.form,
             tent: settings.tent,
+            rings: settings.rings.as_ref().and_then(crate::bake::RingKey::of),
         }
     }
 
@@ -3352,13 +3353,15 @@ impl Frame {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> crate::bake::StoreStats {
-        let missing = if self.lighting.light == Light::Baked {
-            let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 4);
-            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        let (missing, brick_reads) = if self.lighting.light == Light::Baked {
+            let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 8);
+            let word =
+                |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+            (word(0), word(4))
         } else {
-            0
+            (0, 0)
         };
-        self.store.stats(missing)
+        self.store.stats(missing, brick_reads)
     }
 
     /// The store.
@@ -4215,7 +4218,7 @@ impl Frame {
             std::sync::atomic::Ordering::Relaxed,
         );
         if self.lighting.light == Light::Baked {
-            encoder.clear_buffer(self.store.pool(), 0, Some(4));
+            encoder.clear_buffer(self.store.pool(), 0, Some(8));
         }
         if table_cleared {
             encoder.clear_buffer(cache_table, 0, None);

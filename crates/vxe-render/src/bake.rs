@@ -354,6 +354,108 @@ pub fn list_world_chunk(world: &World, coord: ChunkCoord, classes: &[u8]) -> Opt
 /// A test of a voxel and its face.
 pub type FaceFilter = Arc<dyn Fn([i32; 3], u8) -> bool + Send + Sync>;
 
+/// Words of a brick record ([`Rings`]): six direction values in [`rgb9e5_pack`], face order, then
+/// `material | direction mask << 16`, the mask's bit `face` set where the brick has an opaque face
+/// of that direction.
+pub const BRICK_WORDS: usize = 7;
+/// The store header's flags word: bit 0 ([`FLAG_BRICKS`]) where every block carries brick records.
+pub const STORE_FLAGS: u64 = 12;
+/// The blocks carry a brick record before each surface brick's run.
+pub const FLAG_BRICKS: u32 = 1;
+/// A brick of more faces than this holds no cells: its faces read its brick record.
+pub const BRICK_FACES_MAX: usize = 512;
+/// Samples a brick-level direction draws, spread over its faces (at least one a face).
+pub const BRICK_LEVEL_SAMPLES: u32 = 64;
+
+/// What a chunk of a ring store holds: face cells at a count, or the brick level alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tier {
+    Face(u32),
+    Brick,
+}
+
+/// The rings of a reach cut (ADR-0046): around `centre`, chunks within `faces[i].0` chunks
+/// (Chebyshev, the first ring that holds them) hold face cells at `faces[i].1` samples, and the
+/// rest within `brick` hold the brick level. Every block carries brick records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rings {
+    pub centre: [i32; 3],
+    pub brick: i32,
+    /// `(radius, samples)`, inner rings first.
+    pub faces: Vec<(i32, u32)>,
+}
+
+impl Rings {
+    /// The tier of `c`, `None` beyond the brick ring.
+    pub fn tier(&self, c: [i32; 3]) -> Option<Tier> {
+        let d = (0..3).map(|k| (c[k] - self.centre[k]).abs()).max()?;
+        if d > self.brick {
+            return None;
+        }
+        Some(
+            self.faces
+                .iter()
+                .find(|(r, _)| d <= *r)
+                .map_or(Tier::Brick, |&(_, n)| Tier::Face(n)),
+        )
+    }
+
+    /// The chunks within the brick ring, clipped to `world`.
+    pub fn extent(&self, world: ChunkExtent) -> ChunkExtent {
+        let size = world.size();
+        let lo = [0, 1, 2].map(|k| (self.centre[k] - self.brick).max(world.min.0[k]));
+        let hi = [0, 1, 2].map(|k| (self.centre[k] + self.brick + 1).min(world.min.0[k] + size[k]));
+        ChunkExtent::new(lo, [0, 1, 2].map(|k| hi[k].max(lo[k])))
+    }
+}
+
+/// Whether brick `keys` of a chunk at `tier` holds cells.
+fn holds_cells(tier: Option<Tier>, keys: usize) -> bool {
+    match tier {
+        None => true,
+        Some(Tier::Brick) => false,
+        Some(Tier::Face(_)) => keys <= BRICK_FACES_MAX,
+    }
+}
+
+/// The block's directory and its words: plain ([`ChunkFaces::directory`]) at `tier` `None`; else
+/// each surface brick's record, then its cells where [`holds_cells`], the directory pointing at
+/// the cells (a count of 0 for a brick at the brick level).
+fn layout(faces: &ChunkFaces, tier: Option<Tier>) -> (Vec<u32>, u64) {
+    if tier.is_none() {
+        return (faces.directory(), faces.block_words());
+    }
+    let mut dir = vec![0u32; DIRECTORY_WORDS as usize];
+    let mut at = DIRECTORY_WORDS as u32;
+    for (slot, keys) in &faces.bricks {
+        at += BRICK_WORDS as u32;
+        let n = if holds_cells(tier, keys.len()) {
+            keys.len() as u32
+        } else {
+            0
+        };
+        dir[usize::from(*slot)] = at << 11 | n;
+        at += 2 * n;
+    }
+    (dir, u64::from(at))
+}
+
+/// The brick records of a block with them, by brick slot.
+fn records_of(block: &[u32]) -> std::collections::HashMap<u16, [u32; BRICK_WORDS]> {
+    let mut out = std::collections::HashMap::new();
+    for slot in 0..CHUNK_BRICKS {
+        let dir = block[slot];
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        let mut r = [0u32; BRICK_WORDS];
+        r.copy_from_slice(&block[run - BRICK_WORDS..run]);
+        out.insert(slot as u16, r);
+    }
+    out
+}
+
 /// The bake's settings. The default is the reference's: [`KEPT_CANDIDATES`] candidates, the clamp
 /// as [`KEPT_CLAMP`], each face to its own stop.
 #[derive(Clone)]
@@ -392,6 +494,9 @@ pub struct BakeSettings {
     /// Times each submit's dispatch on the GPU into [`BakeReport::dispatch_seconds`] (a reading's
     /// cost rows).
     pub timer: Option<Arc<crate::marcher::PassTimer>>,
+    /// A reach cut: each chunk at its ring's tier, every block with brick records; `n_min` and
+    /// `n_max` are then ignored, each face taking its tier's count.
+    pub rings: Option<Rings>,
 }
 
 /// Candidates a sample resamples in the reference: the arm the count reading keeps.
@@ -460,6 +565,7 @@ impl Default for BakeSettings {
             form: SeedForm::Independent,
             tent: false,
             timer: None,
+            rings: None,
         }
     }
 }
@@ -551,8 +657,10 @@ pub struct StoreStats {
     pub chunks: u64,
     /// Bytes of the pool in use.
     pub bytes: u64,
-    /// Lighting pixels of the last encode whose cube face had no cell.
+    /// Lighting pixels of the last encode whose cube face had no cell (nor brick record).
     pub missing: u32,
+    /// Lighting pixels of the last encode whose cube face read its brick record.
+    pub brick_reads: u32,
 }
 
 /// The pool and where its blocks lie, with a copy of every block's words for a dig's kept cells
@@ -574,6 +682,8 @@ pub struct Store {
     raw: BTreeMap<[i32; 3], Vec<u32>>,
     /// The blocks are filtered ([`BakeSettings::tent`]).
     tent: bool,
+    /// The blocks carry brick records ([`Rings`]).
+    bricks: bool,
 }
 
 /// A store's content off the pool: its piece and blocks, and the raw words under the filter, for
@@ -584,6 +694,8 @@ pub struct StoreImage {
     pub blocks: Vec<(ChunkCoord, Vec<u32>)>,
     pub raw: Vec<(ChunkCoord, Vec<u32>)>,
     pub tent: bool,
+    /// The blocks carry brick records.
+    pub bricks: bool,
 }
 
 impl StoreImage {
@@ -613,6 +725,7 @@ impl Store {
             window: None,
             raw: BTreeMap::new(),
             tent: false,
+            bricks: false,
         }
     }
 
@@ -622,12 +735,25 @@ impl Store {
     }
 
     /// The counters, `missing` as the caller read it.
-    pub fn stats(&self, missing: u32) -> StoreStats {
+    pub fn stats(&self, missing: u32, brick_reads: u32) -> StoreStats {
         StoreStats {
             chunks: self.blocks.len() as u64,
             bytes: (self.head_words + self.blocks.values().map(|b| b.1).sum::<u64>()) * 4,
             missing,
+            brick_reads,
         }
+    }
+
+    /// Whether the blocks carry brick records.
+    pub fn bricks(&self) -> bool {
+        self.bricks
+    }
+
+    /// Sets the header's flags word for blocks with brick records or without.
+    fn set_bricks(&mut self, queue: &wgpu::Queue, on: bool) {
+        self.bricks = on;
+        let flags = if on { FLAG_BRICKS } else { 0 };
+        queue.write_buffer(&self.pool, STORE_FLAGS * 4, bytemuck::bytes_of(&flags));
     }
 
     /// `coord`'s block: its first word and its words.
@@ -660,6 +786,7 @@ impl Store {
             blocks: list(&self.words),
             raw: list(&self.raw),
             tent: self.tent,
+            bricks: self.bricks,
         }
     }
 
@@ -695,6 +822,7 @@ impl Store {
         self.words.clear();
         self.raw.clear();
         self.tent = false;
+        self.bricks = false;
         self.head_words = STORE_TABLE + table_words;
         self.end_words = self.head_words;
         self.piece = None;
@@ -785,6 +913,39 @@ pub struct StoreKey {
     /// The cut: the seed form and the filter.
     pub form: SeedForm,
     pub tent: bool,
+    /// A reach cut's rings ([`RingKey::of`]).
+    pub rings: Option<RingKey>,
+}
+
+/// A reach cut's rings in a store file's key: the brick ring, up to three face rings inner first
+/// (radius -1 and 0 samples where absent), and the brick level's samples a direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingKey {
+    pub brick: i32,
+    pub radii: [i32; 3],
+    pub samples: [u32; 3],
+    pub brick_samples: u32,
+}
+
+impl RingKey {
+    /// `rings`' key; `None` for more than three face rings.
+    pub fn of(rings: &Rings) -> Option<Self> {
+        if rings.faces.len() > 3 {
+            return None;
+        }
+        let mut radii = [-1; 3];
+        let mut samples = [0; 3];
+        for (i, &(r, n)) in rings.faces.iter().enumerate() {
+            radii[i] = r;
+            samples[i] = n;
+        }
+        Some(Self {
+            brick: rings.brick,
+            radii,
+            samples,
+            brick_samples: BRICK_LEVEL_SAMPLES,
+        })
+    }
 }
 
 /// The reference's files (independent seeds, no filter): the key's fields up to the source hash.
@@ -792,6 +953,8 @@ const STORE_MAGIC: &[u8; 8] = b"VXEBAKE1";
 /// A cut's files: the seed form and the filter follow the source hash, and the filter's files
 /// hold each block's words before the filter after the blocks.
 const CUT_MAGIC: &[u8; 8] = b"VXEBAKE2";
+/// A reach cut's files: a cut's fields, then the rings', and blocks with brick records.
+const RING_MAGIC: &[u8; 8] = b"VXEBAKE3";
 
 /// The hash a store file keys the bake's module by: FNV-1a of [`bake_source`].
 pub fn source_hash() -> u64 {
@@ -807,7 +970,9 @@ pub fn source_hash_for(form: SeedForm) -> u64 {
 
 impl StoreKey {
     fn magic(&self) -> &'static [u8; 8] {
-        if self.form == SeedForm::Independent && !self.tent {
+        if self.rings.is_some() {
+            RING_MAGIC
+        } else if self.form == SeedForm::Independent && !self.tent {
             STORE_MAGIC
         } else {
             CUT_MAGIC
@@ -834,11 +999,17 @@ impl StoreKey {
             ("seed", u64::from(self.seed)),
             ("bake source hash", self.source_hash),
         ]);
-        if self.magic() == CUT_MAGIC {
+        if self.magic() != STORE_MAGIC {
             f.extend([
                 ("seed form", self.form.index() as u64),
                 ("filter", u64::from(self.tent)),
             ]);
+        }
+        if let Some(r) = self.rings {
+            f.push(("brick ring", w(r.brick)));
+            f.extend(r.radii.map(|v| ("face rings", w(v))));
+            f.extend(r.samples.map(|v| ("face rings' samples", u64::from(v))));
+            f.push(("brick level's samples", u64::from(r.brick_samples)));
         }
         f
     }
@@ -910,11 +1081,13 @@ impl Store {
         };
         let magic = take(8)?;
         if magic != key.magic() {
-            return Err(if magic == STORE_MAGIC || magic == CUT_MAGIC {
-                StoreFileError::Mismatch("seed form or filter")
-            } else {
-                StoreFileError::Malformed
-            });
+            return Err(
+                if magic == STORE_MAGIC || magic == CUT_MAGIC || magic == RING_MAGIC {
+                    StoreFileError::Mismatch("seed form, filter or rings")
+                } else {
+                    StoreFileError::Malformed
+                },
+            );
         }
         let u64_of = |b: &[u8]| u64::from_le_bytes(b.try_into().expect("8 bytes"));
         for (name, want) in key.fields() {
@@ -943,6 +1116,7 @@ impl Store {
             blocks,
             raw,
             tent: key.tent,
+            bricks: key.rings.is_some(),
         })
     }
 
@@ -959,6 +1133,7 @@ impl Store {
             blocks,
             raw,
             tent,
+            bricks,
         } = image;
         let size = window.size();
         let head = STORE_TABLE + (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
@@ -978,6 +1153,7 @@ impl Store {
         }
         self.raw = raw.into_iter().map(|(c, b)| (c.0, b)).collect();
         self.tent = tent;
+        self.set_bricks(queue, bricks);
         self.piece = piece;
         Ok(())
     }
@@ -1207,6 +1383,11 @@ struct FaceState {
     voxel: [i32; 3],
     face: u8,
     key: u16,
+    /// It holds a cell (else it feeds its brick record only).
+    cell: bool,
+    /// Its own stop's bounds: the settings' or its tier's.
+    n_min: u32,
+    n_max: u32,
     n: u32,
     sum: [f64; 3],
     clamped: [f64; 3],
@@ -1253,27 +1434,27 @@ impl FaceState {
         w
     }
 
-    /// The rounds left before `n_max`.
-    fn rounds_left(&self, round: u32, n_max: u32) -> u32 {
-        (n_max - self.n).div_ceil(round)
+    /// The rounds left before its `n_max`.
+    fn rounds_left(&self, round: u32) -> u32 {
+        (self.n_max - self.n).div_ceil(round)
     }
 
     /// The rounds its stop is expected to need, from its standard error now, which falls as
     /// `1 / sqrt(n)`: 0 before its first round or once it reads under the stop.
-    fn expected_rounds(&self, round: u32, n_max: u32, clamp: bool, se: f32) -> u32 {
+    fn expected_rounds(&self, round: u32, clamp: bool, se: f32) -> u32 {
         if self.n == 0 {
             return 0;
         }
         let ratio = self.se(clamp) / f64::from(se);
-        let wanted = (f64::from(self.n) * ratio * ratio).min(f64::from(n_max));
+        let wanted = (f64::from(self.n) * ratio * ratio).min(f64::from(self.n_max));
         let more = (wanted - f64::from(self.n)).max(0.0);
         (more / f64::from(round)).ceil() as u32
     }
 
-    /// The rounds none of which can end the face before the last: those up to `n_min`, or one.
-    fn certain_rounds(&self, round: u32, n_min: u32) -> u32 {
-        if self.n < n_min {
-            (n_min - self.n).div_ceil(round)
+    /// The rounds none of which can end the face before the last: those up to its `n_min`, or one.
+    fn certain_rounds(&self, round: u32) -> u32 {
+        if self.n < self.n_min {
+            (self.n_min - self.n).div_ceil(round)
         } else {
             1
         }
@@ -1295,6 +1476,46 @@ impl FaceState {
     }
 }
 
+/// A brick's record from its faces' states: each direction the mean of its opaque faces' values
+/// (a baked mean, or a kept cell's), the mask of the directions it has, and the material of the
+/// sample that read the largest luminance over the brick (a kept cell's where none was baked).
+fn brick_record(states: &[FaceState], clamp: bool) -> [u32; BRICK_WORDS] {
+    let mut sums = [[0f64; 3]; 6];
+    let mut counts = [0u32; 6];
+    let mut best = (-1f32, 0u16);
+    for s in states.iter().filter(|s| !s.glass) {
+        let f = usize::from(s.face);
+        let v = if s.n > 0 {
+            if s.best > best.0 {
+                best = (s.best, s.material);
+            }
+            s.mean(s.kept(clamp))
+        } else if let Some(cell) = s.keep {
+            if best.0 < 0.0 {
+                best = (0.0, (cell[1] >> 16) as u16);
+            }
+            rgb9e5_unpack(cell[0])
+        } else {
+            continue;
+        };
+        for k in 0..3 {
+            sums[f][k] += f64::from(v[k]);
+        }
+        counts[f] += 1;
+    }
+    let mut r = [0u32; BRICK_WORDS];
+    let mut mask = 0u32;
+    for f in 0..6 {
+        if counts[f] > 0 {
+            let n = f64::from(counts[f]);
+            r[f] = rgb9e5_pack(sums[f].map(|x| (x / n) as f32));
+            mask |= 1 << f;
+        }
+    }
+    r[6] = u32::from(best.1) | mask << 16;
+    r
+}
+
 /// Everything the job loop needs of the frame.
 pub(crate) struct BakeRun<'a> {
     pub device: &'a wgpu::Device,
@@ -1314,7 +1535,14 @@ pub(crate) struct Job {
     pub faces: ChunkFaces,
     pub first_word: u64,
     pub kept: Option<KeptCells>,
+    /// Under [`Rings`], the chunk's tier: its block carries brick records.
+    pub tier: Option<Tier>,
+    /// Brick records kept from the block before, by slot: their bricks' faces are not baked.
+    pub kept_bricks: KeptBricks,
 }
+
+/// Brick records a re-baked ring job keeps, by brick slot.
+pub(crate) type KeptBricks = std::collections::HashMap<u16, [u32; BRICK_WORDS]>;
 
 /// The cells a re-baked job keeps: by brick slot and key, the two words of the cell before, for
 /// every face outside the ring that the block before holds.
@@ -1510,11 +1738,24 @@ pub(crate) fn run(
     if settings.reversed {
         listed.reverse();
     }
+    let tier_of = |c: ChunkCoord| {
+        settings
+            .rings
+            .as_ref()
+            .map(|r| r.tier(c.0).unwrap_or(Tier::Brick))
+    };
+    if let Some(r) = &settings.rings {
+        listed.retain(|(c, _)| r.tier(c.0).is_some());
+    }
     let window = run.gpu.window();
     let size = window.size();
     let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
-    let needed_words =
-        STORE_TABLE + table_words + listed.iter().map(|(_, f)| f.block_words()).sum::<u64>();
+    let needed_words = STORE_TABLE
+        + table_words
+        + listed
+            .iter()
+            .map(|(c, f)| layout(f, tier_of(*c)).1)
+            .sum::<u64>();
     let capacity = store.pool.size();
     if needed_words * 4 > capacity {
         return Err(BakeError::PoolFull {
@@ -1523,17 +1764,21 @@ pub(crate) fn run(
         });
     }
     store.reset(run.queue, window);
+    store.set_bricks(run.queue, settings.rings.is_some());
     // The blocks lie in the jobs' order, whatever order the jobs end in.
     let mut at = store.head_words;
     let jobs: Vec<Job> = listed
         .into_iter()
         .map(|(coord, faces)| {
-            let words = faces.block_words();
+            let tier = tier_of(coord);
+            let words = layout(&faces, tier).1;
             let job = Job {
                 coord,
                 faces,
                 first_word: at,
                 kept: None,
+                tier,
+                kept_bricks: KeptBricks::new(),
             };
             at += words;
             job
@@ -1631,9 +1876,26 @@ pub(crate) fn rebake(
             store.remove(run.queue, coord);
             continue;
         }
+        let tier = store.bricks.then(|| {
+            settings
+                .rings
+                .as_ref()
+                .and_then(|r| r.tier(*c))
+                .unwrap_or(Tier::Brick)
+        });
         // Under the filter a kept cell is the bake's own value, before the filter.
         let source = if store.tent { &store.raw } else { &store.words };
         let old = source.get(c).map(|b| cells_of(b)).unwrap_or_default();
+        let mut kept_bricks = KeptBricks::new();
+        if store.bricks
+            && let Some(b) = source.get(c)
+        {
+            for (slot, record) in records_of(b) {
+                if slots.binary_search(&slot).is_err() {
+                    kept_bricks.insert(slot, record);
+                }
+            }
+        }
         let mut kept = KeptCells::new();
         for (slot, keys) in &faces.bricks {
             if slots.binary_search(slot).is_ok() {
@@ -1645,12 +1907,14 @@ pub(crate) fn rebake(
                 }
             }
         }
-        let first_word = store.place(coord, faces.block_words(), &mut end)?;
+        let first_word = store.place(coord, layout(&faces, tier).1, &mut end)?;
         jobs.push(Job {
             coord,
             faces,
             first_word,
             kept: Some(kept),
+            tier,
+            kept_bricks,
         });
     }
     let bake = run_jobs(run, store, jobs, settings, progress)?;
@@ -1765,10 +2029,8 @@ fn run_jobs(
                         break;
                     }
                     let s = &job.states[*i];
-                    let expected = s
-                        .expected_rounds(round, n_max, settings.clamp, settings.se)
-                        .max(1);
-                    if *r < s.rounds_left(round, n_max).min(rounds_cap).min(expected) {
+                    let expected = s.expected_rounds(round, settings.clamp, settings.se).max(1);
+                    if *r < s.rounds_left(round).min(rounds_cap).min(expected) {
                         *r += 1;
                         entries += 1;
                     }
@@ -1791,7 +2053,7 @@ fn run_jobs(
                 report.max_rounds_in_submit = report.max_rounds_in_submit.max(r);
                 for k in 0..r {
                     let first = s.n + k * round;
-                    input.push(s.input(first, round.min(n_max - first), job.slot));
+                    input.push(s.input(first, round.min(s.n_max - first), job.slot));
                 }
             }
         }
@@ -1859,12 +2121,11 @@ fn run_jobs(
                         let (a, b) = (s.mean(s.sum), s.mean(s.clamped));
                         s.snapshots.push((s.n, a, b));
                     }
-                    let reached =
-                        s.n >= settings.n_min && s.se(settings.clamp) <= f64::from(settings.se);
-                    if reached || s.n >= n_max {
+                    let reached = s.n >= s.n_min && s.se(settings.clamp) <= f64::from(settings.se);
+                    if reached || s.n >= s.n_max {
                         s.done = true;
-                        report.faces_at_min += u64::from(s.n <= settings.n_min);
-                        report.faces_at_max += u64::from(s.n >= n_max);
+                        report.faces_at_min += u64::from(s.n <= s.n_min);
+                        report.faces_at_max += u64::from(s.n >= s.n_max);
                         done.faces_done += 1;
                     }
                 }
@@ -1897,6 +2158,8 @@ struct OpenJob {
     coord: ChunkCoord,
     faces: ChunkFaces,
     first_word: u64,
+    tier: Option<Tier>,
+    kept_bricks: KeptBricks,
     states: Vec<FaceState>,
     /// The faces still running.
     live: Vec<usize>,
@@ -1920,6 +2183,8 @@ impl JobCtx<'_, '_> {
             faces,
             first_word,
             kept,
+            tier,
+            kept_bricks,
         } = job;
         let table = job_table(self.run.gpu, coord);
         let used = (1 + table.count as usize) * 16;
@@ -1936,27 +2201,50 @@ impl JobCtx<'_, '_> {
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
         for (brick_at, keys) in &faces.bricks {
             let b = brick_of_slot(usize::from(*brick_at));
+            let cell = holds_cells(tier, keys.len());
+            let record_kept = kept_bricks.contains_key(brick_at);
+            // A brick-level direction's samples, spread over its opaque faces.
+            let mut per_dir = [0u32; 6];
+            for &key in keys {
+                if !faces.is_glass(*brick_at, key) {
+                    per_dir[usize::from(key & 7)] += 1;
+                }
+            }
             for &key in keys {
                 let i = i32::from(key >> 3);
                 let l = [i % 8, i / 8 % 8, i / 64];
                 let voxel = [0, 1, 2].map(|k| coord.0[k] * 64 + b[k] * 8 + l[k]);
                 let face = (key & 7) as u8;
+                let glass = faces.is_glass(*brick_at, key);
                 let keep = kept
                     .as_ref()
                     .and_then(|k| k.get(&(*brick_at, key)).copied());
-                let wanted =
-                    keep.is_none() && self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
+                let (n_min, n_max) = match tier {
+                    None => (self.settings.n_min, self.n_max),
+                    Some(Tier::Face(n)) if cell => (n, n),
+                    Some(_) => {
+                        let n = BRICK_LEVEL_SAMPLES.div_ceil(per_dir[usize::from(face)].max(1));
+                        (n, n)
+                    }
+                };
+                let wanted = keep.is_none()
+                    && !record_kept
+                    && (cell || !glass)
+                    && self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
                 states.push(FaceState {
                     voxel,
                     face,
                     key,
+                    cell,
+                    n_min,
+                    n_max,
                     n: 0,
                     sum: [0.0; 3],
                     clamped: [0.0; 3],
                     lum2: 0.0,
                     best: 0.0,
                     material: 0,
-                    glass: faces.is_glass(*brick_at, key),
+                    glass,
                     snapshots: Vec::new(),
                     done: !wanted,
                     keep,
@@ -1968,6 +2256,8 @@ impl JobCtx<'_, '_> {
             coord,
             faces,
             first_word,
+            tier,
+            kept_bricks,
             states,
             live,
             slot,
@@ -1983,8 +2273,8 @@ impl JobCtx<'_, '_> {
             }
             let s = &job.states[i];
             let r = s
-                .certain_rounds(self.round, self.settings.n_min)
-                .min(s.rounds_left(self.round, self.n_max))
+                .certain_rounds(self.round)
+                .min(s.rounds_left(self.round))
                 .min(self.rounds_cap)
                 .min((batch - *entries) as u32);
             p.push((i, r));
@@ -2002,19 +2292,43 @@ impl JobCtx<'_, '_> {
         done: &mut BakeProgress,
     ) {
         let queue = self.run.queue;
-        let mut block: Vec<u32> = job.faces.directory();
-        block.reserve(job.states.len() * 2);
-        for s in &job.states {
+        let clamp = self.settings.clamp;
+        let (dir, words) = layout(&job.faces, job.tier);
+        let mut block: Vec<u32> = dir;
+        block.reserve(words as usize);
+        let cell_words = |s: &FaceState| -> [u32; 2] {
             if let Some(cell) = s.keep {
-                block.extend(cell);
-                continue;
+                return cell;
             }
-            let mean = s.mean(s.kept(self.settings.clamp));
-            block.push(rgb9e5_pack(mean));
             let flags = if s.glass { CELL_TRANSLUCENT } else { 0 };
-            block.push(u32::from(s.key) | flags | u32::from(s.material) << 16);
+            [
+                rgb9e5_pack(s.mean(s.kept(clamp))),
+                u32::from(s.key) | flags | u32::from(s.material) << 16,
+            ]
+        };
+        if job.tier.is_none() {
+            for s in &job.states {
+                block.extend(cell_words(s));
+            }
+        } else {
+            let mut at = 0usize;
+            for (slot, keys) in &job.faces.bricks {
+                let states = &job.states[at..at + keys.len()];
+                at += keys.len();
+                let record = job
+                    .kept_bricks
+                    .get(slot)
+                    .copied()
+                    .unwrap_or_else(|| brick_record(states, clamp));
+                block.extend(record);
+                if states[0].cell {
+                    for s in states {
+                        block.extend(cell_words(s));
+                    }
+                }
+            }
         }
-        debug_assert_eq!(block.len() as u64, job.faces.block_words());
+        debug_assert_eq!(block.len() as u64, words);
         store.put(queue, job.coord, job.first_word, block);
         report.faces += job.states.iter().filter(|s| s.n > 0).count() as u64;
         if self.settings.keep_faces {

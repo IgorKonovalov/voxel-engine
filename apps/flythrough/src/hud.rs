@@ -673,10 +673,15 @@ impl HudStats {
             };
             let table = match l.store {
                 Some(s) => format!(
-                    "{table}, store {} {:.1} MB missing {}{}",
+                    "{table}, store {} {:.1} MB missing {}{}{}",
                     s.chunks,
                     s.bytes as f64 / 1e6,
                     s.missing,
+                    if s.brick_reads > 0 {
+                        format!(" brick level {}", s.brick_reads)
+                    } else {
+                        String::new()
+                    },
                     l.store_note
                 ),
                 None => table,
@@ -1181,6 +1186,7 @@ mod tests {
                 chunks: 12,
                 bytes: 3_400_000,
                 missing: 56,
+                brick_reads: 0,
             }),
             store_note: store_note(
                 Some("piece r2 at [11, 10, 3]"),

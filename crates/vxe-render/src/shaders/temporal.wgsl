@@ -28,11 +28,13 @@
 //  11  storage           cache_cells     the emissive table (march.wgsl), only read
 //  12  storage           store           the loaded store (ADR-0046, `bake::Store`), read under
 //                                        `store_on`; word 0 counts this frame's cacheable hits
-//                                        with no cell (`store_missing`)
+//                                        with no cell nor brick record (`store_missing`), word 1
+//                                        those that read a brick record
 //
 // Under `store_on` a cube face's emissive part is its store cell times the dominant material's
-// emission scale now and this frame's exposure, 0 for a face with no cell, again with no screen
-// history. The emissive part (ADR-0043): a hit on a cube face whose cell holds a sample takes the
+// emission scale now and this frame's exposure, again with no screen history. Where the store's
+// blocks carry brick records (a reach cut's rings) a face with no cell reads its brick's value
+// for its direction (`store_brick_value`); else, or with no record either, 0. The emissive part (ADR-0043): a hit on a cube face whose cell holds a sample takes the
 // cell's mean times this frame's exposure, with no screen history, the same value at every
 // pixel of the face. Any other hit (no face: the field look, a translucent hit, a ray from
 // inside rock; or a key with no cell, the table full) is a fallback: its own emissive samples'
@@ -92,7 +94,12 @@ struct Edits {
 // 4 << 12 | dominant material << 16, sorted by key.
 const STORE_ORIGIN: u32 = 4u;
 const STORE_SIZE: u32 = 8u;
+// The flags word (`bake::STORE_FLAGS`): bit 0, every block carries a brick record of
+// BRICK_WORDS before each surface brick's run (six rgb9e5 direction values in face order, then
+// `material | direction mask << 16`).
+const STORE_FLAGS: u32 = 12u;
 const STORE_TABLE: u32 = 16u;
+const BRICK_WORDS: u32 = 7u;
 
 // The value of an rgb9e5 word: three 9-bit mantissas over a shared exponent, biased by 15 + 9.
 fn rgb9e5_decode(w: u32) -> vec3<f32> {
@@ -144,6 +151,82 @@ fn store_value(v: vec3<i32>, face: u32) -> vec4<f32> {
         }
     }
     return vec4<f32>(0.0);
+}
+
+fn store_bricks_on() -> bool {
+    return (atomicLoad(&store[STORE_FLAGS]) & 1u) != 0u;
+}
+
+// The block of chunk `c` (world chunks), 0 for none or outside the window.
+fn store_block(c: vec3<i32>) -> u32 {
+    let origin = vec3<i32>(
+        i32(atomicLoad(&store[STORE_ORIGIN])),
+        i32(atomicLoad(&store[STORE_ORIGIN + 1u])),
+        i32(atomicLoad(&store[STORE_ORIGIN + 2u])),
+    );
+    let size = vec3<i32>(
+        i32(atomicLoad(&store[STORE_SIZE])),
+        i32(atomicLoad(&store[STORE_SIZE + 1u])),
+        i32(atomicLoad(&store[STORE_SIZE + 2u])),
+    );
+    let w = c - origin;
+    if (any(w < vec3<i32>(0)) || any(w >= size)) {
+        return 0u;
+    }
+    return atomicLoad(&store[STORE_TABLE + u32(w.x + size.x * (w.y + size.y * w.z))]);
+}
+
+// Brick `b`'s (world bricks) value for direction `face` times its material's emission scale now
+// in rgb, with a 1 in a; 0 where the brick has no record or no face of that direction.
+fn store_brick(b: vec3<i32>, face: u32) -> vec4<f32> {
+    let block = store_block(b >> vec3<u32>(3u));
+    if (block == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let s = b & vec3<i32>(7);
+    let dir = atomicLoad(&store[block + u32(s.x + 8 * (s.y + 8 * s.z))]);
+    if (dir == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let rec = block + (dir >> 11u) - BRICK_WORDS;
+    let tail = atomicLoad(&store[rec + 6u]);
+    if (((tail >> (16u + face)) & 1u) == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let x = rgb9e5_decode(atomicLoad(&store[rec + face]));
+    return vec4<f32>(x * emission_scale[tail & 0xFFFFu], 1.0);
+}
+
+// Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 bricks around
+// the voxel's centre in the face's plane (its own brick's layer along the normal), bilinear by
+// the centre's place between the bricks' centres, over those that have the direction; its own
+// brick's alone where none has it with weight. 0 in a where that has none either.
+fn store_brick_value(v: vec3<i32>, face: u32) -> vec4<f32> {
+    let axis = face / 2u;
+    let ta = (axis + 1u) % 3u;
+    let tb = (axis + 2u) % 3u;
+    let own = v >> vec3<u32>(3u);
+    let g = (vec3<f32>(v) + 0.5) / 8.0 - 0.5;
+    let lo = vec3<i32>(floor(g));
+    let f = g - floor(g);
+    var sum = vec3<f32>(0.0);
+    var weight = 0.0;
+    for (var i = 0; i < 4; i++) {
+        var b = own;
+        let oa = i & 1;
+        let ob = i >> 1u;
+        b[ta] = lo[ta] + oa;
+        b[tb] = lo[tb] + ob;
+        let wa = select(1.0 - f[ta], f[ta], oa == 1);
+        let wb = select(1.0 - f[tb], f[tb], ob == 1);
+        let r = store_brick(b, face);
+        sum += r.xyz * (wa * wb * r.w);
+        weight += wa * wb * r.w;
+    }
+    if (weight > 0.0) {
+        return vec4<f32>(sum / weight, 1.0);
+    }
+    return store_brick(own, face);
 }
 
 // The mean of the key's cell in rgb, with a 1 in a; 0 for a key with no cell or no sample.
@@ -237,7 +320,15 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (store_on() && cacheable(rec)) {
         let ray = pixel_ray(full_px(gid.xy));
         let nf = shadow_normal_of(rec, ray.d);
-        let c = store_value(cache_voxel(rec.p, nf), cache_face(rec.axis, nf));
+        let voxel = cache_voxel(rec.p, nf);
+        let face = cache_face(rec.axis, nf);
+        var c = store_value(voxel, face);
+        if (c.w == 0.0 && store_bricks_on()) {
+            c = store_brick_value(voxel, face);
+            if (c.w > 0.0) {
+                atomicAdd(&store[1], 1u);
+            }
+        }
         if (c.w == 0.0) {
             atomicAdd(&store[0], 1u);
         }

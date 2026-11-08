@@ -489,6 +489,7 @@ struct Args {
     bake_file: Option<std::path::PathBuf>,
     /// `--cut FORM:N[:off],...` under `--reference`: stores baked beside the reference at `N`
     /// samples a face, seed form `FORM`, through the filter unless `:off` (Plan 0059 Phase 4);
+    /// or `rings:B/R32/R128/R512` and `bricks:B`, a reach cut's rings (Phase 6, [`RingArm`]);
     /// `F` cycles the reference, each cut and the table.
     cuts: Vec<CutArm>,
     /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
@@ -2974,22 +2975,94 @@ struct Reference {
     selected: usize,
 }
 
-/// A cut of Plan 0059 Phase 4: a seed form, the samples a face and the filter.
+/// A cut of Plan 0059 Phase 4: a seed form, the samples a face and the filter; or with `rings`
+/// a reach cut of Phase 6 (independent seeds, filtered).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CutArm {
     form: vxe_render::SeedForm,
     samples: u32,
     tent: bool,
+    rings: Option<RingArm>,
+}
+
+/// A reach cut's rings around the pose's chunk, in chunks (Chebyshev): the brick level within
+/// `brick`, and face cells within `faces[i]` at [`RING_SAMPLES`]`[i]` (outer ring first, -1 none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RingArm {
+    brick: i32,
+    faces: [i32; 3],
+}
+
+/// The face rings' samples, outer first: the first draft's 32, 128 and Phase 5's kept 512.
+const RING_SAMPLES: [u32; 3] = [32, 128, 512];
+
+impl RingArm {
+    /// `rings:B/R32/R128/R512` (each ring inside the one before) or `bricks:B`.
+    fn parse(s: &str) -> Option<Self> {
+        let num = |v: &str| v.parse::<i32>().ok().filter(|r| (0..=64).contains(r));
+        if let Some(b) = s.strip_prefix("bricks:") {
+            return Some(Self {
+                brick: num(b)?,
+                faces: [-1; 3],
+            });
+        }
+        let r: Vec<i32> = s
+            .strip_prefix("rings:")?
+            .split('/')
+            .map(num)
+            .collect::<Option<_>>()?;
+        let [brick, a, b, c] = r[..] else {
+            return None;
+        };
+        (brick >= a && a >= b && b >= c).then_some(Self {
+            brick,
+            faces: [a, b, c],
+        })
+    }
+
+    fn name(self) -> String {
+        if self.faces[0] < 0 {
+            return format!("bricks {}", self.brick);
+        }
+        let [a, b, c] = self.faces;
+        format!("rings {}/{a}/{b}/{c}", self.brick)
+    }
+
+    /// The bake's rings around `centre`, inner ring first.
+    fn rings(self, centre: [i32; 3]) -> vxe_render::bake::Rings {
+        let mut faces: Vec<(i32, u32)> = self
+            .faces
+            .iter()
+            .zip(RING_SAMPLES)
+            .filter(|(r, _)| **r >= 0)
+            .map(|(r, n)| (*r, n))
+            .collect();
+        faces.reverse();
+        vxe_render::bake::Rings {
+            centre,
+            brick: self.brick,
+            faces,
+        }
+    }
 }
 
 impl CutArm {
-    /// `FORM:N` or `FORM:N:off`.
+    /// `FORM:N`, `FORM:N:off`, `rings:B/R32/R128/R512` or `bricks:B`.
     fn parse(s: &str) -> Result<Self, String> {
         let bad = || {
             format!(
-                "--cut takes FORM:N or FORM:N:off (FORM one of independent, chunk-side, global-side, lattice; N 1 to 1048576), not {s}"
+                "--cut takes FORM:N or FORM:N:off (FORM one of independent, chunk-side, global-side, lattice; N 1 to 1048576), rings:B/R32/R128/R512 or bricks:B, not {s}"
             )
         };
+        if s.starts_with("rings:") || s.starts_with("bricks:") {
+            let rings = RingArm::parse(s).ok_or_else(bad)?;
+            return Ok(Self {
+                form: vxe_render::SeedForm::Independent,
+                samples: RING_SAMPLES[2],
+                tent: true,
+                rings: Some(rings),
+            });
+        }
         let mut it = s.split(':');
         let form = it
             .next()
@@ -3012,11 +3085,16 @@ impl CutArm {
             form,
             samples,
             tent,
+            rings: None,
         })
     }
 
-    /// Its name on the banner, the HUD and its file: `chunk-side 512` (`... raw` without the filter).
+    /// Its name on the banner, the HUD and its file: `chunk-side 512` (`... raw` without the
+    /// filter), or the rings' (`rings 12/4/2/1`, `bricks 12`).
     fn name(self) -> String {
+        if let Some(r) = self.rings {
+            return r.name();
+        }
         format!(
             "{} {}{}",
             self.form.name(),
@@ -3025,22 +3103,26 @@ impl CutArm {
         )
     }
 
-    /// The bake's settings: every face at `samples`, in rounds of at most `BAKE_ROUND`.
-    fn settings(self) -> vxe_render::BakeSettings {
+    /// The bake's settings: every face at `samples`, in rounds of at most `BAKE_ROUND`; a reach
+    /// cut's rings around `centre`, each face at its ring's count.
+    fn settings(self, centre: [i32; 3]) -> vxe_render::BakeSettings {
         vxe_render::BakeSettings {
             round: self.samples.min(vxe_render::bake::BAKE_ROUND),
             n_min: self.samples,
             n_max: self.samples,
             form: self.form,
             tent: self.tent,
+            rings: self.rings.map(|r| r.rings(centre)),
             ..vxe_render::BakeSettings::default()
         }
     }
 
-    /// The cut's file beside the reference's `path`: `vein.bin` gives `vein.chunk-side-512.bin`.
+    /// The cut's file beside the reference's `path`: `vein.bin` gives `vein.chunk-side-512.bin`
+    /// (`vein.rings-12-4-2-1.bin`).
     fn file(self, path: &std::path::Path) -> std::path::PathBuf {
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("bake");
-        path.with_file_name(format!("{stem}.{}.bin", self.name().replace(' ', "-")))
+        let name = self.name().replace([' ', '/'], "-");
+        path.with_file_name(format!("{stem}.{name}.bin"))
     }
 }
 
@@ -3860,15 +3942,23 @@ impl Run {
         }
         let reference = frame.store().image();
         for cut in self.args.cuts.clone() {
-            let settings = cut.settings();
+            let settings = cut.settings(centre.0);
             let file = path.as_deref().map(|p| cut.file(p));
+            // A reach cut covers its brick ring, not the reference's piece.
+            let (cut_extent, cut_label) = match &settings.rings {
+                Some(r) => {
+                    let e = r.extent(world_extent);
+                    (e, format!("rings r{} at {:?}", r.brick, centre.0))
+                }
+                None => (extent, label.clone()),
+            };
             if !self.load_or_bake(
                 gpu,
                 frame,
                 mirror,
-                extent,
+                cut_extent,
                 centre,
-                &label,
+                &cut_label,
                 &settings,
                 file.as_deref(),
                 &cut.name(),
@@ -3922,7 +4012,7 @@ impl Run {
             let start = now();
             match frame.load_store_file(&gpu.device, &gpu.queue, mirror, &self.world, path, &key) {
                 Ok(()) => {
-                    let s = frame.store().stats(0);
+                    let s = frame.store().stats(0, 0);
                     println!(
                         "bake file ({what}): loaded {} in {:.0} ms, {label}, {} chunks, store {:.1} MB",
                         path.display(),
@@ -3981,7 +4071,7 @@ impl Run {
             Ok(r) => {
                 let s = frame.read_store_stats(&gpu.device, &gpu.queue);
                 println!(
-                    "bake ({what}): done, {} chunks, {} faces, {:.3e} samples, {} faces at {} and {} at {}, {:.1} s, store {:.1} MB",
+                    "bake ({what}): done, {} chunks, {} faces, {:.3e} samples, {} faces at {} and {} at {}, {:.1} s ({:.1} s submit to readback, {} submits), store {:.1} MB",
                     r.chunks,
                     r.faces,
                     r.samples as f64,
@@ -3990,6 +4080,8 @@ impl Run {
                     r.faces_at_max,
                     settings.n_max,
                     ms_since(start) / 1e3,
+                    r.gpu_seconds,
+                    r.submits,
                     s.bytes as f64 / 1e6
                 );
                 if let Some(path) = path {
@@ -6599,12 +6691,14 @@ mod tests {
                 CutArm {
                     form: vxe_render::SeedForm::ChunkSide,
                     samples: 512,
-                    tent: true
+                    tent: true,
+                    rings: None
                 },
                 CutArm {
                     form: vxe_render::SeedForm::Independent,
                     samples: 1024,
-                    tent: false
+                    tent: false,
+                    rings: None
                 },
             ]
         );
@@ -6612,7 +6706,7 @@ mod tests {
             a.cuts[0].file(std::path::Path::new("live/bake/vein.bin")),
             std::path::Path::new("live/bake/vein.chunk-side-512.bin")
         );
-        let s = a.cuts[1].settings();
+        let s = a.cuts[1].settings([0, 0, 0]);
         assert_eq!((s.n_min, s.n_max, s.round), (1024, 1024, 1024));
         assert!(!s.tent && s.form == vxe_render::SeedForm::Independent);
         for bad in ["chunk:512", "chunk-side", "chunk-side:0", "lattice:64:on"] {
