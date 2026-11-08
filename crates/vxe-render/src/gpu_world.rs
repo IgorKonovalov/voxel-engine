@@ -262,8 +262,9 @@ pub const BIN_COUNT: usize = SLOT_BINS.len();
 /// Storage buffers the pool is sharded over: every frame shader binds all four.
 pub const MAX_SHARDS: u32 = 4;
 /// Storage buffers the frame's passes bind besides the pool shards: records, table,
-/// materials, light samples and the emission scale.
-pub const OTHER_STORAGE_BUFFERS: u32 = 5;
+/// materials, light samples and the emission scale, plus the face store the hit pass reads
+/// for a translucent face's reflected light (ADR-0047).
+pub const OTHER_STORAGE_BUFFERS: u32 = 6;
 /// `u32` words of a slot's opaque mask (its unit 0): one bit per voxel.
 pub const OPAQUE_WORDS: usize = 16;
 /// The header unit's words: the palette (16 `u16`), the two translucent words (one bit per

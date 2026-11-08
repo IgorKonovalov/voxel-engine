@@ -94,7 +94,7 @@ impl std::fmt::Display for LimitsError {
 impl std::error::Error for LimitsError {}
 
 /// Storage buffers one shader stage of the frame binds at most: four pool shards
-/// (`gpu_world::MAX_SHARDS`), the five other bindings (`OTHER_STORAGE_BUFFERS`) and the probe
+/// (`gpu_world::MAX_SHARDS`), the six other bindings (`OTHER_STORAGE_BUFFERS`) and the probe
 /// passes' two (`probes::PROBE_STORAGE_BUFFERS`).
 pub const STORAGE_BUFFERS_NEEDED: u32 =
     gpu_world::MAX_SHARDS + gpu_world::OTHER_STORAGE_BUFFERS + probes::PROBE_STORAGE_BUFFERS;
@@ -158,13 +158,13 @@ mod tests {
     #[test]
     fn the_limits_are_capped_at_the_offer() {
         let l = limits_within(&offer(16, 1 << 30), 4 << 30).expect("16 storage buffers");
-        assert_eq!(l.max_storage_buffers_per_shader_stage, 11);
+        assert_eq!(l.max_storage_buffers_per_shader_stage, 12);
         assert_eq!(l.max_storage_buffer_binding_size, 1 << 30);
         assert_eq!(l.max_buffer_size, 1 << 30);
-        let l = limits_within(&offer(11, 1 << 30), 16 << 20).expect("11 storage buffers");
-        assert_eq!(l.max_storage_buffers_per_shader_stage, 11);
+        let l = limits_within(&offer(12, 1 << 30), 16 << 20).expect("12 storage buffers");
+        assert_eq!(l.max_storage_buffers_per_shader_stage, 12);
         assert_eq!(l.max_storage_buffer_binding_size, TABLE_BINDING_BYTES);
-        let l = limits_within(&offer(11, 128 << 20), 16 << 20).expect("11 storage buffers");
+        let l = limits_within(&offer(12, 128 << 20), 16 << 20).expect("12 storage buffers");
         assert_eq!(l.max_storage_buffer_binding_size, 128 << 20);
     }
 
@@ -172,11 +172,11 @@ mod tests {
     fn an_offer_below_the_shaders_bindings_is_refused_by_name() {
         let e = limits_within(&offer(8, 1 << 30), 16 << 20).expect_err("8 storage buffers");
         assert_eq!(e.limit, "max_storage_buffers_per_shader_stage");
-        assert_eq!((e.needed, e.offered), (11, 8));
-        assert_eq!(e.requested.max_storage_buffers_per_shader_stage, 11);
+        assert_eq!((e.needed, e.offered), (12, 8));
+        assert_eq!(e.requested.max_storage_buffers_per_shader_stage, 12);
         assert_eq!(
             e.to_string(),
-            "the adapter offers 8 max_storage_buffers_per_shader_stage, the frame's shaders need 11"
+            "the adapter offers 8 max_storage_buffers_per_shader_stage, the frame's shaders need 12"
         );
     }
 }

@@ -3266,7 +3266,9 @@ const CUT_COUNTS: [u32; 5] = [32, 128, 512, 1024, 2048];
 /// one dispatch of 1 000 to 1 000 000 samples at the vein and the hall, on the adapter
 /// `VXE_TEST_ADAPTER` names), `cpu` (a sampler over `World::raycast` on one thread at the vein),
 /// `glass` (the pane's bright pixels at the hall), `parts` (the composite's parts at the pane,
-/// at the hall's shot and the owner's eye). `VXE_BAKE_VIEWS` names the views. Each part
+/// at the hall's shot and the owner's eye, under the per-layer composite: historical),
+/// `filter` (ADR-0047's filter at the hall's shot, [`cut_glass_filter`]). `VXE_BAKE_VIEWS`
+/// names the views. Each part
 /// logs to `live/bake-count/cut-<part>.txt`.
 #[test]
 #[ignore = "a reading on the RTX (and the Radeon for cost) from live/bake/'s files, under the perf lock"]
@@ -3285,8 +3287,9 @@ fn cut_readings() {
                 "cpu" if view.name == "vein" => cut_cpu(&view),
                 "glass" if view.name == "hall" => cut_glass(&view),
                 "parts" if view.name == "hall" => cut_glass_parts(&view),
-                "grain" | "cost" | "cpu" | "glass" | "parts" => {}
-                _ => panic!("VXE_CUT_PART takes grain, cost, cpu, glass or parts"),
+                "filter" if view.name == "hall" => cut_glass_filter(&view),
+                "grain" | "cost" | "cpu" | "glass" | "parts" | "filter" => {}
+                _ => panic!("VXE_CUT_PART takes grain, cost, cpu, glass, parts or filter"),
             }
         }
     }
@@ -3989,8 +3992,9 @@ fn layers_on_ray(
 /// The owner's eye in the glass screenshot (its HUD's `fly at`), chunk [2, 5, 3].
 const OWNER_GLASS_EYE: [f32; 3] = [169.0, 359.7, 222.7];
 
-/// The parts the composite sums at a pane pixel, read from the frame's own textures before the
-/// display: the layer walk's premultiplied glass term (times the exposure, as the composite
+/// The parts the composite sums at a pane pixel under a per-layer composite model: it reads the
+/// layer target's `w` as `(1 - a)^k`, while the filter of ADR-0047 writes `luminance(T)` there,
+/// so its model figures do not describe the filter. Read from the frame's own textures before the display: the layer walk's premultiplied glass term (times the exposure, as the composite
 /// adds it) and its transmittance; the hit behind (its material, the irradiance the composite
 /// reads, its Lambertian term and its emission); the composite rebuilt from them against the
 /// displayed pixel (any term outside both). At the hall's shot and at the owner's eye with the
@@ -4168,4 +4172,356 @@ fn cut_glass_parts(view: &ReadView) {
             ));
         }
     }
+}
+
+/// The texels of an `r32uint` texture, rows top to bottom (`read_rgba8` copies any 4-byte texel).
+fn read_r32u(device: &wgpu::Device, queue: &wgpu::Queue, t: &wgpu::Texture) -> Vec<u32> {
+    assert_eq!(t.format(), wgpu::TextureFormat::R32Uint);
+    readback::read_rgba8(device, queue, t)
+        .chunks(4)
+        .map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")))
+        .collect()
+}
+
+/// The angle under which a pane pixel's ray counts as near the pane's normal, for the filter's
+/// "not dark" reading.
+const NEAR_NORMAL_DEG: f64 = 10.0;
+
+/// ADR-0047's filter at the hall's shot with [`pane_op`]'s pane, exposure 8, the store, the
+/// headlamp's parameters as the window passes them, 64 frames a row, on the adapter
+/// `VXE_TEST_ADAPTER` names (unset: lavapipe). Rows: before the pane lamp off and lamp on, then
+/// the pane dug in and the same two. The pane's pixels are those whose hit has a translucent
+/// voxel in front (the hit record's bit 4) after the dig.
+/// - **No voxel grid:** over pairs of horizontally or vertically adjacent pane pixels, both flat
+///   before the pane (each within 1 level of its four neighbours), `|y_a - y_b|` with the pane
+///   minus the same before it, lamp off; p50, p90, max.
+/// - **No white-out:** lamp on, the pane's pixels over 250 with the pane and the same pixels
+///   over 250 without it.
+/// - **Not dark:** lamp off, the pane's radiance before the display (`layer.rgb * ex + T *
+///   behind`) against its behind's (`behind` = [`hit_radiance`] with the pane), mean luminance
+///   over the pixels whose ray is within [`NEAR_NORMAL_DEG`] of the pane's normal, and over the
+///   whole pane; the path length `L` through the pane by [`path_in_boxes`] beside it.
+/// - **What is behind reads its cell:** lamp off, each pane pixel's behind with the pane against
+///   the same pixel's radiance without it, in display levels; p50, p90, max.
+/// - The rebuilt composite against the displayed pixel, lamp off and on (any term outside both).
+fn cut_glass_filter(view: &ReadView) {
+    let mut log = Log::open("cut-glass-filter.txt");
+    let size = NATIVE;
+    let w = size[0] as usize;
+    let (mut rig, piece) = reference_rig(view, size);
+    let camera = view_camera(view);
+    let op = pane_op(&rig, &camera, piece);
+    let pbox = pane_box(&camera, piece);
+    let axis = (0..3)
+        .find(|k| pbox.1[*k] - pbox.0[*k] == 2)
+        .expect("the pane's thin axis");
+    let mats = rig.world.materials().clone();
+    let ex = 8.0f32;
+    let lp = LightParams::headlamp();
+    let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let row = |rig: &mut ReadRig, lamp: bool| {
+        let lighting = reference_lighting(lamp, Light::Baked);
+        rig.frame.set_lighting(lighting);
+        for _ in 0..64 {
+            rig.frame
+                .step(&rig.device, &rig.queue, &rig.gpu, &camera, &lp);
+        }
+        let img = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+        let rad = hit_radiance(&rig.device, &rig.queue, &rig.frame, &mats, ex);
+        (luma(&img), rad, lighting)
+    };
+    let (y0_off, r0_off, lighting_off) = row(&mut rig, false);
+    let (y0_on, _, _) = row(&mut rig, true);
+    let dig = timed_dig(&mut rig, &[op], "pane");
+    log.line(&format!(
+        "filter hall adapter {}: eye {:?}, pane {pbox:?} (thin axis {axis}); {dig}",
+        rig.adapter,
+        camera.position.to_array()
+    ));
+    let (y1_off, r1_off, _) = row(&mut rig, false);
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let layer_off = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let t_off: Vec<[f32; 3]> = read_r32u(&rig.device, &rig.queue, rig.frame.transmittance())
+        .into_iter()
+        .map(bake::rgb9e5_unpack)
+        .collect();
+    let (y1_on, r1_on, lighting_on) = row(&mut rig, true);
+    let layer_on = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let t_on: Vec<[f32; 3]> = read_r32u(&rig.device, &rig.queue, rig.frame.transmittance())
+        .into_iter()
+        .map(bake::rgb9e5_unpack)
+        .collect();
+    let pane: Vec<bool> = info
+        .iter()
+        .map(|r| r[3] & 1 != 0 && r[3] & 4 != 0)
+        .collect();
+    let n = pane.iter().filter(|p| **p).count();
+    let dl = |c: [f32; 3], lighting: &Lighting| {
+        let b = tone_bytes([c[0], c[1], c[2], 1.0], lighting);
+        0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
+    };
+    let p3 = |v: &mut Vec<f32>| format!("{:.2} / {:.2} / {:.2}", q(v, 0.5), q(v, 0.9), q(v, 1.0));
+
+    // No voxel grid.
+    let h = y0_off.len() / w;
+    let flat = |i: usize| -> bool {
+        let (x, y) = (i % w, i / w);
+        let mut ok = true;
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+            if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                return false;
+            }
+            let j = ny as usize * w + nx as usize;
+            ok &= (y0_off[i] - y0_off[j]).abs() <= 1.0;
+        }
+        ok
+    };
+    let mut grid = vec![];
+    let mut grid_after = vec![];
+    for i in 0..pane.len() {
+        if !pane[i] || !flat(i) {
+            continue;
+        }
+        let (x, y) = (i % w, i / w);
+        for j in [(x + 1 < w).then_some(i + 1), (y + 1 < h).then_some(i + w)]
+            .into_iter()
+            .flatten()
+        {
+            if pane[j] && flat(j) {
+                let after = (y1_off[i] - y1_off[j]).abs();
+                grid.push(after - (y0_off[i] - y0_off[j]).abs());
+                grid_after.push(after);
+            }
+        }
+    }
+    let pairs = grid.len();
+    log.line(&format!(
+        "filter hall lamp off: pane pixels {n}; flat pairs {pairs}; |neighbour difference| with the pane p50/p90/max {}; with the pane minus before it p50/p90/max {}",
+        p3(&mut grid_after),
+        p3(&mut grid)
+    ));
+
+    // No white-out.
+    let over_on = (0..pane.len())
+        .filter(|i| pane[*i] && y1_on[*i] > 250.0)
+        .count();
+    let over_on_before = (0..pane.len())
+        .filter(|i| pane[*i] && y0_on[*i] > 250.0)
+        .count();
+    let over_off = (0..pane.len())
+        .filter(|i| pane[*i] && y1_off[*i] > 250.0)
+        .count();
+    let mut on_y: Vec<f32> = (0..pane.len())
+        .filter(|i| pane[*i])
+        .map(|i| y1_on[i])
+        .collect();
+    log.line(&format!(
+        "filter hall lamp on: pane pixels over 250 with the pane {over_on} ({:.4}), the same pixels without it {over_on_before} ({:.4}); pane luma p50/p90/max {}; lamp off over 250 {over_off}",
+        over_on as f64 / n.max(1) as f64,
+        over_on_before as f64 / n.max(1) as f64,
+        p3(&mut on_y)
+    ));
+
+    // Not dark, and the rebuilt composite.
+    let eye = camera.position.to_array().map(f64::from);
+    let cos_near = NEAR_NORMAL_DEG.to_radians().cos();
+    let boxes = [pbox];
+    let (mut near_pane, mut near_behind, mut near_n) = (0f64, 0f64, 0usize);
+    let (mut all_pane, mut all_behind) = (0f64, 0f64);
+    let (mut l_near, mut l_all, mut t_lum) = (vec![], vec![], vec![]);
+    let (mut rebuilt_off, mut rebuilt_on) = (vec![], vec![]);
+    for i in 0..pane.len() {
+        if !pane[i] {
+            continue;
+        }
+        let to = [0, 1, 2].map(|k| f64::from(pos[i][k]) - eye[k]);
+        let len = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
+        let d = to.map(|v| v / len);
+        let l = path_in_boxes(eye, d, len, &boxes) as f32;
+        let behind = r1_off[i];
+        let px = [0, 1, 2].map(|k| layer_off[i][k] * ex + t_off[i][k] * behind[k]);
+        all_pane += f64::from(lum(px));
+        all_behind += f64::from(lum(behind));
+        l_all.push(l);
+        t_lum.push(lum(t_off[i]));
+        if d[axis].abs() >= cos_near {
+            near_pane += f64::from(lum(px));
+            near_behind += f64::from(lum(behind));
+            near_n += 1;
+            l_near.push(l);
+        }
+        rebuilt_off.push((y1_off[i] - dl(px, &lighting_off)).abs());
+        let px_on = [0, 1, 2].map(|k| layer_on[i][k] * ex + t_on[i][k] * r1_on[i][k]);
+        rebuilt_on.push((y1_on[i] - dl(px_on, &lighting_on)).abs());
+    }
+    log.line(&format!(
+        "filter hall lamp off: not dark: within {NEAR_NORMAL_DEG} degrees of the normal {near_n} pixels, mean luminance pane {:.5} behind {:.5}, ratio {:.4} (L p50/p90/max {}); the whole pane mean pane {:.5} behind {:.5}, ratio {:.4} (L {}; luminance of T {})",
+        near_pane / near_n.max(1) as f64,
+        near_behind / near_n.max(1) as f64,
+        near_pane / near_behind.max(1e-12),
+        p3(&mut l_near),
+        all_pane / n.max(1) as f64,
+        all_behind / n.max(1) as f64,
+        all_pane / all_behind.max(1e-12),
+        p3(&mut l_all),
+        p3(&mut t_lum)
+    ));
+    log.line(&format!(
+        "filter hall: |pixel - display(layer ex + T behind)| p50/p90/max lamp off {}, lamp on {}",
+        p3(&mut rebuilt_off),
+        p3(&mut rebuilt_on)
+    ));
+
+    // What is behind reads its cell.
+    let mut behind_off = vec![];
+    for i in 0..pane.len() {
+        if pane[i] {
+            behind_off.push((dl(r1_off[i], &lighting_off) - dl(r0_off[i], &lighting_off)).abs());
+        }
+    }
+    log.line(&format!(
+        "filter hall lamp off: behind with the pane against the same pixels without it, |levels| p50/p90/max {}",
+        p3(&mut behind_off)
+    ));
+}
+
+/// The subdirectory of `live/bake/` holding the store files baked before ADR-0047's source.
+const OLD_FILES: &str = "pre-5a";
+
+/// A store file's blocks by chunk, and the cut files' blocks before the filter: the file's key
+/// fields are skipped (26 for the reference's magic, 28 for a cut's), so a file with another
+/// source hash parses too.
+type FileBlocks = (BTreeMap<[i32; 3], Vec<u32>>, BTreeMap<[i32; 3], Vec<u32>>);
+
+fn read_store_blocks(path: &std::path::Path) -> FileBlocks {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+    let mut at = 0usize;
+    let mut take = |n: usize| -> &[u8] {
+        let s = &bytes[at..at + n];
+        at += n;
+        s
+    };
+    let fields = match take(8) {
+        b"VXEBAKE1" => 26,
+        b"VXEBAKE2" => 28,
+        m => panic!("{path:?}: magic {m:?}"),
+    };
+    let _ = take(8 * fields);
+    let u64_of = |b: &[u8]| u64::from_le_bytes(b.try_into().expect("8 bytes"));
+    let lists = if fields == 28 { 2 } else { 1 };
+    let mut out = [BTreeMap::new(), BTreeMap::new()];
+    for map in out.iter_mut().take(lists) {
+        let count = u64_of(take(8));
+        for _ in 0..count {
+            let c = [0, 1, 2].map(|_| i32::from_le_bytes(take(4).try_into().expect("4 bytes")));
+            let words = u64_of(take(8)) as usize;
+            let block: Vec<u32> = take(words * 4)
+                .chunks(4)
+                .map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")))
+                .collect();
+            map.insert(c, block);
+        }
+    }
+    let [blocks, raw] = out;
+    (blocks, raw)
+}
+
+/// A store file against an older one with the same key fields but the source hash (the files
+/// in `live/bake/` against the copies in its subdirectory [`OLD_FILES`], ADR-0047): the reference and
+/// independent 512 at the vein, the patch and the hall. A chunk whose block is unchanged counts
+/// as identical; any other is re-listed from the reading's world (`bake::list_world_chunk`):
+/// every opaque face's cell, found by its key in the new block's directory and in the old
+/// block's (the new keys less the translucent faces), reads bit-identical, both words, in the
+/// filtered blocks and the cut's blocks before the filter. Logs to
+/// `live/bake-count/opaque-cells.txt`.
+#[test]
+#[ignore = "a reading of live/bake/'s files against live/bake/pre-5a/"]
+fn store_files_keep_opaque_cells() {
+    let mut log = Log::open("opaque-cells.txt");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../live/bake");
+    let mut bad_total = 0u64;
+    for (pose, scene) in [
+        ("vein", Scene::Level),
+        ("patch", Scene::Level),
+        ("hall", Scene::Showcase),
+    ] {
+        let world = reference_world(scene);
+        let classes = bake::face_classes(world.materials());
+        for file in [format!("{pose}.bin"), format!("{pose}.independent-512.bin")] {
+            let new_path = std::path::Path::new(dir).join(&file);
+            let old_path = std::path::Path::new(dir).join(OLD_FILES).join(&file);
+            let (new, new_raw) = read_store_blocks(&new_path);
+            let (old, old_raw) = read_store_blocks(&old_path);
+            let (mut same, mut keyed, mut opaque, mut glass, mut bad) =
+                (0u64, 0u64, 0u64, 0u64, 0u64);
+            let mut chunks_differ = 0u64;
+            for (kind, n_map, o_map) in [("filtered", &new, &old), ("raw", &new_raw, &old_raw)] {
+                if n_map.keys().ne(o_map.keys()) {
+                    chunks_differ += 1;
+                    log.line(&format!("{file} {kind}: the chunk lists differ"));
+                }
+                for (c, nb) in n_map {
+                    let Some(ob) = o_map.get(c) else { continue };
+                    if nb == ob {
+                        same += 1;
+                        continue;
+                    }
+                    keyed += 1;
+                    let faces = bake::list_world_chunk(&world, ChunkCoord(*c), &classes)
+                        .expect("the chunk");
+                    let d = bake::DIRECTORY_WORDS as usize;
+                    assert_eq!(
+                        &nb[..d],
+                        &faces.directory()[..],
+                        "{file} {c:?}: new directory"
+                    );
+                    let mut at_old = bake::DIRECTORY_WORDS as u32;
+                    for (slot, keys) in &faces.bricks {
+                        let (at_new, n_new) =
+                            (nb[usize::from(*slot)] >> 11, nb[usize::from(*slot)] & 2047);
+                        let opaque_keys: Vec<u16> = keys
+                            .iter()
+                            .copied()
+                            .filter(|k| !faces.is_glass(*slot, *k))
+                            .collect();
+                        let (o_at, o_n) =
+                            (ob[usize::from(*slot)] >> 11, ob[usize::from(*slot)] & 2047);
+                        assert_eq!(n_new as usize, keys.len(), "{file} {c:?} slot {slot}");
+                        assert_eq!(
+                            o_n as usize,
+                            opaque_keys.len(),
+                            "{file} {c:?} slot {slot}: old run"
+                        );
+                        if !opaque_keys.is_empty() {
+                            assert_eq!(o_at, at_old, "{file} {c:?} slot {slot}: old offset");
+                            at_old += 2 * o_n;
+                        }
+                        let mut j_old = 0usize;
+                        for (j, k) in keys.iter().enumerate() {
+                            if faces.is_glass(*slot, *k) {
+                                glass += 1;
+                                continue;
+                            }
+                            opaque += 1;
+                            let n_cell =
+                                &nb[(at_new as usize + 2 * j)..(at_new as usize + 2 * j + 2)];
+                            let o_cell =
+                                &ob[(o_at as usize + 2 * j_old)..(o_at as usize + 2 * j_old + 2)];
+                            j_old += 1;
+                            if n_cell != o_cell {
+                                bad += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            log.line(&format!(
+                "{file}: blocks bit-identical {same}; compared by key {keyed} (opaque cells {opaque}, translucent cells {glass}, opaque cells that differ {bad}); chunk lists differing {chunks_differ}"
+            ));
+            bad_total += bad + chunks_differ;
+        }
+    }
+    assert_eq!(bad_total, 0, "opaque cells or chunk lists differ");
 }

@@ -2127,7 +2127,8 @@ impl Frame {
         // bindings in group 2; the args pass writes the indirect dispatch through group 3.
         let fill_layout = io_layout_at(device, "fill", &[(3, Io::Storage), (4, Io::Storage)]);
         // The args pass binds the counters alone in group 2 (the world's storage buffers and
-        // the table's would pass `max_storage_buffers_per_shader_stage`'s 11).
+        // the table's would pass the requested `max_storage_buffers_per_shader_stage`,
+        // `STORAGE_BUFFERS_NEEDED`).
         let fill_stats_layout = io_layout_at(device, "fill stats", &[(4, Io::Storage)]);
         let fill_args_layout = io_layout(device, "fill args", &[Io::Storage]);
         let fill_source = format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{CACHE_FILL_WGSL}");
