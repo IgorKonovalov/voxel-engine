@@ -981,6 +981,48 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **What:** `live/session8.sh`.
 - **Done when:** the log records the owner's words on the fresh start, the world filling in, the flight, and the digs.
 
+### Phase 8c: Coarse first, a larger near bake (exploration; amended 2026-11-08, owner)
+- **Owner skill:** dev
+- **Why:** at Phase 8b (`live/session8.sh`; screenshot `live/session8-hall-dark.png`), the owner's words, verbatim:
+  1. "it starts fine, but far parts of cave is loading and quite slowly, it would be better to postpone the initial load
+     but load more".
+  2. "load is unfortunately too slow even for this slow drift".
+  3. "dig is instant".
+  4. "hall loads slowly with the same problem of darkness ... better to wait more initially. dig is instant. overall
+     quality of lighting are good though and I think this is the right way".
+
+  Asked how the world should fill, the owner picked "coarse first + bigger initial area".
+- **What:** before the first frame, at full GPU (the pre-roll path, not the 1.5 ms slice):
+  1. Every chunk the mirror holds gets a **coarse pass**: 8-voxel cells at 256 samples a direction.
+  2. Every chunk within 2 chunks of the camera (Chebyshev, 125 chunks) gets the **full 8/4096**.
+
+  Then the queue refines the rest to 8/4096 within the slice, nearest first. A refined value fades over `FADE` frames
+  from the coarse one. A chunk the mirror gains later takes a coarse pass at the head of the queue, ahead of
+  refinement. So nothing reads no value once its chunk is mirrored.
+
+  The arithmetic, from Phase 8a's 7 ns a sample at full GPU on the RTX (a guess for the pre-roll, which may run faster):
+  - the level's coarse pass: 3.84 x 10^9 / 16 = 2.4 x 10^8 samples, about 1.7 s;
+  - the near 125 chunks at 4096: about 0.9 to 1.5 s.
+
+  So the first frame is about 3 to 4 s at the level, against the owner's 3 s target, which the owner traded for "wait
+  more initially". The coarse sample count (256) and the near radius (2) are flags (`--coarse N`, `--near R`), named in the
+  banner.
+- **Files touched:** `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl` if needed, `marcher.rs`, `apps/flythrough/src/main.rs`,
+  `hud.rs`, `docs/plans/logs/0059.md`.
+- **Readings** (nothing gates):
+  - the first frame, split into its coarse and near parts;
+  - the time until everything is at 4096;
+  - the no-value share, which should be 0 for mirrored chunks;
+  - the vein flight's share of pixels still coarse.
+
+  Read at the vein, the patch, the hall and the streamed cave, on the RTX and on the Cezanne.
+- **Done when:** built, read, and `live/session8c.sh` written with Phase 8b's steps.
+
+### Phase 8d: The owner's look at coarse-first
+- **Owner skill:** human
+- **What:** `live/session8c.sh`.
+- **Done when:** the log records the owner's words on the start's wait, any darkness, and the coarse light against the refined one.
+
 ### Phase 9: The dig under a budget, the three rings
 - **Owner skill:** dev
 - **What:** the three rings of ADR-0046, driven by the box `Frame::invalidate` receives. They replace the reference's in-frame re-bake of Phase 2, and ring 3 is what the reference left out; `the_far_light_stays_as_the_reference_states` goes. The owner's eye on it is Phase 13 (e).
