@@ -6,9 +6,10 @@
 //! voxel's faces toward a voxel that is not opaque and a translucent voxel's faces toward air
 //! (ADR-0047: a pane's two sides), the latter flagged [`CELL_TRANSLUCENT`] in the cell's tail.
 //!
-//! **The pool** ([`Store`]), in `u32` words: the missing count (word 0), the mirror window's
-//! origin (word 4) and size (word 8) in chunks, then from word [`STORE_TABLE`] one word per
-//! window chunk naming its block's first word (0 none). A block is 512 directory words, a brick's
+//! **The pool** ([`Store`]), in `u32` words: the frame's counters (words 0 to 2: no value, brick
+//! reads, [`STORE_COARSE_READS`]), the mirror window's origin (word 4) and size (word 8) in
+//! chunks, then from word [`STORE_TABLE`] one word per window chunk naming its block's first word
+//! (0 none), bit 31 ([`TABLE_COARSE`]) set on the live queue's coarse blocks. A block is 512 directory words, a brick's
 //! `run offset from the block's start << 11 | faces` (0 no surface), then the runs: two words a
 //! cell, its [`rgb9e5_pack`] irradiance, then `key | flags << 12 | dominant material << 16`, with
 //! the key `voxel in the brick << 3 | face`, sorted by key, and flag bit 0 ([`CELL_TRANSLUCENT`])
@@ -85,6 +86,11 @@ pub const DEFAULT_BAKE_POOL_BYTES: u64 = 256 << 20;
 pub const MINIMAL_POOL_BYTES: u64 = 64;
 /// The word of the pool's chunk table.
 pub const STORE_TABLE: u64 = 16;
+/// A chunk table word's flag: the chunk's block is the live queue's coarse pass, refined later.
+/// The block's first word is the rest (a pool is under 2^31 words).
+pub const TABLE_COARSE: u32 = 1 << 31;
+/// The header's counter of the lighting pixels that read a coarse block (word 2).
+pub const STORE_COARSE_READS: u64 = 2;
 /// The words of a block's directory.
 pub const DIRECTORY_WORDS: u64 = CHUNK_BRICKS as u64;
 /// The bytes of one face in the working buffer (`BakeFace` in `bake.wgsl`).
@@ -774,6 +780,10 @@ pub struct StoreStats {
     pub missing: u32,
     /// Lighting pixels of the last encode whose cube face read its brick record.
     pub brick_reads: u32,
+    /// Lighting pixels of the last encode whose cube face read a value in a coarse block.
+    pub coarse_reads: u32,
+    /// Chunks whose block is coarse.
+    pub coarse_chunks: u64,
 }
 
 /// The pool and where its blocks lie, with a copy of every block's words for a dig's kept cells
@@ -799,6 +809,9 @@ pub struct Store {
     bricks: Option<u32>,
     /// Places freed by [`Store::remove`]: first word and words, for [`Store::alloc`].
     free: Vec<(u64, u64)>,
+    /// Chunks whose block is the live queue's coarse pass: their table word carries
+    /// [`TABLE_COARSE`].
+    coarse: std::collections::HashSet<[i32; 3]>,
 }
 
 /// A store's content off the pool: its piece and blocks, and the raw words under the filter, for
@@ -842,6 +855,7 @@ impl Store {
             tent: false,
             bricks: None,
             free: Vec::new(),
+            coarse: Default::default(),
         }
     }
 
@@ -850,14 +864,42 @@ impl Store {
         &self.pool
     }
 
-    /// The counters, `missing` as the caller read it.
-    pub fn stats(&self, missing: u32, brick_reads: u32) -> StoreStats {
+    /// The counters, the header's (`missing`, `brick_reads`, `coarse_reads`) as the caller read
+    /// them.
+    pub fn stats(&self, missing: u32, brick_reads: u32, coarse_reads: u32) -> StoreStats {
         StoreStats {
             chunks: self.blocks.len() as u64,
             bytes: (self.head_words + self.blocks.values().map(|b| b.1).sum::<u64>()) * 4,
             missing,
             brick_reads,
+            coarse_reads,
+            coarse_chunks: self.coarse.len() as u64,
         }
+    }
+
+    /// Whether `coord`'s block is the live queue's coarse pass.
+    pub fn is_coarse(&self, coord: ChunkCoord) -> bool {
+        self.coarse.contains(&coord.0)
+    }
+
+    /// Marks `coord`'s next [`Store::put`] as coarse or not; the table word follows at the put.
+    fn mark_coarse(&mut self, coord: ChunkCoord, coarse: bool) {
+        if coarse {
+            self.coarse.insert(coord.0);
+        } else {
+            self.coarse.remove(&coord.0);
+        }
+    }
+
+    /// The chunk table's word for `coord`'s block at `first`: the first word, flagged
+    /// [`TABLE_COARSE`] where the block is coarse.
+    fn table_value(&self, coord: ChunkCoord, first: u64) -> u32 {
+        first as u32
+            | if self.coarse.contains(&coord.0) {
+                TABLE_COARSE
+            } else {
+                0
+            }
     }
 
     /// Whether the blocks carry brick records.
@@ -954,6 +996,7 @@ impl Store {
         self.piece = None;
         self.window = Some(window);
         self.free.clear();
+        self.coarse.clear();
     }
 
     /// Empties the store for `window` for the live queue: blocks with brick records of cells of
@@ -989,6 +1032,7 @@ impl Store {
             }
             self.words.remove(c);
             self.raw.remove(c);
+            self.coarse.remove(c);
         }
         self.window = Some(window);
         let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
@@ -1003,10 +1047,11 @@ impl Store {
             Some(_) => FLAG_BRICKS,
         };
         for (c, (first, _)) in &self.blocks {
-            header[self.table_word(ChunkCoord(*c)) as usize] = *first as u32;
+            header[self.table_word(ChunkCoord(*c)) as usize] =
+                self.table_value(ChunkCoord(*c), *first);
         }
-        // Words 0 and 1 are the frame's counters, which the temporal pass writes.
-        queue.write_buffer(&self.pool, 8, bytemuck::cast_slice(&header[2..]));
+        // Words 0 to 2 are the frame's counters, which the temporal pass writes.
+        queue.write_buffer(&self.pool, 12, bytemuck::cast_slice(&header[3..]));
         dropped
     }
 
@@ -1061,7 +1106,7 @@ impl Store {
         queue.write_buffer(
             &self.pool,
             self.table_word(coord) * 4,
-            bytemuck::bytes_of(&(first as u32)),
+            bytemuck::bytes_of(&self.table_value(coord, first)),
         );
         self.end_words = self.end_words.max(first + block.len() as u64);
         self.blocks.insert(coord.0, (first, block.len() as u64));
@@ -1074,6 +1119,7 @@ impl Store {
             self.free.push(place);
             self.words.remove(&coord.0);
             self.raw.remove(&coord.0);
+            self.coarse.remove(&coord.0);
             queue.write_buffer(
                 &self.pool,
                 self.table_word(coord) * 4,
@@ -1808,6 +1854,9 @@ pub(crate) struct Job {
     /// Samples it draws at most, for the live queue's depth ([`JobLoop::samples_left`]); 0 where
     /// nobody reads it.
     pub samples: u64,
+    /// A brick direction's samples at the brick level for this job alone (the live queue's coarse
+    /// pass); `None` the settings' [`Rings::brick_samples`].
+    pub brick_samples: Option<u32>,
 }
 
 /// Brick records a re-baked ring job keeps, by brick slot.
@@ -2053,6 +2102,7 @@ pub(crate) fn run(
                 tier,
                 kept_bricks: KeptBricks::new(),
                 samples: 0,
+                brick_samples: None,
             };
             at += words;
             job
@@ -2191,6 +2241,7 @@ pub(crate) fn rebake(
             tier,
             kept_bricks,
             samples: 0,
+            brick_samples: None,
         });
     }
     let bake = run_jobs(run, store, jobs, settings, progress)?;
@@ -2840,13 +2891,20 @@ impl JobCtx<'_, '_> {
             tier,
             kept_bricks,
             samples: _,
+            brick_samples,
         } = job;
         write_job_table(self.run, coord, slot);
-        let brick_samples = self
-            .settings
-            .rings
-            .as_ref()
-            .map_or(BRICK_LEVEL_SAMPLES, |r| r.brick_samples);
+        // A job's own count (the live queue's coarse pass) on cells of a brick draws each
+        // direction's samples on `ceil(count / BAKE_LANES)` of its faces, spread evenly through
+        // them in key order, so each entry fills its workgroup; the record is their mean.
+        let subset =
+            brick_samples.is_some() && self.settings.rings.as_ref().is_some_and(|r| r.cell == 8);
+        let brick_samples = brick_samples.unwrap_or_else(|| {
+            self.settings
+                .rings
+                .as_ref()
+                .map_or(BRICK_LEVEL_SAMPLES, |r| r.brick_samples)
+        });
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
         for (brick_at, keys) in &faces.bricks {
             let b = brick_of_slot(usize::from(*brick_at));
@@ -2859,6 +2917,16 @@ impl JobCtx<'_, '_> {
                     per_dir[usize::from(key & 7)] += 1;
                 }
             }
+            // Under `subset`, a direction's `m` faces drawn of its `k`: the i-th opaque face is
+            // drawn where `(i m) mod k < m`, which holds for exactly `m` of them.
+            let drawn = per_dir.map(|k| {
+                if subset {
+                    brick_samples.div_ceil(BAKE_LANES).min(k)
+                } else {
+                    k
+                }
+            });
+            let mut at_dir = [0u32; 6];
             for &key in keys {
                 let i = i32::from(key >> 3);
                 let l = [i % 8, i / 8 % 8, i / 64];
@@ -2872,11 +2940,19 @@ impl JobCtx<'_, '_> {
                     None => (self.settings.n_min, self.n_max),
                     Some(Tier::Face(n)) if cell => (n, n),
                     Some(_) => {
-                        let n = brick_samples.div_ceil(per_dir[usize::from(face)].max(1));
+                        let n = brick_samples.div_ceil(drawn[usize::from(face)].max(1));
                         (n, n)
                     }
                 };
-                let wanted = keep.is_none()
+                let d = usize::from(face);
+                let in_subset = glass || {
+                    let i = at_dir[d];
+                    at_dir[d] += 1;
+                    u64::from(i) * u64::from(drawn[d]) % u64::from(per_dir[d].max(1))
+                        < u64::from(drawn[d])
+                };
+                let wanted = in_subset
+                    && keep.is_none()
                     && !record_kept
                     && (cell || !glass)
                     && self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
@@ -3002,6 +3078,13 @@ pub const DEFAULT_BAKE_SLICE_MS: f64 = 1.5;
 pub const QUEUE_BRICK_SAMPLES: u32 = 4096;
 /// Candidates whose reach the queue checks at most in a frame that opens jobs.
 const QUEUE_CHECKS: usize = 16;
+/// The same in a step without a slice (the pre-roll), where the coarse pass opens many small jobs.
+const QUEUE_CHECKS_UNSLICED: usize = 64;
+/// A brick direction's samples in the live queue's coarse pass by default (`--coarse`).
+pub const DEFAULT_COARSE_SAMPLES: u32 = 256;
+/// Chunks (Chebyshev) around the camera's whose first pass is the full count, not the coarse one
+/// (`--near`).
+pub const DEFAULT_NEAR: i32 = 2;
 /// Frames before a candidate whose reach or lights were not ready is checked again.
 const QUEUE_RECHECK: u64 = 30;
 /// Steps an opening that found nothing ready waits before sorting the candidates again.
@@ -3054,6 +3137,11 @@ pub struct QueueStats {
     pub ms: f64,
     /// Samples since the queue started.
     pub total_samples: u64,
+    /// Chunks whose block is the coarse pass, waiting for their refinement.
+    pub coarse: u64,
+    /// Of the depth, the chunks with no block yet, but those whose reach or lights were not ready
+    /// at a recent check.
+    pub unbaked: u64,
     /// The ns a sample the slice is sized by.
     pub ns_per_sample: f64,
 }
@@ -3087,10 +3175,23 @@ pub struct QueueView<'a> {
 /// listed from the stream workers' masks ([`FacePrep`]) where they arrived, else inline. A first
 /// block is written directly; a block that replaces one of the same layout fades over [`FADE`]
 /// frames. A chunk leaving the mirror frees its block.
+///
+/// **Coarse first** (Plan 0059 Phase 8c). With `coarse_samples` above 0, a chunk with no block
+/// beyond `near` chunks (Chebyshev) of the camera's is first baked at `coarse_samples` a brick
+/// direction, its block flagged coarse ([`TABLE_COARSE`]); one within `near` at the full count.
+/// Every chunk with no block comes before every coarse one, so a chunk the mirror gains is lit
+/// coarse at the head of the queue, and the coarse ones are then refined nearest first. A
+/// refinement lists the same faces, so its block has the coarse one's layout and fades from it.
 pub struct BakeQueue {
     pub settings: BakeSettings,
     /// The slice, in milliseconds a frame.
     pub slice_ms: f64,
+    /// A brick direction's samples in the coarse pass; 0 bakes every chunk at the full count.
+    pub coarse_samples: u32,
+    /// Chunks (Chebyshev) around the camera's whose first pass is the full count.
+    pub near: i32,
+    /// The jobs pending or open, and whether each is a coarse pass.
+    job_coarse: std::collections::HashMap<[i32; 3], bool>,
     lp: JobLoop,
     prepared: std::collections::HashMap<[i32; 3], Arc<PreparedMasks>>,
     prepared_bytes: usize,
@@ -3113,6 +3214,9 @@ impl BakeQueue {
         Self {
             settings,
             slice_ms,
+            coarse_samples: DEFAULT_COARSE_SAMPLES,
+            near: DEFAULT_NEAR,
+            job_coarse: Default::default(),
             lp: JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS).timed(),
             prepared: Default::default(),
             prepared_bytes: 0,
@@ -3139,10 +3243,21 @@ impl BakeQueue {
         self.lp.idle() && self.fades.is_empty() && self.stats.depth == 0
     }
 
-    /// Whether `c` holds its block or is known to have none: no face, or (`absent`) no chunk.
+    /// Whether `c` holds its block at the full count or is known to have none: no face, or
+    /// (`absent`) no chunk.
     pub fn settled(&self, store: &Store, c: ChunkCoord, absent: bool) -> bool {
-        (store.blocks.contains_key(&c.0) || self.faceless.contains(&c.0) || absent)
+        ((store.blocks.contains_key(&c.0) && !store.is_coarse(c))
+            || self.faceless.contains(&c.0)
+            || absent)
             && !self.lp.chunks().any(|j| j == c)
+    }
+
+    /// Whether `c` has had its first pass: it holds a block (coarse or full), is known to have
+    /// no face, or its reach or lights were not ready at its last check.
+    pub fn passed(&self, store: &Store, c: ChunkCoord) -> bool {
+        store.blocks.contains_key(&c.0)
+            || self.faceless.contains(&c.0)
+            || self.blocked.contains_key(&c.0)
     }
 
     /// Takes the stream workers' results; one made under other classes than `classes` is dropped.
@@ -3267,17 +3382,21 @@ impl BakeQueue {
         let stale = &mut self.stale;
         let fades = &mut self.fades;
         let stats = &mut self.stats;
+        let job_coarse = &mut self.job_coarse;
         let record = self
             .settings
             .rings
             .as_ref()
             .map_or(BRICK_WORDS, Rings::record_words);
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
+            let coarse = job_coarse.remove(&coord.0).unwrap_or(false);
             if stale.remove(&coord.0) || !run.gpu.is_mirrored(coord) {
                 store.release(first, block.len() as u64);
                 return;
             }
             stats.baked += 1;
+            // The table word's flag follows at the put below.
+            store.mark_coarse(coord, coarse);
             let old = store
                 .blocks
                 .get(&coord.0)
@@ -3350,6 +3469,7 @@ impl BakeQueue {
         self.advance_fades(run.queue, store, record);
         self.stats.jobs = self.lp.chunks().count() as u64;
         self.stats.fading = self.fades.len() as u64;
+        self.stats.coarse = store.coarse.len() as u64;
         Ok(self.stats)
     }
 
@@ -3409,10 +3529,11 @@ impl BakeQueue {
         let gpu = run.gpu;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
-        let mut cands: Vec<(i64, i32, [i32; 3])> = gpu
+        // Class 0: no block yet; class 1: a coarse block to refine. Every class 0 comes first.
+        let mut cands: Vec<(u8, i64, i32, [i32; 3])> = gpu
             .full_chunks()
             .filter(|c| {
-                !store.blocks.contains_key(&c.0)
+                (!store.blocks.contains_key(&c.0) || store.is_coarse(*c))
                     && !self.faceless.contains(&c.0)
                     && !in_job.contains(&c.0)
             })
@@ -3421,26 +3542,44 @@ impl BakeQueue {
                 let d2: i64 = d.iter().map(|&v| i64::from(v).pow(2)).sum();
                 let len = (d2 as f32).sqrt().max(1.0);
                 let dot: f32 = (0..3).map(|k| d[k] as f32 * view.forward[k]).sum::<f32>() / len;
-                (d2, -(dot * 1000.0) as i32, c.0)
+                let class = u8::from(store.blocks.contains_key(&c.0));
+                (class, d2, -(dot * 1000.0) as i32, c.0)
             })
             .collect();
         self.stats.depth = cands.len() as u64;
+        let steps = self.steps;
+        let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
+        self.stats.unbaked = cands
+            .iter()
+            .filter(|c| c.0 == 0 && !recent(self.blocked.get(&c.3)))
+            .count() as u64;
         cands.sort_unstable();
+        let checks = if view.samples.is_some() {
+            QUEUE_CHECKS_UNSLICED
+        } else {
+            QUEUE_CHECKS
+        };
         let classes = face_classes(run.world.materials());
         let lr = gpu.light_radius();
-        let (mut checked, mut reach, mut lights) = (0usize, 0u64, 0u64);
-        for (_, _, c) in cands {
-            if self.lp.samples_left() >= 2 * cap || checked >= QUEUE_CHECKS {
+        // Class 1 (refinement) is opened only by an opening that found no class 0 candidate
+        // ready, so every chunk with no block that can bake comes first; those whose reach or
+        // lights are not ready (a streamed world's edge) cannot starve the refinement behind them.
+        let (mut checked, mut reach, mut lights) = ([0usize; 2], 0u64, 0u64);
+        let mut ready0 = 0usize;
+        // A step without a slice (the pre-roll) gates up to `checks` candidates and lists them
+        // across threads; a sliced step lists each in turn and stops at two slices of samples.
+        let parallel = view.samples.is_some();
+        let mut ready: Vec<(u8, [i32; 3])> = Vec::new();
+        // The loop's samples left, read once (it walks every open face) and then counted on.
+        let mut left = self.lp.samples_left();
+        for (class, _, _, c) in cands {
+            if left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0) {
                 break;
             }
-            if self
-                .blocked
-                .get(&c)
-                .is_some_and(|&at| self.steps - at < QUEUE_RECHECK)
-            {
+            if checked[usize::from(class)] >= checks || recent(self.blocked.get(&c)) {
                 continue;
             }
-            checked += 1;
+            checked[usize::from(class)] += 1;
             let coord = ChunkCoord(c);
             if !reach_ready(run, coord, lr, view.resident) {
                 reach += 1;
@@ -3453,52 +3592,110 @@ impl BakeQueue {
                 continue;
             }
             self.blocked.remove(&c);
-            let (faces, prepared) = self.list(run.world, coord, &classes);
-            self.stats.prepared += u64::from(prepared);
-            if let Some(m) = self.prepared.remove(&c) {
-                self.prepared_bytes -= m.masks.bytes();
+            if class == 0 {
+                ready0 += 1;
             }
-            if faces.faces() == 0 {
-                self.faceless.insert(c);
+            if parallel {
+                ready.push((class, c));
                 continue;
             }
-            let tier = Some(Tier::Brick);
-            let record = self
-                .settings
-                .rings
-                .as_ref()
-                .map_or(BRICK_WORDS, Rings::record_words);
-            let words = layout(&faces, tier, record).1;
-            let first_word = store.alloc(words)?;
-            let brick_samples = self
-                .settings
-                .rings
-                .as_ref()
-                .map_or(BRICK_LEVEL_SAMPLES, |r| r.brick_samples);
-            let samples = faces
-                .bricks
-                .iter()
-                .map(|(_, keys)| {
-                    let mut dirs = [false; 6];
-                    for k in keys {
-                        dirs[usize::from(k & 7)] = true;
-                    }
-                    dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
-                })
-                .sum();
-            self.lp.push(Job {
-                coord,
-                faces,
-                first_word,
-                kept: None,
-                tier,
-                kept_bricks: KeptBricks::new(),
-                samples,
+            let listed = self.list(run.world, coord, &classes);
+            left += self.push_listed(store, eye, class, coord, listed)?;
+        }
+        if !ready.is_empty() {
+            let threads = std::thread::available_parallelism()
+                .map_or(4, std::num::NonZero::get)
+                .clamp(1, 16);
+            let per = ready.len().div_ceil(threads);
+            let this = &*self;
+            let listed: Vec<(ChunkFaces, bool)> = std::thread::scope(|scope| {
+                let handles: Vec<_> = ready
+                    .chunks(per)
+                    .map(|part| {
+                        let classes = &classes;
+                        scope.spawn(move || {
+                            part.iter()
+                                .map(|&(_, c)| this.list(run.world, ChunkCoord(c), classes))
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|h| h.join().expect("a listing thread panicked"))
+                    .collect()
             });
+            for ((class, c), l) in ready.into_iter().zip(listed) {
+                self.push_listed(store, eye, class, ChunkCoord(c), l)?;
+            }
         }
         self.stats.waiting_reach = reach;
         self.stats.waiting_lights = lights;
         Ok(())
+    }
+
+    /// Opens `coord`'s job from its listed faces (and whether its masks were prepared): its
+    /// place allocated, its count the coarse pass's for a chunk of `class` 0 (no block) beyond
+    /// [`BakeQueue::near`] of `eye` (chunks), else the settings'. A chunk with no face is marked
+    /// faceless instead. The job's samples at most (0 for none).
+    fn push_listed(
+        &mut self,
+        store: &mut Store,
+        eye: [i32; 3],
+        class: u8,
+        coord: ChunkCoord,
+        (faces, prepared): (ChunkFaces, bool),
+    ) -> Result<u64, BakeError> {
+        let c = coord.0;
+        self.stats.prepared += u64::from(prepared);
+        if let Some(m) = self.prepared.remove(&c) {
+            self.prepared_bytes -= m.masks.bytes();
+        }
+        if faces.faces() == 0 {
+            self.faceless.insert(c);
+            return Ok(0);
+        }
+        let tier = Some(Tier::Brick);
+        let record = self
+            .settings
+            .rings
+            .as_ref()
+            .map_or(BRICK_WORDS, Rings::record_words);
+        let words = layout(&faces, tier, record).1;
+        let first_word = store.alloc(words)?;
+        let far = (0..3).map(|k| (c[k] - eye[k]).abs()).max().unwrap_or(0) > self.near;
+        let coarse = class == 0 && self.coarse_samples > 0 && far;
+        let brick_samples = if coarse {
+            self.coarse_samples
+        } else {
+            self.settings
+                .rings
+                .as_ref()
+                .map_or(BRICK_LEVEL_SAMPLES, |r| r.brick_samples)
+        };
+        let samples = faces
+            .bricks
+            .iter()
+            .map(|(_, keys)| {
+                let mut dirs = [false; 6];
+                for k in keys {
+                    dirs[usize::from(k & 7)] = true;
+                }
+                dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
+            })
+            .sum();
+        self.lp.push(Job {
+            coord,
+            faces,
+            first_word,
+            kept: None,
+            tier,
+            kept_bricks: KeptBricks::new(),
+            samples,
+            brick_samples: coarse.then_some(brick_samples),
+        });
+        self.job_coarse.insert(c, coarse);
+        Ok(samples)
     }
 
     /// `coord`'s faces: from its prepared masks and its neighbours' where they are held, the

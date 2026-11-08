@@ -3220,6 +3220,23 @@ impl Frame {
         }
     }
 
+    /// The live queue's coarse pass: `samples` a brick direction (0 none) for a chunk's first
+    /// block beyond `near` chunks (Chebyshev) of the camera's.
+    pub fn set_bake_coarse(&mut self, samples: u32, near: i32) {
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.coarse_samples = samples;
+            q.near = near;
+        }
+    }
+
+    /// Whether each of `chunks` has had the live queue's first pass
+    /// ([`crate::bake::BakeQueue::passed`]); true without the queue.
+    pub fn bake_passed(&self, chunks: &[ChunkCoord]) -> bool {
+        self.bake_queue
+            .as_ref()
+            .is_none_or(|q| chunks.iter().all(|&c| q.passed(&self.store, c)))
+    }
+
     /// Hands the live queue the stream workers' prepared masks ([`crate::bake::FacePrep`]).
     pub fn take_prepared(
         &mut self,
@@ -3473,15 +3490,15 @@ impl Frame {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> crate::bake::StoreStats {
-        let (missing, brick_reads) = if self.lighting.light == Light::Baked {
-            let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 8);
+        let (missing, brick_reads, coarse_reads) = if self.lighting.light == Light::Baked {
+            let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 12);
             let word =
                 |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
-            (word(0), word(4))
+            (word(0), word(4), word(8))
         } else {
-            (0, 0)
+            (0, 0, 0)
         };
-        self.store.stats(missing, brick_reads)
+        self.store.stats(missing, brick_reads, coarse_reads)
     }
 
     /// The store.
@@ -4338,7 +4355,8 @@ impl Frame {
             std::sync::atomic::Ordering::Relaxed,
         );
         if self.lighting.light == Light::Baked {
-            encoder.clear_buffer(self.store.pool(), 0, Some(8));
+            // The header's counters: missing, brick reads, coarse reads.
+            encoder.clear_buffer(self.store.pool(), 0, Some(12));
         }
         if table_cleared {
             encoder.clear_buffer(cache_table, 0, None);

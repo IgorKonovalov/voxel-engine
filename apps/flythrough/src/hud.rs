@@ -1187,6 +1187,8 @@ mod tests {
                 bytes: 3_400_000,
                 missing: 56,
                 brick_reads: 0,
+                coarse_reads: 0,
+                coarse_chunks: 0,
             }),
             store_note: store_note(
                 Some("piece r2 at [11, 10, 3]"),

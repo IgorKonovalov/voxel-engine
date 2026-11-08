@@ -29,7 +29,8 @@
 //  12  storage           store           the loaded store (ADR-0046, `bake::Store`), read under
 //                                        `store_on`; word 0 counts this frame's cacheable hits
 //                                        with no cell nor brick record (`store_missing`), word 1
-//                                        those that read a brick record
+//                                        those that read a brick record, word 2 those whose
+//                                        voxel's chunk holds a coarse block (TABLE_COARSE)
 //
 // Under `store_on` a cube face's emissive part is its store cell times the dominant material's
 // emission scale now and this frame's exposure, again with no screen history. Where the store's
@@ -100,6 +101,9 @@ const STORE_SIZE: u32 = 8u;
 const STORE_FLAGS: u32 = 12u;
 const STORE_TABLE: u32 = 16u;
 const BRICK_WORDS: u32 = 7u;
+// A chunk table word's flag (`bake::TABLE_COARSE`): the block is the live queue's coarse pass. The
+// rest of the word is the block's first word.
+const TABLE_COARSE: u32 = 0x80000000u;
 
 // The value of an rgb9e5 word: three 9-bit mantissas over a shared exponent, biased by 15 + 9.
 fn rgb9e5_decode(w: u32) -> vec3<f32> {
@@ -124,7 +128,7 @@ fn store_value(v: vec3<i32>, face: u32) -> vec4<f32> {
     if (any(c < vec3<i32>(0)) || any(c >= size)) {
         return vec4<f32>(0.0);
     }
-    let block = atomicLoad(&store[STORE_TABLE + u32(c.x + size.x * (c.y + size.y * c.z))]);
+    let block = atomicLoad(&store[STORE_TABLE + u32(c.x + size.x * (c.y + size.y * c.z))]) & ~TABLE_COARSE;
     if (block == 0u) {
         return vec4<f32>(0.0);
     }
@@ -159,6 +163,12 @@ fn store_bricks_on() -> bool {
 
 // The block of chunk `c` (world chunks), 0 for none or outside the window.
 fn store_block(c: vec3<i32>) -> u32 {
+    return store_table(c) & ~TABLE_COARSE;
+}
+
+// Chunk `c`'s table word (world chunks): its block's first word with the TABLE_COARSE flag, 0 for
+// none or outside the window.
+fn store_table(c: vec3<i32>) -> u32 {
     let origin = vec3<i32>(
         i32(atomicLoad(&store[STORE_ORIGIN])),
         i32(atomicLoad(&store[STORE_ORIGIN + 1u])),
@@ -347,6 +357,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         if (c.w == 0.0) {
             atomicAdd(&store[0], 1u);
+        } else if ((store_table(voxel >> vec3<u32>(6u)) & TABLE_COARSE) != 0u) {
+            atomicAdd(&store[2], 1u);
         }
         cached = true;
         sample = vec4<f32>(c.xyz * exposure_now(), sample.w);

@@ -105,11 +105,14 @@
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
 //! `--light queue` (and `--light baked` on the streamed world) fills a loaded-light store from
-//! nothing with the live queue (ADR-0046's scheduler): the camera's chunk and its 26 neighbours
-//! are baked before the first frame and every other full chunk a slice a frame, nearest first,
-//! at the brick level (8 voxels, 4096 samples a brick direction), its row in the banner, its
-//! depth on the HUD's store row and a `bake queue:` line a second on stdout; `--bake-slice MS`
-//! sets the slice (default 1.5) and `F` swaps the read with the table; `--queue-file PATH` writes
+//! nothing with the live queue (ADR-0046's scheduler) at the brick level (8 voxels, 4096 samples a
+//! brick direction): before the first frame, at full GPU, the chunks within `--near R` (default
+//! 2, Chebyshev) of the camera's at 4096 and every other mirrored chunk a coarse pass at
+//! `--coarse N` (default 256; 0 none, and then the near chunks alone); after it, a slice a frame
+//! refines the coarse chunks nearest first, each fading from its coarse value, and a chunk the
+//! mirror gains takes its coarse pass first; its row in the banner, its depth on the HUD's store
+//! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
+//! 1.5) and `F` swaps the read with the table; `--queue-file PATH` writes
 //! the store to `PATH` when the queue first empties; `--glide V` moves the
 //! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
 //! flight to the vein);
@@ -515,6 +518,12 @@ struct Args {
     /// `--bake-slice MS`: the live queue's slice a frame (default
     /// `vxe_render::bake::DEFAULT_BAKE_SLICE_MS`).
     bake_slice: f64,
+    /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
+    /// default `vxe_render::bake::DEFAULT_COARSE_SAMPLES`).
+    bake_coarse: u32,
+    /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
+    /// before the first frame (default `vxe_render::bake::DEFAULT_NEAR`).
+    bake_near: i32,
     /// `--glide V`: the camera moves along its heading at `V` voxels a second (1/60 s a headless
     /// frame), for a flight reading.
     glide: Option<f32>,
@@ -612,6 +621,11 @@ const SHOWCASE_LIGHT_RADIUS: i32 = 19;
 /// Samples a step of the live queue's pre-roll draws: about one chunk's brick level at 4096, so
 /// the jobs it opens stay near the camera.
 const PRE_ROLL_SAMPLES: u64 = 2_000_000;
+
+/// Milliseconds the pre-roll's coarse pass runs at most past the near chunks: a streamed world's
+/// mirror holds about 17 000 full chunks within its full radius, which the live queue then takes
+/// coarse first; the level's 3168 take about 4 s on the RTX.
+const COARSE_PRE_ROLL_MS: f64 = 5000.0;
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
@@ -810,6 +824,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         show: None,
         bake_queue: false,
         bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+        bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
+        bake_near: vxe_render::bake::DEFAULT_NEAR,
         glide: None,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
@@ -1122,6 +1138,22 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok()
                     .filter(|ms: &f64| (0.1..=100.0).contains(ms))
                     .ok_or(format!("--bake-slice takes 0.1 to 100 ms, not {v}"))?;
+            }
+            "--coarse" => {
+                let v = value()?;
+                args.bake_coarse = v
+                    .parse()
+                    .ok()
+                    .filter(|n: &u32| *n <= vxe_render::bake::QUEUE_BRICK_SAMPLES)
+                    .ok_or(format!("--coarse takes 0 to 4096 samples, not {v}"))?;
+            }
+            "--near" => {
+                let v = value()?;
+                args.bake_near = v
+                    .parse()
+                    .ok()
+                    .filter(|r: &i32| (0..=8).contains(r))
+                    .ok_or(format!("--near takes 0 to 8 chunks, not {v}"))?;
             }
             "--glide" => {
                 let v = value()?;
@@ -4149,7 +4181,7 @@ impl Run {
             let start = now();
             match frame.load_store_file(&gpu.device, &gpu.queue, mirror, &self.world, path, &key) {
                 Ok(()) => {
-                    let s = frame.store().stats(0, 0);
+                    let s = frame.store().stats(0, 0, 0);
                     println!(
                         "bake file ({what}): loaded {} in {:.0} ms, {label}, {} chunks, store {:.1} MB",
                         path.display(),
@@ -4293,31 +4325,40 @@ impl Run {
     }
 
     /// The pre-roll under `--light queue`: the live queue started on an empty store, then synced
-    /// and stepped without a slice until the camera's chunk and its 26 neighbours hold their
-    /// blocks (or are known to need none), streaming meanwhile on the streamed world. Prints the
-    /// time; the rest fills a slice a frame.
+    /// and stepped without a slice until the chunks within `--near` of the camera's hold their
+    /// full blocks (or are known to need none) and, under `--coarse`, every full chunk the mirror
+    /// held at that moment has had its first pass, streaming meanwhile on the streamed world (whose
+    /// later chunks take theirs in the live queue). Prints the two times; the rest is refined a
+    /// slice a frame.
     fn queue_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
         let settings = vxe_render::bake::queue_settings();
         if let Err(e) = frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice) {
             self.failure.set(format!("bake queue: {e}"));
             return;
         }
+        frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
         let camera = start_camera(&self.args, self.spawn);
         let eye = camera.position.to_array();
         let (forward, _, _) = camera.basis();
         let centre = ChunkCoord(eye.map(|v| (v / 64.0).floor() as i32));
-        let near: Vec<ChunkCoord> = (-1..=1)
+        let r = self.args.bake_near;
+        let near: Vec<ChunkCoord> = (-r..=r)
             .flat_map(|z| {
-                (-1..=1).flat_map(move |y| {
-                    (-1..=1).map(move |x| {
+                (-r..=r).flat_map(move |y| {
+                    (-r..=r).map(move |x| {
                         ChunkCoord([centre.0[0] + x, centre.0[1] + y, centre.0[2] + z])
                     })
                 })
             })
             .collect();
         let start = now();
+        // The near chunks' moment: the time, the chunks baked and the samples by then, and the
+        // full chunks mirrored then, which the coarse pass covers before the first frame.
+        let mut near_done: Option<(f64, u64, u64)> = None;
+        let mut first_pass: Vec<ChunkCoord> = Vec::new();
+        let mut boxed = false;
         loop {
             let mut enc = gpu
                 .device
@@ -4358,15 +4399,27 @@ impl Run {
                 return;
             }
             let bounded = stream.is_none();
-            let settled = near.iter().all(|&c| {
-                let absent = bounded && self.world.store().get(c).is_none();
-                frame.bake_settled(c, absent)
-            });
-            if settled {
-                break;
+            if near_done.is_none()
+                && near.iter().all(|&c| {
+                    let absent = bounded && self.world.store().get(c).is_none();
+                    frame.bake_settled(c, absent)
+                })
+            {
+                let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+                near_done = Some((ms_since(start), st.baked, st.total_samples));
+                first_pass = mirror.full_chunks().collect();
+            }
+            if let Some((near_ms, _, _)) = near_done {
+                if self.args.bake_coarse == 0 || frame.bake_passed(&first_pass) {
+                    break;
+                }
+                if ms_since(start) - near_ms > COARSE_PRE_ROLL_MS {
+                    boxed = true;
+                    break;
+                }
             }
             if ms_since(start) > 120_000.0 {
-                println!("bake queue: the near chunks did not settle in 120 s; going on");
+                println!("bake queue: the pre-roll did not end in 120 s; going on");
                 break;
             }
             if stream.is_some() {
@@ -4374,12 +4427,32 @@ impl Run {
             }
         }
         let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+        let total = ms_since(start);
+        let (near_ms, near_baked, near_samples) =
+            near_done.unwrap_or((total, st.baked, st.total_samples));
         println!(
-            "bake queue: the camera's chunk {:?} and its 26 neighbours baked in {:.0} ms ({} chunks, {:.3e} samples, {} listed from the workers), {:.0} ms since the start",
+            "bake queue: the camera's chunk {:?} and the {} within {} at 4096 by {:.0} ms ({} chunks, {:.3e} samples); the coarse pass at {} by {:.0} ms (+{:.0} ms, +{} chunks, +{:.3e} samples, {} coarse{}); {} listed from the workers; {:.0} ms since the start",
             centre.0,
-            ms_since(start),
-            st.baked,
-            st.total_samples as f64,
+            near.len(),
+            r,
+            near_ms,
+            near_baked,
+            near_samples as f64,
+            self.args.bake_coarse,
+            total,
+            total - near_ms,
+            st.baked - near_baked,
+            (st.total_samples - near_samples) as f64,
+            st.coarse,
+            if boxed {
+                format!(
+                    ", ended by its {:.0} s box with the rest of the {} chunks to the queue",
+                    COARSE_PRE_ROLL_MS / 1e3,
+                    first_pass.len()
+                )
+            } else {
+                String::new()
+            },
             st.prepared,
             ms_since(self.start)
         );
@@ -4470,7 +4543,8 @@ impl Run {
             t - self.queue.line_ms >= 1000.0
         };
         if due && let Some(st) = self.queue.stats {
-            let missing = gfx.frame.read_store_stats(&gpu.device, &gpu.queue).missing;
+            let store_stats = gfx.frame.read_store_stats(&gpu.device, &gpu.queue);
+            let missing = store_stats.missing;
             let pixels = gfx.frame.light_pixels().max(1);
             let secs = if self.args.headless {
                 f64::from(self.frame - self.queue.line_frame) / 60.0
@@ -4483,7 +4557,7 @@ impl Run {
             let p50 = sl.get(sl.len() / 2).copied().unwrap_or(0.0);
             let max = sl.last().copied().unwrap_or(0.0);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, no value {:.4} of {} pixels, eye {:.0} {:.0} {:.0}",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels, eye {:.0} {:.0} {:.0}",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -4500,7 +4574,9 @@ impl Run {
                 sl.len(),
                 st.ns_per_sample,
                 st.fading,
+                st.coarse,
                 f64::from(missing) / f64::from(pixels),
+                f64::from(store_stats.coarse_reads) / f64::from(pixels),
                 pixels,
                 self.fly.camera.position.x,
                 self.fly.camera.position.y,
@@ -4519,9 +4595,20 @@ impl Run {
     /// The live queue's banner row: the mode, its settings and slice, and the read.
     fn queue_row(&self) -> String {
         format!(
-            "light: live queue, bricks {}/{}, slice {} ms, read {} (F swaps the table)",
+            "light: live queue, bricks {}/{}, {}, slice {} ms, read {} (F swaps the table)",
             vxe_render::bake::BRICK_CELL,
             vxe_render::bake::QUEUE_BRICK_SAMPLES,
+            if self.args.bake_coarse > 0 {
+                format!(
+                    "coarse {}/{} first, near {} at {}",
+                    vxe_render::bake::BRICK_CELL,
+                    self.args.bake_coarse,
+                    self.args.bake_near,
+                    vxe_render::bake::QUEUE_BRICK_SAMPLES
+                )
+            } else {
+                format!("no coarse pass, near {}", self.args.bake_near)
+            },
             self.args.bake_slice,
             match self.modes.lighting.light {
                 vxe_render::Light::Table => "table",
@@ -4534,8 +4621,8 @@ impl Run {
     fn queue_note(&self) -> String {
         match self.queue.stats {
             Some(st) if self.args.bake_queue => format!(
-                ", queue depth {}, jobs {}, slice {:.2} ms",
-                st.depth, st.jobs, st.ms
+                ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms",
+                st.depth, st.coarse, st.jobs, st.ms
             ),
             _ => String::new(),
         }
