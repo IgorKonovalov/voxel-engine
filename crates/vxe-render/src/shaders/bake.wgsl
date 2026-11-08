@@ -6,7 +6,7 @@
 // job slot (`bake_table_slot`, the job's `bake::job_table`) and the LOD walk's camera chunk is the
 // job's chunk (`bake_origin_chunk`). So one dispatch serves faces of many jobs. The CPU keeps the
 // running sums and decides each face's stop (`bake::run`); this pass only returns each entry's
-// round of sums.
+// round of sums, which the CPU may read back frames after the submit (`bake::JobLoop`).
 //
 // Bindings, group 3:
 //   0  uniform  job    the dispatch's job: its entries' count and first, seed, radius, clamp
@@ -16,10 +16,14 @@
 //   2  storage  tables the open jobs' slots, TABLE_SLOT words each: the candidate table's
 //                      header and entries, then the job's chunk (xyz)
 //
-// A face's samples are a function of its key, `job.seed` and the sample's index alone, and one
-// invocation adds them in index order, so a result does not depend on the batching or on the
-// jobs' order. Each sample is the light pass's estimate at a uniform point of the face with the
-// face's normal, times the window `(1 - (d / L)^4)^2`, d the distance from the point to the kept
+// A face's samples are a function of its key, `job.seed` and the sample's index alone. One
+// workgroup of BAKE_LANES lanes takes an entry: lane `l` draws the round's samples `l`,
+// `l + BAKE_LANES`, ..., and the lanes' sums reduce in workgroup memory, so a result does not
+// depend on the batching or on the jobs' order, and differs from one lane drawing them in turn
+// only by the order of its float sums (the round's largest luminance is the earliest sample's on a
+// tie, as in turn). The entries span the dispatch's x then y: entry = y * BAKE_ROW + x.
+//
+// Each sample is the light pass's estimate at a uniform point of the face with the face's normal, times the window `(1 - (d / L)^4)^2`, d the distance from the point to the kept
 // emitter point and L `job.radius` in voxels: it falls to 0 at L, so the table's edge is no seam.
 
 struct BakeJob {
@@ -80,13 +84,38 @@ fn bake_origin_chunk() -> vec3<i32> {
     return bitcast<vec3<i32>>(tables[bake_slot * TABLE_SLOT + TABLE_SLOT - 1u].xyz);
 }
 
+// Lanes an entry's samples spread over (`bake::BAKE_LANES`), and workgroups a dispatch row holds
+// (`bake::BAKE_ROW`).
+const BAKE_LANES: u32 = 64u;
+const BAKE_ROW: u32 = 32768u;
+
+// Each lane's sums, reduced in place to lane 0's.
+var<workgroup> red_sum: array<vec3<f32>, 64>;
+var<workgroup> red_clamped: array<vec3<f32>, 64>;
+var<workgroup> red_lum2: array<f32, 64>;
+var<workgroup> red_best: array<f32, 64>;
+// The sample index of the lane's largest luminance (0xFFFFFFFF: none over 0), and its material.
+var<workgroup> red_best_at: array<u32, 64>;
+var<workgroup> red_material: array<u32, 64>;
+var<workgroup> red_rays: array<u32, 64>;
+var<workgroup> red_len: array<f32, 64>;
+var<workgroup> red_samples: u32;
+
 @compute @workgroup_size(64, 1, 1)
-fn bake_round(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= job.count) {
+fn bake_round(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_index) lane: u32,
+) {
+    let at = wid.y * BAKE_ROW + wid.x;
+    if (at >= job.count) {
         return;
     }
-    let at = gid.x;
     var f = faces[at];
+    if (lane == 0u) {
+        red_samples = f.samples;
+    }
+    // The round's length, uniform across the workgroup, bounds every lane's loop.
+    let samples = workgroupUniformLoad(&red_samples);
     bake_slot = f.slot;
     reset_walk();
     let v = vec3<i32>(f.voxel_x, f.voxel_y, f.voxel_z);
@@ -97,10 +126,11 @@ fn bake_round(@builtin(global_invocation_id) gid: vec3<u32>) {
     var clamped = vec3<f32>(0.0);
     var lum2 = 0.0;
     var best_lum = 0.0;
+    var best_at = 0xFFFFFFFFu;
     var best_material = 0u;
     var rays = 0u;
     var ray_len = 0.0;
-    for (var s = 0u; s < f.samples; s++) {
+    for (var s = lane; s < samples; s += BAKE_LANES) {
         let px = vec2<u32>(stream, f.first + s);
         let p = face_point(v, f.face, px);
         let r = draw_candidates(px, p, nf);
@@ -131,19 +161,49 @@ fn bake_round(@builtin(global_invocation_id) gid: vec3<u32>) {
         lum2 += kept * kept;
         if (kept > best_lum) {
             best_lum = kept;
+            best_at = s;
             best_material = lookup(vec3<i32>(floor(r.x - 0.5 * face_dir(r.face)))).material;
         }
     }
-    f.sum_r = sum.x;
-    f.sum_g = sum.y;
-    f.sum_b = sum.z;
-    f.clamped_r = clamped.x;
-    f.clamped_g = clamped.y;
-    f.clamped_b = clamped.z;
-    f.lum2 = lum2;
-    f.best_lum = best_lum;
-    f.best_material = best_material;
-    f.rays = rays;
-    f.ray_len = ray_len;
+    red_sum[lane] = sum;
+    red_clamped[lane] = clamped;
+    red_lum2[lane] = lum2;
+    red_best[lane] = best_lum;
+    red_best_at[lane] = best_at;
+    red_material[lane] = best_material;
+    red_rays[lane] = rays;
+    red_len[lane] = ray_len;
+    for (var stride = BAKE_LANES / 2u; stride > 0u; stride >>= 1u) {
+        workgroupBarrier();
+        if (lane < stride) {
+            let o = lane + stride;
+            red_sum[lane] += red_sum[o];
+            red_clamped[lane] += red_clamped[o];
+            red_lum2[lane] += red_lum2[o];
+            red_rays[lane] += red_rays[o];
+            red_len[lane] += red_len[o];
+            let b = red_best[o];
+            let b_at = red_best_at[o];
+            if (b > red_best[lane] || (b == red_best[lane] && b_at < red_best_at[lane])) {
+                red_best[lane] = b;
+                red_best_at[lane] = b_at;
+                red_material[lane] = red_material[o];
+            }
+        }
+    }
+    if (lane != 0u) {
+        return;
+    }
+    f.sum_r = red_sum[0].x;
+    f.sum_g = red_sum[0].y;
+    f.sum_b = red_sum[0].z;
+    f.clamped_r = red_clamped[0].x;
+    f.clamped_g = red_clamped[0].y;
+    f.clamped_b = red_clamped[0].z;
+    f.lum2 = red_lum2[0];
+    f.best_lum = red_best[0];
+    f.best_material = red_material[0];
+    f.rays = red_rays[0];
+    f.ray_len = red_len[0];
     faces[at] = f;
 }

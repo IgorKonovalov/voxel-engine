@@ -17,9 +17,11 @@
 //! **The job** ([`Frame::bake_until`](crate::Frame::bake_until)): a chunk's faces, its own
 //! candidate table ([`job_table`]) and its frame parameters, staged once in a slot when the job
 //! opens. A submit holds the live faces of up to [`OPEN_JOBS`] open jobs, at most
-//! [`SUBMIT_SAMPLES`] samples, and is waited on. Each job is one dispatch, preceded by copies of
-//! its slot to where the frame's table, the frame's parameters and the job uniform go, so every
-//! face samples its own job's table. An entry of the working buffer is one round of one face: a
+//! [`SUBMIT_SAMPLES`] samples, in one dispatch whose entries name their jobs' slots, so every face
+//! samples its own job's table. A one-off bake waits on each submit; the live queue reads a submit
+//! back frames later, once mapped, with at most [`IN_FLIGHT`] unread, and a face's next round
+//! starts after the samples it has in flight. An entry of the working buffer is one round of one
+//! face, its samples spread over a workgroup's [`BAKE_LANES`] lanes: a
 //! face takes the rounds that cannot end it (those up to `n_min`) at once, one round past that,
 //! and, when the submit still has room and no job is left to open, further rounds speculatively.
 //! `bake.wgsl` returns each entry's sums; the running sums are kept here in `f64` and added round
@@ -50,7 +52,6 @@ use vxe_world::{
 
 use crate::gpu_world::GpuWorld;
 use crate::marcher::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
-use crate::readback;
 
 /// The sampler, compiled after [`crate::MARCH_WGSL`] and [`crate::LIGHT_WGSL`].
 pub const BAKE_WGSL: &str = include_str!("shaders/bake.wgsl");
@@ -1634,6 +1635,8 @@ struct FaceState {
     n_min: u32,
     n_max: u32,
     n: u32,
+    /// Samples submitted and not read back yet: the next round starts at `n + queued`.
+    queued: u32,
     sum: [f64; 3],
     clamped: [f64; 3],
     lum2: f64,
@@ -1679,14 +1682,19 @@ impl FaceState {
         w
     }
 
-    /// Samples its round `k` from now draws.
-    fn round_samples(&self, k: u32, round: u32) -> u32 {
-        round.min(self.n_max.saturating_sub(self.n + k * round))
+    /// The first sample no submit has drawn.
+    fn next(&self) -> u32 {
+        self.n + self.queued
     }
 
-    /// The rounds left before its `n_max`.
+    /// Samples its round `k` from the next draws.
+    fn round_samples(&self, k: u32, round: u32) -> u32 {
+        round.min(self.n_max.saturating_sub(self.next() + k * round))
+    }
+
+    /// The rounds left to submit before its `n_max`.
     fn rounds_left(&self, round: u32) -> u32 {
-        (self.n_max - self.n).div_ceil(round)
+        self.n_max.saturating_sub(self.next()).div_ceil(round)
     }
 
     /// The rounds its stop is expected to need, from its standard error now, which falls as
@@ -1697,14 +1705,14 @@ impl FaceState {
         }
         let ratio = self.se(clamp) / f64::from(se);
         let wanted = (f64::from(self.n) * ratio * ratio).min(f64::from(self.n_max));
-        let more = (wanted - f64::from(self.n)).max(0.0);
+        let more = (wanted - f64::from(self.next())).max(0.0);
         (more / f64::from(round)).ceil() as u32
     }
 
     /// The rounds none of which can end the face before the last: those up to its `n_min`, or one.
     fn certain_rounds(&self, round: u32) -> u32 {
-        if self.n < self.n_min {
-            (self.n_min - self.n).div_ceil(round)
+        if self.next() < self.n_min {
+            (self.n_min - self.next()).div_ceil(round)
         } else {
             1
         }
@@ -2239,16 +2247,52 @@ pub const QUEUE_SLOTS: usize = 16;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SubmitDone {
     pub samples: u64,
-    /// From the submit to the readback, waited on.
+    /// From the submit to the readback.
     pub seconds: f64,
+    /// The dispatch's milliseconds on the GPU's timestamps, where the loop times its submits.
+    pub gpu_ms: Option<f64>,
+}
+
+/// Lanes of a workgroup that share an entry's samples (`BAKE_LANES` in bake.wgsl).
+pub const BAKE_LANES: u32 = 64;
+/// Workgroups a dispatch row holds (`BAKE_ROW` in bake.wgsl): the entries span x then y.
+const BAKE_ROW: u32 = 32_768;
+/// Submits a loop holds unread at most ([`JobLoop::dispatch`]).
+pub const IN_FLIGHT: usize = 2;
+/// Bytes at the head of a submit's readback: its dispatch's two timestamps.
+const STAMP_BYTES: u64 = 16;
+
+/// A submit not read back yet: its entries in dispatch order (job slot, face, rounds) and the
+/// buffer its results are copied to, mapped when `ready` reads 1.
+struct InFlight {
+    entries: Vec<(usize, usize, u32)>,
+    count: u64,
+    staging: wgpu::Buffer,
+    ready: Arc<std::sync::atomic::AtomicU8>,
+    timed: bool,
+    t: Instant,
+}
+
+/// The loop's own timestamps, resolved into each submit's readback.
+struct LoopTimer {
+    queries: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    period_ns: f32,
 }
 
 /// The job loop, resumable: jobs pending and open, the table slots free, and what it did. Each
-/// [`JobLoop::submit`] is one dispatch, waited on.
+/// [`JobLoop::dispatch`] is one dispatch, read back by a later [`JobLoop::collect`] once the GPU
+/// is done with it; [`JobLoop::submit`] does both, waited on.
 pub(crate) struct JobLoop {
     pending: VecDeque<Job>,
     open: Vec<OpenJob>,
     free: Vec<usize>,
+    in_flight: VecDeque<InFlight>,
+    staging: Vec<wgpu::Buffer>,
+    /// Whether the loop times its submits on its own timestamps, and the timer once made
+    /// (`Some(None)`: the device has no timestamps).
+    timed: bool,
+    timer: Option<Option<LoopTimer>>,
     pub report: BakeReport,
     pub done: BakeProgress,
 }
@@ -2270,7 +2314,18 @@ impl JobLoop {
             pending: jobs.into(),
             open: Vec::new(),
             free: slots.rev().collect(),
+            in_flight: VecDeque::new(),
+            staging: Vec::new(),
+            timed: false,
+            timer: None,
         }
+    }
+
+    /// The loop, timing each submit on its own GPU timestamps where the device has them
+    /// ([`SubmitDone::gpu_ms`]).
+    pub fn timed(mut self) -> Self {
+        self.timed = true;
+        self
     }
 
     /// Adds a job behind the pending ones.
@@ -2286,6 +2341,11 @@ impl JobLoop {
         self.pending.is_empty() && self.open.is_empty()
     }
 
+    /// Submits not read back yet.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.len()
+    }
+
     /// The chunks of the jobs pending or open.
     pub fn chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
         self.pending
@@ -2294,9 +2354,15 @@ impl JobLoop {
             .chain(self.open.iter().map(|j| j.coord))
     }
 
-    /// Samples the pending and open jobs still have to draw, at most.
+    /// Samples the pending and open jobs still have to submit, at most.
     pub fn samples_left(&self) -> u64 {
-        let live = |s: &FaceState| if s.done { 0 } else { u64::from(s.n_max - s.n) };
+        let live = |s: &FaceState| {
+            if s.done {
+                0
+            } else {
+                u64::from(s.n_max.saturating_sub(s.n + s.queued))
+            }
+        };
         let open: u64 = self
             .open
             .iter()
@@ -2313,8 +2379,8 @@ impl JobLoop {
         }
     }
 
-    /// One submit of at most about `sample_cap` samples (and at least one entry): open jobs
-    /// first, then pending ones opened into free slots. Each ended job's block goes to `sink`.
+    /// One submit of at most about `sample_cap` samples (and at least one entry), waited on and
+    /// read back, with any submit before it: see [`JobLoop::dispatch`] and [`JobLoop::collect`].
     /// `None` when no entry was left to dispatch.
     #[allow(
         clippy::too_many_arguments,
@@ -2330,7 +2396,54 @@ impl JobLoop {
         sink: &mut BlockSink<'_>,
         progress: &mut dyn FnMut(&BakeProgress),
     ) -> Option<SubmitDone> {
+        self.collect(run, store, settings, sink, progress, 0);
+        if !self.dispatch(run, bind, store, settings, sample_cap, sink, progress) {
+            return None;
+        }
+        Some(self.collect(run, store, settings, sink, progress, 0))
+    }
+
+    /// Plans and submits one dispatch of at most about `sample_cap` samples (and at least one
+    /// entry): open jobs first, then pending ones opened into free slots, each face's rounds
+    /// from the first sample no submit has drawn yet. Its results are copied to a readback
+    /// buffer and mapped; nothing waits. A job with nothing to draw ends here, its block to
+    /// `sink`. False when no entry was left to dispatch.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the frame's parts, the store, the settings, the cap and the two callbacks are independent"
+    )]
+    pub fn dispatch(
+        &mut self,
+        run: &BakeRun<'_>,
+        bind: &wgpu::BindGroup,
+        store: &mut Store,
+        settings: &BakeSettings,
+        sample_cap: u64,
+        sink: &mut BlockSink<'_>,
+        progress: &mut dyn FnMut(&BakeProgress),
+    ) -> bool {
         let (device, queue) = (run.device, run.queue);
+        if self.timed && self.timer.is_none() {
+            self.timer = Some(
+                device
+                    .features()
+                    .contains(wgpu::Features::TIMESTAMP_QUERY)
+                    .then(|| LoopTimer {
+                        queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                            label: Some("bake loop timer"),
+                            ty: wgpu::QueryType::Timestamp,
+                            count: 2,
+                        }),
+                        resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("bake loop timer resolve"),
+                            size: STAMP_BYTES,
+                            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                            mapped_at_creation: false,
+                        }),
+                        period_ns: queue.get_timestamp_period(),
+                    }),
+            );
+        }
         let round = settings.round.max(1);
         let per_submit = (SUBMIT_SAMPLES / u64::from(round)).max(1) as usize;
         let batch = settings
@@ -2351,12 +2464,6 @@ impl JobLoop {
         let report = &mut self.report;
         let done = &mut self.done;
         let open = &mut self.open;
-        let mut close =
-            |store: &mut Store, job: OpenJob, report: &mut BakeReport, done: &mut BakeProgress| {
-                let (coord, first, block) = ctx.close(job, report);
-                sink(store, coord, first, block);
-                done.chunks_done += 1;
-            };
         // The rounds each live face takes in this submit: first those that cannot end it.
         let mut budget = Budget {
             entries: 0,
@@ -2375,7 +2482,9 @@ impl JobLoop {
             let job = ctx.open(next, slot);
             if job.live.is_empty() {
                 self.free.push(slot);
-                close(store, job, report, done);
+                let (coord, first, block) = ctx.close(job, report);
+                sink(store, coord, first, block);
+                done.chunks_done += 1;
                 progress(done);
                 continue;
             }
@@ -2404,20 +2513,28 @@ impl JobLoop {
             }
         }
         if budget.entries == 0 {
-            return None;
+            return false;
         }
-        // One dispatch: each entry names its job's slot.
+        // One dispatch: each entry names its job's slot, and its face's samples from the first
+        // no submit has drawn.
         let mut input: Vec<[u32; 20]> = Vec::with_capacity(budget.entries);
+        let mut entries = Vec::new();
         let mut jobs_in = 0u64;
-        for (job, p) in open.iter().zip(&plan) {
-            jobs_in += u64::from(!p.is_empty());
+        for (job, p) in open.iter_mut().zip(&plan) {
+            jobs_in += u64::from(p.iter().any(|&(_, r)| r > 0));
             for &(i, r) in p {
-                let s = &job.states[i];
-                report.max_rounds_in_submit = report.max_rounds_in_submit.max(r);
-                for k in 0..r {
-                    let first = s.n + k * round;
-                    input.push(s.input(first, round.min(s.n_max - first), job.slot));
+                if r == 0 {
+                    continue;
                 }
+                let s = &mut job.states[i];
+                report.max_rounds_in_submit = report.max_rounds_in_submit.max(r);
+                for _ in 0..r {
+                    let first = s.n + s.queued;
+                    let samples = round.min(s.n_max - first);
+                    input.push(s.input(first, samples, job.slot));
+                    s.queued += samples;
+                }
+                entries.push((job.slot, i, r));
             }
         }
         let count = input.len() as u32;
@@ -2432,49 +2549,157 @@ impl JobLoop {
             0,
         ];
         queue.write_buffer(&run.pipeline.job, 0, bytemuck::cast_slice(&uniform));
+        queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(&input));
+        let own = self.timer.as_ref().and_then(Option::as_ref);
+        let size = STAMP_BYTES + u64::from(count) * FACE_BYTES;
+        let staging = match self.staging.iter().position(|b| b.size() >= size) {
+            Some(k) => self.staging.swap_remove(k),
+            None => device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("bake readback"),
+                size: STAMP_BYTES + BAKE_BATCH_FACES as u64 * FACE_BYTES,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+        };
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
+            let writes = match own {
+                Some(t) => Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &t.queries,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+                None => settings.timer.as_ref().map(|t| t.writes()),
+            };
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("bake"),
-                timestamp_writes: settings.timer.as_ref().map(|t| t.writes()),
+                timestamp_writes: writes,
             });
             pass.set_pipeline(run.pipeline.pipeline(settings.form));
             pass.set_bind_group(0, run.world_bind, &[]);
             pass.set_bind_group(3, bind, &[]);
-            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(count.min(BAKE_ROW), count.div_ceil(BAKE_ROW), 1);
         }
-        if let Some(timer) = &settings.timer {
-            timer.resolve(&mut enc);
+        match own {
+            Some(t) => {
+                enc.resolve_query_set(&t.queries, 0..2, &t.resolve, 0);
+                enc.copy_buffer_to_buffer(&t.resolve, 0, &staging, 0, STAMP_BYTES);
+            }
+            None => {
+                if let Some(timer) = &settings.timer {
+                    timer.resolve(&mut enc);
+                }
+            }
         }
-        report.max_jobs_in_submit = report.max_jobs_in_submit.max(jobs_in);
-        queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(&input));
-        let t = stopwatch();
-        queue.submit([enc.finish()]);
-        let bytes = readback::read_buffer(
-            device,
-            queue,
+        enc.copy_buffer_to_buffer(
             &run.pipeline.faces,
             0,
-            input.len() as u64 * FACE_BYTES,
+            &staging,
+            STAMP_BYTES,
+            u64::from(count) * FACE_BYTES,
         );
-        let seconds = seconds_since(t);
-        report.gpu_seconds += seconds;
-        if let Some(timer) = &settings.timer {
-            report.dispatch_seconds += timer.read_ms(device) / 1e3;
-        }
-        report.submits += 1;
-        let samples_before = report.samples;
-        // Each face's rounds in order: the stop is read after each, and a round past it is waste.
-        let out: &[u32] = bytemuck::cast_slice(&bytes);
-        let mut e = 0usize;
-        for (job, p) in open.iter_mut().zip(&plan) {
-            for &(i, r) in p {
-                let s = &mut job.states[i];
+        report.max_jobs_in_submit = report.max_jobs_in_submit.max(jobs_in);
+        let t = stopwatch();
+        queue.submit([enc.finish()]);
+        let ready = Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let flag = ready.clone();
+        staging.map_async(wgpu::MapMode::Read, ..size, move |r| {
+            flag.store(
+                if r.is_ok() { 1 } else { 2 },
+                std::sync::atomic::Ordering::Release,
+            );
+        });
+        self.in_flight.push_back(InFlight {
+            entries,
+            count: u64::from(count),
+            staging,
+            ready,
+            timed: own.is_some(),
+            t,
+        });
+        true
+    }
+
+    /// Reads back the submits whose results are mapped, oldest first, stopping at the first
+    /// that is not, after polling the device until at most `unread` are left unread: each face's
+    /// rounds added in sample order, its stop read after each, and each ended job's block to
+    /// `sink`. The sum of what the submits read did; zero samples when none was read.
+    pub fn collect(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        settings: &BakeSettings,
+        sink: &mut BlockSink<'_>,
+        progress: &mut dyn FnMut(&BakeProgress),
+        unread: usize,
+    ) -> SubmitDone {
+        use std::sync::atomic::Ordering;
+        let device = run.device;
+        let mut out = SubmitDone::default();
+        while let Some(front) = self.in_flight.front() {
+            if front.ready.load(Ordering::Acquire) == 0 {
+                if self.in_flight.len() <= unread {
+                    break;
+                }
+                let _ = device.poll(wgpu::PollType::wait_indefinitely());
+                continue;
+            }
+            let f = self.in_flight.pop_front().expect("front read above");
+            let mapped = f.ready.load(Ordering::Acquire) == 1;
+            let seconds = seconds_since(f.t);
+            let size = STAMP_BYTES + f.count * FACE_BYTES;
+            let bytes: Vec<u8> = if mapped {
+                let b = f
+                    .staging
+                    .get_mapped_range(..size)
+                    .expect("bake readback mapped")
+                    .to_vec();
+                f.staging.unmap();
+                b
+            } else {
+                vec![0; size as usize]
+            };
+            self.staging.push(f.staging);
+            let gpu_ms = (f.timed && mapped).then(|| {
+                let t: &[u64] = bytemuck::cast_slice(&bytes[..STAMP_BYTES as usize]);
+                let period = self
+                    .timer
+                    .as_ref()
+                    .and_then(Option::as_ref)
+                    .map_or(1.0, |t| t.period_ns);
+                t[1].saturating_sub(t[0]) as f64 * f64::from(period) / 1e6
+            });
+            let report = &mut self.report;
+            report.gpu_seconds += seconds;
+            if !f.timed
+                && let Some(timer) = &settings.timer
+            {
+                report.dispatch_seconds += timer.read_ms(device) / 1e3;
+            }
+            report.submits += 1;
+            let samples_before = report.samples;
+            // Each face's rounds in order: the stop is read after each, and a round past it is
+            // waste.
+            let out_words: &[u32] = bytemuck::cast_slice(&bytes[STAMP_BYTES as usize..]);
+            let mut e = 0usize;
+            let mut at = 0usize;
+            for &(slot, i, r) in &f.entries {
+                if self.open.get(at).is_none_or(|j| j.slot != slot) {
+                    at = self
+                        .open
+                        .iter()
+                        .position(|j| j.slot == slot)
+                        .expect("a job with entries in flight stays open");
+                }
+                let s = &mut self.open[at].states[i];
                 for _ in 0..r {
-                    let words = &out[e * 20..(e + 1) * 20];
+                    let words = &out_words[e * 20..(e + 1) * 20];
                     e += 1;
                     let samples = words[5];
-                    if s.done {
+                    s.queued -= samples;
+                    // A readback that failed to map draws its rounds again in a later submit,
+                    // from the face's first sample not drawn.
+                    if s.done || !mapped {
                         report.wasted += u64::from(samples);
                         continue;
                     }
@@ -2491,32 +2716,55 @@ impl JobLoop {
                         s.done = true;
                         report.faces_at_min += u64::from(s.n <= s.n_min);
                         report.faces_at_max += u64::from(s.n >= s.n_max);
-                        done.faces_done += 1;
+                        self.done.faces_done += 1;
                     }
                 }
             }
+            self.done.samples = report.samples;
+            self.done.gpu_seconds = report.gpu_seconds;
+            out.samples += report.samples - samples_before;
+            out.seconds += seconds;
+            if let Some(ms) = gpu_ms {
+                *out.gpu_ms.get_or_insert(0.0) += ms;
+            }
+            self.close_ended(run, store, settings, sink);
+            progress(&self.done);
         }
-        done.samples = report.samples;
-        done.gpu_seconds = report.gpu_seconds;
-        for job in open.iter_mut() {
+        out
+    }
+
+    /// Closes each open job whose faces are all done and none of whose rounds is in flight.
+    fn close_ended(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        settings: &BakeSettings,
+        sink: &mut BlockSink<'_>,
+    ) {
+        let ctx = JobCtx {
+            run,
+            settings,
+            round: settings.round.max(1),
+            n_max: settings.n_max.max(1),
+            rounds_cap: 0,
+        };
+        for job in self.open.iter_mut() {
             let states = &job.states;
             job.live.retain(|&i| !states[i].done);
         }
         let mut k = 0;
-        while k < open.len() {
-            if open[k].live.is_empty() {
-                let job = open.remove(k);
+        while k < self.open.len() {
+            let j = &self.open[k];
+            if j.live.is_empty() && j.states.iter().all(|s| s.queued == 0) {
+                let job = self.open.remove(k);
                 self.free.push(job.slot);
-                close(store, job, report, done);
+                let (coord, first, block) = ctx.close(job, &mut self.report);
+                sink(store, coord, first, block);
+                self.done.chunks_done += 1;
             } else {
                 k += 1;
             }
         }
-        progress(done);
-        Some(SubmitDone {
-            samples: report.samples - samples_before,
-            seconds,
-        })
     }
 }
 
@@ -2640,6 +2888,7 @@ impl JobCtx<'_, '_> {
                     n_min,
                     n_max,
                     n: 0,
+                    queued: 0,
                     sum: [0.0; 3],
                     clamped: [0.0; 3],
                     lum2: 0.0,
@@ -2777,13 +3026,11 @@ pub fn queue_settings() -> BakeSettings {
     }
 }
 
-/// Samples a face draws in one entry of the live queue's slices. One invocation draws an entry's
-/// samples in turn, so a slice's few samples need short entries to spread over the GPU (the
-/// rounds read in Plan 0059 Phase 8).
-pub const QUEUE_ROUND: u32 = 4;
-/// Samples a face draws in one entry of a step without a slice ([`QueueView::samples`]), where
-/// the submits are large.
-pub const UNSLICED_ROUND: u32 = 32;
+/// Samples a face draws in one entry of the live queue's slices: one a lane of the entry's
+/// workgroup ([`BAKE_LANES`]).
+pub const QUEUE_ROUND: u32 = BAKE_LANES;
+/// Samples a face draws in one entry of a step without a slice ([`QueueView::samples`]).
+pub const UNSLICED_ROUND: u32 = BAKE_LANES;
 
 /// The live queue's counters, for the HUD and stdout.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2801,7 +3048,8 @@ pub struct QueueStats {
     pub prepared: u64,
     /// Blocks fading.
     pub fading: u64,
-    /// The last submit's samples and its milliseconds, submit to readback.
+    /// The samples read back in the last step and their milliseconds on the GPU's timestamps
+    /// (submit to readback where there are none).
     pub samples: u64,
     pub ms: f64,
     /// Samples since the queue started.
@@ -2865,7 +3113,7 @@ impl BakeQueue {
         Self {
             settings,
             slice_ms,
-            lp: JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS),
+            lp: JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS).timed(),
             prepared: Default::default(),
             prepared_bytes: 0,
             eye: [0; 3],
@@ -3005,11 +3253,16 @@ impl BakeQueue {
         let bind = run.pipeline.bind(run.device);
         run.queue
             .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
-        // The frames before this one are waited out first, so the time read is the bake's; an
-        // idle loop dispatches nothing and waits for nothing.
-        if !self.lp.idle() {
-            let _ = run.device.poll(wgpu::PollType::wait_indefinitely());
-        }
+        // Nothing waits on the GPU in a sliced step: the submits read back are those whose
+        // results are mapped by now, and a new one goes out while fewer than IN_FLIGHT are
+        // unread. A step without a slice (the pre-roll) waits for its oldest submit once
+        // IN_FLIGHT are out, so the CPU lists and plans while the GPU draws.
+        let unread = if view.samples.is_some() {
+            IN_FLIGHT - 1
+        } else {
+            IN_FLIGHT
+        };
+        let _ = run.device.poll(wgpu::PollType::Poll);
         let queue = run.queue;
         let stale = &mut self.stale;
         let fades = &mut self.fades;
@@ -3064,20 +3317,35 @@ impl BakeQueue {
             },
             ..self.settings.clone()
         };
-        let done = self
+        let mut d = self
             .lp
-            .submit(run, &bind, store, &settings, cap, &mut sink, &mut |_| {});
-        if let Some(d) = done {
-            self.stats.samples = d.samples;
-            self.stats.ms = d.seconds * 1e3;
-            self.stats.total_samples += d.samples;
-            if d.samples >= 4096 {
-                let ns = d.seconds * 1e9 / d.samples as f64;
-                self.stats.ns_per_sample = 0.8 * self.stats.ns_per_sample + 0.2 * ns;
+            .collect(run, store, &settings, &mut sink, &mut |_| {}, IN_FLIGHT);
+        let sent = self.lp.in_flight() < IN_FLIGHT
+            && self
+                .lp
+                .dispatch(run, &bind, store, &settings, cap, &mut sink, &mut |_| {});
+        if unread < IN_FLIGHT {
+            // With nothing left to send, the pre-roll waits out what is in flight.
+            let left = if sent { unread } else { 0 };
+            let w = self
+                .lp
+                .collect(run, store, &settings, &mut sink, &mut |_| {}, left);
+            d.samples += w.samples;
+            d.seconds += w.seconds;
+            if let Some(ms) = w.gpu_ms {
+                *d.gpu_ms.get_or_insert(0.0) += ms;
             }
-        } else {
-            self.stats.samples = 0;
-            self.stats.ms = 0.0;
+        }
+        // The slice is sized by the GPU's own time for the submits read back, a frame or two
+        // late; without timestamps it stays at the first guess, a fixed count.
+        self.stats.samples = d.samples;
+        self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);
+        self.stats.total_samples += d.samples;
+        if let Some(ms) = d.gpu_ms
+            && d.samples >= 4096
+        {
+            let ns = ms * 1e6 / d.samples as f64;
+            self.stats.ns_per_sample = 0.8 * self.stats.ns_per_sample + 0.2 * ns;
         }
         self.advance_fades(run.queue, store, record);
         self.stats.jobs = self.lp.chunks().count() as u64;

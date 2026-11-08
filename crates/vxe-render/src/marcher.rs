@@ -3243,7 +3243,7 @@ impl Frame {
 
     /// One frame of the live queue, ahead of the encode: the light-sample ranges held out to
     /// `view.hold` (by default the window's far corner plus the light radius), then [`crate::bake::BakeQueue::step`], which
-    /// waits on the GPU. `gpu` must already hold this frame's sync, submitted. `None` without
+    /// waits on the GPU only without a slice (`view.samples`). `gpu` must already hold this frame's sync, submitted. `None` without
     /// the queue or while the read is not the store.
     pub fn bake_queue_step(
         &mut self,

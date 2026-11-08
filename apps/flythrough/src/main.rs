@@ -109,7 +109,8 @@
 //! are baked before the first frame and every other full chunk a slice a frame, nearest first,
 //! at the brick level (8 voxels, 4096 samples a brick direction), its row in the banner, its
 //! depth on the HUD's store row and a `bake queue:` line a second on stdout; `--bake-slice MS`
-//! sets the slice (default 1.5) and `F` swaps the read with the table; `--glide V` moves the
+//! sets the slice (default 1.5) and `F` swaps the read with the table; `--queue-file PATH` writes
+//! the store to `PATH` when the queue first empties; `--glide V` moves the
 //! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
 //! flight to the vein);
 //! emissive light is read from the per-face table from a face's first sample (ADR-0043), and
@@ -495,6 +496,9 @@ struct Args {
     /// `--bake-file PATH`: the store is loaded from `PATH` where its key matches this run's bake,
     /// else baked and written there.
     bake_file: Option<std::path::PathBuf>,
+    /// `--queue-file PATH` under `--light queue`: the store written to `PATH` when the queue
+    /// first empties (a reading against a store file baked at once).
+    queue_file: Option<std::path::PathBuf>,
     /// `--cut FORM:N[:off],...` under `--reference`: stores baked beside the reference at `N`
     /// samples a face, seed form `FORM`, through the filter unless `:off` (Plan 0059 Phase 4);
     /// or `rings:B/R32/R128/R512`, `bricks:B` and `bricks:B/CELL/SAMPLES`, a reach cut's rings
@@ -801,6 +805,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_radius_set: false,
         reference: false,
         bake_file: None,
+        queue_file: None,
         cuts: Vec::new(),
         show: None,
         bake_queue: false,
@@ -1145,6 +1150,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--reference" => args.reference = true,
             "--bake-file" => args.bake_file = Some(value()?.into()),
+            "--queue-file" => args.queue_file = Some(value()?.into()),
             "--cut" => {
                 for arm in value()?.split(',') {
                     args.cuts.push(CutArm::parse(arm)?);
@@ -1292,6 +1298,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--light queue fills the store live from nothing; it takes no --reference, \
              --bake-file or --bake-radius"
                 .to_owned(),
+        );
+    }
+    if args.queue_file.is_some() && !args.bake_queue {
+        return Err(
+            "--queue-file writes the live queue's store; it needs --light queue".to_owned(),
         );
     }
     if args.pose.is_some() && !args.level {
@@ -4420,6 +4431,26 @@ impl Run {
                         st.baked,
                         st.total_samples as f64
                     );
+                    if let Some(path) = self.args.queue_file.as_deref() {
+                        let settings = vxe_render::bake::queue_settings();
+                        let window = gfx.mirror.window();
+                        let key = Frame::store_key(
+                            &gfx.mirror,
+                            self.world.extent(),
+                            self.args.seed,
+                            window,
+                            window.min,
+                            -1,
+                            &settings,
+                        );
+                        match gfx.frame.write_store_file(path, &key) {
+                            Ok(bytes) => println!(
+                                "bake queue: store written to {} ({bytes} bytes)",
+                                path.display()
+                            ),
+                            Err(e) => println!("bake queue: store not written: {e}"),
+                        }
+                    }
                 }
             }
             Some(Err(e)) => {
