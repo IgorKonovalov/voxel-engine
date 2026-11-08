@@ -119,6 +119,16 @@
 >   The fix runs "Inside 0059, before Phase 6", as **Phase 5a** (dev), with **Phase 5b** (human) to look at it.
 > - (a), (b), (c), (e), (f) and (g) were not answered by name. "Mostly fine" stands for (a) to (c). The rest are not
 >   asked again.
+> - **Amended 2026-11-08 (architect), Phase 5a's stop before code** (`logs/0059.md`, Phase 5a, a972410). Dev found five open
+>   points. The answers, in Phase 5a and in ADR-0047, which is still proposed:
+>   - `face_light` is computed in the hit pass, with the store bound read-only.
+>   - `T` goes to the composite as rgb9e5 in a second target.
+>   - The reflection is untinted.
+>   - What is behind glass reads its store cell.
+>   - Done-when 6 compares opaque faces by key in chunks holding glass.
+>   - Done-when 7 is new.
+>
+>   These are the architect's calls, under the owner's standing rule that technical questions take the recommended option.
 
 ## TL;DR
 
@@ -697,12 +707,25 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
     with no new row field. Glass's tint is then (0.52, 0.56, 0.80), and through 2 voxels (0.27, 0.31, 0.64), whose
     luminance is 0.33.
   - `R` is Schlick's Fresnel with `F0` = 0.04 at the entry face.
-  - `face_light` is the entry face's light as an opaque face reads it: the store cell, plus the lamp and its bounce while
-    the lamp is on. The bake writes cells for translucent faces, both sides of a pane.
+  - `face_light` is the entry face's untinted light, `E / PI` (a dielectric reflects white). `E` is the entry face's
+    store cell at the scale the opaque read applies, plus the lamp's analytic term while the lamp is on. The lamp
+    term needs no shadow ray, because the lamp sits at the eye and the eye's ray reached the face. The lamp's bounce is
+    not added on glass: `R` is a few percent, and the probe group stays off the hit pass. The bake writes cells for
+    translucent faces, both sides of a pane.
+  - **Where it is computed (amended 2026-11-08, architect, at 5a's stop):** in `translucent_march`, with the store
+    bound read-only to the hit pass (the temporal pass keeps its read_write binding). The march writes `R * face_light`
+    into the layer target's rgb.
+  - **How `T` reaches the composite:** a second target holding `T` per channel as rgb9e5 in an `r32uint`, 4 B a pixel
+    (about 14 MB at 2530 x 1378). The composite reads `layer.rgb + T * c` for the native and the FSR 2 path alike.
+    The layer target's `w` is no longer read.
+  - **What is behind glass reads its store cell:** `cacheable(rec)` stops excluding a hit with translucent layers in
+    front, since the store is per face and the glass in front does not change the face's value. The backlog's
+    "A held fallback still moves on screen" stays parked: this removes the fallback behind glass only.
 
   The march's source hash changes, so every store file under `live/bake/` is re-baked: the reference and 512 at the vein,
   the patch and the hall. Opaque faces' blocks are compared before and after, and must be bit-identical.
-- **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`,
+- **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `composite.wgsl`, `temporal.wgsl` (only if `cacheable`
+  lives there), `crates/vxe-render/src/marcher.rs`, `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`,
   `apps/flythrough/tests/bake.rs`, the `translucent.png` golden, `docs/plans/logs/0059.md`.
 - **Done when:**
   1. **No voxel grid.** At the hall's shot with Phase 4a's pane, lamp off, exposure 8, read the pane's pixels whose
@@ -715,12 +738,16 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
      than 2 voxels.
   4. `a_glass_pane_filters_by_path_length` (lavapipe, `cache_box`, under 5 s) asserts three things: a pane 1 voxel
      and a pane 2 voxels thick over the same lit wall read `T` and `T^2` of it, within 2 levels; a 2-voxel pane at
-     30 degrees reads its longer path's `T(L)`; and with no light behind, a pane in a lit box reads `R * face_light`
-     from its store cell, within 10 %. Before the fix, the per-layer composite fails the first assertion.
+     30 degrees reads its longer path's `T(L)`; and with no light behind, a pane in a lit box reads `R * E / PI`
+     from its store cell's `E`, within 10 %. Before the fix, the per-layer composite fails the first assertion.
   5. `a_glass_pane_does_not_brighten_what_it_covers` still passes. `translucent.png` is re-blessed, its change stated in
      the log; every other golden is byte-for-byte unchanged.
-  6. The re-bakes' opaque blocks are bit-identical to the files before the fix, and `live/session5c.sh` is written:
-     glass at the hall, lamp off then on, F through the reference and 512.
+  6. Every opaque face's cell reads bit-identical by its key, before and after the fix, in every chunk of the re-baked files.
+     A chunk with no translucent voxel is bit-identical block for block. A chunk holding glass is compared by key, because
+     its face runs gain the glass faces. `live/session5c.sh` is written: glass at the hall, lamp off then on, F through
+     the reference and 512.
+  7. **What is behind reads its cell.** At the hall's shot, lamp off, the pane's pixels' behind light (before `T`) is
+     within 1 level at p90 of the same pixels' light with no pane.
 
 ### Phase 5b: The owner's look at the glass
 - **Owner skill:** human

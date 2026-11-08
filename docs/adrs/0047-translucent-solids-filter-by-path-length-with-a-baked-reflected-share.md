@@ -27,8 +27,12 @@ A translucent solid is a filter. The pixel is `T(L) * behind + R * face_light`, 
   `0.8 * (0.5 + 0.5 * albedo / max(albedo))`. For glass that is (0.52, 0.56, 0.80): tinted, but passing a third of the
   light's luminance through a 2-voxel pane. The row's opacity is no longer read as a per-layer weight.
 - `R` is a small reflected share: Schlick's Fresnel with `F0` = 0.04, from the view angle at the entry face.
-- `face_light` is the entry face's light, the same as an opaque face's: its baked store cell (the bake writes cells for
-  translucent faces too), plus the lamp and its bounce while the lamp is on.
+- `face_light` is `E / PI`, untinted, since a dielectric reflects white. `E` is the entry face's baked store cell
+  (the bake writes cells for translucent faces too), plus the lamp's analytic term while the lamp is on. The lamp term
+  has no shadow ray, because the lamp is at the eye. The lamp's bounce is not added, since `R` is a few percent.
+- The hit pass computes `R * face_light`, with the store bound read-only. `T` reaches the composite per channel in a
+  second target (rgb9e5 in `r32uint`, 4 B a pixel). An opaque hit behind glass reads its own store cell, like any
+  opaque hit.
 
 Absorption depends on distance, so one voxel edge changes `L` by a fraction of a voxel, not a whole layer, and the pane
 fades smoothly. `R` is at most a few percent at normal view, so no light on the face can turn the pane opaque.
@@ -44,6 +48,8 @@ fades smoothly. `R` is at most a few percent at normal view, so no light on the 
 - The bake writes translucent faces' cells too. Glass is rare in a level, so the store grows a little; no reading yet.
 - The march tracks entry and exit distances instead of counting layers, which adds a few registers on the translucent
   path only.
+- A second screen target for `T`: 4 B a pixel, about 14 MB at 2530 x 1378. The store gains a read-only binding on the
+  hit pass.
 - Glass reads brighter and bluer than before at every pose. `translucent.png` is re-blessed.
 - The march's source hash changes, so every store file is re-baked once.
 - No refraction and no scattering inside the glass; a frosted look needs another rule.
