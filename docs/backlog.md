@@ -52,6 +52,20 @@ fixed list. The missing piece is a per-light and per-emissive-material "feeds th
 flag and the channel's redesign. Pick up after Plan 0058 closes and the owner has seen the
 steady image.
 
+### Per-face light cells as a near-camera enhancement over the brick level
+
+Parked 2026-11-08 at Plan 0059's Phase 7b pick ("Bricks everywhere": 8-voxel cell, 4096 samples a direction). The owner
+asked whether per-face cells should stay as a graceful enhancement: brick light by default, with face cells fading in
+near the camera. The answer for now is no.
+- At Phase 7b, 512-sample face cells did not look better than 8/4096 bricks; the 64- and 512-sample bricks were "too
+  noisy".
+- A near ring of about 1.9 x 10^5 faces at 512 adds about 1.3 s to a fresh start and roughly doubles a dig's re-bake.
+- The frame headroom is kept for dynamic lights (Plan 0058).
+
+Keeping the option open is cheap. The store puts a brick's record before its face run, and the read prefers a face cell
+when one exists. Plan 0059 Phase 6 (7c105c5) has the whole face path working; Phase 14 deletes it. Pick up when
+close-range light reads too soft: shadow edges smeared over 8 voxels, or light bleeding round thin walls.
+
 ### Render settings surface and named quality profiles
 
 Parked 2026-10-22. Every mechanism choice (shadow walk, lighting tier, sampler, look, upscaler,
