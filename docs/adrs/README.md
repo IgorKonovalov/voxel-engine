@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0047.**
+**Next free number: 0048.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -61,6 +61,7 @@ the status.
 | [0044](0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md) | Direct light from dynamic sources comes from a fixed list of analytic lights the consumer hands the frame, shaded exactly with one shadow ray each | proposed (Plan 0058) |
 | [0045](0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md) | A per-face table cell stores irradiance at unit emission, and the read multiplies by its kept emitter's emission scale now | proposed (Plan 0058); refines ADR-0043 |
 | [0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md) | Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values | proposed (Plan 0059); replaces ADR-0043's table on the owner's verdict |
+| [0047](0047-translucent-solids-filter-by-path-length-with-a-baked-reflected-share.md) | Translucent solids filter what is behind by path length, and reflect a small share of their baked face light | proposed (Plan 0059) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

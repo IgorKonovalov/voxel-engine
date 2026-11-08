@@ -108,6 +108,18 @@
 > - **The stated test times stay** ("Keep, note the readings"). The filter test and the glass test read 3.55 s and 3.93 s
 >   quiet, and 5.5 to 6.0 s on a series' first run or loaded. The readings are logged, and "under 5 s" is the quiet steady figure.
 
+> **Amended 2026-11-08 (owner), Phase 5's window and glass.** The owner's words at the window (`live/session5*.sh`):
+> "512 looks mostly fine, if it is cheaper"; "light table still needs time to settle". On the glass, which a rerun placed
+> on the third try: lamp off, "looks very dark and consists of individual visible voxels"; lamp on, "looks like a white
+> non transparent pane" (`live/session5b-glass-lamp-on.png`). So:
+> - **Independent 512, filtered, stands.** Phase 6 onward cut from 512, and the first amendment's arithmetic at 512
+>   holds again (Phase 8's radius-1 ring about 1.3 s of bake, Phase 9's arm's-length ring about 23 frames).
+> - **(h) and (i) are faults with one cause.** The per-layer composite shades each glass voxel layer as a diffuse wall.
+>   The owner picked "Both": a filter by path length plus a small baked reflected share, recorded as ADR-0047 (proposed).
+>   The fix runs "Inside 0059, before Phase 6", as **Phase 5a** (dev), with **Phase 5b** (human) to look at it.
+> - (a), (b), (c), (e), (f) and (g) were not answered by name. "Mostly fine" stands for (a) to (c). The rest are not
+>   asked again.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -674,6 +686,47 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
   hall with the lamp off: no white blob after Phase 4a, and the pane reads dark, since glass has no light of its own. Is that
   right, or should glass get baked light? (i) With the lamp on, the lamp's spot on the pane at 60 cm saturates about 44 % of it:
   is that the lamp, or a fault? A fault in (h) or (i) comes to the architect (the amendment of 2026-11-07).
+
+### Phase 5a: Glass as a filter (amended 2026-11-08, owner; ADR-0047)
+- **Owner skill:** dev
+- **What:** `translucent_march` stops compositing each layer as a diffuse wall. The pixel becomes
+  `T(L) * behind + R * face_light`, as ADR-0047 says:
+  - `L` is the path length through the translucent row's voxels, from the walk's entry and exit distances, up to the
+    march's layer cap measured in length rather than layers.
+  - `T(L) = tint^(L / d)` per channel, with `tint = 0.8 * (0.5 + 0.5 * albedo / max(albedo))`, read from the row's albedo,
+    with no new row field. Glass's tint is then (0.52, 0.56, 0.80), and through 2 voxels (0.27, 0.31, 0.64), whose
+    luminance is 0.33.
+  - `R` is Schlick's Fresnel with `F0` = 0.04 at the entry face.
+  - `face_light` is the entry face's light as an opaque face reads it: the store cell, plus the lamp and its bounce while
+    the lamp is on. The bake writes cells for translucent faces, both sides of a pane.
+
+  The march's source hash changes, so every store file under `live/bake/` is re-baked: the reference and 512 at the vein,
+  the patch and the hall. Opaque faces' blocks are compared before and after, and must be bit-identical.
+- **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`,
+  `apps/flythrough/tests/bake.rs`, the `translucent.png` golden, `docs/plans/logs/0059.md`.
+- **Done when:**
+  1. **No voxel grid.** At the hall's shot with Phase 4a's pane, lamp off, exposure 8, read the pane's pixels whose
+     behind is flat, meaning neighbours within 1 level before the pane. Their neighbour differences, minus those of the
+     same pixels before the pane, read at most 1 level at p90.
+  2. **No white-out.** The same shot with the lamp on: the pane's pixels over 250 are at most twice the share of the
+     same pixels over 250 with the lamp on and no pane.
+  3. **Not dark.** Lamp off, at near-normal view, the pane's mean luminance before the display is at least 0.3 of its
+     behind's mean. The arithmetic is 0.33 for 2 voxels of glass, so the bar leaves a small margin for paths longer
+     than 2 voxels.
+  4. `a_glass_pane_filters_by_path_length` (lavapipe, `cache_box`, under 5 s) asserts three things: a pane 1 voxel
+     and a pane 2 voxels thick over the same lit wall read `T` and `T^2` of it, within 2 levels; a 2-voxel pane at
+     30 degrees reads its longer path's `T(L)`; and with no light behind, a pane in a lit box reads `R * face_light`
+     from its store cell, within 10 %. Before the fix, the per-layer composite fails the first assertion.
+  5. `a_glass_pane_does_not_brighten_what_it_covers` still passes. `translucent.png` is re-blessed, its change stated in
+     the log; every other golden is byte-for-byte unchanged.
+  6. The re-bakes' opaque blocks are bit-identical to the files before the fix, and `live/session5c.sh` is written:
+     glass at the hall, lamp off then on, F through the reference and 512.
+
+### Phase 5b: The owner's look at the glass
+- **Owner skill:** human
+- **What:** the glass at the hall, `live/session5c.sh`, lamp off, then on.
+- **Files touched:** this plan's log.
+- **Done when:** the log records the owner's words on the glass with the lamp off and on. A refusal comes to the architect.
 
 ### Phase 6: The reach cut, the brick level and the rings
 - **Owner skill:** dev
