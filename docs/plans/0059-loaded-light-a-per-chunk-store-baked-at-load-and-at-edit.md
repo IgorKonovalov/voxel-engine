@@ -150,6 +150,24 @@
 > - **Tests come after the pick.** Phase 12 (budgets, the default) and the close write the tests and goldens against the
 >   mechanism that stands, with the bars this plan names as their first draft.
 
+> **Amended 2026-11-08 (owner), Phase 7's window: the brick level's resolution.** The owner's words
+> (`live/session7.sh`; screenshots `live/session7-far-bricks.png`, `live/session7-far-table.png`, far from the spawn, chunk
+> [18, 15, 3]), verbatim:
+> 1. "I dont see a difference in ring or bricks - and view is rather blocky, quality is not enough (this is place far
+>    away from spawn) ... light table are much closer to the look that should be (after settling)".
+> 2. "digging with bricks, far away from spawn feels exactly as it should feel - instant settle and right light".
+> 3. "more or less same. I think bricks looks the best, but it feels like resolution is too low maybe".
+> 4. "hall looks the best with bricks".
+>
+> Far from the spawn, the rings and the bricks are the same store, the brick level, so (1) compares the brick level with
+> the table. **The brick level is the direction:** a dig re-bakes in 22 to 39 ms, and the owner calls that settle right.
+> Its look is not enough. The screenshot shows blotches the size of a brick, and two sources fit it:
+> - **Noise:** 64 samples a brick direction, about 3 a face. A dig of about 12 000 faces drew 3.6 to 5.1 x 10^4 samples.
+> - **Resolution:** one value per 8 voxels, bilinear in the face's plane.
+>
+> No reading has split them, so **Phase 7a** puts both axes under the key and the owner's eye picks. Phase 8 on waits for
+> that pick. Ring choice (d) is moot until then.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -805,6 +823,29 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's words on: (a) the brick level beyond 4 chunks against face cells ("Lego" or not), and whether the ring should move; (b) the far caves against the
   reference; (c) the fresh start's wait at the rings' samples; (d) **which ring stands.** A refusal comes to the architect.
+
+### Phase 7a: The brick level's samples and cell (exploration; amended 2026-11-08, owner)
+- **Owner skill:** dev
+- **What:** the brick level everywhere, under the mode key, in variants along two axes. The first draft's ring structure is
+  set aside until the pick.
+  - **Samples a brick direction:** 64 (Phase 6), 512 and 4096. The arithmetic for a dig of about 700 bricks: 6 x 700 x
+    4096 = 1.7 x 10^7 samples, about 0.23 s at 13.5 ns; at 512, about 29 ms.
+  - **Cell:** 8 voxels (the brick, Phase 6) and 4 voxels (eight sub-cells a brick, 8 x the record's values). The same read:
+    bilinear in the face's plane across the neighbouring cells of the same side.
+
+  Offer at most six cuts. Start with 8/512, 8/4096, 4/512 and 4/4096, and add 4/64 if it's cheap: a cell of 4 at 64 is
+  the noise floor's test. The banner names each cut as `bricks <cell>/<samples>`. For each cut, read the dig's re-bake ms,
+  the bake from nothing at the hall and at the level, and the store bytes. They are readings; nothing gates.
+- **Files touched:** `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`, `shaders/temporal.wgsl`, `apps/flythrough/src/main.rs`,
+  `hud.rs`, `apps/flythrough/tests/bake.rs`, `docs/plans/logs/0059.md`.
+- **Done when:** the cuts are built and baked at the vein, the patch and the hall, under the key, with the readings in the
+  log, and `live/session7b.sh` is written. Its steps are the vein far from the spawn (the screenshots' chunk [18, 15, 3],
+  as a pose or a start position), a dig there, the patch, and the hall. The table and the reference stay in the cycle.
+
+### Phase 7b: The owner's pick of the brick level
+- **Owner skill:** human
+- **What:** `live/session7b.sh`.
+- **Done when:** the log records which cell and sample count stand, or that none does. None standing comes to the architect.
 
 ### Phase 8: The queue, the rings and the reach gate
 - **Owner skill:** dev
