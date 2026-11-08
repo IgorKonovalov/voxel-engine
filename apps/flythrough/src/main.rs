@@ -3579,7 +3579,9 @@ impl Run {
             frame.frame_bytes()
         ));
         // DIAGNOSTIC: CI's WARP runs place the frame-0 hang among the preload's dispatches.
-        // `VXE_DIAG_PRELOAD` is `skip-sweep` or `shade` (`DiagPreload`'s switches), and
+        // `VXE_DIAG_PRELOAD` is `skip-sweep`, `shade`, `empty-sweep` (the sweep's dispatch
+        // recorded with zero workgroups) or `direct-sweep` (the sweep dispatched directly, not
+        // indirectly), `DiagPreload`'s switches, and
         // `VXE_DIAG_SPLIT_FRAME0=1` submits frame 0's preload and light passes one at a time
         // with a `diag:` line after each wait. Out with the fix for the WARP preload hang.
         let diag_preload = std::env::var("VXE_DIAG_PRELOAD").unwrap_or_default();
@@ -3591,6 +3593,8 @@ impl Run {
             frame.set_diag_preload(vxe_render::DiagPreload {
                 skip_sweep: diag_preload == "skip-sweep",
                 shade: diag_preload == "shade",
+                empty_sweep: diag_preload == "empty-sweep",
+                direct_sweep: diag_preload == "direct-sweep",
                 split_next: diag_split.then(|| {
                     Box::new(|stage: &str| diag(format_args!("frame 0 split: {stage} done")))
                         as vxe_render::DiagReport

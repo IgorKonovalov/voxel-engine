@@ -128,15 +128,17 @@ jobs:
         run: cargo run -p vxe-render --release --example pipeline_times
       # DIAGNOSTIC, out with the fix for the WARP hang (docs/backlog.md, "`vxe-render::exposure`
       # hangs on WARP since Plan 0057 Phase 7"): the debug fly-through the shutdown test runs,
-      # headless on WARP, 3 frames as that test runs them. CI run 42470428595 placed the hang:
-      # frame 0 never finishes while the preload runs. These runs place it among frame 0's
-      # preload dispatches: `VXE_DIAG_SPLIT_FRAME0=1` submits the passes before the preload,
-      # the preload's args pass, its sweep and the light pass one at a time, waiting for the GPU
-      # and logging a `diag: frame 0 split: <stage> done` line after each, and
-      # `VXE_DIAG_PRELOAD` drops the sweep (`skip-sweep`) or runs the plain light pass in place
-      # of `shade_preload` (`shade`). The preload-off run is the control that finishes. Each
-      # run is killed past 180 s and its stdout and stderr printed; the `diag:` lines are timed
-      # from the process start. The step never fails the job.
+      # headless on WARP, 3 frames as that test runs them. CI run 42477325818 placed the hang:
+      # frame 0's `shade_preload` never finishes after the preload's sweep, and finishes in
+      # 14.5 s with the sweep skipped. Every run sets `VXE_DIAG_SPLIT_FRAME0=1`, which submits
+      # the passes before the preload, the preload's args pass, its sweep and the light pass one
+      # at a time, waiting for the GPU and logging a `diag: frame 0 split: <stage> done` line
+      # after each (timed from the process start). `VXE_DIAG_PRELOAD` picks the sweep's form:
+      # `skip-sweep` records none, `empty-sweep` records its dispatch indirect from a buffer of
+      # zero workgroups (the dispatch without its writes), `direct-sweep` dispatches it directly
+      # with the workgroups the args pass would write. Each run prints what its outcome means,
+      # is killed past its own bound and has its stdout and stderr printed. Worst case 3 x 180 s
+      # + 600 s = 19 min. The step never fails the job.
       - name: Headless fly-through on WARP (diagnostic)
         if: runner.os == 'Windows'
         continue-on-error: true
@@ -145,22 +147,27 @@ jobs:
         run: |
           $exe = "target\debug\flythrough.exe"
           $env:RUST_LOG = "warn,flythrough=info"
+          $env:VXE_DIAG_SPLIT_FRAME0 = "1"
+          $args3 = "--headless --frames 3 --render 64x36"
           $runs = @(
-            @{ name = "split"; split = "1"; preload = ""; args = "--headless --frames 3 --render 64x36" },
-            @{ name = "split, no sweep"; split = "1"; preload = "skip-sweep"; args = "--headless --frames 3 --render 64x36" },
-            @{ name = "split, shade in place of shade_preload"; split = "1"; preload = "shade"; args = "--headless --frames 3 --render 64x36" },
-            @{ name = "no split, shade in place of shade_preload"; split = ""; preload = "shade"; args = "--headless --frames 3 --render 64x36" },
-            @{ name = "preload off (control)"; split = ""; preload = ""; args = "--headless --frames 3 --render 64x36 --preload off" }
+            @{ name = "control: sweep skipped"; preload = "skip-sweep"; kill = 180;
+               meaning = "Exits 0 as in run 42477325818 (shade_preload about 14.5 s). If not, WARP is not repeatable run to run and the readings below say little." },
+            @{ name = "(b) empty sweep"; preload = "empty-sweep"; kill = 180;
+               meaning = "Exits 0: the sweep's writes (stamps, lists, counters) cause the hang, not its dispatch. Killed after 'preload sweep done': the sweep's dispatch alone (its pipeline, bind groups or indirect words) hangs the next shade_preload." },
+            @{ name = "(c) direct sweep"; preload = "direct-sweep"; kill = 180;
+               meaning = "Exits 0: the sweep's indirect dispatch causes it (wgpu's DX12 indirect path before an indirect shade_preload). Killed after 'preload sweep done': the indirect path is cleared; read with (b)." },
+            @{ name = "(a) as in run 42477325818, 600 s kill"; preload = ""; kill = 600;
+               meaning = "Exits 0, or 'light pass (shade_preload) done' appears: shade_preload after the sweep is slow, not hung; its time is the cost. Killed at 600 s with no such line: hung (or over ten minutes)." }
           )
           foreach ($r in $runs) {
-            Write-Host "=== WARP diagnostic: $($r.name): flythrough $($r.args)"
-            if ($r.split) { $env:VXE_DIAG_SPLIT_FRAME0 = $r.split } else { Remove-Item Env:VXE_DIAG_SPLIT_FRAME0 -ErrorAction Ignore }
+            Write-Host "=== WARP diagnostic: $($r.name): flythrough $args3, VXE_DIAG_PRELOAD='$($r.preload)', killed past $($r.kill) s"
+            Write-Host "=== meaning: $($r.meaning)"
             if ($r.preload) { $env:VXE_DIAG_PRELOAD = $r.preload } else { Remove-Item Env:VXE_DIAG_PRELOAD -ErrorAction Ignore }
             $sw = [Diagnostics.Stopwatch]::StartNew()
-            $p = Start-Process -FilePath $exe -ArgumentList $r.args -NoNewWindow -PassThru `
+            $p = Start-Process -FilePath $exe -ArgumentList $args3 -NoNewWindow -PassThru `
               -RedirectStandardOutput diag-out.txt -RedirectStandardError diag-err.txt
             $null = $p.Handle
-            if ($p.WaitForExit(180000)) {
+            if ($p.WaitForExit($r.kill * 1000)) {
               $p.WaitForExit()
               Write-Host "=== exited with $($p.ExitCode) after $([int]$sw.Elapsed.TotalSeconds) s"
             } else {
