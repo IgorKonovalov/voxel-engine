@@ -3306,8 +3306,8 @@ fn cut_readings() {
     }
 }
 
-/// The fly-through's `--cut` arms Phase 6 offers: `independent:512`, `rings:12/4/2/1` and
-/// `bricks:12`, by their file names and settings around `centre`.
+/// The fly-through's `--cut` arms Phases 6 and 7a offer: `independent:512`, `rings:12/4/2/1` and
+/// `bricks:12/CELL/SAMPLES`, by their file names and settings around `centre`.
 fn ring_cuts(centre: [i32; 3]) -> Vec<(&'static str, BakeSettings)> {
     let cut = |rings: Option<bake::Rings>| BakeSettings {
         round: 512,
@@ -3317,11 +3317,13 @@ fn ring_cuts(centre: [i32; 3]) -> Vec<(&'static str, BakeSettings)> {
         rings,
         ..BakeSettings::default()
     };
-    let rings = |faces: Vec<(i32, u32)>| {
+    let rings = |faces: Vec<(i32, u32)>, cell: u32, brick_samples: u32| {
         Some(bake::Rings {
             centre,
             brick: 12,
             faces,
+            cell,
+            brick_samples,
         })
     };
     vec![
@@ -3329,9 +3331,14 @@ fn ring_cuts(centre: [i32; 3]) -> Vec<(&'static str, BakeSettings)> {
         ("independent-512", cut(None)),
         (
             "rings-12-4-2-1",
-            cut(rings(vec![(1, 512), (2, 128), (4, 32)])),
+            cut(rings(vec![(1, 512), (2, 128), (4, 32)], 8, 64)),
         ),
-        ("bricks-12", cut(rings(Vec::new()))),
+        ("bricks-8-64", cut(rings(Vec::new(), 8, 64))),
+        ("bricks-8-512", cut(rings(Vec::new(), 8, 512))),
+        ("bricks-8-4096", cut(rings(Vec::new(), 8, 4096))),
+        ("bricks-4-64", cut(rings(Vec::new(), 4, 64))),
+        ("bricks-4-512", cut(rings(Vec::new(), 4, 512))),
+        ("bricks-4-4096", cut(rings(Vec::new(), 4, 4096))),
     ]
 }
 

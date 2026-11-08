@@ -489,9 +489,13 @@ struct Args {
     bake_file: Option<std::path::PathBuf>,
     /// `--cut FORM:N[:off],...` under `--reference`: stores baked beside the reference at `N`
     /// samples a face, seed form `FORM`, through the filter unless `:off` (Plan 0059 Phase 4);
-    /// or `rings:B/R32/R128/R512` and `bricks:B`, a reach cut's rings (Phase 6, [`RingArm`]);
+    /// or `rings:B/R32/R128/R512`, `bricks:B` and `bricks:B/CELL/SAMPLES`, a reach cut's rings
+    /// (Phases 6 and 7a, [`RingArm`]);
     /// `F` cycles the reference, each cut and the table.
     cuts: Vec<CutArm>,
+    /// `--show NAME` under `--reference`: the light the run starts on, a store's name as the
+    /// banner prints it (`bricks 4/512`) or `table`, as if `F` had been pressed to it.
+    show: Option<String>,
     /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
     /// `DEFAULT_PRELOAD_CLAIM_RADIUS`).
     preload_claim: u32,
@@ -776,6 +780,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         reference: false,
         bake_file: None,
         cuts: Vec::new(),
+        show: None,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -1098,6 +1103,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     args.cuts.push(CutArm::parse(arm)?);
                 }
             }
+            "--show" => args.show = Some(value()?),
             "--lamp-bounce" | "--indirect" => {
                 args.lamp_bounce = match value()?.as_str() {
                     "on" => true,
@@ -1131,7 +1137,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--pose" => {
                 let v = value()?;
                 args.pose = Some(flythrough::Pose::named(&v).ok_or_else(|| {
-                    let names: Vec<&str> = flythrough::POSES.iter().map(|p| p.name).collect();
+                    let names: Vec<&str> = flythrough::START_POSES.iter().map(|p| p.name).collect();
                     format!("--pose takes {}, not {v}", names.join(", "))
                 })?);
             }
@@ -1237,7 +1243,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         );
     }
     if args.pose.is_some() && !args.level {
-        let names: Vec<&str> = flythrough::POSES.iter().map(|p| p.name).collect();
+        let names: Vec<&str> = flythrough::START_POSES.iter().map(|p| p.name).collect();
         return Err(format!(
             "--pose places the camera on the bounded level ({}); it needs --level",
             names.join(", ")
@@ -2987,23 +2993,42 @@ struct CutArm {
 
 /// A reach cut's rings around the pose's chunk, in chunks (Chebyshev): the brick level within
 /// `brick`, and face cells within `faces[i]` at [`RING_SAMPLES`]`[i]` (outer ring first, -1 none).
+/// The brick level's cell is `cell` voxels (8 or 4), drawing `samples` a brick direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RingArm {
     brick: i32,
     faces: [i32; 3],
+    cell: u32,
+    samples: u32,
 }
 
 /// The face rings' samples, outer first: the first draft's 32, 128 and Phase 5's kept 512.
 const RING_SAMPLES: [u32; 3] = [32, 128, 512];
 
 impl RingArm {
-    /// `rings:B/R32/R128/R512` (each ring inside the one before) or `bricks:B`.
+    /// `rings:B/R32/R128/R512` (each ring inside the one before), `bricks:B` or
+    /// `bricks:B/CELL/SAMPLES` (CELL 8 or 4).
     fn parse(s: &str) -> Option<Self> {
         let num = |v: &str| v.parse::<i32>().ok().filter(|r| (0..=64).contains(r));
         if let Some(b) = s.strip_prefix("bricks:") {
+            let mut it = b.split('/');
+            let brick = num(it.next()?)?;
+            let (cell, samples) = match (it.next(), it.next(), it.next()) {
+                (None, _, _) => (
+                    vxe_render::bake::BRICK_CELL,
+                    vxe_render::bake::BRICK_LEVEL_SAMPLES,
+                ),
+                (Some(c), Some(n), None) => (
+                    c.parse().ok().filter(|c| *c == 8 || *c == 4)?,
+                    n.parse().ok().filter(|n| (1..=1 << 16).contains(n))?,
+                ),
+                _ => return None,
+            };
             return Some(Self {
-                brick: num(b)?,
+                brick,
                 faces: [-1; 3],
+                cell,
+                samples,
             });
         }
         let r: Vec<i32> = s
@@ -3017,12 +3042,15 @@ impl RingArm {
         (brick >= a && a >= b && b >= c).then_some(Self {
             brick,
             faces: [a, b, c],
+            cell: vxe_render::bake::BRICK_CELL,
+            samples: vxe_render::bake::BRICK_LEVEL_SAMPLES,
         })
     }
 
+    /// `rings 12/4/2/1`, or the brick level's cell and samples: `bricks 8/512`.
     fn name(self) -> String {
         if self.faces[0] < 0 {
-            return format!("bricks {}", self.brick);
+            return format!("bricks {}/{}", self.cell, self.samples);
         }
         let [a, b, c] = self.faces;
         format!("rings {}/{a}/{b}/{c}", self.brick)
@@ -3042,16 +3070,18 @@ impl RingArm {
             centre,
             brick: self.brick,
             faces,
+            cell: self.cell,
+            brick_samples: self.samples,
         }
     }
 }
 
 impl CutArm {
-    /// `FORM:N`, `FORM:N:off`, `rings:B/R32/R128/R512` or `bricks:B`.
+    /// `FORM:N`, `FORM:N:off`, `rings:B/R32/R128/R512`, `bricks:B` or `bricks:B/CELL/SAMPLES`.
     fn parse(s: &str) -> Result<Self, String> {
         let bad = || {
             format!(
-                "--cut takes FORM:N or FORM:N:off (FORM one of independent, chunk-side, global-side, lattice; N 1 to 1048576), rings:B/R32/R128/R512 or bricks:B, not {s}"
+                "--cut takes FORM:N or FORM:N:off (FORM one of independent, chunk-side, global-side, lattice; N 1 to 1048576), rings:B/R32/R128/R512, bricks:B or bricks:B/CELL/SAMPLES (CELL 8 or 4), not {s}"
             )
         };
         if s.starts_with("rings:") || s.starts_with("bricks:") {
@@ -3090,7 +3120,7 @@ impl CutArm {
     }
 
     /// Its name on the banner, the HUD and its file: `chunk-side 512` (`... raw` without the
-    /// filter), or the rings' (`rings 12/4/2/1`, `bricks 12`).
+    /// filter), or the rings' (`rings 12/4/2/1`, `bricks 8/64`).
     fn name(self) -> String {
         if let Some(r) = self.rings {
             return r.name();
@@ -3978,6 +4008,24 @@ impl Run {
             ));
         }
         println!("{}", self.reference_row());
+        self.show_light();
+    }
+
+    /// `--show NAME`: selects that store, swapped in at the first frame, or the table.
+    fn show_light(&mut self) {
+        let Some(name) = self.args.show.clone() else {
+            return;
+        };
+        if name == "table" {
+            self.reference.selected = self.reference.stores.len().saturating_sub(1);
+            self.cycle_light();
+        } else if let Some(i) = self.reference.stores.iter().position(|s| s.name == name) {
+            self.reference.selected = i;
+            println!("{}", self.reference_row());
+        } else {
+            self.failure
+                .set(format!("--show names no store of this run: {name}"));
+        }
     }
 
     /// `extent` loaded into `frame`'s store from `path` where its key matches `settings`' bake,
@@ -7730,7 +7778,7 @@ mod tests {
     /// until the camera moves.
     #[test]
     fn pose_starts_the_level_at_the_rigs_still_camera() {
-        for want in [flythrough::VEIN_POSE, flythrough::PATCH_POSE] {
+        for want in flythrough::START_POSES {
             let a = parse_args_from(argv(&["--level", "--pose", want.name])).expect("parses");
             assert_eq!(a.pose, Some(want));
             assert_eq!(a.exposure, None, "the pose's exposure is not applied");
@@ -7750,7 +7798,7 @@ mod tests {
         let e = parse_args_from(argv(&["--level", "--pose", "cave"]))
             .err()
             .expect("unknown name");
-        assert_eq!(e, "--pose takes vein, patch, not cave");
+        assert_eq!(e, "--pose takes vein, patch, far, not cave");
         assert!(parse_args_from(argv(&["--level", "--pose"])).is_err());
 
         let mut run = bare_run(carved_rock());

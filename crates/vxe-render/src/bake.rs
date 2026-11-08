@@ -354,18 +354,24 @@ pub fn list_world_chunk(world: &World, coord: ChunkCoord, classes: &[u8]) -> Opt
 /// A test of a voxel and its face.
 pub type FaceFilter = Arc<dyn Fn([i32; 3], u8) -> bool + Send + Sync>;
 
-/// Words of a brick record ([`Rings`]): six direction values in [`rgb9e5_pack`], face order, then
-/// `material | direction mask << 16`, the mask's bit `face` set where the brick has an opaque face
-/// of that direction.
+/// Words of a brick-level cell's record ([`Rings`]): six direction values in [`rgb9e5_pack`], face
+/// order, then `material | direction mask << 16`, the mask's bit `face` set where the cell has an
+/// opaque face of that direction. A brick's record is its cells' records in cell order
+/// ([`Rings::record_words`]): one cell of 8 voxels, or eight of 4 (`x + 2 y + 4 z`).
 pub const BRICK_WORDS: usize = 7;
-/// The store header's flags word: bit 0 ([`FLAG_BRICKS`]) where every block carries brick records.
+/// The store header's flags word: bit 0 ([`FLAG_BRICKS`]) where every block carries brick records,
+/// bit 1 ([`FLAG_CELL4`]) where their cells are 4 voxels.
 pub const STORE_FLAGS: u64 = 12;
 /// The blocks carry a brick record before each surface brick's run.
 pub const FLAG_BRICKS: u32 = 1;
+/// The brick records hold eight cells of 4 voxels.
+pub const FLAG_CELL4: u32 = 2;
 /// A brick of more faces than this holds no cells: its faces read its brick record.
 pub const BRICK_FACES_MAX: usize = 512;
-/// Samples a brick-level direction draws, spread over its faces (at least one a face).
+/// Samples a brick-level direction draws by default, spread over its faces (at least one a face).
 pub const BRICK_LEVEL_SAMPLES: u32 = 64;
+/// The brick level's cell by default, in voxels: the brick.
+pub const BRICK_CELL: u32 = 8;
 
 /// What a chunk of a ring store holds: face cells at a count, or the brick level alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -376,16 +382,31 @@ pub enum Tier {
 
 /// The rings of a reach cut (ADR-0046): around `centre`, chunks within `faces[i].0` chunks
 /// (Chebyshev, the first ring that holds them) hold face cells at `faces[i].1` samples, and the
-/// rest within `brick` hold the brick level. Every block carries brick records.
+/// rest within `brick` hold the brick level. Every block carries brick records, each of cells of
+/// `cell` voxels (8 or 4), each brick direction drawing `brick_samples` at the brick level.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rings {
     pub centre: [i32; 3],
     pub brick: i32,
     /// `(radius, samples)`, inner rings first.
     pub faces: Vec<(i32, u32)>,
+    /// The brick level's cell in voxels: 8 (the brick) or 4.
+    pub cell: u32,
+    /// Samples a brick direction draws at the brick level, spread over its faces.
+    pub brick_samples: u32,
 }
 
 impl Rings {
+    /// Cells a brick side holds: 1 or 2.
+    pub fn cells_a_side(&self) -> u32 {
+        8 / self.cell
+    }
+
+    /// Words of a brick's record: [`BRICK_WORDS`] a cell.
+    pub fn record_words(&self) -> usize {
+        record_words(self.cell)
+    }
+
     /// The tier of `c`, `None` beyond the brick ring.
     pub fn tier(&self, c: [i32; 3]) -> Option<Tier> {
         let d = (0..3).map(|k| (c[k] - self.centre[k]).abs()).max()?;
@@ -409,6 +430,11 @@ impl Rings {
     }
 }
 
+/// Words of a brick's record of cells of `cell` voxels: [`BRICK_WORDS`] a cell.
+pub fn record_words(cell: u32) -> usize {
+    BRICK_WORDS * (8 / cell).pow(3) as usize
+}
+
 /// Whether brick `keys` of a chunk at `tier` holds cells.
 fn holds_cells(tier: Option<Tier>, keys: usize) -> bool {
     match tier {
@@ -419,16 +445,16 @@ fn holds_cells(tier: Option<Tier>, keys: usize) -> bool {
 }
 
 /// The block's directory and its words: plain ([`ChunkFaces::directory`]) at `tier` `None`; else
-/// each surface brick's record, then its cells where [`holds_cells`], the directory pointing at
-/// the cells (a count of 0 for a brick at the brick level).
-fn layout(faces: &ChunkFaces, tier: Option<Tier>) -> (Vec<u32>, u64) {
+/// each surface brick's record of `record` words, then its cells where [`holds_cells`], the
+/// directory pointing at the cells (a count of 0 for a brick at the brick level).
+fn layout(faces: &ChunkFaces, tier: Option<Tier>, record: usize) -> (Vec<u32>, u64) {
     if tier.is_none() {
         return (faces.directory(), faces.block_words());
     }
     let mut dir = vec![0u32; DIRECTORY_WORDS as usize];
     let mut at = DIRECTORY_WORDS as u32;
     for (slot, keys) in &faces.bricks {
-        at += BRICK_WORDS as u32;
+        at += record as u32;
         let n = if holds_cells(tier, keys.len()) {
             keys.len() as u32
         } else {
@@ -440,18 +466,16 @@ fn layout(faces: &ChunkFaces, tier: Option<Tier>) -> (Vec<u32>, u64) {
     (dir, u64::from(at))
 }
 
-/// The brick records of a block with them, by brick slot.
-fn records_of(block: &[u32]) -> std::collections::HashMap<u16, [u32; BRICK_WORDS]> {
-    let mut out = std::collections::HashMap::new();
+/// The brick records of `record` words of a block with them, by brick slot.
+fn records_of(block: &[u32], record: usize) -> KeptBricks {
+    let mut out = KeptBricks::new();
     for slot in 0..CHUNK_BRICKS {
         let dir = block[slot];
         if dir == 0 {
             continue;
         }
         let run = (dir >> 11) as usize;
-        let mut r = [0u32; BRICK_WORDS];
-        r.copy_from_slice(&block[run - BRICK_WORDS..run]);
-        out.insert(slot as u16, r);
+        out.insert(slot as u16, block[run - record..run].to_vec());
     }
     out
 }
@@ -682,8 +706,8 @@ pub struct Store {
     raw: BTreeMap<[i32; 3], Vec<u32>>,
     /// The blocks are filtered ([`BakeSettings::tent`]).
     tent: bool,
-    /// The blocks carry brick records ([`Rings`]).
-    bricks: bool,
+    /// The blocks carry brick records ([`Rings`]) of cells of this many voxels.
+    bricks: Option<u32>,
 }
 
 /// A store's content off the pool: its piece and blocks, and the raw words under the filter, for
@@ -694,8 +718,8 @@ pub struct StoreImage {
     pub blocks: Vec<(ChunkCoord, Vec<u32>)>,
     pub raw: Vec<(ChunkCoord, Vec<u32>)>,
     pub tent: bool,
-    /// The blocks carry brick records.
-    pub bricks: bool,
+    /// The blocks carry brick records of cells of this many voxels.
+    pub bricks: Option<u32>,
 }
 
 impl StoreImage {
@@ -725,7 +749,7 @@ impl Store {
             window: None,
             raw: BTreeMap::new(),
             tent: false,
-            bricks: false,
+            bricks: None,
         }
     }
 
@@ -746,13 +770,23 @@ impl Store {
 
     /// Whether the blocks carry brick records.
     pub fn bricks(&self) -> bool {
+        self.bricks.is_some()
+    }
+
+    /// The brick records' cell in voxels, `None` without records.
+    pub fn brick_cell(&self) -> Option<u32> {
         self.bricks
     }
 
-    /// Sets the header's flags word for blocks with brick records or without.
-    fn set_bricks(&mut self, queue: &wgpu::Queue, on: bool) {
-        self.bricks = on;
-        let flags = if on { FLAG_BRICKS } else { 0 };
+    /// Sets the header's flags word for blocks with brick records of cells of `cell` voxels, or
+    /// without.
+    fn set_bricks(&mut self, queue: &wgpu::Queue, cell: Option<u32>) {
+        self.bricks = cell;
+        let flags = match cell {
+            None => 0,
+            Some(4) => FLAG_BRICKS | FLAG_CELL4,
+            Some(_) => FLAG_BRICKS,
+        };
         queue.write_buffer(&self.pool, STORE_FLAGS * 4, bytemuck::bytes_of(&flags));
     }
 
@@ -822,7 +856,7 @@ impl Store {
         self.words.clear();
         self.raw.clear();
         self.tent = false;
-        self.bricks = false;
+        self.bricks = None;
         self.head_words = STORE_TABLE + table_words;
         self.end_words = self.head_words;
         self.piece = None;
@@ -925,6 +959,8 @@ pub struct RingKey {
     pub radii: [i32; 3],
     pub samples: [u32; 3],
     pub brick_samples: u32,
+    /// The brick level's cell in voxels; a field of the file only where it is not 8.
+    pub cell: u32,
 }
 
 impl RingKey {
@@ -943,7 +979,8 @@ impl RingKey {
             brick: rings.brick,
             radii,
             samples,
-            brick_samples: BRICK_LEVEL_SAMPLES,
+            brick_samples: rings.brick_samples,
+            cell: rings.cell,
         })
     }
 }
@@ -1010,6 +1047,9 @@ impl StoreKey {
             f.extend(r.radii.map(|v| ("face rings", w(v))));
             f.extend(r.samples.map(|v| ("face rings' samples", u64::from(v))));
             f.push(("brick level's samples", u64::from(r.brick_samples)));
+            if r.cell != BRICK_CELL {
+                f.push(("brick level's cell", u64::from(r.cell)));
+            }
         }
         f
     }
@@ -1116,7 +1156,7 @@ impl Store {
             blocks,
             raw,
             tent: key.tent,
-            bricks: key.rings.is_some(),
+            bricks: key.rings.map(|r| r.cell),
         })
     }
 
@@ -1476,44 +1516,52 @@ impl FaceState {
     }
 }
 
-/// A brick's record from its faces' states: each direction the mean of its opaque faces' values
-/// (a baked mean, or a kept cell's), the mask of the directions it has, and the material of the
-/// sample that read the largest luminance over the brick (a kept cell's where none was baked).
-fn brick_record(states: &[FaceState], clamp: bool) -> [u32; BRICK_WORDS] {
-    let mut sums = [[0f64; 3]; 6];
-    let mut counts = [0u32; 6];
-    let mut best = (-1f32, 0u16);
+/// A brick's record from its faces' states, one [`BRICK_WORDS`] record a cell of `cell` voxels in
+/// cell order: each direction the mean of the cell's opaque faces' values (a baked mean, or a kept
+/// cell's), the mask of the directions it has, and the material of the sample that read the
+/// largest luminance over the cell (a kept cell's where none was baked).
+fn brick_record(states: &[FaceState], clamp: bool, cell: u32) -> Vec<u32> {
+    let side = (8 / cell) as usize;
+    let cells = side * side * side;
+    let mut sums = vec![[[0f64; 3]; 6]; cells];
+    let mut counts = vec![[0u32; 6]; cells];
+    let mut best = vec![(-1f32, 0u16); cells];
     for s in states.iter().filter(|s| !s.glass) {
+        let l = s.voxel.map(|x| (x.rem_euclid(8) as u32 / cell) as usize);
+        let c = l[0] + side * (l[1] + side * l[2]);
         let f = usize::from(s.face);
         let v = if s.n > 0 {
-            if s.best > best.0 {
-                best = (s.best, s.material);
+            if s.best > best[c].0 {
+                best[c] = (s.best, s.material);
             }
             s.mean(s.kept(clamp))
-        } else if let Some(cell) = s.keep {
-            if best.0 < 0.0 {
-                best = (0.0, (cell[1] >> 16) as u16);
+        } else if let Some(kept) = s.keep {
+            if best[c].0 < 0.0 {
+                best[c] = (0.0, (kept[1] >> 16) as u16);
             }
-            rgb9e5_unpack(cell[0])
+            rgb9e5_unpack(kept[0])
         } else {
             continue;
         };
         for k in 0..3 {
-            sums[f][k] += f64::from(v[k]);
+            sums[c][f][k] += f64::from(v[k]);
         }
-        counts[f] += 1;
+        counts[c][f] += 1;
     }
-    let mut r = [0u32; BRICK_WORDS];
-    let mut mask = 0u32;
-    for f in 0..6 {
-        if counts[f] > 0 {
-            let n = f64::from(counts[f]);
-            r[f] = rgb9e5_pack(sums[f].map(|x| (x / n) as f32));
-            mask |= 1 << f;
+    let mut out = vec![0u32; BRICK_WORDS * cells];
+    for c in 0..cells {
+        let r = &mut out[BRICK_WORDS * c..BRICK_WORDS * (c + 1)];
+        let mut mask = 0u32;
+        for f in 0..6 {
+            if counts[c][f] > 0 {
+                let n = f64::from(counts[c][f]);
+                r[f] = rgb9e5_pack(sums[c][f].map(|x| (x / n) as f32));
+                mask |= 1 << f;
+            }
         }
+        r[6] = u32::from(best[c].1) | mask << 16;
     }
-    r[6] = u32::from(best.1) | mask << 16;
-    r
+    out
 }
 
 /// Everything the job loop needs of the frame.
@@ -1542,7 +1590,7 @@ pub(crate) struct Job {
 }
 
 /// Brick records a re-baked ring job keeps, by brick slot.
-pub(crate) type KeptBricks = std::collections::HashMap<u16, [u32; BRICK_WORDS]>;
+pub(crate) type KeptBricks = std::collections::HashMap<u16, Vec<u32>>;
 
 /// The cells a re-baked job keeps: by brick slot and key, the two words of the cell before, for
 /// every face outside the ring that the block before holds.
@@ -1747,6 +1795,10 @@ pub(crate) fn run(
     if let Some(r) = &settings.rings {
         listed.retain(|(c, _)| r.tier(c.0).is_some());
     }
+    let record = settings
+        .rings
+        .as_ref()
+        .map_or(BRICK_WORDS, Rings::record_words);
     let window = run.gpu.window();
     let size = window.size();
     let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
@@ -1754,7 +1806,7 @@ pub(crate) fn run(
         + table_words
         + listed
             .iter()
-            .map(|(c, f)| layout(f, tier_of(*c)).1)
+            .map(|(c, f)| layout(f, tier_of(*c), record).1)
             .sum::<u64>();
     let capacity = store.pool.size();
     if needed_words * 4 > capacity {
@@ -1764,14 +1816,14 @@ pub(crate) fn run(
         });
     }
     store.reset(run.queue, window);
-    store.set_bricks(run.queue, settings.rings.is_some());
+    store.set_bricks(run.queue, settings.rings.as_ref().map(|r| r.cell));
     // The blocks lie in the jobs' order, whatever order the jobs end in.
     let mut at = store.head_words;
     let jobs: Vec<Job> = listed
         .into_iter()
         .map(|(coord, faces)| {
             let tier = tier_of(coord);
-            let words = layout(&faces, tier).1;
+            let words = layout(&faces, tier, record).1;
             let job = Job {
                 coord,
                 faces,
@@ -1876,7 +1928,8 @@ pub(crate) fn rebake(
             store.remove(run.queue, coord);
             continue;
         }
-        let tier = store.bricks.then(|| {
+        let record = store.bricks.map_or(BRICK_WORDS, record_words);
+        let tier = store.bricks.is_some().then(|| {
             settings
                 .rings
                 .as_ref()
@@ -1887,10 +1940,10 @@ pub(crate) fn rebake(
         let source = if store.tent { &store.raw } else { &store.words };
         let old = source.get(c).map(|b| cells_of(b)).unwrap_or_default();
         let mut kept_bricks = KeptBricks::new();
-        if store.bricks
+        if store.bricks.is_some()
             && let Some(b) = source.get(c)
         {
-            for (slot, record) in records_of(b) {
+            for (slot, record) in records_of(b, record) {
                 if slots.binary_search(&slot).is_err() {
                     kept_bricks.insert(slot, record);
                 }
@@ -1907,7 +1960,7 @@ pub(crate) fn rebake(
                 }
             }
         }
-        let first_word = store.place(coord, layout(&faces, tier).1, &mut end)?;
+        let first_word = store.place(coord, layout(&faces, tier, record).1, &mut end)?;
         jobs.push(Job {
             coord,
             faces,
@@ -2198,6 +2251,11 @@ impl JobCtx<'_, '_> {
             at + (TABLE_SLOT_WORDS - 1) * 16,
             bytemuck::cast_slice(&chunk),
         );
+        let brick_samples = self
+            .settings
+            .rings
+            .as_ref()
+            .map_or(BRICK_LEVEL_SAMPLES, |r| r.brick_samples);
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
         for (brick_at, keys) in &faces.bricks {
             let b = brick_of_slot(usize::from(*brick_at));
@@ -2223,7 +2281,7 @@ impl JobCtx<'_, '_> {
                     None => (self.settings.n_min, self.n_max),
                     Some(Tier::Face(n)) if cell => (n, n),
                     Some(_) => {
-                        let n = BRICK_LEVEL_SAMPLES.div_ceil(per_dir[usize::from(face)].max(1));
+                        let n = brick_samples.div_ceil(per_dir[usize::from(face)].max(1));
                         (n, n)
                     }
                 };
@@ -2293,7 +2351,8 @@ impl JobCtx<'_, '_> {
     ) {
         let queue = self.run.queue;
         let clamp = self.settings.clamp;
-        let (dir, words) = layout(&job.faces, job.tier);
+        let cell_size = self.settings.rings.as_ref().map_or(BRICK_CELL, |r| r.cell);
+        let (dir, words) = layout(&job.faces, job.tier, record_words(cell_size));
         let mut block: Vec<u32> = dir;
         block.reserve(words as usize);
         let cell_words = |s: &FaceState| -> [u32; 2] {
@@ -2318,8 +2377,8 @@ impl JobCtx<'_, '_> {
                 let record = job
                     .kept_bricks
                     .get(slot)
-                    .copied()
-                    .unwrap_or_else(|| brick_record(states, clamp));
+                    .cloned()
+                    .unwrap_or_else(|| brick_record(states, clamp, cell_size));
                 block.extend(record);
                 if states[0].cell {
                     for s in states {

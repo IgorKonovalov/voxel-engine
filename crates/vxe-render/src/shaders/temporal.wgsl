@@ -94,9 +94,9 @@ struct Edits {
 // 4 << 12 | dominant material << 16, sorted by key.
 const STORE_ORIGIN: u32 = 4u;
 const STORE_SIZE: u32 = 8u;
-// The flags word (`bake::STORE_FLAGS`): bit 0, every block carries a brick record of
-// BRICK_WORDS before each surface brick's run (six rgb9e5 direction values in face order, then
-// `material | direction mask << 16`).
+// The flags word (`bake::STORE_FLAGS`): bit 0, every block carries a brick record before each
+// surface brick's run, BRICK_WORDS a cell (six rgb9e5 direction values in face order, then
+// `material | direction mask << 16`); bit 1, the cells are 4 voxels (eight a brick), else 8.
 const STORE_FLAGS: u32 = 12u;
 const STORE_TABLE: u32 = 16u;
 const BRICK_WORDS: u32 = 7u;
@@ -176,9 +176,18 @@ fn store_block(c: vec3<i32>) -> u32 {
     return atomicLoad(&store[STORE_TABLE + u32(w.x + size.x * (w.y + size.y * w.z))]);
 }
 
-// Brick `b`'s (world bricks) value for direction `face` times its material's emission scale now
-// in rgb, with a 1 in a; 0 where the brick has no record or no face of that direction.
-fn store_brick(b: vec3<i32>, face: u32) -> vec4<f32> {
+// The brick level's cell in voxels as a shift: 2 (4 voxels, flags bit 1) or 3 (the brick).
+fn store_cell_shift() -> u32 {
+    return select(3u, 2u, (atomicLoad(&store[STORE_FLAGS]) & 2u) != 0u);
+}
+
+// Cell `c`'s (world cells of 1 << `shift` voxels) value for direction `face` times its material's
+// emission scale now in rgb, with a 1 in a; 0 where its brick has no record or the cell no face of
+// that direction. A brick's record is its cells' BRICK_WORDS records, `x + n (y + n z)` with n
+// cells a side, just before its run.
+fn store_cell(c: vec3<i32>, face: u32, shift: u32) -> vec4<f32> {
+    let per = 3u - shift;
+    let b = c >> vec3<u32>(per);
     let block = store_block(b >> vec3<u32>(3u));
     if (block == 0u) {
         return vec4<f32>(0.0);
@@ -188,7 +197,11 @@ fn store_brick(b: vec3<i32>, face: u32) -> vec4<f32> {
     if (dir == 0u) {
         return vec4<f32>(0.0);
     }
-    let rec = block + (dir >> 11u) - BRICK_WORDS;
+    let n = 1 << per;
+    let l = c & vec3<i32>(n - 1);
+    let sub = u32(l.x + n * (l.y + n * l.z));
+    let cells = u32(n * n * n);
+    let rec = block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
     let tail = atomicLoad(&store[rec + 6u]);
     if (((tail >> (16u + face)) & 1u) == 0u) {
         return vec4<f32>(0.0);
@@ -197,16 +210,19 @@ fn store_brick(b: vec3<i32>, face: u32) -> vec4<f32> {
     return vec4<f32>(x * emission_scale[tail & 0xFFFFu], 1.0);
 }
 
-// Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 bricks around
-// the voxel's centre in the face's plane (its own brick's layer along the normal), bilinear by
-// the centre's place between the bricks' centres, over those that have the direction; its own
-// brick's alone where none has it with weight. 0 in a where that has none either.
+// Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 cells around the
+// voxel's centre in the face's plane (its own cell's layer along the normal), bilinear by the
+// centre's place between the cells' centres, over those that have the direction; its own cell's
+// alone where none has it with weight. 0 in a where that has none either. Cells are addressed in
+// world cells, so the blend crosses a brick's border as it crosses a cell's.
 fn store_brick_value(v: vec3<i32>, face: u32) -> vec4<f32> {
+    let shift = store_cell_shift();
+    let size = f32(1u << shift);
     let axis = face / 2u;
     let ta = (axis + 1u) % 3u;
     let tb = (axis + 2u) % 3u;
-    let own = v >> vec3<u32>(3u);
-    let g = (vec3<f32>(v) + 0.5) / 8.0 - 0.5;
+    let own = v >> vec3<u32>(shift);
+    let g = (vec3<f32>(v) + 0.5) / size - 0.5;
     let lo = vec3<i32>(floor(g));
     let f = g - floor(g);
     var sum = vec3<f32>(0.0);
@@ -219,14 +235,14 @@ fn store_brick_value(v: vec3<i32>, face: u32) -> vec4<f32> {
         b[tb] = lo[tb] + ob;
         let wa = select(1.0 - f[ta], f[ta], oa == 1);
         let wb = select(1.0 - f[tb], f[tb], ob == 1);
-        let r = store_brick(b, face);
+        let r = store_cell(b, face, shift);
         sum += r.xyz * (wa * wb * r.w);
         weight += wa * wb * r.w;
     }
     if (weight > 0.0) {
         return vec4<f32>(sum / weight, 1.0);
     }
-    return store_brick(own, face);
+    return store_cell(own, face, shift);
 }
 
 // The mean of the key's cell in rgb, with a 1 in a; 0 for a key with no cell or no sample.
