@@ -128,11 +128,15 @@ jobs:
         run: cargo run -p vxe-render --release --example pipeline_times
       # DIAGNOSTIC, out with the fix for the WARP hang (docs/backlog.md, "`vxe-render::exposure`
       # hangs on WARP since Plan 0057 Phase 7"): the debug fly-through the shutdown test runs,
-      # headless on WARP, once as that test runs it and then in variants that each turn one of
-      # the suspects off. Each run is killed past 180 s and its stdout and stderr printed; the
-      # `diag:` lines time each start-up stage and frame from the process start, and a 35-frame
-      # run that finishes prints the median GPU time of every pass (its `frame (` line). The
-      # step never fails the job.
+      # headless on WARP, 3 frames as that test runs them. CI run 42470428595 placed the hang:
+      # frame 0 never finishes while the preload runs. These runs place it among frame 0's
+      # preload dispatches: `VXE_DIAG_SPLIT_FRAME0=1` submits the passes before the preload,
+      # the preload's args pass, its sweep and the light pass one at a time, waiting for the GPU
+      # and logging a `diag: frame 0 split: <stage> done` line after each, and
+      # `VXE_DIAG_PRELOAD` drops the sweep (`skip-sweep`) or runs the plain light pass in place
+      # of `shade_preload` (`shade`). The preload-off run is the control that finishes. Each
+      # run is killed past 180 s and its stdout and stderr printed; the `diag:` lines are timed
+      # from the process start. The step never fails the job.
       - name: Headless fly-through on WARP (diagnostic)
         if: runner.os == 'Windows'
         continue-on-error: true
@@ -142,16 +146,16 @@ jobs:
           $exe = "target\debug\flythrough.exe"
           $env:RUST_LOG = "warn,flythrough=info"
           $runs = @(
-            @{ name = "as the shutdown test runs it"; table = ""; args = "--headless --frames 3 --render 64x36" },
-            @{ name = "35 frames"; table = ""; args = "--headless --frames 35 --render 64x36" },
-            @{ name = "35 frames, a 2^16-cell table"; table = "65536"; args = "--headless --frames 35 --render 64x36" },
-            @{ name = "35 frames, preload off"; table = ""; args = "--headless --frames 35 --render 64x36 --preload off" },
-            @{ name = "35 frames, cutaway on (no fill or preload)"; table = ""; args = "--headless --frames 35 --render 64x36 --cutaway on" },
-            @{ name = "35 frames, the fixed level"; table = ""; args = "--headless --frames 35 --render 64x36 --level" }
+            @{ name = "split"; split = "1"; preload = ""; args = "--headless --frames 3 --render 64x36" },
+            @{ name = "split, no sweep"; split = "1"; preload = "skip-sweep"; args = "--headless --frames 3 --render 64x36" },
+            @{ name = "split, shade in place of shade_preload"; split = "1"; preload = "shade"; args = "--headless --frames 3 --render 64x36" },
+            @{ name = "no split, shade in place of shade_preload"; split = ""; preload = "shade"; args = "--headless --frames 3 --render 64x36" },
+            @{ name = "preload off (control)"; split = ""; preload = ""; args = "--headless --frames 3 --render 64x36 --preload off" }
           )
           foreach ($r in $runs) {
             Write-Host "=== WARP diagnostic: $($r.name): flythrough $($r.args)"
-            if ($r.table) { $env:VXE_DIAG_TABLE_CELLS = $r.table } else { Remove-Item Env:VXE_DIAG_TABLE_CELLS -ErrorAction Ignore }
+            if ($r.split) { $env:VXE_DIAG_SPLIT_FRAME0 = $r.split } else { Remove-Item Env:VXE_DIAG_SPLIT_FRAME0 -ErrorAction Ignore }
+            if ($r.preload) { $env:VXE_DIAG_PRELOAD = $r.preload } else { Remove-Item Env:VXE_DIAG_PRELOAD -ErrorAction Ignore }
             $sw = [Diagnostics.Stopwatch]::StartNew()
             $p = Start-Process -FilePath $exe -ArgumentList $r.args -NoNewWindow -PassThru `
               -RedirectStandardOutput diag-out.txt -RedirectStandardError diag-err.txt
