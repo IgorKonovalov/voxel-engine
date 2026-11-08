@@ -4738,3 +4738,244 @@ fn store_files_keep_opaque_cells() {
     }
     assert_eq!(bad_total, 0, "opaque cells or chunk lists differ");
 }
+
+/// The live queue's dig against a fresh bake (Plan 0059 Phase 8e): at the far pose, a radius-1
+/// piece baked at the queue's settings ([`bake::queue_settings`], 8/4096), one 5-voxel carve at
+/// the view's centre, its ring re-baked to each arm's settings in turn (the same box each time,
+/// so each arm re-bakes the same bricks from the same edited world), then a fresh bake of the
+/// edited world at the queue's settings. For each arm, every ring brick's six direction values
+/// against the fresh bake's: equal words, within one `rgb9e5` step a channel, and display
+/// levels; split into the bricks the box dilated by one voxel reaches ("touched") and the rest
+/// ("untouched"). The pre-dig store against the fresh bake rides beside them, which is the edit's
+/// own change. Logs to `live/bake-count/queue-dig.txt`.
+#[test]
+#[ignore = "a reading on the RTX: VXE_TEST_ADAPTER=rtx, under the perf lock"]
+fn queue_dig_readings() {
+    let mut log = Log::open("queue-dig.txt");
+    let pose = flythrough::FAR_POSE;
+    let eye = pose.position;
+    let size = [192, 108];
+    let mut rig = read_rig(Scene::Level, eye);
+    rig.frame = Frame::new(&rig.device, size[0], size[1]);
+    rig.frame.set_jitter(&rig.device, false);
+    rig.frame
+        .set_resolution(&rig.device, LightingResolution::Full);
+    rig.frame.set_lighting(Lighting {
+        lamp: false,
+        lamp_bounce: false,
+        exposure: Exposure::Manual(8.0),
+        light: Light::Baked,
+        ..Lighting::default()
+    });
+    let world_extent = rig.world.extent();
+    let centre = eye.map(|v| (v / 64.0).floor() as i32);
+    let piece = ChunkExtent::new(centre.map(|v| v - 1), centre.map(|v| v + 2));
+    let piece = {
+        let s = world_extent.size();
+        let lo = [0, 1, 2].map(|k| piece.min.0[k].max(world_extent.min.0[k]));
+        let hi = [0, 1, 2].map(|k| (piece.min.0[k] + 3).min(world_extent.min.0[k] + s[k]));
+        ChunkExtent::new(lo, hi)
+    };
+    let queue_settings = bake::queue_settings();
+    let t = std::time::Instant::now();
+    let r = rig
+        .frame
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            piece,
+            &queue_settings,
+            &mut |_| {},
+        )
+        .expect("the piece fits the pool");
+    log.line(&format!(
+        "queue dig, adapter {}, far pose chunk {centre:?}, piece {:?}..{:?}: the piece at 8/4096 in {:.0} ms, {} chunks, {} faces, {:.3e} samples",
+        rig.adapter,
+        piece.min.0,
+        [0, 1, 2].map(|k| piece.min.0[k] + piece.size()[k]),
+        t.elapsed().as_secs_f64() * 1e3,
+        r.chunks,
+        r.faces,
+        r.samples as f64
+    ));
+    let before = frame_blocks(&rig.device, &rig.queue, &rig.frame, piece);
+    let camera = pose.camera();
+    rig.frame.step(
+        &rig.device,
+        &rig.queue,
+        &rig.gpu,
+        &camera,
+        &LightParams::default(),
+    );
+    let hit = hit_at(&rig, size, size[0] / 2, size[1] / 2).expect("the view's centre hits rock");
+    let c = hit.map(|v| i64::from(v.floor() as i32) * FIXED_ONE + FIXED_ONE / 2);
+    let op = EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve);
+    let applied = rig.world.apply(&op).expect("the carve applies");
+    let (min, max) = applied.aabb.expect("the carve changed voxels");
+    let dug = [min.0, max.0];
+    rig.gpu
+        .sync_now(&rig.world, &rig.device, &rig.queue)
+        .expect("the mirror fits");
+    let ring = bake::dig_ring(&[dug], piece);
+    log.line(&format!(
+        "queue dig: carve at {:?} ({:.1} voxels from the eye), box {:?}..{:?}, ring {} bricks in {} chunks",
+        hit.map(|v| v.floor() as i32),
+        (0..3).map(|k| (hit[k] - eye[k]).powi(2)).sum::<f32>().sqrt(),
+        dug[0],
+        dug[1],
+        ring.values().map(Vec::len).sum::<usize>(),
+        ring.len()
+    ));
+    let arms: Vec<(&str, BakeSettings)> = vec![
+        (
+            "the window's dig settings (the reference's default, n_max DIG_N_MAX)",
+            BakeSettings {
+                n_max: bake::DIG_N_MAX,
+                ..BakeSettings::default()
+            },
+        ),
+        ("the queue's settings (round 64)", queue_settings.clone()),
+        (
+            "the queue's settings, round BAKE_ROUND",
+            BakeSettings {
+                round: bake::BAKE_ROUND,
+                ..queue_settings.clone()
+            },
+        ),
+    ];
+    let mut after = Vec::new();
+    for (name, settings) in &arms {
+        rig.frame.invalidate(dug[0], dug[1]);
+        let t = std::time::Instant::now();
+        let r = rig
+            .frame
+            .rebake_digs(
+                &rig.device,
+                &rig.queue,
+                &mut rig.gpu,
+                &rig.world,
+                settings,
+                &mut |_| {},
+            )
+            .expect("a box waits")
+            .expect("the ring fits");
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        log.line(&format!(
+            "queue dig, {name}: {} bricks, {} chunks, {} faces, {:.3e} samples, {ms:.0} ms",
+            r.bricks, r.bake.chunks, r.bake.faces, r.bake.samples as f64
+        ));
+        after.push(frame_blocks(&rig.device, &rig.queue, &rig.frame, piece));
+    }
+    // A fresh mirror and frame of the edited world, the piece at the queue's settings.
+    let cfg = MirrorConfig {
+        budget_bytes: 512 << 20,
+        light_radius: 4,
+        ..MirrorConfig::new(Window::Fixed(world_extent))
+    };
+    let mut gpu = GpuWorld::with_config(&rig.device, cfg);
+    gpu.set_focus(vxe_world::VoxelCoord(eye.map(|v| v as i32)));
+    for _ in 0..8 {
+        gpu.sync_now(&rig.world, &rig.device, &rig.queue)
+            .expect("the mirror fits");
+    }
+    let mut fresh_frame = Frame::new(&rig.device, 16, 16);
+    fresh_frame.set_lighting(Lighting {
+        lamp: false,
+        lamp_bounce: false,
+        exposure: Exposure::Manual(8.0),
+        light: Light::Baked,
+        ..Lighting::default()
+    });
+    fresh_frame
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut gpu,
+            &rig.world,
+            piece,
+            &queue_settings,
+            &mut |_| {},
+        )
+        .expect("the piece fits the pool");
+    let fresh = frame_blocks(&rig.device, &rig.queue, &fresh_frame, piece);
+    let touched = |c: [i32; 3], slot: u16| {
+        let b = [
+            i32::from(slot) % 8,
+            i32::from(slot) / 8 % 8,
+            i32::from(slot) / 64,
+        ];
+        (0..3).all(|k| {
+            let lo = c[k] * 64 + b[k] * 8;
+            lo + 7 >= dug[0][k] - 1 && lo <= dug[1][k] + 1
+        })
+    };
+    let mut compare = |name: &str, got: &BTreeMap<[i32; 3], Vec<u32>>| {
+        for part in ["touched", "untouched"] {
+            let mut diffs = Vec::new();
+            let (mut equal, mut one_step, mut dir_differ) = (0usize, 0usize, 0usize);
+            for (c, slots) in &ring {
+                let (Some(a), Some(f)) = (got.get(c), fresh.get(c)) else {
+                    continue;
+                };
+                for &slot in slots {
+                    if touched(*c, slot) != (part == "touched") {
+                        continue;
+                    }
+                    let (da, df) = (a[usize::from(slot)], f[usize::from(slot)]);
+                    if da == 0 || df == 0 {
+                        continue;
+                    }
+                    if (da & 0x7ff) != (df & 0x7ff) {
+                        dir_differ += 1;
+                        continue;
+                    }
+                    let (ra, rf) = ((da >> 11) as usize, (df >> 11) as usize);
+                    for d in 0..6 {
+                        let (wa, wf) =
+                            (a[ra - bake::BRICK_WORDS + d], f[rf - bake::BRICK_WORDS + d]);
+                        if wa == wf {
+                            equal += 1;
+                        }
+                        let (va, vf) = (bake::rgb9e5_unpack(wa), bake::rgb9e5_unpack(wf));
+                        let step = |w: u32| 2f32.powi((w >> 27) as i32 - 24);
+                        let ulp = step(wa).max(step(wf));
+                        if (0..3).all(|k| (va[k] - vf[k]).abs() <= ulp * 1.0001) {
+                            one_step += 1;
+                        }
+                        let l = |v: [f32; 3]| {
+                            bake::tone_level(
+                                0.2126 * f64::from(v[0])
+                                    + 0.7152 * f64::from(v[1])
+                                    + 0.0722 * f64::from(v[2]),
+                            )
+                        };
+                        diffs.push((l(va) - l(vf)).abs());
+                    }
+                }
+            }
+            diffs.sort_by(f64::total_cmp);
+            let n = diffs.len();
+            if n == 0 {
+                log.line(&format!("queue dig, {name}, {part}: nothing compared"));
+                continue;
+            }
+            let at = |q: f64| diffs[((n as f64 * q) as usize).min(n - 1)];
+            log.line(&format!(
+                "queue dig, {name}, {part} bricks: {n} direction values ({dir_differ} bricks whose cell counts differ, skipped); equal words {:.4}, within one rgb9e5 step {:.4}, within 1 level {:.4}; |levels| p50 {:.3} p90 {:.3} p99 {:.3} max {:.3}",
+                equal as f64 / n as f64,
+                one_step as f64 / n as f64,
+                diffs.iter().filter(|d| **d <= 1.0).count() as f64 / n as f64,
+                at(0.5),
+                at(0.9),
+                at(0.99),
+                diffs[n - 1]
+            ));
+        }
+    };
+    compare("before the dig", &before);
+    for ((name, _), got) in arms.iter().zip(&after) {
+        compare(name, got);
+    }
+}

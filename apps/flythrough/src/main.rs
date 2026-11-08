@@ -4628,8 +4628,9 @@ impl Run {
         }
     }
 
-    /// A dig's re-bake, ahead of this frame's encode: the ring of every box since the last frame
-    /// to the reference's stop with `n_max` [`vxe_render::bake::DIG_N_MAX`]. `enc` holds the
+    /// A dig's re-bake, ahead of this frame's encode: the ring of every box since the last frame,
+    /// under the live queue to the queue's settings, else to the active cut's or the reference's
+    /// stop with `n_max` [`vxe_render::bake::DIG_N_MAX`]. `enc` holds the
     /// sync's copies, so it is submitted first and a new one returned. The hitch is printed.
     fn rebake_digs(&mut self, gpu: &Gpu, enc: wgpu::CommandEncoder) -> wgpu::CommandEncoder {
         let Some(gfx) = self.gfx.as_mut() else {
@@ -4647,9 +4648,15 @@ impl Run {
                 slot.pending.extend_from_slice(&boxes);
             }
         }
-        // The reference re-bakes to its stop with `DIG_N_MAX`; a cut to its own count.
-        let settings = match self.reference.stores.get(active) {
-            Some(slot) if active > 0 => slot.settings.clone(),
+        // The live queue's store re-bakes to the queue's own settings (its brick level, its
+        // count a brick direction), so a dug brick holds what the queue would have baked there;
+        // the reference re-bakes to its stop with `DIG_N_MAX`; a cut to its own count.
+        let settings = match (gfx.frame.bake_queue(), self.reference.stores.get(active)) {
+            (Some(q), _) => vxe_render::BakeSettings {
+                round: vxe_render::bake::BAKE_ROUND,
+                ..q.settings.clone()
+            },
+            (None, Some(slot)) if active > 0 => slot.settings.clone(),
             _ => vxe_render::BakeSettings {
                 n_max: vxe_render::bake::DIG_N_MAX,
                 ..vxe_render::BakeSettings::default()
@@ -4675,6 +4682,15 @@ impl Run {
                 };
                 if hitch.outside {
                     println!("{}", hitch.line());
+                } else if let Some(rings) = settings.rings.as_ref() {
+                    println!(
+                        "{} ({} bricks, {} chunks, bricks {}/{})",
+                        hitch.line(),
+                        r.bricks,
+                        r.bake.chunks,
+                        rings.cell,
+                        rings.brick_samples
+                    );
                 } else {
                     println!(
                         "{} ({} bricks, {} chunks, {} at {} and {} at {})",

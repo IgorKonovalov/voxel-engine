@@ -235,14 +235,17 @@ fn store_brick_value(v: vec3<i32>, face: u32) -> vec4<f32> {
     let g = (vec3<f32>(v) + 0.5) / size - 0.5;
     let lo = vec3<i32>(floor(g));
     let f = g - floor(g);
+    // The two in-plane axes as masks: a store through a runtime vector index is not portable
+    // (`shader_portability`), so the cell's coordinate is chosen per component.
+    let axes = vec3<u32>(0u, 1u, 2u);
+    let ma = axes == vec3<u32>(ta);
+    let mb = axes == vec3<u32>(tb);
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
     for (var i = 0; i < 4; i++) {
-        var b = own;
         let oa = i & 1;
         let ob = i >> 1u;
-        b[ta] = lo[ta] + oa;
-        b[tb] = lo[tb] + ob;
+        let b = select(select(own, lo + vec3<i32>(oa), ma), lo + vec3<i32>(ob), mb);
         let wa = select(1.0 - f[ta], f[ta], oa == 1);
         let wb = select(1.0 - f[tb], f[tb], ob == 1);
         let r = store_cell(b, face, shift);
