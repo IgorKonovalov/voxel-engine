@@ -951,6 +951,36 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
      buffer (1 MiB) plus the chunk table's, the arithmetic in its comment, under 5 s, while `--light
      table` allocates a minimal pool.
 
+### Phase 8a: The queue's throughput (exploration; amended 2026-11-08, owner)
+- **Owner skill:** dev
+- **Why:** Phase 8 met the fresh start on the RTX (first frame 1.9 to 2.5 s), but the live queue fills at 4 to 6 x 10^6
+  samples a second on the RTX and about 10^6 on the Cezanne (`logs/0059.md`, Phase 8). The level would take an estimated
+  10 to 15 minutes, and a 30 voxels/s flight shows up to 0.46 of pixels with no value. Phase 8 names two causes: one
+  invocation draws an entry's samples serially, and each frame waits for the GPU to go idle before its slice. The owner
+  picked "Fix throughput, then look".
+- **What:**
+  - **Spread an entry's samples across a workgroup in `bake.wgsl`.** Each lane draws a share, and the sums reduce in
+    workgroup memory. The estimator is unchanged: the same samples, the same seeds by sample index, so a value differs
+    from Phase 8's only by the order of float sums.
+  - **Submit the slice without waiting.** The slice's samples are sized from the last read-back timestamps, one or
+    two frames late. A job's results are read back when ready, not in the frame that submitted them.
+  - The source hash changes, so store files re-bake.
+- **Files touched:** `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`, `gpu_world.rs`, `marcher.rs`,
+  `apps/flythrough/src/main.rs`, `docs/plans/logs/0059.md`.
+- **Readings** (exploration; nothing gates):
+  - samples a second on both adapters, against Phase 8's;
+  - the fresh start's first frame and the seconds until the queue empties, at the vein, the patch and the hall;
+  - the vein flight's share of pixels with no value, per second;
+  - the frame's GPU ms while the queue runs, against at rest;
+  - a hall bake's values against Phase 7a's 8/4096 file: the share within 1 level, which should be about all of it.
+- **Done when:** built, read, and `live/session8.sh` written: a fresh start at the vein and the hall with `--light queue`,
+  a flight at the vein, and a dig at each, with the first frame and the queue's time to empty printed after each run.
+
+### Phase 8b: The owner's look at the live queue
+- **Owner skill:** human
+- **What:** `live/session8.sh`.
+- **Done when:** the log records the owner's words on the fresh start, the world filling in, the flight, and the digs.
+
 ### Phase 9: The dig under a budget, the three rings
 - **Owner skill:** dev
 - **What:** the three rings of ADR-0046, driven by the box `Frame::invalidate` receives. They replace the reference's in-frame re-bake of Phase 2, and ring 3 is what the reference left out; `the_far_light_stays_as_the_reference_states` goes. The owner's eye on it is Phase 13 (e).
