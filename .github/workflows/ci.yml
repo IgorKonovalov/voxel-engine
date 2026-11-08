@@ -184,11 +184,25 @@ jobs:
           cargo nextest run --workspace --profile ci --status-level pass 2>&1 | tee target/nextest-gate.log
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
-      # docs/nfr.md section 7: no gate test over 60 s on this arm. One that crosses the line
-      # fails the push until it moves to the soak list in .config/nextest.toml.
+      # docs/nfr.md section 7: no gate test over 60 s on this arm. A test over the line is a
+      # warning annotation, not a failure: the GPU tests run in parallel on four cores, so one
+      # test's time moves 25 to 40 % between runs (runs 42470428595 and 42477325818) and a hard
+      # line flips on its neighbours. A test that stays over moves to the soak list in
+      # .config/nextest.toml by hand. A missing or unreadable log still fails the step.
       - name: Gate test times against the budget
         if: runner.os == 'Linux'
-        run: node scripts/test-times.mjs target/nextest-gate.log --over 60
+        shell: bash
+        run: |
+          status=0
+          node scripts/test-times.mjs target/nextest-gate.log --over 60 > target/test-times.txt || status=$?
+          cat target/test-times.txt
+          if [ "$status" -eq 1 ]; then
+            grep -- '-> over the' target/test-times.txt | while read -r line; do
+              echo "::warning title=Gate test over 60 s::$line"
+            done
+          elif [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
       # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
       # component; its tests (`tests/component.rs`) need the feature and the built component.
       # Every other fly-through test ran in the workspace step, so only that binary runs here.
