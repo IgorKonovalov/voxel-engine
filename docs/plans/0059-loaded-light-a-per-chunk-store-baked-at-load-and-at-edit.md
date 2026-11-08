@@ -726,7 +726,15 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
   the patch and the hall. Opaque faces' blocks are compared before and after, and must be bit-identical.
 - **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `composite.wgsl`, `temporal.wgsl` (only if `cacheable`
   lives there), `crates/vxe-render/src/marcher.rs`, `crates/vxe-render/src/bake.rs`, `shaders/bake.wgsl`,
-  `apps/flythrough/tests/bake.rs`, the `translucent.png` golden, `docs/plans/logs/0059.md`.
+  `crates/vxe-render/src/lib.rs` and `gpu_world.rs` (the storage-buffer count), `apps/flythrough/tests/bake.rs`, the
+  `translucent.png` golden, `docs/plans/logs/0059.md`.
+  - **The storage-buffer count goes from 11 to 12** (amended 2026-11-08, architect, at 5a's second stop, 6e100d8). The
+    store's read-only binding on the hit pass is counted in `OTHER_STORAGE_BUFFERS`, and lib.rs's limit test asserts 12.
+    Every named adapter offers about 10^6 per stage (lavapipe 1 015 808, the RTX 1 048 576, RADV Renoir 8 388 606), so it
+    costs no adapter. The rejected option, freeing a slot by packing the split walk's arguments into its list, changes
+    the walk for a count no adapter is short of.
+  - Phase 4a's `cut_glass_parts` reading assumes the per-layer model (`layer.w` as `(1 - a)^k`). It is marked in the
+    log as historical and not kept up to date.
 - **Done when:**
   1. **No voxel grid.** At the hall's shot with Phase 4a's pane, lamp off, exposure 8, read the pane's pixels whose
      behind is flat, meaning neighbours within 1 level before the pane. Their neighbour differences, minus those of the
