@@ -363,6 +363,18 @@ fn ms_since(t: Instant) -> f64 {
     (now() - t).as_secs_f64() * 1e3
 }
 
+// DIAGNOSTIC: the headless start-up and frame markers, and the table-size override below,
+// read on CI's WARP adapter, where a 3-frame headless run hangs before its teardown (the
+// backlog's WARP exposure-hang entry). They come out with the fix for that hang.
+static DIAG_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// DIAGNOSTIC: logs `diag: <what> at <ms> ms` at info, timed from the process start, so a
+/// run killed mid-way shows the last stage it reached and when.
+fn diag(what: std::fmt::Arguments<'_>) {
+    let start = *DIAG_START.get_or_init(now);
+    log::info!("diag: {what} at {:.0} ms", ms_since(start));
+}
+
 #[derive(Clone)]
 struct Args {
     seed: u64,
@@ -670,6 +682,12 @@ impl Args {
             blend: self.blend,
             preload_radius: self.preload,
             preload_claim_radius: self.preload_claim,
+            // DIAGNOSTIC: `VXE_DIAG_TABLE_CELLS` sets the per-face table's cells, so CI's WARP
+            // run can read a small table against the default (see `diag`).
+            table_cells: std::env::var("VXE_DIAG_TABLE_CELLS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(Lighting::default().table_cells),
             ..Lighting::default()
         }
     }
@@ -3543,6 +3561,11 @@ impl Run {
         let field_timer = MarchTimer::new(&gpu.device, &gpu.queue);
         let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
         let mut frame = Frame::with_sizes(&gpu.device, scale.internal(output), output);
+        diag(format_args!(
+            "frame created, {} table cells, {} B of targets",
+            frame.table_cells(),
+            frame.frame_bytes()
+        ));
         frame.set_probe_spacing(&gpu.device, self.args.probe_spacing);
         frame.set_jitter(&gpu.device, jitter);
         frame.set_upscaler_kind(&gpu.device, kind);
@@ -3550,6 +3573,11 @@ impl Run {
         println!("{}", self.upscaler.line());
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
+        diag(format_args!(
+            "lighting set, {} table cells, {} B of targets",
+            frame.table_cells(),
+            frame.frame_bytes()
+        ));
         println!("{}", self.modes.line());
         println!("{}", CrispRows::line(self.world.materials()));
         let mirror = if self.stream.is_some() {
@@ -3604,6 +3632,7 @@ impl Run {
             println!("{}", band_census_line(&self.world, &gfx.mirror));
         }
         self.gfx = Some(gfx);
+        diag(format_args!("init done"));
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -3677,7 +3706,23 @@ impl Run {
         // The light extraction of the first sync that scanned a brick, and of all of them.
         let mut first_light: Option<SyncStats> = None;
         let (mut light_us, mut syncs) = (0u64, 0u32);
+        diag(format_args!(
+            "mirror created, streaming {} near chunks",
+            near.len()
+        ));
+        let mut diag_next = now();
         loop {
+            if now() >= diag_next {
+                let mirrored = near
+                    .iter()
+                    .filter(|&&c| mirror.is_mirrored(c) && !mirror.is_lod(c))
+                    .count();
+                diag(format_args!(
+                    "streaming, {syncs} syncs, {mirrored} of {} near chunks mirrored",
+                    near.len()
+                ));
+                diag_next = now() + std::time::Duration::from_secs(2);
+            }
             stream.streamer.update(&self.world, &[self.spawn]);
             stream.tick_ms.push(ms_since(self.start));
             let ev = stream.streamer.poll(&self.world);
@@ -4684,6 +4729,9 @@ impl Run {
             }
         }
         gpu.queue.submit([enc.finish()]);
+        if self.args.headless {
+            diag(format_args!("frame {}: submitted", self.frame));
+        }
         let cpu_ms = ms_since(t0);
         self.hud.exposure = gfx.frame.exposure_readout(&gpu.device);
         self.modes.set_readout(self.hud.exposure);
@@ -4696,7 +4744,9 @@ impl Run {
 
         if self.frame == 0 {
             // The first frame counts once the GPU has finished it.
+            diag(format_args!("frame 0: waiting for the GPU"));
             let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+            diag(format_args!("frame 0: the GPU finished"));
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
         let pass_ms = timer.map(|t| t.read_all_ms(&gpu.device));
@@ -5152,6 +5202,7 @@ impl App for Flythrough {
 /// Returns the session's failure as `Err` once the teardown is done.
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
     let failure = app.failure.clone();
+    diag(format_args!("headless start"));
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let named = app.args.adapter.as_deref().and_then(|want| {
@@ -5176,6 +5227,16 @@ fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
         info.name,
         vxe_app::backend_label(info.backend)
     );
+    diag(format_args!(
+        "adapter {} ({}), driver {:?} {:?}, max storage binding {} B, max buffer {} B, timestamps {}",
+        info.name,
+        vxe_app::backend_label(info.backend),
+        info.driver,
+        info.driver_info,
+        adapter.limits().max_storage_buffer_binding_size,
+        adapter.limits().max_buffer_size,
+        adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+    ));
     let (required_features, required_limits) = app.device_request(&adapter);
     let (device, queue) = pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features,
@@ -5183,6 +5244,7 @@ fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
         ..Default::default()
     }))
     .map_err(|e| format!("no device: {e}"))?;
+    diag(format_args!("device created"));
     let surface_format = wgpu::TextureFormat::Rgba8Unorm;
     let gpu = Gpu {
         adapter,
@@ -5209,16 +5271,23 @@ fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     let input = Input::default();
     let mut last = now();
+    let mut diag_frame = 0u32;
     loop {
         let t = now();
         let dt = (t - last).as_secs_f32();
         last = t;
+        diag(format_args!("frame {diag_frame}: start"));
         if app.frame(&gpu, &input, dt, &view) == Flow::Exit {
             log::info!("teardown: the app asked to exit");
             break;
         }
+        diag(format_args!(
+            "frame {diag_frame}: returned, waiting for the GPU"
+        ));
         // Keep the queue from running ahead of the GPU, as presenting would.
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        diag(format_args!("frame {diag_frame}: the GPU finished"));
+        diag_frame += 1;
     }
     drop(view);
     drop(target);
@@ -5450,6 +5519,7 @@ fn main() {
     )
     .init();
     let start = now();
+    DIAG_START.get_or_init(|| start);
     let mut args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
