@@ -168,6 +168,46 @@
 > No reading has split them, so **Phase 7a** puts both axes under the key and the owner's eye picks. Phase 8 on waits for
 > that pick. Ring choice (d) is moot until then.
 
+> **Amended 2026-11-08 (owner), Phase 7b's pick: bricks 8/4096 everywhere; Part 2 re-read.** The owner's words at
+> `live/session7b.sh`, verbatim:
+> 1. "I believe that 8/4096 looks almost fine, and 5/512 is maybe acceptable" (read as 4/512).
+> 2. "digging on 8/4096 feels fine".
+> 3. "8/4096 is fine, others are too noisy".
+> 4. "again, best at 8/4096".
+>
+> Asked whether bricks replace per-face light everywhere or only away from the camera, the owner chose "Bricks
+> everywhere". So **the light is one store: an 8-voxel cell, 4096 samples a brick direction, the bilinear read of Phase 6,
+> at every distance.** Phase 7a's readings on the RTX: a dig re-bakes in 72 to 88 ms, the hall bakes from nothing in
+> 10.3 s and the level in 81.8 s, the store is 1.75 MB at the hall and 15.4 MB for the level, and the brick read costs
+> about 2 ms a frame over per-face cells at rest (none on the Cezanne). Exploration mode holds to Phase 13. The remaining
+> phases are re-read as follows; where a phase's text below disagrees, this block wins:
+> - **The face cells, their rings, the seed forms and the samples cut are retired from Part 2.**
+>   - The reference keeps its per-face path as the comparison oracle until Phase 14 decides whether it stays.
+>   - The cut flags stay until Phase 14.
+> - **Phase 8, the queue:** brick jobs only, at 8/4096. The chunk is the unit, ordered by distance and then view.
+>   - **The CPU listing moves to the stream workers.** Phase 6 found it is most of the 14 to 82 s: 3168 chunks and the
+>     brick rounds' bookkeeping.
+>   - **No tiers, no tier-ups, no ring crossings.** A re-bake fades over `FADE` frames. A first value is written directly.
+>   - **Eviction:** a chunk leaving the mirror frees its records.
+>   - **Readings for the owner's fresh start, against 3 s:** the first frame, with the camera's chunk and its 26
+>     neighbours baked before it. The arithmetic: about 26 ms a chunk at 4096, so 27 chunks is about 0.7 s. Beside it,
+>     the seconds until the queue empties, on the RTX and on the Cezanne.
+> - **Phase 9, the dig:** ring 1 is the touched bricks at 8/4096, spread over frames within the slice plus the edit cap.
+>   - Read: the longest frame around a dig, against 33 ms, and the frames until the hole settles.
+>   - The owner judged an unsplit 72 to 88 ms re-bake "fine", so the split is for the Cezanne and `B` presses. If it costs
+>     more than a phase, it is reported, not built.
+>   - Rings 2 and 3 (reach and break-through) stay as written, at brick level.
+> - **Phases 10 and 11, the resolution cut:** the brick read does not change with the lighting resolution. So Phase 10 only
+>   reads native against FSR 2 at 1.5 (frame passes and the fast yaw). Phase 11's window folds into Phase 13.
+> - **Phase 12, budgets:** read as written. The temporal pass's "within 0.1 ms of the table's" becomes a reading: Phase 7a
+>   read the brick read about 2 ms over per-face cells on the RTX, and slightly under the table. The Cezanne's lighting
+>   line stays against 6.0 ms.
+> - **Phase 13 adds** a fresh start and a walk on the Cezanne, beside the RTX.
+> - **Phase 14 on "baked"** also removes the face-cell store, the rings, the seed forms, the cut flags and Phase 4's
+>   readings code. It keeps a reference path only if Phase 12's tests need it as an oracle.
+> - **ADR-0046** (proposed) records per-face cells over per-brick values. It is rewritten to the brick level at the close,
+>   with Phase 7a's readings. The Data shapes and Budgets sections below are refreshed then too.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
