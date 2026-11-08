@@ -128,17 +128,20 @@ jobs:
         run: cargo run -p vxe-render --release --example pipeline_times
       # DIAGNOSTIC, out with the fix for the WARP hang (docs/backlog.md, "`vxe-render::exposure`
       # hangs on WARP since Plan 0057 Phase 7"): the debug fly-through the shutdown test runs,
-      # headless on WARP, 3 frames as that test runs them. CI run 42477325818 placed the hang:
-      # frame 0's `shade_preload` never finishes after the preload's sweep, and finishes in
-      # 14.5 s with the sweep skipped. Every run sets `VXE_DIAG_SPLIT_FRAME0=1`, which submits
-      # the passes before the preload, the preload's args pass, its sweep and the light pass one
-      # at a time, waiting for the GPU and logging a `diag: frame 0 split: <stage> done` line
-      # after each (timed from the process start). `VXE_DIAG_PRELOAD` picks the sweep's form:
-      # `skip-sweep` records none, `empty-sweep` records its dispatch indirect from a buffer of
-      # zero workgroups (the dispatch without its writes), `direct-sweep` dispatches it directly
-      # with the workgroups the args pass would write. Each run prints what its outcome means,
-      # is killed past its own bound and has its stdout and stderr printed. Worst case 3 x 180 s
-      # + 600 s = 19 min. The step never fails the job.
+      # headless on WARP, 3 frames as that test runs them. Runs 42477325818 and 42483023036
+      # placed it: frame 0's `shade_preload` never finishes (past 600 s) after the preload's
+      # sweep has been recorded, even with zero workgroups or dispatched directly, and finishes
+      # in 12 to 15 s with the sweep skipped. Every run sets `VXE_DIAG_SPLIT_FRAME0=1`, which
+      # submits the passes before the preload, the preload's args pass, its sweep and the light
+      # pass one at a time, waiting for the GPU and logging a `diag: frame 0 split: <stage>
+      # done` line after each (timed from the process start). `VXE_DIAG_PRELOAD` holds
+      # comma-separated switches: `skip-sweep` records no sweep; `read-args` reads the
+      # indirect words and the counters' split back before the light pass and logs them;
+      # `direct-shade` does that and dispatches `shade_preload` directly with the x and y read
+      # back; `scratch-sweep` records the empty sweep with its table and counters bound to
+      # scratch buffers. Each run prints what its outcome means, is killed past 180 s and has
+      # its stdout and stderr printed. Worst case 5 x 180 s = 15 min. The step never fails
+      # the job.
       - name: Headless fly-through on WARP (diagnostic)
         if: runner.os == 'Windows'
         continue-on-error: true
@@ -150,14 +153,16 @@ jobs:
           $env:VXE_DIAG_SPLIT_FRAME0 = "1"
           $args3 = "--headless --frames 3 --render 64x36"
           $runs = @(
-            @{ name = "control: sweep skipped"; preload = "skip-sweep"; kill = 180;
-               meaning = "Exits 0 as in run 42477325818 (shade_preload about 14.5 s). If not, WARP is not repeatable run to run and the readings below say little." },
-            @{ name = "(b) empty sweep"; preload = "empty-sweep"; kill = 180;
-               meaning = "Exits 0: the sweep's writes (stamps, lists, counters) cause the hang, not its dispatch. Killed after 'preload sweep done': the sweep's dispatch alone (its pipeline, bind groups or indirect words) hangs the next shade_preload." },
-            @{ name = "(c) direct sweep"; preload = "direct-sweep"; kill = 180;
-               meaning = "Exits 0: the sweep's indirect dispatch causes it (wgpu's DX12 indirect path before an indirect shade_preload). Killed after 'preload sweep done': the indirect path is cleared; read with (b)." },
-            @{ name = "(a) as in run 42477325818, 600 s kill"; preload = ""; kill = 600;
-               meaning = "Exits 0, or 'light pass (shade_preload) done' appears: shade_preload after the sweep is slow, not hung; its time is the cost. Killed at 600 s with no such line: hung (or over ten minutes)." }
+            @{ name = "control: sweep skipped, words read back"; preload = "skip-sweep,read-args"; kill = 180;
+               meaning = "Exits 0 as in runs 42477325818 and 42483023036 (shade_preload 12 to 15 s). Its 'args read back' line is the reference: shade_preload's words should be [cols, light_rows + groups, 1] with groups 0 on frame 0. If it no longer exits 0, the readback's copy itself hangs WARP and the next runs say little." },
+            @{ name = "(1) sweep, words read back"; preload = "read-args"; kill = 180;
+               meaning = "Compare its 'args read back' line with the control's. Other words: WARP's args pass or the sweep corrupts them, and the hang is a garbage dispatch. The same words and killed after that line: the counts are right and shade_preload hangs on good args. Exits 0: the readback's copy (the words' buffer moved to a copy source before the indirect read) clears the hang, so the indirect buffer's state is the cause; read with (2)." },
+            @{ name = "(2) sweep, shade_preload direct"; preload = "direct-shade"; kill = 180;
+               meaning = "Exits 0: shade_preload's indirect dispatch after the sweep (wgpu's DX12 validation and command signature with the num_workgroups root constants) is the fault, and a direct dispatch is a fix to try. Killed after its 'args read back' line with no 'light pass (shade_preload, direct ...) done' line: the shader hangs however it is dispatched once the sweep has run." },
+            @{ name = "(3) empty sweep on scratch buffers"; preload = "scratch-sweep"; kill = 180;
+               meaning = "Exits 0: the hang needs the sweep to bind the real table and counters, which shade_preload also binds read-write (state across submissions); give the sweep and shade_preload separate buffers. Killed after 'preload sweep done': the sweep's pipeline (with the world and its uniform) alone is enough, whatever it binds in group 2." },
+            @{ name = "(a) the normal split, as in run 42483023036"; preload = ""; kill = 180;
+               meaning = "Killed after 'preload sweep done' as before: the hang still reproduces in this build. Exits 0: it no longer does, and the runs above read a different tree." }
           )
           foreach ($r in $runs) {
             Write-Host "=== WARP diagnostic: $($r.name): flythrough $args3, VXE_DIAG_PRELOAD='$($r.preload)', killed past $($r.kill) s"
