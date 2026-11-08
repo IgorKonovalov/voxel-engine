@@ -1602,6 +1602,8 @@ pub struct Frame {
     /// The edit boxes since the last dig re-bake ([`Frame::rebake_digs`]), every one, while the
     /// store holds a piece.
     dig_boxes: Vec<[[i32; 3]; 2]>,
+    /// The live queue ([`Frame::start_bake_queue`]), when the store fills a frame at a time.
+    bake_queue: Option<crate::bake::BakeQueue>,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
     gradient_cache_layout: wgpu::BindGroupLayout,
@@ -2565,6 +2567,7 @@ impl Frame {
             store: crate::bake::Store::new(device, crate::bake::MINIMAL_POOL_BYTES),
             bake: None,
             dig_boxes: Vec::new(),
+            bake_queue: None,
             temporal,
             gradient_layout,
             gradient_cache_layout,
@@ -3004,6 +3007,9 @@ impl Frame {
         if self.store.piece().is_some() {
             self.dig_boxes.push([min, max]);
         }
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.invalidate(min, max);
+        }
         let h = self.history();
         if h.edits.len() == MAX_EDITS {
             h.overflow = true;
@@ -3172,6 +3178,120 @@ impl Frame {
             params,
         };
         crate::bake::run(&run, &mut self.store, extent, settings, progress)
+    }
+
+    /// Starts the live queue (ADR-0046's scheduler): the store emptied for `gpu`'s window, every
+    /// block with brick records of `settings`' cell, filled by [`Frame::bake_queue_step`] a slice
+    /// of `slice_ms` a frame. `Err` without [`Light::Baked`] or without `settings.rings`.
+    pub fn start_bake_queue(
+        &mut self,
+        queue: &wgpu::Queue,
+        gpu: &GpuWorld,
+        settings: crate::bake::BakeSettings,
+        slice_ms: f64,
+    ) -> Result<(), crate::bake::BakeError> {
+        if self.lighting.light != Light::Baked {
+            return Err(crate::bake::BakeError::NotBaked);
+        }
+        let Some(cell) = settings.rings.as_ref().map(|r| r.cell) else {
+            return Err(crate::bake::BakeError::NotBaked);
+        };
+        self.store.start_queue(queue, gpu.window(), cell);
+        self.dig_boxes.clear();
+        self.bake_queue = Some(crate::bake::BakeQueue::new(settings, slice_ms));
+        Ok(())
+    }
+
+    /// The lighting grid's pixels: what the store's missing count is a share of.
+    pub fn light_pixels(&self) -> u32 {
+        let [w, h] = self.targets.light_size();
+        w * h
+    }
+
+    /// The live queue, if started.
+    pub fn bake_queue(&self) -> Option<&crate::bake::BakeQueue> {
+        self.bake_queue.as_ref()
+    }
+
+    /// The live queue's slice, in milliseconds.
+    pub fn set_bake_slice(&mut self, ms: f64) {
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.slice_ms = ms;
+        }
+    }
+
+    /// Hands the live queue the stream workers' prepared masks ([`crate::bake::FacePrep`]).
+    pub fn take_prepared(
+        &mut self,
+        prepared: &[(ChunkCoord, vxe_world::Prepared)],
+        world: &vxe_world::World,
+    ) {
+        if let Some(q) = self.bake_queue.as_mut()
+            && !prepared.is_empty()
+        {
+            q.take_prepared(prepared, &crate::bake::face_classes(world.materials()));
+        }
+    }
+
+    /// Whether `c` holds its block in the live queue's store, or is known to need none (`absent`:
+    /// the world holds no chunk there). False without the queue.
+    pub fn bake_settled(&self, c: ChunkCoord, absent: bool) -> bool {
+        self.bake_queue
+            .as_ref()
+            .is_some_and(|q| q.settled(&self.store, c, absent))
+    }
+
+    /// One frame of the live queue, ahead of the encode: the light-sample ranges held out to
+    /// `view.hold` (by default the window's far corner plus the light radius), then [`crate::bake::BakeQueue::step`], which
+    /// waits on the GPU. `gpu` must already hold this frame's sync, submitted. `None` without
+    /// the queue or while the read is not the store.
+    pub fn bake_queue_step(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu: &mut GpuWorld,
+        world: &vxe_world::World,
+        view: &crate::bake::QueueView<'_>,
+    ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
+        if self.lighting.light != Light::Baked {
+            return None;
+        }
+        let settings = self.bake_queue.as_ref()?.settings.clone();
+        let w = gpu.window();
+        let f = gpu.focus().0;
+        let size = w.size();
+        let far: i64 = (0..3)
+            .map(|k| {
+                let lo = i64::from(w.min.0[k] - f[k]).abs();
+                let hi = i64::from(w.min.0[k] + size[k] - 1 - f[k]).abs();
+                lo.max(hi).pow(2)
+            })
+            .sum();
+        gpu.hold_lights(
+            view.hold
+                .unwrap_or((far as f64).sqrt().ceil() as i32 + gpu.light_radius() + 1),
+        );
+        let params = self.bake_params(gpu, &settings);
+        let world_bind = self.world_bind(device, gpu);
+        if self.bake.is_none() {
+            self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
+        }
+        self.bake
+            .as_mut()
+            .expect("built above")
+            .ensure(device, settings.form);
+        let run = crate::bake::BakeRun {
+            device,
+            queue,
+            gpu,
+            world,
+            pipeline: self.bake.as_ref().expect("built above"),
+            world_bind: &world_bind,
+            params_buffer: &self.params,
+            params,
+        };
+        let q = self.bake_queue.as_mut()?;
+        Some(q.step(&run, &mut self.store, view))
     }
 
     /// The frame parameters a bake dispatches with: no view but the LOD walk's camera chunk,

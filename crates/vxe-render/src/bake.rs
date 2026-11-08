@@ -210,13 +210,9 @@ const NO_VOXEL: [u64; 8] = [0; 8];
 const ALL_VOXELS: [u64; 8] = [u64::MAX; 8];
 
 /// A brick's opaque voxels and its solid ones (opaque or translucent): bit `x + 8 y` of word `z`.
-fn class_masks(brick: &Brick, classes: &[u8]) -> ([u64; 8], [u64; 8]) {
+fn class_masks(brick: &Brick, classes: &[u8]) -> Masks {
     match brick {
-        Brick::Uniform(m) => match classes[usize::from(*m)] {
-            CLASS_OPAQUE => (ALL_VOXELS, ALL_VOXELS),
-            CLASS_TRANSLUCENT => (NO_VOXEL, ALL_VOXELS),
-            _ => (NO_VOXEL, NO_VOXEL),
-        },
+        Brick::Uniform(m) => uniform_masks(classes[usize::from(*m)]),
         Brick::Full(p) => {
             let mut v = [AIR; BRICK_VOXELS];
             p.decode(&mut v);
@@ -260,6 +256,89 @@ fn mask_bit(mask: &[u64; 8], l: [usize; 3]) -> bool {
     mask[l[2]] >> (l[0] + 8 * l[1]) & 1 != 0
 }
 
+/// A brick's opaque and solid masks ([`class_masks`]).
+pub type Masks = ([u64; 8], [u64; 8]);
+
+/// The masks of a uniform brick of class `c`.
+fn uniform_masks(c: u8) -> Masks {
+    match c {
+        CLASS_OPAQUE => (ALL_VOXELS, ALL_VOXELS),
+        CLASS_TRANSLUCENT => (NO_VOXEL, ALL_VOXELS),
+        _ => (NO_VOXEL, NO_VOXEL),
+    }
+}
+
+/// A uniform brick's class in [`ChunkMasks`]: this marks a brick held by its masks.
+const MASKED: u8 = u8::MAX;
+
+/// A chunk's brick masks, the listing's decode done ahead of it (on a stream worker, through
+/// [`FacePrep`]): a uniform brick by its class, any other by its masks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChunkMasks {
+    classes: Box<[u8; CHUNK_BRICKS]>,
+    masked: Vec<(u16, Masks)>,
+}
+
+impl ChunkMasks {
+    /// `chunk`'s masks under `classes` ([`face_classes`]).
+    pub fn of(chunk: &Chunk, classes: &[u8]) -> Self {
+        let mut out = Self {
+            classes: Box::new([CLASS_AIR; CHUNK_BRICKS]),
+            masked: Vec::new(),
+        };
+        for (slot, b) in chunk.bricks().iter().enumerate() {
+            match b {
+                Brick::Uniform(m) => out.classes[slot] = classes[usize::from(*m)],
+                Brick::Full(_) => {
+                    out.classes[slot] = MASKED;
+                    out.masked.push((slot as u16, class_masks(b, classes)));
+                }
+            }
+        }
+        out
+    }
+
+    /// Brick `slot`'s masks.
+    pub fn get(&self, slot: usize) -> Masks {
+        match self.classes[slot] {
+            MASKED => {
+                let i = self
+                    .masked
+                    .binary_search_by_key(&(slot as u16), |(s, _)| *s)
+                    .expect("a masked brick holds its masks");
+                self.masked[i].1
+            }
+            c => uniform_masks(c),
+        }
+    }
+
+    /// Bytes held, for the prepared results' cap.
+    pub fn bytes(&self) -> usize {
+        CHUNK_BRICKS + self.masked.len() * std::mem::size_of::<(u16, Masks)>()
+    }
+}
+
+/// The stream workers' hook (ADR-0017, `vxe_world::ChunkPrep`): each full chunk's
+/// [`ChunkMasks`] under the material classes it was made with, for [`list_faces_by`].
+pub struct FacePrep {
+    pub classes: Arc<Vec<u8>>,
+}
+
+impl vxe_world::ChunkPrep for FacePrep {
+    fn prepare(&self, _coord: ChunkCoord, chunk: &Chunk) -> vxe_world::Prepared {
+        vxe_world::Prepared(Arc::new(PreparedMasks {
+            classes: self.classes.clone(),
+            masks: ChunkMasks::of(chunk, &self.classes),
+        }))
+    }
+}
+
+/// What [`FacePrep`] hands back: the masks and the classes they were taken under.
+pub struct PreparedMasks {
+    pub classes: Arc<Vec<u8>>,
+    pub masks: ChunkMasks,
+}
+
 /// `chunk`'s faces, across brick and chunk borders: an opaque voxel's toward a voxel that is not
 /// opaque, and a translucent voxel's toward air (`classes`, [`face_classes`]). The neighbours are
 /// in face order (`-x, +x, -y, +y, -z, +z`); across a neighbour that is `None` no ray arrives (an
@@ -269,11 +348,23 @@ pub fn list_chunk_faces(
     neighbours: &[Option<&Chunk>; 6],
     classes: &[u8],
 ) -> ChunkFaces {
-    let masks: Vec<([u64; 8], [u64; 8])> = chunk
+    let masks: Vec<Masks> = chunk
         .bricks()
         .iter()
         .map(|b| class_masks(b, classes))
         .collect();
+    list_faces_by(&|slot| masks[slot], &|face, slot| {
+        neighbours[face].map(|c| class_masks(c.brick(slot), classes))
+    })
+}
+
+/// A chunk's faces as [`list_chunk_faces`] lists them, from its bricks' masks (`own`, by slot)
+/// and its neighbours' (`beside`, by face and slot; `None` where that neighbour is absent).
+pub fn list_faces_by(
+    own: &dyn Fn(usize) -> Masks,
+    beside: &dyn Fn(usize, usize) -> Option<Masks>,
+) -> ChunkFaces {
+    let masks: Vec<Masks> = (0..CHUNK_BRICKS).map(own).collect();
     let mut out = ChunkFaces::default();
     for slot in 0..CHUNK_BRICKS {
         let (opaque, solid) = masks[slot];
@@ -281,7 +372,7 @@ pub fn list_chunk_faces(
             continue;
         }
         let b = brick_of_slot(slot);
-        let beside: [([u64; 8], [u64; 8]); 6] = std::array::from_fn(|face| {
+        let beside: [Masks; 6] = std::array::from_fn(|face| {
             let (k, d) = (face / 2, if face % 2 == 1 { 1 } else { -1 });
             let mut n = b;
             n[k] += d;
@@ -289,10 +380,7 @@ pub fn list_chunk_faces(
                 return masks[brick_slot(n)];
             }
             n[k] = n[k].rem_euclid(8);
-            match neighbours[face] {
-                Some(c) => class_masks(c.brick(brick_slot(n)), classes),
-                None => (ALL_VOXELS, ALL_VOXELS),
-            }
+            beside(face, brick_slot(n)).unwrap_or((ALL_VOXELS, ALL_VOXELS))
         });
         if opaque == ALL_VOXELS && beside.iter().all(|m| m.0 == ALL_VOXELS) {
             continue;
@@ -708,6 +796,8 @@ pub struct Store {
     tent: bool,
     /// The blocks carry brick records ([`Rings`]) of cells of this many voxels.
     bricks: Option<u32>,
+    /// Places freed by [`Store::remove`]: first word and words, for [`Store::alloc`].
+    free: Vec<(u64, u64)>,
 }
 
 /// A store's content off the pool: its piece and blocks, and the raw words under the filter, for
@@ -750,6 +840,7 @@ impl Store {
             raw: BTreeMap::new(),
             tent: false,
             bricks: None,
+            free: Vec::new(),
         }
     }
 
@@ -861,6 +952,97 @@ impl Store {
         self.end_words = self.head_words;
         self.piece = None;
         self.window = Some(window);
+        self.free.clear();
+    }
+
+    /// Empties the store for `window` for the live queue: blocks with brick records of cells of
+    /// `cell` voxels, the piece the window.
+    pub(crate) fn start_queue(&mut self, queue: &wgpu::Queue, window: ChunkExtent, cell: u32) {
+        self.reset(queue, window);
+        self.set_bricks(queue, Some(cell));
+        self.piece = Some(window);
+    }
+
+    /// Follows the mirror's window: blocks of chunks outside `window` are dropped and their places
+    /// freed, the header's origin moves and the chunk table is written again. A window of another
+    /// size empties the store (the table's words change), keeping its flags. The chunks dropped.
+    pub(crate) fn rewindow(&mut self, queue: &wgpu::Queue, window: ChunkExtent) -> Vec<[i32; 3]> {
+        if self.window == Some(window) {
+            return Vec::new();
+        }
+        let size = window.size();
+        let dropped: Vec<[i32; 3]> = if self.window.map(|w| w.size()) != Some(size) {
+            let all = self.blocks.keys().copied().collect();
+            let bricks = self.bricks;
+            self.reset(queue, window);
+            self.set_bricks(queue, bricks);
+            return all;
+        } else {
+            let inside =
+                |c: &[i32; 3]| (0..3).all(|k| (0..size[k]).contains(&(c[k] - window.min.0[k])));
+            self.blocks.keys().copied().filter(|c| !inside(c)).collect()
+        };
+        for c in &dropped {
+            if let Some((first, words)) = self.blocks.remove(c) {
+                self.free.push((first, words));
+            }
+            self.words.remove(c);
+            self.raw.remove(c);
+        }
+        self.window = Some(window);
+        let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
+        let mut header = vec![0u32; (STORE_TABLE + table_words) as usize];
+        for k in 0..3 {
+            header[4 + k] = window.min.0[k] as u32;
+            header[8 + k] = size[k] as u32;
+        }
+        header[STORE_FLAGS as usize] = match self.bricks {
+            None => 0,
+            Some(4) => FLAG_BRICKS | FLAG_CELL4,
+            Some(_) => FLAG_BRICKS,
+        };
+        for (c, (first, _)) in &self.blocks {
+            header[self.table_word(ChunkCoord(*c)) as usize] = *first as u32;
+        }
+        // Words 0 and 1 are the frame's counters, which the temporal pass writes.
+        queue.write_buffer(&self.pool, 8, bytemuck::cast_slice(&header[2..]));
+        dropped
+    }
+
+    /// A place of `words` words: the smallest freed place that holds it (its rest freed again),
+    /// else past the last block.
+    pub(crate) fn alloc(&mut self, words: u64) -> Result<u64, BakeError> {
+        let fit = (0..self.free.len())
+            .filter(|&i| self.free[i].1 >= words)
+            .min_by_key(|&i| (self.free[i].1, self.free[i].0));
+        if let Some(i) = fit {
+            let (first, have) = self.free.swap_remove(i);
+            if have > words {
+                self.free.push((first + words, have - words));
+            }
+            return Ok(first);
+        }
+        let capacity = self.pool.size();
+        if (self.end_words + words) * 4 > capacity {
+            return Err(BakeError::PoolFull {
+                needed: (self.end_words + words) * 4,
+                capacity,
+            });
+        }
+        let first = self.end_words;
+        self.end_words += words;
+        Ok(first)
+    }
+
+    /// Frees a place [`Store::alloc`] handed out that no block took.
+    pub(crate) fn release(&mut self, first: u64, words: u64) {
+        self.free.push((first, words));
+    }
+
+    /// Writes `words` at `first` in the pool alone: what a fading block shows while the store's
+    /// copy holds its target.
+    pub(crate) fn show(&self, queue: &wgpu::Queue, first: u64, words: &[u32]) {
+        queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(words));
     }
 
     /// The chunk table's word for `coord`.
@@ -885,9 +1067,10 @@ impl Store {
         self.words.insert(coord.0, block);
     }
 
-    /// Drops `coord`'s block: the chunk table reads none.
-    fn remove(&mut self, queue: &wgpu::Queue, coord: ChunkCoord) {
-        if self.blocks.remove(&coord.0).is_some() {
+    /// Drops `coord`'s block, its place freed: the chunk table reads none.
+    pub(crate) fn remove(&mut self, queue: &wgpu::Queue, coord: ChunkCoord) {
+        if let Some(place) = self.blocks.remove(&coord.0) {
+            self.free.push(place);
             self.words.remove(&coord.0);
             self.raw.remove(&coord.0);
             queue.write_buffer(
@@ -1333,6 +1516,28 @@ impl BakePipeline {
         out
     }
 
+    /// Group 3 of a bake's dispatch: the job uniform, the working buffer and the table slots.
+    pub(crate) fn bind(&self, device: &wgpu::Device) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bake"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.job.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.faces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.tables.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
     /// Builds `form`'s pipeline where it is not built yet.
     pub(crate) fn ensure(&mut self, device: &wgpu::Device, form: SeedForm) {
         if self.pipelines[form.index()].is_some() {
@@ -1474,6 +1679,11 @@ impl FaceState {
         w
     }
 
+    /// Samples its round `k` from now draws.
+    fn round_samples(&self, k: u32, round: u32) -> u32 {
+        round.min(self.n_max.saturating_sub(self.n + k * round))
+    }
+
     /// The rounds left before its `n_max`.
     fn rounds_left(&self, round: u32) -> u32 {
         (self.n_max - self.n).div_ceil(round)
@@ -1587,6 +1797,9 @@ pub(crate) struct Job {
     pub tier: Option<Tier>,
     /// Brick records kept from the block before, by slot: their bricks' faces are not baked.
     pub kept_bricks: KeptBricks,
+    /// Samples it draws at most, for the live queue's depth ([`JobLoop::samples_left`]); 0 where
+    /// nobody reads it.
+    pub samples: u64,
 }
 
 /// Brick records a re-baked ring job keeps, by brick slot.
@@ -1831,6 +2044,7 @@ pub(crate) fn run(
                 kept: None,
                 tier,
                 kept_bricks: KeptBricks::new(),
+                samples: 0,
             };
             at += words;
             job
@@ -1968,6 +2182,7 @@ pub(crate) fn rebake(
             kept: Some(kept),
             tier,
             kept_bricks,
+            samples: 0,
         });
     }
     let bake = run_jobs(run, store, jobs, settings, progress)?;
@@ -1994,110 +2209,205 @@ fn run_jobs(
     settings: &BakeSettings,
     progress: &mut dyn FnMut(&BakeProgress),
 ) -> Result<BakeReport, BakeError> {
-    let (device, queue) = (run.device, run.queue);
-    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("bake"),
-        layout: &run.pipeline.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: run.pipeline.job.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: run.pipeline.faces.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: run.pipeline.tables.as_entire_binding(),
-            },
-        ],
-    });
+    let open_cap = if settings.jobs_alone { 1 } else { LOOP_SLOTS };
+    let mut lp = JobLoop::new(jobs, 0..open_cap);
+    let bind = run.pipeline.bind(run.device);
     // The frame's parameters, once: the bake reads no view but the LOD walk's camera chunk,
     // which it takes from the face's job.
-    queue.write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
-    let mut report = BakeReport {
-        chunks: jobs.len() as u64,
-        ..BakeReport::default()
+    run.queue
+        .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
+    let queue = run.queue;
+    let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
+        store.put(queue, coord, first, block);
     };
-    let total_faces: u64 = jobs.iter().map(|j| j.faces.faces() as u64).sum();
-    let mut done = BakeProgress {
-        chunks: jobs.len() as u64,
-        faces: total_faces,
-        ..BakeProgress::default()
-    };
-    let round = settings.round.max(1);
-    let per_submit = (SUBMIT_SAMPLES / u64::from(round)).max(1) as usize;
-    let batch = settings
-        .batch_faces
-        .clamp(1, BAKE_BATCH_FACES)
-        .min(per_submit);
-    let n_max = settings.n_max.max(1);
-    let rounds_cap = if settings.submit_rounds == 0 {
-        u32::MAX
-    } else {
-        settings.submit_rounds
-    };
-    let ctx = JobCtx {
-        run,
-        settings,
-        round,
-        n_max,
-        rounds_cap,
-    };
-    let mut pending: VecDeque<Job> = jobs.into();
-    let open_cap = if settings.jobs_alone { 1 } else { OPEN_JOBS };
-    let mut free: Vec<usize> = (0..open_cap).rev().collect();
-    let mut open: Vec<OpenJob> = Vec::new();
-    loop {
-        // The rounds each live face takes in this submit: first those that cannot end it.
-        let mut entries = 0usize;
-        let mut plan: Vec<Vec<(usize, u32)>> = open
+    while lp
+        .submit(run, &bind, store, settings, u64::MAX, &mut sink, progress)
+        .is_some()
+    {}
+    run.queue.submit([]);
+    Ok(lp.report)
+}
+
+/// Slots of the candidate tables a one-off bake's jobs take ([`run_jobs`]); the live queue's
+/// take the rest ([`QUEUE_SLOTS`]), so a dig's re-bake between two of its submits leaves its open
+/// jobs' tables.
+const LOOP_SLOTS: usize = OPEN_JOBS - QUEUE_SLOTS;
+/// Slots the live queue's open jobs take, the last of [`OPEN_JOBS`].
+pub const QUEUE_SLOTS: usize = 16;
+
+/// What one submit of a [`JobLoop`] did.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SubmitDone {
+    pub samples: u64,
+    /// From the submit to the readback, waited on.
+    pub seconds: f64,
+}
+
+/// The job loop, resumable: jobs pending and open, the table slots free, and what it did. Each
+/// [`JobLoop::submit`] is one dispatch, waited on.
+pub(crate) struct JobLoop {
+    pending: VecDeque<Job>,
+    open: Vec<OpenJob>,
+    free: Vec<usize>,
+    pub report: BakeReport,
+    pub done: BakeProgress,
+}
+
+impl JobLoop {
+    /// A loop over `jobs`, its open jobs' tables in `slots`.
+    pub fn new(jobs: Vec<Job>, slots: std::ops::Range<usize>) -> Self {
+        let faces: u64 = jobs.iter().map(|j| j.faces.faces() as u64).sum();
+        Self {
+            report: BakeReport {
+                chunks: jobs.len() as u64,
+                ..BakeReport::default()
+            },
+            done: BakeProgress {
+                chunks: jobs.len() as u64,
+                faces,
+                ..BakeProgress::default()
+            },
+            pending: jobs.into(),
+            open: Vec::new(),
+            free: slots.rev().collect(),
+        }
+    }
+
+    /// Adds a job behind the pending ones.
+    pub fn push(&mut self, job: Job) {
+        self.report.chunks += 1;
+        self.done.chunks += 1;
+        self.done.faces += job.faces.faces() as u64;
+        self.pending.push_back(job);
+    }
+
+    /// No job pending or open.
+    pub fn idle(&self) -> bool {
+        self.pending.is_empty() && self.open.is_empty()
+    }
+
+    /// The chunks of the jobs pending or open.
+    pub fn chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+        self.pending
             .iter()
-            .map(|job| ctx.plan(job, batch, &mut entries))
-            .collect();
-        while entries < batch {
-            let Some(slot) = free.pop() else { break };
-            let Some(next) = pending.pop_front() else {
-                free.push(slot);
+            .map(|j| j.coord)
+            .chain(self.open.iter().map(|j| j.coord))
+    }
+
+    /// Samples the pending and open jobs still have to draw, at most.
+    pub fn samples_left(&self) -> u64 {
+        let live = |s: &FaceState| if s.done { 0 } else { u64::from(s.n_max - s.n) };
+        let open: u64 = self
+            .open
+            .iter()
+            .map(|j| j.states.iter().map(live).sum::<u64>())
+            .sum();
+        open + self.pending.iter().map(|j| j.samples).sum::<u64>()
+    }
+
+    /// Writes each open job's candidate table again from the ranges `run.gpu` holds now: a sync
+    /// between two submits may have moved a range.
+    pub fn refresh_tables(&self, run: &BakeRun<'_>) {
+        for job in &self.open {
+            write_job_table(run, job.coord, job.slot);
+        }
+    }
+
+    /// One submit of at most about `sample_cap` samples (and at least one entry): open jobs
+    /// first, then pending ones opened into free slots. Each ended job's block goes to `sink`.
+    /// `None` when no entry was left to dispatch.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the frame's parts, the store, the settings, the cap and the two callbacks are independent"
+    )]
+    pub fn submit(
+        &mut self,
+        run: &BakeRun<'_>,
+        bind: &wgpu::BindGroup,
+        store: &mut Store,
+        settings: &BakeSettings,
+        sample_cap: u64,
+        sink: &mut BlockSink<'_>,
+        progress: &mut dyn FnMut(&BakeProgress),
+    ) -> Option<SubmitDone> {
+        let (device, queue) = (run.device, run.queue);
+        let round = settings.round.max(1);
+        let per_submit = (SUBMIT_SAMPLES / u64::from(round)).max(1) as usize;
+        let batch = settings
+            .batch_faces
+            .clamp(1, BAKE_BATCH_FACES)
+            .min(per_submit);
+        let ctx = JobCtx {
+            run,
+            settings,
+            round,
+            n_max: settings.n_max.max(1),
+            rounds_cap: if settings.submit_rounds == 0 {
+                u32::MAX
+            } else {
+                settings.submit_rounds
+            },
+        };
+        let report = &mut self.report;
+        let done = &mut self.done;
+        let open = &mut self.open;
+        let mut close =
+            |store: &mut Store, job: OpenJob, report: &mut BakeReport, done: &mut BakeProgress| {
+                let (coord, first, block) = ctx.close(job, report);
+                sink(store, coord, first, block);
+                done.chunks_done += 1;
+            };
+        // The rounds each live face takes in this submit: first those that cannot end it.
+        let mut budget = Budget {
+            entries: 0,
+            batch,
+            samples: 0,
+            cap: sample_cap,
+        };
+        let mut plan: Vec<Vec<(usize, u32)>> =
+            open.iter().map(|job| ctx.plan(job, &mut budget)).collect();
+        while budget.room() {
+            let Some(slot) = self.free.pop() else { break };
+            let Some(next) = self.pending.pop_front() else {
+                self.free.push(slot);
                 break;
             };
             let job = ctx.open(next, slot);
             if job.live.is_empty() {
-                free.push(slot);
-                ctx.close(store, job, &mut report, &mut done);
-                progress(&done);
+                self.free.push(slot);
+                close(store, job, report, done);
+                progress(done);
                 continue;
             }
-            plan.push(ctx.plan(&job, batch, &mut entries));
+            plan.push(ctx.plan(&job, &mut budget));
             open.push(job);
         }
         // Room left and no job to open: further rounds, a layer at a time, in order, each face
         // up to the rounds its standard error now expects it to need.
-        while entries < batch {
-            let before = entries;
+        while budget.room() && self.pending.is_empty() {
+            let before = budget.entries;
             for (job, p) in open.iter().zip(&mut plan) {
                 for (i, r) in p.iter_mut() {
-                    if entries == batch {
+                    if !budget.room() {
                         break;
                     }
                     let s = &job.states[*i];
                     let expected = s.expected_rounds(round, settings.clamp, settings.se).max(1);
-                    if *r < s.rounds_left(round).min(rounds_cap).min(expected) {
+                    if *r < s.rounds_left(round).min(ctx.rounds_cap).min(expected) {
+                        budget.take(s.round_samples(*r, round));
                         *r += 1;
-                        entries += 1;
                     }
                 }
             }
-            if entries == before {
+            if budget.entries == before {
                 break;
             }
         }
-        if entries == 0 {
-            break;
+        if budget.entries == 0 {
+            return None;
         }
         // One dispatch: each entry names its job's slot.
-        let mut input: Vec<[u32; 20]> = Vec::with_capacity(entries);
+        let mut input: Vec<[u32; 20]> = Vec::with_capacity(budget.entries);
         let mut jobs_in = 0u64;
         for (job, p) in open.iter().zip(&plan) {
             jobs_in += u64::from(!p.is_empty());
@@ -2130,7 +2440,7 @@ fn run_jobs(
             });
             pass.set_pipeline(run.pipeline.pipeline(settings.form));
             pass.set_bind_group(0, run.world_bind, &[]);
-            pass.set_bind_group(3, &bind, &[]);
+            pass.set_bind_group(3, bind, &[]);
             pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
         }
         if let Some(timer) = &settings.timer {
@@ -2147,11 +2457,13 @@ fn run_jobs(
             0,
             input.len() as u64 * FACE_BYTES,
         );
-        report.gpu_seconds += seconds_since(t);
+        let seconds = seconds_since(t);
+        report.gpu_seconds += seconds;
         if let Some(timer) = &settings.timer {
             report.dispatch_seconds += timer.read_ms(device) / 1e3;
         }
         report.submits += 1;
+        let samples_before = report.samples;
         // Each face's rounds in order: the stop is read after each, and a round past it is waste.
         let out: &[u32] = bytemuck::cast_slice(&bytes);
         let mut e = 0usize;
@@ -2186,7 +2498,7 @@ fn run_jobs(
         }
         done.samples = report.samples;
         done.gpu_seconds = report.gpu_seconds;
-        for job in &mut open {
+        for job in open.iter_mut() {
             let states = &job.states;
             job.live.retain(|&i| !states[i].done);
         }
@@ -2194,16 +2506,57 @@ fn run_jobs(
         while k < open.len() {
             if open[k].live.is_empty() {
                 let job = open.remove(k);
-                free.push(job.slot);
-                ctx.close(store, job, &mut report, &mut done);
+                self.free.push(job.slot);
+                close(store, job, report, done);
             } else {
                 k += 1;
             }
         }
-        progress(&done);
+        progress(done);
+        Some(SubmitDone {
+            samples: report.samples - samples_before,
+            seconds,
+        })
     }
-    queue.submit([]);
-    Ok(report)
+}
+
+/// Where an ended job's block goes: the store, its chunk, its place and its words.
+pub(crate) type BlockSink<'a> = dyn FnMut(&mut Store, ChunkCoord, u64, Vec<u32>) + 'a;
+
+/// A submit's room: its entries against the batch, its samples against the cap.
+struct Budget {
+    entries: usize,
+    batch: usize,
+    samples: u64,
+    cap: u64,
+}
+
+impl Budget {
+    /// Another entry fits: under the batch, and under the cap or with none taken yet.
+    fn room(&self) -> bool {
+        self.entries < self.batch && (self.samples < self.cap || self.entries == 0)
+    }
+
+    fn take(&mut self, samples: u32) {
+        self.entries += 1;
+        self.samples += u64::from(samples);
+    }
+}
+
+/// Stages `coord`'s candidate table and its chunk in table slot `slot`.
+fn write_job_table(run: &BakeRun<'_>, coord: ChunkCoord, slot: usize) {
+    let table = job_table(run.gpu, coord);
+    let used = (1 + table.count as usize) * 16;
+    let at = slot as u64 * TABLE_SLOT_BYTES;
+    let tables = &run.pipeline.tables;
+    run.queue
+        .write_buffer(tables, at, &bytemuck::bytes_of(&table)[..used]);
+    let chunk = [coord.0[0], coord.0[1], coord.0[2], 0];
+    run.queue.write_buffer(
+        tables,
+        at + (TABLE_SLOT_WORDS - 1) * 16,
+        bytemuck::cast_slice(&chunk),
+    );
 }
 
 /// A chunk's job while its faces run.
@@ -2238,19 +2591,9 @@ impl JobCtx<'_, '_> {
             kept,
             tier,
             kept_bricks,
+            samples: _,
         } = job;
-        let table = job_table(self.run.gpu, coord);
-        let used = (1 + table.count as usize) * 16;
-        let at = slot as u64 * TABLE_SLOT_BYTES;
-        let tables = &self.run.pipeline.tables;
-        let queue = self.run.queue;
-        queue.write_buffer(tables, at, &bytemuck::bytes_of(&table)[..used]);
-        let chunk = [coord.0[0], coord.0[1], coord.0[2], 0];
-        queue.write_buffer(
-            tables,
-            at + (TABLE_SLOT_WORDS - 1) * 16,
-            bytemuck::cast_slice(&chunk),
-        );
+        write_job_table(self.run, coord, slot);
         let brick_samples = self
             .settings
             .rings
@@ -2322,34 +2665,30 @@ impl JobCtx<'_, '_> {
         }
     }
 
-    /// The rounds of `job`'s live faces that cannot end them, while `entries` is under `batch`.
-    fn plan(&self, job: &OpenJob, batch: usize, entries: &mut usize) -> Vec<(usize, u32)> {
+    /// The rounds of `job`'s live faces that cannot end them, while `budget` has room.
+    fn plan(&self, job: &OpenJob, budget: &mut Budget) -> Vec<(usize, u32)> {
         let mut p = Vec::new();
         for &i in &job.live {
-            if *entries == batch {
+            if !budget.room() {
                 break;
             }
             let s = &job.states[i];
-            let r = s
+            let want = s
                 .certain_rounds(self.round)
                 .min(s.rounds_left(self.round))
-                .min(self.rounds_cap)
-                .min((batch - *entries) as u32);
+                .min(self.rounds_cap);
+            let mut r = 0;
+            while r < want && budget.room() {
+                budget.take(s.round_samples(r, self.round));
+                r += 1;
+            }
             p.push((i, r));
-            *entries += r as usize;
         }
         p
     }
 
-    /// Writes the ended job's block, the directory then its cells in key order, at its place.
-    fn close(
-        &self,
-        store: &mut Store,
-        job: OpenJob,
-        report: &mut BakeReport,
-        done: &mut BakeProgress,
-    ) {
-        let queue = self.run.queue;
+    /// The ended job's chunk, place and block: the directory then its cells in key order.
+    fn close(&self, job: OpenJob, report: &mut BakeReport) -> (ChunkCoord, u64, Vec<u32>) {
         let clamp = self.settings.clamp;
         let cell_size = self.settings.rings.as_ref().map_or(BRICK_CELL, |r| r.cell);
         let (dir, words) = layout(&job.faces, job.tier, record_words(cell_size));
@@ -2388,7 +2727,6 @@ impl JobCtx<'_, '_> {
             }
         }
         debug_assert_eq!(block.len() as u64, words);
-        store.put(queue, job.coord, job.first_word, block);
         report.faces += job.states.iter().filter(|s| s.n > 0).count() as u64;
         if self.settings.keep_faces {
             report
@@ -2403,8 +2741,579 @@ impl JobCtx<'_, '_> {
                     snapshots: s.snapshots.clone(),
                 }));
         }
-        done.chunks_done += 1;
+        (job.coord, job.first_word, block)
     }
+}
+
+/// Frames a re-baked block's values move over, from what it showed to its new values.
+pub const FADE: u32 = 16;
+/// The live queue's slice by default, in milliseconds of a frame.
+pub const DEFAULT_BAKE_SLICE_MS: f64 = 1.5;
+/// Samples a brick direction draws in the live queue: the owner's pick (Plan 0059 Phase 7b).
+pub const QUEUE_BRICK_SAMPLES: u32 = 4096;
+/// Candidates whose reach the queue checks at most in a frame that opens jobs.
+const QUEUE_CHECKS: usize = 16;
+/// Frames before a candidate whose reach or lights were not ready is checked again.
+const QUEUE_RECHECK: u64 = 30;
+/// Steps an opening that found nothing ready waits before sorting the candidates again.
+const QUEUE_QUIET: u64 = 8;
+/// Bytes of prepared masks the queue holds at most; the farthest from the camera go first.
+const PREPARED_BYTES_MAX: usize = 64 << 20;
+
+/// The live queue's settings: the brick level everywhere, cells of 8 voxels, [`QUEUE_BRICK_SAMPLES`]
+/// a brick direction, independent seeds, no filter (no face holds a cell).
+pub fn queue_settings() -> BakeSettings {
+    BakeSettings {
+        rings: Some(Rings {
+            centre: [0; 3],
+            brick: i32::MAX,
+            faces: Vec::new(),
+            cell: BRICK_CELL,
+            brick_samples: QUEUE_BRICK_SAMPLES,
+        }),
+        tent: false,
+        round: QUEUE_ROUND,
+        ..BakeSettings::default()
+    }
+}
+
+/// Samples a face draws in one entry of the live queue's slices. One invocation draws an entry's
+/// samples in turn, so a slice's few samples need short entries to spread over the GPU (the
+/// rounds read in Plan 0059 Phase 8).
+pub const QUEUE_ROUND: u32 = 4;
+/// Samples a face draws in one entry of a step without a slice ([`QueueView::samples`]), where
+/// the submits are large.
+pub const UNSLICED_ROUND: u32 = 32;
+
+/// The live queue's counters, for the HUD and stdout.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct QueueStats {
+    /// Full chunks in the mirror with no block, not known faceless and not in a job: the depth.
+    pub depth: u64,
+    /// Chunks in a job, pending or open.
+    pub jobs: u64,
+    /// Of the candidates checked at the last opening, those whose reach was not ready, and those
+    /// whose emitters' ranges were not.
+    pub waiting_reach: u64,
+    pub waiting_lights: u64,
+    /// Chunks baked, and of them listed from a prepared result.
+    pub baked: u64,
+    pub prepared: u64,
+    /// Blocks fading.
+    pub fading: u64,
+    /// The last submit's samples and its milliseconds, submit to readback.
+    pub samples: u64,
+    pub ms: f64,
+    /// Samples since the queue started.
+    pub total_samples: u64,
+    /// The ns a sample the slice is sized by.
+    pub ns_per_sample: f64,
+}
+
+/// A block fading from what it showed to its target ([`FADE`]).
+struct Fade {
+    first: u64,
+    from: Vec<u32>,
+    frame: u32,
+}
+
+/// What the frame hands the queue's step.
+pub struct QueueView<'a> {
+    /// The camera's position and forward direction, in voxels.
+    pub eye: [f32; 3],
+    pub forward: [f32; 3],
+    /// Whether a chunk is resident full (a streamed world); `None` for a bounded world, whose
+    /// mirror holds every chunk it has and whose absent chunks are empty.
+    pub resident: Option<&'a dyn Fn(ChunkCoord) -> bool>,
+    /// Samples this step draws at most; `None` sizes it by [`BakeQueue::slice_ms`].
+    pub samples: Option<u64>,
+    /// Chunks from the focus the light-sample ranges are held out to; `None` the window's far
+    /// corner plus the light radius.
+    pub hold: Option<i32>,
+}
+
+/// The live queue (ADR-0046's scheduler, Plan 0059 Phase 8 as re-read at Phase 7b): the brick
+/// level of every full chunk in the mirror, baked a slice a frame on the render thread. A chunk
+/// is opened nearest the camera first, ties by the view, once every chunk within the light radius
+/// of it is mirrored or known empty and every emitter range its table reads is held. Its faces are
+/// listed from the stream workers' masks ([`FacePrep`]) where they arrived, else inline. A first
+/// block is written directly; a block that replaces one of the same layout fades over [`FADE`]
+/// frames. A chunk leaving the mirror frees its block.
+pub struct BakeQueue {
+    pub settings: BakeSettings,
+    /// The slice, in milliseconds a frame.
+    pub slice_ms: f64,
+    lp: JobLoop,
+    prepared: std::collections::HashMap<[i32; 3], Arc<PreparedMasks>>,
+    prepared_bytes: usize,
+    /// The camera's chunk at the last step.
+    eye: [i32; 3],
+    faceless: std::collections::HashSet<[i32; 3]>,
+    /// Chunks an edit touched while their job ran: the job's block is thrown away.
+    stale: std::collections::HashSet<[i32; 3]>,
+    /// Candidates not ready at a check, and the step that checked them.
+    blocked: std::collections::HashMap<[i32; 3], u64>,
+    fades: BTreeMap<[i32; 3], Fade>,
+    steps: u64,
+    /// The step before which no candidate is sorted: set when none was ready.
+    quiet_until: u64,
+    stats: QueueStats,
+}
+
+impl BakeQueue {
+    pub fn new(settings: BakeSettings, slice_ms: f64) -> Self {
+        Self {
+            settings,
+            slice_ms,
+            lp: JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS),
+            prepared: Default::default(),
+            prepared_bytes: 0,
+            eye: [0; 3],
+            faceless: Default::default(),
+            stale: Default::default(),
+            blocked: Default::default(),
+            fades: BTreeMap::new(),
+            steps: 0,
+            quiet_until: 0,
+            stats: QueueStats {
+                ns_per_sample: 20.0,
+                ..QueueStats::default()
+            },
+        }
+    }
+
+    pub fn stats(&self) -> QueueStats {
+        self.stats
+    }
+
+    /// No job pending or open, no block fading, and no candidate at the last count.
+    pub fn empty(&self) -> bool {
+        self.lp.idle() && self.fades.is_empty() && self.stats.depth == 0
+    }
+
+    /// Whether `c` holds its block or is known to have none: no face, or (`absent`) no chunk.
+    pub fn settled(&self, store: &Store, c: ChunkCoord, absent: bool) -> bool {
+        (store.blocks.contains_key(&c.0) || self.faceless.contains(&c.0) || absent)
+            && !self.lp.chunks().any(|j| j == c)
+    }
+
+    /// Takes the stream workers' results; one made under other classes than `classes` is dropped.
+    pub fn take_prepared(
+        &mut self,
+        prepared: &[(ChunkCoord, vxe_world::Prepared)],
+        classes: &[u8],
+    ) {
+        for (c, p) in prepared {
+            let Ok(m) = p.0.clone().downcast::<PreparedMasks>() else {
+                continue;
+            };
+            if m.classes.as_slice() != classes {
+                continue;
+            }
+            self.prepared_bytes += m.masks.bytes();
+            if let Some(old) = self.prepared.insert(c.0, m) {
+                self.prepared_bytes -= old.masks.bytes();
+            }
+            self.faceless.remove(&c.0);
+            self.blocked.remove(&c.0);
+        }
+        if self.prepared_bytes > PREPARED_BYTES_MAX {
+            // The farthest from the last step's eye go first, to nine tenths of the cap.
+            let eye = self.eye;
+            let mut by: Vec<(i64, [i32; 3])> = self
+                .prepared
+                .keys()
+                .map(|c| {
+                    let d: i64 = (0..3).map(|k| i64::from(c[k] - eye[k]).pow(2)).sum();
+                    (d, *c)
+                })
+                .collect();
+            by.sort_unstable();
+            while self.prepared_bytes > PREPARED_BYTES_MAX / 10 * 9 {
+                let Some((_, c)) = by.pop() else { break };
+                if let Some(m) = self.prepared.remove(&c) {
+                    self.prepared_bytes -= m.masks.bytes();
+                }
+            }
+        }
+    }
+
+    /// An edit's box (`min ..= max`, voxels): the chunks within a voxel of it lose their prepared
+    /// masks and their known facelessness, and a running job's block for them is thrown away.
+    pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
+        let lo = min.map(|v| (v - 1).div_euclid(64));
+        let hi = max.map(|v| (v + 1).div_euclid(64));
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    let c = [x, y, z];
+                    if let Some(m) = self.prepared.remove(&c) {
+                        self.prepared_bytes -= m.masks.bytes();
+                    }
+                    self.faceless.remove(&c);
+                    self.blocked.remove(&c);
+                    if self.lp.chunks().any(|j| j.0 == c) {
+                        self.stale.insert(c);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One frame's step: follow the window, free the blocks of chunks the mirror dropped, open
+    /// jobs while the open ones hold less than two slices, one submit within the slice, and the
+    /// fades a frame on. `None` from the submit when nothing was dispatched.
+    pub(crate) fn step(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        view: &QueueView<'_>,
+    ) -> Result<QueueStats, BakeError> {
+        self.steps += 1;
+        self.eye = view.eye.map(|v| (v / 64.0).floor() as i32);
+        let gpu = run.gpu;
+        let window = gpu.window();
+        for c in store.rewindow(run.queue, window) {
+            self.fades.remove(&c);
+        }
+        store.piece = Some(window);
+        // A chunk the mirror does not hold full (evicted, or LOD-only) frees its block.
+        let gone: Vec<[i32; 3]> = store
+            .blocks
+            .keys()
+            .copied()
+            .filter(|c| !gpu.is_mirrored(ChunkCoord(*c)) || gpu.is_lod(ChunkCoord(*c)))
+            .collect();
+        for c in gone {
+            store.remove(run.queue, ChunkCoord(c));
+            self.fades.remove(&c);
+            self.faceless.remove(&c);
+        }
+        let cap = view.samples.unwrap_or_else(|| {
+            ((self.slice_ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64)
+                .clamp(16_384, SUBMIT_SAMPLES)
+        });
+        if self.lp.samples_left() < 2 * cap && self.steps >= self.quiet_until {
+            let opened = self.lp.chunks().count();
+            self.open(run, store, view, cap)?;
+            if self.lp.chunks().count() == opened && self.lp.idle() {
+                // Nothing was ready: the candidates are sorted again a few frames on.
+                self.quiet_until = self.steps + QUEUE_QUIET;
+            }
+        }
+        self.lp.refresh_tables(run);
+        let bind = run.pipeline.bind(run.device);
+        run.queue
+            .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
+        // The frames before this one are waited out first, so the time read is the bake's; an
+        // idle loop dispatches nothing and waits for nothing.
+        if !self.lp.idle() {
+            let _ = run.device.poll(wgpu::PollType::wait_indefinitely());
+        }
+        let queue = run.queue;
+        let stale = &mut self.stale;
+        let fades = &mut self.fades;
+        let stats = &mut self.stats;
+        let record = self
+            .settings
+            .rings
+            .as_ref()
+            .map_or(BRICK_WORDS, Rings::record_words);
+        let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
+            if stale.remove(&coord.0) || !run.gpu.is_mirrored(coord) {
+                store.release(first, block.len() as u64);
+                return;
+            }
+            stats.baked += 1;
+            let old = store
+                .blocks
+                .get(&coord.0)
+                .and_then(|&(f, _)| store.words.get(&coord.0).map(|w| (f, w.clone())));
+            match old {
+                Some((f, from))
+                    if from.len() == block.len()
+                        && from[..CHUNK_BRICKS] == block[..CHUNK_BRICKS] =>
+                {
+                    // The same layout: the block takes its old place, shows its old values and
+                    // fades to the new ones.
+                    store.release(first, block.len() as u64);
+                    store.put(queue, coord, f, block);
+                    store.show(queue, f, &from);
+                    fades.insert(
+                        coord.0,
+                        Fade {
+                            first: f,
+                            from,
+                            frame: 0,
+                        },
+                    );
+                }
+                Some((f, from)) => {
+                    store.release(f, from.len() as u64);
+                    fades.remove(&coord.0);
+                    store.put(queue, coord, first, block);
+                }
+                None => store.put(queue, coord, first, block),
+            }
+        };
+        let settings = BakeSettings {
+            round: if view.samples.is_some() {
+                UNSLICED_ROUND
+            } else {
+                self.settings.round
+            },
+            ..self.settings.clone()
+        };
+        let done = self
+            .lp
+            .submit(run, &bind, store, &settings, cap, &mut sink, &mut |_| {});
+        if let Some(d) = done {
+            self.stats.samples = d.samples;
+            self.stats.ms = d.seconds * 1e3;
+            self.stats.total_samples += d.samples;
+            if d.samples >= 4096 {
+                let ns = d.seconds * 1e9 / d.samples as f64;
+                self.stats.ns_per_sample = 0.8 * self.stats.ns_per_sample + 0.2 * ns;
+            }
+        } else {
+            self.stats.samples = 0;
+            self.stats.ms = 0.0;
+        }
+        self.advance_fades(run.queue, store, record);
+        self.stats.jobs = self.lp.chunks().count() as u64;
+        self.stats.fading = self.fades.len() as u64;
+        Ok(self.stats)
+    }
+
+    /// Moves every fade a frame on: each record's direction values (and each cell's value) at
+    /// `frame / FADE` of the way from what it showed to the store's copy; the last frame writes
+    /// the copy itself.
+    fn advance_fades(&mut self, queue: &wgpu::Queue, store: &Store, record: usize) {
+        let mut ended = Vec::new();
+        for (c, f) in &mut self.fades {
+            f.frame += 1;
+            let Some(to) = store.words.get(c) else {
+                ended.push(*c);
+                continue;
+            };
+            if f.frame >= FADE {
+                store.show(queue, f.first, to);
+                ended.push(*c);
+                continue;
+            }
+            let t = f.frame as f32 / FADE as f32;
+            let lerp = |a: u32, b: u32| {
+                let (x, y) = (rgb9e5_unpack(a), rgb9e5_unpack(b));
+                rgb9e5_pack([0, 1, 2].map(|k| x[k] + (y[k] - x[k]) * t))
+            };
+            let mut shown = to.clone();
+            for slot in 0..CHUNK_BRICKS {
+                let dir = to[slot];
+                if dir == 0 {
+                    continue;
+                }
+                let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
+                for cell in (run - record..run).step_by(BRICK_WORDS) {
+                    for w in cell..cell + 6 {
+                        shown[w] = lerp(f.from[w], to[w]);
+                    }
+                }
+                for k in 0..n {
+                    shown[run + 2 * k] = lerp(f.from[run + 2 * k], to[run + 2 * k]);
+                }
+            }
+            store.show(queue, f.first, &shown);
+        }
+        for c in ended {
+            self.fades.remove(&c);
+        }
+    }
+
+    /// Opens jobs, nearest the camera first and ties by the view, while the open ones hold under
+    /// two slices of `cap` samples: each a ready candidate's faces at the brick level.
+    fn open(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        view: &QueueView<'_>,
+        cap: u64,
+    ) -> Result<(), BakeError> {
+        let gpu = run.gpu;
+        let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
+        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        let mut cands: Vec<(i64, i32, [i32; 3])> = gpu
+            .full_chunks()
+            .filter(|c| {
+                !store.blocks.contains_key(&c.0)
+                    && !self.faceless.contains(&c.0)
+                    && !in_job.contains(&c.0)
+            })
+            .map(|c| {
+                let d = [0, 1, 2].map(|k| c.0[k] - eye[k]);
+                let d2: i64 = d.iter().map(|&v| i64::from(v).pow(2)).sum();
+                let len = (d2 as f32).sqrt().max(1.0);
+                let dot: f32 = (0..3).map(|k| d[k] as f32 * view.forward[k]).sum::<f32>() / len;
+                (d2, -(dot * 1000.0) as i32, c.0)
+            })
+            .collect();
+        self.stats.depth = cands.len() as u64;
+        cands.sort_unstable();
+        let classes = face_classes(run.world.materials());
+        let lr = gpu.light_radius();
+        let (mut checked, mut reach, mut lights) = (0usize, 0u64, 0u64);
+        for (_, _, c) in cands {
+            if self.lp.samples_left() >= 2 * cap || checked >= QUEUE_CHECKS {
+                break;
+            }
+            if self
+                .blocked
+                .get(&c)
+                .is_some_and(|&at| self.steps - at < QUEUE_RECHECK)
+            {
+                continue;
+            }
+            checked += 1;
+            let coord = ChunkCoord(c);
+            if !reach_ready(run, coord, lr, view.resident) {
+                reach += 1;
+                self.blocked.insert(c, self.steps);
+                continue;
+            }
+            if !gpu.lights_ready_near(coord, lr) {
+                lights += 1;
+                self.blocked.insert(c, self.steps);
+                continue;
+            }
+            self.blocked.remove(&c);
+            let (faces, prepared) = self.list(run.world, coord, &classes);
+            self.stats.prepared += u64::from(prepared);
+            if let Some(m) = self.prepared.remove(&c) {
+                self.prepared_bytes -= m.masks.bytes();
+            }
+            if faces.faces() == 0 {
+                self.faceless.insert(c);
+                continue;
+            }
+            let tier = Some(Tier::Brick);
+            let record = self
+                .settings
+                .rings
+                .as_ref()
+                .map_or(BRICK_WORDS, Rings::record_words);
+            let words = layout(&faces, tier, record).1;
+            let first_word = store.alloc(words)?;
+            let brick_samples = self
+                .settings
+                .rings
+                .as_ref()
+                .map_or(BRICK_LEVEL_SAMPLES, |r| r.brick_samples);
+            let samples = faces
+                .bricks
+                .iter()
+                .map(|(_, keys)| {
+                    let mut dirs = [false; 6];
+                    for k in keys {
+                        dirs[usize::from(k & 7)] = true;
+                    }
+                    dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
+                })
+                .sum();
+            self.lp.push(Job {
+                coord,
+                faces,
+                first_word,
+                kept: None,
+                tier,
+                kept_bricks: KeptBricks::new(),
+                samples,
+            });
+        }
+        self.stats.waiting_reach = reach;
+        self.stats.waiting_lights = lights;
+        Ok(())
+    }
+
+    /// `coord`'s faces: from its prepared masks and its neighbours' where they are held, the
+    /// rest decoded from the world's chunks; and whether its own masks were prepared.
+    fn list(&self, world: &World, coord: ChunkCoord, classes: &[u8]) -> (ChunkFaces, bool) {
+        let Some(own) = self.prepared.get(&coord.0) else {
+            return (
+                list_world_chunk(world, coord, classes).unwrap_or_default(),
+                false,
+            );
+        };
+        let store = world.store();
+        let neighbour = |face: usize| {
+            let mut c = coord.0;
+            c[face / 2] += if face % 2 == 1 { 1 } else { -1 };
+            c
+        };
+        let held: [_; 6] = std::array::from_fn(|f| {
+            let c = neighbour(f);
+            match self.prepared.get(&c) {
+                Some(m) => Some(Err(m.clone())),
+                None => store.get(ChunkCoord(c)).map(Ok),
+            }
+        });
+        let locks: Vec<_> = held
+            .iter()
+            .map(|h| match h {
+                Some(Ok(c)) => Some(Ok(c
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner))),
+                Some(Err(m)) => Some(Err(m.clone())),
+                None => None,
+            })
+            .collect();
+        let faces = list_faces_by(&|slot| own.masks.get(slot), &|face, slot| {
+            locks[face].as_ref().map(|n| match n {
+                Ok(c) => class_masks(c.brick(slot), classes),
+                Err(m) => m.masks.get(slot),
+            })
+        });
+        (faces, true)
+    }
+}
+
+/// Whether every chunk whose box lies within `lr` chunks of `coord`'s (the candidate table's
+/// reach) is mirrored full and current, or known empty: in a bounded world (`resident` `None`) a
+/// chunk the mirror does not wait to upload; in a streamed one a chunk resident full whose
+/// record is current.
+fn reach_ready(
+    run: &BakeRun<'_>,
+    coord: ChunkCoord,
+    lr: i32,
+    resident: Option<&dyn Fn(ChunkCoord) -> bool>,
+) -> bool {
+    let gpu = run.gpu;
+    if resident.is_none() && gpu.pending_chunks() == 0 {
+        return true;
+    }
+    let r = lr + 1;
+    let rr = i64::from(lr).pow(2);
+    for z in -r..=r {
+        for y in -r..=r {
+            for x in -r..=r {
+                let gap2: i64 = [x, y, z]
+                    .iter()
+                    .map(|&d| i64::from((d.abs() - 1).max(0)).pow(2))
+                    .sum();
+                if gap2 >= rr {
+                    continue;
+                }
+                let n = ChunkCoord([coord.0[0] + x, coord.0[1] + y, coord.0[2] + z]);
+                if gpu.is_pending(n) {
+                    return false;
+                }
+                if let Some(res) = resident
+                    && !(res(n) && gpu.is_mirrored(n) && !gpu.is_lod(n))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -2638,6 +3547,30 @@ mod tests {
         glass.sort_unstable();
         assert!(!glass.is_empty());
         assert_eq!(faces.glass, glass);
+        // The stream workers' path lists the same faces from prepared masks: the chunk's and
+        // its neighbours' all prepared, and again with half the neighbours decoded inline.
+        let own = ChunkMasks::of(&chunk, &classes);
+        let near: [ChunkMasks; 6] = std::array::from_fn(|f| ChunkMasks::of(&beside[f], &classes));
+        let prepared = list_faces_by(&|slot| own.get(slot), &|face, slot| {
+            Some(near[face].get(slot))
+        });
+        assert_eq!(prepared, faces, "all prepared");
+        let mixed = list_faces_by(&|slot| own.get(slot), &|face, slot| {
+            Some(if face % 2 == 0 {
+                near[face].get(slot)
+            } else {
+                class_masks(beside[face].brick(slot), &classes)
+            })
+        });
+        assert_eq!(mixed, faces, "half inline");
+        // An absent neighbour lists nothing across, by either path.
+        let absent: [Option<&Chunk>; 6] = std::array::from_fn(|f| (f != 3).then(|| &beside[f]));
+        let inline = list_chunk_faces(&chunk, &absent, &classes);
+        let by_masks = list_faces_by(&|slot| own.get(slot), &|face, slot| {
+            (face != 3).then(|| near[face].get(slot))
+        });
+        assert_eq!(by_masks, inline, "one neighbour absent");
+        assert_ne!(inline, faces, "the absent neighbour changes the list");
     }
 
     #[test]

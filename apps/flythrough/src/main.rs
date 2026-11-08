@@ -104,6 +104,14 @@
 //! (default 4);
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
+//! `--light queue` (and `--light baked` on the streamed world) fills a loaded-light store from
+//! nothing with the live queue (ADR-0046's scheduler): the camera's chunk and its 26 neighbours
+//! are baked before the first frame and every other full chunk a slice a frame, nearest first,
+//! at the brick level (8 voxels, 4096 samples a brick direction), its row in the banner, its
+//! depth on the HUD's store row and a `bake queue:` line a second on stdout; `--bake-slice MS`
+//! sets the slice (default 1.5) and `F` swaps the read with the table; `--glide V` moves the
+//! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
+//! flight to the vein);
 //! emissive light is read from the per-face table from a face's first sample (ADR-0043), and
 //! `--steady`, `--cache-read`, `--sampler`, `--emissive-history`, `--emissive-guard` and
 //! `--reuse-m-cap` are refused, naming Plan 0057; `--lamp-bounce off` turns the lamp's bounce
@@ -496,6 +504,16 @@ struct Args {
     /// `--show NAME` under `--reference`: the light the run starts on, a store's name as the
     /// banner prints it (`bricks 4/512`) or `table`, as if `F` had been pressed to it.
     show: Option<String>,
+    /// `--light queue`, or `--light baked` on the streamed world: the live queue (Plan 0059
+    /// Phase 8) fills the store a slice a frame from nothing, the camera's chunk and its 26
+    /// neighbours baked before the first frame; no store file. `F` swaps the read with the table.
+    bake_queue: bool,
+    /// `--bake-slice MS`: the live queue's slice a frame (default
+    /// `vxe_render::bake::DEFAULT_BAKE_SLICE_MS`).
+    bake_slice: f64,
+    /// `--glide V`: the camera moves along its heading at `V` voxels a second (1/60 s a headless
+    /// frame), for a flight reading.
+    glide: Option<f32>,
     /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
     /// `DEFAULT_PRELOAD_CLAIM_RADIUS`).
     preload_claim: u32,
@@ -586,6 +604,10 @@ const DEFAULT_SHARPEN: f32 = 0.5;
 /// The light radius of `--source showcase` unless `--light-radius` is given, in chunks: the
 /// farthest pair of its 14 x 12 x 7 chunks is `sqrt(13^2 + 11^2 + 6^2) = 18.06` apart.
 const SHOWCASE_LIGHT_RADIUS: i32 = 19;
+
+/// Samples a step of the live queue's pre-roll draws: about one chunk's brick level at 4096, so
+/// the jobs it opens stay near the camera.
+const PRE_ROLL_SAMPLES: u64 = 2_000_000;
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
@@ -696,7 +718,7 @@ impl Args {
             preload_radius: self.preload,
             preload_claim_radius: self.preload_claim,
             light: self.light,
-            keep_store: self.reference,
+            keep_store: self.reference || self.bake_queue,
             ..Lighting::default()
         }
     }
@@ -781,6 +803,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_file: None,
         cuts: Vec::new(),
         show: None,
+        bake_queue: false,
+        bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+        glide: None,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -1077,8 +1102,30 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--light" => {
                 let v = value()?;
-                args.light = vxe_render::Light::from_name(&v)
-                    .ok_or(format!("--light takes baked or table, not {v}"))?;
+                args.bake_queue = v == "queue";
+                args.light = if args.bake_queue {
+                    vxe_render::Light::Baked
+                } else {
+                    vxe_render::Light::from_name(&v)
+                        .ok_or(format!("--light takes baked, queue or table, not {v}"))?
+                };
+            }
+            "--bake-slice" => {
+                let v = value()?;
+                args.bake_slice = v
+                    .parse()
+                    .ok()
+                    .filter(|ms: &f64| (0.1..=100.0).contains(ms))
+                    .ok_or(format!("--bake-slice takes 0.1 to 100 ms, not {v}"))?;
+            }
+            "--glide" => {
+                let v = value()?;
+                args.glide = Some(
+                    v.parse()
+                        .ok()
+                        .filter(|g: &f32| (0.0..=1000.0).contains(g))
+                        .ok_or(format!("--glide takes 0 to 1000 voxels a second, not {v}"))?,
+                );
             }
             "--bake-radius" => {
                 let v = value()?;
@@ -1235,10 +1282,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if args.bake_file.is_some() && args.light != vxe_render::Light::Baked {
         return Err("--bake-file holds a baked store; it needs --light baked".to_owned());
     }
-    if args.light == vxe_render::Light::Baked && !(args.level || args.showcase) {
+    // The streamed world has no "every chunk" to bake before its first frame: the live queue
+    // fills it instead.
+    if args.light == vxe_render::Light::Baked && !args.reference && !(args.level || args.showcase) {
+        args.bake_queue = true;
+    }
+    if args.bake_queue && (args.reference || args.bake_file.is_some() || args.bake_radius_set) {
         return Err(
-            "--light baked bakes a bounded world before its first frame; it needs --level or \
-             --source showcase"
+            "--light queue fills the store live from nothing; it takes no --reference, \
+             --bake-file or --bake-radius"
                 .to_owned(),
         );
     }
@@ -3239,6 +3291,26 @@ struct Run {
     room_probe: Option<RoomProbe>,
     /// When the exposure line was last checked for printing (ms since the start) and its EV.
     exposure_print: Option<(f64, f32)>,
+    /// The live queue's readings (`--light queue`).
+    queue: QueueRun,
+}
+
+/// The live queue's state in the fly-through: the workers' results before the frame exists, and
+/// what its stdout line reads.
+#[derive(Default)]
+struct QueueRun {
+    prepared: Vec<(ChunkCoord, vxe_world::Prepared)>,
+    /// Ms since the start at the last line, and the chunks baked and samples then.
+    line_ms: f64,
+    line_frame: u32,
+    line_baked: u64,
+    line_samples: u64,
+    line_prepared: u64,
+    /// The submits' ms since the last line.
+    slices: Vec<f64>,
+    emptied: bool,
+    stats: Option<vxe_render::QueueStats>,
+    failed: bool,
 }
 
 impl Run {
@@ -3334,7 +3406,7 @@ impl Run {
                 store_note: hud::store_note(
                     self.reference.piece.as_ref().map(|p| p.0.as_str()),
                     self.reference.last_dig,
-                ),
+                ) + &self.queue_note(),
                 modes: self.modes.line(),
                 upscale: g
                     .frame
@@ -3406,7 +3478,11 @@ impl Run {
             .filter(|(_, at)| now - at < hud::BANNER_MS)
             .map(|(s, _)| s.to_owned());
         let pose = self.pose.as_ref().map(|(s, _)| s.to_owned());
-        let reference = self.args.reference.then(|| self.reference_row());
+        let reference = self
+            .args
+            .reference
+            .then(|| self.reference_row())
+            .or_else(|| self.args.bake_queue.then(|| self.queue_row()));
         let rows: Vec<String> = [
             pose,
             reference,
@@ -3910,7 +3986,9 @@ impl Run {
             mirror
         };
         let mut mirror = mirror;
-        if self.modes.lighting.light == vxe_render::Light::Baked {
+        if self.args.bake_queue {
+            self.queue_pre_roll(gpu, &mut frame, &mut mirror);
+        } else if self.modes.lighting.light == vxe_render::Light::Baked {
             self.bake_pre_roll(gpu, &mut frame, &mut mirror);
         }
         let mut gfx = Gfx {
@@ -4203,6 +4281,235 @@ impl Run {
         );
     }
 
+    /// The pre-roll under `--light queue`: the live queue started on an empty store, then synced
+    /// and stepped without a slice until the camera's chunk and its 26 neighbours hold their
+    /// blocks (or are known to need none), streaming meanwhile on the streamed world. Prints the
+    /// time; the rest fills a slice a frame.
+    fn queue_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
+        let settings = vxe_render::bake::queue_settings();
+        if let Err(e) = frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice) {
+            self.failure.set(format!("bake queue: {e}"));
+            return;
+        }
+        println!("{}", self.queue_row());
+        frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
+        let camera = start_camera(&self.args, self.spawn);
+        let eye = camera.position.to_array();
+        let (forward, _, _) = camera.basis();
+        let centre = ChunkCoord(eye.map(|v| (v / 64.0).floor() as i32));
+        let near: Vec<ChunkCoord> = (-1..=1)
+            .flat_map(|z| {
+                (-1..=1).flat_map(move |y| {
+                    (-1..=1).map(move |x| {
+                        ChunkCoord([centre.0[0] + x, centre.0[1] + y, centre.0[2] + z])
+                    })
+                })
+            })
+            .collect();
+        let start = now();
+        loop {
+            let mut enc = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            if let Some(stream) = self.stream.as_mut() {
+                stream
+                    .streamer
+                    .update(&self.world, &[voxel_of(camera.position)]);
+                let ev = stream.streamer.poll(&self.world);
+                mirror.apply_events(&ev);
+                frame.take_prepared(&ev.prepared, &self.world);
+                stream.track(&ev, mirror);
+            }
+            mirror.set_focus(voxel_of(camera.position));
+            if let Err(e) = mirror.sync(&self.world, &gpu.queue, &mut enc) {
+                self.failure.set(format!("mirror sync failed: {e}"));
+                return;
+            }
+            gpu.queue.submit([enc.finish()]);
+            let stream = self.stream.as_ref();
+            let resident_fn = |c: ChunkCoord| {
+                stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
+            };
+            let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
+                .is_some()
+                .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+            let view = vxe_render::QueueView {
+                eye,
+                forward: forward.to_array(),
+                resident,
+                samples: Some(PRE_ROLL_SAMPLES),
+                hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+            };
+            if let Some(Err(e)) =
+                frame.bake_queue_step(&gpu.device, &gpu.queue, mirror, &self.world, &view)
+            {
+                self.failure.set(format!("bake queue: {e}"));
+                return;
+            }
+            let bounded = stream.is_none();
+            let settled = near.iter().all(|&c| {
+                let absent = bounded && self.world.store().get(c).is_none();
+                frame.bake_settled(c, absent)
+            });
+            if settled {
+                break;
+            }
+            if ms_since(start) > 120_000.0 {
+                println!("bake queue: the near chunks did not settle in 120 s; going on");
+                break;
+            }
+            if stream.is_some() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+        println!(
+            "bake queue: the camera's chunk {:?} and its 26 neighbours baked in {:.0} ms ({} chunks, {:.3e} samples, {} listed from the workers), {:.0} ms since the start",
+            centre.0,
+            ms_since(start),
+            st.baked,
+            st.total_samples as f64,
+            st.prepared,
+            ms_since(self.start)
+        );
+    }
+
+    /// One frame of the live queue, ahead of the encode: `enc` (the sync's copies) is submitted
+    /// first so the bake reads this frame's mirror, and a new encoder returned. Prints a line a
+    /// second, and the time the queue first empties.
+    fn step_bake_queue(&mut self, gpu: &Gpu, enc: wgpu::CommandEncoder) -> wgpu::CommandEncoder {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return enc;
+        };
+        if gfx.frame.bake_queue().is_none() {
+            return enc;
+        }
+        gpu.queue.submit([enc.finish()]);
+        let (forward, _, _) = self.fly.camera.basis();
+        let stream = self.stream.as_ref();
+        let resident_fn = |c: ChunkCoord| {
+            stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
+        };
+        let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
+            .is_some()
+            .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+        let view = vxe_render::QueueView {
+            eye: self.fly.camera.position.to_array(),
+            forward: forward.to_array(),
+            resident,
+            samples: None,
+            hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+        };
+        match gfx.frame.bake_queue_step(
+            &gpu.device,
+            &gpu.queue,
+            &mut gfx.mirror,
+            &self.world,
+            &view,
+        ) {
+            Some(Ok(st)) => {
+                if st.samples > 0 {
+                    self.queue.slices.push(st.ms);
+                }
+                self.queue.stats = Some(st);
+                if !self.queue.emptied && st.depth == 0 && st.jobs == 0 && st.fading == 0 {
+                    self.queue.emptied = true;
+                    println!(
+                        "bake queue: empty after {:.1} s since the start ({} chunks baked, {:.3e} samples)",
+                        ms_since(self.start) / 1e3,
+                        st.baked,
+                        st.total_samples as f64
+                    );
+                }
+            }
+            Some(Err(e)) => {
+                if !self.queue.failed {
+                    println!("bake queue: {e}");
+                }
+                self.queue.failed = true;
+            }
+            None => {}
+        }
+        // A line a second: of wall time in a window, of 60 frames headless (a headless frame is
+        // 1/60 s of the glide and the exposure).
+        let t = ms_since(self.start);
+        let due = if self.args.headless {
+            self.frame.is_multiple_of(60)
+        } else {
+            t - self.queue.line_ms >= 1000.0
+        };
+        if due && let Some(st) = self.queue.stats {
+            let missing = gfx.frame.read_store_stats(&gpu.device, &gpu.queue).missing;
+            let pixels = gfx.frame.light_pixels().max(1);
+            let secs = if self.args.headless {
+                f64::from(self.frame - self.queue.line_frame) / 60.0
+            } else {
+                (t - self.queue.line_ms) / 1e3
+            }
+            .max(1e-3);
+            let mut sl = std::mem::take(&mut self.queue.slices);
+            sl.sort_by(f64::total_cmp);
+            let p50 = sl.get(sl.len() / 2).copied().unwrap_or(0.0);
+            let max = sl.last().copied().unwrap_or(0.0);
+            println!(
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, no value {:.4} of {} pixels, eye {:.0} {:.0} {:.0}",
+                t / 1e3,
+                self.frame,
+                st.depth,
+                st.jobs,
+                st.waiting_reach,
+                st.waiting_lights,
+                st.baked,
+                st.baked - self.queue.line_baked,
+                secs,
+                st.prepared - self.queue.line_prepared,
+                (st.total_samples - self.queue.line_samples) as f64 / secs,
+                p50,
+                max,
+                sl.len(),
+                st.ns_per_sample,
+                st.fading,
+                f64::from(missing) / f64::from(pixels),
+                pixels,
+                self.fly.camera.position.x,
+                self.fly.camera.position.y,
+                self.fly.camera.position.z,
+            );
+            self.queue.line_ms = t;
+            self.queue.line_frame = self.frame;
+            self.queue.line_baked = st.baked;
+            self.queue.line_samples = st.total_samples;
+            self.queue.line_prepared = st.prepared;
+        }
+        gpu.device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
+    }
+
+    /// The live queue's banner row: the mode, its settings and slice, and the read.
+    fn queue_row(&self) -> String {
+        format!(
+            "light: live queue, bricks {}/{}, slice {} ms, read {} (F swaps the table)",
+            vxe_render::bake::BRICK_CELL,
+            vxe_render::bake::QUEUE_BRICK_SAMPLES,
+            self.args.bake_slice,
+            match self.modes.lighting.light {
+                vxe_render::Light::Table => "table",
+                vxe_render::Light::Baked => "store",
+            }
+        )
+    }
+
+    /// The HUD store row's queue part: `, queue depth N, jobs J, slice X ms`, or nothing.
+    fn queue_note(&self) -> String {
+        match self.queue.stats {
+            Some(st) if self.args.bake_queue => format!(
+                ", queue depth {}, jobs {}, slice {:.2} ms",
+                st.depth, st.jobs, st.ms
+            ),
+            _ => String::new(),
+        }
+    }
+
     /// A dig's re-bake, ahead of this frame's encode: the ring of every box since the last frame
     /// to the reference's stop with `n_max` [`vxe_render::bake::DIG_N_MAX`]. `enc` holds the
     /// sync's copies, so it is submitted first and a new one returned. The hitch is printed.
@@ -4390,6 +4697,7 @@ impl Run {
             stream.tick_ms.push(ms_since(self.start));
             let ev = stream.streamer.poll(&self.world);
             mirror.apply_events(&ev);
+            self.queue.prepared.extend(ev.prepared.iter().cloned());
             let mut enc = gpu
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -4458,6 +4766,7 @@ impl Run {
         let poll_ms = ms_since(tp);
         let ta = now();
         gfx.mirror.apply_events(&ev);
+        gfx.frame.take_prepared(&ev.prepared, &self.world);
         gfx.mirror.set_focus(cam);
         let apply_ms = ms_since(ta);
         let ts = now();
@@ -5240,6 +5549,15 @@ impl Run {
 
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant, dt: f32) -> Flow {
         self.tick(gpu);
+        if let Some(v) = self.args.glide {
+            let step = if self.args.headless {
+                1.0 / 60.0
+            } else {
+                dt.clamp(0.0, 0.1)
+            };
+            let (forward, _, _) = self.fly.camera.basis();
+            self.fly.camera.position += forward * (v * step);
+        }
         // The sync's copies are recorded first, so the field pass and the march read
         // them in the same submission.
         let mut enc = gpu
@@ -5265,7 +5583,8 @@ impl Run {
             }
         }
         self.sync_store(gpu);
-        let mut enc = self.rebake_digs(gpu, enc);
+        let enc = self.rebake_digs(gpu, enc);
+        let mut enc = self.step_bake_queue(gpu, enc);
         self.pilot_sample();
         let hud = self.hud.visible;
         if self.hud.cadence.due(hud) {
@@ -5817,6 +6136,7 @@ impl App for Flythrough {
                 audio: self.audio.take(),
                 room_probe: self.room_probe.take(),
                 exposure_print: None,
+                queue: QueueRun::default(),
             });
         }
         match self.run.as_mut() {
@@ -6448,6 +6768,12 @@ fn main() {
         } else {
             Streamer::new(Arc::new(source), cfg)
         };
+        // The live queue's listing runs on the workers (ADR-0017), from the first chunk on.
+        if args.bake_queue {
+            streamer.set_prep(Some(Arc::new(vxe_render::bake::FacePrep {
+                classes: Arc::new(vxe_render::bake::face_classes(world.materials())),
+            })));
+        }
         // Workers start on the spawn's chunks while the shell opens the window.
         streamer.update(&world, &[source.spawn()]);
         println!(
@@ -6869,8 +7195,9 @@ mod tests {
         assert_eq!(run.reference.panes, 1);
     }
 
-    /// `--bake-radius N` needs `--light baked`, which needs a bounded world, and sets the chunks
-    /// within `N` of the eye's chunk; unset, the pre-roll takes the whole extent.
+    /// `--bake-radius N` needs `--light baked` on a bounded world and sets the chunks within `N`
+    /// of the eye's chunk; unset, the pre-roll takes the whole extent. On the streamed world
+    /// `--light baked` is the live queue, which takes no extent.
     #[test]
     fn the_bake_radius_flag_sets_the_extent() {
         let a = parse_args_from(argv(&["--level", "--light", "baked", "--bake-radius", "2"]))
@@ -6885,7 +7212,19 @@ mod tests {
         );
         let table = parse_args_from(argv(&["--level", "--light", "table", "--bake-radius", "2"]));
         assert!(table.is_err());
-        assert!(parse_args_from(argv(&["--light", "baked"])).is_err());
+        // The streamed world takes `--light baked` as the live queue; the queue takes no extent.
+        let streamed = parse_args_from(argv(&["--light", "baked"])).expect("parses");
+        assert!(streamed.bake_queue && streamed.light == vxe_render::Light::Baked);
+        assert!(
+            streamed.start_lighting().keep_store,
+            "F keeps the queue's store"
+        );
+        let queue = parse_args_from(argv(&["--level", "--light", "queue"])).expect("parses");
+        assert!(queue.bake_queue && queue.light == vxe_render::Light::Baked);
+        assert!(
+            parse_args_from(argv(&["--level", "--light", "queue", "--bake-radius", "2"])).is_err()
+        );
+        assert!(!a.bake_queue, "--light baked on the level is the pre-roll");
         assert_eq!(
             parse_args_from(argv(&["--level"])).expect("parses").light,
             vxe_render::Light::Table
@@ -7620,6 +7959,7 @@ mod tests {
             audio: None,
             room_probe: None,
             exposure_print: None,
+            queue: QueueRun::default(),
             cutaway: CutawayMode::Auto,
         }
     }
@@ -7798,7 +8138,7 @@ mod tests {
         let e = parse_args_from(argv(&["--level", "--pose", "cave"]))
             .err()
             .expect("unknown name");
-        assert_eq!(e, "--pose takes vein, patch, far, not cave");
+        assert_eq!(e, "--pose takes vein, patch, far, vein-flight, not cave");
         assert!(parse_args_from(argv(&["--level", "--pose"])).is_err());
 
         let mut run = bare_run(carved_rock());

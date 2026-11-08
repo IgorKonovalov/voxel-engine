@@ -74,7 +74,17 @@ pub const FAR_POSE: Pose = Pose {
 pub const POSES: [Pose; 2] = [VEIN_POSE, PATCH_POSE];
 
 /// The poses `--pose` takes: the rigs' and [`FAR_POSE`].
-pub const START_POSES: [Pose; 3] = [VEIN_POSE, PATCH_POSE, FAR_POSE];
+/// The start of the settle rig's flight to `VEIN_POSE` (`VEIN_FLIGHT` in its support), facing
+/// along it: 180 voxels to the vein pose, which `--glide 30` flies in 360 frames. Not a rig's pose.
+pub const VEIN_FLIGHT_POSE: Pose = Pose {
+    name: "vein-flight",
+    position: [882.7914, 733.9575, 192.81197],
+    yaw_deg: 210.0,
+    pitch_deg: 5.0,
+    exposure: VEIN_EXPOSURE,
+};
+
+pub const START_POSES: [Pose; 4] = [VEIN_POSE, PATCH_POSE, FAR_POSE, VEIN_FLIGHT_POSE];
 
 impl Pose {
     /// The pose `--pose` names `name`, if any.
