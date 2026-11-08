@@ -37,6 +37,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev libudev-dev
+      # lavapipe from the runner's own Mesa (26.0.8 with LLVM 21 on ubuntu-26.04) dies with
+      # SIGSEGV on every frame that runs the per-face table's passes (docs/backlog.md, "llvmpipe
+      # SIGSEGV on CI's Ubuntu"); Mesa 26.2 passes the same tests. The kisak-mesa PPA builds
+      # Mesa's latest stable release for the runner's Ubuntu release, against Ubuntu's own
+      # LLVM. Its signing key is pinned by fingerprint, so a swapped key fails the step. Its
+      # version cannot be pinned: the PPA indexes its latest build only, so a pin would break
+      # at its next upload. The step instead fails unless the installed lavapipe is the PPA's,
+      # so a silent fall-back to the runner's Mesa cannot pass as the fix.
+      - name: Install lavapipe from the kisak-mesa PPA
+        if: runner.os == 'Linux'
+        run: |
+          fpr=EB8B81E14DA65431D7504EA8F63F0F2B90935439
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x$fpr" \
+            | gpg --dearmor > kisak-mesa.gpg
+          gpg --show-keys --with-colons kisak-mesa.gpg | grep -qx "fpr:::::::::$fpr:"
+          sudo install -m 0644 kisak-mesa.gpg /etc/apt/keyrings/kisak-mesa.gpg
+          rm kisak-mesa.gpg
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          echo "deb [signed-by=/etc/apt/keyrings/kisak-mesa.gpg] https://ppa.launchpadcontent.net/kisak/kisak-mesa/ubuntu $codename main" \
+            | sudo tee /etc/apt/sources.list.d/kisak-mesa.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+          dpkg-query -W mesa-vulkan-drivers 'libllvm*' libdrm2
+          dpkg-query -W -f='${Version}\n' mesa-vulkan-drivers | grep -q '~kisak'
       # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
@@ -62,6 +87,48 @@ jobs:
       - name: Pipeline times on lavapipe
         if: runner.os == 'Linux'
         run: cargo run -p vxe-render --release --example pipeline_times
+      # DIAGNOSTIC, out with the fix for the WARP hang (docs/backlog.md, "`vxe-render::exposure`
+      # hangs on WARP since Plan 0057 Phase 7"): the debug fly-through the shutdown test runs,
+      # headless on WARP, once as that test runs it and then in variants that each turn one of
+      # the suspects off. Each run is killed past 180 s and its stdout and stderr printed; the
+      # `diag:` lines time each start-up stage and frame from the process start, and a 35-frame
+      # run that finishes prints the median GPU time of every pass (its `frame (` line). The
+      # step never fails the job.
+      - name: Headless fly-through on WARP (diagnostic)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $exe = "target\debug\flythrough.exe"
+          $env:RUST_LOG = "warn,flythrough=info"
+          $runs = @(
+            @{ name = "as the shutdown test runs it"; table = ""; args = "--headless --frames 3 --render 64x36" },
+            @{ name = "35 frames"; table = ""; args = "--headless --frames 35 --render 64x36" },
+            @{ name = "35 frames, a 2^16-cell table"; table = "65536"; args = "--headless --frames 35 --render 64x36" },
+            @{ name = "35 frames, preload off"; table = ""; args = "--headless --frames 35 --render 64x36 --preload off" },
+            @{ name = "35 frames, cutaway on (no fill or preload)"; table = ""; args = "--headless --frames 35 --render 64x36 --cutaway on" },
+            @{ name = "35 frames, the fixed level"; table = ""; args = "--headless --frames 35 --render 64x36 --level" }
+          )
+          foreach ($r in $runs) {
+            Write-Host "=== WARP diagnostic: $($r.name): flythrough $($r.args)"
+            if ($r.table) { $env:VXE_DIAG_TABLE_CELLS = $r.table } else { Remove-Item Env:VXE_DIAG_TABLE_CELLS -ErrorAction Ignore }
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $p = Start-Process -FilePath $exe -ArgumentList $r.args -NoNewWindow -PassThru `
+              -RedirectStandardOutput diag-out.txt -RedirectStandardError diag-err.txt
+            $null = $p.Handle
+            if ($p.WaitForExit(180000)) {
+              $p.WaitForExit()
+              Write-Host "=== exited with $($p.ExitCode) after $([int]$sw.Elapsed.TotalSeconds) s"
+            } else {
+              $p.Kill($true)
+              $p.WaitForExit()
+              Write-Host "=== KILLED after $([int]$sw.Elapsed.TotalSeconds) s"
+            }
+            Write-Host "--- stdout"; Get-Content diag-out.txt
+            Write-Host "--- stderr"; Get-Content diag-err.txt
+          }
+          Remove-Item diag-out.txt, diag-err.txt
       # The gate tier (.config/nextest.toml): every test but the soak list, which soak.yml runs
       # weekly. The `ci` profile runs the gate tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
