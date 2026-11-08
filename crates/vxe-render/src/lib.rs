@@ -29,10 +29,10 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    AgeStats, CrackShares, DEFAULT_TABLE_CELLS, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill,
-    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning, TableStats, ToneMap, ViewMode,
-    jitter_at,
+    AgeStats, CrackShares, DEFAULT_TABLE_CELLS, DiagPreload, DiagReport, FRAME_PASSES, Frame,
+    GRADIENT_STRATUM, HistoryKill, Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS,
+    MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning,
+    TableStats, ToneMap, ViewMode, jitter_at,
 };
 pub use present::Presenter;
 pub use probes::ProbeVolume;
