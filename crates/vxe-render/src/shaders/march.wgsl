@@ -57,11 +57,17 @@
 //                                      field-surface hit, bit 2 translucent layers in front,
 //                                      bits 3..5 the entry face's axis plus one (0: the ray
 //                                      started inside rock)
-//   2  storage texture  layer_out      rgba16float: the translucent layers in front of the hit
-//                                      (premultiplied colour, transmittance), lit by the lamp's
-//                                      cone and distance term except in the albedo view; in the
-//                                      steps view the primary ray's counters instead; in the
-//                                      cracks view 1 in r for a field walk's leak, else 0
+//   2  storage texture  layer_out      rgba16float: the translucent solid in front of the hit
+//                                      (ADR-0047): its reflected light `R * face_light` before
+//                                      exposure in rgb, the luminance of its transmittance in a
+//                                      (FSR 2's reactive mask reads it); in the steps view the
+//                                      primary ray's counters instead; in the cracks view 1 in r
+//                                      for a field walk's leak, else 0
+//   3, 4                               the split walk's list and arguments (below)
+//   5  storage texture  transmit_out   r32uint: the translucent solid's transmittance `T(L)` per
+//                                      channel as rgb9e5 (`t9e5_pack`), 1 where none is in front
+//   6  storage  glass_store            the loaded store (`bake::Store`, temporal.wgsl's `store`),
+//                                      read only: a translucent entry face's cell
 //
 // A pixel takes the first view whose rectangle holds it (the first when none does). Its ray
 // runs from the view's origin along `fwd + right x - up y`, x and y moving linearly across the
@@ -98,9 +104,8 @@
 // Translucent voxels are air to that walk. When it has read an entry flagged translucent and
 // `translucent_layers` is not 0, a second walk runs from the ray origin to the opaque hit
 // (`translucent_march`): it skips the same empty cells, an unflagged brick as a whole, and a
-// flagged Full brick's clear 2^3 blocks from its two translucent words, and composites the
-// translucent voxels it enters front to back, each albedo times opacity under the lamp's cone
-// and distance term with no shadow ray (0 while the lamp is off), up to `translucent_layers` of
+// flagged Full brick's clear 2^3 blocks from its two translucent words, and filters by the path
+// length through the translucent voxels it enters (ADR-0047), up to `translucent_layers` voxels of
 // them; what remains of the transmittance carries the opaque hit's colour.
 //
 // Cutaway (flag bit 10): the primary ray starts in a `passing` state that steps through solid
@@ -227,6 +232,8 @@ struct ExposureState {
 @group(1) @binding(0) var hit_pos_out: texture_storage_2d<rgba32float, write>;
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(5) var transmit_out: texture_storage_2d<r32uint, write>;
+@group(1) @binding(6) var<storage, read> glass_store: array<u32>;
 
 // The split field walk (FLAG_FIELD_SPLIT): the hit pipeline walks every ray as `march` does,
 // its cells cubes, until the ray enters a full chunk's brick that the field can hit in (a band
@@ -903,6 +910,69 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     return miss;
 }
 
+// `c` (each channel in 0..65408) as an rgb9e5 word: 9-bit mantissas over a shared exponent,
+// red in the low bits, the exponent (bias 15) in the top five; `bake::rgb9e5_pack`'s rounding.
+fn t9e5_pack(c: vec3<f32>) -> u32 {
+    let v = clamp(c, vec3<f32>(0.0), vec3<f32>(65408.0));
+    let top = max(v.x, max(v.y, v.z));
+    if (top <= 0.0) {
+        return 0u;
+    }
+    let e2 = i32(bitcast<u32>(top) >> 23u) - 127;
+    var e = max(e2, -16) + 1 + 15;
+    var scale = exp2(f32(e - 24));
+    if (floor(top / scale + 0.5) >= 512.0) {
+        e += 1;
+        scale *= 2.0;
+    }
+    let m = vec3<u32>(floor(v / scale + 0.5));
+    return m.x | (m.y << 9u) | (m.z << 18u) | (u32(e) << 27u);
+}
+
+// The value of an rgb9e5 word (`t9e5_pack`).
+fn t9e5_unpack(w: u32) -> vec3<f32> {
+    let m = vec3<u32>(w & 511u, (w >> 9u) & 511u, (w >> 18u) & 511u);
+    return vec3<f32>(m) * exp2(f32(i32(w >> 27u) - 24));
+}
+
+// Face `face` of voxel `v`'s cell in `glass_store`: its irradiance at unit emission times its
+// dominant material's emission scale now, 0 for a face with no cell. The same lookup as
+// temporal.wgsl's `store_value` over the store's read-only binding (words in `bake::Store`).
+fn glass_store_value(v: vec3<i32>, face: u32) -> vec3<f32> {
+    let origin = vec3<i32>(i32(glass_store[4]), i32(glass_store[5]), i32(glass_store[6]));
+    let size = vec3<i32>(i32(glass_store[8]), i32(glass_store[9]), i32(glass_store[10]));
+    let c = (v >> vec3<u32>(6u)) - origin;
+    if (any(c < vec3<i32>(0)) || any(c >= size)) {
+        return vec3<f32>(0.0);
+    }
+    let block = glass_store[16u + u32(c.x + size.x * (c.y + size.y * c.z))];
+    if (block == 0u) {
+        return vec3<f32>(0.0);
+    }
+    let local = v & vec3<i32>(63);
+    let brick = local >> vec3<u32>(3u);
+    let dir = glass_store[block + u32(brick.x + 8 * (brick.y + 8 * brick.z))];
+    let inner = local & vec3<i32>(7);
+    let key = (u32(inner.x + 8 * (inner.y + 8 * inner.z)) << 3u) | face;
+    let run = block + (dir >> 11u);
+    var lo = 0u;
+    var hi = dir & 0x7FFu;
+    while (lo < hi) {
+        let mid = (lo + hi) / 2u;
+        let tail = glass_store[run + 2u * mid + 1u];
+        let k = tail & 0xFFFu;
+        if (k == key) {
+            return t9e5_unpack(glass_store[run + 2u * mid]) * emission_scale[tail >> 16u];
+        }
+        if (k < key) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return vec3<f32>(0.0);
+}
+
 // The lamp's irradiance at `p` before any surface term: intensity over squared distance inside
 // the cone, the terms `shade` applies to an opaque hit.
 fn lamp(p: vec3<f32>) -> f32 {
@@ -913,16 +983,58 @@ fn lamp(p: vec3<f32>) -> f32 {
     return params.light_intensity * cone / dist2;
 }
 
+// What a translucent solid in front of a hit leaves to the composite (ADR-0047): the pixel is
+// `reflected * exposure + transmit * behind`.
+struct Glass {
+    // `R * face_light` before exposure.
+    reflected: vec3<f32>,
+    // `T(L)` per channel.
+    transmit: vec3<f32>,
+};
+
+// Schlick's Fresnel of a dielectric at F0 0.04.
+const GLASS_F0: f32 = 0.04;
+
+// A translucent row's transmittance through one voxel, per channel, from its albedo alone:
+// `0.8 * (0.5 + 0.5 * albedo / max(albedo))`.
+fn glass_tint(albedo: vec3<f32>) -> vec3<f32> {
+    let top = max(max(albedo.x, max(albedo.y, albedo.z)), 1e-6);
+    return 0.8 * (0.5 + 0.5 * albedo / top);
+}
+
+// The reflected share of the entry face of voxel `v`, entered at `o + d t` across `axis`:
+// Schlick's `R` at the view angle times `face_light = E / PI`, untinted. `E` is the face's store
+// cell (`Light::Baked`) plus, while the lamp is on, the lamp's `PI * intensity * cone * n.l /
+// dist^2` with no shadow ray (the lamp sits at the eye, whose ray reached the face). Unlit
+// (`lit` false, the albedo view) `face_light` is 1.
+fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, v: vec3<i32>, axis: i32, lit: bool) -> vec3<f32> {
+    let nf = select(vec3<f32>(0.0), vec3<f32>(-sign(d[axis])), axis_mask(axis));
+    let c = 1.0 - min(abs(dot(normalize(d), nf)), 1.0);
+    let c2 = c * c;
+    let r = GLASS_F0 + (1.0 - GLASS_F0) * c2 * c2 * c;
+    if (!lit) {
+        return vec3<f32>(r);
+    }
+    var e = vec3<f32>(0.0);
+    if (store_on()) {
+        e += glass_store_value(v, cache_face(axis, nf));
+    }
+    if ((params.lighting & LIGHTING_LAMP) != 0u) {
+        let p = o + d * t;
+        let l = normalize(params.light_pos - p);
+        e += vec3<f32>(PI * lamp(p) * max(dot(nf, l), 0.0));
+    }
+    return r * e * (1.0 / PI);
+}
+
 // The translucent walk: along `o + d t` for `0 <= t < t_end` (the opaque hit's `t`, or BIG on
-// a miss), the same DDA as `march` over `tlookup`'s cells, compositing the translucent voxels
-// it enters front to back, nearest first, up to `params.translucent_layers` of them. Returns
-// the accumulated colour, premultiplied, in xyz and the transmittance left for what lies
-// behind in w. A layer is albedo times opacity, under the lamp's cone and distance term when
-// `lit` and the lamp is on (`LIGHTING_LAMP`), 0 when `lit` and the lamp is off, and unlit (1)
-// otherwise; a thick volume contributes one layer per voxel entered.
-fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> vec4<f32> {
-    var acc = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    let lamp_on = (params.lighting & LIGHTING_LAMP) != 0u;
+// a miss), the same DDA as `march` over `tlookup`'s cells. It sums the path length `L` through the
+// translucent voxels it enters, up to `params.translucent_layers` voxels of length, and filters
+// by it per voxel's row: `T *= glass_tint(albedo)^segment`. The first translucent voxel's entry
+// face reflects (`glass_reflected`); a ray that starts inside a translucent voxel has no entry
+// face and reflects nothing.
+fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> Glass {
+    var out = Glass(vec3<f32>(0.0), vec3<f32>(1.0));
     let bmin_i = params.window_min * 64;
     let bmax_i = (params.window_min + params.window_size) * 64;
     let bmin = vec3<f32>(bmin_i);
@@ -935,50 +1047,53 @@ fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> vec4<
     let t0 = max(max(tmin.x, tmin.y), tmin.z);
     let t1 = min(min(tmax.x, tmax.y), tmax.z);
     if (t1 < max(t0, 0.0)) {
-        return acc;
+        return out;
     }
     reset_walk();
     var t = max(t0, 0.0);
     var v = voxel_at(o + d * t, d);
+    var axis = -1;
     if (t0 > 0.0) {
-        let axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
+        axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
         let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
         v = advance(o, d, inv, t, axis, face);
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
-    var layers = 0u;
+    let cap = f32(params.translucent_layers);
+    var len = 0.0;
+    var entered = false;
 
     for (var step = 0u; step < MAX_STEPS; step++) {
         if (any(v < bmin_i) || any(v >= bmax_i) || t >= t_end) {
-            return acc;
+            return out;
         }
         let c = tlookup(v);
-        var size = c.size;
-        if (size == 0) {
-            let row = c.material * 4u;
-            let albedo = materials[row].xyz;
-            let opacity = clamp(materials[row + 2u].z, 0.0, 1.0);
-            var light = 1.0;
-            if (lit) {
-                light = select(0.0, lamp(o + d * t), lamp_on);
-            }
-            acc = vec4<f32>(acc.xyz + acc.w * opacity * albedo * light, acc.w * (1.0 - opacity));
-            layers += 1u;
-            if (layers >= params.translucent_layers) {
-                return acc;
-            }
-            size = c.cell;
-        }
+        let size = select(c.size, c.cell, c.size == 0);
         let cell_min = floor_div(v, size) * size;
         let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
         let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
         var k = 0;
         if (tk.y < tk[k]) { k = 1; }
         if (tk.z < tk[k]) { k = 2; }
+        if (c.size == 0) {
+            if (!entered) {
+                entered = true;
+                if (axis >= 0) {
+                    out.reflected = glass_reflected(o, d, t, v, axis, lit);
+                }
+            }
+            let seg = max(min(min(tk[k], t_end) - t, cap - len), 0.0);
+            out.transmit *= pow(glass_tint(materials[c.material * 4u].xyz), vec3<f32>(seg));
+            len += seg;
+            if (len >= cap) {
+                return out;
+            }
+        }
         t = tk[k];
+        axis = k;
         v = advance(o, d, inv, t, k, edge[k]);
     }
-    return acc;
+    return out;
 }
 
 
@@ -1410,9 +1525,10 @@ fn cache_slot(v: vec3<i32>, face: u32) -> u32 {
     return cache_mix(v, face, 0x8DA6B343u, 0xCB1AB31Fu) & params.cache_mask;
 }
 
-// Whether a hit takes the table's path: an opaque cube face entered from air.
+// Whether a hit takes the table's path: an opaque cube face entered from air, a translucent solid
+// in front of it or not (the cell is per face; the solid filters what the face sends, ADR-0047).
 fn cacheable(rec: HitRecord) -> bool {
-    return rec.found && rec.axis >= 0 && !rec.field && !rec.translucent;
+    return rec.found && rec.axis >= 0 && !rec.field;
 }
 
 // The voxel behind hit point `p` with face normal `nf`.
@@ -2312,6 +2428,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         info = vec4<u32>(octa16_encode(n), h.material, flags);
     }
     var layer = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    var transmit = vec3<f32>(1.0);
     if (view == VIEW_STEPS) {
         // The primary ray's cost: its loop iterations, its storage loads and the pool loads
         // among them, each clamped at 255. No translucent walk in this view.
@@ -2321,11 +2438,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         layer = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     } else if (translucent_seen) {
         info.w |= HIT_TRANSLUCENT;
-        layer = translucent_march(o, d, t_end, view != VIEW_ALBEDO);
+        let glass = translucent_march(o, d, t_end, view != VIEW_ALBEDO);
+        transmit = glass.transmit;
+        layer = vec4<f32>(glass.reflected, luminance(glass.transmit));
     }
     textureStore(hit_pos_out, px, pos);
     textureStore(hit_info_out, px, info);
     textureStore(layer_out, px, layer);
+    textureStore(transmit_out, px, vec4<u32>(t9e5_pack(transmit), 0u, 0u, 0u));
 }
 
 // The split walk's pixel (FLAG_FIELD_SPLIT, in the hit pipeline without FIELD_SURFACE): the ray

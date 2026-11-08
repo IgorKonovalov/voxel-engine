@@ -1,6 +1,6 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress: Phase 5a stopped before code for the architect (2026-11-08); Phase 5 done 2026-11-08 (512 stands; the glass to Phase 5a, ADR-0047); Phase 4a done 2026-11-07 under the amendment of its glass bar; Phase 5 (human) ready, `live/session5.sh`; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
+> **Status:** in-progress: Phase 5a stopped at the storage-buffer limit for the architect (2026-11-08, wip); Phase 5 done 2026-11-08 (512 stands; the glass to Phase 5a, ADR-0047); Phase 4a done 2026-11-07 under the amendment of its glass bar; Phase 5 (human) ready, `live/session5.sh`; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
 > the verdict yes; Part 2 re-read by the amendment of 2026-11-06; owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
 > bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
@@ -1070,7 +1070,7 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | 4: The samples cut, the shared seeds and the filter | dev | done under the amendment of 2026-11-06 (d029596): the stop rule fired (no arm meets the offer's bars; the RTX 23.5 ns at 300 000 at the hall), and the owner picked independent 1024 filtered, 512 beside it; the cut files wait for 4a's re-bake; tables in [`logs/0059.md`](logs/0059.md) | 8df5c6c (code), b663570, the cut files with 4a's close |
 | 4a: The glass composite | dev | done under the amendment of 2026-11-07 (0511c86): the part is the glass layer's headlamp light with the lamp off; fixed (`translucent_march` reads `LIGHTING_LAMP`); over 250 at 0.0000 against 0.0077 before the pane; the k-layer model reads p90 0.00 levels (lavapipe); [`logs/0059.md`](logs/0059.md) | a2cb48a (fix), 72d44f9 |
 | 5: The owner's look at the samples cut | human | done 2026-11-07/08 on 72d44f9's release binary, RTX, `live/session5.sh` then `live/session5b.sh` (glass, placed on the third try): "512 looks mostly fine, if it is cheaper"; glass lamp off "looks very dark and consists of individual visible voxels", lamp on "looks like a white non transparent pane"; (h) and (i) to the architect (the amendment of 2026-11-08); [`logs/0059.md`](logs/0059.md) | 3ac2832 |
-| 5a: Glass as a filter | dev | stopped before code: the design needs choices ADR-0047 does not make (where `face_light` is computed, with the store and the probe volume bound to that pass; how a per-channel `T(L)` reaches the composite; `face_light`'s units) and files outside Files touched (`marcher.rs`, composite.wgsl); [`logs/0059.md`](logs/0059.md) | committed with this row |
+| 5a: Glass as a filter | dev | stopped at the storage-buffer limit after the answers at 8005947: the hit pass with the store binds 12 storage buffers against the requested 11 (`STORAGE_BUFFERS_NEEDED`, `lib.rs`, outside the phase's files); the code so far is a wip commit; [`logs/0059.md`](logs/0059.md) | a972410 (first stop), committed with this row (wip) |
 | 5b: The owner's look at the glass | human | not started | |
 | 6: The reach cut, the brick level and the rings | dev | not started | |
 | 7: The owner's look at the reach cut | human | not started | |

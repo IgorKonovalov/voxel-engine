@@ -2,14 +2,17 @@
 //! irradiance at unit emission in a cell of one pool, computed ahead of the frames that read it.
 //!
 //! **The list.** [`list_chunk_faces`] is a pure function of a chunk's voxels, its six neighbours'
-//! and which materials are opaque: each surface brick's sorted face keys.
+//! and each material's class ([`face_classes`]): each surface brick's sorted face keys, an opaque
+//! voxel's faces toward a voxel that is not opaque and a translucent voxel's faces toward air
+//! (ADR-0047: a pane's two sides), the latter flagged [`CELL_TRANSLUCENT`] in the cell's tail.
 //!
 //! **The pool** ([`Store`]), in `u32` words: the missing count (word 0), the mirror window's
 //! origin (word 4) and size (word 8) in chunks, then from word [`STORE_TABLE`] one word per
 //! window chunk naming its block's first word (0 none). A block is 512 directory words, a brick's
 //! `run offset from the block's start << 11 | faces` (0 no surface), then the runs: two words a
 //! cell, its [`rgb9e5_pack`] irradiance, then `key | flags << 12 | dominant material << 16`, with
-//! the key `voxel in the brick << 3 | face`, sorted by key.
+//! the key `voxel in the brick << 3 | face`, sorted by key, and flag bit 0 ([`CELL_TRANSLUCENT`])
+//! set on a translucent voxel's face.
 //!
 //! **The job** ([`Frame::bake_until`](crate::Frame::bake_until)): a chunk's faces, its own
 //! candidate table ([`job_table`]) and its frame parameters, staged once in a slot when the job
@@ -132,26 +135,58 @@ pub fn rgb9e5_unpack(w: u32) -> [f32; 3] {
     [w & 511, (w >> 9) & 511, (w >> 18) & 511].map(|m| (f64::from(m) * scale) as f32)
 }
 
+/// A cell tail's flag: the face is a translucent voxel's (ADR-0047).
+pub const CELL_TRANSLUCENT: u32 = 1 << 12;
+
+/// [`face_classes`]' class of air.
+pub const CLASS_AIR: u8 = 0;
+/// [`face_classes`]' class of a material that stops light.
+pub const CLASS_OPAQUE: u8 = 1;
+/// [`face_classes`]' class of a translucent material: air to the walk and the shadow rays, a
+/// filter to the view.
+pub const CLASS_TRANSLUCENT: u8 = 2;
+
 /// Which materials stop light: not air, not translucent.
 pub fn opaque_table(materials: &MaterialTable) -> Vec<bool> {
-    let mut t = vec![false; 1 << 16];
+    face_classes(materials)
+        .iter()
+        .map(|&c| c == CLASS_OPAQUE)
+        .collect()
+}
+
+/// Each material id's class: [`CLASS_AIR`], [`CLASS_OPAQUE`] or [`CLASS_TRANSLUCENT`].
+pub fn face_classes(materials: &MaterialTable) -> Vec<u8> {
+    let mut t = vec![CLASS_AIR; 1 << 16];
     for (id, m) in materials.rows().iter().enumerate() {
-        t[id] = id != usize::from(AIR) && !m.is_translucent();
+        if id != usize::from(AIR) {
+            t[id] = if m.is_translucent() {
+                CLASS_TRANSLUCENT
+            } else {
+                CLASS_OPAQUE
+            };
+        }
     }
     t
 }
 
 /// A chunk's exposed faces, by surface brick in slot order, each brick's keys ascending. A key is
-/// `voxel in the brick << 3 | face`, face `2 axis + 1` toward `+axis`.
+/// `voxel in the brick << 3 | face`, face `2 axis + 1` toward `+axis`. `glass` holds the
+/// `(brick slot, key)` of every translucent voxel's face among them, ascending.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChunkFaces {
     pub bricks: Vec<(u16, Vec<u16>)>,
+    pub glass: Vec<(u16, u16)>,
 }
 
 impl ChunkFaces {
     /// Faces over the chunk's bricks.
     pub fn faces(&self) -> usize {
         self.bricks.iter().map(|(_, k)| k.len()).sum()
+    }
+
+    /// Whether the face `key` of brick `slot` is a translucent voxel's.
+    pub fn is_glass(&self, slot: u16, key: u16) -> bool {
+        self.glass.binary_search(&(slot, key)).is_ok()
     }
 
     /// The block's words: the directory, then two words a cell.
@@ -174,55 +209,79 @@ impl ChunkFaces {
 const NO_VOXEL: [u64; 8] = [0; 8];
 const ALL_VOXELS: [u64; 8] = [u64::MAX; 8];
 
-/// A brick's opaque voxels: bit `x + 8 y` of word `z`.
-fn opaque_mask(brick: &Brick, opaque: &[bool]) -> [u64; 8] {
+/// A brick's opaque voxels and its solid ones (opaque or translucent): bit `x + 8 y` of word `z`.
+fn class_masks(brick: &Brick, classes: &[u8]) -> ([u64; 8], [u64; 8]) {
     match brick {
-        Brick::Uniform(m) => {
-            if opaque[usize::from(*m)] {
-                ALL_VOXELS
-            } else {
-                NO_VOXEL
-            }
-        }
+        Brick::Uniform(m) => match classes[usize::from(*m)] {
+            CLASS_OPAQUE => (ALL_VOXELS, ALL_VOXELS),
+            CLASS_TRANSLUCENT => (NO_VOXEL, ALL_VOXELS),
+            _ => (NO_VOXEL, NO_VOXEL),
+        },
         Brick::Full(p) => {
             let mut v = [AIR; BRICK_VOXELS];
             p.decode(&mut v);
-            let mut mask = NO_VOXEL;
+            let (mut opaque, mut solid) = (NO_VOXEL, NO_VOXEL);
             for (i, m) in v.iter().enumerate() {
-                if opaque[usize::from(*m)] {
-                    mask[i / 64] |= 1 << (i % 64);
+                let c = classes[usize::from(*m)];
+                if c == CLASS_OPAQUE {
+                    opaque[i / 64] |= 1 << (i % 64);
+                }
+                if c != CLASS_AIR {
+                    solid[i / 64] |= 1 << (i % 64);
                 }
             }
-            mask
+            (opaque, solid)
         }
     }
+}
+
+/// Whether the voxel beside `l` (in the brick) across `face` is set, in `mask` within the brick or
+/// in `side`, the neighbour brick's mask across that face.
+fn beside_bit(mask: &[u64; 8], side: &[u64; 8], l: [usize; 3], face: usize) -> bool {
+    let k = face / 2;
+    let mut q = l;
+    if face % 2 == 1 {
+        if l[k] == 7 {
+            q[k] = 0;
+            return mask_bit(side, q);
+        }
+        q[k] += 1;
+    } else {
+        if l[k] == 0 {
+            q[k] = 7;
+            return mask_bit(side, q);
+        }
+        q[k] -= 1;
+    }
+    mask_bit(mask, q)
 }
 
 fn mask_bit(mask: &[u64; 8], l: [usize; 3]) -> bool {
     mask[l[2]] >> (l[0] + 8 * l[1]) & 1 != 0
 }
 
-/// `chunk`'s faces toward a voxel that is not opaque, across brick and chunk borders. The
-/// neighbours are in face order (`-x, +x, -y, +y, -z, +z`); across a neighbour that is `None` no
-/// ray arrives (an absent chunk is rock to the walk), so no face is listed there.
+/// `chunk`'s faces, across brick and chunk borders: an opaque voxel's toward a voxel that is not
+/// opaque, and a translucent voxel's toward air (`classes`, [`face_classes`]). The neighbours are
+/// in face order (`-x, +x, -y, +y, -z, +z`); across a neighbour that is `None` no ray arrives (an
+/// absent chunk is rock to the walk), so no face is listed there.
 pub fn list_chunk_faces(
     chunk: &Chunk,
     neighbours: &[Option<&Chunk>; 6],
-    opaque: &[bool],
+    classes: &[u8],
 ) -> ChunkFaces {
-    let masks: Vec<[u64; 8]> = chunk
+    let masks: Vec<([u64; 8], [u64; 8])> = chunk
         .bricks()
         .iter()
-        .map(|b| opaque_mask(b, opaque))
+        .map(|b| class_masks(b, classes))
         .collect();
     let mut out = ChunkFaces::default();
     for slot in 0..CHUNK_BRICKS {
-        let mask = masks[slot];
-        if mask == NO_VOXEL {
+        let (opaque, solid) = masks[slot];
+        if solid == NO_VOXEL {
             continue;
         }
         let b = brick_of_slot(slot);
-        let beside: [[u64; 8]; 6] = std::array::from_fn(|face| {
+        let beside: [([u64; 8], [u64; 8]); 6] = std::array::from_fn(|face| {
             let (k, d) = (face / 2, if face % 2 == 1 { 1 } else { -1 });
             let mut n = b;
             n[k] += d;
@@ -231,42 +290,33 @@ pub fn list_chunk_faces(
             }
             n[k] = n[k].rem_euclid(8);
             match neighbours[face] {
-                Some(c) => opaque_mask(c.brick(brick_slot(n)), opaque),
-                None => ALL_VOXELS,
+                Some(c) => class_masks(c.brick(brick_slot(n)), classes),
+                None => (ALL_VOXELS, ALL_VOXELS),
             }
         });
-        if mask == ALL_VOXELS && beside.iter().all(|m| *m == ALL_VOXELS) {
+        if opaque == ALL_VOXELS && beside.iter().all(|m| m.0 == ALL_VOXELS) {
             continue;
         }
         let mut keys = Vec::new();
         for i in 0..BRICK_VOXELS {
-            if mask[i / 64] >> (i % 64) & 1 == 0 {
-                continue;
-            }
             let l = [i % 8, i / 8 % 8, i / 64];
+            // An opaque voxel's face is closed by an opaque one; a translucent voxel's by any
+            // solid one, so a pane lists its two sides toward air and nothing inside it.
+            let (own, glass) = if mask_bit(&opaque, l) {
+                (&opaque, false)
+            } else if mask_bit(&solid, l) {
+                (&solid, true)
+            } else {
+                continue;
+            };
             for (face, side) in beside.iter().enumerate() {
-                let k = face / 2;
-                let solid = if face % 2 == 1 {
-                    if l[k] == 7 {
-                        let mut q = l;
-                        q[k] = 0;
-                        mask_bit(side, q)
-                    } else {
-                        let mut q = l;
-                        q[k] += 1;
-                        mask_bit(&mask, q)
+                let side = if glass { &side.1 } else { &side.0 };
+                if !beside_bit(own, side, l, face) {
+                    let key = (i as u16) << 3 | face as u16;
+                    keys.push(key);
+                    if glass {
+                        out.glass.push((slot as u16, key));
                     }
-                } else if l[k] == 0 {
-                    let mut q = l;
-                    q[k] = 7;
-                    mask_bit(side, q)
-                } else {
-                    let mut q = l;
-                    q[k] -= 1;
-                    mask_bit(&mask, q)
-                };
-                if !solid {
-                    keys.push((i as u16) << 3 | face as u16);
                 }
             }
         }
@@ -278,7 +328,7 @@ pub fn list_chunk_faces(
 }
 
 /// The faces of `coord` in `world`, whose absent neighbours list nothing across.
-pub fn list_world_chunk(world: &World, coord: ChunkCoord, opaque: &[bool]) -> Option<ChunkFaces> {
+pub fn list_world_chunk(world: &World, coord: ChunkCoord, classes: &[u8]) -> Option<ChunkFaces> {
     let store = world.store();
     let chunk = store.get(coord)?;
     let neighbour = |face: usize| {
@@ -298,7 +348,7 @@ pub fn list_world_chunk(world: &World, coord: ChunkCoord, opaque: &[bool]) -> Op
     let c = chunk
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Some(list_chunk_faces(&c, &refs, opaque))
+    Some(list_chunk_faces(&c, &refs, classes))
 }
 
 /// A test of a voxel and its face.
@@ -1163,6 +1213,8 @@ struct FaceState {
     lum2: f64,
     best: f32,
     material: u16,
+    /// A translucent voxel's face: its tail carries [`CELL_TRANSLUCENT`].
+    glass: bool,
     snapshots: Vec<(u32, [f32; 3], [f32; 3])>,
     done: bool,
     /// The cell kept from the block before, unbaked.
@@ -1278,7 +1330,7 @@ fn tent3(d: i32) -> f64 {
 /// neighbour face of the same axis and sign: the coplanar voxel, then the voxel a step toward
 /// the air, then the voxel a step into the rock, the first `get` holds, the two stepped ones at
 /// half weight. No face of another orientation is a candidate, so no light crosses a crease, and
-/// there is no material test. The weights are the binomial tent (4, 2, 1) over the faces found;
+/// there is no material test; [`tent_block`] hands it one class of face at a time. The weights are the binomial tent (4, 2, 1) over the faces found;
 /// a cut's faces all hold the same count, so the blend's count weights cancel and this is a mean
 /// of the faces' values. `None` where `get` holds no centre.
 pub fn tent(
@@ -1323,7 +1375,17 @@ pub fn tent(
 
 /// The cell word of face `face` of voxel `v` among `blocks`, by its chunk's directory and a
 /// binary search of its brick's run.
+#[cfg(test)]
 fn cell_in(blocks: &BTreeMap<[i32; 3], Vec<u32>>, v: [i32; 3], face: u8) -> Option<u32> {
+    cell_and_tail_in(blocks, v, face).map(|(word, _)| word)
+}
+
+/// The cell word and the tail word of face `face` of voxel `v` among `blocks`.
+fn cell_and_tail_in(
+    blocks: &BTreeMap<[i32; 3], Vec<u32>>,
+    v: [i32; 3],
+    face: u8,
+) -> Option<(u32, u32)> {
     let block = blocks.get(&v.map(|x| x.div_euclid(64)))?;
     let l = v.map(|x| x.rem_euclid(64));
     let dir = block[brick_slot(l.map(|x| x / 8))];
@@ -1333,9 +1395,10 @@ fn cell_in(blocks: &BTreeMap<[i32; 3], Vec<u32>>, v: [i32; 3], face: u8) -> Opti
     let (mut lo, mut hi) = (0usize, n);
     while lo < hi {
         let mid = (lo + hi) / 2;
-        let k = block[run + 2 * mid + 1] & 0xFFF;
+        let tail = block[run + 2 * mid + 1];
+        let k = tail & 0xFFF;
         if k == key {
-            return Some(block[run + 2 * mid]);
+            return Some((block[run + 2 * mid], tail));
         }
         if k < key {
             lo = mid + 1;
@@ -1346,11 +1409,20 @@ fn cell_in(blocks: &BTreeMap<[i32; 3], Vec<u32>>, v: [i32; 3], face: u8) -> Opti
     None
 }
 
-/// Chunk `c`'s block of `raw` with each cell through [`tent`] over `raw`'s cells, across
-/// chunks; the tail words as they are. `None` where `raw` holds no block for `c`.
+/// Chunk `c`'s block of `raw` with each cell through [`tent`] over `raw`'s cells of its own class,
+/// across chunks: an opaque face's neighbours are opaque faces, a translucent face's translucent
+/// ones ([`CELL_TRANSLUCENT`]), so glass beside a wall leaves the wall's cells as they were. The
+/// tail words as they are. `None` where `raw` holds no block for `c`.
 fn tent_block(raw: &BTreeMap<[i32; 3], Vec<u32>>, c: [i32; 3]) -> Option<Vec<u32>> {
     let mut block = raw.get(&c)?.clone();
-    let get = |v: [i32; 3], f: u8| cell_in(raw, v, f).map(rgb9e5_unpack);
+    let of_class = |glass: bool| {
+        move |v: [i32; 3], f: u8| {
+            cell_and_tail_in(raw, v, f)
+                .filter(|&(_, tail)| (tail & CELL_TRANSLUCENT != 0) == glass)
+                .map(|(word, _)| rgb9e5_unpack(word))
+        }
+    };
+    let (get_opaque, get_glass) = (of_class(false), of_class(true));
     for slot in 0..CHUNK_BRICKS {
         let dir = block[slot];
         let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
@@ -1361,7 +1433,13 @@ fn tent_block(raw: &BTreeMap<[i32; 3], Vec<u32>>, c: [i32; 3]) -> Option<Vec<u32
             let l = [i % 8, i / 8 % 8, i / 64];
             let v = [0, 1, 2].map(|a| c[a] * 64 + b[a] * 8 + l[a]);
             let face = (key & 7) as u8;
-            if let Some(x) = tent(&get, v, face) {
+            let get: &dyn Fn([i32; 3], u8) -> Option<[f32; 3]> =
+                if block[run + 2 * k + 1] & CELL_TRANSLUCENT != 0 {
+                    &get_glass
+                } else {
+                    &get_opaque
+                };
+            if let Some(x) = tent(get, v, face) {
                 block[run + 2 * k] = rgb9e5_pack(x);
             }
         }
@@ -1394,7 +1472,7 @@ fn cells_of(block: &[u32]) -> KeptCells {
 fn list_extent(
     world: &World,
     extent: ChunkExtent,
-    opaque: &[bool],
+    classes: &[u8],
 ) -> Vec<(ChunkCoord, ChunkFaces)> {
     let mut jobs: Vec<(ChunkCoord, ChunkFaces)> = Vec::new();
     let [ex, ey, ez] = extent.size();
@@ -1406,7 +1484,7 @@ fn list_extent(
                     extent.min.0[1] + y,
                     extent.min.0[2] + z,
                 ]);
-                if let Some(faces) = list_world_chunk(world, c, opaque)
+                if let Some(faces) = list_world_chunk(world, c, classes)
                     && faces.faces() > 0
                 {
                     jobs.push((c, faces));
@@ -1426,9 +1504,9 @@ pub(crate) fn run(
     settings: &BakeSettings,
     progress: &mut dyn FnMut(&BakeProgress),
 ) -> Result<BakeReport, BakeError> {
-    let opaque = opaque_table(run.world.materials());
+    let classes = face_classes(run.world.materials());
     // The list, first: the pool's blocks are known before a sample is drawn.
-    let mut listed = list_extent(run.world, extent, &opaque);
+    let mut listed = list_extent(run.world, extent, &classes);
     if settings.reversed {
         listed.reverse();
     }
@@ -1541,14 +1619,14 @@ pub(crate) fn rebake(
         return Ok(DigReport::default());
     };
     let ring = dig_ring(boxes, piece);
-    let opaque = opaque_table(run.world.materials());
+    let classes = face_classes(run.world.materials());
     let mut jobs = Vec::new();
     let mut end = store.end_words;
     let mut bricks = 0u64;
     for (c, slots) in &ring {
         bricks += slots.len() as u64;
         let coord = ChunkCoord(*c);
-        let faces = list_world_chunk(run.world, coord, &opaque).unwrap_or_default();
+        let faces = list_world_chunk(run.world, coord, &classes).unwrap_or_default();
         if faces.faces() == 0 {
             store.remove(run.queue, coord);
             continue;
@@ -1878,6 +1956,7 @@ impl JobCtx<'_, '_> {
                     lum2: 0.0,
                     best: 0.0,
                     material: 0,
+                    glass: faces.is_glass(*brick_at, key),
                     snapshots: Vec::new(),
                     done: !wanted,
                     keep,
@@ -1932,7 +2011,8 @@ impl JobCtx<'_, '_> {
             }
             let mean = s.mean(s.kept(self.settings.clamp));
             block.push(rgb9e5_pack(mean));
-            block.push(u32::from(s.key) | u32::from(s.material) << 16);
+            let flags = if s.glass { CELL_TRANSLUCENT } else { 0 };
+            block.push(u32::from(s.key) | flags | u32::from(s.material) << 16);
         }
         debug_assert_eq!(block.len() as u64, job.faces.block_words());
         store.put(queue, job.coord, job.first_word, block);
@@ -2057,8 +2137,8 @@ mod tests {
     /// chunk border as within, a crease's other side never, and the tail words unchanged.
     #[test]
     fn the_tent_reads_across_chunks_and_not_across_a_crease() {
-        let mut opaque = vec![false; 4];
-        opaque[1] = true;
+        let mut classes = vec![CLASS_AIR; 4];
+        classes[1] = CLASS_OPAQUE;
         // A floor of two chunks along x, its top at y = 0, and a wall at x = 70 above it.
         let mut chunks = [Chunk::uniform(AIR), Chunk::uniform(AIR)];
         for (n, chunk) in chunks.iter_mut().enumerate() {
@@ -2081,8 +2161,8 @@ mod tests {
         let left = [None, Some(&chunks[1]), None, None, None, None];
         let right = [Some(&chunks[0]), None, None, None, None, None];
         let faces = [
-            list_chunk_faces(&chunks[0], &left, &opaque),
-            list_chunk_faces(&chunks[1], &right, &opaque),
+            list_chunk_faces(&chunks[0], &left, &classes),
+            list_chunk_faces(&chunks[1], &right, &classes),
         ];
         // The floor's top faces read 1 left of x = 64 and 0 from there; the wall's -x faces 0.
         let value = |v: [i32; 3], f: u8| f32::from(f == 3 && v[0] < 64);
@@ -2115,13 +2195,14 @@ mod tests {
 
     #[test]
     fn every_exposed_face_has_one_key() {
-        let mut opaque = vec![false; 1 << 16];
-        opaque[1] = true;
-        opaque[2] = true;
+        let mut classes = vec![CLASS_AIR; 1 << 16];
+        classes[1] = CLASS_OPAQUE;
+        classes[2] = CLASS_OPAQUE;
+        classes[3] = CLASS_TRANSLUCENT;
         let chunk = mixed_chunk(0x9E37_79B9_7F4A_7C15);
         let beside: [Chunk; 6] = std::array::from_fn(|f| mixed_chunk(0x1234_5678 + 97 * f as u64));
         let refs: [Option<&Chunk>; 6] = std::array::from_fn(|f| Some(&beside[f]));
-        let faces = list_chunk_faces(&chunk, &refs, &opaque);
+        let faces = list_chunk_faces(&chunk, &refs, &classes);
         let mut listed: Vec<(usize, u16)> = Vec::new();
         for (slot, keys) in &faces.bricks {
             assert!(!keys.is_empty(), "brick {slot} listed with no face");
@@ -2132,11 +2213,15 @@ mod tests {
             listed.extend(keys.iter().map(|&k| (usize::from(*slot), k)));
         }
         let mut scan: Vec<(usize, u16)> = Vec::new();
+        let mut glass: Vec<(u16, u16)> = Vec::new();
         for z in 0..64 {
             for y in 0..64 {
                 for x in 0..64 {
                     let l = [x, y, z];
-                    if !opaque[usize::from(material(&chunk, l))] {
+                    // An opaque voxel's face toward anything not opaque; a translucent voxel's
+                    // toward air.
+                    let class = classes[usize::from(material(&chunk, l))];
+                    if class == CLASS_AIR {
                         continue;
                     }
                     let inner = l.map(|v| v % 8);
@@ -2151,8 +2236,16 @@ mod tests {
                             n[k] = n[k].rem_euclid(64);
                             material(side, n)
                         };
-                        if !opaque[usize::from(m)] {
-                            scan.push((brick_slot(l.map(|v| v / 8)), key | face as u16));
+                        let open = match class {
+                            CLASS_OPAQUE => classes[usize::from(m)] != CLASS_OPAQUE,
+                            _ => classes[usize::from(m)] == CLASS_AIR,
+                        };
+                        if open {
+                            let at = (brick_slot(l.map(|v| v / 8)), key | face as u16);
+                            scan.push(at);
+                            if class == CLASS_TRANSLUCENT {
+                                glass.push((at.0 as u16, at.1));
+                            }
                         }
                     }
                 }
@@ -2169,12 +2262,16 @@ mod tests {
             scan.len()
         );
         assert_eq!(listed, scan);
+        glass.sort_unstable();
+        assert!(!glass.is_empty());
+        assert_eq!(faces.glass, glass);
     }
 
     #[test]
     fn the_directory_points_at_each_bricks_run() {
         let faces = ChunkFaces {
             bricks: vec![(3, vec![1, 2, 3]), (9, vec![4])],
+            glass: Vec::new(),
         };
         let d = faces.directory();
         assert_eq!(d[3], 512 << 11 | 3);

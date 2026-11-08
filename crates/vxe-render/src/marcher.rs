@@ -1490,7 +1490,7 @@ pub struct Marcher {
 
 impl Marcher {
     fn new(device: &wgpu::Device, world_layout: &wgpu::BindGroupLayout) -> Self {
-        use wgpu::TextureFormat::{Rgba16Float, Rgba16Uint, Rgba32Float};
+        use wgpu::TextureFormat::{R32Uint, Rgba16Float, Rgba16Uint, Rgba32Float};
         let out_layout = io_layout(
             device,
             "hit out",
@@ -1500,6 +1500,8 @@ impl Marcher {
                 Io::Store(Rgba16Float),
                 Io::Storage,
                 Io::Storage,
+                Io::Store(R32Uint),
+                Io::ReadStorage,
             ],
         );
         // The resume dispatch reads its workgroup count from the split arguments, so they are
@@ -1950,6 +1952,8 @@ enum Io {
     Uniform,
     /// A read-write storage buffer.
     Storage,
+    /// A read-only storage buffer.
+    ReadStorage,
 }
 
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
@@ -1965,14 +1969,16 @@ fn io_layout_at(device: &wgpu::Device, label: &str, io: &[(u32, Io)]) -> wgpu::B
             Io::Float => sampled_texture(b, FLOAT),
             Io::Uint => sampled_texture(b, UINT),
             Io::Store(f) => storage_texture(b, f),
-            Io::Uniform | Io::Storage => wgpu::BindGroupLayoutEntry {
+            Io::Uniform | Io::Storage | Io::ReadStorage => wgpu::BindGroupLayoutEntry {
                 binding: b,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: if matches!(k, Io::Uniform) {
                         wgpu::BufferBindingType::Uniform
                     } else {
-                        wgpu::BufferBindingType::Storage { read_only: false }
+                        wgpu::BufferBindingType::Storage {
+                            read_only: matches!(k, Io::ReadStorage),
+                        }
                     },
                     has_dynamic_offset: false,
                     min_binding_size: None,
@@ -2462,6 +2468,7 @@ impl Frame {
                 Io::Uint,
                 Io::Float,
                 Io::Storage,
+                Io::Uint,
             ],
         );
         let probe_storage = |binding| wgpu::BindGroupLayoutEntry {
@@ -3650,10 +3657,16 @@ impl Frame {
         &self.targets.hit_info[self.cur]
     }
 
-    /// The translucent layers in front of each hit (rgba16float: premultiplied colour,
-    /// transmittance).
+    /// The translucent solid in front of each hit (rgba16float: its reflected light before
+    /// exposure in rgb, the luminance of its transmittance in a; ADR-0047).
     pub fn layers(&self) -> &wgpu::Texture {
         &self.targets.layer
+    }
+
+    /// The translucent solid's transmittance per channel in front of each hit (r32uint, rgb9e5;
+    /// `bake::rgb9e5_unpack` reads a texel), 1 where none is in front.
+    pub fn transmittance(&self) -> &wgpu::Texture {
+        &self.targets.transmit
     }
 
     /// The light pass's irradiance (rgba16float: rgb, then the emissive part's luminance).
@@ -4076,6 +4089,8 @@ impl Frame {
                 Res::Tex(&t.layer),
                 Res::Buf(split_list),
                 Res::Buf(&t.split_args),
+                Res::Tex(&t.transmit),
+                Res::Buf(self.store.pool()),
             ],
         );
         let half = t.half_pos.is_some();
@@ -4452,6 +4467,7 @@ impl Frame {
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.indirect),
                 Res::Buf(&t.tiles),
+                Res::Tex(&t.transmit),
             ],
         );
         let gradient_bind = bind_io(
@@ -5029,6 +5045,7 @@ fn composite_hdr_pass(
             Io::Uint,
             Io::Float,
             Io::Storage,
+            Io::Uint,
         ],
     );
     let pipeline = compute_pipeline(
@@ -5128,9 +5145,11 @@ struct Targets {
     /// The lighting grid's hit buffer at half resolution.
     half_pos: Option<[wgpu::Texture; 2]>,
     half_info: Option<[wgpu::Texture; 2]>,
-    /// The translucent layers in front of each hit (rgba16float), or the steps view's
-    /// counters.
+    /// The translucent solid in front of each hit: its reflected light (rgba16float), or the
+    /// steps view's counters.
     layer: wgpu::Texture,
+    /// The translucent solid's transmittance per channel, rgb9e5 in r32uint (ADR-0047).
+    transmit: wgpu::Texture,
     /// The light pass's irradiance (rgba16float), on the lighting grid.
     irradiance: wgpu::Texture,
     /// The temporal pass's accumulated irradiance and moments (rgba16float).
@@ -5193,7 +5212,7 @@ impl Targets {
         let (lw, lh) = (width.div_ceil(scale), height.div_ceil(scale));
         let tex = |label, format| sized(label, format, width, height);
         let lit = |label, format| sized(label, format, lw, lh);
-        use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float};
+        use wgpu::TextureFormat::{R32Uint, Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float};
         let half = scale > 1;
         Self {
             width,
@@ -5204,6 +5223,7 @@ impl Targets {
             half_pos: half.then(|| [0, 1].map(|_| lit("half hit pos", Rgba32Float))),
             half_info: half.then(|| [0, 1].map(|_| lit("half hit info", Rgba16Uint))),
             layer: tex("layer", Rgba16Float),
+            transmit: tex("transmittance", R32Uint),
             irradiance: lit("irradiance", Rgba16Float),
             accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba16Float)),
             moments: [0, 1].map(|_| lit("moments", Rgba16Float)),

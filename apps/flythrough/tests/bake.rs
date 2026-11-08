@@ -1302,6 +1302,266 @@ fn a_glass_pane_does_not_brighten_what_it_covers() {
     );
 }
 
+/// The composite's radiance of each pixel's hit before the display and before any translucent
+/// solid in front of it (pre-exposed): `albedo * E / PI` plus the emission at exposure `ex`, `E`
+/// the irradiance the composite reads (the filter's rgb, or with the filter off the light pass's
+/// rgb plus its lamp's white). 0 on a miss.
+fn hit_radiance(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &Frame,
+    mats: &MaterialTable,
+    ex: f32,
+) -> Vec<[f32; 3]> {
+    let filter = frame.lighting().filter;
+    let info = readback::read_rgba16u(device, queue, frame.hit_records());
+    let lit_tex = if filter {
+        frame.filtered()
+    } else {
+        frame.irradiance()
+    };
+    let lit = readback::read_float(device, queue, lit_tex);
+    info.iter()
+        .zip(&lit)
+        .map(|(r, l)| {
+            if r[3] & 1 == 0 {
+                return [0.0; 3];
+            }
+            let m = mats.get(r[2]).expect("a material");
+            let s = frame.emission_scale(r[2]);
+            let w = if filter { 0.0 } else { l[3] };
+            [0, 1, 2]
+                .map(|k| m.albedo[k] * (l[k] + w) / std::f32::consts::PI + m.emission[k] * s * ex)
+        })
+        .collect()
+}
+
+/// The length of `o + d s`, `0 <= s < s_end`, inside the boxes `[min, max)` (disjoint).
+fn path_in_boxes(o: [f64; 3], d: [f64; 3], s_end: f64, boxes: &[([i32; 3], [i32; 3])]) -> f64 {
+    let mut sum = 0.0;
+    for (min, max) in boxes {
+        let (mut a, mut b) = (0.0f64, s_end);
+        for k in 0..3 {
+            let (lo, hi) = (f64::from(min[k]), f64::from(max[k]));
+            if d[k] == 0.0 {
+                if o[k] < lo || o[k] >= hi {
+                    b = a;
+                }
+                continue;
+            }
+            let (p, q) = ((lo - o[k]) / d[k], (hi - o[k]) / d[k]);
+            a = a.max(p.min(q));
+            b = b.min(p.max(q));
+        }
+        sum += (b - a).max(0.0);
+    }
+    sum
+}
+
+/// ADR-0047's filter (lavapipe, a 64 x 36 frame, lamp off, exposure 8). A wall lit by an ore
+/// strip on its own side, behind a pane 1 voxel thick on one half and 2 on the other; no
+/// emitter sees the pane's camera-side faces, so their store cells are 0 and each pixel is
+/// `T(L)` of what it showed before the pane: `L` the exact path through the glass boxes along the
+/// pixel's ray, `T = tint^L` per channel, `tint = 0.8 (0.5 + 0.5 albedo / max(albedo))` from the
+/// row's albedo. Within 2 levels, head on (the halves at `L` near 1 and 2: `T` and `T^2`) and at
+/// 30 degrees of yaw (`L` near 2.3 through the 2-voxel half). Then a pane lit from the camera's
+/// side over a black wall: each pixel's reflected light before exposure (the layer target's rgb)
+/// is Schlick's `R` at F0 0.04 at its angle times its entry face's store cell `E / PI`, within
+/// 10 %, and the pixel shows it. The per-layer composite fails the first.
+#[test]
+fn a_glass_pane_filters_by_path_length() {
+    let mut t = table();
+    let rock = t.get(ROCK).expect("rock").clone();
+    let albedo = [0.25, 0.35, 0.85];
+    t.push(vxe_world::Material {
+        name: "glass".to_owned(),
+        albedo,
+        emission: [0.0; 3],
+        opacity: 0.6,
+        flags: rock.flags | vxe_world::MaterialFlags::TRANSLUCENT,
+        ..rock.clone()
+    });
+    let glass_id = (t.len() - 1) as vxe_world::MaterialId;
+    t.push(vxe_world::Material {
+        name: "black".to_owned(),
+        albedo: [0.0; 3],
+        emission: [0.0; 3],
+        ..rock.clone()
+    });
+    let black_id = (t.len() - 1) as vxe_world::MaterialId;
+    let mats = t.clone();
+    let world = air_world([2, 2, 2], &t);
+    // The wall and its ore strip above, out of the views.
+    fill(&world, [40, 52, 22], [41, 100, 40], ROCK);
+    fill(&world, [34, 52, 42], [36, 100, 44], ORE);
+    // The lit pane's black wall and its ore strip, on the camera's side of the pane.
+    fill(&world, [84, 54, 92], [85, 88, 118], black_id);
+    fill(&world, [100, 56, 114], [104, 84, 116], ORE);
+    let halves: [([i32; 3], [i32; 3]); 2] =
+        [([30, 56, 20], [31, 70, 42]), ([30, 70, 20], [32, 86, 42])];
+    let lit_pane = ([96, 56, 96], [98, 84, 112]);
+    let size = [64u32, 36];
+    let Some(mut rig) = rig_on(world, size, Light::Baked, None) else {
+        return;
+    };
+    let settings = test_counts(64, 64);
+    rig.bake(&settings);
+    let ex = 8.0f32;
+    let head_on = Camera {
+        position: [20.0, 70.0, 31.0].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 30f32.to_radians(),
+    };
+    let oblique = Camera {
+        position: [31.0 - 8.66, 72.0, 31.0].into(),
+        yaw: 30f32.to_radians(),
+        ..head_on
+    };
+    let lit_view = Camera {
+        position: [108.0, 70.0, 104.0].into(),
+        yaw: 180f32.to_radians(),
+        ..head_on
+    };
+    let lighting = rig.frame.lighting();
+    let level = |c: [f32; 3]| {
+        let b = tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
+        0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
+    };
+    let settle = |rig: &mut Rig, camera: &Camera| {
+        for _ in 0..8 {
+            rig.step(camera);
+        }
+    };
+    let mut before = Vec::new();
+    for camera in [&head_on, &oblique] {
+        settle(&mut rig, camera);
+        before.push(hit_radiance(&rig.device, &rig.queue, &rig.frame, &mats, ex));
+    }
+    for (min, max) in halves.iter().chain([&lit_pane]) {
+        rig.dig(
+            &EditOp::box_(
+                Fixed3(min.map(|v| i64::from(v) * FIXED_ONE)),
+                Fixed3(max.map(|v| i64::from(v) * FIXED_ONE)),
+                Mode::Fill(glass_id),
+            ),
+            &settings,
+        );
+    }
+    let top = albedo.iter().fold(0f32, |a, b| a.max(*b));
+    let tint = albedo.map(|a| f64::from(0.8 * (0.5 + 0.5 * a / top)));
+    for (camera, c0, name) in [
+        (&head_on, &before[0], "head on"),
+        (&oblique, &before[1], "30 degrees"),
+    ] {
+        settle(&mut rig, camera);
+        let shown = luma(&rig.display());
+        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let eye = camera.position.to_array().map(f64::from);
+        let (mut worst, mut n) = (0f32, 0usize);
+        let mut by_half: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
+        for i in 0..info.len() {
+            if info[i][3] & 1 == 0 || info[i][3] & 4 == 0 {
+                continue;
+            }
+            let to = [0, 1, 2].map(|k| f64::from(pos[i][k]) - eye[k]);
+            let s_end = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
+            let d = to.map(|v| v / s_end);
+            let lens = halves.map(|b| path_in_boxes(eye, d, s_end, &[b]));
+            let l = lens[0] + lens[1];
+            let tr = tint.map(|x| x.powf(l) as f32);
+            let want = level([0, 1, 2].map(|k| tr[k] * c0[i][k]));
+            let off = (shown[i] - want).abs();
+            if off > worst {
+                worst = off;
+            }
+            n += 1;
+            if lens[1] == 0.0 {
+                by_half[0].push(l);
+            } else if lens[0] == 0.0 {
+                by_half[1].push(l);
+            }
+        }
+        let median = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v.get(v.len() / 2).copied().unwrap_or(0.0)
+        };
+        let (n1, n2) = (by_half[0].len(), by_half[1].len());
+        let (l1, l2) = (median(&mut by_half[0]), median(&mut by_half[1]));
+        println!(
+            "{name}: {n} pane pixels; L median {l1:.3} over {n1} (1 voxel), {l2:.3} over {n2} (2 voxels); worst |pixel - T(L) behind| {worst:.2} levels"
+        );
+        assert!(n > 1000, "{name}: {n} pixels behind the pane");
+        assert!(
+            worst <= 2.0,
+            "{name}: a pixel {worst:.2} levels from T(L) of what it showed before the pane"
+        );
+        if camera.yaw == 0.0 {
+            assert!(n1 > 300 && n2 > 300, "{name}: halves {n1} and {n2}");
+            assert!(
+                (1.0..1.1).contains(&l1) && (2.0..2.2).contains(&l2),
+                "{l1} {l2}"
+            );
+        } else {
+            assert!(
+                n2 > 300 && (2.25..2.4).contains(&l2),
+                "{name}: {n2} at {l2}"
+            );
+        }
+    }
+    // The lit pane over the black wall: its reflected share from its +x face's cell.
+    settle(&mut rig, &lit_view);
+    let shown = luma(&rig.display());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let cells = rig.cells();
+    let eye = lit_view.position.to_array().map(f64::from);
+    let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let (mut n, mut worst, mut worst_shown) = (0usize, 0f32, 0f32);
+    for i in 0..info.len() {
+        if info[i][3] & 1 == 0 || info[i][3] & 4 == 0 || info[i][2] != black_id {
+            continue;
+        }
+        let to = [0, 1, 2].map(|k| f64::from(pos[i][k]) - eye[k]);
+        let len = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
+        let d = to.map(|v| v / len);
+        // The entry: the plane x = 98, the pane's +x face; its voxel is x = 97.
+        let s = (98.0 - eye[0]) / d[0];
+        let p = [0, 1, 2].map(|k| eye[k] + d[k] * s);
+        let v = [97, p[1].floor() as i32, p[2].floor() as i32];
+        let Some(cell) = cells.get(&(v, 1)) else {
+            panic!("no cell at the pane's face {v:?}");
+        };
+        assert!(
+            cell[1] & bake::CELL_TRANSLUCENT != 0,
+            "the face's tail is flagged"
+        );
+        let e = bake::rgb9e5_unpack(cell[0])
+            .map(|x| x * rig.frame.emission_scale((cell[1] >> 16) as u16));
+        let c = (1.0 - d[0].abs()) as f32;
+        let r = 0.04 + 0.96 * c.powi(5);
+        let want = e.map(|x| r * x / std::f32::consts::PI);
+        let got = [layer[i][0], layer[i][1], layer[i][2]];
+        if lum(want) <= 0.0 {
+            continue;
+        }
+        n += 1;
+        worst = worst.max((lum(got) / lum(want) - 1.0).abs());
+        worst_shown = worst_shown.max((shown[i] - level(got.map(|x| x * ex))).abs());
+    }
+    println!(
+        "lit pane: {n} pixels over the black wall; worst |reflected / (R E / PI) - 1| {worst:.4}; worst |pixel - display(reflected)| {worst_shown:.2} levels"
+    );
+    assert!(n > 1000, "{n} lit pane pixels");
+    assert!(worst <= 0.10, "reflected light {worst:.4} off R E / PI");
+    assert!(
+        worst_shown <= 2.0,
+        "a pixel {worst_shown:.2} levels off its reflected light"
+    );
+}
+
 /// A written store file loads into a new frame with every cell and a frame bit-identical; a file
 /// with another seed, piece, light radius or stop is refused with the field's name.
 #[test]
@@ -1655,7 +1915,7 @@ fn census() {
     let mut log = Log::open("census.txt");
     for (name, scene) in [("level", Scene::Level), ("showcase", Scene::Showcase)] {
         let world = scene_world(scene);
-        let opaque = bake::opaque_table(world.materials());
+        let classes = bake::face_classes(world.materials());
         let e = world.extent();
         let s = e.size();
         let (mut faces, mut words) = (Vec::new(), 0u64);
@@ -1663,7 +1923,7 @@ fn census() {
             for y in 0..s[1] {
                 for x in 0..s[0] {
                     let c = ChunkCoord([x, y, z]);
-                    if let Some(f) = bake::list_world_chunk(&world, c, &opaque)
+                    if let Some(f) = bake::list_world_chunk(&world, c, &classes)
                         && f.faces() > 0
                     {
                         faces.push(f.faces() as u32);
@@ -1696,7 +1956,7 @@ fn census() {
         .unwrap_or(1);
     for view in read_views() {
         let world = scene_world(view.scene);
-        let opaque = bake::opaque_table(world.materials());
+        let classes = bake::face_classes(world.materials());
         let e = world.extent();
         let size = e.size();
         let c = view.eye.map(|v| (v / 64.0).floor() as i32);
@@ -1707,7 +1967,7 @@ fn census() {
             for y in lo[1]..hi[1] {
                 for x in lo[0]..hi[0] {
                     chunks += 1;
-                    if let Some(f) = bake::list_world_chunk(&world, ChunkCoord([x, y, z]), &opaque)
+                    if let Some(f) = bake::list_world_chunk(&world, ChunkCoord([x, y, z]), &classes)
                         && f.faces() > 0
                     {
                         surface += 1;
@@ -3301,7 +3561,7 @@ fn cut_grain(view: &ReadView) {
 
 /// The faces within 96 voxels of `eye`, in a hashed order: a ring's faces without its order.
 fn shuffled_faces(world: &World, eye: [f32; 3]) -> Vec<([i32; 3], u8)> {
-    let opaque = bake::opaque_table(world.materials());
+    let classes = bake::face_classes(world.materials());
     let near = within(eye, 96.0);
     let e = extent_within(world.extent(), eye, 96.0);
     let s = e.size();
@@ -3310,7 +3570,7 @@ fn shuffled_faces(world: &World, eye: [f32; 3]) -> Vec<([i32; 3], u8)> {
         for y in 0..s[1] {
             for x in 0..s[0] {
                 let c = [e.min.0[0] + x, e.min.0[1] + y, e.min.0[2] + z];
-                let Some(f) = bake::list_world_chunk(world, ChunkCoord(c), &opaque) else {
+                let Some(f) = bake::list_world_chunk(world, ChunkCoord(c), &classes) else {
                     continue;
                 };
                 for (slot, keys) in &f.bricks {
