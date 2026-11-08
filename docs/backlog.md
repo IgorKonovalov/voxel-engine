@@ -192,6 +192,23 @@ The suspect the lane started from does not hold: `preload_dispatch`, the only in
 
 Locally on lavapipe (Mesa 26.2.5, LLVM 23.1.3), exclusive perf lock, load 1.4 to 6.8 (loaded from the third run on), every mode exits 0 over 3 frames, `shade_preload` 11 to 17 ms after the sweep. Each read reads the sweep's words [1024, 1, 1], `shade_preload`'s [3, 2, 1] (3 columns and the 2 rows of the lighting grid, no preload rows) and 0 fill and 0 preload groups, with the sweep skipped or not. Those are the words WARP should read in (1) if its args pass and the sweep are right.
 
+Read 2026-11-08 from CI run 42489194343 on f23c5b3 (WARP, 3 frames, split, each killed past 180 s):
+
+| Run | Result | Read back |
+|---|---|---|
+| control: `skip-sweep,read-args` | **killed** after the read-back line | sweep [1024, 1, 1], `shade_preload` [3, 2, 1], 0 fill, 0 preload groups |
+| (1) `read-args` | killed after the read-back line | the same words |
+| (2) `direct-shade` | killed after the read-back line | the same words |
+| (3) `scratch-sweep` | **exits 0 in 59 s**; `shade_preload` 18.9 s after the sweep | none |
+| (a) the normal split | killed after "preload sweep done" | none |
+
+- **The words are right.** WARP reads exactly lavapipe's words, so the hang is not a garbage dispatch.
+- **The read-back alone hangs it.** The control was the sweep-skipped run that exits 0 in runs 42477325818 and 42483023036, but with the read-back added it was killed. So a separate submission that only copies `preload_dispatch` between the args pass and `shade_preload` is enough, with no sweep at all.
+- **(2) says nothing about the indirect path,** because it carried the same read-back.
+- **(3) is clean.** With its table and counters on scratch buffers, the empty sweep leaves `shade_preload` running.
+- **Reading:** on WARP, any submission between the args pass and `shade_preload` that touches a buffer `shade_preload` then uses (the table and counters bound read-write, or `preload_dispatch` copied) makes `shade_preload` hang. Both the in-frame path and the split hang, so it is not only a cross-submission effect. This is a guess until a debug layer reads it.
+- **Next candidates, the owner's pick:** the D3D12 debug layer with GPU-based validation on the WARP runs, which names a bad state or hazard if wgpu emits one; wgpu newer than 30.0.1 on WARP; and (2) without the read-back.
+
 ### The preload's probes and dispatch are not bounded by its cap
 
 Read 2026-11-08 in the chore-ci-preload-fix lane on lavapipe (Mesa 26.2.5), exclusive perf lock, the headless fly-through at 64 x 36 over 35 frames. With the preload on, the light pass (`shade_preload`, which carries the preload's fill and probes) reads 73.4 ms of a 99.2 ms GPU frame (median of 30, load 0.95); with `--preload off` it reads 1.8 ms of 31.7 ms (load 4.9 to 8.0, loaded). The preload draws 32 656 to 69 592 samples a frame against 264 lighting pixels. S_PRE bounds the fill in samples (`draw_cells` = 2048 cells x 16), but not the probes, which sample every face on the input probe list (up to PRELOAD_PROBE_LIST_MAX x 8 = 131 072 samples a frame), nor the dispatch's workgroups, one per 4 input fill entries whether they draw or not (up to 8192; the input list grew to 21 589 entries over the run). This is a cost on every adapter, not WARP's frame-0 hang. Ruled 2026-11-08 (owner): not fixed now. Plan 0059 may delete the path, so it is taken up in that plan's deletion or cut phases: bound the probes in samples a frame and the dispatch in workgroups, if the path stays.
