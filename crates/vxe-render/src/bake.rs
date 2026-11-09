@@ -575,6 +575,125 @@ fn records_of(block: &[u32], record: usize) -> KeptBricks {
     out
 }
 
+/// A dug chunk's block before its job ends: the layout of `faces` at the brick level, each
+/// brick's record the store's (a brick the edit kept), else the mean, direction by direction, of
+/// the records of the bricks around it within one brick (two where one holds none), across
+/// chunks, a direction none of them holds their mean over every direction; a brick with none
+/// around it holds no light. A kept brick in `touched` holds its record with every direction it
+/// held none for filled ([`fill_directions`]). Records of one cell a brick only; at
+/// other cells a new brick holds none.
+fn provisional_block(
+    store: &Store,
+    c: [i32; 3],
+    faces: &ChunkFaces,
+    record: usize,
+    touched: &[u16],
+) -> Vec<u32> {
+    let (dir, words) = layout(faces, Some(Tier::Brick), record);
+    let mut block = dir;
+    block.reserve(words as usize);
+    let record_at = |chunk: [i32; 3], slot: usize| -> Option<&[u32]> {
+        let b = store.words.get(&chunk)?;
+        let d = b[slot];
+        if d == 0 {
+            return None;
+        }
+        let run = (d >> 11) as usize;
+        Some(&b[run - record..run])
+    };
+    for (slot, _) in &faces.bricks {
+        let touched = touched.contains(slot);
+        let slot = usize::from(*slot);
+        if let Some(r) = record_at(c, slot) {
+            let mut r = r.to_vec();
+            if touched && record == BRICK_WORDS {
+                fill_directions(&mut r);
+            }
+            block.extend(r);
+            continue;
+        }
+        let mut guess = vec![0u32; record];
+        if record == BRICK_WORDS {
+            let b = brick_of_slot(slot);
+            let g = [0, 1, 2].map(|k| c[k] * 8 + b[k]);
+            for r in 1..=2 {
+                let mut sums = [[0f64; 3]; 6];
+                let mut counts = [0u32; 6];
+                let mut material = None;
+                for dz in -r..=r {
+                    for dy in -r..=r {
+                        for dx in -r..=r {
+                            if dx == 0 && dy == 0 && dz == 0 {
+                                continue;
+                            }
+                            let n = [g[0] + dx, g[1] + dy, g[2] + dz];
+                            let nc = n.map(|v| v.div_euclid(8));
+                            let Some(rec) = record_at(nc, brick_slot(n.map(|v| v.rem_euclid(8))))
+                            else {
+                                continue;
+                            };
+                            let mask = rec[6] >> 16;
+                            material.get_or_insert(rec[6] & 0xFFFF);
+                            for f in 0..6 {
+                                if mask & 1 << f != 0 {
+                                    let v = rgb9e5_unpack(rec[f]);
+                                    for k in 0..3 {
+                                        sums[f][k] += f64::from(v[k]);
+                                    }
+                                    counts[f] += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                let Some(material) = material else {
+                    continue;
+                };
+                // A direction no brick around holds (a dug hole's faces point where the wall's
+                // did not) takes the mean of every direction they hold.
+                let n_all: u32 = counts.iter().sum();
+                let all = [0, 1, 2].map(|k| {
+                    (sums.iter().map(|d| d[k]).sum::<f64>() / f64::from(n_all.max(1))) as f32
+                });
+                for f in 0..6 {
+                    guess[f] = if counts[f] > 0 {
+                        let n = f64::from(counts[f]);
+                        rgb9e5_pack(sums[f].map(|x| (x / n) as f32))
+                    } else {
+                        rgb9e5_pack(all)
+                    };
+                }
+                guess[6] = material | 0x3F << 16;
+                break;
+            }
+        }
+        block.extend(guess);
+    }
+    debug_assert_eq!(block.len() as u64, words);
+    block
+}
+
+/// A brick record's directions it holds no value for take the mean of those it does: a brick a
+/// dig touched may have faces now where it had none.
+fn fill_directions(r: &mut [u32]) {
+    let mask = r[6] >> 16;
+    let held: Vec<[f32; 3]> = (0..6)
+        .filter(|f| mask & 1 << f != 0)
+        .map(|f| rgb9e5_unpack(r[f]))
+        .collect();
+    if held.is_empty() {
+        return;
+    }
+    let n = held.len() as f32;
+    let mean = [0, 1, 2].map(|k| held.iter().map(|v| v[k]).sum::<f32>() / n);
+    for (f, w) in r.iter_mut().take(6).enumerate() {
+        if mask & 1 << f == 0 {
+            *w = rgb9e5_pack(mean);
+        }
+    }
+    r[6] = (r[6] & 0xFFFF) | 0x3F << 16;
+}
+
 /// Whether `slot`'s record in `block` holds light in any direction (a brick with no record holds
 /// none).
 fn brick_lit(block: &[u32], slot: u16, record: usize) -> bool {
@@ -3282,6 +3401,8 @@ pub struct BakeQueue {
     dig_open: std::collections::HashMap<[i32; 3], DigChunk>,
     /// Chunks with a block that re-bake whole (ring 3, or a job thrown away by an edit).
     reach: std::collections::BTreeSet<[i32; 3]>,
+    /// Dug chunks' faces, listed at the edit for their provisional block, for their dig job.
+    listed: std::collections::HashMap<[i32; 3], ChunkFaces>,
     /// The jobs pending or open, and whether each is a coarse pass.
     job_coarse: std::collections::HashMap<[i32; 3], bool>,
     lp: JobLoop,
@@ -3314,6 +3435,7 @@ impl BakeQueue {
             digs: BTreeMap::new(),
             dig_open: Default::default(),
             reach: Default::default(),
+            listed: Default::default(),
             job_coarse: Default::default(),
             lp: JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS).timed(),
             prepared: Default::default(),
@@ -3473,8 +3595,9 @@ impl BakeQueue {
             self.faceless.remove(&c);
             self.digs.remove(&c);
             self.reach.remove(&c);
+            self.listed.remove(&c);
         }
-        self.take_boxes(run, store);
+        self.take_boxes(run, store)?;
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
             let ms = self.slice_ms + if dig { self.edit_ms } else { 0.0 };
@@ -3620,14 +3743,17 @@ impl BakeQueue {
     /// edits left it (no re-bake has run since): each ring chunk with a block takes its ring's
     /// bricks, merged with what a dig job running there re-bakes (that job is thrown away), and a
     /// job of any kind running in a ring chunk is thrown away. A touched brick that held light
-    /// opens ring 3.
-    fn take_boxes(&mut self, run: &BakeRun<'_>, store: &Store) {
+    /// opens ring 3. Each chunk holding a touched brick is listed again at once and takes a
+    /// provisional block ([`provisional_block`]): its kept bricks' records, and a brick the edit
+    /// opened its neighbours' mean, so no dug face reads no value while its job waits; the job
+    /// then fades from it.
+    fn take_boxes(&mut self, run: &BakeRun<'_>, store: &mut Store) -> Result<(), BakeError> {
         if self.boxes.is_empty() {
-            return;
+            return Ok(());
         }
         let boxes = std::mem::take(&mut self.boxes);
         let Some(piece) = store.piece else {
-            return;
+            return Ok(());
         };
         let record = self.record_words();
         let touches = |c: [i32; 3], slot: u16| {
@@ -3641,6 +3767,7 @@ impl BakeQueue {
         };
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
         let mut lit = false;
+        let mut dug = Vec::new();
         for (c, slots) in dig_ring(&boxes, piece) {
             let near: Vec<u16> = slots.iter().copied().filter(|&s| touches(c, s)).collect();
             if !lit && let Some(block) = store.words.get(&c) {
@@ -3659,9 +3786,57 @@ impl BakeQueue {
             }
             e.slots.extend(slots);
             e.near |= !near.is_empty();
+            if !near.is_empty() {
+                dug.push((c, near));
+            }
+        }
+        let classes = face_classes(run.world.materials());
+        // A `B` press touches tens of chunks: listed across threads, as the pre-roll's are.
+        let threads = std::thread::available_parallelism()
+            .map_or(4, std::num::NonZero::get)
+            .clamp(1, 16);
+        let per = dug.len().div_ceil(threads).max(1);
+        let this = &*self;
+        let listed: Vec<ChunkFaces> = std::thread::scope(|scope| {
+            let handles: Vec<_> = dug
+                .chunks(per)
+                .map(|part| {
+                    let classes = &classes;
+                    scope.spawn(move || {
+                        part.iter()
+                            .map(|(c, _)| this.list(run.world, ChunkCoord(*c), classes).0)
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().expect("a listing thread panicked"))
+                .collect()
+        });
+        for ((c, near), faces) in dug.into_iter().zip(listed) {
+            let coord = ChunkCoord(c);
+            if let Some(m) = self.prepared.remove(&c) {
+                self.prepared_bytes -= m.masks.bytes();
+            }
+            let Some(&(first, words)) = store.blocks.get(&c) else {
+                continue;
+            };
+            self.fades.remove(&c);
+            if faces.faces() == 0 {
+                store.remove(run.queue, coord);
+                self.faceless.insert(c);
+                self.digs.remove(&c);
+                continue;
+            }
+            let block = provisional_block(store, c, &faces, record, &near);
+            store.release(first, words);
+            let at = store.alloc(block.len() as u64)?;
+            store.put(run.queue, coord, at, block);
+            self.listed.insert(c, faces);
         }
         if !(lit && self.reach_ring) {
-            return;
+            return Ok(());
         }
         let lr = run.gpu.light_radius();
         for [min, max] in &boxes {
@@ -3681,6 +3856,7 @@ impl BakeQueue {
                 }
             }
         }
+        Ok(())
     }
 
     /// Opens jobs for the waiting dig chunks not in a job, ahead of every pending job, while the
@@ -3734,7 +3910,10 @@ impl BakeQueue {
                 .into_iter()
                 .filter(|(slot, _)| !d.slots.contains(slot))
                 .collect();
-            let (faces, _) = self.list(run.world, coord, &classes);
+            let faces = match self.listed.remove(&c) {
+                Some(f) => f,
+                None => self.list(run.world, coord, &classes).0,
+            };
             if let Some(m) = self.prepared.remove(&c) {
                 self.prepared_bytes -= m.masks.bytes();
             }

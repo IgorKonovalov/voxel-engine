@@ -531,6 +531,9 @@ struct Args {
     /// of these frames, for a headless reading.
     dig_at: Vec<u32>,
     bench_at: Vec<u32>,
+    /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
+    /// each frame (blocking) for the `dig settled:` line.
+    read_missing: bool,
     /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
     /// (default `vxe_render::bake::DEFAULT_BAKE_EDIT_MS`).
     bake_edit_ms: f64,
@@ -843,6 +846,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         dig_reach: true,
         dig_at: Vec::new(),
         bench_at: Vec::new(),
+        read_missing: false,
         glide: None,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
@@ -1180,6 +1184,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .filter(|ms: &f64| (0.0..=100.0).contains(ms))
                     .ok_or(format!("--edit-ms takes 0 to 100 ms, not {v}"))?;
             }
+            "--read-missing" => args.read_missing = true,
             "--dig-at" | "--bench-at" => {
                 let v = value()?;
                 let frames = v
@@ -3412,6 +3417,9 @@ struct DigWatch {
     longest_ms: f64,
     over_33: u32,
     reach_max: u64,
+    /// The largest share of the lighting pixels reading no value, read back each frame until
+    /// rings 1 and 2 are baked (`--read-missing` only).
+    missing_max: f64,
     rings_ms: Option<(f64, u32)>,
     from: vxe_render::QueueStats,
 }
@@ -4567,6 +4575,7 @@ impl Run {
                 longest_ms: 0.0,
                 over_33: 0,
                 reach_max: 0,
+                missing_max: 0.0,
                 rings_ms: None,
                 from,
             });
@@ -4589,10 +4598,17 @@ impl Run {
                         w.over_33 += u32::from(dt > 33.0);
                     }
                     w.reach_max = w.reach_max.max(st.reach);
+                    if w.rings_ms.is_none() && self.args.read_missing {
+                        // The store's counters, read back blocking: the wait it adds to each
+                        // frame is in the frames this line reads.
+                        let missing = gfx.frame.read_store_stats(&gpu.device, &gpu.queue).missing;
+                        let share = f64::from(missing) / f64::from(gfx.frame.light_pixels().max(1));
+                        w.missing_max = w.missing_max.max(share);
+                    }
                     if w.rings_ms.is_none() && st.digs == 0 {
                         w.rings_ms = Some((t_step - w.start_ms, w.frames));
                         println!(
-                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples); frames from the dig: longest {:.1} ms, {} over 33 ms; ring 3 {} chunks waiting",
+                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples); frames from the dig: longest {:.1} ms, {} over 33 ms; no value at most {}; ring 3 {} chunks waiting",
                             w.frames,
                             t_step - w.start_ms,
                             st.digs_baked - w.from.digs_baked,
@@ -4600,6 +4616,11 @@ impl Run {
                             (st.total_samples - w.from.total_samples) as f64,
                             w.longest_ms,
                             w.over_33,
+                            if self.args.read_missing {
+                                format!("{:.4} of the pixels", w.missing_max)
+                            } else {
+                                "not read (--read-missing)".to_owned()
+                            },
                             st.reach,
                         );
                     }
