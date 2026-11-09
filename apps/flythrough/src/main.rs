@@ -3979,7 +3979,9 @@ impl Run {
                     }
                 }
                 self.queue.stats = Some(st);
-                if !self.queue.emptied && st.depth == 0 && st.jobs == 0 && st.fading == 0 {
+                if !self.queue.emptied
+                    && gfx.frame.bake_queue().is_some_and(vxe_render::BakeQueue::empty)
+                {
                     self.queue.emptied = true;
                     println!(
                         "bake queue: empty after {:.1} s since the start ({} chunks baked, {:.3e} samples)",
@@ -4082,8 +4084,16 @@ impl Run {
     fn queue_note(&self) -> String {
         match self.queue.stats {
             Some(st) => format!(
-                ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms",
-                st.depth, st.coarse, st.jobs, st.ms
+                ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms{}",
+                st.depth,
+                st.coarse,
+                st.jobs,
+                st.ms,
+                if st.pool_full > 0 {
+                    format!(", pool full {}", st.pool_full)
+                } else {
+                    String::new()
+                }
             ),
             _ => String::new(),
         }

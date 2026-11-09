@@ -758,6 +758,54 @@ pub struct StoreStats {
     pub coarse_chunks: u64,
 }
 
+/// A place of `words` words from `free`'s smallest place that holds it (its rest left free),
+/// else at `end`, which moves past it; `None` when that would pass `capacity` words.
+fn alloc_place(
+    free: &mut Vec<(u64, u64)>,
+    end: &mut u64,
+    words: u64,
+    capacity: u64,
+) -> Option<u64> {
+    let fit = (0..free.len())
+        .filter(|&i| free[i].1 >= words)
+        .min_by_key(|&i| (free[i].1, free[i].0));
+    if let Some(i) = fit {
+        let (first, have) = free.swap_remove(i);
+        if have > words {
+            free.push((first + words, have - words));
+        }
+        return Some(first);
+    }
+    if *end + words > capacity {
+        return None;
+    }
+    let first = *end;
+    *end += words;
+    Some(first)
+}
+
+/// Frees `first .. first + words` into `free`, merged with the places it touches on either side;
+/// a place that reaches `end` moves `end` back to its first word instead. So no two free places
+/// touch and none ends at `end`.
+fn free_place(free: &mut Vec<(u64, u64)>, end: &mut u64, mut first: u64, mut words: u64) {
+    if words == 0 {
+        return;
+    }
+    if let Some(i) = free.iter().position(|&(f, w)| f + w == first) {
+        let (f, w) = free.swap_remove(i);
+        first = f;
+        words += w;
+    }
+    if let Some(i) = free.iter().position(|&(f, _)| f == first + words) {
+        words += free.swap_remove(i).1;
+    }
+    if first + words == *end {
+        *end = first;
+    } else {
+        free.push((first, words));
+    }
+}
+
 /// The pool and where its blocks lie, with a copy of every block's words for a dig's kept
 /// records and its provisional blocks.
 pub struct Store {
@@ -774,7 +822,8 @@ pub struct Store {
     window: Option<ChunkExtent>,
     /// The brick records' cells, in voxels: 8 or 4.
     cell: u32,
-    /// Places freed by [`Store::remove`]: first word and words, for [`Store::alloc`].
+    /// Freed places, first word and words, for [`Store::alloc`]: no two touch, and none ends at
+    /// `end_words` ([`Store::free_place`]).
     free: Vec<(u64, u64)>,
     /// Chunks whose block is the live queue's coarse pass: their table word carries
     /// [`TABLE_COARSE`].
@@ -865,6 +914,13 @@ impl Store {
         self.blocks.get(&coord.0).copied()
     }
 
+    /// The pool's words no block holds and no job has been handed: its freed places and the
+    /// room past the last block. With no job open, this plus [`StoreStats::bytes`]' words is the
+    /// pool's size.
+    pub fn free_words(&self) -> u64 {
+        self.free.iter().map(|f| f.1).sum::<u64>() + self.pool.size() / 4 - self.end_words
+    }
+
     /// `coord`'s block as its words, the directory first, from the store's own copy.
     pub fn block_words(&self, coord: ChunkCoord) -> Option<&[u32]> {
         self.words.get(&coord.0).map(Vec::as_slice)
@@ -924,7 +980,7 @@ impl Store {
         };
         for c in &dropped {
             if let Some((first, words)) = self.blocks.remove(c) {
-                self.free.push((first, words));
+                self.free_place(first, words);
             }
             self.words.remove(c);
             self.coarse.remove(c);
@@ -949,31 +1005,25 @@ impl Store {
     /// A place of `words` words: the smallest freed place that holds it (its rest freed again),
     /// else past the last block.
     pub(crate) fn alloc(&mut self, words: u64) -> Result<u64, BakeError> {
-        let fit = (0..self.free.len())
-            .filter(|&i| self.free[i].1 >= words)
-            .min_by_key(|&i| (self.free[i].1, self.free[i].0));
-        if let Some(i) = fit {
-            let (first, have) = self.free.swap_remove(i);
-            if have > words {
-                self.free.push((first + words, have - words));
-            }
-            return Ok(first);
-        }
         let capacity = self.pool.size();
-        if (self.end_words + words) * 4 > capacity {
-            return Err(BakeError::PoolFull {
+        alloc_place(&mut self.free, &mut self.end_words, words, capacity / 4).ok_or(
+            BakeError::PoolFull {
                 needed: (self.end_words + words) * 4,
                 capacity,
-            });
-        }
-        let first = self.end_words;
-        self.end_words += words;
-        Ok(first)
+            },
+        )
     }
 
-    /// Frees a place [`Store::alloc`] handed out that no block took.
+    /// Frees a place [`Store::alloc`] handed out that no block took, or one a block left.
     pub(crate) fn release(&mut self, first: u64, words: u64) {
-        self.free.push((first, words));
+        self.free_place(first, words);
+    }
+
+    /// Frees `first .. first + words`, merged with the freed places it touches on either side, so
+    /// a long run of loads and evictions leaves few large places rather than many small ones. A
+    /// place that reaches `end_words` moves that end back to its first word instead.
+    fn free_place(&mut self, first: u64, words: u64) {
+        free_place(&mut self.free, &mut self.end_words, first, words);
     }
 
     /// Writes `words` at `first` in the pool alone: what a fading block shows while the store's
@@ -1006,8 +1056,8 @@ impl Store {
 
     /// Drops `coord`'s block, its place freed: the chunk table reads none.
     pub(crate) fn remove(&mut self, queue: &wgpu::Queue, coord: ChunkCoord) {
-        if let Some(place) = self.blocks.remove(&coord.0) {
-            self.free.push(place);
+        if let Some((first, words)) = self.blocks.remove(&coord.0) {
+            self.free_place(first, words);
             self.words.remove(&coord.0);
             self.coarse.remove(&coord.0);
             queue.write_buffer(
@@ -1667,6 +1717,8 @@ pub(crate) struct JobLoop {
     /// (`Some(None)`: the device has no timestamps).
     timed: bool,
     timer: Option<Option<LoopTimer>>,
+    /// The samples the last [`JobLoop::dispatch`] planned: 0 when it dispatched nothing.
+    pub last_samples: u64,
     pub report: BakeReport,
     pub done: BakeProgress,
 }
@@ -1692,6 +1744,7 @@ impl JobLoop {
             staging: Vec::new(),
             timed: false,
             timer: None,
+            last_samples: 0,
         }
     }
 
@@ -1924,8 +1977,10 @@ impl JobLoop {
             }
         }
         if budget.entries == 0 {
+            self.last_samples = 0;
             return false;
         }
+        self.last_samples = budget.samples;
         // One dispatch: each entry names its job's slot, and its face's samples from the first
         // no submit has drawn.
         let mut input: Vec<[u32; 20]> = Vec::with_capacity(budget.entries);
@@ -2461,6 +2516,13 @@ pub struct QueueStats {
     /// Dig jobs ended, and the bricks they re-baked, since the queue started.
     pub digs_baked: u64,
     pub dig_bricks: u64,
+    /// Places the pool refused since the queue started: each a job or a provisional block left
+    /// waiting for an eviction to free room.
+    pub pool_full: u64,
+    /// The last step's sample cap, and the samples its one submit planned (0 for none): a submit
+    /// passes the cap by less than one entry's round.
+    pub cap: u64,
+    pub submitted: u64,
 }
 
 /// A block fading from what it showed to its target over `frames` ([`FADE`], or [`DIG_FADE`]
@@ -2557,6 +2619,12 @@ pub struct BakeQueue {
     steps: u64,
     /// The step before which no candidate is sorted: set when none was ready.
     quiet_until: u64,
+    /// Whether the last count of the depth ran with no job pending or open: a job read back
+    /// after the count can leave a candidate it did not see (a coarse block to refine, a chunk
+    /// whose job an edit threw away).
+    counted_idle: bool,
+    /// The mirror's window and chunk count at the last step: a change counts the depth again.
+    mirror_seen: (Option<ChunkExtent>, usize),
     stats: QueueStats,
 }
 
@@ -2585,6 +2653,8 @@ impl BakeQueue {
             fades: BTreeMap::new(),
             steps: 0,
             quiet_until: 0,
+            counted_idle: false,
+            mirror_seen: (None, 0),
             stats: QueueStats {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()
@@ -2596,10 +2666,40 @@ impl BakeQueue {
         self.stats
     }
 
-    /// No job pending or open, no block fading, and no candidate at the last count.
+    /// The chunks of the jobs open and then pending, each part in its order: the order the
+    /// queue opened them in, but where a dig was promoted ahead.
+    pub fn jobs(&self) -> Vec<ChunkCoord> {
+        let open = self.lp.open.iter().map(|j| j.coord);
+        open.chain(self.lp.pending.iter().map(|j| j.coord))
+            .collect()
+    }
+
+    /// The names of the per-chunk sets that hold `c`: what a chunk leaving the mirror must not
+    /// leave behind.
+    pub fn tracks(&self, c: ChunkCoord) -> Vec<&'static str> {
+        let c = c.0;
+        [
+            ("fades", self.fades.contains_key(&c)),
+            ("digs", self.digs.contains_key(&c)),
+            ("dig_open", self.dig_open.contains_key(&c)),
+            ("reach", self.reach.contains(&c)),
+            ("listed", self.listed.contains_key(&c)),
+            ("faceless", self.faceless.contains(&c)),
+            ("blocked", self.blocked.contains_key(&c)),
+            ("job_coarse", self.job_coarse.contains_key(&c)),
+            ("stale", self.stale.contains(&c)),
+        ]
+        .into_iter()
+        .filter_map(|(name, held)| held.then_some(name))
+        .collect()
+    }
+
+    /// No job pending or open, no block fading, and no candidate at the last count, which ran
+    /// with no job in the loop.
     pub fn empty(&self) -> bool {
         self.lp.idle()
             && self.fades.is_empty()
+            && self.counted_idle
             && self.stats.depth == 0
             && self.boxes.is_empty()
             && self.digs.is_empty()
@@ -2716,9 +2816,10 @@ impl BakeQueue {
         self.eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let gpu = run.gpu;
         let window = gpu.window();
-        for c in store.rewindow(run.queue, window) {
-            self.fades.remove(&c);
-        }
+        store.rewindow(run.queue, window);
+        let seen = (Some(window), gpu.mirrored_chunks());
+        let moved = seen != self.mirror_seen;
+        self.mirror_seen = seen;
         store.piece = Some(window);
         // A chunk the mirror does not hold full (evicted, or LOD-only) frees its block.
         let gone: Vec<[i32; 3]> = store
@@ -2727,14 +2828,24 @@ impl BakeQueue {
             .copied()
             .filter(|c| !gpu.is_mirrored(ChunkCoord(*c)) || gpu.is_lod(ChunkCoord(*c)))
             .collect();
+        if moved || !gone.is_empty() {
+            // The mirror moved, gained or lost chunks: the depth is counted again this step.
+            self.counted_idle = false;
+            self.quiet_until = self.steps;
+        }
         for c in gone {
             store.remove(run.queue, ChunkCoord(c));
-            self.fades.remove(&c);
-            self.faceless.remove(&c);
-            self.digs.remove(&c);
-            self.reach.remove(&c);
-            self.listed.remove(&c);
         }
+        // What the queue knows of a chunk the mirror no longer holds full goes with it, block or
+        // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
+        // A job in flight for it ends in the sink, which drops its block.
+        let held = |c: &[i32; 3]| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c));
+        self.fades.retain(|c, _| held(c));
+        self.faceless.retain(held);
+        self.blocked.retain(|c, _| held(c));
+        self.digs.retain(|c, _| held(c));
+        self.reach.retain(held);
+        self.listed.retain(|c, _| held(c));
         self.take_boxes(run, store)?;
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
@@ -2843,6 +2954,7 @@ impl BakeQueue {
             && self
                 .lp
                 .dispatch(run, &bind, store, &settings, cap, &mut sink, &mut |_| {});
+        let submitted = if sent { self.lp.last_samples } else { 0 };
         if unread < IN_FLIGHT {
             // With nothing left to send, the pre-roll waits out what is in flight.
             let left = if sent { unread } else { 0 };
@@ -2857,6 +2969,8 @@ impl BakeQueue {
         }
         // The slice is sized by the GPU's own time for the submits read back, a frame or two
         // late; without timestamps it stays at the first guess, a fixed count.
+        self.stats.cap = cap;
+        self.stats.submitted = submitted;
         self.stats.samples = d.samples;
         self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);
         self.stats.total_samples += d.samples;
@@ -2958,16 +3072,34 @@ impl BakeQueue {
             let Some(&(first, words)) = store.blocks.get(&c) else {
                 continue;
             };
-            self.fades.remove(&c);
             if faces.faces() == 0 {
+                self.fades.remove(&c);
                 store.remove(run.queue, coord);
                 self.faceless.insert(c);
                 self.digs.remove(&c);
                 continue;
             }
             let block = provisional_block(store, c, &faces, record, &near);
-            store.release(first, words);
-            let at = store.alloc(block.len() as u64)?;
+            let len = block.len() as u64;
+            // The old place is freed only once the new one is held: a refused place leaves the
+            // old block where the chunk table points, and its dig waits in `digs`.
+            let at = if len <= words {
+                store.release(first + len, words - len);
+                first
+            } else {
+                match store.alloc(len) {
+                    Ok(at) => {
+                        store.release(first, words);
+                        at
+                    }
+                    Err(BakeError::PoolFull { .. }) => {
+                        self.stats.pool_full += 1;
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            };
+            self.fades.remove(&c);
             store.put(run.queue, coord, at, block);
             self.listed.insert(c, faces);
         }
@@ -3067,7 +3199,17 @@ impl BakeQueue {
                     dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
                 })
                 .sum();
-            let first_word = store.alloc(layout(&faces, record).1)?;
+            let first_word = match store.alloc(layout(&faces, record).1) {
+                Ok(first) => first,
+                Err(BakeError::PoolFull { .. }) => {
+                    // The dig waits for a place, listed: no later dig opens ahead of it.
+                    self.stats.pool_full += 1;
+                    self.digs.insert(c, d);
+                    self.listed.insert(c, faces);
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
             self.job_coarse.insert(c, store.is_coarse(coord));
             left += samples;
             jobs.push(Job {
@@ -3182,6 +3324,7 @@ impl BakeQueue {
             })
             .collect();
         self.stats.depth = cands.len() as u64;
+        self.counted_idle = in_job.is_empty();
         let steps = self.steps;
         let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
         self.stats.unbaked = cands
@@ -3235,7 +3378,17 @@ impl BakeQueue {
                 continue;
             }
             let listed = self.list(run.world, coord, &classes);
-            left += self.push_listed(store, eye, class, coord, listed)?;
+            match self.push_listed(store, eye, class, coord, listed) {
+                Ok(samples) => left += samples,
+                // A chunk the pool refuses waits, and the opening goes on to the next one: a
+                // smaller block (a refinement) may fit, and what is in flight is still read
+                // back and faded, so an eviction frees room.
+                Err(BakeError::PoolFull { .. }) => {
+                    self.stats.pool_full += 1;
+                    ready0 -= usize::from(class == 0);
+                }
+                Err(e) => return Err(e),
+            }
         }
         if !ready.is_empty() {
             let threads = std::thread::available_parallelism()
@@ -3261,7 +3414,11 @@ impl BakeQueue {
                     .collect()
             });
             for ((class, c), l) in ready.into_iter().zip(listed) {
-                self.push_listed(store, eye, class, ChunkCoord(c), l)?;
+                match self.push_listed(store, eye, class, ChunkCoord(c), l) {
+                    Ok(_) => {}
+                    Err(BakeError::PoolFull { .. }) => self.stats.pool_full += 1,
+                    Err(e) => return Err(e),
+                }
             }
         }
         self.stats.waiting_reach = reach;
@@ -3282,17 +3439,18 @@ impl BakeQueue {
         (faces, prepared): (ChunkFaces, bool),
     ) -> Result<u64, BakeError> {
         let c = coord.0;
-        self.reach.remove(&c);
         self.stats.prepared += u64::from(prepared);
         if let Some(m) = self.prepared.remove(&c) {
             self.prepared_bytes -= m.masks.bytes();
         }
         if faces.faces() == 0 {
+            self.reach.remove(&c);
             self.faceless.insert(c);
             return Ok(0);
         }
         let words = layout(&faces, self.record_words()).1;
         let first_word = store.alloc(words)?;
+        self.reach.remove(&c);
         let far = (0..3).map(|k| (c[k] - eye[k]).abs()).max().unwrap_or(0) > self.near;
         let coarse = class == 0 && self.coarse_samples > 0 && far;
         let brick_samples = if coarse {
@@ -3460,6 +3618,43 @@ mod tests {
         chunk
             .brick(brick_slot(b))
             .get((i[0] + 8 * (i[1] + 8 * i[2])) as usize)
+    }
+
+    /// Three neighbouring places freed in any order merge into one, which a place of their sum
+    /// takes back at its first word; the pool's end is untouched while a block lies past them,
+    /// and moves back over them once that block is freed too.
+    #[test]
+    fn freed_neighbours_merge_and_their_sum_reuses_them() {
+        for order in [[0, 1, 2], [2, 0, 1], [1, 2, 0], [2, 1, 0]] {
+            let (mut free, mut end) = (Vec::new(), 100u64);
+            let places: Vec<u64> = [10, 20, 30, 5]
+                .iter()
+                .map(|&w| alloc_place(&mut free, &mut end, w, 1000).expect("room"))
+                .collect();
+            assert_eq!(places, [100, 110, 130, 160]);
+            assert_eq!(end, 165);
+            let sizes = [10, 20, 30];
+            for i in order {
+                free_place(&mut free, &mut end, places[i], sizes[i]);
+            }
+            assert_eq!(free, [(100, 60)], "order {order:?}");
+            assert_eq!(end, 165);
+            assert_eq!(alloc_place(&mut free, &mut end, 60, 1000), Some(100));
+            assert!(free.is_empty());
+            for i in order {
+                free_place(&mut free, &mut end, places[i], sizes[i]);
+            }
+            free_place(&mut free, &mut end, places[3], 5);
+            assert!(free.is_empty(), "the tail folds into the end");
+            assert_eq!(end, 100);
+        }
+        // Without the merge the 60 would not fit under a capacity of 165 words.
+        let (mut free, mut end) = (vec![], 165u64);
+        for (f, w) in [(100, 10), (130, 30), (110, 20)] {
+            free_place(&mut free, &mut end, f, w);
+        }
+        assert_eq!(alloc_place(&mut free, &mut end, 60, 165), Some(100));
+        assert_eq!(alloc_place(&mut free, &mut end, 1, 165), None, "full");
     }
 
     /// The bake's module, with the table and LOD reads replaced, parses and validates.

@@ -1370,7 +1370,7 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 8c: the first frame at the vein and the patch is 7.1 s on the RTX (the amendment's arithmetic 3 to 4 s): the coarse pass reads about 4.2 s with the GPU at 26 to 40 % (the main thread's job bookkeeping; the log's attempts).
 - Phase 8c, noticed: `vxe-render::shader_portability`'s `no_shader_stores_through_a_runtime_vector_index` (gpu tier) fails on `store_brick_value`'s stores, in the tree since Phase 6 (7c105c5).
 - Phase 8, noticed: at the hall the near bake leaves 0.97 of the view's pixels with no value (the hall's walls are beyond the 27 chunks), and the share falls to 0.019 by frame 7200; on the Cezanne the slice's cap sits at its floor.
-- Fix pass (the close review of 2026-11-09), one commit each, readings in the log's Fix pass: B1 the translucent tests assert ADR-0047's filter bcf0b6a; n1, n2 the refusal's doc and the store's names in the shaders (committed with this line).
+- Fix pass (the close review of 2026-11-09), one commit each, readings in the log's Fix pass: B1 the translucent tests assert ADR-0047's filter bcf0b6a; n1, n2 the refusal's doc and the store's names in the shaders 50d8859; M2, m2 the pool's refusals, merged places and the queue's pruning, with two queue bugs M1's tests found (committed with this line).
 
 ### Close triggers
 
