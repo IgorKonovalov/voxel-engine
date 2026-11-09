@@ -26,6 +26,15 @@ Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev 
 The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
 
 
+### The live queue's order and cancellation, after Plan 0059
+
+Parked 2026-11-09 (owner, Plan 0059 Phase 13's window; a new plan after 0059's close). Two complaints about the baked light's live queue (`docs/plans/logs/0059.md`, Phase 13):
+- **Far light waits for the camera:** "light is not recalculated until I come closer, it would be better to recalculate all in the field of view, starting from the nearest chunks". A re-bake order by view, nearest first, out to the light's reach.
+- **A fast flight settles slowly, even coarse:** "we are starting to calculate places that camera is already passed. We should be able to cancel it when camera passed". Drop or demote queued jobs behind the camera.
+
+The third complaint, "a lot of aliasing" at the hall (`live/session13-hall-aliasing.png` in the lane), goes to the parked antialiasing plan below.
+
+
 ## Engine mechanisms
 
 ### Chunk-scale world dynamics: a cellular material step and an event scheduler
@@ -270,3 +279,5 @@ Plan 0059's Phase 10 or 11 reads edges as the remaining fault.
 2026-11-09, Plan 0059 Phase 8e's window (native, no upscaler, far normal 1..2, the live queue): the
 owner, on the hall, "we need to work on antializing later, but much better than before". Still
 later; the 8d window's hall (FSR 2 at 1.5, far normal 2..6) was the worse one.
+2026-11-09, Plan 0059 Phase 13's window (the fly-through's defaults: FSR 2 at 1.5, the baked light): the hall,
+"a lot of aliasing on this step, doesn't look good" (the lane's `live/session13-hall-aliasing.png`).
