@@ -112,7 +112,10 @@
 //! refines the coarse chunks nearest first, each fading from its coarse value, and a chunk the
 //! mirror gains takes its coarse pass first; its row in the banner, its depth on the HUD's store
 //! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
-//! 1.5) and `F` swaps the read with the table; `--queue-file PATH` writes
+//! 1.5) and `F` swaps the read with the table; a dig re-bakes its rings in the queue, ahead of
+//! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
+//! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
+//! lit bricks); a `dig settled:` line when a dig's rings are baked; `--queue-file PATH` writes
 //! the store to `PATH` when the queue first empties; `--glide V` moves the
 //! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
 //! flight to the vein);
@@ -524,6 +527,16 @@ struct Args {
     /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
     /// before the first frame (default `vxe_render::bake::DEFAULT_NEAR`).
     bake_near: i32,
+    /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
+    /// of these frames, for a headless reading.
+    dig_at: Vec<u32>,
+    bench_at: Vec<u32>,
+    /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
+    /// (default `vxe_render::bake::DEFAULT_BAKE_EDIT_MS`).
+    bake_edit_ms: f64,
+    /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
+    /// light radius (ring 3; on by default).
+    dig_reach: bool,
     /// `--glide V`: the camera moves along its heading at `V` voxels a second (1/60 s a headless
     /// frame), for a flight reading.
     glide: Option<f32>,
@@ -826,6 +839,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
         bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
         bake_near: vxe_render::bake::DEFAULT_NEAR,
+        bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
+        dig_reach: true,
+        dig_at: Vec::new(),
+        bench_at: Vec::new(),
         glide: None,
         preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
@@ -1154,6 +1171,34 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok()
                     .filter(|r: &i32| (0..=8).contains(r))
                     .ok_or(format!("--near takes 0 to 8 chunks, not {v}"))?;
+            }
+            "--edit-ms" => {
+                let v = value()?;
+                args.bake_edit_ms = v
+                    .parse()
+                    .ok()
+                    .filter(|ms: &f64| (0.0..=100.0).contains(ms))
+                    .ok_or(format!("--edit-ms takes 0 to 100 ms, not {v}"))?;
+            }
+            "--dig-at" | "--bench-at" => {
+                let v = value()?;
+                let frames = v
+                    .split(',')
+                    .map(|f| f.parse::<u32>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| format!("{flag}: frames, comma-separated, not {v}: {e}"))?;
+                if flag == "--dig-at" {
+                    args.dig_at = frames;
+                } else {
+                    args.bench_at = frames;
+                }
+            }
+            "--dig-reach" => {
+                args.dig_reach = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--dig-reach takes on or off, not {v}")),
+                };
             }
             "--glide" => {
                 let v = value()?;
@@ -3354,6 +3399,21 @@ struct QueueRun {
     emptied: bool,
     stats: Option<vxe_render::QueueStats>,
     failed: bool,
+    /// Ms since the start at the last step, and the dig being watched.
+    step_ms: Option<f64>,
+    dig: Option<DigWatch>,
+}
+
+/// A dig in the live queue, from the step that first read its box until its rings are baked:
+/// the frames, the longest wall time between two steps, and the queue's counters at the start.
+struct DigWatch {
+    start_ms: f64,
+    frames: u32,
+    longest_ms: f64,
+    over_33: u32,
+    reach_max: u64,
+    rings_ms: Option<(f64, u32)>,
+    from: vxe_render::QueueStats,
 }
 
 impl Run {
@@ -4337,6 +4397,7 @@ impl Run {
             return;
         }
         frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
+        frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
         let camera = start_camera(&self.args, self.spawn);
@@ -4484,6 +4545,32 @@ impl Run {
             samples: None,
             hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
         };
+        let t_step = ms_since(self.start);
+        let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
+        let dug = gfx.frame.bake_queue().is_some_and(|q| !q.digs_settled());
+        let new_box = gfx.frame.bake_queue().is_some_and(|q| q.boxes_waiting());
+        // A dig after the last one's rings 1 and 2 starts its own watch; one before them joins it.
+        if new_box && let Some(w) = self.queue.dig.take_if(|w| w.rings_ms.is_some()) {
+            println!(
+                "dig settled: ring 3 not yet ({} chunks at most) after {} frames, {:.0} ms, at the next dig; frames: longest {:.1} ms, {} over 33 ms",
+                w.reach_max,
+                w.frames,
+                t_step - w.start_ms,
+                w.longest_ms,
+                w.over_33,
+            );
+        }
+        if dug && self.queue.dig.is_none() {
+            self.queue.dig = self.queue.stats.map(|from| DigWatch {
+                start_ms: t_step,
+                frames: 0,
+                longest_ms: 0.0,
+                over_33: 0,
+                reach_max: 0,
+                rings_ms: None,
+                from,
+            });
+        }
         match gfx.frame.bake_queue_step(
             &gpu.device,
             &gpu.queue,
@@ -4494,6 +4581,39 @@ impl Run {
             Some(Ok(st)) => {
                 if st.samples > 0 {
                     self.queue.slices.push(st.ms);
+                }
+                if let Some(w) = self.queue.dig.as_mut() {
+                    w.frames += 1;
+                    if let Some(dt) = dt {
+                        w.longest_ms = w.longest_ms.max(dt);
+                        w.over_33 += u32::from(dt > 33.0);
+                    }
+                    w.reach_max = w.reach_max.max(st.reach);
+                    if w.rings_ms.is_none() && st.digs == 0 {
+                        w.rings_ms = Some((t_step - w.start_ms, w.frames));
+                        println!(
+                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples); frames from the dig: longest {:.1} ms, {} over 33 ms; ring 3 {} chunks waiting",
+                            w.frames,
+                            t_step - w.start_ms,
+                            st.digs_baked - w.from.digs_baked,
+                            st.dig_bricks - w.from.dig_bricks,
+                            (st.total_samples - w.from.total_samples) as f64,
+                            w.longest_ms,
+                            w.over_33,
+                            st.reach,
+                        );
+                    }
+                    if w.rings_ms.is_some() && st.reach == 0 {
+                        println!(
+                            "dig settled: ring 3 ({} chunks at most) in {} frames, {:.0} ms from the dig; frames: longest {:.1} ms, {} over 33 ms",
+                            w.reach_max,
+                            w.frames,
+                            t_step - w.start_ms,
+                            w.longest_ms,
+                            w.over_33,
+                        );
+                        self.queue.dig = None;
+                    }
                 }
                 self.queue.stats = Some(st);
                 if !self.queue.emptied && st.depth == 0 && st.jobs == 0 && st.fading == 0 {
@@ -4595,7 +4715,7 @@ impl Run {
     /// The live queue's banner row: the mode, its settings and slice, and the read.
     fn queue_row(&self) -> String {
         format!(
-            "light: live queue, bricks {}/{}, {}, slice {} ms, read {} (F swaps the table)",
+            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}, read {} (F swaps the table)",
             vxe_render::bake::BRICK_CELL,
             vxe_render::bake::QUEUE_BRICK_SAMPLES,
             if self.args.bake_coarse > 0 {
@@ -4610,6 +4730,8 @@ impl Run {
                 format!("no coarse pass, near {}", self.args.bake_near)
             },
             self.args.bake_slice,
+            self.args.bake_edit_ms,
+            if self.args.dig_reach { "on" } else { "off" },
             match self.modes.lighting.light {
                 vxe_render::Light::Table => "table",
                 vxe_render::Light::Baked => "store",
@@ -5327,6 +5449,12 @@ impl Run {
         }
         if self.args.fade_reading && self.frame < FADE_DIGS {
             self.dig();
+        }
+        if self.args.dig_at.contains(&self.frame) {
+            self.dig();
+        }
+        if self.args.bench_at.contains(&self.frame) {
+            self.bench();
         }
         if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {

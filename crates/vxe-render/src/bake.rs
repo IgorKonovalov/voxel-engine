@@ -575,6 +575,21 @@ fn records_of(block: &[u32], record: usize) -> KeptBricks {
     out
 }
 
+/// Whether `slot`'s record in `block` holds light in any direction (a brick with no record holds
+/// none).
+fn brick_lit(block: &[u32], slot: u16, record: usize) -> bool {
+    let dir = block[usize::from(slot)];
+    if dir == 0 {
+        return false;
+    }
+    let run = (dir >> 11) as usize;
+    (run - record..run).step_by(BRICK_WORDS).any(|cell| {
+        block[cell..cell + 6]
+            .iter()
+            .any(|&w| rgb9e5_unpack(w).iter().any(|&v| v > 0.0))
+    })
+}
+
 /// The bake's settings. The default is the reference's: [`KEPT_CANDIDATES`] candidates, the clamp
 /// as [`KEPT_CLAMP`], each face to its own stop.
 #[derive(Clone)]
@@ -2387,6 +2402,20 @@ impl JobLoop {
         self.pending.push_back(job);
     }
 
+    /// Adds a job ahead of the pending ones.
+    pub fn push_front(&mut self, job: Job) {
+        self.report.chunks += 1;
+        self.done.chunks += 1;
+        self.done.faces += job.faces.faces() as u64;
+        self.pending.push_front(job);
+    }
+
+    /// Moves the open jobs `first` holds ahead of the others, each part in its order: a dispatch
+    /// plans the open jobs' rounds in order. A submit in flight finds its jobs by slot.
+    pub fn promote(&mut self, first: impl Fn(ChunkCoord) -> bool) {
+        self.open.sort_by_key(|j| !first(j.coord));
+    }
+
     /// No job pending or open.
     pub fn idle(&self) -> bool {
         self.pending.is_empty() && self.open.is_empty()
@@ -2420,6 +2449,30 @@ impl JobLoop {
             .map(|j| j.states.iter().map(live).sum::<u64>())
             .sum();
         open + self.pending.iter().map(|j| j.samples).sum::<u64>()
+    }
+
+    /// [`JobLoop::samples_left`] of the jobs whose chunks `of` holds.
+    fn dig_samples_left<V>(&self, of: &std::collections::HashMap<[i32; 3], V>) -> u64 {
+        let live = |s: &FaceState| {
+            if s.done {
+                0
+            } else {
+                u64::from(s.n_max.saturating_sub(s.n + s.queued))
+            }
+        };
+        let open: u64 = self
+            .open
+            .iter()
+            .filter(|j| of.contains_key(&j.coord.0))
+            .map(|j| j.states.iter().map(live).sum::<u64>())
+            .sum();
+        let pending: u64 = self
+            .pending
+            .iter()
+            .filter(|j| of.contains_key(&j.coord.0))
+            .map(|j| j.samples)
+            .sum();
+        open + pending
     }
 
     /// Writes each open job's candidate table again from the ranges `run.gpu` holds now: a sync
@@ -3082,6 +3135,9 @@ const QUEUE_CHECKS: usize = 16;
 const QUEUE_CHECKS_UNSLICED: usize = 64;
 /// A brick direction's samples in the live queue's coarse pass by default (`--coarse`).
 pub const DEFAULT_COARSE_SAMPLES: u32 = 256;
+/// Milliseconds a frame the live queue's slice grows by while a dig's bricks wait (ADR-0046's
+/// edit cap, by time on the slice's own ns a sample).
+pub const DEFAULT_BAKE_EDIT_MS: f64 = 3.0;
 /// Chunks (Chebyshev) around the camera's whose first pass is the full count, not the coarse one
 /// (`--near`).
 pub const DEFAULT_NEAR: i32 = 2;
@@ -3144,6 +3200,12 @@ pub struct QueueStats {
     pub unbaked: u64,
     /// The ns a sample the slice is sized by.
     pub ns_per_sample: f64,
+    /// Chunks with dig bricks waiting or in a job, and chunks waiting to re-bake whole (ring 3).
+    pub digs: u64,
+    pub reach: u64,
+    /// Dig jobs ended, and the bricks they re-baked, since the queue started.
+    pub digs_baked: u64,
+    pub dig_bricks: u64,
 }
 
 /// A block fading from what it showed to its target ([`FADE`]).
@@ -3151,6 +3213,13 @@ struct Fade {
     first: u64,
     from: Vec<u32>,
     frame: u32,
+}
+
+/// A chunk's dig bricks (slots), and whether one of them is in ring 1.
+#[derive(Clone, Debug, Default)]
+struct DigChunk {
+    slots: std::collections::BTreeSet<u16>,
+    near: bool,
 }
 
 /// What the frame hands the queue's step.
@@ -3182,6 +3251,17 @@ pub struct QueueView<'a> {
 /// Every chunk with no block comes before every coarse one, so a chunk the mirror gains is lit
 /// coarse at the head of the queue, and the coarse ones are then refined nearest first. A
 /// refinement lists the same faces, so its block has the coarse one's layout and fades from it.
+///
+/// **Digs** (ADR-0046's rings, Plan 0059 Phase 9 as re-read at Phase 7b). An edit's box
+/// ([`BakeQueue::invalidate`]) is read at the next step against the store as it is then: the
+/// bricks within [`DIG_REACH`] voxels of it ([`dig_ring`]) re-bake at the brick level ahead of
+/// every other job, the chunks holding a brick the box dilated by one voxel touches first (ring
+/// 1), the rest by distance (ring 2); each chunk is listed again and keeps every other brick's
+/// record. While a dig's bricks wait the slice grows by [`BakeQueue::edit_ms`]. A chunk with no
+/// block is left to its first pass. When a touched brick held light before the edit, every chunk
+/// with a block within the light radius of the box re-bakes whole (ring 3), after the first
+/// passes and with the refinements, fading. A chunk re-dug while its dig job runs throws the
+/// job's block away and re-bakes the union of its bricks.
 pub struct BakeQueue {
     pub settings: BakeSettings,
     /// The slice, in milliseconds a frame.
@@ -3190,6 +3270,18 @@ pub struct BakeQueue {
     pub coarse_samples: u32,
     /// Chunks (Chebyshev) around the camera's whose first pass is the full count.
     pub near: i32,
+    /// Milliseconds a frame the slice grows by while a dig's bricks wait.
+    pub edit_ms: f64,
+    /// Whether a dig that touched lit bricks re-bakes the chunks within the light radius (ring 3).
+    pub reach_ring: bool,
+    /// Edit boxes since the last step.
+    boxes: Vec<[[i32; 3]; 2]>,
+    /// Chunks with dig bricks to re-bake, not yet in a job; and those in a job, with the bricks
+    /// the job re-bakes.
+    digs: BTreeMap<[i32; 3], DigChunk>,
+    dig_open: std::collections::HashMap<[i32; 3], DigChunk>,
+    /// Chunks with a block that re-bake whole (ring 3, or a job thrown away by an edit).
+    reach: std::collections::BTreeSet<[i32; 3]>,
     /// The jobs pending or open, and whether each is a coarse pass.
     job_coarse: std::collections::HashMap<[i32; 3], bool>,
     lp: JobLoop,
@@ -3216,6 +3308,12 @@ impl BakeQueue {
             slice_ms,
             coarse_samples: DEFAULT_COARSE_SAMPLES,
             near: DEFAULT_NEAR,
+            edit_ms: DEFAULT_BAKE_EDIT_MS,
+            reach_ring: true,
+            boxes: Vec::new(),
+            digs: BTreeMap::new(),
+            dig_open: Default::default(),
+            reach: Default::default(),
             job_coarse: Default::default(),
             lp: JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS).timed(),
             prepared: Default::default(),
@@ -3240,7 +3338,25 @@ impl BakeQueue {
 
     /// No job pending or open, no block fading, and no candidate at the last count.
     pub fn empty(&self) -> bool {
-        self.lp.idle() && self.fades.is_empty() && self.stats.depth == 0
+        self.lp.idle()
+            && self.fades.is_empty()
+            && self.stats.depth == 0
+            && self.boxes.is_empty()
+            && self.digs.is_empty()
+            && self.reach.is_empty()
+    }
+
+    /// Whether an edit box waits for the next step.
+    pub fn boxes_waiting(&self) -> bool {
+        !self.boxes.is_empty()
+    }
+
+    /// No edit box, dig brick or ring-3 chunk waits, and no dig job runs.
+    pub fn digs_settled(&self) -> bool {
+        self.boxes.is_empty()
+            && self.digs.is_empty()
+            && self.dig_open.is_empty()
+            && self.reach.is_empty()
     }
 
     /// Whether `c` holds its block at the full count or is known to have none: no face, or
@@ -3250,6 +3366,8 @@ impl BakeQueue {
             || self.faceless.contains(&c.0)
             || absent)
             && !self.lp.chunks().any(|j| j == c)
+            && !self.digs.contains_key(&c.0)
+            && !self.reach.contains(&c.0)
     }
 
     /// Whether `c` has had its first pass: it holds a block (coarse or full), is known to have
@@ -3302,8 +3420,10 @@ impl BakeQueue {
     }
 
     /// An edit's box (`min ..= max`, voxels): the chunks within a voxel of it lose their prepared
-    /// masks and their known facelessness, and a running job's block for them is thrown away.
+    /// masks and their known facelessness, and a running job's block for them is thrown away; the
+    /// box's rings are read at the next step.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
+        self.boxes.push([min, max]);
         let lo = min.map(|v| (v - 1).div_euclid(64));
         let hi = max.map(|v| (v + 1).div_euclid(64));
         for z in lo[2]..=hi[2] {
@@ -3351,11 +3471,16 @@ impl BakeQueue {
             store.remove(run.queue, ChunkCoord(c));
             self.fades.remove(&c);
             self.faceless.remove(&c);
+            self.digs.remove(&c);
+            self.reach.remove(&c);
         }
+        self.take_boxes(run, store);
+        let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
-            ((self.slice_ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64)
-                .clamp(16_384, SUBMIT_SAMPLES)
+            let ms = self.slice_ms + if dig { self.edit_ms } else { 0.0 };
+            ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
         });
+        self.open_digs(run, store, cap)?;
         if self.lp.samples_left() < 2 * cap && self.steps >= self.quiet_until {
             let opened = self.lp.chunks().count();
             self.open(run, store, view, cap)?;
@@ -3383,6 +3508,8 @@ impl BakeQueue {
         let fades = &mut self.fades;
         let stats = &mut self.stats;
         let job_coarse = &mut self.job_coarse;
+        let dig_open = &mut self.dig_open;
+        let reach = &mut self.reach;
         let record = self
             .settings
             .rings
@@ -3390,9 +3517,23 @@ impl BakeQueue {
             .map_or(BRICK_WORDS, Rings::record_words);
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let coarse = job_coarse.remove(&coord.0).unwrap_or(false);
+            let dug = dig_open.remove(&coord.0);
             if stale.remove(&coord.0) || !run.gpu.is_mirrored(coord) {
                 store.release(first, block.len() as u64);
+                // A dig job's bricks went back to the waiting digs at the edit; a whole chunk's
+                // job that would have replaced a full block re-bakes whole.
+                if dug.is_none()
+                    && run.gpu.is_mirrored(coord)
+                    && store.blocks.contains_key(&coord.0)
+                    && !store.is_coarse(coord)
+                {
+                    reach.insert(coord.0);
+                }
                 return;
+            }
+            if let Some(d) = dug {
+                stats.digs_baked += 1;
+                stats.dig_bricks += d.slots.len() as u64;
             }
             stats.baked += 1;
             // The table word's flag follows at the put below.
@@ -3470,7 +3611,181 @@ impl BakeQueue {
         self.stats.jobs = self.lp.chunks().count() as u64;
         self.stats.fading = self.fades.len() as u64;
         self.stats.coarse = store.coarse.len() as u64;
+        self.stats.digs = (self.digs.len() + self.dig_open.len()) as u64;
+        self.stats.reach = self.reach.len() as u64;
         Ok(self.stats)
+    }
+
+    /// Reads the edit boxes since the last step into the waiting digs, against the store as the
+    /// edits left it (no re-bake has run since): each ring chunk with a block takes its ring's
+    /// bricks, merged with what a dig job running there re-bakes (that job is thrown away), and a
+    /// job of any kind running in a ring chunk is thrown away. A touched brick that held light
+    /// opens ring 3.
+    fn take_boxes(&mut self, run: &BakeRun<'_>, store: &Store) {
+        if self.boxes.is_empty() {
+            return;
+        }
+        let boxes = std::mem::take(&mut self.boxes);
+        let Some(piece) = store.piece else {
+            return;
+        };
+        let record = self.record_words();
+        let touches = |c: [i32; 3], slot: u16| {
+            let b = brick_of_slot(usize::from(slot));
+            boxes.iter().any(|[min, max]| {
+                (0..3).all(|k| {
+                    let lo = c[k] * 64 + b[k] * 8;
+                    lo + 7 >= min[k] - 1 && lo <= max[k] + 1
+                })
+            })
+        };
+        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        let mut lit = false;
+        for (c, slots) in dig_ring(&boxes, piece) {
+            let near: Vec<u16> = slots.iter().copied().filter(|&s| touches(c, s)).collect();
+            if !lit && let Some(block) = store.words.get(&c) {
+                lit = near.iter().any(|&s| brick_lit(block, s, record));
+            }
+            if in_job.contains(&c) {
+                self.stale.insert(c);
+            }
+            if !store.blocks.contains_key(&c) {
+                continue;
+            }
+            let e = self.digs.entry(c).or_default();
+            if let Some(open) = self.dig_open.get(&c) {
+                e.slots.extend(open.slots.iter().copied());
+                e.near |= open.near;
+            }
+            e.slots.extend(slots);
+            e.near |= !near.is_empty();
+        }
+        if !(lit && self.reach_ring) {
+            return;
+        }
+        let lr = run.gpu.light_radius();
+        for [min, max] in &boxes {
+            let lo = min.map(|v| (v - 1).div_euclid(64));
+            let hi = max.map(|v| (v + 1).div_euclid(64));
+            for z in lo[2] - lr..=hi[2] + lr {
+                for y in lo[1] - lr..=hi[1] + lr {
+                    for x in lo[0] - lr..=hi[0] + lr {
+                        let n = [x, y, z];
+                        let gap2: i64 = (0..3)
+                            .map(|k| i64::from((lo[k] - n[k]).max(n[k] - hi[k]).max(0)).pow(2))
+                            .sum();
+                        if gap2 <= i64::from(lr).pow(2) && store.blocks.contains_key(&n) {
+                            self.reach.insert(n);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Opens jobs for the waiting dig chunks not in a job, ahead of every pending job, while the
+    /// loop holds under two slices of `cap` samples (one at least): ring-1 chunks first, then by
+    /// distance from the camera's chunk. Each is listed again on this thread and keeps every
+    /// brick record outside its dig bricks; a chunk left with no face drops its block.
+    fn open_digs(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        cap: u64,
+    ) -> Result<(), BakeError> {
+        if self.digs.is_empty() {
+            return Ok(());
+        }
+        let eye = self.eye;
+        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        let mut order: Vec<(bool, i64, [i32; 3])> = self
+            .digs
+            .iter()
+            .filter(|(c, _)| !in_job.contains(*c))
+            .map(|(c, d)| {
+                let d2: i64 = (0..3).map(|k| i64::from(c[k] - eye[k]).pow(2)).sum();
+                (!d.near, d2, *c)
+            })
+            .collect();
+        order.sort_unstable();
+        // The dig jobs already pending or open count against the two slices; the rest of the
+        // loop does not, so a dig never waits behind the queue's own depth.
+        let mut left: u64 = self.lp.dig_samples_left(&self.dig_open);
+        let classes = face_classes(run.world.materials());
+        let record = self.record_words();
+        let brick_samples = self
+            .settings
+            .rings
+            .as_ref()
+            .map_or(BRICK_LEVEL_SAMPLES, |r| r.brick_samples);
+        let mut jobs = Vec::new();
+        for (_, _, c) in order {
+            if left >= 2 * cap && !jobs.is_empty() {
+                break;
+            }
+            let Some(d) = self.digs.remove(&c) else {
+                continue;
+            };
+            let coord = ChunkCoord(c);
+            let Some(block) = store.words.get(&c) else {
+                continue;
+            };
+            let kept: KeptBricks = records_of(block, record)
+                .into_iter()
+                .filter(|(slot, _)| !d.slots.contains(slot))
+                .collect();
+            let (faces, _) = self.list(run.world, coord, &classes);
+            if let Some(m) = self.prepared.remove(&c) {
+                self.prepared_bytes -= m.masks.bytes();
+            }
+            if faces.faces() == 0 {
+                store.remove(run.queue, coord);
+                self.fades.remove(&c);
+                self.faceless.insert(c);
+                continue;
+            }
+            let samples = faces
+                .bricks
+                .iter()
+                .filter(|(slot, _)| d.slots.contains(slot))
+                .map(|(_, keys)| {
+                    let mut dirs = [false; 6];
+                    for k in keys {
+                        dirs[usize::from(k & 7)] = true;
+                    }
+                    dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
+                })
+                .sum();
+            let first_word = store.alloc(layout(&faces, Some(Tier::Brick), record).1)?;
+            self.job_coarse.insert(c, store.is_coarse(coord));
+            left += samples;
+            jobs.push(Job {
+                coord,
+                faces,
+                first_word,
+                kept: None,
+                tier: Some(Tier::Brick),
+                kept_bricks: kept,
+                samples,
+                brick_samples: None,
+            });
+            self.dig_open.insert(c, d);
+        }
+        // Pushed at the front in reverse, so the pending jobs start in `order`.
+        for job in jobs.into_iter().rev() {
+            self.lp.push_front(job);
+        }
+        let dig_open = &self.dig_open;
+        self.lp.promote(|c| dig_open.contains_key(&c.0));
+        Ok(())
+    }
+
+    /// A brick record's words under the settings' cell.
+    fn record_words(&self) -> usize {
+        self.settings
+            .rings
+            .as_ref()
+            .map_or(BRICK_WORDS, Rings::record_words)
     }
 
     /// Moves every fade a frame on: each record's direction values (and each cell's value) at
@@ -3547,9 +3862,12 @@ impl BakeQueue {
         let mut cands: Vec<(u8, i64, i32, [i32; 3])> = gpu
             .full_chunks()
             .filter(|c| {
-                (!store.blocks.contains_key(&c.0) || store.is_coarse(*c))
+                (!store.blocks.contains_key(&c.0)
+                    || store.is_coarse(*c)
+                    || self.reach.contains(&c.0))
                     && !self.faceless.contains(&c.0)
                     && !in_job.contains(&c.0)
+                    && !self.digs.contains_key(&c.0)
             })
             .map(|c| {
                 let d = [0, 1, 2].map(|k| c.0[k] - eye[k]);
@@ -3661,6 +3979,7 @@ impl BakeQueue {
         (faces, prepared): (ChunkFaces, bool),
     ) -> Result<u64, BakeError> {
         let c = coord.0;
+        self.reach.remove(&c);
         self.stats.prepared += u64::from(prepared);
         if let Some(m) = self.prepared.remove(&c) {
             self.prepared_bytes -= m.masks.bytes();

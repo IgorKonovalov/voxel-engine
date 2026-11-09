@@ -3002,9 +3002,10 @@ impl Frame {
     /// next encoded frame also restarts every probe within the lamp's reach whose cell the box
     /// touches ([`ProbeVolume::touched`]): it blends at hysteresis 0, its age at 1; boxes past
     /// [`MAX_EDITS`] touch no probe, which then refresh in their slices.
-    /// A store holding a piece also keeps the box for [`Frame::rebake_digs`].
+    /// A store holding a piece also keeps the box for [`Frame::rebake_digs`]; under the live
+    /// queue the box goes to the queue instead, which re-bakes its rings over its slices.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
-        if self.store.piece().is_some() {
+        if self.store.piece().is_some() && self.bake_queue.is_none() {
             self.dig_boxes.push([min, max]);
         }
         if let Some(q) = self.bake_queue.as_mut() {
@@ -3226,6 +3227,15 @@ impl Frame {
         if let Some(q) = self.bake_queue.as_mut() {
             q.coarse_samples = samples;
             q.near = near;
+        }
+    }
+
+    /// The live queue's digs: the slice's growth while a dig's bricks wait, and whether a dig
+    /// that touched lit bricks re-bakes the chunks within the light radius (ring 3).
+    pub fn set_bake_digs(&mut self, edit_ms: f64, reach_ring: bool) {
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.edit_ms = edit_ms;
+            q.reach_ring = reach_ring;
         }
     }
 
