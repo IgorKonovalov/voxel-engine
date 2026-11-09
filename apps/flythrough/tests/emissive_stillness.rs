@@ -107,7 +107,6 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2]) {
             }
             "cand" => lit.candidates = v.parse().expect("cand"),
             "kill" => lit.history = HistoryKill::from_name(v).expect("kill"),
-            "read" => lit.table_read = v == "on",
             "probe_rays" => lit.probe_rays = v.parse().expect("probe_rays"),
             "probe_slices" => lit.probe_slices = v.parse().expect("probe_slices"),
             "size" => {
@@ -133,12 +132,11 @@ fn emissive_patch_sweep() {
         let (poses, lit, size) = variant(spec);
         for pose in poses {
             let name = format!(
-                "{} [{spec}] {}x{} cand {} table read {} rays {} slices {}",
+                "{} [{spec}] {}x{} cand {} rays {} slices {}",
                 pose.name,
                 size[0],
                 size[1],
                 lit.candidates,
-                lit.table_read,
                 lit.rays(),
                 lit.slices()
             );
