@@ -145,3 +145,6 @@ bothered them (baked, native, no upscaler, no jitter), the owner answered "Barel
 the order, "Cuts first, then AA". So Plan 0059's Part 2 runs first. Phase 2's fast-yaw rows
 (`docs/plans/logs/0059.md`) are the starting reading. Pick up when the owner calls it, or when
 Plan 0059's Phase 10 or 11 reads edges as the remaining fault.
+2026-11-09, Plan 0059 Phase 8e's window (native, no upscaler, far normal 1..2, the live queue): the
+owner, on the hall, "we need to work on antializing later, but much better than before". Still
+later; the 8d window's hall (FSR 2 at 1.5, far normal 2..6) was the worse one.
