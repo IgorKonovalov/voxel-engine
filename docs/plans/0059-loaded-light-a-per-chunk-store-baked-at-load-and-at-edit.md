@@ -1,6 +1,6 @@
 # 0059: Loaded light: a per-chunk store of face values, a reference with no budget first, then cuts by eye
 
-> **Status:** in-progress: Phase 14 done 2026-11-09 (the table deleted); the close next; Phase 13 done 2026-11-09 (the verdict baked, "table as a fallback maybe"); Phase 14 waits on the architect; Phase 12 done 2026-11-09 (exploration mode; the live queue the default); Phase 10 done 2026-11-09 (exploration mode; native against FSR 2 at 1.5 read; Phase 11 folded into 13); Phase 9 done 2026-11-09; Phase 8c done 2026-11-08 (exploration mode; coarse first, the near cube at 4096); Phase 8d (human) ready, `live/session8c.sh`; Phase 8b done 2026-11-08 ("coarse first + bigger initial area"; the amendment of 2026-11-08, 9364b50); Phase 8a done 2026-11-08 (exploration mode; the queue's throughput); Phase 8b (human) ready, `live/session8.sh`; Phase 8 done 2026-11-08 (exploration mode; the live queue); Phase 7b done 2026-11-08 (bricks 8/4096 everywhere); Phase 7a done 2026-11-08 (exploration mode); Phase 7 done 2026-11-08 (the brick level is the direction, its look not enough; the amendment of 2026-11-08); Phase 6 done 2026-11-08 (exploration mode); Phase 5b done 2026-11-08 ("works perfectly"); Phase 5a done 2026-11-08, built for the owner's eye, bars not read; Phase 5b (human) ready, `live/session5c.sh`; Phase 5 done 2026-11-08 (512 stands; the glass to Phase 5a, ADR-0047); Phase 4a done 2026-11-07 under the amendment of its glass bar; Phase 5 (human) ready, `live/session5.sh`; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
+> **Status:** implemented 2026-11-09, awaits the fresh close review; Phase 14 done 2026-11-09 (the table deleted); the close next; Phase 13 done 2026-11-09 (the verdict baked, "table as a fallback maybe"); Phase 14 waits on the architect; Phase 12 done 2026-11-09 (exploration mode; the live queue the default); Phase 10 done 2026-11-09 (exploration mode; native against FSR 2 at 1.5 read; Phase 11 folded into 13); Phase 9 done 2026-11-09; Phase 8c done 2026-11-08 (exploration mode; coarse first, the near cube at 4096); Phase 8d (human) ready, `live/session8c.sh`; Phase 8b done 2026-11-08 ("coarse first + bigger initial area"; the amendment of 2026-11-08, 9364b50); Phase 8a done 2026-11-08 (exploration mode; the queue's throughput); Phase 8b (human) ready, `live/session8.sh`; Phase 8 done 2026-11-08 (exploration mode; the live queue); Phase 7b done 2026-11-08 (bricks 8/4096 everywhere); Phase 7a done 2026-11-08 (exploration mode); Phase 7 done 2026-11-08 (the brick level is the direction, its look not enough; the amendment of 2026-11-08); Phase 6 done 2026-11-08 (exploration mode); Phase 5b done 2026-11-08 ("works perfectly"); Phase 5a done 2026-11-08, built for the owner's eye, bars not read; Phase 5b (human) ready, `live/session5c.sh`; Phase 5 done 2026-11-08 (512 stands; the glass to Phase 5a, ADR-0047); Phase 4a done 2026-11-07 under the amendment of its glass bar; Phase 5 (human) ready, `live/session5.sh`; Phase 4 done 2026-11-06 under the amendment of its stops (Phase 3 done 2026-11-06 with
 > the verdict yes; Part 2 re-read by the amendment of 2026-11-06; owner's go 2026-11-05; amended 2026-11-05 to look first, cut later; amended 2026-11-05 (owner) to a
 > bounded piece and the stop's submits after Phase 1's stop rule)
 > **Created:** 2026-11-05
@@ -1290,8 +1290,8 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 | 10: The resolution cut | dev | done under exploration mode: native against FSR 2 at 1.5 (far normal 1..2 and 2..6) on the 8/4096 store at the vein and the hall, RTX, 2530 x 1378; within 1 level 0.984 (vein), 0.821 (hall); at rest 12.44 against 9.73 to 10.29 ms (vein), 17.45 against 11.35 to 12.90 (hall); the settings are the existing `F10` cycle, no key added; the own-face read and `--lighting half` not built or read; Phase 11 folded into 13; [`logs/0059.md`](logs/0059.md) | 25ecf19 (wip), a38ae3f, 5c98f6a |
 | 11: The owner's look at the resolution cut | human | folded into Phase 13 (the re-read at Phase 7b) | |
 | 12: Budgets, the default and the end strip | dev | done under exploration mode (the amendment of 2026-11-09): the live queue is the fly-through's default (`--light table` keeps the table), the hero bakes, the library default and the goldens unchanged; the queue's pre-roll records its tick times (residency read 0 ms before); RTX at rest the lighting line baked against table 3.86/1.36 ms (vein) and 3.80/6.06 (hall) native, 1.69/0.64 and 1.72/4.60 FSR 2; temporal 3.52 ms native at the vein (ceiling 3.5); baked native bit-identical; Cezanne line 1.37 to 3.22 ms; walking slice p50 1.50 ms; residency p95 365/379 ms (queue) against 302/296 (table); `frame_bytes` +256 MiB; done-when 3's strip and the list time not read; [`logs/0059.md`](logs/0059.md) | 1af71e0 (merge), 393aa68, 248a326, 61e2e25 (fix: `F` under the queue) |
-| 13: The owner's window | human | done 2026-11-09 on 61e2e25's release binary, `live/session13.sh`, the defaults: verdict "of course backet, table as a fallback maybe. but still some things to improve"; far light not re-baked until near (wants the view nearest first); the hall "a lot of aliasing"; a fast flight settles slowly (wants passed chunks cancelled); first frames 2227 to 11 550 ms; (a) to (h) not answered by name; [`logs/0059.md`](logs/0059.md) | committed with this row |
-| 14: The deletion | dev | done: the per-face table, its preload, sweep, blend and guard, `--light` and the cut flags deleted (refused naming this plan); the store is the brick level only (8/4096 the default `BakeSettings`), no face cells or rings; the gate 723 -> 717 tests, each removed and re-pointed one named in the log; 4 goldens re-blessed on lavapipe; `frame_bytes` 119 208 016 B, 253 425 744 B with lavapipe's pool, of 1.5 GB; the RTX re-read of the still-image and dig bars left to the orchestrator; [`logs/0059.md`](logs/0059.md) | 71d1f51 (wip), 10ad660, 0acb76e, 10f08d4, 8049dbd, 7ab0e21, committed with this row |
+| 13: The owner's window | human | done 2026-11-09 on 61e2e25's release binary, `live/session13.sh`, the defaults: verdict "of course backet, table as a fallback maybe. but still some things to improve"; far light not re-baked until near (wants the view nearest first); the hall "a lot of aliasing"; a fast flight settles slowly (wants passed chunks cancelled); first frames 2227 to 11 550 ms; (a) to (h) not answered by name; [`logs/0059.md`](logs/0059.md) | 4b2de1e |
+| 14: The deletion | dev | done: the per-face table, its preload, sweep, blend and guard, `--light` and the cut flags deleted (refused naming this plan); the store is the brick level only (8/4096 the default `BakeSettings`), no face cells or rings; the gate 723 -> 717 tests, each removed and re-pointed one named in the log; 4 goldens re-blessed on lavapipe; `frame_bytes` 119 208 016 B, 253 425 744 B with lavapipe's pool, of 1.5 GB; the RTX re-read of the still-image and dig bars left to the orchestrator; [`logs/0059.md`](logs/0059.md) | 71d1f51 (wip), 10ad660, 0acb76e, 10f08d4, 8049dbd, 7ab0e21, 72629ff |
 
 ### Notes
 
@@ -1363,7 +1363,8 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 14: removed because the claim cannot hold on the store: bake `a_wall_reads_its_analytic_light` (per-face closed form), `the_stop_spends_where_the_noise_is` (per-face stop), lights `the_candidate_table_favours_near_emitters_without_bias` (per-frame RMSE of a cube face's draw; its bias half moved into the ceiling test), `a_reveal_behind_a_plug_follows_within_seventy_three_frames` (the table guard's bar).
 - Phase 14: assertions removed for the same reason: `a_glass_pane_filters_by_path_length`'s lit pane (`R E / PI` of a pane cell) and `dark_cave_golden_is_lit_by_its_ore_alone`'s history-flushed control.
 - Phase 14: the tests that read a cube face's light bake first (`support::bake_around`, mostly 64 samples a brick direction within one chunk, for lavapipe's time); the ceiling's analytic bar reads the bake's face estimate, not the frame.
-- Phase 14: done-when 3's re-read of the still-image and dig bars on the RTX is not done; left to the orchestrator.
+- Phase 14: done-when 3's re-read on the RTX taken after 72629ff (the close block's commit): baked native bit-identical at the vein and the hall, temporal 2.97 to 3.11 ms native; digs 0 frames over 33 ms, a `B` press 1 (44.9 ms); readings in the log.
+- Phase 14 (the close block's commit): `flythrough::shutdown`'s `the_headless_flythrough_exits_through_every_teardown_stage_within_bound` reads 31.0 s on lavapipe (the queue's smallest pre-roll; 4 s on the table) and moved to the soak list in `.config/nextest.toml`.
 - Phase 8c: a chunk with no block that the mirror gains within `--near` of the camera takes its first pass at 4096, not coarse.
 - Phase 8c: `shaders/temporal.wgsl` (the coarse flag's mask and the coarse-read counter) and `apps/flythrough/src/hud.rs`'s test fixture are changed; `temporal.wgsl` is outside the phase's Files touched.
 - Phase 8c: the first frame at the vein and the patch is 7.1 s on the RTX (the amendment's arithmetic 3 to 4 s): the coarse pass reads about 4.2 s with the GPU at 26 to 40 % (the main thread's job bookkeeping; the log's attempts).
@@ -1374,12 +1375,30 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes,
-  test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature. The emissive light is the brick store (8-voxel cell, 4096 samples a brick direction),
+  filled by the live queue and re-baked by digs in rings 1 to 3; the per-face table (ADR-0043), its preload, sweep,
+  blend and guard, the per-face cells, rings, seed forms, store files and cut flags are deleted.
+- **Public API changed:** `vxe-render`: removed `Light`, `DEFAULT_TABLE_CELLS`, `TableStats`, `AgeStats`,
+  `DiagPreload`, `DiagReport`, `SeedForm`, `StoreFileError`, `StoreImage`, `StoreKey`, `TABLE_BINDING_BYTES` (now
+  `STORE_BINDING_BYTES`, 256 MiB), the table's constants and `cache_slot`, `cache_key`, `preload_offsets`,
+  `PreloadStats`; `Lighting` lost its table, preload, blend and light fields; `Params`' `cache`, `cache_mask`, `fill`
+  became padding (layout unchanged); `FRAME_PASSES` 23 to 20 entries; `BakeSettings` lost `n_min`, `n_max`, `rings`
+  and gained `cell`, `brick_samples`; `Frame::start_bake_queue` cannot fail; `MARCH_WGSL` is `march.wgsl` alone. The
+  fly-through refuses `--light`, `--cut`, `--show`, `--reference`, `--bake-file`, `--queue-file`, `--bake-radius`,
+  `--blend`, `--preload`, `--preload-claim`, naming this plan.
+- **Budget readings:** in `docs/plans/logs/0059.md` Phases 12 and 14, `docs/nfr/02-frame-budget.md`,
+  `docs/nfr/03-memory.md`, `docs/nfr.md` section 5. RTX 3080 Laptop GPU at 2530 x 1378 on 72629ff's tree, at rest: the
+  lighting line 3.31 (vein) and 3.42 ms (hall) native, 1.46 and 1.51 under FSR 2 at 1.5; temporal 2.97 to 3.11 native,
+  1.32 to 1.36 FSR 2. Phase 12 (393aa68), the Cezanne at 1280 x 720: the line 1.37 to 3.22 ms against 6.0. Walking:
+  the slice's p50 by submits 1.50 ms; residency p95 365 and 379 ms (the table 302 and 296). `frame_bytes` 119 208 016 B
+  before the pool, 253 425 744 B with lavapipe's 128 MiB pool (lavapipe), against 1.5 GB. The à-trous pass alone over
+  the 3.0 ms denoise line on both adapters in either light.
+- **Gate at the tip (72629ff plus this commit's soak move):** `cargo build --workspace --all-targets` 0, `cargo clippy
+  --workspace --all-targets -- -D warnings` 0, `cargo fmt --all --check` 0, `cargo deny check` 0, `cargo test --doc
+  --workspace` 7 passed; `cargo nextest run --workspace --profile gate` exit 100: 717 run, 715 passed, 2 failed
+  (`vxe-render::translucent` x2, failing since Phase 5a), 72 skipped; `check-doc-links`, `check-comment-hygiene`,
+  `check-test-tiers`, `check-plan-size`, `check-index-rows` 0. Soak and full not run.
+- **Outstanding `human` phases:** none (Phase 11 folded into 13).
 
 ## Followups
 
