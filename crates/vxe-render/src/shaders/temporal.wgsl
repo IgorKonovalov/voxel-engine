@@ -155,6 +155,11 @@ fn store_value(v: vec3<i32>, face: u32) -> vec4<f32> {
     return vec4<f32>(0.0);
 }
 
+// Whether the blocks carry brick records (the flags word's bit 0).
+fn store_bricks_on() -> bool {
+    return (atomicLoad(&store[STORE_FLAGS]) & 1u) != 0u;
+}
+
 // The block of chunk `c` (world chunks), 0 for none or outside the window.
 fn store_block(c: vec3<i32>) -> u32 {
     return store_table(c) & ~TABLE_COARSE;

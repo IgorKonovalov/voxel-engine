@@ -696,10 +696,9 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// 360, `Frame` alone) holds the store and no emissive history: main's 130 267 216 B before
 /// ADR-0043, less the `rgba32float` accumulation pair's excess over `rgba16float` (2 x 8 B x
 /// 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir textures
-/// (2 x 16 B x 640 x 360 = 7 372 800 B), plus the split walk's state and dispatch (80 + 12 B):
-/// 119 208 108 B before the store's pool is allocated. The live queue's start allocates the pool
+/// (2 x 16 B x 640 x 360 = 7 372 800 B): 119 208 016 B before the store's pool is allocated. The live queue's start allocates the pool
 /// at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage binding, 128 MiB on
-/// lavapipe (134 217 728 B; the chunk table and every block lie in it): 253 425 836 B.
+/// lavapipe (134 217 728 B; the chunk table and every block lie in it): 253 425 744 B.
 #[test]
 fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -710,11 +709,10 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let mut frame = Frame::with_sizes(&device, internal, output);
     let before = frame.frame_bytes();
     let lighting = 640u64 * 360;
-    let walk = 80 + 12;
-    let base = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + walk;
+    let base = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting;
     let pool = 128u64 << 20;
     println!("frame_bytes at the default: {before} B before the store, pool {pool} B");
-    assert_eq!(base, 119_208_108);
+    assert_eq!(base, 119_208_016);
     assert_eq!(before, base);
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
@@ -736,7 +734,7 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let after = frame.frame_bytes();
     println!("frame_bytes with the store: {after} B");
     assert_eq!(after, base + pool);
-    assert_eq!(after, 253_425_836);
+    assert_eq!(after, 253_425_744);
 }
 
 /// Every image's sharpness on the stripe wall at both distances, still and panning at arm's
