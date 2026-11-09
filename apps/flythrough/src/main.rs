@@ -5669,7 +5669,7 @@ impl Run {
         if input.pressed(KeyCode::KeyB) {
             self.bench();
         }
-        if self.args.reference && input.pressed(KeyCode::KeyF) {
+        if (self.args.reference || self.args.bake_queue) && input.pressed(KeyCode::KeyF) {
             self.cycle_light();
         }
         if input.pressed(KeyCode::Digit1) {
@@ -7370,6 +7370,22 @@ mod tests {
     /// lighting, far normal 1..2) and a bake radius of 2 that `--bake-radius` overrides, takes the
     /// level and the showcase and refuses a streamed world naming Plan 0059 Phase 8; `F` swaps the
     /// read in place, the banner and the modes' line naming it.
+    /// Under the live queue (the default), `F` swaps the read with the table and back.
+    #[test]
+    fn f_swaps_the_queue_with_the_table() {
+        let mut run = bare_run(carved_rock());
+        run.args = parse_args_from(argv(&[])).expect("the default parses");
+        run.modes = run.args.start_modes(0.0);
+        let mut input = Input::default();
+        for want in [vxe_render::Light::Table, vxe_render::Light::Baked] {
+            input.end_frame();
+            input.key_up(KeyCode::KeyF);
+            input.key_down(KeyCode::KeyF);
+            run.handle_input(&input);
+            assert_eq!(run.modes.lighting.light, want);
+        }
+    }
+
     #[test]
     fn the_reference_flag_sets_its_look_and_refuses_a_streamed_world() {
         for world_flags in [
