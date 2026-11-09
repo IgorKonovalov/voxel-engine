@@ -4809,7 +4809,21 @@ fn queue_dig_readings() {
         &camera,
         &LightParams::default(),
     );
-    let hit = hit_at(&rig, size, size[0] / 2, size[1] / 2).expect("the view's centre hits rock");
+    // The hit in the view's central half nearest 30 voxels whose carve (radius 5, plus the
+    // ring's voxel) lies inside the piece: the view's centre can hit past the level's edge.
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let dist = |p: &[f32; 3]| (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
+    let hit = (size[1] / 4..3 * size[1] / 4)
+        .flat_map(|y| (size[0] / 4..3 * size[0] / 4).map(move |x| (y * size[0] + x) as usize))
+        .filter(|&i| info[i][3] & 1 != 0)
+        .map(|i| [pos[i][0], pos[i][1], pos[i][2]])
+        .filter(|p| {
+            let v = p.map(|v| v.floor() as i32);
+            inside(piece, v.map(|c| c - 6)) && inside(piece, v.map(|c| c + 6))
+        })
+        .min_by(|a, b| (dist(a) - 30.0).abs().total_cmp(&(dist(b) - 30.0).abs()))
+        .expect("a hit inside the piece in the view's central half");
     let c = hit.map(|v| i64::from(v.floor() as i32) * FIXED_ONE + FIXED_ONE / 2);
     let op = EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve);
     let applied = rig.world.apply(&op).expect("the carve applies");
@@ -4822,7 +4836,7 @@ fn queue_dig_readings() {
     log.line(&format!(
         "queue dig: carve at {:?} ({:.1} voxels from the eye), box {:?}..{:?}, ring {} bricks in {} chunks",
         hit.map(|v| v.floor() as i32),
-        (0..3).map(|k| (hit[k] - eye[k]).powi(2)).sum::<f32>().sqrt(),
+        dist(&hit),
         dug[0],
         dug[1],
         ring.values().map(Vec::len).sum::<usize>(),
