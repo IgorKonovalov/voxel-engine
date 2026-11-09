@@ -16,15 +16,15 @@ const HALVED_AT: usize = 285;
 /// patch pose, halving every emissive material's emission at off frame `HALVED_AT` moves an
 /// emissive-lit tile by 1 log2 against the patch threshold of `log2 1.1`: steps 0 to 4, before
 /// the change, read at most 8 patches each and step 5, which holds it, at least 250. The steps
-/// after it are the cleared table refilling and carry no bar.
+/// after it carry no bar.
 #[test]
 fn the_vein_wall_patches_are_counted() {
-    let Some(level) = vein_level() else {
+    let Some(mut level) = vein_level() else {
         return;
     };
     for pose in [PATCH_POSE, VEIN_POSE] {
         let off = run(
-            &level,
+            &mut level,
             &pose,
             Lighting {
                 candidates: 0,
@@ -40,7 +40,13 @@ fn the_vein_wall_patches_are_counted() {
             off.composite.patches
         );
     }
-    let halved = run_halved_at(&level, &PATCH_POSE, Lighting::default(), SIZE, HALVED_AT);
+    let halved = run_halved_at(
+        &mut level,
+        &PATCH_POSE,
+        Lighting::default(),
+        SIZE,
+        HALVED_AT,
+    );
     halved.print("patch halved");
     let patches = &halved.composite.patches;
     assert!(
@@ -59,11 +65,11 @@ fn the_vein_wall_patches_are_counted() {
 /// flicker of at most 0.06/255.
 #[test]
 fn the_vein_wall_holds_still_with_the_lamp_off() {
-    let Some(level) = vein_level() else {
+    let Some(mut level) = vein_level() else {
         return;
     };
     for pose in [PATCH_POSE, VEIN_POSE] {
-        let r = run(&level, &pose, Lighting::default(), SIZE);
+        let r = run(&mut level, &pose, Lighting::default(), SIZE);
         r.print(&format!("{} default", pose.name));
         let name = pose.name;
         let c = &r.composite;
@@ -124,7 +130,7 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2]) {
 #[test]
 #[ignore = "a sweep: run by hand with STILL_SWEEP"]
 fn emissive_patch_sweep() {
-    let Some(level) = vein_level() else {
+    let Some(mut level) = vein_level() else {
         return;
     };
     let specs = std::env::var("STILL_SWEEP").unwrap_or_else(|_| ";pose=patch,size=384x216".into());
@@ -140,7 +146,7 @@ fn emissive_patch_sweep() {
                 lit.rays(),
                 lit.slices()
             );
-            run(&level, &pose, lit, size).print(&name);
+            run(&mut level, &pose, lit, size).print(&name);
         }
     }
 }

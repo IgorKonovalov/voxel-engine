@@ -70,6 +70,8 @@ fn castle_gate_golden() {
             .sync_now(&world, &rig.device, &rig.queue)
             .expect("mirror fits the adapter");
     }
+    // The store the cube faces read: the chunks around the eye's.
+    rig.bake_around(&world, eye, 1, 64);
     for _ in 0..16 {
         rig.frame.step(
             &rig.device,

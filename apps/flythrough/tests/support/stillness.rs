@@ -41,6 +41,8 @@ pub const FULL_LOG2: f32 = -15.0;
 pub const TILE: u32 = 8;
 /// The bar's frame size.
 pub const SIZE: [u32; 2] = [192, 108];
+/// A run's bake (ADR-0046): chunks around the camera's, and samples a brick direction.
+pub const STILL_BAKE: (i32, u32) = (1, 64);
 
 /// The still cameras and their pinned exposures, one definition shared with the binary's
 /// `--pose`.
@@ -249,13 +251,13 @@ fn stats(tiles: &[Tiles], full: &[Vec<bool>], images: Option<&[Vec<u8>]>) -> Sta
 
 /// One run at `pose` with `lighting` (indirect light on and the pose's manual exposure
 /// imposed), `size` internal pixels, the lamp switched off after `LAMP_ON` frames.
-pub fn run(level: &VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -> Reading {
+pub fn run(level: &mut VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -> Reading {
     run_inner(level, pose, lighting, size, None)
 }
 
 /// `run` that halves every emissive material's emission just before off frame `off`.
 pub fn run_halved_at(
-    level: &VeinLevel,
+    level: &mut VeinLevel,
     pose: &Pose,
     lighting: Lighting,
     size: [u32; 2],
@@ -265,7 +267,7 @@ pub fn run_halved_at(
 }
 
 fn run_inner(
-    level: &VeinLevel,
+    level: &mut VeinLevel,
     pose: &Pose,
     lighting: Lighting,
     size: [u32; 2],
@@ -281,6 +283,17 @@ fn run_inner(
     frame.set_lighting(lit);
     frame.set_dt(1.0 / 60.0);
     let camera = pose.camera();
+    // The store the cube faces read: the chunks around the camera's.
+    super::bake_around(
+        device,
+        queue,
+        &mut level.gpu,
+        &mut frame,
+        &level.world,
+        camera.position.to_array().map(|c| c.floor() as i32),
+        STILL_BAKE.0,
+        STILL_BAKE.1,
+    );
     let light = LightParams::headlamp();
     let [tw, th] = size.map(|n| n.div_ceil(TILE));
     let tiles_n = (tw * th) as usize;

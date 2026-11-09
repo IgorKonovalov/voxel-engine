@@ -252,107 +252,67 @@ fn ceiling_box(table: &MaterialTable, glow: MaterialId) -> World {
     world
 }
 
-/// The closed box lit by its emissive ceiling (emission `[1, 1, 1]`), the lamp off and no
-/// filter: the irradiance at the floor's centre, averaged over 64 frames read back one by one,
-/// is within 5 % of `E = PI L F = 1.741`, the form factor of a point at the centre of a
-/// 2h x 2h rectangle at distance h being `4 x 0.13853 = 0.5541`.
+/// The bake's estimate at the floor's centre (ADR-0046), unbiased with near and far emitters: the
+/// closed box lit by its emissive ceiling (emission `[1, 1, 1]`), the floor face under the box's
+/// centre (the +z face of voxel (32, 32, 19)) baked alone at 4096 samples, its mean irradiance
+/// within 5 % of `E = PI L F = 1.741`, the form factor of a point at the centre of a 2h x 2h
+/// rectangle at distance h being `4 x 0.13853 = 0.5541`; and the same with a far emissive wall of
+/// 4096 samples in the light radius beside the ceiling's 400 (`box_and_far_wall`).
 #[test]
 fn an_emissive_ceiling_gives_the_analytic_irradiance_at_the_floor_centre() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
     let (table, glow, _) = glow_table();
-    let world = ceiling_box(&table, glow);
-    let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync_now(&world, &device, &queue).unwrap();
-    println!(
-        "{} light samples over a span of {}",
-        gpu.light_samples(),
-        gpu.light_span()
-    );
-    // A 1 x 1 target: the pixel's ray is the camera's axis, straight down at (32, 32, 20).
-    let camera = vxe_render::Camera {
-        position: [32.0, 32.0, 29.0].into(),
-        yaw: 0.0,
-        pitch: -std::f32::consts::FRAC_PI_2,
-        vfov: 0.5,
-    };
-    let mut frame = vxe_render::Frame::new(&device, 1, 1);
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    frame.set_lighting(vxe_render::Lighting {
-        lamp: false,
-        ..vxe_render::Lighting::default()
-    });
-    let light = vxe_render::LightParams::headlamp();
-    let mut sum = 0.0f64;
-    let mut readings = Vec::new();
-    for i in 0..64 {
-        frame.set_frame_index(i);
-        frame.render(&device, &queue, &gpu, &camera, &light);
-        let hit = readback::read_buffer(
-            &device,
-            &queue,
-            &hit_pos_buffer(&device, &queue, &frame),
-            0,
-            16,
+    let analytic = std::f64::consts::PI * 4.0 * 0.13853;
+    for (name, world) in [
+        ("the ceiling alone", ceiling_box(&table, glow)),
+        ("with the far wall", box_and_far_wall(&table, glow)),
+    ] {
+        let mut gpu =
+            GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+        gpu.set_focus(VoxelCoord([32, 32, 25]));
+        gpu.sync_now(&world, &device, &queue).unwrap();
+        println!(
+            "{name}: {} light samples over a span of {}",
+            gpu.light_samples(),
+            gpu.light_span()
         );
-        if i == 0 {
-            let p: Vec<f32> = hit
-                .chunks(4)
-                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-                .collect();
-            println!("hit at {:?}", &p[..3]);
-            assert!(
-                (p[2] - 20.0).abs() < 1e-3 && (p[0] - 32.0).abs() < 1e-3,
-                "{p:?}"
-            );
-        }
-        let e = readback::read_rgba16f(&device, &queue, frame.irradiance())[0];
+        let mut frame = vxe_render::Frame::new(&device, 1, 1);
+        // The floor brick's 64 +z faces share a direction's samples: 4096 each.
+        let settings = vxe_render::bake::BakeSettings {
+            brick_samples: 64 * 4096,
+            keep_faces: true,
+            filter: Some(std::sync::Arc::new(|v, f| v == [32, 32, 19] && f == 5)),
+            ..vxe_render::bake::BakeSettings::default()
+        };
+        let report = frame
+            .bake_until(
+                &device,
+                &queue,
+                &mut gpu,
+                &world,
+                ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+                &settings,
+                &mut |_| {},
+            )
+            .expect("the chunk fits the pool");
+        assert_eq!(report.outcomes.len(), 1, "one face baked");
+        let o = &report.outcomes[0];
+        let e = o.mean[0];
         assert!(
             (e[0] - e[1]).abs() < 1e-3 && (e[1] - e[2]).abs() < 1e-3,
             "{e:?}"
         );
-        readings.push(e[0]);
-        sum += f64::from(e[0]);
+        let mean = f64::from(e[0]);
+        println!(
+            "{name}: the floor centre's bake over {} samples: {mean:.4} against {analytic:.4} ({:+.2} %)",
+            o.samples,
+            (mean / analytic - 1.0) * 100.0
+        );
+        assert_eq!(o.samples, 4096);
+        assert!((mean / analytic - 1.0).abs() <= 0.05, "{name}: {mean:.4}");
     }
-    let mean = sum / 64.0;
-    let analytic = std::f64::consts::PI * 4.0 * 0.13853;
-    println!(
-        "floor centre irradiance over 64 frames: mean {mean:.4} against {analytic:.4} ({:+.2} %); first frames {:?}",
-        (mean / analytic - 1.0) * 100.0,
-        &readings[..8]
-    );
-    assert!((mean / analytic - 1.0).abs() <= 0.05, "{mean:.4}");
-}
-
-/// The hit buffer's position texture copied into a buffer of one texel (the target is 1 x 1).
-fn hit_pos_buffer(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
-    frame: &vxe_render::Frame,
-) -> vxe_render::wgpu::Buffer {
-    use vxe_render::wgpu;
-    let buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: 256,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let mut enc = device.create_command_encoder(&Default::default());
-    enc.copy_texture_to_buffer(
-        frame.hit_positions().as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buf,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(256),
-                rows_per_image: Some(1),
-            },
-        },
-        frame.hit_positions().size(),
-    );
-    queue.submit([enc.finish()]);
-    buf
 }
 
 /// The hit positions, records and ages of `frame`'s last encoded frame.
@@ -513,80 +473,6 @@ fn box_and_far_wall(table: &MaterialTable, glow: MaterialId) -> World {
         .apply(&box_op([257, 0, 0], [258, 64, 64], ceiling))
         .unwrap();
     world
-}
-
-/// The floor centre's irradiance over 64 frames, one read per frame, lamp off, no filter.
-fn floor_centre_series(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
-    gpu: &GpuWorld,
-) -> Vec<f64> {
-    let camera = vxe_render::Camera {
-        position: [32.0, 32.0, 29.0].into(),
-        yaw: 0.0,
-        pitch: -std::f32::consts::FRAC_PI_2,
-        vfov: 0.5,
-    };
-    let mut frame = vxe_render::Frame::new(device, 1, 1);
-    frame.set_resolution(device, vxe_render::LightingResolution::Full);
-    frame.set_lighting(vxe_render::Lighting {
-        lamp: false,
-        ..vxe_render::Lighting::default()
-    });
-    (0..64)
-        .map(|i| {
-            frame.set_frame_index(i);
-            frame.render(
-                device,
-                queue,
-                gpu,
-                &camera,
-                &vxe_render::LightParams::headlamp(),
-            );
-            f64::from(readback::read_rgba16f(device, queue, frame.irradiance())[0][0])
-        })
-        .collect()
-}
-
-/// One frame's relative RMSE against 1.741 at the floor centre of `box_and_far_wall` when the
-/// light pass drew its candidates uniformly over the light-sample buffer instead of from the
-/// candidate table: read on lavapipe over the same 64 frames before that draw was removed
-/// (the table's ADR-0025 replaced it), twice, both 1.1403.
-const BUFFER_WIDE_DRAW_RMSE_REFERENCE: f64 = 1.1403;
-
-/// Near emitters win, unbiased inside the radius: with a far emissive wall of 4096 samples
-/// in the light radius beside the box's 400-sample ceiling, the floor centre's mean over 64
-/// frames is within 5 % of 1.741, and one frame's relative RMSE against 1.741 is at most half
-/// of the uniform draw's on the same scene ([`BUFFER_WIDE_DRAW_RMSE_REFERENCE`]).
-#[test]
-fn the_candidate_table_favours_near_emitters_without_bias() {
-    let Some((device, queue)) = software_device(64 << 20) else {
-        return;
-    };
-    let (table, glow, _) = glow_table();
-    let world = box_and_far_wall(&table, glow);
-    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
-    gpu.set_focus(VoxelCoord([32, 32, 25]));
-    gpu.sync_now(&world, &device, &queue).unwrap();
-    let chunks: Vec<_> = gpu.light_chunks().collect();
-    println!("light chunks: {chunks:?}");
-    assert_eq!(gpu.light_samples(), 400 + 4096);
-    let analytic = std::f64::consts::PI * 4.0 * 0.13853;
-    let stats = |v: &[f64]| {
-        let mean = v.iter().sum::<f64>() / v.len() as f64;
-        let rmse = (v.iter().map(|x| (x - analytic).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
-            / analytic;
-        (mean, rmse)
-    };
-    let (mean, rmse) = stats(&floor_centre_series(&device, &queue, &gpu));
-    let urmse = BUFFER_WIDE_DRAW_RMSE_REFERENCE;
-    println!(
-        "table: mean {mean:.4} ({:+.2} %), relative RMSE {rmse:.4}; uniform draw's reference RMSE {urmse:.4}; ratio {:.3}",
-        (mean / analytic - 1.0) * 100.0,
-        rmse / urmse
-    );
-    assert!((mean / analytic - 1.0).abs() <= 0.05, "{mean:.4}");
-    assert!(rmse <= 0.5 * urmse, "{rmse:.4} against {urmse:.4}");
 }
 
 /// Eight chunks in a row along x, each with 2048 exposed emissive voxels (the z = 0 layer's
@@ -904,139 +790,9 @@ fn a_moving_lamp_leaves_the_static_lights_history_alone() {
     }
 }
 
-/// The emitter cell and the far cell of the reveal: in one rock chunk, a cell at x 4..14 (y and
-/// z 20..40) with a `glow` wall at x = 3 facing +x, a one-voxel partition at x = 14, and a cell
-/// at x 15..60 behind it. The plug is the partition's voxels with y and z in `lo .. 60 - lo`:
-/// at 20 the whole partition, at 25 a 10 x 10 window. Returns the world and the plug's carve.
-fn reveal_cells(table: &MaterialTable, glow: MaterialId, lo: i64) -> (World, EditOp) {
-    let world = World::generate(
-        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &UniformSource(flythrough::cave::ROCK),
-        table,
-    );
-    world
-        .apply(&box_op([4, 20, 20], [14, 40, 40], Mode::Carve))
-        .unwrap();
-    world
-        .apply(&box_op(
-            [3, 20, 20],
-            [4, 40, 40],
-            Mode::Replace {
-                from: flythrough::cave::ROCK,
-                to: glow,
-            },
-        ))
-        .unwrap();
-    world
-        .apply(&box_op([15, 20, 20], [60, 40, 40], Mode::Carve))
-        .unwrap();
-    (
-        world,
-        box_op([14, lo, lo], [15, 60 - lo, 60 - lo], Mode::Carve),
-    )
-}
-
-/// The reveal's frames after the carve of the plug `lo` (`reveal_cells`) until the far wall's
-/// centre-region mean emissive accumulation has risen 90 % of the way from its value before
-/// the carve to its value 600 frames after; and those two values.
-fn reveal_frames(lo: i64) -> Option<(usize, f64, f64)> {
-    let (table, glow, _) = glow_table();
-    let (world, plug) = reveal_cells(&table, glow, lo);
-    let mut rig = LookRig::new(&world, None)?;
-    rig.frame.set_lighting(vxe_render::Lighting {
-        lamp: false,
-        exposure: vxe_render::Exposure::Manual(1.0),
-        ..vxe_render::Lighting::default()
-    });
-    // In the far cell 21 voxels past the partition, facing its far wall at x = 60.
-    let camera = vxe_render::Camera {
-        position: [35.0, 30.0, 30.0].into(),
-        yaw: 0.0,
-        pitch: 0.0,
-        vfov: 50f32.to_radians(),
-    };
-    let light = vxe_render::LightParams::headlamp();
-    for _ in 0..256 {
-        rig.frame
-            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
-    }
-    // The centre third of the frame, where the hit lies on the far wall.
-    let f = read_frame(&rig.device, &rig.queue, &rig.frame);
-    let (w, h) = (WIDTH as usize, HEIGHT as usize);
-    let region: Vec<usize> = (h / 3..2 * h / 3)
-        .flat_map(|y| (w / 3..2 * w / 3).map(move |x| y * w + x))
-        .filter(|&i| f.info[i][3] & 1 == 1 && f.pos[i][0] >= 59.0)
-        .collect();
-    assert!(
-        region.len() * 2 >= (w / 3) * (h / 3),
-        "{} far-wall pixels",
-        region.len()
-    );
-    let mean = |rig: &LookRig| {
-        let acc = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
-        region
-            .iter()
-            .map(|&i| {
-                0.2126 * f64::from(acc[i][0])
-                    + 0.7152 * f64::from(acc[i][1])
-                    + 0.0722 * f64::from(acc[i][2])
-            })
-            .sum::<f64>()
-            / region.len() as f64
-    };
-    let start = mean(&rig);
-    let r = world.apply(&plug).unwrap();
-    let aabb = r.aabb.expect("the carve removes the plug");
-    rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
-    rig.frame.invalidate(aabb.0.0, aabb.1.0);
-    let mut series = Vec::with_capacity(600);
-    for _ in 0..600 {
-        rig.frame
-            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
-        series.push(mean(&rig));
-    }
-    let end = series[599];
-    let k = series
-        .iter()
-        .position(|&v| v - start >= 0.9 * (end - start))
-        .map_or(601, |k| k + 1);
-    Some((k, start, end))
-}
-
-/// A reveal follows on the table: the one-voxel rock plug between an emitter's closed cell and
-/// a far cell (the whole partition, `reveal_cells` at 20) is carved after 256 settled frames
-/// (lamp off, filter on, `Manual(1)`), outside the dilated edit box of every far-wall pixel.
-/// The far wall's centre-region mean emissive accumulation rises 90 % of the way to its value
-/// 600 frames after the carve within 16 frames, the table guard's bar at arm's length
-/// (`a_revealed_emitter_reopens_the_cells_it_lights` in `settle.rs`: every lit cell reopens
-/// within 9 frames and reads within 10 % of a fresh run's by frame 16). The frame count with
-/// the plug a 10 x 10 window (`reveal_cells` at 25, which leaves most cells' fresh samples
-/// behind rock) is a `reading:` line.
-#[test]
-fn a_reveal_behind_a_plug_follows_within_seventy_three_frames() {
-    let mut whole = 0;
-    for lo in [20, 25] {
-        let Some((k, start, end)) = reveal_frames(lo) else {
-            return;
-        };
-        println!(
-            "reading: reveal, plug {0} x {0}: 90 % after {k} frames ({start:.5} to {end:.5})",
-            60 - 2 * lo
-        );
-        assert!(
-            end > 4.0 * start.max(1e-6),
-            "the reveal lights the wall: {start} to {end}"
-        );
-        if lo == 20 {
-            whole = k;
-        }
-    }
-    assert!(whole <= 16, "the whole plug: {whole} frames");
-}
-
-/// An emission-scale step from 1.0 to 0.25 on Phase 3's emissive-ceiling box, the filter off,
-/// in the edit-box mode: the floor centre's accumulated irradiance has under 10 % of the change
-/// left after 11 frames, as plain accumulation at 0.2 (0.8^11 = 0.086).
+/// An emission-scale step from 1.0 to 0.25 on Phase 3's emissive-ceiling box, its store baked,
+/// the filter off, in the edit-box mode: the floor centre's accumulated irradiance has under 10 %
+/// of the change left after 11 frames (plain accumulation at 0.2 would leave 0.8^11 = 0.086).
 #[test]
 fn an_emission_step_settles_within_eleven_frames() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -1063,6 +819,17 @@ fn an_emission_step_settles_within_eleven_frames() {
     let read = |frame: &vxe_render::Frame| {
         f64::from(readback::read_float(&device, &queue, frame.accumulated())[0][0])
     };
+    // The store the floor's face reads.
+    bake_around(
+        &device,
+        &queue,
+        &mut gpu,
+        &mut frame,
+        &world,
+        [32, 32, 20],
+        0,
+        1024,
+    );
     for _ in 0..96 {
         frame.step(&device, &queue, &gpu, &camera, &light);
     }

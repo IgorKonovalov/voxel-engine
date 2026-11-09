@@ -954,9 +954,20 @@ fn the_upscaler_follows_an_exposure_step() {
         vfov: 70f32.to_radians(),
     };
     let light = LightParams::headlamp();
-    let run = |upscaler: Upscaler| {
+    let mut run = |upscaler: Upscaler| {
         let mut frame = frame_of(&device, internal, output, true);
         frame.set_upscaler(upscaler);
+        // The store the cube faces read: the chunks around the camera's.
+        bake_around(
+            &device,
+            &queue,
+            &mut gpu,
+            &mut frame,
+            &world,
+            [264, 120, 376],
+            1,
+            64,
+        );
         frame.set_lighting(vxe_render::Lighting {
             lamp: false,
             exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure::eye()),
