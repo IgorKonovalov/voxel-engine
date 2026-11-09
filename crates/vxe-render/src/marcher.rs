@@ -882,7 +882,6 @@ impl Marcher {
                 Io::Storage,
                 Io::Storage,
                 Io::Store(R32Uint),
-                Io::ReadStorage,
             ],
         );
         // The resume dispatch reads its workgroup count from the split arguments, so they are
@@ -1203,8 +1202,6 @@ enum Io {
     Uniform,
     /// A read-write storage buffer.
     Storage,
-    /// A read-only storage buffer.
-    ReadStorage,
 }
 
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
@@ -1220,16 +1217,14 @@ fn io_layout_at(device: &wgpu::Device, label: &str, io: &[(u32, Io)]) -> wgpu::B
             Io::Float => sampled_texture(b, FLOAT),
             Io::Uint => sampled_texture(b, UINT),
             Io::Store(f) => storage_texture(b, f),
-            Io::Uniform | Io::Storage | Io::ReadStorage => wgpu::BindGroupLayoutEntry {
+            Io::Uniform | Io::Storage => wgpu::BindGroupLayoutEntry {
                 binding: b,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: if matches!(k, Io::Uniform) {
                         wgpu::BufferBindingType::Uniform
                     } else {
-                        wgpu::BufferBindingType::Storage {
-                            read_only: matches!(k, Io::ReadStorage),
-                        }
+                        wgpu::BufferBindingType::Storage { read_only: false }
                     },
                     has_dynamic_offset: false,
                     min_binding_size: None,
@@ -2080,23 +2075,18 @@ impl Frame {
 
     /// Starts the live queue (ADR-0046's scheduler): the store emptied for `gpu`'s window, every
     /// block with brick records of `settings`' cell, filled by [`Frame::bake_queue_step`] a slice
-    /// of `slice_ms` a frame; the first allocates the pool ([`Lighting::bake_pool_bytes`]). `Err`
-    /// without `settings.rings`.
+    /// of `slice_ms` a frame; the first allocates the pool ([`Lighting::bake_pool_bytes`]).
     pub fn start_bake_queue(
         &mut self,
         queue: &wgpu::Queue,
         gpu: &GpuWorld,
         settings: crate::bake::BakeSettings,
         slice_ms: f64,
-    ) -> Result<(), crate::bake::BakeError> {
-        let Some(cell) = settings.rings.as_ref().map(|r| r.cell) else {
-            return Err(crate::bake::BakeError::NotBaked);
-        };
+    ) {
         self.fit_store(true);
-        self.store.start_queue(queue, gpu.window(), cell);
+        self.store.start_queue(queue, gpu.window(), settings.cell);
         self.dig_boxes.clear();
         self.bake_queue = Some(crate::bake::BakeQueue::new(settings, slice_ms));
-        Ok(())
     }
 
     /// The lighting grid's pixels: what the store's missing count is a share of.
@@ -2873,7 +2863,6 @@ impl Frame {
                 Res::Buf(split_list),
                 Res::Buf(&t.split_args),
                 Res::Tex(&t.transmit),
-                Res::Buf(self.store.pool()),
             ],
         );
         let half = t.half_pos.is_some();

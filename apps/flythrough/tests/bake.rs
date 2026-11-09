@@ -1,4 +1,4 @@
-//! The loaded light (ADR-0046, Plan 0059): a bake's cells and the frames that read them, headless on
+//! The loaded light (ADR-0046, Plan 0059): a bake's brick records and the frames that read them, headless on
 //! the software adapter, and the ignored readings on a named adapter (lane rule 9c): the live
 //! queue's digs, the resolution cut and the budgets at rest.
 //!
@@ -134,7 +134,7 @@ impl Rig {
         frame_blocks(&self.device, &self.queue, &self.frame, self.world.extent())
     }
 
-    /// Every cell of the store by voxel and face: the `rgb9e5` word and the tail word.
+    /// Every held direction of the store's brick records by brick and face ([`cells_of`]).
     fn cells(&self) -> HashMap<([i32; 3], u8), [u32; 2]> {
         cells_of(&self.blocks())
     }
@@ -163,7 +163,8 @@ impl Rig {
         (report, [min.0, max.0])
     }
 
-    /// A fresh mirror and frame of the world as it is now, `piece` baked to `settings`: its cells.
+    /// A fresh mirror and frame of the world as it is now, `piece` baked to `settings`: its records'
+    /// directions ([`cells_of`]).
     fn fresh_cells(
         &self,
         piece: ChunkExtent,
@@ -226,25 +227,65 @@ fn frame_blocks(
     out
 }
 
-/// The cells of `blocks` by voxel and face: the `rgb9e5` word and the tail word.
+/// The brick records of `blocks` (cells of 8 voxels, one a brick) by world brick and face, each
+/// direction the record holds: its `rgb9e5` word and the record's tail word (`material | mask <<
+/// 16`).
 fn cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> HashMap<([i32; 3], u8), [u32; 2]> {
     let mut out = HashMap::new();
     for (&c, block) in blocks {
         for slot in 0..512usize {
             let dir = block[slot];
-            let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
+            if dir == 0 {
+                continue;
+            }
+            let rec = &block[(dir >> 11) as usize - bake::BRICK_WORDS..(dir >> 11) as usize];
             let b = vxe_world::brick_of_slot(slot);
-            for i in 0..n {
-                let [word, tail] = [block[run + 2 * i], block[run + 2 * i + 1]];
-                let key = (tail & 0xFFF) as i32;
-                let l = key >> 3;
-                let inner = [l % 8, l / 8 % 8, l / 64];
-                let v = [0, 1, 2].map(|k| c[k] * 64 + b[k] * 8 + inner[k]);
-                out.insert((v, (key & 7) as u8), [word, tail]);
+            let g = [0, 1, 2].map(|k| c[k] * 8 + b[k]);
+            for f in 0..6u8 {
+                if rec[6] >> (16 + f) & 1 != 0 {
+                    out.insert((g, f), [rec[usize::from(f)], rec[6]]);
+                }
             }
         }
     }
     out
+}
+
+/// The brick level's value of face `face` of voxel `v` (temporal.wgsl's `store_brick_value` at
+/// cells of 8 voxels, emission scale 1): the 2 x 2 bricks around the voxel's centre in the face's
+/// plane, bilinear over those that hold the direction; its own brick's alone where none has weight.
+fn brick_value(
+    cells: &HashMap<([i32; 3], u8), [u32; 2]>,
+    v: [i32; 3],
+    face: u8,
+) -> Option<[f32; 3]> {
+    let axis = usize::from(face / 2);
+    let (ta, tb) = ((axis + 1) % 3, (axis + 2) % 3);
+    let own = v.map(|x| x.div_euclid(8));
+    let g = v.map(|x| (x as f32 + 0.5) / 8.0 - 0.5);
+    let lo = g.map(|x| x.floor() as i32);
+    let f = [0, 1, 2].map(|k| g[k] - g[k].floor());
+    let mut sum = [0f32; 3];
+    let mut weight = 0f32;
+    for i in 0..4 {
+        let (oa, ob) = (i & 1, i >> 1);
+        let mut b = own;
+        b[ta] = lo[ta] + oa;
+        b[tb] = lo[tb] + ob;
+        let wa = if oa == 1 { f[ta] } else { 1.0 - f[ta] };
+        let wb = if ob == 1 { f[tb] } else { 1.0 - f[tb] };
+        if let Some(c) = cells.get(&(b, face)) {
+            let x = bake::rgb9e5_unpack(c[0]);
+            for k in 0..3 {
+                sum[k] += x[k] * (wa * wb);
+            }
+            weight += wa * wb;
+        }
+    }
+    if weight > 0.0 {
+        return Some(sum.map(|x| x / weight));
+    }
+    cells.get(&(own, face)).map(|c| bake::rgb9e5_unpack(c[0]))
 }
 
 impl Rig {
@@ -283,18 +324,17 @@ fn hit_face(eye: [f32; 3], pos: [f32; 4], info: [u16; 4]) -> Option<([i32; 3], u
     ))
 }
 
-fn test_counts(n_min: u32, n_max: u32) -> BakeSettings {
+/// The brick level at `samples` a brick direction, rounds of 64.
+fn test_counts(samples: u32) -> BakeSettings {
     BakeSettings {
         round: 64,
-        n_min,
-        n_max,
+        brick_samples: samples,
         ..BakeSettings::default()
     }
 }
 
-/// The cells depend on a face's own samples alone: one batch, batches of 7 faces and the jobs
-/// reversed read bit-identical, with the stop in play (64 to 256 samples a face); and baked to a
-/// test stop, [`four_ways`] on the box and on a slab whose faces end at different counts.
+/// The records depend on each face's own samples alone: one batch, batches of 7 faces and the
+/// jobs reversed read bit-identical; and [`four_ways`].
 #[test]
 fn a_bake_does_not_depend_on_its_slicing_or_order() {
     let (world, _) = small_box();
@@ -303,18 +343,20 @@ fn a_bake_does_not_depend_on_its_slicing_or_order() {
     };
     let one = BakeSettings {
         batch_faces: 65_536,
-        ..test_counts(64, 256)
+        ..test_counts(1024)
     };
     let report = rig.bake(&one);
     assert!(report.faces > 1000, "{} faces", report.faces);
     assert!(report.faces < 2000, "{} faces", report.faces);
     let first = rig.blocks();
-    let lit = first
-        .values()
-        .flat_map(|b| b.iter().skip(512).step_by(2))
-        .filter(|w| **w != 0)
-        .count();
-    assert!(lit > 100, "{lit} lit cells");
+    let held = cells_of(&first);
+    let lit = held.values().filter(|c| c[0] != 0).count();
+    println!("{} held directions, {lit} lit", held.len());
+    // The rock's four top bricks face the ore plate: their +z directions are lit.
+    for (x, y) in [(5, 5), (5, 6), (6, 5), (6, 6)] {
+        let up = held.get(&([x, y, 6], 5)).map_or(0, |c| c[0]);
+        assert_ne!(up, 0, "brick ({x}, {y}, 6) +z unlit");
+    }
     rig.bake(&BakeSettings {
         batch_faces: 7,
         ..one.clone()
@@ -325,40 +367,16 @@ fn a_bake_does_not_depend_on_its_slicing_or_order() {
         ..one.clone()
     });
     assert_eq!(rig.blocks(), first, "the jobs reversed");
-
-    // To a test stop, four ways: cache_box, where every face ends at `N_MIN`, then a two-chunk
-    // slab under a small emitter at the chunk border, where the faces end at different counts.
-    four_ways(&mut rig, false);
-    let mut t = MaterialTable::new();
-    for (id, row) in flythrough::cave_materials()
-        .rows()
-        .iter()
-        .enumerate()
-        .skip(1)
-    {
-        let mut m = row.clone();
-        if id == usize::from(ORE) {
-            m.emission = [0.05, 0.05, 0.05];
-        }
-        assert_eq!(usize::from(t.push(m)), id);
-    }
-    let world = air_world([2, 1, 1], &t);
-    fill(&world, [40, 16, 20], [88, 48, 21], ROCK);
-    fill(&world, [63, 30, 21], [64, 31, 22], ORE);
-    let Some(mut rig) = rig_on(world, [16, 16], None) else {
-        return;
-    };
-    four_ways(&mut rig, true);
+    four_ways(&mut rig);
 }
 
-/// Bakes `rig` to `the_stop_spends_where_the_noise_is`'s constants (64 to 4096, rounds of 64)
-/// four ways, one round a submit, several rounds with every job in one submit, each job alone,
-/// each job alone at one round a submit, and asserts bit-identical cells and samples a face. A
-/// face can take several rounds in a submit only where the stop is in play.
-fn four_ways(rig: &mut Rig, stop_in_play: bool) {
+/// Bakes `rig` at 4096 samples a brick direction, rounds of 64, four ways: several rounds a
+/// submit with every job in one submit, one round a submit, each job alone, and each job alone at
+/// one round a submit; asserts bit-identical records and samples a face.
+fn four_ways(rig: &mut Rig) {
     let stop = BakeSettings {
         keep_faces: true,
-        ..test_counts(64, 4096)
+        ..test_counts(4096)
     };
     let samples_of = |r: &bake::BakeReport| -> HashMap<([i32; 3], u8), u32> {
         r.outcomes
@@ -387,14 +405,12 @@ fn four_ways(rig: &mut Rig, stop_in_play: bool) {
         "every job in one submit"
     );
     assert_eq!(spent.len() as u64, several.faces);
-    if stop_in_play {
-        assert!(counts.len() > 2, "the stop is in play: {counts:?}");
-        assert!(
-            several.max_rounds_in_submit > 1,
-            "several rounds a submit: {}",
-            several.max_rounds_in_submit
-        );
-    }
+    assert!(counts.len() > 2, "faces of different shares: {counts:?}");
+    assert!(
+        several.max_rounds_in_submit > 1,
+        "several rounds a submit: {}",
+        several.max_rounds_in_submit
+    );
     let stopped = rig.blocks();
     let one_round = rig.bake(&BakeSettings {
         submit_rounds: 1,
@@ -412,7 +428,7 @@ fn four_ways(rig: &mut Rig, stop_in_play: bool) {
         ..stop.clone()
     });
     assert_eq!(alone.max_jobs_in_submit, 1);
-    assert!(!stop_in_play || alone.max_rounds_in_submit > 1);
+    assert!(alone.max_rounds_in_submit > 1);
     assert_eq!(rig.blocks(), stopped, "each job alone");
     assert_eq!(samples_of(&alone), spent, "each job alone");
     let alone_one = rig.bake(&BakeSettings {
@@ -433,126 +449,16 @@ fn four_ways(rig: &mut Rig, stop_in_play: bool) {
     }
 }
 
-/// The irradiance at `p` (normal +z) from a unit-radiance polygon: Lambert's formula.
-fn polygon_irradiance(p: [f64; 3], polygon: &[[f64; 3]]) -> f64 {
-    let n = polygon.len();
-    let unit = |v: [f64; 3]| {
-        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-        v.map(|c| c / l)
-    };
-    let mut sum = 0.0;
-    for i in 0..n {
-        let a = unit([0, 1, 2].map(|k| polygon[i][k] - p[k]));
-        let b = unit([0, 1, 2].map(|k| polygon[(i + 1) % n][k] - p[k]));
-        let cross = [
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        ];
-        let theta = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2])
-            .clamp(-1.0, 1.0)
-            .acos();
-        sum += theta * unit(cross)[2];
-    }
-    0.5 * sum.abs()
-}
-
-/// The irradiance at `p` (normal +z, below the voxel) from the faces of emitter voxel `e` that
-/// face `p`: the bottom always, a side where `p` lies beyond its plane.
-fn voxel_irradiance(p: [f64; 3], e: [f64; 3]) -> f64 {
-    let [x0, y0, z0] = e;
-    let [x1, y1, z1] = [x0 + 1.0, y0 + 1.0, z0 + 1.0];
-    let mut total =
-        polygon_irradiance(p, &[[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]]);
-    if p[0] < x0 {
-        total += polygon_irradiance(p, &[[x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1]]);
-    }
-    if p[0] > x1 {
-        total += polygon_irradiance(p, &[[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]]);
-    }
-    if p[1] < y0 {
-        total += polygon_irradiance(p, &[[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]]);
-    }
-    if p[1] > y1 {
-        total += polygon_irradiance(p, &[[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]]);
-    }
-    total
-}
-
-/// An unoccluded wall under one emitter voxel, nearer than `L / 4`, reads the closed form times the
-/// window within 3 % on every face (a fixed 4096 samples, the clamp off); a wall at twice the light
-/// radius from the emitter reads exactly 0.
-#[test]
-fn a_wall_reads_its_analytic_light() {
-    let world = air_world([4, 1, 1], &table());
-    // The light radius is 1 chunk: L is 64 voxels. The wall's top at z 20, the emitter's bottom at
-    // z 32: at most about 13.6 voxels from a face's centre, under L / 4.
-    fill(&world, [10, 10, 19], [19, 19, 20], ROCK);
-    fill(&world, [14, 14, 32], [15, 15, 33], ORE);
-    // The far wall: over 128 voxels from the emitter.
-    fill(&world, [160, 10, 19], [169, 19, 20], ROCK);
-    let Some(mut rig) = rig_on(world, [16, 16], Some(1)) else {
-        return;
-    };
-    let report = rig.bake(&BakeSettings {
-        round: 1024,
-        n_min: 4096,
-        n_max: 4096,
-        clamp: false,
-        ..BakeSettings::default()
-    });
-    assert_eq!(report.faces_at_max, report.faces);
-    let cells = rig.cells();
-    let le = flythrough::ORE_EMISSION;
-    let (mut worst, mut read) = (0f64, 0);
-    for x in 10..19 {
-        for y in 10..19 {
-            let word = cells[&([x, y, 19], 5)][0];
-            let got = bake::rgb9e5_unpack(word);
-            // The closed form over the face, on a 4 x 4 grid.
-            let mut e = 0.0;
-            for i in 0..4 {
-                for j in 0..4 {
-                    let p = [
-                        f64::from(x) + (f64::from(i) + 0.5) / 4.0,
-                        f64::from(y) + (f64::from(j) + 0.5) / 4.0,
-                        20.0,
-                    ];
-                    let d = (0..3)
-                        .map(|k| (p[k] - [14.5, 14.5, 32.5][k]).powi(2))
-                        .sum::<f64>()
-                        .sqrt();
-                    let q = (d / 64.0).powi(4);
-                    e += voxel_irradiance(p, [14.0, 14.0, 32.0]) * (1.0 - q).powi(2) / 16.0;
-                }
-            }
-            for k in 0..3 {
-                let want = e * f64::from(le[k]);
-                let err = (f64::from(got[k]) - want).abs() / want;
-                worst = worst.max(err);
-                read += 1;
-            }
-        }
-    }
-    println!("worst of {read} channels: {:.4} of the closed form", worst);
-    assert!(worst <= 0.03, "worst {worst:.4} of the closed form");
-    for x in 160..169 {
-        for y in 10..19 {
-            assert_eq!(cells[&([x, y, 19], 5)][0], 0, "far face {x} {y}");
-        }
-    }
-}
-
 /// After the bake the first frame is the final one: frame 1 and frame 64 are bit-identical, its
-/// emissive part is the cell's value times the exposure within one half step, the light pass drew
-/// nothing, and no face misses the store.
+/// emissive part is the brick level's value ([`brick_value`]) times the exposure within one half
+/// step, the light pass drew nothing, and no face misses the store.
 #[test]
 fn a_baked_view_is_final_on_its_first_frame() {
     let (world, camera) = small_box();
     let Some(mut rig) = rig_on(world, [64, 36], None) else {
         return;
     };
-    rig.bake(&test_counts(128, 128));
+    rig.bake(&test_counts(1024));
     let cells = rig.cells();
     rig.step(&camera);
     let first = rig.display();
@@ -573,8 +479,9 @@ fn a_baked_view_is_final_on_its_first_frame() {
             [0.0; 3],
             "the light pass's emissive sample at pixel {i}"
         );
-        let cell = cells[&key][0];
-        let want = bake::rgb9e5_unpack(cell).map(|v| v * 8.0);
+        let value =
+            brick_value(&cells, key.0, key.1).expect("the face's brick holds its direction");
+        let want = value.map(|v| v * 8.0);
         for k in 0..3 {
             let step = (want[k].abs() / 1024.0).max(1.0 / 16384.0);
             assert!(
@@ -585,7 +492,7 @@ fn a_baked_view_is_final_on_its_first_frame() {
             );
         }
         checked += 1;
-        lit += usize::from(cell != 0);
+        lit += usize::from(value.iter().any(|&v| v > 0.0));
     }
     assert!(checked > 200, "{checked} pixels with a face");
     assert!(lit > 100, "{lit} lit pixels");
@@ -593,68 +500,6 @@ fn a_baked_view_is_final_on_its_first_frame() {
         rig.step(&camera);
     }
     assert_eq!(rig.display(), first, "frame 64 against frame 1");
-}
-
-/// A world for the stop: a floor with one ore voxel on it. The face beside the emitter, a floor face
-/// far from it and the floor's underside, which no emitter reaches. A dim ore keeps the faces
-/// beside it off the tone map's shoulder, where a level says nothing of the spread.
-#[test]
-fn the_stop_spends_where_the_noise_is() {
-    let mut t = MaterialTable::new();
-    let base = flythrough::cave_materials();
-    for (id, row) in base.rows().iter().enumerate().skip(1) {
-        let mut m = row.clone();
-        if id == usize::from(ORE) {
-            m.emission = [0.05, 0.05, 0.05];
-        }
-        assert_eq!(usize::from(t.push(m)), id);
-    }
-    let world = air_world([1, 1, 1], &t);
-    fill(&world, [8, 8, 20], [48, 48, 21], ROCK);
-    fill(&world, [10, 10, 21], [11, 11, 22], ORE);
-    let Some(mut rig) = rig_on(world, [16, 16], None) else {
-        return;
-    };
-    let report = rig.bake(&BakeSettings {
-        round: 64,
-        n_min: 64,
-        n_max: 4096,
-        keep_faces: true,
-        ..BakeSettings::default()
-    });
-    let at = |v: [i32; 3], f: u8| {
-        report
-            .outcomes
-            .iter()
-            .find(|o| o.voxel == v && o.face == f)
-            .unwrap_or_else(|| panic!("face {v:?} {f}"))
-    };
-    let beside = at([11, 10, 20], 5);
-    let far = at([47, 47, 20], 5);
-    let unlit = at([30, 30, 20], 4);
-    println!(
-        "samples: beside {} ({:?} se {:.3}), far {} ({:?} se {:.3}), unlit {}",
-        beside.samples, beside.mean[0], beside.se, far.samples, far.mean[0], far.se, unlit.samples
-    );
-    assert_eq!(unlit.samples, 64, "the unlit face");
-    assert_eq!(unlit.mean[0], [0.0; 3]);
-    assert!(beside.mean[0][0] > 0.0 && far.mean[0][0] > 0.0);
-    assert!(
-        beside.samples > far.samples,
-        "beside {} far {}",
-        beside.samples,
-        far.samples
-    );
-    for o in &report.outcomes {
-        assert!(
-            o.se <= bake::BAKE_SE || o.samples >= 4096,
-            "{:?} {}: {} samples, se {}",
-            o.voxel,
-            o.face,
-            o.samples,
-            o.se
-        );
-    }
 }
 
 /// The owner's "moving fast" as a property: a frame reached by a 90 degree yaw in 2 frames reads
@@ -673,7 +518,7 @@ fn a_moving_camera_reads_what_a_still_one_reads() {
     let Some(mut rig) = rig_on(world, [64, 36], None) else {
         return;
     };
-    rig.bake(&test_counts(128, 128));
+    rig.bake(&test_counts(1024));
     let faced = |rig: &Rig, cam: &Camera, img: &[u8]| -> Vec<(usize, [u8; 4])> {
         let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
         let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
@@ -703,7 +548,7 @@ fn a_moving_camera_reads_what_a_still_one_reads() {
             &mut rig.gpu,
             &rig.world,
             extent,
-            &test_counts(128, 128),
+            &test_counts(1024),
             &mut |_| {},
         )
         .expect("the box fits the pool");
@@ -718,7 +563,7 @@ fn a_moving_camera_reads_what_a_still_one_reads() {
 
 /// A dig's settings beside a bake's: the test counts, the dig's `n_max` the same.
 fn dig_counts() -> BakeSettings {
-    test_counts(64, 256)
+    test_counts(1024)
 }
 
 fn sphere(c: [i64; 3], r: i64, mode: Mode) -> EditOp {
@@ -733,16 +578,16 @@ fn box_op(min: [i64; 3], max: [i64; 3], mode: Mode) -> EditOp {
     )
 }
 
-/// The cells of `cells` whose voxel lies in a brick of `ring`.
+/// The directions of `cells` ([`cells_of`]) whose brick is one of `ring`.
 fn in_ring(
     cells: &HashMap<([i32; 3], u8), [u32; 2]>,
     ring: &BTreeMap<[i32; 3], Vec<u16>>,
 ) -> BTreeMap<([i32; 3], u8), [u32; 2]> {
     cells
         .iter()
-        .filter(|((v, _), _)| {
-            let c = v.map(|x| x.div_euclid(64));
-            let b = v.map(|x| x.rem_euclid(64) / 8);
+        .filter(|((g, _), _)| {
+            let c = g.map(|x| x.div_euclid(8));
+            let b = g.map(|x| x.rem_euclid(8));
             ring.get(&c)
                 .is_some_and(|s| s.contains(&(vxe_world::brick_slot(b) as u16)))
         })
@@ -750,9 +595,9 @@ fn in_ring(
         .collect()
 }
 
-/// A lit wall, a radius 3 carve: on the first frame the hole is on screen, every cell of the ring
-/// is bit-identical to a fresh bake of the edited world (the same `n_max`), every cell beyond it
-/// is as before, and that frame and frame +64 are bit-identical.
+/// A lit wall, a radius 3 carve: on the first frame the hole is on screen, every record of the
+/// ring is bit-identical to a fresh bake of the edited world (the same counts), every record
+/// beyond it is as before, and that frame and frame +64 are bit-identical.
 #[test]
 fn a_dug_hole_is_final_on_its_first_frame() {
     let (world, camera) = small_box();
@@ -768,14 +613,16 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     let after = rig.cells();
     let fresh = rig.fresh_cells(piece, &dig_counts());
     let (a, f) = (in_ring(&after, &ring), in_ring(&fresh, &ring));
-    assert!(a.len() > 100, "{} cells in the ring", a.len());
+    println!("{} directions in the ring of {}", a.len(), after.len());
+    // The ring reaches every brick of the box: its 12 bricks hold over 40 directions.
+    assert!(a.len() > 40, "{} directions in the ring", a.len());
     assert_eq!(a, f, "the ring against a fresh bake");
     for (k, v) in &after {
         if !a.contains_key(k) {
             assert_eq!(before.get(k), Some(v), "{k:?} beyond the ring moved");
         }
     }
-    // The hole's new faces: voxels within the carve's reach that had no cell before.
+    // The hole's new faces: directions of bricks within the carve's reach that held none before.
     let new: Vec<_> = after.keys().filter(|k| !before.contains_key(k)).collect();
     assert!(!new.is_empty(), "the carve exposed no face");
     rig.step(&camera);
@@ -785,7 +632,7 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     let eye = camera.position.to_array();
     let on_screen = (0..pos.len())
         .filter_map(|i| hit_face(eye, pos[i], info[i]))
-        .filter(|k| !before.contains_key(k))
+        .filter(|(v, f)| !before.contains_key(&(v.map(|x| x.div_euclid(8)), *f)))
         .count();
     println!(
         "dig: {} chunks, {} faces, {} samples; {} new faces, {} hole pixels",
@@ -804,7 +651,7 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     assert_eq!(rig.display(), first, "frame +64 against the dig's frame");
 }
 
-/// Carving the box's one emitter brings every cell of the ring to exactly 0 on that frame,
+/// Carving the box's one emitter brings every record of the ring to exactly 0 on that frame,
 /// bit-identical to a fresh bake.
 #[test]
 fn a_dug_emitter_leaves_the_near_ring_at_once() {
@@ -816,7 +663,9 @@ fn a_dug_emitter_leaves_the_near_ring_at_once() {
     };
     rig.bake(&dig_counts());
     let lit = rig.cells().values().filter(|c| c[0] != 0).count();
-    assert!(lit > 100, "{lit} lit cells before");
+    println!("{lit} lit directions before");
+    // The slab's 16 bricks face the ore with their +z.
+    assert!(lit >= 16, "{lit} lit directions before");
     let (_, aabb) = rig.dig(
         &box_op([22, 22, 30], [24, 24, 32], Mode::Carve),
         &dig_counts(),
@@ -824,11 +673,13 @@ fn a_dug_emitter_leaves_the_near_ring_at_once() {
     let piece = rig.world.extent();
     let ring = bake::dig_ring(&[aabb], piece);
     let after = in_ring(&rig.cells(), &ring);
-    assert!(after.len() > 1000, "{} cells in the ring", after.len());
+    println!("{} directions in the ring", after.len());
+    // The slab's 16 bricks, each with its +z and -z.
+    assert!(after.len() >= 32, "{} directions in the ring", after.len());
     let lit: Vec<_> = after.iter().filter(|(_, c)| c[0] != 0).collect();
     assert!(
         lit.is_empty(),
-        "{} cells still lit, first {:?}",
+        "{} directions still lit, first {:?}",
         lit.len(),
         lit.first()
     );
@@ -837,7 +688,7 @@ fn a_dug_emitter_leaves_the_near_ring_at_once() {
 }
 
 /// A tunnel: an emitter, a plug, and the tunnel's far end beyond [`bake::DIG_REACH`] of the plug.
-/// After a window is carved in the plug, the far end's cells are bit-identical to before (where
+/// After a window is carved in the plug, the far end's records are bit-identical to before (where
 /// a fresh bake lights them), and the HUD names the limit.
 #[test]
 fn the_far_light_stays_as_the_reference_states() {
@@ -858,12 +709,14 @@ fn the_far_light_stays_as_the_reference_states() {
     let far = |cells: &HashMap<([i32; 3], u8), [u32; 2]>| -> BTreeMap<([i32; 3], u8), [u32; 2]> {
         cells
             .iter()
-            .filter(|((v, _), _)| v[0] >= 72)
+            .filter(|((g, _), _)| g[0] >= 9)
             .map(|(k, v)| (*k, *v))
             .collect()
     };
     let before = far(&rig.cells());
-    assert!(before.len() > 500, "{} far cells", before.len());
+    println!("{} far directions", before.len());
+    // The tunnel's 20 bricks past x = 72 each hold a y and a z wall direction.
+    assert!(before.len() >= 40, "{} far directions", before.len());
     let (dig, _) = rig.dig(
         &box_op([30, 30, 30], [32, 32, 32], Mode::Carve),
         &dig_counts(),
@@ -872,7 +725,7 @@ fn the_far_light_stays_as_the_reference_states() {
     assert_eq!(after, before, "the far end beyond the ring");
     let fresh = far(&rig.fresh_cells(rig.world.extent(), &dig_counts()));
     let lit = fresh.values().filter(|c| c[0] != 0).count();
-    println!("far cells {}, lit in a fresh bake {lit}", before.len());
+    println!("far directions {}, lit in a fresh bake {lit}", before.len());
     assert!(
         lit > 0,
         "a fresh bake lights the far end through the window"
@@ -890,8 +743,8 @@ fn the_far_light_stays_as_the_reference_states() {
 }
 
 /// `Frame::set_emission_scales` at 0.5 halves a lit wall's displayed irradiance on that frame,
-/// within one `rgb9e5` step, the cells unchanged; a material at 0 when baked reads its light when
-/// raised.
+/// within one `rgb9e5` step, the records unchanged; a material at 0 when baked reads its light
+/// when raised.
 #[test]
 fn a_scale_change_moves_no_bake() {
     let (world, camera) = small_box();
@@ -899,7 +752,7 @@ fn a_scale_change_moves_no_bake() {
         return;
     };
     rig.frame.set_emission_scale(&rig.queue, ORE, 0.0);
-    rig.bake(&test_counts(128, 128));
+    rig.bake(&test_counts(1024));
     let cells = rig.cells();
     rig.step(&camera);
     let dark = rig.accum();
@@ -914,7 +767,7 @@ fn a_scale_change_moves_no_bake() {
     rig.frame.set_emission_scale(&rig.queue, ORE, 0.5);
     rig.step(&camera);
     let half = rig.accum();
-    assert_eq!(rig.cells(), cells, "the cells after the scale changes");
+    assert_eq!(rig.cells(), cells, "the records after the scale changes");
     let mut lit = 0;
     for i in 0..full.len() {
         for k in 0..3 {
@@ -931,7 +784,7 @@ fn a_scale_change_moves_no_bake() {
     assert!(lit > 100, "{lit} lit pixels at scale 1");
 }
 
-/// With the lamp on a frame's emissive part equals the lamp-off frame's and the cells are
+/// With the lamp on a frame's emissive part equals the lamp-off frame's and the records are
 /// unchanged; off again, the frame is bit-identical to the first lamp-off frame once the lamp's
 /// history has emptied, [`LAMP_EMPTY_FRAMES`] frames after the lamp goes off.
 #[test]
@@ -940,7 +793,7 @@ fn the_lamp_adds_over_the_bake() {
     let Some(mut rig) = rig_on(world, [64, 36], None) else {
         return;
     };
-    rig.bake(&test_counts(128, 128));
+    rig.bake(&test_counts(1024));
     let cells = rig.cells();
     rig.step(&camera);
     let off = rig.display();
@@ -964,7 +817,7 @@ fn the_lamp_adds_over_the_bake() {
         .filter(|(a, b)| **a != *b)
         .count();
     assert_eq!(differ, 0, "pixels whose emissive part moved under the lamp");
-    assert_eq!(rig.cells(), cells, "the cells under the lamp");
+    assert_eq!(rig.cells(), cells, "the records under the lamp");
     rig.frame.set_lighting(lighting(false));
     let mut at = None;
     for n in 1..=256 {
@@ -1021,7 +874,7 @@ fn a_glass_pane_does_not_brighten_what_it_covers() {
     let Some(mut rig) = rig_on(world, [64, 36], None) else {
         return;
     };
-    let settings = test_counts(128, 128);
+    let settings = test_counts(1024);
     rig.bake(&settings);
     let frame_of = |rig: &mut Rig, name: &str| -> (Vec<u8>, usize) {
         for _ in 0..16 {
@@ -1132,14 +985,12 @@ fn path_in_boxes(o: [f64; 3], d: [f64; 3], s_end: f64, boxes: &[([i32; 3], [i32;
 
 /// ADR-0047's filter (lavapipe, a 64 x 36 frame, lamp off, exposure 8). A wall lit by an ore
 /// strip on its own side, behind a pane 1 voxel thick on one half and 2 on the other; no
-/// emitter sees the pane's camera-side faces, so their store cells are 0 and each pixel is
-/// `T(L)` of what it showed before the pane: `L` the exact path through the glass boxes along the
-/// pixel's ray, `T = tint^L` per channel, `tint = 0.8 (0.5 + 0.5 albedo / max(albedo))` from the
-/// row's albedo. Within 2 levels, head on (the halves at `L` near 1 and 2: `T` and `T^2`) and at
-/// 30 degrees of yaw (`L` near 2.3 through the 2-voxel half). Then a pane lit from the camera's
-/// side over a black wall: each pixel's reflected light before exposure (the layer target's rgb)
-/// is Schlick's `R` at F0 0.04 at its angle times its entry face's store cell `E / PI`, within
-/// 10 %, and the pixel shows it. The per-layer composite fails the first.
+/// pane reflects no light with the lamp off (the store holds no translucent face), so each pixel
+/// is `T(L)` of what it showed before the pane: `L` the exact path through the glass boxes along
+/// the pixel's ray, `T = tint^L` per channel, `tint = 0.8 (0.5 + 0.5 albedo / max(albedo))` from
+/// the row's albedo. Within 2 levels, head on (the halves at `L` near 1 and 2: `T` and `T^2`) and
+/// at 30 degrees of yaw (`L` near 2.3 through the 2-voxel half). A second pane over a black wall
+/// lies out of both views. The per-layer composite fails it.
 #[test]
 fn a_glass_pane_filters_by_path_length() {
     let mut t = table();
@@ -1176,7 +1027,7 @@ fn a_glass_pane_filters_by_path_length() {
     let Some(mut rig) = rig_on(world, size, None) else {
         return;
     };
-    let settings = test_counts(64, 64);
+    let settings = test_counts(1024);
     rig.bake(&settings);
     let ex = 8.0f32;
     let head_on = Camera {
@@ -1188,11 +1039,6 @@ fn a_glass_pane_filters_by_path_length() {
     let oblique = Camera {
         position: [31.0 - 8.66, 72.0, 31.0].into(),
         yaw: 30f32.to_radians(),
-        ..head_on
-    };
-    let lit_view = Camera {
-        position: [108.0, 70.0, 104.0].into(),
-        yaw: 180f32.to_radians(),
         ..head_on
     };
     let lighting = rig.frame.lighting();
@@ -1282,61 +1128,11 @@ fn a_glass_pane_filters_by_path_length() {
             );
         }
     }
-    // The lit pane over the black wall: its reflected share from its +x face's cell.
-    settle(&mut rig, &lit_view);
-    let shown = luma(&rig.display());
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
-    let cells = rig.cells();
-    let eye = lit_view.position.to_array().map(f64::from);
-    let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-    let (mut n, mut worst, mut worst_shown) = (0usize, 0f32, 0f32);
-    for i in 0..info.len() {
-        if info[i][3] & 1 == 0 || info[i][3] & 4 == 0 || info[i][2] != black_id {
-            continue;
-        }
-        let to = [0, 1, 2].map(|k| f64::from(pos[i][k]) - eye[k]);
-        let len = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
-        let d = to.map(|v| v / len);
-        // The entry: the plane x = 98, the pane's +x face; its voxel is x = 97.
-        let s = (98.0 - eye[0]) / d[0];
-        let p = [0, 1, 2].map(|k| eye[k] + d[k] * s);
-        let v = [97, p[1].floor() as i32, p[2].floor() as i32];
-        let Some(cell) = cells.get(&(v, 1)) else {
-            panic!("no cell at the pane's face {v:?}");
-        };
-        assert!(
-            cell[1] & bake::CELL_TRANSLUCENT != 0,
-            "the face's tail is flagged"
-        );
-        let e = bake::rgb9e5_unpack(cell[0])
-            .map(|x| x * rig.frame.emission_scale((cell[1] >> 16) as u16));
-        let c = (1.0 - d[0].abs()) as f32;
-        let r = 0.04 + 0.96 * c.powi(5);
-        let want = e.map(|x| r * x / std::f32::consts::PI);
-        let got = [layer[i][0], layer[i][1], layer[i][2]];
-        if lum(want) <= 0.0 {
-            continue;
-        }
-        n += 1;
-        worst = worst.max((lum(got) / lum(want) - 1.0).abs());
-        worst_shown = worst_shown.max((shown[i] - level(got.map(|x| x * ex))).abs());
-    }
-    println!(
-        "lit pane: {n} pixels over the black wall; worst |reflected / (R E / PI) - 1| {worst:.4}; worst |pixel - display(reflected)| {worst_shown:.2} levels"
-    );
-    assert!(n > 1000, "{n} lit pane pixels");
-    assert!(worst <= 0.10, "reflected light {worst:.4} off R E / PI");
-    assert!(
-        worst_shown <= 2.0,
-        "a pixel {worst_shown:.2} levels off its reflected light"
-    );
 }
 
-/// A box of two chunks whose emitter lies outside a one-chunk piece: the piece's cells are a whole
-/// bake's, the chunk outside has no block and its hits count in `store_missing`; a carve that
-/// straddles the piece's edge re-bakes only cells inside it, bit-identical to a fresh piece bake
+/// A box of two chunks whose emitter lies outside a one-chunk piece: the piece's records are a
+/// whole bake's, the chunk outside has no block and its hits count in `store_missing`; a carve
+/// that straddles the piece's edge re-bakes only records inside it, bit-identical to a fresh piece bake
 /// of the edited world, and makes no block outside.
 #[test]
 fn a_piece_reads_what_the_whole_world_reads() {
@@ -1380,9 +1176,11 @@ fn a_piece_reads_what_the_whole_world_reads() {
         "a block outside the piece"
     );
     let cells = cells_of(&blocks);
-    let inside: BTreeMap<_, _> = whole.iter().filter(|((v, _), _)| v[0] >= 64).collect();
+    let inside: BTreeMap<_, _> = whole.iter().filter(|((g, _), _)| g[0] >= 8).collect();
     let lit = cells.values().filter(|c| c[0] != 0).count();
-    assert!(lit > 50, "{lit} lit cells in the piece");
+    println!("{lit} lit directions in the piece");
+    // The piece's 12 slab bricks face the ore with their +z.
+    assert!(lit >= 12, "{lit} lit directions in the piece");
     assert_eq!(
         cells.iter().collect::<BTreeMap<_, _>>(),
         inside,
@@ -1815,13 +1613,6 @@ fn queue_dig_readings() {
         ring.len()
     ));
     let arms: Vec<(&str, BakeSettings)> = vec![
-        (
-            "the window's dig settings (the reference's default, n_max DIG_N_MAX)",
-            BakeSettings {
-                n_max: bake::DIG_N_MAX,
-                ..BakeSettings::default()
-            },
-        ),
         ("the queue's settings (round 64)", queue_settings.clone()),
         (
             "the queue's settings, round BAKE_ROUND",
@@ -1965,26 +1756,20 @@ fn queue_dig_readings() {
     }
 }
 
-/// Bakes the brick store within 12 chunks of a view's centre (`file_of`'s eye), cells of 8
-/// voxels, 4096 samples a brick direction, 512 a face's round: the milliseconds it took.
+/// Bakes the brick store within 12 chunks of a view's centre (`file_of`'s eye), the default
+/// brick level (8/4096), 512 a face's round: the milliseconds it took.
 fn brick_bake(rig: &mut ReadRig, view: &ReadView) -> f64 {
     let (_, centre_eye, _) = file_of(view);
     let centre = centre_eye.map(|v| (v / 64.0).floor() as i32);
     let settings = BakeSettings {
         round: 512,
-        n_min: 512,
-        n_max: 512,
-        rings: Some(bake::Rings {
-            centre,
-            brick: 12,
-            faces: Vec::new(),
-            cell: 8,
-            brick_samples: 4096,
-        }),
         ..BakeSettings::default()
     };
     let world = rig.world.extent();
-    let extent = settings.rings.as_ref().map_or(world, |r| r.extent(world));
+    let size = world.size();
+    let lo = [0, 1, 2].map(|k| (centre[k] - 12).max(world.min.0[k]));
+    let hi = [0, 1, 2].map(|k| (centre[k] + 13).min(world.min.0[k] + size[k]));
+    let extent = ChunkExtent::new(lo, [0, 1, 2].map(|k| hi[k].max(lo[k])));
     let t = std::time::Instant::now();
     rig.frame
         .bake_until(

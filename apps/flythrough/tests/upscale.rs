@@ -728,9 +728,7 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     );
     gpu.sync_now(&world, &device, &queue)
         .expect("the mirror fits");
-    frame
-        .start_bake_queue(&queue, &gpu, vxe_render::bake::queue_settings(), 1.0)
-        .expect("the queue starts");
+    frame.start_bake_queue(&queue, &gpu, vxe_render::bake::queue_settings(), 1.0);
     let after = frame.frame_bytes();
     println!("frame_bytes with the store: {after} B");
     assert_eq!(after, base + pool);

@@ -66,8 +66,6 @@
 //   3, 4                               the split walk's list and arguments (below)
 //   5  storage texture  transmit_out   r32uint: the translucent solid's transmittance `T(L)` per
 //                                      channel as rgb9e5 (`t9e5_pack`), 1 where none is in front
-//   6  storage  glass_store            the loaded store (`bake::Store`, temporal.wgsl's `store`),
-//                                      read only: a translucent entry face's cell
 //
 // A pixel takes the first view whose rectangle holds it (the first when none does). Its ray
 // runs from the view's origin along `fwd + right x - up y`, x and y moving linearly across the
@@ -228,7 +226,6 @@ struct ExposureState {
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(5) var transmit_out: texture_storage_2d<r32uint, write>;
-@group(1) @binding(6) var<storage, read> glass_store: array<u32>;
 
 // The split field walk (FLAG_FIELD_SPLIT): the hit pipeline walks every ray as `march` does,
 // its cells cubes, until the ray enters a full chunk's brick that the field can hit in (a band
@@ -928,44 +925,6 @@ fn t9e5_unpack(w: u32) -> vec3<f32> {
     return vec3<f32>(m) * exp2(f32(i32(w >> 27u) - 24));
 }
 
-// Face `face` of voxel `v`'s cell in `glass_store`: its irradiance at unit emission times its
-// dominant material's emission scale now, 0 for a face with no cell. The same lookup as
-// temporal.wgsl's `store_value` over the store's read-only binding (words in `bake::Store`).
-fn glass_store_value(v: vec3<i32>, face: u32) -> vec3<f32> {
-    let origin = vec3<i32>(i32(glass_store[4]), i32(glass_store[5]), i32(glass_store[6]));
-    let size = vec3<i32>(i32(glass_store[8]), i32(glass_store[9]), i32(glass_store[10]));
-    let c = (v >> vec3<u32>(6u)) - origin;
-    if (any(c < vec3<i32>(0)) || any(c >= size)) {
-        return vec3<f32>(0.0);
-    }
-    let block = glass_store[16u + u32(c.x + size.x * (c.y + size.y * c.z))];
-    if (block == 0u) {
-        return vec3<f32>(0.0);
-    }
-    let local = v & vec3<i32>(63);
-    let brick = local >> vec3<u32>(3u);
-    let dir = glass_store[block + u32(brick.x + 8 * (brick.y + 8 * brick.z))];
-    let inner = local & vec3<i32>(7);
-    let key = (u32(inner.x + 8 * (inner.y + 8 * inner.z)) << 3u) | face;
-    let run = block + (dir >> 11u);
-    var lo = 0u;
-    var hi = dir & 0x7FFu;
-    while (lo < hi) {
-        let mid = (lo + hi) / 2u;
-        let tail = glass_store[run + 2u * mid + 1u];
-        let k = tail & 0xFFFu;
-        if (k == key) {
-            return t9e5_unpack(glass_store[run + 2u * mid]) * emission_scale[tail >> 16u];
-        }
-        if (k < key) {
-            lo = mid + 1u;
-        } else {
-            hi = mid;
-        }
-    }
-    return vec3<f32>(0.0);
-}
-
 // The lamp's irradiance at `p` before any surface term: intensity over squared distance inside
 // the cone, the terms `shade` applies to an opaque hit.
 fn lamp(p: vec3<f32>) -> f32 {
@@ -995,12 +954,12 @@ fn glass_tint(albedo: vec3<f32>) -> vec3<f32> {
     return 0.8 * (0.5 + 0.5 * albedo / top);
 }
 
-// The reflected share of the entry face of voxel `v`, entered at `o + d t` across `axis`:
-// Schlick's `R` at the view angle times `face_light = E / PI`, untinted. `E` is the face's store
-// cell plus, while the lamp is on, the lamp's `PI * intensity * cone * n.l /
-// dist^2` with no shadow ray (the lamp sits at the eye, whose ray reached the face). Unlit
+// The reflected share of a translucent entry face, entered at `o + d t` across `axis`:
+// Schlick's `R` at the view angle times `face_light = E / PI`, untinted. `E` is, while the lamp
+// is on, the lamp's `PI * intensity * cone * n.l / dist^2` with no shadow ray (the lamp sits at
+// the eye, whose ray reached the face), else 0: the store holds no translucent face. Unlit
 // (`lit` false, the albedo view) `face_light` is 1.
-fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, v: vec3<i32>, axis: i32, lit: bool) -> vec3<f32> {
+fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, axis: i32, lit: bool) -> vec3<f32> {
     let nf = select(vec3<f32>(0.0), vec3<f32>(-sign(d[axis])), axis_mask(axis));
     let c = 1.0 - min(abs(dot(normalize(d), nf)), 1.0);
     let c2 = c * c;
@@ -1008,7 +967,7 @@ fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, v: vec3<i32>, axis: i32, 
     if (!lit) {
         return vec3<f32>(r);
     }
-    var e = glass_store_value(v, cache_face(axis, nf));
+    var e = vec3<f32>(0.0);
     if ((params.lighting & LIGHTING_LAMP) != 0u) {
         let p = o + d * t;
         let l = normalize(params.light_pos - p);
@@ -1069,7 +1028,7 @@ fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> Glass
             if (!entered) {
                 entered = true;
                 if (axis >= 0) {
-                    out.reflected = glass_reflected(o, d, t, v, axis, lit);
+                    out.reflected = glass_reflected(o, d, t, axis, lit);
                 }
             }
             let seg = max(min(min(tk[k], t_end) - t, cap - len), 0.0);

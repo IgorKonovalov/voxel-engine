@@ -26,14 +26,13 @@
 //                                        over the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
 //  11  storage           store           the store (ADR-0046, `bake::Store`); word 0 counts
-//                                        this frame's cube-face hits with no cell nor brick record
-//                                        (`store_missing`), word 1 those that read a brick
-//                                        record, word 2
+//                                        this frame's cube-face hits with no brick record value
+//                                        (`store_missing`), word 1 those that read one, word 2
 //                                        those whose voxel's chunk holds a coarse block
 //                                        (TABLE_COARSE)
 //
-// A cube face's emissive part (`cacheable`) is its store cell (`store_value`) or, with none, its
-// brick record's value for its direction (`store_brick_value`), times the dominant material's
+// A cube face's emissive part (`cacheable`) is its brick record's value for its direction
+// (`store_brick_value`), times the dominant material's
 // emission scale now and this frame's exposure, with no screen history, the same value at every
 // pixel of the face; 0 with neither.
 // Any other hit (no face: the field look, a translucent hit, a ray from inside rock) is a
@@ -88,14 +87,13 @@ struct Edits {
 
 // The store's words (`bake::Store`): the counters, the window's origin and size in chunks, the
 // flags, then a word per window chunk, its block's first word or 0. A block is 512 directory words
-// (a brick's run offset from the block's start << 11 | its faces; 0 none), then the runs: two
-// words a cell, its rgb9e5 irradiance at unit emission, then key (voxel 9 << 3 | face 3) | flags
-// 4 << 12 | dominant material << 16, sorted by key.
+// (a brick's offset from the block's start just past its record << 11; 0 none), then each surface
+// brick's record.
 const STORE_ORIGIN: u32 = 4u;
 const STORE_SIZE: u32 = 8u;
-// The flags word (`bake::STORE_FLAGS`): bit 0, every block carries a brick record before each
-// surface brick's run, BRICK_WORDS a cell (six rgb9e5 direction values in face order, then
-// `material | direction mask << 16`); bit 1, the cells are 4 voxels (eight a brick), else 8.
+// The flags word (`bake::STORE_FLAGS`): bit 1, the records' cells are 4 voxels (eight a brick),
+// else 8. A record is BRICK_WORDS a cell: six rgb9e5 direction values in face order, then
+// `material | direction mask << 16`.
 const STORE_FLAGS: u32 = 12u;
 const STORE_TABLE: u32 = 16u;
 const BRICK_WORDS: u32 = 7u;
@@ -107,57 +105,6 @@ const TABLE_COARSE: u32 = 0x80000000u;
 fn rgb9e5_decode(w: u32) -> vec3<f32> {
     let m = vec3<u32>(w & 511u, (w >> 9u) & 511u, (w >> 18u) & 511u);
     return vec3<f32>(m) * ldexp(1.0, i32(w >> 27u) - 24);
-}
-
-// Face `face` of voxel `v`'s cell in the store: its irradiance times its dominant material's
-// emission scale now in rgb, with a 1 in a; 0 for a face with no cell.
-fn store_value(v: vec3<i32>, face: u32) -> vec4<f32> {
-    let origin = vec3<i32>(
-        i32(atomicLoad(&store[STORE_ORIGIN])),
-        i32(atomicLoad(&store[STORE_ORIGIN + 1u])),
-        i32(atomicLoad(&store[STORE_ORIGIN + 2u])),
-    );
-    let size = vec3<i32>(
-        i32(atomicLoad(&store[STORE_SIZE])),
-        i32(atomicLoad(&store[STORE_SIZE + 1u])),
-        i32(atomicLoad(&store[STORE_SIZE + 2u])),
-    );
-    let c = (v >> vec3<u32>(6u)) - origin;
-    if (any(c < vec3<i32>(0)) || any(c >= size)) {
-        return vec4<f32>(0.0);
-    }
-    let block = atomicLoad(&store[STORE_TABLE + u32(c.x + size.x * (c.y + size.y * c.z))]) & ~TABLE_COARSE;
-    if (block == 0u) {
-        return vec4<f32>(0.0);
-    }
-    let local = v & vec3<i32>(63);
-    let brick = local >> vec3<u32>(3u);
-    let dir = atomicLoad(&store[block + u32(brick.x + 8 * (brick.y + 8 * brick.z))]);
-    let inner = local & vec3<i32>(7);
-    let key = (u32(inner.x + 8 * (inner.y + 8 * inner.z)) << 3u) | face;
-    let run = block + (dir >> 11u);
-    var lo = 0u;
-    var hi = dir & 0x7FFu;
-    while (lo < hi) {
-        let mid = (lo + hi) / 2u;
-        let tail = atomicLoad(&store[run + 2u * mid + 1u]);
-        let k = tail & 0xFFFu;
-        if (k == key) {
-            let word = atomicLoad(&store[run + 2u * mid]);
-            return vec4<f32>(rgb9e5_decode(word) * emission_scale[tail >> 16u], 1.0);
-        }
-        if (k < key) {
-            lo = mid + 1u;
-        } else {
-            hi = mid;
-        }
-    }
-    return vec4<f32>(0.0);
-}
-
-// Whether the blocks carry brick records (the flags word's bit 0).
-fn store_bricks_on() -> bool {
-    return (atomicLoad(&store[STORE_FLAGS]) & 1u) != 0u;
 }
 
 // The block of chunk `c` (world chunks), 0 for none or outside the window.
@@ -324,12 +271,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         let nf = shadow_normal_of(rec, ray.d);
         let voxel = cache_voxel(rec.p, nf);
         let face = cache_face(rec.axis, nf);
-        var c = store_value(voxel, face);
-        if (c.w == 0.0 && store_bricks_on()) {
-            c = store_brick_value(voxel, face);
-            if (c.w > 0.0) {
-                atomicAdd(&store[1], 1u);
-            }
+        let c = store_brick_value(voxel, face);
+        if (c.w > 0.0) {
+            atomicAdd(&store[1], 1u);
         }
         if (c.w == 0.0) {
             atomicAdd(&store[0], 1u);

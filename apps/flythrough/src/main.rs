@@ -3740,10 +3740,7 @@ impl Run {
     /// slice a frame.
     fn queue_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
         let settings = vxe_render::bake::queue_settings();
-        if let Err(e) = frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice) {
-            self.failure.set(format!("bake queue: {e}"));
-            return;
-        }
+        frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice);
         frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
         frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
         println!("{}", self.queue_row());
