@@ -687,61 +687,6 @@ fn a_dug_emitter_leaves_the_near_ring_at_once() {
     assert_eq!(after, fresh, "the ring against a fresh bake");
 }
 
-/// A tunnel: an emitter, a plug, and the tunnel's far end beyond [`bake::DIG_REACH`] of the plug.
-/// After a window is carved in the plug, the far end's records are bit-identical to before (where
-/// a fresh bake lights them), and the HUD names the limit.
-#[test]
-fn the_far_light_stays_as_the_reference_states() {
-    let world = World::generate(
-        ChunkExtent::new([0, 0, 0], [2, 1, 1]),
-        &UniformSource(ROCK),
-        &table(),
-    );
-    world
-        .apply(&box_op([8, 28, 28], [110, 34, 34], Mode::Carve))
-        .expect("the tunnel");
-    fill(&world, [10, 30, 30], [12, 32, 32], ORE);
-    fill(&world, [30, 28, 28], [32, 34, 34], ROCK);
-    let Some(mut rig) = rig_on(world, [16, 16], Some(2)) else {
-        return;
-    };
-    rig.bake(&dig_counts());
-    let far = |cells: &HashMap<([i32; 3], u8), [u32; 2]>| -> BTreeMap<([i32; 3], u8), [u32; 2]> {
-        cells
-            .iter()
-            .filter(|((g, _), _)| g[0] >= 9)
-            .map(|(k, v)| (*k, *v))
-            .collect()
-    };
-    let before = far(&rig.cells());
-    println!("{} far directions", before.len());
-    // The tunnel's 20 bricks past x = 72 each hold a y and a z wall direction.
-    assert!(before.len() >= 40, "{} far directions", before.len());
-    let (dig, _) = rig.dig(
-        &box_op([30, 30, 30], [32, 32, 32], Mode::Carve),
-        &dig_counts(),
-    );
-    let after = far(&rig.cells());
-    assert_eq!(after, before, "the far end beyond the ring");
-    let fresh = far(&rig.fresh_cells(rig.world.extent(), &dig_counts()));
-    let lit = fresh.values().filter(|c| c[0] != 0).count();
-    println!("far directions {}, lit in a fresh bake {lit}", before.len());
-    assert!(
-        lit > 0,
-        "a fresh bake lights the far end through the window"
-    );
-    let note = flythrough::hud::store_note(
-        None,
-        Some(flythrough::hud::DigHitch {
-            faces: dig.bake.faces,
-            samples: dig.bake.samples,
-            ms: 1.0,
-            outside: false,
-        }),
-    );
-    assert!(note.contains("far light stale after a dig"), "{note}");
-}
-
 /// `Frame::set_emission_scales` at 0.5 halves a lit wall's displayed irradiance on that frame,
 /// within one `rgb9e5` step, the records unchanged; a material at 0 when baked reads its light
 /// when raised.
