@@ -5233,8 +5233,12 @@ impl App for Flythrough {
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
     let failure = app.failure.clone();
     diag(format_args!("headless start"));
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    // DIAGNOSTIC, out with the WARP preload fix: names the flags `WGPU_VALIDATION`,
+    // `WGPU_GPU_BASED_VALIDATION` and the build left on, so CI's debug-layer runs show the
+    // request reached wgpu (whether the layer loaded is the runner's to say).
+    diag(format_args!("instance flags {:?}", desc.flags));
+    let instance = wgpu::Instance::new(desc);
     let named = app.args.adapter.as_deref().and_then(|want| {
         let all = pollster_block_on(instance.enumerate_adapters(wgpu::Backends::all()));
         let found = all.into_iter().find(|a| a.get_info().name.contains(want));
