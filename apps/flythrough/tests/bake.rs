@@ -5205,3 +5205,151 @@ fn resolution_readings() {
         }
     }
 }
+
+/// The light's budget at rest (Plan 0059 Phase 12): at each view of `VXE_BAKE_VIEWS` (default
+/// vein and hall) at `VXE_READ_SIZE` (default `NATIVE`), the `bricks-8-4096` store (as
+/// `resolution_readings` loads or bakes it) and the table, each native with no upscaler and FSR 2
+/// at 1.5, far normal 1..2, lamp off. Per arm, after 1024 still frames from no history: the
+/// passes over 120 timed frames, the lighting line (gradient, preload, light, fill, blend,
+/// temporal, probes, gather), and the display's change from frame 1024 to 1025 (the one frame)
+/// and from 512 to 1024 (the drift): the mean of the channels' level differences, the largest,
+/// and whether the two frames are bit-identical. Logs to `live/bake-count/rest.txt`.
+#[test]
+#[ignore = "a reading on a named adapter from live/bake/'s brick files: VXE_TEST_ADAPTER, under the perf lock"]
+fn rest_readings() {
+    let mut log = Log::open("rest.txt");
+    let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
+    let size = std::env::var("VXE_READ_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some([w.parse().ok()?, h.parse().ok()?])
+        })
+        .unwrap_or(NATIVE);
+    const LINE: [&str; 8] = [
+        "gradient", "preload", "light", "fill", "blend", "temporal", "probes", "gather",
+    ];
+    for view in read_views() {
+        if !names.split(',').any(|n| n == view.name) {
+            continue;
+        }
+        let (mut rig, _) = view_rig(&view, size);
+        let (name, centre_eye, radius) = file_of(&view);
+        let centre = centre_eye.map(|v| (v / 64.0).floor() as i32);
+        let (cut, settings) = ring_cuts(centre)
+            .into_iter()
+            .find(|(n, _)| *n == "bricks-8-4096")
+            .expect("the brick cut");
+        let world = rig.world.extent();
+        let extent = settings.rings.as_ref().map_or(world, |r| r.extent(world));
+        let key = Frame::store_key(
+            &rig.gpu,
+            world,
+            1,
+            extent,
+            ChunkCoord(centre),
+            radius.unwrap_or(-1),
+            &settings,
+        );
+        load_or_bake(
+            &mut rig,
+            &format!("{name}.{cut}.bin"),
+            &key,
+            extent,
+            &settings,
+        );
+        let timer = vxe_render::marcher::PassTimer::with_passes(
+            &rig.device,
+            &rig.queue,
+            vxe_render::marcher::FRAME_PASSES.len() as u32,
+        )
+        .expect("timestamps on the adapter");
+        let still = view_camera(&view);
+        let light = LightParams::default();
+        for (light_name, which) in [("baked", Light::Baked), ("table", Light::Table)] {
+            for fsr in [false, true] {
+                rig.frame.set_lighting(reference_lighting(false, which));
+                if fsr {
+                    rig.frame.set_upscaler_kind(
+                        &rig.device,
+                        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                            sharpness: 0.5,
+                            ..vxe_render::Fsr2Settings::default()
+                        }),
+                    );
+                    rig.frame.set_sizes(
+                        &rig.device,
+                        vxe_render::marcher::RenderScale::OneHalf.internal(size),
+                        size,
+                    );
+                } else {
+                    rig.frame
+                        .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
+                    rig.frame.set_jitter(&rig.device, false);
+                    rig.frame.set_sizes(&rig.device, size, size);
+                }
+                rig.frame.set_look(vxe_render::marcher::LookParams {
+                    far_normal: [1.0, 2.0],
+                    ..rig.frame.look()
+                });
+                rig.frame.reset_history();
+                let read = |rig: &ReadRig| {
+                    readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+                };
+                let mut at512 = Vec::new();
+                for f in 1..=1024 {
+                    rig.frame
+                        .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                    if f == 512 {
+                        at512 = read(&rig);
+                    }
+                }
+                let at1024 = read(&rig);
+                rig.frame
+                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                let at1025 = read(&rig);
+                let change = |a: &[u8], b: &[u8]| {
+                    let mut sum = 0u64;
+                    let mut max = 0u8;
+                    for (p, q) in a.chunks(4).zip(b.chunks(4)) {
+                        for k in 0..3 {
+                            let d = p[k].abs_diff(q[k]);
+                            sum += u64::from(d);
+                            max = max.max(d);
+                        }
+                    }
+                    format!(
+                        "mean {:.4} max {max}{}",
+                        sum as f64 / (a.len() / 4 * 3) as f64,
+                        if a == b { ", bit-identical" } else { "" }
+                    )
+                };
+                let one = change(&at1024, &at1025);
+                let drift = change(&at512, &at1024);
+                let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+                for _ in 0..120 {
+                    for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
+                        *s += ms;
+                    }
+                }
+                let of = |n: &str| {
+                    vxe_render::marcher::FRAME_PASSES
+                        .iter()
+                        .position(|p| *p == n)
+                        .map_or(0.0, |i| sum[i] / 120.0)
+                };
+                let line: f64 = LINE.iter().map(|n| of(n)).sum();
+                log.line(&format!(
+                    "rest {} adapter {} {}x{} {light_name} {}: lighting line {line:.2} ms (temporal {:.2}); one frame 1024/1025 {one}; drift 512/1024 {drift}; {}",
+                    view.name,
+                    rig.adapter,
+                    size[0],
+                    size[1],
+                    if fsr { "fsr2 at 1.5" } else { "native" },
+                    of("temporal"),
+                    pass_line(&sum, 120)
+                ));
+            }
+        }
+    }
+}

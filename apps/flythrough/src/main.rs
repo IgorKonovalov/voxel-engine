@@ -4503,6 +4503,9 @@ impl Run {
                 stream
                     .streamer
                     .update(&self.world, &[voxel_of(camera.position)]);
+                // Each tick's time, as the frame loop records it: `track` reads a chunk's
+                // wanted tick through it.
+                stream.tick_ms.push(ms_since(self.start));
                 let ev = stream.streamer.poll(&self.world);
                 mirror.apply_events(&ev);
                 frame.take_prepared(&ev.prepared, &self.world);

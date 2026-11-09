@@ -229,6 +229,12 @@ Every reading against these budgets, with its machine and commit, is in
   pressure rule no longer fires. The "default contour look" of these rows no longer exists
   (Plan 0054, v0.39.0: honest cubes, no attribute pass). No residency p95 has been re-read since
   Plan 0023; that re-read is owed to a plan that touches streaming.
+- **Re-read under the loaded light (Plan 0059 Phase 12, 393aa68 plus the pre-roll's tick fix, same
+  protocol at 2530 x 1378, 2026-11-09, loaded by the flight's own workers to 5 to 15):** RTX 3080
+  Laptop GPU, the default live queue: p95 365 ms (FSR 2 at 1.5) and 379 ms (native), max 445 and
+  488 ms over 73 381 chunks; the table: p95 302 and 296 ms, max 371 and 350 ms. RADV RENOIR at
+  1280 x 720: queue p95 319 ms, max 404; table p95 321, max 394. Streaming CPU per frame p50 3.2 to
+  19.8 ms (the RTX queue runs at load 12 to 15 read 10.0 and 19.8).
 
 ## 6. Determinism and headless operation
 
