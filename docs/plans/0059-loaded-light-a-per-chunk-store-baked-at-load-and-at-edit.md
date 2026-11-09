@@ -208,6 +208,27 @@
 > - **ADR-0046** (proposed) records per-face cells over per-brick values. It is rewritten to the brick level at the close,
 >   with Phase 7a's readings. The Data shapes and Budgets sections below are refreshed then too.
 
+> **Amended 2026-11-09 (owner), Phase 12's temporal bar.** Phase 10 read the temporal pass on the brick store at 3.40 to
+> 3.49 ms native and 1.50 to 1.96 ms under FSR 2 at 1.5 (RTX, 2530 x 1378; `logs/0059.md`, Phase 10). Phase 7a read
+> the table's at 0.87 to 0.93 ms native. The owner sent the bar to the architect before Phase 12. The 7b amendment's
+> "slightly under the table" holds on the Cezanne only (2.38 to 2.45 ms against 3.16). On the RTX the brick read is
+> about 2 ms over. **The pass is the wrong unit.** The brick store moves the light's cost out of the table's fill and
+> into the temporal pass's read. Phase 7a's whole frame shows it: at the hall bricks 17.0 ms against the table's 27.3,
+> at the far spot 14.5 against 14.6, and on the Cezanne 32.7 against 91.1. The owner picked "sum + ceiling":
+> - **The lighting line takes the temporal pass.** Phase 12 done-when 1's line becomes light, gradient, probes, gather,
+>   bake and temporal, at or under the table's in the same run, at rest and walking. It is read at FSR 2 at 1.5 (the
+>   window's default) and at native.
+> - **The temporal pass alone has a no-regression ceiling,** from Phase 10's highest readings: on the RTX at 2530 x 1378,
+>   at most 2.0 ms under FSR 2 at 1.5 and at most 3.5 ms native. The ceiling has no margin over those readings. A miss
+>   names its view, setting and load, comes to the architect, and does not stop the lane (exploration holds to Phase 13).
+> - **The Cezanne's temporal pass is read beside the table's** in the same run. Its lighting line, now with the
+>   temporal pass, stays against `docs/nfr.md`'s 6.0 ms, or the reading names what is over.
+> - **Not changed:** `docs/nfr.md` section 2's denoise line (3.0 ms, temporal and spatial). The à-trous pass alone
+>   reads 3.1 to 7.3 ms on the RTX with either light, so that line is over before this plan. Phase 12 reads it and
+>   does not bar it.
+> - **Not done:** a phase to cut the brick read (`store_brick_value`) back to the table's per-pass cost. If the summed
+>   line misses, the reading says which pass is over, and the architect decides.
+
 ## TL;DR
 
 Build the light as it should look before asking what it costs. **The reference** bakes every face
@@ -1108,10 +1129,12 @@ two store files, by a key. **A bar a dev phase reads does not overrule the owner
 - **Done when:**
   1. The Budgets rows below are read with machine, commit and load. **The bars on the RTX at the
      window's size:** the slice's mean at most 1.5 ms walking; at rest with an empty queue the
-     bake's slot at most 0.02 ms and two frames bit-identical at scale 1; the temporal pass within
-     0.1 ms of the table's; the lighting line (light, gradient, probes, gather, bake) at or under
-     the table's in the same run at rest and walking. **On the Cezanne:** the lighting line under
-     `docs/nfr.md`'s 6.0 ms, or the reading names what is over.
+     bake's slot at most 0.02 ms and two frames bit-identical at scale 1; the lighting line (light,
+     gradient, probes, gather, bake, temporal) at or under the table's in the same run at rest and
+     walking, at FSR 2 at 1.5 and at native; the temporal pass alone at most 2.0 ms under FSR 2 at
+     1.5 and 3.5 ms native (the amendment of 2026-11-09). **On the Cezanne:** the temporal pass
+     read beside the table's, and the lighting line under `docs/nfr.md`'s 6.0 ms, or the reading
+     names what is over.
   2. The still image holds: Plan 0057's still bars read at baked (the hall native one-frame mean at
      most 0.005, no pixel over 8 levels), and `the_fast_yaw_excess_by_table_read`'s row beside the
      table's.
@@ -1188,7 +1211,7 @@ display level at level 200 through the 2.2 encode, arithmetic: under `STILL_LEVE
 |---|---|---|---|
 | The reference (read, no bar) | none | A radius-2 piece: about 8.7 x 10^5 faces, about 7 MB in the pool and about 37 minutes a file on the RTX (guesses from Phase 1's census and rate; the whole level read 21.3 M faces and 177 MB, about 15 h); a 1 m dig's hitch of about half a minute at the vein | Phase 2's `reference_readings` |
 | §2 lighting line 6.0 ms | RTX in the window: light 1.33 to 3.18, gradient 0.00 to 0.17, preload 0.00 to 0.04; Cezanne walking at 1280 x 720: light 4.2 to 6.9 | RTX: slice mean at most 1.5 walking, lamp pass about 0.11 (Plan 0051), gradient as lamp only. Cezanne: 4 ms slice at a quarter's samples plus about 0.3 | `cost` rows in `settle.rs` on both adapters at rest, walking and Shift, quiet where the machine allows; Phase 12 done-when 1; `docs/nfr/02-frame-budget.md` |
-| §2 denoise line 3.0 ms (the temporal pass's read) | The table's read at the window's size | Within 0.1 ms of it: a directory read and at most about six in a run of 34 faces | The same rows |
+| §2 denoise line 3.0 ms (the temporal pass's read) | The table's read at the window's size | Within 0.1 ms of it: a directory read and at most about six in a run of 34 faces. **Read 2026-11-09 on the brick store:** RTX 3.40 to 3.49 native, 1.50 to 1.96 under FSR 2 at 1.5, against the table's 0.87 to 0.93 native; the bar moved into the lighting line with a ceiling of 2.0 / 3.5 ms (the amendment of 2026-11-09) | The same rows |
 | §2 streaming line 1.0 ms (a recorded miss) | p50 about 5 ms over a flight | Adds under about 25 KB a frame of copies walking (1.4 MB/s: face chunks 12/s x 62 KB, brick chunks 106/s x 6.5 KB), and the free list. Listing on workers | The autopilot's streaming CPU, the worker hook's list time per chunk; Phase 12 done-when 4 |
 | §3 everything else in VRAM, 1.5 GB | About 274 MB with the table at 2^22 (Plan 0057's Budgets) | Between phases + 134 217 728 B pool + 1 048 576 B working + the chunk table; at Phase 14 - 201 326 592 B (the table, at the size Plan 0057 closes with): about 208 MB. Use inside the pool about 49 MB at the vein's density | `frame_bytes` in `upscale.rs` asserted; HUD `store`; `docs/nfr/03-memory.md` |
 | §5 residency p95, 500 ms | Last read at Plan 0023, 188 to 403 ms; owed | No regression: the bake never delays a chunk's mirror | Phase 12 done-when 4 |
