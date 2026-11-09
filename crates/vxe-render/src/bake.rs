@@ -3484,6 +3484,20 @@ impl BakeQueue {
                 ended.push(*c);
                 continue;
             };
+            // A dig re-bakes outside the queue's sink and can relist the chunk: a block at
+            // another place or with another directory is not the one this fade started on, and
+            // its old place may already hold another chunk's block. The dig's put showed the
+            // new block, so the fade ends without a write.
+            let same = store
+                .blocks
+                .get(c)
+                .is_some_and(|&(first, _)| first == f.first)
+                && to.len() == f.from.len()
+                && to[..CHUNK_BRICKS] == f.from[..CHUNK_BRICKS];
+            if !same {
+                ended.push(*c);
+                continue;
+            }
             if f.frame >= FADE {
                 store.show(queue, f.first, to);
                 ended.push(*c);
