@@ -34,13 +34,6 @@
 //! The stop ([`se_levels`]): a face ends when the standard error of its mean luminance, through the
 //! display transform at [`BAKE_EXPOSURE`], is at most [`BAKE_SE`] levels, not before `n_min` samples
 //! and not after `n_max`.
-//!
-//! **The cuts** (Plan 0059 Phase 4). [`SeedForm`] names how faces share their random sequences:
-//! the reference's independent sequences, or one a chunk and side, one a side, or one a side
-//! rotated per face by a lattice of its plane coordinates (`bake_seeds.wgsl`). The independent
-//! form's module is the reference's, unchanged, so its [`source_hash`] and its files stand.
-//! [`BakeSettings::tent`] passes each cell through [`tent`] after the bake, from the bake's own
-//! values ([`Store`] keeps them), which a dig's re-bake filters again around its ring.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -82,7 +75,7 @@ pub const SUBMIT_SAMPLES: u64 = 10_000_000;
 pub const BAKE_EXPOSURE: f32 = 8.0;
 /// [`Lighting::bake_pool_bytes`](crate::Lighting) by default; the device's storage binding clamps it.
 pub const DEFAULT_BAKE_POOL_BYTES: u64 = 256 << 20;
-/// The pool under `Light::Table`: the header's words only, which nothing reads.
+/// The pool before the first bake or live queue: the header's words only, which hold no block.
 pub const MINIMAL_POOL_BYTES: u64 = 64;
 /// The word of the pool's chunk table.
 pub const STORE_TABLE: u64 = 16;
@@ -740,10 +733,6 @@ pub struct BakeSettings {
     pub snapshots: Vec<u32>,
     /// Bakes only the faces this passes (a reading's sphere); the others stay 0.
     pub filter: Option<FaceFilter>,
-    /// The faces' random sequences.
-    pub form: SeedForm,
-    /// Each cell passes through [`tent`] once the bake ends.
-    pub tent: bool,
     /// Times each submit's dispatch on the GPU into [`BakeReport::dispatch_seconds`] (a reading's
     /// cost rows).
     pub timer: Option<Arc<crate::marcher::PassTimer>>,
@@ -756,47 +745,6 @@ pub struct BakeSettings {
 pub const KEPT_CANDIDATES: u32 = 32;
 /// Whether the reference clamps a sample: the arm the count reading keeps.
 pub const KEPT_CLAMP: bool = false;
-
-/// How the faces' random sequences are seeded (Plan 0059 Phase 4's arms).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum SeedForm {
-    /// A sequence per face, keyed by its key: the reference's.
-    #[default]
-    Independent,
-    /// One sequence per chunk and side.
-    ChunkSide,
-    /// One sequence per side, for every chunk.
-    GlobalSide,
-    /// The global-side sequence rotated per face by a lattice of its plane coordinates.
-    Lattice,
-}
-
-impl SeedForm {
-    pub const ALL: [Self; 4] = [
-        Self::Independent,
-        Self::ChunkSide,
-        Self::GlobalSide,
-        Self::Lattice,
-    ];
-
-    /// The form's name, as a flag takes it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Independent => "independent",
-            Self::ChunkSide => "chunk-side",
-            Self::GlobalSide => "global-side",
-            Self::Lattice => "lattice",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|f| f.name() == s)
-    }
-
-    fn index(self) -> usize {
-        self as usize
-    }
-}
 
 impl Default for BakeSettings {
     fn default() -> Self {
@@ -815,8 +763,6 @@ impl Default for BakeSettings {
             keep_faces: false,
             snapshots: Vec::new(),
             filter: None,
-            form: SeedForm::Independent,
-            tent: false,
             timer: None,
             rings: None,
         }
@@ -879,7 +825,7 @@ pub struct BakeProgress {
 /// Why a bake did not run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BakeError {
-    /// The frame's light is not `Light::Baked`.
+    /// The settings name no brick level for the live queue (`BakeSettings::rings`).
     NotBaked,
     /// The pool cannot hold the extent's blocks.
     PoolFull { needed: u64, capacity: u64 },
@@ -890,7 +836,7 @@ pub enum BakeError {
 impl std::fmt::Display for BakeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotBaked => write!(f, "the frame's light is not baked"),
+            Self::NotBaked => write!(f, "the settings name no brick level for the live queue"),
             Self::PoolFull { needed, capacity } => {
                 write!(f, "the bake pool needs {needed} B and holds {capacity} B")
             }
@@ -930,15 +876,10 @@ pub struct Store {
     head_words: u64,
     /// The first word no block holds: a block that outgrows its place moves here.
     end_words: u64,
-    /// The chunks the last bake or load covered; a dig re-bakes only inside them.
+    /// The chunks the last bake covered; a dig re-bakes only inside them.
     piece: Option<ChunkExtent>,
     /// The mirror window the chunk table indexes.
     window: Option<ChunkExtent>,
-    /// Under a bake with [`BakeSettings::tent`], every block's words before the filter, from
-    /// which [`Store::apply_tent`] filters and a dig keeps its cells; else empty.
-    raw: BTreeMap<[i32; 3], Vec<u32>>,
-    /// The blocks are filtered ([`BakeSettings::tent`]).
-    tent: bool,
     /// The blocks carry brick records ([`Rings`]) of cells of this many voxels.
     bricks: Option<u32>,
     /// Places freed by [`Store::remove`]: first word and words, for [`Store::alloc`].
@@ -946,25 +887,6 @@ pub struct Store {
     /// Chunks whose block is the live queue's coarse pass: their table word carries
     /// [`TABLE_COARSE`].
     coarse: std::collections::HashSet<[i32; 3]>,
-}
-
-/// A store's content off the pool: its piece and blocks, and the raw words under the filter, for
-/// a frame to swap stores in place ([`Frame::swap_store_image`](crate::Frame::swap_store_image)).
-#[derive(Clone, Debug, Default)]
-pub struct StoreImage {
-    pub piece: Option<ChunkExtent>,
-    pub blocks: Vec<(ChunkCoord, Vec<u32>)>,
-    pub raw: Vec<(ChunkCoord, Vec<u32>)>,
-    pub tent: bool,
-    /// The blocks carry brick records of cells of this many voxels.
-    pub bricks: Option<u32>,
-}
-
-impl StoreImage {
-    /// Bytes of the blocks.
-    pub fn bytes(&self) -> u64 {
-        self.blocks.iter().map(|(_, b)| b.len() as u64 * 4).sum()
-    }
 }
 
 impl Store {
@@ -985,8 +907,6 @@ impl Store {
             end_words: 0,
             piece: None,
             window: None,
-            raw: BTreeMap::new(),
-            tent: false,
             bricks: None,
             free: Vec::new(),
             coarse: Default::default(),
@@ -1073,43 +993,6 @@ impl Store {
         self.piece
     }
 
-    /// Whether the blocks are filtered ([`BakeSettings::tent`]).
-    pub fn tent(&self) -> bool {
-        self.tent
-    }
-
-    /// The store's content, for [`StoreImage`]'s swap.
-    pub fn image(&self) -> StoreImage {
-        let list = |m: &BTreeMap<[i32; 3], Vec<u32>>| {
-            m.iter().map(|(c, b)| (ChunkCoord(*c), b.clone())).collect()
-        };
-        StoreImage {
-            piece: self.piece,
-            blocks: list(&self.words),
-            raw: list(&self.raw),
-            tent: self.tent,
-            bricks: self.bricks,
-        }
-    }
-
-    /// Takes `raw` as the blocks' words before the filter and writes each of `chunks`' blocks
-    /// through [`tent`] in its place; the rest of the pool is untouched.
-    fn apply_tent(&mut self, queue: &wgpu::Queue, chunks: impl IntoIterator<Item = [i32; 3]>) {
-        self.tent = true;
-        let mut out = Vec::new();
-        for c in chunks {
-            if let Some(block) = tent_block(&self.raw, c) {
-                out.push((c, block));
-            }
-        }
-        for (c, block) in out {
-            let (first, words) = self.blocks[&c];
-            debug_assert_eq!(words, block.len() as u64);
-            queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(&block));
-            self.words.insert(c, block);
-        }
-    }
-
     /// Empties the store for `window`'s chunk table: the header written, no block.
     fn reset(&mut self, queue: &wgpu::Queue, window: ChunkExtent) {
         let size = window.size();
@@ -1122,8 +1005,6 @@ impl Store {
         queue.write_buffer(&self.pool, 0, bytemuck::cast_slice(&header));
         self.blocks.clear();
         self.words.clear();
-        self.raw.clear();
-        self.tent = false;
         self.bricks = None;
         self.head_words = STORE_TABLE + table_words;
         self.end_words = self.head_words;
@@ -1165,7 +1046,6 @@ impl Store {
                 self.free.push((first, words));
             }
             self.words.remove(c);
-            self.raw.remove(c);
             self.coarse.remove(c);
         }
         self.window = Some(window);
@@ -1252,7 +1132,6 @@ impl Store {
         if let Some(place) = self.blocks.remove(&coord.0) {
             self.free.push(place);
             self.words.remove(&coord.0);
-            self.raw.remove(&coord.0);
             self.coarse.remove(&coord.0);
             queue.write_buffer(
                 &self.pool,
@@ -1283,292 +1162,10 @@ impl Store {
     }
 }
 
-/// What a store file was baked from: a file loads only where every field matches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StoreKey {
-    /// The world's generator seed.
-    pub world_seed: u64,
-    /// The world's chunks, `min` and exclusive `max`.
-    pub world: [[i32; 3]; 2],
-    /// The piece's chunks, `min` and exclusive `max`.
-    pub piece: [[i32; 3]; 2],
-    /// The piece's centre chunk and its radius in chunks.
-    pub centre: [i32; 3],
-    pub radius: i32,
-    /// The mirror's light radius, in chunks.
-    pub light_radius: i32,
-    /// The arm: candidates and the clamp.
-    pub candidates: u32,
-    pub clamp: bool,
-    /// The stop: the standard error's bits, `n_min`, `n_max`, the round and the seed.
-    pub se_bits: u32,
-    pub n_min: u32,
-    pub n_max: u32,
-    pub round: u32,
-    pub seed: u32,
-    /// [`source_hash_for`] the form.
-    pub source_hash: u64,
-    /// The cut: the seed form and the filter.
-    pub form: SeedForm,
-    pub tent: bool,
-    /// A reach cut's rings ([`RingKey::of`]).
-    pub rings: Option<RingKey>,
-}
-
-/// A reach cut's rings in a store file's key: the brick ring, up to three face rings inner first
-/// (radius -1 and 0 samples where absent), and the brick level's samples a direction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RingKey {
-    pub brick: i32,
-    pub radii: [i32; 3],
-    pub samples: [u32; 3],
-    pub brick_samples: u32,
-    /// The brick level's cell in voxels; a field of the file only where it is not 8.
-    pub cell: u32,
-}
-
-impl RingKey {
-    /// `rings`' key; `None` for more than three face rings.
-    pub fn of(rings: &Rings) -> Option<Self> {
-        if rings.faces.len() > 3 {
-            return None;
-        }
-        let mut radii = [-1; 3];
-        let mut samples = [0; 3];
-        for (i, &(r, n)) in rings.faces.iter().enumerate() {
-            radii[i] = r;
-            samples[i] = n;
-        }
-        Some(Self {
-            brick: rings.brick,
-            radii,
-            samples,
-            brick_samples: rings.brick_samples,
-            cell: rings.cell,
-        })
-    }
-}
-
-/// The reference's files (independent seeds, no filter): the key's fields up to the source hash.
-const STORE_MAGIC: &[u8; 8] = b"VXEBAKE1";
-/// A cut's files: the seed form and the filter follow the source hash, and the filter's files
-/// hold each block's words before the filter after the blocks.
-const CUT_MAGIC: &[u8; 8] = b"VXEBAKE2";
-/// A reach cut's files: a cut's fields, then the rings', and blocks with brick records.
-const RING_MAGIC: &[u8; 8] = b"VXEBAKE3";
-
-/// The hash a store file keys the bake's module by: FNV-1a of [`bake_source`].
-pub fn source_hash() -> u64 {
-    source_hash_for(SeedForm::Independent)
-}
-
-/// FNV-1a of [`bake_source_for`] `form`.
-pub fn source_hash_for(form: SeedForm) -> u64 {
-    let mut h = vxe_world::hash::Fnv1a::default();
-    h.write(bake_source_for(form).as_bytes());
-    h.finish()
-}
-
-impl StoreKey {
-    fn magic(&self) -> &'static [u8; 8] {
-        if self.rings.is_some() {
-            RING_MAGIC
-        } else if self.form == SeedForm::Independent && !self.tent {
-            STORE_MAGIC
-        } else {
-            CUT_MAGIC
-        }
-    }
-
-    /// The fields in file order, each with its name.
-    fn fields(&self) -> Vec<(&'static str, u64)> {
-        let w = |v: i32| u64::from(v as u32);
-        let mut f = vec![("world seed", self.world_seed)];
-        for (name, v) in [("world", self.world), ("piece", self.piece)] {
-            f.extend(v.iter().flatten().map(|x| (name, w(*x))));
-        }
-        f.extend(self.centre.map(|v| ("piece centre", w(v))));
-        f.extend([
-            ("piece radius", w(self.radius)),
-            ("light radius", w(self.light_radius)),
-            ("candidates", u64::from(self.candidates)),
-            ("clamp", u64::from(self.clamp)),
-            ("stop's standard error", u64::from(self.se_bits)),
-            ("n_min", u64::from(self.n_min)),
-            ("n_max", u64::from(self.n_max)),
-            ("round", u64::from(self.round)),
-            ("seed", u64::from(self.seed)),
-            ("bake source hash", self.source_hash),
-        ]);
-        if self.magic() != STORE_MAGIC {
-            f.extend([
-                ("seed form", self.form.index() as u64),
-                ("filter", u64::from(self.tent)),
-            ]);
-        }
-        if let Some(r) = self.rings {
-            f.push(("brick ring", w(r.brick)));
-            f.extend(r.radii.map(|v| ("face rings", w(v))));
-            f.extend(r.samples.map(|v| ("face rings' samples", u64::from(v))));
-            f.push(("brick level's samples", u64::from(r.brick_samples)));
-            if r.cell != BRICK_CELL {
-                f.push(("brick level's cell", u64::from(r.cell)));
-            }
-        }
-        f
-    }
-}
-
-/// Why a store file did not load.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StoreFileError {
-    /// The file could not be read or written.
-    Io(String),
-    /// Not a store file, or cut short.
-    Malformed,
-    /// The named field differs from what this run would bake.
-    Mismatch(&'static str),
-    /// The blocks do not fit the pool.
-    PoolFull { needed: u64, capacity: u64 },
-}
-
-impl std::fmt::Display for StoreFileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "store file: {e}"),
-            Self::Malformed => write!(f, "store file: not a store file, or cut short"),
-            Self::Mismatch(field) => write!(f, "store file: the {field} differs"),
-            Self::PoolFull { needed, capacity } => {
-                write!(
-                    f,
-                    "store file: the blocks need {needed} B and the pool holds {capacity} B"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for StoreFileError {}
-
-impl Store {
-    /// The store as a file's bytes: the magic, `key`'s fields, then each block's chunk, words and
-    /// words, in chunk order.
-    pub fn to_file_bytes(&self, key: &StoreKey) -> Vec<u8> {
-        let mut out = key.magic().to_vec();
-        for (_, v) in key.fields() {
-            out.extend(v.to_le_bytes());
-        }
-        let mut put = |m: &BTreeMap<[i32; 3], Vec<u32>>| {
-            out.extend((m.len() as u64).to_le_bytes());
-            for (c, block) in m {
-                for v in c {
-                    out.extend(v.to_le_bytes());
-                }
-                out.extend((block.len() as u64).to_le_bytes());
-                out.extend(bytemuck::cast_slice::<u32, u8>(block));
-            }
-        };
-        put(&self.words);
-        if key.tent {
-            put(&self.raw);
-        }
-        out
-    }
-
-    /// `bytes`' blocks, where its fields match `key`; else the first field that differs.
-    pub(crate) fn parse_file(key: &StoreKey, bytes: &[u8]) -> Result<StoreImage, StoreFileError> {
-        let mut at = 0usize;
-        let mut take = |n: usize| -> Result<&[u8], StoreFileError> {
-            let s = bytes.get(at..at + n).ok_or(StoreFileError::Malformed)?;
-            at += n;
-            Ok(s)
-        };
-        let magic = take(8)?;
-        if magic != key.magic() {
-            return Err(
-                if magic == STORE_MAGIC || magic == CUT_MAGIC || magic == RING_MAGIC {
-                    StoreFileError::Mismatch("seed form, filter or rings")
-                } else {
-                    StoreFileError::Malformed
-                },
-            );
-        }
-        let u64_of = |b: &[u8]| u64::from_le_bytes(b.try_into().expect("8 bytes"));
-        for (name, want) in key.fields() {
-            if u64_of(take(8)?) != want {
-                return Err(StoreFileError::Mismatch(name));
-            }
-        }
-        let mut list = || -> Result<Vec<(ChunkCoord, Vec<u32>)>, StoreFileError> {
-            let count = u64_of(take(8)?);
-            let mut blocks = Vec::new();
-            for _ in 0..count {
-                let mut c = [0i32; 3];
-                for v in &mut c {
-                    *v = i32::from_le_bytes(take(4)?.try_into().expect("4 bytes"));
-                }
-                let words = u64_of(take(8)?) as usize;
-                let raw = take(words * 4)?;
-                blocks.push((ChunkCoord(c), bytemuck::pod_collect_to_vec(raw)));
-            }
-            Ok(blocks)
-        };
-        let blocks = list()?;
-        let raw = if key.tent { list()? } else { Vec::new() };
-        Ok(StoreImage {
-            piece: Some(ChunkExtent::new(key.piece[0], key.piece[1])),
-            blocks,
-            raw,
-            tent: key.tent,
-            bricks: key.rings.map(|r| r.cell),
-        })
-    }
-
-    /// Empties the store for `window` and loads `blocks` ([`Store::parse_file`]), laid in chunk
-    /// order, as `key`'s piece.
-    pub(crate) fn load_blocks(
-        &mut self,
-        queue: &wgpu::Queue,
-        window: ChunkExtent,
-        image: StoreImage,
-    ) -> Result<(), StoreFileError> {
-        let StoreImage {
-            piece,
-            blocks,
-            raw,
-            tent,
-            bricks,
-        } = image;
-        let size = window.size();
-        let head = STORE_TABLE + (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
-        let needed = (head + blocks.iter().map(|(_, b)| b.len() as u64).sum::<u64>()) * 4;
-        if needed > self.pool.size() {
-            return Err(StoreFileError::PoolFull {
-                needed,
-                capacity: self.pool.size(),
-            });
-        }
-        self.reset(queue, window);
-        let mut first = self.head_words;
-        for (c, block) in blocks {
-            let words = block.len() as u64;
-            self.put(queue, c, first, block);
-            first += words;
-        }
-        self.raw = raw.into_iter().map(|(c, b)| (c.0, b)).collect();
-        self.tent = tent;
-        self.set_bricks(queue, bricks);
-        self.piece = piece;
-        Ok(())
-    }
-}
-
 /// The compute pipeline and the buffers of a bake, built on the first bake.
 pub struct BakePipeline {
     layout: wgpu::BindGroupLayout,
-    pipeline_layout: wgpu::PipelineLayout,
-    /// By [`SeedForm`], each built on its first bake ([`BakePipeline::ensure`]).
-    pipelines: [Option<wgpu::ComputePipeline>; 4],
+    pipeline: wgpu::ComputePipeline,
     job: wgpu::Buffer,
     faces: wgpu::Buffer,
     /// [`OPEN_JOBS`] slots of [`TABLE_SLOT_BYTES`]: an open job's candidate table and chunk.
@@ -1579,15 +1176,6 @@ pub struct BakePipeline {
 const TABLE_READ: &str = "return bitcast<vec4<u32>>(light_samples[params.light_table_base + i]);";
 /// The LOD walk's camera chunk, which the bake's module takes from the face's job instead.
 const LOD_ORIGIN: &str = "let d = chunk - floor_div(vec3<i32>(floor(params.views[0].origin)), 64);";
-
-/// bake.wgsl's stream, which a shared-seed form's module keys by chunk and side instead.
-const STREAM: &str = "let stream = hash_u32(job.seed ^ hash_u32(key.x ^ hash_u32(key.y)));";
-/// The hashed `rand`'s value, which the lattice form's module rotates by `bake_shift`.
-const RAND_HASHED_VALUE: &str =
-    "return f32(hash_u32(px.x ^ hash_u32(px.y ^ (dim * 0x9E3779B9u))) >> 8u) / 16777216.0;";
-
-/// The shared-seed forms' helpers (`bake_side_key`, `bake_lattice`, `bake_shift`).
-pub const BAKE_SEEDS_WGSL: &str = include_str!("shaders/bake_seeds.wgsl");
 
 fn replace_once(source: &str, from: &str, to: &str) -> String {
     assert_eq!(
@@ -1609,35 +1197,6 @@ pub fn bake_source() -> String {
     );
     let light = replace_once(crate::LIGHT_WGSL, TABLE_READ, "return bake_table_slot(i);");
     format!("{march}\n{light}\n{BAKE_WGSL}")
-}
-
-/// The bake's module for `form`: [`bake_source`] itself for [`SeedForm::Independent`]; else with
-/// bake.wgsl's stream keyed by the chunk and side (chunk-side) or the side (global-side, lattice),
-/// and for the lattice the hashed `rand` rotated by the face's lattice point, then
-/// `bake_seeds.wgsl`.
-pub fn bake_source_for(form: SeedForm) -> String {
-    let source = bake_source();
-    let stream = match form {
-        SeedForm::Independent => return source,
-        SeedForm::ChunkSide => {
-            "let stream = hash_u32(job.seed ^ bake_side_key(floor_div(v, 64), f.face));"
-        }
-        SeedForm::GlobalSide => {
-            "let stream = hash_u32(job.seed ^ bake_side_key(vec3<i32>(0), f.face));"
-        }
-        SeedForm::Lattice => {
-            "bake_shift = bake_lattice(v, f.face);\n    let stream = hash_u32(job.seed ^ bake_side_key(vec3<i32>(0), f.face));"
-        }
-    };
-    let mut source = replace_once(&source, STREAM, stream);
-    if form == SeedForm::Lattice {
-        source = replace_once(
-            &source,
-            RAND_HASHED_VALUE,
-            "return fract(f32(hash_u32(px.x ^ hash_u32(px.y ^ (dim * 0x9E3779B9u))) >> 8u) / 16777216.0 + fract(bake_shift + f32(dim) * 0.618034));",
-        );
-    }
-    format!("{source}\n{BAKE_SEEDS_WGSL}")
 }
 
 impl BakePipeline {
@@ -1685,16 +1244,28 @@ impl BakePipeline {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut out = Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bake"),
+            source: wgpu::ShaderSource::Wgsl(bake_source().into()),
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("bake"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("bake_round"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &[("RAND_HASHED", 1.0), ("EMISSION_UNIT", 1.0)],
+                ..Default::default()
+            },
+            cache: None,
+        });
+        Self {
             layout,
-            pipeline_layout,
-            pipelines: [None, None, None, None],
+            pipeline,
             job,
             faces,
             tables,
-        };
-        out.ensure(device, SeedForm::Independent);
-        out
+        }
     }
 
     /// Group 3 of a bake's dispatch: the job uniform, the working buffer and the table slots.
@@ -1717,36 +1288,6 @@ impl BakePipeline {
                 },
             ],
         })
-    }
-
-    /// Builds `form`'s pipeline where it is not built yet.
-    pub(crate) fn ensure(&mut self, device: &wgpu::Device, form: SeedForm) {
-        if self.pipelines[form.index()].is_some() {
-            return;
-        }
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bake"),
-            source: wgpu::ShaderSource::Wgsl(bake_source_for(form).into()),
-        });
-        self.pipelines[form.index()] = Some(device.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
-                label: Some("bake"),
-                layout: Some(&self.pipeline_layout),
-                module: &module,
-                entry_point: Some("bake_round"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("RAND_HASHED", 1.0), ("EMISSION_UNIT", 1.0)],
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        ));
-    }
-
-    fn pipeline(&self, form: SeedForm) -> &wgpu::ComputePipeline {
-        self.pipelines[form.index()]
-            .as_ref()
-            .expect("the form's pipeline is built before its bake")
     }
 }
 
@@ -2000,140 +1541,6 @@ pub(crate) type KeptBricks = std::collections::HashMap<u16, Vec<u32>>;
 /// every face outside the ring that the block before holds.
 pub(crate) type KeptCells = std::collections::HashMap<(u16, u16), [u32; 2]>;
 
-/// The 3 x 3 tent's weight by the offset from the centre: 1 2 1.
-fn tent3(d: i32) -> f64 {
-    if d == 0 { 2.0 } else { 1.0 }
-}
-
-/// Face `face` of voxel `v` through the bake's filter: the kernel of the table's blend
-/// (`cache_blend.wgsl`), 3 x 3. Each offset `(du, dw)` along the face's tangents takes one
-/// neighbour face of the same axis and sign: the coplanar voxel, then the voxel a step toward
-/// the air, then the voxel a step into the rock, the first `get` holds, the two stepped ones at
-/// half weight. No face of another orientation is a candidate, so no light crosses a crease, and
-/// there is no material test; [`tent_block`] hands it one class of face at a time. The weights are the binomial tent (4, 2, 1) over the faces found;
-/// a cut's faces all hold the same count, so the blend's count weights cancel and this is a mean
-/// of the faces' values. `None` where `get` holds no centre.
-pub fn tent(
-    get: &dyn Fn([i32; 3], u8) -> Option<[f32; 3]>,
-    v: [i32; 3],
-    face: u8,
-) -> Option<[f32; 3]> {
-    let centre = get(v, face)?;
-    let axis = usize::from(face / 2);
-    let air = if face % 2 == 1 { 1 } else { -1 };
-    let (u, w) = ((axis + 1) % 3, (axis + 2) % 3);
-    let mut sum = [0f64; 3];
-    let mut weight = 0f64;
-    for dw in -1..=1i32 {
-        for du in -1..=1i32 {
-            let t = tent3(du) * tent3(dw);
-            let found = if du == 0 && dw == 0 {
-                Some((centre, 1.0))
-            } else {
-                let mut c = v;
-                c[u] += du;
-                c[w] += dw;
-                let mut up = c;
-                up[axis] += air;
-                let mut down = c;
-                down[axis] -= air;
-                get(c, face)
-                    .map(|x| (x, 1.0))
-                    .or_else(|| get(up, face).map(|x| (x, 0.5)))
-                    .or_else(|| get(down, face).map(|x| (x, 0.5)))
-            };
-            if let Some((x, h)) = found {
-                for k in 0..3 {
-                    sum[k] += f64::from(x[k]) * t * h;
-                }
-                weight += t * h;
-            }
-        }
-    }
-    Some(sum.map(|x| (x / weight) as f32))
-}
-
-/// The cell word of face `face` of voxel `v` among `blocks`, by its chunk's directory and a
-/// binary search of its brick's run.
-#[cfg(test)]
-fn cell_in(blocks: &BTreeMap<[i32; 3], Vec<u32>>, v: [i32; 3], face: u8) -> Option<u32> {
-    cell_and_tail_in(blocks, v, face).map(|(word, _)| word)
-}
-
-/// The cell word and the tail word of face `face` of voxel `v` among `blocks`.
-fn cell_and_tail_in(
-    blocks: &BTreeMap<[i32; 3], Vec<u32>>,
-    v: [i32; 3],
-    face: u8,
-) -> Option<(u32, u32)> {
-    let block = blocks.get(&v.map(|x| x.div_euclid(64)))?;
-    let l = v.map(|x| x.rem_euclid(64));
-    let dir = block[brick_slot(l.map(|x| x / 8))];
-    let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
-    let i = l.map(|x| x % 8);
-    let key = (((i[0] + 8 * (i[1] + 8 * i[2])) << 3) as u32) | u32::from(face);
-    let (mut lo, mut hi) = (0usize, n);
-    while lo < hi {
-        let mid = (lo + hi) / 2;
-        let tail = block[run + 2 * mid + 1];
-        let k = tail & 0xFFF;
-        if k == key {
-            return Some((block[run + 2 * mid], tail));
-        }
-        if k < key {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    None
-}
-
-/// Chunk `c`'s block of `raw` with each cell through [`tent`] over `raw`'s cells of its own class,
-/// across chunks: an opaque face's neighbours are opaque faces, a translucent face's translucent
-/// ones ([`CELL_TRANSLUCENT`]), so glass beside a wall leaves the wall's cells as they were. The
-/// tail words as they are. `None` where `raw` holds no block for `c`.
-fn tent_block(raw: &BTreeMap<[i32; 3], Vec<u32>>, c: [i32; 3]) -> Option<Vec<u32>> {
-    let mut block = raw.get(&c)?.clone();
-    let of_class = |glass: bool| {
-        move |v: [i32; 3], f: u8| {
-            cell_and_tail_in(raw, v, f)
-                .filter(|&(_, tail)| (tail & CELL_TRANSLUCENT != 0) == glass)
-                .map(|(word, _)| rgb9e5_unpack(word))
-        }
-    };
-    let (get_opaque, get_glass) = (of_class(false), of_class(true));
-    for slot in 0..CHUNK_BRICKS {
-        let dir = block[slot];
-        let (run, n) = ((dir >> 11) as usize, (dir & 0x7FF) as usize);
-        let b = brick_of_slot(slot);
-        for k in 0..n {
-            let key = block[run + 2 * k + 1] & 0xFFF;
-            let i = (key >> 3) as i32;
-            let l = [i % 8, i / 8 % 8, i / 64];
-            let v = [0, 1, 2].map(|a| c[a] * 64 + b[a] * 8 + l[a]);
-            let face = (key & 7) as u8;
-            let get: &dyn Fn([i32; 3], u8) -> Option<[f32; 3]> =
-                if block[run + 2 * k + 1] & CELL_TRANSLUCENT != 0 {
-                    &get_glass
-                } else {
-                    &get_opaque
-                };
-            if let Some(x) = tent(get, v, face) {
-                block[run + 2 * k] = rgb9e5_pack(x);
-            }
-        }
-    }
-    Some(block)
-}
-
-/// `c` and the 26 chunks around it.
-fn chunks_around(c: [i32; 3]) -> impl Iterator<Item = [i32; 3]> {
-    (-1..=1).flat_map(move |z| {
-        (-1..=1).flat_map(move |y| (-1..=1).map(move |x| [c[0] + x, c[1] + y, c[2] + z]))
-    })
-}
-
 /// The cells of `block` by brick slot and key.
 fn cells_of(block: &[u32]) -> KeptCells {
     let mut out = KeptCells::new();
@@ -2243,11 +1650,6 @@ pub(crate) fn run(
         })
         .collect();
     let report = run_jobs(run, store, jobs, settings, progress)?;
-    if settings.tent {
-        store.raw = store.words.clone();
-        let all: Vec<[i32; 3]> = store.words.keys().copied().collect();
-        store.apply_tent(run.queue, all);
-    }
     store.piece = Some(extent);
     Ok(report)
 }
@@ -2342,8 +1744,7 @@ pub(crate) fn rebake(
                 .and_then(|r| r.tier(*c))
                 .unwrap_or(Tier::Brick)
         });
-        // Under the filter a kept cell is the bake's own value, before the filter.
-        let source = if store.tent { &store.raw } else { &store.words };
+        let source = &store.words;
         let old = source.get(c).map(|b| cells_of(b)).unwrap_or_default();
         let mut kept_bricks = KeptBricks::new();
         if store.bricks.is_some()
@@ -2379,18 +1780,6 @@ pub(crate) fn rebake(
         });
     }
     let bake = run_jobs(run, store, jobs, settings, progress)?;
-    if store.tent {
-        // The ring's chunks hold their new values before the filter (or no block); every chunk
-        // around them reads them through its kernel.
-        let mut around = std::collections::BTreeSet::new();
-        for c in ring.keys() {
-            if let Some(words) = store.words.get(c) {
-                store.raw.insert(*c, words.clone());
-            }
-            around.extend(chunks_around(*c).filter(|n| store.raw.contains_key(n)));
-        }
-        store.apply_tent(run.queue, around);
-    }
     Ok(DigReport { bricks, bake })
 }
 
@@ -2798,7 +2187,7 @@ impl JobLoop {
                 label: Some("bake"),
                 timestamp_writes: writes,
             });
-            pass.set_pipeline(run.pipeline.pipeline(settings.form));
+            pass.set_pipeline(&run.pipeline.pipeline);
             pass.set_bind_group(0, run.world_bind, &[]);
             pass.set_bind_group(3, bind, &[]);
             pass.dispatch_workgroups(count.min(BAKE_ROW), count.div_ceil(BAKE_ROW), 1);
@@ -3281,7 +2670,6 @@ pub fn queue_settings() -> BakeSettings {
             cell: BRICK_CELL,
             brick_samples: QUEUE_BRICK_SAMPLES,
         }),
-        tent: false,
         round: QUEUE_ROUND,
         ..BakeSettings::default()
     }
@@ -4361,102 +3749,14 @@ mod tests {
     fn the_bake_module_reads_the_entrys_job() {
         let source = bake_source();
         assert!(!source.contains(TABLE_READ) && !source.contains(LOD_ORIGIN));
-        // The reference's module is the independent form's, its text unchanged by the forms.
-        assert_eq!(bake_source_for(SeedForm::Independent), source);
-        assert!(!source.contains("bake_side_key"));
-        for form in SeedForm::ALL {
-            let source = bake_source_for(form);
-            assert_eq!(
-                source.contains(STREAM),
-                form == SeedForm::Independent,
-                "{form:?}"
-            );
-            let module = wgpu::naga::front::wgsl::parse_str(&source)
-                .unwrap_or_else(|e| panic!("{form:?}: {}", e.emit_to_string(&source)));
-            wgpu::naga::valid::Validator::new(
-                wgpu::naga::valid::ValidationFlags::all(),
-                wgpu::naga::valid::Capabilities::all(),
-            )
-            .validate(&module)
-            .unwrap_or_else(|e| panic!("{form:?}'s bake module validates: {e:?}"));
-        }
-    }
-
-    /// A block of `faces` whose cell values are `value(voxel, face)`, at chunk `c`.
-    fn block_of(c: [i32; 3], faces: &ChunkFaces, value: impl Fn([i32; 3], u8) -> f32) -> Vec<u32> {
-        let mut block = faces.directory();
-        for (slot, keys) in &faces.bricks {
-            let b = brick_of_slot(usize::from(*slot));
-            for &key in keys {
-                let i = i32::from(key >> 3);
-                let l = [i % 8, i / 8 % 8, i / 64];
-                let v = [0, 1, 2].map(|k| c[k] * 64 + b[k] * 8 + l[k]);
-                let x = value(v, (key & 7) as u8);
-                block.push(rgb9e5_pack([x; 3]));
-                block.push(u32::from(key));
-            }
-        }
-        block
-    }
-
-    /// The filter's block pass reads each face through `tent` over every block's cells: across a
-    /// chunk border as within, a crease's other side never, and the tail words unchanged.
-    #[test]
-    fn the_tent_reads_across_chunks_and_not_across_a_crease() {
-        let mut classes = vec![CLASS_AIR; 4];
-        classes[1] = CLASS_OPAQUE;
-        // A floor of two chunks along x, its top at y = 0, and a wall at x = 70 above it.
-        let mut chunks = [Chunk::uniform(AIR), Chunk::uniform(AIR)];
-        for (n, chunk) in chunks.iter_mut().enumerate() {
-            for slot in 0..CHUNK_BRICKS {
-                let b = brick_of_slot(slot);
-                chunk.set_brick(
-                    slot,
-                    Brick::from_fn(|l| {
-                        let v = [0, 1, 2].map(|k| b[k] * 8 + l[k]);
-                        let x = v[0] + 64 * n as i32;
-                        if v[1] == 0 || (x == 70 && v[1] <= 3) {
-                            1
-                        } else {
-                            AIR
-                        }
-                    }),
-                );
-            }
-        }
-        let left = [None, Some(&chunks[1]), None, None, None, None];
-        let right = [Some(&chunks[0]), None, None, None, None, None];
-        let faces = [
-            list_chunk_faces(&chunks[0], &left, &classes),
-            list_chunk_faces(&chunks[1], &right, &classes),
-        ];
-        // The floor's top faces read 1 left of x = 64 and 0 from there; the wall's -x faces 0.
-        let value = |v: [i32; 3], f: u8| f32::from(f == 3 && v[0] < 64);
-        let mut raw = BTreeMap::new();
-        for (n, f) in faces.iter().enumerate() {
-            raw.insert([n as i32, 0, 0], block_of([n as i32, 0, 0], f, value));
-        }
-        let cell = |m: &BTreeMap<[i32; 3], Vec<u32>>, v, f| cell_in(m, v, f).map(rgb9e5_unpack);
-        let mut out = BTreeMap::new();
-        for c in [[0, 0, 0], [1, 0, 0]] {
-            out.insert(c, tent_block(&raw, c).expect("a block"));
-        }
-        // Across the chunk border, the floor's first face beyond it reads a quarter, the one
-        // before it three quarters, and two beyond reads 0.
-        let at = |x: i32| cell(&out, [x, 0, 20], 3).expect("a floor face")[0];
-        assert_eq!(at(64), 0.25);
-        assert_eq!(at(63), 0.75);
-        assert_eq!(at(65), 0.0);
-        assert_eq!(at(10), 1.0);
-        // The wall's -x face beside the floor reads its own 0, whatever the floor holds.
-        let wall = cell(&out, [70, 1, 20], 0).expect("the wall's -x face");
-        assert_eq!(wall, [0.0; 3]);
-        // The tail words are the block's.
-        for c in [[0, 0, 0], [1, 0, 0]] {
-            let (a, b) = (&raw[&c], &out[&c]);
-            assert_eq!(a.len(), b.len());
-            assert_eq!(a[..CHUNK_BRICKS], b[..CHUNK_BRICKS]);
-        }
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("the bake module validates: {e:?}"));
     }
 
     #[test]

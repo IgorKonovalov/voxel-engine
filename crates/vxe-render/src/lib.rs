@@ -21,7 +21,7 @@ pub mod readback;
 
 pub use bake::{
     BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, DigReport, QueueStats, QueueView,
-    SeedForm, StoreFileError, StoreImage, StoreKey, StoreStats,
+    StoreStats,
 };
 pub use camera::{Camera, View};
 pub use exposure::{
@@ -34,10 +34,9 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    AgeStats, CrackShares, DEFAULT_TABLE_CELLS, DiagPreload, DiagReport, FRAME_PASSES, Frame,
-    GRADIENT_STRATUM, HistoryKill, Light, Lighting, LightingResolution, LodParams, LookParams,
-    MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, RenderScale, ShadowWalk,
-    SurfaceTuning, TableStats, ToneMap, ViewMode, jitter_at,
+    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting, LightingResolution,
+    LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer,
+    RenderScale, ShadowWalk, SurfaceTuning, ToneMap, ViewMode, jitter_at,
 };
 pub use present::Presenter;
 pub use probes::ProbeVolume;
@@ -45,11 +44,7 @@ pub use {glam, wgpu};
 
 /// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
 /// after; for headless validation.
-pub const MARCH_WGSL: &str = concat!(
-    include_str!("shaders/march.wgsl"),
-    "\n",
-    include_str!("shaders/cache_cell.wgsl")
-);
+pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
 /// The light pass, compiled after [`MARCH_WGSL`].
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 /// The gradient pass, compiled after [`MARCH_WGSL`] and [`LIGHT_WGSL`].
@@ -99,10 +94,8 @@ impl std::error::Error for LimitsError {}
 pub const STORAGE_BUFFERS_NEEDED: u32 =
     gpu_world::MAX_SHARDS + gpu_world::OTHER_STORAGE_BUFFERS + probes::PROBE_STORAGE_BUFFERS;
 
-/// The bytes the emissive table binds at [`DEFAULT_TABLE_CELLS`], with the blend list of a
-/// lighting grid of up to 2^22 pixels past its cells (`Frame`'s table buffer), rounded up to a
-/// MiB: 220 MiB.
-pub const TABLE_BINDING_BYTES: u64 = 220 << 20;
+/// The bytes the store's pool binds by default ([`bake::DEFAULT_BAKE_POOL_BYTES`]): 256 MiB.
+pub const STORE_BINDING_BYTES: u64 = bake::DEFAULT_BAKE_POOL_BYTES;
 
 /// Limits to request from `adapter`: [`limits_within`] its offered limits.
 pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> Result<wgpu::Limits, LimitsError> {
@@ -111,8 +104,8 @@ pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> Result<wgpu::Limi
 
 /// Limits to request from an adapter offering `offered`: the defaults, with the
 /// storage-binding and buffer-size limits raised toward what a brick pool of `pool_bytes`
-/// needs in one shard, and at least toward the emissive table at its default size
-/// ([`TABLE_BINDING_BYTES`]), and the storage buffers per stage raised to
+/// needs in one shard, and at least toward the store's pool at its default size
+/// ([`STORE_BINDING_BYTES`]), and the storage buffers per stage raised to
 /// [`STORAGE_BUFFERS_NEEDED`], each capped at what is offered; a pool past the size cap
 /// spreads over the shards (`ShardLayout`). `Err` names the storage-buffer count when the
 /// offer is below what the shaders bind.
@@ -121,7 +114,7 @@ pub fn limits_within(offered: &wgpu::Limits, pool_bytes: u64) -> Result<wgpu::Li
     let needed = l
         .max_storage_buffers_per_shader_stage
         .max(STORAGE_BUFFERS_NEEDED);
-    let want = pool_bytes.max(TABLE_BINDING_BYTES);
+    let want = pool_bytes.max(STORE_BINDING_BYTES);
     l.max_storage_buffer_binding_size = offered
         .max_storage_buffer_binding_size
         .min(want.max(l.max_storage_buffer_binding_size));
@@ -163,7 +156,7 @@ mod tests {
         assert_eq!(l.max_buffer_size, 1 << 30);
         let l = limits_within(&offer(12, 1 << 30), 16 << 20).expect("12 storage buffers");
         assert_eq!(l.max_storage_buffers_per_shader_stage, 12);
-        assert_eq!(l.max_storage_buffer_binding_size, TABLE_BINDING_BYTES);
+        assert_eq!(l.max_storage_buffer_binding_size, STORE_BINDING_BYTES);
         let l = limits_within(&offer(12, 128 << 20), 16 << 20).expect("12 storage buffers");
         assert_eq!(l.max_storage_buffer_binding_size, 128 << 20);
     }

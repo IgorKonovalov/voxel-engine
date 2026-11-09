@@ -21,11 +21,6 @@ use vxe_world::ChunkCoord;
 pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
 /// The sharpening pass (RCAS), compiled after [`MARCH_WGSL`].
 pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
-const CACHE_CLEAR_WGSL: &str = include_str!("shaders/cache_clear.wgsl");
-const CACHE_CELL_WGSL: &str = include_str!("shaders/cache_cell.wgsl");
-const CACHE_SWEEP_WGSL: &str = include_str!("shaders/cache_sweep.wgsl");
-const CACHE_BLEND_WGSL: &str = include_str!("shaders/cache_blend.wgsl");
-const CACHE_FILL_WGSL: &str = include_str!("shaders/cache_fill.wgsl");
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
@@ -70,9 +65,7 @@ pub struct Params {
     /// The manual exposure ([`Exposure::Manual`]); 1.0 and unread in auto, where the exposure
     /// state's `current` is the frame's.
     pub exposure: f32,
-    /// The emissive table as the shaders read it: bit 0 the temporal pass reads it
-    /// ([`Lighting::table_read`]), bits 14..28 [`Lighting::table_cap`].
-    pub cache: u32,
+    pub _pad4: u32,
     /// Emissive candidates per pixel ([`Lighting::candidates`]).
     pub candidates: u32,
     /// The slot of the light-sample buffer where the frame's candidate table starts.
@@ -93,13 +86,10 @@ pub struct Params {
     pub light_scale: u32,
     pub light_offset: u32,
     pub prev_light_offset: u32,
-    /// [`Lighting::table_cells`] less one: a slot index's mask.
-    pub cache_mask: u32,
+    pub _pad8: u32,
     /// The size of the frame's image: the output size with the upscaler, else `size`.
     pub output_size: [u32; 2],
-    /// The reopened fill ([`Lighting::fill_samples`] in bits 0..8, [`Lighting::fill_until`] in
-    /// bits 8..21).
-    pub fill: u32,
+    pub _pad10: u32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
     pub _pad9: u32,
@@ -136,19 +126,6 @@ pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
 /// point light, one shadow ray), so the reset adds none.
 pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
-/// `Params::lighting` bit: the table's guard runs (`guard_cell` in `gradient.wgsl`): the
-/// frame lies within [`GUARD_WINDOW`] frames of a change to the world's emissive light.
-pub const LIGHTING_GUARD: u32 = 1 << 10;
-/// Frames after a change to the world's emissive light during which the table's guard
-/// re-shades kept emitters and re-verifies dark capped cells, and may reopen them; outside it
-/// no cell's light can have changed, so the guard does nothing. The changes that open it: an
-/// edit box ([`Frame::invalidate`], or more than [`MAX_EDITS`] of them), any write to the
-/// mirror (`GpuWorld::bytes_written` moved since the last encode: a chunk streamed in or out,
-/// an edit's upload), and a change of a material's emission scale in the pixels' light
-/// ([`Frame::set_emission_scales`]). The first encode opens it. A later source of changing
-/// emissive light (a moving emitter) must open it too. A guess at ten times the far face's
-/// re-verify cadence (about 26 frames at 0.34 lighting pixels a face).
-pub const GUARD_WINDOW: u32 = 256;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
@@ -750,475 +727,6 @@ impl Upscaler {
     }
 }
 
-/// Cells of the emissive table by default ([`Lighting::table_cells`]): 48 B a cell, so
-/// 201 326 592 B.
-pub const DEFAULT_TABLE_CELLS: u32 = 1 << 22;
-/// `u32`s of a cell: the key (two words), the count, the three sums (Q17.15), the kept
-/// emitter's voxel and face (two words), its luminance, a frame stamp, the frame it was last
-/// seen ([`CACHE_SEEN_WORD`]) and its blended mean ([`CACHE_BLEND_WORD`]).
-pub const CACHE_CELL_WORDS: u64 = 12;
-/// The cell's word of the count; the three sums follow it.
-pub const CACHE_COUNT_WORD: usize = 2;
-/// The cell's seen word: `frame + 1` of the last frame a lighting pixel took the cell or a seen
-/// cell's blend read it; 0 never.
-pub const CACHE_SEEN_WORD: usize = 10;
-/// The cell's blended mean, each channel's square root over a shared exponent (`blend_unpack`,
-/// `cache_cell.wgsl`; written by `cache_blend.wgsl`).
-pub const CACHE_BLEND_WORD: usize = 11;
-/// Slots a key probes linearly: the smallest of 4, 8 and 16 under which the hall's, the
-/// vein's and the patch's key sets at the window's size, inserted at a load of 0.25 of
-/// [`DEFAULT_TABLE_CELLS`], leave no key without a slot (Plan 0057 Phase 7's census: 1356 at
-/// 4, 12 at 8).
-pub const CACHE_PROBES: u32 = 16;
-/// [`Lighting::table_age`] by default, in frames: ten seconds at 60 fps.
-pub const DEFAULT_TABLE_AGE: u32 = 600;
-/// [`Lighting::table_age_min`] by default, in frames.
-pub const DEFAULT_TABLE_AGE_MIN: u32 = 60;
-/// The occupied share over which the age-out runs (EVICT_LOAD), as sixteenths: 3/16.
-pub const EVICT_LOAD_SIXTEENTHS: u32 = 3;
-/// The occupied cells' growth over the mark that runs the age-out again, as a divisor of the
-/// cells: 1/32.
-pub const EVICT_STEP_DIVISOR: u32 = 32;
-/// Cells the table's walk (the chunk sweep and the age-out) visits a frame at most.
-pub const TABLE_WALK_SLICE: u32 = 1 << 20;
-/// The walk's state buffer (`TableWalk` in `cache_sweep.wgsl`): 20 words.
-const WALK_STATE_BYTES: u64 = 80;
-/// The fixed point of the sums.
-pub const CACHE_Q: f32 = 32768.0;
-/// Samples at which a cell stops adding, and its pixels stop drawing, by default
-/// ([`Lighting::table_cap`]). At most 4096: one sample's channel reaches 18.85 at the testbed's
-/// brightest emitter, which at Q17.15 and 4096 samples is `2.53e9`, under `2^32`.
-pub const DEFAULT_TABLE_CAP: u32 = 4096;
-/// Cells the reopened fill lists a frame at most (`FILL_LIST_MAX` in `light.wgsl`); a frame's
-/// offers past it are dropped and counted.
-pub const FILL_LIST_MAX: u32 = 16_384;
-/// The table's counters' bytes (`CacheStats` in `march.wgsl` up to its fill list).
-const CACHE_STATS_BYTES: u64 = 32;
-/// The fill list's bytes, in the counters' buffer past [`CACHE_STATS_BYTES`]: the offer
-/// counter, three words of padding and the slots.
-pub const FILL_LIST_BYTES: u64 = 16 + 4 * FILL_LIST_MAX as u64;
-/// The reopened fill's indirect dispatch: three words.
-pub const FILL_DISPATCH_BYTES: u64 = 12;
-/// The most samples a frame the fill draws per listed cell (`FILL_LANES` in
-/// `cache_fill.wgsl`).
-pub const FILL_SAMPLES_MAX: u32 = 16;
-/// [`Lighting::fill_samples`] by default.
-pub const DEFAULT_FILL_SAMPLES: u32 = 8;
-/// [`Lighting::fill_until`] by default.
-pub const DEFAULT_FILL_UNTIL: u32 = 256;
-/// Workgroups a dispatch dimension takes at most (wgpu's default limit).
-pub const MAX_DISPATCH_GROUPS: u32 = 65_535;
-/// [`Lighting::preload_radius`] by default, in voxels: 8 bricks.
-pub const DEFAULT_PRELOAD_RADIUS: u32 = 64;
-/// The largest [`Lighting::preload_radius`], in voxels (16 bricks).
-pub const PRELOAD_RADIUS_MAX: u32 = 128;
-/// [`Lighting::preload_bricks`] by default.
-pub const DEFAULT_PRELOAD_BRICKS: u32 = 128;
-/// [`Lighting::preload_claim_radius`] by default (r0), in voxels.
-pub const DEFAULT_PRELOAD_CLAIM_RADIUS: u32 = 32;
-/// [`Lighting::preload_until`] by default (C_PRE).
-pub const DEFAULT_PRELOAD_UNTIL: u32 = 256;
-/// [`Lighting::preload_samples`] by default (S_PRE).
-pub const DEFAULT_PRELOAD_SAMPLES: u32 = 32_768;
-/// Cells each of the preload's two lists holds (`PRELOAD_LIST_MAX` in `march.wgsl`); a frame's
-/// entries past it are dropped and counted, and the sweep lists them again.
-pub const PRELOAD_LIST_MAX: u32 = 32_768;
-/// Samples the sweep draws for a face with no cell before it claims one (k0;
-/// `PRELOAD_PROBE_MAX` in `cache_fill.wgsl`).
-pub const PRELOAD_PROBE_SAMPLES: u32 = 8;
-/// The share of the table's cells past which the sweep claims no cell (PRE_LOAD_MAX), as a
-/// divisor: a quarter.
-pub const PRELOAD_LOAD_DIVISOR: u32 = 4;
-/// The edit boxes' bricks the sweep visits first in a frame, at most (`brick_list` in
-/// `cache_fill.wgsl`); the rest of a large edit wait for the sweep's cursor.
-pub const PRELOAD_EDIT_BRICKS_MAX: usize = 256;
-/// Offsets the sweep's table holds at [`PRELOAD_RADIUS_MAX`]: `preload_offsets(16).len()`.
-pub const PRELOAD_OFFSETS_MAX: u64 = 17_077;
-/// The counters' bytes before the preload's lists: `CacheStats` from `pre_cursor` to
-/// `pre_idle_epoch` (38 words, [`PRELOAD_STATE_BYTES`]; the frame's counts and the args pass's
-/// snapshots are words 16 to 31, [`PRELOAD_COUNTS_BYTES`] from byte 64),
-/// then its two fill lists' 64 distance bands.
-const PRELOAD_HEADER_BYTES: u64 = PRELOAD_STATE_BYTES + 2 * 64 * 4;
-const PRELOAD_COUNTS_BYTES: u64 = 64;
-const PRELOAD_STATE_BYTES: u64 = 152;
-/// Faces each of the preload's two probe lists holds (`PRELOAD_PROBE_LIST_MAX` in
-/// `cache_fill.wgsl`), two words a face; a frame's faces past it are dropped and counted, and
-/// their slab is visited again.
-pub const PRELOAD_PROBE_LIST_MAX: u32 = 16_384;
-/// The preload's slab stamps (`cache_fill.wgsl`): one word for each z layer of 8 x 8 voxels of
-/// each brick of a cube of 33 bricks an edge, the bricks within [`PRELOAD_RADIUS_MAX`] of the
-/// eye's brick at their coordinates modulo 33.
-pub const PRELOAD_STAMPS: u64 = 33 * 33 * 33 * 8;
-/// The preload's store in the counters' buffer past the fill list: its header, its two fill
-/// lists (two words an entry), the sweep's offsets, its two probe lists, the left and claimed
-/// lists and its slab stamps.
-pub const PRELOAD_BYTES: u64 = PRELOAD_HEADER_BYTES
-    + 4 * (6 * PRELOAD_LIST_MAX as u64
-        + PRELOAD_OFFSETS_MAX
-        + 4 * PRELOAD_PROBE_LIST_MAX as u64
-        + PRELOAD_STAMPS);
-/// The preload's indirect dispatches: the sweep's three words, then the light pass's.
-pub const PRELOAD_DISPATCH_BYTES: u64 = 24;
-
-fn cache_mix(v: [i32; 3], face: u32, a: u32, b: u32) -> u32 {
-    let mut h = (v[0] as u32).wrapping_mul(a)
-        ^ (v[1] as u32).wrapping_mul(0xD816_3841)
-        ^ (v[2] as u32).wrapping_mul(b)
-        ^ (face + 1).wrapping_mul(0x1656_67B1);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2C1B_3C6D);
-    h ^= h >> 12;
-    h = h.wrapping_mul(0x297A_2D39);
-    h ^= h >> 15;
-    h
-}
-
-/// A key's first slot in a table of `cells` cells (`cache_slot` in `march.wgsl`): the voxel and
-/// its entry face, `2 axis + 1` toward `+axis`.
-pub fn cache_slot(voxel: [i32; 3], face: u32, cells: u32) -> u32 {
-    cache_mix(voxel, face, 0x8DA6_B343, 0xCB1A_B31F) & (cells - 1)
-}
-
-/// A key's two words (`cache_key` in `march.wgsl`): each coordinate's low 20 bits, x and y's
-/// low 12 in the first; y's high 8, z, the face in bits 28..31 and a valid bit 31 in the
-/// second, which is never 0.
-pub fn cache_key(voxel: [i32; 3], face: u32) -> [u32; 2] {
-    let [x, y, z] = voxel.map(|c| c as u32 & 0xF_FFFF);
-    [x | y << 20, y >> 12 | z << 8 | face << 28 | 1 << 31]
-}
-
-/// The brick offsets the preload's sweep visits around the eye's brick, nearest first: every
-/// `o` with `|o|^2 <= radius^2` in bricks, sorted by `|o|^2`, then z, y and x. At a radius of
-/// 8 bricks (64 voxels) 2109 offsets.
-pub fn preload_offsets(radius: u32) -> Vec<[i32; 3]> {
-    let r = radius as i32;
-    let mut out = Vec::new();
-    for z in -r..=r {
-        for y in -r..=r {
-            for x in -r..=r {
-                if x * x + y * y + z * z <= r * r {
-                    out.push([x, y, z]);
-                }
-            }
-        }
-    }
-    out.sort_by_key(|&[x, y, z]| (x * x + y * y + z * z, z, y, x));
-    out
-}
-
-/// The preload's counts of the last encode, read back by [`Frame::read_preload_stats`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PreloadStats {
-    /// Bricks the sweep visited: the edit boxes' within the radius, then the table's.
-    pub edit_bricks: u32,
-    pub visited: u32,
-    /// Slabs whose voxels were read (past their stamp and the brick's early-out).
-    pub scanned: u32,
-    /// Faces put on the list (a cell under C_PRE not yet on it, or a cell just claimed).
-    pub listed: u32,
-    /// Cells the sweep claimed for faces with none, in every band.
-    pub claimed: u32,
-    /// Of `claimed`, the cells within the claim radius whose probes drew light, and those whose
-    /// probes were all dark; the rest (`claimed - near_lit - near_unlit`) lay from r0 to R.
-    pub claimed_near_lit: u32,
-    pub claimed_near_unlit: u32,
-    /// Faces with no cell refused one: the table's load, a miss (the last frame's light pass
-    /// or the claim), no lit probe sample (beyond the claim radius only). A face within r0
-    /// that the load or a miss holds back is counted on each pass of the sweep that finds it.
-    pub refused_load: u32,
-    pub refused_miss: u32,
-    pub refused_unlit: u32,
-    /// Emissive samples the preload drew (the fill's and the sweep's probes).
-    pub samples: u32,
-    /// List entries dropped by a full list.
-    pub drops: u32,
-    /// Faces with no cell the probes sampled (the last frame's sweep found them), and the
-    /// probe list's entries dropped by a full list this frame.
-    pub probed: u32,
-    pub probe_drops: u32,
-    /// Slabs (8 x 8 x 1 voxels) the sweep skipped as done at this epoch.
-    pub done: u32,
-    /// The list's entries the frame filled from (its input) and the cells it drew for.
-    pub list: u32,
-    pub drawn: u32,
-    /// The probe list's entries the frame probed (its input).
-    pub probes: u32,
-}
-
-/// The preload's idle skip: while the args pass of some encode read the sweep idle (both lists
-/// empty and no brick visited), and every encode since was quiet (the camera still to the
-/// preload's test and in the same brick, the guard's window closed, no edit box, no world or
-/// table change, no chunk sweep, the same C_PRE, radius, claim radius and lighting grid), the
-/// preload's passes would change nothing and draw nothing, so the frame runs without them (as
-/// with the preload off) until an encode is not quiet. The args pass's words are copied into a
-/// small ring of mappable buffers and read back without blocking, a frame or more late.
-struct PreloadIdle {
-    slots: Vec<(wgpu::Buffer, IdleSlot)>,
-    /// Encodes with the preload wanted, and the first of the run of quiet ones.
-    encodes: u64,
-    quiet_since: Option<u64>,
-    /// A readback of an encode in the quiet run read idle.
-    confirmed: bool,
-    /// The last encode's eye brick and lighting grid.
-    eye_brick: Option<[i32; 3]>,
-    grid: Option<[u32; 2]>,
-}
-
-enum IdleSlot {
-    Free,
-    Copied(u64),
-    Mapping(u64, std::sync::Arc<std::sync::atomic::AtomicU8>),
-}
-
-/// C_PRE, the preload's radius in bricks and its claim radius: a change raises the epoch.
-type PreloadKey = (u32, u32, u32);
-
-/// The preload's state words the idle skip reads: `pre_n_in` on (`CacheStats` words 5 to 12 of
-/// the preload's header, of which `pre_n_in`, `pre_visit` and `pre_probe_n`), and the ring's
-/// slots.
-const PRELOAD_IDLE_WORDS_AT: u64 = 20;
-const PRELOAD_IDLE_BYTES: u64 = 32;
-const PRELOAD_IDLE_SLOTS: usize = 4;
-
-impl PreloadIdle {
-    fn new(device: &wgpu::Device) -> Self {
-        Self {
-            slots: (0..PRELOAD_IDLE_SLOTS)
-                .map(|_| {
-                    (
-                        device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("preload idle"),
-                            size: PRELOAD_IDLE_BYTES,
-                            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                            mapped_at_creation: false,
-                        }),
-                        IdleSlot::Free,
-                    )
-                })
-                .collect(),
-            encodes: 0,
-            quiet_since: None,
-            confirmed: false,
-            eye_brick: None,
-            grid: None,
-        }
-    }
-
-    /// The encode's decision: whether it skips the preload's passes, given whether it is
-    /// quiet, after a non-blocking poll of the slots copied before it.
-    fn decide(&mut self, device: &wgpu::Device, quiet: bool) -> bool {
-        let now = self.encodes;
-        self.encodes += 1;
-        if !quiet {
-            self.quiet_since = None;
-            self.confirmed = false;
-        } else if self.quiet_since.is_none() {
-            self.quiet_since = Some(now);
-        }
-        for (buf, slot) in &mut self.slots {
-            // Copied two encodes back or more: the encoder that copied it has been submitted.
-            if let IdleSlot::Copied(at) = *slot
-                && at + 1 < now
-            {
-                let done = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
-                let flag = done.clone();
-                buf.map_async(wgpu::MapMode::Read, .., move |r| {
-                    flag.store(
-                        if r.is_ok() { 1 } else { 2 },
-                        std::sync::atomic::Ordering::Release,
-                    );
-                });
-                *slot = IdleSlot::Mapping(at, done);
-            }
-        }
-        let _ = device.poll(wgpu::PollType::Poll);
-        for (buf, slot) in &mut self.slots {
-            let IdleSlot::Mapping(at, done) = slot else {
-                continue;
-            };
-            match done.load(std::sync::atomic::Ordering::Acquire) {
-                0 => continue,
-                1 => {
-                    let idle = {
-                        let bytes = buf
-                            .get_mapped_range(..PRELOAD_IDLE_BYTES)
-                            .expect("the idle words are mapped");
-                        let w: &[u32] = bytemuck::cast_slice(&bytes);
-                        // n_in, visit and probe_n (words 5, 8 and 11 of the header).
-                        w[0] == 0 && w[3] == 0 && w[6] == 0
-                    };
-                    buf.unmap();
-                    if idle && self.quiet_since.is_some_and(|q| *at >= q) {
-                        self.confirmed = true;
-                    }
-                }
-                _ => {}
-            }
-            *slot = IdleSlot::Free;
-        }
-        quiet && self.confirmed
-    }
-
-    /// A free slot to copy this encode's words into, marked copied.
-    fn take_slot(&mut self) -> Option<&wgpu::Buffer> {
-        let at = self.encodes.saturating_sub(1);
-        self.slots
-            .iter_mut()
-            .find(|(_, s)| matches!(s, IdleSlot::Free))
-            .map(|(b, s)| {
-                *s = IdleSlot::Copied(at);
-                &*b
-            })
-    }
-}
-
-/// The blend's uniform (`Blend` in `cache_blend.wgsl`).
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct BlendUniform {
-    cache_mask: u32,
-    c_cap: u32,
-    pool_min: u32,
-    wide: u32,
-    frame: u32,
-    force: u32,
-    _pad: [u32; 2],
-}
-
-/// What the temporal pass reads of a table cell (`cache_blend.wgsl`): a pool of its face's samples
-/// and its coplanar neighbours', or its own mean.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TableBlend {
-    /// The cell's own mean.
-    Off,
-    /// The 3 x 3 pool.
-    Narrow,
-    /// The 3 x 3 pool, and the 5 x 5's where it holds under [`Lighting::blend_pool_min`] samples.
-    #[default]
-    Wide,
-}
-
-impl TableBlend {
-    /// The mode's word in the banner and on the command line.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Narrow => "3x3",
-            Self::Wide => "5x5",
-        }
-    }
-}
-
-/// [`Lighting::blend_pool_min`] by default.
-pub const DEFAULT_BLEND_POOL_MIN: u32 = 4_096;
-
-/// A blend word's colour (`blend_unpack` in `cache_cell.wgsl`).
-pub fn blend_unpack(word: u32) -> [f32; 3] {
-    let scale = 2f32.powi((word >> 27) as i32 - 26);
-    [word & 511, (word >> 9) & 511, (word >> 18) & 511].map(|m| {
-        let q = m as f32 / 511.0;
-        q * q * scale
-    })
-}
-
-/// The table walk's uniform (`Sweep` in `cache_sweep.wgsl`).
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct SweepUniform {
-    chunk: [i32; 3],
-    r2: i32,
-    eye: [f32; 3],
-    reach2: f32,
-    request: u32,
-    cells: u32,
-    evict_load: u32,
-    evict_step: u32,
-    age_max: u32,
-    age_min: u32,
-    slice: u32,
-    frame: u32,
-    age_out: u32,
-    _pad: [u32; 3],
-}
-
-/// The table's age-out after the last submitted encode ([`Frame::read_age_stats`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AgeStats {
-    /// Age-out passes started since the frame was made.
-    pub passes: u32,
-    /// Cells the age-out has freed since the frame was made, and in the last encode.
-    pub evicted: u32,
-    pub evicted_frame: u32,
-    /// Cells the chunk sweep has freed since the frame was made.
-    pub swept: u32,
-    /// The age the next pass takes, in frames.
-    pub age: u32,
-    /// Cells the running walk has left (0 idle).
-    pub walk_left: u32,
-}
-
-/// The preload's uniform (`Preload` in `cache_fill.wgsl`).
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct PreloadUniform {
-    eye_brick: [i32; 3],
-    edit_bricks: u32,
-    offsets: u32,
-    bricks: u32,
-    still: u32,
-    _pad0: u32,
-    until: u32,
-    draw_cells: u32,
-    load_max: u32,
-    probe: u32,
-    epoch: u32,
-    light_cols: u32,
-    light_rows: u32,
-    _pad1: u32,
-    eye: [f32; 3],
-    claim: f32,
-    brick_list: [[i32; 4]; PRELOAD_EDIT_BRICKS_MAX],
-}
-
-/// The emissive table's counters, read back by [`Frame::read_table_stats`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TableStats {
-    /// The table's cells ([`Lighting::table_cells`]).
-    pub cells: u32,
-    /// Cells holding a key.
-    pub occupied: u32,
-    /// Lighting pixels of the last encode whose key found neither its cell nor a free slot
-    /// in [`CACHE_PROBES`] probes; their emissive part was their own sample.
-    pub misses: u32,
-}
-
-/// Where a cube face's emissive light comes from (ADR-0046).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Light {
-    /// The view-driven per-face table (ADR-0043).
-    #[default]
-    Table,
-    /// The loaded store, baked ahead of the frames that read it ([`Frame::bake_until`]).
-    Baked,
-}
-
-impl Light {
-    /// The name `--light` takes and the modes' line shows.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Table => "table",
-            Self::Baked => "baked",
-        }
-    }
-
-    /// The light named `name`.
-    pub fn from_name(name: &str) -> Option<Self> {
-        [Self::Table, Self::Baked]
-            .into_iter()
-            .find(|l| l.name() == name)
-    }
-}
-
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -1263,87 +771,11 @@ pub struct Lighting {
     /// A probe's blend in reach while the lamp moves, `h old + (1 - h) new` (default
     /// [`crate::probes::DEFAULT_H_MOVE`]); its running mean restarts once the lamp is still.
     pub probe_move_blend: f32,
-    /// Cells of the emissive table (ADR-0043), a power of two (default
-    /// [`DEFAULT_TABLE_CELLS`]): the emissive direct irradiance per cube face, its only store.
-    /// The light pass adds each sample to the hit face's cell and draws nothing on a capped
-    /// one; the temporal pass shows the cell's mean from its first sample. A hit with no face
-    /// (the field look, a translucent hit, a ray from inside rock) or whose key finds no slot
-    /// blends its own sample as the lamp's part does. An edit box clears its cells, an
-    /// emission-scale change ([`Frame::set_emission_scales`]) the whole table, the camera
-    /// entering another chunk frees the cells beyond the light radius, and the age-out
-    /// ([`Lighting::table_age_out`]) frees the cells far and long unseen.
-    pub table_cells: u32,
-    /// Samples at which a cell stops adding, at most 4096 (default [`DEFAULT_TABLE_CAP`]).
-    pub table_cap: u32,
-    /// The temporal pass reads the table (default on). Off, every hit takes the fallback: for
-    /// tests that compare against the table.
-    pub table_read: bool,
-    /// What the temporal pass reads of a cell (default [`TableBlend::Wide`]).
-    pub blend: TableBlend,
-    /// The samples under which a 3 x 3 pool widens to the 5 x 5 under [`TableBlend::Wide`].
-    pub blend_pool_min: u32,
-    /// The table's age-out (default on): when the occupied cells cross 3/16 of the table
-    /// upward, again once they have grown by 1/32 of it since the last pass while still over,
-    /// and again [`Lighting::table_age`] frames after a pass that left them over having freed a
-    /// cell or started on their growth, a walk frees every cell whose voxel lies beyond the preload's radius of the eye
-    /// and that no lighting pixel nor a seen cell's blend has read in its age. Off is for
-    /// tests that count what the table holds without it.
-    pub table_age_out: bool,
-    /// The age-out's age in frames (default [`DEFAULT_TABLE_AGE`]): halved by each pass that
-    /// leaves the occupied cells over the mark, down to [`Lighting::table_age_min`] (default
-    /// [`DEFAULT_TABLE_AGE_MIN`]), and back once they are under it.
-    pub table_age: u32,
-    pub table_age_min: u32,
-    /// The reopened fill's samples a frame per listed cell, at most [`FILL_SAMPLES_MAX`]
-    /// (default [`DEFAULT_FILL_SAMPLES`]); 0 is off. A cell an edit box or the guard reopened
-    /// is listed by the first of its pixels each frame, and the fill draws this many emissive
-    /// samples from random points on its face, so a dug hole converges at this rate however
-    /// few pixels its faces cover. A face seen for the first time with no edit is not listed.
-    pub fill_samples: u32,
-    /// The count at which a reopened cell leaves the fill's list (C_FILL; default
-    /// [`DEFAULT_FILL_UNTIL`], at most [`Lighting::table_cap`]).
-    pub fill_until: u32,
-    /// The camera-radius preload's radius in voxels, rounded down to whole bricks and at most
-    /// [`PRELOAD_RADIUS_MAX`] (default [`DEFAULT_PRELOAD_RADIUS`]); 0 is off. A cursor sweeps the
-    /// mirror's bricks within it around the eye's brick, nearest first, and lists every lit
-    /// face it finds, claiming a cell for a face with none when one of
-    /// [`PRELOAD_PROBE_SAMPLES`] samples is lit, the table held under a quarter of its cells
-    /// and the last frame counted no miss; the listed cells are filled to
-    /// [`Lighting::preload_until`] whatever the view shows. Each slab of a brick the sweep has
-    /// read is stamped with the world's epoch, which every edit, upload, table clear and chunk
-    /// sweep raises: a face no emitter reaches is probed once an epoch, and a slab with nothing
-    /// left to fill is skipped. The fill and the probes run in the light pass's dispatch.
-    pub preload_radius: u32,
-    /// Bricks the sweep visits a frame (B; default [`DEFAULT_PRELOAD_BRICKS`]), after the
-    /// frame's edit boxes' bricks; none while idle: the lists empty, the camera moved under a
-    /// voxel and turned under a degree since the last encode, the guard's window closed, and a
-    /// whole pass of the sweep at this epoch found every slab done.
-    pub preload_bricks: u32,
-    /// The count to which the preload fills a listed cell (C_PRE; default
-    /// [`DEFAULT_PRELOAD_UNTIL`], at most [`Lighting::table_cap`]).
-    pub preload_until: u32,
-    /// The preload's claim radius in voxels (r0; default [`DEFAULT_PRELOAD_CLAIM_RADIUS`], at
-    /// most the radius; 0 none): a face whose voxel centre lies within it of the eye claims a
-    /// cell whatever its probes read (the load and miss guards still apply) and is filled to
-    /// [`Lighting::preload_until`] lit or unlit, so a face no emitter reaches is filled once with
-    /// zeros and then skipped for the life of its cell. From r0 to the radius a face claims a
-    /// cell only when a probe sample is lit.
-    pub preload_claim_radius: u32,
-    /// The preload fill's samples a frame at most (S_PRE; default
-    /// [`DEFAULT_PRELOAD_SAMPLES`]), [`FILL_SAMPLES_MAX`] a listed cell, so the list's first
-    /// `S_PRE / 16` cells draw each frame.
-    pub preload_samples: u32,
-    /// Where a cube face's emissive light comes from (default [`Light::Table`]). Under
-    /// [`Light::Baked`] the temporal pass reads the store, the light pass draws no emissive sample
-    /// for a cube face, and [`Frame::set_lighting`] turns off the table's blend, fill, preload and
-    /// age-out; a hit with no face keeps the fallback.
-    pub light: Light,
-    /// The store's pool under [`Light::Baked`], clamped to the device's storage binding (default
-    /// [`crate::bake::DEFAULT_BAKE_POOL_BYTES`]). [`Light::Table`] allocates a minimal one.
+    /// The store's pool (ADR-0046), clamped to the device's storage binding (default
+    /// [`crate::bake::DEFAULT_BAKE_POOL_BYTES`]): allocated by the first bake or live queue
+    /// ([`Frame::bake_until`], [`Frame::start_bake_queue`]); a minimal one until then, which
+    /// holds no light.
     pub bake_pool_bytes: u64,
-    /// Under [`Light::Table`], the store's pool is kept as it is rather than shrunk, so a
-    /// comparison can swap the read between the table and a baked store in place (default off).
-    pub keep_store: bool,
 }
 
 impl Default for Lighting {
@@ -1362,63 +794,12 @@ impl Default for Lighting {
             probe_freeze: DEFAULT_PROBE_FREEZE,
             lamp_reach: crate::probes::LAMP_REACH,
             probe_move_blend: crate::probes::DEFAULT_H_MOVE,
-            table_cells: DEFAULT_TABLE_CELLS,
-            table_cap: DEFAULT_TABLE_CAP,
-            table_read: true,
-            blend: TableBlend::default(),
-            blend_pool_min: DEFAULT_BLEND_POOL_MIN,
-            table_age_out: true,
-            table_age: DEFAULT_TABLE_AGE,
-            table_age_min: DEFAULT_TABLE_AGE_MIN,
-            fill_samples: DEFAULT_FILL_SAMPLES,
-            fill_until: DEFAULT_FILL_UNTIL,
-            preload_radius: DEFAULT_PRELOAD_RADIUS,
-            preload_bricks: DEFAULT_PRELOAD_BRICKS,
-            preload_until: DEFAULT_PRELOAD_UNTIL,
-            preload_claim_radius: DEFAULT_PRELOAD_CLAIM_RADIUS,
-            preload_samples: DEFAULT_PRELOAD_SAMPLES,
-            light: Light::Table,
             bake_pool_bytes: crate::bake::DEFAULT_BAKE_POOL_BYTES,
-            keep_store: false,
         }
     }
 }
 
 impl Lighting {
-    /// [`Lighting::table_cells`] as the frame allocates it: a power of two, at least 64.
-    pub fn cells(&self) -> u32 {
-        self.table_cells.max(64).next_power_of_two()
-    }
-
-    /// `Params::fill`.
-    fn fill_word(&self) -> u32 {
-        let until = self
-            .fill_until
-            .clamp(1, self.table_cap.clamp(1, DEFAULT_TABLE_CAP));
-        self.fill_samples.min(FILL_SAMPLES_MAX) | until << 8
-    }
-
-    /// [`Lighting::preload_radius`] in whole bricks, at most 16; 0 is off.
-    pub fn preload_brick_radius(&self) -> u32 {
-        self.preload_radius.min(PRELOAD_RADIUS_MAX) / 8
-    }
-
-    /// [`Lighting::preload_until`] as the preload takes it: 1 to the cap.
-    pub fn preload_cap(&self) -> u32 {
-        self.preload_until
-            .clamp(1, self.table_cap.clamp(1, DEFAULT_TABLE_CAP))
-    }
-
-    /// `Params::cache`.
-    fn cache_word(&self) -> u32 {
-        if self.light == Light::Baked {
-            return 4 | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14;
-        }
-        u32::from(self.table_read)
-            | u32::from(self.blend != TableBlend::Off) << 1
-            | (self.table_cap.clamp(1, DEFAULT_TABLE_CAP) & 0x3FFF) << 14
-    }
-
     /// The word of `ProbeUniform::steady`: the freeze count.
     fn probe_steady(&self) -> u32 {
         self.probe_freeze.clamp(1, crate::probes::MAX_AGE)
@@ -1557,48 +938,9 @@ pub struct Frame {
     light_layout: wgpu::BindGroupLayout,
     /// The light pass alone, built on first use (`light_layout` in group 2).
     light: std::sync::OnceLock<wgpu::ComputePipeline>,
-    /// The reopened fill (`cache_fill.wgsl`): its two pipelines, their group 2 and 3 layouts,
-    /// and the indirect dispatch the args pass writes (the list the light pass writes lies in
-    /// `cache_stats` past its 32 bytes of counters).
-    fill: wgpu::ComputePipeline,
-    fill_args: wgpu::ComputePipeline,
-    fill_layout: wgpu::BindGroupLayout,
-    fill_stats_layout: wgpu::BindGroupLayout,
-    fill_args_layout: wgpu::BindGroupLayout,
-    fill_dispatch: wgpu::Buffer,
-    /// The camera-radius preload (`cache_fill.wgsl`): its args pass, fill and sweep, their
-    /// group 3 layouts (the uniform; the uniform and the dispatches), its uniform and its
-    /// indirect dispatches. Its lists and the sweep's offsets lie in `cache_stats` past the
-    /// fill list.
-    preload_args: wgpu::ComputePipeline,
-    /// The light pass and the preload's fill, probes and sweep in one indirect dispatch
-    /// (`shade_preload`), written by the preload's args pass.
-    light_preload: wgpu::ComputePipeline,
-    /// The preload's sweep (`preload_sweep`), its own dispatch after the args pass.
-    preload_sweep: wgpu::ComputePipeline,
-    /// The preload's epoch (the slab stamps', `cache_fill.wgsl`), raised on every encode whose
-    /// world or table changed as a whole, and C_PRE, the radius in bricks and the claim radius
-    /// at the last encode.
-    preload_epoch: std::sync::Mutex<(u32, Option<PreloadKey>)>,
-    preload_layout: wgpu::BindGroupLayout,
-    preload_args_layout: wgpu::BindGroupLayout,
-    preload_uniform: wgpu::Buffer,
-    preload_dispatch: wgpu::Buffer,
-    /// The brick radius whose offsets `cache_stats` holds, `None` before the first write.
-    preload_offsets_radius: std::sync::Mutex<Option<u32>>,
-    /// The edit and table bricks the last encode's sweep visited at most (the edit bricks,
-    /// then the table's B), for [`Frame::read_preload_stats`].
-    preload_edit_bricks: std::sync::atomic::AtomicU32,
-    /// The last encode ran the preload.
-    preload_ran: std::sync::atomic::AtomicBool,
-    /// The preload's idle skip ([`PreloadIdle`]), and the encodes it skipped.
-    preload_idle: std::sync::Mutex<PreloadIdle>,
-    preload_skips: std::sync::atomic::AtomicU32,
-    /// DIAGNOSTIC: [`DiagPreload`], set by [`Frame::set_diag_preload`].
-    diag_preload: std::sync::Mutex<DiagPreload>,
     temporal_layout: wgpu::BindGroupLayout,
-    /// The loaded store (minimal under [`Light::Table`]) and the bake's pipeline, built on the
-    /// first bake.
+    /// The store (minimal until the first bake or live queue, [`Lighting::bake_pool_bytes`]) and
+    /// the bake's pipeline, built on the first bake.
     store: crate::bake::Store,
     bake: Option<crate::bake::BakePipeline>,
     /// The edit boxes since the last dig re-bake ([`Frame::rebake_digs`]), every one, while the
@@ -1608,7 +950,6 @@ pub struct Frame {
     bake_queue: Option<crate::bake::BakeQueue>,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
-    gradient_cache_layout: wgpu::BindGroupLayout,
     gradient: wgpu::ComputePipeline,
     variance_layout: wgpu::BindGroupLayout,
     variance: wgpu::ComputePipeline,
@@ -1662,54 +1003,6 @@ pub struct Frame {
     /// [`Frame::probes`] or [`Frame::probes_mut`]), at `probe_spacing`; its passes' group-3
     /// layout; the gather's group-2 layout. The device builds the volume.
     probes: std::sync::OnceLock<ProbeVolume>,
-    /// The emissive table (ADR-0043): [`Lighting::cells`] cells of [`CACHE_CELL_WORDS`]
-    /// `u32`s, rebuilt when the cell count changes; and its counters (`CacheStats` in
-    /// `march.wgsl`: misses, occupied, two pads).
-    cache: wgpu::Buffer,
-    cache_stats: wgpu::Buffer,
-    /// The table clears at the next encode: [`Frame::reset_history`] asked, or the table was
-    /// rebuilt.
-    cache_clear_requested: std::sync::atomic::AtomicBool,
-    /// Whole-table clears and sweeps encoded since the frame was made, for readings.
-    cache_clears: std::sync::atomic::AtomicU32,
-    cache_sweeps: std::sync::atomic::AtomicU32,
-    cache_clear: wgpu::ComputePipeline,
-    cache_clear_layout: wgpu::BindGroupLayout,
-    cache_sweep: wgpu::ComputePipeline,
-    cache_sweep_layout: wgpu::BindGroupLayout,
-    /// The walk's args pass (`walk_args`, on `cache_sweep_layout`) and the slice's layout.
-    cache_walk_args: wgpu::ComputePipeline,
-    cache_walk_layout: wgpu::BindGroupLayout,
-    /// The walk's uniform (`Sweep` in `cache_sweep.wgsl`), its state across frames (`TableWalk`,
-    /// read back by [`Frame::read_age_stats`]) and its slice's indirect dispatch.
-    sweep_params: wgpu::Buffer,
-    walk_state: wgpu::Buffer,
-    walk_dispatch: wgpu::Buffer,
-    /// The table's cells as allocated ([`Frame::table_cells`]).
-    table_cells: u32,
-    /// The blend pass (`cache_blend.wgsl`): its args pass and layout, the pass and layout, its
-    /// uniform and indirect dispatch, and whether the next encode runs it whatever the table
-    /// did (the mode changed).
-    cache_blend_args: wgpu::ComputePipeline,
-    cache_blend_args_layout: wgpu::BindGroupLayout,
-    cache_blend: wgpu::ComputePipeline,
-    cache_blend_layout: wgpu::BindGroupLayout,
-    blend_params: wgpu::Buffer,
-    blend_dispatch: wgpu::Buffer,
-    blend_force: std::sync::atomic::AtomicBool,
-    /// The chunk sweeps requested: the walk takes a new one when it moves.
-    sweep_requests: std::sync::atomic::AtomicU32,
-    /// The table's edit-box reset by cells (`clear_box_cells`), for a frame whose boxes' voxel
-    /// faces outnumber the cells; built on its first use.
-    cache_clear_cells: std::sync::OnceLock<wgpu::ComputePipeline>,
-    /// The camera's chunk at the last encode, `None` before the first: the sweep runs when it
-    /// changes.
-    sweep_chunk: std::sync::Mutex<Option<[i32; 3]>>,
-    /// Workgroups a dispatch row of the table's passes takes at most ([`MAX_DISPATCH_GROUPS`];
-    /// a test sets fewer, [`Frame::set_table_dispatch_cap`]).
-    table_dispatch_cap: u32,
-    /// The guard runs in every frame, its window ignored ([`Frame::force_guard_window`]).
-    guard_forced: bool,
     probe_spacing: u32,
     /// The probe volume's side, if fixed ([`Frame::set_probe_axis`]).
     probe_axis_fixed: Option<u32>,
@@ -1748,48 +1041,6 @@ pub struct Frame {
     composite_capture: Option<wgpu::Texture>,
 }
 
-/// The emissive table's buffer: `cells` cells, then the blend list's header
-/// ([`BLEND_HEADER_BYTES`]) and `list` slots of 4 B (`cache_blend.wgsl`).
-fn table_buffer(device: &wgpu::Device, cells: u32, list: u32) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("emissive table"),
-        size: table_bytes(cells, list),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-/// The cells a device binds: `want`, halved until the table with its `list` slots fits the
-/// device's storage binding size (lavapipe's is 128 MiB, under the default table).
-pub fn table_cells_within(limit: u64, want: u32, list: u32) -> u32 {
-    let mut cells = want;
-    while cells > 64 && table_bytes(cells, list) > limit {
-        cells /= 2;
-    }
-    cells
-}
-
-/// [`table_buffer`]'s bytes.
-pub fn table_bytes(cells: u32, list: u32) -> u64 {
-    u64::from(cells) * CACHE_CELL_WORDS * 4 + BLEND_HEADER_BYTES + 4 * u64::from(list)
-}
-
-/// The blend list's header past the table's cells: the entries listed this frame, the dirty
-/// word, the last frame's and a word of padding.
-pub const BLEND_HEADER_BYTES: u64 = 16;
-
-/// A dispatch of `groups` workgroups in rows of at most `cap`: `[x, y]` with `x * y >= groups`.
-pub fn dispatch_rows(groups: u32, cap: u32) -> [u32; 2] {
-    let cap = cap.max(1);
-    if groups <= cap {
-        [groups, 1]
-    } else {
-        [cap, groups.div_ceil(cap)]
-    }
-}
-
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
 pub const ATROUS_ITERATIONS: usize = 4;
 
@@ -1821,10 +1072,6 @@ struct History {
     light_key: Option<LightKey>,
     /// Encoded frames with a probe update left in the open light-change window.
     light_window: u32,
-    /// The frame of the last change that opens the guard's window ([`GUARD_WINDOW`]), and the
-    /// mirror's `bytes_written` at the last encode with history.
-    guard_event: Option<u32>,
-    guard_bytes: Option<u64>,
 }
 
 /// What a frame's static light depends on, as the probe volume's light-change window compares
@@ -2113,198 +1360,8 @@ impl Frame {
             );
             (layout, pipeline)
         };
-        // The light pass's pipeline alone (`shade`) is built on the first encode that runs it
-        // (the preload off): with the preload on, `light_preload` runs the pass.
-        let light_layout = io_layout(
-            device,
-            "light",
-            &[
-                Io::Float,
-                Io::Uint,
-                f16,
-                Io::Storage,
-                Io::Storage,
-                Io::Uniform,
-            ],
-        );
-        // The reopened fill: light.wgsl's table and counters (which hold the list) at their
-        // bindings in group 2; the args pass writes the indirect dispatch through group 3.
-        let fill_layout = io_layout_at(device, "fill", &[(3, Io::Storage), (4, Io::Storage)]);
-        // The args pass binds the counters alone in group 2 (the world's storage buffers and
-        // the table's would pass the requested `max_storage_buffers_per_shader_stage`,
-        // `STORAGE_BUFFERS_NEEDED`).
-        let fill_stats_layout = io_layout_at(device, "fill stats", &[(4, Io::Storage)]);
-        let fill_args_layout = io_layout(device, "fill args", &[Io::Storage]);
-        let fill_source = format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{CACHE_FILL_WGSL}");
-        let fill = compute_pipeline(
-            device,
-            "fill",
-            fill_source.clone(),
-            &[Some(&world_layout), None, Some(&fill_layout)],
-            "fill",
-        );
-        let fill_args = compute_pipeline(
-            device,
-            "fill args",
-            fill_source,
-            &[
-                Some(&world_layout),
-                None,
-                Some(&fill_stats_layout),
-                Some(&fill_args_layout),
-            ],
-            "fill_args",
-        );
-        let fill_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fill dispatch"),
-            size: FILL_DISPATCH_BYTES,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
-            mapped_at_creation: false,
-        });
-        // The preload: the fill's group 2 with its uniform at group 3 binding 1; the args pass
-        // binds the counters alone in group 2, as the fill's does, and the dispatches at 2.
-        let preload_layout = io_layout_at(device, "preload", &[(1, Io::Uniform)]);
-        let preload_args_layout = io_layout_at(
-            device,
-            "preload args",
-            &[(1, Io::Uniform), (2, Io::Storage)],
-        );
-        let preload_source = format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{CACHE_FILL_WGSL}");
-        let preload_args = compute_pipeline(
-            device,
-            "preload args",
-            preload_source.clone(),
-            // No world: the table, the counters and the dispatches' buffer are three of the
-            // stage's storage buffers.
-            &[None, None, Some(&fill_layout), Some(&preload_args_layout)],
-            "preload_args",
-        );
-        let preload_sweep = compute_pipeline(
-            device,
-            "preload sweep",
-            preload_source.clone(),
-            &[
-                Some(&world_layout),
-                None,
-                Some(&fill_layout),
-                Some(&preload_layout),
-            ],
-            "preload_sweep",
-        );
-        let light_preload = compute_pipeline(
-            device,
-            "light and preload",
-            preload_source,
-            &[
-                Some(&world_layout),
-                None,
-                Some(&light_layout),
-                Some(&preload_layout),
-            ],
-            "shade_preload",
-        );
-        let preload_uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("preload"),
-            size: size_of::<PreloadUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        // DIAGNOSTIC: `COPY_SRC` for `DiagPreload::read_args`; out with the fix for the WARP
-        // preload hang.
-        let preload_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("preload dispatch"),
-            size: PRELOAD_DISPATCH_BYTES,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let (cache_clear_layout, cache_clear) = pass(
-            "cache clear",
-            CACHE_CLEAR_WGSL,
-            "clear_cells",
-            &[Io::Uniform, Io::Storage],
-        );
-        // The walk binds no world: its table, counters, state and dispatch are four of the
-        // stage's storage buffers.
-        let cache_sweep_layout = io_layout(
-            device,
-            "cache walk",
-            &[
-                Io::Uniform,
-                Io::Storage,
-                Io::Storage,
-                Io::Storage,
-                Io::Storage,
-            ],
-        );
-        // The slice reads no dispatch words: the buffer is its indirect argument there.
-        let cache_walk_layout = io_layout(
-            device,
-            "cache walk slice",
-            &[Io::Uniform, Io::Storage, Io::Storage, Io::Storage],
-        );
-        let walk_source = format!("{CACHE_CELL_WGSL}\n{CACHE_SWEEP_WGSL}");
-        let cache_walk_args = compute_pipeline(
-            device,
-            "cache walk args",
-            walk_source.clone(),
-            &[None, None, Some(&cache_sweep_layout)],
-            "walk_args",
-        );
-        let cache_sweep = compute_pipeline(
-            device,
-            "cache walk",
-            walk_source,
-            &[None, None, Some(&cache_walk_layout)],
-            "walk_cells",
-        );
-        let cache_blend_layout = io_layout(device, "cache blend", &[Io::Uniform, Io::Storage]);
-        let cache_blend_args_layout = io_layout(
-            device,
-            "cache blend args",
-            &[Io::Uniform, Io::Storage, Io::Storage],
-        );
-        let cache_blend_args = compute_pipeline(
-            device,
-            "cache blend args",
-            format!("{CACHE_CELL_WGSL}\n{CACHE_BLEND_WGSL}"),
-            &[None, None, Some(&cache_blend_args_layout)],
-            "blend_args",
-        );
-        let blend_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("emissive table blend dispatch"),
-            size: 12,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
-            mapped_at_creation: false,
-        });
-        let cache_blend = compute_pipeline(
-            device,
-            "cache blend",
-            format!("{CACHE_CELL_WGSL}\n{CACHE_BLEND_WGSL}"),
-            &[None, None, Some(&cache_blend_layout)],
-            "blend_cells",
-        );
-        let blend_params = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("emissive table blend"),
-            size: size_of::<BlendUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let walk_state = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("emissive table walk"),
-            size: WALK_STATE_BYTES,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let walk_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("emissive table walk dispatch"),
-            size: 12,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
-            mapped_at_creation: false,
-        });
+        // The light pass's pipeline (`shade`) is built on the first encode that runs it.
+        let light_layout = io_layout(device, "light", &[Io::Float, Io::Uint, f16]);
         let targets = Targets::new(
             device,
             width,
@@ -2313,27 +1370,6 @@ impl Frame {
             (internal != output).then_some(output),
             true,
         );
-        let [lw, lh] = targets.light_size();
-        let table_cells = table_cells_within(
-            device.limits().max_storage_buffer_binding_size,
-            DEFAULT_TABLE_CELLS,
-            lw * lh,
-        );
-        let cache = table_buffer(device, table_cells, lw * lh);
-        let cache_stats = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("emissive table counters"),
-            size: CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_BYTES,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let sweep_params = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("emissive table sweep"),
-            size: size_of::<SweepUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         let (temporal_layout, temporal) = pass(
             "temporal",
             TEMPORAL_WGSL,
@@ -2351,26 +1387,14 @@ impl Frame {
                 Io::Uniform,
                 Io::Float,
                 Io::Storage,
-                Io::Storage,
             ],
         );
         let gradient_layout = io_layout(device, "gradient", &[Io::Float, Io::Uint, Io::Float, f16]);
-        // The guard's group 2: light.wgsl's table and counters at their bindings there.
-        let gradient_cache_layout = io_layout_at(
-            device,
-            "gradient cache",
-            &[(3, Io::Storage), (4, Io::Storage)],
-        );
         let gradient = compute_pipeline(
             device,
             "gradient",
             format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{GRADIENT_WGSL}"),
-            &[
-                Some(&world_layout),
-                None,
-                Some(&gradient_cache_layout),
-                Some(&gradient_layout),
-            ],
+            &[Some(&world_layout), None, None, Some(&gradient_layout)],
             "gradient",
         );
         let downsample_layout = io_layout(
@@ -2549,26 +1573,6 @@ impl Frame {
             world_layout,
             hit,
             light_layout,
-            fill,
-            fill_args,
-            fill_layout,
-            fill_stats_layout,
-            fill_args_layout,
-            fill_dispatch,
-            preload_args,
-            light_preload,
-            preload_sweep,
-            preload_epoch: std::sync::Mutex::new((0, None)),
-            preload_layout,
-            preload_args_layout,
-            preload_uniform,
-            preload_dispatch,
-            preload_offsets_radius: std::sync::Mutex::new(None),
-            preload_edit_bricks: std::sync::atomic::AtomicU32::new(0),
-            preload_ran: std::sync::atomic::AtomicBool::new(false),
-            preload_idle: std::sync::Mutex::new(PreloadIdle::new(device)),
-            preload_skips: std::sync::atomic::AtomicU32::new(0),
-            diag_preload: std::sync::Mutex::new(DiagPreload::default()),
             light: std::sync::OnceLock::new(),
             temporal_layout,
             store: crate::bake::Store::new(device, crate::bake::MINIMAL_POOL_BYTES),
@@ -2577,7 +1581,6 @@ impl Frame {
             bake_queue: None,
             temporal,
             gradient_layout,
-            gradient_cache_layout,
             gradient,
             variance_layout,
             variance,
@@ -2657,35 +1660,6 @@ impl Frame {
             composite_hdr: None,
             composite_capture: None,
             probes: std::sync::OnceLock::new(),
-            cache,
-            table_cells,
-            cache_blend_args,
-            cache_blend_args_layout,
-            cache_blend,
-            cache_blend_layout,
-            blend_params,
-            blend_dispatch,
-            blend_force: std::sync::atomic::AtomicBool::new(false),
-            cache_stats,
-            // The new table's words are zero on creation; clear them once anyway with the
-            // counters.
-            cache_clear_requested: std::sync::atomic::AtomicBool::new(true),
-            cache_clears: std::sync::atomic::AtomicU32::new(0),
-            cache_sweeps: std::sync::atomic::AtomicU32::new(0),
-            cache_clear,
-            cache_clear_layout,
-            cache_sweep,
-            cache_sweep_layout,
-            cache_walk_args,
-            cache_walk_layout,
-            sweep_params,
-            walk_state,
-            walk_dispatch,
-            sweep_requests: std::sync::atomic::AtomicU32::new(0),
-            cache_clear_cells: std::sync::OnceLock::new(),
-            sweep_chunk: std::sync::Mutex::new(None),
-            table_dispatch_cap: MAX_DISPATCH_GROUPS,
-            guard_forced: false,
             probe_spacing: DEFAULT_PROBE_SPACING,
             probe_axis_fixed: None,
             device: device.clone(),
@@ -3035,84 +2009,6 @@ impl Frame {
     /// Drops all history: the next encoded frame starts every pixel afresh.
     pub fn reset_history(&mut self) {
         self.history().valid = false;
-        self.cache_clear_requested
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// The emissive table (`COPY_SRC`; [`CACHE_CELL_WORDS`] `u32`s a cell, laid out as
-    /// `march.wgsl` says).
-    pub fn emissive_table(&self) -> &wgpu::Buffer {
-        &self.cache
-    }
-
-    /// The emissive table's counters after the last submitted encode: a blocking read.
-    pub fn read_table_stats(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> TableStats {
-        let bytes = crate::readback::read_buffer(device, queue, &self.cache_stats, 0, 16);
-        let w: &[u32] = bytemuck::cast_slice(&bytes);
-        TableStats {
-            cells: self.table_cells(),
-            occupied: w[1],
-            misses: w[0],
-        }
-    }
-
-    /// The table's age-out and sweep after the last submitted encode: a blocking read.
-    pub fn read_age_stats(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> AgeStats {
-        let bytes = crate::readback::read_buffer(device, queue, &self.walk_state, 0, 64);
-        let w: &[u32] = bytemuck::cast_slice(&bytes);
-        AgeStats {
-            passes: w[11],
-            evicted: w[13],
-            evicted_frame: w[14],
-            swept: w[15],
-            age: w[6],
-            walk_left: w[1],
-        }
-    }
-
-    /// The whole-table clears (the first frame's, an emission-scale change, a lighting change
-    /// that drops it, an overflowed edit frame) and the sweeps encoded since the
-    /// frame was made.
-    pub fn table_clears_and_sweeps(&self) -> (u32, u32) {
-        use std::sync::atomic::Ordering::Relaxed;
-        (
-            self.cache_clears.load(Relaxed),
-            self.cache_sweeps.load(Relaxed),
-        )
-    }
-
-    /// The guard's reopens since the table was last cleared by branch (a kept emitter's
-    /// re-shade out of the dead zone, a torn tag whose key lights nothing, a dark capped cell
-    /// whose fresh sample drew light), and the last re-shade reopen's kept and new
-    /// luminances. A blocking read.
-    pub fn read_table_reopens_by(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> ([u32; 3], [f32; 2]) {
-        let bytes = crate::readback::read_buffer(device, queue, &self.cache_stats, 0, 32);
-        let w: &[u32] = bytemuck::cast_slice(&bytes);
-        (
-            [w[4], w[5], w[6]],
-            [f32::from_bits(w[3]), f32::from_bits(w[7])],
-        )
-    }
-
-    /// The edit-box reset by cells (`clear_box_cells`), built on its first use.
-    fn cache_clear_cells_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
-        self.cache_clear_cells.get_or_init(|| {
-            compute_pipeline(
-                device,
-                "cache clear by cells",
-                format!("{MARCH_WGSL}\n{CACHE_CLEAR_WGSL}"),
-                &[
-                    Some(&self.world_layout),
-                    None,
-                    Some(&self.cache_clear_layout),
-                ],
-                "clear_box_cells",
-            )
-        })
     }
 
     /// Group 0 of the frame's shaders over `world`.
@@ -3144,9 +2040,9 @@ impl Frame {
     /// Bakes every chunk of `extent` into the store, emptied first, before any frame reads it,
     /// blocking: submits of at most [`crate::bake::SUBMIT_SAMPLES`] samples, each waited on, with
     /// `progress` after each. The light-sample buffer's ranges are first held and written out to
-    /// the bake's reach. `world` is the voxels `gpu` mirrors, which `gpu` must hold already.
-    /// `Err` without [`Light::Baked`], or when the pool or the light samples cannot hold the
-    /// extent.
+    /// the bake's reach. `world` is the voxels `gpu` mirrors, which `gpu` must hold already. The
+    /// first bake allocates the pool ([`Lighting::bake_pool_bytes`]). `Err` when the pool or the
+    /// light samples cannot hold the extent.
     #[allow(
         clippy::too_many_arguments,
         reason = "the device and queue, the two forms of the world, the extent, the settings and the progress are all independent"
@@ -3161,9 +2057,7 @@ impl Frame {
         settings: &crate::bake::BakeSettings,
         progress: &mut dyn FnMut(&crate::bake::BakeProgress),
     ) -> Result<crate::bake::BakeReport, crate::bake::BakeError> {
-        if self.lighting.light != Light::Baked {
-            return Err(crate::bake::BakeError::NotBaked);
-        }
+        self.fit_store(true);
         hold_reach(device, queue, gpu, world, extent)?;
         self.dig_boxes.clear();
         let params = self.bake_params(gpu, settings);
@@ -3171,10 +2065,6 @@ impl Frame {
         if self.bake.is_none() {
             self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
         }
-        self.bake
-            .as_mut()
-            .expect("built above")
-            .ensure(device, settings.form);
         let run = crate::bake::BakeRun {
             device,
             queue,
@@ -3190,7 +2080,8 @@ impl Frame {
 
     /// Starts the live queue (ADR-0046's scheduler): the store emptied for `gpu`'s window, every
     /// block with brick records of `settings`' cell, filled by [`Frame::bake_queue_step`] a slice
-    /// of `slice_ms` a frame. `Err` without [`Light::Baked`] or without `settings.rings`.
+    /// of `slice_ms` a frame; the first allocates the pool ([`Lighting::bake_pool_bytes`]). `Err`
+    /// without `settings.rings`.
     pub fn start_bake_queue(
         &mut self,
         queue: &wgpu::Queue,
@@ -3198,12 +2089,10 @@ impl Frame {
         settings: crate::bake::BakeSettings,
         slice_ms: f64,
     ) -> Result<(), crate::bake::BakeError> {
-        if self.lighting.light != Light::Baked {
-            return Err(crate::bake::BakeError::NotBaked);
-        }
         let Some(cell) = settings.rings.as_ref().map(|r| r.cell) else {
             return Err(crate::bake::BakeError::NotBaked);
         };
+        self.fit_store(true);
         self.store.start_queue(queue, gpu.window(), cell);
         self.dig_boxes.clear();
         self.bake_queue = Some(crate::bake::BakeQueue::new(settings, slice_ms));
@@ -3278,7 +2167,7 @@ impl Frame {
     /// One frame of the live queue, ahead of the encode: the light-sample ranges held out to
     /// `view.hold` (by default the window's far corner plus the light radius), then [`crate::bake::BakeQueue::step`], which
     /// waits on the GPU only without a slice (`view.samples`). `gpu` must already hold this frame's sync, submitted. `None` without
-    /// the queue or while the read is not the store.
+    /// the queue.
     pub fn bake_queue_step(
         &mut self,
         device: &wgpu::Device,
@@ -3287,9 +2176,6 @@ impl Frame {
         world: &vxe_world::World,
         view: &crate::bake::QueueView<'_>,
     ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
-        if self.lighting.light != Light::Baked {
-            return None;
-        }
         let settings = self.bake_queue.as_ref()?.settings.clone();
         let w = gpu.window();
         let f = gpu.focus().0;
@@ -3310,10 +2196,6 @@ impl Frame {
         if self.bake.is_none() {
             self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
         }
-        self.bake
-            .as_mut()
-            .expect("built above")
-            .ensure(device, settings.form);
         let run = crate::bake::BakeRun {
             device,
             queue,
@@ -3340,8 +2222,6 @@ impl Frame {
         let mut params = self.params(gpu, &camera, &LightParams::default());
         params.flags = FLAG_SHADOWS | FLAG_MASKS | FLAG_SKIPS;
         params.lighting = 0;
-        params.cache = 0;
-        params.fill = 0;
         params.history = 0;
         params.forced_level = 0;
         params.candidates = settings.candidates;
@@ -3379,10 +2259,6 @@ impl Frame {
         if self.bake.is_none() {
             self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
         }
-        self.bake
-            .as_mut()
-            .expect("built above")
-            .ensure(device, settings.form);
         let run = crate::bake::BakeRun {
             device,
             queue,
@@ -3402,120 +2278,21 @@ impl Frame {
         ))
     }
 
-    /// The store file's key for the store a bake of `piece` at `settings` gives on `gpu`, with the
-    /// world's seed and extent and the piece's centre and radius as the caller names them.
-    pub fn store_key(
-        gpu: &GpuWorld,
-        world: vxe_world::ChunkExtent,
-        world_seed: u64,
-        piece: vxe_world::ChunkExtent,
-        centre: ChunkCoord,
-        radius: i32,
-        settings: &crate::bake::BakeSettings,
-    ) -> crate::bake::StoreKey {
-        let span = |e: vxe_world::ChunkExtent| {
-            let size = e.size();
-            [e.min.0, [0, 1, 2].map(|k| e.min.0[k] + size[k])]
-        };
-        crate::bake::StoreKey {
-            world_seed,
-            world: span(world),
-            piece: span(piece),
-            centre: centre.0,
-            radius,
-            light_radius: gpu.light_radius(),
-            candidates: settings.candidates,
-            clamp: settings.clamp,
-            se_bits: settings.se.to_bits(),
-            n_min: settings.n_min,
-            n_max: settings.n_max,
-            round: settings.round,
-            seed: settings.seed,
-            source_hash: crate::bake::source_hash_for(settings.form),
-            form: settings.form,
-            tent: settings.tent,
-            rings: settings.rings.as_ref().and_then(crate::bake::RingKey::of),
-        }
-    }
-
-    /// Writes the store's blocks under `key` to `path`.
-    pub fn write_store_file(
-        &self,
-        path: &std::path::Path,
-        key: &crate::bake::StoreKey,
-    ) -> Result<u64, crate::bake::StoreFileError> {
-        let bytes = self.store.to_file_bytes(key);
-        std::fs::write(path, &bytes).map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
-        Ok(bytes.len() as u64)
-    }
-
-    /// Loads `path`'s blocks into the store, emptied first, in place of a bake, where its key
-    /// matches `key`; the light-sample ranges are held and synced as a bake's are, so a dig can
-    /// re-bake. `Err` names the field that differs.
-    pub fn load_store_file(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gpu: &mut GpuWorld,
-        world: &vxe_world::World,
-        path: &std::path::Path,
-        key: &crate::bake::StoreKey,
-    ) -> Result<(), crate::bake::StoreFileError> {
-        if self.lighting.light != Light::Baked {
-            return Err(crate::bake::StoreFileError::Mismatch("light"));
-        }
-        let bytes =
-            std::fs::read(path).map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
-        let image = crate::bake::Store::parse_file(key, &bytes)?;
-        let piece = vxe_world::ChunkExtent::new(key.piece[0], key.piece[1]);
-        hold_reach(device, queue, gpu, world, piece)
-            .map_err(|e| crate::bake::StoreFileError::Io(e.to_string()))?;
-        self.dig_boxes.clear();
-        self.store.load_blocks(queue, gpu.window(), image)
-    }
-
-    /// Writes `image` into the store in place of what it holds, and returns what it held: one
-    /// pool read by the temporal pass, several stores swapped by a key (Plan 0059 Phase 4's
-    /// cut against the reference). Edit boxes waiting for [`Frame::rebake_digs`] stay. `Err`
-    /// where the pool cannot hold `image`, the store unchanged.
-    pub fn swap_store_image(
-        &mut self,
-        queue: &wgpu::Queue,
-        gpu: &GpuWorld,
-        image: crate::bake::StoreImage,
-    ) -> Result<crate::bake::StoreImage, crate::bake::StoreFileError> {
-        let held = self.store.image();
-        self.store.load_blocks(queue, gpu.window(), image)?;
-        Ok(held)
-    }
-
     /// The edit boxes waiting for [`Frame::rebake_digs`], `min ..= max` in voxels.
     pub fn pending_digs(&self) -> &[[[i32; 3]; 2]] {
         &self.dig_boxes
     }
 
-    /// Adds boxes for [`Frame::rebake_digs`], as [`Frame::invalidate`] keeps them while the store
-    /// holds a piece: a swapped-in store's re-bake of the digs it missed.
-    pub fn queue_digs(&mut self, boxes: &[[[i32; 3]; 2]]) {
-        if self.store.piece().is_some() {
-            self.dig_boxes.extend_from_slice(boxes);
-        }
-    }
     /// The store's counters; `missing` is a blocking read of the last submitted encode's count.
     pub fn read_store_stats(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> crate::bake::StoreStats {
-        let (missing, brick_reads, coarse_reads) = if self.lighting.light == Light::Baked {
-            let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 12);
-            let word =
-                |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
-            (word(0), word(4), word(8))
-        } else {
-            (0, 0, 0)
-        };
-        self.store.stats(missing, brick_reads, coarse_reads)
+        let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 12);
+        let word =
+            |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+        self.store.stats(word(0), word(4), word(8))
     }
 
     /// The store.
@@ -3536,7 +2313,7 @@ impl Frame {
         Some(bytemuck::pod_collect_to_vec(&bytes))
     }
 
-    /// The light pass's pipeline without the preload (`shade`), built on its first use.
+    /// The light pass's pipeline (`shade`), built on its first use.
     fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         self.light.get_or_init(|| {
             compute_pipeline(
@@ -3547,89 +2324,6 @@ impl Frame {
                 "shade",
             )
         })
-    }
-
-    /// DIAGNOSTIC: sets the preload's switches for CI's WARP runs ([`DiagPreload`]); comes out
-    /// with the fix for the WARP preload hang.
-    pub fn set_diag_preload(&self, diag: DiagPreload) {
-        *self
-            .diag_preload
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = diag;
-    }
-
-    /// DIAGNOSTIC (`DiagPreload::read_args`): the preload's six indirect words (the sweep's,
-    /// then the light pass's), then the counters' `pre_fill_groups` and `pre_groups`, as the
-    /// GPU holds them now: a blocking read. Out with the fix for the WARP preload hang.
-    fn diag_read_preload_words(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> [u32; 8] {
-        let args = crate::readback::read_buffer(
-            device,
-            queue,
-            &self.preload_dispatch,
-            0,
-            PRELOAD_DISPATCH_BYTES,
-        );
-        let stats = crate::readback::read_buffer(
-            device,
-            queue,
-            &self.cache_stats,
-            CACHE_STATS_BYTES + FILL_LIST_BYTES,
-            PRELOAD_STATE_BYTES,
-        );
-        let a: &[u32] = bytemuck::cast_slice(&args);
-        let w: &[u32] = bytemuck::cast_slice(&stats);
-        [a[0], a[1], a[2], a[3], a[4], a[5], w[14], w[27]]
-    }
-
-    /// The preload's counts of the last submitted encode (zero where it did not run): a
-    /// blocking read.
-    pub fn read_preload_stats(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> PreloadStats {
-        if !self.preload_ran.load(std::sync::atomic::Ordering::Relaxed) {
-            return PreloadStats::default();
-        }
-        let bytes = crate::readback::read_buffer(
-            device,
-            queue,
-            &self.cache_stats,
-            CACHE_STATS_BYTES + FILL_LIST_BYTES,
-            PRELOAD_STATE_BYTES,
-        );
-        let w: &[u32] = bytemuck::cast_slice(&bytes);
-        PreloadStats {
-            edit_bricks: self
-                .preload_edit_bricks
-                .load(std::sync::atomic::Ordering::Relaxed),
-            visited: w[8],
-            scanned: w[16],
-            listed: w[17],
-            claimed: w[18],
-            claimed_near_lit: w[30],
-            claimed_near_unlit: w[31],
-            refused_load: w[19],
-            refused_miss: w[20],
-            refused_unlit: w[21],
-            samples: w[22],
-            drops: w[23],
-            probed: w[24],
-            done: w[25],
-            probe_drops: w[26],
-            list: w[5],
-            drawn: w[6],
-            probes: w[11],
-        }
-    }
-
-    /// The encodes the preload's idle skip has run without the preload's passes.
-    pub fn preload_skips(&self) -> u32 {
-        self.preload_skips
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// The cells the table's guard reopened since the table was last cleared, after the last
-    /// submitted encode: a blocking read.
-    pub fn read_table_reopens(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> u32 {
-        let bytes = crate::readback::read_buffer(device, queue, &self.cache_stats, 8, 4);
-        bytemuck::cast_slice::<u8, u32>(&bytes)[0]
     }
 
     /// Encodes and submits one frame of `camera` over `world` with history, after advancing
@@ -3674,9 +2368,6 @@ impl Frame {
                 self.emission_cpu[row] = scale;
                 if row == i {
                     self.emission_changed_at = Some(self.frame);
-                    // The table's cells hold the old emission's light: they restart.
-                    self.cache_clear_requested
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 queue.write_buffer(
                     &self.emission_scale,
@@ -3734,86 +2425,31 @@ impl Frame {
         self.field_split = on;
     }
 
-    /// Sets exposure, tone map, lamp, candidates and shadow walk.
-    /// Sets the lighting knobs; a change of [`Lighting::cells`] rebuilds the emissive table
-    /// empty.
+    /// Sets the lighting knobs; a change of [`Lighting::bake_pool_bytes`] rebuilds an allocated
+    /// store empty.
     pub fn set_lighting(&mut self, lighting: Lighting) {
-        let blend_changed = (lighting.blend, lighting.blend_pool_min, lighting.table_cap)
-            != (
-                self.lighting.blend,
-                self.lighting.blend_pool_min,
-                self.lighting.table_cap,
-            );
-        if blend_changed {
-            self.blend_force
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
         self.lighting = lighting;
-        if self.lighting.light == Light::Baked {
-            self.lighting.blend = TableBlend::Off;
-            self.lighting.fill_samples = 0;
-            self.lighting.preload_radius = 0;
-            self.lighting.table_age_out = false;
-        }
-        self.fit_store();
-        self.fit_table();
+        self.fit_store(false);
         self.rebuild_probes();
     }
 
-    /// Rebuilds the store empty where its pool's size changes: a minimal one under
-    /// [`Light::Table`], else [`Lighting::bake_pool_bytes`] within the device's storage binding.
-    fn fit_store(&mut self) {
+    /// Rebuilds the store empty where its pool's size changes: [`Lighting::bake_pool_bytes`]
+    /// within the device's storage binding, once `allocate` or a bake has allocated it; a minimal
+    /// one before.
+    fn fit_store(&mut self, allocate: bool) {
+        if !allocate && self.store.pool().size() <= crate::bake::MINIMAL_POOL_BYTES {
+            return;
+        }
         let limits = self.device.limits();
-        let bytes = match self.lighting.light {
-            Light::Table if self.lighting.keep_store => self.store.pool().size(),
-            Light::Table => crate::bake::MINIMAL_POOL_BYTES,
-            Light::Baked => {
-                self.lighting
-                    .bake_pool_bytes
-                    .min(limits.max_storage_buffer_binding_size)
-                    .min(limits.max_buffer_size)
-                    & !3
-            }
-        };
+        let bytes = self
+            .lighting
+            .bake_pool_bytes
+            .min(limits.max_storage_buffer_binding_size)
+            .min(limits.max_buffer_size)
+            & !3;
         if bytes != self.store.pool().size() {
             self.store = crate::bake::Store::new(&self.device, bytes);
         }
-    }
-
-    /// The table's cells as allocated: [`Lighting::cells`], or fewer where the device's storage
-    /// binding cannot hold them ([`table_cells_within`]).
-    pub fn table_cells(&self) -> u32 {
-        self.table_cells
-    }
-
-    /// Rebuilds the emissive table empty where its cells or the lighting grid's pixels (the
-    /// blend list's slots, one a lighting pixel) changed.
-    fn fit_table(&mut self) {
-        let [w, h] = self.targets.light_size();
-        let cells = table_cells_within(
-            self.device.limits().max_storage_buffer_binding_size,
-            self.lighting.cells(),
-            w * h,
-        );
-        if cells != self.table_cells || table_bytes(cells, w * h) != self.cache.size() {
-            self.table_cells = cells;
-            self.cache = table_buffer(&self.device, cells, w * h);
-            self.cache_clear_requested
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    /// Caps a dispatch row of the table's edit-box reset and sweep at `groups` workgroups (at
-    /// least 1, at most [`MAX_DISPATCH_GROUPS`], the default): a test's way to read the rows
-    /// a dispatch past the cap takes.
-    pub fn set_table_dispatch_cap(&mut self, groups: u32) {
-        self.table_dispatch_cap = groups.clamp(1, MAX_DISPATCH_GROUPS);
-    }
-
-    /// Runs the table's guard in every frame, outside its window ([`GUARD_WINDOW`]) too: a
-    /// test's way to read what the window keeps out of a still world.
-    pub fn force_guard_window(&mut self, on: bool) {
-        self.guard_forced = on;
     }
 
     pub fn lighting(&self) -> Lighting {
@@ -3898,24 +2534,13 @@ impl Frame {
         &self.targets.moments[self.cur]
     }
 
-    /// Bytes the frame's targets, the emissive table, its probe volume (once built) and FSR 2's
-    /// resources occupy.
+    /// Bytes the frame's targets, its probe volume (once built), FSR 2's resources and the store's
+    /// pool (once allocated) occupy.
     pub fn frame_bytes(&self) -> u64 {
         self.targets.bytes()
             + self.probes.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
             + self.fsr.as_ref().map_or(0, Fsr2::bytes)
-            + self.cache.size()
-            + WALK_STATE_BYTES
-            + self.blend_params.size()
-            + self.blend_dispatch.size()
-            + self.walk_dispatch.size()
-            + FILL_LIST_BYTES
-            + self.fill_dispatch.size()
-            + PRELOAD_BYTES
-            + self.preload_uniform.size()
-            + self.preload_dispatch.size()
-            + PRELOAD_IDLE_SLOTS as u64 * PRELOAD_IDLE_BYTES
             + if self.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
                 self.store.pool().size()
             } else {
@@ -3949,7 +2574,6 @@ impl Frame {
         if self.composite_capture.is_some() {
             self.composite_capture = Some(composite_capture_texture(device, internal));
         }
-        self.fit_table();
         self.reset_history();
     }
 
@@ -4036,9 +2660,6 @@ impl Frame {
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.manual_exposure(),
-            cache_mask: self.table_cells() - 1,
-            cache: self.lighting.cache_word(),
-            fill: self.lighting.fill_word(),
             emitter_cap: fsr.and_then(|f| f.emitter_cap).unwrap_or(0.0),
             dither: u32::from(fsr.is_some_and(|f| f.dither)),
             output_size: if self.upscaling() {
@@ -4127,13 +2748,6 @@ impl Frame {
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
         let mut old_lamp = Lamp::of(params);
-        // More than MAX_EDITS boxes arrived: the table clears whole, as the screen flushes.
-        let mut edits_overflowed = false;
-        // The camera moved under a voxel and turned under a degree since the last encode.
-        let mut camera_still = false;
-        // The world changed (an edit, an upload, a history reset) since the last encode: the
-        // preload's stamps are stale.
-        let mut world_changed = !keep_history;
         if keep_history {
             let mut h = self
                 .history
@@ -4152,28 +2766,7 @@ impl Frame {
             }
             edits.count = h.edits.len() as u32;
             boxes = std::mem::take(&mut h.edits);
-            edits_overflowed = h.overflow;
             h.overflow = false;
-            let bytes = world.bytes_written();
-            if !boxes.is_empty() || edits_overflowed || h.guard_bytes != Some(bytes) {
-                h.guard_event = Some(self.frame);
-                world_changed = true;
-            }
-            h.guard_bytes = Some(bytes);
-            let within =
-                |f: Option<u32>| f.is_some_and(|f| self.frame.wrapping_sub(f) < GUARD_WINDOW);
-            if self.lighting.light == Light::Table
-                && (self.guard_forced || within(h.guard_event) || within(self.emission_changed_at))
-            {
-                p.lighting |= LIGHTING_GUARD;
-            }
-            let (was, now) = (h.last_views[0], params.views[0]);
-            let moved: f32 = (0..3)
-                .map(|k| (now.origin[k] - was.origin[k]).powi(2))
-                .sum();
-            let turn: f32 = (0..3).map(|k| now.fwd[k] * was.fwd[k]).sum();
-            // `valid`: the last frame was encoded (`encoded` is this frame's, set below).
-            camera_still = h.valid && moved < 1.0 && turn > 1f32.to_radians().cos();
             h.last_views = params.views;
             h.encoded = true;
             let key = LightKey {
@@ -4294,135 +2887,8 @@ impl Frame {
                 Res::Tex(t.lit_info(c)),
             ],
         );
-        let cache_table = &self.cache;
-        // The edit boxes' dilated voxels, in u64: boxes whose voxels' faces outnumber the
-        // table's cells are cleared by a walk over the cells instead (`clear_box_cells`), the
-        // same cells; only a frame of more than MAX_EDITS boxes clears the whole table.
-        let cache_clear_voxels: u64 = boxes
-            .iter()
-            .map(|[min, max]| {
-                (0..3)
-                    .map(|k| (i64::from(max[k]) - i64::from(min[k]) + 3).max(0) as u64)
-                    .product::<u64>()
-            })
-            .sum();
-        let cells = self.table_cells();
-        let clear_whole = edits_overflowed;
-        let clear_by_cells = cache_clear_voxels * 6 > u64::from(cells);
-        // The preload runs where the fill could (a shaded view outside the cutaway) with its
-        // radius and emissive candidates above 0, unless the idle skip holds (`PreloadIdle`).
-        let preload_r = self.lighting.preload_brick_radius();
-        let preload_want = self.look.view.shades()
-            && !self.look.cutaway
-            && preload_r > 0
-            && self.lighting.candidates > 0;
-        let table_cleared = self
-            .cache_clear_requested
-            .swap(false, std::sync::atomic::Ordering::Relaxed)
-            || clear_whole;
-        // The sweep runs on the frame the camera's chunk changes, before the light pass.
-        let eye = p.views[0].origin;
-        let chunk = eye.map(|v| (v / 64.0).floor() as i32);
-        let sweep = {
-            let mut last = self
-                .sweep_chunk
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let moved = last.is_some_and(|c| c != chunk);
-            *last = Some(chunk);
-            moved && self.lighting.light == Light::Table
-        };
-        if sweep {
-            self.cache_sweeps
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.sweep_requests
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        {
-            let r = world.light_radius();
-            let reach = (8 * preload_r) as f32;
-            let age_max = self.lighting.table_age.max(1);
-            let u = SweepUniform {
-                chunk,
-                r2: r.saturating_mul(r),
-                eye,
-                reach2: reach * reach,
-                request: self
-                    .sweep_requests
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                cells,
-                evict_load: cells / 16 * EVICT_LOAD_SIXTEENTHS,
-                evict_step: cells / EVICT_STEP_DIVISOR,
-                age_max,
-                age_min: self.lighting.table_age_min.clamp(1, age_max),
-                slice: TABLE_WALK_SLICE,
-                frame: p.frame.wrapping_add(1),
-                age_out: u32::from(self.lighting.table_age_out),
-                _pad: [0; 3],
-            };
-            queue.write_buffer(&self.sweep_params, 0, bytemuck::bytes_of(&u));
-        }
-        let eye_brick = eye.map(|c| (c / 8.0).floor() as i32);
-        let preload_key = (
-            self.lighting.preload_cap(),
-            preload_r,
-            self.lighting.preload_claim_radius,
-        );
-        let grid = t.light_size();
-        // The camera is still to the preload: under a voxel and a degree since the last encode,
-        // in the same brick, with the guard's window closed.
-        let (preload_still, preload_skip) = {
-            let mut idle = self
-                .preload_idle
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let still = camera_still
-                && p.lighting & LIGHTING_GUARD == 0
-                && idle.eye_brick == Some(eye_brick);
-            let quiet = preload_want
-                && still
-                && boxes.is_empty()
-                && !edits_overflowed
-                && !world_changed
-                && !table_cleared
-                && !sweep
-                && idle.grid == Some(grid)
-                && self
-                    .preload_epoch
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .1
-                    == Some(preload_key);
-            idle.eye_brick = Some(eye_brick);
-            idle.grid = Some(grid);
-            let skip = preload_want && idle.decide(device, quiet);
-            (still, skip)
-        };
-        let preload_on = preload_want && !preload_skip;
-        self.preload_skips.fetch_add(
-            u32::from(preload_skip),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        if self.lighting.light == Light::Baked {
-            // The header's counters: missing, brick reads, coarse reads.
-            encoder.clear_buffer(self.store.pool(), 0, Some(12));
-        }
-        if table_cleared {
-            encoder.clear_buffer(cache_table, 0, None);
-            // The counters, the fill list and the preload's header: its lists' entries name
-            // cleared cells, which their check drops, and the sweep's offsets stay.
-            encoder.clear_buffer(
-                &self.cache_stats,
-                0,
-                Some(CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_HEADER_BYTES),
-            );
-            self.cache_clears
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        } else if !preload_on {
-            // The misses count this frame's (with the preload on, its args pass takes the last
-            // frame's and clears them, before the light pass).
-            encoder.clear_buffer(&self.cache_stats, 0, Some(4));
-        }
+        // The store's counters: missing, brick reads, coarse reads.
+        encoder.clear_buffer(self.store.pool(), 0, Some(12));
         let light_bind = bind_io(
             device,
             &self.light_layout,
@@ -4430,161 +2896,8 @@ impl Frame {
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
-                Res::Buf(cache_table),
-                Res::Buf(&self.cache_stats),
-                Res::Buf(&self.edits),
             ],
         );
-        // The reopened fill runs in a shaded view outside the cutaway with F above 0: the light
-        // pass lists the frame's reopened cells into a list cleared here.
-        let fill_on = self.look.view.shades()
-            && !self.look.cutaway
-            && self.lighting.fill_samples.min(FILL_SAMPLES_MAX) > 0;
-        if fill_on {
-            encoder.clear_buffer(&self.cache_stats, CACHE_STATS_BYTES, Some(16));
-        }
-        let fill_bind = fill_on.then(|| {
-            (
-                bind_io_at(
-                    device,
-                    &self.fill_layout,
-                    &[3, 4],
-                    &[Res::Buf(cache_table), Res::Buf(&self.cache_stats)],
-                ),
-                bind_io_at(
-                    device,
-                    &self.fill_stats_layout,
-                    &[4],
-                    &[Res::Buf(&self.cache_stats)],
-                ),
-                bind_io(
-                    device,
-                    &self.fill_args_layout,
-                    &[Res::Buf(&self.fill_dispatch)],
-                ),
-            )
-        });
-        // DIAGNOSTIC (`DiagPreload::direct_sweep`): the sweep's workgroups as the args pass
-        // writes them when the sweep is not idle. Out with the fix for the WARP preload hang.
-        let mut diag_sweep_groups = 0u32;
-        let preload_bind = preload_on.then(|| {
-            let offsets = {
-                let mut written = self
-                    .preload_offsets_radius
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let table = preload_offsets(preload_r);
-                if *written != Some(preload_r) {
-                    *written = Some(preload_r);
-                    let packed: Vec<u32> = table
-                        .iter()
-                        .map(|o| {
-                            let [x, y, z] = o.map(|c| (c + 512) as u32);
-                            x | y << 10 | z << 20
-                        })
-                        .collect();
-                    queue.write_buffer(
-                        &self.cache_stats,
-                        CACHE_STATS_BYTES
-                            + FILL_LIST_BYTES
-                            + PRELOAD_HEADER_BYTES
-                            + 16 * u64::from(PRELOAD_LIST_MAX),
-                        bytemuck::cast_slice(&packed),
-                    );
-                }
-                table.len() as u32
-            };
-            // A new epoch where the world, the table or C_PRE changed as a whole: every slab's
-            // stamp is stale, so the sweep probes its faces again.
-            let epoch = {
-                let mut e = self
-                    .preload_epoch
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if world_changed || table_cleared || sweep || e.1 != Some(preload_key) {
-                    e.0 = e.0.wrapping_add(1);
-                }
-                e.1 = Some(preload_key);
-                e.0
-            };
-            let r2 = (preload_r * preload_r) as i32;
-            let mut u = PreloadUniform {
-                eye_brick,
-                edit_bricks: 0,
-                offsets,
-                bricks: self.lighting.preload_bricks.clamp(1, 4096),
-                _pad0: 0,
-                still: u32::from(preload_still),
-                until: self.lighting.preload_cap(),
-                draw_cells: self.lighting.preload_samples / FILL_SAMPLES_MAX,
-                load_max: cells / PRELOAD_LOAD_DIVISOR,
-                probe: PRELOAD_PROBE_SAMPLES,
-                epoch,
-                light_cols: grid[0].div_ceil(WORKGROUP),
-                light_rows: grid[1].div_ceil(WORKGROUP),
-                _pad1: 0,
-                eye: p.views[0].origin,
-                claim: self.lighting.preload_claim_radius.min(8 * preload_r) as f32,
-                brick_list: [[0; 4]; PRELOAD_EDIT_BRICKS_MAX],
-            };
-            // The edit boxes' bricks, dilated by a voxel as the reset's are, within the radius.
-            let mut n = 0;
-            'boxes: for [min, max] in &boxes {
-                let lo = min.map(|c| (c - 1).div_euclid(8));
-                let hi = max.map(|c| (c + 1).div_euclid(8));
-                for z in lo[2]..=hi[2] {
-                    for y in lo[1]..=hi[1] {
-                        for x in lo[0]..=hi[0] {
-                            let d = [x - eye_brick[0], y - eye_brick[1], z - eye_brick[2]];
-                            if d.iter().map(|c| c * c).sum::<i32>() > r2 {
-                                continue;
-                            }
-                            if n == PRELOAD_EDIT_BRICKS_MAX {
-                                break 'boxes;
-                            }
-                            u.brick_list[n] = [x, y, z, 0];
-                            n += 1;
-                        }
-                    }
-                }
-            }
-            u.edit_bricks = n as u32;
-            diag_sweep_groups = 8 * (u.edit_bricks + u.bricks.min(u.offsets));
-            self.preload_edit_bricks
-                .store(u.edit_bricks, std::sync::atomic::Ordering::Relaxed);
-            queue.write_buffer(&self.preload_uniform, 0, bytemuck::bytes_of(&u));
-            // The frame's counts.
-            encoder.clear_buffer(
-                &self.cache_stats,
-                CACHE_STATS_BYTES + FILL_LIST_BYTES + 64,
-                Some(PRELOAD_COUNTS_BYTES),
-            );
-            (
-                bind_io_at(
-                    device,
-                    &self.fill_layout,
-                    &[3, 4],
-                    &[Res::Buf(cache_table), Res::Buf(&self.cache_stats)],
-                ),
-                bind_io_at(
-                    device,
-                    &self.preload_layout,
-                    &[1],
-                    &[Res::Buf(&self.preload_uniform)],
-                ),
-                bind_io_at(
-                    device,
-                    &self.preload_args_layout,
-                    &[1, 2],
-                    &[
-                        Res::Buf(&self.preload_uniform),
-                        Res::Buf(&self.preload_dispatch),
-                    ],
-                ),
-            )
-        });
-        self.preload_ran
-            .store(preload_on, std::sync::atomic::Ordering::Relaxed);
         let temporal_bind = bind_io(
             device,
             &self.temporal_layout,
@@ -4600,7 +2913,6 @@ impl Frame {
                 Res::Tex(&t.moments[c]),
                 Res::Buf(&self.edits),
                 Res::Tex(&t.strata),
-                Res::Buf(cache_table),
                 Res::Buf(self.store.pool()),
             ],
         );
@@ -4703,16 +3015,8 @@ impl Frame {
                 ],
             )
         });
-        // The gradient pass runs in a shaded view for the gradient mode's lambda, and for the
-        // table's guard within its window.
-        let gradient_on =
-            self.look.view.shades() && p.lighting & (LIGHTING_GRADIENT | LIGHTING_GUARD) != 0;
-        let gradient_cache_bind = bind_io_at(
-            device,
-            &self.gradient_cache_layout,
-            &[3, 4],
-            &[Res::Buf(&self.cache), Res::Buf(&self.cache_stats)],
-        );
+        // The gradient pass runs in a shaded view for the gradient mode's lambda.
+        let gradient_on = self.look.view.shades() && p.lighting & LIGHTING_GRADIENT != 0;
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
@@ -4788,195 +3092,8 @@ impl Frame {
             hit.push(frame_pass(&self.downsample, &downsample_bind, 3, lw));
         }
         let mut gradient: Vec<Dispatch<'_>> = Vec::new();
-        // The table's edit-box reset and sweep run in the gradient's slot, before the light
-        // pass.
-        let cache_clear_bind = (!clear_whole && cache_clear_voxels > 0).then(|| {
-            bind_io(
-                device,
-                &self.cache_clear_layout,
-                &[Res::Buf(&self.edits), Res::Buf(cache_table)],
-            )
-        });
-        if let Some(b) = &cache_clear_bind {
-            gradient.push(if clear_by_cells {
-                frame_pass(
-                    self.cache_clear_cells_pipeline(device),
-                    b,
-                    2,
-                    dispatch_rows(cells.div_ceil(64), self.table_dispatch_cap),
-                )
-            } else {
-                frame_pass(
-                    &self.cache_clear,
-                    b,
-                    2,
-                    dispatch_rows(
-                        cache_clear_voxels.div_ceil(64) as u32,
-                        self.table_dispatch_cap,
-                    ),
-                )
-            });
-        }
-        // The walk (the chunk sweep and the age-out): its args pass every frame, then the
-        // slice it sets, none while idle.
-        let walk_bind = bind_io(
-            device,
-            &self.cache_sweep_layout,
-            &[
-                Res::Buf(&self.sweep_params),
-                Res::Buf(cache_table),
-                Res::Buf(&self.cache_stats),
-                Res::Buf(&self.walk_state),
-                Res::Buf(&self.walk_dispatch),
-            ],
-        );
-        let walk_slice_bind = bind_io(
-            device,
-            &self.cache_walk_layout,
-            &[
-                Res::Buf(&self.sweep_params),
-                Res::Buf(cache_table),
-                Res::Buf(&self.cache_stats),
-                Res::Buf(&self.walk_state),
-            ],
-        );
-        {
-            let mut a = frame_pass(&self.cache_walk_args, &walk_bind, 2, [1, 1]);
-            a.groups[0] = None;
-            gradient.push(a);
-            let mut w = frame_pass(&self.cache_sweep, &walk_slice_bind, 2, [0, 0]);
-            w.groups[0] = None;
-            w.indirect = Some((&self.walk_dispatch, 0));
-            gradient.push(w);
-        }
         if gradient_on {
-            let mut pass = frame_pass(&self.gradient, &gradient_bind, 3, strata);
-            pass.groups[2] = Some(&gradient_cache_bind);
-            gradient.push(pass);
-        }
-        let blend_bind = (self.lighting.blend != TableBlend::Off).then(|| {
-            queue.write_buffer(
-                &self.blend_params,
-                0,
-                bytemuck::bytes_of(&BlendUniform {
-                    cache_mask: cells - 1,
-                    c_cap: self.lighting.table_cap.clamp(1, DEFAULT_TABLE_CAP),
-                    pool_min: self.lighting.blend_pool_min,
-                    wide: u32::from(self.lighting.blend == TableBlend::Wide),
-                    frame: p.frame.wrapping_add(1),
-                    force: u32::from(
-                        self.blend_force
-                            .swap(false, std::sync::atomic::Ordering::Relaxed),
-                    ),
-                    _pad: [0; 2],
-                }),
-            );
-            (
-                bind_io(
-                    device,
-                    &self.cache_blend_args_layout,
-                    &[
-                        Res::Buf(&self.blend_params),
-                        Res::Buf(cache_table),
-                        Res::Buf(&self.blend_dispatch),
-                    ],
-                ),
-                bind_io(
-                    device,
-                    &self.cache_blend_layout,
-                    &[Res::Buf(&self.blend_params), Res::Buf(cache_table)],
-                ),
-            )
-        });
-        let mut blend: Vec<Dispatch<'_>> = Vec::new();
-        if let Some((args, cells)) = &blend_bind {
-            let mut a = frame_pass(&self.cache_blend_args, args, 2, [1, 1]);
-            a.groups[0] = None;
-            blend.push(a);
-            let mut d = frame_pass(&self.cache_blend, cells, 2, [0, 0]);
-            d.groups[0] = None;
-            d.indirect = Some((&self.blend_dispatch, 0));
-            blend.push(d);
-        }
-        let mut fill: Vec<Dispatch<'_>> = Vec::new();
-        if let Some((list, stats, args)) = &fill_bind {
-            let mut a = frame_pass(&self.fill_args, stats, 2, [1, 1]);
-            a.groups[3] = Some(args);
-            fill.push(a);
-            fill.push(Dispatch {
-                indirect: Some((&self.fill_dispatch, 0)),
-                ..frame_pass(&self.fill, list, 2, [0, 0])
-            });
-        }
-        // DIAGNOSTIC (`DiagPreload`): out with the fix for the WARP preload hang.
-        let diag = {
-            let mut d = self
-                .diag_preload
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            DiagPreload {
-                split_next: d.split_next.take(),
-                ..*d
-            }
-        };
-        let (diag_skip_sweep, diag_shade, diag_direct_sweep) =
-            (diag.skip_sweep, diag.shade, diag.direct_sweep);
-        let diag_empty_sweep = diag.empty_sweep || diag.scratch_sweep;
-        let (diag_read_args, diag_direct_shade, diag_scratch_sweep) =
-            (diag.read_args, diag.direct_shade, diag.scratch_sweep);
-        let mut diag_split = diag.split_next;
-        // DIAGNOSTIC (`DiagPreload::scratch_sweep`): the sweep's group 2 on buffers of its own,
-        // the table's and the counters' layout, which no other pass binds.
-        let diag_scratch_cells = (diag_scratch_sweep && preload_bind.is_some()).then(|| {
-            let scratch = |label, size| {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size,
-                    usage: wgpu::BufferUsages::STORAGE,
-                    mapped_at_creation: false,
-                })
-            };
-            let table = scratch("diag scratch table", 256);
-            let stats = scratch("diag scratch counters", self.cache_stats.size());
-            bind_io_at(
-                device,
-                &self.fill_layout,
-                &[3, 4],
-                &[Res::Buf(&table), Res::Buf(&stats)],
-            )
-        });
-        // DIAGNOSTIC (`DiagPreload::empty_sweep`): indirect words of zero workgroups.
-        let diag_zero_args = diag_empty_sweep.then(|| {
-            wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("diag empty sweep"),
-                    contents: bytemuck::cast_slice(&[0u32, 1, 1]),
-                    usage: wgpu::BufferUsages::INDIRECT,
-                },
-            )
-        });
-        let mut preload: Vec<Dispatch<'_>> = Vec::new();
-        if let Some((cells, uniform, args)) = &preload_bind {
-            let mut a = frame_pass(&self.preload_args, cells, 2, [1, 1]);
-            a.groups[0] = None;
-            a.groups[3] = Some(args);
-            preload.push(a);
-            let mut w = frame_pass(&self.preload_sweep, cells, 2, [0, 0]);
-            w.groups[3] = Some(uniform);
-            w.indirect = Some((&self.preload_dispatch, 0));
-            if let Some(scratch) = &diag_scratch_cells {
-                w.groups[2] = Some(scratch);
-            }
-            if let Some(zero) = &diag_zero_args {
-                w.indirect = Some((zero, 0));
-            } else if diag_direct_sweep {
-                w.indirect = None;
-                w.workgroups = [diag_sweep_groups, 1];
-            }
-            if !diag_skip_sweep {
-                preload.push(w);
-            }
+            gradient.push(frame_pass(&self.gradient, &gradient_bind, 3, strata));
         }
         let mut atrous: Vec<Dispatch<'_>> = Vec::new();
         if filtering {
@@ -5081,18 +3198,7 @@ impl Frame {
         let passes = [
             hit,
             gradient,
-            preload,
-            match &preload_bind {
-                Some((_, uniform, _)) if !diag_shade => {
-                    let mut m = frame_pass(&self.light_preload, &light_bind, 2, [0, 0]);
-                    m.groups[3] = Some(uniform);
-                    m.indirect = Some((&self.preload_dispatch, 12));
-                    vec![m]
-                }
-                _ => vec![frame_pass(self.light_pipeline(device), &light_bind, 2, lw)],
-            },
-            fill,
-            blend,
+            vec![frame_pass(self.light_pipeline(device), &light_bind, 2, lw)],
             vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
             probes,
@@ -5103,60 +3209,7 @@ impl Frame {
         ]
         .into_iter()
         .chain(fsr_passes);
-        for (i, mut dispatches) in passes.enumerate() {
-            // DIAGNOSTIC (`DiagPreload::split_next`): the preload's and the light pass's
-            // dispatches each in a submission of their own, the GPU waited for after each.
-            if let Some(report) = diag_split.as_mut()
-                && (FRAME_PASSES[i] == "preload" || FRAME_PASSES[i] == "light")
-            {
-                if FRAME_PASSES[i] == "preload" {
-                    diag_submit_wait(device, queue, encoder);
-                    report("before the preload");
-                }
-                let shade_preload = preload_bind.is_some() && !diag_shade;
-                let mut light_name = if shade_preload {
-                    "light pass (shade_preload)".to_string()
-                } else {
-                    "light pass (shade)".to_string()
-                };
-                // DIAGNOSTIC (`DiagPreload::read_args`, `direct_shade`): the indirect words
-                // after the args pass and the sweep, before the light pass is recorded.
-                if FRAME_PASSES[i] == "light"
-                    && shade_preload
-                    && (diag_read_args || diag_direct_shade)
-                {
-                    let w = self.diag_read_preload_words(device, queue);
-                    report(&format!(
-                        "args read back: sweep [{}, {}, {}], shade_preload [{}, {}, {}], \
-                         fill groups {}, preload groups {}",
-                        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]
-                    ));
-                    if diag_direct_shade && let Some(d) = dispatches.first_mut() {
-                        d.indirect = None;
-                        d.workgroups = [w[3], w[4]];
-                        light_name = format!(
-                            "light pass (shade_preload, direct {} x {} x 1, words z {})",
-                            w[3], w[4], w[5]
-                        );
-                    }
-                }
-                for (k, d) in dispatches.iter().enumerate() {
-                    let name = match (FRAME_PASSES[i], k) {
-                        ("light", _) => light_name.as_str(),
-                        (_, 0) => "preload args",
-                        _ => "preload sweep",
-                    };
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some(FRAME_PASSES[i]),
-                        timestamp_writes: None,
-                    });
-                    d.record(&mut pass);
-                    drop(pass);
-                    diag_submit_wait(device, queue, encoder);
-                    report(name);
-                }
-                continue;
-            }
+        for (i, dispatches) in passes.enumerate() {
             // An empty slot is still recorded under a timer, so every timestamp pair is written.
             if dispatches.is_empty() && timer.is_none() {
                 continue;
@@ -5177,22 +3230,6 @@ impl Frame {
                     t.output.as_image_copy(),
                     capture.as_image_copy(),
                     capture.size(),
-                );
-            }
-        }
-        // The args pass's words, for the idle skip.
-        if preload_bind.is_some() {
-            let mut idle = self
-                .preload_idle
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(slot) = idle.take_slot() {
-                encoder.copy_buffer_to_buffer(
-                    &self.cache_stats,
-                    CACHE_STATS_BYTES + FILL_LIST_BYTES + PRELOAD_IDLE_WORDS_AT,
-                    slot,
-                    0,
-                    PRELOAD_IDLE_BYTES,
                 );
             }
         }
@@ -5382,23 +3419,6 @@ impl Dispatch<'_> {
     }
 }
 
-/// DIAGNOSTIC (`DiagPreload::split_next`): submits what `encoder` holds, puts a fresh encoder
-/// in its place and waits for the GPU. Out with the fix for the WARP preload hang.
-fn diag_submit_wait(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    encoder: &mut wgpu::CommandEncoder,
-) {
-    let done = std::mem::replace(
-        encoder,
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("diag split"),
-        }),
-    );
-    queue.submit([done.finish()]);
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
-}
-
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
@@ -5424,57 +3444,14 @@ fn composite_capture_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Tex
     })
 }
 
-/// DIAGNOSTIC: the preload's switches for CI's WARP runs, where frame 0's GPU work never
-/// finishes while the preload runs (the backlog's WARP exposure-hang entry). It comes out with
-/// the fix for that hang. None of it reads the backend: the caller sets it, and the default
-/// changes nothing.
-#[derive(Default)]
-pub struct DiagPreload {
-    /// Records no sweep dispatch (the args pass and the light pass still run).
-    pub skip_sweep: bool,
-    /// Runs the plain light pass (`shade`) in place of `shade_preload`, the args pass and the
-    /// sweep kept.
-    pub shade: bool,
-    /// Records the sweep's dispatch, its pipeline and bind groups, indirect from a buffer of
-    /// zero workgroups: the dispatch without any of its writes.
-    pub empty_sweep: bool,
-    /// Dispatches the sweep directly, with the workgroups the args pass writes when the sweep
-    /// is not idle (8 per edit brick and per visited brick), rather than from its indirect words.
-    pub direct_sweep: bool,
-    /// Records the empty sweep (as `empty_sweep`) with its group 2, the table and the counters,
-    /// bound to scratch buffers no other pass binds, so the sweep's bind groups share no
-    /// read-write buffer with `shade_preload`'s.
-    pub scratch_sweep: bool,
-    /// On the split encode (`split_next`): reads back the preload's indirect words and the
-    /// dispatch's split in the counters after the args pass and the sweep, before the light
-    /// pass is recorded, and reports them.
-    pub read_args: bool,
-    /// On the split encode: reads back as `read_args` does, then dispatches `shade_preload`
-    /// directly with the x and y workgroups read back, rather than indirectly.
-    pub direct_shade: bool,
-    /// For the next encode only: the encoder is submitted and the GPU waited for before the
-    /// preload's passes and after each of its args pass, its sweep and the light pass, each
-    /// in a compute pass of its own, and this is called with the stage's name after each
-    /// wait. Those passes write no timestamps on that encode.
-    pub split_next: Option<DiagReport>,
-}
-
-/// DIAGNOSTIC: [`DiagPreload::split_next`]'s report, called with a stage's name.
-pub type DiagReport = Box<dyn FnMut(&str) + Send>;
-
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
-/// timestamps `2 i` and `2 i + 1` of the timer it is given. With the preload on, `preload`
-/// holds its args pass and sweep, and `light` the light pass with the preload's fill and
-/// probes in one dispatch.
+/// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
 /// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 23] = [
+pub const FRAME_PASSES: [&str; 20] = [
     "hit",
     "gradient",
-    "preload",
     "light",
-    "fill",
-    "blend",
     "temporal",
     "atrous",
     "probes",
@@ -5940,27 +3917,6 @@ fn hold_reach(
 #[cfg(test)]
 mod tests {
     use super::{JITTER_PHASES, RenderScale, jitter_at};
-
-    /// The preload's offsets hold every brick within the radius once, nearest first, from the
-    /// eye's own brick: 2109 at 8 bricks, and at 16 exactly the store's `PRELOAD_OFFSETS_MAX`;
-    /// each packs into the shader's ten bits a component.
-    #[test]
-    fn the_preload_offsets_run_nearest_first() {
-        use super::{PRELOAD_OFFSETS_MAX, PRELOAD_RADIUS_MAX, preload_offsets};
-        let near = preload_offsets(8);
-        assert_eq!(near.len(), 2109);
-        assert_eq!(near[0], [0, 0, 0]);
-        let d2 = |o: &[i32; 3]| o.iter().map(|c| c * c).sum::<i32>();
-        assert!(near.windows(2).all(|w| d2(&w[0]) <= d2(&w[1])));
-        let mut set = near.clone();
-        set.sort_unstable();
-        set.dedup();
-        assert_eq!(set.len(), near.len());
-        let far = preload_offsets(PRELOAD_RADIUS_MAX / 8);
-        assert_eq!(far.len() as u64, PRELOAD_OFFSETS_MAX);
-        assert!(far.iter().flatten().all(|c| (c + 512) as u32 <= 1023));
-        assert!(preload_offsets(0) == vec![[0, 0, 0]]);
-    }
 
     /// The jitter's sixteen phases are distinct points of `(-0.5, 0.5)^2` that repeat with
     /// period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).

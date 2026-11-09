@@ -17,7 +17,7 @@
 //                                        filtered irradiance's luminance (the lamp's part and a
 //                                        fallback hit's emissive part), then the age: frames of
 //                                        history reused, 0 after a reset; then 1 where the
-//                                        emissive part is the table's (the a-trous passes it
+//                                        emissive part is the store's (the a-trous passes it
 //                                        through), else 0
 //   9  uniform           edits           the frame's edit boxes (see `Edits`)
 //  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
@@ -25,23 +25,22 @@
 //                                        lamp's blend weight rises to twice the lambda averaged
 //                                        over the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
-//  11  storage           cache_cells     the emissive table (march.wgsl), only read
-//  12  storage           store           the loaded store (ADR-0046, `bake::Store`), read under
-//                                        `store_on`; word 0 counts this frame's cacheable hits
-//                                        with no cell nor brick record (`store_missing`), word 1
-//                                        those that read a brick record, word 2 those whose
-//                                        voxel's chunk holds a coarse block (TABLE_COARSE)
+//  11  storage           store           the store (ADR-0046, `bake::Store`); word 0 counts
+//                                        this frame's cube-face hits with no cell nor brick record
+//                                        (`store_missing`), word 1 those that read a brick
+//                                        record, word 2
+//                                        those whose voxel's chunk holds a coarse block
+//                                        (TABLE_COARSE)
 //
-// Under `store_on` a cube face's emissive part is its store cell times the dominant material's
-// emission scale now and this frame's exposure, again with no screen history. Where the store's
-// blocks carry brick records (a reach cut's rings) a face with no cell reads its brick's value
-// for its direction (`store_brick_value`); else, or with no record either, 0. The emissive part (ADR-0043): a hit on a cube face whose cell holds a sample takes the
-// cell's mean times this frame's exposure, with no screen history, the same value at every
-// pixel of the face. Any other hit (no face: the field look, a translucent hit, a ray from
-// inside rock; or a key with no cell, the table full) is a fallback: its own emissive samples'
-// running mean over the pixel's age, `1 / (age + 1)`, until the age reaches FALLBACK_CAP, then
-// held, so a still fallback pixel holds still; it restarts where the pixel resets (no
-// accepted history, no history, an edit box), and follows an emission-scale change at ALPHA.
+// A cube face's emissive part (`cacheable`) is its store cell (`store_value`) or, with none, its
+// brick record's value for its direction (`store_brick_value`), times the dominant material's
+// emission scale now and this frame's exposure, with no screen history, the same value at every
+// pixel of the face; 0 with neither.
+// Any other hit (no face: the field look, a translucent hit, a ray from inside rock) is a
+// fallback: its own emissive samples' running mean over the pixel's age, `1 / (age + 1)`, until
+// the age reaches FALLBACK_CAP, then held, so a still fallback pixel holds still; it restarts
+// where the pixel resets (no accepted history, no history, an edit box), and follows an
+// emission-scale change at ALPHA.
 //
 // A hit is reprojected through the previous frame's view of the same index to a fractional
 // pixel as if both frames' rays went through their pixels' centres (`reproject_centred`: a
@@ -85,11 +84,10 @@ struct Edits {
 
 @group(2) @binding(9) var<uniform> edits: Edits;
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
-@group(2) @binding(11) var<storage, read_write> cache_cells: array<u32>;
-@group(2) @binding(12) var<storage, read_write> store: array<atomic<u32>>;
+@group(2) @binding(11) var<storage, read_write> store: array<atomic<u32>>;
 
-// The store's words (`bake::Store`): the missing count, the window's origin and size in chunks,
-// then a word per window chunk, its block's first word or 0. A block is 512 directory words
+// The store's words (`bake::Store`): the counters, the window's origin and size in chunks, the
+// flags, then a word per window chunk, its block's first word or 0. A block is 512 directory words
 // (a brick's run offset from the block's start << 11 | its faces; 0 none), then the runs: two
 // words a cell, its rgb9e5 irradiance at unit emission, then key (voxel 9 << 3 | face 3) | flags
 // 4 << 12 | dominant material << 16, sorted by key.
@@ -155,10 +153,6 @@ fn store_value(v: vec3<i32>, face: u32) -> vec4<f32> {
         }
     }
     return vec4<f32>(0.0);
-}
-
-fn store_bricks_on() -> bool {
-    return (atomicLoad(&store[STORE_FLAGS]) & 1u) != 0u;
 }
 
 // The block of chunk `c` (world chunks), 0 for none or outside the window.
@@ -258,32 +252,6 @@ fn store_brick_value(v: vec3<i32>, face: u32) -> vec4<f32> {
     return store_cell(own, face, shift);
 }
 
-// The mean of the key's cell in rgb, with a 1 in a; 0 for a key with no cell or no sample.
-fn cache_mean(v: vec3<i32>, face: u32) -> vec4<f32> {
-    let base = cache_slot(v, face);
-    let key = cache_key(v, face);
-    for (var i = 0u; i < CACHE_PROBES; i++) {
-        let word = CACHE_WORDS * ((base + i) & params.cache_mask);
-        if (cache_cells[word + 1u] == key.y && cache_cells[word] == key.x) {
-            let count = cache_cells[word + CACHE_COUNT];
-            if (count == 0u) {
-                break;
-            }
-            if (cache_blend_on()) {
-                return vec4<f32>(blend_unpack(cache_cells[word + CACHE_BLEND]), 1.0);
-            }
-            let n = f32(min(count, cache_c_cap())) * CACHE_Q;
-            let sums = vec3<f32>(
-                f32(cache_cells[word + CACHE_COUNT + 1u]),
-                f32(cache_cells[word + CACHE_COUNT + 2u]),
-                f32(cache_cells[word + CACHE_COUNT + 3u]),
-            );
-            return vec4<f32>(sums / n, 1.0);
-        }
-    }
-    return vec4<f32>(0.0);
-}
-
 // The gradient's gain: lambda = |new - old| / max(new, old) reads 0.9 where light fell to a
 // tenth, and a blend at 0.9 would keep a tenth of the old light; twice lambda, clamped, takes
 // such a pixel to its new light at once.
@@ -346,7 +314,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The emissive irradiance in rgb, the lamp's (white) in a.
     var sample = textureLoad(irradiance_in, px, 0);
     var cached = false;
-    if (store_on() && cacheable(rec)) {
+    if (cacheable(rec)) {
         let ray = pixel_ray(full_px(gid.xy));
         let nf = shadow_normal_of(rec, ray.d);
         let voxel = cache_voxel(rec.p, nf);
@@ -365,14 +333,6 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         cached = true;
         sample = vec4<f32>(c.xyz * exposure_now(), sample.w);
-    } else if (cache_read_on() && cacheable(rec)) {
-        let ray = pixel_ray(full_px(gid.xy));
-        let nf = shadow_normal_of(rec, ray.d);
-        let c = cache_mean(cache_voxel(rec.p, nf), cache_face(rec.axis, nf));
-        if (c.w > 0.0) {
-            cached = true;
-            sample = vec4<f32>(c.xyz * exposure_now(), sample.w);
-        }
     }
     // The filtered part's luminance: the lamp's, and a fallback's emissive part.
     let l = min(select(luminance(sample.xyz), 0.0, cached) + sample.w, MOMENT_LUM_MAX);
