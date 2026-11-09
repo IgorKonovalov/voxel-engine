@@ -1,8 +1,8 @@
 # ADR-0047: Translucent solids filter what is behind by path length, and reflect a small share of their baked face light
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-09, Plan 0059's close), with an Outcome: the face light is the brick's record
 > **Date:** 2026-11-08
-> **Related plan(s):** [Plan 0059](../plans/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md), Phase 5a
+> **Related plan(s):** [Plan 0059](../plans/done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md), Phase 5a
 
 ## Context
 
@@ -69,3 +69,13 @@ pick (2026-11-08, "Both").
 ### Alternative C: Treat glass as an opaque face with a store cell
 
 Cheapest, since it is the opaque path, but it is not glass. Rejected outright: translucency is the row's point.
+
+## Outcome
+
+Accepted 2026-11-09 at Plan 0059's close. The filter, `T(L)`, Schlick's `R` and the second target were built as
+decided, and the owner's look at Phase 5b was "works perfectly". One point changed with ADR-0046's Outcome. The store
+holds no per-face cells, so `E` is not "the entry face's baked store cell". It is the brick level's value at the
+entry face (`glass_store_value` in `march.wgsl`, the read an opaque face makes). A translucent voxel's faces are
+baked into their brick's direction records alongside the opaque faces. So in a brick that holds both, a wall face and
+a pane face of the same direction share one mean. On the RTX at the hall, with the lamp off, the reflected share is
+p50 0.68 of the pane's shown level (loaded, indicative; `docs/plans/logs/0059.md`, Fix pass 2).

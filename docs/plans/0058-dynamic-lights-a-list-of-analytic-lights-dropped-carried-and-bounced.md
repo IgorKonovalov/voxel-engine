@@ -15,7 +15,7 @@
 > **Source:** the owner, 2026-11-04: "I want to be able to for example light cavern by dropping
 > some light source inside, and see lighting change in real time", and the answers under Owner
 > answers.
-> **Starts after:** [Plan 0059](0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md)'s
+> **Starts after:** [Plan 0059](done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md)'s
 > verdict in its Phase 13 (amended 2026-11-05: Phase 3 here is written over the table and is
 > refreshed if baked light wins, when a kept emitter becomes a dominant material; Phases 3 and 4
 > change the store and the lamp channel). Its order against [Plan 0044](0044-hot-path-and-defect-pass.md) and
