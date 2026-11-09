@@ -1091,12 +1091,13 @@ impl Store {
 
 /// The compute pipeline and the buffers of a bake, built on the first bake.
 pub struct BakePipeline {
-    layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
     job: wgpu::Buffer,
     faces: wgpu::Buffer,
     /// [`OPEN_JOBS`] slots of [`TABLE_SLOT_BYTES`]: an open job's candidate table and chunk.
     tables: wgpu::Buffer,
+    /// Group 3 over the three buffers above, which the pipeline never replaces.
+    bind: wgpu::BindGroup,
 }
 
 /// The light pass's table read, which the bake's module reads from the face's slot instead.
@@ -1186,35 +1187,36 @@ impl BakePipeline {
             },
             cache: None,
         });
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bake"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: job.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: faces.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: tables.as_entire_binding(),
+                },
+            ],
+        });
         Self {
-            layout,
             pipeline,
             job,
             faces,
             tables,
+            bind,
         }
     }
 
     /// Group 3 of a bake's dispatch: the job uniform, the working buffer and the table slots.
-    pub(crate) fn bind(&self, device: &wgpu::Device) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bake"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.job.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.faces.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.tables.as_entire_binding(),
-                },
-            ],
-        })
+    pub(crate) fn bind(&self) -> &wgpu::BindGroup {
+        &self.bind
     }
 }
 
@@ -1643,7 +1645,7 @@ fn run_jobs(
 ) -> Result<BakeReport, BakeError> {
     let open_cap = if settings.jobs_alone { 1 } else { LOOP_SLOTS };
     let mut lp = JobLoop::new(jobs, 0..open_cap);
-    let bind = run.pipeline.bind(run.device);
+    let bind = run.pipeline.bind();
     // The frame's parameters, once: the bake reads no view but the LOD walk's camera chunk,
     // which it takes from the face's job.
     run.queue
@@ -1653,7 +1655,7 @@ fn run_jobs(
         store.put(queue, coord, first, block);
     };
     while lp
-        .submit(run, &bind, store, settings, u64::MAX, &mut sink, progress)
+        .submit(run, bind, store, settings, u64::MAX, &mut sink, progress)
         .is_some()
     {}
     run.queue.submit([]);
@@ -1719,6 +1721,8 @@ pub(crate) struct JobLoop {
     timer: Option<Option<LoopTimer>>,
     /// The samples the last [`JobLoop::dispatch`] planned: 0 when it dispatched nothing.
     pub last_samples: u64,
+    /// The light epoch the open jobs' tables were last written at ([`JobLoop::refresh_tables`]).
+    tables_at: Option<u64>,
     pub report: BakeReport,
     pub done: BakeProgress,
 }
@@ -1745,6 +1749,7 @@ impl JobLoop {
             timed: false,
             timer: None,
             last_samples: 0,
+            tables_at: None,
         }
     }
 
@@ -1836,9 +1841,15 @@ impl JobLoop {
         open + pending
     }
 
-    /// Writes each open job's candidate table again from the ranges `run.gpu` holds now: a sync
-    /// between two submits may have moved a range.
-    pub fn refresh_tables(&self, run: &BakeRun<'_>) {
+    /// Writes each open job's candidate table again from the ranges `run.gpu` holds now, when a
+    /// sync since the last write moved, wrote or dropped a range ([`GpuWorld::light_epoch`]). A
+    /// job opened since then wrote its own table from the same ranges.
+    pub fn refresh_tables(&mut self, run: &BakeRun<'_>) {
+        let epoch = run.gpu.light_epoch();
+        if self.tables_at == Some(epoch) {
+            return;
+        }
+        self.tables_at = Some(epoch);
         for job in &self.open {
             write_job_table(run, job.coord, job.slot);
         }
@@ -2625,6 +2636,10 @@ pub struct BakeQueue {
     counted_idle: bool,
     /// The mirror's window and chunk count at the last step: a change counts the depth again.
     mirror_seen: (Option<ChunkExtent>, usize),
+    /// [`face_classes`] of the world's table, and each row's translucency it was made from.
+    classes: Option<(Vec<bool>, Arc<Vec<u8>>)>,
+    /// The block a fade shows this step, kept between steps.
+    fade_scratch: Vec<u32>,
     stats: QueueStats,
 }
 
@@ -2655,6 +2670,8 @@ impl BakeQueue {
             quiet_until: 0,
             counted_idle: false,
             mirror_seen: (None, 0),
+            classes: None,
+            fade_scratch: Vec::new(),
             stats: QueueStats {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()
@@ -2738,12 +2755,28 @@ impl BakeQueue {
             || self.blocked.contains_key(&c.0)
     }
 
-    /// Takes the stream workers' results; one made under other classes than `classes` is dropped.
+    /// [`face_classes`] of `materials`, made again only when a row's translucency changed.
+    fn classes(&mut self, materials: &MaterialTable) -> Arc<Vec<u8>> {
+        let rows = materials.rows();
+        let same = self.classes.as_ref().is_some_and(|(k, _)| {
+            k.len() == rows.len() && k.iter().zip(rows).all(|(t, m)| *t == m.is_translucent())
+        });
+        if !same {
+            let key = rows.iter().map(|m| m.is_translucent()).collect();
+            self.classes = Some((key, Arc::new(face_classes(materials))));
+        }
+        self.classes.as_ref().expect("made above").1.clone()
+    }
+
+    /// Takes the stream workers' results; one made under other classes than `materials`' is
+    /// dropped.
     pub fn take_prepared(
         &mut self,
         prepared: &[(ChunkCoord, vxe_world::Prepared)],
-        classes: &[u8],
+        materials: &MaterialTable,
     ) {
+        let classes = self.classes(materials);
+        let classes = classes.as_slice();
         for (c, p) in prepared {
             let Ok(m) = p.0.clone().downcast::<PreparedMasks>() else {
                 continue;
@@ -2862,7 +2895,7 @@ impl BakeQueue {
             }
         }
         self.lp.refresh_tables(run);
-        let bind = run.pipeline.bind(run.device);
+        let bind = run.pipeline.bind();
         run.queue
             .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
         // Nothing waits on the GPU in a sliced step: the submits read back are those whose
@@ -2953,7 +2986,7 @@ impl BakeQueue {
         let sent = self.lp.in_flight() < IN_FLIGHT
             && self
                 .lp
-                .dispatch(run, &bind, store, &settings, cap, &mut sink, &mut |_| {});
+                .dispatch(run, bind, store, &settings, cap, &mut sink, &mut |_| {});
         let submitted = if sent { self.lp.last_samples } else { 0 };
         if unread < IN_FLIGHT {
             // With nothing left to send, the pre-roll waits out what is in flight.
@@ -3040,7 +3073,7 @@ impl BakeQueue {
                 dug.push((c, near));
             }
         }
-        let classes = face_classes(run.world.materials());
+        let classes = self.classes(run.world.materials());
         // A `B` press touches tens of chunks: listed across threads, as the pre-roll's are.
         let threads = std::thread::available_parallelism()
             .map_or(4, std::num::NonZero::get)
@@ -3155,7 +3188,7 @@ impl BakeQueue {
         // The dig jobs already pending or open count against the two slices; the rest of the
         // loop does not, so a dig never waits behind the queue's own depth.
         let mut left: u64 = self.lp.dig_samples_left(&self.dig_open);
-        let classes = face_classes(run.world.materials());
+        let classes = self.classes(run.world.materials());
         let record = self.record_words();
         let brick_samples = self.settings.brick_samples;
         let mut jobs = Vec::new();
@@ -3241,6 +3274,7 @@ impl BakeQueue {
     /// the copy itself.
     fn advance_fades(&mut self, queue: &wgpu::Queue, store: &Store, record: usize) {
         let mut ended = Vec::new();
+        let mut shown = std::mem::take(&mut self.fade_scratch);
         for (c, f) in &mut self.fades {
             f.frame += 1;
             let Some(to) = store.words.get(c) else {
@@ -3271,7 +3305,8 @@ impl BakeQueue {
                 let (x, y) = (rgb9e5_unpack(a), rgb9e5_unpack(b));
                 rgb9e5_pack([0, 1, 2].map(|k| x[k] + (y[k] - x[k]) * t))
             };
-            let mut shown = to.clone();
+            shown.clear();
+            shown.extend_from_slice(to);
             for slot in 0..CHUNK_BRICKS {
                 let dir = to[slot];
                 if dir == 0 {
@@ -3286,6 +3321,7 @@ impl BakeQueue {
             }
             store.show(queue, f.first, &shown);
         }
+        self.fade_scratch = shown;
         for c in ended {
             self.fades.remove(&c);
         }
@@ -3337,7 +3373,7 @@ impl BakeQueue {
         } else {
             QUEUE_CHECKS
         };
-        let classes = face_classes(run.world.materials());
+        let classes = self.classes(run.world.materials());
         let lr = gpu.light_radius();
         // Class 1 (refinement) is opened only by an opening that found no class 0 candidate
         // ready, so every chunk with no block that can bake comes first; those whose reach or

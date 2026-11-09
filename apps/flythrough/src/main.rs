@@ -2616,6 +2616,8 @@ struct Autopilot {
     cpu_ms: Vec<f64>,
     /// The streaming CPU's stages per flight frame: `update`, `poll`, `apply_events`, `sync`.
     stages_ms: [Vec<f64>; 4],
+    /// The live queue's step on the CPU per flight frame.
+    queue_ms: Vec<f64>,
     /// The light extraction inside `sync`, per flight frame; the flight's peak of light
     /// samples in the mirror, its ranges evicted and refused, and the longest wait of a chunk
     /// inside the light radius, in milliseconds.
@@ -3038,6 +3040,9 @@ struct QueueRun {
     /// Ms since the start at the last step, and the dig being watched.
     step_ms: Option<f64>,
     dig: Option<DigWatch>,
+    /// The CPU ms of each `bake_queue_step` since the last line, and of the last one.
+    step_cpu: Vec<f64>,
+    last_step_cpu: f64,
 }
 
 /// A dig in the live queue, from the step that first read its box until its rings are baked:
@@ -3922,13 +3927,13 @@ impl Run {
                 from,
             });
         }
-        match gfx.frame.bake_queue_step(
-            &gpu.device,
-            &gpu.queue,
-            &mut gfx.mirror,
-            &self.world,
-            &view,
-        ) {
+        let t_cpu = now();
+        let stepped =
+            gfx.frame
+                .bake_queue_step(&gpu.device, &gpu.queue, &mut gfx.mirror, &self.world, &view);
+        self.queue.last_step_cpu = ms_since(t_cpu);
+        self.queue.step_cpu.push(self.queue.last_step_cpu);
+        match stepped {
             Some(Ok(st)) => {
                 if st.samples > 0 {
                     self.queue.slices.push(st.ms);
@@ -3980,7 +3985,10 @@ impl Run {
                 }
                 self.queue.stats = Some(st);
                 if !self.queue.emptied
-                    && gfx.frame.bake_queue().is_some_and(vxe_render::BakeQueue::empty)
+                    && gfx
+                        .frame
+                        .bake_queue()
+                        .is_some_and(vxe_render::BakeQueue::empty)
                 {
                     self.queue.emptied = true;
                     println!(
@@ -4021,8 +4029,9 @@ impl Run {
             sl.sort_by(f64::total_cmp);
             let p50 = sl.get(sl.len() / 2).copied().unwrap_or(0.0);
             let max = sl.last().copied().unwrap_or(0.0);
+            let mut cpu = std::mem::take(&mut self.queue.step_cpu);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels, eye {:.0} {:.0} {:.0}",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -4046,6 +4055,8 @@ impl Run {
                 self.fly.camera.position.x,
                 self.fly.camera.position.y,
                 self.fly.camera.position.z,
+                percentile(&mut cpu, 50.0),
+                percentile(&mut cpu, 100.0),
             );
             self.queue.line_ms = t;
             self.queue.line_frame = self.frame;
@@ -4473,6 +4484,7 @@ impl Run {
             None
         };
         let now_ms = ms_since(self.start);
+        let queue_ms = self.queue.last_step_cpu;
         let (Some(p), Some(stream), Some(gfx)) =
             (self.pilot.as_mut(), self.stream.as_ref(), self.gfx.as_ref())
         else {
@@ -4497,6 +4509,7 @@ impl Run {
                 v.push(ms);
             }
             p.light_ms.push(stream.light_ms);
+            p.queue_ms.push(queue_ms);
             p.light_evicted += stream.light_evicted;
             p.light_refused += stream.light_refused;
             p.light_wait_ms = p.light_wait_ms.max(stream.light_wait_ms);
@@ -4572,6 +4585,13 @@ impl Run {
             p.light_evicted,
             p.light_refused,
             p.light_wait_ms
+        );
+        println!(
+            "autopilot: bake queue step CPU per frame: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames",
+            percentile(&mut p.queue_ms, 50.0),
+            percentile(&mut p.queue_ms, 99.0),
+            percentile(&mut p.queue_ms, 100.0),
+            p.queue_ms.len()
         );
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();
         println!(
@@ -5542,6 +5562,7 @@ impl App for Flythrough {
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),
+                queue_ms: Vec::new(),
                 light_ms: Vec::new(),
                 pass_ms: Vec::new(),
                 peak_light: 0,

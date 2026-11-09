@@ -935,6 +935,9 @@ pub struct GpuWorld {
     light_hold: i32,
     lights: HashMap<ChunkCoord, ChunkLights>,
     light_live: u64,
+    /// Bumped whenever a chunk's range is written, released or dropped: what a reader of
+    /// [`GpuWorld::light_chunks`] keys a cache on.
+    light_epoch: u64,
     /// Ranges of chunks dropped outside a sync, zeroed and freed at the next one.
     light_dropped: Vec<(u32, u32)>,
     /// Chunks whose lists changed since their range was written; chunks inside the radius
@@ -1149,6 +1152,7 @@ impl GpuWorld {
             light_high: 0,
             lights: HashMap::new(),
             light_live: 0,
+            light_epoch: 0,
             light_dropped: Vec::new(),
             light_dirty: HashSet::new(),
             light_wait: HashMap::new(),
@@ -2839,12 +2843,14 @@ impl GpuWorld {
             l.range = Some((start, n));
             l.power = power;
         }
+        self.light_epoch += 1;
         u64::from(n)
     }
 
     /// Zeroes and frees `coord`'s range, keeping its lists.
     fn release_lights(&mut self, coord: ChunkCoord, enc: &mut wgpu::CommandEncoder) {
         if let Some(r) = self.lights.get_mut(&coord).and_then(|l| l.range.take()) {
+            self.light_epoch += 1;
             self.light_live -= u64::from(r.1);
             self.zero_light_range(r, enc);
             self.free_light_range(r);
@@ -2883,6 +2889,11 @@ impl GpuWorld {
         })
     }
 
+    /// A count that changes whenever [`GpuWorld::light_chunks`] does.
+    pub fn light_epoch(&self) -> u64 {
+        self.light_epoch
+    }
+
     /// The light radius in chunks ([`MirrorConfig::light_radius`]).
     pub fn light_radius(&self) -> i32 {
         self.cfg.light_radius
@@ -2895,6 +2906,7 @@ impl GpuWorld {
         if let Some(l) = self.lights.remove(&coord)
             && let Some(r) = l.range
         {
+            self.light_epoch += 1;
             self.light_live -= u64::from(r.1);
             self.light_dropped.push(r);
         }

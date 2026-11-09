@@ -947,6 +947,8 @@ pub struct Frame {
     dig_boxes: Vec<[[i32; 3]; 2]>,
     /// The live queue ([`Frame::start_bake_queue`]), when the store fills a frame at a time.
     bake_queue: Option<crate::bake::BakeQueue>,
+    /// The live queue's world group and the buffers it binds ([`Frame::queue_world_bind`]).
+    queue_world_bind: Option<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
     temporal: wgpu::ComputePipeline,
     gradient_layout: wgpu::BindGroupLayout,
     gradient: wgpu::ComputePipeline,
@@ -1574,6 +1576,7 @@ impl Frame {
             bake: None,
             dig_boxes: Vec::new(),
             bake_queue: None,
+            queue_world_bind: None,
             temporal,
             gradient_layout,
             gradient,
@@ -2007,6 +2010,32 @@ impl Frame {
     }
 
     /// Group 0 of the frame's shaders over `world`.
+    /// [`Frame::world_bind`] for the live queue's step, made again only when one of the buffers
+    /// it binds was replaced (a mirror shard or the light-sample buffer grown, say).
+    fn queue_world_bind(&mut self, device: &wgpu::Device, world: &GpuWorld) -> wgpu::BindGroup {
+        let key = vec![
+            self.params.clone(),
+            world.pool_shard(0).clone(),
+            world.pool_shard(1).clone(),
+            world.pool_shard(2).clone(),
+            world.pool_shard(3).clone(),
+            world.records().clone(),
+            world.table().clone(),
+            world.materials().clone(),
+            world.light_buffer().clone(),
+            self.emission_scale.clone(),
+            self.exposure.state_uniform().clone(),
+        ];
+        match &self.queue_world_bind {
+            Some((k, bind)) if *k == key => bind.clone(),
+            _ => {
+                let bind = self.world_bind(device, world);
+                self.queue_world_bind = Some((key, bind.clone()));
+                bind
+            }
+        }
+    }
+
     fn world_bind(&self, device: &wgpu::Device, world: &GpuWorld) -> wgpu::BindGroup {
         let noise = view(&self.blue_noise);
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2142,7 +2171,7 @@ impl Frame {
         if let Some(q) = self.bake_queue.as_mut()
             && !prepared.is_empty()
         {
-            q.take_prepared(prepared, &crate::bake::face_classes(world.materials()));
+            q.take_prepared(prepared, world.materials());
         }
     }
 
@@ -2182,7 +2211,7 @@ impl Frame {
                 .unwrap_or((far as f64).sqrt().ceil() as i32 + gpu.light_radius() + 1),
         );
         let params = self.bake_params(gpu, &settings);
-        let world_bind = self.world_bind(device, gpu);
+        let world_bind = self.queue_world_bind(device, gpu);
         if self.bake.is_none() {
             self.bake = Some(crate::bake::BakePipeline::new(device, &self.world_layout));
         }
