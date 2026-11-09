@@ -3244,6 +3244,9 @@ impl JobCtx<'_, '_> {
 
 /// Frames a re-baked block's values move over, from what it showed to its new values.
 pub const FADE: u32 = 16;
+/// Frames a dig job's block moves over, from its provisional block: short, so a dug hole's light
+/// is seen settling for a moment, not dissolving.
+pub const DIG_FADE: u32 = 4;
 /// The live queue's slice by default, in milliseconds of a frame.
 pub const DEFAULT_BAKE_SLICE_MS: f64 = 1.5;
 /// Samples a brick direction draws in the live queue: the owner's pick (Plan 0059 Phase 7b).
@@ -3327,11 +3330,13 @@ pub struct QueueStats {
     pub dig_bricks: u64,
 }
 
-/// A block fading from what it showed to its target ([`FADE`]).
+/// A block fading from what it showed to its target over `frames` ([`FADE`], or [`DIG_FADE`]
+/// for a dig job's).
 struct Fade {
     first: u64,
     from: Vec<u32>,
     frame: u32,
+    frames: u32,
 }
 
 /// A chunk's dig bricks (slots), and whether one of them is in ring 1.
@@ -3654,10 +3659,11 @@ impl BakeQueue {
                 }
                 return;
             }
-            if let Some(d) = dug {
+            if let Some(d) = &dug {
                 stats.digs_baked += 1;
                 stats.dig_bricks += d.slots.len() as u64;
             }
+            let dug = dug.is_some();
             stats.baked += 1;
             // The table word's flag follows at the put below.
             store.mark_coarse(coord, coarse);
@@ -3681,6 +3687,7 @@ impl BakeQueue {
                             first: f,
                             from,
                             frame: 0,
+                            frames: if dug { DIG_FADE } else { FADE },
                         },
                     );
                 }
@@ -3992,12 +3999,12 @@ impl BakeQueue {
                 ended.push(*c);
                 continue;
             }
-            if f.frame >= FADE {
+            if f.frame >= f.frames {
                 store.show(queue, f.first, to);
                 ended.push(*c);
                 continue;
             }
-            let t = f.frame as f32 / FADE as f32;
+            let t = f.frame as f32 / f.frames as f32;
             let lerp = |a: u32, b: u32| {
                 let (x, y) = (rgb9e5_unpack(a), rgb9e5_unpack(b));
                 rgb9e5_pack([0, 1, 2].map(|k| x[k] + (y[k] - x[k]) * t))
