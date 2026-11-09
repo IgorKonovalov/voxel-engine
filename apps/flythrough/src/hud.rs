@@ -419,54 +419,11 @@ pub struct LightingRow {
     pub live_probes: Option<u32>,
     /// The store's counts at the last sample.
     pub store: Option<vxe_render::StoreStats>,
-    /// The store's piece and last dig in words ([`store_note`]), after its counts.
+    /// The light queue's state in words (the fly-through's queue note), after the store's counts.
     pub store_note: String,
     pub modes: String,
     /// The internal and output sizes while the upscaler runs: a row then reads its passes.
     pub upscale: Option<[[u32; 2]; 2]>,
-}
-
-/// A dig's re-bake, as the HUD and stdout state it: the faces and samples baked and its wall
-/// time, or a dig wholly outside the baked piece.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct DigHitch {
-    pub faces: u64,
-    pub samples: u64,
-    pub ms: f64,
-    pub outside: bool,
-}
-
-impl DigHitch {
-    /// `dig 3120 faces, 1.2e8 samples, 1890 ms`, or `dig outside the baked piece`.
-    pub fn line(&self) -> String {
-        if self.outside {
-            "dig outside the baked piece".to_owned()
-        } else {
-            format!(
-                "dig {} faces, {:.2e} samples, {:.0} ms",
-                self.faces, self.samples as f64, self.ms
-            )
-        }
-    }
-}
-
-/// The store's piece (`piece r2 at [11, 10, 3]`, or `piece whole`) and the last dig's hitch, each
-/// after a comma; once a dig has re-baked, `far light stale after a dig`: beyond
-/// `vxe_render::bake::DIG_REACH` voxels a dig moves no cell.
-pub fn store_note(piece: Option<&str>, last_dig: Option<DigHitch>) -> String {
-    let mut out = String::new();
-    if let Some(p) = piece {
-        out.push_str(", ");
-        out.push_str(p);
-    }
-    if let Some(d) = last_dig {
-        out.push_str(", ");
-        out.push_str(&d.line());
-        if !d.outside {
-            out.push_str(", far light stale after a dig");
-        }
-    }
-    out
 }
 
 /// The mirror's pressure (the fuller of its pool units and records), its reservation in bytes,
@@ -1152,22 +1109,14 @@ mod tests {
                 coarse_reads: 0,
                 coarse_chunks: 0,
             }),
-            store_note: store_note(
-                Some("piece r2 at [11, 10, 3]"),
-                Some(DigHitch {
-                    faces: 3120,
-                    samples: 120_000_000,
-                    ms: 1890.0,
-                    outside: false,
-                }),
-            ),
+            store_note: ", queue depth 4, coarse 2, jobs 9, slice 1.25 ms".to_owned(),
             modes: "light baked".to_owned(),
             upscale: None,
         });
         s.write_rows(&mut out, &mut colours);
         assert!(
             out.contains(
-                "store 12 3.4 MB missing 56, piece r2 at [11, 10, 3], dig 3120 faces, 1.20e8 samples, 1890 ms, far light stale after a dig; light baked"
+                "store 12 3.4 MB missing 56, queue depth 4, coarse 2, jobs 9, slice 1.25 ms; light baked"
             ),
             "{out}"
         );
