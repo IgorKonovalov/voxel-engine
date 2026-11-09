@@ -32,6 +32,16 @@ plan lanes run at once, each in its own worktree at
     Anything that loosens a bar still stops for the owner. That includes a wider tolerance, a
     lower ratio, a longer lag, a dropped assertion, or a bar re-derived against a different
     quantity.
+2b. **Exploration mode (owner, 2026-11-08).** A plan or amendment can mark phases as
+    exploration, as Plan 0059 does until its pick. In those phases:
+    - The owner's window is the gate. A phase is done when its change is built, behind a key
+      or flag, and named in the banner.
+    - Bars become readings, taken when cheap and reported without stopping.
+    - A stop is only for a design choice the plan doesn't make, or code that can't work.
+    - Checks per step are build, clippy, fmt and the quick tier. The gpu tier runs before the
+      merge into main and at the close.
+    - Tests and goldens are written after the pick.
+    Outside a marked phase, rule 2 holds as written.
 3. Keep anything that must survive a reboot in the worktree (committed, or under the
    untracked `live/`), never only in `/tmp` or a scratchpad.
 
@@ -66,7 +76,7 @@ plan lanes run at once, each in its own worktree at
 
    Build first, outside the lock, and keep the hold short. The owner's windowed checks take the
    same lock run by run, and the lock is free between runs, so a GPU job started then blocks
-   the owner's next run. While a live-session runner is up (`pgrep -f '^bash .*live/session[0-9]+\.sh'`
+   the owner's next run. While a live-session runner is up (`pgrep -f '^bash .*live/session[0-9]+[a-z]?\.sh'`
    finds it; a looser pattern also matches the shell running the check), take no GPU or timing work at all; poll at most once a minute, and keep doing CPU work.
 7. Record "exclusive perf lock" and the 1-minute load average with every reading. A reading
    taken at a load above 2 is labelled loaded (indicative), not quiet. Readings, gate counts,

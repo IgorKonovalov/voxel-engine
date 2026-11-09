@@ -28,8 +28,9 @@
 // `quick` profile's default-filter must start with `not (<gpu>)` and the `gpu` profile's with
 // `(<gpu>)`, verbatim, and both must end with `and not (<soak>)`, where <soak> is another
 // default-profile override's filter, the same in both; the `gate` profile's default-filter must
-// be `not (<soak>)` and the `soak` profile's `(<soak>)`. A list edited in one place and not the
-// others is a finding too.
+// be `not (<soak>)` and the `soak` profile's `(<soak>)`; a `ci-windows` profile, when there is
+// one, must be the `quick` profile's filter. A list edited in one place and not the others is a
+// finding too.
 //
 // Usage:  node scripts/check-test-tiers.mjs [root]
 // Exit 0 = the filter and the GPU files agree. Exit 1 = one line per finding:
@@ -213,6 +214,13 @@ if (tails.length === 2 && tails[0] === tails[1]) {
         `${CONFIG} -> [profile.${profile}] default-filter is not ${shown}: copy the soak override's filter into it verbatim`,
       );
     }
+  }
+  // CI's Windows arm, when the profile exists: the CPU tests only, as `quick`.
+  const win = defaults.get("ci-windows");
+  if (win !== undefined && win !== defaults.get("quick")) {
+    findings.push(
+      `${CONFIG} -> [profile.ci-windows] default-filter is not the quick profile's: copy it verbatim`,
+    );
   }
 }
 
