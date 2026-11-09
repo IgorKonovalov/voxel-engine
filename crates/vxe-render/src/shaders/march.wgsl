@@ -66,6 +66,8 @@
 //   3, 4                               the split walk's list and arguments (below)
 //   5  storage texture  transmit_out   r32uint: the translucent solid's transmittance `T(L)` per
 //                                      channel as rgb9e5 (`t9e5_pack`), 1 where none is in front
+//   6  storage  glass_store            the store (`bake::Store`, temporal.wgsl's `store`), read
+//                                      only: a translucent entry face's brick record
 //
 // A pixel takes the first view whose rectangle holds it (the first when none does). Its ray
 // runs from the view's origin along `fwd + right x - up y`, x and y moving linearly across the
@@ -226,6 +228,7 @@ struct ExposureState {
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(5) var transmit_out: texture_storage_2d<r32uint, write>;
+@group(1) @binding(6) var<storage, read> glass_store: array<u32>;
 
 // The split field walk (FLAG_FIELD_SPLIT): the hit pipeline walks every ray as `march` does,
 // its cells cubes, until the ray enters a full chunk's brick that the field can hit in (a band
@@ -925,6 +928,112 @@ fn t9e5_unpack(w: u32) -> vec3<f32> {
     return vec3<f32>(m) * exp2(f32(i32(w >> 27u) - 24));
 }
 
+// The store's words (`bake::Store`): the counters, the window's origin and size in chunks, the
+// flags, then a word per window chunk, its block's first word or 0. A block is 512 directory words
+// (a brick's offset from the block's start just past its record << 11; 0 none), then each surface
+// brick's record.
+const STORE_ORIGIN: u32 = 4u;
+const STORE_SIZE: u32 = 8u;
+// The flags word (`bake::STORE_FLAGS`): bit 1, the records' cells are 4 voxels (eight a brick),
+// else 8. A record is BRICK_WORDS a cell: six rgb9e5 direction values in face order, then
+// `material | direction mask << 16`.
+const STORE_FLAGS: u32 = 12u;
+const STORE_TABLE: u32 = 16u;
+const BRICK_WORDS: u32 = 7u;
+// A chunk table word's flag (`bake::TABLE_COARSE`): the block is the live queue's coarse pass. The
+// rest of the word is the block's first word.
+const TABLE_COARSE: u32 = 0x80000000u;
+
+// One of the 2 x 2 cells (world cells of 1 << `shift` voxels) around voxel `v`'s centre in the
+// plane of face `face` (its own cell's layer along the normal), and its bilinear weight by the
+// centre's place between the cells' centres; `i` in 0..4. Cells are addressed in world cells, so
+// the blend crosses a brick's border as it crosses a cell's.
+struct StoreTap {
+    cell: vec3<i32>,
+    w: f32,
+};
+
+fn store_tap(v: vec3<i32>, face: u32, shift: u32, i: i32) -> StoreTap {
+    let size = f32(1u << shift);
+    let axis = face / 2u;
+    let ta = (axis + 1u) % 3u;
+    let tb = (axis + 2u) % 3u;
+    let own = v >> vec3<u32>(shift);
+    let g = (vec3<f32>(v) + 0.5) / size - 0.5;
+    let lo = vec3<i32>(floor(g));
+    let f = g - floor(g);
+    // The two in-plane axes as masks: a store through a runtime vector index is not portable
+    // (`shader_portability`), so the cell's coordinate is chosen per component.
+    let axes = vec3<u32>(0u, 1u, 2u);
+    let ma = axes == vec3<u32>(ta);
+    let mb = axes == vec3<u32>(tb);
+    let oa = i & 1;
+    let ob = i >> 1u;
+    let cell = select(select(own, lo + vec3<i32>(oa), ma), lo + vec3<i32>(ob), mb);
+    let wa = select(1.0 - f[ta], f[ta], oa == 1);
+    let wb = select(1.0 - f[tb], f[tb], ob == 1);
+    return StoreTap(cell, wa * wb);
+}
+
+// temporal.wgsl's `store_cell` over `glass_store`: cell `c`'s value for direction `face` times its
+// material's emission scale now in rgb, 1 in a; 0 where its brick has no record or the cell no
+// face of that direction.
+fn glass_store_cell(c: vec3<i32>, face: u32, shift: u32) -> vec4<f32> {
+    let per = 3u - shift;
+    let b = c >> vec3<u32>(per);
+    let origin = vec3<i32>(
+        i32(glass_store[STORE_ORIGIN]),
+        i32(glass_store[STORE_ORIGIN + 1u]),
+        i32(glass_store[STORE_ORIGIN + 2u]),
+    );
+    let size = vec3<i32>(
+        i32(glass_store[STORE_SIZE]),
+        i32(glass_store[STORE_SIZE + 1u]),
+        i32(glass_store[STORE_SIZE + 2u]),
+    );
+    let w = (b >> vec3<u32>(3u)) - origin;
+    if (any(w < vec3<i32>(0)) || any(w >= size)) {
+        return vec4<f32>(0.0);
+    }
+    let block = glass_store[STORE_TABLE + u32(w.x + size.x * (w.y + size.y * w.z))] & ~TABLE_COARSE;
+    if (block == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let s = b & vec3<i32>(7);
+    let dir = glass_store[block + u32(s.x + 8 * (s.y + 8 * s.z))];
+    if (dir == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let n = 1 << per;
+    let l = c & vec3<i32>(n - 1);
+    let sub = u32(l.x + n * (l.y + n * l.z));
+    let cells = u32(n * n * n);
+    let rec = block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
+    let tail = glass_store[rec + 6u];
+    if (((tail >> (16u + face)) & 1u) == 0u) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(t9e5_unpack(glass_store[rec + face]) * emission_scale[tail & 0xFFFFu], 1.0);
+}
+
+// temporal.wgsl's `store_brick_value` over `glass_store`, in rgb alone: face `face` of voxel `v`,
+// bilinear over the 2 x 2 cells that have the direction, else its own cell's, else 0.
+fn glass_store_value(v: vec3<i32>, face: u32) -> vec3<f32> {
+    let shift = select(3u, 2u, (glass_store[STORE_FLAGS] & 2u) != 0u);
+    var sum = vec3<f32>(0.0);
+    var weight = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let tap = store_tap(v, face, shift, i);
+        let r = glass_store_cell(tap.cell, face, shift);
+        sum += r.xyz * (tap.w * r.w);
+        weight += tap.w * r.w;
+    }
+    if (weight > 0.0) {
+        return sum / weight;
+    }
+    return glass_store_cell(v >> vec3<u32>(shift), face, shift).xyz;
+}
+
 // The lamp's irradiance at `p` before any surface term: intensity over squared distance inside
 // the cone, the terms `shade` applies to an opaque hit.
 fn lamp(p: vec3<f32>) -> f32 {
@@ -954,12 +1063,13 @@ fn glass_tint(albedo: vec3<f32>) -> vec3<f32> {
     return 0.8 * (0.5 + 0.5 * albedo / top);
 }
 
-// The reflected share of a translucent entry face, entered at `o + d t` across `axis`:
-// Schlick's `R` at the view angle times `face_light = E / PI`, untinted. `E` is, while the lamp
-// is on, the lamp's `PI * intensity * cone * n.l / dist^2` with no shadow ray (the lamp sits at
-// the eye, whose ray reached the face), else 0: the store holds no translucent face. Unlit
-// (`lit` false, the albedo view) `face_light` is 1.
-fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, axis: i32, lit: bool) -> vec3<f32> {
+// The reflected share of the entry face of translucent voxel `v`, entered at `o + d t` across
+// `axis`: Schlick's `R` at the view angle times `face_light = E / PI`, untinted. `E` is the face's
+// brick record (`glass_store_value`, the read an opaque face's temporal pass makes) plus, while
+// the lamp is on, the lamp's `PI * intensity * cone * n.l / dist^2` with no shadow ray (the lamp
+// sits at the eye, whose ray reached the face). Unlit (`lit` false, the albedo view)
+// `face_light` is 1.
+fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, v: vec3<i32>, axis: i32, lit: bool) -> vec3<f32> {
     let nf = select(vec3<f32>(0.0), vec3<f32>(-sign(d[axis])), axis_mask(axis));
     let c = 1.0 - min(abs(dot(normalize(d), nf)), 1.0);
     let c2 = c * c;
@@ -967,7 +1077,7 @@ fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, axis: i32, lit: bool) -> 
     if (!lit) {
         return vec3<f32>(r);
     }
-    var e = vec3<f32>(0.0);
+    var e = glass_store_value(v, store_face(axis, nf));
     if ((params.lighting & LIGHTING_LAMP) != 0u) {
         let p = o + d * t;
         let l = normalize(params.light_pos - p);
@@ -1028,7 +1138,7 @@ fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> Glass
             if (!entered) {
                 entered = true;
                 if (axis >= 0) {
-                    out.reflected = glass_reflected(o, d, t, axis, lit);
+                    out.reflected = glass_reflected(o, d, t, v, axis, lit);
                 }
             }
             let seg = max(min(min(tk[k], t_end) - t, cap - len), 0.0);

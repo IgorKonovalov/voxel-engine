@@ -882,6 +882,7 @@ impl Marcher {
                 Io::Storage,
                 Io::Storage,
                 Io::Store(R32Uint),
+                Io::ReadStorage,
             ],
         );
         // The resume dispatch reads its workgroup count from the split arguments, so they are
@@ -1204,6 +1205,8 @@ enum Io {
     Uniform,
     /// A read-write storage buffer.
     Storage,
+    /// A read-only storage buffer.
+    ReadStorage,
 }
 
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
@@ -1219,14 +1222,16 @@ fn io_layout_at(device: &wgpu::Device, label: &str, io: &[(u32, Io)]) -> wgpu::B
             Io::Float => sampled_texture(b, FLOAT),
             Io::Uint => sampled_texture(b, UINT),
             Io::Store(f) => storage_texture(b, f),
-            Io::Uniform | Io::Storage => wgpu::BindGroupLayoutEntry {
+            Io::Uniform | Io::Storage | Io::ReadStorage => wgpu::BindGroupLayoutEntry {
                 binding: b,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: if matches!(k, Io::Uniform) {
                         wgpu::BufferBindingType::Uniform
                     } else {
-                        wgpu::BufferBindingType::Storage { read_only: false }
+                        wgpu::BufferBindingType::Storage {
+                            read_only: matches!(k, Io::ReadStorage),
+                        }
                     },
                     has_dynamic_offset: false,
                     min_binding_size: None,
@@ -2892,6 +2897,7 @@ impl Frame {
                 Res::Buf(split_list),
                 Res::Buf(&t.split_args),
                 Res::Tex(&t.transmit),
+                Res::Buf(self.store.pool()),
             ],
         );
         let half = t.half_pos.is_some();

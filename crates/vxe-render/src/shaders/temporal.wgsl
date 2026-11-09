@@ -85,21 +85,7 @@ struct Edits {
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
 @group(2) @binding(11) var<storage, read_write> store: array<atomic<u32>>;
 
-// The store's words (`bake::Store`): the counters, the window's origin and size in chunks, the
-// flags, then a word per window chunk, its block's first word or 0. A block is 512 directory words
-// (a brick's offset from the block's start just past its record << 11; 0 none), then each surface
-// brick's record.
-const STORE_ORIGIN: u32 = 4u;
-const STORE_SIZE: u32 = 8u;
-// The flags word (`bake::STORE_FLAGS`): bit 1, the records' cells are 4 voxels (eight a brick),
-// else 8. A record is BRICK_WORDS a cell: six rgb9e5 direction values in face order, then
-// `material | direction mask << 16`.
-const STORE_FLAGS: u32 = 12u;
-const STORE_TABLE: u32 = 16u;
-const BRICK_WORDS: u32 = 7u;
-// A chunk table word's flag (`bake::TABLE_COARSE`): the block is the live queue's coarse pass. The
-// rest of the word is the block's first word.
-const TABLE_COARSE: u32 = 0x80000000u;
+// The store's words and a record's layout: march.wgsl's STORE_ORIGIN to TABLE_COARSE.
 
 // The value of an rgb9e5 word: three 9-bit mantissas over a shared exponent, biased by 15 + 9.
 fn rgb9e5_decode(w: u32) -> vec3<f32> {
@@ -167,41 +153,23 @@ fn store_cell(c: vec3<i32>, face: u32, shift: u32) -> vec4<f32> {
 }
 
 // Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 cells around the
-// voxel's centre in the face's plane (its own cell's layer along the normal), bilinear by the
-// centre's place between the cells' centres, over those that have the direction; its own cell's
-// alone where none has it with weight. 0 in a where that has none either. Cells are addressed in
-// world cells, so the blend crosses a brick's border as it crosses a cell's.
+// voxel's centre in the face's plane (march.wgsl's `store_tap`), bilinear over those that have
+// the direction; its own cell's alone where none has it with weight. 0 in a where that has none
+// either. march.wgsl's `glass_store_value` is the same read over the read-only binding.
 fn store_brick_value(v: vec3<i32>, face: u32) -> vec4<f32> {
     let shift = store_cell_shift();
-    let size = f32(1u << shift);
-    let axis = face / 2u;
-    let ta = (axis + 1u) % 3u;
-    let tb = (axis + 2u) % 3u;
-    let own = v >> vec3<u32>(shift);
-    let g = (vec3<f32>(v) + 0.5) / size - 0.5;
-    let lo = vec3<i32>(floor(g));
-    let f = g - floor(g);
-    // The two in-plane axes as masks: a store through a runtime vector index is not portable
-    // (`shader_portability`), so the cell's coordinate is chosen per component.
-    let axes = vec3<u32>(0u, 1u, 2u);
-    let ma = axes == vec3<u32>(ta);
-    let mb = axes == vec3<u32>(tb);
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
     for (var i = 0; i < 4; i++) {
-        let oa = i & 1;
-        let ob = i >> 1u;
-        let b = select(select(own, lo + vec3<i32>(oa), ma), lo + vec3<i32>(ob), mb);
-        let wa = select(1.0 - f[ta], f[ta], oa == 1);
-        let wb = select(1.0 - f[tb], f[tb], ob == 1);
-        let r = store_cell(b, face, shift);
-        sum += r.xyz * (wa * wb * r.w);
-        weight += wa * wb * r.w;
+        let tap = store_tap(v, face, shift, i);
+        let r = store_cell(tap.cell, face, shift);
+        sum += r.xyz * (tap.w * r.w);
+        weight += tap.w * r.w;
     }
     if (weight > 0.0) {
         return vec4<f32>(sum / weight, 1.0);
     }
-    return store_cell(own, face, shift);
+    return store_cell(v >> vec3<u32>(shift), face, shift);
 }
 
 // The gradient's gain: lambda = |new - old| / max(new, old) reads 0.9 where light fell to a

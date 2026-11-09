@@ -930,12 +930,16 @@ fn path_in_boxes(o: [f64; 3], d: [f64; 3], s_end: f64, boxes: &[([i32; 3], [i32;
 
 /// ADR-0047's filter (lavapipe, a 64 x 36 frame, lamp off, exposure 8). A wall lit by an ore
 /// strip on its own side, behind a pane 1 voxel thick on one half and 2 on the other; no
-/// pane reflects no light with the lamp off (the store holds no translucent face), so each pixel
-/// is `T(L)` of what it showed before the pane: `L` the exact path through the glass boxes along
-/// the pixel's ray, `T = tint^L` per channel, `tint = 0.8 (0.5 + 0.5 albedo / max(albedo))` from
-/// the row's albedo. Within 2 levels, head on (the halves at `L` near 1 and 2: `T` and `T^2`) and
-/// at 30 degrees of yaw (`L` near 2.3 through the 2-voxel half). A second pane over a black wall
-/// lies out of both views. The per-layer composite fails it.
+/// emitter sees the pane's camera-side faces, so their records are 0 and each pixel is `T(L)` of
+/// what it showed before the pane: `L` the exact path through the glass boxes along the pixel's
+/// ray, `T = tint^L` per channel, `tint = 0.8 (0.5 + 0.5 albedo / max(albedo))` from the row's
+/// albedo. Within 2 levels, head on (the halves at `L` near 1 and 2: `T` and `T^2`) and at 30
+/// degrees of yaw (`L` near 2.3 through the 2-voxel half). Then a pane lit from the camera's side
+/// over a black wall: each pixel's reflected light before exposure (the layer target's rgb) is
+/// Schlick's `R` at F0 0.04 at its angle times `E / PI`, `E` the brick level's value of its entry
+/// face ([`brick_value`] of the store's records, times the ore's emission scale), above 0 and
+/// within 10 %, and the pixel shows it. With the ore strip carved away (its ring re-baked), the
+/// same pixels reflect 0. The per-layer composite fails the first.
 #[test]
 fn a_glass_pane_filters_by_path_length() {
     let mut t = table();
@@ -984,6 +988,11 @@ fn a_glass_pane_filters_by_path_length() {
     let oblique = Camera {
         position: [31.0 - 8.66, 72.0, 31.0].into(),
         yaw: 30f32.to_radians(),
+        ..head_on
+    };
+    let lit_view = Camera {
+        position: [108.0, 70.0, 104.0].into(),
+        yaw: 180f32.to_radians(),
         ..head_on
     };
     let lighting = rig.frame.lighting();
@@ -1073,6 +1082,71 @@ fn a_glass_pane_filters_by_path_length() {
             );
         }
     }
+    // The lit pane over the black wall: its reflected share from its +x face's brick record.
+    settle(&mut rig, &lit_view);
+    let shown = luma(&rig.display());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let cells = rig.cells();
+    let scale = rig.frame.emission_scale(ORE);
+    let eye = lit_view.position.to_array().map(f64::from);
+    let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let (mut lit, mut dark, mut worst, mut worst_shown) = (Vec::new(), 0usize, 0f32, 0f32);
+    for i in 0..info.len() {
+        if info[i][3] & 1 == 0 || info[i][3] & 4 == 0 || info[i][2] != black_id {
+            continue;
+        }
+        let to = [0, 1, 2].map(|k| f64::from(pos[i][k]) - eye[k]);
+        let len = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
+        let d = to.map(|v| v / len);
+        // The entry: the plane x = 98, the pane's +x face; its voxel is x = 97.
+        let s = (98.0 - eye[0]) / d[0];
+        let p = [0, 1, 2].map(|k| eye[k] + d[k] * s);
+        let v = [97, p[1].floor() as i32, p[2].floor() as i32];
+        let Some(e) = brick_value(&cells, v, 1) else {
+            panic!("no record at the pane's face {v:?}");
+        };
+        let c = (1.0 - d[0].abs()) as f32;
+        let r = 0.04 + 0.96 * c.powi(5);
+        let want = e.map(|x| r * x * scale / std::f32::consts::PI);
+        let got = [layer[i][0], layer[i][1], layer[i][2]];
+        if lum(want) <= 0.0 {
+            dark += 1;
+            continue;
+        }
+        lit.push(i);
+        worst = worst.max((lum(got) / lum(want) - 1.0).abs());
+        worst_shown = worst_shown.max((shown[i] - level(got.map(|x| x * ex))).abs());
+    }
+    println!(
+        "lit pane: {} pixels over the black wall, {dark} with E 0; worst |reflected / (R E / PI) - 1| {worst:.4}; worst |pixel - display(reflected)| {worst_shown:.2} levels",
+        lit.len()
+    );
+    assert!(lit.len() > 1000, "{} lit pane pixels", lit.len());
+    assert_eq!(dark, 0, "pane pixels whose entry face's record reads 0");
+    assert!(worst <= 0.10, "reflected light {worst:.4} off R E / PI");
+    assert!(
+        worst_shown <= 2.0,
+        "a pixel {worst_shown:.2} levels off its reflected light"
+    );
+    // The control: no emitter sees the pane, so the same pixels reflect nothing.
+    rig.dig(
+        &EditOp::box_(
+            Fixed3([100, 56, 114].map(|v| v * FIXED_ONE)),
+            Fixed3([104, 84, 116].map(|v| v * FIXED_ONE)),
+            Mode::Carve,
+        ),
+        &settings,
+    );
+    settle(&mut rig, &lit_view);
+    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let unlit = lit
+        .iter()
+        .filter(|&&i| layer[i][0] != 0.0 || layer[i][1] != 0.0 || layer[i][2] != 0.0)
+        .count();
+    println!("no emitter: {unlit} of {} pane pixels reflect", lit.len());
+    assert_eq!(unlit, 0, "pane pixels reflecting with no emitter");
 }
 
 /// A box of two chunks whose emitter lies outside a one-chunk piece: the piece's records are a
@@ -1881,6 +1955,114 @@ fn resolution_readings() {
             ));
         }
     }
+}
+
+/// The hall's pane with the lamp off: at the hall view (native, `VXE_READ_SIZE`), a 40 x 40 x 2
+/// box of the reference's glass row 6 voxels ahead along the horizontal axis the view faces most,
+/// placed before the brick bake (`brick_bake`), then 64 still frames. Over the pixels with the
+/// pane in front: the reflected term before exposure (the layer target's rgb), its luminance p50
+/// and p90 and the pixels where it is 0; its display level alone at exposure 8 against the
+/// pixel's shown luma, p50 and p90 of each and of their ratio (the reflected share). Logs to
+/// `live/bake-count/glass.txt`.
+#[test]
+#[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
+fn glass_readings() {
+    let mut log = Log::open("glass.txt");
+    let size = std::env::var("VXE_READ_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some([w.parse().ok()?, h.parse().ok()?])
+        })
+        .unwrap_or(NATIVE);
+    let view = read_views()
+        .into_iter()
+        .find(|v| v.name == "hall")
+        .expect("the hall view");
+    let (mut rig, _) = view_rig(&view, size);
+    let glass = flythrough::showcase_materials().len() as vxe_world::MaterialId;
+    let camera = view_camera(&view);
+    let (fwd, _, _) = camera.basis();
+    let a = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
+    let eye = camera.position.to_array().map(|v| v.floor() as i64);
+    let ahead = if fwd.to_array()[a] > 0.0 { 6 } else { -7 };
+    let mut min = eye.map(|v| v - 20);
+    let mut max = eye.map(|v| v + 20);
+    min[a] = eye[a] + ahead;
+    max[a] = min[a] + 2;
+    let r = rig
+        .world
+        .apply(&EditOp::box_(
+            Fixed3(min.map(|v| v * FIXED_ONE)),
+            Fixed3(max.map(|v| v * FIXED_ONE)),
+            Mode::Fill(glass),
+        ))
+        .expect("the pane is resident");
+    rig.gpu
+        .sync_now(&rig.world, &rig.device, &rig.queue)
+        .expect("the mirror fits");
+    let placed: u32 = r.changed_from.iter().map(|(_, n)| n).sum();
+    let bake_ms = brick_bake(&mut rig, &view);
+    for _ in 0..64 {
+        rig.frame.step(
+            &rig.device,
+            &rig.queue,
+            &rig.gpu,
+            &camera,
+            &LightParams::default(),
+        );
+    }
+    let lighting = rig.frame.lighting();
+    let level = |c: [f32; 3]| {
+        let b = tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
+        0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
+    };
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let shown = luma(&readback::read_rgba8(
+        &rig.device,
+        &rig.queue,
+        rig.frame.target(),
+    ));
+    let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let (mut refl, mut levels, mut shares, mut lumas) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut zero = 0usize;
+    for i in 0..info.len() {
+        if info[i][3] & 4 == 0 {
+            continue;
+        }
+        let c = [layer[i][0], layer[i][1], layer[i][2]];
+        if c == [0.0; 3] {
+            zero += 1;
+        }
+        let l = level(c.map(|x| x * 8.0));
+        refl.push(lum(c));
+        levels.push(l);
+        lumas.push(shown[i]);
+        shares.push(if shown[i] > 0.0 { l / shown[i] } else { 0.0 });
+    }
+    let q = |v: &mut Vec<f32>, p: f32| {
+        v.sort_by(f32::total_cmp);
+        v.get(((v.len() as f32 - 1.0) * p) as usize)
+            .copied()
+            .unwrap_or(0.0)
+    };
+    log.line(&format!(
+        "glass hall adapter {} {}x{} lamp off exposure 8: pane {min:?}..{max:?}, {placed} voxels; bake {bake_ms:.0} ms; {} pixels behind the pane, {zero} reflecting 0; reflected luminance before exposure p50 {:.5} p90 {:.5}; its level alone p50 {:.1} p90 {:.1}; shown luma p50 {:.1} p90 {:.1}; share (level / shown) p50 {:.3} p90 {:.3}",
+        rig.adapter,
+        size[0],
+        size[1],
+        refl.len(),
+        q(&mut refl, 0.5),
+        q(&mut refl, 0.9),
+        q(&mut levels, 0.5),
+        q(&mut levels, 0.9),
+        q(&mut lumas, 0.5),
+        q(&mut lumas, 0.9),
+        q(&mut shares, 0.5),
+        q(&mut shares, 0.9),
+    ));
 }
 
 /// The light's budget at rest (Plan 0059 Phase 12): at each view of `VXE_BAKE_VIEWS` (default

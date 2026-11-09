@@ -5,7 +5,9 @@
 //! **The list.** [`list_chunk_faces`] is a pure function of a chunk's voxels, its six neighbours'
 //! and each material's class ([`face_classes`]): each surface brick's sorted face keys, an opaque
 //! voxel's faces toward a voxel that is not opaque and a translucent voxel's faces toward air
-//! (ADR-0047: a pane's two sides), the latter listed in [`ChunkFaces::glass`] and never baked.
+//! (ADR-0047: a pane's two sides), the latter listed in [`ChunkFaces::glass`] and baked as the
+//! opaque ones are: a pane's entry face reads its brick's record (`march.wgsl`'s
+//! `glass_reflected`).
 //!
 //! **The pool** ([`Store`]), in `u32` words: the frame's counters (words 0 to 2: no value, brick
 //! reads, [`STORE_COARSE_READS`]), the mirror window's origin (word 4) and size (word 8) in
@@ -13,8 +15,8 @@
 //! naming its block's first word (0 none), bit 31 ([`TABLE_COARSE`]) set on the live queue's
 //! coarse blocks. A block is 512 directory words, a brick's `offset from the block's start << 11`
 //! just past its record (0 no surface), then each surface brick's record ([`BRICK_WORDS`] a cell,
-//! [`record_words`]). A record's direction is the mean of the cell's opaque faces of that
-//! direction, each face drawing its share of [`BakeSettings::brick_samples`].
+//! [`record_words`]). A record's direction is the mean of the cell's faces of that direction,
+//! opaque and translucent, each face drawing its share of [`BakeSettings::brick_samples`].
 //!
 //! **The job** ([`Frame::bake_until`](crate::Frame::bake_until)): a chunk's faces, its own
 //! candidate table ([`job_table`]) and its frame parameters, staged once in a slot when the job
@@ -427,7 +429,7 @@ pub fn list_world_chunk(world: &World, coord: ChunkCoord, classes: &[u8]) -> Opt
 pub type FaceFilter = Arc<dyn Fn([i32; 3], u8) -> bool + Send + Sync>;
 
 /// Words of a brick-level cell's record: six direction values in [`rgb9e5_pack`], face order, then
-/// `material | direction mask << 16`, the mask's bit `face` set where the cell has an opaque face
+/// `material | direction mask << 16`, the mask's bit `face` set where the cell has a face
 /// of that direction. A brick's record is its cells' records in cell order ([`record_words`]):
 /// one cell of 8 voxels, or eight of 4 (`x + 2 y + 4 z`).
 pub const BRICK_WORDS: usize = 7;
@@ -638,7 +640,7 @@ pub struct BakeSettings {
     pub timer: Option<Arc<crate::marcher::PassTimer>>,
     /// The brick records' cell in voxels: 8 (the brick) or 4.
     pub cell: u32,
-    /// Samples a brick direction draws, spread over its opaque faces (at least one a face).
+    /// Samples a brick direction draws, spread over its faces (at least one a face).
     pub brick_samples: u32,
 }
 
@@ -1294,8 +1296,6 @@ struct FaceState {
     lum2: f64,
     best: f32,
     material: u16,
-    /// A translucent voxel's face: never baked, no part of a record.
-    glass: bool,
     snapshots: Vec<(u32, [f32; 3], [f32; 3])>,
     done: bool,
 }
@@ -1385,7 +1385,7 @@ impl FaceState {
 }
 
 /// A brick's record from its faces' states, one [`BRICK_WORDS`] record a cell of `cell` voxels in
-/// cell order: each direction the mean of the cell's baked opaque faces' values, the mask of the
+/// cell order: each direction the mean of the cell's baked faces' values, the mask of the
 /// directions it has, and the material of the sample that read the largest luminance over the
 /// cell.
 fn brick_record(states: &[FaceState], clamp: bool, cell: u32) -> Vec<u32> {
@@ -1394,7 +1394,7 @@ fn brick_record(states: &[FaceState], clamp: bool, cell: u32) -> Vec<u32> {
     let mut sums = vec![[[0f64; 3]; 6]; cells];
     let mut counts = vec![[0u32; 6]; cells];
     let mut best = vec![(-1f32, 0u16); cells];
-    for s in states.iter().filter(|s| !s.glass) {
+    for s in states {
         let l = s.voxel.map(|x| (x.rem_euclid(8) as u32 / cell) as usize);
         let c = l[0] + side * (l[1] + side * l[2]);
         let f = usize::from(s.face);
@@ -2329,14 +2329,13 @@ impl JobCtx<'_, '_> {
         for (brick_at, keys) in &faces.bricks {
             let b = brick_of_slot(usize::from(*brick_at));
             let record_kept = kept_bricks.contains_key(brick_at);
-            // A brick-level direction's samples, spread over its opaque faces.
+            // A brick-level direction's samples, spread over its faces, a translucent voxel's
+            // among them.
             let mut per_dir = [0u32; 6];
             for &key in keys {
-                if !faces.is_glass(*brick_at, key) {
-                    per_dir[usize::from(key & 7)] += 1;
-                }
+                per_dir[usize::from(key & 7)] += 1;
             }
-            // Under `subset`, a direction's `m` faces drawn of its `k`: the i-th opaque face is
+            // Under `subset`, a direction's `m` faces drawn of its `k`: the i-th face is
             // drawn where `(i m) mod k < m`, which holds for exactly `m` of them.
             let drawn = per_dir.map(|k| {
                 if subset {
@@ -2351,10 +2350,9 @@ impl JobCtx<'_, '_> {
                 let l = [i % 8, i / 8 % 8, i / 64];
                 let voxel = [0, 1, 2].map(|k| coord.0[k] * 64 + b[k] * 8 + l[k]);
                 let face = (key & 7) as u8;
-                let glass = faces.is_glass(*brick_at, key);
                 let d = usize::from(face);
                 let n = brick_samples.div_ceil(drawn[d].max(1));
-                let in_subset = glass || {
+                let in_subset = {
                     let i = at_dir[d];
                     at_dir[d] += 1;
                     u64::from(i) * u64::from(drawn[d]) % u64::from(per_dir[d].max(1))
@@ -2362,7 +2360,6 @@ impl JobCtx<'_, '_> {
                 };
                 let wanted = in_subset
                     && !record_kept
-                    && !glass
                     && self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
                 states.push(FaceState {
                     voxel,
@@ -2376,7 +2373,6 @@ impl JobCtx<'_, '_> {
                     lum2: 0.0,
                     best: 0.0,
                     material: 0,
-                    glass,
                     snapshots: Vec::new(),
                     done: !wanted,
                 });
