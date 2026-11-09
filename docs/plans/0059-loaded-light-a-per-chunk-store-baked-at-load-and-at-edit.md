@@ -1370,7 +1370,7 @@ was done instead. Followups noticed and not acted on. One line each. Empty is fi
 - Phase 8c: the first frame at the vein and the patch is 7.1 s on the RTX (the amendment's arithmetic 3 to 4 s): the coarse pass reads about 4.2 s with the GPU at 26 to 40 % (the main thread's job bookkeeping; the log's attempts).
 - Phase 8c, noticed: `vxe-render::shader_portability`'s `no_shader_stores_through_a_runtime_vector_index` (gpu tier) fails on `store_brick_value`'s stores, in the tree since Phase 6 (7c105c5).
 - Phase 8, noticed: at the hall the near bake leaves 0.97 of the view's pixels with no value (the hall's walls are beyond the 27 chunks), and the share falls to 0.019 by frame 7200; on the Cezanne the slice's cap sits at its floor.
-- Fix pass (the close review of 2026-11-09), one commit each, readings in the log's Fix pass: B1 the translucent tests assert ADR-0047's filter bcf0b6a; n1, n2 the refusal's doc and the store's names in the shaders 50d8859; M2, m2 the pool's refusals, merged places and the queue's pruning, with two queue bugs M1's tests found 4dfe3b3; M1 the live queue's nine tests in `tests/queue.rs`, `the_far_light_stays_as_the_reference_states` removed 9e4e594; m1 the queue step's bind groups, classes, fade scratch and tables cached a4fbbd8; M3 the readings re-read quiet, the hook's time and the adapter difference, the per-face strip moot (committed with this line).
+- Fix pass (the close review of 2026-11-09), one commit each, readings in the log's Fix pass: B1 the translucent tests assert ADR-0047's filter bcf0b6a; n1, n2 the refusal's doc and the store's names in the shaders 50d8859; M2, m2 the pool's refusals, merged places and the queue's pruning, with two queue bugs M1's tests found 4dfe3b3; M1 the live queue's nine tests in `tests/queue.rs`, `the_far_light_stays_as_the_reference_states` removed 9e4e594; m1 the queue step's bind groups, classes, fade scratch and tables cached a4fbbd8; M3 the readings re-read quiet, the hook's time and the adapter difference, the per-face strip moot ce79a85; c88c99d words a comment as a property.
 
 ### Close triggers
 
@@ -1398,7 +1398,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   --workspace --all-targets -- -D warnings` 0, `cargo fmt --all --check` 0, `cargo deny check` 0, `cargo test --doc
   --workspace` 7 passed; `cargo nextest run --workspace --profile gate` exit 100: 717 run, 715 passed, 2 failed
   (`vxe-render::translucent` x2, failing since Phase 5a), 72 skipped; `check-doc-links`, `check-comment-hygiene`,
-  `check-test-tiers`, `check-plan-size`, `check-index-rows` 0. Soak and full not run.
+  `check-test-tiers`, `check-plan-size`, `check-index-rows` 0. Soak and full not run. Fix pass tip (c88c99d): gate tier exit 0, 725 run, 725 passed, 74 skipped, none over 30 s; doctests, clippy, fmt, deny, the five doc gates 0; times in the log's Fix pass.
 - **Outstanding `human` phases:** none (Phase 11 folded into 13).
 
 ## Followups
