@@ -2882,7 +2882,7 @@ impl BakeQueue {
         for c in gone {
             store.remove(run.queue, ChunkCoord(c));
         }
-        // What the queue knows of a chunk the mirror no longer holds full goes with it, block or
+        // What the queue knows of a chunk the mirror does not hold full goes with it, block or
         // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
         // A job in flight for it ends in the sink, which drops its block.
         let held = |c: &[i32; 3]| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c));
