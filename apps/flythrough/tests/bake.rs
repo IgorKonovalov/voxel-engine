@@ -2005,3 +2005,105 @@ fn rest_readings() {
         }
     }
 }
+
+/// The vein piece (chunks within 2 of the vein pose's) baked at the queue's settings on the
+/// adapter `VXE_TEST_ADAPTER` names; its blocks saved as `live/bake-count/adapter-<name>.bin`.
+/// When the RTX's and the Cezanne's files are both there, every direction value either holds is
+/// compared: the equal words' share, and the luminance's tone-mapped level difference, mean and
+/// p99.
+#[test]
+#[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
+fn adapter_records() {
+    let name = std::env::var("VXE_TEST_ADAPTER").unwrap_or_else(|_| "fallback".to_owned());
+    let mut log = Log::open("adapter.txt");
+    let vein = flythrough::VEIN_POSE.position;
+    let mut rig = read_rig(Scene::Level, vein);
+    let piece = piece_of(rig.world.extent(), vein, Some(2));
+    let t = std::time::Instant::now();
+    let r = rig
+        .frame
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            piece,
+            &bake::queue_settings(),
+            &mut |_| {},
+        )
+        .expect("the piece fits the pool");
+    log.line(&format!(
+        "adapter records, {}: the vein piece {:?}..{:?} at 8/4096, {} chunks, {} faces, {:.3e} samples in {:.0} ms",
+        rig.adapter,
+        piece.min.0,
+        [0, 1, 2].map(|k| piece.min.0[k] + piece.size()[k]),
+        r.chunks,
+        r.faces,
+        r.samples as f64,
+        t.elapsed().as_secs_f64() * 1e3
+    ));
+    let blocks = frame_blocks(&rig.device, &rig.queue, &rig.frame, piece);
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../live/bake-count");
+    let file = |n: &str| format!("{dir}/adapter-{}.bin", n.to_lowercase());
+    let mut bytes = Vec::new();
+    for (c, b) in &blocks {
+        for v in c
+            .iter()
+            .map(|&x| x as u32)
+            .chain([b.len() as u32])
+            .chain(b.iter().copied())
+        {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    std::fs::write(file(&name), &bytes).expect("the records file");
+    let read = |n: &str| -> Option<BTreeMap<[i32; 3], Vec<u32>>> {
+        let raw = std::fs::read(file(n)).ok()?;
+        let w: Vec<u32> = raw
+            .chunks(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        let mut out = BTreeMap::new();
+        let mut i = 0;
+        while i < w.len() {
+            let c = [w[i] as i32, w[i + 1] as i32, w[i + 2] as i32];
+            let n = w[i + 3] as usize;
+            out.insert(c, w[i + 4..i + 4 + n].to_vec());
+            i += 4 + n;
+        }
+        Some(out)
+    };
+    let (Some(a), Some(b)) = (read("rtx"), read("radeon")) else {
+        log.line("adapter records: the other adapter's file is not there yet");
+        return;
+    };
+    let (ca, cb) = (cells_of(&a), cells_of(&b));
+    let level = |w: u32| {
+        let v = bake::rgb9e5_unpack(w);
+        bake::tone_level(
+            0.2126 * f64::from(v[0]) + 0.7152 * f64::from(v[1]) + 0.0722 * f64::from(v[2]),
+        )
+    };
+    let mut diffs = Vec::new();
+    let (mut equal, mut only) = (0usize, 0usize);
+    for (k, x) in &ca {
+        let Some(y) = cb.get(k) else {
+            only += 1;
+            continue;
+        };
+        equal += usize::from(x[0] == y[0]);
+        diffs.push((level(x[0]) - level(y[0])).abs());
+    }
+    only += cb.keys().filter(|k| !ca.contains_key(k)).count();
+    diffs.sort_by(f64::total_cmp);
+    let n = diffs.len().max(1);
+    log.line(&format!(
+        "adapter records, RTX against Cezanne: {} directions, {only} held by one alone; equal words {:.4}; |levels| mean {:.3}, p50 {:.3}, p99 {:.3}, max {:.3}",
+        diffs.len(),
+        equal as f64 / n as f64,
+        diffs.iter().sum::<f64>() / n as f64,
+        diffs[(n as f64 * 0.5) as usize % n],
+        diffs[((n as f64 * 0.99) as usize).min(n - 1)],
+        diffs.last().copied().unwrap_or(0.0)
+    ));
+}

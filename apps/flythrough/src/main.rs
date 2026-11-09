@@ -4593,6 +4593,14 @@ impl Run {
             percentile(&mut p.queue_ms, 100.0),
             p.queue_ms.len()
         );
+        if let Some(st) = self.queue.stats {
+            println!(
+                "autopilot: the workers' face masks per chunk: mean {:.1} us, max {:.1} us over {} chunks since the start",
+                st.hook_ns as f64 / st.hook_chunks.max(1) as f64 / 1e3,
+                st.hook_max_ns as f64 / 1e3,
+                st.hook_chunks
+            );
+        }
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();
         println!(
             "autopilot: residency latency wanted to mirrored: p95 {:.0} ms, max {:.0} ms over {} chunks (proposal 500 ms)",

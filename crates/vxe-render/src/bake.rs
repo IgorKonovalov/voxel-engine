@@ -305,17 +305,22 @@ pub struct FacePrep {
 
 impl vxe_world::ChunkPrep for FacePrep {
     fn prepare(&self, _coord: ChunkCoord, chunk: &Chunk) -> vxe_world::Prepared {
+        let t = stopwatch();
+        let masks = ChunkMasks::of(chunk, &self.classes);
         vxe_world::Prepared(Arc::new(PreparedMasks {
             classes: self.classes.clone(),
-            masks: ChunkMasks::of(chunk, &self.classes),
+            masks,
+            ns: (seconds_since(t) * 1e9) as u64,
         }))
     }
 }
 
-/// What [`FacePrep`] hands back: the masks and the classes they were taken under.
+/// What [`FacePrep`] hands back: the masks and the classes they were taken under, and the
+/// nanoseconds the worker took over them.
 pub struct PreparedMasks {
     pub classes: Arc<Vec<u8>>,
     pub masks: ChunkMasks,
+    pub ns: u64,
 }
 
 /// `chunk`'s faces, across brick and chunk borders: an opaque voxel's toward a voxel that is not
@@ -2534,6 +2539,11 @@ pub struct QueueStats {
     /// passes the cap by less than one entry's round.
     pub cap: u64,
     pub submitted: u64,
+    /// The stream workers' results taken since the queue started, and their time on the
+    /// workers in total and at most, in nanoseconds ([`FacePrep`]).
+    pub hook_chunks: u64,
+    pub hook_ns: u64,
+    pub hook_max_ns: u64,
 }
 
 /// A block fading from what it showed to its target over `frames` ([`FADE`], or [`DIG_FADE`]
@@ -2781,6 +2791,9 @@ impl BakeQueue {
             let Ok(m) = p.0.clone().downcast::<PreparedMasks>() else {
                 continue;
             };
+            self.stats.hook_chunks += 1;
+            self.stats.hook_ns += m.ns;
+            self.stats.hook_max_ns = self.stats.hook_max_ns.max(m.ns);
             if m.classes.as_slice() != classes {
                 continue;
             }
