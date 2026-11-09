@@ -1350,7 +1350,7 @@ fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
 // every 2^20 voxels, past any light radius), x then y's low 12 bits in word 0; y's high 8 bits,
 // z, the face in bits 28..31 and a valid bit 31 in word 1, so word 1 is never 0. The bake's
 // random sequence of a face is keyed by it (bake.wgsl).
-fn cache_key(v: vec3<i32>, face: u32) -> vec2<u32> {
+fn face_seed_key(v: vec3<i32>, face: u32) -> vec2<u32> {
     let c = bitcast<vec3<u32>>(v) & vec3<u32>(0xFFFFFu);
     return vec2<u32>(c.x | (c.y << 20u), (c.y >> 12u) | (c.z << 8u) | (face << 28u) | 0x80000000u);
 }
@@ -1358,17 +1358,17 @@ fn cache_key(v: vec3<i32>, face: u32) -> vec2<u32> {
 // Whether a hit reads the store (ADR-0046): an opaque cube face entered from air, a translucent
 // solid in front of it or not (the solid filters what the face sends, ADR-0047). The light pass
 // draws no emissive sample for it, and the temporal pass reads its brick record.
-fn cacheable(rec: HitRecord) -> bool {
+fn reads_store(rec: HitRecord) -> bool {
     return rec.found && rec.axis >= 0 && !rec.field;
 }
 
 // The voxel behind hit point `p` with face normal `nf`.
-fn cache_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
+fn store_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
     return vec3<i32>(floor(p - 0.5 * nf));
 }
 
 // The entry face of a hit on `axis` with face normal `nf`.
-fn cache_face(axis: i32, nf: vec3<f32>) -> u32 {
+fn store_face(axis: i32, nf: vec3<f32>) -> u32 {
     return 2u * u32(axis) + select(0u, 1u, nf[axis] > 0.0);
 }
 

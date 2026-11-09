@@ -100,7 +100,7 @@ fn shade_px(gid: vec3<u32>) {
             }
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
             // ray. Any other hit draws its own.
-            if (!cacheable(rec)) {
+            if (!reads_store(rec)) {
                 emissive = resolve_emissive(draw_candidates(gid.xy, rec.p, n), rec.p, ns);
             }
         }

@@ -31,7 +31,7 @@
 //                                        those whose voxel's chunk holds a coarse block
 //                                        (TABLE_COARSE)
 //
-// A cube face's emissive part (`cacheable`) is its brick record's value for its direction
+// A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`), times the dominant material's
 // emission scale now and this frame's exposure, with no screen history, the same value at every
 // pixel of the face; 0 with neither.
@@ -265,12 +265,12 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
     // The emissive irradiance in rgb, the lamp's (white) in a.
     var sample = textureLoad(irradiance_in, px, 0);
-    var cached = false;
-    if (cacheable(rec)) {
+    var stored = false;
+    if (reads_store(rec)) {
         let ray = pixel_ray(full_px(gid.xy));
         let nf = shadow_normal_of(rec, ray.d);
-        let voxel = cache_voxel(rec.p, nf);
-        let face = cache_face(rec.axis, nf);
+        let voxel = store_voxel(rec.p, nf);
+        let face = store_face(rec.axis, nf);
         let c = store_brick_value(voxel, face);
         if (c.w > 0.0) {
             atomicAdd(&store[1], 1u);
@@ -280,11 +280,11 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         } else if ((store_table(voxel >> vec3<u32>(6u)) & TABLE_COARSE) != 0u) {
             atomicAdd(&store[2], 1u);
         }
-        cached = true;
+        stored = true;
         sample = vec4<f32>(c.xyz * exposure_now(), sample.w);
     }
     // The filtered part's luminance: the lamp's, and a fallback's emissive part.
-    let l = min(select(luminance(sample.xyz), 0.0, cached) + sample.w, MOMENT_LUM_MAX);
+    let l = min(select(luminance(sample.xyz), 0.0, stored) + sample.w, MOMENT_LUM_MAX);
     var accum = sample;
     var moments = vec2<f32>(l, l * l);
     var age = 0.0;
@@ -375,7 +375,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (a_emissive == 0.0 && best_w >= HELD_TAP_W) {
                 e_fallback = best_h * ratio;
             }
-            let e_new = select(e_fallback, sample.xyz, cached);
+            let e_new = select(e_fallback, sample.xyz, stored);
             accum = vec4<f32>(e_new, mix(h.w, sample.w, a));
             moments = mix(m.xy, vec2<f32>(l, l * l), a);
         }
@@ -384,5 +384,5 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them
     // past it, and the second moment's bound, 65 025, is still a finite half.
     let m_max = vec2<f32>(MOMENT_LUM_MAX, MOMENT_LUM_MAX * MOMENT_LUM_MAX);
-    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, select(0.0, 1.0, cached)));
+    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, select(0.0, 1.0, stored)));
 }

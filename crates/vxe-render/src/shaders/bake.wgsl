@@ -119,7 +119,7 @@ fn bake_round(
     bake_slot = f.slot;
     reset_walk();
     let v = vec3<i32>(f.voxel_x, f.voxel_y, f.voxel_z);
-    let key = cache_key(v, f.face);
+    let key = face_seed_key(v, f.face);
     let stream = hash_u32(job.seed ^ hash_u32(key.x ^ hash_u32(key.y)));
     let nf = face_dir(f.face);
     var sum = vec3<f32>(0.0);

@@ -742,9 +742,10 @@ fn parse_args() -> Result<Args, String> {
     parse_args_from(std::env::args().skip(1))
 }
 
-/// The arguments after the program name.
-/// Why a flag of the per-face table, the reference or the cuts is refused: Plan 0059 Phase 14
-/// deleted them, and the light is the live queue's store (ADR-0046).
+/// The refusal of a flag that chose the per-face table, the reference or a cut: the binary has
+/// no such light, the live queue's store is the only one (ADR-0046), so the flag is an error
+/// rather than ignored, and an old runner script fails loudly instead of measuring the wrong
+/// light.
 fn gone_since_0059(flag: &str) -> String {
     format!(
         "{flag} is gone since Plan 0059: the per-face table, the reference and the cuts were \
@@ -752,6 +753,7 @@ fn gone_since_0059(flag: &str) -> String {
     )
 }
 
+/// The arguments after the program name.
 fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut args = Args {
         seed: 1,
