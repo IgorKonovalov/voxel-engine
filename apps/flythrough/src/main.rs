@@ -373,9 +373,9 @@ fn ms_since(t: Instant) -> f64 {
     (now() - t).as_secs_f64() * 1e3
 }
 
-// DIAGNOSTIC: the headless start-up and frame markers, and the table-size override below,
-// read on CI's WARP adapter, where a 3-frame headless run hangs before its teardown (the
-// backlog's WARP exposure-hang entry). They come out with the fix for that hang.
+// DIAGNOSTIC: the headless start-up and frame markers (the `diag:` lines) read on CI's WARP
+// adapter, where a 3-frame headless run hangs before its teardown (the backlog's WARP
+// exposure-hang entry). They come out with the fix for that hang.
 static DIAG_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// DIAGNOSTIC: logs `diag: <what> at <ms> ms` at info, timed from the process start, so a
