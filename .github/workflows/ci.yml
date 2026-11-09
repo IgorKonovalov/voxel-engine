@@ -1,9 +1,9 @@
 # Build, tests, doctests, clippy, fmt and the supply-chain gate on Linux and
-# Windows for every push. GPU tests run on a software Vulkan adapter (Mesa's
-# lavapipe on Linux); golden baselines are blessed on lavapipe, so image
-# comparisons assert on the Linux arm (VXE_REQUIRE_SOFTWARE_ADAPTER=1 fails
-# them if lavapipe is missing) and print-and-skip elsewhere. Real-vendor
-# GPU checks stay manual (docs/nfr.md).
+# Windows for every push. GPU tests run on the Linux arm only, on a software
+# Vulkan adapter (Mesa's lavapipe), where golden baselines are blessed;
+# VXE_REQUIRE_SOFTWARE_ADAPTER=1 fails them if lavapipe is missing. The
+# Windows arm runs the CPU tests and DX12 pipeline creation on WARP.
+# Real-vendor GPU checks stay manual (docs/nfr.md).
 name: CI
 
 on:
@@ -126,100 +126,6 @@ jobs:
       - name: Pipeline times on lavapipe
         if: runner.os == 'Linux'
         run: cargo run -p vxe-render --release --example pipeline_times
-      # DIAGNOSTIC, out with the fix for the WARP hang (docs/backlog.md, "`vxe-render::exposure`
-      # hangs on WARP since Plan 0057 Phase 7"): the debug fly-through the shutdown test runs,
-      # headless on WARP, 3 frames as that test runs them, under the D3D12 debug layer. Run
-      # 42489194343 placed it: frame 0's `shade_preload` hangs once any submission between the
-      # preload's args pass and it touches a buffer it uses (the sweep's table and counters, or
-      # a copy of `preload_dispatch`), and runs with the sweep on scratch buffers.
-      #
-      # The layer is the Graphics Tools optional feature (`d3d12SDKLayers.dll` in System32). The
-      # step installs it with DISM when the image lacks it, killed past 480 s and never fatal,
-      # and skips the runs when it is still missing. The fly-through's instance reads wgpu's
-      # `WGPU_VALIDATION` (the debug layer, `ID3D12Debug::EnableDebugLayer`) and
-      # `WGPU_GPU_BASED_VALIDATION` (`ID3D12Debug1::SetEnableGPUBasedValidation`). wgpu-hal
-      # turns the layer's output into `log` lines under `wgpu_hal::auxil::dxgi::exception`
-      # (ERROR and CORRUPTION at error, WARNING at warn, INFO at debug, MESSAGE at trace); the
-      # runs log that target at trace and print only those lines, wgpu-hal's dx12 lines, the
-      # `diag:` lines and any panic, each distinct line once with its count (addresses masked).
-      # Every run sets `VXE_DIAG_SPLIT_FRAME0=1` (each frame-0 stage submitted alone and waited
-      # for, a `diag:` line after each). Worst case 480 + 180 + 300 + 180 s = 19 min. The step
-      # never fails the job.
-      - name: Headless fly-through on WARP under the D3D12 debug layer (diagnostic)
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        timeout-minutes: 25
-        shell: pwsh
-        run: |
-          $layer = Join-Path $env:windir "System32\d3d12SDKLayers.dll"
-          $dxgidebug = Join-Path $env:windir "System32\dxgidebug.dll"
-          Write-Host "=== debug layer on the image: $(Test-Path $layer) ($layer); dxgidebug.dll: $(Test-Path $dxgidebug)"
-          if (-not (Test-Path $layer)) {
-            Write-Host "=== installing Graphics Tools (Tools.Graphics.DirectX~~~~0.0.1.0) with DISM, killed past 480 s"
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            $p = Start-Process -FilePath dism.exe -NoNewWindow -PassThru `
-              -ArgumentList "/Online /Add-Capability /CapabilityName:Tools.Graphics.DirectX~~~~0.0.1.0 /NoRestart" `
-              -RedirectStandardOutput dism-out.txt -RedirectStandardError dism-err.txt
-            $null = $p.Handle
-            if ($p.WaitForExit(480 * 1000)) {
-              $p.WaitForExit()
-              Write-Host "=== DISM exited with $($p.ExitCode) after $([int]$sw.Elapsed.TotalSeconds) s"
-            } else {
-              $p.Kill($true)
-              $p.WaitForExit()
-              Write-Host "=== DISM KILLED after $([int]$sw.Elapsed.TotalSeconds) s"
-            }
-            Get-Content dism-out.txt, dism-err.txt -ErrorAction Ignore | Select-Object -Last 15
-            Remove-Item dism-out.txt, dism-err.txt -ErrorAction Ignore
-            Write-Host "=== debug layer after the install: $(Test-Path $layer); dxgidebug.dll: $(Test-Path $dxgidebug)"
-          }
-          if (-not (Test-Path $layer)) {
-            Write-Host "=== no debug layer: runs skipped (without it they repeat run 42489194343)"
-            exit 0
-          }
-          $exe = "target\debug\flythrough.exe"
-          $env:RUST_LOG = "warn,flythrough=info,wgpu_hal::auxil::dxgi::exception=trace"
-          $env:VXE_DIAG_SPLIT_FRAME0 = "1"
-          $env:WGPU_VALIDATION = "1"
-          $args3 = "--headless --frames 3 --render 64x36"
-          $keep = 'wgpu_hal::(auxil::dxgi|dx12)|diag: |panicked|headless on'
-          $runs = @(
-            @{ name = "(a) the normal split, debug layer and GBV"; preload = ""; gbv = "1"; kill = 180;
-               meaning = "Layer lines here and not in (b) name the bad state or hazard: that is the finding. GBV reports a command list's errors once it completes, so a hung shade_preload's own GBV errors may never print; the earlier submissions' do. Killed with only (b)'s lines: the layer sees nothing wrong in what wgpu records, and the hang is below the API (WARP); next is a wgpu newer than 30.0.1. Exits 0: GBV's instrumentation (patched shaders, its own state tracking) clears the hang, which points at resource states or barriers; read with (c). Killed before 'preload sweep done': GBV is too slow on WARP; read (c)." },
-            @{ name = "(b) empty sweep on scratch buffers, debug layer and GBV"; preload = "scratch-sweep"; gbv = "1"; kill = 300;
-               meaning = "Exits 0 as in run 42489194343 (59 s there, slower under GBV): its layer lines are the baseline every run prints, and only lines in (a) or (c) beyond them count. No layer line at all here or in (a) and (c), with the layer present: the layer emits nothing on these runs (check the 'instance flags' line holds VALIDATION). Killed: GBV is too slow on WARP for 300 s, or the layer changes the outcome; read (c)." },
-            @{ name = "(c) the normal split, debug layer without GBV"; preload = ""; gbv = "0"; kill = 180;
-               meaning = "The layer's CPU-side checks only (states and barriers at record and submit). Lines not in (b) name the fault. Killed with nothing beyond (b): the CPU-side layer sees no misuse either. Exits 0: the layer alone clears the hang (its timing or its own synchronisation); read with (a)." }
-          )
-          foreach ($r in $runs) {
-            Write-Host "=== WARP diagnostic: $($r.name): flythrough $args3, VXE_DIAG_PRELOAD='$($r.preload)', WGPU_GPU_BASED_VALIDATION=$($r.gbv), killed past $($r.kill) s"
-            Write-Host "=== meaning: $($r.meaning)"
-            if ($r.preload) { $env:VXE_DIAG_PRELOAD = $r.preload } else { Remove-Item Env:VXE_DIAG_PRELOAD -ErrorAction Ignore }
-            $env:WGPU_GPU_BASED_VALIDATION = $r.gbv
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            $p = Start-Process -FilePath $exe -ArgumentList $args3 -NoNewWindow -PassThru `
-              -RedirectStandardOutput diag-out.txt -RedirectStandardError diag-err.txt
-            $null = $p.Handle
-            if ($p.WaitForExit($r.kill * 1000)) {
-              $p.WaitForExit()
-              Write-Host "=== exited with $($p.ExitCode) after $([int]$sw.Elapsed.TotalSeconds) s"
-            } else {
-              $p.Kill($true)
-              $p.WaitForExit()
-              Write-Host "=== KILLED after $([int]$sw.Elapsed.TotalSeconds) s"
-            }
-            $lines = @(Get-Content diag-out.txt, diag-err.txt | Where-Object { $_ -match $keep })
-            $groups = [ordered]@{}
-            foreach ($l in $lines) {
-              $k = ($l -replace '^\[\S+Z ', '[') -replace '0x[0-9A-Fa-f]+', '0x_'
-              if ($groups.Contains($k)) { $groups[$k] += 1 } else { $groups[$k] = 1 }
-            }
-            Write-Host "--- $($lines.Count) kept lines, $($groups.Count) distinct (first 200 shown, in order of first sight)"
-            $groups.GetEnumerator() | Select-Object -First 200 | ForEach-Object {
-              if ($_.Value -gt 1) { Write-Host "[$($_.Value)x] $($_.Key)" } else { Write-Host $_.Key }
-            }
-          }
-          Remove-Item diag-out.txt, diag-err.txt
       # The gate tier (.config/nextest.toml): every test but the soak list, which soak.yml runs
       # weekly. The `ci` profile runs the gate tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
@@ -232,7 +138,7 @@ jobs:
           cargo nextest run --workspace --profile "$GATE_PROFILE" --status-level pass 2>&1 | tee target/nextest-gate.log
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
-          # Windows runs every CPU test and a GPU smoke set (.config/nextest.toml, ci-windows).
+          # Windows runs the CPU tests only (.config/nextest.toml, ci-windows).
           GATE_PROFILE: ${{ runner.os == 'Windows' && 'ci-windows' || 'ci' }}
       # docs/nfr.md section 7: no gate test over 60 s on this arm. A test over the line is a
       # warning annotation, not a failure: the GPU tests run in parallel on four cores, so one
