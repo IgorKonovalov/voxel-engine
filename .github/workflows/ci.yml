@@ -25,82 +25,23 @@ jobs:
     # cold cache. The gate step has its own cap below, and nextest's ci profile kills a single
     # test at 600 s.
     timeout-minutes: 90
-    # The lavapipe the Linux arm builds (the steps after the build packages): Mesa's release
-    # tarball, pinned by its sha256, and the meson options that build lavapipe alone.
-    env:
-      MESA_VERSION: 26.2.6
-      MESA_SHA256: b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92
-      MESA_OPTIONS: >-
-        -Dbuildtype=debugoptimized -Db_ndebug=true -Dvulkan-drivers=swrast
-        -Dgallium-drivers=llvmpipe -Dplatforms= -Dopengl=false -Dglx=disabled -Degl=disabled
-        -Dgbm=disabled -Dgles1=disabled -Dgles2=disabled -Dllvm=enabled -Dshared-llvm=enabled
-        -Dvideo-codecs= -Dvalgrind=disabled -Dlibunwind=disabled -Dbuild-tests=false
     steps:
       - uses: actions/checkout@v5
       # winit's Wayland and X11 backends need the xkbcommon and wayland headers;
       # mesa-vulkan-drivers carries lavapipe, without which wgpu finds no adapter;
       # libasound2-dev is the ALSA library cpal's Linux backend links; libudev-dev is the
-      # udev library gilrs links for the fly-through's gamepad; vulkan-tools' vulkaninfo names the
-      # driver the Vulkan loader picks.
+      # udev library gilrs links for the fly-through's gamepad.
       - name: Install the Linux build packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev libudev-dev \
-            vulkan-tools
-      # The runner's own lavapipe (Mesa 26.0.8) dies with SIGSEGV in the light pass, and Mesa
-      # 26.2.6 on the same LLVM 21 passes (docs/backlog.md, "llvmpipe SIGSEGV on CI's Ubuntu since
-      # Plan 0057 Phase 7"). So the Linux arm builds lavapipe alone from Mesa's release tarball,
-      # checked against the sha256 above, against the runner's own LLVM 21, with meson and its
-      # Python tools pinned on PyPI and every other package from the runner's archive. The
-      # install is cached by the tarball's hash, the options and the runner image, so a warm run
-      # skips the build. These steps come out once the runner image ships Mesa 26.2 or later.
-      - name: Key the lavapipe build
+            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev libudev-dev
+      # Lavapipe from the pinned Mesa release; the runner's own Mesa 26.0.8 crashes the light
+      # pass. The action names the pin and why.
+      - name: Build or restore the pinned lavapipe
         if: runner.os == 'Linux'
-        id: lavapipe-key
-        run: |
-          sum=$(printf '%s %s' "$MESA_SHA256" "$MESA_OPTIONS" | sha256sum | cut -c1-16)
-          echo "key=lavapipe-${ImageOS:-linux}-${ImageVersion:-unknown}-$MESA_VERSION-$sum" >> "$GITHUB_OUTPUT"
-      - name: Restore the built lavapipe
-        if: runner.os == 'Linux'
-        id: lavapipe-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/mesa-lvp
-          key: ${{ steps.lavapipe-key.outputs.key }}
-      - name: Build lavapipe from Mesa's release tarball
-        if: runner.os == 'Linux' && steps.lavapipe-cache.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get install -y --no-install-recommends \
-            python3-venv bison flex glslang-tools llvm-21-dev libdrm-dev libzstd-dev zlib1g-dev \
-            libexpat1-dev
-          work=$(mktemp -d)
-          curl -fsSL -o "$work/mesa.tar.xz" "https://mesa.freedesktop.org/archive/mesa-$MESA_VERSION.tar.xz"
-          echo "$MESA_SHA256  $work/mesa.tar.xz" | sha256sum -c -
-          tar -xJf "$work/mesa.tar.xz" -C "$work"
-          python3 -m venv "$work/venv"
-          "$work/venv/bin/pip" install --quiet \
-            meson==1.9.1 ninja==1.13.0 mako==1.3.10 packaging==25.0 pyyaml==6.0.3
-          printf "[binaries]\nllvm-config = '/usr/lib/llvm-21/bin/llvm-config'\n" > "$work/native.ini"
-          start=$(date +%s)
-          # shellcheck disable=SC2086 # the options split into meson's arguments
-          PATH="$work/venv/bin:$PATH" meson setup "$work/build" "$work/mesa-$MESA_VERSION" \
-            --native-file "$work/native.ini" --prefix "$HOME/mesa-lvp" --libdir lib $MESA_OPTIONS
-          PATH="$work/venv/bin:$PATH" ninja -C "$work/build" install
-          echo "lavapipe built in $(( $(date +%s) - start )) s"
-          rm -rf "$work"
-      # Every later step loads the built lavapipe alone; the job fails unless the loader reports
-      # its version.
-      - name: Use the built lavapipe
-        if: runner.os == 'Linux'
-        run: |
-          icd="$HOME/mesa-lvp/share/vulkan/icd.d/lvp_icd.x86_64.json"
-          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
-          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
-          export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd"
-          vulkaninfo --summary | grep -E 'deviceName|driverInfo'
-          vulkaninfo --summary | grep -q "driverInfo *= Mesa $MESA_VERSION "
+        uses: ./.github/actions/lavapipe
       # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
