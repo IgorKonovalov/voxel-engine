@@ -15,6 +15,17 @@ Rules:
 - **Anyone edits this file**, by hand, in the session the idea comes up. The architect reads it at
   every plan interview and close review and asks which entries are ripe.
 
+## Next up
+
+### Test tiers by marks, not by copied lists
+
+Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev chore once Plan 0059 has merged (owner, 2026-11-09): the rename touches the test files and `.config/nextest.toml` that lane also edits. The WARP lane it first waited on is done; Windows runs the CPU tests only. `.config/nextest.toml` spells the GPU list (15 binaries) and the soak list (about 50 test names) out in every profile, six copies kept in step by `scripts/check-test-tiers.mjs`, because nextest has no filter aliases. The replacement marks the tests themselves:
+- **Soak:** `#[ignore = "soak"]` on each long series; the soak tier runs `--run-ignored only`, full runs `--run-ignored all`, and `soak.yml`, the docs and `test-changed.mjs` take the flag.
+- **GPU:** every test file that opens a device is named `tests/gpu_*.rs`, and the profiles filter on `binary(/^gpu_/)`. `check-test-tiers` shrinks to the one rule that a file which opens a device carries the prefix.
+
+The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
+
+
 ## Engine mechanisms
 
 ### Chunk-scale world dynamics: a cellular material step and an event scheduler
@@ -107,14 +118,6 @@ no lane holds the GPU.
 ### A held fallback still moves on screen
 
 Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With the table's read off at the patch pose on 299b5c8, the accumulation is bit-identical over the window (0 pixels changed), yet the filter's output reads 90.95 patches a step and the composite 51.10. The lamp is off and the gather is not added, so the filter is the only part left that moves. By reading the code (not isolated): `temporal.wgsl` keeps blending each frame's noisy sample into the moments after the emissive part holds, and `atrous.wgsl` weights its taps by that variance. `a_still_fallback_pixel_holds_still` reads the accumulation, so it does not see this. Plan 0059 keeps the fallback for no-face hits, so glass and the field look may shimmer at rest. That patch-pose run makes every hit a fallback, so it is an extreme case; a translucent surface has not been read. What it takes: a spike that reads a translucent wall's composite at rest, then a fix that holds the moments with the mean, or passes a held part around the filter as the table's part does. Plan 0059's Phase 2 reads a glass pane at rest and its Phase 3 window looks at it (owner, 2026-11-05); pick up on that answer.
-
-### Test tiers by marks, not by copied lists
-
-Queued 2026-11-08 (owner), to start as a dev chore once the WARP `shade_preload` fix lane has merged, because both touch `ci.yml` and the test files. `.config/nextest.toml` spells the GPU list (15 binaries) and the soak list (about 50 test names) out in every profile, six copies kept in step by `scripts/check-test-tiers.mjs`, because nextest has no filter aliases. The replacement marks the tests themselves:
-- **Soak:** `#[ignore = "soak"]` on each long series; the soak tier runs `--run-ignored only`, full runs `--run-ignored all`, and `soak.yml`, the docs and `test-changed.mjs` take the flag.
-- **GPU:** every test file that opens a device is named `tests/gpu_*.rs`, and the profiles filter on `binary(/^gpu_/)`. `check-test-tiers` shrinks to the one rule that a file which opens a device carries the prefix.
-
-The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
 
 ### The gate tier is over its wall-time budget
 
