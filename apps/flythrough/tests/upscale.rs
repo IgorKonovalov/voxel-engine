@@ -693,42 +693,46 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 }
 
 /// `frame_bytes` at the default (1080p output, scale 1.5, half-resolution lighting at 640 x
-/// 360, `Frame` alone) holds the emissive table and no emissive history: main's 130 267 216 B
-/// before ADR-0043, less the `rgba32float` accumulation pair's excess over `rgba16float`
-/// (2 x 8 B x 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir
-/// textures (2 x 16 B x 640 x 360 = 7 372 800 B), plus the table's cells of 48 B, 2^21 on
-/// lavapipe, whose storage binding stops at 128 MiB (100 663 296 B; 2^22 elsewhere, 201 326 592 B),
-/// and past them the blend list (16 B of header and a slot of 4 B a lighting
-/// pixel, 921 616 B), plus the walk's state and dispatch and the blend's uniform and dispatch (80 + 12 + 32 + 12 B), plus the reopened fill's list (16 B of header and 16 384 slots of 4 B,
-/// 65 552 B) and its 12-byte indirect dispatch, plus the preload's store (its 152 B header and
-/// its fill lists' 2 x 64 distance bands of 4 B; two fill lists of 32 768 entries of 8 B, the
-/// sweep's offsets at the largest radius, 17 077 of 4 B, two probe lists of 16 384 faces of
-/// 8 B, the left and claimed lists of 32 768 slots of 4 B and the slab stamps, 33^3 x 8 of
-/// 4 B: 2 267 532 B), its 4 176 B uniform, its 24-byte indirect dispatches and its idle skip's
-/// four 32-byte readback slots: 223 130 488 B.
+/// 360, `Frame` alone) holds the store and no emissive history: main's 130 267 216 B before
+/// ADR-0043, less the `rgba32float` accumulation pair's excess over `rgba16float` (2 x 8 B x
+/// 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir textures
+/// (2 x 16 B x 640 x 360 = 7 372 800 B): 119 208 016 B before the store's pool is allocated. The live queue's start allocates the pool
+/// at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage binding, 128 MiB on
+/// lavapipe (134 217 728 B; the chunk table and every block lie in it): 253 425 744 B.
 #[test]
-fn frame_bytes_hold_the_table_and_no_emissive_history() {
-    let Some((device, _queue)) = software_device(64 << 20) else {
+fn frame_bytes_hold_the_store_and_no_emissive_history() {
+    let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
     let output = [1920u32, 1080];
     let internal = vxe_render::RenderScale::OneHalf.internal(output);
-    let bytes = Frame::with_sizes(&device, internal, output).frame_bytes();
+    let mut frame = Frame::with_sizes(&device, internal, output);
+    let before = frame.frame_bytes();
     let lighting = 640u64 * 360;
-    let fill = 16 + 4 * 16_384 + 12;
-    let preload = 152
-        + 512
-        + 4 * (4 * 32_768 + 17_077 + 4 * 16_384 + 2 * 32_768 + 33 * 33 * 33 * 8)
-        + 4_176
-        + 24
-        + 4 * 32;
-    let table = 100_663_296 + 16 + 4 * lighting;
-    let walk = 80 + 12 + 32 + 12;
-    let expected =
-        130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + table + walk + fill + preload;
-    println!("frame_bytes at the default: {bytes} B");
-    assert_eq!(expected, 223_130_488);
-    assert_eq!(bytes, expected);
+    let base = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting;
+    let pool = 128u64 << 20;
+    println!("frame_bytes at the default: {before} B before the store, pool {pool} B");
+    assert_eq!(base, 119_208_016);
+    assert_eq!(before, base);
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(AIR),
+        &MaterialTable::new(),
+    );
+    let mut gpu = vxe_render::GpuWorld::with_config(
+        &device,
+        vxe_render::MirrorConfig {
+            budget_bytes: 64 << 20,
+            ..vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+        },
+    );
+    gpu.sync_now(&world, &device, &queue)
+        .expect("the mirror fits");
+    frame.start_bake_queue(&queue, &gpu, vxe_render::bake::queue_settings(), 1.0);
+    let after = frame.frame_bytes();
+    println!("frame_bytes with the store: {after} B");
+    assert_eq!(after, base + pool);
+    assert_eq!(after, 253_425_744);
 }
 
 /// Every image's sharpness on the stripe wall at both distances, still and panning at arm's
@@ -950,9 +954,20 @@ fn the_upscaler_follows_an_exposure_step() {
         vfov: 70f32.to_radians(),
     };
     let light = LightParams::headlamp();
-    let run = |upscaler: Upscaler| {
+    let mut run = |upscaler: Upscaler| {
         let mut frame = frame_of(&device, internal, output, true);
         frame.set_upscaler(upscaler);
+        // The store the cube faces read: the chunks around the camera's.
+        bake_around(
+            &device,
+            &queue,
+            &mut gpu,
+            &mut frame,
+            &world,
+            [264, 120, 376],
+            1,
+            64,
+        );
         frame.set_lighting(vxe_render::Lighting {
             lamp: false,
             exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure::eye()),

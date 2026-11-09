@@ -519,6 +519,66 @@ impl LookRig {
     }
 }
 
+/// Bakes `frame`'s store (ADR-0046) over the chunks within `radius` (Chebyshev) of voxel `centre`'s
+/// chunk, clipped to `world`, at `samples` a brick direction and rounds of 64: the emissive light
+/// a cube face reads. `gpu` mirrors `world` already; faces outside the extent read none. The
+/// report.
+#[allow(clippy::too_many_arguments, reason = "the rig's parts, borrowed apart")]
+pub fn bake_around(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &mut GpuWorld,
+    frame: &mut Frame,
+    world: &World,
+    centre: [i32; 3],
+    radius: i32,
+    samples: u32,
+) -> vxe_render::bake::BakeReport {
+    let w = world.extent();
+    let size = w.size();
+    let c = centre.map(|v| v.div_euclid(64));
+    let lo = [0, 1, 2].map(|k| (c[k] - radius).max(w.min.0[k]));
+    let hi = [0, 1, 2].map(|k| (c[k] + radius + 1).min(w.min.0[k] + size[k]).max(lo[k]));
+    let settings = vxe_render::bake::BakeSettings {
+        round: 64,
+        brick_samples: samples,
+        ..vxe_render::bake::BakeSettings::default()
+    };
+    frame
+        .bake_until(
+            device,
+            queue,
+            gpu,
+            world,
+            ChunkExtent::new(lo, hi),
+            &settings,
+            &mut |_| {},
+        )
+        .expect("the extent fits the pool")
+}
+
+impl LookRig {
+    /// [`bake_around`] on the rig.
+    pub fn bake_around(
+        &mut self,
+        world: &World,
+        centre: [i32; 3],
+        radius: i32,
+        samples: u32,
+    ) -> vxe_render::bake::BakeReport {
+        bake_around(
+            &self.device,
+            &self.queue,
+            &mut self.gpu,
+            &mut self.frame,
+            world,
+            centre,
+            radius,
+            samples,
+        )
+    }
+}
+
 /// At `position` (voxels) looking +x, 70 degrees vertical field of view.
 pub fn camera_looking_x(position: [f32; 3]) -> Camera {
     Camera {

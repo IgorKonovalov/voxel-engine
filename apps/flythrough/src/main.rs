@@ -25,7 +25,7 @@
 //! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]
 //! [--history edits|gradient] [--lighting full|half]
-//! [--blend off|3x3|5x5|on] [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N] [--preload VOXELS|off] [--preload-claim VOXELS]
+//! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
 //! [--exposure auto|E]
@@ -104,19 +104,29 @@
 //! (default 4);
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
-//! emissive light is read from the per-face table from a face's first sample (ADR-0043), and
+//! the light is the store (ADR-0046), filled from nothing by the live queue at the brick level (8 voxels, 4096 samples a
+//! brick direction): before the first frame, at full GPU, the chunks within `--near R` (default
+//! 2, Chebyshev) of the camera's at 4096 and every other mirrored chunk a coarse pass at
+//! `--coarse N` (default 256; 0 none, and then the near chunks alone); after it, a slice a frame
+//! refines the coarse chunks nearest first, each fading from its coarse value, and a chunk the
+//! mirror gains takes its coarse pass first; its row in the banner, its depth on the HUD's store
+//! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
+//! 1.5); a dig re-bakes its rings in the queue, ahead of
+//! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
+//! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
+//! lit bricks); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
+//! `--reference`, `--bake-file`, `--queue-file`, `--bake-radius`, `--blend`, `--preload` and
+//! `--preload-claim` are refused, naming Plan 0059; `--glide V` moves the
+//! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
+//! flight to the vein);
 //! `--steady`, `--cache-read`, `--sampler`, `--emissive-history`, `--emissive-guard` and
 //! `--reuse-m-cap` are refused, naming Plan 0057; `--lamp-bounce off` turns the lamp's bounce
 //! from the probe volume off (on by default, ADR-0043's lamp channel; `--indirect on|off` is its
 //! alias); `--probe-spacing N` sets the voxels between its probes
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
-//! default, 16 or 32); `--blend off|3x3|5x5|on` sets what the temporal pass reads of a table cell, its own mean, the 3 x 3 pool or
-//! the widening 5 x 5 (default; `C` cycles them); `--preload VOXELS|off` sets the camera-radius preload's radius (default
-//! 64, rounded down to whole bricks, at most 128) or turns it off, and `--preload-claim VOXELS`
-//! its claim radius r0 (default 32, 0 to 128; at most the radius), within which every face is
-//! filled lit or not. In a window
-//! `F3` toggles the shadow walk, `F4` the preload, `F5` the history killer, `F6` the lighting
+//! default, 16 or 32). In a window
+//! `F3` toggles the shadow walk, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp, `F8` the lamp's bounce and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets, naming the look on the banner.
@@ -363,9 +373,9 @@ fn ms_since(t: Instant) -> f64 {
     (now() - t).as_secs_f64() * 1e3
 }
 
-// DIAGNOSTIC: the headless start-up and frame markers, and the table-size override below,
-// read on CI's WARP adapter, where a 3-frame headless run hangs before its teardown (the
-// backlog's WARP exposure-hang entry). They come out with the fix for that hang.
+// DIAGNOSTIC: the headless start-up and frame markers (the `diag:` lines) read on CI's WARP
+// adapter, where a 3-frame headless run hangs before its teardown (the backlog's WARP
+// exposure-hang entry). They come out with the fix for that hang.
 static DIAG_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// DIAGNOSTIC: logs `diag: <what> at <ms> ms` at info, timed from the process start, so a
@@ -478,14 +488,31 @@ struct Args {
     /// `--lamp-bounce on|off` (alias `--indirect`): the lamp's bounce from the probe volume (on
     /// by default).
     lamp_bounce: bool,
-    /// `--blend off|3x3|5x5|on`: what the temporal pass reads of a table cell (default on, 5x5).
-    blend: vxe_render::marcher::TableBlend,
-    /// `--preload VOXELS|off`: the camera-radius preload's radius in voxels, 0 off (default
-    /// `DEFAULT_PRELOAD_RADIUS`).
-    preload: u32,
-    /// `--preload-claim VOXELS`: the preload's claim radius r0 in voxels (default
-    /// `DEFAULT_PRELOAD_CLAIM_RADIUS`).
-    preload_claim: u32,
+    /// `--bake-slice MS`: the live queue's slice a frame (default
+    /// `vxe_render::bake::DEFAULT_BAKE_SLICE_MS`).
+    bake_slice: f64,
+    /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
+    /// default `vxe_render::bake::DEFAULT_COARSE_SAMPLES`).
+    bake_coarse: u32,
+    /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
+    /// before the first frame (default `vxe_render::bake::DEFAULT_NEAR`).
+    bake_near: i32,
+    /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
+    /// of these frames, for a headless reading.
+    dig_at: Vec<u32>,
+    bench_at: Vec<u32>,
+    /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
+    /// each frame (blocking) for the `dig settled:` line.
+    read_missing: bool,
+    /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
+    /// (default `vxe_render::bake::DEFAULT_BAKE_EDIT_MS`).
+    bake_edit_ms: f64,
+    /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
+    /// light radius (ring 3; on by default).
+    dig_reach: bool,
+    /// `--glide V`: the camera moves along its heading at `V` voxels a second (1/60 s a headless
+    /// frame), for a flight reading.
+    glide: Option<f32>,
     /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
     probe_spacing: u32,
     /// `--probe-rays N`: rays each updated probe traces (default 64).
@@ -573,6 +600,15 @@ const DEFAULT_SHARPEN: f32 = 0.5;
 /// The light radius of `--source showcase` unless `--light-radius` is given, in chunks: the
 /// farthest pair of its 14 x 12 x 7 chunks is `sqrt(13^2 + 11^2 + 6^2) = 18.06` apart.
 const SHOWCASE_LIGHT_RADIUS: i32 = 19;
+
+/// Samples a step of the live queue's pre-roll draws: about one chunk's brick level at 4096, so
+/// the jobs it opens stay near the camera.
+const PRE_ROLL_SAMPLES: u64 = 2_000_000;
+
+/// Milliseconds the pre-roll's coarse pass runs at most past the near chunks: a streamed world's
+/// mirror holds about 17 000 full chunks within its full radius, which the live queue then takes
+/// coarse first; the level's 3168 take about 4 s on the RTX.
+const COARSE_PRE_ROLL_MS: f64 = 5000.0;
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
@@ -679,15 +715,6 @@ impl Args {
             lamp_bounce: self.lamp_bounce,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
-            blend: self.blend,
-            preload_radius: self.preload,
-            preload_claim_radius: self.preload_claim,
-            // DIAGNOSTIC: `VXE_DIAG_TABLE_CELLS` sets the per-face table's cells, so CI's WARP
-            // run can read a small table against the default (see `diag`).
-            table_cells: std::env::var("VXE_DIAG_TABLE_CELLS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(Lighting::default().table_cells),
             ..Lighting::default()
         }
     }
@@ -713,6 +740,17 @@ impl Args {
 
 fn parse_args() -> Result<Args, String> {
     parse_args_from(std::env::args().skip(1))
+}
+
+/// The refusal of a flag that chose the per-face table, the reference or a cut: the binary has
+/// no such light, the live queue's store is the only one (ADR-0046), so the flag is an error
+/// rather than ignored, and an old runner script fails loudly instead of measuring the wrong
+/// light.
+fn gone_since_0059(flag: &str) -> String {
+    format!(
+        "{flag} is gone since Plan 0059: the per-face table, the reference and the cuts were \
+         deleted, and the light is the live queue's store (ADR-0046)"
+    )
 }
 
 /// The arguments after the program name.
@@ -763,9 +801,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp_toggle: None,
         fade_reading: false,
         lamp_bounce: true,
-        blend: vxe_render::marcher::TableBlend::default(),
-        preload: vxe_render::marcher::DEFAULT_PRELOAD_RADIUS,
-        preload_claim: vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
+        bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+        bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
+        bake_near: vxe_render::bake::DEFAULT_NEAR,
+        bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
+        dig_reach: true,
+        dig_at: Vec::new(),
+        bench_at: Vec::new(),
+        read_missing: false,
+        glide: None,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
         probe_slices: vxe_render::probes::SLICES,
@@ -1021,43 +1065,74 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--steady" | "--cache-read" | "--sampler" | "--emissive-history"
             | "--emissive-guard" | "--reuse-m-cap" => {
                 return Err(format!(
-                    "{flag} is gone since Plan 0057: emissive light is read from the per-face table (ADR-0043)"
+                    "{flag} is gone since Plan 0057: emissive light is read from the store (ADR-0046)"
                 ));
             }
-            "--blend" => {
-                use vxe_render::marcher::TableBlend;
-                args.blend = match value()?.as_str() {
-                    "off" => TableBlend::Off,
-                    "3x3" => TableBlend::Narrow,
-                    "5x5" | "on" => TableBlend::Wide,
-                    v => return Err(format!("--blend takes off, 3x3, 5x5 or on, not {v}")),
-                };
+            "--light" | "--cut" | "--show" | "--reference" | "--bake-file" | "--queue-file"
+            | "--bake-radius" | "--blend" | "--preload" | "--preload-claim" => {
+                return Err(gone_since_0059(&flag));
             }
-            "--preload" => {
-                args.preload = match value()?.as_str() {
-                    "off" => 0,
-                    v => match v.parse::<u32>() {
-                        Ok(r) if (8..=vxe_render::marcher::PRELOAD_RADIUS_MAX).contains(&r) => r,
-                        _ => {
-                            return Err(format!(
-                                "--preload takes off or a radius of 8 to {} voxels, not {v}",
-                                vxe_render::marcher::PRELOAD_RADIUS_MAX
-                            ));
-                        }
-                    },
+            "--bake-slice" => {
+                let v = value()?;
+                args.bake_slice = v
+                    .parse()
+                    .ok()
+                    .filter(|ms: &f64| (0.1..=100.0).contains(ms))
+                    .ok_or(format!("--bake-slice takes 0.1 to 100 ms, not {v}"))?;
+            }
+            "--coarse" => {
+                let v = value()?;
+                args.bake_coarse = v
+                    .parse()
+                    .ok()
+                    .filter(|n: &u32| *n <= vxe_render::bake::QUEUE_BRICK_SAMPLES)
+                    .ok_or(format!("--coarse takes 0 to 4096 samples, not {v}"))?;
+            }
+            "--near" => {
+                let v = value()?;
+                args.bake_near = v
+                    .parse()
+                    .ok()
+                    .filter(|r: &i32| (0..=8).contains(r))
+                    .ok_or(format!("--near takes 0 to 8 chunks, not {v}"))?;
+            }
+            "--edit-ms" => {
+                let v = value()?;
+                args.bake_edit_ms = v
+                    .parse()
+                    .ok()
+                    .filter(|ms: &f64| (0.0..=100.0).contains(ms))
+                    .ok_or(format!("--edit-ms takes 0 to 100 ms, not {v}"))?;
+            }
+            "--read-missing" => args.read_missing = true,
+            "--dig-at" | "--bench-at" => {
+                let v = value()?;
+                let frames = v
+                    .split(',')
+                    .map(|f| f.parse::<u32>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| format!("{flag}: frames, comma-separated, not {v}: {e}"))?;
+                if flag == "--dig-at" {
+                    args.dig_at = frames;
+                } else {
+                    args.bench_at = frames;
                 }
             }
-            "--preload-claim" => {
-                let v = value()?;
-                args.preload_claim = match v.parse::<u32>() {
-                    Ok(r) if r <= vxe_render::marcher::PRELOAD_RADIUS_MAX => r,
-                    _ => {
-                        return Err(format!(
-                            "--preload-claim takes a radius of 0 to {} voxels, not {v}",
-                            vxe_render::marcher::PRELOAD_RADIUS_MAX
-                        ));
-                    }
+            "--dig-reach" => {
+                args.dig_reach = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--dig-reach takes on or off, not {v}")),
                 };
+            }
+            "--glide" => {
+                let v = value()?;
+                args.glide = Some(
+                    v.parse()
+                        .ok()
+                        .filter(|g: &f32| (0.0..=1000.0).contains(g))
+                        .ok_or(format!("--glide takes 0 to 1000 voxels a second, not {v}"))?,
+                );
             }
             "--lamp-bounce" | "--indirect" => {
                 args.lamp_bounce = match value()?.as_str() {
@@ -1092,7 +1167,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--pose" => {
                 let v = value()?;
                 args.pose = Some(flythrough::Pose::named(&v).ok_or_else(|| {
-                    let names: Vec<&str> = flythrough::POSES.iter().map(|p| p.name).collect();
+                    let names: Vec<&str> = flythrough::START_POSES.iter().map(|p| p.name).collect();
                     format!("--pose takes {}, not {v}", names.join(", "))
                 })?);
             }
@@ -1163,7 +1238,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         args.exposure = Some(args.shot.exposure_milli as f32 / 1000.0);
     }
     if args.pose.is_some() && !args.level {
-        let names: Vec<&str> = flythrough::POSES.iter().map(|p| p.name).collect();
+        let names: Vec<&str> = flythrough::START_POSES.iter().map(|p| p.name).collect();
         return Err(format!(
             "--pose places the camera on the bounded level ({}); it needs --level",
             names.join(", ")
@@ -2283,12 +2358,8 @@ struct Hud {
     cpu_ms: f32,
     /// The probe volume's live probes at the last world sample, with the lamp's bounce on.
     live_probes: Option<u32>,
-    /// The emissive table's counters at the last sample.
-    table: Option<vxe_render::TableStats>,
-    /// The table's age-out at the last sample.
-    age: Option<vxe_render::AgeStats>,
-    /// The preload's counts at the last sample, while it is on.
-    preload: Option<vxe_render::marcher::PreloadStats>,
+    /// The store's counts at the last sample.
+    store: Option<vxe_render::StoreStats>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
     /// The last frame's cracks view, read back while that view and the HUD are on.
@@ -2320,9 +2391,7 @@ impl Hud {
             hud_ms: None,
             cpu_ms: 0.0,
             live_probes: None,
-            table: None,
-            age: None,
-            preload: None,
+            store: None,
             steps: None,
             cracks: None,
             exposure: None,
@@ -2547,6 +2616,8 @@ struct Autopilot {
     cpu_ms: Vec<f64>,
     /// The streaming CPU's stages per flight frame: `update`, `poll`, `apply_events`, `sync`.
     stages_ms: [Vec<f64>; 4],
+    /// The live queue's step on the CPU per flight frame.
+    queue_ms: Vec<f64>,
     /// The light extraction inside `sync`, per flight frame; the flight's peak of light
     /// samples in the mirror, its ranges evicted and refused, and the longest wait of a chunk
     /// inside the light radius, in milliseconds.
@@ -2946,6 +3017,47 @@ struct Run {
     room_probe: Option<RoomProbe>,
     /// When the exposure line was last checked for printing (ms since the start) and its EV.
     exposure_print: Option<(f64, f32)>,
+    /// The live queue's readings.
+    queue: QueueRun,
+}
+
+/// The live queue's state in the fly-through: the workers' results before the frame exists, and
+/// what its stdout line reads.
+#[derive(Default)]
+struct QueueRun {
+    prepared: Vec<(ChunkCoord, vxe_world::Prepared)>,
+    /// Ms since the start at the last line, and the chunks baked and samples then.
+    line_ms: f64,
+    line_frame: u32,
+    line_baked: u64,
+    line_samples: u64,
+    line_prepared: u64,
+    /// The submits' ms since the last line.
+    slices: Vec<f64>,
+    emptied: bool,
+    stats: Option<vxe_render::QueueStats>,
+    failed: bool,
+    /// Ms since the start at the last step, and the dig being watched.
+    step_ms: Option<f64>,
+    dig: Option<DigWatch>,
+    /// The CPU ms of each `bake_queue_step` since the last line, and of the last one.
+    step_cpu: Vec<f64>,
+    last_step_cpu: f64,
+}
+
+/// A dig in the live queue, from the step that first read its box until its rings are baked:
+/// the frames, the longest wall time between two steps, and the queue's counters at the start.
+struct DigWatch {
+    start_ms: f64,
+    frames: u32,
+    longest_ms: f64,
+    over_33: u32,
+    reach_max: u64,
+    /// The largest share of the lighting pixels reading no value, read back each frame until
+    /// rings 1 and 2 are baked (`--read-missing` only).
+    missing_max: f64,
+    rings_ms: Option<(f64, u32)>,
+    from: vxe_render::QueueStats,
 }
 
 impl Run {
@@ -2977,21 +3089,13 @@ impl Run {
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
-    /// Reads the emissive table's counters and, with the lamp's bounce on, counts the probe
-    /// volume's live probes for the HUD: blocking reads, paid at the world sample's cadence.
+    /// Reads the store's counters and, with the lamp's bounce on, counts the probe volume's live
+    /// probes for the HUD: blocking reads, paid at the world sample's cadence.
     fn sample_probes(&mut self, gpu: &Gpu) {
-        self.hud.table = self
+        self.hud.store = self
             .gfx
             .as_ref()
-            .map(|g| g.frame.read_table_stats(&gpu.device, &gpu.queue));
-        self.hud.age = self
-            .gfx
-            .as_ref()
-            .map(|g| g.frame.read_age_stats(&gpu.device, &gpu.queue));
-        self.hud.preload = self.gfx.as_ref().and_then(|g| {
-            (g.frame.lighting().preload_radius > 0)
-                .then(|| g.frame.read_preload_stats(&gpu.device, &gpu.queue))
-        });
+            .map(|g| g.frame.read_store_stats(&gpu.device, &gpu.queue));
         self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
             g.frame.lighting().lamp_bounce.then(|| {
                 let probes = g.frame.probes();
@@ -3030,9 +3134,8 @@ impl Run {
                     .hud
                     .live_probes
                     .filter(|_| self.modes.lighting.lamp_bounce),
-                table: self.hud.table,
-                age: self.hud.age,
-                preload: self.hud.preload,
+                store: self.hud.store,
+                store_note: self.queue_note(),
                 modes: self.modes.line(),
                 upscale: g
                     .frame
@@ -3106,6 +3209,7 @@ impl Run {
         let pose = self.pose.as_ref().map(|(s, _)| s.to_owned());
         let rows: Vec<String> = [
             pose,
+            Some(self.queue_row()),
             scene,
             self.modes.banner(now),
             self.upscaler.banner(now),
@@ -3562,8 +3666,7 @@ impl Run {
         let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
         let mut frame = Frame::with_sizes(&gpu.device, scale.internal(output), output);
         diag(format_args!(
-            "frame created, {} table cells, {} B of targets",
-            frame.table_cells(),
+            "frame created, {} B of targets",
             frame.frame_bytes()
         ));
         frame.set_probe_spacing(&gpu.device, self.args.probe_spacing);
@@ -3574,40 +3677,9 @@ impl Run {
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         diag(format_args!(
-            "lighting set, {} table cells, {} B of targets",
-            frame.table_cells(),
+            "lighting set, {} B of targets",
             frame.frame_bytes()
         ));
-        // DIAGNOSTIC: CI's WARP runs place the frame-0 hang among the preload's dispatches.
-        // `VXE_DIAG_PRELOAD` is a comma-separated list of `DiagPreload`'s switches:
-        // `skip-sweep`, `shade`, `empty-sweep` (the sweep's dispatch recorded with zero
-        // workgroups), `direct-sweep` (the sweep dispatched directly, not indirectly),
-        // `scratch-sweep` (the empty sweep bound to scratch buffers), `read-args` (frame 0's
-        // indirect words read back before the light pass) and `direct-shade` (`shade_preload`
-        // dispatched directly with the words read back). `VXE_DIAG_SPLIT_FRAME0=1` submits
-        // frame 0's preload and light passes one at a time with a `diag:` line after each
-        // wait. Out with the fix for the WARP preload hang.
-        let diag_preload = std::env::var("VXE_DIAG_PRELOAD").unwrap_or_default();
-        let diag_on = |s: &str| diag_preload.split(',').any(|d| d.trim() == s);
-        let diag_split = std::env::var("VXE_DIAG_SPLIT_FRAME0").as_deref() == Ok("1");
-        if diag_split || !diag_preload.is_empty() {
-            diag(format_args!(
-                "preload switches {diag_preload:?}, frame 0 split {diag_split}"
-            ));
-            frame.set_diag_preload(vxe_render::DiagPreload {
-                skip_sweep: diag_on("skip-sweep"),
-                shade: diag_on("shade"),
-                empty_sweep: diag_on("empty-sweep"),
-                direct_sweep: diag_on("direct-sweep"),
-                scratch_sweep: diag_on("scratch-sweep"),
-                read_args: diag_on("read-args"),
-                direct_shade: diag_on("direct-shade"),
-                split_next: diag_split.then(|| {
-                    Box::new(|stage: &str| diag(format_args!("frame 0 split: {stage} done")))
-                        as vxe_render::DiagReport
-                }),
-            });
-        }
         println!("{}", self.modes.line());
         println!("{}", CrispRows::line(self.world.materials()));
         let mirror = if self.stream.is_some() {
@@ -3645,6 +3717,8 @@ impl Run {
             }
             mirror
         };
+        let mut mirror = mirror;
+        self.queue_pre_roll(gpu, &mut frame, &mut mirror);
         let mut gfx = Gfx {
             mirror,
             frame,
@@ -3663,6 +3737,377 @@ impl Run {
         }
         self.gfx = Some(gfx);
         diag(format_args!("init done"));
+    }
+
+    /// The pre-roll: the live queue started on an empty store, then synced
+    /// and stepped without a slice until the chunks within `--near` of the camera's hold their
+    /// full blocks (or are known to need none) and, under `--coarse`, every full chunk the mirror
+    /// held at that moment has had its first pass, streaming meanwhile on the streamed world (whose
+    /// later chunks take theirs in the live queue). Prints the two times; the rest is refined a
+    /// slice a frame.
+    fn queue_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
+        let settings = vxe_render::bake::queue_settings();
+        frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice);
+        frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
+        frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
+        println!("{}", self.queue_row());
+        frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
+        let camera = start_camera(&self.args, self.spawn);
+        let eye = camera.position.to_array();
+        let (forward, _, _) = camera.basis();
+        let centre = ChunkCoord(eye.map(|v| (v / 64.0).floor() as i32));
+        let r = self.args.bake_near;
+        let near: Vec<ChunkCoord> = (-r..=r)
+            .flat_map(|z| {
+                (-r..=r).flat_map(move |y| {
+                    (-r..=r).map(move |x| {
+                        ChunkCoord([centre.0[0] + x, centre.0[1] + y, centre.0[2] + z])
+                    })
+                })
+            })
+            .collect();
+        let start = now();
+        // The near chunks' moment: the time, the chunks baked and the samples by then, and the
+        // full chunks mirrored then, which the coarse pass covers before the first frame.
+        let mut near_done: Option<(f64, u64, u64)> = None;
+        let mut first_pass: Vec<ChunkCoord> = Vec::new();
+        let mut boxed = false;
+        loop {
+            let mut enc = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            if let Some(stream) = self.stream.as_mut() {
+                stream
+                    .streamer
+                    .update(&self.world, &[voxel_of(camera.position)]);
+                // Each tick's time, as the frame loop records it: `track` reads a chunk's
+                // wanted tick through it.
+                stream.tick_ms.push(ms_since(self.start));
+                let ev = stream.streamer.poll(&self.world);
+                mirror.apply_events(&ev);
+                frame.take_prepared(&ev.prepared, &self.world);
+                stream.track(&ev, mirror);
+            }
+            mirror.set_focus(voxel_of(camera.position));
+            if let Err(e) = mirror.sync(&self.world, &gpu.queue, &mut enc) {
+                self.failure.set(format!("mirror sync failed: {e}"));
+                return;
+            }
+            gpu.queue.submit([enc.finish()]);
+            let stream = self.stream.as_ref();
+            let resident_fn = |c: ChunkCoord| {
+                stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
+            };
+            let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
+                .is_some()
+                .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+            let view = vxe_render::QueueView {
+                eye,
+                forward: forward.to_array(),
+                resident,
+                samples: Some(PRE_ROLL_SAMPLES),
+                hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+            };
+            if let Some(Err(e)) =
+                frame.bake_queue_step(&gpu.device, &gpu.queue, mirror, &self.world, &view)
+            {
+                self.failure.set(format!("bake queue: {e}"));
+                return;
+            }
+            let bounded = stream.is_none();
+            if near_done.is_none()
+                && near.iter().all(|&c| {
+                    let absent = bounded && self.world.store().get(c).is_none();
+                    frame.bake_settled(c, absent)
+                })
+            {
+                let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+                near_done = Some((ms_since(start), st.baked, st.total_samples));
+                first_pass = mirror.full_chunks().collect();
+            }
+            if let Some((near_ms, _, _)) = near_done {
+                if self.args.bake_coarse == 0 || frame.bake_passed(&first_pass) {
+                    break;
+                }
+                if ms_since(start) - near_ms > COARSE_PRE_ROLL_MS {
+                    boxed = true;
+                    break;
+                }
+            }
+            if ms_since(start) > 120_000.0 {
+                println!("bake queue: the pre-roll did not end in 120 s; going on");
+                break;
+            }
+            if stream.is_some() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+        let total = ms_since(start);
+        let (near_ms, near_baked, near_samples) =
+            near_done.unwrap_or((total, st.baked, st.total_samples));
+        println!(
+            "bake queue: the camera's chunk {:?} and the {} within {} at 4096 by {:.0} ms ({} chunks, {:.3e} samples); the coarse pass at {} by {:.0} ms (+{:.0} ms, +{} chunks, +{:.3e} samples, {} coarse{}); {} listed from the workers; {:.0} ms since the start",
+            centre.0,
+            near.len(),
+            r,
+            near_ms,
+            near_baked,
+            near_samples as f64,
+            self.args.bake_coarse,
+            total,
+            total - near_ms,
+            st.baked - near_baked,
+            (st.total_samples - near_samples) as f64,
+            st.coarse,
+            if boxed {
+                format!(
+                    ", ended by its {:.0} s box with the rest of the {} chunks to the queue",
+                    COARSE_PRE_ROLL_MS / 1e3,
+                    first_pass.len()
+                )
+            } else {
+                String::new()
+            },
+            st.prepared,
+            ms_since(self.start)
+        );
+    }
+
+    /// One frame of the live queue, ahead of the encode: `enc` (the sync's copies) is submitted
+    /// first so the bake reads this frame's mirror, and a new encoder returned. Prints a line a
+    /// second, and the time the queue first empties.
+    fn step_bake_queue(&mut self, gpu: &Gpu, enc: wgpu::CommandEncoder) -> wgpu::CommandEncoder {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return enc;
+        };
+        if gfx.frame.bake_queue().is_none() {
+            return enc;
+        }
+        gpu.queue.submit([enc.finish()]);
+        let (forward, _, _) = self.fly.camera.basis();
+        let stream = self.stream.as_ref();
+        let resident_fn = |c: ChunkCoord| {
+            stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
+        };
+        let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
+            .is_some()
+            .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+        let view = vxe_render::QueueView {
+            eye: self.fly.camera.position.to_array(),
+            forward: forward.to_array(),
+            resident,
+            samples: None,
+            hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+        };
+        let t_step = ms_since(self.start);
+        let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
+        let dug = gfx.frame.bake_queue().is_some_and(|q| !q.digs_settled());
+        let new_box = gfx.frame.bake_queue().is_some_and(|q| q.boxes_waiting());
+        // A dig after the last one's rings 1 and 2 starts its own watch; one before them joins it.
+        if new_box && let Some(w) = self.queue.dig.take_if(|w| w.rings_ms.is_some()) {
+            println!(
+                "dig settled: ring 3 not yet ({} chunks at most) after {} frames, {:.0} ms, at the next dig; frames: longest {:.1} ms, {} over 33 ms",
+                w.reach_max,
+                w.frames,
+                t_step - w.start_ms,
+                w.longest_ms,
+                w.over_33,
+            );
+        }
+        if dug && self.queue.dig.is_none() {
+            self.queue.dig = self.queue.stats.map(|from| DigWatch {
+                start_ms: t_step,
+                frames: 0,
+                longest_ms: 0.0,
+                over_33: 0,
+                reach_max: 0,
+                missing_max: 0.0,
+                rings_ms: None,
+                from,
+            });
+        }
+        let t_cpu = now();
+        let stepped =
+            gfx.frame
+                .bake_queue_step(&gpu.device, &gpu.queue, &mut gfx.mirror, &self.world, &view);
+        self.queue.last_step_cpu = ms_since(t_cpu);
+        self.queue.step_cpu.push(self.queue.last_step_cpu);
+        match stepped {
+            Some(Ok(st)) => {
+                if st.samples > 0 {
+                    self.queue.slices.push(st.ms);
+                }
+                if let Some(w) = self.queue.dig.as_mut() {
+                    w.frames += 1;
+                    if let Some(dt) = dt {
+                        w.longest_ms = w.longest_ms.max(dt);
+                        w.over_33 += u32::from(dt > 33.0);
+                    }
+                    w.reach_max = w.reach_max.max(st.reach);
+                    if w.rings_ms.is_none() && self.args.read_missing {
+                        // The store's counters, read back blocking: the wait it adds to each
+                        // frame is in the frames this line reads.
+                        let missing = gfx.frame.read_store_stats(&gpu.device, &gpu.queue).missing;
+                        let share = f64::from(missing) / f64::from(gfx.frame.light_pixels().max(1));
+                        w.missing_max = w.missing_max.max(share);
+                    }
+                    if w.rings_ms.is_none() && st.digs == 0 {
+                        w.rings_ms = Some((t_step - w.start_ms, w.frames));
+                        println!(
+                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples); frames from the dig: longest {:.1} ms, {} over 33 ms; no value at most {}; ring 3 {} chunks waiting",
+                            w.frames,
+                            t_step - w.start_ms,
+                            st.digs_baked - w.from.digs_baked,
+                            st.dig_bricks - w.from.dig_bricks,
+                            (st.total_samples - w.from.total_samples) as f64,
+                            w.longest_ms,
+                            w.over_33,
+                            if self.args.read_missing {
+                                format!("{:.4} of the pixels", w.missing_max)
+                            } else {
+                                "not read (--read-missing)".to_owned()
+                            },
+                            st.reach,
+                        );
+                    }
+                    if w.rings_ms.is_some() && st.reach == 0 {
+                        println!(
+                            "dig settled: ring 3 ({} chunks at most) in {} frames, {:.0} ms from the dig; frames: longest {:.1} ms, {} over 33 ms",
+                            w.reach_max,
+                            w.frames,
+                            t_step - w.start_ms,
+                            w.longest_ms,
+                            w.over_33,
+                        );
+                        self.queue.dig = None;
+                    }
+                }
+                self.queue.stats = Some(st);
+                if !self.queue.emptied
+                    && gfx
+                        .frame
+                        .bake_queue()
+                        .is_some_and(vxe_render::BakeQueue::empty)
+                {
+                    self.queue.emptied = true;
+                    println!(
+                        "bake queue: empty after {:.1} s since the start ({} chunks baked, {:.3e} samples)",
+                        ms_since(self.start) / 1e3,
+                        st.baked,
+                        st.total_samples as f64
+                    );
+                }
+            }
+            Some(Err(e)) => {
+                if !self.queue.failed {
+                    println!("bake queue: {e}");
+                }
+                self.queue.failed = true;
+            }
+            None => {}
+        }
+        // A line a second: of wall time in a window, of 60 frames headless (a headless frame is
+        // 1/60 s of the glide and the exposure).
+        let t = ms_since(self.start);
+        let due = if self.args.headless {
+            self.frame.is_multiple_of(60)
+        } else {
+            t - self.queue.line_ms >= 1000.0
+        };
+        if due && let Some(st) = self.queue.stats {
+            let store_stats = gfx.frame.read_store_stats(&gpu.device, &gpu.queue);
+            let missing = store_stats.missing;
+            let pixels = gfx.frame.light_pixels().max(1);
+            let secs = if self.args.headless {
+                f64::from(self.frame - self.queue.line_frame) / 60.0
+            } else {
+                (t - self.queue.line_ms) / 1e3
+            }
+            .max(1e-3);
+            let mut sl = std::mem::take(&mut self.queue.slices);
+            sl.sort_by(f64::total_cmp);
+            let p50 = sl.get(sl.len() / 2).copied().unwrap_or(0.0);
+            let max = sl.last().copied().unwrap_or(0.0);
+            let mut cpu = std::mem::take(&mut self.queue.step_cpu);
+            println!(
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
+                t / 1e3,
+                self.frame,
+                st.depth,
+                st.jobs,
+                st.waiting_reach,
+                st.waiting_lights,
+                st.baked,
+                st.baked - self.queue.line_baked,
+                secs,
+                st.prepared - self.queue.line_prepared,
+                (st.total_samples - self.queue.line_samples) as f64 / secs,
+                p50,
+                max,
+                sl.len(),
+                st.ns_per_sample,
+                st.fading,
+                st.coarse,
+                f64::from(missing) / f64::from(pixels),
+                f64::from(store_stats.coarse_reads) / f64::from(pixels),
+                pixels,
+                self.fly.camera.position.x,
+                self.fly.camera.position.y,
+                self.fly.camera.position.z,
+                percentile(&mut cpu, 50.0),
+                percentile(&mut cpu, 100.0),
+            );
+            self.queue.line_ms = t;
+            self.queue.line_frame = self.frame;
+            self.queue.line_baked = st.baked;
+            self.queue.line_samples = st.total_samples;
+            self.queue.line_prepared = st.prepared;
+        }
+        gpu.device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
+    }
+
+    /// The live queue's banner row: the mode, its settings and slice, and the read.
+    fn queue_row(&self) -> String {
+        format!(
+            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}",
+            vxe_render::bake::BRICK_CELL,
+            vxe_render::bake::QUEUE_BRICK_SAMPLES,
+            if self.args.bake_coarse > 0 {
+                format!(
+                    "coarse {}/{} first, near {} at {}",
+                    vxe_render::bake::BRICK_CELL,
+                    self.args.bake_coarse,
+                    self.args.bake_near,
+                    vxe_render::bake::QUEUE_BRICK_SAMPLES
+                )
+            } else {
+                format!("no coarse pass, near {}", self.args.bake_near)
+            },
+            self.args.bake_slice,
+            self.args.bake_edit_ms,
+            if self.args.dig_reach { "on" } else { "off" },
+        )
+    }
+
+    /// The HUD store row's queue part: `, queue depth N, jobs J, slice X ms`, or nothing.
+    fn queue_note(&self) -> String {
+        match self.queue.stats {
+            Some(st) => format!(
+                ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms{}",
+                st.depth,
+                st.coarse,
+                st.jobs,
+                st.ms,
+                if st.pool_full > 0 {
+                    format!(", pool full {}", st.pool_full)
+                } else {
+                    String::new()
+                }
+            ),
+            _ => String::new(),
+        }
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -3757,6 +4202,7 @@ impl Run {
             stream.tick_ms.push(ms_since(self.start));
             let ev = stream.streamer.poll(&self.world);
             mirror.apply_events(&ev);
+            self.queue.prepared.extend(ev.prepared.iter().cloned());
             let mut enc = gpu
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -3825,6 +4271,7 @@ impl Run {
         let poll_ms = ms_since(tp);
         let ta = now();
         gfx.mirror.apply_events(&ev);
+        gfx.frame.take_prepared(&ev.prepared, &self.world);
         gfx.mirror.set_focus(cam);
         let apply_ms = ms_since(ta);
         let ts = now();
@@ -4037,6 +4484,7 @@ impl Run {
             None
         };
         let now_ms = ms_since(self.start);
+        let queue_ms = self.queue.last_step_cpu;
         let (Some(p), Some(stream), Some(gfx)) =
             (self.pilot.as_mut(), self.stream.as_ref(), self.gfx.as_ref())
         else {
@@ -4061,6 +4509,7 @@ impl Run {
                 v.push(ms);
             }
             p.light_ms.push(stream.light_ms);
+            p.queue_ms.push(queue_ms);
             p.light_evicted += stream.light_evicted;
             p.light_refused += stream.light_refused;
             p.light_wait_ms = p.light_wait_ms.max(stream.light_wait_ms);
@@ -4137,6 +4586,21 @@ impl Run {
             p.light_refused,
             p.light_wait_ms
         );
+        println!(
+            "autopilot: bake queue step CPU per frame: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames",
+            percentile(&mut p.queue_ms, 50.0),
+            percentile(&mut p.queue_ms, 99.0),
+            percentile(&mut p.queue_ms, 100.0),
+            p.queue_ms.len()
+        );
+        if let Some(st) = self.queue.stats {
+            println!(
+                "autopilot: the workers' face masks per chunk: mean {:.1} us, max {:.1} us over {} chunks since the start",
+                st.hook_ns as f64 / st.hook_chunks.max(1) as f64 / 1e3,
+                st.hook_max_ns as f64 / 1e3,
+                st.hook_chunks
+            );
+        }
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();
         println!(
             "autopilot: residency latency wanted to mirrored: p95 {:.0} ms, max {:.0} ms over {} chunks (proposal 500 ms)",
@@ -4252,6 +4716,12 @@ impl Run {
         if self.args.fade_reading && self.frame < FADE_DIGS {
             self.dig();
         }
+        if self.args.dig_at.contains(&self.frame) {
+            self.dig();
+        }
+        if self.args.bench_at.contains(&self.frame) {
+            self.bench();
+        }
         if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
@@ -4288,8 +4758,6 @@ impl Run {
     fn handle_input(&mut self, input: &Input) {
         for (key, mode) in [
             (KeyCode::F3, hud::ModeKey::ShadowWalk),
-            (KeyCode::F4, hud::ModeKey::Preload),
-            (KeyCode::KeyC, hud::ModeKey::Blend),
             (KeyCode::F5, hud::ModeKey::History),
             (KeyCode::F6, hud::ModeKey::Resolution),
             (KeyCode::F7, hud::ModeKey::Lamp),
@@ -4601,6 +5069,15 @@ impl Run {
 
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant, dt: f32) -> Flow {
         self.tick(gpu);
+        if let Some(v) = self.args.glide {
+            let step = if self.args.headless {
+                1.0 / 60.0
+            } else {
+                dt.clamp(0.0, 0.1)
+            };
+            let (forward, _, _) = self.fly.camera.basis();
+            self.fly.camera.position += forward * (v * step);
+        }
         // The sync's copies are recorded first, so the field pass and the march read
         // them in the same submission.
         let mut enc = gpu
@@ -4625,6 +5102,7 @@ impl Run {
                 Err(e) => return self.mirror_failed(e),
             }
         }
+        let mut enc = self.step_bake_queue(gpu, enc);
         self.pilot_sample();
         let hud = self.hud.visible;
         if self.hud.cadence.due(hud) {
@@ -5092,6 +5570,7 @@ impl App for Flythrough {
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),
+                queue_ms: Vec::new(),
                 light_ms: Vec::new(),
                 pass_ms: Vec::new(),
                 peak_light: 0,
@@ -5180,6 +5659,7 @@ impl App for Flythrough {
                 audio: self.audio.take(),
                 room_probe: self.room_probe.take(),
                 exposure_print: None,
+                queue: QueueRun::default(),
             });
         }
         match self.run.as_mut() {
@@ -5722,6 +6202,10 @@ fn main() {
         } else {
             Streamer::new(Arc::new(source), cfg)
         };
+        // The live queue's listing runs on the workers (ADR-0017), from the first chunk on.
+        streamer.set_prep(Some(Arc::new(vxe_render::bake::FacePrep {
+            classes: Arc::new(vxe_render::bake::face_classes(world.materials())),
+        })));
         // Workers start on the spawn's chunks while the shell opens the window.
         streamer.update(&world, &[source.spawn()]);
         println!(
@@ -5915,6 +6399,36 @@ mod tests {
         assert_eq!(hud.strip.len(), 100);
     }
     use flythrough::cave::SHELL;
+
+    /// The flags of the per-face table, the reference and the cuts are refused, each naming Plan
+    /// 0059 and the flag; with none of them the run parses and its frame takes the store.
+    #[test]
+    fn the_flags_of_the_deleted_table_are_refused_naming_plan_0059() {
+        for flags in [
+            &["--light", "table"][..],
+            &["--light", "baked"],
+            &["--light", "queue"],
+            &["--cut", "lattice:64"],
+            &["--show", "table"],
+            &["--reference"],
+            &["--bake-file", "a.bin"],
+            &["--queue-file", "a.bin"],
+            &["--bake-radius", "2"],
+            &["--blend", "off"],
+            &["--preload", "off"],
+            &["--preload-claim", "16"],
+        ] {
+            let Err(e) = parse_args_from(argv(flags)) else {
+                panic!("{flags:?} is refused");
+            };
+            assert!(e.contains("Plan 0059"), "{flags:?}: {e}");
+            assert!(e.starts_with(flags[0]), "{flags:?}: {e}");
+            let mut level = vec!["--level"];
+            level.extend_from_slice(flags);
+            assert!(parse_args_from(argv(&level)).is_err(), "{level:?}");
+        }
+        assert!(parse_args_from(argv(&["--level"])).is_ok());
+    }
 
     fn argv(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| (*s).to_owned()).collect()
@@ -6596,6 +7110,7 @@ mod tests {
             audio: None,
             room_probe: None,
             exposure_print: None,
+            queue: QueueRun::default(),
             cutaway: CutawayMode::Auto,
         }
     }
@@ -6754,7 +7269,7 @@ mod tests {
     /// until the camera moves.
     #[test]
     fn pose_starts_the_level_at_the_rigs_still_camera() {
-        for want in [flythrough::VEIN_POSE, flythrough::PATCH_POSE] {
+        for want in flythrough::START_POSES {
             let a = parse_args_from(argv(&["--level", "--pose", want.name])).expect("parses");
             assert_eq!(a.pose, Some(want));
             assert_eq!(a.exposure, None, "the pose's exposure is not applied");
@@ -6774,7 +7289,7 @@ mod tests {
         let e = parse_args_from(argv(&["--level", "--pose", "cave"]))
             .err()
             .expect("unknown name");
-        assert_eq!(e, "--pose takes vein, patch, not cave");
+        assert_eq!(e, "--pose takes vein, patch, far, vein-flight, not cave");
         assert!(parse_args_from(argv(&["--level", "--pose"])).is_err());
 
         let mut run = bare_run(carved_rock());
@@ -6931,10 +7446,12 @@ mod tests {
                 Vec3::from(eye.map(|v| v as f32 + 0.5))
             );
             assert_eq!(run.scene.as_ref().unwrap().0, format!("castle {want}"));
+            // Under the default light the queue's row comes first.
             assert!(
                 run.banner()
                     .unwrap()
-                    .starts_with(&format!("castle {want}\n"))
+                    .lines()
+                    .any(|l| l == format!("castle {want}"))
             );
         }
         let (_, yaw, pitch) = castle::CastleShot::Nave.pose();
@@ -7545,10 +8062,6 @@ mod tests {
             d.start_lighting().lamp_bounce,
             "the lamp's bounce is on by default"
         );
-        assert_eq!(
-            d.start_lighting().table_cells,
-            vxe_render::DEFAULT_TABLE_CELLS
-        );
         assert_eq!(d.probe_spacing, 16);
         assert_eq!(parse(&["--probe-spacing", "8"]).unwrap().probe_spacing, 8);
         let p = parse(&["--probe-rays", "32", "--probe-slices", "16"]).unwrap();
@@ -7566,10 +8079,10 @@ mod tests {
                 4
             )
         );
-        // The line the fly-through prints at the start with no lighting flags.
+        // The line the fly-through prints at the start with no lighting flags, and under the table.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 2^22 probes 16, blend 5x5, fill 8 to 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -7590,43 +8103,9 @@ mod tests {
                 "--light-radius",
                 "--light-radius takes 0 to 64 chunks, not x",
             ),
-            (
-                "--preload",
-                "--preload takes off or a radius of 8 to 128 voxels, not x",
-            ),
         ] {
             assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
         }
-        // The preload: on at 64 voxels by default, `off` is 0, a radius sets it.
-        assert_eq!(parse(&[]).unwrap().start_lighting().preload_radius, 64);
-        assert_eq!(
-            parse(&["--preload", "off"])
-                .unwrap()
-                .start_lighting()
-                .preload_radius,
-            0
-        );
-        assert_eq!(
-            parse(&["--preload", "96"])
-                .unwrap()
-                .start_lighting()
-                .preload_radius,
-            96
-        );
-        assert!(parse(&["--preload", "4"]).is_err());
-        // The claim radius: 32 by default, a radius sets it, past 128 is refused.
-        assert_eq!(
-            parse(&[]).unwrap().start_lighting().preload_claim_radius,
-            32
-        );
-        assert_eq!(
-            parse(&["--preload-claim", "16"])
-                .unwrap()
-                .start_lighting()
-                .preload_claim_radius,
-            16
-        );
-        assert!(parse(&["--preload-claim", "200"]).is_err());
         // The steady spike's flags and the screen path's are refused, naming Plan 0057.
         for flag in [
             "--steady",

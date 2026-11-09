@@ -107,6 +107,9 @@ pub struct StreamEvents {
     /// For each chunk in `loaded` as `Full`, the `update` calls between the one that first
     /// wanted it full and its insertion.
     pub latency_ticks: Vec<u32>,
+    /// The hook's results ([`Streamer::set_prep`]) for chunks in `loaded` as `Full`, in the
+    /// same order; a chunk loaded before the hook was set has none.
+    pub prepared: Vec<(ChunkCoord, Prepared)>,
 }
 
 impl StreamEvents {
@@ -116,6 +119,7 @@ impl StreamEvents {
         self.evicted.append(&mut other.evicted);
         self.errors.append(&mut other.errors);
         self.latency_ticks.append(&mut other.latency_ticks);
+        self.prepared.append(&mut other.prepared);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -182,6 +186,8 @@ enum Done {
         coord: ChunkCoord,
         chunk: Arc<RwLock<Chunk>>,
         restored: bool,
+        /// The caller's hook's result on it ([`Streamer::set_prep`]), if one is set.
+        prepared: Option<Prepared>,
     },
     /// Mips for a LOD-only load; `generated` when the full chunk came from the source.
     Lod {
@@ -220,6 +226,8 @@ struct Shared {
     persisted: Mutex<Persisted>,
     spill_dir: Option<PathBuf>,
     world_key: u64,
+    /// The caller's hook, run on each full chunk a worker loads ([`Streamer::set_prep`]).
+    prep: RwLock<Option<Arc<dyn ChunkPrep>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -276,6 +284,7 @@ impl Streamer {
             persisted: Mutex::new(Persisted::default()),
             spill_dir: cfg.persist.spill_dir.clone(),
             world_key: cfg.persist.world_key,
+            prep: RwLock::new(None),
         });
         let (tx, results) = mpsc::channel();
         let workers = (0..cfg.workers.max(1))
@@ -313,6 +322,16 @@ impl Streamer {
 
     pub fn config(&self) -> &StreamConfig {
         &self.cfg
+    }
+
+    /// Sets the hook the workers run on each full chunk they load from now on (ADR-0017), or
+    /// none. Its results arrive in [`StreamEvents::prepared`].
+    pub fn set_prep(&mut self, prep: Option<Arc<dyn ChunkPrep>>) {
+        *self
+            .shared
+            .prep
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = prep;
     }
 
     /// Changes the full and LOD radii, keeping the hysteresis. The queue is rebuilt for the
@@ -654,6 +673,7 @@ impl Streamer {
                     coord,
                     chunk,
                     restored,
+                    prepared,
                 } => {
                     if restored {
                         self.restored += 1;
@@ -677,6 +697,9 @@ impl Streamer {
                     }
                     inserts.push((coord, chunk));
                     ev.loaded.push((coord, Tier::Full));
+                    if let Some(p) = prepared {
+                        ev.prepared.push((coord, p));
+                    }
                     let since = since.unwrap_or(self.tick);
                     ev.latency_ticks
                         .push(u32::try_from(self.tick - since).unwrap_or(u32::MAX));
@@ -979,6 +1002,53 @@ enum Work {
     Demote(DemoteJob),
 }
 
+/// Work the caller has the stream workers do on each full chunk they load (ADR-0017): a pure
+/// function of the chunk's content, whose result the world carries to [`Streamer::poll`]'s
+/// events and never reads. A caller keeps an inline path for a chunk with no result, and
+/// throws a result away once the chunk is edited.
+pub trait ChunkPrep: Send + Sync {
+    fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> Prepared;
+}
+
+/// A [`ChunkPrep`] result, opaque to the world. Two are equal when they are the same value.
+#[derive(Clone)]
+pub struct Prepared(pub Arc<dyn std::any::Any + Send + Sync>);
+
+impl std::fmt::Debug for Prepared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Prepared(..)")
+    }
+}
+
+impl PartialEq for Prepared {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Prepared {}
+
+/// `done` with the hook's result where it is a full chunk and a hook is set.
+fn prepare(shared: &Shared, mut done: Done) -> Done {
+    if let Done::Full {
+        coord,
+        chunk,
+        prepared,
+        ..
+    } = &mut done
+    {
+        let hook = shared
+            .prep
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(h) = hook {
+            *prepared = Some(h.prepare(*coord, &read(chunk)));
+        }
+    }
+    done
+}
+
 fn worker<S: WorldSource + ?Sized>(shared: &Shared, source: &S, tx: &Sender<Done>) {
     loop {
         let work = {
@@ -1000,7 +1070,9 @@ fn worker<S: WorldSource + ?Sized>(shared: &Shared, source: &S, tx: &Sender<Done
             }
         };
         let r = std::panic::catch_unwind(AssertUnwindSafe(|| match work {
-            Work::Load(key) if key.tier == Tier::Full => load_full(shared, source, key.coord),
+            Work::Load(key) if key.tier == Tier::Full => {
+                prepare(shared, load_full(shared, source, key.coord))
+            }
             Work::Load(key) => load_lod(shared, source, key.coord),
             Work::Spill(job) => spill(shared, job),
             Work::Demote(DemoteJob { coord, chunk }) => Done::Demoted {
@@ -1052,6 +1124,7 @@ fn load_full<S: WorldSource + ?Sized>(shared: &Shared, source: &S, coord: ChunkC
                 coord,
                 chunk,
                 restored: true,
+                prepared: None,
             }
         }
         Some(Found::File(path)) => match read_spill(shared, coord, &path) {
@@ -1063,6 +1136,7 @@ fn load_full<S: WorldSource + ?Sized>(shared: &Shared, source: &S, coord: ChunkC
                     coord,
                     chunk: Arc::new(RwLock::new(chunk)),
                     restored: true,
+                    prepared: None,
                 }
             }
             Err(kind) => Done::LoadFailed { coord, kind },
@@ -1074,6 +1148,7 @@ fn load_full<S: WorldSource + ?Sized>(shared: &Shared, source: &S, coord: ChunkC
                 coord,
                 chunk: Arc::new(RwLock::new(chunk)),
                 restored: false,
+                prepared: None,
             }
         }
     }

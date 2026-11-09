@@ -2,7 +2,7 @@
 // irradiance, weighted by the hits' positions and normals and by the luminance variance
 // estimated from the temporal moments (SVGF, Schied 2017). Irradiance only: the composite
 // multiplies the albedo back after it, so a material edge never blurs. It filters the lamp's
-// part and a fallback hit's emissive part; a pixel whose emissive part is the table's (the
+// part and a fallback hit's emissive part; a pixel whose emissive part is the store's (the
 // moments' w, temporal.wgsl) carries a cell's mean, whose variance is the cell's and not the
 // pixel's, so that part passes around the filter and the last iteration adds it back
 // (ADR-0043). Compiled after march.wgsl, whose bindings (group 0) and hit-record helpers it
@@ -33,8 +33,8 @@
 //   6  uniform           step            the iteration's stride in pixels, and whether it is
 //                                        the last
 //   7  texture_2d<f32>   accum_pass_in   the temporal pass's accumulation, read by the last
-//                                        iteration for the table's emissive part
-//   8  texture_2d<f32>   moments_pass_in the temporal pass's moments (w: the part is the table's)
+//                                        iteration for the store's emissive part
+//   8  texture_2d<f32>   moments_pass_in the temporal pass's moments (w: the part is the store's)
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -42,7 +42,7 @@
 
 struct Step {
     size: u32,
-    // 1 on the last iteration, which adds the table's emissive part back.
+    // 1 on the last iteration, which adds the store's emissive part back.
     last: u32,
     _pad1: u32,
     _pad2: u32,
@@ -136,7 +136,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureStore(filter_out_atrous, px, centre);
         return;
     }
-    // The table's emissive part, added back after the last iteration.
+    // The store's emissive part, added back after the last iteration.
     var passed = vec3<f32>(0.0);
     if (step.last != 0u && textureLoad(moments_pass_in, px, 0).w > 0.5) {
         passed = textureLoad(accum_pass_in, px, 0).xyz;

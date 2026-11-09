@@ -20,8 +20,9 @@
 //! default for both sources; the lamp's bounce is off (`--lamp-bounce on`, or its alias
 //! `--indirect on`, runs ADR-0043's lamp channel with the lamp on at the hero's probe spacing,
 //! `HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it), emissive
-//! light is read from the per-face table (ADR-0043; `--steady`, `--cache-read`, `--sampler`,
-//! `--emissive-history` and `--emissive-guard` are refused, naming Plan 0057), and the upscaler at
+//! light is read from the store, the whole world baked at the live queue's settings before each
+//! still (ADR-0046; `--steady`, `--cache-read`, `--sampler`, `--emissive-history` and
+//! `--emissive-guard` are refused, naming Plan 0057), and the upscaler at
 //! the fly-through's defaults (`--internal-scale 1.5`: FSR 2; `--jitter` starts our upscaler,
 //! jittered or not; `--internal-scale 1` without `--jitter on` is the native frame).
 //! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face` with the
@@ -193,7 +194,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--steady" | "--cache-read" | "--sampler" | "--emissive-history"
             | "--emissive-guard" => {
                 return Err(format!(
-                    "{flag} is gone since Plan 0057: emissive light is read from the per-face table (ADR-0043)"
+                    "{flag} is gone since Plan 0057: emissive light is read from the store (ADR-0046)"
                 ));
             }
             "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
@@ -514,6 +515,18 @@ fn main() -> Result<(), String> {
             ..vxe_render::LookParams::default()
         });
         frame.set_resolution(&device, args.resolution);
+        let r = frame
+            .bake_until(
+                &device,
+                &queue,
+                &mut gpu,
+                &world,
+                world.extent(),
+                &vxe_render::bake::queue_settings(),
+                &mut |_| {},
+            )
+            .map_err(|e| format!("bake: {e:?}"))?;
+        println!("baked {} chunks, {} faces", r.chunks, r.faces);
         for _ in 0..frames {
             frame.step(
                 &device,
@@ -555,6 +568,7 @@ mod tests {
         assert_eq!(d.shots, Shots::One(SHOTS[0]));
         assert_eq!(d.size, [1920, 1080]);
         assert!(!d.lighting.lamp && !d.lighting.lamp_bounce);
+        assert!(parse(&["--light", "baked"]).is_err());
         assert_eq!(
             (d.internal_scale, d.jitter(), d.fsr2()),
             (RenderScale::OneHalf, false, true)

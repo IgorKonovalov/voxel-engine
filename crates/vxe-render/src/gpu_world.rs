@@ -262,8 +262,9 @@ pub const BIN_COUNT: usize = SLOT_BINS.len();
 /// Storage buffers the pool is sharded over: every frame shader binds all four.
 pub const MAX_SHARDS: u32 = 4;
 /// Storage buffers the frame's passes bind besides the pool shards: records, table,
-/// materials, light samples and the emission scale.
-pub const OTHER_STORAGE_BUFFERS: u32 = 5;
+/// materials, light samples and the emission scale, plus the face store the hit pass reads
+/// for a translucent face's reflected light (ADR-0047).
+pub const OTHER_STORAGE_BUFFERS: u32 = 6;
 /// `u32` words of a slot's opaque mask (its unit 0): one bit per voxel.
 pub const OPAQUE_WORDS: usize = 16;
 /// The header unit's words: the palette (16 `u16`), the two translucent words (one bit per
@@ -930,8 +931,13 @@ pub struct GpuWorld {
     light_buf: wgpu::Buffer,
     light_free: BTreeMap<u32, u32>,
     light_high: u32,
+    /// Ranges are held out to at least this many chunks of the focus ([`GpuWorld::hold_lights`]).
+    light_hold: i32,
     lights: HashMap<ChunkCoord, ChunkLights>,
     light_live: u64,
+    /// Bumped whenever a chunk's range is written, released or dropped: what a reader of
+    /// [`GpuWorld::light_chunks`] keys a cache on.
+    light_epoch: u64,
     /// Ranges of chunks dropped outside a sync, zeroed and freed at the next one.
     light_dropped: Vec<(u32, u32)>,
     /// Chunks whose lists changed since their range was written; chunks inside the radius
@@ -1142,9 +1148,11 @@ impl GpuWorld {
                 (u64::from(cfg.light_samples) + LIGHT_TABLE_SLOTS) * LIGHT_SAMPLE_BYTES,
             ),
             light_free: BTreeMap::new(),
+            light_hold: 0,
             light_high: 0,
             lights: HashMap::new(),
             light_live: 0,
+            light_epoch: 0,
             light_dropped: Vec::new(),
             light_dirty: HashSet::new(),
             light_wait: HashMap::new(),
@@ -1497,6 +1505,32 @@ impl GpuWorld {
     /// Chunks waiting for an upload.
     pub fn pending_chunks(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Whether `coord` waits for an upload: its mirrored record, if any, is not its content.
+    pub fn is_pending(&self, coord: ChunkCoord) -> bool {
+        self.pending_d2.contains_key(&coord)
+    }
+
+    /// The chunks holding a full record (not LOD-only), in no order.
+    pub fn full_chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+        self.mirrored
+            .iter()
+            .filter(|(_, m)| !m.lod)
+            .map(|(c, _)| *c)
+    }
+
+    /// Whether every chunk with lights whose box lies within `r` chunks of `coord`'s box (the
+    /// bake's candidate table's reach, `bake::job_table`) holds a current range of the
+    /// light-sample buffer.
+    pub fn lights_ready_near(&self, coord: ChunkCoord, r: i32) -> bool {
+        let rr = i64::from(r).pow(2);
+        self.lights.iter().all(|(c, l)| {
+            let gap2: i64 = (0..3)
+                .map(|k| i64::from(((c.0[k] - coord.0[k]).abs() - 1).max(0)).pow(2))
+                .sum();
+            gap2 >= rr || (l.range.is_some() && !self.light_dirty.contains(c))
+        })
     }
 
     /// The record entry the mirror holds for brick `slot` of chunk `coord`.
@@ -2700,7 +2734,7 @@ impl GpuWorld {
     /// next sync). A chunk the buffer cannot fit evicts the farthest range beyond itself.
     fn place_lights(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         self.light_syncs += 1;
-        let r = i64::from(self.cfg.light_radius);
+        let r = i64::from(self.cfg.light_radius.max(self.light_hold));
         let f = self.focus;
         let d2 = |c: ChunkCoord| -> i64 { (0..3).map(|k| i64::from(c.0[k] - f.0[k]).pow(2)).sum() };
         let far: Vec<ChunkCoord> = self
@@ -2809,12 +2843,14 @@ impl GpuWorld {
             l.range = Some((start, n));
             l.power = power;
         }
+        self.light_epoch += 1;
         u64::from(n)
     }
 
     /// Zeroes and frees `coord`'s range, keeping its lists.
     fn release_lights(&mut self, coord: ChunkCoord, enc: &mut wgpu::CommandEncoder) {
         if let Some(r) = self.lights.get_mut(&coord).and_then(|l| l.range.take()) {
+            self.light_epoch += 1;
             self.light_live -= u64::from(r.1);
             self.zero_light_range(r, enc);
             self.free_light_range(r);
@@ -2836,6 +2872,28 @@ impl GpuWorld {
         self.cfg.light_samples
     }
 
+    /// Holds ranges of the light-sample buffer out to `r` chunks of the focus, however small the
+    /// light radius: a bake's chunk reads every emitter within the light radius of itself, not of
+    /// the camera. The frame's candidate table still reads only the light radius.
+    pub fn hold_lights(&mut self, r: i32) {
+        self.light_hold = r;
+    }
+
+    /// Whether every chunk with lights within the held radius holds a current range.
+    pub fn lights_settled(&self) -> bool {
+        let r = i64::from(self.cfg.light_radius.max(self.light_hold));
+        let f = self.focus;
+        self.lights.iter().all(|(c, l)| {
+            let d2: i64 = (0..3).map(|k| i64::from(c.0[k] - f.0[k]).pow(2)).sum();
+            d2 > r * r || (l.range.is_some() && !self.light_dirty.contains(c))
+        })
+    }
+
+    /// A count that changes whenever [`GpuWorld::light_chunks`] does.
+    pub fn light_epoch(&self) -> u64 {
+        self.light_epoch
+    }
+
     /// The light radius in chunks ([`MirrorConfig::light_radius`]).
     pub fn light_radius(&self) -> i32 {
         self.cfg.light_radius
@@ -2848,6 +2906,7 @@ impl GpuWorld {
         if let Some(l) = self.lights.remove(&coord)
             && let Some(r) = l.range
         {
+            self.light_epoch += 1;
             self.light_live -= u64::from(r.1);
             self.light_dropped.push(r);
         }

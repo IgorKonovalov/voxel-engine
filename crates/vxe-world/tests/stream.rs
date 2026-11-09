@@ -91,6 +91,46 @@ fn a_radius_2_residency_loads_33_chunks_then_keeps_42_after_a_move() {
     assert_eq!(s.stats().in_flight, 0);
 }
 
+/// A hook that hands back the chunk's coordinate and its first brick's material.
+struct FirstBrick;
+
+impl ChunkPrep for FirstBrick {
+    fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> Prepared {
+        let first = match chunk.brick(0) {
+            Brick::Uniform(m) => *m,
+            Brick::Full(_) => MaterialId::MAX,
+        };
+        Prepared(Arc::new((coord, first)))
+    }
+}
+
+#[test]
+fn the_workers_hand_back_the_hooks_result_for_each_full_load() {
+    let (world, mut s) = solid3_streamer(2);
+    s.set_prep(Some(Arc::new(FirstBrick)));
+    s.update(&world, &[VoxelCoord([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    let full: Vec<ChunkCoord> = ev
+        .loaded
+        .iter()
+        .filter(|(_, t)| *t == Tier::Full)
+        .map(|(c, _)| *c)
+        .collect();
+    assert_eq!(full.len(), 33);
+    let got: Vec<ChunkCoord> = ev.prepared.iter().map(|(c, _)| *c).collect();
+    assert_eq!(got, full, "one result a full load, in the same order");
+    for (c, p) in &ev.prepared {
+        let v = p.0.clone().downcast::<(ChunkCoord, MaterialId)>().unwrap();
+        assert_eq!(*v, (*c, 3), "the hook saw the loaded chunk");
+    }
+    // Without the hook, a load carries none.
+    s.set_prep(None);
+    s.update(&world, &[VoxelCoord([192, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    assert!(ev.loaded.iter().any(|(_, t)| *t == Tier::Full));
+    assert!(ev.prepared.is_empty());
+}
+
 #[test]
 fn streamed_chunks_equal_generated_chunks() {
     let world = World::new(&test_table());

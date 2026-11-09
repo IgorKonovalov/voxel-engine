@@ -59,13 +59,37 @@ pub const VEIN_POSE: Pose = Pose {
 /// `VEIN_POSE`'s adapted exposure.
 pub const VEIN_EXPOSURE: f32 = 5.3720;
 
-/// The poses `--pose` takes, by name.
+/// Far from the spawn, in chunk [18, 15, 3], where the owner judged the brick level at the
+/// position the HUD read (1191.5 1013.9 240.4); the heading is the flight's from `VEIN_POSE`, out
+/// along the cave, a little up toward the wall and its ceiling lamp. Not a rig's pose.
+pub const FAR_POSE: Pose = Pose {
+    name: "far",
+    position: [1191.5, 1013.9, 240.4],
+    yaw_deg: 38.6,
+    pitch_deg: 10.0,
+    exposure: VEIN_EXPOSURE,
+};
+
+/// The poses the rigs read, by name.
 pub const POSES: [Pose; 2] = [VEIN_POSE, PATCH_POSE];
 
+/// The poses `--pose` takes: the rigs' and [`FAR_POSE`].
+/// The start of the settle rig's flight to `VEIN_POSE` (`VEIN_FLIGHT` in its support), facing
+/// along it: 180 voxels to the vein pose, which `--glide 30` flies in 360 frames. Not a rig's pose.
+pub const VEIN_FLIGHT_POSE: Pose = Pose {
+    name: "vein-flight",
+    position: [882.7914, 733.9575, 192.81197],
+    yaw_deg: 210.0,
+    pitch_deg: 5.0,
+    exposure: VEIN_EXPOSURE,
+};
+
+pub const START_POSES: [Pose; 4] = [VEIN_POSE, PATCH_POSE, FAR_POSE, VEIN_FLIGHT_POSE];
+
 impl Pose {
-    /// The pose named `name`, if any.
+    /// The pose `--pose` names `name`, if any.
     pub fn named(name: &str) -> Option<Pose> {
-        POSES.into_iter().find(|p| p.name == name)
+        START_POSES.into_iter().find(|p| p.name == name)
     }
 
     pub fn camera(&self) -> Camera {

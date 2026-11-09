@@ -1484,21 +1484,12 @@ fn the_split_walk_moves_no_hit_record() {
 /// `Frame::frame_bytes` of the default frame at 1080p output from 1280 x 720 internal, after
 /// a render in its default look over the thin rig mirrored without band slots: main 28948a5's
 /// figure (DEFAULT_MAIN) plus the split walk's 32-byte stub list and 16-byte dispatch words,
-/// no hand-off list, and the emissive table of ADR-0043 in place of the screen's emissive
-/// history and reservoirs (TABLE_DELTA: + lavapipe's 2^21 cells' 100 663 296 + the blend list's 921 616 + the walk's 92 + the blend's uniform and dispatch's 44 - 3 686 400 -
-/// 7 372 800, `upscale.rs`'s `frame_bytes_hold_the_table_and_no_emissive_history`), the reopened fill's list and
-/// dispatch words (+ 65 564), and the preload's store, uniform, dispatch words and idle
-/// readback slots (+ 2 271 860).
-const DEFAULT_FRAME_BYTES: u64 = 223_130_488;
+/// no hand-off list, and in place of the screen's emissive history and reservoirs the store,
+/// whose pool no bake has allocated (STORE_LESS: - 3 686 400 - 7 372 800, `upscale.rs`'s
+/// `frame_bytes_hold_the_store_and_no_emissive_history`).
+const DEFAULT_FRAME_BYTES: u64 = 119_208_016;
 const DEFAULT_MAIN: u64 = 130_267_168;
-const TABLE_DELTA: u64 = 100_663_296 + 921_616 + 92 + 44 - 3_686_400 - 7_372_800;
-const FILL_BYTES: u64 = 16 + 4 * 16_384 + 12;
-const PRELOAD_BYTES: u64 = 152
-    + 512
-    + 4 * (4 * 32_768 + 17_077 + 4 * 16_384 + 2 * 32_768 + 33 * 33 * 33 * 8)
-    + 4_176
-    + 24
-    + 4 * 32;
+const STORE_LESS: u64 = 3_686_400 + 7_372_800;
 
 /// The split walk's hand-off list (16 B of header and 16 B a pixel) is allocated only by a
 /// frame that splits: on lavapipe the default frame (internal 1280 x 720, output 1920 x 1080)
@@ -1533,10 +1524,7 @@ fn only_a_split_frame_allocates_the_split_list() {
     );
     assert_eq!(before, default, "a render without the split walk");
     assert_eq!(default, DEFAULT_FRAME_BYTES);
-    assert_eq!(
-        default,
-        DEFAULT_MAIN + 32 + 16 + TABLE_DELTA + FILL_BYTES + PRELOAD_BYTES
-    );
+    assert_eq!(default, DEFAULT_MAIN + 32 + 16 - STORE_LESS);
 
     let mut rig = field_rig_on(device.clone(), queue.clone(), &wood, THIN_SIZE);
     let field = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);

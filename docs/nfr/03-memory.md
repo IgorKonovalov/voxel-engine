@@ -374,3 +374,5 @@ output (`frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`, lavapip
 254 687 644 B against ours 130 267 216 B.
 
 **`frame_bytes` with the table as the emissive store (Plan 0057 Phase 7, 2de29c6, `frame_bytes_hold_the_table_and_no_emissive_history`, lavapipe).** 223 130 488 B asserted at the default, where lavapipe's 128 MiB storage binding holds the table at 2^21 cells; 323 793 784 B at 2^22, the size on the RTX (+ 100 663 296, arithmetic). Against Phase 6's 163 488 480 B: the table + 58 720 256 at 2^21 (+ 159 383 552 at 2^22, 201 326 592 B in all), the blend list 921 616, the walk's 92, the blend's 44. About 22 % of section 3's 1.5 GB line for everything else in VRAM at 2^22. The owner gave no words on the figure.
+
+**`frame_bytes` under the loaded light (Plan 0059 Phase 12, 393aa68, the autopilot's exit line, RTX 3080 Laptop GPU, 2530 x 1378 from 1687 x 919, FSR 2 at 1.5).** The default live queue 888 490 396 B against the table's 620 054 940 B in the same build (+268 435 456 B). The store's use: 1.8 MB at the hall's 445 chunks, 15.4 MB at the level's 3168 (Phase 9's vein run).

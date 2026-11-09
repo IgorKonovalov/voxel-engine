@@ -1,9 +1,9 @@
 # ADR-0046: Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-09, Plan 0059's close), with an Outcome: the store is the brick level alone
 > **Date:** 2026-11-05
 > **Related plan(s):** [Plan
-> 0059](../plans/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md)
+> 0059](../plans/done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md)
 > (builds it; its close accepts this ADR, and the owner's verdicts in its Phases 3 and 13 can
 > overturn it).
 > Amended 2026-11-05 while proposed: the order, look first and cut later (the section below).
@@ -73,8 +73,9 @@ build something that would look really polished, then we will see where we can c
 its scope: "agreed, only light. antializing next".
 
 **The first thing built is a reference with no budget**, and the owner judges it before any budget
-work starts. It is this ADR's store at its limit: a face cell for every face of every chunk of a bounded
-world (no brick level, no rings, no queue), baked before the first frame with independent seeds and no
+work starts. It is this ADR's store at its limit: a face cell for every face of every chunk in a bounded
+piece of the world around each of the window's poses (no brick level, no rings, no queue; Plan 0059's census
+put a whole level at about 15 h on the RTX, so the owner, 2026-11-05: "Bounded piece, bars kept"), baked before the first frame with independent seeds and no
 filter, each face sampled until its own standard error through the display transform is under half a
 level (at least 4096 samples, at most 2^20), read at native resolution with full-resolution lighting
 and no upscaler. A dig re-bakes the box and the bricks within 32 voxels, in the frame, at a hitch nobody
@@ -191,7 +192,7 @@ replaces them as a cache. On a no, the store comes out and this ADR is supersede
   The cost at rest is one lookup a lighting pixel.
 - No load, no misses, no cap. Memory is about 49 MB at the vein's density against the table's
   201 326 592 B at 2^22 (452 near chunks at 62 KB plus 3 167 far at 6.5 KB, surface share 0.5 a
-  guess).
+  guess; Plan 0059's census read 0.990 on the level and 0.378 in the showcase, so this is re-read).
 - The dug hole has a value in its first frame, and the far faces no longer wait on their footprint.
 - A bake is hit-centred: a face far from the camera samples its own emitters, which removes
   ADR-0025's
@@ -329,4 +330,32 @@ The owner also said of this kind of evidence that the judgement is in the app (P
 
 ## Outcome
 
-_(Added at acceptance, at Plan 0059's close, if implementation falsified something above.)_
+Accepted 2026-11-09 at Plan 0059's close. The direction held, and the owner picked it over the table in Phase 13 ("of
+course backet, table as a fallback maybe"). The cuts the owner made by eye falsified most of the Decision's shape. The
+body above is kept as written; this section is what was built. The readings are in `docs/plans/logs/0059.md`.
+
+- **One level, no face cells.** The owner, Phase 7b: "Bricks everywhere". A surface brick holds one record a cell: an
+  8-voxel cell (the brick), six `rgb9e5` direction values, each the mean of that direction's faces, and `material |
+  direction mask << 16`. A face reads the 2 x 2 cells around it in its plane, bilinear, over the cells that have its
+  direction. The face cells, `BRICK_FACES_MAX`, the rings of the table above, the shared seeds, the filter and the
+  per-face stop are gone (Phase 14). Alternative E's leak inside a brick is the accepted price. Per-face cells near the
+  camera are parked in `docs/backlog.md`.
+- **Samples.** 4096 a brick direction, spread over its faces, independent seeds, no filter (Phase 7b: "8/4096 is
+  fine, others are too noisy"). Shared seeds missed their seam bar in Phase 4 and were dropped.
+- **The queue.** One queue on the render thread (ADR-0017), nearest by chunk distance, ties to the chunk ahead. The
+  face listing runs on the stream workers through `Streamer::set_prep`. A chunk waits until its reach is mirrored.
+  Before the first frame the chunks within 2 (Chebyshev) bake at 4096, then a coarse pass at 256 covers what is
+  mirrored, for at most 5 s. The live slice refines coarse chunks nearest first and fades each over 16 frames. The
+  slice is sized from its own GPU timestamps, with two submits in flight. The pool is one 256 MiB binding
+  (`STORE_BINDING_BYTES`). A refused allocation leaves the old block in place, and the queue goes on.
+- **Digs.** Rings 1 and 2 re-bake at the queue's settings ahead of every other job, with the slice raised while they
+  wait, and fade over 4 frames from a provisional block written at the dig. Ring 3 (the light radius) opens when a
+  touched brick was lit. On the RTX at native, a vein dig settles in 7 frames, none over 33 ms.
+- **Readings against the guesses above** (RTX 3080 Laptop unless named). The first frame reads 2.2 to 11.6 s at the
+  owner's window, not the 0.3 s guessed: Phase 1 read a sample at 36 to 64 ns, not 4.6. The temporal pass now carries
+  the read, 2.97 to 3.11 ms native at 2530 x 1378 against the table's 0.87 to 0.93, while the lighting line falls
+  below the table's. Across adapters, the vein piece's records read equal words 0.9998 and at most 0.204 levels
+  apart between the RTX and the Cezanne on RADV, under the 1-level target.
+- **Glass** (ADR-0047): a translucent voxel's faces join their brick's records, so a pane's entry face reads its
+  brick's value.
+- **Still open,** in `docs/backlog.md`: the queue's view order, and cancelling chunks that a fast flight has passed.

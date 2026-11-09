@@ -129,45 +129,25 @@ pub struct Setting {
 }
 
 /// The probe knob a run reads (the steady spike's A1: the freeze count, now the channel's only
-/// blend), and whether the temporal pass reads the emissive table (ADR-0043; off, every hit
-/// takes the fallback).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// blend).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Steady {
     /// A1: the probes' freeze count; `None` is the default (`DEFAULT_PROBE_FREEZE`).
     pub a1: Option<u32>,
-    /// The table's read (on by default).
-    pub table: bool,
-}
-
-impl Default for Steady {
-    fn default() -> Self {
-        Self {
-            a1: None,
-            table: true,
-        }
-    }
 }
 
 impl Steady {
-    /// `table` (the default; `off`, `b`, `a` and `a1` name it too, as the readings before
-    /// ADR-0043's lamp channel did), `noread` (the table's read off), and `aN` with a freeze of
-    /// `N`.
+    /// The default (`off`, `b`, `a` and `a1` name it too, as the readings before ADR-0043's
+    /// lamp channel did), and `aN` with a freeze of `N`.
     pub fn named(name: &str) -> Steady {
         match name {
-            "table" | "off" | "b" | "a" | "a1" => Steady::default(),
-            "noread" => Steady {
-                table: false,
-                ..Steady::default()
-            },
+            "off" | "b" | "a" | "a1" => Steady::default(),
             other => {
                 let n = other
                     .strip_prefix('a')
                     .and_then(|n| n.parse().ok())
                     .unwrap_or_else(|| panic!("unknown steady preset {other}"));
-                Steady {
-                    a1: Some(n),
-                    ..Steady::default()
-                }
+                Steady { a1: Some(n) }
             }
         }
     }
@@ -175,24 +155,16 @@ impl Steady {
     pub fn apply(self, lighting: Lighting) -> Lighting {
         Lighting {
             probe_freeze: self.a1.unwrap_or(vxe_render::marcher::DEFAULT_PROBE_FREEZE),
-            table_read: self.table,
             ..lighting
         }
     }
 
     /// The name for a run's label, empty at the default.
     pub fn words(self) -> String {
-        if self == Steady::default() {
-            return String::new();
+        match self.a1 {
+            Some(f) => format!(" steady a1={f}"),
+            None => String::new(),
         }
-        let mut w = Vec::new();
-        if let Some(f) = self.a1 {
-            w.push(format!("a1={f}"));
-        }
-        if !self.table {
-            w.push("noread".to_owned());
-        }
-        format!(" steady {}", w.join("+"))
     }
 }
 
@@ -279,12 +251,6 @@ pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
 }
 
 fn lighting(pose: &Pose, setting: Setting) -> Lighting {
-    let env = |name: &str, default: u32| {
-        std::env::var(name)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default)
-    };
     setting.steady.apply(Lighting {
         lamp: setting.lamp,
         lamp_bounce: setting.indirect,
@@ -298,32 +264,6 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
         } else {
             Exposure::Manual(pose.exposure)
         },
-        // The reopened fill's sweep: `VXE_FILL_SAMPLES` (F) and `VXE_FILL_UNTIL` (C_FILL).
-        fill_samples: env(
-            "VXE_FILL_SAMPLES",
-            vxe_render::marcher::DEFAULT_FILL_SAMPLES,
-        ),
-        fill_until: env("VXE_FILL_UNTIL", vxe_render::marcher::DEFAULT_FILL_UNTIL),
-        // The preload's: `VXE_PRELOAD` (R in voxels, 0 off), `VXE_PRELOAD_BRICKS` (B),
-        // `VXE_PRELOAD_UNTIL` (C_PRE) and `VXE_PRELOAD_SAMPLES` (S_PRE).
-        preload_radius: env("VXE_PRELOAD", vxe_render::marcher::DEFAULT_PRELOAD_RADIUS),
-        preload_bricks: env(
-            "VXE_PRELOAD_BRICKS",
-            vxe_render::marcher::DEFAULT_PRELOAD_BRICKS,
-        ),
-        preload_until: env(
-            "VXE_PRELOAD_UNTIL",
-            vxe_render::marcher::DEFAULT_PRELOAD_UNTIL,
-        ),
-        preload_samples: env(
-            "VXE_PRELOAD_SAMPLES",
-            vxe_render::marcher::DEFAULT_PRELOAD_SAMPLES,
-        ),
-        // `VXE_PRELOAD_CLAIM` (r0).
-        preload_claim_radius: env(
-            "VXE_PRELOAD_CLAIM",
-            vxe_render::marcher::DEFAULT_PRELOAD_CLAIM_RADIUS,
-        ),
         ..Lighting::default()
     })
 }
@@ -699,44 +639,6 @@ pub struct Dots {
     /// before (the rig's warp accepts it).
     pub reject_share: f64,
     pub age0: usize,
-    /// Whether the run read the table, and the dots by their pixel's cell (`dots_by_cell`),
-    /// summed over the dot frames, and the floor's means: young (no cell, or under
-    /// `YOUNG_COUNT` samples), mature. `no_key` counts the young dots with no face key.
-    pub cell_split: bool,
-    pub by_cell: [usize; 2],
-    pub by_cell_floor: [f64; 2],
-    pub no_key: usize,
-}
-
-/// The sample count under which the dots' split calls a cell young (the spike's `C_MIN`).
-pub const YOUNG_COUNT: u32 = 16;
-
-/// Of a frame's display dots `dots` (indices into the display), how many lie on a pixel whose
-/// cell is young (no face key, no cell, or under `YOUNG_COUNT` samples) and how many on a
-/// mature cell, and how many of the young have no face key. Each dot takes the internal
-/// pixel under it (`Pixels::internal_of`) and that pixel's hit's face key.
-pub fn dots_by_cell(px: &Pixels, dots: &[usize], words: &[u32]) -> ([usize; 2], usize) {
-    let [ow, _] = px.display_size;
-    let (mut split, mut no_key) = ([0usize; 2], 0usize);
-    for &i in dots {
-        let (x, y) = (i as u32 % ow, i as u32 / ow);
-        let (ix, iy) = px.internal_of(px.display_size, x, y);
-        let j = (iy * SIZE[0] + ix) as usize;
-        match face_key(px.camera.position, px.hit_pos[j], px.hit_info[j]) {
-            None => {
-                split[0] += 1;
-                no_key += 1;
-            }
-            Some(k) => split[usize::from(cache_count(words, k) >= YOUNG_COUNT)] += 1,
-        }
-    }
-    (split, no_key)
-}
-
-/// A frame's display dots and their split by cell (`dots_by_cell`).
-pub fn frame_dot_split(px: &Pixels, words: &[u32]) -> (usize, [usize; 2]) {
-    let d = frame_dots(px).0;
-    (d.len(), dots_by_cell(px, &d, words).0)
 }
 
 pub const BY_PART: [&str; 7] = [
@@ -767,12 +669,6 @@ impl Dots {
 
     pub fn excess_at(&self, f: usize) -> f64 {
         self.counts[f - 1] as f64 - self.floor
-    }
-
-    /// The excess over the dot frames by cell: young, mature. They sum to `excess_sum`.
-    pub fn cell_excess(&self) -> [f64; 2] {
-        let n = self.counts.len() as f64;
-        [0, 1].map(|k| self.by_cell[k] as f64 - n * self.by_cell_floor[k])
     }
 
     pub fn line(&self) -> String {
@@ -809,18 +705,7 @@ impl Dots {
             age.join(", "),
             self.reject_share,
             self.age0,
-        ) + &if self.cell_split {
-            let [y, m] = self.cell_excess();
-            format!(
-                "; by cell [young {y:.0}, mature {m:.0}] (young share of the excess {:.3}; {} young dots with no face key; floor young {:.1}, mature {:.1}/frame)",
-                y / self.excess_sum(),
-                self.no_key,
-                self.by_cell_floor[0],
-                self.by_cell_floor[1],
-            )
-        } else {
-            "; by cell n/a (no table)".to_owned()
-        }
+        )
     }
 }
 
@@ -1281,8 +1166,6 @@ pub fn settle_run(
     let mut floor_n = 0usize;
     let mut floor_part = [0usize; 7];
     let mut floor_age = [0usize; 5];
-    let mut floor_cell = [0usize; 2];
-    let split_on = dots_on && setting.steady.table;
     let mut floor_count = 0usize;
     let mut floor_counts: Vec<f64> = Vec::new();
     let mut strip = Vec::new();
@@ -1341,17 +1224,8 @@ pub fn settle_run(
         let mut fd = Vec::new();
         if dot_frame {
             let (d, bp, ba) = frame_dots(&px);
-            let (bc, nk) = if split_on {
-                dots_by_cell(&px, &d, &cache_words(level, &frame))
-            } else {
-                ([0; 2], 0)
-            };
             if f <= DOT_FRAMES {
                 dots.counts.push(d.len());
-                dots.no_key += nk;
-                for (a, b) in dots.by_cell.iter_mut().zip(bc) {
-                    *a += b;
-                }
                 for (a, b) in dots.by_part.iter_mut().zip(bp) {
                     *a += b;
                 }
@@ -1365,9 +1239,6 @@ pub fn settle_run(
                 floor_n += 1;
                 floor_count += d.len();
                 floor_counts.push(d.len() as f64);
-                for (a, b) in floor_cell.iter_mut().zip(bc) {
-                    *a += b;
-                }
                 for (a, b) in floor_part.iter_mut().zip(bp) {
                     *a += b;
                 }
@@ -1404,8 +1275,6 @@ pub fn settle_run(
         dots.floor_sd = sd(&floor_counts);
         dots.by_part_floor = floor_part.map(|c| c as f64 / n);
         dots.by_age_floor = floor_age.map(|c| c as f64 / n);
-        dots.cell_split = split_on;
-        dots.by_cell_floor = floor_cell.map(|c| c as f64 / n);
         dots.reject_share = rej as f64 / age0.max(1) as f64;
         dots.age0 = age0 as usize;
         dots
@@ -2448,352 +2317,12 @@ pub fn flight_cost(
     )
 }
 
-/// The emissive table's cells as words (the blend list past them left out).
-pub fn cache_words(level: &VeinLevel, frame: &Frame) -> Vec<u32> {
-    let table = frame.emissive_table();
-    let bytes = u64::from(frame.table_cells()) * vxe_render::marcher::CACHE_CELL_WORDS * 4;
-    let b = readback::read_buffer(&level.device, &level.queue, table, 0, bytes);
-    b.chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
-        .collect()
-}
-
-/// The table's cells, from its words.
-pub fn cache_cells(words: &[u32]) -> u32 {
-    (words.len() / vxe_render::marcher::CACHE_CELL_WORDS as usize) as u32
-}
-
-/// The word index of each of a key's probed slots, in probe order.
-fn cache_slots(words: &[u32], key: FaceKey) -> impl Iterator<Item = usize> {
-    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_PROBES, cache_slot};
-    let cells = cache_cells(words);
-    let slot = cache_slot(key.0, u32::from(key.1), cells);
-    (0..CACHE_PROBES)
-        .map(move |i| (slot.wrapping_add(i) & (cells - 1)) as usize * CACHE_CELL_WORDS as usize)
-}
-
-/// The cell of a key in the table's words: its word index, or `None` when no probed slot holds
-/// its key.
-pub fn cache_cell(words: &[u32], key: FaceKey) -> Option<usize> {
-    let k = vxe_render::marcher::cache_key(key.0, u32::from(key.1));
-    cache_slots(words, key).find(|&w| words[w] == k[0] && words[w + 1] == k[1])
-}
-
-/// Whether a key with no cell found none of its probed slots free: the table's slot-probe
-/// failure, which the light pass counts as a miss and shows through the fallback.
-pub fn cache_full(words: &[u32], key: FaceKey) -> bool {
-    cache_cell(words, key).is_none() && cache_slots(words, key).all(|w| words[w + 1] != 0)
-}
-
-/// The sample count of a key's cell, 0 with none.
-pub fn cache_count(words: &[u32], key: FaceKey) -> u32 {
-    cache_cell(words, key).map_or(0, |w| words[w + vxe_render::marcher::CACHE_COUNT_WORD])
-}
-
-/// The table's cells in use and of them how many have reached `c_min` and `c_cap`.
-pub fn cache_census(words: &[u32], c_min: u32, c_cap: u32) -> [u64; 3] {
-    let mut c = [0u64; 3];
-    let n = vxe_render::marcher::CACHE_COUNT_WORD;
-    for cell in words.chunks_exact(vxe_render::marcher::CACHE_CELL_WORDS as usize) {
-        if cell[1] != 0 {
-            c[0] += 1;
-            c[1] += u64::from(cell[n] >= c_min);
-            c[2] += u64::from(cell[n] >= c_cap);
-        }
-    }
-    c
-}
-
-/// Of a frame's internal hit pixels on cube faces, the share whose cell is young or absent
-/// (the young share), the share with no cell at all, and of those the share whose probed slots
-/// were all taken (`cache_full`, the full table's).
-pub fn young_share(px: &Pixels, words: &[u32], c_min: u32) -> (f64, f64, f64) {
-    let (mut hits, mut young, mut absent, mut full) = (0u64, 0u64, 0u64, 0u64);
-    for i in 0..px.hit_pos.len() {
-        if let Some(k) = face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]) {
-            hits += 1;
-            match cache_cell(words, k) {
-                None => {
-                    absent += 1;
-                    young += 1;
-                    full += u64::from(cache_full(words, k));
-                }
-                Some(w) => {
-                    young += u64::from(words[w + vxe_render::marcher::CACHE_COUNT_WORD] < c_min)
-                }
-            }
-        }
-    }
-    let h = hits.max(1) as f64;
-    (young as f64 / h, absent as f64 / h, full as f64 / h)
-}
-
-/// A frame's read-back for the dots and the young share.
-pub fn read_dots(level: &VeinLevel, frame: &Frame, camera: Camera) -> Pixels {
-    read(
-        level,
-        frame,
-        camera,
-        Want {
-            hits: true,
-            composite: true,
-            moments: true,
-        },
-    )
-}
-
-/// One frame's display dots at `level`.
-pub fn dots_of(px: &Pixels) -> usize {
-    frame_dots(px).0.len()
-}
-
 /// The camera `degrees` of yaw from `pose`.
 pub fn yawed(pose: &Pose, degrees: f32) -> Camera {
     camera_at(pose.position, pose.yaw_deg + degrees, pose.pitch_deg)
 }
 
-/// B's young share and table census along a run: `KRun` from a settled start, printed per 12
-/// frames from frame 1, and the table's cells at the end, with the share of cells whose chunk
-/// lies within the mirror's light radius of the pose.
-pub fn cache_run(level: &VeinLevel, pose: &Pose, setting: Setting, run: KRun) -> String {
-    let mut frame = make_frame(level, pose, setting);
-    let light = LightParams::headlamp();
-    render(level, &mut frame, &run.camera(pose, 0), SETTLE);
-    let cap = vxe_render::marcher::DEFAULT_TABLE_CAP;
-    let mut shares = Vec::new();
-    let (mut sum, mut n) = (0.0, 0u32);
-    let mut absent_max = 0.0f64;
-    let mut full_max = 0.0f64;
-    let mut seen = std::collections::HashSet::new();
-    for f in 1..FLIGHT_FRAMES {
-        let cam = run.camera(pose, f);
-        frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
-        if f % 4 == 1 {
-            let px = read_dots(level, &frame, cam);
-            for i in 0..px.hit_pos.len() {
-                seen.extend(face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]));
-            }
-            let words = cache_words(level, &frame);
-            let (y, a, full) = young_share(&px, &words, YOUNG_COUNT);
-            full_max = full_max.max(full);
-            sum += y;
-            n += 1;
-            absent_max = absent_max.max(a);
-            if f % 12 == 1 {
-                shares.push(format!("{f}:{y:.3}"));
-            }
-        }
-    }
-    let words = cache_words(level, &frame);
-    let [used, min, cap] = cache_census(&words, YOUNG_COUNT, cap);
-    // The table's keys cannot be read back to voxels: this share is of the keys read in view.
-    let eye = VoxelCoord(pose.position.map(|c| c.floor() as i32))
-        .chunk()
-        .0;
-    let r = i64::from(level.gpu.light_radius());
-    let near = seen
-        .iter()
-        .filter(|(v, _)| {
-            let c = VoxelCoord(*v).chunk().0;
-            (0..3)
-                .map(|k| (i64::from(c[k]) - i64::from(eye[k])).pow(2))
-                .sum::<i64>()
-                <= r * r
-        })
-        .count();
-    format!(
-        "{} of {} keys read in view within the light radius of the pose; young share mean {:.4} (per frame {}); no-cell share max {absent_max:.5}; full-table share max {full_max:.5}; cells {used} ({:.4} of the table), at c_min {min}, at c_cap {cap}; frame_bytes {}",
-        near,
-        seen.len(),
-        sum / f64::from(n.max(1)),
-        shares.join(" "),
-        used as f64 / f64::from(cache_cells(&words)),
-        frame.frame_bytes()
-    )
-}
-
-/// The frames after a dig at which `dig_box_run` reads the table (every frame to 64, then
-/// every 8th to 512).
-fn dig_table_frame(f: usize) -> bool {
-    f <= 64 || (f <= 512 && f.is_multiple_of(8))
-}
-
-/// The dug hole's settle (`Event::Dig` or `Event::DigFar`, which `reset_world` undoes after):
-/// settle `SETTLE` frames at `dig_camera`, the carve, then frames 1 ..= `REF.1` still. The hole's
-/// pixels are the lighting pixels of frame 1 whose face key's voxel lies in the carve's box
-/// dilated by one (the cells the edit-box reset clears). Each is a series of `meter_log2` of its
-/// emissive part, read every frame to `SETTLE_DENSE` and sparsely after (`settle_sampled`), and
-/// `settle_of` over them gives `S90` and the mean's 90 % frame; at `dig_table_frame`s, of the
-/// hole pixels whose hit is still in the hole, the young share (no cell, or under
-/// `YOUNG_COUNT` samples) and the share with no cell. One line.
-pub fn dig_box_run(level: &mut VeinLevel, pose: &Pose, setting: Setting, far: bool) -> String {
-    let mut frame = make_frame(level, pose, setting);
-    let light = LightParams::headlamp();
-    let cam = dig_camera(pose, if far { Event::DigFar } else { Event::Dig });
-    render(level, &mut frame, &cam, SETTLE);
-    let want = Want {
-        hits: true,
-        composite: false,
-        moments: false,
-    };
-    let f0 = read(level, &frame, cam, want);
-    let (min, max) = dig(level, &mut frame, &f0, far);
-    let inside = |k: FaceKey| (0..3).all(|a| k.0[a] >= min[a] - 1 && k.0[a] <= max[a] + 1);
-    let table = setting.steady.table;
-    let mut pixels: Vec<usize> = Vec::new();
-    let mut series: Vec<Vec<f32>> = Vec::new();
-    let mut young = Vec::new();
-    // `Q90`: the last frame in the dense reads with under 90 % of the hole's pixels still, moving
-    // under `STILL_LEVEL` through the display transform since the frame before.
-    let level_of = |v: f32| {
-        let x = v.max(0.0);
-        let m = ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0);
-        m.powf(1.0 / 2.2) * 255.0
-    };
-    let mut last_levels: Vec<f32> = Vec::new();
-    let mut q90 = 0usize;
-    for f in 1..=REF.1 {
-        frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
-        let sampled = settle_sampled(f) || f >= REF.0;
-        if !sampled && f > 1 {
-            let last = series.last().expect("frame 1 read").clone();
-            series.push(last);
-            continue;
-        }
-        let px = read(level, &frame, cam, want);
-        if f == 1 {
-            let g = px.grid;
-            pixels = (0..g[1])
-                .flat_map(|y| (0..g[0]).map(move |x| (x, y)))
-                .filter(|&(x, y)| {
-                    let (ix, iy) = px.internal_of(g, x, y);
-                    let i = (iy * SIZE[0] + ix) as usize;
-                    face_key(px.camera.position, px.hit_pos[i], px.hit_info[i]).is_some_and(inside)
-                })
-                .map(|(x, y)| (y * g[0] + x) as usize)
-                .collect();
-            // Frame 0 stands for the dig's frame: the series starts at frame 1's reading.
-            series.push(Vec::new());
-        }
-        let (_, v) = px.values(Part::Emissive, false);
-        series.push(pixels.iter().map(|&i| meter_log2(v[i])).collect());
-        if f <= SETTLE_DENSE {
-            let (_, seen) = px.values(Part::Emissive, true);
-            let levels: Vec<f32> = pixels.iter().map(|&i| level_of(seen[i])).collect();
-            if !last_levels.is_empty() {
-                let still = levels
-                    .iter()
-                    .zip(&last_levels)
-                    .filter(|(a, b)| (*a - *b).abs() < 1.0)
-                    .count();
-                if still * 10 < levels.len() * 9 {
-                    q90 = f;
-                }
-            }
-            last_levels = levels;
-        }
-        if table && dig_table_frame(f) {
-            let words = cache_words(level, &frame);
-            let g = px.grid;
-            let (mut y, mut a, mut n) = (0u32, 0u32, 0u32);
-            let mut counts: Vec<u32> = Vec::new();
-            for &l in &pixels {
-                let (ix, iy) = px.internal_of(g, l as u32 % g[0], l as u32 / g[0]);
-                let i = (iy * SIZE[0] + ix) as usize;
-                // A hole pixel whose hit left the hole this frame (jitter) counts as neither.
-                let Some(k) = face_key(px.camera.position, px.hit_pos[i], px.hit_info[i])
-                    .filter(|&k| inside(k))
-                else {
-                    continue;
-                };
-                n += 1;
-                let c =
-                    cache_cell(&words, k).map(|w| words[w + vxe_render::marcher::CACHE_COUNT_WORD]);
-                a += u32::from(c.is_none());
-                y += u32::from(c.is_none_or(|c| c < YOUNG_COUNT));
-                counts.push(c.unwrap_or(0));
-            }
-            let n = f64::from(n.max(1));
-            counts.sort_unstable();
-            let q = |p: usize| counts.get(counts.len() * p / 100).copied().unwrap_or(0);
-            young.push((f, f64::from(y) / n, f64::from(a) / n, [q(10), q(50), q(90)]));
-        }
-    }
-    series[0] = series[1].clone();
-    let s = settle_of(&series, &vec![true; pixels.len()]);
-    let at = [1usize, 2, 4, 8, 16, 32, 60, 64, 128, 256, 512];
-    let curve: Vec<String> = at
-        .iter()
-        .map(|&f| format!("{f}:{:.0}", s.curve[f] * 100.0))
-        .collect();
-    let young: Vec<String> = young
-        .iter()
-        .filter(|(f, ..)| at.contains(f))
-        .map(|(f, y, a, c)| {
-            format!(
-                "{f}:{y:.3}/{a:.3} counts p10/50/90 {}/{}/{}",
-                c[0], c[1], c[2]
-            )
-        })
-        .collect();
-    format!(
-        "{} hole pixels ({} counted); Q90 {q90}; emissive S90 {} mean90 {} (step {:+.3}, noise {:.4}); settled % at frame {}; young/no-cell share in the hole and its pixels' cell counts at frame {}",
-        pixels.len(),
-        s.counted,
-        s.frames.map_or("none".into(), |f| f.to_string()),
-        s.mean_90.map_or("none".into(), |f| f.to_string()),
-        s.step0,
-        s.ref_noise,
-        curve.join(" "),
-        if table {
-            young.join(" ")
-        } else {
-            "n/a (no table)".to_owned()
-        }
-    )
-}
-
-/// The table's occupancy over `flights` repeats of the steady flight from a settled start
-/// (`KRun::Path`, the camera back at the start between them, the table never cleared): per
-/// flight, the cells in use, at `c_min` and at `c_cap`, and the largest no-cell and full-table
-/// shares (`young_share`) over every 4th frame. One line a flight.
-pub fn occupancy_run(
-    level: &VeinLevel,
-    pose: &Pose,
-    setting: Setting,
-    flights: usize,
-) -> Vec<String> {
-    let cap = vxe_render::marcher::DEFAULT_TABLE_CAP;
-    let mut frame = make_frame(level, pose, setting);
-    let light = LightParams::headlamp();
-    render(level, &mut frame, &KRun::Path.camera(pose, 0), SETTLE);
-    let mut out = Vec::new();
-    for k in 1..=flights {
-        let (mut absent_max, mut full_max) = (0.0f64, 0.0f64);
-        for f in 0..FLIGHT_FRAMES {
-            let cam = KRun::Path.camera(pose, f);
-            frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
-            if f % 4 == 1 {
-                let px = read_dots(level, &frame, cam);
-                let words = cache_words(level, &frame);
-                let (_, a, full) = young_share(&px, &words, YOUNG_COUNT);
-                absent_max = absent_max.max(a);
-                full_max = full_max.max(full);
-            }
-        }
-        let words = cache_words(level, &frame);
-        let [used, min, at_cap] = cache_census(&words, YOUNG_COUNT, cap);
-        out.push(format!(
-            "after flight {k}: cells {used} ({:.4} of {}), at c_min {min}, at c_cap {at_cap}; no-cell share max {absent_max:.5}, full-table share max {full_max:.5}",
-            used as f64 / f64::from(cache_cells(&words)),
-            cache_cells(&words)
-        ));
-    }
-    out.push(table_census(&cache_words(level, &frame)));
-    out
-}
-
-// ---- The creases: yellow dots and their own face's cell ----
+// ---- The creases ----
 
 /// A yellow display pixel (Plan 0056's rule): red and green both over twice blue, and green
 /// over half of red.
@@ -2802,503 +2331,9 @@ pub fn yellow(p: &[u8]) -> bool {
     r > 2 * b && g > 2 * b && 2 * g > r
 }
 
-/// The emissive part the composite builds for internal pixel `(ix, iy)` (`composite.wgsl`'s
-/// `lit_at`), pre-exposed: at full lighting resolution its own lighting pixel's emissive, at
-/// half the four lighting pixels around it under bilinear weights times
-/// `max(n.n', 0)^32 exp(-plane distance)`, or the nearest tap when every weight vanishes. A
-/// lighting pixel's emissive is the temporal pass's accumulation rgb, which the a-trous adds
-/// back unfiltered where it is the table's (`atrous.wgsl`). `None` for a miss.
-fn shown_emissive(px: &Pixels, ix: u32, iy: u32) -> Option<Vec3> {
-    let (p, info) = hit(px, ix, iy)?;
-    let [gw, gh] = px.grid;
-    let e_at = |q: (u32, u32)| Vec3::from_slice(&px.accum[(q.1 * gw + q.0) as usize][..3]);
-    let s = px.scale();
-    if s == 1 {
-        return Some(e_at((ix, iy)));
-    }
-    let n = oct_normal(info);
-    let o = HALF_OFFSET.map(|v| v as f32);
-    let c = [(ix as f32 - o[0]) / s as f32, (iy as f32 - o[1]) / s as f32];
-    let base = c.map(|v| v.floor() as i32);
-    let f = [c[0] - c[0].floor(), c[1] - c[1].floor()];
-    let (mut sum, mut w_sum) = (Vec3::ZERO, 0.0f32);
-    let (mut nearest, mut nearest_w) = (Vec3::ZERO, -1.0f32);
-    for i in 0..4 {
-        let d = [i & 1, i >> 1];
-        let tap = [base[0] + d[0], base[1] + d[1]];
-        if tap[0] < 0 || tap[1] < 0 || tap[0] >= gw as i32 || tap[1] >= gh as i32 {
-            continue;
-        }
-        let tap = (tap[0] as u32, tap[1] as u32);
-        let full = (
-            (tap.0 * s + HALF_OFFSET[0]).min(SIZE[0] - 1),
-            (tap.1 * s + HALF_OFFSET[1]).min(SIZE[1] - 1),
-        );
-        let Some((op, oinfo)) = hit(px, full.0, full.1) else {
-            continue;
-        };
-        let bil =
-            if d[0] == 1 { f[0] } else { 1.0 - f[0] } * if d[1] == 1 { f[1] } else { 1.0 - f[1] };
-        let cosn = n.dot(oct_normal(oinfo)).max(0.0).powi(32);
-        let w = bil * cosn * (-(n.dot(op - p)).abs()).exp();
-        let e = e_at(tap);
-        sum += w * e;
-        w_sum += w;
-        if bil > nearest_w {
-            nearest_w = bil;
-            nearest = e;
-        }
-    }
-    Some(if w_sum > 1e-6 { sum / w_sum } else { nearest })
-}
-
-/// The mean of a key's cell in rgb (`temporal.wgsl`'s `cache_mean`: the sums over
-/// `min(count, cap)` samples at `CACHE_Q`), `None` with no cell or no sample.
-fn cell_mean(words: &[u32], key: FaceKey) -> Option<Vec3> {
-    use vxe_render::marcher::{CACHE_COUNT_WORD, CACHE_Q, DEFAULT_TABLE_CAP};
-    let w = cache_cell(words, key)?;
-    let count = words[w + CACHE_COUNT_WORD];
-    if count == 0 {
-        return None;
-    }
-    let n = count.min(DEFAULT_TABLE_CAP) as f32 * CACHE_Q;
-    let s = |k: usize| words[w + CACHE_COUNT_WORD + k] as f32 / n;
-    Some(Vec3::new(s(1), s(2), s(3)))
-}
-
-/// The classes of [`own_class`]: no face key or no cell, the shown emissive more than 10 % from
-/// its own cell's mean times the exposure, within 10 %.
-pub const OWN_CLASSES: [&str; 3] = ["no cell", "off own", "own"];
-
-/// The class of display pixel `i` against its own face's cell: the internal pixel under it, its
-/// hit's face key and cell, and whether the emissive the composite builds there
-/// ([`shown_emissive`]) lies more than 10 % (in luma) from that cell's mean times `exposure`.
-pub fn own_class(px: &Pixels, words: &[u32], exposure: f32, i: usize) -> usize {
-    let [ow, _] = px.display_size;
-    let (x, y) = (i as u32 % ow, i as u32 / ow);
-    let (ix, iy) = px.internal_of(px.display_size, x, y);
-    let j = (iy * SIZE[0] + ix) as usize;
-    let Some(key) = face_key(px.camera.position, px.hit_pos[j], px.hit_info[j]) else {
-        return 0;
-    };
-    let (Some(mean), Some(shown)) = (cell_mean(words, key), shown_emissive(px, ix, iy)) else {
-        return 0;
-    };
-    let l = |v: Vec3| 0.2126 * v.x + 0.7152 * v.y + 0.0722 * v.z;
-    let (own, shown) = (l(mean) * exposure, l(shown));
-    if (shown - own).abs() > 0.1 * own {
-        1
-    } else {
-        2
-    }
-}
-
-/// A frame's display dots (the settle rig's rule), its yellow dots, and each set split by
-/// [`own_class`].
-pub fn crease_frame(px: &Pixels, words: &[u32], exposure: f32) -> ([usize; 3], [usize; 3]) {
-    let (mut all, mut yel) = ([0usize; 3], [0usize; 3]);
-    for i in frame_dots(px).0 {
-        let c = own_class(px, words, exposure, i);
-        all[c] += 1;
-        if yellow(&px.display[i * 4..i * 4 + 4]) {
-            yel[c] += 1;
-        }
-    }
-    (all, yel)
-}
-
 /// The yaw in radians that moves the image centre one display pixel, for a view `height`
 /// pixels high (Plan 0056's pan: `atan(1 / focal) / cos(pitch)`).
 pub fn yaw_per_pixel(height: u32, vfov: f32, pitch: f32) -> f32 {
     let focal = height as f32 * 0.5 / (vfov * 0.5).tan();
     (1.0 / focal).atan() / pitch.cos()
-}
-
-/// Plan 0056's fast yaw on the rig: settled `settle` frames at the pose (lighting at `lighting`),
-/// then `frames` frames of a pure yaw to the left at `rate` display pixels a frame. The still
-/// frame's dots and yellow dots, and summed over the yaw's frames the dots and the yellow dots
-/// by [`own_class`]; one line.
-pub fn crease_yaw_run(
-    level: &VeinLevel,
-    pose: &Pose,
-    setting: Setting,
-    lighting: vxe_render::marcher::LightingResolution,
-    settle: usize,
-    rate: f32,
-    frames: usize,
-) -> String {
-    let mut frame = make_frame(level, pose, setting);
-    frame.set_resolution(&level.device, lighting);
-    let mut cam = pose.camera();
-    render(level, &mut frame, &cam, settle);
-    let px = read_dots(level, &frame, cam);
-    let words = cache_words(level, &frame);
-    let (s_all, s_yel) = crease_frame(&px, &words, pose.exposure);
-    let step = yaw_per_pixel(frame.target().height(), cam.vfov, cam.pitch);
-    let light = LightParams::headlamp();
-    let (mut all, mut yel) = ([0u64; 3], [0u64; 3]);
-    for _ in 0..frames {
-        cam.yaw += rate * step;
-        frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
-        let px = read_dots(level, &frame, cam);
-        let words = cache_words(level, &frame);
-        let (a, y) = crease_frame(&px, &words, pose.exposure);
-        for k in 0..3 {
-            all[k] += a[k] as u64;
-            yel[k] += y[k] as u64;
-        }
-    }
-    let n = frames.max(1) as f64;
-    let per = |v: [u64; 3]| v.iter().sum::<u64>() as f64 / n;
-    let split = |v: [u64; 3]| {
-        let t = v.iter().sum::<u64>().max(1) as f64;
-        format!(
-            "{} {:.3}, {} {:.3}, {} {:.3}",
-            OWN_CLASSES[0],
-            v[0] as f64 / t,
-            OWN_CLASSES[1],
-            v[1] as f64 / t,
-            OWN_CLASSES[2],
-            v[2] as f64 / t
-        )
-    };
-    format!(
-        "{:.5} deg a frame; still dots {} yellow {}; over {frames} frames: yellow {:.2} a frame ({}), all {:.2} a frame ({})",
-        (rate * step).to_degrees(),
-        s_all.iter().sum::<usize>(),
-        s_yel.iter().sum::<usize>(),
-        per(yel),
-        split(yel),
-        per(all),
-        split(all)
-    )
-}
-
-// ---- The table's census ----
-
-/// A cell's key words decoded to its voxel and face (`cache_key`'s inverse for coordinates in
-/// `0 .. 2^20`).
-pub fn key_of(w0: u32, w1: u32) -> ([i32; 3], u32) {
-    let x = w0 & 0xF_FFFF;
-    let y = (w0 >> 20) | (w1 & 0xFF) << 12;
-    let z = (w1 >> 8) & 0xF_FFFF;
-    ([x as i32, y as i32, z as i32], (w1 >> 28) & 7)
-}
-
-/// Linear-probe insertion of keys whose first slots are `bases` into `cells` cells, four probes
-/// each, in order: the keys left without a slot, and the occupied runs' count, mean and longest.
-pub fn probe_insert(bases: &[u32], cells: u32) -> (usize, usize, f64, usize) {
-    use vxe_render::marcher::CACHE_PROBES;
-    let mut used = vec![false; cells as usize];
-    let mut missed = 0;
-    for &b in bases {
-        match (0..CACHE_PROBES)
-            .map(|i| (b.wrapping_add(i) & (cells - 1)) as usize)
-            .find(|&s| !used[s])
-        {
-            Some(s) => used[s] = true,
-            None => missed += 1,
-        }
-    }
-    let (n, mean, max) = runs(&used);
-    (missed, n, mean, max)
-}
-
-/// The runs of consecutive set entries (cyclic ends not joined): count, mean length, longest.
-fn runs(used: &[bool]) -> (usize, f64, usize) {
-    let (mut n, mut sum, mut max, mut cur) = (0usize, 0usize, 0usize, 0usize);
-    for &u in used.iter().chain(std::iter::once(&false)) {
-        if u {
-            cur += 1;
-        } else if cur > 0 {
-            n += 1;
-            sum += cur;
-            max = max.max(cur);
-            cur = 0;
-        }
-    }
-    (n, sum as f64 / n.max(1) as f64, max)
-}
-
-/// A seeded uniform first slot for key `i` in `cells` cells (splitmix64).
-pub fn uniform_slot(seed: u64, i: u64, cells: u32) -> u32 {
-    let mut z = seed.wrapping_add(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    ((z ^ (z >> 31)) as u32) & (cells - 1)
-}
-
-/// The census of a table dump: its keys, the duplicate keys (one key in two or more cells) and
-/// the cells they hold, each cell's probe distance from its key's first slot (0 to 3, and any
-/// cell outside its probes), the occupied runs, and the same keys inserted again on the CPU
-/// through `cache_slot` and through a seeded uniform assignment (keys without a slot, runs).
-pub fn table_census(words: &[u32]) -> String {
-    use vxe_render::marcher::{CACHE_CELL_WORDS, CACHE_PROBES, cache_slot};
-    let cells = cache_cells(words);
-    let mut seen: HashMap<(u32, u32), u32> = HashMap::new();
-    let mut used = vec![false; cells as usize];
-    let mut dist = [0usize; 5];
-    for (s, c) in words.chunks_exact(CACHE_CELL_WORDS as usize).enumerate() {
-        if c[1] == 0 {
-            continue;
-        }
-        used[s] = true;
-        *seen.entry((c[0], c[1])).or_default() += 1;
-        let (v, f) = key_of(c[0], c[1]);
-        let d = (s as u32).wrapping_sub(cache_slot(v, f, cells)) & (cells - 1);
-        dist[(d.min(CACHE_PROBES)) as usize] += 1;
-    }
-    let dups = seen.values().filter(|&&n| n > 1).count();
-    let dup_cells: u32 = seen.values().filter(|&&n| n > 1).sum();
-    let (rn, rmean, rmax) = runs(&used);
-    let mut keys: Vec<(u32, u32)> = seen.keys().copied().collect();
-    keys.sort_unstable();
-    let bases: Vec<u32> = keys
-        .iter()
-        .map(|&(a, b)| {
-            let (v, f) = key_of(a, b);
-            cache_slot(v, f, cells)
-        })
-        .collect();
-    let (hm, hn, hmean, hmax) = probe_insert(&bases, cells);
-    let ubases: Vec<u32> = (0..keys.len() as u64)
-        .map(|i| uniform_slot(0x0057, i, cells))
-        .collect();
-    let (um, un, umean, umax) = probe_insert(&ubases, cells);
-    format!(
-        "census: cells {cells}, used {}, keys {}, duplicate keys {dups} in {dup_cells} cells; probe distance 0/1/2/3/outside {:?}; runs {rn} mean {rmean:.3} max {rmax}; CPU cache_slot: no slot {hm}, runs {hn} mean {hmean:.3} max {hmax}; CPU uniform: no slot {um}, runs {un} mean {umean:.3} max {umax}",
-        used.iter().filter(|&&u| u).count(),
-        keys.len(),
-        dist
-    )
-}
-
-// ---- The still hall by pixel class ----
-
-/// The classes of [`hall_class_run`]: a miss; the fallback with no face (a field, translucent or
-/// in-rock hit); the fallback on a face whose key has no cell; a cell reopened between the two
-/// frames (its count fell); a pixel whose four half-resolution lighting taps hold two or more
-/// cells (the upsample at a crease); a cell capped at the earlier frame; a cell under the cap.
-pub const HALL_CLASSES: [&str; 7] = [
-    "miss",
-    "no face",
-    "missed key",
-    "reopened",
-    "crease taps",
-    "capped",
-    "under cap",
-];
-
-/// One captured frame of the hall: the display, the internal hits and the table.
-struct HallCapture {
-    display: Vec<u8>,
-    hit_pos: Vec<[f32; 4]>,
-    hit_info: Vec<[u16; 4]>,
-    words: Vec<u32>,
-}
-
-/// The class of display pixel `(x, y)` between captures `a` (earlier) and `b` (later), from
-/// `b`'s hits ([`HALL_CLASSES`]).
-/// The hall's view for [`hall_class`]: the eye, the internal and display sizes, and whether the
-/// lighting runs at half resolution.
-#[derive(Clone, Copy)]
-struct HallView {
-    eye: Vec3,
-    size: [u32; 2],
-    out: [u32; 2],
-    half: bool,
-}
-
-fn hall_class(view: HallView, a: &HallCapture, b: &HallCapture, x: u32, y: u32) -> usize {
-    let cap = vxe_render::marcher::DEFAULT_TABLE_CAP;
-    let HallView {
-        eye,
-        size,
-        out,
-        half,
-    } = view;
-    let (ix, iy) = (x * size[0] / out[0], y * size[1] / out[1]);
-    let j = (iy * size[0] + ix) as usize;
-    if b.hit_info[j][3] & 1 == 0 {
-        return 0;
-    }
-    let Some(key) = face_key(eye, b.hit_pos[j], b.hit_info[j]) else {
-        return 1;
-    };
-    if cache_cell(&b.words, key).is_none() {
-        return 2;
-    }
-    let (ca, cb) = (cache_count(&a.words, key), cache_count(&b.words, key));
-    if cb < ca {
-        return 3;
-    }
-    if half {
-        let (lx, ly) = (
-            (ix.saturating_sub(HALF_OFFSET[0])) / 2,
-            (iy.saturating_sub(HALF_OFFSET[1])) / 2,
-        );
-        let mut keys = Vec::with_capacity(4);
-        for d in 0..4u32 {
-            let (tx, ty) = (lx + (d & 1), ly + (d >> 1));
-            let (fx, fy) = (
-                (tx * 2 + HALF_OFFSET[0]).min(size[0] - 1),
-                (ty * 2 + HALF_OFFSET[1]).min(size[1] - 1),
-            );
-            let k = (fy * size[0] + fx) as usize;
-            if let Some(tk) = face_key(eye, b.hit_pos[k], b.hit_info[k])
-                && !keys.contains(&tk)
-            {
-                keys.push(tk);
-            }
-        }
-        if keys.len() >= 2 {
-            return 4;
-        }
-    }
-    if ca >= cap { 5 } else { 6 }
-}
-
-/// The per-class difference between two display images, `classes` per pixel: per class the
-/// pixels, the sum of the largest channel difference, its share of the whole sum, the class's
-/// mean, its max and its pixels over 2 and over 8 levels; one line a class and a total.
-fn class_table(a: &[u8], b: &[u8], classes: &[usize]) -> String {
-    let mut px = [0u64; 7];
-    let mut sum = [0u64; 7];
-    let mut max = [0u32; 7];
-    let mut o2 = [0u64; 7];
-    let mut o8 = [0u64; 7];
-    for (i, &c) in classes.iter().enumerate() {
-        let d = (0..3)
-            .map(|k| u32::from(a[i * 4 + k].abs_diff(b[i * 4 + k])))
-            .max()
-            .unwrap_or(0);
-        px[c] += 1;
-        sum[c] += u64::from(d);
-        max[c] = max[c].max(d);
-        o2[c] += u64::from(d > 2);
-        o8[c] += u64::from(d > 8);
-    }
-    let total: u64 = sum.iter().sum();
-    let n = classes.len() as f64;
-    let mut s = format!(
-        "all: mean {:.4}, max {}, over 2 {:.3} %, over 8 {:.3} %",
-        total as f64 / n,
-        max.iter().max().unwrap_or(&0),
-        100.0 * o2.iter().sum::<u64>() as f64 / n,
-        100.0 * o8.iter().sum::<u64>() as f64 / n
-    );
-    for c in 0..7 {
-        s.push_str(&format!(
-            "\n  {}: pixels {} ({:.3} %), sum {} ({:.3} of all), mean {:.4}, max {}, over 2 {}, over 8 {}",
-            HALL_CLASSES[c],
-            px[c],
-            100.0 * px[c] as f64 / n,
-            sum[c],
-            sum[c] as f64 / total.max(1) as f64,
-            sum[c] as f64 / px[c].max(1) as f64,
-            max[c],
-            o2[c],
-            o8[c]
-        ));
-    }
-    s
-}
-
-/// The showcase hall as `hero --exposure 8` renders it (1920 x 1080, lamp off, FSR 2 at 1.5,
-/// or native with `native`), read at frames 4096, 8192 and 8193: the drift (4096 against 8192)
-/// and the one frame (8192 against 8193) by pixel class, with the whole-table clears, sweeps
-/// and the guard's reopens over the run.
-pub fn hall_class_run(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    gpu: &vxe_render::gpu_world::GpuWorld,
-    camera: Camera,
-    native: bool,
-) -> String {
-    use vxe_render::RenderScale;
-    let out = [1920u32, 1080];
-    let scale = if native {
-        RenderScale::One
-    } else {
-        RenderScale::OneHalf
-    };
-    let size = scale.internal(out);
-    let mut frame = Frame::with_sizes(device, size, out);
-    frame.set_probe_spacing(device, 32);
-    if native {
-        frame.set_jitter(device, false);
-        frame.set_sharpness(queue, 0.5);
-    } else {
-        frame.set_upscaler_kind(
-            device,
-            UpscalerKind::Fsr2(Fsr2Settings {
-                sharpness: 0.5,
-                ..Fsr2Settings::default()
-            }),
-        );
-    }
-    frame.set_lighting(Lighting {
-        lamp: false,
-        exposure: Exposure::Manual(8.0),
-        // The preload's radius: `VXE_PRELOAD` (0 off), else the default.
-        preload_radius: std::env::var("VXE_PRELOAD")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(vxe_render::marcher::DEFAULT_PRELOAD_RADIUS),
-        ..Lighting::default()
-    });
-    frame.set_look(LookParams::default());
-    let view = HallView {
-        eye: camera.position,
-        size,
-        out,
-        half: frame.resolution().scale() > 1,
-    };
-    let light = LightParams::headlamp();
-    let capture = |frame: &Frame| HallCapture {
-        display: readback::read_rgba8(device, queue, frame.target()),
-        hit_pos: readback::read_float(device, queue, frame.hit_positions()),
-        hit_info: readback::read_rgba16u(device, queue, frame.hit_records()),
-        words: {
-            let t = frame.emissive_table();
-            let bytes = u64::from(frame.table_cells()) * vxe_render::marcher::CACHE_CELL_WORDS * 4;
-            readback::read_buffer(device, queue, t, 0, bytes)
-                .chunks_exact(4)
-                .map(|c| u32::from_le_bytes(c.try_into().expect("a word")))
-                .collect()
-        },
-    };
-    let mut caps = Vec::new();
-    let mut reopens = Vec::new();
-    for f in 1..=8193 {
-        frame.step(device, queue, gpu, &camera, &light);
-        if f == 4096 || f == 8192 || f == 8193 {
-            caps.push(capture(&frame));
-            reopens.push(frame.read_table_reopens(device, queue));
-        }
-    }
-    let (clears, sweeps) = frame.table_clears_and_sweeps();
-    let stats = frame.read_table_stats(device, queue);
-    let classes = |a: &HallCapture, b: &HallCapture| -> Vec<usize> {
-        (0..out[1])
-            .flat_map(|y| (0..out[0]).map(move |x| (x, y)))
-            .map(|(x, y)| hall_class(view, a, b, x, y))
-            .collect()
-    };
-    let drift = class_table(
-        &caps[0].display,
-        &caps[1].display,
-        &classes(&caps[0], &caps[1]),
-    );
-    let one = class_table(
-        &caps[1].display,
-        &caps[2].display,
-        &classes(&caps[1], &caps[2]),
-    );
-    format!(
-        "clears {clears}, sweeps {sweeps}, reopens at 4096/8192/8193 {reopens:?}, occupied {}, misses {}\n drift 4096/8192 {drift}\n one 8192/8193 {one}\n {}",
-        stats.occupied,
-        stats.misses,
-        table_census(&caps[2].words)
-    )
 }

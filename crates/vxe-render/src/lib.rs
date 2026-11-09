@@ -5,6 +5,7 @@
 //! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Frame`] draws it
 //! (its hit pass is the [`Marcher`]) and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
 
+pub mod bake;
 pub mod camera;
 pub mod exposure;
 pub mod field;
@@ -18,6 +19,10 @@ pub mod present;
 pub mod probes;
 pub mod readback;
 
+pub use bake::{
+    BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, DigReport, QueueStats, QueueView,
+    StoreStats,
+};
 pub use camera::{Camera, View};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
@@ -29,10 +34,9 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    AgeStats, CrackShares, DEFAULT_TABLE_CELLS, DiagPreload, DiagReport, FRAME_PASSES, Frame,
-    GRADIENT_STRATUM, HistoryKill, Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS,
-    MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, RenderScale, ShadowWalk, SurfaceTuning,
-    TableStats, ToneMap, ViewMode, jitter_at,
+    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting, LightingResolution,
+    LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer,
+    RenderScale, ShadowWalk, SurfaceTuning, ToneMap, ViewMode, jitter_at,
 };
 pub use present::Presenter;
 pub use probes::ProbeVolume;
@@ -40,11 +44,7 @@ pub use {glam, wgpu};
 
 /// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
 /// after; for headless validation.
-pub const MARCH_WGSL: &str = concat!(
-    include_str!("shaders/march.wgsl"),
-    "\n",
-    include_str!("shaders/cache_cell.wgsl")
-);
+pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
 /// The light pass, compiled after [`MARCH_WGSL`].
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 /// The gradient pass, compiled after [`MARCH_WGSL`] and [`LIGHT_WGSL`].
@@ -89,15 +89,13 @@ impl std::fmt::Display for LimitsError {
 impl std::error::Error for LimitsError {}
 
 /// Storage buffers one shader stage of the frame binds at most: four pool shards
-/// (`gpu_world::MAX_SHARDS`), the five other bindings (`OTHER_STORAGE_BUFFERS`) and the probe
+/// (`gpu_world::MAX_SHARDS`), the six other bindings (`OTHER_STORAGE_BUFFERS`) and the probe
 /// passes' two (`probes::PROBE_STORAGE_BUFFERS`).
 pub const STORAGE_BUFFERS_NEEDED: u32 =
     gpu_world::MAX_SHARDS + gpu_world::OTHER_STORAGE_BUFFERS + probes::PROBE_STORAGE_BUFFERS;
 
-/// The bytes the emissive table binds at [`DEFAULT_TABLE_CELLS`], with the blend list of a
-/// lighting grid of up to 2^22 pixels past its cells (`Frame`'s table buffer), rounded up to a
-/// MiB: 220 MiB.
-pub const TABLE_BINDING_BYTES: u64 = 220 << 20;
+/// The bytes the store's pool binds by default ([`bake::DEFAULT_BAKE_POOL_BYTES`]): 256 MiB.
+pub const STORE_BINDING_BYTES: u64 = bake::DEFAULT_BAKE_POOL_BYTES;
 
 /// Limits to request from `adapter`: [`limits_within`] its offered limits.
 pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> Result<wgpu::Limits, LimitsError> {
@@ -106,8 +104,8 @@ pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> Result<wgpu::Limi
 
 /// Limits to request from an adapter offering `offered`: the defaults, with the
 /// storage-binding and buffer-size limits raised toward what a brick pool of `pool_bytes`
-/// needs in one shard, and at least toward the emissive table at its default size
-/// ([`TABLE_BINDING_BYTES`]), and the storage buffers per stage raised to
+/// needs in one shard, and at least toward the store's pool at its default size
+/// ([`STORE_BINDING_BYTES`]), and the storage buffers per stage raised to
 /// [`STORAGE_BUFFERS_NEEDED`], each capped at what is offered; a pool past the size cap
 /// spreads over the shards (`ShardLayout`). `Err` names the storage-buffer count when the
 /// offer is below what the shaders bind.
@@ -116,7 +114,7 @@ pub fn limits_within(offered: &wgpu::Limits, pool_bytes: u64) -> Result<wgpu::Li
     let needed = l
         .max_storage_buffers_per_shader_stage
         .max(STORAGE_BUFFERS_NEEDED);
-    let want = pool_bytes.max(TABLE_BINDING_BYTES);
+    let want = pool_bytes.max(STORE_BINDING_BYTES);
     l.max_storage_buffer_binding_size = offered
         .max_storage_buffer_binding_size
         .min(want.max(l.max_storage_buffer_binding_size));
@@ -153,13 +151,13 @@ mod tests {
     #[test]
     fn the_limits_are_capped_at_the_offer() {
         let l = limits_within(&offer(16, 1 << 30), 4 << 30).expect("16 storage buffers");
-        assert_eq!(l.max_storage_buffers_per_shader_stage, 11);
+        assert_eq!(l.max_storage_buffers_per_shader_stage, 12);
         assert_eq!(l.max_storage_buffer_binding_size, 1 << 30);
         assert_eq!(l.max_buffer_size, 1 << 30);
-        let l = limits_within(&offer(11, 1 << 30), 16 << 20).expect("11 storage buffers");
-        assert_eq!(l.max_storage_buffers_per_shader_stage, 11);
-        assert_eq!(l.max_storage_buffer_binding_size, TABLE_BINDING_BYTES);
-        let l = limits_within(&offer(11, 128 << 20), 16 << 20).expect("11 storage buffers");
+        let l = limits_within(&offer(12, 1 << 30), 16 << 20).expect("12 storage buffers");
+        assert_eq!(l.max_storage_buffers_per_shader_stage, 12);
+        assert_eq!(l.max_storage_buffer_binding_size, STORE_BINDING_BYTES);
+        let l = limits_within(&offer(12, 128 << 20), 16 << 20).expect("12 storage buffers");
         assert_eq!(l.max_storage_buffer_binding_size, 128 << 20);
     }
 
@@ -167,11 +165,11 @@ mod tests {
     fn an_offer_below_the_shaders_bindings_is_refused_by_name() {
         let e = limits_within(&offer(8, 1 << 30), 16 << 20).expect_err("8 storage buffers");
         assert_eq!(e.limit, "max_storage_buffers_per_shader_stage");
-        assert_eq!((e.needed, e.offered), (11, 8));
-        assert_eq!(e.requested.max_storage_buffers_per_shader_stage, 11);
+        assert_eq!((e.needed, e.offered), (12, 8));
+        assert_eq!(e.requested.max_storage_buffers_per_shader_stage, 12);
         assert_eq!(
             e.to_string(),
-            "the adapter offers 8 max_storage_buffers_per_shader_stage, the frame's shaders need 11"
+            "the adapter offers 8 max_storage_buffers_per_shader_stage, the frame's shaders need 12"
         );
     }
 }

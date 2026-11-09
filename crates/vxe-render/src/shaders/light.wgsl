@@ -12,24 +12,10 @@
 //   2  storage texture   irradiance_out  rgba16float: the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), this frame's emissive sample in rgb
-//                                        (0 where the hit's cell is capped) and the lamp's
+//                                        (0 on a cube face, whose light the store holds) and the lamp's
 //                                        (white) in a, pre-exposed (`exposure_now`, clamped at
 //                                        HDR_MAX); 0 on a miss. In the steps view the lamp
 //                                        shadow ray's counters instead (see `shade`)
-//   3  storage           cache_cells     the emissive table (march.wgsl): a hit on a cube face
-//                                        finds or claims its cell, adds its emissive sample to
-//                                        it and offers the sample's emitter as the cell's kept
-//                                        emitter (`cache_offer`); a capped cell's pixel draws
-//                                        nothing
-//   4  storage           cache_stats     the table's counters (`CacheStats`)
-//                                        and, past them, the frame's reopened-fill list: a
-//                                        hit on a reopened cell under C_FILL lists it once a
-//                                        frame (`fill_offer`), with the fill on
-//   5  uniform           light_edits     the frame's edit boxes (temporal.wgsl's `Edits`): a
-//                                        cell whose hit lies in one, dilated by one voxel, is
-//                                        marked reopened, so the faces a dig exposes (cells
-//                                        claimed new this frame) are filled as the cells the
-//                                        edit-box reset cleared are
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
 // max(n.l, 0) / dist^2, so that the composite's Lambertian `albedo * E / PI` is the former
@@ -58,54 +44,6 @@
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
 @group(2) @binding(2) var irradiance_out: texture_storage_2d<rgba16float, write>;
-@group(2) @binding(3) var<storage, read_write> cache_cells: array<atomic<u32>>;
-@group(2) @binding(4) var<storage, read_write> cache_stats: CacheStats;
-
-// Up to MAX_EDITS boxes, inclusive voxel bounds (temporal.wgsl's `Edits`).
-struct LightEdits {
-    count: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-    boxes: array<vec4<i32>, 128>,
-};
-
-@group(2) @binding(5) var<uniform> light_edits: LightEdits;
-
-// Whether `p` lies in one of the frame's edit boxes dilated by one voxel (temporal.wgsl's
-// `in_edit`).
-fn in_light_edit(p: vec3<f32>) -> bool {
-    for (var i = 0u; i < light_edits.count; i++) {
-        let lo = vec3<f32>(light_edits.boxes[2u * i].xyz - 1);
-        let hi = vec3<f32>(light_edits.boxes[2u * i + 1u].xyz + 2);
-        if (all(p >= lo) && all(p <= hi)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// Lists `slot` for this frame's fill where it is reopened, under C_FILL and not yet listed this
-// frame (the stamp's compare-exchange: one pixel of the face lists it).
-fn fill_offer(slot: u32) {
-    let word = CACHE_WORDS * slot;
-    let stamp = atomicLoad(&cache_cells[word + CACHE_STAMP]);
-    let frame = params.frame & CACHE_STAMP_FRAME;
-    if ((stamp & CACHE_REOPENED) == 0u || (stamp & CACHE_STAMP_FRAME) == frame) {
-        return;
-    }
-    let now = (stamp & ~CACHE_STAMP_FRAME) | frame;
-    if (atomicLoad(&cache_cells[word + CACHE_COUNT]) >= fill_until()) {
-        return;
-    }
-    if (atomicCompareExchangeWeak(&cache_cells[word + CACHE_STAMP], stamp, now).exchanged) {
-        let i = atomicAdd(&cache_stats.fill_offered, 1u);
-        if (i < FILL_LIST_MAX) {
-            cache_stats.fill_cells[i] = slot;
-        }
-    }
-}
-
 // The frame's candidate table (ADR-0025), in light_samples from `params.light_table_base`:
 // a header slot (count, total weight as f32 bits), then per entry the start and length of an
 // emitter chunk's range and the cumulative weight up to and including it (f32 bits), in
@@ -123,8 +61,7 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     shade_px(gid);
 }
 
-// The light pass at lighting pixel `gid.xy` (`shade`, and the rows of cache_fill.wgsl's
-// `shade_preload` under the lighting grid).
+// The light pass at lighting pixel `gid.xy`.
 fn shade_px(gid: vec3<u32>) {
     let view = view_mode();
     if (gid.x >= params.light_size.x || gid.y >= params.light_size.y || (view != VIEW_SHADED && view != VIEW_STEPS && view != VIEW_CRACKS)) {
@@ -161,36 +98,10 @@ fn shade_px(gid: vec3<u32>) {
             if ((params.lighting & LIGHTING_LAMP) != 0u) {
                 e = vec3<f32>(PI * lamp_lit(rec.p, n, ns));
             }
-            var cell = -1;
-            var capped = false;
-            if (cacheable(rec)) {
-                cell = cache_claim(cache_voxel(rec.p, ns), cache_face(rec.axis, ns));
-                if (cell < 0) {
-                    atomicAdd(&cache_stats.misses, 1u);
-                } else {
-                    if (cache_seen(u32(cell)) && cache_blend_on()) {
-                        blend_list(u32(cell));
-                    }
-                    capped = atomicLoad(&cache_cells[CACHE_WORDS * u32(cell) + CACHE_COUNT]) >= cache_c_cap();
-                    if (fill_samples() > 0u) {
-                        if (light_edits.count > 0u && in_light_edit(rec.p)) {
-                            atomicOr(&cache_cells[CACHE_WORDS * u32(cell) + CACHE_STAMP], CACHE_REOPENED);
-                        }
-                        fill_offer(u32(cell));
-                    }
-                }
-            }
-            // A capped cell's pixel casts no emissive shadow ray: the temporal pass reads the
-            // cell's mean.
-            if (!capped) {
-                // A cell's sample is drawn at a uniform point of its face, with the face's
-                // normal, as the fill's and the preload's are (`fill_face`): the cell holds the
-                // face's mean whatever points of it the pixels hit.
-                if (cell >= 0) {
-                    emissive = fill_face(u32(cell), cache_voxel(rec.p, ns), cache_face(rec.axis, ns), gid.xy);
-                } else {
-                    emissive = resolve_emissive(draw_candidates(gid.xy, rec.p, n), rec.p, ns);
-                }
+            // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
+            // ray. Any other hit draws its own.
+            if (!reads_store(rec)) {
+                emissive = resolve_emissive(draw_candidates(gid.xy, rec.p, n), rec.p, ns);
             }
         }
     }
@@ -204,148 +115,6 @@ fn shade_px(gid: vec3<u32>) {
     );
 }
 
-// The slot holding the key `(v, face)`, claiming a free one of its CACHE_PROBES slots; -1 when
-// they all hold other keys (a miss). Two scans keep one cell a key: the first looks for the key
-// in every probe (a sweep may have freed a slot before it), the second claims the first free
-// slot. A claim exchanges word 1 from 0 to the key's busy value (`cache_busy`, never a valid
-// word 1), stores word 0, then publishes word 1; a pixel that meets its own key's busy value
-// takes that slot (its count and sums are the key's already) instead of probing on, and every
-// reader compares word 1 with a valid key, so no pixel sees a half-written key. Nothing frees
-// a slot during the light pass, so every pixel of a key meets the same first free slot.
-fn cache_claim(v: vec3<i32>, face: u32) -> i32 {
-    let base = cache_slot(v, face);
-    let key = cache_key(v, face);
-    let busy = cache_busy(key);
-    for (var i = 0u; i < CACHE_PROBES; i++) {
-        let word = CACHE_WORDS * ((base + i) & params.cache_mask);
-        let w1 = atomicLoad(&cache_cells[word + 1u]);
-        if (w1 == busy) {
-            return i32((base + i) & params.cache_mask);
-        }
-        if (w1 == key.y && cache_word0_is(word, key.x)) {
-            return i32((base + i) & params.cache_mask);
-        }
-    }
-    for (var i = 0u; i < CACHE_PROBES; i++) {
-        let slot = (base + i) & params.cache_mask;
-        let word = CACHE_WORDS * slot;
-        // The weak exchange may fail spuriously on a free slot: try again.
-        loop {
-            let r = atomicCompareExchangeWeak(&cache_cells[word + 1u], 0u, busy);
-            if (r.exchanged) {
-                atomicStore(&cache_cells[word], key.x);
-                atomicStore(&cache_cells[word + 1u], key.y);
-                blend_dirty();
-                atomicAdd(&cache_stats.occupied, 1u);
-                return i32(slot);
-            }
-            if (r.old_value == busy) {
-                return i32(slot);
-            }
-            if (r.old_value == key.y && cache_word0_is(word, key.x)) {
-                return i32(slot);
-            }
-            if (r.old_value != 0u) {
-                break;
-            }
-        }
-    }
-    return -1;
-}
-
-// Marks the table changed for the blend (cache_cell.wgsl's CACHE_BLEND_DIRTY).
-fn blend_dirty() {
-    atomicStore(&cache_cells[CACHE_WORDS * (params.cache_mask + 1u) + CACHE_BLEND_DIRTY], 1u);
-}
-
-// Appends `slot` to the blend list past the table's cells (cache_blend.wgsl).
-fn blend_list(slot: u32) {
-    let list = CACHE_WORDS * (params.cache_mask + 1u);
-    let entry = atomicAdd(&cache_cells[list], 1u);
-    atomicStore(&cache_cells[list + 4u + entry], slot);
-}
-
-// Stamps `slot` seen this frame (cache_cell.wgsl's CACHE_SEEN, `params.frame + 1`): the first pixel
-// of the frame to take the cell exchanges the word; returns whether this invocation did.
-fn cache_seen(slot: u32) -> bool {
-    let word = CACHE_WORDS * slot + CACHE_SEEN;
-    let now = params.frame + 1u;
-    var old = atomicLoad(&cache_cells[word]);
-    loop {
-        if (old == now) {
-            return false;
-        }
-        // A cell that was not in the last frame's list has no blend of this frame's table.
-        if (old != now - 1u) {
-            blend_dirty();
-        }
-        let r = atomicCompareExchangeWeak(&cache_cells[word], old, now);
-        if (r.exchanged) {
-            return true;
-        }
-        old = r.old_value;
-    }
-    return false;
-}
-
-// A claim's busy word 1 for `key`: a hash of both words with the valid bit clear and bit 0 set,
-// so never a valid word 1 nor a free slot's 0; two keys share one with a chance of 2^-30.
-fn cache_busy(key: vec2<u32>) -> u32 {
-    return (hash_u32(key.x ^ hash_u32(key.y)) & 0x7FFFFFFEu) | 1u;
-}
-
-// Whether word 0 of the cell at `word` reads `x`, re-read a few times while it reads 0 and `x`
-// is not: a claim's store of word 0 that this invocation does not see yet beside its word 1
-// (storage atomics are relaxed in WGSL).
-fn cache_word0_is(word: u32, x: u32) -> bool {
-    for (var t = 0u; t < 8u; t++) {
-        let w0 = atomicLoad(&cache_cells[word]);
-        if (w0 == x) {
-            return true;
-        }
-        if (w0 != 0u) {
-            return false;
-        }
-    }
-    return false;
-}
-
-// Adds an emissive sample to `slot`'s sums while its count is under C_CAP.
-fn cache_add(slot: u32, emissive: vec3<f32>) {
-    let word = CACHE_WORDS * slot + CACHE_COUNT;
-    let before = atomicAdd(&cache_cells[word], 1u);
-    if (before < cache_c_cap()) {
-        blend_dirty();
-        let q = vec3<u32>(emissive * CACHE_Q + 0.5);
-        atomicAdd(&cache_cells[word + 1u], q.x);
-        atomicAdd(&cache_cells[word + 2u], q.y);
-        atomicAdd(&cache_cells[word + 3u], q.z);
-    }
-}
-
-// The cell's words of its kept emitter (ADR-0043's guard): the emitter face's key
-// (`cache_key`, two words; word 1 is 0 while none is kept), then the packed luminance
-// (`kept_pack`).
-const CACHE_KEPT: u32 = 6u;
-const CACHE_KEPT_LUM: u32 = 8u;
-
-// The low 16 bits of a kept emitter's packed word: a hash of its key's two words.
-fn kept_tag(k: vec2<u32>) -> u32 {
-    return hash_u32(k.x ^ hash_u32(k.y)) & 0xFFFFu;
-}
-
-// A kept emitter's packed word: the luminance's f32 bits truncated to their high 16 (sign,
-// exponent, seven mantissa bits, so a u32 `atomicMax` orders non-negative luminances), the
-// key's tag in the low 16. A store of the key's two words that raced another winner's leaves
-// a key whose tag differs from the packed word's, which the guard detects (`guard_cell`).
-fn kept_pack(lum: f32, k: vec2<u32>) -> u32 {
-    return (bitcast<u32>(max(lum, 0.0)) & 0xFFFF0000u) | kept_tag(k);
-}
-
-fn kept_lum(w: u32) -> f32 {
-    return bitcast<f32>(w & 0xFFFF0000u);
-}
-
 // A uniform point of face `face` of voxel `v`, from `rand` at pixel `px` (dimensions 0 and 1;
 // the candidates take 2 on).
 fn face_point(v: vec3<i32>, face: u32, px: vec2<u32>) -> vec3<f32> {
@@ -355,111 +124,9 @@ fn face_point(v: vec3<i32>, face: u32, px: vec2<u32>) -> vec3<f32> {
     return face_centre(v, face) + t0 * (rand(px, 0u) - 0.5) + t1 * (rand(px, 1u) - 0.5);
 }
 
-// One emissive sample of face `face` of voxel `v` (its irradiance `e`, the resampled emitter
-// `r`): at a uniform point of the face (`face_point`) with the face's normal, random numbers
-// at pixel `px`.
-struct FaceSample {
-    e: vec3<f32>,
-    r: Reservoir,
-};
-
-fn face_sample(v: vec3<i32>, face: u32, px: vec2<u32>) -> FaceSample {
-    let p = face_point(v, face, px);
-    let nf = face_dir(face);
-    let r = draw_candidates(px, p, nf);
-    return FaceSample(resolve_emissive(r, p, nf), r);
-}
-
-// Adds `s`, a sample of face `face` of voxel `v`, to the cell `slot` (`cache_add`), and offers
-// its emitter as the cell's kept emitter when it is lit (`cache_offer`).
-fn cache_take(slot: u32, v: vec3<i32>, face: u32, s: FaceSample) {
-    cache_add(slot, s.e);
-    if (luminance(s.e) > 0.0) {
-        cache_offer(slot, v, face, s.r);
-    }
-}
-
-// Draws one sample of face `face` of voxel `v` at pixel `px` into the cell `slot`
-// (`face_sample`, `cache_take`): the light pass's, the reopened fill's and the preload's
-// sample of a face with a cell. Returns its irradiance.
-fn fill_face(slot: u32, v: vec3<i32>, face: u32, px: vec2<u32>) -> vec3<f32> {
-    let s = face_sample(v, face, px);
-    cache_take(slot, v, face, s);
-    return s.e;
-}
-
 // The unit face `face` of voxel `v`'s centre.
 fn face_centre(v: vec3<i32>, face: u32) -> vec3<f32> {
     return vec3<f32>(v) + vec3<f32>(0.5) + 0.5 * face_dir(face);
-}
-
-// The luminance of the irradiance at the centre of face `face` of voxel `v` from the centre of
-// the emitter face `ef` of voxel `ev`, with the emitter voxel's material's emission now:
-// `lum(Le) cos cos / d^2`, 0 when the emitter voxel emits nothing, either face looks away
-// from the other, or the shadow ray between the centres finds rock; also 0, with no shadow
-// ray cast, when the unshadowed value is at most `above`. The light pass keeps it and the
-// gradient pass re-shades it with the same arithmetic, so nothing changed reads the same
-// value.
-fn kept_irradiance(v: vec3<i32>, face: u32, ev: vec3<i32>, ef: u32, above: f32) -> f32 {
-    let le = emission_of(lookup(ev).material);
-    let l = luminance(le);
-    if (l <= 0.0) {
-        return 0.0;
-    }
-    let n = face_dir(face);
-    let c = face_centre(v, face);
-    let x = face_centre(ev, ef);
-    let to = x - c;
-    let d2 = max(dot(to, to), 1e-4);
-    let dir = to * inverseSqrt(d2);
-    let g = max(dot(n, dir), 0.0) * max(dot(face_dir(ef), -dir), 0.0);
-    let e = l * g / d2;
-    if (g <= 0.0 || e <= above) {
-        return 0.0;
-    }
-    let o = shadow_origin(c, n);
-    let ray = x - o;
-    let dist = length(ray);
-    if (shadowed(o, ray / dist, dist - 1e-3)) {
-        return 0.0;
-    }
-    return e;
-}
-
-// Offers the emitter of a lit sample `r` at the cell `slot` of face `face` of voxel `v` as its
-// kept emitter: kept when its centre-to-centre irradiance (`kept_irradiance`) is above the
-// cell's kept luminance (`atomicMax` on the packed word, then the key's two words stored; a
-// lost race keeps the other winner).
-fn cache_offer(slot: u32, v: vec3<i32>, face: u32, r: Reservoir) {
-    let word = CACHE_WORDS * slot;
-    let ef = r.face;
-    let ev = vec3<i32>(floor(r.x - 0.5 * face_dir(ef)));
-    let cur = kept_lum(atomicLoad(&cache_cells[word + CACHE_KEPT_LUM]));
-    let e = kept_irradiance(v, face, ev, ef, cur);
-    let k = cache_key(ev, ef);
-    let packed = kept_pack(e, k);
-    if (kept_lum(packed) <= cur) {
-        return;
-    }
-    let old = atomicMax(&cache_cells[word + CACHE_KEPT_LUM], packed);
-    if (old < packed) {
-        atomicStore(&cache_cells[word + CACHE_KEPT], k.x);
-        atomicStore(&cache_cells[word + CACHE_KEPT + 1u], k.y);
-    }
-}
-
-// The slot holding the key `(v, face)`, without claiming one; -1 when none does.
-fn cache_find(v: vec3<i32>, face: u32) -> i32 {
-    let base = cache_slot(v, face);
-    let key = cache_key(v, face);
-    for (var i = 0u; i < CACHE_PROBES; i++) {
-        let slot = (base + i) & params.cache_mask;
-        let word = CACHE_WORDS * slot;
-        if (atomicLoad(&cache_cells[word + 1u]) == key.y && atomicLoad(&cache_cells[word]) == key.x) {
-            return i32(slot);
-        }
-    }
-    return -1;
 }
 
 // The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p` with shading normal `n`,

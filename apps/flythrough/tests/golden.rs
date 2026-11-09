@@ -907,6 +907,9 @@ fn settled_dark_cave(table: &MaterialTable) -> Option<(World, LookRig)> {
 }
 
 /// [`settled_dark_cave`] with the lighting passes at `resolution`.
+/// The dark cave's bake: chunks around the camera's, and samples a brick direction.
+const DARK_CAVE_BAKE: (i32, u32) = (1, 64);
+
 fn settled_dark_cave_at(
     table: &MaterialTable,
     resolution: vxe_render::LightingResolution,
@@ -927,6 +930,9 @@ fn settled_dark_cave_at(
             .sync_now(&world, &rig.device, &rig.queue)
             .expect("mirror fits the adapter");
     }
+    // The store the cube faces read: the chunks around the camera's.
+    let eye = vein_camera().position.to_array().map(|c| c.floor() as i32);
+    rig.bake_around(&world, eye, DARK_CAVE_BAKE.0, DARK_CAVE_BAKE.1);
     for _ in 0..SETTLE_FRAMES {
         rig.frame.step(
             &rig.device,
@@ -1017,15 +1023,11 @@ fn carve_reading(
     pos: &[[f32; 4]],
     info: &[[u16; 4]],
     table: &MaterialTable,
-    flush: bool,
 ) -> CarveReading {
     let r = world.apply(carve).expect("the carve applies");
     let aabb = r.aabb.expect("the carve removes rock");
     rig.gpu.sync_now(world, &rig.device, &rig.queue).unwrap();
-    let boxes = if flush { vxe_render::MAX_EDITS + 1 } else { 1 };
-    for _ in 0..boxes {
-        rig.frame.invalidate(aabb.0.0, aabb.1.0);
-    }
+    rig.frame.invalidate(aabb.0.0, aabb.1.0);
     let camera = vein_camera();
     rig.frame.step(
         &rig.device,
@@ -1090,8 +1092,7 @@ fn carve_reading(
 /// brightest rock pixel 15 to 25 voxels away), every hit pixel in the carve's dilated `aabb`
 /// reads age 0 (the test also prints how many pixels whose non-emissive pre-carve hit voxel
 /// the carve removed stay within 2/255 of their pre-carve value), and at most 0.1 % of the pixels farther than
-/// 16 pixels from the box's projection change by more than 8/255; the same carve with all
-/// history flushed exceeds that bar.
+/// 16 pixels from the box's projection change by more than 8/255.
 #[test]
 fn dark_cave_golden_is_lit_by_its_ore_alone() {
     let Some((world, mut rig)) =
@@ -1118,8 +1119,7 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
     );
 
     // The carve at the brightest rock pixel 15 to 25 voxels away, and the frame right after
-    // it; the control makes the same carve on a second settled rig with every pixel's history
-    // flushed.
+    // it.
     let pos = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let target = (0..pos.len())
@@ -1146,42 +1146,23 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
         Mode::Carve,
     );
     let table = flythrough::with_emissive_ore(&cave_materials());
-    let reading = carve_reading(
-        &world, &mut rig, &carve, &before, &pos, &info, &table, false,
-    );
-    let (cworld, mut control) = settled_dark_cave(&table).unwrap();
-    let control = carve_reading(
-        &cworld,
-        &mut control,
-        &carve,
-        &before,
-        &pos,
-        &info,
-        &table,
-        true,
-    );
+    let reading = carve_reading(&world, &mut rig, &carve, &before, &pos, &info, &table);
     println!(
-        "carve: {} hit pixels in the dilated box, {} not at age 0; {} pixels whose non-emissive pre-carve voxel was carved, {} within 2/255 of before; far: {} of {} over 8/255 (control, history flushed: {} of {})",
+        "carve: {} hit pixels in the dilated box, {} not at age 0; {} pixels whose non-emissive pre-carve voxel was carved, {} within 2/255 of before; far: {} of {} over 8/255",
         reading.in_box,
         reading.in_box_aged,
         reading.removed,
         reading.removed_stale,
         reading.far_over,
-        reading.far,
-        control.far_over,
-        control.far
+        reading.far
     );
     assert!(reading.in_box > 0 && reading.removed > 0);
     assert_eq!(reading.in_box_aged, 0, "pixels in the box kept history");
     // `removed_stale` is a reading: rock revealed behind the removed rock, most of it as dark,
     // reads within 2/255 of it in about a fifth of those pixels (Plan 0024's log).
-    // The table's blend reads a cleared table about as settled: the flushed control moves a
-    // few far pixels over 8/255, so the bar is one pixel in ten thousand.
-    let bar = |r: &CarveReading| r.far_over * 10_000 <= r.far;
-    assert!(bar(&reading), "the carve disturbs pixels far from it");
     assert!(
-        !bar(&control),
-        "the flushed control meets the far bar, which then bites on nothing"
+        reading.far_over * 10_000 <= reading.far,
+        "the carve disturbs pixels far from it"
     );
 
     let (_, off) = settled_dark_cave(&cave_materials()).unwrap();

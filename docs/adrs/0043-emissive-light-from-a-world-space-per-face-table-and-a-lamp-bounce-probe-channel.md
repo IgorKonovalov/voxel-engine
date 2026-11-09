@@ -1,6 +1,6 @@
 # ADR-0043: Emissive light is read from a world-space table of per-face irradiance, and the probe volume becomes a lamp-bounce channel
 
-> **Status:** accepted (2026-11-05, Plan 0057's close; the table, fill, preload and guard are expected to be superseded by ADR-0046 on the owner's verdict in Plan 0059's Phase 13)
+> **Status:** accepted (2026-11-05, Plan 0057's close); the table, fill, preload and guard superseded by ADR-0046 (2026-11-09, Plan 0059's close, the owner's verdict in its Phase 13). The lamp-bounce channel, the nearest read and the empty screen history stand
 > **Date:** 2026-11-04
 > **Related plan(s):** [Plan 0057](../plans/done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)
 > (builds it); [Plan 0051](../plans/done/0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)

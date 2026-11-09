@@ -130,10 +130,27 @@ fn assert_rgb(px: [u8; 4], rgb: [f32; 3], what: &str) {
 
 const EYE: [f32; 3] = [10.5, 32.5, 32.5];
 
-/// Through the red wall at x = 20 to the grey wall at x = 40, the albedo view composites
-/// `0.5 × red + 0.5 × grey = [0.75, 0.25, 0.25]`, and the hit mask reads the opaque hit. With
-/// no layers the grey wall alone is composited. With two red walls (x = 20 and 30) and one
-/// layer only the nearer is: `[0.75, 0.25, 0.25]`; with two, `[0.875, 0.125, 0.125]`.
+/// The red row's transmittance through one voxel (ADR-0047), `0.8 * (0.5 + 0.5 * albedo /
+/// max(albedo))` of its albedo `[1, 0, 0]`.
+const TINT: [f32; 3] = [0.8, 0.4, 0.4];
+
+/// Schlick's reflected share of the entry face at normal view, `F0` 0.04: the +x ray meets the
+/// face at `cos = 1`, so `R = F0`.
+const R: f32 = 0.04;
+
+/// The albedo view's pixel behind `len` voxels of red in front of the grey wall (albedo 0.5):
+/// `R * face_light + T(len) * grey` with `T(len) = TINT^len` per channel. The albedo view runs
+/// the filter unlit, so `face_light` is 1 there, not the lamp's term.
+fn filtered(len: i32) -> [f32; 3] {
+    TINT.map(|t| R + t.powi(len) * 0.5)
+}
+
+/// Through the red wall at x = 20 to the grey wall at x = 40, the albedo view filters by the
+/// one voxel of path: `0.04 + 0.8 * 0.5 = 0.44` red, `0.04 + 0.4 * 0.5 = 0.24` green and blue,
+/// and the hit mask reads the opaque hit. With no layers the grey wall alone is drawn. With
+/// two red walls (x = 20 and 30) the layer bound caps the path in voxels of length: one layer
+/// reads the one-wall value, two read `0.04 + 0.64 * 0.5 = 0.36` and `0.04 + 0.16 * 0.5 =
+/// 0.12`. The reflected share is the first entry face's alone.
 #[test]
 fn translucent_layers_composite_front_to_back_up_to_the_bound() {
     let Some((device, queue)) = device() else {
@@ -142,7 +159,7 @@ fn translucent_layers_composite_front_to_back_up_to_the_bound() {
     let one = walls(&[20]);
     assert_rgb(
         pixel(&device, &queue, &one, EYE, ViewMode::Albedo, 4),
-        [0.75, 0.25, 0.25],
+        filtered(1),
         "one red wall",
     );
     assert_eq!(
@@ -156,14 +173,19 @@ fn translucent_layers_composite_front_to_back_up_to_the_bound() {
         "no layers",
     );
     let two = walls(&[20, 30]);
+    assert_eq!(
+        pixel(&device, &queue, &two, EYE, ViewMode::HitMask, 4),
+        [255, 255, 255, 255],
+        "the opaque wall is the hit behind two"
+    );
     assert_rgb(
         pixel(&device, &queue, &two, EYE, ViewMode::Albedo, 1),
-        [0.75, 0.25, 0.25],
+        filtered(1),
         "two red walls, one layer",
     );
     assert_rgb(
         pixel(&device, &queue, &two, EYE, ViewMode::Albedo, 2),
-        [0.875, 0.125, 0.125],
+        filtered(2),
         "two red walls, two layers",
     );
 }
@@ -191,10 +213,10 @@ fn a_translucent_wall_costs_the_opaque_walk_no_pool_read() {
     assert_eq!(with, [6, 16, 1, 255]);
 }
 
-/// A uniform translucent brick is air to the opaque walk and one layer to the translucent
-/// walk: with bricks 2 and 3 along the ray (x in [16, 32)) all red, the ray composites one
-/// layer per voxel, 16 of them at opacity 0.5, so with 4 layers `T = 1/16` of the grey wall
-/// remains: `[1 - 1/16 + 1/32, 1/32, 1/32]`.
+/// A uniform translucent brick is air to the opaque walk and filters in the second: with bricks
+/// 2 and 3 along the ray (x in [16, 32)) all red, the path through them is 16 voxels, capped at
+/// the 4 layers' length, so `T(4) = [0.4096, 0.0256, 0.0256]` of the grey wall remains under the
+/// entry face's `R`: `[0.2448, 0.0528, 0.0528]`.
 #[test]
 fn a_uniform_translucent_brick_is_air_to_the_opaque_walk_and_layers_to_the_second() {
     let Some((device, queue)) = device() else {
@@ -217,10 +239,9 @@ fn a_uniform_translucent_brick_is_air_to_the_opaque_walk_and_layers_to_the_secon
         pixel(&device, &queue, &slab, EYE, ViewMode::HitMask, 4),
         [255, 255, 255, 255]
     );
-    let t = 1.0 / 16.0;
     assert_rgb(
         pixel(&device, &queue, &slab, EYE, ViewMode::Albedo, 4),
-        [1.0 - t + t * 0.5, t * 0.5, t * 0.5],
+        filtered(4),
         "a 16-voxel red slab, 4 layers",
     );
 }

@@ -26,6 +26,15 @@ Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev 
 The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
 
 
+### The live queue's order and cancellation, after Plan 0059
+
+Parked 2026-11-09 (owner, Plan 0059 Phase 13's window; a new plan after 0059's close). Two complaints about the baked light's live queue (`docs/plans/logs/0059.md`, Phase 13):
+- **Far light waits for the camera:** "light is not recalculated until I come closer, it would be better to recalculate all in the field of view, starting from the nearest chunks". A re-bake order by view, nearest first, out to the light's reach.
+- **A fast flight settles slowly, even coarse:** "we are starting to calculate places that camera is already passed. We should be able to cancel it when camera passed". Drop or demote queued jobs behind the camera.
+
+The third complaint, "a lot of aliasing" at the hall (`live/session13-hall-aliasing.png` in the lane), goes to the parked antialiasing plan below.
+
+
 ## Engine mechanisms
 
 ### Chunk-scale world dynamics: a cellular material step and an event scheduler
@@ -63,6 +72,20 @@ fixed list. The missing piece is a per-light and per-emissive-material "feeds th
 flag and the channel's redesign. Pick up after Plan 0058 closes and the owner has seen the
 steady image.
 
+### Per-face light cells as a near-camera enhancement over the brick level
+
+Parked 2026-11-08 at Plan 0059's Phase 7b pick ("Bricks everywhere": 8-voxel cell, 4096 samples a direction). The owner
+asked whether per-face cells should stay as a graceful enhancement: brick light by default, with face cells fading in
+near the camera. The answer for now is no.
+- At Phase 7b, 512-sample face cells did not look better than 8/4096 bricks; the 64- and 512-sample bricks were "too
+  noisy".
+- A near ring of about 1.9 x 10^5 faces at 512 adds about 1.3 s to a fresh start and roughly doubles a dig's re-bake.
+- The frame headroom is kept for dynamic lights (Plan 0058).
+
+Keeping the option open is cheap. The store puts a brick's record before its face run, and the read prefers a face cell
+when one exists. Plan 0059 Phase 6 (7c105c5) has the whole face path working; Phase 14 deletes it. Pick up when
+close-range light reads too soft: shadow edges smeared over 8 voxels, or light bleeding round thin walls.
+
 ### Render settings surface and named quality profiles
 
 Parked 2026-10-22. Every mechanism choice (shadow walk, lighting tier, sampler, look, upscaler,
@@ -81,16 +104,6 @@ named the edge dots left at `[1, 2]` the next aliasing item. Owed: a plan whose 
 makes `[1, 2]` the default with ADR-0042's Outcome, then the edge dots, and removes the emitter
 cap knob (Plan 0056's Followups). Draft it with the antialiasing plan at Plan 0059's Phase 3 verdict;
 Plan 0059's reference runs at `[1, 2]` by flag meanwhile.
-
-### The table's edges, if the owner's verdict keeps it
-
-Parked 2026-11-05 at Plan 0057's close. All of this goes if Plan 0059's Phase 13 picks the bake, and
-is owed if it picks the table: a frame over `MAX_EDITS` clears the whole table (the vein's `B`
-presses, 78 to 87 carves); a cell out of view past the guard's 256-frame window stays stale; a
-capped cell can show a blend word from before a neighbour's last change when it enters view; the
-parity skip can age out a far cell only an off-parity cell's kernel reads; the walk's slice frames
-were never read on their own; Radeon lighting reads over the 6.0 ms line walking, the blend adding
-0.64 to 1.38 ms. Pick up at that verdict.
 
 ### The lamp channel's faults
 
@@ -121,7 +134,7 @@ Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With t
 
 ### The gate tier is over its wall-time budget
 
-Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions.
+Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions.
 
 ### `vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7
 
@@ -225,10 +238,7 @@ Read 2026-11-09 from CI run 42573270474 on e5d6646 (WARP, driver 10.0.26100.3364
 - **Reading:** GBV crashes WARP before the first stage of frame 0, including on the scratch baseline that exits 0 without it, so (a) and (b) say nothing about the hang. With the debug layer on and GBV off, the split that hung past 600 s in every earlier run completes, and the layer reports no misuse of states or barriers. The layer's own work at record and submit time clears the hang. That points at a race inside WARP across submissions on buffers `shade_preload` uses, not at a bad state that wgpu records. crates.io's newest wgpu is still 30.0.1, so a newer wgpu is not available to try.
 - **Next candidates, the owner's pick:** run the Windows GPU smoke set with `WGPU_VALIDATION=1` (the layer that cleared the hang), which also keeps validation running on Windows; take the GPU smoke set off WARP and keep Windows on CPU tests until the preload's fate in Plan 0059; or a backend-neutral change that keeps other submissions off the preload's buffers between its args pass and `shade_preload`, which the scratch sweep showed runs.
 - **Ruled 2026-11-09 (owner): no GPU tests on WARP.** The `ci-windows` profile runs the quick tier's filter, the CPU tests only, and the debug-layer step is gone from `ci.yml`. Windows still creates every pipeline on DX12 (the pipeline-times step). The env-gated switches in the code (`VXE_DIAG_PRELOAD`, `VXE_DIAG_SPLIT_FRAME0`, the `diag:` lines) stay until Plan 0059 settles the preload. If the path stays, this entry is how to put a GPU smoke set back on Windows; if it goes, they go with it and this entry closes.
-
-### The preload's probes and dispatch are not bounded by its cap
-
-Read 2026-11-08 in the chore-ci-preload-fix lane on lavapipe (Mesa 26.2.5), exclusive perf lock, the headless fly-through at 64 x 36 over 35 frames. With the preload on, the light pass (`shade_preload`, which carries the preload's fill and probes) reads 73.4 ms of a 99.2 ms GPU frame (median of 30, load 0.95); with `--preload off` it reads 1.8 ms of 31.7 ms (load 4.9 to 8.0, loaded). The preload draws 32 656 to 69 592 samples a frame against 264 lighting pixels. S_PRE bounds the fill in samples (`draw_cells` = 2048 cells x 16), but not the probes, which sample every face on the input probe list (up to PRELOAD_PROBE_LIST_MAX x 8 = 131 072 samples a frame), nor the dispatch's workgroups, one per 4 input fill entries whether they draw or not (up to 8192; the input list grew to 21 589 entries over the run). This is a cost on every adapter, not WARP's frame-0 hang. Ruled 2026-11-08 (owner): not fixed now. Plan 0059 may delete the path, so it is taken up in that plan's deletion or cut phases: bound the probes in samples a frame and the dispatch in workgroups, if the path stays.
+- **Plan 0059 closed 2026-11-09 on "baked":** the preload, its sweep and `shade_preload` are deleted, and with them `VXE_DIAG_PRELOAD` and `VXE_DIAG_SPLIT_FRAME0`; the `diag:` lines stay (`apps/flythrough/src/main.rs`). Next, the owner's call: one push that runs the GPU smoke set on WARP again. Clean, the `diag:` lines go and this entry closes; still hung, the hang was not the preload's.
 
 ### llvmpipe SIGSEGV on CI's Ubuntu since Plan 0057 Phase 7
 
@@ -247,5 +257,14 @@ materials, a sky and a way to build interesting architecture.
 
 Decided 2026-11-05 (owner, Plan 0057's second window): "antializing next", after the emissive-only
 reference of the look-first Plan 0059. The owner's fast turn "still has artifacts" (step 1); the
-reference runs with no upscaler, so it tells the light's part from the image's. Picks up when
-the owner has judged the reference.
+reference runs with no upscaler, so it tells the light's part from the image's. Parked again
+2026-11-06 at Plan 0059's Phase 3 verdict. Asked whether the reference's edges or fast turn
+bothered them (baked, native, no upscaler, no jitter), the owner answered "Barely noticed", and on
+the order, "Cuts first, then AA". So Plan 0059's Part 2 runs first. Phase 2's fast-yaw rows
+(`docs/plans/logs/0059.md`) are the starting reading. Pick up when the owner calls it, or when
+Plan 0059's Phase 10 or 11 reads edges as the remaining fault.
+2026-11-09, Plan 0059 Phase 8e's window (native, no upscaler, far normal 1..2, the live queue): the
+owner, on the hall, "we need to work on antializing later, but much better than before". Still
+later; the 8d window's hall (FSR 2 at 1.5, far normal 2..6) was the worse one.
+2026-11-09, Plan 0059 Phase 13's window (the fly-through's defaults: FSR 2 at 1.5, the baked light): the hall,
+"a lot of aliasing on this step, doesn't look good" (the lane's `live/session13-hall-aliasing.png`).

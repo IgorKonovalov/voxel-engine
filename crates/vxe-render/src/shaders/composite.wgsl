@@ -5,10 +5,10 @@
 // Bindings, group 2:
 //   0  texture_2d<f32>   hit_pos_in      the hit pass's rgba32float position + t
 //   1  texture_2d<u32>   hit_info_in     the hit pass's rgba16uint normal, material, flags
-//   2  texture_2d<f32>   layer_in        the hit pass's rgba16float translucent layers
-//                                        (premultiplied colour, transmittance), or in the
-//                                        steps view its walk counters, in the cracks view
-//                                        the field walk's leak
+//   2  texture_2d<f32>   layer_in        the hit pass's rgba16float translucent solid's
+//                                        reflected light before exposure in rgb (ADR-0047), or
+//                                        in the steps view its walk counters, in the cracks
+//                                        view the field walk's leak
 //   3  texture_2d<f32>   irradiance_in   the irradiance at each hit, rgb: the temporal
 //                                        pass's accumulation
 //   4  storage texture   target_tex      rgba8unorm output
@@ -23,18 +23,22 @@
 //                                        -16, 16)` of the shaded radiance before exposure and
 //                                        the tone map, and their count; written in the shaded
 //                                        view only
+//   9  texture_2d<u32>   transmit_in     the hit pass's r32uint transmittance per channel,
+//                                        rgb9e5 (`t9e5_unpack`)
 //
 // Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
 // irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance) plus its
 // material's
 // emission under the frame's scale (none in the cutaway view; the cutaway's flat
-// sky on a miss in that view, else black), the translucent layers composited over it, all
+// sky on a miss in that view, else black), filtered by the translucent solid in front of it,
+// `reflected * exposure + T * c` (ADR-0047), all
 // pre-exposed (ADR-0033: the irradiance arrives pre-exposed, and the absolute terms, emission,
 // the layers, the sky and the probes' indirect irradiance, are multiplied by `exposure_now()`
 // where they join it), tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
 // display-encoded by `pow(c, 1 / 2.2)`; `normals` writes a hit's shading normal as
 // `n * 0.5 + 0.5`, linear, and a miss as `shaded` does; `hitmask` white on a hit;
-// `steps` the counters over 255; `albedo` the hit's albedo with the unlit layers over it;
+// `steps` the counters over 255; `albedo` the hit's albedo through the solid's `T`, its
+// reflected share at unit light added;
 // `cracks` the field walk's leaks over the shaded image without its layers (`crack_colour`).
 
 // The cracks view's colour of a pixel whose shaded display colour is `shaded`, from the hit
@@ -63,6 +67,7 @@ const HDR_TARGET: bool = false;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
 @group(2) @binding(7) var indirect_in: texture_2d<f32>;
 @group(2) @binding(8) var<storage, read_write> meter_tiles: array<vec2<f32>>;
+@group(2) @binding(9) var transmit_in: texture_2d<u32>;
 
 // The workgroup's meter partial sums: log2 luminance, pixel count.
 var<workgroup> meter_sum: array<vec2<f32>, 64>;
@@ -212,7 +217,7 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
             a = materials[rec.material * 4u].xyz;
         }
         if (rec.translucent) {
-            a = layer.xyz + layer.w * a;
+            a = layer.xyz + t9e5_unpack(textureLoad(transmit_in, px, 0).x) * a;
         }
         textureStore(target_tex, px, vec4<f32>(a, 1.0));
         return vec2<f32>(0.0);
@@ -248,7 +253,7 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         return meter_of(c / ex);
     }
     if (rec.translucent) {
-        c = layer.xyz * ex + layer.w * c;
+        c = layer.xyz * ex + t9e5_unpack(textureLoad(transmit_in, px, 0).x) * c;
     }
     textureStore(target_tex, px, vec4<f32>(select(display(c), c, HDR_TARGET), 1.0));
     return meter_of(c / ex);

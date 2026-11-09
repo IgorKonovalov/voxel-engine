@@ -229,6 +229,12 @@ Every reading against these budgets, with its machine and commit, is in
   pressure rule no longer fires. The "default contour look" of these rows no longer exists
   (Plan 0054, v0.39.0: honest cubes, no attribute pass). No residency p95 has been re-read since
   Plan 0023; that re-read is owed to a plan that touches streaming.
+- **Re-read under the loaded light (Plan 0059 Phase 12, 393aa68 plus the pre-roll's tick fix, same
+  protocol at 2530 x 1378, 2026-11-09, loaded by the flight's own workers to 5 to 15):** RTX 3080
+  Laptop GPU, the default live queue: p95 365 ms (FSR 2 at 1.5) and 379 ms (native), max 445 and
+  488 ms over 73 381 chunks; the table: p95 302 and 296 ms, max 371 and 350 ms. RADV RENOIR at
+  1280 x 720: queue p95 319 ms, max 404; table p95 321, max 394. Streaming CPU per frame p50 3.2 to
+  19.8 ms (the RTX queue runs at load 12 to 15 read 10.0 and 19.8).
 
 ## 6. Determinism and headless operation
 
@@ -337,6 +343,7 @@ Every reading against these budgets, with its machine and commit, is in
   with `--status-level pass` and names the tests over the line.
   **Reading (Plan 0057 close review, 2026-11-05, bb5fa9d with the fix pass and main merged, 731 tests, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, load 0.93 at the start and 2.03 at the end, nothing else running):** gate **1300.7 s, over the 12 min proposal**. Earlier the same day, with reads beside it, 1702.5 s, 730 tests, load 1.77 to 1.85; dev's run at 2de29c6 924.7 s. Sum of tests about 1636 s, `flythrough::settle` the largest at 358 s over 37 tests, then `golden` 218 s, `look` 182 s. Over the 30 s line: `a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips` 40.4 s (69.1 s in the earlier run), `a_dug_hole_settles_within_the_bar` 31.8 s.
   **Reading (2026-11-05, 7cd77ad, 729 tests, all passed, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, load 4.62 at the start and 2.81 at the end, so loaded, nothing else running):** gate **1313.4 s, over the 12 min proposal**, with those two tests on the soak list. Sum of tests about 1662 s, `flythrough::settle` 338 s over 36 tests. Over the 30 s line: `smoothed_normals_cut_the_normal_error_and_move_no_hit` 32.3 s, `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` 31.8 s, `castle_gate_golden` 31.1 s (its first render on that cache; alone 27.4 s cold, 11.4 to 13.3 s warm), `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 30.8 s.
+  **Reading (Plan 0059 close review, 2026-11-09, d1e3468 with main merged, 725 tests, all passed, 75 skipped, dev reference on lavapipe, exclusive perf lock, 16G cap, build in the same timed run, `--status-level pass`, load 1.92 at the start and 2.34 at the end):** gate **850.2 s, over the 12 min proposal** but 35 % under the 1313.4 s before the table's deletion, with the `flythrough::settle` binary back in the gate. Sum of tests 20.0 min serial. None over the 30 s line; the slowest `the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn` 25.7 s.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
   the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial
   test time; 41 tests over 60 s take 320 of those minutes, 603 tests under 5 s take 4. The
