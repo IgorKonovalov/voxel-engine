@@ -22,6 +22,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev libudev-dev
+      # The runner's own Mesa 26.0.8 crashes the light pass with SIGSEGV (Soak run 42602069520,
+      # 67 of 79 tests); the action builds or restores the pinned lavapipe the push run uses.
+      - name: Build or restore the pinned lavapipe
+        uses: ./.github/actions/lavapipe
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # Per-test times in the log, so `node scripts/test-times.mjs` can rank them.

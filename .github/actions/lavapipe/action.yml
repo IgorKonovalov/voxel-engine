@@ -1,0 +1,68 @@
+# The runner's own lavapipe (Mesa 26.0.8) dies with SIGSEGV in the light pass, and Mesa 26.2.6
+# on the same LLVM 21 passes (docs/backlog.md, "llvmpipe SIGSEGV on CI's Ubuntu since Plan 0057
+# Phase 7"). So this builds lavapipe alone from Mesa's release tarball, checked against the
+# sha256 below, against the runner's own LLVM 21, with meson and its Python tools pinned on PyPI
+# and every other package from the runner's archive. The install is cached by the tarball's
+# hash, the options and the runner image, so a warm run skips the build, and the push and soak
+# workflows share the cache. Every later step of the job loads the built lavapipe alone; the
+# action fails unless the loader reports its version. It comes out once the runner image ships
+# Mesa 26.2 or later.
+name: lavapipe
+description: Build (or restore) the pinned Mesa lavapipe and make it the job's only Vulkan driver
+
+runs:
+  using: composite
+  steps:
+    # vulkan-tools' vulkaninfo names the driver the Vulkan loader picks.
+    - name: Pin the Mesa release and the lavapipe options
+      shell: bash
+      run: |
+        sudo apt-get install -y --no-install-recommends vulkan-tools
+        {
+          echo "MESA_VERSION=26.2.6"
+          echo "MESA_SHA256=b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92"
+          echo "MESA_OPTIONS=-Dbuildtype=debugoptimized -Db_ndebug=true -Dvulkan-drivers=swrast -Dgallium-drivers=llvmpipe -Dplatforms= -Dopengl=false -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dgles1=disabled -Dgles2=disabled -Dllvm=enabled -Dshared-llvm=enabled -Dvideo-codecs= -Dvalgrind=disabled -Dlibunwind=disabled -Dbuild-tests=false"
+        } >> "$GITHUB_ENV"
+    - name: Key the lavapipe build
+      id: key
+      shell: bash
+      run: |
+        sum=$(printf '%s %s' "$MESA_SHA256" "$MESA_OPTIONS" | sha256sum | cut -c1-16)
+        echo "key=lavapipe-${ImageOS:-linux}-${ImageVersion:-unknown}-$MESA_VERSION-$sum" >> "$GITHUB_OUTPUT"
+    - name: Restore the built lavapipe
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/mesa-lvp
+        key: ${{ steps.key.outputs.key }}
+    - name: Build lavapipe from Mesa's release tarball
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        sudo apt-get install -y --no-install-recommends \
+          python3-venv bison flex glslang-tools llvm-21-dev libdrm-dev libzstd-dev zlib1g-dev \
+          libexpat1-dev
+        work=$(mktemp -d)
+        curl -fsSL -o "$work/mesa.tar.xz" "https://mesa.freedesktop.org/archive/mesa-$MESA_VERSION.tar.xz"
+        echo "$MESA_SHA256  $work/mesa.tar.xz" | sha256sum -c -
+        tar -xJf "$work/mesa.tar.xz" -C "$work"
+        python3 -m venv "$work/venv"
+        "$work/venv/bin/pip" install --quiet \
+          meson==1.9.1 ninja==1.13.0 mako==1.3.10 packaging==25.0 pyyaml==6.0.3
+        printf "[binaries]\nllvm-config = '/usr/lib/llvm-21/bin/llvm-config'\n" > "$work/native.ini"
+        start=$(date +%s)
+        # shellcheck disable=SC2086 # the options split into meson's arguments
+        PATH="$work/venv/bin:$PATH" meson setup "$work/build" "$work/mesa-$MESA_VERSION" \
+          --native-file "$work/native.ini" --prefix "$HOME/mesa-lvp" --libdir lib $MESA_OPTIONS
+        PATH="$work/venv/bin:$PATH" ninja -C "$work/build" install
+        echo "lavapipe built in $(( $(date +%s) - start )) s"
+        rm -rf "$work"
+    - name: Use the built lavapipe
+      shell: bash
+      run: |
+        icd="$HOME/mesa-lvp/share/vulkan/icd.d/lvp_icd.x86_64.json"
+        echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+        echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+        export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd"
+        vulkaninfo --summary | grep -E 'deviceName|driverInfo'
+        vulkaninfo --summary | grep -q "driverInfo *= Mesa $MESA_VERSION "
