@@ -124,9 +124,18 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
     const RUN_BOUND: Duration = Duration::from_secs(120);
     // The default look: the teardown trace needs no band slots, and a mirror without them
     // builds no field pass, so the run's start does not wait on a software adapter's initial
-    // fill.
+    // fill. The table's light: the default live queue bakes its near chunks before the first
+    // frame, about 50 s of a debug build on the RTX.
     let mut child = Command::new(env!("CARGO_BIN_EXE_flythrough"))
-        .args(["--headless", "--frames", "3", "--render", "64x36"])
+        .args([
+            "--headless",
+            "--frames",
+            "3",
+            "--render",
+            "64x36",
+            "--light",
+            "table",
+        ])
         .args(extra)
         .env("RUST_LOG", "flythrough=info")
         .stdout(Stdio::piped())

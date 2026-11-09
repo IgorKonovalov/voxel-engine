@@ -7,7 +7,7 @@
 //! [--lamp-bounce on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--history edits|gradient]
-//! [--lamp on|off] [--filter on|off] [--look PRESET]`.
+//! [--lamp on|off] [--filter on|off] [--look PRESET] [--light baked|table]`.
 //!
 //! `--source showcase` (the default) generates `flythrough::showcase` and frames one of its
 //! shots (`--shot`, default `hall`); `--at`, `--yaw`, `--pitch` and `--exposure` override the
@@ -20,8 +20,10 @@
 //! default for both sources; the lamp's bounce is off (`--lamp-bounce on`, or its alias
 //! `--indirect on`, runs ADR-0043's lamp channel with the lamp on at the hero's probe spacing,
 //! `HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it), emissive
-//! light is read from the per-face table (ADR-0043; `--steady`, `--cache-read`, `--sampler`,
-//! `--emissive-history` and `--emissive-guard` are refused, naming Plan 0057), and the upscaler at
+//! light is read from the loaded store, the whole world baked at the live queue's settings
+//! before each still (ADR-0046), or with `--light table` from the per-face table (ADR-0043;
+//! `--steady`, `--cache-read`, `--sampler`, `--emissive-history` and `--emissive-guard` are
+//! refused, naming Plan 0057), and the upscaler at
 //! the fly-through's defaults (`--internal-scale 1.5`: FSR 2; `--jitter` starts our upscaler,
 //! jittered or not; `--internal-scale 1` without `--jitter on` is the native frame).
 //! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face` with the
@@ -117,6 +119,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         resolution: LightingResolution::default(),
         lighting: Lighting {
             lamp: false,
+            light: vxe_render::Light::Baked,
             ..Lighting::default()
         },
         probe_spacing: HERO_PROBE_SPACING,
@@ -239,6 +242,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok_or(format!("--history takes edits or gradient, not {v}"))?;
             }
             "--lamp" => args.lighting.lamp = on_off(&flag, &v)?,
+            "--light" => {
+                args.lighting.light = vxe_render::Light::from_name(&v)
+                    .ok_or(format!("--light takes baked or table, not {v}"))?;
+            }
             "--filter" => args.lighting.filter = on_off(&flag, &v)?,
             _ => return Err(format!("unknown argument {flag}")),
         }
@@ -514,6 +521,20 @@ fn main() -> Result<(), String> {
             ..vxe_render::LookParams::default()
         });
         frame.set_resolution(&device, args.resolution);
+        if args.lighting.light == vxe_render::Light::Baked {
+            let r = frame
+                .bake_until(
+                    &device,
+                    &queue,
+                    &mut gpu,
+                    &world,
+                    world.extent(),
+                    &vxe_render::bake::queue_settings(),
+                    &mut |_| {},
+                )
+                .map_err(|e| format!("bake: {e:?}"))?;
+            println!("baked {} chunks, {} faces", r.chunks, r.faces);
+        }
         for _ in 0..frames {
             frame.step(
                 &device,
@@ -555,6 +576,12 @@ mod tests {
         assert_eq!(d.shots, Shots::One(SHOTS[0]));
         assert_eq!(d.size, [1920, 1080]);
         assert!(!d.lighting.lamp && !d.lighting.lamp_bounce);
+        assert_eq!(d.lighting.light, vxe_render::Light::Baked);
+        assert_eq!(
+            parse(&["--light", "table"]).expect("table").lighting.light,
+            vxe_render::Light::Table
+        );
+        assert!(parse(&["--light", "x"]).is_err());
         assert_eq!(
             (d.internal_scale, d.jitter(), d.fsr2()),
             (RenderScale::OneHalf, false, true)

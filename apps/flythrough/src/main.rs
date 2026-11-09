@@ -104,8 +104,8 @@
 //! (default 4);
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
-//! `--light queue` (and `--light baked` on the streamed world) fills a loaded-light store from
-//! nothing with the live queue (ADR-0046's scheduler) at the brick level (8 voxels, 4096 samples a
+//! `--light queue` (the default with no `--light`, `--reference`, `--bake-file` or `--bake-radius`;
+//! and `--light baked` on the streamed world) fills a loaded-light store from nothing with the live queue (ADR-0046's scheduler) at the brick level (8 voxels, 4096 samples a
 //! brick direction): before the first frame, at full GPU, the chunks within `--near R` (default
 //! 2, Chebyshev) of the camera's at 4096 and every other mirrored chunk a coarse pass at
 //! `--coarse N` (default 256; 0 none, and then the near chunks alone); after it, a slice a frame
@@ -498,7 +498,8 @@ struct Args {
     /// `--preload VOXELS|off`: the camera-radius preload's radius in voxels, 0 off (default
     /// `DEFAULT_PRELOAD_RADIUS`).
     preload: u32,
-    /// `--light`: where a cube face's emissive light comes from.
+    /// `--light`: where a cube face's emissive light comes from; with no flag, the live queue's
+    /// store (`bake_queue`).
     light: vxe_render::Light,
     /// `--bake-radius`: the chunks the pre-roll bakes around the eye's chunk; `None` every chunk
     /// of the world.
@@ -897,6 +898,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     // The part flags, applied to the `--look` preset after every flag is read.
     let mut face_mix = None;
     let mut far_normal = None;
+    let mut light_flag = false;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -1162,6 +1164,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--light" => {
                 let v = value()?;
+                light_flag = true;
                 args.bake_queue = v == "queue";
                 args.light = if args.bake_queue {
                     vxe_render::Light::Baked
@@ -1378,6 +1381,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         if !args.bake_radius_set {
             args.bake_radius = Some(REFERENCE_BAKE_RADIUS);
         }
+    }
+    // With no `--light`, the light is the live queue's store, unless a flag names the pre-roll.
+    if !light_flag && !args.reference && args.bake_file.is_none() && !args.bake_radius_set {
+        args.light = vxe_render::Light::Baked;
+        args.bake_queue = true;
     }
     if !args.cuts.is_empty() && !args.reference {
         return Err("--cut bakes a cut beside the reference; it needs --reference".to_owned());
@@ -7612,8 +7620,12 @@ mod tests {
             parse_args_from(argv(&["--level", "--light", "queue", "--bake-radius", "2"])).is_err()
         );
         assert!(!a.bake_queue, "--light baked on the level is the pre-roll");
+        let default = parse_args_from(argv(&["--level"])).expect("parses");
+        assert!(default.bake_queue && default.light == vxe_render::Light::Baked);
         assert_eq!(
-            parse_args_from(argv(&["--level"])).expect("parses").light,
+            parse_args_from(argv(&["--level", "--light", "table"]))
+                .expect("parses")
+                .light,
             vxe_render::Light::Table
         );
 
@@ -8682,10 +8694,12 @@ mod tests {
                 Vec3::from(eye.map(|v| v as f32 + 0.5))
             );
             assert_eq!(run.scene.as_ref().unwrap().0, format!("castle {want}"));
+            // Under the default light the queue's row comes first.
             assert!(
                 run.banner()
                     .unwrap()
-                    .starts_with(&format!("castle {want}\n"))
+                    .lines()
+                    .any(|l| l == format!("castle {want}"))
             );
         }
         let (_, yaw, pitch) = castle::CastleShot::Nave.pose();
@@ -9317,9 +9331,16 @@ mod tests {
                 4
             )
         );
-        // The line the fly-through prints at the start with no lighting flags.
+        // The line the fly-through prints at the start with no lighting flags, and under the table.
         assert_eq!(
             d.start_modes(0.0).line(),
+            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, light baked, exposure auto eye +0.00 EV"
+        );
+        assert_eq!(
+            parse(&["--light", "table"])
+                .unwrap()
+                .start_modes(0.0)
+                .line(),
             "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, table 2^22 probes 16, blend 5x5, fill 8 to 256, preload R 64 r0 32 B 128 C 256, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
