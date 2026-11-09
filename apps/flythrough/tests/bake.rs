@@ -4993,3 +4993,170 @@ fn queue_dig_readings() {
         compare(name, got);
     }
 }
+
+/// The resolution cut under the brick store (Plan 0059 Phase 10 as re-read at Phase 7b): at each
+/// view of `VXE_BAKE_VIEWS` (default vein and hall), the view's `bricks-8-4096` file loaded, and
+/// three settings at `NATIVE`: native with no upscaler (the reference), FSR 2 at 1.5 with far
+/// normal 1..2, and FSR 2 at 1.5 with far normal 2..6 (the fly-through's default image). Per
+/// setting, after 128 still frames: the share of the pixels within 1, 2 and 4 display levels of
+/// the reference's, the passes' milliseconds over 120 timed frames at rest, and the fast yaw's
+/// excess dots (as `ref_yaw`: 64 frames at -90 degrees, ten 9-degree steps back, 60 frames
+/// counted against the still floor). Logs to `live/bake-count/resolution.txt`.
+#[test]
+#[ignore = "a reading on the RTX from live/bake/'s brick files: VXE_TEST_ADAPTER=rtx, under the perf lock"]
+fn resolution_readings() {
+    let mut log = Log::open("resolution.txt");
+    let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
+    for view in read_views() {
+        if !names.split(',').any(|n| n == view.name) {
+            continue;
+        }
+        let (mut rig, _) = reference_rig(&view, NATIVE);
+        let (name, centre_eye, radius) = file_of(&view);
+        let centre = centre_eye.map(|v| (v / 64.0).floor() as i32);
+        let (cut, settings) = ring_cuts(centre)
+            .into_iter()
+            .find(|(n, _)| *n == "bricks-8-4096")
+            .expect("the brick cut");
+        let world = rig.world.extent();
+        let extent = settings.rings.as_ref().map_or(world, |r| r.extent(world));
+        let key = Frame::store_key(
+            &rig.gpu,
+            world,
+            1,
+            extent,
+            ChunkCoord(centre),
+            radius.unwrap_or(-1),
+            &settings,
+        );
+        let load_ms = load_cut(&mut rig, &format!("{name}.{cut}.bin"), &key);
+        let timer = vxe_render::marcher::PassTimer::with_passes(
+            &rig.device,
+            &rig.queue,
+            vxe_render::marcher::FRAME_PASSES.len() as u32,
+        )
+        .expect("timestamps on the RTX");
+        let still = view_camera(&view);
+        let yawed = |deg: f32| Camera {
+            yaw: still.yaw + deg.to_radians(),
+            ..still
+        };
+        let light = LightParams::default();
+        let fsr = || {
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness: 0.5,
+                ..vxe_render::Fsr2Settings::default()
+            })
+        };
+        let settings: [(&str, Option<vxe_render::UpscalerKind>, [f32; 2]); 3] = [
+            ("native, no upscaler, far normal 1..2", None, [1.0, 2.0]),
+            ("fsr2 at 1.5, far normal 1..2", Some(fsr()), [1.0, 2.0]),
+            ("fsr2 at 1.5, far normal 2..6", Some(fsr()), [2.0, 6.0]),
+        ];
+        let mut reference: Option<Vec<f32>> = None;
+        for (setting, kind, far) in settings {
+            match kind {
+                None => {
+                    rig.frame
+                        .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
+                    rig.frame.set_jitter(&rig.device, false);
+                    rig.frame.set_sizes(&rig.device, NATIVE, NATIVE);
+                }
+                Some(k) => {
+                    rig.frame.set_upscaler_kind(&rig.device, k);
+                    rig.frame.set_sizes(
+                        &rig.device,
+                        vxe_render::marcher::RenderScale::OneHalf.internal(NATIVE),
+                        NATIVE,
+                    );
+                }
+            }
+            rig.frame.set_look(vxe_render::marcher::LookParams {
+                far_normal: far,
+                ..rig.frame.look()
+            });
+            rig.frame.reset_history();
+            for _ in 0..128 {
+                rig.frame
+                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+            }
+            let img = luma(&readback::read_rgba8(
+                &rig.device,
+                &rig.queue,
+                rig.frame.target(),
+            ));
+            let shares = match &reference {
+                None => {
+                    reference = Some(img.clone());
+                    "the reference".to_owned()
+                }
+                Some(r) => {
+                    let n = r.len() as f64;
+                    let within = |lv: f32| {
+                        r.iter()
+                            .zip(&img)
+                            .filter(|(a, b)| (*a - *b).abs() <= lv)
+                            .count() as f64
+                            / n
+                    };
+                    format!(
+                        "within 1/2/4 levels of the reference {:.4} / {:.4} / {:.4}",
+                        within(1.0),
+                        within(2.0),
+                        within(4.0)
+                    )
+                }
+            };
+            let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+            for _ in 0..120 {
+                for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
+                    *s += ms;
+                }
+            }
+            let passes = pass_line(&sum, 120);
+            let dots = |rig: &ReadRig| -> f64 {
+                let px = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+                support::aliasing::dots(&px, NATIVE[0], NATIVE[1])
+                    .iter()
+                    .filter(|d| **d)
+                    .count() as f64
+            };
+            let mut floor = Vec::new();
+            for _ in 0..64 {
+                rig.frame
+                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                floor.push(dots(&rig));
+            }
+            for _ in 0..64 {
+                rig.frame
+                    .step(&rig.device, &rig.queue, &rig.gpu, &yawed(-90.0), &light);
+            }
+            for i in 1..=10 {
+                rig.frame.step(
+                    &rig.device,
+                    &rig.queue,
+                    &rig.gpu,
+                    &yawed(-90.0 + 9.0 * i as f32),
+                    &light,
+                );
+            }
+            let mean = floor.iter().sum::<f64>() / floor.len() as f64;
+            let sd =
+                (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
+            let mut excess = 0.0;
+            for _ in 0..YAW_DOT_FRAMES {
+                rig.frame
+                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                excess += dots(&rig) - mean;
+            }
+            log.line(&format!(
+                "resolution {} adapter {} {}x{} (bricks 8/4096 loaded in {load_ms:.0} ms), {setting}: {shares}; at rest {passes}; fast yaw excess dots 1-60 {excess:+.1} (floor {mean:.1}, sd {sd:.1}, line {:.1})",
+                view.name,
+                rig.adapter,
+                NATIVE[0],
+                NATIVE[1],
+                YAW_DOT_FRAMES as f64 * sd
+            ));
+        }
+    }
+}
