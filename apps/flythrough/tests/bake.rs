@@ -2530,6 +2530,28 @@ fn reference_world(scene: Scene) -> World {
 /// A rig on the RTX over `view`'s world at `size`, native and full-resolution lighting, no jitter,
 /// lamp off, exposure 8, its store loaded from `view`'s file: the rig and the piece.
 fn reference_rig(view: &ReadView, size: [u32; 2]) -> (ReadRig, ChunkExtent) {
+    let (mut rig, piece) = view_rig(view, size);
+    let (name, centre_eye, radius) = file_of(view);
+    let key = Frame::store_key(
+        &rig.gpu,
+        rig.world.extent(),
+        1,
+        piece,
+        ChunkCoord(centre_eye.map(|v| (v / 64.0).floor() as i32)),
+        radius.unwrap_or(-1),
+        &BakeSettings::default(),
+    );
+    let t = std::time::Instant::now();
+    load_cut(&mut rig, &format!("{name}.bin"), &key);
+    println!(
+        "loaded live/bake/{name}.bin in {:.0} ms",
+        t.elapsed().as_secs_f64() * 1e3
+    );
+    (rig, piece)
+}
+
+/// [`reference_rig`]'s rig with an empty store: the rig and the piece.
+fn view_rig(view: &ReadView, size: [u32; 2]) -> (ReadRig, ChunkExtent) {
     let world = reference_world(view.scene);
     let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
     let (device, queue, adapter) = reading_device(pool).expect("a device");
@@ -2539,7 +2561,7 @@ fn reference_rig(view: &ReadView, size: [u32; 2]) -> (ReadRig, ChunkExtent) {
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_config(&device, cfg);
-    let (name, centre_eye, radius) = file_of(view);
+    let (_, centre_eye, radius) = file_of(view);
     gpu.set_focus(vxe_world::VoxelCoord(view.eye.map(|v| v as i32)));
     for _ in 0..8 {
         gpu.sync_now(&world, &device, &queue)
@@ -2551,28 +2573,6 @@ fn reference_rig(view: &ReadView, size: [u32; 2]) -> (ReadRig, ChunkExtent) {
     frame.set_lighting(reference_lighting(false, Light::Baked));
     frame.set_dt(1.0 / 60.0);
     let piece = piece_of(world.extent(), centre_eye, radius);
-    let key = Frame::store_key(
-        &gpu,
-        world.extent(),
-        1,
-        piece,
-        ChunkCoord(centre_eye.map(|v| (v / 64.0).floor() as i32)),
-        radius.unwrap_or(-1),
-        &BakeSettings::default(),
-    );
-    let path = format!("{}/../../live/bake/{name}.bin", env!("CARGO_MANIFEST_DIR"));
-    let t = std::time::Instant::now();
-    frame
-        .load_store_file(
-            &device,
-            &queue,
-            &mut gpu,
-            &world,
-            std::path::Path::new(&path),
-            &key,
-        )
-        .unwrap_or_else(|e| panic!("{path}: {e}"));
-    println!("loaded {path} in {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
     (
         ReadRig {
             device,
@@ -3505,6 +3505,50 @@ fn load_cut(rig: &mut ReadRig, file: &str, key: &bake::StoreKey) -> f64 {
             key,
         )
         .unwrap_or_else(|e| panic!("{path}: {e}"));
+    t.elapsed().as_secs_f64() * 1e3
+}
+
+/// [`load_cut`], or where the file is missing or under another bake source hash, `extent` baked
+/// at `settings` and written to the file: the milliseconds either took.
+fn load_or_bake(
+    rig: &mut ReadRig,
+    file: &str,
+    key: &bake::StoreKey,
+    extent: ChunkExtent,
+    settings: &BakeSettings,
+) -> f64 {
+    let path = format!("{}/../../live/bake/{file}", env!("CARGO_MANIFEST_DIR"));
+    let path = std::path::Path::new(&path);
+    let t = std::time::Instant::now();
+    match rig
+        .frame
+        .load_store_file(&rig.device, &rig.queue, &mut rig.gpu, &rig.world, path, key)
+    {
+        Ok(()) => {}
+        Err(bake::StoreFileError::Io(_) | bake::StoreFileError::Mismatch("bake source hash")) => {
+            let r = rig
+                .frame
+                .bake_until(
+                    &rig.device,
+                    &rig.queue,
+                    &mut rig.gpu,
+                    &rig.world,
+                    extent,
+                    settings,
+                    &mut |_| {},
+                )
+                .expect("the extent fits the pool");
+            rig.frame.write_store_file(path, key).expect("written");
+            println!(
+                "baked {file} in {:.0} ms ({} chunks, {} faces, {:.3e} samples)",
+                t.elapsed().as_secs_f64() * 1e3,
+                r.chunks,
+                r.faces,
+                r.samples as f64
+            );
+        }
+        Err(e) => panic!("{}: {e}", path.display()),
+    }
     t.elapsed().as_secs_f64() * 1e3
 }
 
@@ -5011,7 +5055,7 @@ fn resolution_readings() {
         if !names.split(',').any(|n| n == view.name) {
             continue;
         }
-        let (mut rig, _) = reference_rig(&view, NATIVE);
+        let (mut rig, _) = view_rig(&view, NATIVE);
         let (name, centre_eye, radius) = file_of(&view);
         let centre = centre_eye.map(|v| (v / 64.0).floor() as i32);
         let (cut, settings) = ring_cuts(centre)
@@ -5029,7 +5073,8 @@ fn resolution_readings() {
             radius.unwrap_or(-1),
             &settings,
         );
-        let load_ms = load_cut(&mut rig, &format!("{name}.{cut}.bin"), &key);
+        let file = format!("{name}.{cut}.bin");
+        let load_ms = load_or_bake(&mut rig, &file, &key, extent, &settings);
         let timer = vxe_render::marcher::PassTimer::with_passes(
             &rig.device,
             &rig.queue,
