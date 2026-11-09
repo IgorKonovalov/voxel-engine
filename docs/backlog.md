@@ -114,7 +114,7 @@ Queued 2026-11-08 (owner), to start as a dev chore once the WARP `shade_preload`
 - **Soak:** `#[ignore = "soak"]` on each long series; the soak tier runs `--run-ignored only`, full runs `--run-ignored all`, and `soak.yml`, the docs and `test-changed.mjs` take the flag.
 - **GPU:** every test file that opens a device is named `tests/gpu_*.rs`, and the profiles filter on `binary(/^gpu_/)`. `check-test-tiers` shrinks to the one rule that a file which opens a device carries the prefix.
 
-The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the CPU tests plus a named smoke set (ci-windows). The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
+The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
 
 ### The gate tier is over its wall-time budget
 
@@ -221,6 +221,7 @@ Read 2026-11-09 from CI run 42573270474 on e5d6646 (WARP, driver 10.0.26100.3364
 
 - **Reading:** GBV crashes WARP before the first stage of frame 0, including on the scratch baseline that exits 0 without it, so (a) and (b) say nothing about the hang. With the debug layer on and GBV off, the split that hung past 600 s in every earlier run completes, and the layer reports no misuse of states or barriers. The layer's own work at record and submit time clears the hang. That points at a race inside WARP across submissions on buffers `shade_preload` uses, not at a bad state that wgpu records. crates.io's newest wgpu is still 30.0.1, so a newer wgpu is not available to try.
 - **Next candidates, the owner's pick:** run the Windows GPU smoke set with `WGPU_VALIDATION=1` (the layer that cleared the hang), which also keeps validation running on Windows; take the GPU smoke set off WARP and keep Windows on CPU tests until the preload's fate in Plan 0059; or a backend-neutral change that keeps other submissions off the preload's buffers between its args pass and `shade_preload`, which the scratch sweep showed runs.
+- **Ruled 2026-11-09 (owner): no GPU tests on WARP.** The `ci-windows` profile runs the quick tier's filter, the CPU tests only, and the debug-layer step is gone from `ci.yml`. Windows still creates every pipeline on DX12 (the pipeline-times step). The env-gated switches in the code (`VXE_DIAG_PRELOAD`, `VXE_DIAG_SPLIT_FRAME0`, the `diag:` lines) stay until Plan 0059 settles the preload. If the path stays, this entry is how to put a GPU smoke set back on Windows; if it goes, they go with it and this entry closes.
 
 ### The preload's probes and dispatch are not bounded by its cap
 
