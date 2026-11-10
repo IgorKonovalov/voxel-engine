@@ -1,6 +1,6 @@
 # 0064: The window's frame: what paces it, workers that leave no core, and readbacks that wait
 
-> **Status:** draft (2026-11-10)
+> **Status:** approved (owner go 2026-11-10; Phase 1 may start now, beside Plan 0060)
 > **Created:** 2026-11-10
 > **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's frame and section 5's streaming line.
@@ -13,8 +13,10 @@
 > from reading the code and the readings already on record; Phase 1 takes the first reading.**
 > **Starts after:** Phases 1 and 2 touch `crates/vxe-app/src/shell.rs` and the fly-through's
 > flag table only and may run beside Plan 0060. Phases 3 to 5 edit `marcher.rs`, `main.rs`,
-> `hud.rs` and `gpu_world.rs` and start on main after Plan 0060 merges. A proposal: the order
-> is the owner's (`docs/plans/README.md`, Sequence).
+> `hud.rs` and `gpu_world.rs` and start on main after Plan 0060 merges (owner, 2026-11-10;
+> `docs/plans/README.md`, Sequence). **If Phase 1 reads free pacing no better than the
+> compositor's, the plan stops there and Plan 0065 does not start** until the architect has
+> read the windowed figures: the window then has another cause.
 
 ## TL;DR
 

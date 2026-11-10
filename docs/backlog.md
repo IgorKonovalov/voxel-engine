@@ -115,7 +115,8 @@ across Plans 0035, 0036 and 0037, leaving none for M8 fog or game work until thi
 The static performance review of 2026-11-10 recommends drafting it **before Plan 0058's lane
 starts**, not after Plan 0045: summed from the plans' own guesses the cave frame fits the
 projected floor only at the low end and the outdoor frame not at all, and Plan 0058's eight
-lights land with no cap or profile. A recommendation; the order is the owner's.
+lights land with no cap or profile. **Agreed (owner, 2026-11-10): the draft is written before
+Plan 0058's lane starts; its implementation stays where the Sequence has it.**
 
 ### Remove `own`, the engine's own upscaler
 
@@ -154,7 +155,7 @@ every figure below is an estimate. The window's pacing, the readbacks, the worke
 sync's time went to [Plan 0064](plans/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md);
 the baked light's shader waste and the queue's scan to
 [Plan 0065](plans/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
-(both drafts). What neither takes:
+(both approved 2026-11-10). What neither takes:
 
 ### Budget lines over with no owner
 

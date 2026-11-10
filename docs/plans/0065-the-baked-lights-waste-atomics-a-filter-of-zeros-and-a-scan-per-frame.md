@@ -1,6 +1,6 @@
 # 0065: The baked light's waste: atomics on every pixel, a filter of zeros, a scan per frame
 
-> **Status:** draft (2026-11-10)
+> **Status:** approved (owner go 2026-11-10; the lane starts after Plans 0060 and 0064)
 > **Created:** 2026-11-10
 > **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's lighting, denoise and upscale lines.
@@ -12,10 +12,10 @@
 > [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) also comes
 > from. **The owner asked for no load tests, so every saving here is an estimate from reading
 > the code; Phase 1 takes the readings.**
-> **Starts after:** Plan 0060's merge (it rewrites `bake.rs`). **Proposed to run before Plan
-> 0061's Phase 2 and before Plan 0058**, because both decide by per-pass readings that today
-> include this waste, and both edit `temporal.wgsl`. The order is the owner's
-> (`docs/plans/README.md`, Sequence).
+> **Starts after:** Plan 0060's merge (it rewrites `bake.rs`) and Plan 0064's close, and only
+> if Plan 0064's Phase 1 confirmed the pacing (its header says why). **It runs before Plan
+> 0061's Phase 2 and before Plan 0058** (owner, 2026-11-10), because both decide by per-pass
+> readings that today include this waste, and both edit `temporal.wgsl`.
 
 ## TL;DR
 
@@ -237,13 +237,14 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 
 - **The savings are unmeasured and the default tier is half.** At the half tier the screen
   passes cost about a quarter of the figures on record; Phase 1 strikes what is not worth it.
-- **Order against Plans 0061 and 0058.** Both edit `temporal.wgsl`. Run first, this plan
-  gives them honest bases; run after, it rebases onto their rewrites and Phase 2 is re-read
-  by the architect. Plan 0061's Phase 2 adds store reads by the far normal, which this plan's
+- **Order against Plans 0061 and 0058.** Both edit `temporal.wgsl`. This plan runs first
+  (owner, 2026-11-10) and gives them honest bases; the architect's re-read of Plan 0058's
+  Phases 1 and 2 at Plan 0061's tip covers this plan's changes too. Plan 0061's Phase 2 adds store reads by the far normal, which this plan's
   cheaper read makes cheaper.
 - **Plan 0044's Phase 5** (the walk reads no discarded material, shifts for divides) has the
-  same argument for running before those two plans. It is not moved here; it is the owner's
-  question in the README's Sequence.
+  same argument for running before those two plans. It stays after Plan 0058 (owner,
+  2026-11-10): it rewrites the walk across four files and forces a re-bake, and Phase 4 here
+  takes the part that weighs on Plan 0061's far-normal pick.
 - **GPU features:** none new. `override` constants and read-only storage are in use already.
 - **Determinism:** untouched; everything is in `vxe-render`.
 - **Threading:** none; the queue's step stays on the render thread.
