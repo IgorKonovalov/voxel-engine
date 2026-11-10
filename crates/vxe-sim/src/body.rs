@@ -239,8 +239,20 @@ pub(crate) fn collect(
     stats: &mut QueryStats,
 ) -> Vec<SolidBox> {
     let mut out = Vec::new();
+    collect_into(world, lo, hi, stats, &mut out);
+    out
+}
+
+/// [`collect`] appending to `out`.
+fn collect_into(
+    world: &World,
+    lo: [i64; 3],
+    hi: [i64; 3],
+    stats: &mut QueryStats,
+    out: &mut Vec<SolidBox>,
+) {
     if (0..3).any(|k| lo[k] >= hi[k]) {
-        return out;
+        return;
     }
     let one = FIXED_ONE;
     let (ce, be) = (i64::from(CHUNK_EDGE), i64::from(BRICK_EDGE));
@@ -299,7 +311,72 @@ pub(crate) fn collect(
             }
         }
     }
-    out
+}
+
+/// The solid boxes of a region, collected once and read by every query inside it.
+///
+/// The boxes of a region `R` inside the collected one are, in order, the collected boxes that
+/// meet `R`: [`collect`]'s order (ascending chunk, brick, voxel) is the same order restricted.
+/// A query over the larger list that takes only the boxes meeting its region, and the first
+/// box in order of any it looks for, reads what [`collect`] over `R` would have given.
+pub(crate) struct Boxes {
+    lo: [i64; 3],
+    hi: [i64; 3],
+    list: Vec<SolidBox>,
+    /// The boxes of the last region asked for, taken from `list`.
+    sub: Vec<SolidBox>,
+    /// Collections made, for tests.
+    pub(crate) collections: u64,
+}
+
+impl Boxes {
+    pub(crate) const fn new() -> Self {
+        Self {
+            lo: [0; 3],
+            hi: [0; 3],
+            list: Vec::new(),
+            sub: Vec::new(),
+            collections: 0,
+        }
+    }
+
+    /// Collects the boxes of `[lo, hi)` afresh, reusing the list's storage.
+    pub(crate) fn collect(&mut self, world: &World, lo: [i64; 3], hi: [i64; 3]) {
+        self.list.clear();
+        collect_into(world, lo, hi, &mut QueryStats::default(), &mut self.list);
+        (self.lo, self.hi) = (lo, hi);
+        self.collections += 1;
+    }
+
+    /// The boxes meeting `[lo, hi)`, in [`collect`]'s order: [`Boxes::cover`]'s list
+    /// restricted to them, so a query scans only its own region's boxes.
+    pub(crate) fn select(&mut self, world: &World, lo: [i64; 3], hi: [i64; 3]) -> &[SolidBox] {
+        self.cover(world, lo, hi);
+        self.sub.clear();
+        self.sub
+            .extend(self.list.iter().filter(|x| x.intersects(lo, hi)).copied());
+        &self.sub
+    }
+
+    /// The boxes of a region holding `[lo, hi)`: the held list, or, when `[lo, hi)` reaches
+    /// past it, a list collected anew over the smallest box holding both.
+    pub(crate) fn cover(&mut self, world: &World, lo: [i64; 3], hi: [i64; 3]) -> &[SolidBox] {
+        let empty = (0..3).any(|k| lo[k] >= hi[k]);
+        let inside = (0..3).all(|k| lo[k] >= self.lo[k] && hi[k] <= self.hi[k]);
+        if !empty && !inside {
+            let held = (0..3).all(|k| self.lo[k] < self.hi[k]);
+            let (ulo, uhi) = if held {
+                (
+                    [0, 1, 2].map(|k| lo[k].min(self.lo[k])),
+                    [0, 1, 2].map(|k| hi[k].max(self.hi[k])),
+                )
+            } else {
+                (lo, hi)
+            };
+            self.collect(world, ulo, uhi);
+        }
+        &self.list
+    }
 }
 
 #[cfg(test)]

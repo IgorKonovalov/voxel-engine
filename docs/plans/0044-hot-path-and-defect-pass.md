@@ -529,8 +529,8 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 | 3: the frame builds its bind groups once per size | dev | not started | |
 | 4: the sync sizes only what it uploads | dev | not started | |
 | 5: the march walks without reading what it discards | dev | not started | |
-| 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | committed with this row |
-| 7: the controller and the server stop repeating work | dev | not started | |
+| 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | ebd54e3 |
+| 7: the controller and the server stop repeating work | dev | done; deviations: the box list is per-thread scratch with a recollect past its region, and covers the usual sweeps only; the counting test is in `vxe-sim/tests/controller.rs`; inputs are logged after the logic's tick | committed with this row |
 | 8: the guards that were missing | dev | not started | |
 
 ### Notes
