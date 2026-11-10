@@ -25,6 +25,8 @@ Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev 
 
 The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
 
+**GPU half done 2026-11-10 at 50b2193:** 25 files renamed to `tests/gpu_*.rs` (every vxe-render integration test, which the old package rule covered, and 17 fly-through binaries), the profiles filter on `binary(/^gpu_/)`, `check-test-tiers` checks the prefix. Tier membership unchanged. **Soak half open:** 34 reading-only tests are already `#[ignore]`d (no `"soak"` reason a filter could see), so `--run-ignored only` would add them to soak and `--run-ignored all` to full. How to tell readings from soak is an owner call; until then the soak list keeps its copies.
+
 
 ### The live queue's order and cancellation, after Plan 0059
 
