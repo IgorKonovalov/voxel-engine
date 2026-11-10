@@ -78,8 +78,8 @@ For each phase, in order:
      in no gate. `--profile gate` (quick plus gpu, every crate) is for the plan's tip, not a
      phase. `--profile soak` and `--profile full` run only when the owner asks. A bare
      `cargo nextest run` is the full suite.
-   - **A new test file that opens a GPU device** goes into the gpu filter;
-     `node scripts/check-test-tiers.mjs` fails until it does and names the file and the entry.
+   - **A test file that opens a GPU device** is named `tests/gpu_*.rs`, which is all that puts
+     it in the gpu tier; `node scripts/check-test-tiers.mjs` fails until it is and names the file.
    - **A test "passes" only when you've read its assertion body** and it asserts the behavior the
      plan named, with the exact values. `assert!(result.is_ok())` doesn't defend "returns
      `{3: 4169}`".

@@ -1,4 +1,4 @@
-//! The aliasing reads on the final image (`tests/strip.rs`): frame-to-frame change in 8-bit
+//! The aliasing reads on the final image (`tests/gpu_strip.rs`): frame-to-frame change in 8-bit
 //! levels, the fold over the jitter's cycle, the pan's crawl, and the class mask that sorts
 //! display pixels by what lies under them.
 //!

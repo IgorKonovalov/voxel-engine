@@ -67,7 +67,7 @@
 //!
 //! Example (the RTX, under the perf lock and the memory cap):
 //! `VXE_TEST_ADAPTER=rtx VXE_STRIP_TAG=lamp-off VXE_STRIP_SOURCE=level VXE_STRIP_LAMP_AT=60
-//! cargo test --release -p flythrough --test strip -- --ignored --nocapture`.
+//! cargo test --release -p flythrough --test gpu_strip -- --ignored --nocapture`.
 
 mod support;
 

@@ -72,7 +72,7 @@ pub const FLY_IN_LENGTH: f32 = 160.0;
 /// The steady flight's frames, and the first frame the flicker's `K` reads.
 pub const FLIGHT_FRAMES: usize = 360;
 pub const SHIMMER_FROM: usize = 64;
-/// The strip tool's flight (`tests/strip.rs`): voxels a second along the view, its yaw rate in
+/// The strip tool's flight (`tests/gpu_strip.rs`): voxels a second along the view, its yaw rate in
 /// degrees a second, and its frames.
 pub const STRIP_SPEED: f32 = 40.0;
 pub const STRIP_YAW: f32 = 12.0;
@@ -2049,7 +2049,7 @@ impl StripDots {
     }
 }
 
-/// The strip tool's flight (`tests/strip.rs`): along the view at `STRIP_SPEED` with the yaw at
+/// The strip tool's flight (`tests/gpu_strip.rs`): along the view at `STRIP_SPEED` with the yaw at
 /// `STRIP_YAW`, from a start settled `SETTLE` frames. The camera may enter rock, as the tool's
 /// does.
 pub fn strip_dots(level: &VeinLevel, pose: &Pose, setting: Setting) -> StripDots {

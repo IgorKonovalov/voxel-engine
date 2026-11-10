@@ -1,4 +1,4 @@
-//! SEEDED: `test = true`, and its test module opens an adapter; not in the gpu filter.
+//! SEEDED: `test = true`, and its test module opens an adapter; its name lacks the `gpu_` prefix.
 fn main() {
     let _ = wgpu::Instance::default();
 }
