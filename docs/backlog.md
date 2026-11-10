@@ -30,11 +30,7 @@ The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), n
 
 ### The live queue's order and cancellation, after Plan 0059
 
-Parked 2026-11-09 (owner, Plan 0059 Phase 13's window; a new plan after 0059's close). Two complaints about the baked light's live queue (`docs/plans/logs/0059.md`, Phase 13):
-- **Far light waits for the camera:** "light is not recalculated until I come closer, it would be better to recalculate all in the field of view, starting from the nearest chunks". A re-bake order by view, nearest first, out to the light's reach.
-- **A fast flight settles slowly, even coarse:** "we are starting to calculate places that camera is already passed. We should be able to cancel it when camera passed". Drop or demote queued jobs behind the camera.
-
-The third complaint, "a lot of aliasing" at the hall (`live/session13-hall-aliasing.png` in the lane), goes to the parked antialiasing plan below.
+Taken 2026-11-10 by [Plan 0060](plans/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
 
 
 ## Engine mechanisms
@@ -100,12 +96,7 @@ The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Pla
 
 ### Far normal range: the owner picked `[1, 2]`
 
-Plan 0055 shipped `[2, 6]` as a provisional pick. Plan 0056's window (2026-11-04) picked `[1, 2]`
-by eye, against a headless reading of about 7 times `[2, 6]`'s still jumps under FSR 2, and
-named the edge dots left at `[1, 2]` the next aliasing item. Owed: a plan whose first phase
-makes `[1, 2]` the default with ADR-0042's Outcome, then the edge dots, and removes the emitter
-cap knob (Plan 0056's Followups). Draft it with the antialiasing plan at Plan 0059's Phase 3 verdict;
-Plan 0059's reference runs at `[1, 2]` by flag meanwhile.
+Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): picked again under the store read in its window, landed in its Phase 5, ADR-0042's Outcome at its close; the emitter cap goes in Phase 5.
 
 ### The lamp channel's faults
 
@@ -117,9 +108,7 @@ the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Pick up 
 
 ### Slow-pan verdict for FSR 2 (ADR-0034)
 
-The slow pan ADR-0034 named as FSR 2's verdict ran in Plan 0056's window (2026-11-04, steps 2
-and 5b), and the owner's word was "FSR 2 at 1.5 stays". Owed: ADR-0034's dated Outcome, written
-with the far-normal plan above.
+Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): ADR-0034's dated Outcome is written at its close.
 
 ## Tooling and process
 
@@ -257,16 +246,4 @@ materials, a sky and a way to build interesting architecture.
 
 ### Antialiasing after the look-first light
 
-Decided 2026-11-05 (owner, Plan 0057's second window): "antializing next", after the emissive-only
-reference of the look-first Plan 0059. The owner's fast turn "still has artifacts" (step 1); the
-reference runs with no upscaler, so it tells the light's part from the image's. Parked again
-2026-11-06 at Plan 0059's Phase 3 verdict. Asked whether the reference's edges or fast turn
-bothered them (baked, native, no upscaler, no jitter), the owner answered "Barely noticed", and on
-the order, "Cuts first, then AA". So Plan 0059's Part 2 runs first. Phase 2's fast-yaw rows
-(`docs/plans/logs/0059.md`) are the starting reading. Pick up when the owner calls it, or when
-Plan 0059's Phase 10 or 11 reads edges as the remaining fault.
-2026-11-09, Plan 0059 Phase 8e's window (native, no upscaler, far normal 1..2, the live queue): the
-owner, on the hall, "we need to work on antializing later, but much better than before". Still
-later; the 8d window's hall (FSR 2 at 1.5, far normal 2..6) was the worse one.
-2026-11-09, Plan 0059 Phase 13's window (the fly-through's defaults: FSR 2 at 1.5, the baked light): the hall,
-"a lot of aliasing on this step, doesn't look good" (the lane's `live/session13-hall-aliasing.png`).
+Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) and [ADR-0049](adrs/0049-the-baked-light-is-read-by-the-far-shading-normal.md) (both draft, 2026-11-10). The history of the owner's words is in the plan's Context.
