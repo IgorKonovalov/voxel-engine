@@ -539,7 +539,7 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
   overflow, a separate source hold, buffers kept on the mixer with the recycler gone; plus the
   output-hash test of finding 9. Commit: 45ec573.
 - Fix pass, finding 3 (raycast bench origin in rock): four origins in a carved hall with
-  boulders; base and tip re-read. Commit: committed with this line.
+  boulders; base and tip re-read. Commit: c6c3bbb.
 - Fix pass, finding 2 (two handovers within the spare's cleaning time zero it in one block):
   not fixed; an owner question (readings log, "Fix pass").
 
