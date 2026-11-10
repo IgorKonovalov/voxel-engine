@@ -25,7 +25,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 | [0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: what paces it, workers that leave no core, readbacks that wait | approved | Code health. Phase 1 a spike, beside 0060; the rest after it. Takes 0044's Phase 2. |
 | [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | approved | Code health. After 0060 and 0064, before 0061's Phase 2; only if 0064's spike confirms. |
-| [0066](0066-test-cost-a-10-s-soak-line-and-named-gpu-binaries-per-phase.md) | Test cost: a 10 s soak line, and the gpu binaries a phase names | draft | Harness chore. Side lane beside 0060; touches no render source. Gate under 12 min is its done-when. |
+| [0066](0066-test-cost-a-10-s-soak-line-and-named-gpu-binaries-per-phase.md) | Test cost: a 10 s soak line, and the gpu binaries a phase names | approved | Harness chore. Side lane beside 0060; touches no render source. Gate under 12 min is its done-when. |
 <!-- roster:end -->
 
 ## Sequence

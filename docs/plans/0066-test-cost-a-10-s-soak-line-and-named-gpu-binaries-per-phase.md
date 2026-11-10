@@ -1,6 +1,6 @@
 # 0066: Test cost: a 10 s soak line, and the gpu binaries a phase names
 
-> **Status:** draft
+> **Status:** approved (owner go 2026-11-10; side lane beside Plan 0060)
 > **Created:** 2026-11-10
 > **Milestone:** none (harness chore; `docs/nfr.md` section 7)
 > **Related ADRs:** none. The rejected alternatives (below, Decision) are a process call, recorded
