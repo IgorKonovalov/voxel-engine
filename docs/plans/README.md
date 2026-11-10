@@ -40,8 +40,8 @@ Each starts on main after the one before it closes, unless its line says otherwi
    Its Phase 0 re-measures and the architect confirms the seams before a file moves.
 6. **Two owed plans, not drafted**: removing the `own` upscaler, and the render settings and
    profiles plan that holds M10 against the budget (`docs/backlog.md`).
-7. **M6, entities: Plan 0062, then Plan 0063** (the architect's proposal of 2026-11-10 for
-   their place, ahead of M10 because the first consumer is a cave game; the owner confirms).
+7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
+   because the first consumer is a cave game).
    0062's Phase 1 and 0063's Phases 1 and 2 add files only and may run as a side lane from now.
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.

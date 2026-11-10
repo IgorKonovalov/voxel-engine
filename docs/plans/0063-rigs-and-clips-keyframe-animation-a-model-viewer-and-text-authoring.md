@@ -274,7 +274,8 @@ No GPU memory is added: a clip changes transforms, not volumes.
 
 1. **Animation:** the engine plays keyframe clips (this plan; Plan 0062 takes the poses).
 2. **Authoring:** the owner makes models or asks the agent to; no editor is built (the
-   architect's recommendation, not yet confirmed by the owner in words).
+   architect's recommendation; the owner: "agreed").
+3. **The order:** after Plan 0062, ahead of M10.
 
 Open: the "go"; the two questions under Risks.
 
