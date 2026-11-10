@@ -1,6 +1,6 @@
 # 0060: The live queue by the view, nearest first, and withdrawing the work a flight has passed
 
-> **Status:** draft (amended 2026-11-10, review pass)
+> **Status:** approved (owner go 2026-11-10), amended 2026-11-10 (review pass)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes, emissive voxels
 > as the light")

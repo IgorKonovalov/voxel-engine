@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** draft (amended 2026-11-10, review pass)
+> **Status:** approved (owner go 2026-11-10: Phase 1 beside Plan 0060, Phase 2 on after 0060 merges), amended 2026-11-10 (review pass)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
