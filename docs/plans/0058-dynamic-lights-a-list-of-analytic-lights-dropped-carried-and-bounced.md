@@ -1,6 +1,7 @@
 # 0058: Dynamic lights: a list of eight analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
 
-> **Status:** draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
+> **Status:** approved (owner go 2026-11-10; the lane starts after Plan 0061 merges and the
+> architect's re-read below), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
 > phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
 > flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5)
 > **Created:** 2026-11-04
@@ -24,7 +25,7 @@
 > [Plan 0044](0044-hot-path-and-defect-pass.md) and
 > [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md). Plan 0061 edits
 > `temporal.wgsl` (the store read), `composite.wgsl` (the emitter cap) and `Lighting` (one bit),
-> the files Phases 1 and 2 here change. **Before the go the architect re-reads Phases 1 and 2
+> the files Phases 1 and 2 here change. **Before the lane starts the architect re-reads Phases 1 and 2
 > against Plan 0061's tip** and refreshes their paths; bit and binding numbers in this plan are
 > "the next free at the start commit", which dev reads from the tree.
 
@@ -624,7 +625,8 @@ will be lighting up walls of cave"; "yes, amend the plan"):
    reads the trail behind it. This replaces "no thrown arc" in answer 3 as far as a straight
    flight; an arc stays the consumer's.
 
-Open: the "go", after the architect's re-read against Plan 0061's tip. The keys (`1` to `6`)
+The "go" is given (owner, 2026-11-10: "move all draft plans to approved"); the lane starts
+after the architect's re-read against Plan 0061's tip. The keys (`1` to `6`)
 are the architect's picks from the unbound ones and dev may move them if a binding collides.
 
 ## Implementation log

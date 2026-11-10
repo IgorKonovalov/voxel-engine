@@ -18,11 +18,11 @@ state from `git log`. Completed plans move to `done/`.
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | approved | Code health. After Plan 0058; Phases 1, 6, 7 may run beside the drafts. Phase 0 re-inventories. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health. After Plan 0044, last before M10. Phase 0 re-measures; the architect confirms the seams. |
-| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | draft | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0061; re-read Phases 1-2 at its tip. |
+| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | approved | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0061; re-read Phases 1-2 at its tip. |
 | [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: one score of distance and angle, tuned by eye; passed jobs withdrawn | approved | M2, ADR-0048 (proposed). Amended 2026-11-10. First in the order; 0061's Phase 1 beside it. |
 | [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | approved | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
-| [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | draft | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
-| [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | draft | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
+| [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
+| [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 <!-- roster:end -->
 
 ## Sequence
@@ -33,7 +33,7 @@ Each starts on main after the one before it closes, unless its line says otherwi
 1. **Plan 0060**, the live queue. Plan 0061's Phase 1 (readings only) may run beside it.
 2. **Plan 0061**, antialiasing, from its Phase 2 once 0060 has merged.
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
-   before the go, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
+   before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
 4. **Plan 0044**, the hot-path pass. Its Phases 1, 6 and 7 (audio, world, sim and net) touch no
    file of 0058, 0060 or 0061 and may run as a side lane at any point above.
 5. **Plan 0045**, the structure pass, last because it moves the files every plan above edits.
@@ -46,7 +46,10 @@ Each starts on main after the one before it closes, unless its line says otherwi
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
-Drafts 0058, 0062 and 0063 await the owner's go. The approved plans were amended on 2026-11-10;
+Every active plan is approved (owner, 2026-11-10). Approval accepts the design; a plan's lane
+starts only when the plans its "Starts after" line names have closed and merged, and where that
+line asks for it, after the architect has re-read the plan against the new tip. The approved
+plans were amended on 2026-11-10;
 their figures for wall time and frame cost are estimates until a phase measures them.
 
 ## Recently closed

@@ -1,6 +1,7 @@
 # 0063: Rigs and clips: keyframe animation sampled by tick, a rig text file beside the `.vox`, a model viewer in the fly-through, and voxels from text
 
-> **Status:** draft (2026-11-10)
+> **Status:** approved (owner go 2026-11-10; Phases 1 and 2 start after Plan 0062's Phase 1
+> merges, Phases 3 and 4 after Plan 0062 closes)
 > **Created:** 2026-11-10
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
@@ -277,7 +278,8 @@ No GPU memory is added: a clip changes transforms, not volumes.
    architect's recommendation; the owner: "agreed").
 3. **The order:** after Plan 0062, ahead of M10.
 
-Open: the "go"; the two questions under Risks.
+The "go" is given (owner, 2026-11-10: "move all draft plans to approved"). Open: the two
+questions under Risks.
 
 ## Implementation log
 
