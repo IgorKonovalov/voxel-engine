@@ -14,12 +14,16 @@
 //! [`World::trace_materials`] walks the same cells through solids as well as air: a missing
 //! chunk is one 64³ cell of air, any `Uniform` brick one 8³ cell of its material, a clear 2³
 //! block one cell of air, and it reports the runs of equal material the ray crosses.
+//!
+//! Both walks hold the store map's read lock for their run and read through a
+//! [`ChunkReader`], so a run of steps inside one chunk costs one map lookup and one chunk lock.
 
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, VoxelCoord};
 use crate::edit::EditError;
 use crate::fixed::{FIXED_ONE, Fixed3};
 use crate::material::{AIR, MaterialId};
-use crate::store::{World, read};
+use crate::store::World;
+use crate::store::{ChunkReader, read};
 
 /// The face of the hit voxel the ray entered through: `NegZ` is the face at the voxel's
 /// minimum z, entered by a ray travelling toward +z.
@@ -120,6 +124,8 @@ impl World {
 
     /// The walk of [`World::raycast_exact`] and the cells it looked at.
     fn raycast_walk(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> (Option<ExactHit>, u64) {
+        let map = read(&self.store.chunks);
+        let mut reader = ChunkReader::new(&map);
         let mut steps = 0;
         let o = origin.0.map(i128::from);
         let d = dir.map(i128::from);
@@ -133,7 +139,7 @@ impl World {
             }
             let v = voxel_at(o, d, num, den);
             steps += 1;
-            let size = match self.cell(v) {
+            let size = match cell(&mut reader, v) {
                 Cell::Solid(material) => {
                     let hit = ExactHit {
                         hit: Hit {
@@ -194,12 +200,14 @@ impl World {
         let d = dir.map(i128::from);
         let one = i128::from(FIXED_ONE);
         let max = i128::from(max_t);
+        let map = read(&self.store.chunks);
+        let mut reader = ChunkReader::new(&map);
         let (mut num, mut den): (i128, i128) = (0, 1);
         // The open run: its material and entry parameter.
         let mut open: Option<(MaterialId, i64)> = None;
         loop {
             let v = voxel_at(o, d, num, den);
-            let (material, size) = self.material_cell(v);
+            let (material, size) = material_cell(&mut reader, v);
             let t = num.div_euclid(den) as i64;
             match open {
                 Some((m, _)) if m == material => {}
@@ -243,51 +251,49 @@ impl World {
             }
         }
     }
+}
 
-    /// The material at `v` and the edge of the cell sharing it: a missing chunk (air), a
-    /// `Uniform` brick, a clear 2³ block of a `Full` brick (air), or one voxel of a `Full`
-    /// brick.
-    fn material_cell(&self, v: [i64; 3]) -> (MaterialId, i64) {
-        let [Ok(x), Ok(y), Ok(z)] = v.map(i32::try_from) else {
-            return (AIR, i64::from(CHUNK_EDGE));
-        };
-        let v = VoxelCoord([x, y, z]);
-        let Some(chunk) = self.store.get(v.chunk()) else {
-            return (AIR, i64::from(CHUNK_EDGE));
-        };
-        let chunk = read(&chunk);
-        let brick = chunk.brick(v.brick_slot());
-        if !brick.is_full() {
-            (brick.get(0), i64::from(BRICK_EDGE))
-        } else if brick.block_clear(local(v)) {
-            (AIR, 2)
-        } else {
-            (brick.get(v.index_in_brick()), 1)
-        }
+/// The material at `v` and the edge of the cell sharing it: a missing chunk (air), a
+/// `Uniform` brick, a clear 2³ block of a `Full` brick (air), or one voxel of a `Full`
+/// brick.
+fn material_cell(reader: &mut ChunkReader<'_>, v: [i64; 3]) -> (MaterialId, i64) {
+    let [Ok(x), Ok(y), Ok(z)] = v.map(i32::try_from) else {
+        return (AIR, i64::from(CHUNK_EDGE));
+    };
+    let v = VoxelCoord([x, y, z]);
+    let Some(chunk) = reader.chunk(v.chunk()) else {
+        return (AIR, i64::from(CHUNK_EDGE));
+    };
+    let brick = chunk.brick(v.brick_slot());
+    if !brick.is_full() {
+        (brick.get(0), i64::from(BRICK_EDGE))
+    } else if brick.block_clear(local(v)) {
+        (AIR, 2)
+    } else {
+        (brick.get(v.index_in_brick()), 1)
     }
+}
 
-    /// The material at `v` if solid, else the edge of the empty cell to skip.
-    fn cell(&self, v: [i64; 3]) -> Cell {
-        // Beyond the i32 lattice no chunk can be resident.
-        let [Ok(x), Ok(y), Ok(z)] = v.map(i32::try_from) else {
-            return Cell::Empty(i64::from(CHUNK_EDGE));
-        };
-        let v = VoxelCoord([x, y, z]);
-        let Some(chunk) = self.store.get(v.chunk()) else {
-            return Cell::Empty(i64::from(CHUNK_EDGE));
-        };
-        let chunk = read(&chunk);
-        let brick = chunk.brick(v.brick_slot());
-        if !brick.is_full() && brick.get(0) == AIR {
-            return Cell::Empty(i64::from(BRICK_EDGE));
-        }
-        if brick.block_clear(local(v)) {
-            return Cell::Empty(2);
-        }
-        match brick.get(v.index_in_brick()) {
-            AIR => Cell::Empty(1),
-            m => Cell::Solid(m),
-        }
+/// The material at `v` if solid, else the edge of the empty cell to skip.
+fn cell(reader: &mut ChunkReader<'_>, v: [i64; 3]) -> Cell {
+    // Beyond the i32 lattice no chunk can be resident.
+    let [Ok(x), Ok(y), Ok(z)] = v.map(i32::try_from) else {
+        return Cell::Empty(i64::from(CHUNK_EDGE));
+    };
+    let v = VoxelCoord([x, y, z]);
+    let Some(chunk) = reader.chunk(v.chunk()) else {
+        return Cell::Empty(i64::from(CHUNK_EDGE));
+    };
+    let brick = chunk.brick(v.brick_slot());
+    if !brick.is_full() && brick.get(0) == AIR {
+        return Cell::Empty(i64::from(BRICK_EDGE));
+    }
+    if brick.block_clear(local(v)) {
+        return Cell::Empty(2);
+    }
+    match brick.get(v.index_in_brick()) {
+        AIR => Cell::Empty(1),
+        m => Cell::Solid(m),
     }
 }
 
@@ -327,6 +333,39 @@ mod tests {
     use super::*;
     use crate::fixed::centre_of_voxel;
     use crate::material::MaterialTable;
+
+    /// A walk reads a chunk once per run of steps inside it: a ray through three resident
+    /// air chunks, ending in the third, makes three store lookups, and so does
+    /// `trace_materials` over the same ray.
+    #[test]
+    fn a_ray_across_three_resident_chunks_looks_up_three() {
+        use crate::chunk::Chunk;
+        use crate::coords::ChunkCoord;
+        use crate::store::READER_LOOKUPS;
+        let world = World::new(&MaterialTable::new());
+        for x in 0..3 {
+            world.store.insert(ChunkCoord([x, 0, 0]), Chunk::default());
+        }
+        let lookups = |f: &dyn Fn()| {
+            let before = READER_LOOKUPS.with(std::cell::Cell::get);
+            f();
+            READER_LOOKUPS.with(std::cell::Cell::get) - before
+        };
+        // From voxel 5 to voxel 150 along +x: chunks 0, 1 and 2.
+        let o = centre_of_voxel([5, 7, 3]);
+        let max_t = (150 - 5) * 256;
+        let n = lookups(&|| {
+            let (hit, steps) = world.raycast_with_stats(o, [256, 0, 0], max_t).unwrap();
+            assert_eq!(hit, None);
+            assert!(steps > 3, "{steps} steps");
+        });
+        assert_eq!(n, 3, "raycast");
+        let n = lookups(&|| {
+            let runs = world.trace_materials(o, [256, 0, 0], max_t).unwrap();
+            assert_eq!(runs.len(), 1);
+        });
+        assert_eq!(n, 3, "trace_materials");
+    }
 
     /// The longest ray the default limits accept, from a voxel centre through a world with
     /// nothing resident, steps through 64-voxel cells: at most 258 steps along an axis and

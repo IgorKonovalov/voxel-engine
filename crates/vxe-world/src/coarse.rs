@@ -16,7 +16,7 @@ use crate::coords::{
 use crate::edit::EditResult;
 use crate::material::{AIR, MaterialId};
 use crate::query::QueryStats;
-use crate::store::{World, read};
+use crate::store::{ChunkReader, World, read};
 
 /// One brick's summary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -209,8 +209,10 @@ impl CoarseGrid {
         self.cells.len() * CHUNK_BRICKS * size_of::<CoarseCell>()
     }
 
-    /// Recomputes the cells of the bricks inside `result.aabb`, in chunks the grid holds, and
-    /// returns those that changed, sorted by `(chunk, slot)`.
+    /// Recomputes the cells of the bricks inside `result.aabb`, in the chunks of
+    /// `result.touched` (ascending, as every result lists them) the grid holds, and returns
+    /// those that changed, sorted by `(chunk, slot)`. A chunk an edit did not touch holds no
+    /// changed brick, so it is not read.
     pub fn update(&mut self, world: &World, result: &EditResult) -> Vec<CellChange> {
         self.update_with_stats(world, result).0
     }
@@ -231,7 +233,13 @@ impl CoarseGrid {
         world: &World,
         result: &EditResult,
     ) -> (Vec<CellChange>, QueryStats) {
-        self.update_aabb_with_stats(world, result.aabb)
+        self.update_chunks(world, result.aabb, |lo, hi, f| {
+            for &c in &result.touched {
+                if (0..3).all(|k| (lo[k]..=hi[k]).contains(&c.0[k])) {
+                    f(c);
+                }
+            }
+        })
     }
 
     /// [`CoarseGrid::update_aabb`] plus the voxel arrays it read.
@@ -239,6 +247,26 @@ impl CoarseGrid {
         &mut self,
         world: &World,
         aabb: Option<(VoxelCoord, VoxelCoord)>,
+    ) -> (Vec<CellChange>, QueryStats) {
+        self.update_chunks(world, aabb, |lo, hi, f| {
+            for cx in lo[0]..=hi[0] {
+                for cy in lo[1]..=hi[1] {
+                    for cz in lo[2]..=hi[2] {
+                        f(ChunkCoord([cx, cy, cz]));
+                    }
+                }
+            }
+        })
+    }
+
+    /// Recomputes the cells of the bricks inside `aabb` in the chunks `chunks` calls its
+    /// callback with, ascending, given the aabb's inclusive chunk bounds; skips the chunks the
+    /// grid or the world lacks.
+    fn update_chunks(
+        &mut self,
+        world: &World,
+        aabb: Option<(VoxelCoord, VoxelCoord)>,
+        chunks: impl FnOnce([i32; 3], [i32; 3], &mut dyn FnMut(ChunkCoord)),
     ) -> (Vec<CellChange>, QueryStats) {
         let mut stats = QueryStats::default();
         let mut out = Vec::new();
@@ -248,42 +276,37 @@ impl CoarseGrid {
         let (ce, be) = (CHUNK_EDGE, BRICK_EDGE);
         let clo = lo.0.map(|v| v.div_euclid(ce));
         let chi = hi.0.map(|v| v.div_euclid(ce));
-        for cx in clo[0]..=chi[0] {
-            for cy in clo[1]..=chi[1] {
-                for cz in clo[2]..=chi[2] {
-                    let c = [cx, cy, cz];
-                    let coord = ChunkCoord(c);
-                    let Some(cells) = self.cells.get_mut(&coord) else {
-                        continue;
-                    };
-                    let Some(chunk) = world.store.get(coord) else {
-                        continue;
-                    };
-                    let chunk = read(&chunk);
-                    let blo = [0, 1, 2].map(|k| (lo.0[k].max(c[k] * ce) - c[k] * ce) / be);
-                    let bhi = [0, 1, 2].map(|k| (hi.0[k].min(c[k] * ce + ce - 1) - c[k] * ce) / be);
-                    // z, then y, then x: ascending slot order.
-                    let slots = (blo[2]..=bhi[2]).flat_map(|bz| {
-                        (blo[1]..=bhi[1]).flat_map(move |by| {
-                            (blo[0]..=bhi[0]).map(move |bx| brick_slot([bx, by, bz]))
-                        })
+        let map = read(&world.store.chunks);
+        let mut reader = ChunkReader::new(&map);
+        chunks(clo, chi, &mut |coord| {
+            let c = coord.0;
+            let Some(cells) = self.cells.get_mut(&coord) else {
+                return;
+            };
+            let Some(chunk) = reader.chunk(coord) else {
+                return;
+            };
+            let blo = [0, 1, 2].map(|k| (lo.0[k].max(c[k] * ce) - c[k] * ce) / be);
+            let bhi = [0, 1, 2].map(|k| (hi.0[k].min(c[k] * ce + ce - 1) - c[k] * ce) / be);
+            // z, then y, then x: ascending slot order.
+            let slots = (blo[2]..=bhi[2]).flat_map(|bz| {
+                (blo[1]..=bhi[1])
+                    .flat_map(move |by| (blo[0]..=bhi[0]).map(move |bx| brick_slot([bx, by, bz])))
+            });
+            for slot in slots {
+                let after = CoarseCell::of_counted(chunk.brick(slot), &mut stats);
+                let before = cells[slot];
+                if after != before {
+                    cells[slot] = after;
+                    out.push(CellChange {
+                        chunk: coord,
+                        slot: slot as u16,
+                        before,
+                        after,
                     });
-                    for slot in slots {
-                        let after = CoarseCell::of_counted(chunk.brick(slot), &mut stats);
-                        let before = cells[slot];
-                        if after != before {
-                            cells[slot] = after;
-                            out.push(CellChange {
-                                chunk: coord,
-                                slot: slot as u16,
-                                before,
-                                after,
-                            });
-                        }
-                    }
                 }
             }
-        }
+        });
         (out, stats)
     }
 }

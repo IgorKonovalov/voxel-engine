@@ -524,12 +524,12 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 0: the inventory at the start commit | dev | side-lane rows only (Phases 1, 6, 7); the render rows wait for Phases 2-5, 8 | e1388e1 |
-| 1: the audio callback frees nothing and zeroes nothing large | dev | done; deviations: `lib.rs` exports `Recycler` and `ReverbClears` (not in Files touched); the FDN clear swaps with a third spare set of lines (+1.8 MB); the paired mixer bench reads +0.2 to +0.8 % (kept: it removes the counted frees) | committed with this row |
+| 1: the audio callback frees nothing and zeroes nothing large | dev | done; deviations: `lib.rs` exports `Recycler` and `ReverbClears` (not in Files touched); the FDN clear swaps with a third spare set of lines (+1.8 MB); the paired mixer bench reads +0.2 to +0.8 % (kept: it removes the counted frees) | ab366e7 |
 | 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | not started | |
 | 3: the frame builds its bind groups once per size | dev | not started | |
 | 4: the sync sizes only what it uploads | dev | not started | |
 | 5: the march walks without reading what it discards | dev | not started | |
-| 6: the world reads a chunk once per run of steps | dev | not started | |
+| 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | committed with this row |
 | 7: the controller and the server stop repeating work | dev | not started | |
 | 8: the guards that were missing | dev | not started | |
 

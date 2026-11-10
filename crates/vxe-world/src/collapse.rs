@@ -17,16 +17,14 @@
 //! the same voxels and result everywhere.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use crate::brick::{Brick, RawBrick, SpareArrays};
-use crate::chunk::Chunk;
 use crate::coarse::CellCoord;
 use crate::coords::{BRICK_EDGE, ChunkCoord, VoxelCoord, index_in_brick};
 use crate::edit::{EditError, EditResult};
 use crate::material::{AIR, MaterialId, MaterialTable};
-use crate::packed::{KernelMode, PackedStats};
-use crate::store::{World, read, write};
+use crate::packed::{KernelMode, PackedStats, bounds_of};
+use crate::store::{ChunkMap, ChunkReader, World, read, write};
 use crate::support::{CellKey, CellMap};
 
 /// What [`World::drop_region`] and [`World::drop_region_through`] did.
@@ -118,8 +116,6 @@ impl PileResult {
     }
 }
 
-type ChunkMap = HashMap<ChunkCoord, Arc<RwLock<Chunk>>>;
-
 const BE: i32 = BRICK_EDGE;
 
 /// The cell holding voxel `v`.
@@ -132,35 +128,46 @@ fn index_of(v: [i32; 3]) -> usize {
     index_in_brick(v.map(|c| c.rem_euclid(BE)))
 }
 
-/// Brick reads over the store map with the current chunk's read lock kept between reads.
-struct Reader<'m> {
-    map: &'m ChunkMap,
-    cur: Option<(ChunkCoord, RwLockReadGuard<'m, Chunk>)>,
+/// The bit of voxel `v` in its brick's layer words: bit `x + 8 y` of word `z`.
+fn bit_of(v: [i32; 3]) -> (usize, u64) {
+    let i = index_of(v);
+    (i / 64, 1 << (i % 64))
 }
 
-impl<'m> Reader<'m> {
-    fn new(map: &'m ChunkMap) -> Self {
-        Self { map, cur: None }
-    }
-
-    /// The brick of cell `c`, or its chunk's coordinate when that is not resident.
-    fn brick(&mut self, c: CellCoord) -> Result<&Brick, ChunkCoord> {
-        let (chunk, slot) = c.split();
-        if self.cur.as_ref().is_none_or(|(k, _)| *k != chunk) {
-            self.cur = None;
-            let lock = self.map.get(&chunk).ok_or(chunk)?;
-            self.cur = Some((chunk, read(lock)));
+/// The 64 voxel columns of `b`, index `x + 8 y`, each bottom first: one decode of the brick.
+fn brick_columns(b: &Brick) -> [[MaterialId; 8]; 64] {
+    match b {
+        Brick::Uniform(m) => [[*m; 8]; 64],
+        Brick::Full(p) => {
+            let mut v = [AIR; crate::coords::BRICK_VOXELS];
+            p.decode(&mut v);
+            std::array::from_fn(|xy| std::array::from_fn(|z| v[64 * z + xy]))
         }
-        let (_, guard) = self.cur.as_ref().expect("set above");
-        Ok(guard.brick(slot))
     }
+}
+
+/// Calls `f(material, n)` for each non-air material of `b` under `sel`, ascending, `n > 0`.
+fn counts_under(b: &Brick, sel: &[u64; 8], f: &mut impl FnMut(MaterialId, u32)) {
+    match b {
+        Brick::Uniform(AIR) => {}
+        Brick::Uniform(m) => {
+            let n = sel.iter().map(|w| w.count_ones()).sum();
+            if n > 0 {
+                f(*m, n);
+            }
+        }
+        Brick::Full(p) => p.counts_under(sel, f),
+    }
+}
+
+/// The brick-local inclusive bounds of the set bits of `mask`, or `None`.
+fn local_bounds(mask: &[u64; 8]) -> Option<([i32; 3], [i32; 3])> {
+    bounds_of(mask).map(|(lo, hi)| (lo.map(i32::from), hi.map(i32::from)))
 }
 
 /// The region's bricks as they were when the op started.
 struct Snapshot {
-    /// Decoded, for the voxel scans.
-    bricks: CellMap<RawBrick>,
-    /// As the world holds them, for the composed writes.
+    /// As the world holds them: read for the scans, the counts and the composed writes.
     packed: CellMap<Brick>,
     /// Per cell column `(x, y)` of the footprint, ascending, the region's cells' `z`,
     /// ascending.
@@ -185,46 +192,38 @@ impl Snapshot {
         {
             return Err(EditError::NotResident(m));
         }
-        let mut bricks = CellMap::default();
         let mut packed = CellMap::default();
         let mut stacks: BTreeMap<[i32; 2], Vec<i32>> = BTreeMap::new();
-        let mut reader = Reader::new(map);
+        let mut reader = ChunkReader::new(map);
         for &c in &cells {
             let b = reader.brick(c).expect("residency checked above").clone();
-            bricks.insert(CellKey(c), RawBrick::of(&b));
             packed.insert(CellKey(c), b);
             stacks.entry([c.0[0], c.0[1]]).or_default().push(c.0[2]);
         }
-        Ok(Self {
-            bricks,
-            packed,
-            stacks,
-        })
+        Ok(Self { packed, stacks })
     }
 
-    fn brick(&self, c: CellCoord) -> &RawBrick {
-        &self.bricks[&CellKey(c)]
+    fn brick(&self, c: CellCoord) -> &Brick {
+        &self.packed[&CellKey(c)]
     }
 
     /// Every voxel column of the footprint that holds a solid region voxel, ascending by
-    /// `(x, y)`.
+    /// `(x, y)`. Each brick is decoded once, into its 64 columns.
     fn columns(&self) -> Vec<Column> {
         let mut out = Vec::new();
+        let mut stack: Vec<(i32, [[MaterialId; 8]; 64])> = Vec::new();
         for (&[cx, cy], zs) in &self.stacks {
-            for ly in 0..BE {
-                for lx in 0..BE {
-                    let mut parts = Vec::with_capacity(zs.len());
-                    let mut any = false;
-                    for &cz in zs {
-                        let b = self.brick(CellCoord([cx, cy, cz]));
-                        let col =
-                            std::array::from_fn(|lz| b.get(index_in_brick([lx, ly, lz as i32])));
-                        any |= col.iter().any(|&m| m != AIR);
-                        parts.push((cz, col));
-                    }
-                    if any {
-                        out.push(([cx * BE + lx, cy * BE + ly], parts));
-                    }
+            stack.clear();
+            stack.extend(
+                zs.iter()
+                    .map(|&cz| (cz, brick_columns(self.brick(CellCoord([cx, cy, cz]))))),
+            );
+            // `xy = lx + 8 ly`: local y, then local x, ascending.
+            for xy in 0..64 {
+                let parts: Vec<_> = stack.iter().map(|(cz, cols)| (*cz, cols[xy])).collect();
+                if parts.iter().any(|(_, col)| col.iter().any(|&m| m != AIR)) {
+                    let (lx, ly) = ((xy % 8) as i32, (xy / 8) as i32);
+                    out.push(([cx * BE + lx, cy * BE + ly], parts));
                 }
             }
         }
@@ -239,7 +238,7 @@ impl Snapshot {
     /// voxel reached.
     fn gap_below(
         &self,
-        reader: &mut Reader<'_>,
+        reader: &mut ChunkReader<'_>,
         [x, y]: [i32; 2],
         z: i32,
         max: i32,
@@ -252,16 +251,16 @@ impl Snapshot {
             let cell = cell_of([x, y, top]);
             // Voxels from `top` down to the bottom of its cell.
             let span = (top.rem_euclid(BE) + 1).min(max - gap);
-            let brick = match self.bricks.get(&CellKey(cell)) {
+            let brick = match self.packed.get(&CellKey(cell)) {
                 Some(b) => match b {
-                    RawBrick::Uniform(m) if !spare(*m) => {
+                    Brick::Uniform(m) if !spare(*m) => {
                         gap += span;
                         continue;
                     }
-                    RawBrick::Uniform(_) => break,
-                    RawBrick::Full(v) => {
+                    Brick::Uniform(_) => break,
+                    full @ Brick::Full(_) => {
                         for k in 0..span {
-                            if spare(v[index_of([x, y, top - k])]) {
+                            if spare(full.get(index_of([x, y, top - k]))) {
                                 return Ok(gap);
                             }
                             gap += 1;
@@ -351,12 +350,12 @@ impl Snapshot {
     /// voxel in a chunk that is not resident is not.
     fn air_after_carve(
         &self,
-        reader: &mut Reader<'_>,
+        reader: &mut ChunkReader<'_>,
         v: [i32; 3],
         spare: &impl Fn(MaterialId) -> bool,
     ) -> bool {
         let cell = cell_of(v);
-        match self.bricks.get(&CellKey(cell)) {
+        match self.packed.get(&CellKey(cell)) {
             Some(b) => !spare(b.get(index_of(v))),
             None => reader.brick(cell).is_ok_and(|b| b.get(index_of(v)) == AIR),
         }
@@ -413,10 +412,10 @@ trait Composed: Sized {
     fn set_uniform(&mut self, m: MaterialId);
     /// Writes the non-air voxels of `src`'s z-layers `layers` into layers `first..`.
     fn place(&mut self, src: &Brick, layers: std::ops::Range<usize>, first: usize);
-    /// Sets voxel `i` to `m`.
-    fn set_voxel(&mut self, i: usize, m: MaterialId);
-    /// Sets the voxels at `indices` to air.
-    fn clear(&mut self, indices: &[usize]);
+    /// Sets the air voxels under `shape` (layer words) to `m`.
+    fn fill(&mut self, shape: &[u64; 8], m: MaterialId);
+    /// Sets the voxels under `shape` to air.
+    fn clear(&mut self, shape: &[u64; 8]);
     fn into_brick(self) -> Brick;
 }
 
@@ -443,32 +442,26 @@ impl Composed for Brick {
         self.overlay_layers(src, layers, first);
     }
 
-    fn set_voxel(&mut self, i: usize, m: MaterialId) {
-        let old = self.get(i);
-        if old == m {
-            return;
-        }
-        if old == AIR {
-            // A fill of the one voxel: a mask bit and the entry's plane bits.
-            let mut shape = [0u64; 8];
-            shape[i / 64] = 1 << (i % 64);
-            self.edit_planar(
-                KernelMode::Fill(m),
-                &shape,
-                &mut |_, _| {},
-                &mut PackedStats::default(),
-            );
-        } else {
-            self.modify(|v| v[i] = m);
-        }
+    fn fill(&mut self, shape: &[u64; 8], m: MaterialId) {
+        self.edit_planar(
+            KernelMode::Fill(m),
+            shape,
+            &mut |_, _| {},
+            &mut PackedStats::default(),
+        );
     }
 
-    fn clear(&mut self, indices: &[usize]) {
-        self.modify(|v| {
-            for &i in indices {
-                v[i] = AIR;
-            }
-        });
+    fn clear(&mut self, shape: &[u64; 8]) {
+        // Every id is at or past `rows == 0`, so every voxel under the shape becomes air.
+        self.edit_planar(
+            KernelMode::Carve {
+                carves: &[],
+                rows: 0,
+            },
+            shape,
+            &mut |_, _| {},
+            &mut PackedStats::default(),
+        );
     }
 
     fn into_brick(self) -> Brick {
@@ -528,20 +521,35 @@ impl Composed for RawBrick {
         }
     }
 
-    fn set_voxel(&mut self, i: usize, m: MaterialId) {
-        if self.get(i) != m {
-            self.expand(&mut SpareArrays::new())[i] = m;
-        }
+    fn fill(&mut self, shape: &[u64; 8], m: MaterialId) {
+        for_each_bit(shape, |i| {
+            if self.get(i) == AIR && m != AIR {
+                self.expand(&mut SpareArrays::new())[i] = m;
+            }
+        });
     }
 
-    fn clear(&mut self, indices: &[usize]) {
-        for &i in indices {
-            self.set_voxel(i, AIR);
-        }
+    fn clear(&mut self, shape: &[u64; 8]) {
+        for_each_bit(shape, |i| {
+            if self.get(i) != AIR {
+                self.expand(&mut SpareArrays::new())[i] = AIR;
+            }
+        });
     }
 
     fn into_brick(self) -> Brick {
         RawBrick::into_brick(self)
+    }
+}
+
+/// Calls `f(i)` for the brick index of every set bit of `shape`, ascending.
+fn for_each_bit(shape: &[u64; 8], mut f: impl FnMut(usize)) {
+    for (z, &w) in shape.iter().enumerate() {
+        let mut bits = w;
+        while bits != 0 {
+            f(64 * z + bits.trailing_zeros() as usize);
+            bits &= bits - 1;
+        }
     }
 }
 
@@ -571,7 +579,7 @@ fn landings(
 /// that is not resident, taking the region's cells ascending by `(x, y)`, then `z`.
 fn check_landings(
     snap: &Snapshot,
-    reader: &mut Reader<'_>,
+    reader: &mut ChunkReader<'_>,
     dropped: i32,
 ) -> Result<(), ChunkCoord> {
     for (&[cx, cy], zs) in &snap.stacks {
@@ -607,7 +615,7 @@ impl<B: Composed> Compose<B> {
     /// is resident by construction: a region cell is in the snapshot, a crushed cell was read
     /// by the gap scan, and every landing cell is checked by [`check_landings`] before
     /// anything is composed.
-    fn brick(&mut self, reader: &mut Reader<'_>, c: CellCoord) -> &mut B {
+    fn brick(&mut self, reader: &mut ChunkReader<'_>, c: CellCoord) -> &mut B {
         self.bricks.entry(CellKey(c)).or_insert_with(|| {
             B::of_world(
                 reader
@@ -620,14 +628,16 @@ impl<B: Composed> Compose<B> {
     /// Writes the solid voxels of `src`, the brick of region cell `c`, `dropped` voxels lower,
     /// into the cells [`landings`] names. Each destination brick is looked up once and takes
     /// whole z-layers.
-    fn place_dropped(&mut self, reader: &mut Reader<'_>, c: CellCoord, src: &Brick, dropped: i32) {
+    fn place_dropped(
+        &mut self,
+        reader: &mut ChunkReader<'_>,
+        c: CellCoord,
+        src: &Brick,
+        dropped: i32,
+    ) {
         for (to, layers, first) in landings(c, src, dropped) {
             self.brick(reader, to).place(src, layers, first);
         }
-    }
-
-    fn set(&mut self, reader: &mut Reader<'_>, v: [i32; 3], m: MaterialId) {
-        self.brick(reader, cell_of(v)).set_voxel(index_of(v), m);
     }
 
     /// Writes every composed brick that differs from the world's, in canonical form, ascending
@@ -693,7 +703,7 @@ impl RubbleStage {
     fn column(
         &mut self,
         snap: &Snapshot,
-        reader: &mut Reader<'_>,
+        reader: &mut ChunkReader<'_>,
         xy: [i32; 2],
         n: u64,
         z: i32,
@@ -723,20 +733,25 @@ impl RubbleStage {
     fn write<B: Composed>(
         self,
         snap: &Snapshot,
-        reader: &mut Reader<'_>,
+        reader: &mut ChunkReader<'_>,
         compose: &mut Compose<B>,
         spare: &impl Fn(MaterialId) -> bool,
         touched: &mut BTreeSet<ChunkCoord>,
         bounds: &mut Bounds,
     ) -> u32 {
         let mut placed: u32 = 0;
+        // Each column's run, as bits of its cells' shapes: the columns are distinct and the
+        // air test reads the snapshot and the world, never the composed bricks, so each
+        // brick then takes its rubble in one fill.
+        let mut shapes: BTreeMap<CellCoord, [u64; 8]> = BTreeMap::new();
         for ([x, y, z0], h) in self.piles {
             let mut top = None;
             for z in z0..z0.saturating_add(h) {
                 if !snap.air_after_carve(reader, [x, y, z], spare) {
                     break;
                 }
-                compose.set(reader, [x, y, z], self.rubble);
+                let (w, bit) = bit_of([x, y, z]);
+                shapes.entry(cell_of([x, y, z])).or_default()[w] |= bit;
                 touched.insert(VoxelCoord([x, y, z]).chunk());
                 placed += 1;
                 top = Some(z);
@@ -744,6 +759,9 @@ impl RubbleStage {
             if let Some(top) = top {
                 bounds.add([x, y, z0], [x, y, top]);
             }
+        }
+        for (cell, shape) in shapes {
+            compose.brick(reader, cell).fill(&shape, self.rubble);
         }
         placed
     }
@@ -862,7 +880,7 @@ impl World {
             return Ok(DropResult::default());
         }
 
-        let mut reader = Reader::new(&map);
+        let mut reader = ChunkReader::new(&map);
         let mut yields = (yield_below > 0).then(|| Yield::new(yield_below, &self.materials));
         let mut dropped = max_drop;
         for (xy, parts) in &columns {
@@ -904,7 +922,7 @@ impl World {
             // spans of its runs (which may overlap) are merged, and each meets the yielded
             // cells of its cell stack.
             y.yielded.sort_unstable();
-            let mut by_cell: BTreeMap<CellCoord, Vec<usize>> = BTreeMap::new();
+            let mut by_cell: BTreeMap<CellCoord, [u64; 8]> = BTreeMap::new();
             let mut spans: Vec<(i32, i32)> = Vec::new();
             let mut stack: Option<[i32; 2]> = None;
             let mut stack_cells: Vec<CellCoord> = Vec::new();
@@ -947,14 +965,15 @@ impl World {
                                 crushed.add(m, 1);
                                 bounds.add(v, v);
                                 touched.insert(VoxelCoord(v).chunk());
-                                by_cell.entry(cell).or_default().push(index_of(v));
+                                let (w, bit) = bit_of(v);
+                                by_cell.entry(cell).or_default()[w] |= bit;
                             }
                         }
                     }
                 }
             }
-            for (cell, indices) in by_cell {
-                compose.brick(&mut reader, cell).clear(&indices);
+            for (cell, shape) in by_cell {
+                compose.brick(&mut reader, cell).clear(&shape);
             }
         }
         for (&[cx, cy], zs) in &snap.stacks {
@@ -962,8 +981,8 @@ impl World {
                 let c = CellCoord([cx, cy, cz]);
                 let min = c.min_voxel().0;
                 match snap.brick(c) {
-                    RawBrick::Uniform(AIR) => {}
-                    RawBrick::Uniform(m) => {
+                    Brick::Uniform(AIR) => {}
+                    Brick::Uniform(m) => {
                         moved.add(*m, 512);
                         let hi = min.map(|v| v + BE - 1);
                         bounds.add([min[0], min[1], min[2] - dropped], hi);
@@ -980,24 +999,11 @@ impl World {
                         }
                         compose.place_dropped(&mut reader, c, &Brick::Uniform(*m), dropped);
                     }
-                    RawBrick::Full(vox) => {
-                        let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
-                        for (i, &m) in vox.iter().enumerate() {
-                            if m == AIR {
-                                continue;
-                            }
-                            moved.add(m, 1);
-                            let l = [i % 8, i / 8 % 8, i / 64].map(|x| x as i32);
-                            lo = [0, 1, 2].map(|k| lo[k].min(l[k]));
-                            hi = [0, 1, 2].map(|k| hi[k].max(l[k]));
-                        }
-                        if hi[0] >= 0 {
-                            compose.place_dropped(
-                                &mut reader,
-                                c,
-                                &snap.packed[&CellKey(c)],
-                                dropped,
-                            );
+                    full @ Brick::Full(_) => {
+                        let solid = full.solid_bits();
+                        counts_under(full, &solid, &mut |m, n| moved.add(m, n));
+                        if let Some((lo, hi)) = local_bounds(&solid) {
+                            compose.place_dropped(&mut reader, c, full, dropped);
                             let lo = [0, 1, 2].map(|k| min[k] + lo[k]);
                             let hi = [0, 1, 2].map(|k| min[k] + hi[k]);
                             bounds.add([lo[0], lo[1], lo[2] - dropped], hi);
@@ -1080,7 +1086,7 @@ impl World {
         let carved = |m: MaterialId| m != AIR && !spare(m);
 
         // Scan every column first, so a non-resident chunk fails the op before any write.
-        let mut reader = Reader::new(&map);
+        let mut reader = ChunkReader::new(&map);
         let mut stage = RubbleStage::new(rubble, fraction, max_depth);
         for (xy, parts) in &columns {
             let mut n: u64 = 0;
@@ -1106,25 +1112,25 @@ impl World {
                 let c = CellCoord([cx, cy, cz]);
                 let min = c.min_voxel().0;
                 let (lo, hi) = match snap.brick(c) {
-                    RawBrick::Uniform(m) if !carved(*m) => continue,
-                    RawBrick::Uniform(m) => {
+                    Brick::Uniform(m) if !carved(*m) => continue,
+                    Brick::Uniform(m) => {
                         removed.add(*m, 512);
                         ([0; 3], [BE - 1; 3])
                     }
-                    RawBrick::Full(vox) => {
-                        let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
-                        for (i, &m) in vox.iter().enumerate() {
-                            if carved(m) {
-                                removed.add(m, 1);
-                                let l = [i % 8, i / 8 % 8, i / 64].map(|x| x as i32);
-                                lo = [0, 1, 2].map(|k| lo[k].min(l[k]));
-                                hi = [0, 1, 2].map(|k| hi[k].max(l[k]));
-                            }
+                    full @ Brick::Full(_) => {
+                        // The carved voxels: the solid ones less those the carve spares.
+                        let mut kept = full.clone();
+                        kept.keep_only(spare);
+                        let kept = kept.solid_bits();
+                        let mut sel = full.solid_bits();
+                        for (w, k) in sel.iter_mut().zip(kept) {
+                            *w &= !k;
                         }
-                        if hi[0] < 0 {
+                        counts_under(full, &sel, &mut |m, n| removed.add(m, n));
+                        let Some(b) = local_bounds(&sel) else {
                             continue;
-                        }
-                        (lo, hi)
+                        };
+                        b
                     }
                 };
                 bounds.add(
@@ -1210,7 +1216,7 @@ impl World {
         let spare = |m: MaterialId| m != AIR;
         let c = u32::try_from(columns.len()).expect("at most region_cells_max * 64 columns");
 
-        let mut reader = Reader::new(&map);
+        let mut reader = ChunkReader::new(&map);
         let mut stage = RubbleStage::new(rubble, (count, c), max_depth);
         for (xy, parts) in &columns {
             let (top_cell, _) = parts.last().expect("a column crosses a named cell");
