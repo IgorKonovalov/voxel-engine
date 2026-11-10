@@ -1,49 +1,13 @@
 //! A streamed voice: a writer thread feeding the ring while the mixer renders, an underrun,
 //! a voice heard only off the walls, and no allocation while a stream plays.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use vxe_audio::*;
 use vxe_world::*;
 
-/// Counts heap allocations made on a thread that has switched counting on.
-struct Counting;
-
-thread_local! {
-    static COUNTING: Cell<bool> = const { Cell::new(false) };
-    static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
-}
-
-// SAFETY: forwards every call to `System` unchanged; the thread-locals are `const`-initialised
-// `Cell`s, which never allocate.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.with(Cell::get) {
-            ALLOCATIONS.with(|a| a.set(a.get() + 1));
-        }
-        // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract, passed through.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: `ptr` came from `System.alloc` with this layout.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.with(Cell::get) {
-            ALLOCATIONS.with(|a| a.set(a.get() + 1));
-        }
-        // SAFETY: as `alloc` and `dealloc`, passed through.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
-#[global_allocator]
-static ALLOC: Counting = Counting;
+mod support;
 
 const MPV: f32 = 0.1;
 const W: MaterialId = 1;
@@ -322,12 +286,12 @@ fn a_stream_renders_without_allocating() {
     }
     let piece = tone(BLOCK);
     let mut out = vec![0.0; 2 * BLOCK];
-    COUNTING.with(|c| c.set(true));
-    for _ in 0..64 {
-        writer.push(&piece);
-        mixer.render(&mut out, BLOCK);
-    }
-    COUNTING.with(|c| c.set(false));
-    assert_eq!(ALLOCATIONS.with(Cell::get), 0);
+    let ((), counts) = support::count(|| {
+        for _ in 0..64 {
+            writer.push(&piece);
+            mixer.render(&mut out, BLOCK);
+        }
+    });
+    assert_eq!(counts, support::Counts::NONE);
     assert!(out.iter().any(|&s| s != 0.0));
 }

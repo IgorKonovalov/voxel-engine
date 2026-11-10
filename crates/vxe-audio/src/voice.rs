@@ -171,7 +171,9 @@ pub(crate) struct Voice {
 }
 
 /// A voice's heap state, taken from the mixer's pool on `Play` and returned when the voice
-/// ends, so the callback never allocates.
+/// ends, so the callback never allocates. Buffers in the pool are cleared: the game thread
+/// clears them ([`crate::Recycler`]) before they come back, so the callback never zeroes a
+/// ring either.
 pub(crate) struct VoiceBuffers {
     pub history: Vec<f32>,
     /// The delay line the taps read: a ring of the voice's own-gained signal,
@@ -195,8 +197,8 @@ impl VoiceBuffers {
 }
 
 impl Voice {
-    pub fn new(id: VoiceId, source: Source, params: PlayParams, mut buffers: VoiceBuffers) -> Self {
-        buffers.clear();
+    /// A voice over `buffers`, which must be cleared ([`VoiceBuffers::clear`]).
+    pub fn new(id: VoiceId, source: Source, params: PlayParams, buffers: VoiceBuffers) -> Self {
         Self {
             id,
             source,

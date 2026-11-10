@@ -2,47 +2,10 @@
 //! measures, a room that changes under a hum (gliding lines, and two networks handing over
 //! without moving a line that holds signal), and no allocation while it runs.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-
 use vxe_audio::*;
 use vxe_world::*;
 
-/// Counts heap allocations made on a thread that has switched counting on.
-struct Counting;
-
-thread_local! {
-    static COUNTING: Cell<bool> = const { Cell::new(false) };
-    static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
-}
-
-// SAFETY: forwards every call to `System` unchanged; the thread-locals are `const`-initialised
-// `Cell`s, which never allocate.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.with(Cell::get) {
-            ALLOCATIONS.with(|a| a.set(a.get() + 1));
-        }
-        // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract, passed through.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: `ptr` came from `System.alloc` with this layout.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.with(Cell::get) {
-            ALLOCATIONS.with(|a| a.set(a.get() + 1));
-        }
-        // SAFETY: as `alloc` and `dealloc`, passed through.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
-#[global_allocator]
-static ALLOC: Counting = Counting;
+mod support;
 
 const MPV: f32 = 0.1;
 const CAVE: MaterialId = 1;
@@ -669,17 +632,17 @@ fn the_tail_renders_without_allocating() {
         energy: 0.4,
     }));
     m.render(&mut out, BLOCK);
-    COUNTING.with(|c| c.set(true));
-    for b in 0..32 {
-        m.apply(Command::SetRoom(RoomTargets {
-            t60_s: 1.0 + b as f32 * 0.2,
-            mean_free_path_m: 4.0 + b as f32,
-            energy: 0.1 + b as f32 * 0.01,
-        }));
-        m.render(&mut out, BLOCK);
-    }
-    COUNTING.with(|c| c.set(false));
-    assert_eq!(ALLOCATIONS.with(Cell::get), 0);
+    let ((), counts) = support::count(|| {
+        for b in 0..32 {
+            m.apply(Command::SetRoom(RoomTargets {
+                t60_s: 1.0 + b as f32 * 0.2,
+                mean_free_path_m: 4.0 + b as f32,
+                energy: 0.1 + b as f32 * 0.01,
+            }));
+            m.render(&mut out, BLOCK);
+        }
+    });
+    assert_eq!(counts, support::Counts::NONE);
     assert!(out.iter().all(|s| s.is_finite()));
 }
 
@@ -731,4 +694,87 @@ fn a_silent_tail_rings_out_to_zero_not_subnormals() {
         tail_block.iter().all(|&x| x == 0.0),
         "the last block is zero"
     );
+}
+
+/// A tail that rings out is cleared without zeroing its lines at once: the network swaps them
+/// for the clean spare lines, and no block zeroes more than one block's worth of every line
+/// (`REVERB_LINES x BLOCK` samples). A network rings out once the input has gone to the other
+/// one; a network still ringing when a handover is due fades out first and is cleared the
+/// same way. The clears here are each further apart than the spare takes to clean, so none
+/// finds it dirty.
+#[test]
+fn a_ring_out_clears_no_more_than_a_block_of_lines_per_block() {
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
+    let room = |mfp: f32| {
+        Command::SetRoom(RoomTargets {
+            t60_s: 0.75,
+            mean_free_path_m: mfp,
+            energy: 1.0,
+        })
+    };
+    let mut out = vec![0.0; 2 * BLOCK];
+    let mut render = |m: &mut Mixer, blocks: usize| {
+        for _ in 0..blocks {
+            m.render(&mut out, BLOCK);
+        }
+    };
+    let ping = |m: &mut Mixer, id: u32| {
+        m.apply(Command::Play(
+            VoiceId(id),
+            impulse(),
+            PlayParams::at([10.0, 0.0, 0.0]),
+        ));
+    };
+    m.apply(room(2.667));
+    render(&mut m, 100);
+    ping(&mut m, 1);
+    render(&mut m, 20);
+    assert_eq!(m.reverb_clears().swaps, 0);
+    // The 8 m room goes to the other network; the first rings out with no input.
+    m.apply(room(8.0));
+    let mut rung_out_after = None;
+    for b in 0..2000 {
+        render(&mut m, 1);
+        if m.reverb_clears().swaps == 1 {
+            rung_out_after = Some(b);
+            break;
+        }
+    }
+    let clears = m.reverb_clears();
+    println!("rang out {rung_out_after:?} blocks after the handover: {clears:?}");
+    assert!(
+        rung_out_after.is_some(),
+        "the old network rang out and was cleared"
+    );
+    assert_eq!(clears.forced, 0);
+    assert!(
+        clears.max_zeroed <= REVERB_LINES * BLOCK,
+        "{} samples zeroed in one block",
+        clears.max_zeroed
+    );
+    // Sound into the 8 m network, then back to 2.667 m, which the cleared network takes: the
+    // 8 m one rings with no input. Sound into the 2.667 m network; 200 blocks on, the 8 m
+    // one, still ringing, is due the 8 m room again, so it fades out, is cleared and takes
+    // it; the 2.667 m network then rings out.
+    render(&mut m, 200);
+    ping(&mut m, 2);
+    render(&mut m, 20);
+    m.apply(room(2.667));
+    render(&mut m, 150);
+    ping(&mut m, 3);
+    render(&mut m, 50);
+    assert_eq!(m.reverb_clears().swaps, 1, "the 8 m network still rings");
+    m.apply(room(8.0));
+    render(&mut m, 20);
+    assert_eq!(m.reverb_clears().swaps, 2, "the faded network was cleared");
+    render(&mut m, 2000);
+    let clears = m.reverb_clears();
+    println!("after the fade and the second ring-out: {clears:?}");
+    assert_eq!(
+        clears.swaps, 3,
+        "the 2.667 m network rang out and was cleared"
+    );
+    assert_eq!(clears.forced, 0);
+    assert!(clears.max_zeroed <= REVERB_LINES * BLOCK);
 }
