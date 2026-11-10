@@ -112,6 +112,10 @@ mechanism lands as a documented setting, and a plan for the settings surface and
 The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
 Plan 0035's allotment table (2026-11-10) spends all of section 2's 2.1 ms Headroom on the floor
 across Plans 0035, 0036 and 0037, leaving none for M8 fog or game work until this plan arbitrates.
+The static performance review of 2026-11-10 recommends drafting it **before Plan 0058's lane
+starts**, not after Plan 0045: summed from the plans' own guesses the cave frame fits the
+projected floor only at the low end and the outdoor frame not at all, and Plan 0058's eight
+lights land with no cap or profile. A recommendation; the order is the owner's.
 
 ### Remove `own`, the engine's own upscaler
 
@@ -121,6 +125,10 @@ and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour
 its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
 ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
 Plan 0061's picks; it runs after Plan 0045 and before M10.
+Noted 2026-11-10 (static performance review): `own` is the only upscaler on record under or near
+section 2's 1.5 ms upscale line (0.93 to 1.3 ms at the owner's window against FSR 2's 2.9 ms) and
+reads 6 to 7 ms less on the Radeon. Removing it before the profile plan arbitrates removes the
+slow adapter's cheaper arm; the removal plan should say what the portable profile uses instead.
 
 ### Far normal range: the owner picked `[1, 2]`
 
@@ -137,6 +145,95 @@ the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 005
 ### Slow-pan verdict for FSR 2 (ADR-0034)
 
 Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): ADR-0034's dated Outcome is written at its close.
+
+## Performance: the static review of 2026-11-10
+
+Parked 2026-11-10. The owner asked why the window reads 30 to 50 fps with little on screen; a
+read-only review of the tree at `50b637a` followed, with no run (the owner asked for none), so
+every figure below is an estimate. The window's pacing, the readbacks, the workers and the
+sync's time went to [Plan 0064](plans/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md);
+the baked light's shader waste and the queue's scan to
+[Plan 0065](plans/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
+(both drafts). What neither takes:
+
+### Budget lines over with no owner
+
+- **Upscale, 1.5 ms:** FSR 2 reads 2.9 ms on the RTX and 10 ms on the Radeon; every plan
+  "reads its delta and does not claim the line". Plan 0065 expects 0.2 to 0.5 ms off it. Either
+  the line moves or a profile owns it: the render-profile plan's call.
+- **The bake's slice and the queue's step have no line.** 1.5 ms of GPU a frame while the queue
+  works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
+  line at the next `docs/nfr.md` revision; Plan 0060's close is the natural place.
+- **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 bounds the p99 and trims
+  the p50; the upload's copy into mapped memory stays (see "Slot words packed on the workers").
+- **The frame ledger's re-base**, owed since 2026-11-03: it still reads `own`, the table light
+  and the probes, and has no row for the list lights or the bake's slice. Re-base it at Plan
+  0065's close, when the per-pass table at the half tier exists.
+- **Time to first frame, 3 s:** 7137 ms at the vein under the baked light; Plan 0060 bars only
+  its delta.
+
+Pick up: at the render-profile plan's interview, or at the next close that touches the line.
+
+### The a-trous under the baked light: fewer iterations, or none
+
+Plan 0065 only stops the filter where the variance is zero. With the lamp on, its input is an
+analytic light with a binary shadow, no Monte Carlo noise; four iterations may be one or two,
+and with the lamp off and the `face` look the whole pass could be skipped on the CPU side. Both
+change shadow softness or the rare fallback pixels, so they are the owner's eye. Pick up after
+Plan 0058, which widens the filter to rgb.
+
+### A beam prepass, or a distance value per brick
+
+The primary walk skips by occupancy only: chunk, 2 x 2 x 2 brick groups, uniform bricks, the
+in-brick mask. There is no coarse depth prepass and no distance field. A 1/8-resolution beam
+pass over the chunk, group and brick levels would start each ray near its hit; a 3-bit
+Chebyshev distance per brick, mirror-side only, would lengthen the fixed 16-voxel group skip.
+Both pay in halls and outdoors and little in veins. Read the steps view's histogram first; pick
+up before Plan 0033's far field, whose rays are the long ones.
+
+### Narrower frame targets and fewer stores
+
+`hit_pos` is `rgba32float` and every screen pass taps it; a ray length in `r32float` would cut
+that traffic but moves every golden. FSR 2's colour input is `rgba32float` though clamped inside
+half-float range. The hit pass writes the translucent layer and transmittance on every pixel,
+translucent or not. FSR 2's input pass could fold into the composite. Each is 0.1 ms or so on
+the RTX, more on the Radeon where bandwidth is the limit. Pick up with the slow adapter's
+walk-speed spike below.
+
+### Uniform branches as pipeline constants
+
+`FLAG_SKIPS`, `FLAG_MASKS`, `FLAG_CUTAWAY`, `FLAG_FIELD_SPLIT`, `coarse_span`, `forced_level`,
+the view-mode chains in the composite and `LIGHTING_GRADIENT` are tested per step or per pixel
+from a uniform and are fixed for a pipeline's life in production. `override` constants would
+let the compiler drop them. Small each; fits Plan 0044's Phase 5 or the shader toolchain spike.
+
+### Slot words packed on the workers
+
+The mirror packs and copies a chunk's bricks on the render thread; `docs/roadmap.md` names an
+"upload-copy ADR" that was never drafted. The workers already prepare face masks. Moving the
+packing there needs the mirror's slot format across a thread boundary, so it is an ADR and a
+plan. Pick up if Plan 0064's time budget leaves residency short.
+
+### The slow adapter's walk-speed spike
+
+Owed since Plan 0054 (ADR-0034 and ADR-0041 name it) and in no plan or backlog entry until now:
+why the Radeon's hit pass reads 7 to 8 times the RTX's when the light pass under the store reads
+about twice. Run with the shader toolchain spike, when no lane holds the GPU.
+
+### The dev box presents across two GPUs
+
+The panel hangs off the AMD iGPU, Hyprland composites there, and the RTX has no connected
+output, so a windowed frame crosses GPUs before it shows. Windowed readings should say so, and
+`references/project-context.md`'s machine facts should carry it. An external display on the
+RTX's port would give a windowed reading without the crossing.
+
+### Costs that multiply across the approved plans
+
+Plans 0058, 0032, 0034 and 0062 each add shadow rays per lighting pixel that the others
+multiply (lights by entities, a sky ray and a sun ray per lit pixel, liquid reflections), and
+no plan budgets the product. Plans 0058, 0061 and 0062 carry dated review notes for their own
+part. Plans 0035, 0036 and 0037 project more on the RTX than their floor shares allow by their
+own figures. The render-profile plan is where the product gets a cap.
 
 ## Tooling and process
 
