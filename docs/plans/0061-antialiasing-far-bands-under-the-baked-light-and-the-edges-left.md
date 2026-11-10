@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** approved (owner go 2026-11-10: Phase 1 beside Plan 0060, Phase 2 on after 0060 merges), amended 2026-11-10 (review pass)
+> **Status:** in-progress (Phase 1 readings in, stopped at its stop rule 3 for an architect amendment; owner go 2026-11-10: Phase 1 beside Plan 0060, Phase 2 on after 0060 merges), amended 2026-11-10 (review pass)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -495,13 +495,18 @@ The owner, 2026-11-10, to the open questions above:
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Which aliasing it is, under the baked light | dev | not started | |
+| 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), Phase 2 not started; see [the readings log](logs/0061.md) | committed with this row |
 | 2: The store read by the far normal (ADR-0049), behind a toggle | dev | not started | |
 | 3: The matrix with the read, the edges left, and the window's runner | dev | not started | |
 | 4: The owner's window | human | not started | |
 | 5: The picks as defaults | dev | not started | |
 
 ### Notes
+
+- Phase 1: the rig adds `VXE_STRIP_LIGHTING` (the light passes' resolution) beside the phase's
+  arms, for the attribution of done-when 3's reading; the plan names no such arm.
+- Phase 1, done-when 5 (i): the class mask leaves the far crops with no `interior` pixel, so the
+  row as written is empty; the log gives the figure both as written and across every class.
 
 ### Close triggers
 
