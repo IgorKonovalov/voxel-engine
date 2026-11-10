@@ -70,7 +70,8 @@ fixed list. The missing piece is a per-light and per-emissive-material "feeds th
 flag and the channel's redesign. Plan 0058's Phase 3 (redrafted 2026-11-10) builds the per-light
 flag; what remains after its close is the per-emissive-material flag and the channel's redesign.
 Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky ray, so a cave
-mouth gets no bounced sun until this entry is taken.
+mouth gets no bounced sun until this entry is taken. Plan 0037's night light likewise has no
+bounce and no probe feed.
 
 ### Per-face light cells as a near-camera enhancement over the brick level
 
@@ -86,6 +87,12 @@ Keeping the option open is cheap. The store puts a brick's record before its fac
 when one exists. Plan 0059 Phase 6 (7c105c5) has the whole face path working; Phase 14 deletes it. Pick up when
 close-range light reads too soft: shadow edges smeared over 8 voxels, or light bleeding round thin walls.
 
+### Baked or emissive light on far-field cells
+
+Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value, so distant
+emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
+Alternative F, picked up only if a reading or the owner's flight asks.
+
 ### Render settings surface and named quality profiles
 
 Parked 2026-10-22. Every mechanism choice (shadow walk, lighting tier, sampler, look, upscaler,
@@ -95,6 +102,8 @@ resolution, look and LOD at runtime; construction-time settings (mirror budget, 
 separate and live-versus-restart is undocumented. What it takes: a best-practices rule that a new
 mechanism lands as a documented setting, and a plan for the settings surface and the profiles.
 The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
+Plan 0035's allotment table (2026-11-10) spends all of section 2's 2.1 ms Headroom on the floor
+across Plans 0035, 0036 and 0037, leaving none for M8 fog or game work until this plan arbitrates.
 
 ### Remove `own`, the engine's own upscaler
 
