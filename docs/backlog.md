@@ -67,8 +67,10 @@ owner wants bounce light only from some sources: "fire on a stick or fire in a d
 probes, the headlamp and simple lights are direct only. ADR-0043 shrinks the probe volume to a
 lamp-bounce channel and keeps its logic for exactly this later redesign; ADR-0044 gives lights a
 fixed list. The missing piece is a per-light and per-emissive-material "feeds the bounce channel"
-flag and the channel's redesign. Pick up after Plan 0058 closes and the owner has seen the
-steady image.
+flag and the channel's redesign. Plan 0058's Phase 3 (redrafted 2026-11-10) builds the per-light
+flag; what remains after its close is the per-emissive-material flag and the channel's redesign.
+Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky ray, so a cave
+mouth gets no bounced sun until this entry is taken.
 
 ### Per-face light cells as a near-camera enhancement over the brick level
 
@@ -94,6 +96,15 @@ separate and live-versus-restart is undocumented. What it takes: a best-practice
 mechanism lands as a documented setting, and a plan for the settings surface and the profiles.
 The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
 
+### Remove `own`, the engine's own upscaler
+
+Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
+opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of `gpu_upscale.rs`
+and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
+its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
+ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
+Plan 0061's picks; it runs after Plan 0045 and before M10.
+
 ### Far normal range: the owner picked `[1, 2]`
 
 Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): picked again under the store read in its window, landed in its Phase 5, ADR-0042's Outcome at its close; the emitter cap goes in Phase 5.
@@ -104,7 +115,7 @@ Parked 2026-11-05 at Plan 0057's close. `the_lamp_furnace_reads_its_albedo_times
 its `D` from the shader's output, so it does not defend the albedo: `D` wants an independent reading
 of the lamp's irradiance at the rays' hits. Inside probes are traced while the lamp moves
 (`probe_update.wgsl`'s `probe_idle` returns on `MOVED_BIT` before its inside check): cost only, unread on
-the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Pick up with Plan 0058's Phase 4.
+the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 0058's Phase 3 (redrafted 2026-11-10) takes the furnace's `D` and the one-probe step test; the inside-probe trace is a reading there.
 
 ### Slow-pan verdict for FSR 2 (ADR-0034)
 
