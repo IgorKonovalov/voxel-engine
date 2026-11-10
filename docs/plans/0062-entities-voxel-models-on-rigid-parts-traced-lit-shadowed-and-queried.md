@@ -381,7 +381,10 @@ d^2` times the window `(1 - (d / r)^4)^2`: **9.40** at 20 voxels straight below 
      defaults and that the frame's inventory lists it. Under 5 s (an estimate).
   2. The readings are in the log: the primary, light, temporal and upscale passes and the
      frame, at the level's spawn and the vein, `--entities` 0, 4, 16 and 64, walkers still and
-     walking, lamp on, both adapters, three quiet rounds where the machine allows; the CPU
+     walking, lamp on, and at 16 and 64 walkers also with `--lights 8` (amended 2026-11-10:
+     the entity walk runs after every shadow ray of every list light, so its cost multiplies
+     with Plan 0058's list and the lamp-only arm cannot show it), both adapters, three quiet
+     rounds where the machine allows; the CPU
      time of `set_entities` at 64 walkers; `EntitySet::raycast` at 64 walkers, mean over 4096
      seeded rays, on the dev box (a `mod reading` test).
   3. `--entities 0` reads within the round-to-round spread of the start commit's frame on

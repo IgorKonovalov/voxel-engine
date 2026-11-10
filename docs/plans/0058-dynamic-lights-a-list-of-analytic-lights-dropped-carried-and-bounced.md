@@ -542,6 +542,18 @@ default; this plan's reading there is its delta.
 | §2 upscale line (over at the base) | the start commit's reading | the mask's loop over a still list: **a guess** of under + 0.05 ms on the RTX at 8 lights, skipped at 0 | the same runs, `--lights` 0 and 8 |
 | §3 `Frame::frame_bytes` | the start commit's figure at the run's resolution | **arithmetic:** + 8 B x 3 per lighting pixel (5 529 600 B at 1280 x 720 internal, half tier); the lights uniform + 1040 B | `frame_bytes` asserted in `gpu_upscale.rs` and `gpu_fsr2.rs`, printed at the close |
 
+**Review note (2026-11-10, the static performance review; estimates, nothing was run).** The
+per-light projection above comes from one loaded reading of the headlamp: a spot cone at the
+eye, whose shadow rays retrace the open path the primary ray crossed. A dropped point light
+has no cone and its shadow rays are incoherent across the cave, so its cost may sit nearer a
+share of the hit pass per light than 0.1 ms: **a guess of 0.15 to 1.1 ms each in the hall on
+the RTX**. The close's readings therefore add one arm to the table's command: `--lights` 1, 4
+and 8 as **dropped point lights at the hall**, beside the vein. A reading over 0.3 ms per
+light on the RTX is not a failure; it goes to the owner with the cap the render-profile plan
+would set (`docs/backlog.md`). If
+[Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
+has landed, the a-trous row's base is its early-out, which a moving light switches off.
+
 Determinism is not touched: everything is in `vxe-render` and the fly-through. The list's
 shading draws no random number, so two runs of the same still frame are bit-identical in the
 direct part, which the close reads on lavapipe.

@@ -410,6 +410,15 @@ Against `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`. Today's figur
 | Upscale line, 1.5 ms | FSR 2 2.93 to 3.15 ms RTX, 9.95 to 10.0 ms RADV | unchanged; FSR 2 at 1 (opt-in) about 5 ms RTX |
 | `frame_bytes` | unchanged by design | Phase 2 done-when 4 checks it |
 
+**Review note (2026-11-10, the static performance review; an estimate, nothing was run).** The
++0.3 ms guess for Phase 2's read may be low. The read is `store_brick_value`, up to three of
+them where there is one today, and that read is what took the temporal pass from 0.39 to
+1.54 ms in Plan 0059 (full tier): through an atomic binding each one re-reads the store's
+header per tap. Where the hall is mostly far band, +1 ms or more is plausible at the full
+tier. [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+Phase 2 makes the read cheaper; Phase 2 here reads the temporal pass by itself, at the half
+and the full tier, so the read's cost is not lost in the frame figure.
+
 The close measures with `flythrough --headless --frames 300`, three alternated rounds, perf lock,
 both adapters, as in Phase 2. Test times are named per phase and are estimates; none is planned
 over the 30 s line of `docs/nfr.md` section 7, and one that reads over it is marked
