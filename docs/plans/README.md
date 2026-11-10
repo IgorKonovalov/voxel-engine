@@ -10,18 +10,39 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as light samples, sky light into the probes, an outdoor testbed source | approved | M10, ADR-0026, ADR-0027. After the render-profile plan (owed). |
-| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed). After Plans 0028 and 0032. |
-| [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface | approved | M10, ADR-0029 (proposed). After Plan 0032; its upscaler half after Plan 0030. |
-| [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). After Plans 0032 and 0033. |
-| [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). After Plan 0035. |
-| [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
-| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0059's Phase 3 verdict, where its order against the cuts is set; before 0045. |
-| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before M10. |
-| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: a list of eight analytic lights, exact, dropped and carried; scaled emission over the table; a bounce flag | draft | M2, ADR-0044 and ADR-0045 (proposed). Next; its scale phase needs a refresh. |
-| [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: one score of distance and angle to the view, tuned by eye; jobs a flight has passed withdrawn | draft | M2, ADR-0048 (proposed). Owner answers 2026-11-10. Before Plan 0061 past its Phase 1. |
-| [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands back under the baked light; a split by measurement, the store read by the far normal, picks by eye | draft | M2, ADR-0049 (proposed). Phase 1 beside Plan 0060; the rest after it merges. |
+| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day, sun and sky ray into the direct target, an outdoor testbed | approved | M10, ADR-0026, ADR-0027. Redesigned 2026-11-10. After 0058 and the render-profile plan. |
+| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed). Amended 2026-11-10. After Plan 0032. |
+| [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction, absorption under the surface | approved | M10, ADR-0029 (proposed). Amended 2026-11-10. After Plan 0033. |
+| [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Amended 2026-11-10. After Plan 0034. |
+| [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
+| [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
+| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | approved | Code health. After Plan 0058; Phases 1, 6, 7 may run beside the drafts. Phase 0 re-inventories. |
+| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health. After Plan 0044, last before M10. Phase 0 re-measures; the architect confirms the seams. |
+| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | draft | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0061; re-read Phases 1-2 at its tip. |
+| [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: one score of distance and angle, tuned by eye; passed jobs withdrawn | draft | M2, ADR-0048 (proposed). Amended 2026-11-10. First in the order; 0061's Phase 1 beside it. |
+| [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | draft | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
 <!-- roster:end -->
+
+## Sequence
+
+The order the active plans run in (owner, 2026-11-10, set at the review of every active plan).
+Each starts on main after the one before it closes, unless its line says otherwise.
+
+1. **Plan 0060**, the live queue. Plan 0061's Phase 1 (readings only) may run beside it.
+2. **Plan 0061**, antialiasing, from its Phase 2 once 0060 has merged.
+3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
+   before the go, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
+4. **Plan 0044**, the hot-path pass. Its Phases 1, 6 and 7 (audio, world, sim and net) touch no
+   file of 0058, 0060 or 0061 and may run as a side lane at any point above.
+5. **Plan 0045**, the structure pass, last because it moves the files every plan above edits.
+   Its Phase 0 re-measures and the architect confirms the seams before a file moves.
+6. **Two owed plans, not drafted**: removing the `own` upscaler, and the render settings and
+   profiles plan that holds M10 against the budget (`docs/backlog.md`).
+7. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
+   target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
+
+Drafts 0058, 0060 and 0061 await the owner's go. The approved plans were amended on 2026-11-10;
+their figures for wall time and frame cost are estimates until a phase measures them.
 
 ## Recently closed
 

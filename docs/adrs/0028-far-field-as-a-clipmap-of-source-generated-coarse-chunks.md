@@ -1,6 +1,7 @@
 # ADR-0028: The far field is a clipmap of coarse chunk levels that the source generates directly, with edits folded in from full detail
 
-> **Status:** proposed
+> **Status:** proposed (redrafted 2026-11-10 against ADR-0046's baked store: the level rule is
+> per caller, the bake and the probe rays take no far field, a clip hit reads no store)
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0033](../plans/0033-far-field-clipmap-to-a-kilometre.md)
 > **Claims:** the founding-interview decision "Far-field clipmap (coarser rings beyond the
@@ -60,7 +61,7 @@ children when none is exposed, ties to the lowest id. The **by-volume** reading,
 level-`k` cell is solid when at least half of its `8^k` full-detail voxels are, with the same
 material rule over its voxels (`MipRule::HalfVolume`), is built beside it as a selectable
 mode and measured against it (Alternative E); the residency names the rule, the source and
-the overlay both follow it, and the owner picks the default on screen (Plan 0033 Phase 8).
+the overlay both follow it, and the owner picks the default on screen (Plan 0033 Phase 9).
 The two readings agree at level 1 and wherever a cell is wholly solid or wholly air; they
 differ on partly filled volumes such as foliage. A source approximates the rule as it sees
 fit (sampling the cell centre for occupancy and giving the column's surface cell its surface
@@ -77,8 +78,14 @@ disjoint, so the order never matters). Resident clip chunks are patched when an 
 changes; a regenerated clip chunk takes the overlay again. Overlay entries live as long as
 their chunk's persistence entry, so the far field shows every edit the near field would.
 
-**The marcher picks a level per point, never finer along a ray.** A ray's walk level at a
-point `p` is the larger of the level so far and the level `|p - camera|` falls in; level `k`
+**The marcher picks a level per point, never finer along a ray, for the callers that ask.** A
+walk takes the far field only when its caller passes it, with a level origin: the primary ray
+of the cube look and the lighting rays of ADR-0027 (the directional shadow ray and the sky
+ray) do, with the camera as the origin. The bake's rays (ADR-0046) never do: the bake compiles
+the same `march` source with its job's chunk in place of the camera, and a baked value must
+not depend on where the camera is. The lamp channel's probe rays, the translucent walk and the
+field look keep today's walk. For a walk that takes it, the level at a
+point `p` is the larger of the level so far and the level `|p - origin|` falls in; level `k`
 takes over at `s_k = (r_(k-1) - 2) x 64 x 2^(k-1)` voxels (with `r_0 = r_full` and
 `r_k = r_clip`), inside the distance every finer chunk is guaranteed resident, moved closer by
 up to one level-`(k-1)` chunk with a per-pixel blue-noise offset when the temporal upscaler
@@ -87,7 +94,14 @@ one level coarser at the same point; only at the coarsest level does an absent c
 ball count as an occluder for a lighting ray (ADR-0027's rule, moved outward). The directional
 shadow ray toward the sun or moon (ADR-0027) starts at its hit's level, offset by half a cell of
 that level, and follows the same rule out to the far limit, where it reaches the sky. When the
-far field is off (no clip levels), the walk is today's.
+far field is off (no clip levels), the walk is today's. The first switch distance follows the
+streamer's live `r_full`, which the pressure rule moves.
+
+**A clip hit carries no baked light.** The baked store (ADR-0046) is keyed by a full-detail
+voxel and a face; a hit at level 1 to 3 does not read it, takes an emissive term of 0 and is
+not counted as a missing record. It is lit by the direct terms (the sun, the sky ray, the
+analytic lights of ADR-0044). Its normal is the clip normal, a face or a gradient over the hit
+cell's neighbours; ADR-0042's far normal and ADR-0049's store read are for full-detail hits.
 
 ## Consequences
 
@@ -96,7 +110,9 @@ far field is off (no clip levels), the walk is today's.
 - **About 1 km at one to two pixels per cell, with three levels.** At `r_full` 16 and
   `r_clip` 22 the levels take over at 83 to 90 m, 243 to 256 m and 486 to 512 m, and level 3
   is guaranteed to 1024 m. A cell measures 2.4, 1.6 and 1.6 pixels where its level starts at
-  1080p and 0.77 at its far edge (Plan 0033's arithmetic).
+  1080p and 0.77 at its far edge; at the default frame's 720p internal resolution (FSR 2 at
+  1.5) it is 1.6, 1.1 and 1.1 internal pixels and 0.5 at the far edge (Plan 0033's
+  arithmetic).
 - **Nothing new to walk or store.** A clip chunk is a chunk: the packed brick, Plan 0028's
   slots and bins, the records, ADR-0013's reservation and pressure, and the marcher's scaled
   walk all apply. The new parts are the per-level tables, the level rule and the overlay.
@@ -107,8 +123,11 @@ far field is off (no clip levels), the walk is today's.
 - **Edits stay visible everywhere and the far field stays deterministic.** A clip chunk is a
   pure function of the source, the level, the coordinate and the overlay; the overlay is a
   pure function of edited voxels. Both are integer and thread-order independent.
-- **Every ray type gets the far field.** Shadow, probe and reflection rays go through the
-  same `march`, so a distant ridge shadows a near valley without a second structure.
+- **Any ray can take the far field.** It lives in the one `march`, behind a per-call choice,
+  so the sun's shadow ray sees a distant ridge shadow a near valley without a second
+  structure, and a later secondary ray opts in the same way.
+- **The bake stays a function of the world alone.** Its rays walk full detail from the job's
+  chunk whether the far field is on or off, and a test holds a baked face byte-equal.
 - **The pixel footprint's fallback is free:** a level holds its whole ball, so late finer data
   shows coarser geometry, never sky, and a ring boundary moves continuously with the camera.
 
@@ -138,6 +157,14 @@ far field is off (no clip levels), the walk is today's.
   meets unedited ones in a clip chunk, the overlay's downsample of real voxels sits beside the
   source's approximation; a source whose coarse path is not close to the half rule shows a
   seam around every edited chunk at distance.
+- **Far cells are at or under one internal pixel under the default frame**, and the dithered
+  band changes a pixel's level frame to frame by design. Whether FSR 2 holds that still is
+  unread; Plan 0033 measures it with a stop rule before the owner flies it, and the hard
+  switch, a dither fixed per pixel and the face normal are the levers.
+- **No baked light beyond the first switch.** A far emitter shows its own emission and lights
+  nothing around it; a store for clip cells is a followup a reading would have to ask for.
+- **The lamp's bounce, glass and the field look end at the near sphere.** Their walks do not
+  take the far field.
 - **The seam is a band only with the upscaler.** Without it the switch is a hard line at a
   fixed distance, up to half a coarse cell of surface offset, which shows on grazing terrain.
 - **Coarse geometry is invisible to the CPU.** Raycasts, queries and collision see full chunks
@@ -193,10 +220,24 @@ foliage looks on screen, and the two readings trade differently: the level rule 
 partial structures visible and dark at distance (a far forest stays a solid mass that casts
 shadow), the volume rule keeps density honest but lets sparse foliage thin away. It is not
 rejected either: the owner chose (2026-10-22) to build both behind `MipRule` and a flag,
-measure their generation cost and canopy fill per level (Plan 0033 Phases 2 and 7), and pick
-the default at Plan 0033 Phase 8. Until then the level rule is the default because it is the
+measure their generation cost and canopy fill per level (Plan 0033 Phases 2 and 8), and pick
+the default at Plan 0033 Phase 9. Until then the level rule is the default because it is the
 existing `ChunkMips` reduction and its cost is a fixed 8-child step per level. The Outcome
 records the pick.
+
+### Alternative F: a coarse block in the baked store for each clip brick
+
+Giving a clip cell a record in ADR-0046's store would light far terrain by far emitters. It
+lost for now: the store's key has no level, a clip brick's bake would have to walk coarse
+cells with a camera-free origin of its own, and outdoor light is the sun and the sky. Nothing
+read so far asks for it.
+
+### Alternative G: the level rule for every caller of `march`
+
+The first draft of this decision put the rule in `march` for every ray. It lost on two facts
+of the tree: the bake compiles `march` and would have become camera-dependent, and the lamp
+channel's probe rays have no distance limit of their own and would have walked a kilometre
+for a light that reaches a few metres.
 
 ## Outcome
 

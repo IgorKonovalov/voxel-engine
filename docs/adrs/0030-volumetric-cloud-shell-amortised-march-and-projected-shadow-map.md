@@ -1,9 +1,11 @@
 # ADR-0030: Clouds are a ray-marched shell of seeded noise, one pixel in four of a quarter-resolution buffer per frame, rebuilt temporally and shadowing the ground through a projected map
 
-> **Status:** proposed; amended 2026-11-04 (architect, drift): "Plan 0032's sun sample, in the
-> light pass and in the probe rays" assumes probe rays that shade the sun; under ADR-0043
-> (proposed) the probe rays shade the lamp alone, so the sun's visibility by the shadow map is
-> read in the light pass and, if the sun feeds the channel, as a per-source term there
+> **Status:** proposed; refreshed 2026-11-10 (architect, review pass): the probe volume is the
+> lamp's bounce channel and shades no sun or sky (ADR-0043), the baked store is emissive only
+> (ADR-0046), and Plan 0032 was redesigned so that the directional sample and the sky ray
+> land in Plan 0058's direct target. The cloud shadow therefore multiplies the directional
+> sample's visibility in the light pass alone, and the upscalers follow a moving shadow
+> through the map of this frame and of the frame before
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0035](../plans/0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md)
 
@@ -18,21 +20,21 @@ how its shadow reaches the ground: each has a cheaper and a more exact answer, a
 moves a budget line.
 
 The facts that decide it. `docs/nfr.md` §2 gives volumetrics a share of the 2.1 ms headroom
-line on the floor at 1080p with the upscaler (internal 720p, Plan 0030), and the floor is two
+line on the floor at 1080p with the upscaler (internal 720p under FSR 2 at 1.5), and the floor is two
 to three times slower than the dev box (a projection; the baseline card is not on hand) and
 the slow adapter slower still. A cloud ray crosses kilometres of shell: from the ground at 5
 degrees of elevation a shell at 1.5 to 4 km altitude spans 16.95 to 44.15 km along the ray
-(sphere arithmetic, Plan 0035), so a march of 64 steps with six light samples at each dense
+(sphere arithmetic, Plan 0035), so a march of 64 steps with seven light samples at each dense
 step reads a few hundred 3D-texture samples per ray. At 720p that is about 0.9 million rays
 per frame if every pixel is marched, against 57 600 if one pixel in sixteen is. Clouds are
 smooth, distant and slow (wind moves them a fraction of a metre per frame), so the history of
 a cloud pixel is almost always valid, which is what makes amortising the march over frames
 safe where it would not be for the near field.
 
-The sun's shadow is Plan 0032's per-pixel shadow ray (ADR-0027), one more light sample in
-Plan 0024's light pass and in Plan 0029's probe rays. Cloud transmittance along that ray is
-the integral of the same 3D noise over up to tens of kilometres: per pixel it would cost as
-much as a second cloud march, and per probe ray more again. The cloud field changes slowly
+The sun's shadow is Plan 0032's per-pixel shadow ray (ADR-0027), one more sample in the light
+pass, added to Plan 0058's direct target. Cloud transmittance along that ray is the integral
+of the same 3D noise over up to tens of kilometres: per pixel it would cost as much as a
+second cloud march. The cloud field changes slowly
 and is far above every receiver, so a 2D table of its transmittance toward the sun serves
 every receiver at the cost of one texture read.
 
@@ -56,7 +58,7 @@ a 128^3 Perlin-Worley and Worley base volume and a 32^3 Worley detail volume, bo
 with mips, generated once on the GPU from a `u32` seed; a 2D weather map (coverage,
 precipitation, type) remaps the base shape, a height profile per cloud type shapes it, and the
 detail erodes its edges. Lighting integrates each step energy-conservingly (Hillaire 2016)
-with three scattering octaves (Wrenninge) and a two-lobe Henyey-Greenstein phase, a six-sample
+with three scattering octaves (Wrenninge) and a two-lobe Henyey-Greenstein phase, a seven-sample
 cone march toward the key light (the sun, or the moon at night), the key light's colour from
 Plan 0032's transmittance LUT, and an ambient term reduced from its sky-view LUT; Beer-Powder
 is the switchable alternative. The march stops at the near or far field's hit, and the
@@ -64,8 +66,13 @@ composite applies a cloud texel to a pixel only where the pixel's hit lies beyon
 front depth. The ground's cloud shadow is a 512 x 512 `r32float` map of transmittance toward
 the key light, indexed by a receiver's position projected along the light direction onto the
 shell's base altitude, rebuilt every frame over a 4 km square snapped to its texels around the
-camera's projection; Plan 0032's sun sample, in the light pass and in the probe rays,
-multiplies its visibility by it. A camera inside or above the shell uses the same segment
+camera's projection; Plan 0032's directional sample multiplies its visibility by it at the
+one place the light pass computes that visibility. The map of the frame before is kept beside
+this frame's, and the upscalers' change and reactive mask compares the key light under the
+two, so a shadow edge that moved releases their history; no lighting change bit is raised.
+The maps and their lookup live in a shader source of their own, which the bake's module does
+not compile: the baked store takes no cloud term. The weather map's channels are R coverage,
+G precipitation, B type, with A unused. A camera inside or above the shell uses the same segment
 logic; inside the shell the update falls back to every pixel.
 
 ## Consequences
@@ -75,8 +82,8 @@ logic; inside the shell the update falls back to every pixel.
   march's cost scales with screen area, not with how cloudy the sky is (early exit at full
   opacity aside), and the one-in-sixteen mode is a further factor of four for the slow
   adapter, chosen by reading.
-- A cloud shadow costs every receiver one bilinear read: the near field, the far field and
-  the probes darken under the same cloud without a second march.
+- A cloud shadow costs every receiver one bilinear read: the near field and the far field
+  darken under the same cloud without a second march.
 - The noise is generated from a seed on the GPU, so no texture asset ships and two consumers
   with different seeds get different skies; the weather map is the one input Plan 0036
   drives (coverage, type, precipitation, wind offset).
@@ -97,8 +104,13 @@ logic; inside the shell the update falls back to every pixel.
   the coverage's mean transmittance instead.
 - Two lighting models, three update modes and a debug flat density are switch surface to
   keep tested until the owner retires them.
-- About 31 MB of VRAM at a 1080p internal resolution (Plan 0035's table), most of it the base
+- About 32 MB of VRAM at a 1080p internal resolution (Plan 0035's table), most of it the base
   noise and the cloud history.
+- A moving shadow edge trails by the direct target's short blend, about three frames, and
+  the mask's two extra map reads run in the upscaler's input pass on every pixel.
+- The probe volume and the baked store see no cloud: an overcast day does not dim the lamp's
+  bounce or the emissive light, which is right for both, and there is no sunlight bounce to
+  dim.
 
 ## Alternatives considered
 
@@ -113,9 +125,9 @@ update mode, used inside the shell and by the goldens.
 ### Alternative B: cloud shadow by marching the noise along each sun shadow ray
 
 Exact per receiver, and it shadows a peak that pierces the layer correctly. It costs a second
-cloud march per lit pixel and per probe ray: at 720p and one sun sample per pixel, 921 600
+cloud march per lit pixel: at 720p and one sun sample per pixel, 921 600
 light marches of 16 or more samples a frame against the map's 262 144 texels at the same
-sample count, and the probe rays add their own. The receivers sit far below a slowly moving
+sample count. The receivers sit far below a slowly moving
 field, which is the case a 2D table serves.
 
 ### Alternative C: clouds in a froxel volume shared with the aerial perspective and the fog

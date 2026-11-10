@@ -67,8 +67,11 @@ owner wants bounce light only from some sources: "fire on a stick or fire in a d
 probes, the headlamp and simple lights are direct only. ADR-0043 shrinks the probe volume to a
 lamp-bounce channel and keeps its logic for exactly this later redesign; ADR-0044 gives lights a
 fixed list. The missing piece is a per-light and per-emissive-material "feeds the bounce channel"
-flag and the channel's redesign. Pick up after Plan 0058 closes and the owner has seen the
-steady image.
+flag and the channel's redesign. Plan 0058's Phase 3 (redrafted 2026-11-10) builds the per-light
+flag; what remains after its close is the per-emissive-material flag and the channel's redesign.
+Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky ray, so a cave
+mouth gets no bounced sun until this entry is taken. Plan 0037's night light likewise has no
+bounce and no probe feed.
 
 ### Per-face light cells as a near-camera enhancement over the brick level
 
@@ -84,6 +87,12 @@ Keeping the option open is cheap. The store puts a brick's record before its fac
 when one exists. Plan 0059 Phase 6 (7c105c5) has the whole face path working; Phase 14 deletes it. Pick up when
 close-range light reads too soft: shadow edges smeared over 8 voxels, or light bleeding round thin walls.
 
+### Baked or emissive light on far-field cells
+
+Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value, so distant
+emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
+Alternative F, picked up only if a reading or the owner's flight asks.
+
 ### Render settings surface and named quality profiles
 
 Parked 2026-10-22. Every mechanism choice (shadow walk, lighting tier, sampler, look, upscaler,
@@ -93,6 +102,17 @@ resolution, look and LOD at runtime; construction-time settings (mirror budget, 
 separate and live-versus-restart is undocumented. What it takes: a best-practices rule that a new
 mechanism lands as a documented setting, and a plan for the settings surface and the profiles.
 The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
+Plan 0035's allotment table (2026-11-10) spends all of section 2's 2.1 ms Headroom on the floor
+across Plans 0035, 0036 and 0037, leaving none for M8 fog or game work until this plan arbitrates.
+
+### Remove `own`, the engine's own upscaler
+
+Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
+opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of `gpu_upscale.rs`
+and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
+its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
+ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
+Plan 0061's picks; it runs after Plan 0045 and before M10.
 
 ### Far normal range: the owner picked `[1, 2]`
 
@@ -104,7 +124,7 @@ Parked 2026-11-05 at Plan 0057's close. `the_lamp_furnace_reads_its_albedo_times
 its `D` from the shader's output, so it does not defend the albedo: `D` wants an independent reading
 of the lamp's irradiance at the rays' hits. Inside probes are traced while the lamp moves
 (`probe_update.wgsl`'s `probe_idle` returns on `MOVED_BIT` before its inside check): cost only, unread on
-the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Pick up with Plan 0058's Phase 4.
+the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 0058's Phase 3 (redrafted 2026-11-10) takes the furnace's `D` and the one-probe step test; the inside-probe trace is a reading there.
 
 ### Slow-pan verdict for FSR 2 (ADR-0034)
 

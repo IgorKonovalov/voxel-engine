@@ -1,10 +1,8 @@
 # ADR-0032: The night sky is drawn analytically on miss pixels (a binned star catalogue, sky bodies the game lists, an aurora shell lighting the scene via a hemisphere map), and the night look is a luminance tint
 
-> **Status:** proposed; amended 2026-11-04 (architect, drift): "Plan 0032's probe misses" and
-> "reaches the probes through their hysteresis" name ADR-0023's sky-reading rays and its
-> hysteresis schedule, both gone under ADR-0043 (proposed); the aurora's light on the ground
-> through the probes is a per-source feed into the lamp-only channel, with that channel's blend,
-> decided when Plan 0037 starts
+> **Status:** proposed; redrafted 2026-11-10 (architect, review pass) against the tree after
+> Plan 0059: the night's light reaches the ground through Plan 0032's sky ray alone, into
+> Plan 0058's direct target; no probe and no baked store takes it (Alternative G)
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0037](../plans/0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md)
 > (builds it)
@@ -12,9 +10,12 @@
 > (the transmittance and sky-view LUTs the night terms sit behind),
 > [ADR-0030](0030-volumetric-cloud-shell-amortised-march-and-projected-shadow-map.md) (the
 > cloud buffer that covers them, its update modes and its reconstruction),
-> [ADR-0023](0023-indirect-light-from-a-scrolling-probe-volume.md) and
-> [ADR-0027](0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) (the lighting
-> rays whose misses read the sky)
+> [ADR-0027](0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) (the sky ray
+> whose reach of the sky reads the night's light),
+> [ADR-0044](0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
+> (the direct target that ray's light lands in),
+> [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> (the baked store, emissive only)
 
 ## Context
 
@@ -28,10 +29,9 @@ does so by a time or a direction the game sets.
 The facts that decide the shape. A star is a point: the brightest subtends milliarcseconds,
 while a pixel of a 1080p frame with a 90 degree field is about 0.07 degrees wide. What a star
 contributes to a pixel is its flux, not a radiance to sample. The frame renders at an
-internal resolution with a sub-pixel jitter per frame. Plan 0030's upscaler takes miss pixels
-with no history (alpha 1.0), and FSR 2, the default since Plan 0055, reprojects them by
-direction; in either, a point sampled at the jittered ray's direction
-flickers on and off from frame to frame. Northern lights are emissive curtains about 1 km
+internal resolution with a sub-pixel jitter per frame. FSR 2 at 1.5, the default since Plan
+0055, accumulates miss pixels reprojected by direction; a point sampled at the jittered ray's
+direction flickers on and off from frame to frame. Northern lights are emissive curtains about 1 km
 thick, hundreds of kilometres long, from about 100 km up to 300 km of altitude, with vertical
 ray striations. Overhead, those rays converge in perspective into the corona, and at the
 horizon the curtains stack into bands. Their look comes from three-dimensional geometry seen
@@ -39,9 +39,15 @@ from one point. Their light is dim but real: a bright display lights snow at a m
 night. Sky bodies (a comet, a second moon, a planet, a meteor) sit at infinity for the
 camera. They are directions with an angular size, never positions in the world.
 
-The budget: `nfr.md` §2 gives volumetrics a share of the 2.1 ms headroom line, which Plan
-0035's clouds already draw on, and the composite sits in the 1.5 ms post line. At night, most
-of an outdoor frame can be sky.
+The budget: `nfr.md` section 2 gives volumetrics a share of the headroom line, which Plan
+0035 allots across the outdoor plans, and the composite sits in the post line, which is
+already over under the FSR 2 default. At night, most of an outdoor frame can be sky.
+
+The light on the ground has one path. Under ADR-0043 the probe volume is the headlamp's bounce
+channel and reads no sky; under ADR-0046 the baked store is emissive only; under ADR-0027 as
+redrafted, sky light is a cosine-weighted sky ray per lighting pixel into Plan 0058's direct
+target, on that target's short blend. The owner's priority (2026-11-03) is an image with no
+flicker.
 
 The night's look is a separate question from its contents. At physical brightness under
 Plan 0032's exposure, a moonlit landscape is a dim copy of the day in the same colours; the
@@ -77,11 +83,15 @@ transmittance and under the clouds, from three analytic sources.**
    so a curtain thinner than a step is not missed. The march is skipped where the clouds are
    already opaque. It takes Plan 0035's three update modes and its reconstruction, with a
    reprojection by direction. Its light reaches the scene through a separate 128 x 64
-   upper-hemisphere `night_light` map, rebuilt every frame from the same march with the
-   airglow background and the stars' mean radiance. The lighting rays' sky lookup adds that
-   map (Plan 0032's probe misses and sky ray, and Plan 0035's `cloud_sky` background). The
-   sky-view LUT stays the atmosphere alone, because primary misses read it and would show the
-   aurora twice.
+   upper-hemisphere `night_light` map with a mip chain, rebuilt every frame from the same
+   march with the airglow background and the stars' mean radiance. The sky ray adds that map
+   to the sky's radiance where it reaches the sky, as do Plan 0034's secondary-ray misses and
+   the background of Plan 0035's `cloud_sky` map, and the result lands in the direct target.
+   Which mip the sky ray reads is set by a stillness reading against the headlamp's, not
+   here: a bright band read sharply by one ray a pixel is noisy. A night light that changes
+   from frame to frame raises no lighting change bit; it adds a now-and-then pair to the
+   upscalers' comparison. The sky-view LUT stays the atmosphere alone, because primary misses
+   read it and would show the aurora twice.
 
 An optional sky texture (a cube map in the celestial frame, for a painted Milky Way or
 nebulae) adds behind the stars.
@@ -118,7 +128,7 @@ byte the frame before.
   moon's own phases. The engine names none of them.
 - The aurora's curtains, folds, rays and overhead corona come from geometry, so they look
   right from the ground, from a mountain and in any direction. Its glow lights the ground
-  through the paths the sky light already uses.
+  through the one path the sky light already uses, the sky ray, at every distance.
 - The night terms sit in front of the clouds and behind the atmosphere in one place in the
   composite, under Plan 0035's media rule. Clouds hide the stars and the aurora, and the
   horizon dims and reddens them, with no special case.
@@ -129,14 +139,17 @@ byte the frame before.
   are on. The pass skips the loop when the frame's exposure makes the brightest star
   invisible, so daylight pays a branch, not the loop.
 - The point-spread function is a look choice: a sigma under about half an internal pixel
-  aliases, and one over a pixel blurs. `own`'s kernel with no history on misses can still
-  shimmer a star a little at scale 1.5, and FSR 2's lock and sharpen passes can brighten one. The
-  plan measures both.
+  aliases, and one over a pixel blurs. FSR 2's lock and sharpen passes can brighten or ring a
+  one-pixel peak. The plan measures a still star through FSR 2 right after the splat exists,
+  with a stop rule, before anything else is built on it.
 - The aurora is a stylised emission model, not a simulation of particle precipitation. Its
   parameters (curtain count, fold scale, colours) are art direction that the game owns.
-- The aurora's light reaches the probes through their hysteresis and `cloud_sky` through its
-  one-eighth refresh, so a fast pulse lights the ground late and smoothed. The aurora's glow
-  scattered in the lower atmosphere (a halo around a bright display) is not modelled.
+- The aurora's light follows the direct target's blend (90 % of a step within eleven frames)
+  and `cloud_sky`'s one-eighth refresh, so a fast pulse lights the ground a little late and
+  smoothed. If the sky ray must read a coarse mip to hold still, the ground loses the aurora's
+  directional shadowing. The night's light has no bounce and does not reach under an
+  overhang the sky ray cannot see out of. The aurora's glow scattered in the lower atmosphere
+  (a halo around a bright display) is not modelled.
 - Bodies are always at infinity and drawn on misses only. A body cannot pass in front of the
   terrain, cast light or shadow, eclipse the sun or show motion blur. A meteor's speed reads
   through its trail, which the game sets.
@@ -144,6 +157,9 @@ byte the frame before.
   caps the point-spread function's reach at one cell (about 1.6 degrees at a cube corner).
   That suits any field of view a frame uses.
 - About a dozen new public types and many parameters are surface to keep tested.
+- The tint's weight depends on each pixel's own luminance, so luminance noise in the ramp
+  between its bounds becomes chromaticity noise. The plan bounds it against the tint off on a
+  dim lamp-lit wall, with a filtered luminance as the named fallback.
 - The tint is art direction, not physiology. Keeping luminance means a night-blue scene is
   no darker than the physical one, so darkness still comes from the exposure's `max` and
   the game's light levels. Its bounds are in frame units and so tied to the game's unit
@@ -210,6 +226,19 @@ taken now and not ruled out: it composes with the tint (the tint reads pre-expos
 luminance, so a different exposure leaves it unchanged) and is a possible later addition
 with its own plan and ADR if the owner's night check finds the tint alone leaves the night
 too bright.
+
+### Alternative G: The night's light through the probe volume or the baked store
+Feed the aurora and the airglow into the lamp's probe channel as one more source, or bake a
+sky term into the per-chunk store, so the ground's night light is filtered in world space and
+holds still for free. The probe channel is sized to the headlamp's reach around the camera and
+runs only with the lamp on (ADR-0043), so it would light the ground near the player and
+nothing beyond, and not at all with the lamp off. The store is baked at load and at edit
+(ADR-0046); an aurora that moves every frame would re-bake the world or go stale, and Plan
+0032 keeps every sky term out of the bake so a baked face does not depend on the sky. The
+decisive reason is that Plan 0032 already gives sky light one path at every distance, the sky
+ray, and a second path for the night alone would be a second thing to keep still. If the sky
+ray's reading fails even at a coarse mip, the fallback is ADR-0027's Alternative F, a longer
+history for the sky ray's target, not this.
 
 ## Outcome
 

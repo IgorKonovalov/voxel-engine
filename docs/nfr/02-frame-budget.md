@@ -827,7 +827,7 @@ figure, itself a guess until that plan's close reads it; "guess" means no plan e
 | volumetrics: dust, fog, smoke | 0.3 to 0.6 | 2.0 to 3.9 (6.5x) | guess | M8 (`roadmap.md`): a coarse volume marched at half resolution with a fixed step count; scaled from Plan 0035's cloud march |
 | effects: debris particles | 0.1 to 0.3 | 0.7 to 2.0 (6.5x) | guess | M8, no plan |
 | **cave frame subtotal** (the first consumer's) | **1.9 to 3.7** | **12.3 to 23.9** | | the six rows above |
-| sun and sky | 0.85 to 1.9 | 5.2 to 11.4 | budgeted | Plan 0032, ADR-0026, ADR-0027: sky LUTs, the directional and sky rays, the probes' sun rays, the gradient re-shade, the composite's sky |
+| sun and sky | 0.85 to 1.9 | 5.2 to 11.4 | budgeted | Plan 0032 (redesigned 2026-11-10), ADR-0026, ADR-0027: sky LUTs, the directional ray and the sky ray into Plan 0058's direct target, the composite's sky. The row is the 2026-10-22 budget, kept so the totals below stand; the redesign drops the probes' sun rays and the gradient re-shade and guesses 0.5 to 1.0 and 3 to 6 at one sky ray, unmeasured |
 | far field | 0.3 to 1.0 | 2.0 to 6.5 (6.5x) | budgeted | Plan 0033, ADR-0028: outdoor horizon view, primary rays; the sun ray's growth is unprojected |
 | clouds and aerial perspective | 0.5 to 1.0 | 3.6 to 7.7 | budgeted | Plan 0035, ADR-0030; it proposes a 1.0 ms sub-line on the floor |
 | weather | 0.25 to 0.8 | 0.75 to 8.0 | budgeted | Plan 0036, ADR-0031: fall map, precipitation, composite terms |

@@ -1,6 +1,7 @@
 # ADR-0031: Weather is cosmetic client state stepped by the game's ticks, and rain, snow, wetness and snow cover are rendered against a fall map traced through the mirror, never written as voxels
 
-> **Status:** proposed
+> **Status:** proposed (refreshed 2026-11-10 with Plan 0036's review pass: the puddle's
+> reflection, the flash's place in the frame, and the lighting base of ADR-0043 and ADR-0046)
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0036](../plans/0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md)
 
@@ -44,11 +45,24 @@ one ray per texel through the far field and the mirror along the quantized fall 
 stores the height of the first solid voxel it meets. Only dirty tiles are re-traced: those an
 edit box or a streamed chunk touched, those that scrolled in, and all of them, into a second map,
 when the quantized wind slant changes. Particles, wetness, puddles, snow cover and the lightning
-flash all compare a point's height against this map. Precipitation is drawn as stateless
+flash all compare a point's height against this map, through one shelter function
+(`sky_open`). Precipitation is drawn as stateless
 particles: their positions are a hash of their index plus the wind-integrated fall offset,
 wrapped in a world-aligned box around the camera. They are drawn after the upscaler, depth-tested
 against the hit buffer, and dropped where the map says covered. Wetness, puddles and snow cover
-are terms in the composite on the exposed faces. Weather never writes a voxel. A game that needs
+are terms in the composite on the exposed faces: they change the albedo the composite
+multiplies the light by, so no light history and no baked value moves. Standing water has one
+reflection model in the engine: a puddle adds the liquid Fresnel reflection of ADR-0029 in its
+sky-only mode, with no ray traced, and a wet face that is not a puddle is only darker.
+
+The lightning flash is a term of its own in the composite: a cone toward the strike, gated by
+the shelter function, multiplied by the camera's exposure, and added after the pixel's term
+for the exposure meter (ADR-0033) is taken, so a strike does not pump the auto exposure. The
+upscalers' change mask compares the flash now with the flash one frame older at each pixel,
+so open ground is marked and a sheltered pixel keeps its history. The flash is not an entry
+of ADR-0044's light list and is not stored in the direct-light target, the probe volume
+(ADR-0043: the lamp's bounce only) or the baked store (ADR-0046: emissive only, no per-frame
+term). Weather never writes a voxel. A game that needs
 weather in gameplay (a sheltered check, snow that blocks, thunder that alerts) owns that state
 in its own deterministic logic and sends the targets and strikes to its clients. It queries
 `vxe-world` for gameplay facts and never reads the fall map, which is a cosmetic GPU artifact.
@@ -57,8 +71,8 @@ in its own deterministic logic and sends the targets and strikes to its clients.
 
 ### Positive
 - One occlusion source serves all the effects, so rain, wetness and snow agree about where the
-  roof ends. Its edges are 0.2 m texels compared with a 2 x 2 filter, smooth enough for the
-  owner's "no Lego" bar.
+  roof ends. Its edges are 0.2 m texels read by four loads and a 2 x 2 weight (`rg32float` is not
+  filterable), which softens the drip line.
 - Edits and streaming cost almost nothing: an edit marks the tiles under its box, and the next
   frame re-traces up to 64 tiles (65 536 rays, a projected 0.06 ms on the dev box).
 - Particles need no buffer and no simulation. The same seed and tick give the same image, so
@@ -79,6 +93,15 @@ in its own deterministic logic and sends the targets and strikes to its clients.
   a pebble, and nothing collides with it.
 - The flash has no shadow ray toward the strike. It lights what the fall map calls exposed,
   shaded by the normal, so a hill between the strike and a valley does not shade the valley.
+- A puddle mirrors the sky only. At a cave mouth or under a cliff it shows sky where rock
+  stands in the reflected direction, the artefact ADR-0029 rejects sky-only reflection for on
+  a lake. A puddle takes it because the composite traces no ray and a puddle is a few
+  centimetres of one face; if the owner's window refuses it, puddle pixels go through the
+  liquid pass's traced reflection.
+- Wet ground has no sheen and no sun glint: a glossy lobe needs the key light's per-pixel
+  visibility, which ADR-0027 does not write out.
+- The flash's glow in the clouds is part of the clouds' radiance and is metered, so a strike
+  overhead can move the exposure through the clouds. Plan 0036 reads it under a stop rule.
 - 16 MiB of VRAM (two maps of `rg32float`) for an effect a cave-only game may never switch on.
   It is allocated only when weather is enabled.
 
@@ -114,3 +137,18 @@ cost. It lost because snowflakes on flat layers show no parallax when the camera
 occlusion is only correct per layer, not per flake. That fails exactly at a cave mouth, the
 scene this ADR is for. Stateless particles cost about as little and keep every flake in the
 world.
+
+### Alternative E: a glossy sky reflection of weather's own for wet faces and puddles
+Give wet faces a GGX lobe for the key light and a sky-view lookup at a wetness-scaled
+roughness, and puddles the same at roughness 0.02. It was this ADR's first draft. It lost
+because it is a second reflection model beside ADR-0029's liquid Fresnel, so a puddle and a
+pond a metre apart would look different, and because its sun lobe has no shadow: ADR-0027
+keeps no per-pixel key-light visibility, so a wet face in a hill's shade would glint.
+
+### Alternative F: the flash as a light of ADR-0044's list
+Hand the frame a strike as one of the eight analytic lights and get its shadow ray for free.
+It lost on shape and on time. A list light is a point or a cone with a reach of
+`sqrt(intensity / floor)` from its position, and a strike is kilometres away and directional.
+The direct target blends over about eleven frames, which smears a flash whose strokes decay in
+30 ms, and its change bit would reset every pixel's direct history on each stroke.
+

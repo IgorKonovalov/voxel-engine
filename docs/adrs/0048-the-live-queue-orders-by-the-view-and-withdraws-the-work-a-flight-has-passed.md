@@ -7,7 +7,9 @@
 > Amends the queue clause of
 > [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)'s
 > Outcome ("nearest by chunk distance, ties to the chunk ahead") and keeps the rest of it: the
-> store, the slice, the coarse pass, the digs and their rings, and the order-independent result.
+> store, the slice, the coarse pass's samples, the digs and their rings, and the order-independent
+> result. It gives up that Outcome's rule that every chunk with no block opens before any refinement
+> (Consequences, Negative).
 
 ## Context
 
@@ -43,9 +45,12 @@ passed**. The owner picked the blended score on 2026-11-10 (Plan 0060's owner an
 - **The score.** For a candidate at integer chunk offset `o` from the camera's chunk,
   `score = |o| x (1 + W_ANGLE x a) x (W_REFINE if its block is coarse, else 1)`, ties by the view
   cosine, then the coordinate. `a` is the angle between the camera's forward and `o` beyond the view
-  cone, over pi. The view cone is the frustum's widest half-angle widened by a margin (a guess of 15
-  degrees); at the fly-through's 70 degree vertical field at 16:9 that is about 51 + 15 = 66 degrees,
-  so `a` is 0 inside it and about (180 - 66) / 180 = 0.63 straight behind. A chunk in the near shell
+  cone, over pi. The view cone is circular: the wider of the frustum's horizontal and vertical
+  half-angles, widened by a margin (a guess of 15 degrees); at the fly-through's 70 degree vertical
+  field at 16:9 that is about 51 + 15 = 66 degrees every way, so `a` is 0 inside it and about
+  (180 - 66) / 180 = 0.63 straight behind. The owner's answer was "the frustum widened by 15
+  degrees"; the cone stands in for it because the score needs one angle that grows smoothly to
+  straight behind, and it is the wider of the two (the widened frustum is 50 degrees up and down). A chunk in the near shell
   (Chebyshev `near` of the camera's chunk, every direction) takes `a` 0 whatever its direction. The near shell and the view enter only through `a`, the class only through
   `W_REFINE`. `W_ANGLE` and `W_REFINE` are named constants, the owner tunes them by eye (Plan 0060
   Phase 4); `W_ANGLE` 0 orders by distance and `W_REFINE` alone. Digs (rings 1 and 2) stay ahead of every score,
@@ -78,9 +83,18 @@ passed**. The owner picked the blended score on 2026-11-10 (Plan 0060's owner an
 - **Withdrawn work is lost.** A refinement withdrawn at 90 % re-draws all its samples later. The
   keep cone's margin and the "a better candidate is ready" condition bound the churn; Plan 0060
   reads the samples withdrawn.
-- **Two weights to tune**, by eye, and the queue needs the frustum: `QueueView` gains the camera's
-  basis and tangents; a VR view needs the union of its eyes' frusta (the roadmap's asymmetric-view
+- **Two weights to tune**, by eye, and the queue needs the view: `QueueView` gains its widest
+  half-angle; a VR view needs a cone that holds both eyes' frusta (the roadmap's asymmetric-view
   rule).
+- **The cone is wider than the frustum** above and below the frame, so some of the slice goes to
+  chunks the owner's answer did not ask for. Plan 0060 counts them and the window judges; the
+  fallback is the frustum's own vertical half-angle for the up and down component.
+- **ADR-0046's coarse-first rule is given up.** As built, every chunk with no block opens before any
+  refinement. Under the score the class is one factor, `W_REFINE`: at 2, a coarse chunk at `|o|` 4
+  opens before a blank one in view at `|o|` 9. A flight's far chunks can stay unlit longer while
+  near ones refine. Plan 0060's Phase 2 reads the no-value share against the distance order and
+  falls back to the class as a leading key, with the score inside each class, if it rose; that
+  arm stays selectable either way.
 - **ADR-0046's consequence "a place is lit before it is seen, whatever the view" weakens** to
   "within the near shell, or once the score reaches it".
 
