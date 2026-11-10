@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0062** (ADRs are a separate sequence; next free there is **0050**).
+**Next free number: 0064** (ADRs are a separate sequence; next free there is **0052**).
 
 ## Active roster
 
@@ -21,6 +21,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | draft | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0061; re-read Phases 1-2 at its tip. |
 | [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: one score of distance and angle, tuned by eye; passed jobs withdrawn | approved | M2, ADR-0048 (proposed). Amended 2026-11-10. First in the order; 0061's Phase 1 beside it. |
 | [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | approved | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
+| [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | draft | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
+| [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | draft | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 <!-- roster:end -->
 
 ## Sequence
@@ -38,10 +40,13 @@ Each starts on main after the one before it closes, unless its line says otherwi
    Its Phase 0 re-measures and the architect confirms the seams before a file moves.
 6. **Two owed plans, not drafted**: removing the `own` upscaler, and the render settings and
    profiles plan that holds M10 against the budget (`docs/backlog.md`).
-7. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
+7. **M6, entities: Plan 0062, then Plan 0063** (the architect's proposal of 2026-11-10 for
+   their place, ahead of M10 because the first consumer is a cave game; the owner confirms).
+   0062's Phase 1 and 0063's Phases 1 and 2 add files only and may run as a side lane from now.
+8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
-Drafts 0058, 0060 and 0061 await the owner's go. The approved plans were amended on 2026-11-10;
+Drafts 0058, 0062 and 0063 await the owner's go. The approved plans were amended on 2026-11-10;
 their figures for wall time and frame cost are estimates until a phase measures them.
 
 ## Recently closed
