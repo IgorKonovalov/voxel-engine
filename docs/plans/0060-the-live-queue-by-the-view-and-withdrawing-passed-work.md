@@ -1,6 +1,6 @@
 # 0060: The live queue by the view, nearest first, and withdrawing the work a flight has passed
 
-> **Status:** approved (owner go 2026-11-10), amended 2026-11-10 (review pass)
+> **Status:** in-progress (owner go 2026-11-10), amended 2026-11-10 (review pass)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes, emissive voxels
 > as the light")
@@ -364,11 +364,11 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings, attempts and resume
-> notes go to `docs/plans/logs/0060.md`.
+> notes go to [`docs/plans/logs/0060.md`](logs/0060.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The view cone as a reading | dev | not started | |
+| 1: The view cone as a reading | dev | done; both stop rules read as firing (readings log, Phase 1); the census and the in-view reach count are Phase 2 tree code | committed with this row |
 | 2: The blended score | dev | not started | |
 | 3: Withdrawing passed work | dev | not started | |
 | 4: The owner's window | human | not started | |

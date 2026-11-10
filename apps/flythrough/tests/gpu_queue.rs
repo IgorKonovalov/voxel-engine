@@ -171,6 +171,11 @@ impl Q {
             resident: None,
             samples: None,
             hold: None,
+            half_angle: {
+                let [w, h] = self.frame.output_size();
+                bake::view_half_angle(self.camera.vfov, w as f32 / h as f32)
+            },
+            frustum: None,
         };
         let st = self
             .frame

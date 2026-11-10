@@ -3043,6 +3043,9 @@ struct QueueRun {
     /// The CPU ms of each `bake_queue_step` since the last line, and of the last one.
     step_cpu: Vec<f64>,
     last_step_cpu: f64,
+    /// The samples by view class and passed at the last line.
+    line_view: [u64; 3],
+    line_passed: u64,
 }
 
 /// A dig in the live queue, from the step that first read its box until its rings are baked:
@@ -3178,6 +3181,7 @@ impl Run {
         s.format_us = h.format_us;
         s.lighting = lighting;
         s.exposure = Some(self.modes.exposure_row());
+        s.queue = self.queue.stats.map(|st| hud::queue_row(&st));
         s.aliasing = Some(hud::aliasing_row(
             &self.upscaler,
             &LookPreset::far_normal_words(self.look.normal_mode, self.look.far_normal),
@@ -3801,12 +3805,15 @@ impl Run {
             let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
                 .is_some()
                 .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+            let (half_angle, frustum) = queue_view_angles(camera.vfov, frame.output_size());
             let view = vxe_render::QueueView {
                 eye,
                 forward: forward.to_array(),
                 resident,
                 samples: Some(PRE_ROLL_SAMPLES),
                 hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+                half_angle,
+                frustum: Some(frustum),
             };
             if let Some(Err(e)) =
                 frame.bake_queue_step(&gpu.device, &gpu.queue, mirror, &self.world, &view)
@@ -3893,12 +3900,16 @@ impl Run {
         let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
             .is_some()
             .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+        let (half_angle, frustum) =
+            queue_view_angles(self.fly.camera.vfov, gfx.frame.output_size());
         let view = vxe_render::QueueView {
             eye: self.fly.camera.position.to_array(),
             forward: forward.to_array(),
             resident,
             samples: None,
             hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+            half_angle,
+            frustum: Some(frustum),
         };
         let t_step = ms_since(self.start);
         let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
@@ -4058,6 +4069,32 @@ impl Run {
                 percentile(&mut cpu, 50.0),
                 percentile(&mut cpu, 100.0),
             );
+            let needs = gfx
+                .frame
+                .bake_queue_mut()
+                .map(vxe_render::BakeQueue::take_angle_needs)
+                .unwrap_or_default();
+            let (first, full) = gfx
+                .frame
+                .bake_queue()
+                .map(|q| {
+                    let (a, b) = q.view_ages();
+                    (a.to_vec(), b.to_vec())
+                })
+                .unwrap_or_default();
+            println!(
+                "{}",
+                queue_view_line(
+                    &st,
+                    self.queue.line_view,
+                    self.queue.line_passed,
+                    &needs,
+                    &first,
+                    &full
+                )
+            );
+            self.queue.line_view = st.view_samples;
+            self.queue.line_passed = st.passed_samples;
             self.queue.line_ms = t;
             self.queue.line_frame = self.frame;
             self.queue.line_baked = st.baked;
@@ -5945,6 +5982,101 @@ fn shot_camera(shot: &Shot) -> Camera {
 
 /// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
 /// camera, or the spawn facing +x.
+/// The live queue's view angles for a camera of `vfov` drawn at `size` (output pixels): the
+/// cone's half-angle (the wider of the two) and the frustum's horizontal and vertical ones.
+fn queue_view_angles(vfov: f32, size: [u32; 2]) -> (f32, [f32; 2]) {
+    let aspect = size[0].max(1) as f32 / size[1].max(1) as f32;
+    (
+        vxe_render::bake::view_half_angle(vfov, aspect),
+        vxe_render::bake::view_half_angles(vfov, aspect),
+    )
+}
+
+/// The live queue's view line, a second: the candidates by where they lie (blank / coarse),
+/// those the cone adds over the widened frustum, the samples of ended jobs by where their chunk
+/// lay (since the start, and since the last line with `line_view` and `line_passed` then), the
+/// in-view ages in frames over the run, and the weight log: the angle weights `needs` read
+/// since the last line at p50 and p90, the refine weight at which the in-view median coarse
+/// chunk ranks with the median blank one, and the census by class, distance band and angle
+/// band.
+fn queue_view_line(
+    st: &vxe_render::QueueStats,
+    line_view: [u64; 3],
+    line_passed: u64,
+    needs: &[f32],
+    first: &[u32],
+    full: &[u32],
+) -> String {
+    let w = st.view_waiting;
+    let total: u64 = st.view_samples.iter().sum();
+    let d: [u64; 3] = std::array::from_fn(|k| st.view_samples[k] - line_view[k]);
+    let d_total: u64 = d.iter().sum();
+    let d_passed = st.passed_samples - line_passed;
+    let share = |v: u64, of: u64| 100.0 * v as f64 / of.max(1) as f64;
+    let pct = |v: &[u32], p: f64| {
+        let mut f: Vec<f64> = v.iter().map(|&x| f64::from(x)).collect();
+        if f.is_empty() {
+            "-".to_owned()
+        } else {
+            format!("{:.0}", percentile(&mut f, p))
+        }
+    };
+    let mut n: Vec<f64> = needs.iter().map(|&x| f64::from(x)).collect();
+    let need = |n: &mut Vec<f64>, p: f64| {
+        if n.is_empty() {
+            "-".to_owned()
+        } else {
+            format!("{:.2}", percentile(n, p))
+        }
+    };
+    let refine = if st.view_median[1] > 0.0 && st.view_median[0] > 0.0 {
+        format!("{:.2}", st.view_median[0] / st.view_median[1])
+    } else {
+        "-".to_owned()
+    };
+    let census = |c: usize| {
+        st.weight_census[c]
+            .iter()
+            .map(|a| format!("{} {} {} {}", a[0], a[1], a[2], a[3]))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    format!(
+        "bake queue view: waiting (blank/coarse) shell {}/{} in view {}/{} out {}/{}, cone only {}, in-view median {:.1}/{:.1} chunks; samples shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e} since the start, last line shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e}; in-view ages (frames) first p50 {} p95 {} of {}, full p50 {} p95 {} of {}; angle weight needed p50 {} p90 {} of {}, refine {} (3 at 5..6: 1.67..2.00); census blank [{}] coarse [{}] (distance 0-2 | 3-5 | 6-10 | >10, a 0 <0.2 0.2-0.4 >0.4)",
+        w[0][0],
+        w[0][1],
+        w[1][0],
+        w[1][1],
+        w[2][0],
+        w[2][1],
+        st.cone_only,
+        st.view_median[0],
+        st.view_median[1],
+        share(st.view_samples[0], total),
+        share(st.view_samples[1], total),
+        share(st.view_samples[2], total),
+        share(st.passed_samples, total),
+        total as f64,
+        share(d[0], d_total),
+        share(d[1], d_total),
+        share(d[2], d_total),
+        share(d_passed, d_total),
+        d_total as f64,
+        pct(first, 50.0),
+        pct(first, 95.0),
+        first.len(),
+        pct(full, 50.0),
+        pct(full, 95.0),
+        full.len(),
+        need(&mut n, 50.0),
+        need(&mut n, 90.0),
+        n.len(),
+        refine,
+        census(0),
+        census(1),
+    )
+}
+
 fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     if args.castle {
         castle_camera(args.castle_shot)
