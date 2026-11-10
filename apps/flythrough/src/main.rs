@@ -503,7 +503,8 @@ struct Args {
     queue_distance: bool,
     /// `--queue-weights A,R` or `A,tier`: the score's angle weight (`2` halves it, `3` doubles
     /// it) and its refine weight, or the class as the leading key (defaults
-    /// `vxe_render::bake::QUEUE_ANGLE_WEIGHT` and `QUEUE_REFINE_WEIGHT`).
+    /// `vxe_render::bake::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
+    /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `1` cycles to).
     queue_angle: f32,
     queue_refine: f32,
     queue_tier: bool,
@@ -847,7 +848,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         queue_distance: false,
         queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
         queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
-        queue_tier: false,
+        queue_tier: true,
         queue_withdraw: true,
         bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
         dig_reach: true,
@@ -7659,8 +7660,9 @@ mod tests {
     }
 
     /// `--queue-order` parses `score` and `distance` and refuses the rest, `--queue-weights` `A,R`
-    /// and `A,tier`; `1` cycles the order, `2` halves the angle weight and `3` doubles it, each
-    /// press changing the banner and the HUD's queue row in the same frame.
+    /// and `A,tier`; a plain start reads the score with the class as the tier; `1` cycles the
+    /// order, `2` halves the angle weight and `3` doubles it, each press changing the banner and
+    /// the HUD's queue row in the same frame.
     #[test]
     fn the_banner_names_the_queue_order_and_its_weights() {
         use vxe_render::bake::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
@@ -7690,9 +7692,11 @@ mod tests {
         };
         check(
             shown(&mut run, None),
-            format!("order score, angle {A}, refine {R}"),
+            format!("order score, angle {A}, refine tier"),
         );
         for want in [
+            "order distance".to_owned(),
+            format!("order score, angle {A}, refine {R}"),
             format!("order score, angle {A}, refine tier"),
             "order distance".to_owned(),
             format!("order score, angle {A}, refine {R}"),
@@ -7729,7 +7733,13 @@ mod tests {
                 refine: Refine::Tier
             })
         );
-        assert_eq!(order(&[]), Ok(QueueOrder::default()));
+        assert_eq!(
+            order(&[]),
+            Ok(QueueOrder::Score {
+                angle: A,
+                refine: Refine::Tier
+            })
+        );
         for bad in [
             &["--queue-order", "near"][..],
             &["--queue-weights", "4"],
