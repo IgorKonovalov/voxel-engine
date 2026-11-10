@@ -517,6 +517,9 @@ table before Phase 2's first change.
 3. **Glow:** emissive voxels glow; light on the walls is a list light the game attaches.
 4. **Queries:** render plus a headless ray query.
 
+5. **The order** ("agreed", to the architect's proposal): after Plan 0045 and ahead of M10;
+   Phase 1 may run as a side lane.
+
 Architect's calls the owner may overturn: detail 1, 2 or 4 per part; 16 parts and 64 voxels a
 side per part; entities absent from the bounce and the bake; the fallback for the world's
 emissive light on an entity; the walker and its keys (`7`, `8`, `Minus`).
