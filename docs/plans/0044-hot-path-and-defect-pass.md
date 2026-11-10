@@ -1,6 +1,7 @@
 # 0044: The hot-path and defect pass: what the frame, the sync, the walk, the edits and the audio callback do for nothing
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** in-progress (2026-11-10, side lane: Phases 1, 6, 7); approved 2026-10-22, amended
+> 2026-11-10 (review pass)
 > **Created:** 2026-10-22
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
 > figures in `docs/nfr.md` that the plans so far have already shipped.
@@ -522,7 +523,7 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the inventory at the start commit | dev | not started | |
+| 0: the inventory at the start commit | dev | side-lane rows only (Phases 1, 6, 7); the render rows wait for Phases 2-5, 8 | committed with this row |
 | 1: the audio callback frees nothing and zeroes nothing large | dev | not started | |
 | 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | not started | |
 | 3: the frame builds its bind groups once per size | dev | not started | |
