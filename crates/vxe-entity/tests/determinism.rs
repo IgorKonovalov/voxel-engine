@@ -1,9 +1,11 @@
-//! Fixed vectors: seeded rays against a posed three-part model hash to a committed constant,
-//! the same on every platform CI runs.
+//! Fixed vectors: seeded rays against a posed three-part model, and every tick of a three-part
+//! clip, hash to committed constants, the same on every platform CI runs.
 
 use std::sync::Arc;
 
-use vxe_entity::{EntityHit, EntitySet, Model, Part, PartPose, Pose, Quat};
+use vxe_entity::{
+    Clip, EntityHit, EntitySet, Key, Model, Part, PartPose, Pose, Quat, Track, blend, sample,
+};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{AIR, Face, Fixed3, MaterialId, Prefab};
 
@@ -165,4 +167,82 @@ fn entity_hits_match_the_fixed_vectors() {
     println!("hits {hits}, per part {parts:?}, hash {:#018x}", h.finish());
     assert!(parts.iter().all(|&n| n > 0), "every part is hit: {parts:?}");
     assert_eq!(h.finish(), ENTITY_HITS_HASH);
+}
+
+fn write_pose(h: &mut Fnv1a, p: &Pose) {
+    for c in p.root.0 {
+        h.write(&c.to_le_bytes());
+    }
+    for c in p.root_q.0 {
+        h.write(&c.to_le_bytes());
+    }
+    for pp in &p.parts {
+        for c in pp.t {
+            h.write(&c.to_le_bytes());
+        }
+        for c in pp.q.0 {
+            h.write(&c.to_le_bytes());
+        }
+    }
+}
+
+/// A 48-tick looped clip on the three-part model: the root part sways, part 1 turns through
+/// keys whose neighbours include a negative dot product, part 2 slides and turns about two
+/// axes. Keys sit at uneven ticks so the divisions round.
+fn three_part_clip(model: &Model) -> Clip {
+    let k = |tick, t, q| Key { tick, t, q };
+    Clip::new(
+        model,
+        48,
+        true,
+        vec![
+            Track {
+                part: 0,
+                keys: vec![
+                    k(0, [0, 0, 0], Quat::IDENTITY),
+                    k(17, [-301, 77, 5], Quat([15826, 4240, 0, 0])),
+                    k(48, [0, 0, 0], Quat::IDENTITY),
+                ],
+            },
+            Track {
+                part: 1,
+                keys: vec![
+                    k(3, [0, 0, 0], Quat([14189, 0, 8192, 0])),
+                    // 100 degrees about y, negated: dot < 0 with the key before.
+                    k(25, [13, -7, 0], Quat([-10531, 0, -12551, 0])),
+                    k(41, [0, 100, 0], Quat([0, 0, 0, 16384])),
+                ],
+            },
+            Track {
+                part: 2,
+                keys: vec![
+                    k(0, [256, 0, -256], Quat([11585, 0, 0, 11585])),
+                    k(11, [-256, 3, 255], Quat([15137, 6270, 0, 0])),
+                    k(29, [1, 1, 1], Quat([8192, 8192, 8192, 8192])),
+                    k(47, [256, 0, -256], Quat([11585, 0, 0, 11585])),
+                ],
+            },
+        ],
+    )
+    .unwrap()
+}
+
+/// The hash of the clip's poses at ticks 0 to 96 (two loops) from the posed rest of [`pose`],
+/// then of each tick's pose blended at w 77 with tick 0's.
+const CLIP_POSES_HASH: u64 = 0xd1aa_d34b_0a23_3d09;
+
+#[test]
+fn clip_poses_match_the_fixed_vectors() {
+    let model = model();
+    let rest = pose(&model);
+    let clip = three_part_clip(&model);
+    let mut h = Fnv1a::default();
+    let first = sample(&model, &rest, &clip, 0);
+    for tick in 0..=96 {
+        let p = sample(&model, &rest, &clip, tick);
+        write_pose(&mut h, &p);
+        write_pose(&mut h, &blend(&first, &p, 77));
+    }
+    println!("clip hash {:#018x}", h.finish());
+    assert_eq!(h.finish(), CLIP_POSES_HASH);
 }

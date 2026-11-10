@@ -1,7 +1,7 @@
 # 0063: Rigs and clips: keyframe animation sampled by tick, a rig text file beside the `.vox`, a model viewer in the fly-through, and voxels from text
 
-> **Status:** approved (owner go 2026-11-10; Phases 1 and 2 start after Plan 0062's Phase 1
-> merges, Phases 3 and 4 after Plan 0062 closes)
+> **Status:** in-progress (Phases 1 and 2, stacked on `plan-0062` at bc80246; Phases 3 and 4
+> after Plan 0062 closes)
 > **Created:** 2026-11-10
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
@@ -289,9 +289,11 @@ questions under Risks.
 > Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
 > resume notes go to `docs/plans/logs/0063.md`.
 
+Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Clips in `vxe-entity` | dev | not started | |
+| 1: Clips in `vxe-entity` | dev | done | committed with this row |
 | 2: The `.rig` file and voxels from text | dev | not started | |
 | 3: The viewer, display interpolation and a sample model | dev | not started | |
 | 4: The owner's window | human | not started | |
@@ -301,6 +303,11 @@ questions under Risks.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: `sample` takes a rest `Pose` (`sample(model, rest, clip, tick)`), and a key's
+  translation is an offset from the rest translation; `Part` has no rest offset (Plan 0062's
+  option (a)). `Clip::new` also refuses a zero length, an empty track and two tracks for one
+  part; equal ticks in a track count as unsorted. `Playback` holds an `Arc<Clip>`.
 
 ### Close triggers
 
