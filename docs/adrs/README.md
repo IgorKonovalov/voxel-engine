@@ -62,6 +62,7 @@ the status.
 | [0045](0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md) | A per-face table cell stores irradiance at unit emission, and the read multiplies by its kept emitter's emission scale now | proposed (Plan 0058); refines ADR-0043 |
 | [0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md) | Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values | accepted (Plan 0059), Outcome: brick level only, live queue; supersedes ADR-0043's table |
 | [0047](0047-translucent-solids-filter-by-path-length-with-a-baked-reflected-share.md) | Translucent solids filter what is behind by path length, and reflect a small share of their baked face light | accepted (Plan 0059), Outcome: the face light is the brick's record |
+| [0049](0049-the-baked-light-is-read-by-the-far-shading-normal.md) | Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values | proposed (Plan 0061) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

@@ -203,6 +203,12 @@ layout.
 
 ### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057 and 0059 closed; 0049 abandoned)
 
+Plan 0061, antialiasing, drafted 2026-11-10 with ADR-0049 (proposed): the owner's "a lot of aliasing" at the
+hall (Plan 0059 Phase 13) reads as ADR-0042's far bands back, since the baked store is read by the face's
+direction and the far normal no longer reaches the light. A reading phase confirms it first; the store read by
+the far normal goes behind a toggle to a window; the far normal's setting, the emitter cap's removal and
+ADR-0034's and ADR-0042's Outcomes land with it.
+
 Plan 0056, the aliasing spike, closed 2026-11-04 (v0.42.0, no ADR): it read the final image
 under an eye lamp that cannot move. FSR 2's frame-to-frame jumps at 1.5 sit on silhouettes and
 emitters, are locked to its jitter and survive the frozen light, so they are the upscaler's,
