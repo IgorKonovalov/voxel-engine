@@ -28,11 +28,7 @@ The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), n
 
 ### The live queue's order and cancellation, after Plan 0059
 
-Parked 2026-11-09 (owner, Plan 0059 Phase 13's window; a new plan after 0059's close). Two complaints about the baked light's live queue (`docs/plans/logs/0059.md`, Phase 13):
-- **Far light waits for the camera:** "light is not recalculated until I come closer, it would be better to recalculate all in the field of view, starting from the nearest chunks". A re-bake order by view, nearest first, out to the light's reach.
-- **A fast flight settles slowly, even coarse:** "we are starting to calculate places that camera is already passed. We should be able to cancel it when camera passed". Drop or demote queued jobs behind the camera.
-
-The third complaint, "a lot of aliasing" at the hall (`live/session13-hall-aliasing.png` in the lane), goes to the parked antialiasing plan below.
+Taken 2026-11-10 by [Plan 0060](plans/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
 
 
 ## Engine mechanisms

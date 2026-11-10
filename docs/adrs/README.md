@@ -62,6 +62,7 @@ the status.
 | [0045](0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md) | A per-face table cell stores irradiance at unit emission, and the read multiplies by its kept emitter's emission scale now | proposed (Plan 0058); refines ADR-0043 |
 | [0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md) | Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values | accepted (Plan 0059), Outcome: brick level only, live queue; supersedes ADR-0043's table |
 | [0047](0047-translucent-solids-filter-by-path-length-with-a-baked-reflected-share.md) | Translucent solids filter what is behind by path length, and reflect a small share of their baked face light | accepted (Plan 0059), Outcome: the face light is the brick's record |
+| [0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md) | The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed | proposed (Plan 0060); amends ADR-0046's queue clause |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
