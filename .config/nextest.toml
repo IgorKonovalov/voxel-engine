@@ -14,16 +14,18 @@
 #   cargo nextest run --profile ci-soak --run-ignored only
 #                                        the soak tier with the GPU tests in parallel; CI only
 #
-# A dev phase runs `node scripts/test-changed.mjs --profile quick` (and `--profile gpu` under the
-# perf lock when the change reaches the renderer): the tier narrowed to the crates the working
-# tree changed and their dependents. A bare `cargo nextest run` is the gate tier.
+# A dev phase runs `node scripts/test-changed.mjs --profile quick`: the tier narrowed to the
+# crates the working tree changed and their dependents. When the change reaches the renderer it
+# adds `--profile gpu --binaries <gpu_* names>` under the perf lock: the binaries the phase
+# names plus those whose own file the change touched. The whole gpu tier runs at a plan's tip. A
+# bare `cargo nextest run` is the gate tier.
 #
 # The tests carry their own marks; no profile lists a test:
 #
 # GPU      every test binary named `gpu_*` (`tests/gpu_*.rs`): `binary(/^gpu_/)`, and
 #          `not binary(/^gpu_/)` for the CPU tests.
-# SOAK     every test over the line in docs/nfr.md section 7 (60 s on CI's Linux arm, or 30 s on
-#          the dev reference's lavapipe, quiet) is `#[ignore = "soak"]`. Only `--run-ignored`
+# SOAK     every test over the line in docs/nfr.md section 7 (10 s on the dev reference's
+#          lavapipe, read quiet; 60 s on CI's Linux arm) is `#[ignore = "soak"]`. Only `--run-ignored`
 #          reaches it, which a profile cannot set, so the soak and full commands above pass it.
 #          `node scripts/test-times.mjs <log>` ranks a run's tests by time and names the ones
 #          over the line; a run logs per-test times with `--status-level pass`.

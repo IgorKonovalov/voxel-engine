@@ -1,6 +1,6 @@
 # 0066: Test cost: a 10 s soak line, and the gpu binaries a phase names
 
-> **Status:** approved (owner go 2026-11-10; side lane beside Plan 0060)
+> **Status:** in-progress (owner go 2026-11-10; side lane beside Plan 0060)
 > **Created:** 2026-11-10
 > **Milestone:** none (harness chore; `docs/nfr.md` section 7)
 > **Related ADRs:** none. The rejected alternatives (below, Decision) are a process call, recorded
@@ -115,9 +115,11 @@ phase** (a render phase would reach the tip blind).
 > resume notes go to the plan's readings log, `docs/plans/logs/0066.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings log: [logs/0066.md](logs/0066.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `--binaries`, the 10 s line in the scripts | dev | not started | |
+| 1: `--binaries`, the 10 s line in the scripts | dev | done; `CLAUDE.md` canonical-commands line names `--binaries`; fixture `scripts/fixtures/test-times/` | committed with this row |
 | 2: Mark the tests over the line, and read the gate | dev | not started | |
 
 ### Notes
