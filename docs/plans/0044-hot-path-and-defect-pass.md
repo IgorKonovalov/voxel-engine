@@ -535,6 +535,10 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 
 ### Notes
 
+- Fix pass, side-lane review finding 1 (retire drops buffers): a voice hold that cannot
+  overflow, a separate source hold, buffers kept on the mixer with the recycler gone; plus the
+  output-hash test of finding 9. Commit: committed with this line.
+
 ### Close triggers
 
 ## Followups

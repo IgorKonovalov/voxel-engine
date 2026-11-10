@@ -432,3 +432,89 @@ fn a_full_recycling_channel_holds_on_the_callback_and_frees_nothing() {
     assert_eq!(taken, 8, "the held sounds, sent once the channel had room");
     assert_eq!(game_side.frees, 8);
 }
+
+/// A burst larger than every hold: [`MAX_VOICES`] looping voices play, then one block gets 200
+/// `Play`s (no buffers left, so each is dropped) and [`MAX_VOICES`] `Stop`s. The dropped
+/// `Play`s fill the channel and the source hold; the stopped voices still wait in the voice
+/// hold, so the callback frees nothing and loses no buffers. After the game thread recycles
+/// between blocks, [`MAX_VOICES`] new `Play`s start [`MAX_VOICES`] voices.
+#[test]
+fn a_burst_past_every_hold_keeps_every_voice_buffer_and_frees_nothing() {
+    let mut m = mixer();
+    let recycler = m.take_recycler().expect("a new mixer holds its recycler");
+    let looping = PlayParams {
+        looping: true,
+        ..PlayParams::at([10.0, 0.0, 0.0])
+    };
+    // One sound the test keeps, so a dropped `Play`'s source is never its last reference.
+    let sound = tone(440.0, 0.1, BLOCK);
+    let n = MAX_VOICES as u32;
+    let mut first: Vec<_> = (0..n)
+        .map(|i| Command::Play(VoiceId(i), sound.clone(), looping))
+        .collect();
+    let mut burst: Vec<_> = (n..n + 200)
+        .map(|i| Command::Play(VoiceId(i), sound.clone(), looping))
+        .collect();
+    let mut again: Vec<_> = (1000..1000 + n)
+        .map(|i| Command::Play(VoiceId(i), sound.clone(), looping))
+        .collect();
+    let mut out = vec![0.0; 2 * BLOCK];
+    let ((), counts) = support::count(|| {
+        for cmd in first.drain(..) {
+            m.apply(cmd);
+        }
+        m.render(&mut out, BLOCK);
+        assert_eq!(m.voice_count(), MAX_VOICES);
+        for cmd in burst.drain(..) {
+            m.apply(cmd);
+        }
+        for i in 0..n {
+            m.apply(Command::Stop(VoiceId(i)));
+        }
+        m.render(&mut out, BLOCK);
+        assert_eq!(m.voice_count(), 0);
+    });
+    assert_eq!(counts.frees, 0, "callback {counts:?}");
+    for _ in 0..4 {
+        recycler.recycle();
+        let ((), counts) = support::count(|| m.render(&mut out, BLOCK));
+        assert_eq!(counts.frees, 0, "callback {counts:?}");
+    }
+    recycler.recycle();
+    let ((), counts) = support::count(|| {
+        for cmd in again.drain(..) {
+            m.apply(cmd);
+        }
+        m.render(&mut out, BLOCK);
+    });
+    assert_eq!(counts.frees, 0, "callback {counts:?}");
+    assert_eq!(
+        m.voice_count(),
+        MAX_VOICES,
+        "every buffer set came back to the pool"
+    );
+}
+
+/// With the game's end dropped, the voices that end keep their buffers on the mixer: the next
+/// [`MAX_VOICES`] `Play`s start [`MAX_VOICES`] voices again.
+#[test]
+fn a_dropped_recycler_keeps_every_voice_buffer_on_the_mixer() {
+    let mut m = mixer();
+    drop(m.take_recycler());
+    let sound = tone(440.0, 0.1, BLOCK);
+    let mut out = vec![0.0; 2 * BLOCK];
+    for round in 0..2u32 {
+        for i in 0..MAX_VOICES as u32 {
+            m.apply(Command::Play(
+                VoiceId(round * 1000 + i),
+                sound.clone(),
+                PlayParams::at([10.0, 0.0, 0.0]),
+            ));
+        }
+        assert_eq!(m.voice_count(), MAX_VOICES, "round {round}");
+        for _ in 0..8 {
+            m.render(&mut out, BLOCK);
+        }
+        assert_eq!(m.voice_count(), 0, "every voice ended");
+    }
+}
