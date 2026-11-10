@@ -26,6 +26,14 @@
 > 3. **The view:** the frustum widened by 15 degrees, plus the near shell (as drafted).
 > 4. **Bake speed:** keep the 1.5 ms slice and judge the order first (as drafted).
 
+> **Amended 2026-11-10 (owner), Phase 1's two stop rules.** Both fired (`docs/plans/logs/0060.md`, Phase 1):
+> in the streamed cave about 0.70 of the in-view waiting chunks are `waiting reach`, the near shell takes 98 to
+> 99 % of the slice at `--glide 300`, and the passed samples there are 0.7 to 1.2 % (46 to 84 % in the vein
+> flights, 62 % on the autopilot). Readings taken at load 17 to 44. The owner's answers:
+> 1. **Before Phase 2: build Phase 2 as written.** The score is the lever at rest; the near shell's cost in
+>    flight and the streaming edge are out of this plan and go to `docs/backlog.md` at its close.
+> 2. **Before Phase 3: build the withdrawal** (answer 2 stands), not demote only.
+
 > **Amended 2026-11-10 (review pass, before any code).** The score, the withdrawal and the owner's four
 > answers stand. What changed: the view enters the queue as one half-angle, not a basis and four tangents
 > (Decision, and the note on answer 3 there); Phase 2 says what replaces the class gate and the check caps,
