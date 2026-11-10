@@ -608,7 +608,7 @@ a cheap query.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   accepted at their plans' closes.
 
-### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half is not drafted and follows M2)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half is Plans 0062 and 0063, drafted 2026-11-10, after Plan 0058)
 
 - `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
