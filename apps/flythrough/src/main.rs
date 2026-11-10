@@ -7831,38 +7831,6 @@ mod tests {
         assert_eq!(lines, ["collapse: drop unsupported regions"]);
     }
 
-    /// The support query after digs from the spawn of the seed-1 level, one along each axis
-    /// at the default radius, through the logic, printed. Run with `cargo test --release -p
-    /// flythrough -- --ignored --nocapture a_dig_in_the_level_prints_the_query`.
-    #[test]
-    #[ignore = "a reading on the generated level, run in release"]
-    fn a_dig_in_the_level_prints_the_query() {
-        let source = CaveSource::new(1, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
-        let world = Arc::new(World::generate(source.extent, &source, &cave_materials()));
-        let mut net = native_net(&world);
-        let origin = vxe_world::centre_of_voxel(source.spawn());
-        let f = FIXED_ONE;
-        for dir in [
-            [f, 0, 0],
-            [-f, 0, 0],
-            [0, f, 0],
-            [0, -f, 0],
-            [0, 0, f],
-            [0, 0, -f],
-        ] {
-            let t = now();
-            let (lines, _) = net_tick(
-                &mut net,
-                &[DigInput::Dig {
-                    origin,
-                    dir,
-                    radius: DIG_RADIUS,
-                }],
-            );
-            println!("dig {dir:?}: tick {:.3} ms; {lines:?}", ms_since(t));
-        }
-    }
-
     /// `--source` picks the cave, the level (as `--level` does) or the showcase; the showcase
     /// starts with the lamp off and a light radius of 19 unless the flags set them, and
     /// refuses what it cannot take.
@@ -8431,59 +8399,101 @@ mod tests {
         assert!(parse_args_from(argv(&["--look", "cubes-field"])).is_err());
     }
 
-    /// The cost of one `World::stats` call on the streamed cave at its spawn after full
-    /// residency, median of 10, which sets [`HUD_STATS_EVERY`]. Run by hand in release:
-    /// `cargo test --release -p flythrough --bin flythrough -- --ignored world_stats_call`.
-    #[test]
-    #[ignore = "a timing reading, run by hand in release"]
-    fn world_stats_call_on_the_streamed_world_at_full_residency() {
-        let source = CaveSource::unbounded(1);
-        let spawn = source.spawn();
-        let world = World::new(&cave_materials());
-        let workers = std::thread::available_parallelism()
-            .map_or(1, usize::from)
-            .saturating_sub(1)
-            .max(1);
-        let mut streamer = Streamer::new(
-            Arc::new(source),
-            StreamConfig {
-                residency: RESIDENCY,
-                workers,
-                persist: PersistConfig::default(),
-            },
-        );
-        loop {
-            streamer.update(&world, &[spawn]);
-            let _ = streamer.poll(&world);
-            let st = streamer.stats();
-            if st.ticks > 1 && st.in_flight == 0 && st.queued == 0 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        let mut ms: Vec<f64> = (0..10)
-            .map(|_| {
-                let t = now();
-                std::hint::black_box(world.stats());
-                ms_since(t)
-            })
-            .collect();
-        let s = world.stats();
-        let st = streamer.stats();
-        println!(
-            "world stats call: median {:.3} ms of 10 (min {:.3}, max {:.3}); {} chunks, {} full bricks; streamer {} full, {} lod",
-            median(&mut ms),
-            ms[0],
-            ms[9],
-            s.chunks,
-            s.full_bricks,
-            st.resident_full,
-            st.resident_lod
-        );
-    }
-
     #[test]
     fn the_first_frame_waits_for_33_chunks() {
         assert_eq!(ball(NEAR_D2).len(), 33);
+    }
+
+    /// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+    /// `#[ignore]`d and run by hand, `cargo nextest run -p flythrough --bin flythrough
+    /// --run-ignored only -E 'test(=tests::reading::<name>)'`; the soak and full tiers leave this
+    /// module out by its name.
+    mod reading {
+        use super::*;
+
+        /// The support query after digs from the spawn of the seed-1 level, one along each axis
+        /// at the default radius, through the logic, printed. Run with `cargo nextest run --release -p
+        /// flythrough --bin flythrough --run-ignored only --no-capture -E
+        /// 'test(=tests::reading::a_dig_in_the_level_prints_the_query)'`.
+        #[test]
+        #[ignore = "a reading on the generated level, run in release"]
+        fn a_dig_in_the_level_prints_the_query() {
+            let source = CaveSource::new(1, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+            let world = Arc::new(World::generate(source.extent, &source, &cave_materials()));
+            let mut net = native_net(&world);
+            let origin = vxe_world::centre_of_voxel(source.spawn());
+            let f = FIXED_ONE;
+            for dir in [
+                [f, 0, 0],
+                [-f, 0, 0],
+                [0, f, 0],
+                [0, -f, 0],
+                [0, 0, f],
+                [0, 0, -f],
+            ] {
+                let t = now();
+                let (lines, _) = net_tick(
+                    &mut net,
+                    &[DigInput::Dig {
+                        origin,
+                        dir,
+                        radius: DIG_RADIUS,
+                    }],
+                );
+                println!("dig {dir:?}: tick {:.3} ms; {lines:?}", ms_since(t));
+            }
+        }
+
+        /// The cost of one `World::stats` call on the streamed cave at its spawn after full
+        /// residency, median of 10, which sets [`HUD_STATS_EVERY`]. Run by hand in release:
+        /// `cargo nextest run --release -p flythrough --bin flythrough --run-ignored only -E
+        /// 'test(=tests::reading::world_stats_call_on_the_streamed_world_at_full_residency)'`.
+        #[test]
+        #[ignore = "a timing reading, run by hand in release"]
+        fn world_stats_call_on_the_streamed_world_at_full_residency() {
+            let source = CaveSource::unbounded(1);
+            let spawn = source.spawn();
+            let world = World::new(&cave_materials());
+            let workers = std::thread::available_parallelism()
+                .map_or(1, usize::from)
+                .saturating_sub(1)
+                .max(1);
+            let mut streamer = Streamer::new(
+                Arc::new(source),
+                StreamConfig {
+                    residency: RESIDENCY,
+                    workers,
+                    persist: PersistConfig::default(),
+                },
+            );
+            loop {
+                streamer.update(&world, &[spawn]);
+                let _ = streamer.poll(&world);
+                let st = streamer.stats();
+                if st.ticks > 1 && st.in_flight == 0 && st.queued == 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let mut ms: Vec<f64> = (0..10)
+                .map(|_| {
+                    let t = now();
+                    std::hint::black_box(world.stats());
+                    ms_since(t)
+                })
+                .collect();
+            let s = world.stats();
+            let st = streamer.stats();
+            println!(
+                "world stats call: median {:.3} ms of 10 (min {:.3}, max {:.3}); {} chunks, {} full bricks; streamer {} full, {} lod",
+                median(&mut ms),
+                ms[0],
+                ms[9],
+                s.chunks,
+                s.full_bricks,
+                st.resident_full,
+                st.resident_lod
+            );
+        }
     }
 }

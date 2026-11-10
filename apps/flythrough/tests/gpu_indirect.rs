@@ -297,6 +297,7 @@ fn lamp_furnace(device: &vxe_render::wgpu::Device) -> FloorProbe {
 /// each visit the tile is zeroed, so the visit leaves `new / (age + 1)` (the running mean's
 /// weight), and `D_t = 2 x texel x age` after it.
 #[test]
+#[ignore = "soak"]
 fn the_lamp_furnace_reads_its_albedo_times_the_direct_mean() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
@@ -475,6 +476,7 @@ const DARK_X0: i64 = 46;
 /// the dark box's floor-centre gather is under 2 % of the lit box's (no leak through the wall:
 /// the dark box's probes see no lamp light, and the lit box's are not gathered through it).
 #[test]
+#[ignore = "soak"]
 fn no_light_leaks_through_a_two_voxel_wall() {
     let world = two_boxes();
     let full = world.stats().full_bricks as u64;
@@ -641,6 +643,7 @@ const HOLE_SETTLED_FRAMES: usize = 2048;
 /// carve fails. Filling the hole back with the wall's rock drops it under 5 % of the lit box's
 /// within 64 frames.
 #[test]
+#[ignore = "soak"]
 fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
     let world = two_boxes();
     let full = world.stats().full_bricks as u64;
@@ -825,6 +828,7 @@ struct SwitchSeries {
 /// first frame (nothing else lights the box), with no window. Switched back on, the channel fills from zero: the light-change window opens for
 /// exactly its 16 frames, and the floor reaches 90 % of `F0` within them.
 #[test]
+#[ignore = "soak"]
 fn switching_the_lamp_off_drops_the_probe_history() {
     let Some((f0, [off, on])) = lamp_switch_run(48) else {
         return;
@@ -916,6 +920,7 @@ fn the_lamp_off_encodes_no_probe_pass() {
 /// light); a change of the lamp's intensity opens one at the next frame, which traces one
 /// probe in 4, and it closes after its 16 frames, one probe in 8 a frame again.
 #[test]
+#[ignore = "soak"]
 fn no_light_change_opens_no_window() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;

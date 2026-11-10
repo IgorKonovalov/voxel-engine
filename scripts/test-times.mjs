@@ -5,12 +5,12 @@
 // `--status-level pass` (the lane rules' form, tee'd to a log). This script reads such a log,
 // from a local run or a CI job log (`gh run view <id> --log`), and prints the slowest tests,
 // the serial total, and every test over the line, which docs/nfr.md section 7 sends to the
-// soak list in .config/nextest.toml. ANSI colour codes are tolerated, as the raw escape or in
-// the caret form a CI log viewer writes.
+// soak tier by the mark `#[ignore = "soak"]` (.config/nextest.toml). ANSI colour codes are
+// tolerated, as the raw escape or in the caret form a CI log viewer writes.
 //
 // Usage:  node scripts/test-times.mjs <log> [--over <seconds>] [--top <n>]
 // Exit 0 = no test over the line (default 60 s). Exit 1 = at least one, each printed as
-//   <seconds> <binary> <test> -> over the <line> s line: add it to the soak list
+//   <seconds> <binary> <test> -> over the <line> s line: mark it #[ignore = "soak"]
 
 import { readFileSync } from "node:fs";
 
@@ -57,7 +57,7 @@ for (const r of rows.slice(0, top)) {
 if (slow.length) {
   console.log("");
   for (const r of slow) {
-    console.log(`${r.secs.toFixed(1)} ${r.binary} ${r.test} -> over the ${over} s line: add it to the soak list`);
+    console.log(`${r.secs.toFixed(1)} ${r.binary} ${r.test} -> over the ${over} s line: mark it #[ignore = "soak"]`);
   }
   process.exit(1);
 }

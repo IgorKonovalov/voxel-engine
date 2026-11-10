@@ -67,7 +67,7 @@ jobs:
       - name: Pipeline times on lavapipe
         if: runner.os == 'Linux'
         run: cargo run -p vxe-render --release --example pipeline_times
-      # The gate tier (.config/nextest.toml): every test but the soak list, which soak.yml runs
+      # The gate tier (.config/nextest.toml): every test but the soak-marked ones, which soak.yml runs
       # weekly. The `ci` profile runs the gate tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
       # Per-test times go to a log, so the budget step below can read them.
@@ -84,8 +84,8 @@ jobs:
       # docs/nfr.md section 7: no gate test over 60 s on this arm. A test over the line is a
       # warning annotation, not a failure: the GPU tests run in parallel on four cores, so one
       # test's time moves 25 to 40 % between runs (runs 42470428595 and 42477325818) and a hard
-      # line flips on its neighbours. A test that stays over moves to the soak list in
-      # .config/nextest.toml by hand. A missing or unreadable log still fails the step.
+      # line flips on its neighbours. A test that stays over is marked
+      # `#[ignore = "soak"]` by hand. A missing or unreadable log still fails the step.
       - name: Gate test times against the budget
         if: runner.os == 'Linux'
         shell: bash

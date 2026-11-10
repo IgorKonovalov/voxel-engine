@@ -18,6 +18,7 @@ const HALVED_AT: usize = 285;
 /// the change, read at most 8 patches each and step 5, which holds it, at least 250. The steps
 /// after it carry no bar.
 #[test]
+#[ignore = "soak"]
 fn the_vein_wall_patches_are_counted() {
     let Some(mut level) = vein_level() else {
         return;
@@ -64,6 +65,7 @@ fn the_vein_wall_patches_are_counted() {
 /// at most 1 sudden step a second, with a tile flicker of at most 0.002 and a display luma
 /// flicker of at most 0.06/255.
 #[test]
+#[ignore = "soak"]
 fn the_vein_wall_holds_still_with_the_lamp_off() {
     let Some(mut level) = vein_level() else {
         return;
@@ -125,28 +127,36 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2]) {
     (poses, lit, size)
 }
 
-/// The statistics of each variant in `STILL_SWEEP` (see `variant`), printed as `reading:`
-/// lines; with it unset, the default at both poses and at 384 x 216 at the patch pose.
-#[test]
-#[ignore = "a sweep: run by hand with STILL_SWEEP"]
-fn emissive_patch_sweep() {
-    let Some(mut level) = vein_level() else {
-        return;
-    };
-    let specs = std::env::var("STILL_SWEEP").unwrap_or_else(|_| ";pose=patch,size=384x216".into());
-    for spec in specs.split(';') {
-        let (poses, lit, size) = variant(spec);
-        for pose in poses {
-            let name = format!(
-                "{} [{spec}] {}x{} cand {} rays {} slices {}",
-                pose.name,
-                size[0],
-                size[1],
-                lit.candidates,
-                lit.rays(),
-                lit.slices()
-            );
-            run(&mut level, &pose, lit, size).print(&name);
+/// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+/// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// The statistics of each variant in `STILL_SWEEP` (see `variant`), printed as `reading:`
+    /// lines; with it unset, the default at both poses and at 384 x 216 at the patch pose.
+    #[test]
+    #[ignore = "a sweep: run by hand with STILL_SWEEP"]
+    fn emissive_patch_sweep() {
+        let Some(mut level) = vein_level() else {
+            return;
+        };
+        let specs =
+            std::env::var("STILL_SWEEP").unwrap_or_else(|_| ";pose=patch,size=384x216".into());
+        for spec in specs.split(';') {
+            let (poses, lit, size) = variant(spec);
+            for pose in poses {
+                let name = format!(
+                    "{} [{spec}] {}x{} cand {} rays {} slices {}",
+                    pose.name,
+                    size[0],
+                    size[1],
+                    lit.candidates,
+                    lit.rays(),
+                    lit.slices()
+                );
+                run(&mut level, &pose, lit, size).print(&name);
+            }
         }
     }
 }

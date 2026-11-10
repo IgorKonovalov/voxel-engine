@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Assert that every test binary that reaches a GPU device carries the `gpu_` prefix, which the
-// tiers in .config/nextest.toml select it by.
+// Assert the marks the test tiers in .config/nextest.toml select by: every test binary that
+// reaches a GPU device carries the `gpu_` prefix, and every `#[ignore]` is a soak mark or a
+// reading.
 //
 // The test tiers split the suite into `quick` (CPU only, no perf lock) and `gpu` by one mark,
 // the binary's name: `binary(/^gpu_/)` is the gpu tier, `not binary(/^gpu_/)` the quick tier.
@@ -25,15 +26,19 @@
 // A file may carry the prefix without opening a device (a test the gpu tier keeps for another
 // reason, such as a shader compile check); only the converse is a finding.
 //
+// Every `#[ignore]` in a tracked `.rs` file under crates/ or apps/ (comments and string
+// literals blanked) must be `#[ignore = "soak"]`, a long series only the soak tier runs, or sit
+// inside a `mod reading` block, a measurement run by hand that soak and full leave out by
+// `test(/(^|::)reading::/)`. Any other ignored test would run in the soak tier unasked.
+//
 // The profiles are read too: the `lavapipe` override's filter must be `binary(/^gpu_/)`, the
-// `quick` profile's default-filter `not binary(/^gpu_/) and not (<soak>)` and the `gpu`
-// profile's `binary(/^gpu_/) and not (<soak>)`, where <soak> is another default-profile
-// override's filter, the same in both; `gate` must be `not (<soak>)` and `soak` `(<soak>)`; a
-// `ci-windows` profile, when there is one, must be the `quick` profile's filter.
+// `quick` and `ci-windows` profiles' default-filter `not binary(/^gpu_/)`, the `gpu` profile's
+// `binary(/^gpu_/)`, `gate` none, and `soak` and `full` `not test(/(^|::)reading::/)`.
 //
 // Usage:  node scripts/check-test-tiers.mjs [root]
 // Exit 0 = every device-opening test binary carries the prefix. Exit 1 = one line per finding:
 //   <file> -> opens a GPU device but its test binary `<id>` lacks the gpu_ prefix: rename it ...
+//   <file>:<line> -> an #[ignore] that is neither "soak" nor inside `mod reading`: ...
 // The optional `root` scans another tree; scripts/fixtures/test-tiers is the seeded one, and
 // scripts/fixtures/README.md names its expected findings. Fixture trees are skipped by path
 // on an ordinary run.
@@ -49,6 +54,7 @@ const SEEDED = resolve(REPO_ROOT, "scripts", "fixtures");
 const CONFIG = ".config/nextest.toml";
 const PREFIX = "gpu_";
 const GPU = "binary(/^gpu_/)";
+const NOT_READING = "not test(/(^|::)reading::/)";
 
 const ENTRY_POINTS = [
   /\bsoftware_device\b/,
@@ -78,6 +84,47 @@ function code(path) {
   return readFileSync(join(ROOT, path), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/.*$/gm, "");
+}
+
+/** Rust source with comments and string and char literals turned to spaces, offsets and
+ * newlines kept, so braces and attributes are read from code alone. */
+function blanked(text) {
+  const out = text.split("");
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < text.length) {
+    const two = text.slice(i, i + 2);
+    const raw = /^r(#*)"/.exec(text.slice(i, i + 12));
+    if (two === "//") {
+      const e = text.indexOf("\n", i);
+      const end = e < 0 ? text.length : e;
+      blank(i, end);
+      i = end;
+    } else if (two === "/*") {
+      const e = text.indexOf("*/", i + 2);
+      const end = e < 0 ? text.length : e + 2;
+      blank(i, end);
+      i = end;
+    } else if (raw && !/\w/.test(text[i - 1] ?? "")) {
+      const close = `"${raw[1]}`;
+      const e = text.indexOf(close, i + raw[0].length);
+      const end = e < 0 ? text.length : e + close.length;
+      blank(i, end);
+      i = end;
+    } else if (text[i] === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      blank(i, j + 1);
+      i = j + 1;
+    } else if (/^'(\\.|[^\\'])'/.test(text.slice(i, i + 4))) {
+      const len = /^'(\\.|[^\\'])'/.exec(text.slice(i, i + 4))[0].length;
+      blank(i, i + len);
+      i += len;
+    } else i++;
+  }
+  return out.join("");
 }
 
 const reachesDevice = (src) => ENTRY_POINTS.some((re) => re.test(src));
@@ -129,67 +176,45 @@ function manifest(dir) {
   return { name, tests, examples };
 }
 
-/** The `lavapipe` override's filter, every default-profile override filter, and each profile's default-filter. */
+/** The `lavapipe` override's filter and each profile's default-filter. */
 function configFilters(text) {
   let lavapipe;
-  const overrides = [];
   const defaults = new Map();
   for (const block of text.split(/^(?=\[)/m)) {
     const header = /^\[\[?([^\]]+)\]\]?/.exec(block)?.[1];
     if (header === "profile.default.overrides") {
       const f = /^filter\s*=\s*'([^']*)'/m.exec(block)?.[1];
-      if (f !== undefined) overrides.push(f);
       if (/test-group\s*=\s*['"]lavapipe['"]/.test(block)) lavapipe = f;
     }
     const prof = /^profile\.([^.]+)$/.exec(header ?? "")?.[1];
     const df = /^default-filter\s*=\s*'([^']*)'/m.exec(block)?.[1];
     if (prof && df) defaults.set(prof, df);
   }
-  return { lavapipe, defaults, overrides };
+  return { lavapipe, defaults };
 }
 
 if (!existsSync(join(ROOT, CONFIG))) {
   console.error(`${CONFIG} -> missing under ${ROOT}`);
   process.exit(1);
 }
-const { lavapipe, defaults, overrides } = configFilters(readFileSync(join(ROOT, CONFIG), "utf8"));
+const { lavapipe, defaults } = configFilters(readFileSync(join(ROOT, CONFIG), "utf8"));
 if (lavapipe !== GPU) {
   findings.push(`${CONFIG} -> the lavapipe override's filter is not '${GPU}'`);
 }
 
-// The quick and gpu profiles: the prefix, then `and not (<soak>)`, the soak list being another
-// default-profile override's filter; then the gate and soak profiles, and CI's Windows arm.
-const tails = [];
-for (const [profile, prefix] of [
+// Each profile's default-filter, `undefined` for none; the readings' filter in soak and full.
+for (const [profile, expected] of [
   ["quick", `not ${GPU}`],
   ["gpu", GPU],
+  ["gate", undefined],
+  ["soak", NOT_READING],
+  ["full", NOT_READING],
+  ["ci-windows", `not ${GPU}`],
 ]) {
-  const df = defaults.get(profile) ?? "";
-  const soak = df.startsWith(prefix) ? /^ and not \((.*)\)$/.exec(df.slice(prefix.length))?.[1] : undefined;
-  if (soak === undefined || !overrides.includes(soak)) {
-    findings.push(
-      `${CONFIG} -> [profile.${profile}] default-filter is not \`${prefix} and not (<soak>)\`, the soak override's filter copied verbatim`,
-    );
-  } else tails.push(soak);
-}
-if (tails.length === 2 && tails[0] !== tails[1]) {
-  findings.push(`${CONFIG} -> the quick and gpu profiles exclude different soak lists`);
-}
-if (tails.length === 2 && tails[0] === tails[1]) {
-  for (const [profile, expected, shown] of [
-    ["gate", `not (${tails[0]})`, "not (<soak>)"],
-    ["soak", `(${tails[0]})`, "(<soak>)"],
-  ]) {
-    if (defaults.get(profile) !== expected) {
-      findings.push(
-        `${CONFIG} -> [profile.${profile}] default-filter is not ${shown}: copy the soak override's filter into it verbatim`,
-      );
-    }
+  if (defaults.get(profile) !== expected) {
+    const want = expected === undefined ? "no default-filter" : `default-filter '${expected}'`;
+    findings.push(`${CONFIG} -> [profile.${profile}] does not have ${want}`);
   }
-}
-const win = defaults.get("ci-windows");
-if (win !== undefined && win !== defaults.get("quick")) {
-  findings.push(`${CONFIG} -> [profile.ci-windows] default-filter is not the quick profile's: copy it verbatim`);
 }
 
 // Every integration-test file: tests/*.rs of a crate or app.
@@ -249,6 +274,34 @@ for (const file of files.filter((p) => /^(crates|apps)\/[^/]+\/Cargo\.toml$/.tes
   }
 }
 
+// Every `#[ignore]`: `"soak"`, or inside a `mod reading` block.
+let ignores = 0;
+for (const file of files.filter((p) => /^(crates|apps)\/.*\.rs$/.test(p)).sort()) {
+  const text = readFileSync(join(ROOT, file), "utf8");
+  const src = blanked(text);
+  const readings = [];
+  for (const m of src.matchAll(/\bmod\s+reading\s*\{/g)) {
+    let depth = 0;
+    let i = m.index + m[0].length - 1;
+    for (; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) break;
+    }
+    readings.push([m.index, i]);
+  }
+  for (const m of src.matchAll(/#\[\s*ignore\b[^\]]*\]/g)) {
+    ignores++;
+    const soak = /^#\[\s*ignore\s*=\s*"soak"\s*\]$/.test(text.slice(m.index, m.index + m[0].length));
+    const inReading = readings.some(([s, e]) => m.index > s && m.index < e);
+    if (!soak && !inReading) {
+      const line = src.slice(0, m.index).split("\n").length;
+      findings.push(
+        `${file}:${line} -> an #[ignore] that is neither "soak" nor inside \`mod reading\`: mark a long series #[ignore = "soak"], or move a reading into the file's \`mod reading\``,
+      );
+    }
+  }
+}
+
 if (findings.length) {
   for (const f of findings) console.error(f);
   console.error(`${findings.length} finding(s) across ${testFiles.length + units} test binaries`);
@@ -256,5 +309,5 @@ if (findings.length) {
 }
 const gpuCount = testFiles.filter((f) => f.split("/").pop().startsWith(PREFIX)).length;
 console.log(
-  `test tiers: ${testFiles.length} test files (${gpuCount} ${PREFIX}) and ${units} example and binary test modules, every device behind the prefix`,
+  `test tiers: ${testFiles.length} test files (${gpuCount} ${PREFIX}) and ${units} example and binary test modules, every device behind the prefix; ${ignores} #[ignore]s, each soak or a reading`,
 );

@@ -4,7 +4,10 @@
 // The per-phase gate (dev skill, lane rules): a phase that edits vxe-sim should not wait for
 // the audio or the net tests. This script maps the changed files to workspace packages and
 // runs `cargo nextest run --workspace --profile <tier> -E 'rdeps(a) | rdeps(b)'`, which the
-// tier's own default-filter still narrows (quick keeps no GPU test, gpu no CPU test).
+// tier's own default-filter still narrows (quick keeps no GPU test, gpu no CPU test). The soak
+// tests are `#[ignore = "soak"]`, which no profile can select, so `--profile soak` adds
+// `--run-ignored only` and `--profile full` `--run-ignored all`, unless the arguments after
+// `--` already name one.
 //
 // Which change: the working tree against HEAD (unstaged, staged and untracked files), the
 // unit a dev agent gates before its phase commit. With no working-tree change the last commit
@@ -17,7 +20,7 @@
 // under docs/, scripts/, .claude/, .github/ and markdown anywhere select nothing. Anything
 // else outside a package (root assets/, for one) selects every test: the safe reading.
 //
-// Usage:  node scripts/test-changed.mjs [--profile quick|gpu|gate] [--since <rev>] [--dry-run]
+// Usage:  node scripts/test-changed.mjs [--profile quick|gpu|gate|soak|full] [--since <rev>] [--dry-run]
 //                                       [-- <more nextest arguments>]
 // Exit: nextest's exit code; 0 with a message when nothing changed that a test covers;
 //       2 on a usage error.
@@ -118,6 +121,10 @@ if (everything) {
   const expr = [...selected].sort().map((p) => `rdeps(${p})`).join(" | ");
   console.error(`test-changed: packages ${[...selected].sort().join(", ")} -> -E '${expr}'`);
   nextest.push("-E", expr);
+}
+const runIgnored = { soak: "only", full: "all" }[profile];
+if (runIgnored && !passthrough.some((a) => a.startsWith("--run-ignored"))) {
+  nextest.push("--run-ignored", runIgnored);
 }
 nextest.push(...passthrough);
 

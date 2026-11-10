@@ -1529,252 +1529,6 @@ fn pass_line(sum: &[f64], frames: usize) -> String {
 // Plan 0059 Phase 4: the samples cut, the shared seeds and the filter, read against the
 // reference's files.
 
-/// The live queue's dig against a fresh bake (Plan 0059 Phase 8e): at the far pose, a radius-1
-/// piece baked at the queue's settings ([`bake::queue_settings`], 8/4096), one 5-voxel carve at
-/// the view's centre, its ring re-baked to each arm's settings in turn (the same box each time,
-/// so each arm re-bakes the same bricks from the same edited world), then a fresh bake of the
-/// edited world at the queue's settings. For each arm, every ring brick's six direction values
-/// against the fresh bake's: equal words, within one `rgb9e5` step a channel, and display
-/// levels; split into the bricks the box dilated by one voxel reaches ("touched") and the rest
-/// ("untouched"). The pre-dig store against the fresh bake rides beside them, which is the edit's
-/// own change. Logs to `live/bake-count/queue-dig.txt`.
-#[test]
-#[ignore = "a reading on the RTX: VXE_TEST_ADAPTER=rtx, under the perf lock"]
-fn queue_dig_readings() {
-    let mut log = Log::open("queue-dig.txt");
-    let pose = flythrough::FAR_POSE;
-    let eye = pose.position;
-    let size = [192, 108];
-    let mut rig = read_rig(Scene::Level, eye);
-    rig.frame = Frame::new(&rig.device, size[0], size[1]);
-    rig.frame.set_jitter(&rig.device, false);
-    rig.frame
-        .set_resolution(&rig.device, LightingResolution::Full);
-    rig.frame.set_lighting(Lighting {
-        lamp: false,
-        lamp_bounce: false,
-        exposure: Exposure::Manual(8.0),
-        ..Lighting::default()
-    });
-    let world_extent = rig.world.extent();
-    let centre = eye.map(|v| (v / 64.0).floor() as i32);
-    let piece = ChunkExtent::new(centre.map(|v| v - 1), centre.map(|v| v + 2));
-    let piece = {
-        let s = world_extent.size();
-        let lo = [0, 1, 2].map(|k| piece.min.0[k].max(world_extent.min.0[k]));
-        let hi = [0, 1, 2].map(|k| (piece.min.0[k] + 3).min(world_extent.min.0[k] + s[k]));
-        ChunkExtent::new(lo, hi)
-    };
-    let queue_settings = bake::queue_settings();
-    let t = std::time::Instant::now();
-    let r = rig
-        .frame
-        .bake_until(
-            &rig.device,
-            &rig.queue,
-            &mut rig.gpu,
-            &rig.world,
-            piece,
-            &queue_settings,
-            &mut |_| {},
-        )
-        .expect("the piece fits the pool");
-    log.line(&format!(
-        "queue dig, adapter {}, far pose chunk {centre:?}, piece {:?}..{:?}: the piece at 8/4096 in {:.0} ms, {} chunks, {} faces, {:.3e} samples",
-        rig.adapter,
-        piece.min.0,
-        [0, 1, 2].map(|k| piece.min.0[k] + piece.size()[k]),
-        t.elapsed().as_secs_f64() * 1e3,
-        r.chunks,
-        r.faces,
-        r.samples as f64
-    ));
-    let before = frame_blocks(&rig.device, &rig.queue, &rig.frame, piece);
-    let camera = pose.camera();
-    rig.frame.step(
-        &rig.device,
-        &rig.queue,
-        &rig.gpu,
-        &camera,
-        &LightParams::default(),
-    );
-    // The hit in the view's central half nearest 30 voxels whose carve (radius 5, plus the
-    // ring's voxel) lies inside the piece: the view's centre can hit past the level's edge.
-    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let dist = |p: &[f32; 3]| (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
-    let hit = (size[1] / 4..3 * size[1] / 4)
-        .flat_map(|y| (size[0] / 4..3 * size[0] / 4).map(move |x| (y * size[0] + x) as usize))
-        .filter(|&i| info[i][3] & 1 != 0)
-        .map(|i| [pos[i][0], pos[i][1], pos[i][2]])
-        .filter(|p| {
-            let v = p.map(|v| v.floor() as i32);
-            inside(piece, v.map(|c| c - 6)) && inside(piece, v.map(|c| c + 6))
-        })
-        .min_by(|a, b| (dist(a) - 30.0).abs().total_cmp(&(dist(b) - 30.0).abs()))
-        .expect("a hit inside the piece in the view's central half");
-    let c = hit.map(|v| i64::from(v.floor() as i32) * FIXED_ONE + FIXED_ONE / 2);
-    let op = EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve);
-    let applied = rig.world.apply(&op).expect("the carve applies");
-    let (min, max) = applied.aabb.expect("the carve changed voxels");
-    let dug = [min.0, max.0];
-    rig.gpu
-        .sync_now(&rig.world, &rig.device, &rig.queue)
-        .expect("the mirror fits");
-    let ring = bake::dig_ring(&[dug], piece);
-    log.line(&format!(
-        "queue dig: carve at {:?} ({:.1} voxels from the eye), box {:?}..{:?}, ring {} bricks in {} chunks",
-        hit.map(|v| v.floor() as i32),
-        dist(&hit),
-        dug[0],
-        dug[1],
-        ring.values().map(Vec::len).sum::<usize>(),
-        ring.len()
-    ));
-    let arms: Vec<(&str, BakeSettings)> = vec![
-        ("the queue's settings (round 64)", queue_settings.clone()),
-        (
-            "the queue's settings, round BAKE_ROUND",
-            BakeSettings {
-                round: bake::BAKE_ROUND,
-                ..queue_settings.clone()
-            },
-        ),
-    ];
-    let mut after = Vec::new();
-    for (name, settings) in &arms {
-        rig.frame.invalidate(dug[0], dug[1]);
-        let t = std::time::Instant::now();
-        let r = rig
-            .frame
-            .rebake_digs(
-                &rig.device,
-                &rig.queue,
-                &mut rig.gpu,
-                &rig.world,
-                settings,
-                &mut |_| {},
-            )
-            .expect("a box waits")
-            .expect("the ring fits");
-        let ms = t.elapsed().as_secs_f64() * 1e3;
-        log.line(&format!(
-            "queue dig, {name}: {} bricks, {} chunks, {} faces, {:.3e} samples, {ms:.0} ms",
-            r.bricks, r.bake.chunks, r.bake.faces, r.bake.samples as f64
-        ));
-        after.push(frame_blocks(&rig.device, &rig.queue, &rig.frame, piece));
-    }
-    // A fresh mirror and frame of the edited world, the piece at the queue's settings.
-    let cfg = MirrorConfig {
-        budget_bytes: 512 << 20,
-        light_radius: 4,
-        ..MirrorConfig::new(Window::Fixed(world_extent))
-    };
-    let mut gpu = GpuWorld::with_config(&rig.device, cfg);
-    gpu.set_focus(vxe_world::VoxelCoord(eye.map(|v| v as i32)));
-    for _ in 0..8 {
-        gpu.sync_now(&rig.world, &rig.device, &rig.queue)
-            .expect("the mirror fits");
-    }
-    let mut fresh_frame = Frame::new(&rig.device, 16, 16);
-    fresh_frame.set_lighting(Lighting {
-        lamp: false,
-        lamp_bounce: false,
-        exposure: Exposure::Manual(8.0),
-        ..Lighting::default()
-    });
-    fresh_frame
-        .bake_until(
-            &rig.device,
-            &rig.queue,
-            &mut gpu,
-            &rig.world,
-            piece,
-            &queue_settings,
-            &mut |_| {},
-        )
-        .expect("the piece fits the pool");
-    let fresh = frame_blocks(&rig.device, &rig.queue, &fresh_frame, piece);
-    let touched = |c: [i32; 3], slot: u16| {
-        let b = [
-            i32::from(slot) % 8,
-            i32::from(slot) / 8 % 8,
-            i32::from(slot) / 64,
-        ];
-        (0..3).all(|k| {
-            let lo = c[k] * 64 + b[k] * 8;
-            lo + 7 >= dug[0][k] - 1 && lo <= dug[1][k] + 1
-        })
-    };
-    let mut compare = |name: &str, got: &BTreeMap<[i32; 3], Vec<u32>>| {
-        for part in ["touched", "untouched"] {
-            let mut diffs = Vec::new();
-            let (mut equal, mut one_step, mut dir_differ) = (0usize, 0usize, 0usize);
-            for (c, slots) in &ring {
-                let (Some(a), Some(f)) = (got.get(c), fresh.get(c)) else {
-                    continue;
-                };
-                for &slot in slots {
-                    if touched(*c, slot) != (part == "touched") {
-                        continue;
-                    }
-                    let (da, df) = (a[usize::from(slot)], f[usize::from(slot)]);
-                    if da == 0 || df == 0 {
-                        continue;
-                    }
-                    if (da & 0x7ff) != (df & 0x7ff) {
-                        dir_differ += 1;
-                        continue;
-                    }
-                    let (ra, rf) = ((da >> 11) as usize, (df >> 11) as usize);
-                    for d in 0..6 {
-                        let (wa, wf) =
-                            (a[ra - bake::BRICK_WORDS + d], f[rf - bake::BRICK_WORDS + d]);
-                        if wa == wf {
-                            equal += 1;
-                        }
-                        let (va, vf) = (bake::rgb9e5_unpack(wa), bake::rgb9e5_unpack(wf));
-                        let step = |w: u32| 2f32.powi((w >> 27) as i32 - 24);
-                        let ulp = step(wa).max(step(wf));
-                        if (0..3).all(|k| (va[k] - vf[k]).abs() <= ulp * 1.0001) {
-                            one_step += 1;
-                        }
-                        let l = |v: [f32; 3]| {
-                            bake::tone_level(
-                                0.2126 * f64::from(v[0])
-                                    + 0.7152 * f64::from(v[1])
-                                    + 0.0722 * f64::from(v[2]),
-                            )
-                        };
-                        diffs.push((l(va) - l(vf)).abs());
-                    }
-                }
-            }
-            diffs.sort_by(f64::total_cmp);
-            let n = diffs.len();
-            if n == 0 {
-                log.line(&format!("queue dig, {name}, {part}: nothing compared"));
-                continue;
-            }
-            let at = |q: f64| diffs[((n as f64 * q) as usize).min(n - 1)];
-            log.line(&format!(
-                "queue dig, {name}, {part} bricks: {n} direction values ({dir_differ} bricks whose cell counts differ, skipped); equal words {:.4}, within one rgb9e5 step {:.4}, within 1 level {:.4}; |levels| p50 {:.3} p90 {:.3} p99 {:.3} max {:.3}",
-                equal as f64 / n as f64,
-                one_step as f64 / n as f64,
-                diffs.iter().filter(|d| **d <= 1.0).count() as f64 / n as f64,
-                at(0.5),
-                at(0.9),
-                at(0.99),
-                diffs[n - 1]
-            ));
-        }
-    };
-    compare("before the dig", &before);
-    for ((name, _), got) in arms.iter().zip(&after) {
-        compare(name, got);
-    }
-}
-
 /// Bakes the brick store within 12 chunks of a view's centre (`file_of`'s eye), the default
 /// brick level (8/4096), 512 a face's round: the milliseconds it took.
 fn brick_bake(rig: &mut ReadRig, view: &ReadView) -> f64 {
@@ -1807,248 +1561,206 @@ fn brick_bake(rig: &mut ReadRig, view: &ReadView) -> f64 {
 /// Frames of a yaw's read, as the settle rig's fast yaw.
 const YAW_DOT_FRAMES: usize = 60;
 
-/// The resolution cut under the brick store (Plan 0059 Phase 10 as re-read at Phase 7b): at each
-/// view of `VXE_BAKE_VIEWS` (default vein and hall), the view's brick store baked (`brick_bake`), and
-/// three settings at `NATIVE`: native with no upscaler (the reference), FSR 2 at 1.5 with far
-/// normal 1..2, and FSR 2 at 1.5 with far normal 2..6 (the fly-through's default image). Per
-/// setting, after 128 still frames: the share of the pixels within 1, 2 and 4 display levels of
-/// the reference's, the passes' milliseconds over 120 timed frames at rest, and the fast yaw's
-/// excess dots (64 frames at -90 degrees, ten 9-degree steps back, 60 frames
-/// counted against the still floor). Logs to `live/bake-count/resolution.txt`.
-#[test]
-#[ignore = "a reading on the RTX: VXE_TEST_ADAPTER=rtx, under the perf lock"]
-fn resolution_readings() {
-    let mut log = Log::open("resolution.txt");
-    let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
-    for view in read_views() {
-        if !names.split(',').any(|n| n == view.name) {
-            continue;
-        }
-        let (mut rig, _) = view_rig(&view, NATIVE);
-        let load_ms = brick_bake(&mut rig, &view);
-        let timer = vxe_render::marcher::PassTimer::with_passes(
-            &rig.device,
-            &rig.queue,
-            vxe_render::marcher::FRAME_PASSES.len() as u32,
-        )
-        .expect("timestamps on the RTX");
-        let still = view_camera(&view);
-        let yawed = |deg: f32| Camera {
-            yaw: still.yaw + deg.to_radians(),
-            ..still
-        };
-        let light = LightParams::default();
-        let fsr = || {
-            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
-                sharpness: 0.5,
-                ..vxe_render::Fsr2Settings::default()
-            })
-        };
-        let settings: [(&str, Option<vxe_render::UpscalerKind>, [f32; 2]); 3] = [
-            ("native, no upscaler, far normal 1..2", None, [1.0, 2.0]),
-            ("fsr2 at 1.5, far normal 1..2", Some(fsr()), [1.0, 2.0]),
-            ("fsr2 at 1.5, far normal 2..6", Some(fsr()), [2.0, 6.0]),
-        ];
-        let mut reference: Option<Vec<f32>> = None;
-        for (setting, kind, far) in settings {
-            match kind {
-                None => {
-                    rig.frame
-                        .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
-                    rig.frame.set_jitter(&rig.device, false);
-                    rig.frame.set_sizes(&rig.device, NATIVE, NATIVE);
-                }
-                Some(k) => {
-                    rig.frame.set_upscaler_kind(&rig.device, k);
-                    rig.frame.set_sizes(
-                        &rig.device,
-                        vxe_render::marcher::RenderScale::OneHalf.internal(NATIVE),
-                        NATIVE,
-                    );
-                }
-            }
-            rig.frame.set_look(vxe_render::marcher::LookParams {
-                far_normal: far,
-                ..rig.frame.look()
-            });
-            rig.frame.reset_history();
-            for _ in 0..128 {
-                rig.frame
-                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
-            }
-            let img = luma(&readback::read_rgba8(
+/// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+/// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// The vein piece (chunks within 2 of the vein pose's) baked at the queue's settings on the
+    /// adapter `VXE_TEST_ADAPTER` names; its blocks saved as `live/bake-count/adapter-<name>.bin`.
+    /// When the RTX's and the Cezanne's files are both there, every direction value either holds is
+    /// compared: the equal words' share, and the luminance's tone-mapped level difference, mean and
+    /// p99.
+    #[test]
+    #[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
+    fn adapter_records() {
+        let name = std::env::var("VXE_TEST_ADAPTER").unwrap_or_else(|_| "fallback".to_owned());
+        let mut log = Log::open("adapter.txt");
+        let vein = flythrough::VEIN_POSE.position;
+        let mut rig = read_rig(Scene::Level, vein);
+        let piece = piece_of(rig.world.extent(), vein, Some(2));
+        let t = std::time::Instant::now();
+        let r = rig
+            .frame
+            .bake_until(
                 &rig.device,
                 &rig.queue,
-                rig.frame.target(),
-            ));
-            let shares = match &reference {
-                None => {
-                    reference = Some(img.clone());
-                    "the reference".to_owned()
-                }
-                Some(r) => {
-                    let n = r.len() as f64;
-                    let within = |lv: f32| {
-                        r.iter()
-                            .zip(&img)
-                            .filter(|(a, b)| (*a - *b).abs() <= lv)
-                            .count() as f64
-                            / n
-                    };
-                    format!(
-                        "within 1/2/4 levels of the reference {:.4} / {:.4} / {:.4}",
-                        within(1.0),
-                        within(2.0),
-                        within(4.0)
-                    )
-                }
-            };
-            let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
-            for _ in 0..120 {
-                for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
-                    *s += ms;
-                }
+                &mut rig.gpu,
+                &rig.world,
+                piece,
+                &bake::queue_settings(),
+                &mut |_| {},
+            )
+            .expect("the piece fits the pool");
+        log.line(&format!(
+        "adapter records, {}: the vein piece {:?}..{:?} at 8/4096, {} chunks, {} faces, {:.3e} samples in {:.0} ms",
+        rig.adapter,
+        piece.min.0,
+        [0, 1, 2].map(|k| piece.min.0[k] + piece.size()[k]),
+        r.chunks,
+        r.faces,
+        r.samples as f64,
+        t.elapsed().as_secs_f64() * 1e3
+    ));
+        let blocks = frame_blocks(&rig.device, &rig.queue, &rig.frame, piece);
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../live/bake-count");
+        let file = |n: &str| format!("{dir}/adapter-{}.bin", n.to_lowercase());
+        let mut bytes = Vec::new();
+        for (c, b) in &blocks {
+            for v in c
+                .iter()
+                .map(|&x| x as u32)
+                .chain([b.len() as u32])
+                .chain(b.iter().copied())
+            {
+                bytes.extend_from_slice(&v.to_le_bytes());
             }
-            let passes = pass_line(&sum, 120);
-            let dots = |rig: &ReadRig| -> f64 {
-                let px = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
-                support::aliasing::dots(&px, NATIVE[0], NATIVE[1])
-                    .iter()
-                    .filter(|d| **d)
-                    .count() as f64
-            };
-            let mut floor = Vec::new();
-            for _ in 0..64 {
-                rig.frame
-                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
-                floor.push(dots(&rig));
-            }
-            for _ in 0..64 {
-                rig.frame
-                    .step(&rig.device, &rig.queue, &rig.gpu, &yawed(-90.0), &light);
-            }
-            for i in 1..=10 {
-                rig.frame.step(
-                    &rig.device,
-                    &rig.queue,
-                    &rig.gpu,
-                    &yawed(-90.0 + 9.0 * i as f32),
-                    &light,
-                );
-            }
-            let mean = floor.iter().sum::<f64>() / floor.len() as f64;
-            let sd =
-                (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / floor.len() as f64).sqrt();
-            let mut excess = 0.0;
-            for _ in 0..YAW_DOT_FRAMES {
-                rig.frame
-                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
-                excess += dots(&rig) - mean;
-            }
-            log.line(&format!(
-                "resolution {} adapter {} {}x{} (bricks 8/4096 loaded in {load_ms:.0} ms), {setting}: {shares}; at rest {passes}; fast yaw excess dots 1-60 {excess:+.1} (floor {mean:.1}, sd {sd:.1}, line {:.1})",
-                view.name,
-                rig.adapter,
-                NATIVE[0],
-                NATIVE[1],
-                YAW_DOT_FRAMES as f64 * sd
-            ));
         }
+        std::fs::write(file(&name), &bytes).expect("the records file");
+        let read = |n: &str| -> Option<BTreeMap<[i32; 3], Vec<u32>>> {
+            let raw = std::fs::read(file(n)).ok()?;
+            let w: Vec<u32> = raw
+                .chunks(4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            let mut out = BTreeMap::new();
+            let mut i = 0;
+            while i < w.len() {
+                let c = [w[i] as i32, w[i + 1] as i32, w[i + 2] as i32];
+                let n = w[i + 3] as usize;
+                out.insert(c, w[i + 4..i + 4 + n].to_vec());
+                i += 4 + n;
+            }
+            Some(out)
+        };
+        let (Some(a), Some(b)) = (read("rtx"), read("radeon")) else {
+            log.line("adapter records: the other adapter's file is not there yet");
+            return;
+        };
+        let (ca, cb) = (cells_of(&a), cells_of(&b));
+        let level = |w: u32| {
+            let v = bake::rgb9e5_unpack(w);
+            bake::tone_level(
+                0.2126 * f64::from(v[0]) + 0.7152 * f64::from(v[1]) + 0.0722 * f64::from(v[2]),
+            )
+        };
+        let mut diffs = Vec::new();
+        let (mut equal, mut only) = (0usize, 0usize);
+        for (k, x) in &ca {
+            let Some(y) = cb.get(k) else {
+                only += 1;
+                continue;
+            };
+            equal += usize::from(x[0] == y[0]);
+            diffs.push((level(x[0]) - level(y[0])).abs());
+        }
+        only += cb.keys().filter(|k| !ca.contains_key(k)).count();
+        diffs.sort_by(f64::total_cmp);
+        let n = diffs.len().max(1);
+        log.line(&format!(
+        "adapter records, RTX against Cezanne: {} directions, {only} held by one alone; equal words {:.4}; |levels| mean {:.3}, p50 {:.3}, p99 {:.3}, max {:.3}",
+        diffs.len(),
+        equal as f64 / n as f64,
+        diffs.iter().sum::<f64>() / n as f64,
+        diffs[(n as f64 * 0.5) as usize % n],
+        diffs[((n as f64 * 0.99) as usize).min(n - 1)],
+        diffs.last().copied().unwrap_or(0.0)
+    ));
     }
-}
 
-/// The hall's pane with the lamp off: at the hall view (native, `VXE_READ_SIZE`), a 40 x 40 x 2
-/// box of the reference's glass row 6 voxels ahead along the horizontal axis the view faces most,
-/// placed before the brick bake (`brick_bake`), then 64 still frames. Over the pixels with the
-/// pane in front: the reflected term before exposure (the layer target's rgb), its luminance p50
-/// and p90 and the pixels where it is 0; its display level alone at exposure 8 against the
-/// pixel's shown luma, p50 and p90 of each and of their ratio (the reflected share). Logs to
-/// `live/bake-count/glass.txt`.
-#[test]
-#[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
-fn glass_readings() {
-    let mut log = Log::open("glass.txt");
-    let size = std::env::var("VXE_READ_SIZE")
-        .ok()
-        .and_then(|v| {
-            let (w, h) = v.split_once('x')?;
-            Some([w.parse().ok()?, h.parse().ok()?])
-        })
-        .unwrap_or(NATIVE);
-    let view = read_views()
-        .into_iter()
-        .find(|v| v.name == "hall")
-        .expect("the hall view");
-    let (mut rig, _) = view_rig(&view, size);
-    let glass = flythrough::showcase_materials().len() as vxe_world::MaterialId;
-    let camera = view_camera(&view);
-    let (fwd, _, _) = camera.basis();
-    let a = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
-    let eye = camera.position.to_array().map(|v| v.floor() as i64);
-    let ahead = if fwd.to_array()[a] > 0.0 { 6 } else { -7 };
-    let mut min = eye.map(|v| v - 20);
-    let mut max = eye.map(|v| v + 20);
-    min[a] = eye[a] + ahead;
-    max[a] = min[a] + 2;
-    let r = rig
-        .world
-        .apply(&EditOp::box_(
-            Fixed3(min.map(|v| v * FIXED_ONE)),
-            Fixed3(max.map(|v| v * FIXED_ONE)),
-            Mode::Fill(glass),
-        ))
-        .expect("the pane is resident");
-    rig.gpu
-        .sync_now(&rig.world, &rig.device, &rig.queue)
-        .expect("the mirror fits");
-    let placed: u32 = r.changed_from.iter().map(|(_, n)| n).sum();
-    let bake_ms = brick_bake(&mut rig, &view);
-    for _ in 0..64 {
-        rig.frame.step(
+    /// The hall's pane with the lamp off: at the hall view (native, `VXE_READ_SIZE`), a 40 x 40 x 2
+    /// box of the reference's glass row 6 voxels ahead along the horizontal axis the view faces most,
+    /// placed before the brick bake (`brick_bake`), then 64 still frames. Over the pixels with the
+    /// pane in front: the reflected term before exposure (the layer target's rgb), its luminance p50
+    /// and p90 and the pixels where it is 0; its display level alone at exposure 8 against the
+    /// pixel's shown luma, p50 and p90 of each and of their ratio (the reflected share). Logs to
+    /// `live/bake-count/glass.txt`.
+    #[test]
+    #[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
+    fn glass_readings() {
+        let mut log = Log::open("glass.txt");
+        let size = std::env::var("VXE_READ_SIZE")
+            .ok()
+            .and_then(|v| {
+                let (w, h) = v.split_once('x')?;
+                Some([w.parse().ok()?, h.parse().ok()?])
+            })
+            .unwrap_or(NATIVE);
+        let view = read_views()
+            .into_iter()
+            .find(|v| v.name == "hall")
+            .expect("the hall view");
+        let (mut rig, _) = view_rig(&view, size);
+        let glass = flythrough::showcase_materials().len() as vxe_world::MaterialId;
+        let camera = view_camera(&view);
+        let (fwd, _, _) = camera.basis();
+        let a = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
+        let eye = camera.position.to_array().map(|v| v.floor() as i64);
+        let ahead = if fwd.to_array()[a] > 0.0 { 6 } else { -7 };
+        let mut min = eye.map(|v| v - 20);
+        let mut max = eye.map(|v| v + 20);
+        min[a] = eye[a] + ahead;
+        max[a] = min[a] + 2;
+        let r = rig
+            .world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v| v * FIXED_ONE)),
+                Fixed3(max.map(|v| v * FIXED_ONE)),
+                Mode::Fill(glass),
+            ))
+            .expect("the pane is resident");
+        rig.gpu
+            .sync_now(&rig.world, &rig.device, &rig.queue)
+            .expect("the mirror fits");
+        let placed: u32 = r.changed_from.iter().map(|(_, n)| n).sum();
+        let bake_ms = brick_bake(&mut rig, &view);
+        for _ in 0..64 {
+            rig.frame.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                &camera,
+                &LightParams::default(),
+            );
+        }
+        let lighting = rig.frame.lighting();
+        let level = |c: [f32; 3]| {
+            let b = tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
+            0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
+        };
+        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+        let shown = luma(&readback::read_rgba8(
             &rig.device,
             &rig.queue,
-            &rig.gpu,
-            &camera,
-            &LightParams::default(),
-        );
-    }
-    let lighting = rig.frame.lighting();
-    let level = |c: [f32; 3]| {
-        let b = tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
-        0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
-    };
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
-    let shown = luma(&readback::read_rgba8(
-        &rig.device,
-        &rig.queue,
-        rig.frame.target(),
-    ));
-    let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-    let (mut refl, mut levels, mut shares, mut lumas) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let mut zero = 0usize;
-    for i in 0..info.len() {
-        if info[i][3] & 4 == 0 {
-            continue;
+            rig.frame.target(),
+        ));
+        let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        let (mut refl, mut levels, mut shares, mut lumas) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut zero = 0usize;
+        for i in 0..info.len() {
+            if info[i][3] & 4 == 0 {
+                continue;
+            }
+            let c = [layer[i][0], layer[i][1], layer[i][2]];
+            if c == [0.0; 3] {
+                zero += 1;
+            }
+            let l = level(c.map(|x| x * 8.0));
+            refl.push(lum(c));
+            levels.push(l);
+            lumas.push(shown[i]);
+            shares.push(if shown[i] > 0.0 { l / shown[i] } else { 0.0 });
         }
-        let c = [layer[i][0], layer[i][1], layer[i][2]];
-        if c == [0.0; 3] {
-            zero += 1;
-        }
-        let l = level(c.map(|x| x * 8.0));
-        refl.push(lum(c));
-        levels.push(l);
-        lumas.push(shown[i]);
-        shares.push(if shown[i] > 0.0 { l / shown[i] } else { 0.0 });
-    }
-    let q = |v: &mut Vec<f32>, p: f32| {
-        v.sort_by(f32::total_cmp);
-        v.get(((v.len() as f32 - 1.0) * p) as usize)
-            .copied()
-            .unwrap_or(0.0)
-    };
-    log.line(&format!(
+        let q = |v: &mut Vec<f32>, p: f32| {
+            v.sort_by(f32::total_cmp);
+            v.get(((v.len() as f32 - 1.0) * p) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
+        log.line(&format!(
         "glass hall adapter {} {}x{} lamp off exposure 8: pane {min:?}..{max:?}, {placed} voxels; bake {bake_ms:.0} ms; {} pixels behind the pane, {zero} reflecting 0; reflected luminance before exposure p50 {:.5} p90 {:.5}; its level alone p50 {:.1} p90 {:.1}; shown luma p50 {:.1} p90 {:.1}; share (level / shown) p50 {:.3} p90 {:.3}",
         rig.adapter,
         size[0],
@@ -2063,117 +1775,514 @@ fn glass_readings() {
         q(&mut shares, 0.5),
         q(&mut shares, 0.9),
     ));
-}
+    }
 
-/// The light's budget at rest (Plan 0059 Phase 12): at each view of `VXE_BAKE_VIEWS` (default
-/// vein and hall) at `VXE_READ_SIZE` (default `NATIVE`), the brick store (`brick_bake`), native
-/// with no upscaler and FSR 2 at 1.5, far normal 1..2, lamp off. Per arm, after 1024 still frames
-/// from no history: the passes over 120 timed frames, the lighting line (gradient, light,
-/// temporal, probes, gather), and the display's change from frame 1024 to 1025 (the one frame)
-/// and from 512 to 1024 (the drift): the mean of the channels' level differences, the largest,
-/// and whether the two frames are bit-identical. Logs to `live/bake-count/rest.txt`.
-#[test]
-#[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
-fn rest_readings() {
-    let mut log = Log::open("rest.txt");
-    let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
-    let size = std::env::var("VXE_READ_SIZE")
-        .ok()
-        .and_then(|v| {
-            let (w, h) = v.split_once('x')?;
-            Some([w.parse().ok()?, h.parse().ok()?])
-        })
-        .unwrap_or(NATIVE);
-    const LINE: [&str; 5] = ["gradient", "light", "temporal", "probes", "gather"];
-    for view in read_views() {
-        if !names.split(',').any(|n| n == view.name) {
-            continue;
-        }
-        let (mut rig, _) = view_rig(&view, size);
-        brick_bake(&mut rig, &view);
-        let timer = vxe_render::marcher::PassTimer::with_passes(
+    /// The live queue's dig against a fresh bake (Plan 0059 Phase 8e): at the far pose, a radius-1
+    /// piece baked at the queue's settings ([`bake::queue_settings`], 8/4096), one 5-voxel carve at
+    /// the view's centre, its ring re-baked to each arm's settings in turn (the same box each time,
+    /// so each arm re-bakes the same bricks from the same edited world), then a fresh bake of the
+    /// edited world at the queue's settings. For each arm, every ring brick's six direction values
+    /// against the fresh bake's: equal words, within one `rgb9e5` step a channel, and display
+    /// levels; split into the bricks the box dilated by one voxel reaches ("touched") and the rest
+    /// ("untouched"). The pre-dig store against the fresh bake rides beside them, which is the edit's
+    /// own change. Logs to `live/bake-count/queue-dig.txt`.
+    #[test]
+    #[ignore = "a reading on the RTX: VXE_TEST_ADAPTER=rtx, under the perf lock"]
+    fn queue_dig_readings() {
+        let mut log = Log::open("queue-dig.txt");
+        let pose = flythrough::FAR_POSE;
+        let eye = pose.position;
+        let size = [192, 108];
+        let mut rig = read_rig(Scene::Level, eye);
+        rig.frame = Frame::new(&rig.device, size[0], size[1]);
+        rig.frame.set_jitter(&rig.device, false);
+        rig.frame
+            .set_resolution(&rig.device, LightingResolution::Full);
+        rig.frame.set_lighting(Lighting {
+            lamp: false,
+            lamp_bounce: false,
+            exposure: Exposure::Manual(8.0),
+            ..Lighting::default()
+        });
+        let world_extent = rig.world.extent();
+        let centre = eye.map(|v| (v / 64.0).floor() as i32);
+        let piece = ChunkExtent::new(centre.map(|v| v - 1), centre.map(|v| v + 2));
+        let piece = {
+            let s = world_extent.size();
+            let lo = [0, 1, 2].map(|k| piece.min.0[k].max(world_extent.min.0[k]));
+            let hi = [0, 1, 2].map(|k| (piece.min.0[k] + 3).min(world_extent.min.0[k] + s[k]));
+            ChunkExtent::new(lo, hi)
+        };
+        let queue_settings = bake::queue_settings();
+        let t = std::time::Instant::now();
+        let r = rig
+            .frame
+            .bake_until(
+                &rig.device,
+                &rig.queue,
+                &mut rig.gpu,
+                &rig.world,
+                piece,
+                &queue_settings,
+                &mut |_| {},
+            )
+            .expect("the piece fits the pool");
+        log.line(&format!(
+        "queue dig, adapter {}, far pose chunk {centre:?}, piece {:?}..{:?}: the piece at 8/4096 in {:.0} ms, {} chunks, {} faces, {:.3e} samples",
+        rig.adapter,
+        piece.min.0,
+        [0, 1, 2].map(|k| piece.min.0[k] + piece.size()[k]),
+        t.elapsed().as_secs_f64() * 1e3,
+        r.chunks,
+        r.faces,
+        r.samples as f64
+    ));
+        let before = frame_blocks(&rig.device, &rig.queue, &rig.frame, piece);
+        let camera = pose.camera();
+        rig.frame.step(
             &rig.device,
             &rig.queue,
-            vxe_render::marcher::FRAME_PASSES.len() as u32,
-        )
-        .expect("timestamps on the adapter");
-        let still = view_camera(&view);
-        let light = LightParams::default();
-        let light_name = "baked";
-        {
-            for fsr in [false, true] {
-                rig.frame.set_lighting(reference_lighting(false));
-                if fsr {
-                    rig.frame.set_upscaler_kind(
-                        &rig.device,
-                        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
-                            sharpness: 0.5,
-                            ..vxe_render::Fsr2Settings::default()
-                        }),
-                    );
-                    rig.frame.set_sizes(
-                        &rig.device,
-                        vxe_render::marcher::RenderScale::OneHalf.internal(size),
-                        size,
-                    );
-                } else {
-                    rig.frame
-                        .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
-                    rig.frame.set_jitter(&rig.device, false);
-                    rig.frame.set_sizes(&rig.device, size, size);
+            &rig.gpu,
+            &camera,
+            &LightParams::default(),
+        );
+        // The hit in the view's central half nearest 30 voxels whose carve (radius 5, plus the
+        // ring's voxel) lies inside the piece: the view's centre can hit past the level's edge.
+        let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let dist = |p: &[f32; 3]| (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
+        let hit = (size[1] / 4..3 * size[1] / 4)
+            .flat_map(|y| (size[0] / 4..3 * size[0] / 4).map(move |x| (y * size[0] + x) as usize))
+            .filter(|&i| info[i][3] & 1 != 0)
+            .map(|i| [pos[i][0], pos[i][1], pos[i][2]])
+            .filter(|p| {
+                let v = p.map(|v| v.floor() as i32);
+                inside(piece, v.map(|c| c - 6)) && inside(piece, v.map(|c| c + 6))
+            })
+            .min_by(|a, b| (dist(a) - 30.0).abs().total_cmp(&(dist(b) - 30.0).abs()))
+            .expect("a hit inside the piece in the view's central half");
+        let c = hit.map(|v| i64::from(v.floor() as i32) * FIXED_ONE + FIXED_ONE / 2);
+        let op = EditOp::sphere(Fixed3(c), 5 * FIXED_ONE, Mode::Carve);
+        let applied = rig.world.apply(&op).expect("the carve applies");
+        let (min, max) = applied.aabb.expect("the carve changed voxels");
+        let dug = [min.0, max.0];
+        rig.gpu
+            .sync_now(&rig.world, &rig.device, &rig.queue)
+            .expect("the mirror fits");
+        let ring = bake::dig_ring(&[dug], piece);
+        log.line(&format!(
+        "queue dig: carve at {:?} ({:.1} voxels from the eye), box {:?}..{:?}, ring {} bricks in {} chunks",
+        hit.map(|v| v.floor() as i32),
+        dist(&hit),
+        dug[0],
+        dug[1],
+        ring.values().map(Vec::len).sum::<usize>(),
+        ring.len()
+    ));
+        let arms: Vec<(&str, BakeSettings)> = vec![
+            ("the queue's settings (round 64)", queue_settings.clone()),
+            (
+                "the queue's settings, round BAKE_ROUND",
+                BakeSettings {
+                    round: bake::BAKE_ROUND,
+                    ..queue_settings.clone()
+                },
+            ),
+        ];
+        let mut after = Vec::new();
+        for (name, settings) in &arms {
+            rig.frame.invalidate(dug[0], dug[1]);
+            let t = std::time::Instant::now();
+            let r = rig
+                .frame
+                .rebake_digs(
+                    &rig.device,
+                    &rig.queue,
+                    &mut rig.gpu,
+                    &rig.world,
+                    settings,
+                    &mut |_| {},
+                )
+                .expect("a box waits")
+                .expect("the ring fits");
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            log.line(&format!(
+                "queue dig, {name}: {} bricks, {} chunks, {} faces, {:.3e} samples, {ms:.0} ms",
+                r.bricks, r.bake.chunks, r.bake.faces, r.bake.samples as f64
+            ));
+            after.push(frame_blocks(&rig.device, &rig.queue, &rig.frame, piece));
+        }
+        // A fresh mirror and frame of the edited world, the piece at the queue's settings.
+        let cfg = MirrorConfig {
+            budget_bytes: 512 << 20,
+            light_radius: 4,
+            ..MirrorConfig::new(Window::Fixed(world_extent))
+        };
+        let mut gpu = GpuWorld::with_config(&rig.device, cfg);
+        gpu.set_focus(vxe_world::VoxelCoord(eye.map(|v| v as i32)));
+        for _ in 0..8 {
+            gpu.sync_now(&rig.world, &rig.device, &rig.queue)
+                .expect("the mirror fits");
+        }
+        let mut fresh_frame = Frame::new(&rig.device, 16, 16);
+        fresh_frame.set_lighting(Lighting {
+            lamp: false,
+            lamp_bounce: false,
+            exposure: Exposure::Manual(8.0),
+            ..Lighting::default()
+        });
+        fresh_frame
+            .bake_until(
+                &rig.device,
+                &rig.queue,
+                &mut gpu,
+                &rig.world,
+                piece,
+                &queue_settings,
+                &mut |_| {},
+            )
+            .expect("the piece fits the pool");
+        let fresh = frame_blocks(&rig.device, &rig.queue, &fresh_frame, piece);
+        let touched = |c: [i32; 3], slot: u16| {
+            let b = [
+                i32::from(slot) % 8,
+                i32::from(slot) / 8 % 8,
+                i32::from(slot) / 64,
+            ];
+            (0..3).all(|k| {
+                let lo = c[k] * 64 + b[k] * 8;
+                lo + 7 >= dug[0][k] - 1 && lo <= dug[1][k] + 1
+            })
+        };
+        let mut compare = |name: &str, got: &BTreeMap<[i32; 3], Vec<u32>>| {
+            for part in ["touched", "untouched"] {
+                let mut diffs = Vec::new();
+                let (mut equal, mut one_step, mut dir_differ) = (0usize, 0usize, 0usize);
+                for (c, slots) in &ring {
+                    let (Some(a), Some(f)) = (got.get(c), fresh.get(c)) else {
+                        continue;
+                    };
+                    for &slot in slots {
+                        if touched(*c, slot) != (part == "touched") {
+                            continue;
+                        }
+                        let (da, df) = (a[usize::from(slot)], f[usize::from(slot)]);
+                        if da == 0 || df == 0 {
+                            continue;
+                        }
+                        if (da & 0x7ff) != (df & 0x7ff) {
+                            dir_differ += 1;
+                            continue;
+                        }
+                        let (ra, rf) = ((da >> 11) as usize, (df >> 11) as usize);
+                        for d in 0..6 {
+                            let (wa, wf) =
+                                (a[ra - bake::BRICK_WORDS + d], f[rf - bake::BRICK_WORDS + d]);
+                            if wa == wf {
+                                equal += 1;
+                            }
+                            let (va, vf) = (bake::rgb9e5_unpack(wa), bake::rgb9e5_unpack(wf));
+                            let step = |w: u32| 2f32.powi((w >> 27) as i32 - 24);
+                            let ulp = step(wa).max(step(wf));
+                            if (0..3).all(|k| (va[k] - vf[k]).abs() <= ulp * 1.0001) {
+                                one_step += 1;
+                            }
+                            let l = |v: [f32; 3]| {
+                                bake::tone_level(
+                                    0.2126 * f64::from(v[0])
+                                        + 0.7152 * f64::from(v[1])
+                                        + 0.0722 * f64::from(v[2]),
+                                )
+                            };
+                            diffs.push((l(va) - l(vf)).abs());
+                        }
+                    }
+                }
+                diffs.sort_by(f64::total_cmp);
+                let n = diffs.len();
+                if n == 0 {
+                    log.line(&format!("queue dig, {name}, {part}: nothing compared"));
+                    continue;
+                }
+                let at = |q: f64| diffs[((n as f64 * q) as usize).min(n - 1)];
+                log.line(&format!(
+                "queue dig, {name}, {part} bricks: {n} direction values ({dir_differ} bricks whose cell counts differ, skipped); equal words {:.4}, within one rgb9e5 step {:.4}, within 1 level {:.4}; |levels| p50 {:.3} p90 {:.3} p99 {:.3} max {:.3}",
+                equal as f64 / n as f64,
+                one_step as f64 / n as f64,
+                diffs.iter().filter(|d| **d <= 1.0).count() as f64 / n as f64,
+                at(0.5),
+                at(0.9),
+                at(0.99),
+                diffs[n - 1]
+            ));
+            }
+        };
+        compare("before the dig", &before);
+        for ((name, _), got) in arms.iter().zip(&after) {
+            compare(name, got);
+        }
+    }
+
+    /// The resolution cut under the brick store (Plan 0059 Phase 10 as re-read at Phase 7b): at each
+    /// view of `VXE_BAKE_VIEWS` (default vein and hall), the view's brick store baked (`brick_bake`), and
+    /// three settings at `NATIVE`: native with no upscaler (the reference), FSR 2 at 1.5 with far
+    /// normal 1..2, and FSR 2 at 1.5 with far normal 2..6 (the fly-through's default image). Per
+    /// setting, after 128 still frames: the share of the pixels within 1, 2 and 4 display levels of
+    /// the reference's, the passes' milliseconds over 120 timed frames at rest, and the fast yaw's
+    /// excess dots (64 frames at -90 degrees, ten 9-degree steps back, 60 frames
+    /// counted against the still floor). Logs to `live/bake-count/resolution.txt`.
+    #[test]
+    #[ignore = "a reading on the RTX: VXE_TEST_ADAPTER=rtx, under the perf lock"]
+    fn resolution_readings() {
+        let mut log = Log::open("resolution.txt");
+        let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
+        for view in read_views() {
+            if !names.split(',').any(|n| n == view.name) {
+                continue;
+            }
+            let (mut rig, _) = view_rig(&view, NATIVE);
+            let load_ms = brick_bake(&mut rig, &view);
+            let timer = vxe_render::marcher::PassTimer::with_passes(
+                &rig.device,
+                &rig.queue,
+                vxe_render::marcher::FRAME_PASSES.len() as u32,
+            )
+            .expect("timestamps on the RTX");
+            let still = view_camera(&view);
+            let yawed = |deg: f32| Camera {
+                yaw: still.yaw + deg.to_radians(),
+                ..still
+            };
+            let light = LightParams::default();
+            let fsr = || {
+                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                    sharpness: 0.5,
+                    ..vxe_render::Fsr2Settings::default()
+                })
+            };
+            let settings: [(&str, Option<vxe_render::UpscalerKind>, [f32; 2]); 3] = [
+                ("native, no upscaler, far normal 1..2", None, [1.0, 2.0]),
+                ("fsr2 at 1.5, far normal 1..2", Some(fsr()), [1.0, 2.0]),
+                ("fsr2 at 1.5, far normal 2..6", Some(fsr()), [2.0, 6.0]),
+            ];
+            let mut reference: Option<Vec<f32>> = None;
+            for (setting, kind, far) in settings {
+                match kind {
+                    None => {
+                        rig.frame
+                            .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
+                        rig.frame.set_jitter(&rig.device, false);
+                        rig.frame.set_sizes(&rig.device, NATIVE, NATIVE);
+                    }
+                    Some(k) => {
+                        rig.frame.set_upscaler_kind(&rig.device, k);
+                        rig.frame.set_sizes(
+                            &rig.device,
+                            vxe_render::marcher::RenderScale::OneHalf.internal(NATIVE),
+                            NATIVE,
+                        );
+                    }
                 }
                 rig.frame.set_look(vxe_render::marcher::LookParams {
-                    far_normal: [1.0, 2.0],
+                    far_normal: far,
                     ..rig.frame.look()
                 });
                 rig.frame.reset_history();
-                let read = |rig: &ReadRig| {
-                    readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
-                };
-                let mut at512 = Vec::new();
-                for f in 1..=1024 {
+                for _ in 0..128 {
                     rig.frame
                         .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
-                    if f == 512 {
-                        at512 = read(&rig);
-                    }
                 }
-                let at1024 = read(&rig);
-                rig.frame
-                    .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
-                let at1025 = read(&rig);
-                let change = |a: &[u8], b: &[u8]| {
-                    let mut sum = 0u64;
-                    let mut max = 0u8;
-                    for (p, q) in a.chunks(4).zip(b.chunks(4)) {
-                        for k in 0..3 {
-                            let d = p[k].abs_diff(q[k]);
-                            sum += u64::from(d);
-                            max = max.max(d);
-                        }
+                let img = luma(&readback::read_rgba8(
+                    &rig.device,
+                    &rig.queue,
+                    rig.frame.target(),
+                ));
+                let shares = match &reference {
+                    None => {
+                        reference = Some(img.clone());
+                        "the reference".to_owned()
                     }
-                    format!(
-                        "mean {:.4} max {max}{}",
-                        sum as f64 / (a.len() / 4 * 3) as f64,
-                        if a == b { ", bit-identical" } else { "" }
-                    )
+                    Some(r) => {
+                        let n = r.len() as f64;
+                        let within = |lv: f32| {
+                            r.iter()
+                                .zip(&img)
+                                .filter(|(a, b)| (*a - *b).abs() <= lv)
+                                .count() as f64
+                                / n
+                        };
+                        format!(
+                            "within 1/2/4 levels of the reference {:.4} / {:.4} / {:.4}",
+                            within(1.0),
+                            within(2.0),
+                            within(4.0)
+                        )
+                    }
                 };
-                let one = change(&at1024, &at1025);
-                let drift = change(&at512, &at1024);
                 let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
                 for _ in 0..120 {
                     for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
                         *s += ms;
                     }
                 }
-                let of = |n: &str| {
-                    vxe_render::marcher::FRAME_PASSES
+                let passes = pass_line(&sum, 120);
+                let dots = |rig: &ReadRig| -> f64 {
+                    let px = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+                    support::aliasing::dots(&px, NATIVE[0], NATIVE[1])
                         .iter()
-                        .position(|p| *p == n)
-                        .map_or(0.0, |i| sum[i] / 120.0)
+                        .filter(|d| **d)
+                        .count() as f64
                 };
-                let line: f64 = LINE.iter().map(|n| of(n)).sum();
+                let mut floor = Vec::new();
+                for _ in 0..64 {
+                    rig.frame
+                        .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                    floor.push(dots(&rig));
+                }
+                for _ in 0..64 {
+                    rig.frame
+                        .step(&rig.device, &rig.queue, &rig.gpu, &yawed(-90.0), &light);
+                }
+                for i in 1..=10 {
+                    rig.frame.step(
+                        &rig.device,
+                        &rig.queue,
+                        &rig.gpu,
+                        &yawed(-90.0 + 9.0 * i as f32),
+                        &light,
+                    );
+                }
+                let mean = floor.iter().sum::<f64>() / floor.len() as f64;
+                let sd = (floor.iter().map(|f| (f - mean).powi(2)).sum::<f64>()
+                    / floor.len() as f64)
+                    .sqrt();
+                let mut excess = 0.0;
+                for _ in 0..YAW_DOT_FRAMES {
+                    rig.frame
+                        .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                    excess += dots(&rig) - mean;
+                }
                 log.line(&format!(
+                "resolution {} adapter {} {}x{} (bricks 8/4096 loaded in {load_ms:.0} ms), {setting}: {shares}; at rest {passes}; fast yaw excess dots 1-60 {excess:+.1} (floor {mean:.1}, sd {sd:.1}, line {:.1})",
+                view.name,
+                rig.adapter,
+                NATIVE[0],
+                NATIVE[1],
+                YAW_DOT_FRAMES as f64 * sd
+            ));
+            }
+        }
+    }
+
+    /// The light's budget at rest (Plan 0059 Phase 12): at each view of `VXE_BAKE_VIEWS` (default
+    /// vein and hall) at `VXE_READ_SIZE` (default `NATIVE`), the brick store (`brick_bake`), native
+    /// with no upscaler and FSR 2 at 1.5, far normal 1..2, lamp off. Per arm, after 1024 still frames
+    /// from no history: the passes over 120 timed frames, the lighting line (gradient, light,
+    /// temporal, probes, gather), and the display's change from frame 1024 to 1025 (the one frame)
+    /// and from 512 to 1024 (the drift): the mean of the channels' level differences, the largest,
+    /// and whether the two frames are bit-identical. Logs to `live/bake-count/rest.txt`.
+    #[test]
+    #[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
+    fn rest_readings() {
+        let mut log = Log::open("rest.txt");
+        let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
+        let size = std::env::var("VXE_READ_SIZE")
+            .ok()
+            .and_then(|v| {
+                let (w, h) = v.split_once('x')?;
+                Some([w.parse().ok()?, h.parse().ok()?])
+            })
+            .unwrap_or(NATIVE);
+        const LINE: [&str; 5] = ["gradient", "light", "temporal", "probes", "gather"];
+        for view in read_views() {
+            if !names.split(',').any(|n| n == view.name) {
+                continue;
+            }
+            let (mut rig, _) = view_rig(&view, size);
+            brick_bake(&mut rig, &view);
+            let timer = vxe_render::marcher::PassTimer::with_passes(
+                &rig.device,
+                &rig.queue,
+                vxe_render::marcher::FRAME_PASSES.len() as u32,
+            )
+            .expect("timestamps on the adapter");
+            let still = view_camera(&view);
+            let light = LightParams::default();
+            let light_name = "baked";
+            {
+                for fsr in [false, true] {
+                    rig.frame.set_lighting(reference_lighting(false));
+                    if fsr {
+                        rig.frame.set_upscaler_kind(
+                            &rig.device,
+                            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                                sharpness: 0.5,
+                                ..vxe_render::Fsr2Settings::default()
+                            }),
+                        );
+                        rig.frame.set_sizes(
+                            &rig.device,
+                            vxe_render::marcher::RenderScale::OneHalf.internal(size),
+                            size,
+                        );
+                    } else {
+                        rig.frame
+                            .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
+                        rig.frame.set_jitter(&rig.device, false);
+                        rig.frame.set_sizes(&rig.device, size, size);
+                    }
+                    rig.frame.set_look(vxe_render::marcher::LookParams {
+                        far_normal: [1.0, 2.0],
+                        ..rig.frame.look()
+                    });
+                    rig.frame.reset_history();
+                    let read = |rig: &ReadRig| {
+                        readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+                    };
+                    let mut at512 = Vec::new();
+                    for f in 1..=1024 {
+                        rig.frame
+                            .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                        if f == 512 {
+                            at512 = read(&rig);
+                        }
+                    }
+                    let at1024 = read(&rig);
+                    rig.frame
+                        .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                    let at1025 = read(&rig);
+                    let change = |a: &[u8], b: &[u8]| {
+                        let mut sum = 0u64;
+                        let mut max = 0u8;
+                        for (p, q) in a.chunks(4).zip(b.chunks(4)) {
+                            for k in 0..3 {
+                                let d = p[k].abs_diff(q[k]);
+                                sum += u64::from(d);
+                                max = max.max(d);
+                            }
+                        }
+                        format!(
+                            "mean {:.4} max {max}{}",
+                            sum as f64 / (a.len() / 4 * 3) as f64,
+                            if a == b { ", bit-identical" } else { "" }
+                        )
+                    };
+                    let one = change(&at1024, &at1025);
+                    let drift = change(&at512, &at1024);
+                    let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+                    for _ in 0..120 {
+                        for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
+                            *s += ms;
+                        }
+                    }
+                    let of = |n: &str| {
+                        vxe_render::marcher::FRAME_PASSES
+                            .iter()
+                            .position(|p| *p == n)
+                            .map_or(0.0, |i| sum[i] / 120.0)
+                    };
+                    let line: f64 = LINE.iter().map(|n| of(n)).sum();
+                    log.line(&format!(
                     "rest {} adapter {} {}x{} {light_name} {}: lighting line {line:.2} ms (temporal {:.2}); one frame 1024/1025 {one}; drift 512/1024 {drift}; {}",
                     view.name,
                     rig.adapter,
@@ -2183,109 +2292,8 @@ fn rest_readings() {
                     of("temporal"),
                     pass_line(&sum, 120)
                 ));
+                }
             }
         }
     }
-}
-
-/// The vein piece (chunks within 2 of the vein pose's) baked at the queue's settings on the
-/// adapter `VXE_TEST_ADAPTER` names; its blocks saved as `live/bake-count/adapter-<name>.bin`.
-/// When the RTX's and the Cezanne's files are both there, every direction value either holds is
-/// compared: the equal words' share, and the luminance's tone-mapped level difference, mean and
-/// p99.
-#[test]
-#[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
-fn adapter_records() {
-    let name = std::env::var("VXE_TEST_ADAPTER").unwrap_or_else(|_| "fallback".to_owned());
-    let mut log = Log::open("adapter.txt");
-    let vein = flythrough::VEIN_POSE.position;
-    let mut rig = read_rig(Scene::Level, vein);
-    let piece = piece_of(rig.world.extent(), vein, Some(2));
-    let t = std::time::Instant::now();
-    let r = rig
-        .frame
-        .bake_until(
-            &rig.device,
-            &rig.queue,
-            &mut rig.gpu,
-            &rig.world,
-            piece,
-            &bake::queue_settings(),
-            &mut |_| {},
-        )
-        .expect("the piece fits the pool");
-    log.line(&format!(
-        "adapter records, {}: the vein piece {:?}..{:?} at 8/4096, {} chunks, {} faces, {:.3e} samples in {:.0} ms",
-        rig.adapter,
-        piece.min.0,
-        [0, 1, 2].map(|k| piece.min.0[k] + piece.size()[k]),
-        r.chunks,
-        r.faces,
-        r.samples as f64,
-        t.elapsed().as_secs_f64() * 1e3
-    ));
-    let blocks = frame_blocks(&rig.device, &rig.queue, &rig.frame, piece);
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../live/bake-count");
-    let file = |n: &str| format!("{dir}/adapter-{}.bin", n.to_lowercase());
-    let mut bytes = Vec::new();
-    for (c, b) in &blocks {
-        for v in c
-            .iter()
-            .map(|&x| x as u32)
-            .chain([b.len() as u32])
-            .chain(b.iter().copied())
-        {
-            bytes.extend_from_slice(&v.to_le_bytes());
-        }
-    }
-    std::fs::write(file(&name), &bytes).expect("the records file");
-    let read = |n: &str| -> Option<BTreeMap<[i32; 3], Vec<u32>>> {
-        let raw = std::fs::read(file(n)).ok()?;
-        let w: Vec<u32> = raw
-            .chunks(4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
-        let mut out = BTreeMap::new();
-        let mut i = 0;
-        while i < w.len() {
-            let c = [w[i] as i32, w[i + 1] as i32, w[i + 2] as i32];
-            let n = w[i + 3] as usize;
-            out.insert(c, w[i + 4..i + 4 + n].to_vec());
-            i += 4 + n;
-        }
-        Some(out)
-    };
-    let (Some(a), Some(b)) = (read("rtx"), read("radeon")) else {
-        log.line("adapter records: the other adapter's file is not there yet");
-        return;
-    };
-    let (ca, cb) = (cells_of(&a), cells_of(&b));
-    let level = |w: u32| {
-        let v = bake::rgb9e5_unpack(w);
-        bake::tone_level(
-            0.2126 * f64::from(v[0]) + 0.7152 * f64::from(v[1]) + 0.0722 * f64::from(v[2]),
-        )
-    };
-    let mut diffs = Vec::new();
-    let (mut equal, mut only) = (0usize, 0usize);
-    for (k, x) in &ca {
-        let Some(y) = cb.get(k) else {
-            only += 1;
-            continue;
-        };
-        equal += usize::from(x[0] == y[0]);
-        diffs.push((level(x[0]) - level(y[0])).abs());
-    }
-    only += cb.keys().filter(|k| !ca.contains_key(k)).count();
-    diffs.sort_by(f64::total_cmp);
-    let n = diffs.len().max(1);
-    log.line(&format!(
-        "adapter records, RTX against Cezanne: {} directions, {only} held by one alone; equal words {:.4}; |levels| mean {:.3}, p50 {:.3}, p99 {:.3}, max {:.3}",
-        diffs.len(),
-        equal as f64 / n as f64,
-        diffs.iter().sum::<f64>() / n as f64,
-        diffs[(n as f64 * 0.5) as usize % n],
-        diffs[((n as f64 * 0.99) as usize).min(n - 1)],
-        diffs.last().copied().unwrap_or(0.0)
-    ));
 }

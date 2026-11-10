@@ -450,6 +450,7 @@ const SESSION_HASH: u64 = 0x422b_7654_317b_145d;
 /// edit is an op in the log, and the save replays to the same world from its ops and from its
 /// inputs.
 #[test]
+#[ignore = "soak"]
 fn a_stamp_and_a_collapse_replay_from_the_save() {
     let (world, file, lines) = run_session(Box::new(DigLogic::default()));
     let live = world.voxel_hash();

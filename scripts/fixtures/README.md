@@ -105,9 +105,9 @@ The two trees are siblings, each its own root, so neither run reaches the other'
 node scripts/check-test-tiers.mjs scripts/fixtures/test-tiers
 ```
 
-Expect **exit 1 and exactly five findings**, then the count line `5 finding(s) across 7 test
+Expect **exit 1 and exactly six findings**, then the count line `6 finding(s) across 7 test
 binaries` (five test files, the `still` example and the `app` binary). The tree is two packages (`gfx`, `app`) and a `.config/nextest.toml` whose tiers select GPU binaries by
-`binary(/^gpu_/)`:
+`binary(/^gpu_/)` and keep readings out of soak and full by `test(/(^|::)reading::/)`:
 
 | Case | Seeded as | Expected |
 |------|-----------|----------|
@@ -115,15 +115,17 @@ binaries` (five test files, the `still` example and the `app` binary). The tree 
 | a file that reaches a device only through `support` | `apps/app/tests/via_support.rs` declares `mod support;`, whose `mod.rs` names `software_device` | `apps/app/tests/via_support.rs -> opens a GPU device but ...` |
 | an example marked `test = true` whose test module opens a device | `apps/app/examples/still.rs` | `apps/app/examples/still.rs -> its tests open a GPU device but the example \`app::example/still\` lacks the gpu_ prefix: ...` |
 | a binary's module whose test module opens a device | `apps/app/src/draw.rs`, declared by `src/main.rs` | `apps/app/src/draw.rs -> its tests open a GPU device inside the binary \`app::bin/app\`, which cannot carry the gpu_ prefix: ...` |
-| a profile copy that drifted | `[profile.ci-windows]`'s default-filter is not the `quick` profile's | `.config/nextest.toml -> [profile.ci-windows] default-filter is not the quick profile's: copy it verbatim` |
+| a profile that drifted | `[profile.ci-windows]`'s default-filter is `all()` | `.config/nextest.toml -> [profile.ci-windows] does not have default-filter 'not binary(/^gpu_/)'` |
+| an `#[ignore]` neither soak nor a reading | `apps/app/tests/cpu.rs`'s `stray`, `#[ignore = "slow"]` | `apps/app/tests/cpu.rs:12 -> an #[ignore] that is neither "soak" nor inside \`mod reading\`: ...` |
+| a soak mark, and readings | `cpu.rs`'s `slow_one` (`#[ignore = "soak"]`) and its `mod reading`, one test with a reason and one bare, braces inside a string between them; `#[ignore]` in a block comment | not reported |
 | a binary or example that opens a device outside its tests | `src/main.rs`'s and `still.rs`'s `main`, `examples/plain.rs` (no `test = true`) | not reported; only `#[cfg(test)]` items are read there |
 | `--headless` in a binary's own test module, nothing spawned | `src/main.rs`'s `parses` | not reported; there it counts only beside `Command::new` |
 | a GPU file with the prefix | `apps/app/tests/gpu_golden.rs`, `crates/gfx/tests/gpu_draw.rs` | not reported |
 | a CPU-only file | `apps/app/tests/cpu.rs` names every entry point in comments only, and a local `device` | not reported; comments are stripped before matching |
 
-The other profiles are green here (`quick` and `gpu` are the prefix filter and its negation, each
-with `and not (test(=slow_one))`, the soak override verbatim; `gate` is `not (<soak>)` and `soak`
-is `(<soak>)`), so the five lines above are the whole output.
+The other profiles are green here (`quick` and `gpu` are the prefix filter and its negation,
+`gate` has none, `soak` and `full` leave out `reading::`), so the six lines above are the whole
+output.
 
 ## `plan-size/`: for `check-plan-size.mjs`
 

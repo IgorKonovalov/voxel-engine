@@ -315,61 +315,68 @@ fn no_line_at_a_low_ceiling_and_no_strip_without_samples() {
     assert!(img.chunks(4).all(|p| p == CLEAR));
 }
 
-/// The HUD pass's GPU time at 1920 x 1080: 24 rows of 100 characters and 240 samples, scale
-/// 2, on the high-performance adapter with timestamp queries; median of 300 frames. A reading,
-/// not a check: run with `--ignored` on the machine being measured.
-#[test]
-#[ignore = "a GPU timing reading; run by hand with --ignored"]
-fn hud_pass_reading_at_1080p() {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .expect("an adapter");
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-        ..Default::default()
-    }))
-    .expect("a device");
-    let Some(timer) = vxe_render::PassTimer::new(&device, &queue) else {
+/// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+/// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// The HUD pass's GPU time at 1920 x 1080: 24 rows of 100 characters and 240 samples, scale
+    /// 2, on the high-performance adapter with timestamp queries; median of 300 frames. A reading,
+    /// not a check: run with `--ignored` on the machine being measured.
+    #[test]
+    #[ignore = "a GPU timing reading; run by hand with --ignored"]
+    fn hud_pass_reading_at_1080p() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        }))
+        .expect("an adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+            ..Default::default()
+        }))
+        .expect("a device");
+        let Some(timer) = vxe_render::PassTimer::new(&device, &queue) else {
+            println!(
+                "skipped: {} has no TIMESTAMP_QUERY",
+                adapter.get_info().name
+            );
+            return;
+        };
+        let (w, h) = (1920, 1080);
+        let target = cleared_target(&device, &queue, w, h);
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 2);
+        let rows: Vec<Vec<u8>> = (0..24)
+            .map(|r| {
+                (0..100)
+                    .map(|c| b' ' + 1 + ((r * 7 + c) % 94) as u8)
+                    .collect()
+            })
+            .collect();
+        let rows: Vec<&[u8]> = rows.iter().map(Vec::as_slice).collect();
+        let samples: Vec<f32> = (0..240).map(|i| (i % 40) as f32).collect();
+        let mut ms = Vec::new();
+        for _ in 0..300 {
+            hud.set_text(&queue, &rows);
+            hud.set_samples(&queue, &samples, 33.3);
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            hud.encode_timed(&mut enc, &view, w, h, Some(timer.render_writes()));
+            timer.resolve(&mut enc);
+            queue.submit([enc.finish()]);
+            ms.push(timer.read_ms(&device));
+        }
+        ms.sort_by(f64::total_cmp);
         println!(
-            "skipped: {} has no TIMESTAMP_QUERY",
-            adapter.get_info().name
-        );
-        return;
-    };
-    let (w, h) = (1920, 1080);
-    let target = cleared_target(&device, &queue, w, h);
-    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 2);
-    let rows: Vec<Vec<u8>> = (0..24)
-        .map(|r| {
-            (0..100)
-                .map(|c| b' ' + 1 + ((r * 7 + c) % 94) as u8)
-                .collect()
-        })
-        .collect();
-    let rows: Vec<&[u8]> = rows.iter().map(Vec::as_slice).collect();
-    let samples: Vec<f32> = (0..240).map(|i| (i % 40) as f32).collect();
-    let mut ms = Vec::new();
-    for _ in 0..300 {
-        hud.set_text(&queue, &rows);
-        hud.set_samples(&queue, &samples, 33.3);
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        hud.encode_timed(&mut enc, &view, w, h, Some(timer.render_writes()));
-        timer.resolve(&mut enc);
-        queue.submit([enc.finish()]);
-        ms.push(timer.read_ms(&device));
-    }
-    ms.sort_by(f64::total_cmp);
-    println!(
-        "hud pass on {} at {w}x{h}, 24 rows x 100 chars, 240 samples, scale 2: median {:.4} ms, \
+            "hud pass on {} at {w}x{h}, 24 rows x 100 chars, 240 samples, scale 2: median {:.4} ms, \
          p99 {:.4} ms, max {:.4} ms over {} frames",
-        adapter.get_info().name,
-        ms[ms.len() / 2],
-        ms[ms.len() * 99 / 100],
-        ms[ms.len() - 1],
-        ms.len()
-    );
+            adapter.get_info().name,
+            ms[ms.len() / 2],
+            ms[ms.len() * 99 / 100],
+            ms[ms.len() - 1],
+            ms.len()
+        );
+    }
 }

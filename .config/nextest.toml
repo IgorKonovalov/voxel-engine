@@ -1,35 +1,40 @@
-# Test tiers (Plan 0043; re-cut 2026-11-03 for iteration speed). One classification, these profiles:
+# Test tiers (Plan 0043; re-cut 2026-11-03 for iteration speed; selected by marks since
+# 2026-11-10). One classification, these profiles:
 #
-#   cargo nextest run --profile quick    CPU-only tests minus the soak list; no perf lock, no GPU
-#   cargo nextest run --profile gpu      the GPU tests minus the soak list; under the perf lock
+#   cargo nextest run --profile quick    CPU-only tests minus soak; no perf lock, no GPU
+#   cargo nextest run --profile gpu      the GPU tests minus soak; under the perf lock
 #   cargo nextest run --profile gate     quick + gpu, everything but soak: a plan's tip, the close
 #                                        review, CI's push run (as `ci`)
-#   cargo nextest run --profile soak     the long series only; on request, and CI's weekly run (as
-#                                        `ci-soak`). Not part of any gate
-#   cargo nextest run --profile full     everything; optional, only when the owner asks
+#   cargo nextest run --profile soak --run-ignored only
+#                                        the long series only; on request, and CI's weekly run
+#                                        (as `ci-soak`). Not part of any gate
+#   cargo nextest run --profile full --run-ignored all
+#                                        everything but the readings; only when the owner asks
 #   cargo nextest run --profile ci       the gate tier with the GPU tests in parallel; CI only
-#   cargo nextest run --profile ci-soak  the soak tier with the GPU tests in parallel; CI only
+#   cargo nextest run --profile ci-soak --run-ignored only
+#                                        the soak tier with the GPU tests in parallel; CI only
 #
 # A dev phase runs `node scripts/test-changed.mjs --profile quick` (and `--profile gpu` under the
 # perf lock when the change reaches the renderer): the tier narrowed to the crates the working
-# tree changed and their dependents. A bare `cargo nextest run` is the default profile, which is
-# the full suite.
+# tree changed and their dependents. A bare `cargo nextest run` is the gate tier.
 #
-# The classification is two expressions:
+# The tests carry their own marks; no profile lists a test:
 #
-# GPU  every test binary named `gpu_*` (`tests/gpu_*.rs`): `binary(/^gpu_/)`, and
-#      `not binary(/^gpu_/)` for the CPU tests. `node scripts/check-test-tiers.mjs` fails when a
-#      test file that reaches a device lacks the prefix, or when a profile below drifts from
-#      the forms it expects.
+# GPU      every test binary named `gpu_*` (`tests/gpu_*.rs`): `binary(/^gpu_/)`, and
+#          `not binary(/^gpu_/)` for the CPU tests.
+# SOAK     every test over the line in docs/nfr.md section 7 (60 s on CI's Linux arm, or 30 s on
+#          the dev reference's lavapipe, quiet) is `#[ignore = "soak"]`. Only `--run-ignored`
+#          reaches it, which a profile cannot set, so the soak and full commands above pass it.
+#          `node scripts/test-times.mjs <log>` ranks a run's tests by time and names the ones
+#          over the line; a run logs per-test times with `--status-level pass`.
+# READING  a measurement run by hand (it prints numbers and asserts nothing a tier runs) is
+#          `#[ignore]`d inside a `mod reading`; soak and full leave out
+#          `test(/(^|::)reading::/)`. Run one with
+#          `cargo nextest run -p <package> --run-ignored only -E 'test(=reading::<name>)'`.
 #
-# SOAK every test over the line in docs/nfr.md section 7 (60 s on CI's Linux arm, or 30 s on the
-#      dev reference's lavapipe, quiet), by binary and full name. The `soak` override's filter
-#      below is the canonical copy; `quick`, `gpu`, `gate` and `soak` repeat it verbatim,
-#      because nextest has no filter aliases, and the same gate checks the copies.
-#      `node scripts/test-times.mjs <log>` ranks a run's tests by time and names the ones over
-#      the line; a run logs per-test times with `--status-level pass`. The list was cut from CI
-#      run 41332396750 on 929d1b3 (2026-11-01). `flythrough::gpu_settle` left it at Plan 0059
-#      Phase 14: its tests read 0 to 14 s on lavapipe.
+# `node scripts/check-test-tiers.mjs` fails when a test file that reaches a device lacks the
+# prefix, when an `#[ignore]` is neither "soak" nor inside `mod reading`, or when a profile
+# below drifts from these forms.
 
 # One lavapipe process already spreads over every core, so two at once only contend on a
 # shared dev box. The `ci` profiles lift the cap on a dedicated runner.
@@ -45,38 +50,31 @@ slow-timeout = { period = "30s" }
 filter = 'binary(/^gpu_/)'
 test-group = 'lavapipe'
 
-# SOAK: the canonical copy of the soak list. Its own effect is a quieter report: a long series
-# is flagged at 600 s rather than 30 s.
-[[profile.default.overrides]]
-filter = '(binary_id(flythrough::gpu_emissive_stillness) & (test(=the_vein_wall_holds_still_with_the_lamp_off) | test(=the_vein_wall_patches_are_counted))) | (binary_id(flythrough::gpu_exposure) & (test(=the_caves_curve_after_the_lamp_goes_off) | test(=the_curve_facing_a_vein_follows_the_stepped_model))) | (binary_id(flythrough::gpu_fsr2) & (test(=a_carve_leaves_no_ghost_under_fsr2) | test(=doubling_the_exposure_reaches_fsr_the_same_frame) | test(=a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera) | test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_pan_per_pass_readings) | test(=fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit) | test(=fsr2_wobble_per_pass_readings) | test(=the_reactive_mask_marks_edits_light_changes_and_translucency) | test(=the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose))) | (binary_id(flythrough::gpu_golden) & (test(=showcase_hall_golden_is_lit_by_its_four_ores))) | (binary_id(flythrough::gpu_shutdown) & (test(=the_headless_flythrough_exits_through_every_teardown_stage_within_bound))) | (binary_id(flythrough::gpu_indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=no_light_change_opens_no_window) | test(=no_light_leaks_through_a_two_voxel_wall) | test(=switching_the_lamp_off_drops_the_probe_history) | test(=the_lamp_furnace_reads_its_albedo_times_the_direct_mean))) | (binary_id(flythrough::gpu_level_mirror) & (test(=band_census))) | (binary_id(flythrough::gpu_lights) & (test(=a_moving_lamp_leaves_the_static_lights_history_alone) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::gpu_look) & (test(=a_smooth_surface_meets_a_crisp_cube_without_a_gap) | test(=every_mode) | test(=the_default_look_reads_the_same_hit_records_with_and_without_band_slots) | test(=the_field_look_has_no_boxes_and_no_leaks) | test(=the_field_surface_has_no_boxes_and_no_leaks) | test(=the_field_surface_lies_on_the_flat_faces) | test(=thin_features_in_the_field_and_per_material))) | (binary_id(flythrough::replay) & (test(=a_stamp_and_a_collapse_replay_from_the_save))) | (binary_id(flythrough::gpu_upscale) & (test(=a_carve_in_view_leaves_no_ghost_in_its_box) | test(=a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame) | test(=temporal_age_under_the_jitter) | test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning))) | (binary_id(vxe-render::gpu_walk) & (test(=a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips))) | (binary_id(vxe-world::stamp) & (test(=stamp_tally_agrees_with_apply_on_random_boxes)))'
-slow-timeout = { period = "600s" }
-
 [profile.quick]
-default-filter = 'not binary(/^gpu_/) and not ((binary_id(flythrough::gpu_emissive_stillness) & (test(=the_vein_wall_holds_still_with_the_lamp_off) | test(=the_vein_wall_patches_are_counted))) | (binary_id(flythrough::gpu_exposure) & (test(=the_caves_curve_after_the_lamp_goes_off) | test(=the_curve_facing_a_vein_follows_the_stepped_model))) | (binary_id(flythrough::gpu_fsr2) & (test(=a_carve_leaves_no_ghost_under_fsr2) | test(=doubling_the_exposure_reaches_fsr_the_same_frame) | test(=a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera) | test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_pan_per_pass_readings) | test(=fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit) | test(=fsr2_wobble_per_pass_readings) | test(=the_reactive_mask_marks_edits_light_changes_and_translucency) | test(=the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose))) | (binary_id(flythrough::gpu_golden) & (test(=showcase_hall_golden_is_lit_by_its_four_ores))) | (binary_id(flythrough::gpu_shutdown) & (test(=the_headless_flythrough_exits_through_every_teardown_stage_within_bound))) | (binary_id(flythrough::gpu_indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=no_light_change_opens_no_window) | test(=no_light_leaks_through_a_two_voxel_wall) | test(=switching_the_lamp_off_drops_the_probe_history) | test(=the_lamp_furnace_reads_its_albedo_times_the_direct_mean))) | (binary_id(flythrough::gpu_level_mirror) & (test(=band_census))) | (binary_id(flythrough::gpu_lights) & (test(=a_moving_lamp_leaves_the_static_lights_history_alone) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::gpu_look) & (test(=a_smooth_surface_meets_a_crisp_cube_without_a_gap) | test(=every_mode) | test(=the_default_look_reads_the_same_hit_records_with_and_without_band_slots) | test(=the_field_look_has_no_boxes_and_no_leaks) | test(=the_field_surface_has_no_boxes_and_no_leaks) | test(=the_field_surface_lies_on_the_flat_faces) | test(=thin_features_in_the_field_and_per_material))) | (binary_id(flythrough::replay) & (test(=a_stamp_and_a_collapse_replay_from_the_save))) | (binary_id(flythrough::gpu_upscale) & (test(=a_carve_in_view_leaves_no_ghost_in_its_box) | test(=a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame) | test(=temporal_age_under_the_jitter) | test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning))) | (binary_id(vxe-render::gpu_walk) & (test(=a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips))) | (binary_id(vxe-world::stamp) & (test(=stamp_tally_agrees_with_apply_on_random_boxes))))'
-# A test past 30 s is killed: the fix is the soak list, not a longer timeout.
+default-filter = 'not binary(/^gpu_/)'
+# A test past 30 s is killed: the fix is the soak mark, not a longer timeout.
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 [profile.gpu]
-default-filter = 'binary(/^gpu_/) and not ((binary_id(flythrough::gpu_emissive_stillness) & (test(=the_vein_wall_holds_still_with_the_lamp_off) | test(=the_vein_wall_patches_are_counted))) | (binary_id(flythrough::gpu_exposure) & (test(=the_caves_curve_after_the_lamp_goes_off) | test(=the_curve_facing_a_vein_follows_the_stepped_model))) | (binary_id(flythrough::gpu_fsr2) & (test(=a_carve_leaves_no_ghost_under_fsr2) | test(=doubling_the_exposure_reaches_fsr_the_same_frame) | test(=a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera) | test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_pan_per_pass_readings) | test(=fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit) | test(=fsr2_wobble_per_pass_readings) | test(=the_reactive_mask_marks_edits_light_changes_and_translucency) | test(=the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose))) | (binary_id(flythrough::gpu_golden) & (test(=showcase_hall_golden_is_lit_by_its_four_ores))) | (binary_id(flythrough::gpu_shutdown) & (test(=the_headless_flythrough_exits_through_every_teardown_stage_within_bound))) | (binary_id(flythrough::gpu_indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=no_light_change_opens_no_window) | test(=no_light_leaks_through_a_two_voxel_wall) | test(=switching_the_lamp_off_drops_the_probe_history) | test(=the_lamp_furnace_reads_its_albedo_times_the_direct_mean))) | (binary_id(flythrough::gpu_level_mirror) & (test(=band_census))) | (binary_id(flythrough::gpu_lights) & (test(=a_moving_lamp_leaves_the_static_lights_history_alone) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::gpu_look) & (test(=a_smooth_surface_meets_a_crisp_cube_without_a_gap) | test(=every_mode) | test(=the_default_look_reads_the_same_hit_records_with_and_without_band_slots) | test(=the_field_look_has_no_boxes_and_no_leaks) | test(=the_field_surface_has_no_boxes_and_no_leaks) | test(=the_field_surface_lies_on_the_flat_faces) | test(=thin_features_in_the_field_and_per_material))) | (binary_id(flythrough::replay) & (test(=a_stamp_and_a_collapse_replay_from_the_save))) | (binary_id(flythrough::gpu_upscale) & (test(=a_carve_in_view_leaves_no_ghost_in_its_box) | test(=a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame) | test(=temporal_age_under_the_jitter) | test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning))) | (binary_id(vxe-render::gpu_walk) & (test(=a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips))) | (binary_id(vxe-world::stamp) & (test(=stamp_tally_agrees_with_apply_on_random_boxes))))'
+default-filter = 'binary(/^gpu_/)'
 slow-timeout = { period = "30s" }
 
 [profile.gate]
-default-filter = 'not ((binary_id(flythrough::gpu_emissive_stillness) & (test(=the_vein_wall_holds_still_with_the_lamp_off) | test(=the_vein_wall_patches_are_counted))) | (binary_id(flythrough::gpu_exposure) & (test(=the_caves_curve_after_the_lamp_goes_off) | test(=the_curve_facing_a_vein_follows_the_stepped_model))) | (binary_id(flythrough::gpu_fsr2) & (test(=a_carve_leaves_no_ghost_under_fsr2) | test(=doubling_the_exposure_reaches_fsr_the_same_frame) | test(=a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera) | test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_pan_per_pass_readings) | test(=fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit) | test(=fsr2_wobble_per_pass_readings) | test(=the_reactive_mask_marks_edits_light_changes_and_translucency) | test(=the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose))) | (binary_id(flythrough::gpu_golden) & (test(=showcase_hall_golden_is_lit_by_its_four_ores))) | (binary_id(flythrough::gpu_shutdown) & (test(=the_headless_flythrough_exits_through_every_teardown_stage_within_bound))) | (binary_id(flythrough::gpu_indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=no_light_change_opens_no_window) | test(=no_light_leaks_through_a_two_voxel_wall) | test(=switching_the_lamp_off_drops_the_probe_history) | test(=the_lamp_furnace_reads_its_albedo_times_the_direct_mean))) | (binary_id(flythrough::gpu_level_mirror) & (test(=band_census))) | (binary_id(flythrough::gpu_lights) & (test(=a_moving_lamp_leaves_the_static_lights_history_alone) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::gpu_look) & (test(=a_smooth_surface_meets_a_crisp_cube_without_a_gap) | test(=every_mode) | test(=the_default_look_reads_the_same_hit_records_with_and_without_band_slots) | test(=the_field_look_has_no_boxes_and_no_leaks) | test(=the_field_surface_has_no_boxes_and_no_leaks) | test(=the_field_surface_lies_on_the_flat_faces) | test(=thin_features_in_the_field_and_per_material))) | (binary_id(flythrough::replay) & (test(=a_stamp_and_a_collapse_replay_from_the_save))) | (binary_id(flythrough::gpu_upscale) & (test(=a_carve_in_view_leaves_no_ghost_in_its_box) | test(=a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame) | test(=temporal_age_under_the_jitter) | test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning))) | (binary_id(vxe-render::gpu_walk) & (test(=a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips))) | (binary_id(vxe-world::stamp) & (test(=stamp_tally_agrees_with_apply_on_random_boxes))))'
 slow-timeout = { period = "30s" }
 
+# A long series is flagged at 600 s rather than 30 s.
 [profile.soak]
-default-filter = '((binary_id(flythrough::gpu_emissive_stillness) & (test(=the_vein_wall_holds_still_with_the_lamp_off) | test(=the_vein_wall_patches_are_counted))) | (binary_id(flythrough::gpu_exposure) & (test(=the_caves_curve_after_the_lamp_goes_off) | test(=the_curve_facing_a_vein_follows_the_stepped_model))) | (binary_id(flythrough::gpu_fsr2) & (test(=a_carve_leaves_no_ghost_under_fsr2) | test(=doubling_the_exposure_reaches_fsr_the_same_frame) | test(=a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera) | test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_pan_per_pass_readings) | test(=fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit) | test(=fsr2_wobble_per_pass_readings) | test(=the_reactive_mask_marks_edits_light_changes_and_translucency) | test(=the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose))) | (binary_id(flythrough::gpu_golden) & (test(=showcase_hall_golden_is_lit_by_its_four_ores))) | (binary_id(flythrough::gpu_shutdown) & (test(=the_headless_flythrough_exits_through_every_teardown_stage_within_bound))) | (binary_id(flythrough::gpu_indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=no_light_change_opens_no_window) | test(=no_light_leaks_through_a_two_voxel_wall) | test(=switching_the_lamp_off_drops_the_probe_history) | test(=the_lamp_furnace_reads_its_albedo_times_the_direct_mean))) | (binary_id(flythrough::gpu_level_mirror) & (test(=band_census))) | (binary_id(flythrough::gpu_lights) & (test(=a_moving_lamp_leaves_the_static_lights_history_alone) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::gpu_look) & (test(=a_smooth_surface_meets_a_crisp_cube_without_a_gap) | test(=every_mode) | test(=the_default_look_reads_the_same_hit_records_with_and_without_band_slots) | test(=the_field_look_has_no_boxes_and_no_leaks) | test(=the_field_surface_has_no_boxes_and_no_leaks) | test(=the_field_surface_lies_on_the_flat_faces) | test(=thin_features_in_the_field_and_per_material))) | (binary_id(flythrough::replay) & (test(=a_stamp_and_a_collapse_replay_from_the_save))) | (binary_id(flythrough::gpu_upscale) & (test(=a_carve_in_view_leaves_no_ghost_in_its_box) | test(=a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame) | test(=temporal_age_under_the_jitter) | test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning))) | (binary_id(vxe-render::gpu_walk) & (test(=a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips))) | (binary_id(vxe-world::stamp) & (test(=stamp_tally_agrees_with_apply_on_random_boxes))))'
+default-filter = 'not test(/(^|::)reading::/)'
 slow-timeout = { period = "600s" }
 
 [profile.full]
-default-filter = 'all()'
+default-filter = 'not test(/(^|::)reading::/)'
 slow-timeout = { period = "30s" }
 
-# The gate tier for CI. It inherits `gate`'s filter, so it runs the same tests, and moves every
-# test out of the `lavapipe` group into nextest's `@global` group: a profile's own overrides
-# win over the default profile's, setting by setting, so the soak list's timeout still applies.
-# A dedicated runner has no other lane to crowd, and serialising the GPU tests there roughly
-# doubles the Linux test step.
+# The gate tier for CI. It inherits `gate`'s tests and moves every test out of the `lavapipe`
+# group into nextest's `@global` group: a profile's own overrides win over the default
+# profile's, setting by setting. A dedicated runner has no other lane to crowd, and serialising
+# the GPU tests there roughly doubles the Linux test step.
 #
 # A test still running at 600 s is killed and fails by name, so a hang or a runaway slows one
 # test, not the job: ten times the 60 s line, over the slowest gate test either arm has read
@@ -93,12 +91,12 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 # The gate tier for CI's Windows arm: the CPU tests only, the quick tier's filter. On WARP,
 # frame 0's `shade_preload` hangs once anything touches its buffers between the preload's
 # args pass and it, and only the D3D12 debug layer clears that (docs/backlog.md,
-# "`vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7"). No GPU test runs on
-# Windows until Plan 0059 settles the preload (owner, 2026-11-09).
-# `node scripts/check-test-tiers.mjs` checks the copy.
+# "`vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7", the binary now
+# `vxe-render::gpu_exposure`). No GPU test runs on Windows until Plan 0059 settles the preload
+# (owner, 2026-11-09). `node scripts/check-test-tiers.mjs` checks the copy.
 [profile.ci-windows]
 inherits = "ci"
-default-filter = 'not binary(/^gpu_/) and not ((binary_id(flythrough::gpu_emissive_stillness) & (test(=the_vein_wall_holds_still_with_the_lamp_off) | test(=the_vein_wall_patches_are_counted))) | (binary_id(flythrough::gpu_exposure) & (test(=the_caves_curve_after_the_lamp_goes_off) | test(=the_curve_facing_a_vein_follows_the_stepped_model))) | (binary_id(flythrough::gpu_fsr2) & (test(=a_carve_leaves_no_ghost_under_fsr2) | test(=doubling_the_exposure_reaches_fsr_the_same_frame) | test(=a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera) | test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_pan_per_pass_readings) | test(=fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit) | test(=fsr2_wobble_per_pass_readings) | test(=the_reactive_mask_marks_edits_light_changes_and_translucency) | test(=the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose))) | (binary_id(flythrough::gpu_golden) & (test(=showcase_hall_golden_is_lit_by_its_four_ores))) | (binary_id(flythrough::gpu_shutdown) & (test(=the_headless_flythrough_exits_through_every_teardown_stage_within_bound))) | (binary_id(flythrough::gpu_indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=no_light_change_opens_no_window) | test(=no_light_leaks_through_a_two_voxel_wall) | test(=switching_the_lamp_off_drops_the_probe_history) | test(=the_lamp_furnace_reads_its_albedo_times_the_direct_mean))) | (binary_id(flythrough::gpu_level_mirror) & (test(=band_census))) | (binary_id(flythrough::gpu_lights) & (test(=a_moving_lamp_leaves_the_static_lights_history_alone) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::gpu_look) & (test(=a_smooth_surface_meets_a_crisp_cube_without_a_gap) | test(=every_mode) | test(=the_default_look_reads_the_same_hit_records_with_and_without_band_slots) | test(=the_field_look_has_no_boxes_and_no_leaks) | test(=the_field_surface_has_no_boxes_and_no_leaks) | test(=the_field_surface_lies_on_the_flat_faces) | test(=thin_features_in_the_field_and_per_material))) | (binary_id(flythrough::replay) & (test(=a_stamp_and_a_collapse_replay_from_the_save))) | (binary_id(flythrough::gpu_upscale) & (test(=a_carve_in_view_leaves_no_ghost_in_its_box) | test(=a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame) | test(=temporal_age_under_the_jitter) | test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning))) | (binary_id(vxe-render::gpu_walk) & (test(=a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips))) | (binary_id(vxe-world::stamp) & (test(=stamp_tally_agrees_with_apply_on_random_boxes))))'
+default-filter = 'not binary(/^gpu_/)'
 
 # The soak tier for CI's weekly run (.github/workflows/soak.yml), GPU tests in parallel as above.
 [profile.ci-soak]

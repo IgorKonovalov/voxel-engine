@@ -78,7 +78,7 @@ prompt.
   review (architect Mode 4) in the lane's worktree. It runs the gate tier itself, and on a
   clean review it does the close ceremony on the branch. Findings go back to a dev agent as a
   fix pass.
-- **The gate tier (`--profile gate`, everything but the soak list) is the most any step runs
+- **The gate tier (`--profile gate`, everything but the soak tests) is the most any step runs
   (owner, 2026-11-03).** The lane gates each phase with `scripts/test-changed.mjs` (quick, and
   gpu under the lock for a render change), its close-out confirms the gate tier at the tip,
   and the review's run on the tree that already holds main is the plan's one gate run. The

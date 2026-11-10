@@ -615,6 +615,7 @@ fn accumulated_lum(rig: &LookRig) -> Vec<f64> {
 /// before ADR-0043, when lambda was read on the whole light).
 /// The whole light's frames are printed for the log.
 #[test]
+#[ignore = "soak"]
 fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
     let turned = vxe_render::LightParams {
         turn: 30f32.to_radians(),
@@ -738,6 +739,7 @@ fn the_gradient_keeps_history_where_nothing_changed() {
 /// the turn) keep their age rising: on each of the 40 frames after the turn at least 95 % read
 /// their pre-turn age plus the frames elapsed.
 #[test]
+#[ignore = "soak"]
 fn a_moving_lamp_leaves_the_static_lights_history_alone() {
     let turned = vxe_render::LightParams {
         turn: 30f32.to_radians(),

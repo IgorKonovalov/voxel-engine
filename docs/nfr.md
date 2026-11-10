@@ -333,13 +333,16 @@ Every reading against these budgets, with its machine and commit, is in
   `node scripts/test-changed.mjs --profile quick` (the CPU tests of the changed crates and
   their dependents, no perf lock) and adds `--profile gpu` under the lock when the change
   reaches the renderer; a plan's tip and its close review run `--profile gate` (quick plus
-  gpu, everything but the soak list), CI's push run its `ci` twin (the GPU group
-  unthrottled). The soak list (`.config/nextest.toml`) holds the long series: `--profile soak`
-  runs on request and weekly in CI (`soak.yml`), `--profile full` only when the owner asks.
+  gpu, everything but soak), CI's push run its `ci` twin (the GPU group unthrottled). The
+  tiers select by marks (`.config/nextest.toml`, 2026-11-10): a GPU test file is
+  `tests/gpu_*.rs`, a long series is `#[ignore = "soak"]`, and a hand-run measurement is
+  `#[ignore]`d inside a `mod reading`. `--profile soak --run-ignored only` runs the long
+  series on request and weekly in CI (`soak.yml`), `--profile full --run-ignored all` only
+  when the owner asks; both leave the readings out.
   Budgets, proposals until read on the dev reference, quiet: quick under 60 s, so a phase gate
   holds no lock; gpu under 10 min wall; gate under 12 min wall; **no single gate test over 30 s
-  on the dev reference's lavapipe, or over 60 s on CI's Linux arm**. A test over the line moves
-  to the soak list, which has no budget. `node scripts/test-times.mjs <log>` reads a run logged
+  on the dev reference's lavapipe, or over 60 s on CI's Linux arm**. A test over the line is
+  marked `#[ignore = "soak"]`, and the soak tier has no budget. `node scripts/test-times.mjs <log>` reads a run logged
   with `--status-level pass` and names the tests over the line.
   **Reading (Plan 0057 close review, 2026-11-05, bb5fa9d with the fix pass and main merged, 731 tests, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, load 0.93 at the start and 2.03 at the end, nothing else running):** gate **1300.7 s, over the 12 min proposal**. Earlier the same day, with reads beside it, 1702.5 s, 730 tests, load 1.77 to 1.85; dev's run at 2de29c6 924.7 s. Sum of tests about 1636 s, `flythrough::settle` the largest at 358 s over 37 tests, then `golden` 218 s, `look` 182 s. Over the 30 s line: `a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips` 40.4 s (69.1 s in the earlier run), `a_dug_hole_settles_within_the_bar` 31.8 s.
   **Reading (2026-11-05, 7cd77ad, 729 tests, all passed, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, load 4.62 at the start and 2.81 at the end, so loaded, nothing else running):** gate **1313.4 s, over the 12 min proposal**, with those two tests on the soak list. Sum of tests about 1662 s, `flythrough::settle` 338 s over 36 tests. Over the 30 s line: `smoothed_normals_cut_the_normal_error_and_move_no_hit` 32.3 s, `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` 31.8 s, `castle_gate_golden` 31.1 s (its first render on that cache; alone 27.4 s cold, 11.4 to 13.3 s warm), `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 30.8 s.

@@ -53,9 +53,10 @@ plan lanes run at once, each in its own worktree at
    caps the build; nextest's `-j` is `--test-threads`, not build jobs. The tiers are in
    `.config/nextest.toml`: the phase gate is `node scripts/test-changed.mjs --profile quick`
    (the changed crates' CPU tests and their dependents') plus `--profile gpu` under the perf
-   lock when the change reaches the renderer; `--profile gate` (everything but the soak list)
-   is the tip gate; `--profile soak` and `--profile full` run only when the orchestrator asks
-   for a specific reading (the default profile is the full suite too).
+   lock when the change reaches the renderer; `--profile gate` (everything but the soak-marked
+   tests) is the tip gate; `--profile soak --run-ignored only` and `--profile full --run-ignored all`
+   run only when the orchestrator asks for a specific reading (the default profile is the gate
+   tier).
 5. Every cargo build, test, bench or fly-through run goes inside a memory-capped scope, so a
    runaway dies alone (the 2026-10-20 oomd kill took every session at once). With one or two
    lanes:
