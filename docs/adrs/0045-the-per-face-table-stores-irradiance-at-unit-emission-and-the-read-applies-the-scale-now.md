@@ -1,6 +1,16 @@
 # ADR-0045: A per-face table cell stores irradiance at unit emission, and the read multiplies by its kept emitter's emission scale now
 
-> **Status:** proposed
+> **Status:** withdrawn 2026-11-10 (never accepted; nothing was built from it)
+> **Withdrawn because** the per-face table this ADR refines was deleted by
+> [Plan 0059](../plans/done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md),
+> and [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> (accepted) already gives what this ADR wanted, more simply: the store is baked at unit
+> emission and the read multiplies a record's value by its dominant material's emission scale
+> now, so a scale change moves the faces' light that frame and re-bakes nothing. The test is
+> `a_scale_change_moves_no_bake` in `apps/flythrough/tests/gpu_bake.rs`. Plan 0058 dropped its
+> emission-scale phase in its redraft of the same day. The text below is kept as the record of
+> the proposal; none of `cache_add`, the kept emitter, the fill pass or the reopen counter it
+> names exists in the tree.
 > **Date:** 2026-11-04
 > **Related plan(s):** [Plan 0058](../plans/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)
 > (builds it, in its emission-scale phase, on the table

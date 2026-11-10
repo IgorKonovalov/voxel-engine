@@ -1,9 +1,8 @@
 # ADR-0026: The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets
 
-> **Status:** proposed; amended 2026-11-04 (architect, drift): the clause "a probe ray of the
-> indirect volume (ADR-0023) that misses returns its radiance" assumes probe rays that shade
-> every light. ADR-0043 (proposed) makes the volume a lamp-only channel, so sky light into the
-> probes is a per-source feed into that channel, decided when Plan 0032 starts
+> **Status:** proposed; redrafted 2026-11-10 with Plan 0032's redesign: no probe ray reads the
+> sky (the probe volume is the lamp's bounce channel, ADR-0043); the sky's light on a surface is
+> ADR-0027's sky ray
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (builds it); Plan 0035 (adds the aerial-perspective volume and the clouds on top of it);
@@ -14,8 +13,8 @@
 Outdoors is a general engine capability (owner, 2026-10-22). The first consumer lives
 underground, but the engine must also show open sky with a dynamic day-night cycle, a sun and
 a moon, and later clouds and weather. Every lighting path of the frame needs the sky: a
-primary ray that leaves the world shows it; a probe ray of the indirect volume (ADR-0023) that
-misses returns its radiance; the sun's direct light at a hit is the light at the top of the
+primary ray that leaves the world shows it; a sky ray cast from a lit surface (ADR-0027) that
+reaches the sky returns its radiance; the sun's direct light at a hit is the light at the top of the
 atmosphere times the atmosphere's transmittance along the way. These must agree, or the sky's
 colour and the ground's sunlight drift apart at sunset.
 
@@ -57,7 +56,7 @@ this and renders exactly as before.
 ## Consequences
 
 ### Positive
-- One model answers the primary-ray miss, the probe-ray miss, the sun's transmittance at a
+- One model answers the primary-ray miss, the sky ray's miss, the sun's transmittance at a
   hit and, later, the aerial perspective and the clouds' lighting. All of them read the same
   tables, so the ground's sunlight and the sky's colour agree at every sun angle.
 - Any sun or moon direction and any atmosphere costs one rebuild with no bake. Weather
@@ -103,7 +102,7 @@ decisive reason is that it cannot do a sun below the horizon, a moon or weather.
 
 ### Alternative C: Ray-march the atmosphere per pixel with no tables
 This is exact single scattering at full rate. It costs a march of 30 or more steps with a
-nested transmittance march at every miss pixel and at every probe-ray miss, which is
+nested transmittance march at every miss pixel and at every sky ray that misses, which is
 orders of magnitude more than a LUT read, and multiple scattering is still missing. The
 decisive reason is the frame budget: outdoors, a large share of pixels miss.
 

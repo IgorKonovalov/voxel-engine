@@ -3,8 +3,9 @@
 > **Status:** proposed
 > **Date:** 2026-11-10
 > **Related plan(s):** [Plan 0061](../plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md)
-> (Phase 1 checks the source this ADR assumes and can reject it; Phase 4's window picks or drops
-> it). Extends
+> (Phase 1 checks the source this ADR assumes and can reject it, by two stop rules: the far normal
+> must not move the far crops under the store, and direction changes must carry the largest share
+> of their distance from the reference; Phase 4's window picks or drops it). Extends
 > [ADR-0042](0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
 > (the far normal) to the light of
 > [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
@@ -46,6 +47,11 @@ taps included, so a far pixel costs up to three of today's reads. A direction th
 out of the sum; with none left but the hit face's, the read is the hit face's. The knob is a
 `Lighting` bit, off in the library; Plan 0061's window decides whether the fly-through's default
 takes it. The glass's reflected share (ADR-0047) keeps the face read.
+
+"Where the far normal's weight is above 0" is the default look's case (`face`), where the shading
+normal leaves the face normal only there. Under the whole-frame normal looks (`gradient27`,
+`trilinear8`, opt-in) the shading normal is the look's at every distance, and the read follows it
+on near faces too, as the lamp already does. The field look does not read the store by face.
 
 The blend is the "ambient cube" read of Half-Life 2's shading (McTaggart, Valve, 2004) applied to
 the store's six direction means. It is not exact: a staircase's true footprint average weights each

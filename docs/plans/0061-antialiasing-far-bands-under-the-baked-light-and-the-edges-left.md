@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** draft
+> **Status:** draft (amended 2026-11-10, review pass)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -17,8 +17,20 @@
 > (2026-11-09, the defaults: FSR 2 at 1.5, far normal `[2, 6]`, the baked light), at the hall: "a lot
 > of aliasing on this step, doesn't look good".
 > **Starts after:** Plan 0060 (the live queue) runs first. Phase 1 (readings, no file under
-> `crates/`) runs beside it; Phases 2 to 5 wait for Plan 0060's merge into main, since both touch
-> `temporal.wgsl` and the goldens (Owner answers, 5).
+> `crates/`) runs beside it; Phases 2 to 5 wait for Plan 0060's merge into main (Owner answers, 5),
+> because both plans edit `apps/flythrough/src/main.rs`, `apps/flythrough/src/hud.rs` and
+> `crates/vxe-render/src/marcher.rs`. Plan 0060 touches no shader and no golden. The overlap in
+> `temporal.wgsl`, `composite.wgsl`, `Lighting` and the goldens is with Plan 0058 (dynamic lights),
+> which runs **after** this plan (the owner's order, 2026-11-10: 0060, 0061, 0058, 0044, 0045) and
+> refreshes its phases against this plan's tip.
+
+> **Amended 2026-11-10 (review pass, before any code).** The mechanism and the owner's five answers
+> stand. What changed: Phase 1 gains a positive stop rule, so Phase 2 starts only on a reading that
+> attributes the far bands to direction changes; the ordering reason above; the test files' `gpu_`
+> names and the tiers by marks (`#[ignore = "soak"]`, `mod reading`); the read's rule under the
+> whole-frame normal looks; a gate-sized staircase golden for the read; Phase 4 no longer asks for
+> a per-adapter default (answer 4); Phase 5 names every site of the emitter cap and gives its
+> re-bless a floor.
 
 ## TL;DR
 
@@ -74,7 +86,7 @@ ADR-0042's Context describes and the far normal was built to remove.
   `nf = shadow_normal_of(rec, ray.d)`, `store_brick_value(store_voxel(rec.p, nf), store_face(rec.axis, nf))`:
   the face direction, the same value at every pixel of the face, no screen history. `rec.n` is not
   read.
-- `rec.n` reaches `light.wgsl` (the lamp, line 93) and the weights of `lit_at` and `atrous.wgsl`.
+- `rec.n` reaches `light.wgsl` (the lamp's `lamp_lit` call) and the weights of `lit_at` and `atrous.wgsl`.
 - So at the hall, lamp off, the far normal costs the hit pass (Plan 0056 Phase 3: RTX hit 4.34 ms
   against `face`'s 2.85 at the showcase start, RADV 21.1 against 14.5) and should change no lit value.
 - The store holds per 8-voxel cell six direction values, each the mean of that direction's faces, and
@@ -87,7 +99,8 @@ normal halves native's crawl (`C` 2.90 to 1.03). FSR 2 at 1.5's still jumps sit 
 emitters, 0.76 locked to the jitter; without the far normal they rise from 4766 to 221 412. `[1, 2]`
 reads about seven times `[2, 6]`'s still jumps under `E`, and the owner picked it by eye anyway. The
 floor's rings are its 1-voxel terraces, world-anchored (R1, R3). The emitter cap was a fault; jitter
-phases 8 and the static dither stay opt-in knobs. The rig is `apps/flythrough/tests/strip.rs` with
+phases 8 and the static dither stay opt-in knobs. The rig is `apps/flythrough/tests/gpu_strip.rs`
+(its run is `reading::strip_run`, in the file's `mod reading`) with
 `tests/support/aliasing.rs` (`T`, `L`, `J`, `C`, the class mask, the guard, `R`).
 
 **The defaults today** (`apps/flythrough/src/lib.rs`, `LookPreset::DEFAULT`): face, far normal
@@ -100,7 +113,8 @@ one.
 
 - **Phase 1 attributes** the hall's aliasing under the baked light into Plan 0056's classes, plus one
   new reading: far normal on against off, under the store and under `E`. The code read predicts no
-  change under the store. A stop rule sends the plan back if that is false.
+  change under the store. Two stop rules send the plan back: one if that is false, one if the
+  class table does not put the far crops' distance from the reference on direction changes.
 - **ADR-0049** (proposed) is the mechanism for the far bands: where the far normal's weight is above
   0, a cube-face hit reads the store as `sum_a n_a^2 value(cell, dir_a(n))` over the directions the
   cell holds, renormalised. At weight 0 it is today's read to the bit. No storage, no pass.
@@ -129,7 +143,7 @@ flowchart LR
     subgraph Plan 0061
         K[Lighting bit: read by rec.n] --> T
     end
-    O --> M[strip.rs: T, L, J, C, distance from R, class]
+    O --> M[gpu_strip.rs: T, L, J, C, distance from R, class]
     M --> W[owner's window]
 ```
 
@@ -142,7 +156,15 @@ reading run under the perf lock and the memory cap; done-when asserts on lavapip
 `node scripts/test-changed.mjs --profile quick`, and `--profile gpu` under the perf lock on a phase
 that changes `crates/vxe-render` or a GPU test; clippy, fmt. At the tip: `cargo nextest run
 --workspace --profile gate` under the perf lock, doctests, clippy, fmt, deny, the doc and tier gates.
-`strip_run` stays `#[ignore]`d.
+
+**Tiers by marks** (`.config/nextest.toml`, `scripts/check-test-tiers.mjs`). The strip rig's run is
+`reading::strip_run` in `gpu_strip.rs`'s `mod reading`, `#[ignore]`d, run by hand with
+`cargo nextest run --release -p flythrough --test gpu_strip --run-ignored only --no-capture -E 'test(=reading::strip_run)'`.
+**Every measurement this plan adds to `gpu_strip.rs` (the direction-map read, Phase 3's matrix, the
+lavapipe re-read) is an arm of `strip_run` or a new `#[ignore]`d test inside `mod reading`**; an
+`#[ignore]` anywhere else fails the tier gate. A test that asserts and reads over 30 s on lavapipe
+is marked `#[ignore = "soak"]`, its phase's log says so, and its claim keeps a gate-sized test.
+The wall times below are estimates until a phase reads them.
 
 ### Phase 1: Which aliasing it is, under the baked light
 
@@ -150,8 +172,8 @@ that changes `crates/vxe-render` or a GPU test; clippy, fmt. At the tip: `cargo 
 - **What:** the strip rig on the fly-through's default light, and the first table: what the far
   normal does under the store, and which class carries the hall's distance from the reference.
 - **The rig:** `VXE_STRIP_LIGHT=baked` runs the fly-through's default light: the store baked over the
-  view before the read (the rig `apps/flythrough/tests/bake.rs` uses for its rest readings; dev states
-  which), lamp off, the shot's exposure. A new read beside Plan 0056's z-level map: the **direction
+  view before the read (the rig `apps/flythrough/tests/gpu_bake.rs` uses for its rest readings; dev
+  states which), lamp off, the shot's exposure. A new read beside Plan 0056's z-level map: the **direction
   map**, a pixel's store direction (`store_face`), and the share of image-edge pixels (a neighbour 2
   levels apart) within 1 pixel of a direction change against the share elsewhere. `R` is `off` at 3840
   x 2160 with the far normal scaled to native's voxels (`[2, 4]` for `[1, 2]`, `[4, 12]` for `[2, 6]`, as Plan 0056),
@@ -162,50 +184,74 @@ that changes `crates/vxe-render` or a GPU test; clippy, fmt. At the tip: `cargo 
   frame (240 frames); the fast yaw at 10 px a frame for the defaults and native. One row at the
   window's size, 2530 x 1378, for the defaults. The `albedo` view at the hall, to show the material is
   one colour where the bands are.
-- **Files touched:** `apps/flythrough/tests/strip.rs`, `apps/flythrough/tests/support/aliasing.rs`,
+- **Files touched:** `apps/flythrough/tests/gpu_strip.rs`, `apps/flythrough/tests/support/aliasing.rs`,
   `docs/plans/logs/0061.md` (new).
 - **Done when:**
-  1. `the_direction_map_names_each_face_direction` (no GPU, under 1 s): a hand-built grid of hits on
+  1. `the_direction_map_names_each_face_direction` (no GPU, under 1 s; it lives with the support
+     module's own tests, so it runs in a CPU binary if one hosts them and in `gpu_strip` otherwise,
+     dev states which): a hand-built grid of hits on
      a two-step staircase gives each pixel its `store_face`, and the edge share counts a luma step at a
      direction change and not one inside a face.
   2. **The far normal under the store, in the log (RTX):** the far crops (dome 800,0 700x250; far wall
      780,230 640x360) under `baked`, FSR 2 and native, far normal off against `[1, 2]` and `[2, 6]`:
      the guard's energy, the distance from `R`, `T` still. Beside it the same under `E`, where Plan
      0056 read the far normal lowering the far wall's and dome's energy.
-  3. **The stop rule.** If under `baked` the far normal moves the far crops' energy by more than 10 %
-     against off, at either setting, the code read above is wrong and the bands have another source:
-     dev stops for an architect amendment before Phase 2. The log gives the figure either way.
+  3. **The stop rule, the code read.** If under `baked` the far normal moves the far crops' energy
+     by more than 10 % against off, at either setting, the code read above is wrong and the bands
+     have another source: dev stops for an architect amendment before Phase 2. The log gives the
+     figure either way.
   4. **The class table under `baked`, in the log:** for the defaults and native, the share of `T`
      jumps, `C` jumps and the distance from `R` on interior, seam, crease, silhouette, emitter and
      miss pixels, by footprint (under 2, 2 to 6, over 6 internal pixels), and the direction map's edge
      ratio by 10 m bins of `t`. The log names in one line each: the largest class by distance from `R`,
      the largest by `C`, and whether the bands are world-anchored (the eye moved 16 voxels, as Plan
      0056's R3).
-  5. **The re-read on lavapipe,** per lane rule 9c: the far crops' guard and `T` for `baked`, far normal
-     off and `[2, 6]`, FSR 2 at 384 x 216; a reading run in no tier. The log says whether it agrees.
+  5. **The stop rule, the attribution.** Phase 2 builds a fix for direction changes, so it starts
+     only if the reading puts the bands there. Both must hold on the far crops under `baked` at
+     the defaults: (i) of the class table's classes, the pixels within 1 pixel of a direction
+     change carry the largest share of the distance from `R` (the table gains that row: interior
+     pixels split into "at a direction change" and "inside one direction"); (ii) the direction
+     map's edge ratio in the bins beyond the far normal's band start is above 2 (an image edge is
+     more than twice as likely at a direction change as elsewhere; a ratio near 1 says the edges
+     are not the store's directions). If either fails (silhouettes, emitters or seams carry the
+     distance, or the ratio is near 1), dev stops for an architect amendment before Phase 2 and
+     the log names the class that leads. The threshold 2 is a proposal; the log gives the figures
+     either way.
+  6. **The re-read on lavapipe,** per lane rule 9c: the far crops' guard and `T` for `baked`, far normal
+     off and `[2, 6]`, FSR 2 at 384 x 216, as an arm of `reading::strip_run` (no tier runs it). The
+     log says whether it agrees.
 
 ### Phase 2: The store read by the far normal (ADR-0049), behind a toggle
 
 - **Owner skill:** dev
 - **What:** ADR-0049's read in `temporal.wgsl`, a `Lighting` bit off in the library, a fly-through
   flag and key that show their mode, its tests and its cost.
-- **The read:** at a cube-face hit with `rec.n` not equal to the face normal (the far normal's weight
-  above 0), for each axis `a` with `n_a^2` above 1e-4, `store_brick_value(voxel, 2a + (n_a > 0))` at
+- **The read:** at a cube-face hit with `rec.n` not equal to the face normal, for each axis `a` with `n_a^2` above 1e-4, `store_brick_value(voxel, 2a + (n_a > 0))` at
   the hit's voxel; the values with `w > 0` summed by `n_a^2` and renormalised; the face's own read
   where none has a value. The hit face's term is today's call. The counters `store[0..2]` count the
   hit face's read as today. The glass's reflected share (`march.wgsl`, `glass_store_value`) is not
   changed.
+- **Which pixels that is, by look.** Under `--look face` (the default) `rec.n` leaves the face
+  normal only where the far normal's weight is above 0, so near faces keep today's read to the bit
+  (done-when 2). Under the whole-frame normal looks, `gradient27` and `trilinear8` (opt-in), `rec.n`
+  is the look's normal at every distance, so with the knob on the stored part follows it on near
+  faces too: the light reads the same normal the lamp already does there. That is the rule, not a
+  side effect; done-when 2 covers it with a finite-and-renormalised check, and those looks get no
+  golden. The field look's hits do not read the store by face (`reads_store`), so the knob does not
+  reach them.
 - **The window:** `--store-read face|normal` (default `face` in this phase); a key cycles it (`Comma`
   reads free at 9ce251d; dev moves it if taken and says so). The banner and the stats HUD's aliasing
   row show `store read face` or `store read normal` beside the far normal, the whole time.
 - **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`, `crates/vxe-render/src/marcher.rs`
   (the `Lighting` bit and its doc), `crates/vxe-render/src/lib.rs` if the bit is re-exported,
   `apps/flythrough/src/main.rs`, `apps/flythrough/src/hud.rs`, `apps/flythrough/src/lib.rs`,
-  `apps/flythrough/tests/look.rs` (the staircase test), `apps/flythrough/tests/hud_golden.rs` if the
-  row's golden changes, `docs/plans/logs/0061.md`, `docs/nfr/02-frame-budget.md`.
+  `apps/flythrough/tests/gpu_look.rs` (the staircase tests and their golden under
+  `apps/flythrough/tests/golden/`), `apps/flythrough/tests/gpu_hud_golden.rs` if the row's golden
+  changes, `docs/plans/logs/0061.md`, `docs/nfr/02-frame-budget.md`.
 - **Done when:**
-  1. `a_far_staircase_reads_the_mix_of_its_two_directions` (lavapipe, a guess of under 20 s; over 30 s
-     it moves to the soak list and the phase says so): a 45-degree staircase of 1-voxel steps rising
+  1. `a_far_staircase_reads_the_mix_of_its_two_directions` (lavapipe, a guess of under 20 s; if it
+     reads over 30 s it is marked `#[ignore = "soak"]`, the log says so, and done-when 1b carries
+     the claim in the gate): a 45-degree staircase of 1-voxel steps rising
      along +x, its store filled so that a tread's (+z) value is `Vz` and a riser's (-x) is `Vx`, with
      `Vz` four times `Vx` (by hand or by a bake, dev states which); a 192 x 108 view, 70 degrees
      horizontal, far normal `[1, 2]`. The far-normal weight is 1 where `px <= 1`, that is
@@ -213,13 +259,24 @@ that changes `crates/vxe-render` or a GPU test; clippy, fmt. At the tip: `cargo 
      with `t >= 140` reads the stored part within 1 % of `n_x^2 Vx + n_z^2 Vz`, with `n` the hit
      record's normal (for a perfect 45-degree staircase `(Vx + Vz) / 2`; dev logs the gradient read
      there); knob off, the same pixels read `Vx` or `Vz` within 1 % and both occur.
-  2. `the_store_read_by_normal_leaves_near_faces_alone` (lavapipe, same world, under 10 s): every
-     pixel with `t <= 64` reads the same stored part to the bit with the knob on and off, and the
-     whole frame is bit-identical with the far normal off.
+  1b. `a_small_far_staircase_reads_the_mix_and_matches_its_golden` (lavapipe, a guess of under 10 s;
+     the gate-sized variant, always in the gate): the same world at 96 x 54, so the weight is 1
+     from `t >= 96 / (2 tan 35 deg) = 68.6` voxels and 0 at `t <= 34.3`. Knob on, every hit pixel
+     with `t >= 72` holds the claim of done-when 1; knob off, both `Vx` and `Vz` occur there. The
+     knob-on frame matches a new golden, `far_staircase_store_normal.png`, at the harness's floor
+     (at most 0.1 % of pixels over 2/255), blessed on lavapipe. This is the golden of
+     `store read normal`; the showcase hall's golden is a soak test
+     (`showcase_hall_golden_is_lit_by_its_four_ores`, `#[ignore = "soak"]`) and gates nothing.
+  2. `the_store_read_by_normal_leaves_near_faces_alone` (lavapipe, same world, under 10 s, an
+     estimate): under `--look face`, every pixel with `t <= 64` at 192 x 108 reads the same stored
+     part to the bit with the knob on and off, and the whole frame is bit-identical with the far
+     normal off. Under `gradient27` and `trilinear8` with the knob on, every stored part read is
+     finite, and a pixel whose three direction values are equal reads that value within 1e-5 (the
+     weights renormalise).
   3. `the_store_read_toggle_shows_in_the_banner` (no GPU, under 1 s): the flag parses `face` and
      `normal` and refuses anything else; the key changes the banner's and the row's text to each mode.
-  4. Knob off: the existing goldens unchanged (`golden.rs`, `castle_golden.rs`), `frame_bytes` as
-     main's.
+  4. Knob off: the existing goldens unchanged (`gpu_golden.rs`, `gpu_castle_golden.rs`),
+     `frame_bytes` as main's.
   5. **Cost, in the log and `docs/nfr/02-frame-budget.md`:** the temporal pass and the GPU frame with
      the knob off and on, far normal `[1, 2]` and `[2, 6]`, `flythrough --headless --frames 300` at
      the hall shot and `--level --pose vein`, RTX at 2530 x 1378 and RADV RENOIR at 1920 x 1080, three
@@ -234,8 +291,9 @@ that changes `crates/vxe-render` or a GPU test; clippy, fmt. At the tip: `cargo 
   `face` and `normal`; far normal off, `[1, 2]`, `[2, 6]`; FSR 2 at 1.5, native, FSR 2 at 1 with the
   far normal scaled to the same voxels (`[1.5, 3]` for `[1, 2]`); for the edges, at the knob's best
   arm: `--jitter-phases 8`, `--sharpen 0.25`. Still, the 1 px pan, the 10 px yaw.
-- **Files touched:** `apps/flythrough/tests/strip.rs`, `apps/flythrough/tests/support/aliasing.rs`,
-  `docs/plans/logs/0061.md`, `live/session-0061.sh` (local, untracked).
+- **Files touched:** `apps/flythrough/tests/gpu_strip.rs` (the matrix's arms, inside `mod reading`),
+  `apps/flythrough/tests/support/aliasing.rs`, `docs/plans/logs/0061.md`, `live/session61.sh`
+  (local, untracked; named as Plan 0060's `live/session60.sh`).
 - **Done when:**
   1. Every arm's `T`, `L`, `J`, `C`, distance from `R` and guard are in the log, with the class table
      of what is left at the knob's best arm.
@@ -274,7 +332,9 @@ that changes `crates/vxe-render` or a GPU test; clippy, fmt. At the tip: `cargo 
 - **Done when:** the log has the owner's words on: (a) the store read, `normal` or `face`; (b) the far
   normal's setting, or off; (c) what is still seen, by class and scene (bands, rings, silhouettes,
   emitters' edges, the edge dots); (d) whether an edge fix is wanted and what it may cost; (e) FSR 2
-  at 1 as a quality setting, yes or no; (f) the Radeon's default, the same or `--look face`.
+  at 1 as a quality setting, yes or no; (f) what the Radeon run showed at the pick, as words for
+  the log. The Radeon keeps the same default (owner answer 4); a per-adapter default is the
+  render-settings plan's question, not this window's.
 
 ### Phase 5: The picks as defaults
 
@@ -285,20 +345,34 @@ that changes `crates/vxe-render` or a GPU test; clippy, fmt. At the tip: `cargo 
   removed (Plan 0056's verdict: a fault); `--jitter-phases` and `--dither` stay opt-in or go, as (c)
   and (d) say, and the log states which. If (a) is `face`, the read stays as an opt-in knob or is
   removed, as the owner says.
-- **Files touched:** `apps/flythrough/src/lib.rs`, `apps/flythrough/src/main.rs`,
-  `apps/flythrough/src/hud.rs`, `crates/vxe-render/src/fsr2.rs`, `crates/vxe-render/src/shaders/composite.wgsl`
-  (the cap's read), `crates/vxe-render/src/marcher.rs`, `apps/flythrough/tests/golden.rs` and its
-  `golden/` images, `apps/flythrough/tests/look.rs`, `apps/flythrough/tests/settle.rs`,
-  `docs/plans/logs/0061.md`, `docs/nfr/02-frame-budget.md`.
+- **Files touched:** `apps/flythrough/src/lib.rs`, `apps/flythrough/src/main.rs` (the flag, its
+  field and its banner test), `apps/flythrough/src/hud.rs` (`fsr2_knob_words`). The emitter cap's
+  sites: `crates/vxe-render/src/fsr2.rs` (`Fsr2Settings::emitter_cap`),
+  `crates/vxe-render/src/marcher.rs` (the `Params` field and its fill),
+  `crates/vxe-render/src/shaders/march.wgsl` (`Params.emitter_cap`),
+  `crates/vxe-render/src/shaders/composite.wgsl` (the cap's read), `apps/flythrough/tests/gpu_strip.rs`
+  (`VXE_STRIP_EMITTER_CAP` and its doc line). Then `apps/flythrough/tests/gpu_golden.rs`,
+  `gpu_castle_golden.rs` and their `golden/` images, `apps/flythrough/tests/gpu_look.rs`,
+  `apps/flythrough/tests/gpu_settle.rs`, `docs/plans/logs/0061.md`, `docs/nfr/02-frame-budget.md`.
+  Removing `Params.emitter_cap` changes `march.wgsl`, which the bake compiles: a store written to
+  a `--bake-file` re-bakes once (ADR-0047, Negative).
 - **Done when:**
   1. `the_default_look_is_the_windows_pick` (no GPU, under 1 s): `LookPreset::DEFAULT.far_normal` and
      the fly-through's default store read equal the log's (a) and (b), and the banner's first row
      names both.
-  2. The staircase test of Phase 2 runs at the defaults and holds its claim (or, if (a) is `face`, its
-     knob-off half).
-  3. `--emitter-cap` is refused as an unknown flag, and no shader reads the cap.
+  2. Phase 2's gate-sized staircase test (done-when 1b) runs at the defaults and holds its claim
+     (or, if (a) is `face`, its knob-off half); it is in the gate whether or not the 192 x 108 test
+     went to soak. If (b) is not `[1, 2]`, its distances follow the picked band and the plan's log
+     gives the arithmetic.
+  3. `--emitter-cap` is refused as an unknown flag, `VXE_STRIP_EMITTER_CAP` is gone from the rig,
+     and no shader or `Params` field names the cap (`the_emitter_cap_is_gone`, no GPU, under 1 s,
+     for the flag; a grep line in the log for the rest).
   4. Re-blessed goldens on lavapipe, each with its old and new image's mean and max difference in the
-     log, and the reason (the far normal or the read).
+     log, and the reason (the far normal or the read). The floor: a golden none of whose pixels
+     has a far-normal weight above 0 under the old or the new band does not move (max difference
+     0), and dev lists which those are; every re-blessed golden passes its own test at the
+     harness's floor on a second run. The hall's golden is a soak test, so its re-bless is run by
+     name with `--run-ignored only` and the log says so; it is not part of the gate.
   5. The default's cost on both adapters at the hall and the vein, three rounds, in the log and
      `docs/nfr/02-frame-budget.md`, against Phase 1's default row.
 
@@ -337,8 +411,10 @@ Against `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`. Today's figur
 | `frame_bytes` | unchanged by design | Phase 2 done-when 4 checks it |
 
 The close measures with `flythrough --headless --frames 300`, three alternated rounds, perf lock,
-both adapters, as in Phase 2. Test times are named per phase; none is planned over the 30 s line of
-`docs/nfr.md` section 7.
+both adapters, as in Phase 2. Test times are named per phase and are estimates; none is planned
+over the 30 s line of `docs/nfr.md` section 7, and one that reads over it is marked
+`#[ignore = "soak"]` with a gate-sized test kept for its claim. The upscale line is already missed
+under the FSR 2 default (the table's row); this plan reads its delta and does not claim the line.
 
 ## Risks & open questions
 
@@ -351,6 +427,12 @@ both adapters, as in Phase 2. Test times are named per phase; none is planned ov
   sign.
 - **The far normal's band is in internal pixels:** comparisons across scales use the scaled settings
   named in each phase.
+- **The attribution may not hold.** The stills were read by eye; if Phase 1's class table puts the
+  distance from `R` on silhouettes or emitters, ADR-0049 is not the fix and Phase 1's second stop
+  rule sends the plan back before any shader changes.
+- **Plan 0058 rewrites the same paths afterwards** (`temporal.wgsl`'s direct pair, `composite.wgsl`,
+  the `Lighting` bits, the lamp path the `E` readings rest on). The `E` rows here are read before
+  it lands and are not comparable after; Plan 0058 says so on its side.
 - **`R` is not bit-identical at rest** (Plan 0056's unread max 26): Phase 1 reads why or says so.
 - **Determinism and threading:** nothing touches `vxe-world` or the bake. The read is per pixel and
   reads no random number, so a still frame stays bit-identical at native.
@@ -385,7 +467,9 @@ The owner, 2026-11-10, to the open questions above:
    plan if the window asks.
 4. **The Radeon:** (a), one default on both adapters, its cost read and recorded.
 5. **The start:** Plan 0060 runs first. Phase 1 runs beside it; Phases 2 onward wait for Plan 0060's
-   merge into main.
+   merge into main. (The draft's reason, "both plans change `temporal.wgsl`", was wrong: Plan 0060
+   touches no shader. The shared files are `main.rs`, `hud.rs` and `marcher.rs`; the header says
+   so.)
 
 ## What this plan does NOT do
 
@@ -393,7 +477,9 @@ The owner, 2026-11-10, to the open questions above:
 - Add MSAA, analytic coverage, a new upscaler or a footprint-prefiltered store.
 - Fix the silhouettes', emitters' or edge dots' jumps: read only; a later plan if the window asks.
 - Change the generators' terraces (the consumer's geometry), or the glass's reflected share.
-- Remove `own` or any upscaler (Plan 0045), or re-base the frame ledger's `own` line.
+- Remove `own` or any upscaler, or re-base the frame ledger's `own` line. Removing `own` is its own
+  small plan, owed and not yet drafted ([`docs/backlog.md`](../backlog.md); the owner, 2026-11-10);
+  Plan 0045 stays a structure move and does not remove it.
 - Render profiles per adapter (backlog, "render settings + profiles").
 - Write ADR outcomes: the architect writes ADR-0042's and ADR-0034's at the close, and accepts or
   rejects ADR-0049.
