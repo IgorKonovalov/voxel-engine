@@ -293,8 +293,8 @@ Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Clips in `vxe-entity` | dev | done | committed with this row |
-| 2: The `.rig` file and voxels from text | dev | not started | |
+| 1: Clips in `vxe-entity` | dev | done | 7aed6b7 |
+| 2: The `.rig` file and voxels from text | dev | done | committed with this row |
 | 3: The viewer, display interpolation and a sample model | dev | not started | |
 | 4: The owner's window | human | not started | |
 
@@ -308,6 +308,12 @@ each. Empty is fine.)_
   translation is an offset from the rest translation; `Part` has no rest offset (Plan 0062's
   option (a)). `Clip::new` also refuses a zero length, an empty track and two tracks for one
   part; equal ticks in a track count as unsorted. `Playback` holds an `Arc<Clip>`.
+- Phase 2: `Rig::build` returns `RigModel { model, part_names, rest, clips }` (the rest pose
+  added, the plan's tuple a struct). `VoxFile` gains `names` (node `_name`s), which also
+  touched `apps/flythrough/src/castle.rs` and `crates/vxe-assets/tests/vox.rs` (one
+  `names: Default::default()` each, outside the phase's files). The `.rig` grammar adds
+  `move x y z` on a key, `at` measured in the parent's model voxels, and parents declared
+  later in the file; `.voxtext` is `color` / `model <name> [at x y z]` / `layer` / rows.
 
 ### Close triggers
 

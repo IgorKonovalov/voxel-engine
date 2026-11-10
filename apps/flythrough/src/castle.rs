@@ -860,6 +860,7 @@ pub fn castle_vox_where(threads: usize, keep: impl Fn(&Tile) -> bool) -> VoxFile
         models,
         palette,
         nodes,
+        names: Default::default(),
         imap_present: false,
     }
 }
