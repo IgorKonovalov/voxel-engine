@@ -11,6 +11,7 @@ use vxe_render::{Frame, GpuWorld, LightParams, LookParams, UpscalerKind, View, r
 /// recovers what a blit cannot: its gradient energy is above the bilinear blit's
 /// and its edge spread below it, both read in this run.
 #[test]
+#[ignore = "soak"]
 fn fsr2_upscales_the_stripe_wall_sharper_than_a_bilinear_blit() {
     let Some(rig) = stripe_rig() else {
         return;
@@ -201,6 +202,7 @@ fn the_tone_pass_reproduces_the_composites_bytes() {
 
 /// The tone move is lossless on the primary, headlamp, translucent and LOD golden poses.
 #[test]
+#[ignore = "soak"]
 fn the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose() {
     let poses: [(
         &str,
@@ -250,6 +252,7 @@ fn the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose() {
 /// 0; behind the glass slab every pixel reads `reactive_translucent (1 - transmittance)`
 /// within 1/255.
 #[test]
+#[ignore = "soak"]
 fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
     let (world, camera) = level();
     let Some((device, queue, mut gpu)) = level_rig(&world, &camera) else {
@@ -384,6 +387,7 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
 /// and once the history settles the tone pass's output on the stripe wall at scale 1 is Plan
 /// 0024's frame's at the new exposure within 2/255 mean.
 #[test]
+#[ignore = "soak"]
 fn doubling_the_exposure_reaches_fsr_the_same_frame() {
     let Some(rig) = stripe_rig() else {
         return;
@@ -519,6 +523,7 @@ fn difference_over(a: &[u8], b: &[u8], at: &[usize]) -> (f64, usize) {
 /// lighting history) by at most 2/255 mean. The count over 8/255 and the fourth frame's two
 /// figures are readings.
 #[test]
+#[ignore = "soak"]
 fn a_carve_leaves_no_ghost_under_fsr2() {
     let (world, camera) = level();
     let Some((device, queue, mut gpu)) = level_rig(&world, &camera) else {
@@ -841,6 +846,7 @@ fn reading(what: &str, value: &str, bar: &str) {
 /// frame against ours, and the 88-voxel pans at 0.37 and 0.5 px a frame. Sharpening 0.5 and the
 /// rim gradients are readings.
 #[test]
+#[ignore = "soak"]
 fn fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length() {
     let Some(rig) = stripe_rig() else {
         return;
@@ -985,6 +991,7 @@ fn fsr2_pan_ge(rig: &StripeRig, dist: f32, pan_px: f32) -> (f64, f64) {
 /// still ones keeps the last frame's GE at least 0.85 of the same run's still GE at frame 32. A
 /// motion-vector or jitter misalignment blurs the history on every frame and drops it.
 #[test]
+#[ignore = "soak"]
 fn fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan() {
     let Some(rig) = stripe_rig() else {
         return;
@@ -1030,6 +1037,7 @@ fn downsample_2x2_linear(big: &[u8]) -> Vec<u8> {
 /// `reading:` line (the bar: below the blit's), and every image's distance from the render
 /// averaged in display bytes, with its mean signed difference.
 #[test]
+#[ignore = "soak"]
 fn a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit() {
     let (world, camera) = level();
     let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
@@ -1163,6 +1171,7 @@ fn pan_per_pass_readings(dist: f32, pan_px: f32) -> Vec<String> {
 
 /// The pan's per-pass readings at both distances (readings, no bar).
 #[test]
+#[ignore = "soak"]
 fn fsr2_pan_per_pass_readings() {
     for (dist, px) in [(NEAR, PAN_PX), (FAR, PAN_PX), (FAR, 1.0), (FAR, 0.5)] {
         println!("pan at {dist} voxels, {px} px a frame, scale 1.5:");
@@ -1191,6 +1200,7 @@ fn fsr2_reactive(light: f32, translucent: f32) -> UpscalerKind {
 /// lamp's settled contribution in at most 2 frames more than that frame takes. The trail, the
 /// emission step and the whole-image wobble are readings.
 #[test]
+#[ignore = "soak"]
 fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
     let Some(failures) = lamp_readings(fsr2_kind(), "fsr2", true) else {
         return;
@@ -1367,6 +1377,7 @@ fn wobble(
 /// `reading:` line (the same bar, missed with no port defect found); Plan 0024's frame and the
 /// composite's input under FSR 2 (the jittered lighting before the upscaler) are readings.
 #[test]
+#[ignore = "soak"]
 fn fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera() {
     let (world, camera) = level();
     let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
@@ -1427,41 +1438,13 @@ fn fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera() {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
-/// A reading, no bar: the lamp, flicker and wobble rigs under FSR 2 for each reactive-mask
-/// tuning tried (the light-change value, the translucent weight). Run with `--ignored`.
-#[test]
-#[ignore = "a diagnostic reading of the reactive mask's tuning; run by hand with --ignored"]
-fn fsr2_reactive_tuning_readings() {
-    let (world, camera) = level();
-    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
-        return;
-    };
-    let boundary = shadow_boundary(&device, &queue, &gpu, &camera);
-    for (light, translucent) in [(1.0, 1.0), (0.6, 1.0), (0.3, 1.0), (0.0, 1.0), (1.0, 0.6)] {
-        let kind = fsr2_reactive(light, translucent);
-        let label = format!("light {light}, translucent {translucent}");
-        lamp_readings(kind, &label, false);
-        let (m, o) = still_vein_flicker(true, kind).unwrap();
-        println!(
-            "[{label}] flicker at 1.5: {m:.4}/255, {:.4} % over 4/255",
-            o * 100.0
-        );
-        for pipe in [Pipe::U1, Pipe::U15] {
-            let (a, e, i) = wobble(&device, &queue, &gpu, &camera, pipe, kind, &boundary);
-            println!(
-                "[{label}] {pipe:?}: wobble {a:.3}/255, at the boundary {e:.3}/255, its input there {:.3}/255",
-                i.unwrap_or(f64::NAN)
-            );
-        }
-    }
-}
-
 /// Per-pass readings of FSR 2 on the wobble rig (readings, no bar): the level's spawn, lamp
 /// on, still, face look, at scale 1 and 1.5; over one jitter cycle after 32 frames, at the
 /// lamp-shadow boundary's output pixels, frame by frame: the history's share of the blend,
 /// the share holding a lock, the temporal reactivity (the upscaled colour's alpha), and at the
 /// internal pixels nearest them the dilated reactive and accumulation masks and the depth clip.
 #[test]
+#[ignore = "soak"]
 fn fsr2_wobble_per_pass_readings() {
     let (world, camera) = level();
     let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
@@ -1558,4 +1541,40 @@ fn frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory() {
         "frame_bytes at 1080p output, scale 1.5: ours {ours} B, FSR 2 {fsr} B; histories {histories} B; FSR 2's inventory {inventory} B (render size {render}, output size {display}, the rest {tiny})"
     );
     assert_eq!(fsr, ours - histories + inventory);
+}
+
+/// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+/// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// A reading, no bar: the lamp, flicker and wobble rigs under FSR 2 for each reactive-mask
+    /// tuning tried (the light-change value, the translucent weight). Run with `--ignored`.
+    #[test]
+    #[ignore = "a diagnostic reading of the reactive mask's tuning; run by hand with --ignored"]
+    fn fsr2_reactive_tuning_readings() {
+        let (world, camera) = level();
+        let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+            return;
+        };
+        let boundary = shadow_boundary(&device, &queue, &gpu, &camera);
+        for (light, translucent) in [(1.0, 1.0), (0.6, 1.0), (0.3, 1.0), (0.0, 1.0), (1.0, 0.6)] {
+            let kind = fsr2_reactive(light, translucent);
+            let label = format!("light {light}, translucent {translucent}");
+            lamp_readings(kind, &label, false);
+            let (m, o) = still_vein_flicker(true, kind).unwrap();
+            println!(
+                "[{label}] flicker at 1.5: {m:.4}/255, {:.4} % over 4/255",
+                o * 100.0
+            );
+            for pipe in [Pipe::U1, Pipe::U15] {
+                let (a, e, i) = wobble(&device, &queue, &gpu, &camera, pipe, kind, &boundary);
+                println!(
+                    "[{label}] {pipe:?}: wobble {a:.3}/255, at the boundary {e:.3}/255, its input there {:.3}/255",
+                    i.unwrap_or(f64::NAN)
+                );
+            }
+        }
+    }
 }

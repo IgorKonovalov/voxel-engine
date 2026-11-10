@@ -180,6 +180,7 @@ fn check_curve(name: &str, states: &[ExposureState]) {
 
 /// On the level at its spawn pose, which sees no vein: the dark meter sits far under the clamp.
 #[test]
+#[ignore = "soak"]
 fn the_caves_curve_after_the_lamp_goes_off() {
     let Some(level) = level() else {
         return;
@@ -191,6 +192,7 @@ fn the_caves_curve_after_the_lamp_goes_off() {
 
 /// From a pose facing a vein (VEIN_POSE), whose lamp-off meter settles above `max`'s clamp.
 #[test]
+#[ignore = "soak"]
 fn the_curve_facing_a_vein_follows_the_stepped_model() {
     let Some(level) = level() else {
         return;

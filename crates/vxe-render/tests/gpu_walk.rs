@@ -321,6 +321,7 @@ fn lone_voxel(at: [i32; 3]) -> World {
 /// 84). With the voxel at `(3, 4, 0)` instead the ray only touches its corner, and both
 /// walks miss it.
 #[test]
+#[ignore = "soak"]
 fn a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips() {
     let Some((device, queue)) = device() else {
         return;

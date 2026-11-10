@@ -113,8 +113,8 @@ specific. Vague plans get ignored.
 - **Headless proof is mandatory.** Every plan names at least one test that runs without a window.
   A render plan also names its golden image and the SSIM or pixel floor.
 - **Every named test states its expected wall time on lavapipe.** One that needs a long
-  series (over 30 s there, or 60 s on CI; `docs/nfr.md` section 7) is born on the soak list in
-  `.config/nextest.toml`, named as such in the phase, and is never a gate.
+  series (over 30 s there, or 60 s on CI; `docs/nfr.md` section 7) is born `#[ignore = "soak"]`
+  (`.config/nextest.toml`), named as such in the phase, and is never a gate.
 - **A testbed toggle shows its mode in the window**, with a behavioural done-when
   (`references/best-practices.md`, Tests).
 - **Name what the plan does NOT do.** Tempting bundles go there, with a pointer to a milestone.
@@ -176,11 +176,11 @@ followup for a future plan, not a finding.
 - **Run the gate yourself** (build, `cargo nextest run --workspace --profile gate
   --status-level pass` under the perf lock, tee'd to a log, doctests, clippy, fmt, deny) on
   the finished tree, which already holds main (the lane merged it before the review). Don't
-  copy the log's numbers. The gate tier is everything but the soak list; the soak and full
+  copy the log's numbers. The gate tier is everything but the soak tests; the soak and full
   tiers run only when the owner asks (2026-11-03). Record the wall time and the load, start
   it first, in the background, while you read, and run `node scripts/test-times.mjs <log>` on
   it: a test over the line in `docs/nfr.md` section 7 is a `minor` finding that names the
-  test for the soak list, and a gate tier over its wall-time budget there is a `major`. Run
+  test for the soak mark, and a gate tier over its wall-time budget there is a `major`. Run
   `node scripts/velocity.mjs` too and put its last three lines under the bookkeeping owed: a
   window at half the one before is a finding for the owner, not for the plan.
 - **Check every budget reading** in the close triggers against `nfr.md`: is there a number, a

@@ -266,6 +266,7 @@ fn still_camera_reading(upscaler: Upscaler) -> Option<StillReading> {
 /// absolute difference from the 2 x 2 supersampled native render is lower than the bilinear
 /// blit's (a property, not a threshold). The distances from plain native are a reading.
 #[test]
+#[ignore = "soak"]
 fn a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit() {
     let Some(r) = still_camera_reading(Upscaler::default()) else {
         return;
@@ -306,6 +307,7 @@ fn box_projection(camera: &vxe_render::Camera, (min, max): (VoxelCoord, VoxelCoo
 /// inside the carve's projected box, the upscaled frame's difference from a native 384 x 216
 /// render that took the same frames and the same carve.
 #[test]
+#[ignore = "soak"]
 fn a_carve_in_view_leaves_no_ghost_in_its_box() {
     let (world, camera) = level();
     let Some((device, queue, mut gpu)) = level_rig(&world, &camera) else {
@@ -538,72 +540,6 @@ fn octa16(u: u16, v: u16) -> [f32; 3] {
     n.map(|c| c / l)
 }
 
-/// The still-camera reading of the level under each lighting mode: the mean absolute
-/// difference (mean of r, g, b, in 1/255) of the upscaled image and of the bilinear blit
-/// from the native render, and of those two, the native render and the jittered render at
-/// scale 1 from a 2 x 2 supersampled native render (768 x 432, box-filtered). A reading, not
-/// a check: run with `--ignored`.
-#[test]
-#[ignore = "a diagnostic reading of the upscaler under each lighting mode; run by hand with --ignored"]
-fn the_upscalers_distance_from_native_under_each_lighting_mode() {
-    let (world, camera) = level();
-    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
-        return;
-    };
-    let light = LightParams::headlamp();
-    let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
-    for (label, candidates, filter, resolution) in [
-        ("defaults", 8, true, vxe_render::LightingResolution::Half),
-        ("no emissive", 0, true, vxe_render::LightingResolution::Half),
-        (
-            "full-res lighting",
-            8,
-            true,
-            vxe_render::LightingResolution::Full,
-        ),
-        ("filter off", 8, false, vxe_render::LightingResolution::Half),
-        (
-            "full-res lighting, filter off",
-            8,
-            false,
-            vxe_render::LightingResolution::Full,
-        ),
-    ] {
-        let render = |internal: [u32; 2], output: [u32; 2], jitter: bool| {
-            let mut f = frame_of(&device, internal, output, jitter);
-            f.set_resolution(&device, resolution);
-            f.set_lighting(vxe_render::Lighting {
-                candidates,
-                filter,
-                ..vxe_render::Lighting::default()
-            });
-            for _ in 0..SETTLE {
-                f.step(&device, &queue, &gpu, &camera, &light);
-            }
-            f
-        };
-        let native = readback::read_rgba8(&device, &queue, render(OUTPUT, OUTPUT, false).target());
-        let up = readback::read_rgba8(&device, &queue, render(INTERNAL, OUTPUT, true).target());
-        let low = render(INTERNAL, INTERNAL, false);
-        let bilinear = blit_texture(&device, &queue, low.target(), OUTPUT);
-        let taa = readback::read_rgba8(&device, &queue, render(OUTPUT, OUTPUT, true).target());
-        let big = OUTPUT.map(|n| 2 * n);
-        let ssaa = downsample_2x2(
-            &readback::read_rgba8(&device, &queue, render(big, big, false).target()),
-            OUTPUT,
-        );
-        let (u, b) = (mean(mad(&up, &native)), mean(mad(&bilinear, &native)));
-        println!(
-            "{label}: from native: upscaled {u:.3}, bilinear {b:.3}, ratio {:.3}; from 2x2 supersampled: upscaled {:.3}, bilinear {:.3}, native {:.3}, jittered at scale 1 {:.3}",
-            u / b,
-            mean(mad(&up, &ssaa)),
-            mean(mad(&bilinear, &ssaa)),
-            mean(mad(&native, &ssaa)),
-            mean(mad(&taa, &ssaa)),
-        );
-    }
-}
-
 /// Jitter adds little flicker: on the dark cave's still rig at scale 1.5, the upscaled frames'
 /// mean step with jitter on is at most 0.40/255 above jitter off's, and its share of values
 /// over 4/255 at most 1.15 percentage points above it (Plan 0024 Phase 13's gain, from the
@@ -639,6 +575,7 @@ fn jitter_adds_little_flicker_on_a_still_vein() {
 /// frames with the jitter on and off; the share of hit pixels whose temporal age is below 15,
 /// the age of a history unbroken since the first frame (which reads 0).
 #[test]
+#[ignore = "soak"]
 fn temporal_age_under_the_jitter() {
     let (world, camera) = level();
     let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
@@ -844,23 +781,13 @@ fn stripe_readings(rig: &StripeRig, upscaler: Upscaler, label: &str, full: bool)
 /// at least 0.3 px below the first upscaler's and its gradient energy no lower, at both
 /// scales.
 #[test]
+#[ignore = "soak"]
 fn the_upscaler_keeps_stripe_edges_sharp_still_and_panning() {
     let Some(rig) = stripe_rig() else {
         return;
     };
     let failures = stripe_readings(&rig, Upscaler::default(), "default", false);
     assert!(failures.is_empty(), "{failures:?}");
-}
-
-/// A reading, no bar: the stripe readings in full (the far pans too) under the default
-/// upscaler. Run with `--ignored`.
-#[test]
-#[ignore = "a diagnostic reading of the upscaler's sharpness; run by hand with --ignored"]
-fn the_upscalers_sharpness_readings() {
-    let Some(rig) = stripe_rig() else {
-        return;
-    };
-    stripe_readings(&rig, Upscaler::default(), "default", true);
 }
 
 // ---- Light changes under a still camera: the headlamp's sweep and step ----
@@ -872,43 +799,13 @@ fn the_upscalers_sharpness_readings() {
 /// sweep's last 16 frames, and the lamp step settles within 10 % of the lamp's settled
 /// contribution in at most 2 frames more than that frame takes.
 #[test]
+#[ignore = "soak"]
 fn a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame() {
     let Some(failures) = lamp_readings(UpscalerKind::Own(Upscaler::default()), "default", false)
     else {
         return;
     };
     assert!(failures.is_empty(), "{failures:?}");
-}
-
-/// A reading, no bar: the lamp readings in full (the emission step, the wobble and the trail
-/// too) under the default upscaler and with the still blend at 1/16, which also reads the still camera, the flicker rig and the stripes. Run
-/// with `--ignored`.
-#[test]
-#[ignore = "a diagnostic reading of light changes and the history weight; run by hand with --ignored"]
-fn the_upscalers_lamp_and_history_weight_readings() {
-    let base = Upscaler::default();
-    let sixteenth = Upscaler {
-        alpha: 0.0625,
-        ..base
-    };
-    if lamp_readings(UpscalerKind::Own(base), "default", true).is_none() {
-        return;
-    }
-    for (label, u) in [("default", base), ("still alpha 1/16", sixteenth)] {
-        let r = still_camera_reading(u).unwrap();
-        let (m0, o0) = still_vein_flicker(false, UpscalerKind::Own(u)).unwrap();
-        let (m1, o1) = still_vein_flicker(true, UpscalerKind::Own(u)).unwrap();
-        println!(
-            "[{label}] still camera from supersampled {:.3} (bilinear {:.3}); flicker at 1.5 jitter off {m0:.4}/255 {:.4} %, on {m1:.4}/255 {:.4} %",
-            r.up_ssaa,
-            r.bilinear_ssaa,
-            o0 * 100.0,
-            o1 * 100.0
-        );
-    }
-    let rig = stripe_rig().unwrap();
-    stripe_readings(&rig, sixteenth, "still alpha 1/16", false);
-    lamp_readings(UpscalerKind::Own(sixteenth), "still alpha 1/16", true);
 }
 
 /// The mean Rec. 709 luma of an RGBA8 image, in 1/255.
@@ -1021,4 +918,120 @@ fn the_upscaler_follows_an_exposure_step() {
         );
     }
     assert!(evs[1] - evs[0] > 1.0 / 64.0, "the exposure moves: {evs:?}");
+}
+
+/// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+/// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// The still-camera reading of the level under each lighting mode: the mean absolute
+    /// difference (mean of r, g, b, in 1/255) of the upscaled image and of the bilinear blit
+    /// from the native render, and of those two, the native render and the jittered render at
+    /// scale 1 from a 2 x 2 supersampled native render (768 x 432, box-filtered). A reading, not
+    /// a check: run with `--ignored`.
+    #[test]
+    #[ignore = "a diagnostic reading of the upscaler under each lighting mode; run by hand with --ignored"]
+    fn the_upscalers_distance_from_native_under_each_lighting_mode() {
+        let (world, camera) = level();
+        let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+            return;
+        };
+        let light = LightParams::headlamp();
+        let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
+        for (label, candidates, filter, resolution) in [
+            ("defaults", 8, true, vxe_render::LightingResolution::Half),
+            ("no emissive", 0, true, vxe_render::LightingResolution::Half),
+            (
+                "full-res lighting",
+                8,
+                true,
+                vxe_render::LightingResolution::Full,
+            ),
+            ("filter off", 8, false, vxe_render::LightingResolution::Half),
+            (
+                "full-res lighting, filter off",
+                8,
+                false,
+                vxe_render::LightingResolution::Full,
+            ),
+        ] {
+            let render = |internal: [u32; 2], output: [u32; 2], jitter: bool| {
+                let mut f = frame_of(&device, internal, output, jitter);
+                f.set_resolution(&device, resolution);
+                f.set_lighting(vxe_render::Lighting {
+                    candidates,
+                    filter,
+                    ..vxe_render::Lighting::default()
+                });
+                for _ in 0..SETTLE {
+                    f.step(&device, &queue, &gpu, &camera, &light);
+                }
+                f
+            };
+            let native =
+                readback::read_rgba8(&device, &queue, render(OUTPUT, OUTPUT, false).target());
+            let up = readback::read_rgba8(&device, &queue, render(INTERNAL, OUTPUT, true).target());
+            let low = render(INTERNAL, INTERNAL, false);
+            let bilinear = blit_texture(&device, &queue, low.target(), OUTPUT);
+            let taa = readback::read_rgba8(&device, &queue, render(OUTPUT, OUTPUT, true).target());
+            let big = OUTPUT.map(|n| 2 * n);
+            let ssaa = downsample_2x2(
+                &readback::read_rgba8(&device, &queue, render(big, big, false).target()),
+                OUTPUT,
+            );
+            let (u, b) = (mean(mad(&up, &native)), mean(mad(&bilinear, &native)));
+            println!(
+                "{label}: from native: upscaled {u:.3}, bilinear {b:.3}, ratio {:.3}; from 2x2 supersampled: upscaled {:.3}, bilinear {:.3}, native {:.3}, jittered at scale 1 {:.3}",
+                u / b,
+                mean(mad(&up, &ssaa)),
+                mean(mad(&bilinear, &ssaa)),
+                mean(mad(&native, &ssaa)),
+                mean(mad(&taa, &ssaa)),
+            );
+        }
+    }
+
+    /// A reading, no bar: the lamp readings in full (the emission step, the wobble and the trail
+    /// too) under the default upscaler and with the still blend at 1/16, which also reads the still camera, the flicker rig and the stripes. Run
+    /// with `--ignored`.
+    #[test]
+    #[ignore = "a diagnostic reading of light changes and the history weight; run by hand with --ignored"]
+    fn the_upscalers_lamp_and_history_weight_readings() {
+        let base = Upscaler::default();
+        let sixteenth = Upscaler {
+            alpha: 0.0625,
+            ..base
+        };
+        if lamp_readings(UpscalerKind::Own(base), "default", true).is_none() {
+            return;
+        }
+        for (label, u) in [("default", base), ("still alpha 1/16", sixteenth)] {
+            let r = still_camera_reading(u).unwrap();
+            let (m0, o0) = still_vein_flicker(false, UpscalerKind::Own(u)).unwrap();
+            let (m1, o1) = still_vein_flicker(true, UpscalerKind::Own(u)).unwrap();
+            println!(
+                "[{label}] still camera from supersampled {:.3} (bilinear {:.3}); flicker at 1.5 jitter off {m0:.4}/255 {:.4} %, on {m1:.4}/255 {:.4} %",
+                r.up_ssaa,
+                r.bilinear_ssaa,
+                o0 * 100.0,
+                o1 * 100.0
+            );
+        }
+        let rig = stripe_rig().unwrap();
+        stripe_readings(&rig, sixteenth, "still alpha 1/16", false);
+        lamp_readings(UpscalerKind::Own(sixteenth), "still alpha 1/16", true);
+    }
+
+    /// A reading, no bar: the stripe readings in full (the far pans too) under the default
+    /// upscaler. Run with `--ignored`.
+    #[test]
+    #[ignore = "a diagnostic reading of the upscaler's sharpness; run by hand with --ignored"]
+    fn the_upscalers_sharpness_readings() {
+        let Some(rig) = stripe_rig() else {
+            return;
+        };
+        stripe_readings(&rig, Upscaler::default(), "default", true);
+    }
 }

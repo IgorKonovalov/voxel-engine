@@ -17,7 +17,7 @@ Rules:
 
 ## Next up
 
-### Test tiers by marks, not by copied lists
+### Done: test tiers by marks, not by copied lists
 
 Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev chore once Plan 0059 has merged (owner, 2026-11-09): the rename touches the test files and `.config/nextest.toml` that lane also edits. The WARP lane it first waited on is done; Windows runs the CPU tests only. `.config/nextest.toml` spells the GPU list (15 binaries) and the soak list (about 50 test names) out in every profile, six copies kept in step by `scripts/check-test-tiers.mjs`, because nextest has no filter aliases. The replacement marks the tests themselves:
 - **Soak:** `#[ignore = "soak"]` on each long series; the soak tier runs `--run-ignored only`, full runs `--run-ignored all`, and `soak.yml`, the docs and `test-changed.mjs` take the flag.
@@ -25,7 +25,7 @@ Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev 
 
 The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
 
-**GPU half done 2026-11-10 at 50b2193:** 25 files renamed to `tests/gpu_*.rs` (every vxe-render integration test, which the old package rule covered, and 17 fly-through binaries), the profiles filter on `binary(/^gpu_/)`, `check-test-tiers` checks the prefix. Tier membership unchanged. **Soak half open:** 34 reading-only tests are already `#[ignore]`d (no `"soak"` reason a filter could see), so `--run-ignored only` would add them to soak and `--run-ignored all` to full. How to tell readings from soak is an owner call; until then the soak list keeps its copies.
+**Done 2026-11-10** (GPU half 50b2193, soak half 4a15e60). 25 files renamed to `tests/gpu_*.rs`; the 41 long series are `#[ignore = "soak"]`; the 34 hand-run measurements that were already `#[ignore]`d moved into a `mod reading` per file (owner, 2026-11-10), and soak and full leave out `test(/(^|::)reading::/)`. `check-test-tiers` checks the prefix, that every `#[ignore]` is soak or a reading, and the profiles' forms. Tier membership unchanged in every profile.
 
 
 ### The live queue's order and cancellation, after Plan 0059

@@ -268,6 +268,7 @@ fn a_mirror_that_cannot_sync_exits_1_after_the_teardown() {
 /// traced, in the windowed shell's order (the app with its streamer and GPU objects before
 /// the queue and device), and the stages together take under `DROP_BOUND`.
 #[test]
+#[ignore = "soak"]
 fn the_headless_flythrough_exits_through_every_teardown_stage_within_bound() {
     let Some(err) = headless_run_trace() else {
         return;

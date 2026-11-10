@@ -702,61 +702,6 @@ fn cutaway_level_golden_shows_sky_and_lit_rock() {
     assert!(lit >= 0.20, "lit rock {:.2} %", lit * 100.0);
 }
 
-/// The steps view from the outside camera at 1920 x 1080 on the high-performance adapter:
-/// mean and p99 steps per ray (red channel, clamped at 255). A reading, not a check: run with
-/// `--ignored` on the machine being measured.
-#[test]
-#[ignore = "a diagnostic reading on the high-performance adapter; run by hand with --ignored"]
-fn cutaway_steps_from_outside_the_level_at_1080p() {
-    let world = seed_1_level();
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .expect("an adapter");
-    let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes).expect("the frame's limits"),
-        ..Default::default()
-    }))
-    .expect("a device");
-    let cfg = MirrorConfig {
-        budget_bytes: 256 << 20,
-        ..MirrorConfig::new(Window::Fixed(world.extent()))
-    };
-    let mut gpu = GpuWorld::with_config(&device, cfg);
-    gpu.sync_now(&world, &device, &queue)
-        .expect("mirror fits the adapter");
-    let (w, h) = (1920, 1080);
-    let mut frame = Frame::new(&device, w, h);
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    for cutaway in [false, true] {
-        frame.set_look(vxe_render::LookParams {
-            view: vxe_render::ViewMode::Steps,
-            cutaway,
-            ..cutaway_look()
-        });
-        frame.render(
-            &device,
-            &queue,
-            &gpu,
-            &outside_level_camera(),
-            &LightParams::headlamp(),
-        );
-        let px = readback::read_rgba8(&device, &queue, frame.target());
-        let hist = readback::StepHistogram::from_rgba8(&px, w as usize);
-        let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
-        println!(
-            "{} at {w}x{h}, cutaway {cutaway}: steps per ray mean {:.2} p99 {}, rays at the 255 clamp {saturated} of {}",
-            adapter.get_info().name,
-            hist.mean_steps(),
-            hist.p99_steps(),
-            w * h
-        );
-    }
-}
-
 /// The hit buffer's hitmask and normals views render, byte for byte, what the single-pass
 /// march rendered at ae58f0c on the three opaque scenes (the carved golden scene, its LOD
 /// ring at level 1, the slab-and-wall occluder scene): the `split_*.png` files, never
@@ -1534,6 +1479,7 @@ fn hue_class(p: &[u8]) -> Option<usize> {
 /// default look's honest cubes light the ember and violet ores' faces thinly); its mean sRGB
 /// luma lies in 11..40/255.
 #[test]
+#[ignore = "soak"]
 fn showcase_hall_golden_is_lit_by_its_four_ores() {
     let table = flythrough::showcase_materials();
     let Some((lit, samples)) = showcase_hall(&table, SHOWCASE_FRAMES) else {
@@ -1796,4 +1742,67 @@ fn fsr2_golden_matches_and_rcas_is_bypassed_at_zero() {
     println!(
         "reading: fsr2.png at sharpening 0.5, sharpened pixels over their unsharpened 3 x 3 maximum by more than 1/255 {over} of {changed}, largest excess {most}/255; bar: none over; owner judges, Phase 7"
     );
+}
+
+/// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+/// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// The steps view from the outside camera at 1920 x 1080 on the high-performance adapter:
+    /// mean and p99 steps per ray (red channel, clamped at 255). A reading, not a check: run with
+    /// `--ignored` on the machine being measured.
+    #[test]
+    #[ignore = "a diagnostic reading on the high-performance adapter; run by hand with --ignored"]
+    fn cutaway_steps_from_outside_the_level_at_1080p() {
+        let world = seed_1_level();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        }))
+        .expect("an adapter");
+        let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits:
+                vxe_render::limits_for(&adapter, pool_bytes).expect("the frame's limits"),
+            ..Default::default()
+        }))
+        .expect("a device");
+        let cfg = MirrorConfig {
+            budget_bytes: 256 << 20,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        };
+        let mut gpu = GpuWorld::with_config(&device, cfg);
+        gpu.sync_now(&world, &device, &queue)
+            .expect("mirror fits the adapter");
+        let (w, h) = (1920, 1080);
+        let mut frame = Frame::new(&device, w, h);
+        frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+        for cutaway in [false, true] {
+            frame.set_look(vxe_render::LookParams {
+                view: vxe_render::ViewMode::Steps,
+                cutaway,
+                ..cutaway_look()
+            });
+            frame.render(
+                &device,
+                &queue,
+                &gpu,
+                &outside_level_camera(),
+                &LightParams::headlamp(),
+            );
+            let px = readback::read_rgba8(&device, &queue, frame.target());
+            let hist = readback::StepHistogram::from_rgba8(&px, w as usize);
+            let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
+            println!(
+                "{} at {w}x{h}, cutaway {cutaway}: steps per ray mean {:.2} p99 {}, rays at the 255 clamp {saturated} of {}",
+                adapter.get_info().name,
+                hist.mean_steps(),
+                hist.p99_steps(),
+                w * h
+            );
+        }
+    }
 }

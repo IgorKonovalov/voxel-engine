@@ -438,6 +438,7 @@ fn vaulted_cave() -> World {
 }
 
 #[test]
+#[ignore = "soak"]
 fn stamp_tally_agrees_with_apply_on_random_boxes() {
     let mut rng = SplitMix64(0x1234_5678);
     let modes = [

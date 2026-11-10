@@ -67,7 +67,8 @@
 //!
 //! Example (the RTX, under the perf lock and the memory cap):
 //! `VXE_TEST_ADAPTER=rtx VXE_STRIP_TAG=lamp-off VXE_STRIP_SOURCE=level VXE_STRIP_LAMP_AT=60
-//! cargo test --release -p flythrough --test gpu_strip -- --ignored --nocapture`.
+//! cargo nextest run --release -p flythrough --test gpu_strip --run-ignored only --no-capture -E
+//! 'test(=reading::strip_run)'`.
 
 mod support;
 
@@ -755,368 +756,6 @@ impl FoldRead<'_> {
     }
 }
 
-#[test]
-#[ignore = "reading only: run with --ignored"]
-fn strip_run() {
-    let look = env("VXE_STRIP_LOOK");
-    let mut preset = look.as_deref().map_or(LookPreset::DEFAULT, |name| {
-        LookPreset::from_name(name).expect("VXE_STRIP_LOOK takes a look preset")
-    });
-    let look_source = if look.is_some() { "" } else { " (default)" };
-    if let Some(f) = list::<2>("VXE_STRIP_FAR") {
-        preset.far_normal = f;
-    }
-    let Some(mut scene) = scene() else {
-        println!("strip: no adapter; skipped");
-        return;
-    };
-    let (device, queue) = (&scene.device, &scene.queue);
-    if let Some(c) = list::<5>("VXE_STRIP_CAMERA") {
-        scene.camera = Camera {
-            position: [c[0], c[1], c[2]].into(),
-            yaw: c[3].to_radians(),
-            pitch: c[4].to_radians(),
-            vfov: 70f32.to_radians(),
-        };
-    }
-    let view = env("VXE_STRIP_VIEW").unwrap_or_else(|| "shaded".to_owned());
-    let view = vxe_render::ViewMode::from_name(&view)
-        .expect("VXE_STRIP_VIEW takes shaded, normals, albedo, hitmask or steps");
-
-    let size = env("VXE_STRIP_SIZE").unwrap_or_else(|| "1920x1080".to_owned());
-    let (w, h) = size
-        .split_once('x')
-        .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
-        .expect("VXE_STRIP_SIZE takes WxH");
-    let output = [w, h];
-    let upscaler = env("VXE_STRIP_UPSCALER").unwrap_or_else(|| "fsr2".to_owned());
-    let sharpen: f32 = env_or("VXE_STRIP_SHARPEN", 0.5);
-    let scale = env("VXE_STRIP_SCALE").map_or(RenderScale::OneHalf, |v| {
-        RenderScale::ALL
-            .into_iter()
-            .find(|s| s.name() == v)
-            .unwrap_or_else(|| panic!("VXE_STRIP_SCALE takes 1, 1.5 or 2, not {v}"))
-    });
-    let shrink: u32 = env_or("VXE_STRIP_SHRINK", 1);
-    assert!(
-        shrink == 1 || upscaler == "off",
-        "VXE_STRIP_SHRINK renders the native frame larger: VXE_STRIP_UPSCALER=off"
-    );
-    let mut frame = match upscaler.as_str() {
-        "off" => Frame::new(device, w * shrink, h * shrink),
-        "own" => {
-            let mut f = Frame::with_sizes(device, scale.internal(output), output);
-            f.set_jitter(device, true);
-            f.set_sharpness(queue, sharpen);
-            f
-        }
-        "fsr2" => {
-            let mut f = Frame::with_sizes(device, scale.internal(output), output);
-            f.set_upscaler_kind(
-                device,
-                UpscalerKind::Fsr2(Fsr2Settings {
-                    sharpness: sharpen,
-                    jitter_phases: env("VXE_STRIP_JITTER_PHASES").map(|v| {
-                        v.parse()
-                            .expect("VXE_STRIP_JITTER_PHASES takes a phase count")
-                    }),
-                    emitter_cap: env("VXE_STRIP_EMITTER_CAP").map(|v| {
-                        v.parse()
-                            .expect("VXE_STRIP_EMITTER_CAP takes a pre-exposed level")
-                    }),
-                    dither: on_off("VXE_STRIP_DITHER", false),
-                    ..Fsr2Settings::default()
-                }),
-            );
-            f
-        }
-        v => panic!("VXE_STRIP_UPSCALER takes fsr2, own or off, not {v}"),
-    };
-    let internal = frame.internal_size();
-    let phases = match upscaler.as_str() {
-        "fsr2" => frame
-            .fsr2()
-            .map_or(0, |f| f.settings().phases(internal[0], w)),
-        "own" => vxe_render::marcher::JITTER_PHASES,
-        _ => 18,
-    };
-    let phases: u32 = env_or("VXE_STRIP_PHASES", phases);
-    let exposure = match env("VXE_STRIP_EXPOSURE").as_deref() {
-        Some("auto") => Exposure::Auto(AutoExposure::eye()),
-        Some(v) => Exposure::Manual(
-            v.parse()
-                .expect("VXE_STRIP_EXPOSURE takes a number or auto"),
-        ),
-        None => Exposure::Manual(scene.exposure),
-    };
-    let mut lighting = Lighting {
-        lamp: on_off("VXE_STRIP_LAMP", scene.lamp),
-        lamp_bounce: on_off("VXE_STRIP_INDIRECT", true),
-        filter: on_off("VXE_STRIP_FILTER", true),
-        candidates: env_or("VXE_STRIP_CANDIDATES", 8),
-        shadow_walk: match env("VXE_STRIP_SHADOW").as_deref() {
-            Some("full") => vxe_render::ShadowWalk::Full,
-            Some("coarse") | None => vxe_render::ShadowWalk::Coarse,
-            Some(v) => panic!("VXE_STRIP_SHADOW takes coarse or full, not {v}"),
-        },
-        exposure,
-        ..Lighting::default()
-    };
-    let light_mode = env("VXE_STRIP_LIGHT");
-    for gone in ["VXE_STRIP_SAMPLER", "VXE_STRIP_STEADY"] {
-        assert!(env(gone).is_none(), "{gone} is gone (ADR-0043)");
-    }
-    let lamp_power: f32 = env_or("VXE_STRIP_LAMP_POWER", 4000.0);
-    let light = match light_mode.as_deref() {
-        None | Some("hero") => LightParams::headlamp(),
-        Some("eye" | "eye0") => {
-            lighting = aliasing::eye_lighting(lighting);
-            aliasing::eye_lamp(lamp_power)
-        }
-        Some(v) => panic!("VXE_STRIP_LIGHT takes hero, eye or eye0, not {v}"),
-    };
-    if light_mode.as_deref() == Some("eye0") {
-        for &m in &scene.emits {
-            frame.set_emission_scale(queue, m, 0.0);
-        }
-    }
-    let spacing: u32 = env_or(
-        "VXE_STRIP_PROBE_SPACING",
-        if light_mode.is_some() {
-            HERO_PROBE_SPACING
-        } else {
-            vxe_render::probes::DEFAULT_PROBE_SPACING
-        },
-    );
-    frame.set_probe_spacing(device, spacing);
-    let mean_image = on_off("VXE_STRIP_MEAN", false);
-    frame.set_lighting(lighting);
-    frame.set_look(LookParams {
-        normal_mode: preset.normal_mode,
-        view,
-        tuning: preset.tuning,
-        far_normal: preset.far_normal,
-        ..LookParams::default()
-    });
-    const DT: f32 = 1.0 / 60.0;
-    frame.set_dt(DT);
-
-    let settle: u32 = env_or("VXE_STRIP_SETTLE", 120);
-    let frames: u32 = env_or("VXE_STRIP_FRAMES", 240);
-    let every: u32 = env_or("VXE_STRIP_EVERY", 24).max(1);
-    let speed: f32 = env_or("VXE_STRIP_SPEED", 0.0);
-    let yaw_rate: f32 = env_or("VXE_STRIP_YAW", 0.0);
-    let lamp_at: Option<u32> = env("VXE_STRIP_LAMP_AT").map(|v| v.parse().expect("a frame"));
-    let crop_box = list::<4>("VXE_STRIP_CROP").map(|c| c.map(|v| v as u32));
-    let flicker_window =
-        list::<2>("VXE_STRIP_FLICKER").map_or((1, frames), |f| (f[0] as u32, f[1] as u32));
-    let tag = env("VXE_STRIP_TAG").unwrap_or_else(|| "strip".to_owned());
-    let dir = out_dir(&tag);
-    println!(
-        "strip {tag}: {} | {w}x{h} {upscaler} | look {} {}{look_source} | lamp {} indirect {} filter {} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
-        scene.name,
-        preset.name,
-        LookPreset::far_normal_words(preset.normal_mode, preset.far_normal),
-        lighting.lamp,
-        lighting.lamp_bounce,
-        lighting.filter,
-        lighting.candidates,
-        lighting.exposure
-    );
-    println!(
-        "strip {tag}: light {} (lamp power {}, light radius {}, light samples {}), probe spacing {spacing}, sharpen {sharpen}, internal {}x{}, jitter phases {phases}",
-        light_mode.as_deref().unwrap_or("hero"),
-        light.intensity,
-        scene.light_radius,
-        scene.gpu.light_samples(),
-        internal[0],
-        internal[1]
-    );
-
-    let mut camera = scene.camera;
-    for _ in 0..settle {
-        frame.step(device, queue, &scene.gpu, &camera, &light);
-    }
-    if let Some(rate) = env("VXE_STRIP_PAN") {
-        let read = PanRead {
-            size: [w, h],
-            shrink,
-            rate: rate.parse().expect("VXE_STRIP_PAN takes pixels a frame"),
-            frames,
-            dots: on_off("VXE_STRIP_DOTS", false),
-            tag: &tag,
-            dir: &dir,
-        };
-        read.run(&mut scene, &mut frame, &mut camera, &light);
-        return;
-    }
-    if env("VXE_STRIP_READ").as_deref() == Some("drift") {
-        // Step `settle + 1` against step `VXE_STRIP_DRIFT_TO`.
-        frame.step(device, queue, &scene.gpu, &camera, &light);
-        let a = display(&scene, &frame, shrink);
-        let to: u32 = env_or("VXE_STRIP_DRIFT_TO", 8192);
-        for _ in settle + 1..to {
-            frame.step(device, queue, &scene.gpu, &camera, &light);
-        }
-        let b = display(&scene, &frame, shrink);
-        let mut hist = aliasing::Hist::default();
-        aliasing::levels(&a, &b)
-            .into_iter()
-            .for_each(|d| hist.add(d));
-        let c = hist.change();
-        let over_8 =
-            aliasing::levels(&a, &b).iter().filter(|&&d| d > 8).count() as f64 / (w * h) as f64;
-        println!(
-            "drift step {} vs {to}: {}; over 8 {:.2} %",
-            settle + 1,
-            c.cell(),
-            over_8 * 100.0
-        );
-        return;
-    }
-    if env("VXE_STRIP_READ").as_deref() == Some("fold") {
-        let read = FoldRead {
-            size: [w, h],
-            shrink,
-            phases,
-            frames,
-            tag: &tag,
-            dir: &dir,
-        };
-        read.run(&mut scene, &mut frame, &camera, &light);
-        return;
-    }
-
-    let n = (w * h) as usize;
-    let mut prev: Option<Vec<f32>> = None;
-    let mut flick = vec![0f32; n];
-    let mut flick_frames = 0u32;
-    let mut panels = Vec::new();
-    let mut frame_flicker = Vec::new();
-    let mut mean_acc = vec![0f32; n * 4];
-    for f in 0..frames {
-        if lamp_at == Some(f) {
-            lighting.lamp = !lighting.lamp;
-            frame.set_lighting(lighting);
-            println!(
-                "frame {f}: lamp {}",
-                if lighting.lamp { "on" } else { "off" }
-            );
-        }
-        frame.step(device, queue, &scene.gpu, &camera, &light);
-        let rgba = readback::read_rgba8(device, queue, frame.target());
-        let y: Vec<f32> = rgba.chunks_exact(4).map(luma).collect();
-        let mean = y.iter().sum::<f32>() / n as f32;
-        let mut d_mean = 0.0;
-        if let Some(p) = &prev {
-            let mut d_sum = 0.0;
-            for (i, (a, b)) in y.iter().zip(p).enumerate() {
-                let d = (a - b).abs();
-                d_sum += d;
-                if (flicker_window.0..=flicker_window.1).contains(&f) {
-                    flick[i] += d;
-                }
-            }
-            d_mean = d_sum / n as f32;
-            if (flicker_window.0..=flicker_window.1).contains(&f) {
-                flick_frames += 1;
-            }
-        }
-        frame_flicker.push(d_mean);
-        if mean_image {
-            for (a, &v) in mean_acc.iter_mut().zip(&rgba) {
-                *a += f32::from(v);
-            }
-        }
-        println!(
-            "frame {f:4}: mean luma {mean:.4}, mean |dY| {d_mean:.5}, camera {:.1?} yaw {:.1}",
-            camera.position.to_array(),
-            camera.yaw.to_degrees()
-        );
-        if f + 1 == frames
-            && let Some(spec) = env("VXE_STRIP_ENERGY")
-        {
-            for c in spec.split('/') {
-                let c: Vec<u32> = c.split(',').map(|v| v.parse().expect("a crop")).collect();
-                let c = [c[0], c[1], c[2], c[3]];
-                let (eh, ev) = neighbour_energy(&rgba, w, c);
-                println!("energy {c:?}: h {eh:.5} v {ev:.5}");
-            }
-        }
-        if f % every == 0 || f + 1 == frames {
-            write_png(&dir.join(format!("f{f:04}.png")), &rgba, w, h);
-            if let Some(c) = crop_box {
-                write_png(
-                    &dir.join(format!("f{f:04}-crop.png")),
-                    &crop(&rgba, w, c),
-                    c[2],
-                    c[3],
-                );
-            }
-            panels.push(shrink_image(&rgba, w, h, 4).0);
-        }
-        prev = Some(y);
-        let (fwd, _, _) = camera.basis();
-        camera.position += fwd * speed * DT;
-        camera.yaw += yaw_rate.to_radians() * DT;
-        if speed != 0.0 {
-            scene.gpu.set_focus(VoxelCoord(
-                camera.position.to_array().map(|v| v.floor() as i32),
-            ));
-        }
-    }
-    let (sw, sh) = (w / 4, h / 4);
-    let (px, pw, ph) = sheet(&panels, sw, sh, 4);
-    write_png(&dir.join("sheet.png"), &px, pw, ph);
-    if mean_image && frames > 0 {
-        let mean: Vec<u8> = mean_acc
-            .iter()
-            .map(|a| (a / frames as f32).round().clamp(0.0, 255.0) as u8)
-            .collect();
-        write_png(&dir.join("mean.png"), &mean, w, h);
-        if let Some(c) = crop_box {
-            write_png(&dir.join("mean-crop.png"), &crop(&mean, w, c), c[2], c[3]);
-        }
-    }
-    if flick_frames > 0 {
-        let map: Vec<u8> = flick
-            .iter()
-            .flat_map(|&d| {
-                let g = (d / flick_frames as f32 * 8.0 * 255.0).min(255.0) as u8;
-                [g, g, g, 255]
-            })
-            .collect();
-        write_png(&dir.join("flicker.png"), &map, w, h);
-        if let Some(c) = crop_box {
-            write_png(&dir.join("flicker-crop.png"), &crop(&map, w, c), c[2], c[3]);
-        }
-        let mut sorted: Vec<f32> = flick.iter().map(|d| d / flick_frames as f32).collect();
-        sorted.sort_by(f32::total_cmp);
-        let at = |p: f64| sorted[((sorted.len() - 1) as f64 * p) as usize];
-        println!(
-            "flicker over run frames {}..={} ({flick_frames} pairs): per-pixel mean |dY| median {:.5}, p95 {:.5}, p99 {:.5}, max {:.5}",
-            flicker_window.0,
-            flicker_window.1,
-            at(0.5),
-            at(0.95),
-            at(0.99),
-            sorted[sorted.len() - 1]
-        );
-    }
-    let series: Vec<String> = frame_flicker
-        .iter()
-        .enumerate()
-        .step_by(8)
-        .map(|(f, d)| format!("{f}:{d:.4}"))
-        .collect();
-    println!("frame |dY| every 8: {}", series.join(" "));
-    println!(
-        "strip: {} frames written under {}",
-        panels.len(),
-        dir.display()
-    );
-}
-
 /// 72 frames of 10 000 pixels (100 x 100) at 18 phases.
 const FOLD_SIDE: usize = 100;
 const FOLD_FRAMES: usize = 72;
@@ -1373,103 +1012,472 @@ fn the_pan_moves_the_centre_band_one_pixel() {
     );
 }
 
-/// R1's CPU half: the hall floor's terraces over the visible floor, x and y in 192..704 and
-/// 192..576 (whole 64-voxel cells), from the showcase's floor rule (`FLOOR_Z` plus the seed-1
-/// floor noise at cell 64, shifted down 11): terrace widths along rows and columns, the riser
-/// heights, and the lattice corners that are extrema of their 8 neighbours with the floor on a
-/// ring of radius 32 around them all below (a maximum) or all above (a minimum), so that every
-/// level between closes around the corner.
-#[test]
-#[ignore = "reading only: run with --ignored"]
-fn hall_floor_terraces() {
-    use flythrough::showcase::FLOOR_Z;
-    let noise = vxe_world::hash::ValueNoise::new(1 ^ 0x5A0C_A5E0_0000_0002, 6);
-    let floor = |x: i32, y: i32| FLOOR_Z + (noise.sample([x, y, 0]) >> 11);
-    let (x0, x1, y0, y1) = (192, 704, 192, 576);
-    let mut runs = (0u64, 0u64);
-    let mut steps = [0u64; 4];
-    for y in y0..y1 {
-        let mut run = 1u64;
-        for x in x0 + 1..x1 {
-            let d = (floor(x, y) - floor(x - 1, y)).unsigned_abs();
-            if d == 0 {
-                run += 1;
-            } else {
-                runs.0 += run;
-                runs.1 += 1;
-                run = 1;
-                steps[(d as usize).min(3)] += 1;
+/// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
+/// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// R1's CPU half: the hall floor's terraces over the visible floor, x and y in 192..704 and
+    /// 192..576 (whole 64-voxel cells), from the showcase's floor rule (`FLOOR_Z` plus the seed-1
+    /// floor noise at cell 64, shifted down 11): terrace widths along rows and columns, the riser
+    /// heights, and the lattice corners that are extrema of their 8 neighbours with the floor on a
+    /// ring of radius 32 around them all below (a maximum) or all above (a minimum), so that every
+    /// level between closes around the corner.
+    #[test]
+    #[ignore = "reading only: run with --ignored"]
+    fn hall_floor_terraces() {
+        use flythrough::showcase::FLOOR_Z;
+        let noise = vxe_world::hash::ValueNoise::new(1 ^ 0x5A0C_A5E0_0000_0002, 6);
+        let floor = |x: i32, y: i32| FLOOR_Z + (noise.sample([x, y, 0]) >> 11);
+        let (x0, x1, y0, y1) = (192, 704, 192, 576);
+        let mut runs = (0u64, 0u64);
+        let mut steps = [0u64; 4];
+        for y in y0..y1 {
+            let mut run = 1u64;
+            for x in x0 + 1..x1 {
+                let d = (floor(x, y) - floor(x - 1, y)).unsigned_abs();
+                if d == 0 {
+                    run += 1;
+                } else {
+                    runs.0 += run;
+                    runs.1 += 1;
+                    run = 1;
+                    steps[(d as usize).min(3)] += 1;
+                }
             }
         }
-    }
-    let mut cruns = (0u64, 0u64);
-    for x in x0..x1 {
-        let mut run = 1u64;
-        for y in y0 + 1..y1 {
-            if floor(x, y) == floor(x, y - 1) {
-                run += 1;
-            } else {
-                cruns.0 += run;
-                cruns.1 += 1;
-                run = 1;
+        let mut cruns = (0u64, 0u64);
+        for x in x0..x1 {
+            let mut run = 1u64;
+            for y in y0 + 1..y1 {
+                if floor(x, y) == floor(x, y - 1) {
+                    run += 1;
+                } else {
+                    cruns.0 += run;
+                    cruns.1 += 1;
+                    run = 1;
+                }
             }
         }
-    }
-    let mut corner_diff = (0i64, 0u64);
-    let mut extrema = Vec::new();
-    for cy in (y0..=y1).step_by(64) {
-        for cx in (x0..=x1).step_by(64) {
-            let c = floor(cx, cy);
-            let ns: Vec<i64> = [(-64, 0), (64, 0), (0, -64), (0, 64)]
-                .iter()
-                .map(|&(dx, dy)| floor(cx + dx, cy + dy))
-                .collect();
-            for &n in &ns[..2] {
-                corner_diff.0 += (n - c).abs();
-                corner_diff.1 += 1;
+        let mut corner_diff = (0i64, 0u64);
+        let mut extrema = Vec::new();
+        for cy in (y0..=y1).step_by(64) {
+            for cx in (x0..=x1).step_by(64) {
+                let c = floor(cx, cy);
+                let ns: Vec<i64> = [(-64, 0), (64, 0), (0, -64), (0, 64)]
+                    .iter()
+                    .map(|&(dx, dy)| floor(cx + dx, cy + dy))
+                    .collect();
+                for &n in &ns[..2] {
+                    corner_diff.0 += (n - c).abs();
+                    corner_diff.1 += 1;
+                }
+                let all: Vec<i64> = (-1..=1)
+                    .flat_map(|j| (-1..=1).map(move |i| (i, j)))
+                    .filter(|&(i, j)| (i, j) != (0, 0))
+                    .map(|(i, j)| floor(cx + 64 * i, cy + 64 * j))
+                    .collect();
+                let ring: Vec<i64> = (0..64)
+                    .map(|k| {
+                        let a = k as f32 / 64.0 * std::f32::consts::TAU;
+                        floor(
+                            cx + (32.0 * a.cos()).round() as i32,
+                            cy + (32.0 * a.sin()).round() as i32,
+                        )
+                    })
+                    .collect();
+                let max = all.iter().all(|&n| n < c) && ring.iter().all(|&n| n < c);
+                let min = all.iter().all(|&n| n > c) && ring.iter().all(|&n| n > c);
+                if max || min {
+                    let lo = ring.iter().min().copied().unwrap_or(c);
+                    let hi = ring.iter().max().copied().unwrap_or(c);
+                    extrema.push(format!(
+                        "({cx}, {cy}) {} at z {c}, ring of radius 32 at {lo}..{hi}",
+                        if max { "max" } else { "min" }
+                    ));
+                }
             }
-            let all: Vec<i64> = (-1..=1)
-                .flat_map(|j| (-1..=1).map(move |i| (i, j)))
-                .filter(|&(i, j)| (i, j) != (0, 0))
-                .map(|(i, j)| floor(cx + 64 * i, cy + 64 * j))
-                .collect();
-            let ring: Vec<i64> = (0..64)
-                .map(|k| {
-                    let a = k as f32 / 64.0 * std::f32::consts::TAU;
-                    floor(
-                        cx + (32.0 * a.cos()).round() as i32,
-                        cy + (32.0 * a.sin()).round() as i32,
-                    )
-                })
-                .collect();
-            let max = all.iter().all(|&n| n < c) && ring.iter().all(|&n| n < c);
-            let min = all.iter().all(|&n| n > c) && ring.iter().all(|&n| n > c);
-            if max || min {
-                let lo = ring.iter().min().copied().unwrap_or(c);
-                let hi = ring.iter().max().copied().unwrap_or(c);
-                extrema.push(format!(
-                    "({cx}, {cy}) {} at z {c}, ring of radius 32 at {lo}..{hi}",
-                    if max { "max" } else { "min" }
+        }
+        println!(
+            "hall floor x {x0}..{x1}, y {y0}..{y1}: terraces along x mean {:.2} voxels ({} runs), along y mean {:.2} ({} runs); risers of 1, 2, 3+ voxels: {}, {}, {}; mean corner difference over 64 voxels {:.2}",
+            runs.0 as f64 / runs.1.max(1) as f64,
+            runs.1,
+            cruns.0 as f64 / cruns.1.max(1) as f64,
+            cruns.1,
+            steps[1],
+            steps[2],
+            steps[3],
+            corner_diff.0 as f64 / corner_diff.1.max(1) as f64
+        );
+        println!(
+            "hall floor lattice extrema with closed contours: {}",
+            extrema.len()
+        );
+        for e in &extrema {
+            println!("  {e}");
+        }
+    }
+
+    #[test]
+    #[ignore = "reading only: run with --ignored"]
+    fn strip_run() {
+        let look = env("VXE_STRIP_LOOK");
+        let mut preset = look.as_deref().map_or(LookPreset::DEFAULT, |name| {
+            LookPreset::from_name(name).expect("VXE_STRIP_LOOK takes a look preset")
+        });
+        let look_source = if look.is_some() { "" } else { " (default)" };
+        if let Some(f) = list::<2>("VXE_STRIP_FAR") {
+            preset.far_normal = f;
+        }
+        let Some(mut scene) = scene() else {
+            println!("strip: no adapter; skipped");
+            return;
+        };
+        let (device, queue) = (&scene.device, &scene.queue);
+        if let Some(c) = list::<5>("VXE_STRIP_CAMERA") {
+            scene.camera = Camera {
+                position: [c[0], c[1], c[2]].into(),
+                yaw: c[3].to_radians(),
+                pitch: c[4].to_radians(),
+                vfov: 70f32.to_radians(),
+            };
+        }
+        let view = env("VXE_STRIP_VIEW").unwrap_or_else(|| "shaded".to_owned());
+        let view = vxe_render::ViewMode::from_name(&view)
+            .expect("VXE_STRIP_VIEW takes shaded, normals, albedo, hitmask or steps");
+
+        let size = env("VXE_STRIP_SIZE").unwrap_or_else(|| "1920x1080".to_owned());
+        let (w, h) = size
+            .split_once('x')
+            .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
+            .expect("VXE_STRIP_SIZE takes WxH");
+        let output = [w, h];
+        let upscaler = env("VXE_STRIP_UPSCALER").unwrap_or_else(|| "fsr2".to_owned());
+        let sharpen: f32 = env_or("VXE_STRIP_SHARPEN", 0.5);
+        let scale = env("VXE_STRIP_SCALE").map_or(RenderScale::OneHalf, |v| {
+            RenderScale::ALL
+                .into_iter()
+                .find(|s| s.name() == v)
+                .unwrap_or_else(|| panic!("VXE_STRIP_SCALE takes 1, 1.5 or 2, not {v}"))
+        });
+        let shrink: u32 = env_or("VXE_STRIP_SHRINK", 1);
+        assert!(
+            shrink == 1 || upscaler == "off",
+            "VXE_STRIP_SHRINK renders the native frame larger: VXE_STRIP_UPSCALER=off"
+        );
+        let mut frame = match upscaler.as_str() {
+            "off" => Frame::new(device, w * shrink, h * shrink),
+            "own" => {
+                let mut f = Frame::with_sizes(device, scale.internal(output), output);
+                f.set_jitter(device, true);
+                f.set_sharpness(queue, sharpen);
+                f
+            }
+            "fsr2" => {
+                let mut f = Frame::with_sizes(device, scale.internal(output), output);
+                f.set_upscaler_kind(
+                    device,
+                    UpscalerKind::Fsr2(Fsr2Settings {
+                        sharpness: sharpen,
+                        jitter_phases: env("VXE_STRIP_JITTER_PHASES").map(|v| {
+                            v.parse()
+                                .expect("VXE_STRIP_JITTER_PHASES takes a phase count")
+                        }),
+                        emitter_cap: env("VXE_STRIP_EMITTER_CAP").map(|v| {
+                            v.parse()
+                                .expect("VXE_STRIP_EMITTER_CAP takes a pre-exposed level")
+                        }),
+                        dither: on_off("VXE_STRIP_DITHER", false),
+                        ..Fsr2Settings::default()
+                    }),
+                );
+                f
+            }
+            v => panic!("VXE_STRIP_UPSCALER takes fsr2, own or off, not {v}"),
+        };
+        let internal = frame.internal_size();
+        let phases = match upscaler.as_str() {
+            "fsr2" => frame
+                .fsr2()
+                .map_or(0, |f| f.settings().phases(internal[0], w)),
+            "own" => vxe_render::marcher::JITTER_PHASES,
+            _ => 18,
+        };
+        let phases: u32 = env_or("VXE_STRIP_PHASES", phases);
+        let exposure = match env("VXE_STRIP_EXPOSURE").as_deref() {
+            Some("auto") => Exposure::Auto(AutoExposure::eye()),
+            Some(v) => Exposure::Manual(
+                v.parse()
+                    .expect("VXE_STRIP_EXPOSURE takes a number or auto"),
+            ),
+            None => Exposure::Manual(scene.exposure),
+        };
+        let mut lighting = Lighting {
+            lamp: on_off("VXE_STRIP_LAMP", scene.lamp),
+            lamp_bounce: on_off("VXE_STRIP_INDIRECT", true),
+            filter: on_off("VXE_STRIP_FILTER", true),
+            candidates: env_or("VXE_STRIP_CANDIDATES", 8),
+            shadow_walk: match env("VXE_STRIP_SHADOW").as_deref() {
+                Some("full") => vxe_render::ShadowWalk::Full,
+                Some("coarse") | None => vxe_render::ShadowWalk::Coarse,
+                Some(v) => panic!("VXE_STRIP_SHADOW takes coarse or full, not {v}"),
+            },
+            exposure,
+            ..Lighting::default()
+        };
+        let light_mode = env("VXE_STRIP_LIGHT");
+        for gone in ["VXE_STRIP_SAMPLER", "VXE_STRIP_STEADY"] {
+            assert!(env(gone).is_none(), "{gone} is gone (ADR-0043)");
+        }
+        let lamp_power: f32 = env_or("VXE_STRIP_LAMP_POWER", 4000.0);
+        let light = match light_mode.as_deref() {
+            None | Some("hero") => LightParams::headlamp(),
+            Some("eye" | "eye0") => {
+                lighting = aliasing::eye_lighting(lighting);
+                aliasing::eye_lamp(lamp_power)
+            }
+            Some(v) => panic!("VXE_STRIP_LIGHT takes hero, eye or eye0, not {v}"),
+        };
+        if light_mode.as_deref() == Some("eye0") {
+            for &m in &scene.emits {
+                frame.set_emission_scale(queue, m, 0.0);
+            }
+        }
+        let spacing: u32 = env_or(
+            "VXE_STRIP_PROBE_SPACING",
+            if light_mode.is_some() {
+                HERO_PROBE_SPACING
+            } else {
+                vxe_render::probes::DEFAULT_PROBE_SPACING
+            },
+        );
+        frame.set_probe_spacing(device, spacing);
+        let mean_image = on_off("VXE_STRIP_MEAN", false);
+        frame.set_lighting(lighting);
+        frame.set_look(LookParams {
+            normal_mode: preset.normal_mode,
+            view,
+            tuning: preset.tuning,
+            far_normal: preset.far_normal,
+            ..LookParams::default()
+        });
+        const DT: f32 = 1.0 / 60.0;
+        frame.set_dt(DT);
+
+        let settle: u32 = env_or("VXE_STRIP_SETTLE", 120);
+        let frames: u32 = env_or("VXE_STRIP_FRAMES", 240);
+        let every: u32 = env_or("VXE_STRIP_EVERY", 24).max(1);
+        let speed: f32 = env_or("VXE_STRIP_SPEED", 0.0);
+        let yaw_rate: f32 = env_or("VXE_STRIP_YAW", 0.0);
+        let lamp_at: Option<u32> = env("VXE_STRIP_LAMP_AT").map(|v| v.parse().expect("a frame"));
+        let crop_box = list::<4>("VXE_STRIP_CROP").map(|c| c.map(|v| v as u32));
+        let flicker_window =
+            list::<2>("VXE_STRIP_FLICKER").map_or((1, frames), |f| (f[0] as u32, f[1] as u32));
+        let tag = env("VXE_STRIP_TAG").unwrap_or_else(|| "strip".to_owned());
+        let dir = out_dir(&tag);
+        println!(
+            "strip {tag}: {} | {w}x{h} {upscaler} | look {} {}{look_source} | lamp {} indirect {} filter {} candidates {} exposure {:?} | settle {settle} frames {frames} every {every} speed {speed} yaw {yaw_rate} lamp_at {lamp_at:?} crop {crop_box:?} flicker {flicker_window:?}",
+            scene.name,
+            preset.name,
+            LookPreset::far_normal_words(preset.normal_mode, preset.far_normal),
+            lighting.lamp,
+            lighting.lamp_bounce,
+            lighting.filter,
+            lighting.candidates,
+            lighting.exposure
+        );
+        println!(
+            "strip {tag}: light {} (lamp power {}, light radius {}, light samples {}), probe spacing {spacing}, sharpen {sharpen}, internal {}x{}, jitter phases {phases}",
+            light_mode.as_deref().unwrap_or("hero"),
+            light.intensity,
+            scene.light_radius,
+            scene.gpu.light_samples(),
+            internal[0],
+            internal[1]
+        );
+
+        let mut camera = scene.camera;
+        for _ in 0..settle {
+            frame.step(device, queue, &scene.gpu, &camera, &light);
+        }
+        if let Some(rate) = env("VXE_STRIP_PAN") {
+            let read = PanRead {
+                size: [w, h],
+                shrink,
+                rate: rate.parse().expect("VXE_STRIP_PAN takes pixels a frame"),
+                frames,
+                dots: on_off("VXE_STRIP_DOTS", false),
+                tag: &tag,
+                dir: &dir,
+            };
+            read.run(&mut scene, &mut frame, &mut camera, &light);
+            return;
+        }
+        if env("VXE_STRIP_READ").as_deref() == Some("drift") {
+            // Step `settle + 1` against step `VXE_STRIP_DRIFT_TO`.
+            frame.step(device, queue, &scene.gpu, &camera, &light);
+            let a = display(&scene, &frame, shrink);
+            let to: u32 = env_or("VXE_STRIP_DRIFT_TO", 8192);
+            for _ in settle + 1..to {
+                frame.step(device, queue, &scene.gpu, &camera, &light);
+            }
+            let b = display(&scene, &frame, shrink);
+            let mut hist = aliasing::Hist::default();
+            aliasing::levels(&a, &b)
+                .into_iter()
+                .for_each(|d| hist.add(d));
+            let c = hist.change();
+            let over_8 =
+                aliasing::levels(&a, &b).iter().filter(|&&d| d > 8).count() as f64 / (w * h) as f64;
+            println!(
+                "drift step {} vs {to}: {}; over 8 {:.2} %",
+                settle + 1,
+                c.cell(),
+                over_8 * 100.0
+            );
+            return;
+        }
+        if env("VXE_STRIP_READ").as_deref() == Some("fold") {
+            let read = FoldRead {
+                size: [w, h],
+                shrink,
+                phases,
+                frames,
+                tag: &tag,
+                dir: &dir,
+            };
+            read.run(&mut scene, &mut frame, &camera, &light);
+            return;
+        }
+
+        let n = (w * h) as usize;
+        let mut prev: Option<Vec<f32>> = None;
+        let mut flick = vec![0f32; n];
+        let mut flick_frames = 0u32;
+        let mut panels = Vec::new();
+        let mut frame_flicker = Vec::new();
+        let mut mean_acc = vec![0f32; n * 4];
+        for f in 0..frames {
+            if lamp_at == Some(f) {
+                lighting.lamp = !lighting.lamp;
+                frame.set_lighting(lighting);
+                println!(
+                    "frame {f}: lamp {}",
+                    if lighting.lamp { "on" } else { "off" }
+                );
+            }
+            frame.step(device, queue, &scene.gpu, &camera, &light);
+            let rgba = readback::read_rgba8(device, queue, frame.target());
+            let y: Vec<f32> = rgba.chunks_exact(4).map(luma).collect();
+            let mean = y.iter().sum::<f32>() / n as f32;
+            let mut d_mean = 0.0;
+            if let Some(p) = &prev {
+                let mut d_sum = 0.0;
+                for (i, (a, b)) in y.iter().zip(p).enumerate() {
+                    let d = (a - b).abs();
+                    d_sum += d;
+                    if (flicker_window.0..=flicker_window.1).contains(&f) {
+                        flick[i] += d;
+                    }
+                }
+                d_mean = d_sum / n as f32;
+                if (flicker_window.0..=flicker_window.1).contains(&f) {
+                    flick_frames += 1;
+                }
+            }
+            frame_flicker.push(d_mean);
+            if mean_image {
+                for (a, &v) in mean_acc.iter_mut().zip(&rgba) {
+                    *a += f32::from(v);
+                }
+            }
+            println!(
+                "frame {f:4}: mean luma {mean:.4}, mean |dY| {d_mean:.5}, camera {:.1?} yaw {:.1}",
+                camera.position.to_array(),
+                camera.yaw.to_degrees()
+            );
+            if f + 1 == frames
+                && let Some(spec) = env("VXE_STRIP_ENERGY")
+            {
+                for c in spec.split('/') {
+                    let c: Vec<u32> = c.split(',').map(|v| v.parse().expect("a crop")).collect();
+                    let c = [c[0], c[1], c[2], c[3]];
+                    let (eh, ev) = neighbour_energy(&rgba, w, c);
+                    println!("energy {c:?}: h {eh:.5} v {ev:.5}");
+                }
+            }
+            if f % every == 0 || f + 1 == frames {
+                write_png(&dir.join(format!("f{f:04}.png")), &rgba, w, h);
+                if let Some(c) = crop_box {
+                    write_png(
+                        &dir.join(format!("f{f:04}-crop.png")),
+                        &crop(&rgba, w, c),
+                        c[2],
+                        c[3],
+                    );
+                }
+                panels.push(shrink_image(&rgba, w, h, 4).0);
+            }
+            prev = Some(y);
+            let (fwd, _, _) = camera.basis();
+            camera.position += fwd * speed * DT;
+            camera.yaw += yaw_rate.to_radians() * DT;
+            if speed != 0.0 {
+                scene.gpu.set_focus(VoxelCoord(
+                    camera.position.to_array().map(|v| v.floor() as i32),
                 ));
             }
         }
-    }
-    println!(
-        "hall floor x {x0}..{x1}, y {y0}..{y1}: terraces along x mean {:.2} voxels ({} runs), along y mean {:.2} ({} runs); risers of 1, 2, 3+ voxels: {}, {}, {}; mean corner difference over 64 voxels {:.2}",
-        runs.0 as f64 / runs.1.max(1) as f64,
-        runs.1,
-        cruns.0 as f64 / cruns.1.max(1) as f64,
-        cruns.1,
-        steps[1],
-        steps[2],
-        steps[3],
-        corner_diff.0 as f64 / corner_diff.1.max(1) as f64
-    );
-    println!(
-        "hall floor lattice extrema with closed contours: {}",
-        extrema.len()
-    );
-    for e in &extrema {
-        println!("  {e}");
+        let (sw, sh) = (w / 4, h / 4);
+        let (px, pw, ph) = sheet(&panels, sw, sh, 4);
+        write_png(&dir.join("sheet.png"), &px, pw, ph);
+        if mean_image && frames > 0 {
+            let mean: Vec<u8> = mean_acc
+                .iter()
+                .map(|a| (a / frames as f32).round().clamp(0.0, 255.0) as u8)
+                .collect();
+            write_png(&dir.join("mean.png"), &mean, w, h);
+            if let Some(c) = crop_box {
+                write_png(&dir.join("mean-crop.png"), &crop(&mean, w, c), c[2], c[3]);
+            }
+        }
+        if flick_frames > 0 {
+            let map: Vec<u8> = flick
+                .iter()
+                .flat_map(|&d| {
+                    let g = (d / flick_frames as f32 * 8.0 * 255.0).min(255.0) as u8;
+                    [g, g, g, 255]
+                })
+                .collect();
+            write_png(&dir.join("flicker.png"), &map, w, h);
+            if let Some(c) = crop_box {
+                write_png(&dir.join("flicker-crop.png"), &crop(&map, w, c), c[2], c[3]);
+            }
+            let mut sorted: Vec<f32> = flick.iter().map(|d| d / flick_frames as f32).collect();
+            sorted.sort_by(f32::total_cmp);
+            let at = |p: f64| sorted[((sorted.len() - 1) as f64 * p) as usize];
+            println!(
+                "flicker over run frames {}..={} ({flick_frames} pairs): per-pixel mean |dY| median {:.5}, p95 {:.5}, p99 {:.5}, max {:.5}",
+                flicker_window.0,
+                flicker_window.1,
+                at(0.5),
+                at(0.95),
+                at(0.99),
+                sorted[sorted.len() - 1]
+            );
+        }
+        let series: Vec<String> = frame_flicker
+            .iter()
+            .enumerate()
+            .step_by(8)
+            .map(|(f, d)| format!("{f}:{d:.4}"))
+            .collect();
+        println!("frame |dY| every 8: {}", series.join(" "));
+        println!(
+            "strip: {} frames written under {}",
+            panels.len(),
+            dir.display()
+        );
     }
 }

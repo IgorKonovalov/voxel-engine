@@ -541,8 +541,10 @@ fn the_far_normal_is_face_up_close_and_gradient27_far() {
 }
 
 /// The comparison table's image metrics, one line per mode, in one run:
-/// `cargo nextest run -p flythrough --test gpu_look --no-capture every_mode`.
+/// `cargo nextest run -p flythrough --test gpu_look --run-ignored only --no-capture -E
+/// 'test(=every_mode)'`.
 #[test]
+#[ignore = "soak"]
 fn every_mode() {
     println!("| mode | cavity normal error (degrees) | pillar silhouette error (px) |");
     println!("|---|---|---|");
@@ -949,6 +951,7 @@ fn field_crack_reading(
 /// (rock at `x >= 80`) within 1e-3 of `x = 80`, and neither reads a leak in the cracks view.
 /// The hit counts print beside the start look's.
 #[test]
+#[ignore = "soak"]
 fn the_field_surface_lies_on_the_flat_faces() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
@@ -1143,6 +1146,7 @@ const FIELD_HEADER: &str = "| scene | look | hits | left out | box px | count < 
 /// the field look also needs its shading normal within [`FIELD_BOX_DEGREES`] of the face's axis
 /// normal (the field surface crosses face planes without showing a cube face there).
 #[test]
+#[ignore = "soak"]
 fn the_field_surface_has_no_boxes_and_no_leaks() {
     let level = pose_level();
     let Some((device, queue)) = software_device(field_pool_bytes(&level).max(256 << 20)) else {
@@ -1295,6 +1299,7 @@ const THIN_SMOOTH_PX: [u64; 6] = [0, 0, 913, 0, 0, 2666];
 /// one and a miss in the other counting as a difference. The shaded side-by-side (face, field
 /// smooth wood, field crisp wood) goes to `live/thin/rig.png`.
 #[test]
+#[ignore = "soak"]
 fn thin_features_in_the_field_and_per_material() {
     let level = pose_level();
     let Some((device, queue)) = software_device(field_pool_bytes(&level).max(256 << 20)) else {
@@ -1565,6 +1570,7 @@ fn only_a_split_frame_allocates_the_split_list() {
 /// over a mirror with no band slot (the fly-through's default mirror) the same hit position
 /// (bits) and hit record at every pixel as over a mirror with the field's band slots.
 #[test]
+#[ignore = "soak"]
 fn the_default_look_reads_the_same_hit_records_with_and_without_band_slots() {
     assert_eq!(
         flythrough::LookPreset::DEFAULT,
@@ -1664,6 +1670,7 @@ fn tile_bar(scene: &str) -> Option<f64> {
 /// lamp on); and Plan 0039's guardrails hold: cavity normal error at most 12
 /// degrees, pillar silhouette error at most half of face mode's, axis fraction at most 10 %.
 #[test]
+#[ignore = "soak"]
 fn the_field_look_has_no_boxes_and_no_leaks() {
     let level = pose_level();
     let Some((device, queue)) = software_device(field_pool_bytes(&level).max(256 << 20)) else {
@@ -1937,6 +1944,7 @@ const WORKED_COLLAR: [(&str, f32); 3] = [
 /// within 1.5 voxels of its bounding box above `z = 66` that are not cube hits on a slab, and
 /// the dark specks on the trunk face head-on with the branches crisp and smooth.
 #[test]
+#[ignore = "soak"]
 fn a_smooth_surface_meets_a_crisp_cube_without_a_gap() {
     use flythrough::thin_rig::{INLAY_X, INLAY_Z, L_THICK, L_TOP, L_X, L_Y, TRUNK_LO, WALL_Y};
     let Some((device, queue)) = software_device(256 << 20) else {

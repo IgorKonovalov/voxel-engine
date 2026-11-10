@@ -73,13 +73,16 @@ For each phase, in order:
      test what changed, iteration speed over repetition). `quick` is the CPU-only tests, takes
      no perf lock and kills a test past 30 s. Add `--profile gpu` (under the perf lock) when the
      phase's `Files touched` include `crates/vxe-render/`, a shader, or a fly-through render
-     test. The soak list holds the long series (a test over 30 s on lavapipe here, or 60 s on
-     CI; `docs/nfr.md` section 7): a test that crosses the line goes on it, and the list runs
-     in no gate. `--profile gate` (quick plus gpu, every crate) is for the plan's tip, not a
-     phase. `--profile soak` and `--profile full` run only when the owner asks. A bare
-     `cargo nextest run` is the full suite.
+     test. A long series (a test over 30 s on lavapipe here, or 60 s on CI; `docs/nfr.md`
+     section 7) is marked `#[ignore = "soak"]` and runs in no gate. A measurement run by hand
+     is `#[ignore]`d inside the file's `mod reading`, and run with
+     `--run-ignored only -E 'test(=reading::<name>)'`. `--profile gate` (quick plus gpu,
+     every crate) is for the plan's tip, not a phase. `--profile soak --run-ignored only` and
+     `--profile full --run-ignored all` run only when the owner asks. A bare
+     `cargo nextest run` is the gate tier.
    - **A test file that opens a GPU device** is named `tests/gpu_*.rs`, which is all that puts
-     it in the gpu tier; `node scripts/check-test-tiers.mjs` fails until it is and names the file.
+     it in the gpu tier; `node scripts/check-test-tiers.mjs` fails until it is and names the file, and fails
+     on an `#[ignore]` that is neither `"soak"` nor inside `mod reading`.
    - **A test "passes" only when you've read its assertion body** and it asserts the behavior the
      plan named, with the exact values. `assert!(result.is_ok())` doesn't defend "returns
      `{3: 4169}`".
