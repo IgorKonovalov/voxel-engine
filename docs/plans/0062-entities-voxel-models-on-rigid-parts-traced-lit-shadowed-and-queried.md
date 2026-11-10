@@ -1,6 +1,7 @@
 # 0062: Entities: voxel models on rigid parts, traced with the world, lit and shadowed by the list lights, and hit by a headless ray query
 
-> **Status:** draft (2026-11-10)
+> **Status:** approved (owner go 2026-11-10; Phase 1 may start now, Phases 2 to 6 start after
+> Plans 0058 and 0045 close and the architect's re-read below)
 > **Created:** 2026-11-10
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (the render half; Plan 0008 closed the
 > `.vox` import)
@@ -18,7 +19,7 @@
 > close for Phases 2 to 6 (they read its light list, its direct target and its change rule),
 > and after [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
 > order in the plans index. **Phase 1 adds a crate and edits no existing source file**; it may
-> run as a side lane at any point. Before the go for Phase 2 the architect re-reads Phases 2 to
+> run as a side lane at any point. Before the Phase 2 lane starts the architect re-reads Phases 2 to
 > 4 against the tip (Plans 0058 and 0045 move the files they name). Bit and binding numbers
 > are "the next free at the start commit".
 > **Followed by:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
@@ -524,7 +525,7 @@ Architect's calls the owner may overturn: detail 1, 2 or 4 per part; 16 parts an
 side per part; entities absent from the bounce and the bake; the fallback for the world's
 emissive light on an entity; the walker and its keys (`7`, `8`, `Minus`).
 
-Open: the "go" (Phase 1 may be given its own).
+The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 
 ## Implementation log
 
