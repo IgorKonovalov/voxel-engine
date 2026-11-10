@@ -27,7 +27,7 @@
 //! [--history edits|gradient] [--lighting full|half]
 //! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
-//! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
+//! [--jitter-phases N] [--emitter-cap C] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
@@ -59,7 +59,11 @@
 //! pre-exposed colour held at `C` into FSR 2) and `--dither on` (a static one-level dither in
 //! its tone pass), each named in the banner's fsr2 line when set;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
-//! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
+//! stats HUD's rows; `--pace free|compositor` (default `compositor`) picks whether the window
+//! asks the compositor for a frame callback before each present (`vxe_app::Pacing`): with it
+//! the next frame starts only after the compositor showed this one; `free` starts it at once.
+//! The stats HUD's `pace` row names the mode beside the wall, CPU and GPU time of a frame, and
+//! the `frames:` line at exit gives the wall time between frames beside the CPU and GPU; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
 //! [`Autopilot`]); `--cutaway auto|on|off` sets the cutaway view's start state (default `auto`:
 //! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
@@ -260,7 +264,7 @@ use flythrough::{
     chunk_ram, chunks_hash, level_mirror_budget, level_pool_units, mips_ram, percentile,
 };
 use pad::Pad;
-use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
+use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, Pacing, PadButton, ShellConfig};
 use vxe_audio::{
     Acoustics, BlockClock, Command, Hrtf, MixSettings, Mixer, Output, PlayParams, ReverbSettings,
     RoomEstimate, RoomTargets, Sound, TailLines, VoiceId,
@@ -390,6 +394,8 @@ struct Args {
     seed: u64,
     render: Option<[u32; 2]>,
     frames: Option<u32>,
+    /// `--pace`: whether the window waits for the compositor's frame callback.
+    pace: Pacing,
     bench: u32,
     level: bool,
     /// `--source showcase`: the bounded showcase cavern (`flythrough::showcase`).
@@ -759,6 +765,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         seed: 1,
         render: None,
         frames: None,
+        pace: Pacing::Compositor,
         bench: 0,
         level: false,
         showcase: false,
@@ -853,6 +860,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--frames" => {
                 args.frames = Some(value()?.parse().map_err(|e| format!("--frames: {e}"))?)
+            }
+            "--pace" => {
+                let v = value()?;
+                args.pace = Pacing::from_word(&v)
+                    .ok_or(format!("--pace takes free or compositor, not {v}"))?;
             }
             "--bench" => args.bench = value()?.parse().map_err(|e| format!("--bench: {e}"))?,
             "--sync-budget" => {
@@ -2285,11 +2297,13 @@ struct Samples {
     hud_ms: Vec<f64>,
 }
 
-/// Every frame's render-thread CPU, its `update + poll + sync` (the sync alone without
+/// Every frame's wall time since the frame before, its render-thread CPU, its `update + poll + sync` (the sync alone without
 /// streaming) and, on frames the march timer is on, the march's GPU time, over the whole run:
 /// the `frames:` line printed at exit.
 #[derive(Default)]
 struct RunTimes {
+    /// The wall time between frame starts, from the second frame on.
+    wall_ms: Vec<f64>,
     cpu_ms: Vec<f64>,
     stream_ms: Vec<f64>,
     gpu_ms: Vec<f64>,
@@ -2325,8 +2339,13 @@ impl RunTimes {
                 self.gpu_ms.len()
             )
         };
+        let wall = if self.wall_ms.is_empty() {
+            "n/a".to_owned()
+        } else {
+            stats(&self.wall_ms)
+        };
         Some(format!(
-            "frames: {} frames; frame CPU {}; update + poll + sync {}; march GPU {gpu}",
+            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}",
             self.cpu_ms.len(),
             stats(&self.cpu_ms),
             stats(&self.stream_ms)
@@ -3155,6 +3174,7 @@ impl Run {
         s.fps = h.frames.fps();
         s.frame_ms = h.frames.frame_ms();
         s.cpu_ms = h.cpu_ms;
+        s.pace = Some(self.args.pace.word());
         s.march_ms = h.march_ms;
         s.hud_ms = h.hud_ms;
         s.upload_bytes = sync.bytes;
@@ -4704,6 +4724,7 @@ impl Run {
         // The first frame's delta spans startup, not a frame.
         if self.frame > 0 {
             self.hud.frames.record(dt);
+            self.hud.run.wall_ms.push(f64::from(dt) * 1e3);
         }
         if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
             self.hud.visible = !self.hud.visible;
@@ -6264,6 +6285,7 @@ fn main() {
                 .map_or_else(|| "pad: none".to_owned(), Pad::startup_line)
         );
     }
+    let args_pace = args.pace;
     let app = Flythrough {
         start,
         args,
@@ -6283,6 +6305,7 @@ fn main() {
             title: "flythrough".to_owned(),
             size,
             lock_cursor: true,
+            pacing: args_pace,
             ..ShellConfig::default()
         };
         vxe_app::run(config, app)
@@ -6399,6 +6422,25 @@ mod tests {
         assert_eq!(hud.strip.len(), 100);
     }
     use flythrough::cave::SHELL;
+
+    /// `--pace` takes `free` (no frame callback) and `compositor`, the default; another word
+    /// or a missing value is refused.
+    #[test]
+    fn the_pace_flag_parses_both_words() {
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(a.pace, Pacing::Compositor);
+        let a = parse_args_from(argv(&["--pace", "free"])).expect("--pace free parses");
+        assert_eq!(a.pace, Pacing::Unthrottled);
+        assert!(!a.pace.frame_callback());
+        let a = parse_args_from(argv(&["--pace", "compositor"])).expect("--pace compositor parses");
+        assert_eq!(a.pace, Pacing::Compositor);
+        assert!(a.pace.frame_callback());
+        let e = parse_args_from(argv(&["--pace", "vsync"]))
+            .err()
+            .expect("vsync is refused");
+        assert!(e.contains("free or compositor"), "{e}");
+        assert!(parse_args_from(argv(&["--pace"])).is_err());
+    }
 
     /// The flags of the per-face table, the reference and the cuts are refused, each naming Plan
     /// 0059 and the flag; with none of them the run parses and its frame takes the store.

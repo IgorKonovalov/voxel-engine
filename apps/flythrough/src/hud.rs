@@ -345,6 +345,8 @@ pub struct HudStats {
     pub frame_ms: FrameMs,
     /// Render-thread CPU of this frame, from its start to its submit.
     pub cpu_ms: f32,
+    /// The window's pacing word (`vxe_app::Pacing::word`); `None` hides the `pace` row.
+    pub pace: Option<&'static str>,
     /// GPU time of the march and the HUD pass; `None` without `TIMESTAMP_QUERY`.
     pub march_ms: Option<f32>,
     pub hud_ms: Option<f32>,
@@ -478,6 +480,7 @@ impl HudStats {
                 max: 31.5,
             },
             cpu_ms: 4.125,
+            pace: None,
             march_ms: Some(1.75),
             hud_ms: Some(0.0375),
             upload_bytes: 1_310_720,
@@ -559,6 +562,20 @@ impl HudStats {
             over(self.cpu_ms, FRAME_LINE_MS),
             format_args!("cpu {:.3} ms", self.cpu_ms),
         )?;
+        if let Some(pace) = self.pace {
+            // The frame window's median wall time beside this frame's CPU and GPU: with the
+            // compositor pacing, wall near their sum; free, near the larger of the two.
+            write!(
+                out,
+                "pace {pace}  wall {:.2} / cpu {:.2} / gpu ",
+                f.p50, self.cpu_ms
+            )?;
+            match self.march_ms {
+                Some(g) => write!(out, "{g:.2} ms")?,
+                None => out.write_str("n/a ms")?,
+            }
+            row(out, over(f.p50, FRAME_LINE_MS), format_args!(""))?;
+        }
         row(
             out,
             self.march_ms
@@ -792,6 +809,38 @@ pub fn page_bytes() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `pace` row names the mode and shows the window's median wall time beside the
+    /// frame's CPU and GPU, under the cpu row, for both modes; without a mode it is hidden.
+    #[test]
+    fn a_shown_hud_names_the_pace() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.write_rows(&mut out, &mut colours);
+        assert!(!out.contains("pace "), "{out}");
+        for (pace, want) in [
+            ("free", "pace free  wall 16.50 / cpu 4.12 / gpu 1.75 ms"),
+            (
+                "compositor",
+                "pace compositor  wall 16.50 / cpu 4.12 / gpu 1.75 ms",
+            ),
+        ] {
+            s.pace = Some(pace);
+            s.write_rows(&mut out, &mut colours);
+            let lines: Vec<&str> = out.lines().collect();
+            assert_eq!(lines[1], "cpu 4.125 ms", "{out}");
+            assert_eq!(lines[2], want, "{out}");
+            assert_eq!(colours[2], HudColour::White);
+            assert_eq!(lines.len(), colours.len());
+        }
+        s.march_ms = None;
+        s.write_rows(&mut out, &mut colours);
+        assert!(
+            out.lines()
+                .any(|l| l == "pace compositor  wall 16.50 / cpu 4.12 / gpu n/a ms"),
+            "{out}"
+        );
+    }
 
     fn fed(ms: impl IntoIterator<Item = f32>) -> FrameStats {
         let mut s = FrameStats::new();

@@ -97,12 +97,18 @@ impl Default for ShellConfig {
 /// When the shell starts the next frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Pacing {
-    /// Request the next frame as soon as the event loop is idle (`ControlFlow::Poll`).
+    /// Request the next frame as soon as the event loop is idle (`ControlFlow::Poll`), with
+    /// no frame callback: the next frame does not wait for the compositor to show this one.
     #[default]
     Unthrottled,
+    /// Request the next frame as soon as the event loop is idle, but ask the compositor for a
+    /// frame callback before each present (`Window::pre_present_notify`). On Wayland winit
+    /// delivers no redraw while that callback is outstanding, so the next frame starts only
+    /// after the compositor showed this one.
+    Compositor,
     /// Start a frame at most `hz` times a second: the loop sleeps
     /// (`ControlFlow::WaitUntil`) until `1 / hz` after the last frame started. `hz` 0 is
-    /// treated as 1.
+    /// treated as 1. Each present also asks for a frame callback, as [`Pacing::Compositor`].
     Cap { hz: u32 },
 }
 
@@ -110,12 +116,58 @@ impl Pacing {
     /// When the frame after one started at `last_start` may start; `None` for at once.
     pub fn next_deadline(self, last_start: Instant) -> Option<Instant> {
         match self {
-            Pacing::Unthrottled => None,
+            Pacing::Unthrottled | Pacing::Compositor => None,
             Pacing::Cap { hz } => {
                 Some(last_start + Duration::from_micros(1_000_000 / u64::from(hz.max(1))))
             }
         }
     }
+
+    /// Whether the shell asks the compositor for a frame callback before each present.
+    pub fn frame_callback(self) -> bool {
+        match self {
+            Pacing::Unthrottled => false,
+            Pacing::Compositor | Pacing::Cap { .. } => true,
+        }
+    }
+
+    /// The mode's word: `free`, `compositor` or `cap` (without its rate).
+    pub fn word(self) -> &'static str {
+        match self {
+            Pacing::Unthrottled => "free",
+            Pacing::Compositor => "compositor",
+            Pacing::Cap { .. } => "cap",
+        }
+    }
+
+    /// The mode a word names: `free` ([`Pacing::Unthrottled`]) or `compositor`.
+    pub fn from_word(word: &str) -> Option<Self> {
+        match word {
+            "free" => Some(Pacing::Unthrottled),
+            "compositor" => Some(Pacing::Compositor),
+            _ => None,
+        }
+    }
+}
+
+/// The present mode `wgpu` configures for a `requested` one among the surface's `offered`
+/// modes: the requested mode when offered, else for `AutoVsync` the first offered of
+/// `FifoRelaxed` and `Fifo`, for `AutoNoVsync` of `Immediate`, `Mailbox` and `Fifo`
+/// (wgpu-core's fallback rule); `None` when nothing fits.
+fn granted_present_mode(
+    requested: wgpu::PresentMode,
+    offered: &[wgpu::PresentMode],
+) -> Option<wgpu::PresentMode> {
+    use wgpu::PresentMode as P;
+    if offered.contains(&requested) {
+        return Some(requested);
+    }
+    let fallbacks: &[P] = match requested {
+        P::AutoVsync => &[P::FifoRelaxed, P::Fifo],
+        P::AutoNoVsync => &[P::Immediate, P::Mailbox, P::Fifo],
+        _ => &[],
+    };
+    fallbacks.iter().copied().find(|m| offered.contains(m))
 }
 
 #[derive(Debug)]
@@ -145,8 +197,17 @@ impl std::error::Error for ShellError {}
 /// the event loop, so it is gone before the first stage.
 pub fn run<A: App>(config: ShellConfig, app: A) -> Result<(), ShellError> {
     let event_loop = EventLoop::new().map_err(ShellError::EventLoop)?;
+    log::info!(
+        "pacing: {} ({})",
+        config.pacing.word(),
+        if config.pacing.frame_callback() {
+            "a frame callback before each present"
+        } else {
+            "no frame callback"
+        }
+    );
     event_loop.set_control_flow(match config.pacing {
-        Pacing::Unthrottled => ControlFlow::Poll,
+        Pacing::Unthrottled | Pacing::Compositor => ControlFlow::Poll,
         // `about_to_wait` sets the deadline once a frame has started.
         Pacing::Cap { .. } => ControlFlow::Wait,
     });
@@ -298,6 +359,13 @@ impl<A: App> Shell<A> {
         }
         config.present_mode = self.config.present_mode;
         surface.configure(&device, &config);
+        log::info!(
+            "present mode: requested {:?}, granted {}, offered {:?}",
+            self.config.present_mode,
+            granted_present_mode(self.config.present_mode, &caps.present_modes)
+                .map_or_else(|| "none".to_owned(), |m| format!("{m:?}")),
+            caps.present_modes
+        );
 
         if self.config.lock_cursor {
             let grabbed = window
@@ -348,7 +416,9 @@ impl<A: App> Shell<A> {
         self.app.poll(&mut self.input);
         let flow = self.app.frame(&state.gpu, &self.input, dt, &view);
         self.input.end_frame();
-        state.window.pre_present_notify();
+        if self.config.pacing.frame_callback() {
+            state.window.pre_present_notify();
+        }
         state.gpu.queue.present(texture);
         if flow == Flow::Exit {
             log::info!("teardown: the app asked to exit");
@@ -459,5 +529,54 @@ mod tests {
         let next = Pacing::Cap { hz: 60 }.next_deadline(start);
         assert_eq!(next, Some(start + Duration::from_micros(16_666)));
         assert_eq!(Pacing::Unthrottled.next_deadline(start), None);
+        assert_eq!(Pacing::Compositor.next_deadline(start), None);
+    }
+
+    /// `free` requests no frame callback; `compositor`, the shell's earlier behaviour, does,
+    /// and so does a cap. The words round-trip; anything else is refused.
+    #[test]
+    fn free_pacing_requests_no_frame_callback() {
+        assert!(!Pacing::Unthrottled.frame_callback());
+        assert!(Pacing::Compositor.frame_callback());
+        assert!(Pacing::Cap { hz: 60 }.frame_callback());
+        assert_eq!(Pacing::from_word("free"), Some(Pacing::Unthrottled));
+        assert_eq!(Pacing::from_word("compositor"), Some(Pacing::Compositor));
+        assert_eq!(Pacing::from_word("vsync"), None);
+        assert_eq!(Pacing::from_word("Free"), None);
+        for p in [Pacing::Unthrottled, Pacing::Compositor] {
+            assert_eq!(Pacing::from_word(p.word()), Some(p));
+        }
+        assert_eq!(Pacing::Cap { hz: 60 }.word(), "cap");
+    }
+
+    /// The granted mode follows wgpu-core's fallback: no vsync prefers `Immediate`, then
+    /// `Mailbox`, then `Fifo`; vsync prefers `FifoRelaxed`, then `Fifo`; a concrete mode is
+    /// granted only when offered.
+    #[test]
+    fn the_granted_present_mode_follows_wgpu_s_fallback() {
+        use wgpu::PresentMode as P;
+        let all = [P::Fifo, P::FifoRelaxed, P::Immediate, P::Mailbox];
+        assert_eq!(
+            granted_present_mode(P::AutoNoVsync, &all),
+            Some(P::Immediate)
+        );
+        assert_eq!(
+            granted_present_mode(P::AutoNoVsync, &[P::Fifo, P::Mailbox]),
+            Some(P::Mailbox)
+        );
+        assert_eq!(
+            granted_present_mode(P::AutoNoVsync, &[P::Fifo]),
+            Some(P::Fifo)
+        );
+        assert_eq!(
+            granted_present_mode(P::AutoVsync, &all),
+            Some(P::FifoRelaxed)
+        );
+        assert_eq!(
+            granted_present_mode(P::AutoVsync, &[P::Fifo]),
+            Some(P::Fifo)
+        );
+        assert_eq!(granted_present_mode(P::Mailbox, &[P::Fifo]), None);
+        assert_eq!(granted_present_mode(P::Fifo, &[P::Fifo]), Some(P::Fifo));
     }
 }

@@ -1,6 +1,6 @@
 # 0064: The window's frame: what paces it, workers that leave no core, and readbacks that wait
 
-> **Status:** approved (owner go 2026-11-10; Phase 1 may start now, beside Plan 0060)
+> **Status:** in-progress (owner go 2026-11-10; Phase 1 may start now, beside Plan 0060)
 > **Created:** 2026-11-10
 > **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's frame and section 5's streaming line.
@@ -255,7 +255,7 @@ pub struct SyncBudget {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: what paces the window | dev | not started | |
+| 1: what paces the window | dev | code landed (flag, present-mode log, HUD `pace` row, `frames:` wall, 3 CPU tests); the windowed readings are owed to the owner, see [the readings log](logs/0064.md) | committed with this row |
 | 2: the pacing default | human | not started | |
 | 3: nothing waits for the GPU | dev | not started | |
 | 4: workers, the sync's time, the stats | dev | not started | |
