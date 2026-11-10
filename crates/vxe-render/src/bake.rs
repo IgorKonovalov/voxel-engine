@@ -1717,6 +1717,9 @@ struct LoopTimer {
 pub(crate) struct JobLoop {
     pending: VecDeque<Job>,
     open: Vec<OpenJob>,
+    /// Withdrawn open jobs with rounds still in flight ([`JobLoop::withdraw`]): read back into
+    /// nothing, each slot freed once its rounds are.
+    withdrawn: Vec<OpenJob>,
     free: Vec<usize>,
     in_flight: VecDeque<InFlight>,
     staging: Vec<wgpu::Buffer>,
@@ -1751,6 +1754,7 @@ impl JobLoop {
             },
             pending: jobs.into(),
             open: Vec::new(),
+            withdrawn: Vec::new(),
             free: slots.rev().collect(),
             in_flight: VecDeque::new(),
             staging: Vec::new(),
@@ -1807,6 +1811,63 @@ impl JobLoop {
             .iter()
             .map(|j| j.coord)
             .chain(self.open.iter().map(|j| j.coord))
+    }
+
+    /// Takes out the pending and open jobs whose chunks `pred` holds: a pending job dropped, an
+    /// open job closed with no block, its rounds in flight read back into nothing and its table
+    /// slot freed once they are. Each job's chunk, place (first word and words, its block's
+    /// layout at `record` words a brick record) and the samples its faces drew (read back or
+    /// in flight).
+    pub fn withdraw(&mut self, pred: impl Fn(ChunkCoord) -> bool, record: usize) -> Vec<Withdrawn> {
+        let mut out = Vec::new();
+        let pending = std::mem::take(&mut self.pending);
+        for job in pending {
+            if pred(job.coord) {
+                out.push(Withdrawn {
+                    coord: job.coord,
+                    first_word: job.first_word,
+                    words: layout(&job.faces, record).1,
+                    drawn: 0,
+                });
+            } else {
+                self.pending.push_back(job);
+            }
+        }
+        let mut k = 0;
+        while k < self.open.len() {
+            if !pred(self.open[k].coord) {
+                k += 1;
+                continue;
+            }
+            let job = self.open.remove(k);
+            out.push(Withdrawn {
+                coord: job.coord,
+                first_word: job.first_word,
+                words: layout(&job.faces, record).1,
+                drawn: job
+                    .states
+                    .iter()
+                    .map(|s| u64::from(s.n) + u64::from(s.queued))
+                    .sum(),
+            });
+            if job.states.iter().all(|s| s.queued == 0) {
+                self.free.push(job.slot);
+            } else {
+                self.withdrawn.push(job);
+            }
+        }
+        out
+    }
+
+    /// The pool words the pending and open jobs' places hold, at `record` words a brick record.
+    pub fn place_words(&self, record: usize) -> u64 {
+        let pending: u64 = self
+            .pending
+            .iter()
+            .map(|j| layout(&j.faces, record).1)
+            .sum();
+        let open: u64 = self.open.iter().map(|j| layout(&j.faces, record).1).sum();
+        pending + open
     }
 
     /// Samples the pending and open jobs still have to submit, at most.
@@ -2171,11 +2232,24 @@ impl JobLoop {
             let mut at = 0usize;
             for &(slot, i, r) in &f.entries {
                 if self.open.get(at).is_none_or(|j| j.slot != slot) {
-                    at = self
-                        .open
-                        .iter()
-                        .position(|j| j.slot == slot)
-                        .expect("a job with entries in flight stays open");
+                    match self.open.iter().position(|j| j.slot == slot) {
+                        Some(k) => at = k,
+                        None => {
+                            // A withdrawn job's rounds: read into nothing.
+                            let z = self
+                                .withdrawn
+                                .iter_mut()
+                                .find(|j| j.slot == slot)
+                                .expect("a job with entries in flight stays open or withdrawn");
+                            for _ in 0..r {
+                                let samples = out_words[e * 20 + 5];
+                                e += 1;
+                                z.states[i].queued -= samples;
+                                report.wasted += u64::from(samples);
+                            }
+                            continue;
+                        }
+                    }
                 }
                 let s = &mut self.open[at].states[i];
                 for _ in 0..r {
@@ -2206,6 +2280,15 @@ impl JobLoop {
                     }
                 }
             }
+            // A withdrawn job whose rounds are all read back frees its slot.
+            let free = &mut self.free;
+            self.withdrawn.retain(|j| {
+                let drained = j.states.iter().all(|s| s.queued == 0);
+                if drained {
+                    free.push(j.slot);
+                }
+                !drained
+            });
             self.done.samples = report.samples;
             self.done.gpu_seconds = report.gpu_seconds;
             out.samples += report.samples - samples_before;
@@ -2255,6 +2338,16 @@ impl JobLoop {
             }
         }
     }
+}
+
+/// A job taken out of a [`JobLoop`] ([`JobLoop::withdraw`]): its chunk, its place and the
+/// samples its faces drew.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Withdrawn {
+    pub coord: ChunkCoord,
+    pub first_word: u64,
+    pub words: u64,
+    pub drawn: u64,
 }
 
 /// Where an ended job's block goes: the store, its chunk, its place and its words.
@@ -2572,6 +2665,10 @@ pub struct QueueStats {
     pub view_reach: [u64; 2],
     /// The CPU milliseconds of the view's counters at the last opening.
     pub census_ms: f64,
+    /// Jobs withdrawn since the queue started ([`BakeQueue::withdraw`]), and the samples their
+    /// faces had drawn: lost.
+    pub withdrawn: u64,
+    pub withdrawn_samples: u64,
 }
 
 /// A block fading from what it showed to its target over `frames` ([`FADE`], or [`DIG_FADE`]
@@ -2835,6 +2932,12 @@ pub struct BakeQueue {
     pub reach_ring: bool,
     /// The order candidates open in.
     pub order: QueueOrder,
+    /// Whether the queue withdraws the jobs of chunks the camera has passed (ADR-0048): at a
+    /// step with a candidate in the near shell or the view cone ready, a job that is not a
+    /// dig's and not a whole re-bake of a full block, whose chunk lies outside the near shell
+    /// and outside the keep cone (the view cone's margin doubled), is taken out of the loop, its
+    /// place freed; its chunk keeps the block it had and is a candidate again.
+    pub withdraw: bool,
     /// Edit boxes since the last step.
     boxes: Vec<[[i32; 3]; 2]>,
     /// Chunks with dig bricks to re-bake, not yet in a job; and those in a job, with the bricks
@@ -2895,6 +2998,7 @@ impl BakeQueue {
             edit_ms: DEFAULT_BAKE_EDIT_MS,
             reach_ring: true,
             order: QueueOrder::default(),
+            withdraw: true,
             boxes: Vec::new(),
             digs: BTreeMap::new(),
             dig_open: Default::default(),
@@ -2941,6 +3045,12 @@ impl BakeQueue {
     /// openings, so it lags by the steps between two.
     pub fn view_ages(&self) -> (&[u32], &[u32]) {
         (&self.ages_first, &self.ages_full)
+    }
+
+    /// The pool words the places of the jobs pending and open hold: with the store's blocks,
+    /// its header and its free words, the whole pool.
+    pub fn job_words(&self) -> u64 {
+        self.lp.place_words(self.record_words())
     }
 
     /// The angle weights read since the last call: for each candidate found ready, the weight
@@ -3170,6 +3280,7 @@ impl BakeQueue {
             let ms = self.slice_ms + if dig { self.edit_ms } else { 0.0 };
             ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
         });
+        self.withdraw_passed(run, store, view);
         self.open_digs(run, store, cap)?;
         if self.lp.samples_left() < 2 * cap && self.steps >= self.quiet_until {
             let opened = self.lp.chunks().count();
@@ -3868,6 +3979,96 @@ impl BakeQueue {
             not_ready += u64::from(!reach_ready(run, ChunkCoord(c), lr, view.resident));
         }
         self.stats.view_reach = [take as u64, not_ready];
+    }
+
+    /// Withdraws the passed jobs ([`BakeQueue::withdraw`]) when a candidate in the near shell or
+    /// the view cone is ready: up to the opening's count of checks of those candidates, nearest
+    /// first, each not checked in the last [`QUEUE_RECHECK`] steps.
+    fn withdraw_passed(&mut self, run: &BakeRun<'_>, store: &mut Store, view: &QueueView<'_>) {
+        if !self.withdraw {
+            return;
+        }
+        let (eye, near) = (self.eye, self.near);
+        let keep = view.half_angle + QUEUE_VIEW_MARGIN_DEG.to_radians();
+        let passed: std::collections::HashSet<[i32; 3]> = self
+            .lp
+            .chunks()
+            .map(|c| c.0)
+            .filter(|c| {
+                let o = [0, 1, 2].map(|k| c[k] - eye[k]);
+                let full = store.blocks.contains_key(c) && !store.is_coarse(ChunkCoord(*c));
+                !self.dig_open.contains_key(c)
+                    && !full
+                    && !in_near_shell(o, near)
+                    && angle_term(o, view.forward, keep, near) > 0.0
+            })
+            .collect();
+        if passed.is_empty() {
+            return;
+        }
+        let gpu = run.gpu;
+        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        let mut seen: Vec<(i64, [i32; 3])> = gpu
+            .full_chunks()
+            .filter(|c| {
+                (!store.blocks.contains_key(&c.0)
+                    || store.is_coarse(*c)
+                    || self.reach.contains(&c.0))
+                    && !self.faceless.contains(&c.0)
+                    && !in_job.contains(&c.0)
+                    && !self.digs.contains_key(&c.0)
+            })
+            .filter_map(|c| {
+                let o = [0, 1, 2].map(|k| c.0[k] - eye[k]);
+                (angle_term(o, view.forward, view.half_angle, near) <= 0.0).then(|| {
+                    let d2: i64 = o.iter().map(|&v| i64::from(v).pow(2)).sum();
+                    (d2, c.0)
+                })
+            })
+            .collect();
+        seen.sort_unstable();
+        let steps = self.steps;
+        let lr = gpu.light_radius();
+        let checks = if view.samples.is_some() {
+            QUEUE_CHECKS_UNSLICED
+        } else {
+            QUEUE_CHECKS
+        };
+        let mut ready = false;
+        let mut checked = 0;
+        for (_, c) in seen {
+            if checked >= checks {
+                break;
+            }
+            if self
+                .blocked
+                .get(&c)
+                .is_some_and(|&at| steps - at < QUEUE_RECHECK)
+            {
+                continue;
+            }
+            checked += 1;
+            let coord = ChunkCoord(c);
+            if reach_ready(run, coord, lr, view.resident) && gpu.lights_ready_near(coord, lr) {
+                ready = true;
+                break;
+            }
+            self.blocked.insert(c, steps);
+        }
+        if !ready {
+            return;
+        }
+        let record = self.record_words();
+        for w in self.lp.withdraw(|c| passed.contains(&c.0), record) {
+            store.release(w.first_word, w.words);
+            self.job_coarse.remove(&w.coord.0);
+            self.stale.remove(&w.coord.0);
+            self.stats.withdrawn += 1;
+            self.stats.withdrawn_samples += w.drawn;
+        }
+        // The candidates are counted and sorted again this step.
+        self.counted_idle = false;
+        self.quiet_until = self.steps;
     }
 
     /// The view's counters over the candidates of an opening ([`QueueStats::view_waiting`] and

@@ -70,6 +70,7 @@ struct Q {
     frame: Frame,
     cfg: MirrorConfig,
     camera: Camera,
+    counts: BakeSettings,
 }
 
 /// How a rig's queue and mirror start.
@@ -158,6 +159,7 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
         frame,
         cfg,
         camera: camera_at(setup.eye),
+        counts: setup.counts.clone(),
     })
 }
 
@@ -238,8 +240,8 @@ impl Q {
         blocks_of(&self.device, &self.queue, &self.frame, self.world.extent())
     }
 
-    /// A fresh mirror and frame of the world as it is now, its extent baked in one go at
-    /// [`counts`]: every block.
+    /// A fresh mirror and frame of the world as it is now, its extent baked in one go at the
+    /// rig's counts: every block.
     fn fresh(&self) -> BTreeMap<[i32; 3], Vec<u32>> {
         let cfg = MirrorConfig {
             sync_budget_bytes: u64::MAX,
@@ -263,7 +265,7 @@ impl Q {
                 &mut gpu,
                 &self.world,
                 extent,
-                &counts(),
+                &self.counts,
                 &mut |_| {},
             )
             .expect("the world fits the pool");
@@ -680,6 +682,205 @@ fn a_turn_resorts_the_queue() {
         }
     }
     assert!(at(1).is_some() && at(0).is_some(), "{before:?} {after:?}");
+}
+
+/// Eight chunks in a row, an 8^3 rock cube on one brick of each, its top layer ore (6 brick
+/// directions, 24 576 samples a chunk at 4096 a brick direction), and a rig on it at `near` 0,
+/// coarse off, the smallest slice (a step draws the cap's floor, 16 384 samples, and an opening
+/// admits jobs while under two caps are left), the camera in chunk 0 looking +x.
+fn cubes_rig() -> Option<Q> {
+    let world = world_of([8, 1, 1], AIR);
+    for x in 0..8 {
+        fill(&world, [x * 64 + 24, 24, 24], [x * 64 + 32, 32, 31], ROCK);
+        fill(&world, [x * 64 + 24, 24, 31], [x * 64 + 32, 32, 32], ORE);
+    }
+    rig(
+        world,
+        &Setup {
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 4096,
+                ..counts()
+            },
+            ..Setup::at([32.5, 32.5, 50.5])
+        },
+    )
+}
+
+impl Q {
+    /// Every pool word is the header's, a held block's, a job's place or free.
+    fn assert_pool_accounted(&self) {
+        let store = self.frame.store();
+        let used = store.stats(0, 0, 0).bytes / 4;
+        assert_eq!(
+            used + store.free_words() + self.q().job_words(),
+            store.pool().size() / 4,
+            "every pool word is the header's, a block's, a job's or free"
+        );
+    }
+
+    /// Steps until `jobs()` holds chunk `x` of the row: the steps taken.
+    fn step_until_job(&mut self, x: i32) -> usize {
+        for n in 1..=MAX_STEPS {
+            self.step();
+            if self.q().jobs().iter().any(|c| c.0[0] == x) {
+                return n;
+            }
+        }
+        panic!("chunk {x} never opened");
+    }
+}
+
+/// The cubes' row: the camera steps in chunk 0 until chunk 2's job is in the loop (with chunk
+/// 1's, open and partly drawn), then moves to chunk 5 looking +x. At the next step the loop
+/// holds no job of chunks 0 to 4, the withdrawn count and samples are above 0, each withdrawn
+/// chunk holds no block it did not hold before and nothing of it is left but its listing, and
+/// every pool word is accounted for. Run to empty, every block is bit-identical to a one-shot
+/// bake.
+#[test]
+fn a_passed_chunk_is_withdrawn() {
+    let Some(mut q) = cubes_rig() else {
+        return;
+    };
+    let steps = q.step_until_job(2);
+    let held: Vec<[i32; 3]> = q.q().jobs().iter().map(|c| c.0).collect();
+    let had: Vec<bool> = (0..5)
+        .map(|x| q.frame.store().block(ChunkCoord([x, 0, 0])).is_some())
+        .collect();
+    println!("chunk 2 opened after {steps} steps; jobs {held:?}, blocks {had:?}");
+    assert!(
+        held.contains(&[1, 0, 0]) && held.contains(&[2, 0, 0]),
+        "{held:?}"
+    );
+    q.camera.position.x = 5.0 * 64.0 + 32.5;
+    let st = q.step();
+    let jobs: Vec<i32> = q.q().jobs().iter().map(|c| c.0[0]).collect();
+    println!("after the move: jobs {jobs:?}, {st:?}");
+    assert!(jobs.iter().all(|x| !(0..5).contains(x)), "{jobs:?}");
+    assert!(st.withdrawn > 0, "{st:?}");
+    assert!(st.withdrawn_samples > 0, "{st:?}");
+    for c in &held {
+        if (0..5).contains(&c[0]) {
+            let block = q.frame.store().block(ChunkCoord(*c));
+            assert!(
+                block.is_none() || had[c[0] as usize],
+                "{c:?} holds a block it did not hold"
+            );
+            let tracks = q.q().tracks(ChunkCoord(*c));
+            assert!(
+                tracks.iter().all(|t| *t == "listed"),
+                "{c:?} left behind {tracks:?}"
+            );
+        }
+    }
+    q.assert_pool_accounted();
+    q.settle();
+    let got = q.blocks();
+    assert_eq!(got.len(), 8, "every chunk holds a block");
+    let fresh = q.fresh();
+    for (c, b) in &got {
+        assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
+    }
+    q.assert_pool_accounted();
+}
+
+/// The cubes' row with no extra slice for digs and a carve in chunk 1 once its block lands,
+/// before the move to chunk 5: the dig's job stays in the loop after the move, and the dig's
+/// chunk settles to a one-shot bake of the edited world.
+#[test]
+fn a_dig_is_never_withdrawn() {
+    let Some(mut q) = cubes_rig() else {
+        return;
+    };
+    // No extra slice for digs: the dig's job draws the cap's floor a step, so it is still in
+    // the loop at the step after the move.
+    q.frame.bake_queue_mut().expect("the queue started").edit_ms = 0.0;
+    let one = ChunkCoord([1, 0, 0]);
+    let mut n = 0;
+    while q.frame.store().block(one).is_none() {
+        q.step();
+        n += 1;
+        assert!(n < MAX_STEPS, "chunk 1 is baked");
+    }
+    q.edit(&box_op([88, 24, 24], [92, 28, 32], Mode::Carve));
+    q.step();
+    assert!(
+        q.q().tracks(one).contains(&"dig_open"),
+        "{:?}",
+        q.q().tracks(one)
+    );
+    q.camera.position.x = 5.0 * 64.0 + 32.5;
+    let st = q.step();
+    println!("after the move: jobs {:?}, {st:?}", q.q().jobs());
+    assert!(q.q().jobs().contains(&one), "the dig's job stays");
+    assert!(q.q().tracks(one).contains(&"dig_open"));
+    q.settle();
+    assert_eq!(
+        q.blocks().get(&one.0),
+        q.fresh().get(&one.0),
+        "the dig's chunk against a one-shot bake of the edited world"
+    );
+}
+
+/// A 4 x 4 chunk floor of 32^3 rock blocks at 4096 samples a brick direction (a job of about
+/// 3.9 x 10^5 samples, many steps), the camera in chunk [0, 0, 0] yawing by plus and minus 5
+/// degrees a step about the view cone's edge on +x: the chunks along +x leave the view cone
+/// and come back, and stay in the keep cone. Over 64 steps nothing is withdrawn, while a job's
+/// chunk lies out of the view cone at some step.
+#[test]
+fn the_edge_of_the_view_does_not_churn() {
+    let world = world_of([4, 4, 1], AIR);
+    for x in 0..4 {
+        for y in 0..4 {
+            fill(
+                &world,
+                [x * 64 + 16, y * 64 + 16, 16],
+                [x * 64 + 48, y * 64 + 48, 48],
+                ROCK,
+            );
+        }
+    }
+    fill(&world, [20, 20, 48], [30, 30, 50], ORE);
+    let Some(mut q) = rig(
+        world,
+        &Setup {
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 4096,
+                ..counts()
+            },
+            ..Setup::at([32.5, 32.5, 32.5])
+        },
+    ) else {
+        return;
+    };
+    let edge = bake::view_half_angle(70f32.to_radians(), 16.0 / 9.0)
+        + bake::QUEUE_VIEW_MARGIN_DEG.to_radians();
+    let mut out_of_view = 0;
+    for n in 0..64 {
+        let sign = if n % 2 == 0 { 1.0 } else { -1.0 };
+        q.camera.yaw = edge + sign * 5f32.to_radians();
+        let st = q.step();
+        assert_eq!(st.withdrawn, 0, "step {n}: {st:?}");
+        let forward = q.camera.basis().0.to_array();
+        out_of_view += q
+            .q()
+            .jobs()
+            .iter()
+            .filter(|c| {
+                bake::angle_term(
+                    c.0,
+                    forward,
+                    edge - bake::QUEUE_VIEW_MARGIN_DEG.to_radians(),
+                    0,
+                ) > 0.0
+            })
+            .count();
+    }
+    println!("job-steps out of the view cone: {out_of_view}");
+    assert!(out_of_view > 0, "a job's chunk left the view cone");
 }
 
 /// A record fading from `from` to `to` over `frames` steps, shown each step: every value word

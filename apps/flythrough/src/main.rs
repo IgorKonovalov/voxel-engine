@@ -507,6 +507,9 @@ struct Args {
     queue_angle: f32,
     queue_refine: f32,
     queue_tier: bool,
+    /// `--queue-withdraw on|off`: whether the live queue withdraws the jobs of chunks the camera
+    /// has passed (default on); `4` toggles it.
+    queue_withdraw: bool,
     /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
     /// of these frames, for a headless reading.
     dig_at: Vec<u32>,
@@ -654,6 +657,16 @@ impl Args {
         }
         a.metering = self.metering;
         a
+    }
+
+    /// The live queue's order and withdrawal in words: `order score, angle 4, refine 2;
+    /// withdraw on`.
+    fn queue_words(&self) -> String {
+        format!(
+            "{}; withdraw {}",
+            self.queue_order().words(),
+            if self.queue_withdraw { "on" } else { "off" }
+        )
     }
 
     /// The live queue's order from `--queue-order` and `--queue-weights` (and their keys).
@@ -835,6 +848,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
         queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
         queue_tier: false,
+        queue_withdraw: true,
         bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
         dig_reach: true,
         dig_at: Vec::new(),
@@ -1133,6 +1147,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "score" => false,
                     "distance" => true,
                     _ => return Err(format!("--queue-order takes score or distance, not {v}")),
+                };
+            }
+            "--queue-withdraw" => {
+                let v = value()?;
+                args.queue_withdraw = match v.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(format!("--queue-withdraw takes on or off, not {v}")),
                 };
             }
             "--queue-weights" => {
@@ -3242,7 +3264,7 @@ impl Run {
         s.exposure = Some(self.modes.exposure_row());
         s.queue = Some(hud::queue_row(
             &self.queue.stats.unwrap_or_default(),
-            &self.args.queue_order().words(),
+            &self.args.queue_words(),
         ));
         s.aliasing = Some(hud::aliasing_row(
             &self.upscaler,
@@ -3818,6 +3840,7 @@ impl Run {
         frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
         if let Some(q) = frame.bake_queue_mut() {
             q.order = self.args.queue_order();
+            q.withdraw = self.args.queue_withdraw;
         }
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
@@ -4171,8 +4194,9 @@ impl Run {
     }
 
     /// The live queue's keys: `1` cycles the order (score, score with the class as a tier,
-    /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25). A
-    /// change goes to the queue at once and prints the order.
+    /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25), `4`
+    /// toggles the withdrawal. A change goes to the queue at once and prints the order and the
+    /// withdrawal.
     fn queue_keys(&mut self, input: &Input) {
         let a = &mut self.args;
         let mut changed = false;
@@ -4196,11 +4220,17 @@ impl Run {
             };
             changed = true;
         }
+        if input.pressed(KeyCode::Digit4) {
+            a.queue_withdraw = !a.queue_withdraw;
+            changed = true;
+        }
         if changed {
             let order = self.args.queue_order();
-            println!("bake queue: {}", order.words());
+            println!("bake queue: {}", self.args.queue_words());
+            let withdraw = self.args.queue_withdraw;
             if let Some(q) = self.gfx.as_mut().and_then(|g| g.frame.bake_queue_mut()) {
                 q.order = order;
+                q.withdraw = withdraw;
             }
         }
     }
@@ -4208,7 +4238,7 @@ impl Run {
     /// The live queue's banner row: the mode, its settings and slice, its order and keys.
     fn queue_row(&self) -> String {
         format!(
-            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}; {} (1 order, 2/3 angle)",
+            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}; {} (1 order, 2/3 angle, 4 withdraw)",
             vxe_render::bake::BRICK_CELL,
             vxe_render::bake::QUEUE_BRICK_SAMPLES,
             if self.args.bake_coarse > 0 {
@@ -4225,7 +4255,7 @@ impl Run {
             self.args.bake_slice,
             self.args.bake_edit_ms,
             if self.args.dig_reach { "on" } else { "off" },
-            self.args.queue_order().words(),
+            self.args.queue_words(),
         )
     }
 
@@ -6144,7 +6174,7 @@ fn queue_view_line(
             .join(" | ")
     };
     format!(
-        "bake queue view: waiting (blank/coarse) shell {}/{} in view {}/{} out {}/{} (reach not ready {} of {} read, census {:.3} ms), cone only {}, in-view median {:.1}/{:.1} chunks; samples shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e} since the start, last line shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e}; in-view ages (frames) first p50 {} p95 {} of {}, full p50 {} p95 {} of {}; angle weight needed p50 {} p90 {} of {}, refine {} (3 at 5..6: 1.67..2.00); census blank [{}] coarse [{}] (distance 0-2 | 3-5 | 6-10 | >10, a 0 <0.2 0.2-0.4 >0.4)",
+        "bake queue view: waiting (blank/coarse) shell {}/{} in view {}/{} out {}/{} (reach not ready {} of {} read, census {:.3} ms), cone only {}, in-view median {:.1}/{:.1} chunks; samples shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e} since the start, last line shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e}; in-view ages (frames) first p50 {} p95 {} of {}, full p50 {} p95 {} of {}; angle weight needed p50 {} p90 {} of {}, refine {} (3 at 5..6: 1.67..2.00); census blank [{}] coarse [{}] (distance 0-2 | 3-5 | 6-10 | >10, a 0 <0.2 0.2-0.4 >0.4); withdrawn {} jobs, {:.3e} samples",
         w[0][0],
         w[0][1],
         w[1][0],
@@ -6179,6 +6209,8 @@ fn queue_view_line(
         refine,
         census(0),
         census(1),
+        st.withdrawn,
+        st.withdrawn_samples as f64,
     )
 }
 
@@ -7648,10 +7680,13 @@ mod tests {
         };
         let check = |(banner, row): (String, String), want: String| {
             assert!(
-                banner.contains(&format!("; {want} (1 order")),
+                banner.contains(&format!("; {want}; withdraw on (1 order")),
                 "{want}: {banner}"
             );
-            assert_eq!(row, format!("in view: 0 waiting (0 coarse); {want}"));
+            assert_eq!(
+                row,
+                format!("in view: 0 waiting (0 coarse), withdrawn 0; {want}; withdraw on")
+            );
         };
         check(
             shown(&mut run, None),
@@ -7705,6 +7740,44 @@ mod tests {
         ] {
             assert!(order(bad).is_err(), "{bad:?}");
         }
+    }
+
+    /// `--queue-withdraw` parses `on` and `off` and refuses the rest; `4` toggles the
+    /// withdrawal, the banner and the HUD's queue row saying so in the same frame; the row
+    /// shows the withdrawn count from the queue's counters.
+    #[test]
+    fn the_banner_names_the_withdrawal() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        for want in ["withdraw off", "withdraw on", "withdraw off"] {
+            input.end_frame();
+            input.key_up(KeyCode::Digit4);
+            input.key_down(KeyCode::Digit4);
+            run.handle_input(&input);
+            run.refresh_hud_stats();
+            let banner = run.banner().expect("the queue's row is on the banner");
+            assert!(
+                banner.contains(&format!("; {want} (1 order")),
+                "{want}: {banner}"
+            );
+            let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+            assert!(row.ends_with(&format!("; {want}")), "{want}: {row}");
+        }
+        run.queue.stats = Some(vxe_render::QueueStats {
+            withdrawn: 7,
+            ..Default::default()
+        });
+        run.refresh_hud_stats();
+        let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+        assert!(
+            row.starts_with("in view: 0 waiting (0 coarse), withdrawn 7; "),
+            "{row}"
+        );
+        let w = |v: &str| parse_args_from(argv(&["--queue-withdraw", v])).map(|a| a.queue_withdraw);
+        assert_eq!(w("on"), Ok(true));
+        assert_eq!(w("off"), Ok(false));
+        assert!(w("yes").is_err());
+        assert!(parse_args_from(argv(&[])).unwrap().queue_withdraw);
     }
 
     /// `F9` cycles the views shaded, normals, hitmask, steps, cracks, albedo, shaded; each

@@ -386,11 +386,16 @@ pub struct HudStats {
 }
 
 /// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
-/// their light, and of them those with a coarse block, then `mode` (the order in words) after a
-/// semicolon when it is not empty: `in view: 12 waiting (5 coarse); order distance`.
+/// their light, and of them those with a coarse block, the jobs withdrawn since the start, then
+/// `mode` (the order and the withdrawal in words) after a semicolon when it is not empty:
+/// `in view: 12 waiting (5 coarse), withdrawn 3; order distance; withdraw on`.
 pub fn queue_row(st: &vxe_render::QueueStats, mode: &str) -> String {
     let [blank, coarse] = st.view_waiting[vxe_render::bake::VIEW_IN];
-    let row = format!("in view: {} waiting ({coarse} coarse)", blank + coarse);
+    let row = format!(
+        "in view: {} waiting ({coarse} coarse), withdrawn {}",
+        blank + coarse,
+        st.withdrawn
+    );
     if mode.is_empty() {
         row
     } else {
@@ -1120,7 +1125,10 @@ mod tests {
         st.view_waiting[vxe_render::bake::VIEW_SHELL] = [3, 1];
         st.view_waiting[vxe_render::bake::VIEW_IN] = [7, 5];
         st.view_waiting[vxe_render::bake::VIEW_OUT] = [40, 9];
-        assert_eq!(queue_row(&st, ""), "in view: 12 waiting (5 coarse)");
+        assert_eq!(
+            queue_row(&st, ""),
+            "in view: 12 waiting (5 coarse), withdrawn 0"
+        );
         let (mut out, mut colours) = (String::new(), Vec::new());
         let mut s = HudStats::fixed();
         s.write_rows(&mut out, &mut colours);
@@ -1128,7 +1136,8 @@ mod tests {
         s.queue = Some(queue_row(&st, ""));
         s.write_rows(&mut out, &mut colours);
         assert!(
-            out.lines().any(|l| l == "in view: 12 waiting (5 coarse)"),
+            out.lines()
+                .any(|l| l == "in view: 12 waiting (5 coarse), withdrawn 0"),
             "{out}"
         );
         assert_eq!(out.lines().count(), colours.len());
