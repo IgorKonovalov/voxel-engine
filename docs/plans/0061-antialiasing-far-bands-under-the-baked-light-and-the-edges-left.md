@@ -416,7 +416,8 @@ them where there is one today, and that read is what took the temporal pass from
 1.54 ms in Plan 0059 (full tier): through an atomic binding each one re-reads the store's
 header per tap. Where the hall is mostly far band, +1 ms or more is plausible at the full
 tier. [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
-Phase 2 makes the read cheaper; Phase 2 here reads the temporal pass by itself, at the half
+Phase 2 makes the read cheaper, and **Phase 2 here starts after Plan 0065 merges** (owner,
+2026-11-10; `docs/plans/README.md`, Sequence). Phase 2 here reads the temporal pass by itself, at the half
 and the full tier, so the read's cost is not lost in the frame figure.
 
 The close measures with `flythrough --headless --frames 300`, three alternated rounds, perf lock,

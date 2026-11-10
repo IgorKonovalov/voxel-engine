@@ -23,8 +23,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | approved | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
-| [0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: what paces it, workers that leave no core, readbacks that wait | draft | Code health. Phase 1 a spike, beside 0060; the rest after it. Takes 0044's Phase 2. |
-| [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | draft | Code health. After 0060; proposed before 0061's Phase 2 and 0058. |
+| [0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: what paces it, workers that leave no core, readbacks that wait | approved | Code health. Phase 1 a spike, beside 0060; the rest after it. Takes 0044's Phase 2. |
+| [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | approved | Code health. After 0060 and 0064, before 0061's Phase 2; only if 0064's spike confirms. |
 <!-- roster:end -->
 
 ## Sequence
@@ -32,10 +32,17 @@ state from `git log`. Completed plans move to `done/`.
 The order the active plans run in (owner, 2026-11-10, set at the review of every active plan).
 Each starts on main after the one before it closes, unless its line says otherwise.
 
-1. **Plan 0060**, the live queue. Plan 0061's Phase 1 (readings only) may run beside it.
-2. **Plan 0061**, antialiasing, from its Phase 2 once 0060 has merged.
+1. **Plan 0060**, the live queue. Plan 0061's Phase 1 (readings only) and Plan 0064's Phases 1
+   and 2 (the pacing spike and the owner's pick) may run beside it.
+   - **Plan 0064**, the window's frame, from its Phase 3 once 0060 has merged (owner,
+     2026-11-10). If its Phase 1 reads free pacing no better, it stops and 0065 waits for the
+     architect.
+   - **Plan 0065**, the baked light's waste, after 0064 (owner, 2026-11-10).
+2. **Plan 0061**, antialiasing, from its Phase 2 once 0065 has merged.
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
    before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
+   **The render settings and profiles plan is drafted before this lane starts** (owner,
+   2026-11-10; a draft only, its implementation stays at step 6), so the lights' cap has a home.
 4. **Plan 0044**, the hot-path pass. Its Phases 1, 6 and 7 (audio, world, sim and net) touch no
    file of 0058, 0060 or 0061 and may run as a side lane at any point above.
 5. **Plan 0045**, the structure pass, last because it moves the files every plan above edits.
@@ -48,19 +55,9 @@ Each starts on main after the one before it closes, unless its line says otherwi
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
-**Proposed changes to this order (2026-11-10, the static performance review; drafts, each
-awaits the owner):**
-- **Plan 0064** (the window's frame): Phases 1 and 2 beside Plan 0060, the rest right after
-  its merge. It takes Plan 0044's Phase 2.
-- **Plan 0065** (the baked light's waste): after Plan 0060's merge and before Plan 0061's
-  Phase 2, so that Plans 0061 and 0058 read their per-pass bases without it.
-- **Open question:** whether Plan 0044's Phase 5 (the walk) also moves ahead of Plans 0061 and
-  0058, for the same reason. It collides with their shader files; the review note in Plan 0044
-  states the case.
-- **Open question:** drafting the render settings and profiles plan before Plan 0058's lane
-  starts instead of at step 6 (`docs/backlog.md`).
-
-Every plan in steps 1 to 8 is approved (owner, 2026-11-10); Plans 0064 and 0065 are drafts. Approval accepts the design; a plan's lane
+Every active plan is approved (owner, 2026-11-10; Plans 0064 and 0065 the same day, after the
+static performance review). Plan 0044's Phase 2 runs as Plan 0064's Phase 3, and its Phase 5
+stays after Plan 0058. Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
 plans were amended on 2026-11-10;
