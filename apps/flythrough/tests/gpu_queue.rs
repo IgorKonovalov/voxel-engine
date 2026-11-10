@@ -82,6 +82,10 @@ struct Setup {
     coarse: u32,
     near: i32,
     slice_ms: f64,
+    /// The queue's order; `None` keeps its default.
+    order: Option<bake::QueueOrder>,
+    /// The queue's counts.
+    counts: BakeSettings,
 }
 
 impl Setup {
@@ -94,6 +98,8 @@ impl Setup {
             coarse: 0,
             near: bake::DEFAULT_NEAR,
             slice_ms: 1.5,
+            order: None,
+            counts: counts(),
         }
     }
 }
@@ -139,8 +145,11 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
     gpu.sync_now(&world, &device, &queue)
         .expect("the mirror fits");
     let mut frame = new_frame(&device, setup.pool_bytes);
-    frame.start_bake_queue(&queue, &gpu, counts(), setup.slice_ms);
+    frame.start_bake_queue(&queue, &gpu, setup.counts.clone(), setup.slice_ms);
     frame.set_bake_coarse(setup.coarse, setup.near);
+    if let Some(order) = setup.order {
+        frame.bake_queue_mut().expect("the queue started").order = order;
+    }
     Some(Q {
         device,
         queue,
@@ -167,7 +176,7 @@ impl Q {
         }
         let view = QueueView {
             eye,
-            forward: [1.0, 0.0, 0.0],
+            forward: self.camera.basis().0.to_array(),
             resident: None,
             samples: None,
             hold: None,
@@ -407,22 +416,61 @@ fn the_queue_settles_to_a_direct_bake() {
     assert_eq!(frames[30], frames[31], "two frames at rest");
 }
 
+/// [`the_queue_settles_to_a_direct_bake`] with the camera turned to look -x half-way: once
+/// chunk 1's coarse block lands. Every block is still bit-identical to a one-shot bake.
+#[test]
+fn the_queue_settles_to_a_direct_bake_after_a_turn() {
+    let (world, eye) = border_box();
+    let mut q = match rig(
+        world,
+        &Setup {
+            coarse: COARSE,
+            near: 0,
+            ..Setup::at(eye)
+        },
+    ) {
+        Some(q) => q,
+        None => return,
+    };
+    let mut turned = false;
+    for n in 1..=MAX_STEPS {
+        let st = q.step();
+        if !turned && st.coarse > 0 {
+            q.camera.yaw = std::f32::consts::PI;
+            turned = true;
+            println!("turned after {n} steps");
+        }
+        if q.q().empty() {
+            println!("empty after {n} steps: {st:?}");
+            break;
+        }
+    }
+    assert!(turned, "chunk 1 was lit coarse");
+    assert!(q.q().empty(), "the queue settles");
+    let got = q.blocks();
+    assert_eq!(got.len(), 2, "both chunks hold a block");
+    let fresh = q.fresh();
+    for (c, b) in &got {
+        assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
+        assert_eq!(
+            q.target(*c).as_ref(),
+            Some(b),
+            "{c:?}: the pool shows the store's copy"
+        );
+    }
+}
+
 /// Six chunks in a row, a rock block in each and the camera in chunk 2 looking along +x, coarse
 /// off: the jobs open by squared chunk distance from the camera's chunk, ties by the view (the
 /// chunk ahead first), so 2, 3, 1, 4, 0, 5. At the smallest slice no step's submit plans more
 /// than the step's cap but for the one entry (a round, 64 samples) that crosses it.
 #[test]
 fn the_queue_runs_near_first_and_within_its_samples() {
-    let world = world_of([6, 1, 1], AIR);
-    for x in 0..6 {
-        fill(&world, [x * 64 + 16, 16, 16], [x * 64 + 48, 48, 48], ROCK);
-    }
-    fill(&world, [140, 28, 48], [150, 36, 50], ORE);
     let Some(mut q) = rig(
-        world,
+        row(&[0, 1, 2, 3, 4, 5]),
         &Setup {
             slice_ms: 1e-6,
-            ..Setup::at([150.5, 32.5, 60.5])
+            ..Setup::at(ROW_EYE)
         },
     ) else {
         return;
@@ -451,6 +499,187 @@ fn the_queue_runs_near_first_and_within_its_samples() {
     println!("{steps} steps, opened {order:?}");
     assert!(steps > 3, "the cap spreads the work over steps");
     assert_eq!(order, [2, 3, 1, 4, 0, 5]);
+}
+
+/// Six chunks in a row along x, a rock block in each chunk of `rocks` (16 voxels from its
+/// borders) and an ore plate in chunk 2.
+fn row(rocks: &[i64]) -> World {
+    let world = world_of([6, 1, 1], AIR);
+    for &x in rocks {
+        fill(&world, [x * 64 + 16, 16, 16], [x * 64 + 48, 48, 48], ROCK);
+    }
+    fill(&world, [140, 28, 48], [150, 36, 50], ORE);
+    world
+}
+
+/// The row's camera, in chunk 2.
+const ROW_EYE: [f32; 3] = [150.5, 32.5, 60.5];
+
+/// The score at angle weight `angle` and refine weight 2.
+fn score(angle: f32) -> bake::QueueOrder {
+    bake::QueueOrder::Score {
+        angle,
+        refine: bake::Refine::Weight(2.0),
+    }
+}
+
+/// Steps until the queue is empty: the chunks' x in the order they first appear in `jobs()`.
+fn open_order(q: &mut Q) -> Vec<i32> {
+    let mut order = Vec::new();
+    for _ in 0..MAX_STEPS {
+        q.step();
+        for c in q.q().jobs() {
+            if !order.contains(&c.0[0]) {
+                order.push(c.0[0]);
+            }
+        }
+        if q.q().empty() {
+            return order;
+        }
+    }
+    panic!("the queue is not empty after {MAX_STEPS} steps");
+}
+
+/// ADR-0048's score on the row, camera in chunk 2 looking +x, `near` 0, coarse pass on, refine
+/// weight 2: the chunks first open by `|o| x (1 + W x a)`, behind the camera `a` 0.632. At
+/// angle weight 4: ahead 1, 2, 3, behind 1 x 3.53 and 2 x 3.53, so 2, 3, 4, 5, 1, 0; at 1:
+/// behind 1.63 and 3.26, so 2, 3, 1, 4, 5, 0; at 0 the distance, ties ahead first, so 2, 3, 1,
+/// 4, 0, 5, as under the distance order.
+#[test]
+fn the_score_blends_distance_and_the_view() {
+    for (order, want) in [
+        (score(4.0), [2, 3, 4, 5, 1, 0]),
+        (score(1.0), [2, 3, 1, 4, 5, 0]),
+        (score(0.0), [2, 3, 1, 4, 0, 5]),
+        (bake::QueueOrder::Distance, [2, 3, 1, 4, 0, 5]),
+    ] {
+        let Some(mut q) = rig(
+            row(&[0, 1, 2, 3, 4, 5]),
+            &Setup {
+                coarse: COARSE,
+                near: 0,
+                slice_ms: 1e-6,
+                order: Some(order),
+                ..Setup::at(ROW_EYE)
+            },
+        ) else {
+            return;
+        };
+        let got = open_order(&mut q);
+        println!("{order:?}: {got:?}");
+        assert_eq!(got, want, "{order:?}");
+    }
+}
+
+/// The row with chunk 3 holding a coarse block and chunk 5 none, the rest full, camera in chunk
+/// 2 looking +x, `near` 0, refine weight 2: under the score chunk 3's refinement (1 x 2 = 2)
+/// opens before chunk 5's first pass (3); with the class as a tier, and under the distance
+/// order, chunk 5 opens first. Chunks 3 and 5 start empty and are filled by edits: 3 first,
+/// stepped until its coarse block lands, then 5.
+#[test]
+fn a_blank_chunk_waits_behind_a_nearer_refinement_only_under_the_score() {
+    for (order, first) in [
+        (score(4.0), 3),
+        (
+            bake::QueueOrder::Score {
+                angle: 4.0,
+                refine: bake::Refine::Tier,
+            },
+            5,
+        ),
+        (bake::QueueOrder::Distance, 5),
+    ] {
+        let Some(mut q) = rig(
+            row(&[0, 1, 2, 4]),
+            &Setup {
+                coarse: COARSE,
+                near: 0,
+                slice_ms: 1e-6,
+                order: Some(order),
+                ..Setup::at(ROW_EYE)
+            },
+        ) else {
+            return;
+        };
+        q.settle();
+        q.edit(&box_op([208, 16, 16], [240, 48, 48], Mode::Fill(ROCK)));
+        let three = ChunkCoord([3, 0, 0]);
+        let mut steps = 0;
+        while !(q.frame.store().is_coarse(three) && !q.q().jobs().contains(&three)) {
+            q.step();
+            steps += 1;
+            assert!(steps < MAX_STEPS, "chunk 3's coarse block lands");
+        }
+        q.edit(&box_op([336, 16, 16], [368, 48, 48], Mode::Fill(ROCK)));
+        let mut seen: Vec<i32> = Vec::new();
+        for _ in 0..MAX_STEPS {
+            q.step();
+            for c in q.q().jobs() {
+                if (c.0[0] == 3 || c.0[0] == 5) && !seen.contains(&c.0[0]) {
+                    seen.push(c.0[0]);
+                }
+            }
+            if seen.len() == 2 {
+                break;
+            }
+        }
+        println!("{order:?}: {seen:?}");
+        assert_eq!(seen.first(), Some(&first), "{order:?}: {seen:?}");
+    }
+}
+
+/// The row at `near` 0 and angle weight 4, the camera turned to look -x once its own chunk
+/// opens: of the chunks not yet opened at the turn, 1 and 0 (now ahead) open before 4 and 5.
+/// Coarse off and 4096 samples a brick direction, so a chunk's job (about 3.9 x 10^5 samples)
+/// fills the loop's two slices of 16 384 alone and the chunks open one at a time.
+#[test]
+fn a_turn_resorts_the_queue() {
+    let Some(mut q) = rig(
+        row(&[0, 1, 2, 3, 4, 5]),
+        &Setup {
+            near: 0,
+            slice_ms: 1e-6,
+            order: Some(score(4.0)),
+            counts: BakeSettings {
+                brick_samples: 4096,
+                ..counts()
+            },
+            ..Setup::at(ROW_EYE)
+        },
+    ) else {
+        return;
+    };
+    let mut before: Vec<i32> = Vec::new();
+    while !before.contains(&2) {
+        q.step();
+        before.extend(q.q().jobs().iter().map(|c| c.0[0]));
+        assert!(before.len() < 64, "chunk 2 opens");
+    }
+    q.camera.yaw = std::f32::consts::PI;
+    let mut after: Vec<i32> = Vec::new();
+    for _ in 0..MAX_STEPS {
+        q.step();
+        for c in q.q().jobs() {
+            let x = c.0[0];
+            if !before.contains(&x) && !after.contains(&x) {
+                after.push(x);
+            }
+        }
+        if q.q().empty() {
+            break;
+        }
+    }
+    println!("opened before the turn {before:?}, after {after:?}");
+    let at = |x: i32| after.iter().position(|&v| v == x);
+    for behind in [4, 5] {
+        for ahead in [1, 0] {
+            if let Some(b) = at(behind) {
+                let a = at(ahead).expect("a chunk ahead opens");
+                assert!(a < b, "{ahead} before {behind}: {after:?}");
+            }
+        }
+    }
+    assert!(at(1).is_some() && at(0).is_some(), "{before:?} {after:?}");
 }
 
 /// A record fading from `from` to `to` over `frames` steps, shown each step: every value word

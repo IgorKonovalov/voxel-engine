@@ -497,6 +497,16 @@ struct Args {
     /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
     /// before the first frame (default `vxe_render::bake::DEFAULT_NEAR`).
     bake_near: i32,
+    /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
+    /// the class and the distance first); `1` cycles score, score with the class as a tier,
+    /// distance.
+    queue_distance: bool,
+    /// `--queue-weights A,R` or `A,tier`: the score's angle weight (`2` halves it, `3` doubles
+    /// it) and its refine weight, or the class as the leading key (defaults
+    /// `vxe_render::bake::QUEUE_ANGLE_WEIGHT` and `QUEUE_REFINE_WEIGHT`).
+    queue_angle: f32,
+    queue_refine: f32,
+    queue_tier: bool,
     /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
     /// of these frames, for a headless reading.
     dig_at: Vec<u32>,
@@ -644,6 +654,23 @@ impl Args {
         }
         a.metering = self.metering;
         a
+    }
+
+    /// The live queue's order from `--queue-order` and `--queue-weights` (and their keys).
+    fn queue_order(&self) -> vxe_render::bake::QueueOrder {
+        use vxe_render::bake::{QueueOrder, Refine};
+        if self.queue_distance {
+            QueueOrder::Distance
+        } else {
+            QueueOrder::Score {
+                angle: self.queue_angle,
+                refine: if self.queue_tier {
+                    Refine::Tier
+                } else {
+                    Refine::Weight(self.queue_refine)
+                },
+            }
+        }
     }
 
     /// The lighting modes at the start, the banner shown from `now_ms`, the auto exposure's
@@ -804,6 +831,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
         bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
         bake_near: vxe_render::bake::DEFAULT_NEAR,
+        queue_distance: false,
+        queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
+        queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
+        queue_tier: false,
         bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
         dig_reach: true,
         dig_at: Vec::new(),
@@ -1095,6 +1126,34 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok()
                     .filter(|r: &i32| (0..=8).contains(r))
                     .ok_or(format!("--near takes 0 to 8 chunks, not {v}"))?;
+            }
+            "--queue-order" => {
+                let v = value()?;
+                args.queue_distance = match v.as_str() {
+                    "score" => false,
+                    "distance" => true,
+                    _ => return Err(format!("--queue-order takes score or distance, not {v}")),
+                };
+            }
+            "--queue-weights" => {
+                let v = value()?;
+                let bad = || format!("--queue-weights takes A,R or A,tier, not {v}");
+                let (a, r) = v.split_once(',').ok_or_else(bad)?;
+                args.queue_angle = a
+                    .parse()
+                    .ok()
+                    .filter(|x: &f32| x.is_finite() && *x >= 0.0)
+                    .ok_or_else(bad)?;
+                if r == "tier" {
+                    args.queue_tier = true;
+                } else {
+                    args.queue_refine = r
+                        .parse()
+                        .ok()
+                        .filter(|x: &f32| x.is_finite() && *x > 0.0)
+                        .ok_or_else(bad)?;
+                    args.queue_tier = false;
+                }
             }
             "--edit-ms" => {
                 let v = value()?;
@@ -3181,7 +3240,10 @@ impl Run {
         s.format_us = h.format_us;
         s.lighting = lighting;
         s.exposure = Some(self.modes.exposure_row());
-        s.queue = self.queue.stats.map(|st| hud::queue_row(&st));
+        s.queue = Some(hud::queue_row(
+            &self.queue.stats.unwrap_or_default(),
+            &self.args.queue_order().words(),
+        ));
         s.aliasing = Some(hud::aliasing_row(
             &self.upscaler,
             &LookPreset::far_normal_words(self.look.normal_mode, self.look.far_normal),
@@ -3754,6 +3816,9 @@ impl Run {
         frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice);
         frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
         frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
+        if let Some(q) = frame.bake_queue_mut() {
+            q.order = self.args.queue_order();
+        }
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
         let camera = start_camera(&self.args, self.spawn);
@@ -4105,10 +4170,45 @@ impl Run {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
     }
 
-    /// The live queue's banner row: the mode, its settings and slice, and the read.
+    /// The live queue's keys: `1` cycles the order (score, score with the class as a tier,
+    /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25). A
+    /// change goes to the queue at once and prints the order.
+    fn queue_keys(&mut self, input: &Input) {
+        let a = &mut self.args;
+        let mut changed = false;
+        if input.pressed(KeyCode::Digit1) {
+            (a.queue_distance, a.queue_tier) = match (a.queue_distance, a.queue_tier) {
+                (false, false) => (false, true),
+                (false, true) => (true, false),
+                (true, _) => (false, false),
+            };
+            changed = true;
+        }
+        if input.pressed(KeyCode::Digit2) {
+            a.queue_angle *= 0.5;
+            changed = true;
+        }
+        if input.pressed(KeyCode::Digit3) {
+            a.queue_angle = if a.queue_angle > 0.0 {
+                a.queue_angle * 2.0
+            } else {
+                0.25
+            };
+            changed = true;
+        }
+        if changed {
+            let order = self.args.queue_order();
+            println!("bake queue: {}", order.words());
+            if let Some(q) = self.gfx.as_mut().and_then(|g| g.frame.bake_queue_mut()) {
+                q.order = order;
+            }
+        }
+    }
+
+    /// The live queue's banner row: the mode, its settings and slice, its order and keys.
     fn queue_row(&self) -> String {
         format!(
-            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}",
+            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}; {} (1 order, 2/3 angle)",
             vxe_render::bake::BRICK_CELL,
             vxe_render::bake::QUEUE_BRICK_SAMPLES,
             if self.args.bake_coarse > 0 {
@@ -4125,6 +4225,7 @@ impl Run {
             self.args.bake_slice,
             self.args.bake_edit_ms,
             if self.args.dig_reach { "on" } else { "off" },
+            self.args.queue_order().words(),
         )
     }
 
@@ -4793,6 +4894,7 @@ impl Run {
     /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
     /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
+        self.queue_keys(input);
         for (key, mode) in [
             (KeyCode::F3, hud::ModeKey::ShadowWalk),
             (KeyCode::F5, hud::ModeKey::History),
@@ -6042,13 +6144,16 @@ fn queue_view_line(
             .join(" | ")
     };
     format!(
-        "bake queue view: waiting (blank/coarse) shell {}/{} in view {}/{} out {}/{}, cone only {}, in-view median {:.1}/{:.1} chunks; samples shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e} since the start, last line shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e}; in-view ages (frames) first p50 {} p95 {} of {}, full p50 {} p95 {} of {}; angle weight needed p50 {} p90 {} of {}, refine {} (3 at 5..6: 1.67..2.00); census blank [{}] coarse [{}] (distance 0-2 | 3-5 | 6-10 | >10, a 0 <0.2 0.2-0.4 >0.4)",
+        "bake queue view: waiting (blank/coarse) shell {}/{} in view {}/{} out {}/{} (reach not ready {} of {} read, census {:.3} ms), cone only {}, in-view median {:.1}/{:.1} chunks; samples shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e} since the start, last line shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e}; in-view ages (frames) first p50 {} p95 {} of {}, full p50 {} p95 {} of {}; angle weight needed p50 {} p90 {} of {}, refine {} (3 at 5..6: 1.67..2.00); census blank [{}] coarse [{}] (distance 0-2 | 3-5 | 6-10 | >10, a 0 <0.2 0.2-0.4 >0.4)",
         w[0][0],
         w[0][1],
         w[1][0],
         w[1][1],
         w[2][0],
         w[2][1],
+        st.view_reach[1],
+        st.view_reach[0],
+        st.census_ms,
         st.cone_only,
         st.view_median[0],
         st.view_median[1],
@@ -7518,6 +7623,87 @@ mod tests {
                 Some(format!("--pan takes degrees a second other than 0, not {bad}").as_str()),
                 "{bad}"
             );
+        }
+    }
+
+    /// `--queue-order` parses `score` and `distance` and refuses the rest, `--queue-weights` `A,R`
+    /// and `A,tier`; `1` cycles the order, `2` halves the angle weight and `3` doubles it, each
+    /// press changing the banner and the HUD's queue row in the same frame.
+    #[test]
+    fn the_banner_names_the_queue_order_and_its_weights() {
+        use vxe_render::bake::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        let mut shown = |run: &mut Run, key: Option<KeyCode>| {
+            input.end_frame();
+            if let Some(key) = key {
+                input.key_up(key);
+                input.key_down(key);
+            }
+            run.handle_input(&input);
+            run.refresh_hud_stats();
+            let banner = run.banner().expect("the queue's row is on the banner");
+            let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+            (banner, row)
+        };
+        let check = |(banner, row): (String, String), want: String| {
+            assert!(
+                banner.contains(&format!("; {want} (1 order")),
+                "{want}: {banner}"
+            );
+            assert_eq!(row, format!("in view: 0 waiting (0 coarse); {want}"));
+        };
+        check(
+            shown(&mut run, None),
+            format!("order score, angle {A}, refine {R}"),
+        );
+        for want in [
+            format!("order score, angle {A}, refine tier"),
+            "order distance".to_owned(),
+            format!("order score, angle {A}, refine {R}"),
+        ] {
+            check(shown(&mut run, Some(KeyCode::Digit1)), want);
+        }
+        for (key, angle) in [
+            (KeyCode::Digit2, A / 2.0),
+            (KeyCode::Digit3, A),
+            (KeyCode::Digit3, A * 2.0),
+        ] {
+            check(
+                shown(&mut run, Some(key)),
+                format!("order score, angle {angle}, refine {R}"),
+            );
+        }
+        use vxe_render::bake::{QueueOrder, Refine};
+        let order = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.queue_order());
+        assert_eq!(
+            order(&["--queue-order", "distance"]),
+            Ok(QueueOrder::Distance)
+        );
+        assert_eq!(
+            order(&["--queue-order", "score", "--queue-weights", "1.5,3"]),
+            Ok(QueueOrder::Score {
+                angle: 1.5,
+                refine: Refine::Weight(3.0)
+            })
+        );
+        assert_eq!(
+            order(&["--queue-weights", "4,tier"]),
+            Ok(QueueOrder::Score {
+                angle: 4.0,
+                refine: Refine::Tier
+            })
+        );
+        assert_eq!(order(&[]), Ok(QueueOrder::default()));
+        for bad in [
+            &["--queue-order", "near"][..],
+            &["--queue-weights", "4"],
+            &["--queue-weights", "x,2"],
+            &["--queue-weights", "-1,2"],
+            &["--queue-weights", "4,0"],
+            &["--queue-weights", "4,flat"],
+        ] {
+            assert!(order(bad).is_err(), "{bad:?}");
         }
     }
 

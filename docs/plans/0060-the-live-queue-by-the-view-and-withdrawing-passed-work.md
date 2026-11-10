@@ -368,8 +368,8 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The view cone as a reading | dev | done; both stop rules read as firing (readings log, Phase 1); the census and the in-view reach count are Phase 2 tree code | committed with this row |
-| 2: The blended score | dev | not started | |
+| 1: The view cone as a reading | dev | done; both stop rules read as firing (readings log, Phase 1); the census and the in-view reach count are Phase 2 tree code | f371e66 |
+| 2: The blended score | dev | stopped before its commit by Phase 1's stop rule (owner question); code and tests as `wip(render)` | committed with this row |
 | 3: Withdrawing passed work | dev | not started | |
 | 4: The owner's window | human | not started | |
 | 5: The defaults and the close's readings | dev | not started | |

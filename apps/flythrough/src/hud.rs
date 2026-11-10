@@ -386,10 +386,16 @@ pub struct HudStats {
 }
 
 /// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
-/// their light, and of them those with a coarse block: `in view: 12 waiting (5 coarse)`.
-pub fn queue_row(st: &vxe_render::QueueStats) -> String {
+/// their light, and of them those with a coarse block, then `mode` (the order in words) after a
+/// semicolon when it is not empty: `in view: 12 waiting (5 coarse); order distance`.
+pub fn queue_row(st: &vxe_render::QueueStats, mode: &str) -> String {
     let [blank, coarse] = st.view_waiting[vxe_render::bake::VIEW_IN];
-    format!("in view: {} waiting ({coarse} coarse)", blank + coarse)
+    let row = format!("in view: {} waiting ({coarse} coarse)", blank + coarse);
+    if mode.is_empty() {
+        row
+    } else {
+        format!("{row}; {mode}")
+    }
 }
 
 /// The exposure row: the mode in words, the exposure the next frame uses in EV (`log2 e`), the
@@ -1114,12 +1120,12 @@ mod tests {
         st.view_waiting[vxe_render::bake::VIEW_SHELL] = [3, 1];
         st.view_waiting[vxe_render::bake::VIEW_IN] = [7, 5];
         st.view_waiting[vxe_render::bake::VIEW_OUT] = [40, 9];
-        assert_eq!(queue_row(&st), "in view: 12 waiting (5 coarse)");
+        assert_eq!(queue_row(&st, ""), "in view: 12 waiting (5 coarse)");
         let (mut out, mut colours) = (String::new(), Vec::new());
         let mut s = HudStats::fixed();
         s.write_rows(&mut out, &mut colours);
         assert!(!out.contains("in view:"), "{out}");
-        s.queue = Some(queue_row(&st));
+        s.queue = Some(queue_row(&st, ""));
         s.write_rows(&mut out, &mut colours);
         assert!(
             out.lines().any(|l| l == "in view: 12 waiting (5 coarse)"),
