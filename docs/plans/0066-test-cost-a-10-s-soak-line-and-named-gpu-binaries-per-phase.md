@@ -119,8 +119,8 @@ Readings log: [logs/0066.md](logs/0066.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `--binaries`, the 10 s line in the scripts | dev | done; `CLAUDE.md` canonical-commands line names `--binaries`; fixture `scripts/fixtures/test-times/` | committed with this row |
-| 2: Mark the tests over the line, and read the gate | dev | not started | |
+| 1: `--binaries`, the 10 s line in the scripts | dev | done; `CLAUDE.md` canonical-commands line names `--binaries`; fixture `scripts/fixtures/test-times/` | 9359b82 |
+| 2: Mark the tests over the line, and read the gate | dev | 28 tests marked; gate 505 s; done-when 2 not met as stated: 4 tests read over 10 s in gate 2, under it in gate 1, unmarked (question open); soak run narrowed to the 28 | committed with this row |
 
 ### Notes
 

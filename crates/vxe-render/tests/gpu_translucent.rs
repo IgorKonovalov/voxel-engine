@@ -152,6 +152,7 @@ fn filtered(len: i32) -> [f32; 3] {
 /// reads the one-wall value, two read `0.04 + 0.64 * 0.5 = 0.36` and `0.04 + 0.16 * 0.5 =
 /// 0.12`. The reflected share is the first entry face's alone.
 #[test]
+#[ignore = "soak"]
 fn translucent_layers_composite_front_to_back_up_to_the_bound() {
     let Some((device, queue)) = device() else {
         return;

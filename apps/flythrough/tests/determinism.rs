@@ -335,6 +335,7 @@ fn the_unbounded_cave_matches_the_bounded_one_in_the_interior() {
 /// 990 chunks its box meets (x 2..=11, y -5..=5, z -2..=6) generated from the hall of seed 1
 /// with the castle stamped over it, under the castle's table. Blessed on Linux.
 #[test]
+#[ignore = "soak"]
 fn castle_vector() {
     use flythrough::castle;
     let file = castle::castle_vox();
@@ -361,6 +362,7 @@ fn castle_vector() {
 /// arm. Seed 2 gives another hash, and generating the chunks one by one through
 /// `WorldSource::chunk` in reverse order (in runs over the threads) gives the same voxels.
 #[test]
+#[ignore = "soak"]
 fn showcase_vector() {
     use flythrough::showcase::ShowcaseSource;
     let source = ShowcaseSource::new(1);
