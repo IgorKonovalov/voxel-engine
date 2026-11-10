@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0060** (ADRs are a separate sequence; next free there is **0048**).
+**Next free number: 0062** (ADRs are a separate sequence; next free there is **0050**).
 
 ## Active roster
 
@@ -20,6 +20,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before M10. |
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: a list of eight analytic lights, exact, dropped and carried; scaled emission over the table; a bounce flag | draft | M2, ADR-0044 and ADR-0045 (proposed). Next; its scale phase needs a refresh. |
 | [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: one score of distance and angle to the view, tuned by eye; jobs a flight has passed withdrawn | draft | M2, ADR-0048 (proposed). Owner answers 2026-11-10. Before Plan 0061 past its Phase 1. |
+| [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands back under the baked light; a split by measurement, the store read by the far normal, picks by eye | draft | M2, ADR-0049 (proposed). Phase 1 beside Plan 0060; the rest after it merges. |
 <!-- roster:end -->
 
 ## Recently closed

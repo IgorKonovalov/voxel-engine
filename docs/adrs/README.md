@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0048.**
+**Next free number: 0050.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -63,6 +63,7 @@ the status.
 | [0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md) | Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values | accepted (Plan 0059), Outcome: brick level only, live queue; supersedes ADR-0043's table |
 | [0047](0047-translucent-solids-filter-by-path-length-with-a-baked-reflected-share.md) | Translucent solids filter what is behind by path length, and reflect a small share of their baked face light | accepted (Plan 0059), Outcome: the face light is the brick's record |
 | [0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md) | The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed | proposed (Plan 0060); amends ADR-0046's queue clause |
+| [0049](0049-the-baked-light-is-read-by-the-far-shading-normal.md) | Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values | proposed (Plan 0061) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
