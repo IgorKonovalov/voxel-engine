@@ -32,6 +32,57 @@
 > a per-adapter default (answer 4); Phase 5 names every site of the emitter cap and gives its
 > re-bless a floor.
 
+**Amendment drafted 2026-11-11 (architect), awaiting the owner's pick.** Phase 1 stopped at
+done-when 3. The phases below are unchanged until the owner picks; the readings are in
+[the readings log](logs/0061.md), Phase 1 (RTX, loaded, indicative).
+
+*The finding.* Under `baked`, `[2, 6]` moves the far crops' energy just over 10 % against far
+normal off (native far wall −10.6 %, FSR 2 dome −10.0 %); `[1, 2]` stays under. With the light
+passes at full resolution the three far-normal arms read the same to the printed digit, so the
+far normal changes no light value: ADR-0049's Context (the store is read by face) holds, and the
+10 % comes from the half-resolution grid. `lit_at` upsamples with `max(n.n', 0)^32` on `rec.n` and
+the a-trous `edge_weight` uses `^128`; with the far normal on, a riser's and a tread's taps stop
+being orthogonal and mix, which blurs the far crops and doubles FSR 2's still jumps (20 739 to
+43 605). Full-resolution light alone cut them to 1 309 and brought the far crops nearer `R` (dome
+2.74 to 1.71 levels). The direction bands remain at full resolution (far-crop edge ratio 2.52).
+Stop rule 5 holds in substance: no far-crop pixel is `interior` (sub-pixel terraces class as
+silhouette), but across every class the pixels at a direction change carry 97.4 % of the distance
+from `R`, and the edge ratio is 2.09 to 2.92 in every bin. Two caveats: `R` reads the store by face
+too, so it carries the same bands and penalises ADR-0049's read by construction; and lavapipe at
+384 x 216 does not reproduce the energy move (it does reproduce `T`'s rise).
+
+*Frame-cost risk of full-resolution light (a guess, no reading under the baked defaults).* The
+fly-through already has it (`--lighting full`, `F6`; ADR-0018's Outcome picked half as "the only
+tier under the lines"). Plan 0024's 1080p readings (lamp on, path-traced) put full at about 4x the
+light, temporal and a-trous passes: +9 to +12.5 ms a frame on the RTX, over `docs/nfr.md` section 2's 6.0 ms
+lighting and 3.0 ms denoise lines. Scaled by pixels to the window's internal 1687 x 919, a guess of
++6 to +10 ms RTX, which takes the defaults' 12 to 13.5 ms frame past 16.6 ms; the RADV, already at
+55 ms, several times that. The baked lamp-off light may be cheaper; Phase 2 would read it.
+
+*Options (recommended first).*
+
+1. **Read, face-normal weights, full as an arm.** Phase 2 builds ADR-0049's read as planned plus a
+   second `Lighting` bit: `lit_at` and `edge_weight` weigh by the face normal (from `rec.axis`)
+   instead of `rec.n`, so a riser's and tread's taps stay apart while their values are smooth. Cost
+   about 0 ms (a guess); whether it recovers far-normal-off's 20 739 jumps is unread. `--lighting
+   full` joins Phase 3's matrix and Phase 4's window as an existing arm, its cost read at both
+   adapters. Phase 2 text: the second bit, its done-when (near faces bit-identical; far crops'
+   energy within 10 % of far normal off under the knob), its key. Stop rules: 3 marked answered by
+   this reading; 5(i) restated as "at a direction change, across every class" (met, 97.4 %); Phase
+   3 adds `R` with the read on (`R` normal) beside `R` face, and judges the read by edge ratio, `T`
+   and the eye, not by distance from `R` face alone. ADR-0049 (proposed) is edited in place to add
+   the weight rule; a default flip to full, if the window picks it, owes a new ADR on ADR-0018's pick.
+2. **Full resolution as the fix.** Phase 2 becomes the cost reading of `--lighting full` at the
+   defaults and Phase 5 flips the fly-through's default if the window keeps it; ADR-0049 is
+   withdrawn. The best figures read so far, at the largest cost (above, a guess), and the direction
+   bands stay (edge ratio 2.52). A new ADR supersedes ADR-0018's resolution pick; stop rule 5 drops.
+3. **ADR-0049's read as planned.** Phase 2 unchanged; only 5(i) is restated and stop rule 3 marked
+   answered. Least work; the half-resolution weights keep doubling the still jumps under the far
+   normal, and the window may still cycle `F6`. No ADR change.
+4. **Full resolution in the far band only.** A new mechanism (the light grid's resolution by the
+   voxel's size on screen), a new ADR and a later plan; Plan 0061 waits on it. Cost between half and
+   full, unread; the most design work.
+
 ## TL;DR
 
 The aliasing in the owner's still (`session13-hall-aliasing.png`) is mostly **ADR-0042's far bands,
