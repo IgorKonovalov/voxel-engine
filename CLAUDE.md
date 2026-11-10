@@ -84,7 +84,7 @@ scripts/
 ├── check-doc-links.mjs        # every relative markdown link resolves (run at every plan close)
 ├── check-comment-hygiene.mjs  # no relative link or plan-relative narration in .rs/.wgsl comments
 ├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
-├── check-test-tiers.mjs       # every test file that opens a GPU device is in .config/nextest.toml's gpu filter
+├── check-test-tiers.mjs       # every test file that opens a GPU device is named tests/gpu_*.rs
 ├── check-plan-size.mjs        # a plan's Implementation log (0055 on) stays under 150 lines, no resume notes in it
 ├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line

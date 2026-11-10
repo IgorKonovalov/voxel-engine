@@ -3,7 +3,7 @@
 lavapipe = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = '(package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)'
+filter = 'binary(/^gpu_/)'
 test-group = 'lavapipe'
 
 [[profile.default.overrides]]
@@ -11,13 +11,17 @@ filter = 'test(=slow_one)'
 slow-timeout = { period = "600s" }
 
 [profile.quick]
-default-filter = 'not ((package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)) and not (test(=slow_one))'
+default-filter = 'not binary(/^gpu_/) and not (test(=slow_one))'
 
 [profile.gpu]
-default-filter = '((package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)) and not (test(=slow_one))'
+default-filter = 'binary(/^gpu_/) and not (test(=slow_one))'
 
 [profile.gate]
 default-filter = 'not (test(=slow_one))'
 
 [profile.soak]
 default-filter = '(test(=slow_one))'
+
+# SEEDED: CI's Windows arm drifted from the quick tier's filter.
+[profile.ci-windows]
+default-filter = 'not (test(=slow_one))'

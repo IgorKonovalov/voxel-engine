@@ -106,24 +106,24 @@ node scripts/check-test-tiers.mjs scripts/fixtures/test-tiers
 ```
 
 Expect **exit 1 and exactly five findings**, then the count line `5 finding(s) across 7 test
-binaries` (five test files, the `still` example and the `app` binary). The tree is two packages (`gfx`, `app`) and a `.config/nextest.toml` whose gpu filter is
-`(package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)`:
+binaries` (five test files, the `still` example and the `app` binary). The tree is two packages (`gfx`, `app`) and a `.config/nextest.toml` whose tiers select GPU binaries by
+`binary(/^gpu_/)`:
 
 | Case | Seeded as | Expected |
 |------|-----------|----------|
-| a GPU test file missing from the filter | `apps/app/tests/missing.rs` opens `wgpu::Instance` and calls `request_adapter` | `apps/app/tests/missing.rs -> not in the gpu filter: add \`binary_id(app::missing)\` ...` |
-| a filter entry with no file | `binary_id(app::gone)` in the filter, no `tests/gone.rs` | `binary_id(app::gone) -> matches no test file: ...` |
-| a file that reaches a device only through `support` | `apps/app/tests/via_support.rs` declares `mod support;`, whose `mod.rs` names `software_device` | `apps/app/tests/via_support.rs -> not in the gpu filter: ...` |
-| an example marked `test = true` whose test module opens a device | `apps/app/examples/still.rs` | `apps/app/examples/still.rs -> not in the gpu filter: add \`binary_id(app::example/still)\` ...` |
-| a binary's module whose test module opens a device | `apps/app/src/draw.rs`, declared by `src/main.rs` | `apps/app/src/draw.rs -> not in the gpu filter: add \`binary_id(app::bin/app)\` ...` |
+| a GPU test file without the prefix | `apps/app/tests/missing.rs` opens `wgpu::Instance` and calls `request_adapter` | `apps/app/tests/missing.rs -> opens a GPU device but its test binary \`app::missing\` lacks the gpu_ prefix: ...` |
+| a file that reaches a device only through `support` | `apps/app/tests/via_support.rs` declares `mod support;`, whose `mod.rs` names `software_device` | `apps/app/tests/via_support.rs -> opens a GPU device but ...` |
+| an example marked `test = true` whose test module opens a device | `apps/app/examples/still.rs` | `apps/app/examples/still.rs -> its tests open a GPU device but the example \`app::example/still\` lacks the gpu_ prefix: ...` |
+| a binary's module whose test module opens a device | `apps/app/src/draw.rs`, declared by `src/main.rs` | `apps/app/src/draw.rs -> its tests open a GPU device inside the binary \`app::bin/app\`, which cannot carry the gpu_ prefix: ...` |
+| a profile copy that drifted | `[profile.ci-windows]`'s default-filter is not the `quick` profile's | `.config/nextest.toml -> [profile.ci-windows] default-filter is not the quick profile's: copy it verbatim` |
 | a binary or example that opens a device outside its tests | `src/main.rs`'s and `still.rs`'s `main`, `examples/plain.rs` (no `test = true`) | not reported; only `#[cfg(test)]` items are read there |
 | `--headless` in a binary's own test module, nothing spawned | `src/main.rs`'s `parses` | not reported; there it counts only beside `Command::new` |
-| a covered GPU file | `apps/app/tests/golden.rs` (by `binary_id`), `crates/gfx/tests/draw.rs` (by `package`) | not reported |
+| a GPU file with the prefix | `apps/app/tests/gpu_golden.rs`, `crates/gfx/tests/gpu_draw.rs` | not reported |
 | a CPU-only file | `apps/app/tests/cpu.rs` names every entry point in comments only, and a local `device` | not reported; comments are stripped before matching |
 
-The profile copies are green here (`quick` and `gpu` each repeat the gpu filter and the soak
-override `test(=slow_one)` verbatim, `gate` is `not (<soak>)` and `soak` is `(<soak>)`), so the
-five lines above are the whole output.
+The other profiles are green here (`quick` and `gpu` are the prefix filter and its negation, each
+with `and not (test(=slow_one))`, the soak override verbatim; `gate` is `not (<soak>)` and `soak`
+is `(<soak>)`), so the five lines above are the whole output.
 
 ## `plan-size/`: for `check-plan-size.mjs`
 

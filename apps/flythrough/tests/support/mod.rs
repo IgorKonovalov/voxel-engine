@@ -250,7 +250,7 @@ pub fn assert_golden(name: &str, rgba: &[u8]) {
     assert!(f <= 0.001, "{name}: {:.4} % of pixels differ", f * 100.0);
 }
 
-// ---- The surface-look harness (tests/look.rs) ----
+// ---- The surface-look harness (tests/gpu_look.rs) ----
 
 use flythrough::cave::ROCK;
 use vxe_render::glam::Vec3;
@@ -595,7 +595,7 @@ pub fn centre_pixel(rgba: &[u8]) -> [u8; 3] {
     [rgba[i], rgba[i + 1], rgba[i + 2]]
 }
 
-// ---- The field surface and the sharpness scenes (tests/look.rs, tests/sharpness.rs) ----
+// ---- The field surface and the sharpness scenes (tests/gpu_look.rs, tests/sharpness.rs) ----
 
 use vxe_render::LightingResolution;
 use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};

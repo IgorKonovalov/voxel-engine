@@ -1,18 +1,19 @@
 #!/usr/bin/env node
-// Assert that the gpu filter in .config/nextest.toml covers every test file that reaches a
-// GPU device, and names nothing else.
+// Assert that every test binary that reaches a GPU device carries the `gpu_` prefix, which the
+// tiers in .config/nextest.toml select it by.
 //
-// The test tiers (Plan 0043) split the suite into `quick` (CPU only, no perf lock), `gpu` and
-// a soak list of long series. `quick` is `not (GPU) and not (SOAK)`, so a GPU test file the gpu
-// filter does not match lands in the quick tier: it runs on lavapipe without the perf lock, on
-// every dev phase of every lane. Nothing in nextest notices. This gate does.
+// The test tiers split the suite into `quick` (CPU only, no perf lock) and `gpu` by one mark,
+// the binary's name: `binary(/^gpu_/)` is the gpu tier, `not binary(/^gpu_/)` the quick tier.
+// A test file that opens a device without the prefix lands in the quick tier: it runs on
+// lavapipe without the perf lock, on every dev phase of every lane. Nothing in nextest notices.
+// This gate does.
 //
 // A test file is GPU when it, or a `support` module it declares (`mod support;`), names a
 // device entry point. Two more kinds of test binary are scanned, by their `#[cfg(test)]` items
 // alone (their other code runs as the program, not under the test harness): an example a
-// manifest marks `test = true` (`binary_id(<package>::example/<name>)`), and a binary crate's
-// `src/main.rs` with the modules it declares (`binary_id(<package>::bin/<package>)`). The
-// entry points:
+// manifest marks `test = true`, whose name must carry the prefix too, and a binary crate's
+// `src/main.rs` with the modules it declares, whose binary is named after its package and so
+// cannot carry it: a device there is always a finding. The entry points:
 //
 //   software_device    the tests' shared helper that opens the software adapter
 //   wgpu::Instance     opening an instance directly
@@ -21,22 +22,18 @@
 //   --headless         spawning a headless render of an app binary (it opens a device); in a
 //                      binary's or an example's own test items, only beside `Command::new`
 //
-// The gpu filter is read from its one canonical copy, the filter of the
-// `[[profile.default.overrides]]` entry whose `test-group` is `lavapipe`. Its entries are
-// `binary_id(<package>::<test>)` for one integration-test binary and
-// `(package(<package>) - kind(lib))` for every integration-test binary of a package. The
-// `quick` profile's default-filter must start with `not (<gpu>)` and the `gpu` profile's with
-// `(<gpu>)`, verbatim, and both must end with `and not (<soak>)`, where <soak> is another
-// default-profile override's filter, the same in both; the `gate` profile's default-filter must
-// be `not (<soak>)` and the `soak` profile's `(<soak>)`; a `ci-windows` profile, when there is
-// one, must be the `quick` profile's filter. A list edited in one place and not the others is a
-// finding too.
+// A file may carry the prefix without opening a device (a test the gpu tier keeps for another
+// reason, such as a shader compile check); only the converse is a finding.
+//
+// The profiles are read too: the `lavapipe` override's filter must be `binary(/^gpu_/)`, the
+// `quick` profile's default-filter `not binary(/^gpu_/) and not (<soak>)` and the `gpu`
+// profile's `binary(/^gpu_/) and not (<soak>)`, where <soak> is another default-profile
+// override's filter, the same in both; `gate` must be `not (<soak>)` and `soak` `(<soak>)`; a
+// `ci-windows` profile, when there is one, must be the `quick` profile's filter.
 //
 // Usage:  node scripts/check-test-tiers.mjs [root]
-// Exit 0 = the filter and the GPU files agree. Exit 1 = one line per finding:
-//   <file> -> not in the gpu filter: add `binary_id(<id>)` to the lavapipe override's filter
-//             and to the quick and gpu default-filters in .config/nextest.toml
-//   <entry> -> matches no test file: ...
+// Exit 0 = every device-opening test binary carries the prefix. Exit 1 = one line per finding:
+//   <file> -> opens a GPU device but its test binary `<id>` lacks the gpu_ prefix: rename it ...
 // The optional `root` scans another tree; scripts/fixtures/test-tiers is the seeded one, and
 // scripts/fixtures/README.md names its expected findings. Fixture trees are skipped by path
 // on an ordinary run.
@@ -50,6 +47,8 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = resolve(process.argv[2] ?? REPO_ROOT);
 const SEEDED = resolve(REPO_ROOT, "scripts", "fixtures");
 const CONFIG = ".config/nextest.toml";
+const PREFIX = "gpu_";
+const GPU = "binary(/^gpu_/)";
 
 const ENTRY_POINTS = [
   /\bsoftware_device\b/,
@@ -130,73 +129,46 @@ function manifest(dir) {
   return { name, tests, examples };
 }
 
-/** The gpu filter (the `lavapipe` override's), every default-profile override filter, and each profile's default-filter. */
+/** The `lavapipe` override's filter, every default-profile override filter, and each profile's default-filter. */
 function configFilters(text) {
-  const blocks = text.split(/^(?=\[)/m);
-  let gpu;
+  let lavapipe;
   const overrides = [];
   const defaults = new Map();
-  let profile;
-  for (const block of blocks) {
+  for (const block of text.split(/^(?=\[)/m)) {
     const header = /^\[\[?([^\]]+)\]\]?/.exec(block)?.[1];
-    if (header === "profile.default.overrides" && /test-group\s*=\s*'lavapipe'|test-group\s*=\s*"lavapipe"/.test(block)) {
-      gpu = /^filter\s*=\s*'([^']*)'/m.exec(block)?.[1];
-    }
     if (header === "profile.default.overrides") {
       const f = /^filter\s*=\s*'([^']*)'/m.exec(block)?.[1];
       if (f !== undefined) overrides.push(f);
+      if (/test-group\s*=\s*['"]lavapipe['"]/.test(block)) lavapipe = f;
     }
     const prof = /^profile\.([^.]+)$/.exec(header ?? "")?.[1];
-    if (prof) profile = prof;
     const df = /^default-filter\s*=\s*'([^']*)'/m.exec(block)?.[1];
-    if (prof && df) defaults.set(profile, df);
+    if (prof && df) defaults.set(prof, df);
   }
-  return { gpu, defaults, overrides };
+  return { lavapipe, defaults, overrides };
 }
 
 if (!existsSync(join(ROOT, CONFIG))) {
   console.error(`${CONFIG} -> missing under ${ROOT}`);
   process.exit(1);
 }
-const { gpu, defaults, overrides: overrideFilters } = configFilters(readFileSync(join(ROOT, CONFIG), "utf8"));
-if (!gpu) {
-  console.error(`${CONFIG} -> no [[profile.default.overrides]] with test-group = 'lavapipe'`);
-  process.exit(1);
+const { lavapipe, defaults, overrides } = configFilters(readFileSync(join(ROOT, CONFIG), "utf8"));
+if (lavapipe !== GPU) {
+  findings.push(`${CONFIG} -> the lavapipe override's filter is not '${GPU}'`);
 }
 
-// The filter's entries: one binary, or a package's integration tests.
-const binaries = new Set([...gpu.matchAll(/binary_id\(([^)]+)\)/g)].map((m) => m[1]));
-const packages = new Set(
-  [...gpu.matchAll(/\(package\(([^)]+)\)\s*-\s*kind\(lib\)\)/g)].map((m) => m[1]),
-);
-const leftover = gpu
-  .replace(/binary_id\([^)]+\)/g, "")
-  .replace(/\(package\([^)]+\)\s*-\s*kind\(lib\)\)/g, "")
-  .replace(/[\s|]/g, "");
-if (leftover) {
-  findings.push(`${CONFIG} -> the gpu filter has a term this gate cannot read: ${leftover}`);
-}
-
-// The copies in the quick and gpu profiles: `not (<gpu>) and not (<soak>)` and
-// `(<gpu>) and not (<soak>)`, the soak list being another default-profile override's filter;
-// then the gate and soak profiles, `not (<soak>)` and `(<soak>)`.
-const copies = [
-  ["quick", `not (${gpu})`, "not (<gpu>)"],
-  ["gpu", `(${gpu})`, "(<gpu>)"],
-];
+// The quick and gpu profiles: the prefix, then `and not (<soak>)`, the soak list being another
+// default-profile override's filter; then the gate and soak profiles, and CI's Windows arm.
 const tails = [];
-for (const [profile, prefix, shown] of copies) {
-  const df = defaults.get(profile);
-  if (!df || !df.startsWith(prefix)) {
+for (const [profile, prefix] of [
+  ["quick", `not ${GPU}`],
+  ["gpu", GPU],
+]) {
+  const df = defaults.get(profile) ?? "";
+  const soak = df.startsWith(prefix) ? /^ and not \((.*)\)$/.exec(df.slice(prefix.length))?.[1] : undefined;
+  if (soak === undefined || !overrides.includes(soak)) {
     findings.push(
-      `${CONFIG} -> [profile.${profile}] default-filter does not start with ${shown}: copy the lavapipe override's filter into it verbatim`,
-    );
-    continue;
-  }
-  const soak = /^ and not \((.*)\)$/.exec(df.slice(prefix.length))?.[1];
-  if (soak === undefined || !overrideFilters.includes(soak)) {
-    findings.push(
-      `${CONFIG} -> [profile.${profile}] default-filter does not end with \`and not (<soak>)\`, the soak override's filter copied verbatim`,
+      `${CONFIG} -> [profile.${profile}] default-filter is not \`${prefix} and not (<soak>)\`, the soak override's filter copied verbatim`,
     );
   } else tails.push(soak);
 }
@@ -204,10 +176,9 @@ if (tails.length === 2 && tails[0] !== tails[1]) {
   findings.push(`${CONFIG} -> the quick and gpu profiles exclude different soak lists`);
 }
 if (tails.length === 2 && tails[0] === tails[1]) {
-  const soak = tails[0];
   for (const [profile, expected, shown] of [
-    ["gate", `not (${soak})`, "not (<soak>)"],
-    ["soak", `(${soak})`, "(<soak>)"],
+    ["gate", `not (${tails[0]})`, "not (<soak>)"],
+    ["soak", `(${tails[0]})`, "(<soak>)"],
   ]) {
     if (defaults.get(profile) !== expected) {
       findings.push(
@@ -215,91 +186,75 @@ if (tails.length === 2 && tails[0] === tails[1]) {
       );
     }
   }
-  // CI's Windows arm, when the profile exists: the CPU tests only, as `quick`.
-  const win = defaults.get("ci-windows");
-  if (win !== undefined && win !== defaults.get("quick")) {
-    findings.push(
-      `${CONFIG} -> [profile.ci-windows] default-filter is not the quick profile's: copy it verbatim`,
-    );
-  }
+}
+const win = defaults.get("ci-windows");
+if (win !== undefined && win !== defaults.get("quick")) {
+  findings.push(`${CONFIG} -> [profile.ci-windows] default-filter is not the quick profile's: copy it verbatim`);
 }
 
 // Every integration-test file: tests/*.rs of a crate or app.
 const files = trackedFiles();
 const testFiles = files.filter((p) => /^(crates|apps)\/[^/]+\/tests\/[^/]+\.rs$/.test(p));
-const seenBinaries = new Set();
-const seenPackages = new Set();
 const manifests = new Map();
+const manifestOf = (dir) => {
+  if (!manifests.has(dir)) manifests.set(dir, manifest(dir));
+  return manifests.get(dir);
+};
 for (const file of testFiles.sort()) {
   const dir = file.split("/").slice(0, 2).join("/");
-  if (!manifests.has(dir)) manifests.set(dir, manifest(dir));
-  const { name: pkg, tests } = manifests.get(dir);
+  const { name: pkg, tests } = manifestOf(dir);
   const rel = file.slice(dir.length + 1);
   const bin = tests.get(rel) ?? rel.slice("tests/".length, -".rs".length);
-  const id = `${pkg}::${bin}`;
-  if (packages.has(pkg)) seenPackages.add(pkg);
-  if (binaries.has(id)) seenBinaries.add(id);
-
-  const src = code(file);
-  let gpuFile = reachesDevice(src);
-  if (!gpuFile && /^\s*(pub\s+)?mod\s+support\s*;/m.test(src)) {
+  if (bin.startsWith(PREFIX)) continue;
+  let gpuFile = reachesDevice(code(file));
+  if (!gpuFile && /^\s*(pub\s+)?mod\s+support\s*;/m.test(code(file))) {
     for (const s of [`${dir}/tests/support/mod.rs`, `${dir}/tests/support.rs`]) {
       if (files.includes(s) && reachesDevice(code(s))) gpuFile = true;
     }
   }
-  if (gpuFile && !packages.has(pkg) && !binaries.has(id)) {
+  if (gpuFile) {
     findings.push(
-      `${file} -> not in the gpu filter: add \`binary_id(${id})\` to the lavapipe override's filter and to the quick and gpu default-filters in ${CONFIG}`,
+      `${file} -> opens a GPU device but its test binary \`${pkg}::${bin}\` lacks the ${PREFIX} prefix: rename it to tests/${PREFIX}${bin}.rs`,
     );
   }
 }
 // Test binaries scanned by their `#[cfg(test)]` items: examples marked `test = true`, and a
 // binary crate's `src/main.rs` with the modules it declares.
-const testItemUnits = [];
+let units = 0;
 for (const file of files.filter((p) => /^(crates|apps)\/[^/]+\/Cargo\.toml$/.test(p)).sort()) {
   const dir = file.split("/").slice(0, 2).join("/");
-  if (!manifests.has(dir)) manifests.set(dir, manifest(dir));
-  const { name: pkg, examples } = manifests.get(dir);
+  const { name: pkg, examples } = manifestOf(dir);
   for (const [rel, ex] of examples) {
-    if (files.includes(`${dir}/${rel}`)) testItemUnits.push([pkg, `${pkg}::example/${ex}`, [`${dir}/${rel}`]]);
+    const src = `${dir}/${rel}`;
+    if (!files.includes(src)) continue;
+    units++;
+    if (!ex.startsWith(PREFIX) && itemsReachDevice(testItems(code(src)))) {
+      findings.push(
+        `${src} -> its tests open a GPU device but the example \`${pkg}::example/${ex}\` lacks the ${PREFIX} prefix: rename it to ${PREFIX}${ex}`,
+      );
+    }
   }
   const main = `${dir}/src/main.rs`;
-  if (files.includes(main)) {
-    const mods = [...code(main).matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z_][a-z0-9_]*)\s*;/gm)]
-      .map((m) => [`${dir}/src/${m[1]}.rs`, `${dir}/src/${m[1]}/mod.rs`].find((f) => files.includes(f)))
-      .filter(Boolean);
-    testItemUnits.push([pkg, `${pkg}::bin/${pkg}`, [main, ...mods]]);
-  }
-}
-for (const [pkg, id, sources] of testItemUnits) {
-  if (packages.has(pkg)) seenPackages.add(pkg);
-  if (binaries.has(id)) seenBinaries.add(id);
-  for (const file of sources) {
-    if (itemsReachDevice(testItems(code(file))) && !packages.has(pkg) && !binaries.has(id)) {
+  if (!files.includes(main)) continue;
+  units++;
+  const mods = [...code(main).matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z_][a-z0-9_]*)\s*;/gm)]
+    .map((m) => [`${dir}/src/${m[1]}.rs`, `${dir}/src/${m[1]}/mod.rs`].find((f) => files.includes(f)))
+    .filter(Boolean);
+  for (const src of [main, ...mods]) {
+    if (itemsReachDevice(testItems(code(src)))) {
       findings.push(
-        `${file} -> not in the gpu filter: add \`binary_id(${id})\` to the lavapipe override's filter and to the quick and gpu default-filters in ${CONFIG}`,
+        `${src} -> its tests open a GPU device inside the binary \`${pkg}::bin/${pkg}\`, which cannot carry the ${PREFIX} prefix: move them to a tests/${PREFIX}*.rs file`,
       );
     }
   }
 }
-const scanned = testFiles.length + testItemUnits.length;
-for (const id of [...binaries].sort()) {
-  if (!seenBinaries.has(id)) {
-    findings.push(`binary_id(${id}) -> matches no test file: remove it from the gpu filter in ${CONFIG}`);
-  }
-}
-for (const pkg of [...packages].sort()) {
-  if (!seenPackages.has(pkg)) {
-    findings.push(`package(${pkg}) -> matches no test file: remove it from the gpu filter in ${CONFIG}`);
-  }
-}
-
 
 if (findings.length) {
   for (const f of findings) console.error(f);
-  console.error(`${findings.length} finding(s) across ${scanned} test binaries`);
+  console.error(`${findings.length} finding(s) across ${testFiles.length + units} test binaries`);
   process.exit(1);
 }
+const gpuCount = testFiles.filter((f) => f.split("/").pop().startsWith(PREFIX)).length;
 console.log(
-  `test tiers: ${testFiles.length} test files and ${testItemUnits.length} example and binary test modules, gpu filter ${binaries.size} binaries + ${packages.size} package(s), all agree`,
+  `test tiers: ${testFiles.length} test files (${gpuCount} ${PREFIX}) and ${units} example and binary test modules, every device behind the prefix`,
 );

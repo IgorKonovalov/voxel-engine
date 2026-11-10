@@ -559,7 +559,7 @@ fn light_ranges_follow_the_radius_and_evict_the_farthest() {
     assert_eq!(ranged(&gpu), [0, 1]);
 }
 
-/// The dark cave of `golden.rs` (the golden scene with its carve, the ore emissive, the pose
+/// The dark cave of `gpu_golden.rs` (the golden scene with its carve, the ore emissive, the pose
 /// facing a vein) with the lamp on and `history`, settled over 32 frames.
 fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::Camera)> {
     let source = scene_source();

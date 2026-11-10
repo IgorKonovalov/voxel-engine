@@ -541,7 +541,7 @@ fn the_far_normal_is_face_up_close_and_gradient27_far() {
 }
 
 /// The comparison table's image metrics, one line per mode, in one run:
-/// `cargo nextest run -p flythrough --test look --no-capture every_mode`.
+/// `cargo nextest run -p flythrough --test gpu_look --no-capture every_mode`.
 #[test]
 fn every_mode() {
     println!("| mode | cavity normal error (degrees) | pillar silhouette error (px) |");
@@ -1485,7 +1485,7 @@ fn the_split_walk_moves_no_hit_record() {
 /// a render in its default look over the thin rig mirrored without band slots: main 28948a5's
 /// figure (DEFAULT_MAIN) plus the split walk's 32-byte stub list and 16-byte dispatch words,
 /// no hand-off list, and in place of the screen's emissive history and reservoirs the store,
-/// whose pool no bake has allocated (STORE_LESS: - 3 686 400 - 7 372 800, `upscale.rs`'s
+/// whose pool no bake has allocated (STORE_LESS: - 3 686 400 - 7 372 800, `gpu_upscale.rs`'s
 /// `frame_bytes_hold_the_store_and_no_emissive_history`).
 const DEFAULT_FRAME_BYTES: u64 = 119_208_016;
 const DEFAULT_MAIN: u64 = 130_267_168;

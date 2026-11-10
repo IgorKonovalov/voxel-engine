@@ -1065,7 +1065,7 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
     Some((sum / n as f64, over as f64 / n as f64))
 }
 
-// ---- The leak scenes (tests/look.rs's cracks view) ----
+// ---- The leak scenes (tests/gpu_look.rs's cracks view) ----
 
 /// Air over chunks `[0, 2)^3` with `ROCK` wherever voxel `v` satisfies any of the half-spaces
 /// `a . (2 v + 1) <= c`: integer tests on twice the voxel centre, so each scene's plane cuts
@@ -1303,7 +1303,7 @@ pub fn pose_rig_with(
     }
 }
 
-// ---- The one-voxel scenes (tests/look.rs's box metric) ----
+// ---- The one-voxel scenes (tests/gpu_look.rs's box metric) ----
 
 /// A [`HalfSpaces`] world with boxes of rock added and boxes of air carved after it, each box
 /// `[min, max)` in voxels: the one-voxel features on a flat floor or a flat wall.
