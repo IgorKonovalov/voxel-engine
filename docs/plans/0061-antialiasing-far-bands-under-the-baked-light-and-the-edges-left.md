@@ -16,8 +16,9 @@
 > "Far normal range" and "Slow-pan verdict for FSR 2". The owner, Plan 0059's Phase 13 window
 > (2026-11-09, the defaults: FSR 2 at 1.5, far normal `[2, 6]`, the baked light), at the hall: "a lot
 > of aliasing on this step, doesn't look good".
-> **Starts after:** Plan 0060 (the live queue) merges, since both touch `temporal.wgsl` and the
-> goldens; Phase 1 changes no file under `crates/` and may start beside it (open question 5).
+> **Starts after:** Plan 0060 (the live queue) runs first. Phase 1 (readings, no file under
+> `crates/`) runs beside it; Phases 2 to 5 wait for Plan 0060's merge into main, since both touch
+> `temporal.wgsl` and the goldens (Owner answers, 5).
 
 ## TL;DR
 
@@ -354,7 +355,7 @@ both adapters, as in Phase 2. Test times are named per phase; none is planned ov
 - **Determinism and threading:** nothing touches `vxe-world` or the bake. The read is per pixel and
   reads no random number, so a still frame stays bit-identical at native.
 
-**Open questions for the owner** (drafted with the recommended option first; the go answers them):
+**Open questions for the owner** (drafted with the recommended option first; answered 2026-11-10, see Owner answers):
 
 1. **The fix for the far bands.** (a) ADR-0049's store read by the far normal, judged in the window
    (recommended: no storage, exact up close, cheap); (b) FSR 2 at scale 1 as the default, at about
@@ -372,6 +373,19 @@ both adapters, as in Phase 2. Test times are named per phase; none is planned ov
 5. **The start.** (a) Phase 1 now beside Plan 0060, Phases 2 to 5 after it merges (recommended:
    Phase 1 touches no file under `crates/`, and both plans change `temporal.wgsl`); (b) all after Plan
    0060 merges; (c) all now, as a parallel lane.
+
+## Owner answers
+
+The owner, 2026-11-10, to the open questions above:
+
+1. **The fix for the far bands:** (a), ADR-0049's store read by the far normal, judged in the window.
+   ADR-0049 stays proposed until this plan's close.
+2. **The far normal's setting:** (a), picked again by eye in Phase 4 under the new read.
+3. **The edges:** (a), read in Phases 1 and 3 and shown with the existing knobs; a fix is a later
+   plan if the window asks.
+4. **The Radeon:** (a), one default on both adapters, its cost read and recorded.
+5. **The start:** Plan 0060 runs first. Phase 1 runs beside it; Phases 2 onward wait for Plan 0060's
+   merge into main.
 
 ## What this plan does NOT do
 
