@@ -112,9 +112,16 @@ specific. Vague plans get ignored.
   the readings log only at its resume notes.
 - **Headless proof is mandatory.** Every plan names at least one test that runs without a window.
   A render plan also names its golden image and the SSIM or pixel floor.
-- **Every named test states its expected wall time on lavapipe.** One that needs a long
-  series (over 30 s there, or 60 s on CI; `docs/nfr.md` section 7) is born `#[ignore = "soak"]`
+- **Every named test states its expected wall time on lavapipe.** One over the soak line
+  (10 s there, or 60 s on CI; `docs/nfr.md` section 7) is born `#[ignore = "soak"]`
   (`.config/nextest.toml`), named as such in the phase, and is never a gate.
+- **A phase that names GPU tests names their `gpu_*` binaries**, which is what it runs per
+  phase (`test-changed.mjs --binaries`); the whole gpu tier is the tip's (owner, 2026-11-10).
+- **A look-driven plan marks its phases before the owner's window as exploration** (lane rules
+  2b, owner 2026-11-10). They name readings, not image tests; CPU tests of data, determinism
+  and API stay with their phase. The last dev phase, after the window, writes the goldens and
+  image bars against the picks. Don't plan an asserting harness for a mechanism the window
+  may drop.
 - **A testbed toggle shows its mode in the window**, with a behavioural done-when
   (`references/best-practices.md`, Tests).
 - **Name what the plan does NOT do.** Tempting bundles go there, with a pointer to a milestone.
@@ -176,8 +183,10 @@ followup for a future plan, not a finding.
 - **Run the gate yourself** (build, `cargo nextest run --workspace --profile gate
   --status-level pass` under the perf lock, tee'd to a log, doctests, clippy, fmt, deny) on
   the finished tree, which already holds main (the lane merged it before the review). Don't
-  copy the log's numbers. The gate tier is everything but the soak tests; the soak and full
-  tiers run only when the owner asks (2026-11-03). Record the wall time and the load, start
+  copy the log's numbers. The gate tier is everything but the soak tests. After it, run the
+  soak tests of the crates the plan changed (`node scripts/test-changed.mjs --profile soak
+  --since main`, under the lock; owner, 2026-11-10, since the 10 s line moved tests there);
+  the whole soak and full tiers run only when the owner asks (2026-11-03). Record the wall time and the load, start
   it first, in the background, while you read, and run `node scripts/test-times.mjs <log>` on
   it: a test over the line in `docs/nfr.md` section 7 is a `minor` finding that names the
   test for the soak mark, and a gate tier over its wall-time budget there is a `major`. Run

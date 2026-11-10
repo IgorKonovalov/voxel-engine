@@ -29,6 +29,16 @@
 > against Plan 0061's tip** and refreshes their paths; bit and binding numbers in this plan are
 > "the next free at the start commit", which dev reads from the tree.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 1 to 3 are **exploration** (lane rules 2b):
+> the owner's window in Phase 4 is their gate. Each lands its CPU tests of data, determinism
+> and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
+> settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
+> recorded in the readings log, and is written as a test in Phase 5, after the window, against
+> the picks. Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
+> become tests moves.
+
 ## TL;DR
 
 The renderer shades one light that is not a voxel, the headlamp, and it is bound to the camera.
@@ -476,6 +486,19 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
   readings and done-when 12's trail length; the narrowed reset under Risks is the first amendment. A "no" on (g) names the run
   and goes to the architect with the tables. The plan closes with that record.
 
+### Phase 5: The picks as tests
+
+- **Owner skill:** dev
+- **What:** the image tests, goldens and bars Phases 1 to 3 name, written now with the
+  values the Phase 4 window settled, and the readings they replace cited from the log.
+- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 3 name,
+  `docs/plans/logs/0058.md`.
+- **Done when:** every image test Phases 1 to 3 name exists, asserts the picked value or
+  the bar the plan states (a bar the window moved says so in the log, with the owner's words),
+  and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
+  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
+  is not written, and the log names it.
+
 ## Data shapes
 
 ```rust
@@ -655,6 +678,7 @@ are the architect's picks from the unbound ones and dev may move them if a bindi
 | 2: Colour: the direct part in a target of its own | dev | not started | |
 | 3: The bounce flag | dev | not started | |
 | 4: The owner's window | human | not started | |
+| 5: The picks as tests | dev | not started | |
 
 ### Notes
 

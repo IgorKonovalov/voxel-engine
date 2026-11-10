@@ -47,8 +47,10 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
   ("a radius-10 sphere carve at the origin of a solid material-3 world returns
   `{3: 4169}` and leaves voxel (0,0,10) solid"), not "tests pass". Every numeric value is
   worked out, not guessed, or stated as a property. Each test names its expected wall time
-  on lavapipe; one over 30 s is born `#[ignore = "soak"]` (`.config/nextest.toml`) and is not a
-  gate.
+  on lavapipe; one over 10 s is born `#[ignore = "soak"]` (`.config/nextest.toml`) and is not a
+  gate. A GPU test names its `gpu_*` binary. In a phase marked exploration (a look-driven
+  plan's phases before the owner's window), name readings instead of image tests; the last dev
+  phase writes those against the picks.
 
 ### Phase 2: <name>
 …

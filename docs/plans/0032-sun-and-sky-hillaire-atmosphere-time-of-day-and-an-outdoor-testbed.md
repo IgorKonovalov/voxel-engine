@@ -39,6 +39,16 @@
 > and the Interface section against Plan 0058 at its close, before this lane starts.
 > The names in this plan were checked against main at 82ea836.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 1 to 8 are **exploration** (lane rules 2b):
+> the owner's window in Phase 9 is their gate. Each lands its CPU tests of data, determinism
+> and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
+> settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
+> recorded in the readings log, and is written as a test in Phase 10, after the window, against
+> the picks. Phase 7 keeps its switches, banner and readings before the window; its goldens and image bars move to Phase 10. Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
+> become tests moves.
+
 ## TL;DR
 
 The frame gets a sky. A `Sky` the game sets each frame names the atmosphere, the sun and the
@@ -818,6 +828,19 @@ README says which.
   is a one-line commit after it, with Phase 3's pinned hash and Phase 7's goldens re-read
   under it as a disclosed deviation).
 
+### Phase 10: The picks as tests
+
+- **Owner skill:** dev
+- **What:** the image tests, goldens and bars Phases 1 to 8 name, written now with the
+  values the Phase 9 window settled, and the readings they replace cited from the log.
+- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 8 name,
+  `docs/plans/logs/0032.md`.
+- **Done when:** every image test Phases 1 to 8 name exists, asserts the picked value or
+  the bar the plan states (a bar the window moved says so in the log, with the owner's words),
+  and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
+  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
+  is not written, and the log names it.
+
 ## Data shapes
 
 ```rust
@@ -1036,6 +1059,7 @@ apply: the guard and the long emissive history are gone, and Plan 0048 was dropp
 | 7: The four goldens, the HUD rows and the readings | dev | not started | |
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | not started | |
 | 9: The owner's windowed check | human | not started | |
+| 10: The picks as tests | dev | not started | |
 
 ### Notes
 

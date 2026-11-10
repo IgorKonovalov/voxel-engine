@@ -39,6 +39,16 @@
 > of secondary rays through `march`. If any of the three closes with a different shape, the
 > architect re-reads Phases 2, 4 and 5 before the go.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 1 to 8 are **exploration** (lane rules 2b):
+> the owner's window in Phase 9 is their gate. Each lands its CPU tests of data, determinism
+> and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
+> settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
+> recorded in the readings log, and is written as a test in Phase 10, after the window, against
+> the picks. Phase 8 keeps its switches, banner and readings before the window; its goldens and image bars move to Phase 10. Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
+> become tests moves.
+
 ## TL;DR
 
 A material row can be a liquid (`MaterialFlags::LIQUID`, always with `TRANSLUCENT`), with
@@ -509,6 +519,19 @@ first). A toggle's done-when names the banner's mode word, and the README names 
   fog (the in-scatter's floor-light estimate kept or replaced), and a default for
   `--liquid-reflection`.
 
+### Phase 10: The picks as tests
+
+- **Owner skill:** dev
+- **What:** the image tests, goldens and bars Phases 1 to 8 name, written now with the
+  values the Phase 9 window settled, and the readings they replace cited from the log.
+- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 8 name,
+  `docs/plans/logs/0034.md`.
+- **Done when:** every image test Phases 1 to 8 name exists, asserts the picked value or
+  the bar the plan states (a bar the window moved says so in the log, with the owner's words),
+  and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
+  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
+  is not written, and the log names it.
+
 ## Data shapes
 
 ```rust
@@ -717,6 +740,7 @@ overturns it.
 | 7: History on liquid pixels: measured, then the temporal pass and FSR 2 | dev | not started | |
 | 8: The testbed's switches, the mode banner, and the readings | dev | not started | |
 | 9: The owner's windowed check | human | not started | |
+| 10: The picks as tests | dev | not started | |
 
 ### Notes
 

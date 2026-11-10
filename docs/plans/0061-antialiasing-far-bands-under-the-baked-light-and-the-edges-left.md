@@ -32,6 +32,15 @@
 > a per-adapter default (answer 4); Phase 5 names every site of the emitter cap and gives its
 > re-bless a floor.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 2 and 3 are **exploration** (lane rules 2b):
+> the owner's window in Phase 4 is their gate. Each lands its CPU tests of data and API; the image
+> tests they name (Phase 2's staircase golden, done-when 1b, and Phase 3's matrix bars) run as
+> readings from `live/`, a `mod reading` or the strip tool, recorded in the readings log, and Phase 5
+> writes them as tests against the picks (its done-when 2 already holds the staircase claim at the
+> defaults). Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). Phase 1 is readings already and is unchanged.
+
 ## TL;DR
 
 The aliasing in the owner's still (`session13-hall-aliasing.png`) is mostly **ADR-0042's far bands,
