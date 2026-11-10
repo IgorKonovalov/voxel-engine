@@ -52,6 +52,9 @@ crates/
 ├── vxe-audio/       # cpal output, an HRTF mixer on the device callback, occlusion and
 │                    #   early reflections probed through the material table; the shipped
 │                    #   HRIR pack under assets/. Depends on vxe-world only; not deterministic
+├── vxe-entity/      # voxel-model entities: rigid parts as prefabs, poses in fixed point and
+│                    #   Q14 quaternions, the entity ray query. HEADLESS and DETERMINISTIC;
+│                    #   depends on vxe-world only
 └── (planned, one per plan) vxe-script-lua (mlua host, client scripts)
 apps/
 └── flythrough/      # the engine's own testbed binary: fly, dig, read edit results

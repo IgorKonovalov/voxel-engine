@@ -1,6 +1,6 @@
 # 0062: Entities: voxel models on rigid parts, traced with the world, lit and shadowed by the list lights, and hit by a headless ray query
 
-> **Status:** approved (owner go 2026-11-10; Phase 1 may start now, Phases 2 to 6 start after
+> **Status:** in-progress (owner go 2026-11-10; Phase 1 may start now, Phases 2 to 6 start after
 > Plans 0058 and 0045 close and the architect's re-read below)
 > **Created:** 2026-11-10
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (the render half; Plan 0008 closed the
@@ -540,7 +540,7 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | not started | |
+| 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](logs/0062.md) | committed with this row |
 | 2: The mirror and the primary hit | dev | not started | |
 | 3: Light, shadow and emission | dev | not started | |
 | 4: Motion | dev | not started | |
@@ -552,6 +552,10 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: `EntityHit` carries `face: Option<vxe_world::Face>` in place of `axis` and
+  `positive`; a part's rest offset from its parent is the child's `PartPose::t`, zero in
+  `Pose::rest` (the mapping is in the readings log).
 
 ### Close triggers
 
