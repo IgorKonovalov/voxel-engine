@@ -257,7 +257,7 @@ then cuts one at a time by eye (antialiasing moved after them, 2026-11-06). Plan
 (v0.44.0; ADR-0046 and ADR-0047 accepted with Outcomes, ADR-0043's table superseded): the owner picked the
 bake, a brick-level store at 8 voxels and 4096 samples a direction filled by a live queue and re-baked by
 digs, and the table is deleted. Owed next: Plan 0058's refresh, the queue's view order and cancellation
-(`docs/backlog.md`), and the antialiasing plan.
+(Plan 0060 and ADR-0048, drafted 2026-11-10), and the antialiasing plan.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the

@@ -19,6 +19,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0059's Phase 3 verdict, where its order against the cuts is set; before 0045. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, before M10. |
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: a list of eight analytic lights, exact, dropped and carried; scaled emission over the table; a bounce flag | draft | M2, ADR-0044 and ADR-0045 (proposed). Next; its scale phase needs a refresh. |
+| [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: the near shell, then the view, nearest first; jobs a flight has passed withdrawn | draft | M2, ADR-0048 (proposed). After Plan 0059; Phase 1's reading sets Phase 3. |
 <!-- roster:end -->
 
 ## Recently closed
