@@ -739,7 +739,8 @@ pub struct Lighting {
     pub candidates: u32,
     pub shadow_walk: ShadowWalk,
     /// The a-trous filter runs over the lamp's part (and a fallback hit's emissive part); off,
-    /// the composite shows the light pass's raw irradiance.
+    /// the composite shows the temporal pass's accumulation unfiltered (a cube face's emissive
+    /// part the store's value, which the light pass's irradiance does not hold).
     pub filter: bool,
     pub history: HistoryKill,
     /// The lamp's bounce from the probe volume (ADR-0043's lamp channel over ADR-0023's
@@ -950,7 +951,16 @@ pub struct Frame {
     bake_queue: Option<crate::bake::BakeQueue>,
     /// The live queue's world group and the buffers it binds ([`Frame::queue_world_bind`]).
     queue_world_bind: Option<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
+    /// The temporal pass, its `COUNT_STORE` off: it writes no counter.
     temporal: wgpu::ComputePipeline,
+    /// The temporal pass with `COUNT_STORE` on, built on the first encode that counts
+    /// ([`Frame::set_count_store`]).
+    temporal_counting: std::sync::OnceLock<wgpu::ComputePipeline>,
+    /// Whether the temporal pass counts the store's reads ([`Frame::set_count_store`]).
+    count_store: bool,
+    /// The store's three read counters (`counters` in `temporal.wgsl`): missing, brick reads,
+    /// coarse reads.
+    store_counters: wgpu::Buffer,
     gradient_layout: wgpu::BindGroupLayout,
     gradient: wgpu::ComputePipeline,
     variance_layout: wgpu::BindGroupLayout,
@@ -1392,9 +1402,18 @@ impl Frame {
                 f16,
                 Io::Uniform,
                 Io::Float,
+                Io::ReadStorage,
                 Io::Storage,
             ],
         );
+        let store_counters = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("store counters"),
+            size: STORE_STATS_BYTES,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let gradient_layout = io_layout(device, "gradient", &[Io::Float, Io::Uint, Io::Float, f16]);
         let gradient = compute_pipeline(
             device,
@@ -1587,6 +1606,9 @@ impl Frame {
             bake_queue: None,
             queue_world_bind: None,
             temporal,
+            temporal_counting: std::sync::OnceLock::new(),
+            count_store: false,
+            store_counters,
             gradient_layout,
             gradient,
             variance_layout,
@@ -2319,8 +2341,22 @@ impl Frame {
         &self.dig_boxes
     }
 
+    /// Whether the temporal pass counts the store's reads (off by default): on, it runs the
+    /// pipeline whose `COUNT_STORE` is true and [`Frame::read_store_stats`] and
+    /// [`Frame::try_store_stats`] read its counts; off, the counters stay zero and the pass
+    /// does no atomic write.
+    pub fn set_count_store(&mut self, on: bool) {
+        self.count_store = on;
+    }
+
+    /// Whether the temporal pass counts the store's reads ([`Frame::set_count_store`]).
+    pub fn counts_store(&self) -> bool {
+        self.count_store
+    }
+
     /// The store's counters; `missing` is a blocking read of the last submitted encode's
-    /// count, counted in [`Frame::store_blocking_reads`].
+    /// count (0 with [`Frame::set_count_store`] off), counted in
+    /// [`Frame::store_blocking_reads`].
     pub fn read_store_stats(
         &self,
         device: &wgpu::Device,
@@ -2329,7 +2365,7 @@ impl Frame {
         self.store_blocking_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let bytes =
-            crate::readback::read_buffer(device, queue, self.store.pool(), 0, STORE_STATS_BYTES);
+            crate::readback::read_buffer(device, queue, &self.store_counters, 0, STORE_STATS_BYTES);
         self.store_stats_of(&bytes)
     }
 
@@ -2337,7 +2373,7 @@ impl Frame {
     /// [`Frame::try_store_stats`]; call after [`Frame::encode`] in the same encoder, and submit
     /// it before the next read.
     pub fn copy_store_stats(&self, encoder: &mut wgpu::CommandEncoder) {
-        self.store_ring.copy(encoder, self.store.pool(), 0);
+        self.store_ring.copy(encoder, &self.store_counters, 0);
     }
 
     /// The store's counters as of the newest [`Frame::copy_store_stats`] that has finished on
@@ -2347,7 +2383,7 @@ impl Frame {
         self.store_ring.try_read(device, |b| self.store_stats_of(b))
     }
 
-    /// The store's counts with its GPU counters' first three words.
+    /// The store's counts with its GPU counters' three words.
     fn store_stats_of(&self, bytes: &[u8]) -> crate::bake::StoreStats {
         let word =
             |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
@@ -2376,6 +2412,24 @@ impl Frame {
         let bytes =
             crate::readback::read_buffer(device, queue, self.store.pool(), first * 4, words * 4);
         Some(bytemuck::pod_collect_to_vec(&bytes))
+    }
+
+    /// The temporal pass's pipeline: with [`Frame::set_count_store`] on, the one whose
+    /// `COUNT_STORE` is true, built on its first use.
+    fn temporal_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
+        if !self.count_store {
+            return &self.temporal;
+        }
+        self.temporal_counting.get_or_init(|| {
+            compute_pipeline_with(
+                device,
+                "temporal counting",
+                format!("{MARCH_WGSL}\n{TEMPORAL_WGSL}"),
+                &[Some(&self.world_layout), None, Some(&self.temporal_layout)],
+                "temporal",
+                &[("COUNT_STORE", 1.0)],
+            )
+        })
     }
 
     /// The light pass's pipeline (`shade`), built on its first use.
@@ -2953,7 +3007,7 @@ impl Frame {
             ],
         );
         // The store's counters: missing, brick reads, coarse reads.
-        encoder.clear_buffer(self.store.pool(), 0, Some(12));
+        encoder.clear_buffer(&self.store_counters, 0, None);
         let light_bind = bind_io(
             device,
             &self.light_layout,
@@ -2979,6 +3033,7 @@ impl Frame {
                 Res::Buf(&self.edits),
                 Res::Tex(&t.strata),
                 Res::Buf(self.store.pool()),
+                Res::Buf(&self.store_counters),
             ],
         );
         // The filter runs in the shaded and cracks views unless switched off; the variance pass
@@ -3016,7 +3071,7 @@ impl Frame {
         let lit = if filtering {
             &t.filter[ATROUS_ITERATIONS % 2]
         } else {
-            &t.irradiance
+            &t.accum[c]
         };
         // In FSR mode the composite writes FSR's colour input at the internal size.
         let composite_out = self.fsr.as_ref().map_or(&t.output, Fsr2::colour);
@@ -3099,6 +3154,7 @@ impl Frame {
                         edits: &self.edits,
                         lamp: &self.upscale_params,
                         output: &t.output,
+                        blue_noise: &self.blue_noise,
                         cur: c,
                         dt: self.dt,
                     },
@@ -3264,7 +3320,12 @@ impl Frame {
             hit,
             gradient,
             vec![frame_pass(self.light_pipeline(device), &light_bind, 2, lw)],
-            vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
+            vec![frame_pass(
+                self.temporal_pipeline(device),
+                &temporal_bind,
+                2,
+                lw,
+            )],
             atrous,
             probes,
             gather,
@@ -3811,8 +3872,7 @@ fn compute_pipeline_with(
 /// Bytes one resolved timestamp occupies: a `u64` tick count.
 const QUERY_BYTES: u64 = 8;
 
-/// Bytes of the store's GPU counters at the pool's start that [`Frame::read_store_stats`] reads:
-/// three `u32` words.
+/// Bytes of the store's GPU counters that [`Frame::read_store_stats`] reads: three `u32` words.
 const STORE_STATS_BYTES: u64 = 12;
 
 /// Read-back buffers a [`ReadbackRing`] cycles through: with the GPU keeping up, a frame's

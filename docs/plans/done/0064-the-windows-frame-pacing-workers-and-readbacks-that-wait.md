@@ -278,7 +278,7 @@ pub struct SyncBudget {
 
 ## What this plan does NOT do
 
-- Shader work: the baked light's waste is [Plan 0065](../0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md).
+- Shader work: the baked light's waste is [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md).
 - Plan 0044's other phases (bind groups, the sync's sizing, the march's inner loop).
 - Packing slot words on the workers, or any change to the mirror's format (`docs/backlog.md`).
 - Anything about the dev box's two-GPU present path; it is recorded as a label on readings.

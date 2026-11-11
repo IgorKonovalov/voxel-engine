@@ -1,4 +1,5 @@
-// The FSR 2 tone pass (ours, ADR-0034): FSR 2's output, linear radiance at the output size
+// The FSR 2 tone pass (ours, ADR-0034), dispatched with sharpening off or the upscaler bypassed
+// (with sharpening on, rcas.wgsl ends in the same arithmetic): FSR 2's output, linear radiance at the output size
 // pre-exposed by the frame's exposure (ADR-0033), tone mapped and display-encoded into the
 // frame's rgba8 image, one invocation per output pixel. The same arithmetic as composite.wgsl's
 // `display`, applied after the upscaler instead of before it. Compiled after march.wgsl, whose

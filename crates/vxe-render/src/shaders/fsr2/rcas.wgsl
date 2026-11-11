@@ -10,17 +10,58 @@
 // detection's `nz`. FSR 2 runs it on the exposed colour (`PrepareRgb`) and unprepares the
 // result.
 //
+// Ours past AMD's: the pass ends in the tone pass's arithmetic (fsr2/tone.wgsl), so with
+// sharpening on the tone pass is not dispatched. The sharpened colour is first rounded to half
+// precision toward zero (`half_rtz`), the value the tone pass read back when RCAS wrote an
+// rgba16float target on the software adapter (lavapipe), where the goldens are blessed; an
+// adapter that rounds such a store to nearest read at most one half-precision step away. Then
+// it is tone mapped, display-encoded and dithered as `cb.tone` says (common.wgsl), and stored
+// into the frame's rgba8 image.
+//
 // Bindings, group 1:
 //   0  texture_2d<f32>   rcas_in       the accumulate pass's internal upscaled colour
 //   1  texture_2d<f32>   exposure_in   rg32float 1x1
-//   2  storage texture   rcas_out      rgba16float: the sharpened colour, unprepared (the
-//                                      frame writes it into last frame's copy of the internal
-//                                      upscaled colour, which nothing reads after the
-//                                      accumulate pass), which the tone pass reads
+//   2  storage texture   rcas_out      rgba8unorm: the frame's image
+//   3  texture_2d<f32>   rcas_noise    the frame's 128 x 128 blue noise (march.wgsl's
+//                                      `blue_noise`)
 
 @group(1) @binding(0) var rcas_in: texture_2d<f32>;
 @group(1) @binding(1) var exposure_in: texture_2d<f32>;
-@group(1) @binding(2) var rcas_out: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(2) var rcas_out: texture_storage_2d<rgba8unorm, write>;
+@group(1) @binding(3) var rcas_noise: texture_2d<f32>;
+
+// `cb.tone`'s bits.
+const TONE_IDENTITY: u32 = 1u;
+const TONE_SHADED: u32 = 2u;
+const TONE_DITHER: u32 = 4u;
+
+// tone.wgsl's `tone_aces`.
+fn rcas_aces(x: vec3<f32>) -> vec3<f32> {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// tone.wgsl's `tone_display`.
+fn rcas_display(c: vec3<f32>) -> vec3<f32> {
+    let x = c;
+    var m = clamp(x, vec3<f32>(0.0), vec3<f32>(1.0));
+    if ((cb.tone & TONE_IDENTITY) == 0u) {
+        m = rcas_aces(max(x, vec3<f32>(0.0)));
+    }
+    return pow(m, vec3<f32>(1.0 / 2.2));
+}
+
+// tone.wgsl's `tone` on colour `c` at display pixel `px`.
+fn rcas_tone(c: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
+    var out = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    if ((cb.tone & TONE_SHADED) != 0u) {
+        out = rcas_display(c);
+        if ((cb.tone & TONE_DITHER) != 0u) {
+            let n = textureLoad(rcas_noise, px % vec2<i32>(128), 0).x;
+            out = clamp(out + (n - 0.5) / 255.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        }
+    }
+    return out;
+}
 
 // FSR_RCAS_LIMIT.
 const RCAS_LIMIT: f32 = 0.25 - (1.0 / 16.0);
@@ -77,6 +118,16 @@ fn fsr_rcas(ip: vec2<i32>) -> vec3<f32> {
     return (lobe * b + lobe * d + lobe * h + lobe * f + e) * rcp_l;
 }
 
+// `x` rounded toward zero to a half-precision value: a subnormal half to a multiple of 2^-24,
+// a normal one to 10 mantissa bits, at most 65504 in magnitude.
+fn half_rtz(x: f32) -> f32 {
+    let a = abs(x);
+    if (a < 6.103515625e-5) {
+        return trunc(x * 16777216.0) / 16777216.0;
+    }
+    return sign(x) * min(bitcast<f32>(bitcast<u32>(a) & 0xFFFFE000u), 65504.0);
+}
+
 // ffxRemapForQuad: a 64-lane index to 8 x 8 in quads.
 fn remap_for_quad(a: u32) -> vec2<u32> {
     return vec2<u32>(extractBits(a, 1u, 3u), insertBits(extractBits(a, 3u, 3u), a, 0u, 1u));
@@ -87,8 +138,9 @@ fn curr_filter(p: vec2<u32>) {
     if (any(pos >= display_size())) {
         return;
     }
-    let c = unprepare_rgb(fsr_rcas(pos), exposure_of(exposure_in));
-    textureStore(rcas_out, pos, vec4<f32>(c, 1.0));
+    let u = unprepare_rgb(fsr_rcas(pos), exposure_of(exposure_in));
+    let c = vec3<f32>(half_rtz(u.x), half_rtz(u.y), half_rtz(u.z));
+    textureStore(rcas_out, pos, vec4<f32>(rcas_tone(c, pos), 1.0));
 }
 
 @compute @workgroup_size(64, 1, 1)

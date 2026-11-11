@@ -47,7 +47,7 @@
 > - **Phase 5 (the walk) has a case for running before Plans 0061 and 0058**, which decide by
 >   hit and light readings that include the material read it removes. It collides with their
 >   shader files and forces a re-bake, so it stays where it is (owner, 2026-11-10).
->   [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+>   [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
 >   Phase 4 takes the far normal's 27 bits from the brick's mask; whichever lands second keeps
 >   the other's path.
 

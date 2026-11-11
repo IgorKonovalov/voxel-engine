@@ -75,8 +75,8 @@ var<workgroup> meter_sum: array<vec2<f32>, 64>;
 // `Params::lighting` bit: the probe gather ran and its irradiance adds to the direct one.
 const LIGHTING_INDIRECT: u32 = 4096u;
 
-// The irradiance at lighting texel `q`: the filter's rgb, or with the filter off the light
-// pass's emissive rgb plus its lamp's white a; with the indirect flag, the gathered indirect
+// The irradiance at lighting texel `q`: the filter's rgb, or with the filter off the temporal
+// pass's accumulation, its emissive rgb plus its lamp's white a; with the indirect flag, the gathered indirect
 // rgb added.
 fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
     let v = textureLoad(irradiance_in, q, 0);

@@ -145,6 +145,59 @@ fn off_after_fsr2_renders_the_goldens_byte_for_byte() {
     }
 }
 
+/// FSR 2's dispatch list (`Fsr2::dispatched`): with sharpening on, RCAS writes the frame's image
+/// and the tone pass is not dispatched, eight passes ending in `fsr2 rcas`; with sharpening off,
+/// eight ending in `fsr2 tone`; bypassed, the tone pass alone. The frame's target bytes are the
+/// same with sharpening on and off: the accumulate pass's two display-size colour targets are
+/// its history's pair, read and written by the accumulate pass alone.
+#[test]
+fn fsr2_dispatches_rcas_or_the_tone_pass_not_both() {
+    let world = scene_world();
+    let Some((device, queue, gpu)) = mirrored(&world) else {
+        return;
+    };
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    let first: Vec<&str> = vxe_render::fsr2::FSR2_PASSES[..7].to_vec();
+    let mut bytes = Vec::new();
+    for (sharpness, last) in [(0.5, "fsr2 rcas"), (0.0, "fsr2 tone")] {
+        frame.set_upscaler_kind(
+            &device,
+            UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness,
+                ..vxe_render::Fsr2Settings::default()
+            }),
+        );
+        frame.render(
+            &device,
+            &queue,
+            &gpu,
+            &scene_camera(),
+            &LightParams::at_eye(),
+        );
+        let fsr = frame.fsr2().expect("FSR 2 is on");
+        let mut want = first.clone();
+        want.push(last);
+        assert_eq!(fsr.dispatched(), want, "sharpness {sharpness}");
+        bytes.push(frame.frame_bytes());
+    }
+    println!("frame_bytes with sharpening on and off: {bytes:?}");
+    assert_eq!(bytes[0], bytes[1], "frame_bytes with sharpening on and off");
+    frame.fsr2_mut().expect("FSR 2 is on").set_bypass(true);
+    frame.render(
+        &device,
+        &queue,
+        &gpu,
+        &scene_camera(),
+        &LightParams::at_eye(),
+    );
+    assert_eq!(
+        frame.fsr2().expect("FSR 2 is on").dispatched(),
+        ["fsr2 tone"],
+        "bypassed"
+    );
+}
+
 /// `world` mirrored over its extent on the software adapter; `None` without the adapter.
 fn mirrored(world: &vxe_world::World) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
     let full = world.stats().full_bricks as u64;

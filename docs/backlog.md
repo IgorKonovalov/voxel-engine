@@ -170,14 +170,14 @@ read-only review of the tree at `50b637a` followed, with no run (the owner asked
 every figure below is an estimate. The window's pacing, the readbacks, the workers and the
 sync's time went to [Plan 0064](plans/done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md);
 the baked light's shader waste and the queue's scan to
-[Plan 0065](plans/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
+[Plan 0065](plans/done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
 (both approved 2026-11-10). What neither takes:
 
 ### Budget lines over with no owner
 
-- **Upscale, 1.5 ms:** FSR 2 reads 2.9 ms on the RTX and 10 ms on the Radeon; every plan
-  "reads its delta and does not claim the line". Plan 0065 expects 0.2 to 0.5 ms off it. Either
-  the line moves or a profile owns it: the render-profile plan's call.
+- **Upscale, 1.5 ms:** FSR 2 reads 2.1 to 2.4 ms on the RTX and 15.7 to 16.1 ms on the Radeon
+  at 2530 x 1378 after Plan 0065 (closed 2026-11-11); every plan "reads its delta and does not
+  claim the line". Either the line moves or a profile owns it: the render-profile plan's call.
 - **The bake's slice and the queue's step have no line.** 1.5 ms of GPU a frame while the queue
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
   line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
@@ -185,9 +185,10 @@ the baked light's shader waste and the queue's scan to
 - **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 (closed 2026-11-11) left
   it where it was: its sync time budget cost residency and stays off, and the upload's copy
   into mapped memory stays (see "Slot words packed on the workers").
-- **The frame ledger's re-base**, owed since 2026-11-03: it still reads `own`, the table light
-  and the probes, and has no row for the list lights or the bake's slice. Re-base it at Plan
-  0065's close, when the per-pass table at the half tier exists.
+- **The frame ledger's split**: its totals were re-based at Plan 0065's close (2026-11-11,
+  `docs/nfr/02-frame-budget.md`, "Frame ledger"), but its scenario tables still read `own`, the
+  table light and the probes, with no row for the list lights or the bake's slice. Rewrite them
+  with the render-profile plan, which sets the lines.
 - **Time to first frame, 3 s:** 7137 ms at the vein under the baked light; Plan 0060 bars only
   its delta.
 
@@ -195,8 +196,8 @@ Pick up: at the render-profile plan's interview, or at the next close that touch
 
 ### The a-trous under the baked light: fewer iterations, or none
 
-Plan 0065 only stops the filter where the variance is zero. With the lamp on, its input is an
-analytic light with a binary shadow, no Monte Carlo noise; four iterations may be one or two,
+Plan 0065 (closed 2026-11-11) skips the filter only with the lamp off, where its input is zero;
+with the lamp on it filters as before. There its input is an analytic light with a binary shadow, no Monte Carlo noise; four iterations may be one or two,
 and with the lamp off and the `face` look the whole pass could be skipped on the CPU side. Both
 change shadow softness or the rare fallback pixels, so they are the owner's eye. Pick up after
 Plan 0058, which widens the filter to rgb.

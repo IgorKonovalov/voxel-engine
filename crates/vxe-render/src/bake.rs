@@ -9,8 +9,9 @@
 //! opaque ones are: a pane's entry face reads its brick's record (`march.wgsl`'s
 //! `glass_reflected`).
 //!
-//! **The pool** ([`Store`]), in `u32` words: the frame's counters (words 0 to 2: no value, brick
-//! reads, [`STORE_COARSE_READS`]), the mirror window's origin (word 4) and size (word 8) in
+//! **The pool** ([`Store`]), in `u32` words: words 0 to 2 unused (the frame's read counters,
+//! no value, brick reads and [`STORE_COARSE_READS`], are a buffer of their own that only the
+//! counting temporal pass writes), the mirror window's origin (word 4) and size (word 8) in
 //! chunks, the flags ([`STORE_FLAGS`]), then from word [`STORE_TABLE`] one word per window chunk
 //! naming its block's first word (0 none), bit 31 ([`TABLE_COARSE`]) set on the live queue's
 //! coarse blocks. A block is 512 directory words, a brick's `offset from the block's start << 11`
@@ -82,7 +83,7 @@ pub const STORE_TABLE: u64 = 16;
 /// A chunk table word's flag: the chunk's block is the live queue's coarse pass, refined later.
 /// The block's first word is the rest (a pool is under 2^31 words).
 pub const TABLE_COARSE: u32 = 1 << 31;
-/// The header's counter of the lighting pixels that read a coarse block (word 2).
+/// The frame's read counters' word that counts the lighting pixels that read a coarse block.
 pub const STORE_COARSE_READS: u64 = 2;
 /// The words of a block's directory.
 pub const DIRECTORY_WORDS: u64 = CHUNK_BRICKS as u64;
@@ -1004,7 +1005,7 @@ impl Store {
             header[self.table_word(ChunkCoord(*c)) as usize] =
                 self.table_value(ChunkCoord(*c), *first);
         }
-        // Words 0 to 2 are the frame's counters, which the temporal pass writes.
+        // Words 0 to 2 are unused; the frame's counters are a buffer of their own.
         queue.write_buffer(&self.pool, 12, bytemuck::cast_slice(&header[3..]));
         dropped
     }

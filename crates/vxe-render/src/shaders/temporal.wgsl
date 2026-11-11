@@ -25,8 +25,10 @@
 //                                        lamp's blend weight rises to twice the lambda averaged
 //                                        over the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
-//  11  storage           store           the store (ADR-0046, `bake::Store`); word 0 counts
-//                                        this frame's cube-face hits with no brick record value
+//  11  storage, read      store           the store (ADR-0046, `bake::Store`)
+//  12  storage           counters        three words, written only where the pipeline's
+//                                        COUNT_STORE is true: word 0 counts this frame's
+//                                        cube-face hits with no brick record value
 //                                        (`store_missing`), word 1 those that read one, word 2
 //                                        those whose voxel's chunk holds a coarse block
 //                                        (TABLE_COARSE)
@@ -57,6 +59,13 @@
 // sample as it is: the light pass's lamp estimate is exact up to its shadow ray, so a lamp
 // switched off leaves nothing behind.
 //
+// A cube face's pixel with the lamp off (Params.lighting bit 0 clear, no cutaway, not the steps
+// view) skips the reprojection: its emissive part is the store's and its lamp part, moments and
+// their history are zero (the frame the lamp switched off took its sample, zero, at once), so it
+// writes the store's value and zero moments. Its age is carried on the pixel: last frame's age at
+// the same pixel plus one, 0 where the pixel would reset; a still camera maps each pixel onto
+// itself, so there it is the reprojected age.
+//
 // Every value is pre-exposed (ADR-0033): the history read from last frame is rescaled by
 // `exposure_ratio()` (the second moment by its square) before it blends, the accumulation's
 // store is clamped at HDR_MAX, and the moments are of the luminance clamped at MOMENT_LUM_MAX
@@ -83,7 +92,12 @@ struct Edits {
 
 @group(2) @binding(9) var<uniform> edits: Edits;
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
-@group(2) @binding(11) var<storage, read_write> store: array<atomic<u32>>;
+@group(2) @binding(11) var<storage, read> store: array<u32>;
+@group(2) @binding(12) var<storage, read_write> counters: array<atomic<u32>, 3>;
+
+// Whether this pipeline counts the store's reads into `counters` (the HUD's and
+// `--read-missing`'s pipeline); off, `counters` is never written.
+override COUNT_STORE: bool = false;
 
 // The store's words and a record's layout: march.wgsl's STORE_ORIGIN to TABLE_COARSE.
 
@@ -93,49 +107,51 @@ fn rgb9e5_decode(w: u32) -> vec3<f32> {
     return vec3<f32>(m) * ldexp(1.0, i32(w >> 27u) - 24);
 }
 
-// The block of chunk `c` (world chunks), 0 for none or outside the window.
-fn store_block(c: vec3<i32>) -> u32 {
-    return store_table(c) & ~TABLE_COARSE;
+// The store's window in chunks and its brick level's cell as a shift, read once a pixel.
+struct StoreHead {
+    origin: vec3<i32>,
+    size: vec3<i32>,
+    // 2 (4 voxels, flags bit 1) or 3 (the brick).
+    shift: u32,
+};
+
+fn store_head() -> StoreHead {
+    let origin = vec3<i32>(
+        i32(store[STORE_ORIGIN]),
+        i32(store[STORE_ORIGIN + 1u]),
+        i32(store[STORE_ORIGIN + 2u]),
+    );
+    let size = vec3<i32>(
+        i32(store[STORE_SIZE]),
+        i32(store[STORE_SIZE + 1u]),
+        i32(store[STORE_SIZE + 2u]),
+    );
+    return StoreHead(origin, size, select(3u, 2u, (store[STORE_FLAGS] & 2u) != 0u));
 }
 
 // Chunk `c`'s table word (world chunks): its block's first word with the TABLE_COARSE flag, 0 for
 // none or outside the window.
-fn store_table(c: vec3<i32>) -> u32 {
-    let origin = vec3<i32>(
-        i32(atomicLoad(&store[STORE_ORIGIN])),
-        i32(atomicLoad(&store[STORE_ORIGIN + 1u])),
-        i32(atomicLoad(&store[STORE_ORIGIN + 2u])),
-    );
-    let size = vec3<i32>(
-        i32(atomicLoad(&store[STORE_SIZE])),
-        i32(atomicLoad(&store[STORE_SIZE + 1u])),
-        i32(atomicLoad(&store[STORE_SIZE + 2u])),
-    );
-    let w = c - origin;
-    if (any(w < vec3<i32>(0)) || any(w >= size)) {
+fn store_table(head: StoreHead, c: vec3<i32>) -> u32 {
+    let w = c - head.origin;
+    if (any(w < vec3<i32>(0)) || any(w >= head.size)) {
         return 0u;
     }
-    return atomicLoad(&store[STORE_TABLE + u32(w.x + size.x * (w.y + size.y * w.z))]);
+    return store[STORE_TABLE + u32(w.x + head.size.x * (w.y + head.size.y * w.z))];
 }
 
-// The brick level's cell in voxels as a shift: 2 (4 voxels, flags bit 1) or 3 (the brick).
-fn store_cell_shift() -> u32 {
-    return select(3u, 2u, (atomicLoad(&store[STORE_FLAGS]) & 2u) != 0u);
-}
-
-// Cell `c`'s (world cells of 1 << `shift` voxels) value for direction `face` times its material's
-// emission scale now in rgb, with a 1 in a; 0 where its brick has no record or the cell no face of
-// that direction. A brick's record is its cells' BRICK_WORDS records, `x + n (y + n z)` with n
-// cells a side, just before its run.
-fn store_cell(c: vec3<i32>, face: u32, shift: u32) -> vec4<f32> {
-    let per = 3u - shift;
+// Cell `c`'s (world cells of 1 << `head.shift` voxels) value for direction `face` times its
+// material's emission scale now in rgb, with a 1 in a; 0 where its brick has no record or the cell
+// no face of that direction. A brick's record is its cells' BRICK_WORDS records, `x + n (y + n z)`
+// with n cells a side, just before its run.
+fn store_cell(head: StoreHead, c: vec3<i32>, face: u32) -> vec4<f32> {
+    let per = 3u - head.shift;
     let b = c >> vec3<u32>(per);
-    let block = store_block(b >> vec3<u32>(3u));
+    let block = store_table(head, b >> vec3<u32>(3u)) & ~TABLE_COARSE;
     if (block == 0u) {
         return vec4<f32>(0.0);
     }
     let s = b & vec3<i32>(7);
-    let dir = atomicLoad(&store[block + u32(s.x + 8 * (s.y + 8 * s.z))]);
+    let dir = store[block + u32(s.x + 8 * (s.y + 8 * s.z))];
     if (dir == 0u) {
         return vec4<f32>(0.0);
     }
@@ -144,32 +160,31 @@ fn store_cell(c: vec3<i32>, face: u32, shift: u32) -> vec4<f32> {
     let sub = u32(l.x + n * (l.y + n * l.z));
     let cells = u32(n * n * n);
     let rec = block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
-    let tail = atomicLoad(&store[rec + 6u]);
+    let tail = store[rec + 6u];
     if (((tail >> (16u + face)) & 1u) == 0u) {
         return vec4<f32>(0.0);
     }
-    let x = rgb9e5_decode(atomicLoad(&store[rec + face]));
+    let x = rgb9e5_decode(store[rec + face]);
     return vec4<f32>(x * emission_scale[tail & 0xFFFFu], 1.0);
 }
 
 // Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 cells around the
 // voxel's centre in the face's plane (march.wgsl's `store_tap`), bilinear over those that have
 // the direction; its own cell's alone where none has it with weight. 0 in a where that has none
-// either. march.wgsl's `glass_store_value` is the same read over the read-only binding.
-fn store_brick_value(v: vec3<i32>, face: u32) -> vec4<f32> {
-    let shift = store_cell_shift();
+// either. march.wgsl's `glass_store_value` is the same read over the hit pass's binding.
+fn store_brick_value(head: StoreHead, v: vec3<i32>, face: u32) -> vec4<f32> {
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
     for (var i = 0; i < 4; i++) {
-        let tap = store_tap(v, face, shift, i);
-        let r = store_cell(tap.cell, face, shift);
+        let tap = store_tap(v, face, head.shift, i);
+        let r = store_cell(head, tap.cell, face);
         sum += r.xyz * (tap.w * r.w);
         weight += tap.w * r.w;
     }
     if (weight > 0.0) {
         return vec4<f32>(sum / weight, 1.0);
     }
-    return store_cell(v >> vec3<u32>(shift), face, shift);
+    return store_cell(head, v >> vec3<u32>(head.shift), face);
 }
 
 // The gradient's gain: lambda = |new - old| / max(new, old) reads 0.9 where light fell to a
@@ -239,17 +254,30 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         let nf = shadow_normal_of(rec, ray.d);
         let voxel = store_voxel(rec.p, nf);
         let face = store_face(rec.axis, nf);
-        let c = store_brick_value(voxel, face);
-        if (c.w > 0.0) {
-            atomicAdd(&store[1], 1u);
-        }
-        if (c.w == 0.0) {
-            atomicAdd(&store[0], 1u);
-        } else if ((store_table(voxel >> vec3<u32>(6u)) & TABLE_COARSE) != 0u) {
-            atomicAdd(&store[2], 1u);
+        let head = store_head();
+        let c = store_brick_value(head, voxel, face);
+        if (COUNT_STORE) {
+            if (c.w > 0.0) {
+                atomicAdd(&counters[1], 1u);
+            }
+            if (c.w == 0.0) {
+                atomicAdd(&counters[0], 1u);
+            } else if ((store_table(head, voxel >> vec3<u32>(6u)) & TABLE_COARSE) != 0u) {
+                atomicAdd(&counters[2], 1u);
+            }
         }
         stored = true;
         sample = vec4<f32>(c.xyz * exposure_now(), sample.w);
+        if ((params.lighting & LIGHTING_LAMP) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
+            && view_mode() != VIEW_STEPS) {
+            var held = 0.0;
+            if ((params.history & 1u) != 0u && !in_edit(rec.p)) {
+                held = min(floor(textureLoad(prev_moments_in, px, 0).z + 0.5) + 1.0, AGE_MAX);
+            }
+            textureStore(accum_out, px, min(vec4<f32>(sample.xyz, 0.0), vec4<f32>(HDR_MAX)));
+            textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0));
+            return;
+        }
     }
     // The filtered part's luminance: the lamp's, and a fallback's emissive part.
     let l = min(select(luminance(sample.xyz), 0.0, stored) + sample.w, MOMENT_LUM_MAX);

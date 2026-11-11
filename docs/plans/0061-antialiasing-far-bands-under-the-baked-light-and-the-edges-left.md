@@ -424,7 +424,7 @@ Against `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`. Today's figur
 them where there is one today, and that read is what took the temporal pass from 0.39 to
 1.54 ms in Plan 0059 (full tier): through an atomic binding each one re-reads the store's
 header per tap. Where the hall is mostly far band, +1 ms or more is plausible at the full
-tier. [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+tier. [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
 Phase 2 makes the read cheaper, and **Phase 2 here starts after Plan 0065 merges** (owner,
 2026-11-10; `docs/plans/README.md`, Sequence). Phase 2 here reads the temporal pass by itself, at the half
 and the full tier, so the read's cost is not lost in the frame figure.

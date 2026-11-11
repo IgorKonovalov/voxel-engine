@@ -48,7 +48,9 @@ measurement:
 
 The upscale line is over under the fly-through's FSR 2 default since Plan 0055: 2.932 to 2.958 ms on
 the RTX 3080 Laptop, 9.967 to 9.983 ms on the RADV RENOIR. The close keeps the line and records the
-reading; the default stands on the owner's eye.
+reading; the default stands on the owner's eye. At Plan 0065's close (03b00ab, 2530 x 1378 output)
+FSR 2's passes read 2.103 to 2.424 ms on the RTX and 15.691 to 16.058 ms on the RADV RENOIR, still
+over; the lamp-on a-trous at the full lighting tier (3.088 to 3.321 ms RTX) is over the denoise line.
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.

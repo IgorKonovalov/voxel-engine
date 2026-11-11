@@ -765,7 +765,7 @@ one in Phase 6.
 ## What this plan does NOT do
 
 - The Radeon's GPU frame at the window's size (hit 26 ms, FSR 2 18.5 ms): the render settings
-  and profiles plan (owed, Sequence step 6) and [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s passes.
+  and profiles plan (owed, Sequence step 6) and [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s passes.
 - The window's pacing, the HUD's waits, the sync's time budget and the worker count:
   [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
 - A worker thread for the queue: only if Phase 2 misses its bar, with its own ADR.

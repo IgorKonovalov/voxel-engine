@@ -928,10 +928,10 @@ fn t9e5_unpack(w: u32) -> vec3<f32> {
     return vec3<f32>(m) * exp2(f32(i32(w >> 27u) - 24));
 }
 
-// The store's words (`bake::Store`): the counters, the window's origin and size in chunks, the
-// flags, then a word per window chunk, its block's first word or 0. A block is 512 directory words
-// (a brick's offset from the block's start just past its record << 11; 0 none), then each surface
-// brick's record.
+// The store's words (`bake::Store`): three unused words, the window's origin and size in
+// chunks, the flags, then a word per window chunk, its block's first word or 0. A block is 512
+// directory words (a brick's offset from the block's start just past its record << 11; 0 none),
+// then each surface brick's record.
 const STORE_ORIGIN: u32 = 4u;
 const STORE_SIZE: u32 = 8u;
 // The flags word (`bake::STORE_FLAGS`): bit 1, the records' cells are 4 voxels (eight a brick),
@@ -1190,8 +1190,41 @@ fn normal_from_gradient(g: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
 }
 
 // Central differences of occupancy over the 3 x 3 x 3 voxels around the hit voxel: each axis
-// sums the nine voxels on its positive face minus the nine on its negative face.
+// sums the nine voxels on its positive face minus the nine on its negative face. For a hit voxel
+// at local 1 to 6 on every axis of a full-detail Full brick (with the walk's skips and masks on)
+// the 27 voxels lie in that brick, and their occupancy is their bits in its opaque mask: a voxel's
+// mask bit is `lookup(v).size == 0` (the mask holds the opaque voxels; a translucent voxel is air
+// to both), so the six mask words of the three layers replace 26 lookups. The sums are of small
+// integers, exact in any order, so both paths give the same normal bit for bit.
 fn gradient27_normal(h: Hit, fallback: vec3<f32>) -> vec3<f32> {
+    let flags = FLAG_SKIPS | FLAG_MASKS;
+    if ((params.flags & flags) == flags) {
+        let dsc = descend(h.voxel);
+        if (dsc.size == 0 && dsc.level == 0u && (dsc.entry & FULL_BIT) != 0u
+            && all(dsc.l >= vec3<u32>(1u)) && all(dsc.l <= vec3<u32>(6u))) {
+            let unit = dsc.entry & UNIT_MASK;
+            var g = vec3<f32>(0.0);
+            for (var z = -1; z <= 1; z++) {
+                // Layer lz's 64 bits: word 2 lz holds rows 0..3 (bit x + 8 y), word 2 lz + 1
+                // rows 4..7.
+                let lz = dsc.l.z + u32(z + 1) - 1u;
+                let lo = mask_word_at(unit, 2u * lz);
+                let hi = mask_word_at(unit, 2u * lz + 1u);
+                for (var y = -1; y <= 1; y++) {
+                    let ly = dsc.l.y + u32(y + 1) - 1u;
+                    let row = select(lo, hi, ly >= 4u) >> (8u * (ly & 3u));
+                    for (var x = -1; x <= 1; x++) {
+                        let lx = dsc.l.x + u32(x + 1) - 1u;
+                        let o = vec3<i32>(x, y, z);
+                        if (any(o != vec3<i32>(0))) {
+                            g += vec3<f32>(o) * f32((row >> lx) & 1u);
+                        }
+                    }
+                }
+            }
+            return normal_from_gradient(g, fallback);
+        }
+    }
     var g = vec3<f32>(0.0);
     for (var z = -1; z <= 1; z++) {
         for (var y = -1; y <= 1; y++) {
