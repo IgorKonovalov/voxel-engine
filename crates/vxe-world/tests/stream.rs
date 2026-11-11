@@ -639,3 +639,76 @@ fn a_full_chunk_landing_outside_its_band_is_demoted_by_the_next_poll() {
     );
     assert_eq!(s.tier(held), Some(Tier::LodOnly));
 }
+
+/// The resident tiers counted by walking every chunk within `reach` chunks of the origin on
+/// each axis: `(full, LOD-only)`.
+fn walk_counts(s: &Streamer, reach: i32) -> (usize, usize) {
+    let mut counts = (0, 0);
+    for x in -reach..=reach {
+        for y in -reach..=reach {
+            for z in -reach..=reach {
+                match s.tier(ChunkCoord([x, y, z])) {
+                    Some(Tier::Full) => counts.0 += 1,
+                    Some(Tier::LodOnly) => counts.1 += 1,
+                    None => {}
+                }
+            }
+        }
+    }
+    counts
+}
+
+/// A seeded flight of 200 steps over a uniform world (radii 2 and 4, hysteresis 1, two
+/// workers): each step moves the focus up to two chunks on one axis inside a 6-chunk cube, and
+/// every 25th changes the full radius between 1 and 2 (demoting the full edge, then promoting
+/// it); every 10th step waits for the workers, the rest poll once, so loads, demotions and
+/// evictions land part-way. After every step `stats()`'s `resident_full` and `resident_lod`
+/// equal a walk over every chunk the residency can reach (the cube plus the LOD radius and the
+/// hysteresis).
+#[test]
+fn stats_counts_match_a_walk() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 4, 1, 2));
+    let mut seed: u64 = 0x5eed_0064;
+    let mut next = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as i32
+    };
+    let mut focus = [0i32; 3];
+    let reach = 6 + 4 + 1 + 1;
+    let (mut demotions, mut evictions) = (0, 0);
+    for step in 0..200 {
+        let axis = (next() % 3) as usize;
+        focus[axis] = (focus[axis] + next() % 5 - 2).clamp(-6, 6);
+        if step % 25 == 24 {
+            let r_full = if s.config().residency.r_full == 2 {
+                1
+            } else {
+                2
+            };
+            s.set_radii(r_full, 4);
+        }
+        s.update(&world, &[VoxelCoord(focus.map(|c| c * CHUNK_EDGE))]);
+        let ev = if step % 10 == 9 {
+            s.wait_idle(&world)
+        } else {
+            s.poll(&world)
+        };
+        demotions += ev.demoted.len();
+        evictions += ev.evicted.len();
+        let st = s.stats();
+        assert_eq!(
+            (st.resident_full, st.resident_lod),
+            walk_counts(&s, reach),
+            "step {step}, focus {focus:?}"
+        );
+        assert_eq!(st.ticks, s.ticks());
+    }
+    println!("{demotions} demotions, {evictions} evictions over the flight");
+    assert!(
+        demotions > 0 && evictions > 0,
+        "the flight demoted and evicted"
+    );
+}

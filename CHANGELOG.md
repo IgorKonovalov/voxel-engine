@@ -6,6 +6,14 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-11-11
+
+Plan 0064 (a minor bump: public API added and changed). What paces the window, read first: the shell asked the compositor for a frame callback before every present, so a frame's CPU work waited for the last one to show. Without it (`free`, the owner's pick and the default) the window's wall p50 reads 10.6 to 13.5 ms against 13.0 to 17.2 with it, on the RTX under Hyprland, every cell outside the spread. The frame path no longer waits on the GPU: the pass timers and the store's counters read through a ring of three buffers a frame or two late (608 blocking reads over 300 lavapipe frames before, 0 after), and the shown HUD's refresh and banner allocate nothing after the first frame. `Streamer::stats` walks nothing. **Kept off by the plan's rule:** one fewer streaming worker (p99 not lower) and the sync's time budget, which bounds selection and upload and keeps deferred chunks' sizes but put residency p95 at 2.7 to 6.9 s against 0.30 s without one. The Radeon's window is unread (owner). Goldens and pinned hashes unchanged.
+
+- **Added: `vxe_app::Pacing::Compositor`, `Pacing::{frame_callback, word, from_word}`, a present-mode log line; `vxe_render::marcher::{ReadbackRing, READBACK_RING}`, `PassTimer::{try_read_all_ms, try_read_ms, blocking_reads}`, `Frame::{copy_store_stats, try_store_stats, store_blocking_reads}`; `vxe_render::{SyncClock, SyncPoint}`, `GpuWorld::set_sync_clock`, `MirrorConfig::sync_budget_time`, `SyncStats::{time_deferred_chunks, sized_chunks, kept_sizes}`; `vxe_world::Streamer::ticks`.**
+- **Changed: `Pacing::Unthrottled` requests no frame callback (the old behaviour is `Compositor`); `PassTimer` copies into a ring; `Streamer::stats` keeps the full count instead of walking.**
+- **Added (fly-through): `--pace free|compositor` (default `free`, named in the banner), the HUD's `pace` row (wall / cpu / gpu), the `frames:` line's wall time and blocking-read count, `--workers N`, `--sync-ms MS` (default none).**
+
 ## [0.45.0] - 2026-11-11
 
 Plan 0060 (a minor bump: public API added; ADR-0048 accepted with an Outcome). The baked light's live queue orders its candidates by a score of distance and angle to the view, with the class (no block before a refinement) kept as the leading key after the blended score raised the no-value share in a fast flight, and withdraws the jobs of chunks a flight has passed. At the owner's window the order made no visible difference (the slice's throughput limits the far light, Plan 0067's); the withdrawal stays on ("without it everything starts lagging"). Blocks stay bit-identical to a one-shot bake under every order and after a withdrawal. The queue step's CPU equals the base's in the same of its two states (about 1 and 9 ms p50 on the RTX).

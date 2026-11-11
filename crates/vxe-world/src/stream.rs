@@ -247,7 +247,11 @@ pub struct Streamer {
     /// Set when the focus chunks change or a chunk arrives outside its band; the next `poll`
     /// sweeps residency for demotions and evictions.
     sweep: bool,
+    /// Every change goes through [`Streamer::set_resident`] and [`Streamer::unset_resident`],
+    /// which keep `resident_full`.
     resident: HashMap<ChunkCoord, Tier>,
+    /// The `Tier::Full` entries of `resident`, kept by count so `stats` walks nothing.
+    resident_full: usize,
     /// Chunks with a load or demotion job queued or running, and the tier it produces.
     in_flight: HashMap<ChunkCoord, Tier>,
     /// Chunks with a spill write queued or running.
@@ -303,6 +307,7 @@ impl Streamer {
             focus: Vec::new(),
             sweep: false,
             resident: HashMap::new(),
+            resident_full: 0,
             in_flight: HashMap::new(),
             spilling: HashSet::new(),
             spill_failed: HashSet::new(),
@@ -715,7 +720,7 @@ impl Streamer {
                     self.in_flight.remove(&coord);
                     if self.d2(coord) <= keep_lod2 && !self.resident.contains_key(&coord) {
                         world.insert_lod(coord, mips);
-                        self.resident.insert(coord, Tier::LodOnly);
+                        self.set_resident(coord, Tier::LodOnly);
                         ev.loaded.push((coord, Tier::LodOnly));
                     }
                     requeue.push(coord);
@@ -724,12 +729,12 @@ impl Streamer {
                     self.in_flight.remove(&coord);
                     if self.wanted_tier(coord) != Some(Tier::Full) && self.d2(coord) <= keep_lod2 {
                         world.insert_lod(coord, mips);
-                        self.resident.insert(coord, Tier::LodOnly);
+                        self.set_resident(coord, Tier::LodOnly);
                         ev.demoted.push(coord);
                     } else {
                         // Wanted full again, or out of range: the mirror still holds the
                         // full chunk it had, so report it gone.
-                        self.resident.remove(&coord);
+                        self.unset_resident(coord);
                         ev.evicted.push(coord);
                         requeue.push(coord);
                     }
@@ -770,7 +775,7 @@ impl Streamer {
             let mut map = world.store.write_lock();
             for (coord, chunk) in inserts {
                 map.insert(coord, chunk);
-                self.resident.insert(coord, Tier::Full);
+                self.set_resident(coord, Tier::Full);
                 world.remove_lod(coord);
             }
             for &(coord, tier) in &evict {
@@ -781,7 +786,7 @@ impl Streamer {
                 } else {
                     world.remove_lod(coord);
                 }
-                self.resident.remove(&coord);
+                self.unset_resident(coord);
             }
             for &coord in &demote {
                 if let Some(chunk) = map.remove(coord) {
@@ -797,7 +802,7 @@ impl Streamer {
             self.persist(*coord, chunk.clone());
             // Neither in the store nor LOD-only until its mips arrive; the mirror keeps the
             // full chunk it has meanwhile.
-            self.resident.remove(coord);
+            self.unset_resident(*coord);
             self.in_flight.insert(*coord, Tier::LodOnly);
         }
         let spills = {
@@ -917,9 +922,30 @@ impl Streamer {
         jobs
     }
 
+    /// Makes `coord` resident in `tier`, keeping the full count.
+    fn set_resident(&mut self, coord: ChunkCoord, tier: Tier) {
+        let old = self.resident.insert(coord, tier);
+        self.resident_full += usize::from(tier == Tier::Full);
+        self.resident_full -= usize::from(old == Some(Tier::Full));
+    }
+
+    /// Makes `coord` not resident, keeping the full count.
+    fn unset_resident(&mut self, coord: ChunkCoord) {
+        let old = self.resident.remove(&coord);
+        self.resident_full -= usize::from(old == Some(Tier::Full));
+    }
+
+    /// `update` calls so far, as [`StreamStats::ticks`], without the rest of the counters'
+    /// locks.
+    pub fn ticks(&self) -> u64 {
+        self.tick
+    }
+
+    /// The counters: the resident counts are kept as chunks change tier, so this walks
+    /// nothing; it takes the persistence and job queue locks once each.
     pub fn stats(&self) -> StreamStats {
         let p = lock(&self.shared.persisted);
-        let full = self.resident.values().filter(|&&t| t == Tier::Full).count();
+        let full = self.resident_full;
         StreamStats {
             ticks: self.tick,
             resident_full: full,
