@@ -380,7 +380,7 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 | 2: The blended score | dev | done; code and tests at 17a6454 (`wip(render)`, before the owner's answer); the coarse-first stop rule read as firing, so the plain start is `4,tier` (readings log, Phase 2) | 49428d7 |
 | 3: Withdrawing passed work | dev | done; code at 903cbda (`wip(render)`); `withdrawn_samples` counts rounds in flight and the dig test's rig sets `edit_ms` 0 (readings log, Phase 3) | 599dcd5 |
 | 4: The owner's window | human | done 2026-11-11; order and angle weight: no visible difference; withdrawal kept on; step 4 first ran on the RTX (the window ignores `--adapter`), rerun on the Radeon by Mesa's device select (readings log, Phase 4) | 51ad42f |
-| 5: The defaults and the close's readings | dev | done; defaults unchanged in the fly-through (`score 4,tier`, withdrawal on), `QueueOrder::default()` follows them; queue step CPU p50 3.29 / 3.39 ms against the 1.119 ms bar, not met (readings log, Phase 5) | committed with this row |
+| 5: The defaults and the close's readings | dev | done; defaults unchanged in the fly-through (`score 4,tier`, withdrawal on), `QueueOrder::default()` follows them; queue step CPU p50 3.29 / 3.39 ms against the 1.119 ms bar, not met (readings log, Phase 5) | 95ce5ac |
 
 ### Notes
 
@@ -397,7 +397,18 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
   15 fps it gets about a quarter of the RTX's work a second; light the store does not hold yet shows black
   (Phase 4, 4A: light store 526 bricks, 36 932 missing; owner: "after several seconds distant caves still black").
   Raised with the owner by the orchestrator; not designed or built here.
+- `the_score_blends_distance_and_the_view` reads 10.463 s in the tip's gate run and 10.405 s in Phase 5's gpu run
+  (both loaded, load 6.7 to 6.9), over the 10 s soak line on lavapipe; not marked `soak`.
 
 ### Close triggers
+
+- Gate at 95ce5ac: `cargo nextest run --workspace --profile gate` exit 0, 736 run, 736 passed, 75 skipped,
+  832.1 s (lavapipe, exclusive perf lock, load 6.9); doctests 7 passed; clippy 0; fmt 0; `cargo deny check` 0;
+  doc, comment, index-row, test-tier and plan-size scripts 0.
+- Queue step CPU per frame, autopilot (RTX 3080 Laptop, 2530 x 1378, FSR 2 at 1.5, `--seed 1`, exclusive perf
+  lock, started under load 1.5), p50 / p99 / max ms: base a8b1a2c 1.007 / 18.318 / 31.443 and 1.006 / 17.670 /
+  38.234; tip 95ce5ac's tree 3.290 / 18.572 / 30.563 and 3.392 / 18.542 / 45.475.
+- `frame_bytes` (`autopilot: frame targets`): 683 273 268 B on the base and the tip.
+- Section 7's first frame at the vein and the hall: Phase 2's readings (readings log, Phase 2); not re-read here.
 
 ## Followups
