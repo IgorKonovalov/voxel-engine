@@ -544,7 +544,9 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 - Fix pass, finding 3 (raycast bench origin in rock): four origins in a carved hall with
   boulders; base and tip re-read. Commit: c6c3bbb.
 - Fix pass, finding 2 (two handovers within the spare's cleaning time zero it in one block):
-  not fixed; an owner question (readings log, "Fix pass").
+  a clear that finds the spare dirty parks its network until the spare is clean; the
+  per-block clearing bound is `2 x BLOCK` frames a line (owner answer 3), and the ring-out
+  test's bar moved with it. Commit: committed with this row.
 
 ### Close triggers
 

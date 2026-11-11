@@ -697,10 +697,10 @@ fn a_silent_tail_rings_out_to_zero_not_subnormals() {
 }
 
 /// A tail that rings out is cleared without zeroing its lines at once: the network swaps them
-/// for the clean spare lines, and no block zeroes more than one block's worth of every line
-/// (`REVERB_LINES x BLOCK` samples). A network rings out once the input has gone to the other
-/// one; a network still ringing when a handover is due fades out first and is cleared the
-/// same way. The clears here are each further apart than the spare takes to clean, so none
+/// for the clean spare lines, and no block zeroes more than two blocks' worth of every line
+/// (`REVERB_LINES x 2 x BLOCK` samples). A network rings out once the input has gone to the
+/// other one; a network still ringing when a handover is due fades out first and is cleared
+/// the same way. The clears here are each further apart than the spare takes to clean, so none
 /// finds it dirty.
 #[test]
 fn a_ring_out_clears_no_more_than_a_block_of_lines_per_block() {
@@ -749,7 +749,7 @@ fn a_ring_out_clears_no_more_than_a_block_of_lines_per_block() {
     );
     assert_eq!(clears.forced, 0);
     assert!(
-        clears.max_zeroed <= REVERB_LINES * BLOCK,
+        clears.max_zeroed <= REVERB_LINES * 2 * BLOCK,
         "{} samples zeroed in one block",
         clears.max_zeroed
     );
@@ -776,5 +776,71 @@ fn a_ring_out_clears_no_more_than_a_block_of_lines_per_block() {
         "the 2.667 m network rang out and was cleared"
     );
     assert_eq!(clears.forced, 0);
-    assert!(clears.max_zeroed <= REVERB_LINES * BLOCK);
+    assert!(clears.max_zeroed <= REVERB_LINES * 2 * BLOCK);
+}
+
+/// Rooms one block apart, then a third, under a steady hum. The 8 m room goes to the idle
+/// network B; the 2.667 m room a block later is due back to A, which still rings, so A fades
+/// out, swaps its lines into the spare and takes it. The 8 m room 20 blocks on is due to B,
+/// still ringing, so B fades out too, about 10 blocks after A's swap: its clear finds the spare
+/// dirty and parks B instead of zeroing the spare at once, and the 8 m room waits for B's swap
+/// and then goes through. No block zeroes more than two blocks of every line
+/// (`REVERB_LINES x 2 x BLOCK` samples).
+#[test]
+fn rapid_handovers_zero_no_more_than_a_block_of_lines_per_block() {
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
+    let room = |mfp: f32| {
+        Command::SetRoom(RoomTargets {
+            t60_s: 0.75,
+            mean_free_path_m: mfp,
+            energy: 1.0,
+        })
+    };
+    let mut out = vec![0.0; 2 * BLOCK];
+    let mut render = |m: &mut Mixer, blocks: usize| {
+        for _ in 0..blocks {
+            m.render(&mut out, BLOCK);
+        }
+    };
+    m.apply(room(2.667));
+    m.apply(Command::Play(
+        VoiceId(1),
+        Sound::new(
+            (0..RATE)
+                .map(|n| 0.3 * (std::f64::consts::TAU * 440.0 * f64::from(n) / FS).sin() as f32)
+                .collect::<Vec<_>>(),
+        ),
+        PlayParams {
+            looping: true,
+            ..PlayParams::at([10.0, 0.0, 0.0])
+        },
+    ));
+    render(&mut m, 100);
+    m.apply(room(8.0));
+    render(&mut m, 1);
+    let eight = m.reverb_lines().map(|l| l.target);
+    m.apply(room(2.667));
+    render(&mut m, 20);
+    assert_eq!(m.reverb_clears().swaps, 1, "A faded out and swapped");
+    m.apply(room(8.0));
+    render(&mut m, 20);
+    let clears = m.reverb_clears();
+    println!("20 blocks after the third room: {clears:?}");
+    assert_eq!(clears.swaps, 1, "B faded out with the spare dirty");
+    assert_eq!(clears.deferred, 1, "and parked");
+    render(&mut m, 400);
+    let clears = m.reverb_clears();
+    println!("400 blocks on: {clears:?}");
+    assert_eq!(
+        m.reverb_lines().map(|l| l.target),
+        eight,
+        "the third handover went through"
+    );
+    assert_eq!(clears.forced, 0);
+    assert!(
+        clears.max_zeroed <= REVERB_LINES * 2 * BLOCK,
+        "{} samples zeroed in one block",
+        clears.max_zeroed
+    );
 }

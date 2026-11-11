@@ -49,8 +49,14 @@
 //! handover takes. Its lines are not zeroed there: they swap with a third, spare set of lines
 //! that is already zero; lines that never took a nonzero sample since they were last zero stay.
 //! The spare then has zeroed, a block at a time, only the run of ring frames that took nonzero
-//! samples, at most [`BLOCK`] frames of each line per block. A clear that finds the spare not
-//! yet clean finishes zeroing it first.
+//! samples, at most [`CLEAR_FRAMES_PER_BLOCK`] (two blocks) frames of each line per block; a
+//! run over the whole ring is clean after `RING / CLEAR_FRAMES_PER_BLOCK` blocks, rounded up. A
+//! clear that finds the spare not yet clean (a second handover within the spare's cleaning time)
+//! parks the network instead: it goes silent and inactive with its lines as they are, and swaps
+//! them at the end of the first block that leaves the spare clean. A handover that falls to a
+//! parked network waits for that swap; a room taken in place by a parked network wakes it on its
+//! own lines, the tail it rang out to. So no block zeroes more than [`CLEAR_FRAMES_PER_BLOCK`]
+//! frames of each line.
 //!
 //! # Level
 //!
@@ -111,6 +117,9 @@ const HF_HZ: f32 = 4_000.0;
 const ENERGY_BANDS: usize = 64;
 /// Each ring holds the longest line plus a block.
 const RING: usize = REVERB_MAX_DELAY_FRAMES + BLOCK;
+
+/// Frames of each spare line zeroed at most per block (module comment, "Clearing").
+const CLEAR_FRAMES_PER_BLOCK: usize = 2 * BLOCK;
 
 /// How the tail sounds beyond what the room gives it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -386,11 +395,18 @@ impl Network {
     }
 
     /// Silences every line and filter: lines that may hold signal swap with `spare`'s clean
-    /// ones (module comment, "Clearing").
+    /// ones, or, while the spare is dirty, wait parked (module comment, "Clearing").
     fn clear(&mut self, spare: &mut SpareLines) {
-        if let Some((first, end)) = self.nonzero.take() {
-            let len = (end - first).min(RING as u64) as usize;
-            spare.take(&mut self.lines, (end % RING as u64) as usize, len);
+        if let Some((first, end)) = self.nonzero {
+            if !spare.has_clean() {
+                if !self.parked() {
+                    spare.stats.deferred += 1;
+                }
+            } else {
+                self.nonzero = None;
+                let len = (end - first).min(RING as u64) as usize;
+                spare.take(&mut self.lines, (end % RING as u64) as usize, len);
+            }
         }
         self.lowpass = [0.0; REVERB_LINES];
         self.active = false;
@@ -458,6 +474,11 @@ impl Network {
     fn take_room_level(&mut self, mfp: f32, settings: &ReverbSettings) {
         self.room_mfp = mfp;
         self.room_level = settings.level_by_room.gain_at(mfp);
+    }
+
+    /// Cleared while the spare was dirty: silent, its lines not yet swapped.
+    fn parked(&self) -> bool {
+        !self.active && self.nonzero.is_some()
     }
 
     /// Whether any line or filter state is nonzero.
@@ -654,38 +675,31 @@ pub struct ReverbClears {
     /// Clears that swapped a network's lines with the spare.
     pub swaps: u64,
     /// Of those, the ones that found the spare not yet clean and finished zeroing it first.
+    /// A clear defers instead, so this stays 0.
     pub forced: u64,
+    /// Clears that found the spare dirty and parked their network until it was clean.
+    pub deferred: u64,
     /// The most samples zeroed in one block.
     pub max_zeroed: usize,
 }
 
-/// The spare lines a cleared network swaps with (module comment, "Clearing"): all zero
-/// except the run of `len` ring frames ending before index `end`.
-struct SpareLines {
+/// Spare line sets a cleared network swaps with (module comment, "Clearing").
+pub(crate) const SPARE_SETS: usize = 1;
+
+/// One spare set: all zero except the run of `len` ring frames ending before index `end`.
+struct SpareSet {
     lines: [Vec<f32>; REVERB_LINES],
     end: usize,
     len: usize,
-    stats: ReverbClears,
-    /// Samples zeroed in the block running now.
-    zeroed: usize,
 }
 
-impl SpareLines {
-    fn new() -> Self {
-        Self {
-            lines: std::array::from_fn(|_| vec![0.0; RING]),
-            end: 0,
-            len: 0,
-            stats: ReverbClears::default(),
-            zeroed: 0,
-        }
-    }
-
-    /// Zeroes the oldest `frames` frames of the dirty run, at most all of it, in every line.
-    fn zero(&mut self, frames: usize) {
+impl SpareSet {
+    /// Zeroes the oldest `frames` frames of the dirty run, at most all of it, in every line;
+    /// returns how many frames it zeroed.
+    fn zero(&mut self, frames: usize) -> usize {
         let k = frames.min(self.len);
         if k == 0 {
-            return;
+            return 0;
         }
         let start = (self.end + RING - self.len) % RING;
         let first = (RING - start).min(k);
@@ -694,26 +708,74 @@ impl SpareLines {
             line[..k - first].fill(0.0);
         }
         self.len -= k;
-        self.zeroed += k * REVERB_LINES;
+        k
+    }
+}
+
+/// The [`SPARE_SETS`] spare sets and how their clears ran.
+struct SpareLines {
+    sets: [SpareSet; SPARE_SETS],
+    stats: ReverbClears,
+    /// Samples zeroed in the block running now.
+    zeroed: usize,
+}
+
+impl SpareLines {
+    fn new() -> Self {
+        Self {
+            sets: std::array::from_fn(|_| SpareSet {
+                lines: std::array::from_fn(|_| vec![0.0; RING]),
+                end: 0,
+                len: 0,
+            }),
+            stats: ReverbClears::default(),
+            zeroed: 0,
+        }
+    }
+
+    /// Whether a set is clean, so a clear can swap at once.
+    fn has_clean(&self) -> bool {
+        self.sets.iter().any(|s| s.len == 0)
     }
 
     /// Swaps `lines`, nonzero only over the `dirty` frames ending before ring index `end`,
-    /// with the spare's clean ones; the spare first finishes zeroing itself if it has not yet.
+    /// with a clean set's lines. With no set clean (a caller that did not check
+    /// [`SpareLines::has_clean`]), the first set finishes zeroing itself first.
     fn take(&mut self, lines: &mut [Vec<f32>; REVERB_LINES], end: usize, dirty: usize) {
-        if self.len > 0 {
-            self.stats.forced += 1;
-            self.zero(self.len);
-        }
-        std::mem::swap(&mut self.lines, lines);
-        self.end = end;
-        self.len = dirty;
+        let i = match self.sets.iter().position(|s| s.len == 0) {
+            Some(i) => i,
+            None => {
+                self.stats.forced += 1;
+                let k = self.sets[0].zero(usize::MAX);
+                self.zeroed += k * REVERB_LINES;
+                0
+            }
+        };
+        let set = &mut self.sets[i];
+        std::mem::swap(&mut set.lines, lines);
+        set.end = end;
+        set.len = dirty;
         self.stats.swaps += 1;
     }
 
-    /// Ends a block: zeroes up to [`BLOCK`] more frames of each line and records the block's
-    /// total.
+    /// Ends a block: zeroes up to [`CLEAR_FRAMES_PER_BLOCK`] more frames of each line in all,
+    /// the set with the shortest dirty run first so it comes clean soonest, and records the
+    /// block's total.
     fn end_block(&mut self) {
-        self.zero(BLOCK);
+        let mut budget = CLEAR_FRAMES_PER_BLOCK;
+        while budget > 0 {
+            let Some(set) = self
+                .sets
+                .iter_mut()
+                .filter(|s| s.len > 0)
+                .min_by_key(|s| s.len)
+            else {
+                break;
+            };
+            let k = set.zero(budget);
+            budget -= k;
+            self.zeroed += k * REVERB_LINES;
+        }
         self.stats.max_zeroed = self.stats.max_zeroed.max(self.zeroed);
         self.zeroed = 0;
     }
@@ -835,7 +897,7 @@ impl Reverb {
 
     /// Bytes the lines hold: both networks' and the spare set.
     pub fn line_bytes() -> usize {
-        3 * REVERB_LINES * RING * 4
+        (2 + SPARE_SETS) * REVERB_LINES * RING * 4
     }
 
     /// How the clears ran so far.
@@ -889,11 +951,15 @@ impl Reverb {
         }
     }
 
-    /// Hands the pending room to the other network if it is silent: it takes the room's
-    /// lengths and decay at once and the input starts crossfading to it.
+    /// Hands the pending room to the other network if it is silent and not parked: it takes the
+    /// room's lengths and decay at once and the input starts crossfading to it.
     fn take_pending(&mut self) {
         let other = 1 - self.fed;
-        if self.nets[other].active {
+        if self.nets[other].active || self.pending.is_none() {
+            return;
+        }
+        self.nets[other].clear(&mut self.spare);
+        if self.nets[other].parked() {
             return;
         }
         let Some(room) = self.pending.take() else {
@@ -901,7 +967,6 @@ impl Reverb {
         };
         let settings = self.settings;
         let net = &mut self.nets[other];
-        net.clear(&mut self.spare);
         // Its input weight starts at 0, so its input gain starts at its target.
         net.set_at_once(room, &settings, 0.0);
         net.b = net.input_gain(net.t60, &settings, &self.band_cos);
@@ -973,6 +1038,11 @@ impl Reverb {
             }
         }
         self.spare.end_block();
+        if self.spare.has_clean()
+            && let Some(net) = self.nets.iter_mut().find(|n| n.parked())
+        {
+            net.clear(&mut self.spare);
+        }
     }
 }
 
