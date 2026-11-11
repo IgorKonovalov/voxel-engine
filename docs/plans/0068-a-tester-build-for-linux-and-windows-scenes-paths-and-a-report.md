@@ -1,6 +1,6 @@
 # 0068: A tester build for Linux and Windows: three scenes, a camera path, free flight and a report
 
-> **Status:** draft
+> **Status:** approved (2026-11-11, owner go)
 > **Created:** 2026-11-11
 > **Milestone:** M7 in `docs/roadmap.md` (the benchmark lane)
 > **Related ADRs:** [ADR-0054](../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) (proposed)
