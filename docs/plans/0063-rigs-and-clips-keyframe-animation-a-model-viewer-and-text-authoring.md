@@ -15,8 +15,8 @@
 > Phases 1 and 2 are headless and need only its Phase 1 (`vxe-entity`); they may run as a
 > side lane once that has merged. Phases 3 and 4 need Plan 0062 closed.
 
-> **Amended 2026-11-11 (architect, owner away; default taken, owner may overrule): the rest
-> pose.** Plan 0062's Phase 1 review found the gap: the `.rig` gives each part a rest place
+> **Amended 2026-11-11 (architect, owner away; default taken, confirmed by the owner the same
+> day): the rest pose.** Plan 0062's Phase 1 review found the gap: the `.rig` gives each part a rest place
 > (`at`), Plan 0062's answer 6 puts a child's rest layout in `PartPose::t` (`Part` has no rest
 > field), but the draft's `Rig::build` returned no rest pose and its `sample` let an untracked
 > part "keep its rest pose", which `Pose::rest` sets to zero: the part would sit on its
@@ -343,11 +343,11 @@ questions under Risks.
    lengths are in the prefab's axes as `VoxMap::to_prefab` lays a `.vox` model out, as
    MagicaVoxel and `vxe-sim`'s controller do. The rest offset is Plan 0062's answer 6.
 
-5. **Owner point, open (architect, 2026-11-11, owner away; default taken, owner may
-   overrule): the rest pose.** `Rig::build` returns a rest `Pose` holding each part's `at`;
-   `sample` starts from it; key translations add to the rest place and key rotations replace
-   the rest rotation (the amendment under the header, with the rejected alternatives). The
-   plan stays approved; an overrule is an amendment to Phases 1 and 2.
+5. **The rest pose (owner, 2026-11-11, confirmed the default taken while away).**
+   `Rig::build` returns a rest `Pose` holding each part's `at`; `sample` starts from it; key
+   translations add to the rest place and key rotations replace the rest rotation (the
+   amendment under the header, with the rejected alternatives). The owner also confirmed
+   answer 4's z-up over the sample rig's y-up: Phase 3's walker rig is drawn z-up.
 
 ## Implementation log
 
