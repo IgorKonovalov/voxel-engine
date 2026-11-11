@@ -2979,7 +2979,9 @@ pub struct BakeQueue {
     /// The block a fade shows this step, kept between steps.
     fade_scratch: Vec<u32>,
     /// Chunks that entered the view cone or the near shell with no full block: the step they
-    /// entered at, and whether a block has landed since.
+    /// entered at, and whether a block has landed since. It can hold most of the mirror's full
+    /// chunks, so it is pruned to the chunks the mirror holds full at each census, not at every
+    /// step: an entry whose chunk left and came back between two censuses keeps its old step.
     entered: std::collections::HashMap<[i32; 3], (u64, bool)>,
     /// Steps from entering to the first block and to the full block, since the queue started.
     ages_first: Vec<u32>,
@@ -3295,7 +3297,6 @@ impl BakeQueue {
         self.digs.retain(|c, _| held(c));
         self.reach.retain(held);
         self.listed.retain(|c, _| held(c));
-        self.entered.retain(|c, _| held(c));
         self.take_boxes(run, store)?;
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
@@ -3842,6 +3843,8 @@ impl BakeQueue {
         let census = self.census_every_opening || std::mem::take(&mut self.census_due);
         if census {
             let t = stopwatch();
+            self.entered
+                .retain(|c, _| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c)));
             self.view_census(eye, view, &cands);
             self.view_reach_census(run, eye, view, &cands);
             self.stats.census_ms = seconds_since(t) * 1e3;
