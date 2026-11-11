@@ -277,7 +277,8 @@ it lives outside the `gpu_` binaries.
     1 free.
   - A `Play` under the counting allocator does 0 allocations and 0 frees. A ring-out that
     resets the network does no single zeroing of more than one block's worth of lines, which
-    is asserted on a counter the mixer exposes to tests.
+    is asserted on a counter the mixer exposes to tests. (Raised to two blocks' worth, owner
+    answer 3.)
   - The existing mixer, reverb and balance tests produce the same samples. Where a test compares
     output, it compares exactly, or within the tolerance it already uses.
   - `cargo bench -p vxe-audio --bench mixer` is read before and after, with the machine and
