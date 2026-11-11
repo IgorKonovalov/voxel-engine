@@ -340,7 +340,8 @@ for them. The release profile's build time on CI is recorded there too.
 | 4: the launcher window, runs, logs and the zip | dev | done; "run all" + zip reading taken 2026-11-11 through `--auto` | 6fa1f39 |
 | 5: the release archives on CI | dev | files and local checks done; done-when's workflow_dispatch run owed after the merge to main (owner, 2026-11-11: dispatch release.yml on main, no push of the plan branch) | 12ffee5 |
 | readings | dev | Phases 1, 2, 4 windowed readings written | e0b7d91 |
-| fix pass: B1, M1 of the phase review | dev | done; quick tier, clippy, fmt, deny, doc scripts (readings log) | committed with this row |
+| fix pass: B1, M1 of the phase review | dev | done; quick tier, clippy, fmt, deny, doc scripts (readings log) | fdfb04b |
+| merge of main at b017d93 (Plan 0061, v0.48.0) | dev | merged 57093ee (Cargo.toml conflict); gate tier green; B1 checked on a real `--auto` report (readings log) | committed with this row |
 | 6: the owner's runs on Linux and Windows | human | not started | |
 
 ### Notes
