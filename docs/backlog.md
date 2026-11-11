@@ -101,26 +101,6 @@ Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value,
 emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
 Alternative F, picked up only if a reading or the owner's flight asks.
 
-### Render settings surface and named quality profiles
-
-Parked 2026-10-22. Every mechanism choice (shadow walk, lighting tier, sampler, look, upscaler,
-later sky, clouds, far field) should be a documented engine setting a consumer picks, with named
-profiles (floor, portable, performance) the roadmap promises. Today `Frame` exposes lighting,
-resolution, look and LOD at runtime; construction-time settings (mirror budget, residency) are
-separate and live-versus-restart is undocumented. What it takes: a best-practices rule that a new
-mechanism lands as a documented setting, and a plan for the settings surface and the profiles.
-The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
-Plan 0035's allotment table (2026-11-10) spends all of section 2's 2.1 ms Headroom on the floor
-across Plans 0035, 0036 and 0037, leaving none for M8 fog or game work until this plan arbitrates.
-The static performance review of 2026-11-10 recommends drafting it **before Plan 0058's lane
-starts**, not after Plan 0045: summed from the plans' own guesses the cave frame fits the
-projected floor only at the low end and the outdoor frame not at all, and Plan 0058's eight
-lights land with no cap or profile. **Agreed (owner, 2026-11-10): the draft is written before
-Plan 0058's lane starts; its implementation stays where the Sequence has it.** Taken by
-[Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
-and ADR-0055 (drafted 2026-11-11, awaiting go), with the upscale line, the bake slice's line,
-the frame ledger's rewrite and the product cap below as its open question 4.
-
 ### Remove `own`, the engine's own upscaler
 
 Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
@@ -128,11 +108,13 @@ opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of
 and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
 its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
 ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
-Plan 0061's picks; it runs after Plan 0045 and before M10.
+Plan 0061's picks; it runs after Plan 0069 (owner, 2026-11-11) and before M10.
 Noted 2026-11-10 (static performance review): `own` is the only upscaler on record under or near
 section 2's 1.5 ms upscale line (0.93 to 1.3 ms at the owner's window against FSR 2's 2.9 ms) and
 reads 6 to 7 ms less on the Radeon. Removing it before the profile plan arbitrates removes the
 slow adapter's cheaper arm; the removal plan should say what the portable profile uses instead.
+Answered 2026-11-11 (owner, Plan 0069's answer 2): Portable uses FSR 2 at 720p output, and the
+removal plan goes ahead after Plan 0069.
 
 ### Far normal range: the owner picked `[1, 2]`
 
@@ -196,8 +178,8 @@ the baked light's shader waste and the queue's scan to
   its delta.
 
 Pick up: at the render-profile plan's interview, or at the next close that touches the line.
-Plan 0069 (draft, 2026-11-11) proposes the upscale, bake-slice and split lines under its
-"Budgets" and rewrites the ledger at its close.
+Plan 0069 (approved 2026-11-11, its answer 4) proposes the upscale, bake-slice and split lines
+under its "Budgets", sets them at its close from the readings and rewrites the ledger then.
 
 ### The a-trous under the baked light: fewer iterations, or none
 

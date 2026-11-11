@@ -1,6 +1,7 @@
 # 0069: Render settings: one surface, an apply class per field, and named quality profiles
 
-> **Status:** draft, awaiting owner go
+> **Status:** approved (owner, 2026-11-11: "go with recommended on all"; every open question
+> took its recommendation, recorded under "Owner answers")
 > **Created:** 2026-11-11
 > **Milestone:** M10's first plan (`docs/roadmap.md`, M10 "Order": the render-profile plan that
 > holds M10 against the budget), and the roadmap's decisions row "Floor, profiles and scene
@@ -11,11 +12,15 @@
 > and named quality profiles"); the static performance review of 2026-11-10, which asked for this
 > draft before Plan 0058's lane (owner agreed the same day); the Radeon's GPU frame, which Plans
 > 0065 and 0067 left here.
-> **Starts after:** Plan 0045 has closed (`docs/plans/README.md`, Sequence step 6), so Plans
-> 0058, 0061, 0067 and 0068 are on main and their settings exist. The architect re-reads Phases
-> 1 to 3 against that tip before the lane starts, since 0045 moves `marcher.rs` apart.
-> **Drafted with the owner away** (2026-11-11 overnight): every open point carries a recommended
-> default, and the questions are under "Risks & open questions".
+> **Starts after:** Plans 0045, 0058 and 0044 have closed (`docs/plans/README.md`, Sequence;
+> 0045 moved ahead of 0058 and 0044's render phases, owner 2026-11-11), so Plans 0058, 0061,
+> 0067 and 0068 are on main and their settings exist. The architect re-reads Phases 1 to 3
+> against that tip before the lane starts, since 0045 moves `marcher.rs` apart.
+> **Drafted with the owner away** (2026-11-11 overnight); the owner took every recommendation
+> the same evening ("Owner answers").
+> **Owner, 2026-11-11, Plan 0061's window:** FSR 2 at internal scale 1 looked "fine, maybe even
+> a bit better". Offered as a quality setting, not the default: Phase 4 reads it as a candidate
+> profile value (`High`, Floor at scale 1, or Performance's scale) and Phase 5 places it.
 
 ## TL;DR
 
@@ -179,7 +184,9 @@ figures (a hand-built box on lavapipe renders a few dozen frames at 192 x 108 in
 - **Owner skill:** dev
 - **What:** the per-pass GPU time, the frame CPU and the reserved VRAM of each profile on the
   RTX and the Cezanne, at the vein, the hall and the castle, at each profile's output size, and
-  the portable profile's two upscaler arms if `own` is still in the tree.
+  the portable profile's two upscaler arms if `own` is still in the tree. A candidate column,
+  `High` (Floor with `scale` 1, FSR 2; the owner's Plan 0061 window), is read beside them on
+  both adapters.
 - **Files touched:** `docs/plans/logs/0069.md`.
 - **Done when:** a table per adapter in the readings log, each cell the median of three quiet
   rounds of `flythrough --level --seed 1 --headless --render WxH --frames 600 --adapter
@@ -192,9 +199,10 @@ figures (a hand-built box on lavapipe renders a few dozen frames at 192 x 108 in
 - **What:** the owner flies each profile on both adapters and picks.
 - **Done when:** the owner's words are in the readings log for: (a) does each profile hold a
   stable image (no flicker or aliasing) at walk and at a slow pan, per adapter; (b) the portable
-  profile's upscaler (FSR 2 or `own`, if both exist); (c) portable's lamp bounce, translucent
-  layers and light cap; (d) the performance profile's shape (open question 3); (e) the frame
-  lines (open question 4); (f) any field whose value a profile should change.
+  profile's upscaler confirmed as FSR 2 (answer 2); (c) portable's lamp bounce, translucent
+  layers and light cap; (d) the `High` candidate (FSR 2 at scale 1): a fourth profile, or not
+  offered (Performance stays Floor at scale 2, answer 3); (e) the frame lines (answer 4);
+  (f) any field whose value a profile should change.
 
 ### Phase 6: the picks into the profiles
 - **Owner skill:** dev
@@ -245,7 +253,7 @@ impl Frame {
 |---|---|---|---|
 | output hint | 1920 x 1080 | 1280 x 720 | none (the display) |
 | `scale` | 1.5 | 1.5 | 2 |
-| `upscaler` | FSR 2 | FSR 2 (open question 2) | FSR 2 |
+| `upscaler` | FSR 2 | FSR 2 (answer 2) | FSR 2 |
 | `lighting_resolution` | half | half | half |
 | `look.translucent_layers` | 4 | 2 | 4 |
 | Plan 0058's light cap | 8 (`MAX_LIGHTS`) | 4 | 8 |
@@ -256,14 +264,14 @@ impl Frame {
 
 The far normal, the shadow walk, the filter and FSR 2's own settings stay at the picks of Plans
 0056 and 0061 in every profile: they are image-stability choices, and no profile trades those
-(open question 1). Portable's residency (three quarters of each radius) is a guess for
+(answer 1). Portable's residency (three quarters of each radius) is a guess for
 a 9 GB shared-memory class, to be read in Phase 4.
 
 ## Budgets
 
 `docs/nfr.md` section 2's split becomes **the Floor profile's** budget (60 fps at 1080p output on
-the floor class). Proposed lines, for the close to set from Phase 4's and 7's readings (open
-question 4): streaming CPU 1.0, primary rays 3.0, lighting 4.0 (6.0 today; the baked store and
+the floor class). Proposed lines, for the close to set from Phase 4's and 7's readings (answer
+4): streaming CPU 1.0, primary rays 3.0, lighting 4.0 (6.0 today; the baked store and
 the half tier read about 1 ms of light pass on the RTX), denoise 2.0, **the bake's slice 1.0**
 (new; the backlog's "no line"), upscale and post 3.0 (FSR 2 owns it), headroom 2.6 (2.1 today);
 sum 16.6 ms. Portable gets a column at 33.3 ms (30 fps, the low end of the roadmap's 30 to 60) at
@@ -283,33 +291,28 @@ lights would add about 1.1 to 1.8 ms at its internal size (by the same pixel rat
 quiet rounds, labelled by adapter. VRAM: the mirror's and the frame's reserved bytes per profile
 (`docs/nfr.md` section 3), read from the `--settings` run's log.
 
-## Risks & open questions
+## Owner answers
 
-The owner was away at the draft; each question has the draft's default.
+Owner, 2026-11-11 (~21:25, "go with recommended on all"): recommendation taken on each.
 
-1. **May a profile trade image stability for speed?** (a) No: profiles change resolution,
-   radius, layers, light count and bounce, never the far normal, the shadow walk, the filter or
-   the temporal settings (recommended, "stable image first"); (b) yes, per profile.
-2. **Portable's upscaler.** (a) FSR 2 at 720p output, the projection about 4 ms on the Cezanne,
-   and the `own` removal plan goes ahead after this one (recommended: one upscaler to keep
-   stable); (b) `own` for portable, which keeps it alive and the removal plan is dropped. The
-   window decides; this plan runs before the removal plan so the arm still exists (Phase 4).
-3. **What is Performance?** (a) Floor at scale 2, for a fast machine past 60 fps (recommended,
-   the roadmap's words); (b) a fourth, `High`, above Floor (FSR 2 at 1, the full lighting tier)
-   for the RTX class, as Plan 0061's "FSR 2 at 1 as a quality setting" asks; (c) both.
-4. **The frame lines.** (a) Section 2's split is Floor's, rebalanced as proposed under "Budgets",
-   set at the close from readings (recommended); (b) keep today's lines and let each profile
-   record its misses.
-5. **When does it run?** (a) Sequence step 6, after Plan 0045, as agreed (recommended: 0045
-   moves the files `apply_settings` edits); (b) right after Plan 0058, for the Radeon sooner,
-   paying a rebase across 0045's split.
-6. **Plan 0058's cap:** 0058 lands with `MAX_LIGHTS` 8 as the bound; this plan adds the
-   per-profile cap as a `Live` field at or under it, Portable 4 (a guess). Nothing in 0058
-   changes (recommended); the alternative, 0058 adding the field itself, widens its lane.
-7. **The rule.** At approval the architect adds to `.claude/skills/architect/references/best-practices.md`:
-   "A new render mechanism lands as a `RenderSettings` field with its class and each profile's
-   value", gated by Phase 2's test (recommended); M10's plans each gain a "Profile rows" line at
-   their re-read.
+1. **A profile never trades image stability for speed.** Profiles change resolution, radius,
+   layers, light count and bounce, never the far normal, the shadow walk, the filter or the
+   temporal settings ("stable image first").
+2. **Portable uses FSR 2 at 720p output**, and the plan removing `own` goes ahead after this
+   one. Phase 4 still reads the `own` arm if it is in the tree; the window confirms.
+3. **Performance is Floor at scale 2**, for a fast machine past 60 fps. FSR 2 at scale 1 (the
+   owner's Plan 0061 window, the same day) is read in Phase 4 as the `High` candidate.
+4. **The frame lines are rebalanced as proposed under "Budgets"** and set at the close from
+   the readings; Portable gets a 33.3 ms column.
+5. **The plan runs after Plan 0045** (which moved ahead of Plans 0058 and 0044's render phases
+   the same day; this plan stays after all three).
+6. **Plan 0058 is unchanged.** It lands with `MAX_LIGHTS` 8 as the bound; this plan owns the
+   per-profile cap, a `Live` field at or under it, Portable 4 (a guess).
+7. **The rule** is in `.claude/skills/architect/references/best-practices.md` (GPU): a new
+   render mechanism lands as a `RenderSettings` field with its apply class and each profile's
+   value, gated by Phase 2's test. Each M10 plan gains a "Profile rows" line at its re-read.
+
+## Risks
 
 **Risks.** Two ways to set a knob (the setters and the struct) can drift: Phase 1's no-op test
 and Phase 2's class tests bound it, and folding the setters in is a followup. A field whose class
@@ -320,13 +323,13 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 
 ## What this plan does NOT do
 
-- Remove `own` (its own owed plan, after this one; open question 2).
+- Remove `own` (its own owed plan, after this one; answer 2).
 - Pick a profile from the adapter, benchmark at start, or scale the resolution per frame
   (ADR-0055 Alternative B; a start-up suggestion is a later idea).
 - Serialise settings to a file, or add a game options screen.
 - Rebuild the mirror or the streamer live in the fly-through: `F4` applies `Live` and `Settle`
   and names the rest.
-- Settings for M10's mechanisms: each M10 plan adds its own rows (open question 7).
+- Settings for M10's mechanisms: each M10 plan adds its own rows (answer 7; `.claude/skills/architect/references/best-practices.md`, GPU).
 - Change any mechanism's default: Floor is today's look until the window picks.
 
 ## Implementation log
