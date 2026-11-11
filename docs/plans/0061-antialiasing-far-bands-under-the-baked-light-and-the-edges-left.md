@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** in-progress (Phase 5 landed; awaits the close review), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
+> **Status:** in-progress (close review 2026-11-11: not clean, two majors; a dev fix pass is owed, see Close review), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -731,3 +731,74 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   3.19 ms, over the 3.0 ms denoise line.
 - FSR 2 at 1 (`--far-normal 3,9`) as a quality setting: "looks fine, maybe even a bit better";
   Plan 0069's profiles take it.
+
+## Close review (2026-11-11, architect, fresh session)
+
+On the lane at dd656c6 (78b3d12 with main d6d205a merged; docs only came in, so the dev's tip gate
+on a2d289d stands and was not rerun). **Verdict: not clean.** The mechanism, the toggles, the
+defaults and the emitter cap's removal match the amended plan and the owner's window, but the
+picked defaults ship without the gate tests that defend ADR-0049's "near faces to the bit", and
+Phase 5's done-when 4 is open on the hall golden. A dev fix pass is owed; the close ceremony
+follows it.
+
+**Major**
+
+1. **Phase 2 done-whens 2 and 2b were never written as tests**, and Phase 5 lands both bits as the
+   fly-through's defaults. `the_store_read_by_normal_leaves_near_faces_alone` and
+   `the_face_weights_leave_near_faces_alone` exist only as rows of `reading::staircase_read`
+   (`apps/flythrough/tests/gpu_bake.rs`, run by hand); no gate test asserts that the defaults'
+   read and weights leave a near face, or a frame with the far normal off, as the library's
+   `Face` / `Normal` render it. Phase 5 done-when 4 ("none moved") rests on those readings. The
+   read's guard is a float compare (`any(rec.n != nf)`, `temporal.wgsl`) on a decoded normal, and
+   the face term's renormalisation (`sum / weight`) is exact only if that compare holds, which is
+   the claim to defend. Plan 0058 rewrites `temporal.wgsl` and `composite.wgsl` next. The Notes
+   disclose only that done-when 2's "three equal values" sub-check was not built. Fix: the two
+   tests in the gate (see the fix-pass brief). The "three equal values within 1e-5" sub-check is
+   waived: the gate staircase test's match to the CPU `by_normal` within 1 % covers the
+   renormalised mix.
+2. **Phase 5 done-when 4 is open: `showcase_hall.png` is not re-blessed**, though its render now
+   takes the defaults' read and weights (`gpu_golden.rs`, `showcase_hall`), so the image moves by
+   this plan. The done-when names its run by name with `--run-ignored only`; the orchestrator's
+   no-soak instruction covered tiers, not a done-when's named test. Its hue-class failure
+   (`[336, 0, 209, 121]`, ember 0) predates the plan (backlog, "A stale soak golden") and does not
+   hold the close: if it persists after the re-bless, the log gives the figures and the backlog
+   entry narrows to it. The settle rig (`tests/support/settle.rs`) also took the defaults, so
+   `gpu_settle`'s soak tests run once by name too.
+
+**Minor**
+
+3. Phase 5 done-when 5's cost is Phase 2's `nf` against `fn` arms on c327f6a's code, not re-read on
+   Phase 5's binary. Accepted: the only code difference is the emitter cap's removal (a cap of 0,
+   no branch taken), and the arms are the defaults' own. No re-read.
+4. The best arm by the plan's rule is `nnh` at `[2, 6]` (edge ratio 1.09); the owner picked `nfh`
+   (1.29), the weights the amendment asked for. The owner's pick stands; ADR-0049's Outcome
+   records both. The pick's far-crop energy is 50 to 80 % under `R face` (the plan's blur mark
+   against that reference, within 5 % of `R normal`); the owner's "a bit too soft" is the same
+   reading by eye, kept in Followups.
+5. RADV RENOIR, the vein: the a-trous pass reads 3.19 ms with the face weights, over the 3.0 ms
+   denoise line (2.70 without). Routed at the close to Plan 0067 (the frame's cost) and Plan 0069
+   (profiles: a per-adapter default for the weights is its question); the line's miss is in
+   `docs/nfr/02-frame-budget.md`.
+6. Phase 3's full-light, `--jitter-phases 8`, `--sharpen 0.25` and level arms were not run
+   (disclosed; orchestrator's call before the window, and the owner's verdict made them moot).
+   Accepted; the edge knobs stay unread, which the owner's (c) and (d) leave as is.
+
+**Nit**
+
+7. The staircase tests live in `gpu_bake.rs`, not `gpu_look.rs` (disclosed: the CPU replica of
+   the store read lives there). Accepted.
+8. `README.md` gained the two flag rows and the FSR 2 at 1 quality setting outside Phase 5's Files
+   touched (disclosed). Accepted; the README is the flags' home.
+9. `atrous.wgsl`'s header comment, "(the normals march.wgsl's `filter_normal`s)", reads badly and
+   overruns the block's width; reword in the fix pass.
+
+**Bookkeeping owed at the close (architect):** Status `done` and the move to `done/`; the index
+rows; the roadmap's M2 line; ADR-0049 accepted with an Outcome (the pick, the weight rule, the
+best-by-rule arm, the cost), and Outcomes on ADR-0042 (`[2, 6]` under the read) and ADR-0034 (the
+slow-pan verdict: no artifacts at 1.1 and 4.5 deg/s at the pick; FSR 2 at 1 a quality setting);
+`CHANGELOG.md` (the two flags, the defaults, `--emitter-cap` gone); the Radeon a-trous routing to
+Plans 0067 and 0069; v0.48.0. `node scripts/velocity.mjs`: the last 14 days 538 commits over 14
+active days, 18 plans closed; commits per active day 0.50x the window before (for the owner, not
+this plan). `node scripts/loc.mjs`: total 42,772 / 50,313 / 14,420 / 5,422 / 73,142; functional
+48,194, test : code 1.18; `apps/flythrough/src/main.rs` heads the largest files at 9443 lines
+(+249 here), Plan 0045's.
