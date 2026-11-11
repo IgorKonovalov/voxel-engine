@@ -46,6 +46,15 @@ the gate, but costs a plan of test rewrites and moves their goldens); **a golden
 other flythrough GPU test to soak, which drops the CPU-visible bars too); **no GPU test per
 phase** (a render phase would reach the tip blind).
 
+> **Amended 2026-11-11 (owner), the close review's two calls.** The owner took the recommended
+> option on both (readings log, Close review):
+> 1. **The four flippers stay in the gate.** A test that read 5.9 to 10.0 s in the first quiet
+>    run and 10.8 to 13.1 s after is not marked (Risks, Load).
+> 2. **`castle_vector` and `showcase_vector` stay in the gate.** The 10 s line applies to the
+>    lavapipe group only; a CPU test runs beside that group and keeps its Windows arm. The
+>    cross-platform generation vectors are not traded for gate time. `docs/nfr.md` section 7
+>    says so.
+
 ## Implementation phases
 
 ### Phase 1: `--binaries`, the 10 s line in the scripts

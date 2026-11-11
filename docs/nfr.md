@@ -343,7 +343,9 @@ Every reading against these budgets, with its machine and commit, is in
   holds no lock; gpu under 10 min wall; gate under 12 min wall; **no single gate test over 10 s
   on the dev reference's lavapipe, or over 60 s on CI's Linux arm** (the lavapipe line was
   30 s until 2026-11-10; the owner lowered it to bring the gate under 12 min, Plan 0066). A
-  test over the line is marked `#[ignore = "soak"]`; the soak tier has no budget, runs weekly
+  lavapipe test over the line is marked `#[ignore = "soak"]`; a CPU test over it stays in the
+  gate on both arms, since it runs beside the lavapipe group and the cross-platform vectors
+  need the Windows arm (owner, 2026-11-11); the soak tier has no budget, runs weekly
   in CI, and the close review runs the soak tests of the crates its plan changed. `node scripts/test-times.mjs <log>` reads a run logged
   with `--status-level pass` and names the tests over the line.
   **Reading (Plan 0057 close review, 2026-11-05, bb5fa9d with the fix pass and main merged, 731 tests, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, load 0.93 at the start and 2.03 at the end, nothing else running):** gate **1300.7 s, over the 12 min proposal**. Earlier the same day, with reads beside it, 1702.5 s, 730 tests, load 1.77 to 1.85; dev's run at 2de29c6 924.7 s. Sum of tests about 1636 s, `flythrough::settle` the largest at 358 s over 37 tests, then `golden` 218 s, `look` 182 s. Over the 30 s line: `a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips` 40.4 s (69.1 s in the earlier run), `a_dug_hole_settles_within_the_bar` 31.8 s.
