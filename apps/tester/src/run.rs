@@ -117,6 +117,28 @@ pub fn flythrough_beside(exe: &Path) -> PathBuf {
     exe.with_file_name(format!("flythrough{}", std::env::consts::EXE_SUFFIX))
 }
 
+/// The child `exe args` started with its current directory at `root`, the report folder, so
+/// the arguments name folders inside it relative to it and no absolute path reaches the
+/// child's output.
+pub fn child_command(exe: &Path, args: &[String], root: &Path) -> Command {
+    let mut c = Command::new(exe);
+    c.args(args).current_dir(root);
+    c
+}
+
+/// The line `tester.log` keeps for a child: the executable's file name, not its path (which
+/// names the folder the tester unpacked into, usually under their home), then the arguments,
+/// which [`child_command`] keeps relative to the report folder.
+pub fn logged_command(exe: &Path, args: &[String]) -> String {
+    let name = exe
+        .file_name()
+        .map_or_else(|| "?".to_owned(), |n| n.to_string_lossy().into_owned());
+    std::iter::once(name)
+        .chain(args.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// How a run ended.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
@@ -283,14 +305,32 @@ impl ReportDir {
             .join(format!("{:02}-{}-{}", self.runs, scene.name(), mode.name()))
     }
 
-    /// Zips the folder to `<root>.zip` beside it, its entries under the folder's name.
+    /// `path` (inside the folder) relative to the root, as a child started there by
+    /// [`child_command`] reads it; `path` itself when it is not inside.
+    pub fn relative(&self, path: &Path) -> PathBuf {
+        path.strip_prefix(&self.root)
+            .map_or_else(|_| path.to_path_buf(), Path::to_path_buf)
+    }
+
+    /// Zips the folder to `<root>.zip` beside it, its entries under the folder's name, with
+    /// the user's home folder ([`crate::zip::home_dir`]) written `~` in every entry.
     pub fn zip(&self) -> io::Result<PathBuf> {
+        self.zip_scrubbing(crate::zip::home_dir().as_deref())
+    }
+
+    /// [`ReportDir::zip`] with `home` the folder to write `~`; `None` scrubs nothing.
+    pub fn zip_scrubbing(&self, home: Option<&str>) -> io::Result<PathBuf> {
         let name = self
             .root
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let files = crate::zip::collect(&self.root, &name)?;
+        let mut files = crate::zip::collect(&self.root, &name)?;
+        if let Some(home) = home {
+            for (_, bytes) in &mut files {
+                *bytes = crate::zip::scrub_home(bytes, home);
+            }
+        }
         let out = self.root.with_file_name(format!("{name}.zip"));
         let mut f = io::BufWriter::new(File::create(&out)?);
         crate::zip::write_zip(&mut f, &files)?;

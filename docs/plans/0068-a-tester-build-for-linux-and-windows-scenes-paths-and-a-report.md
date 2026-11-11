@@ -339,7 +339,8 @@ for them. The release profile's build time on CI is recorded there too.
 | 3: the system report and Windows readings | dev | done; Windows `peak_rss_bytes` owed to Phase 6 | 32ca789 |
 | 4: the launcher window, runs, logs and the zip | dev | done; "run all" + zip reading taken 2026-11-11 through `--auto` | 6fa1f39 |
 | 5: the release archives on CI | dev | files and local checks done; done-when's workflow_dispatch run owed after the merge to main (owner, 2026-11-11: dispatch release.yml on main, no push of the plan branch) | 12ffee5 |
-| readings | dev | Phases 1, 2, 4 windowed readings written | committed with this row |
+| readings | dev | Phases 1, 2, 4 windowed readings written | e0b7d91 |
+| fix pass: B1, M1 of the phase review | dev | done; quick tier, clippy, fmt, deny, doc scripts (readings log) | committed with this row |
 | 6: the owner's runs on Linux and Windows | human | not started | |
 
 ### Notes
@@ -369,6 +370,12 @@ for them. The release profile's build time on CI is recorded there too.
   (no `VXE_COMMIT` locally); the tour's banner, help panel and input hand-over were not seen.
 - The saved report's `tester.log` holds each command line with absolute paths under the home
   directory (the user name); the plan's Risks say the report holds no paths. Not changed.
+- Fix pass (phase review B1, M1; commit of the fix-pass row): the launcher starts its children
+  in the report root with relative paths, `tester.log` names executables by file name
+  (`vxe_tester::run::{child_command, logged_command}`), and the zip writes the home folder `~`
+  (`vxe_tester::zip::scrub_home`); the report is made before the display size is read.
+  `apps/flythrough/src/main.rs`'s `report: wrote` line is unchanged: it prints the relative
+  `--report` it is handed. `tester.log`'s `system:` exit line prints `exit N`.
 - The zip's entries carry the DOS date 1980-01-01 00:00.
 - `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
   launcher uses, not a parser private to the test.

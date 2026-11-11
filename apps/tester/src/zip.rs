@@ -1,7 +1,9 @@
 //! A stored-only zip writer: every entry kept as its bytes (method 0), with its CRC-32, a local
 //! header before it and a central directory after the last, which Windows Explorer, `unzip` and
 //! Python's `zipfile` read. Names are UTF-8 (general-purpose bit 11); no zip64, so an archive
-//! and each entry stay under 4 GiB, and no more than 65 535 entries.
+//! and each entry stay under 4 GiB, and no more than 65 535 entries. [`scrub_home`] writes the
+//! user's home folder as `~` in an entry's bytes, for text the launcher does not control (a
+//! driver's message, a panic's).
 
 use std::io::{self, Write};
 
@@ -90,6 +92,61 @@ pub fn write_zip(out: &mut impl Write, files: &[(String, Vec<u8>)]) -> io::Resul
     dir.extend_from_slice(&dir_at.to_le_bytes());
     dir.extend_from_slice(&0u16.to_le_bytes()); // comment
     out.write_all(&dir)
+}
+
+/// The user's home folder: `USERPROFILE` on Windows, `HOME` elsewhere; `None` when unset.
+pub fn home_dir() -> Option<String> {
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var(key).ok().filter(|h| !h.is_empty())
+}
+
+/// `bytes` with every occurrence of `home` written `~`: `home` as given, with its separators
+/// swapped (`/` for `\` and back), and with each `\` doubled as a JSON string escapes it. A
+/// trailing separator on `home` is ignored; a `home` with fewer than three characters besides
+/// its separators (`/`, `C:\`) scrubs nothing, as it would match far more than the folder.
+pub fn scrub_home(bytes: &[u8], home: &str) -> Vec<u8> {
+    let home = home.trim_end_matches(['/', '\\']);
+    if home.chars().filter(|c| !matches!(c, '/' | '\\')).count() < 3 {
+        return bytes.to_vec();
+    }
+    let swapped: String = home
+        .chars()
+        .map(|c| match c {
+            '/' => '\\',
+            '\\' => '/',
+            c => c,
+        })
+        .collect();
+    let mut out = bytes.to_vec();
+    // The doubled forms first: a single `\` form never matches inside them, so order only
+    // matters for which spelling is left.
+    for form in [
+        home.replace('\\', "\\\\"),
+        swapped.replace('\\', "\\\\"),
+        home.to_owned(),
+        swapped,
+    ] {
+        out = replace_all(&out, form.as_bytes(), b"~");
+    }
+    out
+}
+
+fn replace_all(hay: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return hay.to_vec();
+    }
+    let mut out = Vec::with_capacity(hay.len());
+    let mut i = 0;
+    while i < hay.len() {
+        if hay[i..].starts_with(needle) {
+            out.extend_from_slice(with);
+            i += needle.len();
+        } else {
+            out.push(hay[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Every file under `root`, depth first in name order, as (the path relative to `root` with

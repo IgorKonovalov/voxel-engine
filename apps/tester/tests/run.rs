@@ -9,8 +9,8 @@ use flythrough::path::{PathMode, Scene};
 use vxe_app::KeyCode;
 use vxe_tester::menu::{Command as MenuCommand, Menu};
 use vxe_tester::run::{
-    Outcome, Output, ReportDir, RunSpec, Scale, TAIL_LINES, fly_args, flythrough_beside,
-    report_name, run_child, utc_stamp,
+    Outcome, Output, ReportDir, RunSpec, Scale, TAIL_LINES, child_command, fly_args,
+    flythrough_beside, logged_command, report_name, run_child, utc_stamp,
 };
 
 fn scratch(name: &str) -> PathBuf {
@@ -224,6 +224,10 @@ fn fake_child() {
     ) else {
         return;
     };
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    println!("fake args: {}", args.join(" "));
+    let cwd = std::env::current_dir().expect("current dir");
+    println!("fake cwd: {}", cwd.display());
     for i in 0..15 {
         println!("fake line {i}");
     }
@@ -326,6 +330,106 @@ fn a_run_reads_ok_with_its_p50_or_failed_with_its_exit_and_tail_and_the_report_s
         assert!(names.contains(&want.as_str()), "{want} not in {names:?}");
     }
     assert!(std::fs::metadata(&zip).expect("zip").len() > 0);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// No absolute path of the folder a report is made under reaches the saved zip: `tester.log`
+/// names executables by file name and folders relative to the report root, the child runs in
+/// the report root with a relative `--report` (the fake prints both), and the zip writes the
+/// base, standing in for the home folder, `~` in what the child printed of its own accord.
+#[test]
+fn the_saved_report_holds_no_absolute_path_of_its_base() {
+    let base = scratch("noleak");
+    let base_str = base.to_str().expect("a UTF-8 temp folder").to_owned();
+    let name = report_name("0.0.0", "test", &utc_stamp(1_762_867_200));
+    let mut report = ReportDir::create(&[base.join("reports")], &name).expect("report folder");
+
+    // The launcher's system child: logged by file name, its output file relative.
+    let tester = base.join("bin").join("vxe-tester");
+    let sys_args = ["--system-json", "system.json", "--displays"].map(str::to_owned);
+    report.log(&format!("system: {}", logged_command(&tester, &sys_args)));
+
+    let spec = RunSpec {
+        scene: Scene::Cave,
+        mode: PathMode::Bench,
+        output: Output::Hd720,
+        scale: Scale::OneHalf,
+    };
+    let dir = report.next_run(spec.scene, spec.mode);
+    let rel = report.relative(&dir);
+    assert_eq!(rel, Path::new("runs").join("01-cave-bench"));
+    let args = fly_args(&spec, None, &rel);
+    let fly = flythrough_beside(&tester);
+    report.log(&format!("run: {}", logged_command(&fly, &args)));
+
+    // The fake child takes the fly-through's arguments after libtest's `--` (as filters that
+    // match no other test) and writes its run.json through the relative folder.
+    let exe = std::env::current_exe().expect("test binary");
+    let mut child_args: Vec<String> = [
+        "fake_child",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1",
+        "--",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    child_args.extend(args.iter().cloned());
+    let mut cmd = child_command(&exe, &child_args, &report.root);
+    cmd.env("VXE_FAKE_CHILD", "ok").env("VXE_FAKE_DIR", &rel);
+    let outcome = run_child(cmd, &dir).expect("runs");
+    assert!(matches!(outcome, Outcome::Ok { .. }), "{outcome:?}");
+
+    let tester_log = std::fs::read_to_string(report.root.join("tester.log")).expect("tester.log");
+    let rel_s = rel.display().to_string();
+    let fly_name = format!("flythrough{}", std::env::consts::EXE_SUFFIX);
+    assert_eq!(
+        tester_log,
+        format!(
+            "system: vxe-tester --system-json system.json --displays\n\
+             run: {fly_name} --source cave --tester --path cave --path-mode bench --render 1280x720 \
+             --internal-scale 1.5 --report {rel_s}\n"
+        )
+    );
+    // The child ran in the report root and was handed the relative folder; its own print of
+    // its current directory is the one absolute path, left for the scrub.
+    let log = std::fs::read_to_string(dir.join("log.txt")).expect("log.txt");
+    assert!(
+        log.contains(&format!(
+            "fake args: {} {}\n",
+            child_args[..5].join(" "),
+            args.join(" ")
+        )),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!("fake cwd: {}\n", report.root.display())),
+        "{log}"
+    );
+
+    let zip = report.zip_scrubbing(Some(&base_str)).expect("zip");
+    let bytes = std::fs::read(&zip).expect("zip bytes");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains(&base_str), "the zip names {base_str}");
+    let scrubbed_root = format!(
+        "fake cwd: ~{}",
+        &report.root.display().to_string()[base_str.len()..]
+    );
+    assert!(
+        text.contains(&scrubbed_root),
+        "{scrubbed_root} not in the zip"
+    );
+    // The zip is stored, so its bytes hold every entry's text as written: the three files.
+    let files = vxe_tester::zip::collect(&report.root, &name).expect("collect");
+    let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            format!("{name}/runs/01-cave-bench/log.txt"),
+            format!("{name}/runs/01-cave-bench/run.json"),
+            format!("{name}/tester.log"),
+        ]
+    );
     let _ = std::fs::remove_dir_all(&base);
 }
 

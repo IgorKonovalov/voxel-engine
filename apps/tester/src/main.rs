@@ -3,7 +3,8 @@
 //! With no arguments it opens a small window with the menu (`vxe_tester::menu`): the scene,
 //! benchmark or tour, the output and the internal scale; run, run all benchmarks, save report,
 //! open report folder, quit. Each run starts the fly-through found next to this executable as a
-//! child process (`vxe_tester::run`) and the window shows its state, then its wall p50 and p95,
+//! child process in the report folder, with paths relative to it (`vxe_tester::run`), and the
+//! window shows its state, then its wall p50 and p95,
 //! or its exit code and the log's last lines. The first run or save makes the report folder
 //! under `reports/` beside the executable (the OS's temp directory when that is not writable),
 //! writes its `system.json` and logs every command line and exit code to its `tester.log`;
@@ -26,8 +27,8 @@ use vxe_app::{App, Flow, Gpu, Input, KeyCode, Pacing, ShellConfig, wgpu};
 use vxe_render::{HudColour, HudOverlay};
 use vxe_tester::menu::{Command, Menu};
 use vxe_tester::run::{
-    Outcome, Output, ReportDir, RunSpec, Scale, fly_args, flythrough_beside, report_name,
-    run_child, utc_stamp,
+    Outcome, Output, ReportDir, RunSpec, Scale, child_command, fly_args, flythrough_beside,
+    logged_command, report_name, run_child, utc_stamp,
 };
 use vxe_tester::system::{SystemInfo, adapters, displays};
 
@@ -194,15 +195,19 @@ impl Worker {
             return;
         }
         let status = Arc::clone(&self.status);
+        // The report first: making it writes `system.json`, which finds the display size.
+        if self.report().is_none() {
+            return;
+        }
         let display = self.display;
-        let Some(report) = self.report() else { return };
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
         let dir = report.next_run(spec.scene, spec.mode);
-        let args = fly_args(&spec, display, &dir);
-        report.log(&format!("run: {} {}", fly.display(), args.join(" ")));
+        let args = fly_args(&spec, display, &report.relative(&dir));
+        report.log(&format!("run: {}", logged_command(&fly, &args)));
         lock(&status).busy = Some(format!("running the {words}: Esc in its window ends it"));
-        let mut cmd = Process::new(&fly);
-        cmd.args(&args);
-        let outcome = run_child(cmd, &dir);
+        let outcome = run_child(child_command(&fly, &args, &report.root), &dir);
         let line = match &outcome {
             Ok(o) => format!("{words}: {}", o.row()),
             Err(e) => format!("{words}: did not start: {e}"),
@@ -238,19 +243,21 @@ impl Worker {
 /// needs an event loop of its own), logs the command and its exit, and returns the first
 /// display's size.
 fn write_system(exe: &Path, report: &mut ReportDir) -> Option<[u32; 2]> {
-    let path = report.root.join("system.json");
-    report.log(&format!(
-        "system: {} --system-json {} --displays",
-        exe.display(),
-        path.display()
-    ));
-    let status = Process::new(exe)
-        .arg("--system-json")
-        .arg(&path)
-        .arg("--displays")
+    let args = ["--system-json", "system.json", "--displays"].map(str::to_owned);
+    report.log(&format!("system: {}", logged_command(exe, &args)));
+    let status = child_command(exe, &args, &report.root)
         .stdout(std::process::Stdio::null())
         .status();
-    report.log(&format!("system: exit {status:?}"));
+    report.log(&format!(
+        "system: {}",
+        match status {
+            Ok(s) => s
+                .code()
+                .map_or_else(|| "killed by a signal".to_owned(), |c| format!("exit {c}")),
+            Err(e) => format!("did not start: {e}"),
+        }
+    ));
+    let path = report.root.join("system.json");
     let v = json::parse(&std::fs::read_to_string(&path).ok()?).ok()?;
     let size = v
         .get("displays")?

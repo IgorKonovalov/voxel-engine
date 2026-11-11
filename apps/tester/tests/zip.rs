@@ -131,3 +131,38 @@ print("zipfile ok", len(names))
     assert_eq!(stdout.trim(), "zipfile ok 3");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The scrub writes a home folder `~` in either separator and in its JSON-escaped form, ignores
+/// a trailing separator, leaves text without the home unchanged, and refuses a home too short
+/// to name one folder.
+#[test]
+fn the_scrub_writes_the_home_folder_as_a_tilde() {
+    use vxe_tester::zip::scrub_home;
+    let scrub = |text: &str, home: &str| {
+        String::from_utf8(scrub_home(text.as_bytes(), home)).expect("UTF-8")
+    };
+
+    let unix = "report: wrote /home/tester/vxe/reports/r/run.json\npanicked at /home/tester/x.rs\n";
+    assert_eq!(
+        scrub(unix, "/home/tester"),
+        "report: wrote ~/vxe/reports/r/run.json\npanicked at ~/x.rs\n"
+    );
+    assert_eq!(scrub(unix, "/home/tester/"), scrub(unix, "/home/tester"));
+    // A home given with the other separator still matches.
+    assert_eq!(scrub(unix, "\\home\\tester"), scrub(unix, "/home/tester"));
+
+    let win = "cwd C:\\Users\\Tester\\vxe\nslash C:/Users/Tester/vxe\njson \"C:\\\\Users\\\\Tester\\\\vxe\"\n";
+    assert_eq!(
+        scrub(win, "C:\\Users\\Tester"),
+        "cwd ~\\vxe\nslash ~/vxe\njson \"~\\\\vxe\"\n"
+    );
+    assert_eq!(
+        scrub(win, "C:/Users/Tester"),
+        scrub(win, "C:\\Users\\Tester")
+    );
+
+    // Text without the home is unchanged, and a root or drive is no home to scrub.
+    assert_eq!(scrub("no paths here\n", "/home/tester"), "no paths here\n");
+    assert_eq!(scrub(unix, "/"), unix);
+    assert_eq!(scrub(win, "C:\\"), win);
+}
