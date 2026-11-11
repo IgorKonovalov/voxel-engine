@@ -337,8 +337,8 @@ for them. The release profile's build time on CI is recorded there too.
 | 1: a camera path through the showcase, and its run.json | dev | done; windowed reading owed (live/readings68.sh) | 2704f51 |
 | 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench readings owed (live/readings68.sh) | bffba55 |
 | 3: the system report and Windows readings | dev | done; Windows `peak_rss_bytes` owed to Phase 6 | 32ca789 |
-| 4: the launcher window, runs, logs and the zip | dev | done; "run all" reading owed (live/readings68.sh) | committed with this row |
-| 5: the release archives on CI | dev | not started | |
+| 4: the launcher window, runs, logs and the zip | dev | done; "run all" reading owed (live/readings68.sh) | 6fa1f39 |
+| 5: the release archives on CI | dev | files and local checks done; the workflow_dispatch run owed on main after the merge | committed with this row |
 | 6: the owner's runs on Linux and Windows | human | not started | |
 
 ### Notes
@@ -359,6 +359,11 @@ for them. The release profile's build time on CI is recorded there too.
   files list; the done-when names it) and `vxe-tester --auto` (not in the plan: run all, save,
   quit, for the unattended reading); the report's `system.json` comes from a child
   `vxe-tester --system-json PATH --displays`.
+- Phase 5: the notices are generated in each workflow run (cargo-about 0.9.3), not committed
+  as `dist/THIRD-PARTY-NOTICES.txt`; `dist/about.toml`, `dist/about.hbs` and
+  `dist/DXC-LICENSE.txt` are committed instead. The Linux archive builds on `ubuntu-22.04` and is
+  checked on `ubuntu-latest` (the lavapipe action needs LLVM 21). The done-when's dispatch run
+  waits for main (owner, 2026-11-11).
 - `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
   launcher uses, not a parser private to the test.
 
