@@ -380,12 +380,18 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 | 2: The blended score | dev | done; code and tests at 17a6454 (`wip(render)`, before the owner's answer); the coarse-first stop rule read as firing, so the plain start is `4,tier` (readings log, Phase 2) | 49428d7 |
 | 3: Withdrawing passed work | dev | done; code at 903cbda (`wip(render)`); `withdrawn_samples` counts rounds in flight and the dig test's rig sets `edit_ms` 0 (readings log, Phase 3) | 599dcd5 |
 | 4: The owner's window | human | done 2026-11-11; order and angle weight: no visible difference; withdrawal kept on; step 4 first ran on the RTX (the window ignores `--adapter`), rerun on the Radeon by Mesa's device select (readings log, Phase 4) | 51ad42f |
-| 5: The defaults and the close's readings | dev | done; defaults unchanged in the fly-through (`score 4,tier`, withdrawal on), `QueueOrder::default()` follows them; queue step CPU p50 3.29 / 3.39 ms against the 1.119 ms bar, not met (readings log, Phase 5) | 95ce5ac |
+| 5: The defaults and the close's readings | dev | done; defaults unchanged in the fly-through (`score 4,tier`, withdrawal on), `QueueOrder::default()` follows them; queue step CPU p50 against the 1.119 ms bar not met by the tip or the base after the fix pass (d5c4532, 78740af; readings log, Phase 5) | 95ce5ac |
 
 ### Notes
 
 - Phase 5's queue-step CPU bar is not met: tip p50 3.290 and 3.392 ms against base a8b1a2c's 1.007 and 1.006 ms
   (bar 1.119); p99 under its line (readings log, Phase 5).
+- Fix pass on that bar (readings log, Phase 5, the fix pass): d5c4532 prunes the queue's in-view entries at the census
+  instead of every step (1.31 ms a step); 78740af stops the pre-roll withdrawing (it withdrew about 8 400 jobs of its
+  own coarse pass); test `a_pre_roll_step_withdraws_nothing`. After them the A/B reads tip p50 9.290 and 9.009 ms
+  against base 9.268 and 9.175 ms (p99 tip 19.549 and 18.149, base 19.176 and 18.813 ms). The base read 1.007 and
+  1.006 ms before the reboot in the same protocol: the step is about 1 ms with no opening and about 9 ms with one,
+  and p50 follows the share of steps that open, which moves between runs of the same binary.
 - `bake::QueueOrder::default()` changed to the score with the class as the tier, so the library's default equals the
   fly-through's plain start (Phase 5).
 - `frame_bytes` reads 683 273 268 B on the base and the tip; the plan's 888 490 396 B is not the line this branch's
@@ -407,7 +413,12 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
   doc, comment, index-row, test-tier and plan-size scripts 0.
 - Queue step CPU per frame, autopilot (RTX 3080 Laptop, 2530 x 1378, FSR 2 at 1.5, `--seed 1`, exclusive perf
   lock, started under load 1.5), p50 / p99 / max ms: base a8b1a2c 1.007 / 18.318 / 31.443 and 1.006 / 17.670 /
-  38.234; tip 95ce5ac's tree 3.290 / 18.572 / 30.563 and 3.392 / 18.542 / 45.475.
+  38.234; tip 95ce5ac's tree 3.290 / 18.572 / 30.563 and 3.392 / 18.542 / 45.475. After the fix pass, the same
+  protocol, 11:03 to 11:14: base a8b1a2c 9.268 / 19.176 / 28.603 and 9.175 / 18.813 / 23.393; tip 78740af's tree
+  9.290 / 19.549 / 27.585 and 9.009 / 18.149 / 22.979.
+- Gate after the fix pass (78740af's tree): clippy 0, fmt 0, quick tier 176 passed; gpu tier of the changed crates
+  185 run, 185 passed, 71 skipped, 604.8 s (lavapipe, exclusive perf lock, load 5.19: loaded). The full gate tier
+  not re-run.
 - `frame_bytes` (`autopilot: frame targets`): 683 273 268 B on the base and the tip.
 - Section 7's first frame at the vein and the hall: Phase 2's readings (readings log, Phase 2); not re-read here.
 
