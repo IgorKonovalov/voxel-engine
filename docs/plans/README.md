@@ -42,6 +42,13 @@ Each starts on main after the one before it closes, unless its line says otherwi
      before the window as exploration: image tests are written after the pick, in each plan's
      last dev phase.
 2. **Plan 0061**, antialiasing, from its Phase 2 once 0065 has merged.
+   - **A performance plan, owed, not drafted** (owner, 2026-11-11, after Plan 0060's and
+     0064's windows: "we are not there - either lagging too much, or the picture is
+     unacceptable"; "address performance next after this set of plans"). Drafted from those
+     windows' readings (`docs/plans/logs/0060.md`, `0064.md`) once 0061 lands, ahead of 0058.
+     Starting points: the live queue's step on the main thread (7 to 13 ms of a 7 to 15 ms CPU
+     frame on the RTX), the streaming sync's 40 to 48 ms p99 in flight, a bake budget per
+     second (`docs/backlog.md`), the Radeon's hit and FSR 2 passes (26 and 18.5 ms).
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
    before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
    **The render settings and profiles plan is drafted before this lane starts** (owner,
