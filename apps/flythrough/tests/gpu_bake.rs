@@ -2297,4 +2297,115 @@ mod reading {
             }
         }
     }
+
+    /// The per-pass table (Plan 0065 Phase 1): at each view of `VXE_BAKE_VIEWS` (default vein and
+    /// hall), the brick store (`brick_bake`), FSR 2 at 1.5 to `NATIVE` (internal 1687 x 919),
+    /// sharpness 0.5, the far normal at `VXE_FAR_NORMAL` (`lo,hi`, default the fly-through's
+    /// `2,6`). Per arm (lighting tier half and full, lamp off and on, at rest and walking), 128
+    /// still frames from no history, then 120 timed frames: still, or walking (the eye moves at 14
+    /// voxels a second, 60 frames out and 60 back, its view held: at the vein back along the
+    /// steady flight that ends there, at the hall along the level heading). Each pass's
+    /// mean milliseconds, every pass printed to 3 decimals. Logs to `live/bake-count/passes.txt`.
+    #[test]
+    #[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
+    fn pass_readings() {
+        let mut log = Log::open("passes.txt");
+        let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
+        let far = std::env::var("VXE_FAR_NORMAL")
+            .ok()
+            .and_then(|v| {
+                let (lo, hi) = v.split_once(',')?;
+                Some([lo.parse().ok()?, hi.parse().ok()?])
+            })
+            .unwrap_or([2.0, 6.0]);
+        const FRAMES: usize = 120;
+        for view in read_views() {
+            if !names.split(',').any(|n| n == view.name) {
+                continue;
+            }
+            let (mut rig, _) = view_rig(&view, NATIVE);
+            brick_bake(&mut rig, &view);
+            let timer = vxe_render::marcher::PassTimer::with_passes(
+                &rig.device,
+                &rig.queue,
+                vxe_render::marcher::FRAME_PASSES.len() as u32,
+            )
+            .expect("timestamps on the adapter");
+            let internal = vxe_render::marcher::RenderScale::OneHalf.internal(NATIVE);
+            rig.frame.set_upscaler_kind(
+                &rig.device,
+                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                    sharpness: 0.5,
+                    ..vxe_render::Fsr2Settings::default()
+                }),
+            );
+            rig.frame.set_sizes(&rig.device, internal, NATIVE);
+            rig.frame.set_look(vxe_render::marcher::LookParams {
+                far_normal: far,
+                ..rig.frame.look()
+            });
+            let still = view_camera(&view);
+            // The walk's direction: at the vein back along the steady flight that ends at its
+            // pose (a cube of 5 voxels of air around every step), elsewhere the view's level
+            // heading.
+            let ahead = if view.name == "vein" {
+                let (start, end) = support::settle::flight_path(&flythrough::VEIN_POSE);
+                (vxe_render::glam::Vec3::from(start) - vxe_render::glam::Vec3::from(end))
+                    .normalize()
+            } else {
+                vxe_render::glam::Vec3::new(still.yaw.cos(), still.yaw.sin(), 0.0)
+            };
+            let walk = |f: usize| {
+                let t = (f % FRAMES) as f32;
+                let out = if t < 60.0 { t } else { FRAMES as f32 - t };
+                Camera {
+                    position: still.position + ahead * (14.0 / 60.0 * out),
+                    ..still
+                }
+            };
+            let light = LightParams::default();
+            for tier in [LightingResolution::Half, LightingResolution::Full] {
+                rig.frame.set_resolution(&rig.device, tier);
+                for lamp in [false, true] {
+                    rig.frame.set_lighting(reference_lighting(lamp));
+                    for walking in [false, true] {
+                        rig.frame.reset_history();
+                        for _ in 0..128 {
+                            rig.frame
+                                .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                        }
+                        let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+                        for f in 0..FRAMES {
+                            let c = if walking { walk(f) } else { still };
+                            for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &c)) {
+                                *s += ms;
+                            }
+                        }
+                        let total: f64 = sum.iter().sum::<f64>() / FRAMES as f64;
+                        let passes: Vec<String> = vxe_render::marcher::FRAME_PASSES
+                            .iter()
+                            .zip(&sum)
+                            .filter(|(_, ms)| **ms > 0.0)
+                            .map(|(n, ms)| format!("{n} {:.3}", ms / FRAMES as f64))
+                            .collect();
+                        log.line(&format!(
+                            "passes {} adapter {} {}x{} to {}x{} fsr2 at 1.5, far normal {}..{}, tier {}, lamp {}, {}: total {total:.3} ms, {}",
+                            view.name,
+                            rig.adapter,
+                            internal[0],
+                            internal[1],
+                            NATIVE[0],
+                            NATIVE[1],
+                            far[0],
+                            far[1],
+                            tier.name(),
+                            if lamp { "on" } else { "off" },
+                            if walking { "walking" } else { "at rest" },
+                            passes.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+    }
 }

@@ -1,6 +1,6 @@
 # 0065: The baked light's waste: atomics on every pixel, a filter of zeros, a scan per frame
 
-> **Status:** approved (owner go 2026-11-10; the lane starts after Plans 0060 and 0064)
+> **Status:** in-progress (owner go 2026-11-10; the lane starts after Plans 0060 and 0064)
 > **Created:** 2026-11-10
 > **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's lighting, denoise and upscale lines.
@@ -257,11 +257,11 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to `docs/plans/logs/0065.md`.
+> attempts and resume notes go to [`docs/plans/logs/0065.md`](logs/0065.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the per-pass readings | dev | not started | |
+| 1: the per-pass readings | dev | done; no phase struck (every base over 0.05 ms at the half tier) | committed with this row |
 | 2: the temporal pass | dev | not started | |
 | 3: the a-trous | dev | not started | |
 | 4: the far normal and the pool read | dev | not started | |
