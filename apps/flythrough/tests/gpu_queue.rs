@@ -75,6 +75,8 @@ struct Q {
     samples: Option<u64>,
     /// The last step's `bake_queue_step` call, timed from outside, in ms.
     last_step_ms: f64,
+    /// Whether a chunk is resident full, as a streamer's would say; `None` is a bounded world.
+    resident: Option<fn(ChunkCoord) -> bool>,
 }
 
 /// How a rig's queue and mirror start.
@@ -166,6 +168,7 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
         counts: setup.counts.clone(),
         samples: None,
         last_step_ms: 0.0,
+        resident: None,
     })
 }
 
@@ -182,10 +185,14 @@ impl Q {
                 .sync_now(&self.world, &self.device, &self.queue)
                 .expect("the mirror fits");
         }
+        let resident = self.resident;
+        let resident_fn = move |c: ChunkCoord| resident.is_some_and(|f| f(c));
         let view = QueueView {
             eye,
             forward: self.camera.basis().0.to_array(),
-            resident: None,
+            resident: resident
+                .is_some()
+                .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool),
             samples: self.samples,
             hold: None,
             half_angle: {
@@ -1467,3 +1474,218 @@ fn the_stages_split_by_opening() {
         );
     }
 }
+
+/// `n` chunks in a row along x, a rock block in each and an ore plate in chunk 2, mirrored one
+/// chunk a sync nearest the camera (in chunk 2) first, `syncs` times: 7 syncs of 8, chunk 7
+/// waits to upload and the chunks within the light radius of it (5 and 6) wait for their
+/// reach.
+fn row_n(n: i64, syncs: usize, setup: Setup) -> Option<Q> {
+    let world = world_of([n as i32, 1, 1], AIR);
+    for x in 0..n {
+        fill(&world, [x * 64 + 16, 16, 16], [x * 64 + 48, 48, 48], ROCK);
+    }
+    fill(&world, [140, 28, 48], [150, 36, 50], ORE);
+    let mut q = rig(
+        world,
+        &Setup {
+            sync_budget: 1,
+            ..setup
+        },
+    )?;
+    for _ in 1..syncs {
+        q.gpu
+            .sync_now(&q.world, &q.device, &q.queue)
+            .expect("the mirror fits");
+    }
+    Some(q)
+}
+
+/// Mirrors one chunk: one sync at the rig's budget.
+fn sync_one(q: &mut Q) {
+    q.gpu
+        .sync_now(&q.world, &q.device, &q.queue)
+        .expect("the mirror fits");
+}
+
+/// Nine chunks in a row, chunks 7 and 8 waiting to upload: once the queue has baked chunks 0
+/// to 4 and checked 5 and 6, 100 further steps on a still mirror scan nothing, walk no reach
+/// and score nothing. Evicting chunk 3 makes the next step scan exactly that chunk and free
+/// its block, no other. Mirroring chunk 7 re-checks exactly the candidates within the light
+/// radius and one of it, chunks 5, 6 and 7, each once: 5 bakes, 6 and 7 wait for chunk 8.
+#[test]
+fn a_still_step_scans_nothing() {
+    let Some(mut q) = row_n(9, 7, Setup::at(ROW_EYE)) else {
+        return;
+    };
+    let blocks = |q: &Q| -> Vec<i32> {
+        (0..9)
+            .filter(|&x| q.frame.store().block(ChunkCoord([x, 0, 0])).is_some())
+            .collect()
+    };
+    for _ in 0..300 {
+        q.step_with(false);
+    }
+    let st = q.q().stats();
+    assert_eq!((st.jobs, st.fading), (0, 0), "drained: {st:?}");
+    assert_eq!(
+        blocks(&q),
+        [0, 1, 2, 3, 4],
+        "chunks 5 and 6 wait for their reach"
+    );
+    for n in 0..100 {
+        let st = q.step_with(false);
+        assert_eq!(
+            (st.scanned, st.reach_checks, st.rebuilt),
+            (0, 0, 0),
+            "still step {n}: {st:?}"
+        );
+    }
+    q.gpu.apply_events(&vxe_world::StreamEvents {
+        evicted: vec![ChunkCoord([3, 0, 0])],
+        ..Default::default()
+    });
+    let st = q.step_with(false);
+    assert_eq!(st.scanned, 1, "the eviction's step scans its chunk");
+    assert_eq!(
+        blocks(&q),
+        [0, 1, 2, 4],
+        "chunk 3's block is freed, no other"
+    );
+    sync_one(&mut q);
+    assert!(
+        q.gpu.is_mirrored(ChunkCoord([7, 0, 0])),
+        "chunk 7 is mirrored"
+    );
+    assert!(
+        q.gpu.is_pending(ChunkCoord([8, 0, 0])),
+        "chunk 8 still waits"
+    );
+    let mut checks = 0;
+    for _ in 0..40 {
+        checks += q.step_with(false).reach_checks;
+    }
+    assert_eq!(checks, 3, "chunks 5, 6 and 7 are checked again, once each");
+    assert_eq!(blocks(&q), [0, 1, 2, 4, 5], "chunk 5 bakes");
+}
+
+/// The eight-chunk row with chunk 7 waiting to upload, at 1024 samples a brick direction and
+/// the smallest slice: one job opens at a time, nearest first with the view's tie (2, 3, 1,
+/// 4, 0), as the start commit opens them. Every opening after the first, the mirror still and
+/// jobs ending between them, scores nothing again, and each candidate's reach is walked once
+/// over the run (0 to 6).
+/// Mirroring chunk 7 makes the next opening score once; 7 opens, then 5 and 6 once their
+/// last check is old enough to be read again.
+#[test]
+fn an_opening_without_a_mirror_event_rebuilds_nothing() {
+    let Some(mut q) = row_n(
+        8,
+        7,
+        Setup {
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 1024,
+                ..counts()
+            },
+            ..Setup::at(ROW_EYE)
+        },
+    ) else {
+        return;
+    };
+    let mut order: Vec<i32> = Vec::new();
+    let (mut checks, mut openings, mut rebuilt) = (0, 0, 0);
+    let mut steps = 0;
+    while !(q.q().jobs().is_empty() && order.len() == 5) {
+        steps += 1;
+        assert!(steps <= MAX_STEPS, "the five ready chunks bake");
+        let before = q.q().stats().openings;
+        let st = q.step_with(false);
+        checks += st.reach_checks;
+        if st.openings > before {
+            openings += 1;
+            rebuilt += st.rebuilt;
+            assert!(
+                openings == 1 || st.rebuilt == 0,
+                "opening {openings} scores again: {st:?}"
+            );
+        }
+        for c in q.q().jobs() {
+            if !order.contains(&c.0[0]) {
+                order.push(c.0[0]);
+            }
+        }
+    }
+    for _ in 0..40 {
+        checks += q.step_with(false).reach_checks;
+    }
+    println!("order {order:?}, {openings} openings, {rebuilt} scored, {checks} reach walks");
+    assert_eq!(order, [2, 3, 1, 4, 0]);
+    assert!(openings >= 5, "one opening a job at least");
+    assert_eq!(rebuilt, 1, "only the first opening scores");
+    assert_eq!(checks, 7, "chunks 0 to 6 each walked once");
+    sync_one(&mut q);
+    let mut rebuilt = None;
+    for _ in 0..20 {
+        let before = q.q().stats().openings;
+        let st = q.step_with(false);
+        if st.openings > before {
+            rebuilt = Some(st.rebuilt);
+            break;
+        }
+    }
+    assert_eq!(rebuilt, Some(1), "chunk 7's arrival scores the order once");
+    for _ in 0..MAX_STEPS {
+        q.step_with(false);
+        for c in q.q().jobs() {
+            if !order.contains(&c.0[0]) {
+                order.push(c.0[0]);
+            }
+        }
+        if q.q().empty() {
+            break;
+        }
+    }
+    // 5 and 6 were found blocked at the last openings and wait out the recheck: 7 first.
+    assert_eq!(order, [2, 3, 1, 4, 0, 7, 5, 6]);
+}
+
+/// The order of a flight: the six-chunk row, the coarse pass on, the near shell 1 and the
+/// smallest slice, the camera flown along +x from chunk 0 six voxels a step for 60 steps,
+/// then held until the queue is empty. Each job's chunk is recorded as it first appears in
+/// the jobs (a refinement appears again), against the start commit's recording.
+#[test]
+fn a_flight_opens_in_the_start_commit_s_order() {
+    let Some(mut q) = rig(
+        row(&[0, 1, 2, 3, 4, 5]),
+        &Setup {
+            coarse: COARSE,
+            near: 1,
+            slice_ms: 1e-6,
+            ..Setup::at([20.5, 32.5, 60.5])
+        },
+    ) else {
+        return;
+    };
+    let mut seen: Vec<i32> = Vec::new();
+    let mut prev: Vec<ChunkCoord> = Vec::new();
+    for n in 0..MAX_STEPS {
+        if n < 60 {
+            q.camera.position.x += 6.0;
+        }
+        q.step();
+        let jobs = q.q().jobs();
+        for c in &jobs {
+            if !prev.contains(c) {
+                seen.push(c.0[0]);
+            }
+        }
+        prev = jobs;
+        if n >= 60 && q.q().empty() {
+            break;
+        }
+    }
+    println!("flight order {seen:?}");
+    assert_eq!(seen, FLIGHT_ORDER);
+}
+
+/// [`a_flight_opens_in_the_start_commit_s_order`]'s recording at the start commit (4bc8100).
+const FLIGHT_ORDER: [i32; 10] = [0, 1, 2, 3, 4, 5, 2, 3, 4, 5];

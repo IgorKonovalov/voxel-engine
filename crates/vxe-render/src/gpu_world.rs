@@ -933,6 +933,18 @@ impl<'a> Bricks<'a> {
     }
 }
 
+/// Changes [`GpuWorld::take_changes`] keeps at most between two calls.
+pub const CHANGES_MAX: usize = 1 << 16;
+
+/// The mirror's changed chunks between two [`GpuWorld::take_changes`]: kept once a reader took
+/// them once, and given up past [`CHANGES_MAX`].
+#[derive(Debug, Default)]
+struct Changes {
+    on: bool,
+    overflow: bool,
+    list: Vec<ChunkCoord>,
+}
+
 pub struct GpuWorld {
     device: wgpu::Device,
     cfg: MirrorConfig,
@@ -1010,6 +1022,8 @@ pub struct GpuWorld {
     /// Chunks waiting for an upload, keyed by squared distance to `pending_focus`.
     pending: BTreeSet<(i64, ChunkCoord)>,
     pending_d2: HashMap<ChunkCoord, i64>,
+    /// The chunks whose mirror state changed since the last [`GpuWorld::take_changes`].
+    changes: std::sync::Mutex<Changes>,
     /// Kept sizes of pending chunks ([`Sizing`]).
     sizes: HashMap<ChunkCoord, Sizing>,
     pending_focus: ChunkCoord,
@@ -1224,6 +1238,7 @@ impl GpuWorld {
             pending: BTreeSet::new(),
             sizes: HashMap::new(),
             pending_d2: HashMap::new(),
+            changes: Default::default(),
             pending_focus: focus,
             bytes_written: 0,
             belt: Belt::new(device),
@@ -1716,6 +1731,7 @@ impl GpuWorld {
         let Some(Mirrored { record: rec, .. }) = self.mirrored.remove(&coord) else {
             return;
         };
+        self.note_change(coord);
         if let Some(slots) = self.band.as_mut().and_then(|b| b.slots.remove(&coord)) {
             for &u in slots.iter().filter(|&&u| u != ABSENT) {
                 self.band.as_mut().expect("held above").items.remove(&u);
@@ -1768,6 +1784,13 @@ impl GpuWorld {
         if self.pending_d2.contains_key(&c) {
             return;
         }
+        self.note_change(c);
+        self.enqueue_keyed(c);
+    }
+
+    /// Queues `c` under its distance to `pending_focus`, as no change: the re-keying of a
+    /// focus move.
+    fn enqueue_keyed(&mut self, c: ChunkCoord) {
         let d = d2(c, self.pending_focus);
         self.pending_d2.insert(c, d);
         self.pending.insert((d, c));
@@ -1777,7 +1800,37 @@ impl GpuWorld {
         self.sizes.remove(&c);
         if let Some(d) = self.pending_d2.remove(&c) {
             self.pending.remove(&(d, c));
+            self.note_change(c);
         }
+    }
+
+    /// Notes that `c`'s mirror state changed (mirrored, dropped, its tier, queued or uploaded),
+    /// once a reader takes the changes.
+    fn note_change(&self, c: ChunkCoord) {
+        let mut ch = self.changes.lock().unwrap_or_else(PoisonError::into_inner);
+        if ch.on && !ch.overflow {
+            if ch.list.len() >= CHANGES_MAX {
+                ch.overflow = true;
+                ch.list = Vec::new();
+            } else {
+                ch.list.push(c);
+            }
+        }
+    }
+
+    /// The chunks whose mirror state changed since the last call: mirrored, dropped, turned
+    /// LOD-only or full, queued for an upload or uploaded, in no order and possibly repeated.
+    /// `None` at the first call, and after more than [`CHANGES_MAX`] changes went untaken:
+    /// anything may have changed.
+    pub fn take_changes(&self) -> Option<Vec<ChunkCoord>> {
+        let mut ch = self.changes.lock().unwrap_or_else(PoisonError::into_inner);
+        let out = (ch.on && !ch.overflow).then(|| std::mem::take(&mut ch.list));
+        *ch = Changes {
+            on: true,
+            overflow: false,
+            list: Vec::new(),
+        };
+        out
     }
 
     /// Moves the window to follow the focus, and re-keys the pending set when the focus
@@ -1790,7 +1843,7 @@ impl GpuWorld {
             self.pending.clear();
             self.pending_d2.clear();
             for c in keys {
-                self.enqueue(c);
+                self.enqueue_keyed(c);
             }
         }
         let new_min = match self.cfg.window {
@@ -2407,6 +2460,7 @@ impl GpuWorld {
         }
         st.light_us += light_us;
         let empty = self.write_bits(base);
+        self.note_change(coord);
         self.mirrored.insert(
             coord,
             Mirrored {

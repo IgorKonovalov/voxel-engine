@@ -49,7 +49,7 @@ use vxe_world::{
     brick_of_slot, brick_slot,
 };
 
-use crate::gpu_world::GpuWorld;
+use crate::gpu_world::{CHANGES_MAX, GpuWorld};
 use crate::marcher::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
 
 /// The sampler, compiled after [`crate::MARCH_WGSL`] and [`crate::LIGHT_WGSL`].
@@ -836,9 +836,29 @@ pub struct Store {
     /// Chunks whose block is the live queue's coarse pass: their table word carries
     /// [`TABLE_COARSE`].
     coarse: std::collections::HashSet<[i32; 3]>,
+    /// Chunks whose block or coarse mark changed since the live queue last took them
+    /// ([`Store::take_touched`]); `None` once more than [`CHANGES_MAX`] went untaken.
+    touched: Option<Vec<[i32; 3]>>,
 }
 
 impl Store {
+    /// Notes that `c`'s block or its coarse mark changed.
+    fn touch(&mut self, c: [i32; 3]) {
+        if let Some(t) = self.touched.as_mut() {
+            if t.len() >= CHANGES_MAX {
+                self.touched = None;
+            } else {
+                t.push(c);
+            }
+        }
+    }
+
+    /// The chunks whose block or coarse mark changed since the last call, possibly repeated;
+    /// `None` when too many went untaken to keep.
+    pub(crate) fn take_touched(&mut self) -> Option<Vec<[i32; 3]>> {
+        self.touched.replace(Vec::new())
+    }
+
     pub(crate) fn new(device: &wgpu::Device, bytes: u64) -> Self {
         let pool = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bake pool"),
@@ -859,6 +879,7 @@ impl Store {
             cell: BRICK_CELL,
             free: Vec::new(),
             coarse: Default::default(),
+            touched: Some(Vec::new()),
         }
     }
 
@@ -887,6 +908,7 @@ impl Store {
 
     /// Marks `coord`'s next [`Store::put`] as coarse or not; the table word follows at the put.
     fn mark_coarse(&mut self, coord: ChunkCoord, coarse: bool) {
+        self.touch(coord.0);
         if coarse {
             self.coarse.insert(coord.0);
         } else {
@@ -957,6 +979,8 @@ impl Store {
         self.window = Some(window);
         self.free.clear();
         self.coarse.clear();
+        // Every chunk may have changed: the queue reads them all again.
+        self.touched = None;
     }
 
     /// Empties the store for `window` for the live queue: blocks with brick records of cells of
@@ -1060,11 +1084,13 @@ impl Store {
         self.end_words = self.end_words.max(first + block.len() as u64);
         self.blocks.insert(coord.0, (first, block.len() as u64));
         self.words.insert(coord.0, block);
+        self.touch(coord.0);
     }
 
     /// Drops `coord`'s block, its place freed: the chunk table reads none.
     pub(crate) fn remove(&mut self, queue: &wgpu::Queue, coord: ChunkCoord) {
         if let Some((first, words)) = self.blocks.remove(&coord.0) {
+            self.touch(coord.0);
             self.free_place(first, words);
             self.words.remove(&coord.0);
             self.coarse.remove(&coord.0);
@@ -2674,6 +2700,12 @@ pub struct QueueStats {
     pub stages: StepStages,
     /// Steps that ran an opening since the queue started.
     pub openings: u64,
+    /// In the last step: the chunks the mirror filter and a whole reading of the candidates
+    /// visited, the reach walks run ([`reach_ready`], not answered from the cache), and
+    /// whether the candidates' order was scored again (1) or walked as kept (0).
+    pub scanned: u64,
+    pub reach_checks: u64,
+    pub rebuilt: u64,
     /// Of the candidates in the view cone beyond the shell at the last census, waiting for
     /// their light (blank or coarse), those whose reach crosses the streamer's full radius
     /// ([`QueueView::full_radius`]): their distance in chunks plus the light radius exceeds it,
@@ -3036,6 +3068,121 @@ struct Cand {
     a: f32,
 }
 
+impl Cand {
+    /// The order's key: unique, since it ends in the coordinate.
+    fn sort_key(&self) -> (u8, u64, i32, [i32; 3]) {
+        (self.lead, self.key, self.tie, self.c)
+    }
+}
+
+/// A candidate under its key, least first in a [`std::collections::BinaryHeap`].
+#[derive(Clone, Copy, Debug)]
+struct HeapCand(Cand);
+
+impl PartialEq for HeapCand {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.sort_key() == other.0.sort_key()
+    }
+}
+impl Eq for HeapCand {}
+impl PartialOrd for HeapCand {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for HeapCand {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.0.sort_key().cmp(&self.0.sort_key())
+    }
+}
+
+/// The kept candidates in their order, sorted only as far as an opening walks: the walked
+/// head in order, the rest a heap popped on demand. The keys are unique, so the walk sees the
+/// order a full sort gives.
+#[derive(Debug, Default)]
+struct Ordered {
+    done: Vec<Cand>,
+    heap: std::collections::BinaryHeap<HeapCand>,
+}
+
+impl Ordered {
+    fn new(cands: Vec<Cand>) -> Self {
+        Self {
+            done: Vec::new(),
+            heap: cands.into_iter().map(HeapCand).collect(),
+        }
+    }
+
+    /// The `i`th candidate in order, sorting the heap's head as far as `i`.
+    fn get(&mut self, i: usize) -> Option<Cand> {
+        while self.done.len() <= i {
+            self.done.push(self.heap.pop()?.0);
+        }
+        Some(self.done[i])
+    }
+
+    /// Every candidate, in no order.
+    fn all(&self) -> impl Iterator<Item = &Cand> + '_ {
+        self.done.iter().chain(self.heap.iter().map(|h| &h.0))
+    }
+}
+
+/// What the kept order's scores read: the camera's chunk, the forward direction and the
+/// half-angle (bits), the order and the near shell.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct OrderView {
+    eye: [i32; 3],
+    forward: [u32; 3],
+    half_angle: u32,
+    order: QueueOrder,
+    near: i32,
+}
+
+/// The candidate `c` of `class` (and whether its block is `coarse`) scored under `order` from
+/// the camera's chunk `eye` and `view`.
+fn cand_of(
+    c: [i32; 3],
+    class: u8,
+    coarse: bool,
+    eye: [i32; 3],
+    view: &QueueView<'_>,
+    order: QueueOrder,
+    near: i32,
+) -> Cand {
+    let d = [0, 1, 2].map(|k| c[k] - eye[k]);
+    let d2: i64 = d.iter().map(|&v| i64::from(v).pow(2)).sum();
+    let len = (d2 as f32).sqrt().max(1.0);
+    let dot: f32 = (0..3).map(|k| d[k] as f32 * view.forward[k]).sum::<f32>() / len;
+    let a = angle_term(d, view.forward, view.half_angle, near);
+    let (lead, key) = match order {
+        QueueOrder::Distance => (class, d2 as u64),
+        QueueOrder::Score {
+            angle,
+            refine: Refine::Weight(r),
+        } => (
+            0,
+            u64::from(queue_score(d, a, class == 1, angle, r).to_bits()),
+        ),
+        QueueOrder::Score {
+            angle,
+            refine: Refine::Tier,
+        } => (
+            class,
+            u64::from(queue_score(d, a, false, angle, 1.0).to_bits()),
+        ),
+    };
+    Cand {
+        lead,
+        key,
+        tie: -(dot * 1000.0) as i32,
+        c,
+        class,
+        coarse,
+        d2,
+        a,
+    }
+}
+
 /// Candidates in the view the reach census reads at most ([`QueueStats::view_reach`]).
 pub const VIEW_REACH_SAMPLE: usize = 64;
 /// Steps between two reach censuses of the view.
@@ -3255,6 +3402,27 @@ pub struct BakeQueue {
     stats: QueueStats,
     /// The current step's stage laps.
     laps: Laps,
+    /// The candidates, kept between steps: every full chunk in the mirror with no block, a
+    /// coarse one or a whole re-bake waiting (ring 3), not known faceless, not in a job and
+    /// not a dig's, with its class (1 when it holds a block) and whether its block is coarse.
+    /// Re-read for the chunks the mirror, the store or the queue changed ([`BakeQueue::touched`]).
+    pool: std::collections::HashMap<[i32; 3], (u8, bool)>,
+    /// Chunks whose candidacy is read again at the next opening.
+    touched: std::collections::HashSet<[i32; 3]>,
+    /// The pool is read again whole at the next opening: at the start, and when the mirror's
+    /// or the store's changes went untracked.
+    pool_stale: bool,
+    /// The jobs' chunks at the last reading of the pool: a chunk joining or leaving a job is
+    /// read again.
+    pool_jobs: std::collections::HashSet<[i32; 3]>,
+    /// The pool's candidates in their order, and the view they were scored under; dirty when
+    /// a candidate joined the pool or changed class.
+    ordered: Ordered,
+    order_view: Option<OrderView>,
+    order_dirty: bool,
+    /// Each checked candidate's reach verdict ([`reach_ready`]), dropped when a chunk within
+    /// the light radius and one of it changes in the mirror.
+    reach_cache: std::collections::HashMap<[i32; 3], bool>,
 }
 
 impl BakeQueue {
@@ -3304,7 +3472,140 @@ impl BakeQueue {
                 ..QueueStats::default()
             },
             laps: Laps::new(stopwatch()),
+            pool: Default::default(),
+            touched: Default::default(),
+            pool_stale: true,
+            pool_jobs: Default::default(),
+            ordered: Ordered::default(),
+            order_view: None,
+            order_dirty: true,
+            reach_cache: Default::default(),
         }
+    }
+
+    /// Whether `c` is a candidate ([`BakeQueue::pool`]): its class and whether its block is
+    /// coarse.
+    fn candidacy(
+        &self,
+        store: &Store,
+        gpu: &GpuWorld,
+        in_job: &std::collections::HashSet<[i32; 3]>,
+        c: [i32; 3],
+    ) -> Option<(u8, bool)> {
+        let cc = ChunkCoord(c);
+        if !gpu.is_mirrored(cc) || gpu.is_lod(cc) {
+            return None;
+        }
+        let has = store.blocks.contains_key(&c);
+        let coarse = has && store.is_coarse(cc);
+        let wants = !has || coarse || self.reach.contains(&c);
+        (wants
+            && !self.faceless.contains(&c)
+            && !in_job.contains(&c)
+            && !self.digs.contains_key(&c))
+        .then_some((u8::from(has), coarse))
+    }
+
+    /// Brings the pool up to date: whole when it is stale, else for the chunks touched since,
+    /// the store's changed blocks and the chunks that joined or left a job. A candidate that
+    /// joins or changes class leaves the kept order dirty; one that leaves is skipped by the
+    /// walk.
+    fn sync_pool(&mut self, run: &BakeRun<'_>, store: &mut Store) {
+        let gpu = run.gpu;
+        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        match store.take_touched() {
+            Some(t) => self.touched.extend(t),
+            None => self.pool_stale = true,
+        }
+        if self.pool_stale {
+            let pool: std::collections::HashMap<[i32; 3], (u8, bool)> = gpu
+                .full_chunks()
+                .filter_map(|c| self.candidacy(store, gpu, &in_job, c.0).map(|v| (c.0, v)))
+                .collect();
+            self.stats.scanned += gpu.mirrored_chunks() as u64;
+            self.pool = pool;
+            self.pool_stale = false;
+            self.order_dirty = true;
+            self.touched.clear();
+        } else {
+            let moved: Vec<[i32; 3]> = self
+                .pool_jobs
+                .symmetric_difference(&in_job)
+                .copied()
+                .collect();
+            self.touched.extend(moved);
+            for c in std::mem::take(&mut self.touched) {
+                let now = self.candidacy(store, gpu, &in_job, c);
+                let was = self.pool.get(&c).copied();
+                if now == was {
+                    continue;
+                }
+                match now {
+                    Some(v) => {
+                        self.pool.insert(c, v);
+                        self.order_dirty = true;
+                    }
+                    None => {
+                        self.pool.remove(&c);
+                    }
+                }
+            }
+        }
+        self.pool_jobs = in_job;
+        #[cfg(debug_assertions)]
+        {
+            let jobs = &self.pool_jobs;
+            let whole: std::collections::HashMap<[i32; 3], (u8, bool)> = gpu
+                .full_chunks()
+                .filter_map(|c| self.candidacy(store, gpu, jobs, c.0).map(|v| (c.0, v)))
+                .collect();
+            debug_assert_eq!(self.pool, whole, "the kept pool against a whole reading");
+        }
+    }
+
+    /// [`reach_ready`] through the cache of verdicts; a bounded world with nothing waiting to
+    /// upload is ready without a walk. A miss counts in [`QueueStats::reach_checks`].
+    fn reach_cached(
+        &mut self,
+        run: &BakeRun<'_>,
+        coord: ChunkCoord,
+        lr: i32,
+        resident: Option<&dyn Fn(ChunkCoord) -> bool>,
+    ) -> bool {
+        if resident.is_none() && run.gpu.pending_chunks() == 0 {
+            return true;
+        }
+        if let Some(&v) = self.reach_cache.get(&coord.0) {
+            // A streamer's residency can move a frame ahead of the mirror; a bounded world's
+            // verdict reads the mirror alone.
+            debug_assert!(
+                resident.is_some() || v == reach_ready(run, coord, lr, resident),
+                "the cached reach of {coord:?}"
+            );
+            return v;
+        }
+        self.stats.reach_checks += 1;
+        let v = reach_ready(run, coord, lr, resident);
+        self.reach_cache.insert(coord.0, v);
+        v
+    }
+
+    /// Drops the cached reach verdicts within `lr + 1` chunks (Chebyshev) of a chunk of
+    /// `changed`; too many pairs to compare drop them all.
+    fn drop_reach(&mut self, changed: &[ChunkCoord], lr: i32) {
+        if changed.is_empty() || self.reach_cache.is_empty() {
+            return;
+        }
+        if changed.len().saturating_mul(self.reach_cache.len()) > 1 << 22 {
+            self.reach_cache.clear();
+            return;
+        }
+        let r = lr + 1;
+        self.reach_cache.retain(|c, _| {
+            !changed
+                .iter()
+                .any(|n| (0..3).all(|k| (n.0[k] - c[k]).abs() <= r))
+        });
     }
 
     pub fn stats(&self) -> QueueStats {
@@ -3465,6 +3766,7 @@ impl BakeQueue {
                 self.prepared_bytes -= old.masks.bytes();
             }
             self.faceless.remove(&c.0);
+            self.touched.insert(c.0);
             self.blocked.remove(&c.0);
         }
         if self.prepared_bytes > PREPARED_BYTES_MAX {
@@ -3503,6 +3805,7 @@ impl BakeQueue {
                         self.prepared_bytes -= m.masks.bytes();
                     }
                     self.faceless.remove(&c);
+                    self.touched.insert(c);
                     self.blocked.remove(&c);
                     if self.lp.chunks().any(|j| j.0 == c) {
                         self.stale.insert(c);
@@ -3528,19 +3831,39 @@ impl BakeQueue {
         self.steps += 1;
         self.eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let gpu = run.gpu;
+        self.stats.scanned = 0;
+        self.stats.reach_checks = 0;
+        self.stats.rebuilt = 0;
         let window = gpu.window();
-        store.rewindow(run.queue, window);
+        let dropped = store.rewindow(run.queue, window);
+        self.touched.extend(dropped);
         let seen = (Some(window), gpu.mirrored_chunks());
         let moved = seen != self.mirror_seen;
         self.mirror_seen = seen;
         store.piece = Some(window);
-        // A chunk the mirror does not hold full (evicted, or LOD-only) frees its block.
-        let gone: Vec<[i32; 3]> = store
-            .blocks
-            .keys()
-            .copied()
-            .filter(|c| !gpu.is_mirrored(ChunkCoord(*c)) || gpu.is_lod(ChunkCoord(*c)))
-            .collect();
+        // The mirror's changes since the last step; untracked (the first step), everything is
+        // read again.
+        let changes = gpu.take_changes();
+        let unheld = |c: &[i32; 3]| !gpu.is_mirrored(ChunkCoord(*c)) || gpu.is_lod(ChunkCoord(*c));
+        // A chunk the mirror does not hold full (evicted, or LOD-only) frees its block. Every
+        // such chunk is among the mirror's changes since the step that last read them.
+        let gone: Vec<[i32; 3]> = match &changes {
+            Some(ch) => {
+                self.stats.scanned += ch.len() as u64;
+                let mut g: Vec<[i32; 3]> = ch
+                    .iter()
+                    .map(|c| c.0)
+                    .filter(|c| store.blocks.contains_key(c) && unheld(c))
+                    .collect();
+                g.sort_unstable();
+                g.dedup();
+                g
+            }
+            None => {
+                self.stats.scanned += store.blocks.len() as u64;
+                store.blocks.keys().copied().filter(unheld).collect()
+            }
+        };
         if moved || !gone.is_empty() {
             // The mirror moved, gained or lost chunks: the depth is counted again this step.
             self.counted_idle = false;
@@ -3553,12 +3876,31 @@ impl BakeQueue {
         // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
         // A job in flight for it ends in the sink, which drops its block.
         let held = |c: &[i32; 3]| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c));
-        self.fades.retain(|c, _| held(c));
-        self.faceless.retain(held);
-        self.blocked.retain(|c, _| held(c));
-        self.digs.retain(|c, _| held(c));
-        self.reach.retain(held);
-        self.listed.retain(|c, _| held(c));
+        match changes {
+            Some(ch) => {
+                // Only a changed chunk can have stopped being held.
+                for c in ch.iter().map(|c| c.0).filter(|c| !held(c)) {
+                    self.fades.remove(&c);
+                    self.faceless.remove(&c);
+                    self.blocked.remove(&c);
+                    self.digs.remove(&c);
+                    self.reach.remove(&c);
+                    self.listed.remove(&c);
+                }
+                self.drop_reach(&ch, gpu.light_radius());
+                self.touched.extend(ch.iter().map(|c| c.0));
+            }
+            None => {
+                self.fades.retain(|c, _| held(c));
+                self.faceless.retain(held);
+                self.blocked.retain(|c, _| held(c));
+                self.digs.retain(|c, _| held(c));
+                self.reach.retain(held);
+                self.listed.retain(|c, _| held(c));
+                self.reach_cache.clear();
+                self.pool_stale = true;
+            }
+        }
         self.laps.lap(S_FILTER);
         self.take_boxes(run, store)?;
         self.laps.lap(S_BOXES);
@@ -3813,6 +4155,7 @@ impl BakeQueue {
                 continue;
             }
             let e = self.digs.entry(c).or_default();
+            self.touched.insert(c);
             if let Some(open) = self.dig_open.get(&c) {
                 e.slots.extend(open.slots.iter().copied());
                 e.near |= open.near;
@@ -3859,6 +4202,7 @@ impl BakeQueue {
                 self.fades.remove(&c);
                 store.remove(run.queue, coord);
                 self.faceless.insert(c);
+                self.touched.insert(c);
                 self.digs.remove(&c);
                 continue;
             }
@@ -3902,6 +4246,7 @@ impl BakeQueue {
                             .sum();
                         if gap2 <= i64::from(lr).pow(2) && store.blocks.contains_key(&n) {
                             self.reach.insert(n);
+                            self.touched.insert(n);
                         }
                     }
                 }
@@ -3946,6 +4291,7 @@ impl BakeQueue {
             if left >= 2 * cap && !jobs.is_empty() {
                 break;
             }
+            self.touched.insert(c);
             let Some(d) = self.digs.remove(&c) else {
                 continue;
             };
@@ -3968,6 +4314,7 @@ impl BakeQueue {
                 store.remove(run.queue, coord);
                 self.fades.remove(&c);
                 self.faceless.insert(c);
+                self.touched.insert(c);
                 continue;
             }
             let samples = faces
@@ -3988,6 +4335,7 @@ impl BakeQueue {
                     // The dig waits for a place, listed: no later dig opens ahead of it.
                     self.stats.pool_full += 1;
                     self.digs.insert(c, d);
+                    self.touched.insert(c);
                     self.listed.insert(c, faces);
                     break;
                 }
@@ -4088,78 +4436,54 @@ impl BakeQueue {
     ) -> Result<(), BakeError> {
         let gpu = run.gpu;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
-        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
-        // Class 0: no block yet; class 1: a block to refine (coarse) or re-bake whole (ring 3).
-        // Under the distance order and the score's tier every class 0 comes first.
         let order = self.order;
         let near = self.near;
-        let mut cands: Vec<Cand> = gpu
-            .full_chunks()
-            .filter(|c| {
-                (!store.blocks.contains_key(&c.0)
-                    || store.is_coarse(*c)
-                    || self.reach.contains(&c.0))
-                    && !self.faceless.contains(&c.0)
-                    && !in_job.contains(&c.0)
-                    && !self.digs.contains_key(&c.0)
-            })
-            .map(|c| {
-                let d = [0, 1, 2].map(|k| c.0[k] - eye[k]);
-                let d2: i64 = d.iter().map(|&v| i64::from(v).pow(2)).sum();
-                let len = (d2 as f32).sqrt().max(1.0);
-                let dot: f32 = (0..3).map(|k| d[k] as f32 * view.forward[k]).sum::<f32>() / len;
-                let class = u8::from(store.blocks.contains_key(&c.0));
-                let coarse = class == 1 && store.is_coarse(c);
-                let a = angle_term(d, view.forward, view.half_angle, near);
-                let (lead, key) = match order {
-                    QueueOrder::Distance => (class, d2 as u64),
-                    QueueOrder::Score {
-                        angle,
-                        refine: Refine::Weight(r),
-                    } => (
-                        0,
-                        u64::from(queue_score(d, a, class == 1, angle, r).to_bits()),
-                    ),
-                    QueueOrder::Score {
-                        angle,
-                        refine: Refine::Tier,
-                    } => (
-                        class,
-                        u64::from(queue_score(d, a, false, angle, 1.0).to_bits()),
-                    ),
-                };
-                Cand {
-                    lead,
-                    key,
-                    tie: -(dot * 1000.0) as i32,
-                    c: c.0,
-                    class,
-                    coarse,
-                    d2,
-                    a,
-                }
-            })
-            .collect();
+        self.sync_pool(run, store);
+        // The kept order is scored again when a candidate joined or changed class, or the view
+        // the scores read changed; else it is walked as it stands.
+        let key = OrderView {
+            eye,
+            forward: view.forward.map(f32::to_bits),
+            half_angle: view.half_angle.to_bits(),
+            order,
+            near,
+        };
+        if self.order_dirty || self.order_view != Some(key) {
+            let cands: Vec<Cand> = self
+                .pool
+                .iter()
+                .map(|(&c, &(class, coarse))| cand_of(c, class, coarse, eye, view, order, near))
+                .collect();
+            self.ordered = Ordered::new(cands);
+            self.order_dirty = false;
+            self.order_view = Some(key);
+            self.stats.rebuilt += 1;
+        }
         self.laps.lap(S_CANDIDATES);
         let census = self.census_every_opening || std::mem::take(&mut self.census_due);
+        let steps = self.steps;
+        let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
         if census {
             let t = stopwatch();
             self.entered
                 .retain(|c, _| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c)));
+            let cands: Vec<Cand> = self
+                .ordered
+                .all()
+                .filter(|k| self.pool.contains_key(&k.c))
+                .copied()
+                .collect();
             self.view_census(eye, view, &cands, gpu.light_radius());
             self.view_reach_census(run, eye, view, &cands);
+            self.stats.unbaked = cands
+                .iter()
+                .filter(|k| k.class == 0 && !recent(self.blocked.get(&k.c)))
+                .count() as u64;
             self.stats.census_ms = seconds_since(t) * 1e3;
         }
         self.laps.lap(S_CENSUS);
-        self.stats.depth = cands.len() as u64;
-        self.counted_idle = in_job.is_empty();
-        let steps = self.steps;
-        let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
-        self.stats.unbaked = cands
-            .iter()
-            .filter(|k| k.class == 0 && !recent(self.blocked.get(&k.c)))
-            .count() as u64;
-        cands.sort_unstable_by_key(|k| (k.lead, k.key, k.tie, k.c));
+        self.stats.depth = self.pool.len() as u64;
+        self.counted_idle = self.lp.chunks().next().is_none();
         self.laps.lap(S_SORT);
         let checks = if view.samples.is_some() {
             QUEUE_CHECKS_UNSLICED
@@ -4192,11 +4516,25 @@ impl BakeQueue {
         let mut left = self.lp.samples_left();
         let angle_needs = self.census_every_opening;
         let nearest_in_view = if angle_needs {
-            cands.iter().filter(|k| k.a <= 0.0).map(|k| k.d2).min()
+            self.ordered
+                .all()
+                .filter(|k| k.a <= 0.0 && self.pool.contains_key(&k.c))
+                .map(|k| k.d2)
+                .min()
         } else {
             None
         };
-        for Cand { class, c, .. } in cands {
+        let mut next = 0;
+        while let Some(Cand {
+            class, coarse, c, ..
+        }) = self.ordered.get(next)
+        {
+            next += 1;
+            // A kept candidate pushed, or listed faceless, since the order was scored has left
+            // the pool; a class change re-scores the order before the walk.
+            if self.pool.get(&c) != Some(&(class, coarse)) {
+                continue;
+            }
             if tiered {
                 if left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0) {
                     break;
@@ -4215,7 +4553,7 @@ impl BakeQueue {
                 checked[0] += 1;
             }
             let coord = ChunkCoord(c);
-            if !reach_ready(run, coord, lr, view.resident) {
+            if !self.reach_cached(run, coord, lr, view.resident) {
                 reach += 1;
                 self.blocked.insert(c, self.steps);
                 continue;
@@ -4350,22 +4688,15 @@ impl BakeQueue {
             return;
         }
         let gpu = run.gpu;
-        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
-        let mut seen: Vec<(i64, [i32; 3])> = gpu
-            .full_chunks()
-            .filter(|c| {
-                (!store.blocks.contains_key(&c.0)
-                    || store.is_coarse(*c)
-                    || self.reach.contains(&c.0))
-                    && !self.faceless.contains(&c.0)
-                    && !in_job.contains(&c.0)
-                    && !self.digs.contains_key(&c.0)
-            })
+        self.sync_pool(run, store);
+        let mut seen: Vec<(i64, [i32; 3])> = self
+            .pool
+            .keys()
             .filter_map(|c| {
-                let o = [0, 1, 2].map(|k| c.0[k] - eye[k]);
+                let o = [0, 1, 2].map(|k| c[k] - eye[k]);
                 (angle_term(o, view.forward, view.half_angle, near) <= 0.0).then(|| {
                     let d2: i64 = o.iter().map(|&v| i64::from(v).pow(2)).sum();
-                    (d2, c.0)
+                    (d2, *c)
                 })
             })
             .collect();
@@ -4388,7 +4719,8 @@ impl BakeQueue {
             }
             checked += 1;
             let coord = ChunkCoord(c);
-            if reach_ready(run, coord, lr, view.resident) && gpu.lights_ready_near(coord, lr) {
+            if self.reach_cached(run, coord, lr, view.resident) && gpu.lights_ready_near(coord, lr)
+            {
                 ready = true;
                 break;
             }
@@ -4508,6 +4840,8 @@ impl BakeQueue {
     ) -> Result<u64, BakeError> {
         let c = coord.0;
         self.stats.prepared += u64::from(prepared);
+        // Faceless or in a job, it is no candidate either way; a refused place keeps it one.
+        let candidacy = self.pool.remove(&c);
         if let Some(m) = self.prepared.remove(&c) {
             self.prepared_bytes -= m.masks.bytes();
         }
@@ -4517,7 +4851,15 @@ impl BakeQueue {
             return Ok(0);
         }
         let words = layout(&faces, self.record_words()).1;
-        let first_word = store.alloc(words)?;
+        let first_word = match store.alloc(words) {
+            Ok(w) => w,
+            Err(e) => {
+                if let Some(v) = candidacy {
+                    self.pool.insert(c, v);
+                }
+                return Err(e);
+            }
+        };
         self.reach.remove(&c);
         let far = (0..3).map(|k| (c[k] - eye[k]).abs()).max().unwrap_or(0) > self.near;
         let coarse = class == 0 && self.coarse_samples > 0 && far;
