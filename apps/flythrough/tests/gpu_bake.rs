@@ -561,6 +561,57 @@ fn the_store_counters_count_with_the_override_on() {
     assert_eq!(off, [0; 3], "the counters with the override off");
 }
 
+/// The baked light with the filter off (`Lighting::filter`, the fly-through's `--filter off`): on
+/// the small box after its bake, lamp off, the mean display luma over the pixels whose cube face
+/// holds a lit brick value is within 2 % of the same frame's with the filter on.
+#[test]
+fn the_baked_light_shows_with_the_filter_off() {
+    let (world, camera) = small_box();
+    let Some(mut rig) = rig_on(world, [64, 36], None) else {
+        return;
+    };
+    rig.bake(&test_counts(1024));
+    let cells = rig.cells();
+    let frames = |rig: &mut Rig, filter: bool| {
+        rig.frame.set_lighting(Lighting {
+            filter,
+            ..rig.frame.lighting()
+        });
+        rig.frame.reset_history();
+        for _ in 0..4 {
+            rig.step(&camera);
+        }
+        rig.display()
+    };
+    let on = frames(&mut rig, true);
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let off = frames(&mut rig, false);
+    let eye = camera.position.to_array();
+    let lit: Vec<usize> = (0..pos.len())
+        .filter(|&i| {
+            hit_face(eye, pos[i], info[i])
+                .and_then(|(v, f)| brick_value(&cells, v, f))
+                .is_some_and(|value| value.iter().any(|&c| c > 0.0))
+        })
+        .collect();
+    let mean = |img: &[u8]| {
+        let l = luma(img);
+        lit.iter().map(|&i| f64::from(l[i])).sum::<f64>() / lit.len() as f64
+    };
+    let (m_on, m_off) = (mean(&on), mean(&off));
+    println!(
+        "{} lit pixels: mean luma {m_on:.3} filter on, {m_off:.3} off",
+        lit.len()
+    );
+    assert!(lit.len() > 100, "{} lit pixels", lit.len());
+    assert!(m_on > 10.0, "the lit face's luma {m_on}");
+    assert!(
+        (m_off - m_on).abs() <= 0.02 * m_on,
+        "filter off {m_off} against on {m_on}"
+    );
+}
+
 /// The owner's "moving fast" as a property: a frame reached by a 90 degree yaw in 2 frames reads
 /// what a fresh frame at that pose reads, on every pixel with a face.
 #[test]

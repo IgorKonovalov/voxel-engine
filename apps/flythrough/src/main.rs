@@ -106,7 +106,7 @@
 //! and prints how the screen centre's light fades, by source (see [`FadeSample`]);
 //! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
 //! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
-//! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
+//! `--filter off` shows the temporal pass's accumulation unfiltered;
 //! `--light-radius N` sets the chunks around the camera whose emitters light the frame
 //! (default 4);
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;

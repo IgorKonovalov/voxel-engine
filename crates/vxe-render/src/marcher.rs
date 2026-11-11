@@ -739,7 +739,8 @@ pub struct Lighting {
     pub candidates: u32,
     pub shadow_walk: ShadowWalk,
     /// The a-trous filter runs over the lamp's part (and a fallback hit's emissive part); off,
-    /// the composite shows the light pass's raw irradiance.
+    /// the composite shows the temporal pass's accumulation unfiltered (a cube face's emissive
+    /// part the store's value, which the light pass's irradiance does not hold).
     pub filter: bool,
     pub history: HistoryKill,
     /// The lamp's bounce from the probe volume (ADR-0043's lamp channel over ADR-0023's
@@ -3070,7 +3071,7 @@ impl Frame {
         let lit = if filtering {
             &t.filter[ATROUS_ITERATIONS % 2]
         } else {
-            &t.irradiance
+            &t.accum[c]
         };
         // In FSR mode the composite writes FSR's colour input at the internal size.
         let composite_out = self.fsr.as_ref().map_or(&t.output, Fsr2::colour);
