@@ -293,7 +293,7 @@ pub struct SyncBudget {
 | 2: the pacing default | human | done: owner's window 2026-11-11, pick `free` (flights loaded by other lanes' builds; no tearing or fan difference noticed, loaded); `--pace` defaults to `free`, the banner's `pace` row names it on a plain start; see [the readings log](logs/0064.md) | 7b6e3ea, aa4ee55 (readings), 0248b41 (default and banner) |
 | 3: nothing waits for the GPU | dev | code done: `ReadbackRing` (3 read-back buffers) under `PassTimer` and the store's counters, `try_read_all_ms` / `try_read_ms` / `Frame::try_store_stats` on the frame path, blocking-read counters on the `frames:` line (608 before, 0 after over 300 lavapipe frames), the HUD's refresh and banner allocation-free (4749 B a frame before, 0 after); deviations: one query set and one resolve buffer serve the ring, `--lamp-toggle` and `--fade-reading` keep the waiting read; autopilot HUD on/off readings on both adapters in the log; see [the readings log](logs/0064.md) | 373beb9, 284cbd9 (readings) |
 | 4: workers, the sync's time, the stats | dev | done: `resident_full` counter and `ticks()`, `stats()` once a frame, `sync_budget_time` with a test clock, `--workers N`, `--sync-ms MS`, 4 new tests; 14 against 15 workers read (RTX, three rounds, at 2 ms and at none): p99 not lower, **default reverted to cores - 1**; deviation: `--sync-ms` defaults to none, not 2 ms (residency p95 3.0 to 13.7 s at 2, 4 and 8 ms against 0.26 to 0.30 s at none); see [the readings log](logs/0064.md) | a9298c6 |
-| 4b: a time budget over the whole sync | dev | done: selection reads the clock (`SyncPoint`) and stops sizing once the budget is spent; a sized chunk keeps its size (`Sizing`) until it uploads or changes; `SyncStats::sized_chunks` / `kept_sizes`; 2 new tests, 1 extended; sweep (RTX, three rounds, loaded): residency p95 2.7 to 6.9 s at 2, 4 and 8 ms against 297 to 303 ms at none, **default stays none** by the plan's rule; see [the readings log](logs/0064.md) | committed with this row |
+| 4b: a time budget over the whole sync | dev | done: selection reads the clock (`SyncPoint`) and stops sizing once the budget is spent; a sized chunk keeps its size (`Sizing`) until it uploads or changes; `SyncStats::sized_chunks` / `kept_sizes`; 2 new tests, 1 extended; sweep (RTX, three rounds, loaded): residency p95 2.7 to 6.9 s at 2, 4 and 8 ms against 297 to 303 ms at none, **default stays none** by the plan's rule; see [the readings log](logs/0064.md) | 00731f9 |
 | 5: the close's readings | dev | done: headless before (37f6845), main merged (f8c1ffc) and after (a9298c6) on the RTX 3080 Laptop and RADV RENOIR, three rounds, into the log and `docs/nfr/02-frame-budget.md`; the window's after read on the RTX at 2552989 (the owner's session, `live/session64c.log`, 8 runs, HUD shown, two rounds), the RENOIR's window recorded as unread (owner, 2026-11-11); `docs/nfr.md` section 5 not edited (residency did not move out of the line on record); see [the readings log](logs/0064.md) | 4a6f8d8, 9a93156 (window) |
 
 ### Notes
@@ -351,10 +351,11 @@ pub struct SyncBudget {
   showcase 12.194 to 12.273 against 13.360 to 13.484; `compositor` level 14.927 to 15.011
   against 13.745 to 14.141, showcase 18.022 to 18.184 against 16.766 to 17.230; blocking reads
   0 in every run. Rows in [the readings log](logs/0064.md).
-- **Gate at the tip:** `cargo nextest run --workspace --profile gate` at 4a6f8d8: 724 run, 724
-  passed, 101 skipped, 559.6 s, exit 0; then 98f1a2a marks one test soak (passes alone,
-  12.3 s). Doctests 7 passed; clippy, fmt, `cargo deny check`, doc links, comment hygiene,
-  index rows, plan size, test tiers: exit 0.
+- **Gate at the tip:** `cargo nextest run --workspace --profile gate` at 00731f9 (lavapipe for
+  the gpu binaries, exclusive perf lock, 16G cap, `scripts/build-guests.sh` first, 1-minute load
+  5.6 at the start and 1.9 at the end): 725 run, 725 passed, 102 skipped, 554.3 s, exit 0.
+  Doctests passed; clippy, fmt, `cargo deny check`, doc links, comment hygiene, index rows,
+  plan size, test tiers: exit 0.
 - **Outstanding `human` phases:** none; the RADV RENOIR's window is recorded as unread (owner,
   2026-11-11).
 
