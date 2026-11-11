@@ -2712,7 +2712,9 @@ pub struct QueueView<'a> {
 
 /// The live queue's angle weight by default (ADR-0048's `W_ANGLE`, [`QueueOrder::Score`]).
 pub const QUEUE_ANGLE_WEIGHT: f32 = 4.0;
-/// The live queue's refine weight by default (ADR-0048's `W_REFINE`, [`Refine::Weight`]).
+/// The live queue's refine weight when the score folds the class in ([`Refine::Weight`],
+/// ADR-0048's `W_REFINE`). The default order keeps the class as a tier ([`Refine::Tier`]);
+/// this is the comparison arm's weight.
 pub const QUEUE_REFINE_WEIGHT: f32 = 2.0;
 
 /// How the score treats a chunk that holds a block (a coarse one to refine, or a whole re-bake
@@ -2736,11 +2738,13 @@ pub enum QueueOrder {
     Distance,
 }
 
+/// ADR-0048's score at [`QUEUE_ANGLE_WEIGHT`] with the class as the leading key
+/// ([`Refine::Tier`], ADR-0046's coarse-first rule).
 impl Default for QueueOrder {
     fn default() -> Self {
         Self::Score {
             angle: QUEUE_ANGLE_WEIGHT,
-            refine: Refine::Weight(QUEUE_REFINE_WEIGHT),
+            refine: Refine::Tier,
         }
     }
 }

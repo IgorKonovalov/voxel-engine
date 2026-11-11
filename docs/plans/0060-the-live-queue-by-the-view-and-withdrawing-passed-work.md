@@ -379,10 +379,24 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 | 1: The view cone as a reading | dev | done; both stop rules read as firing (readings log, Phase 1); the census and the in-view reach count are Phase 2 tree code | f371e66 |
 | 2: The blended score | dev | done; code and tests at 17a6454 (`wip(render)`, before the owner's answer); the coarse-first stop rule read as firing, so the plain start is `4,tier` (readings log, Phase 2) | 49428d7 |
 | 3: Withdrawing passed work | dev | done; code at 903cbda (`wip(render)`); `withdrawn_samples` counts rounds in flight and the dig test's rig sets `edit_ms` 0 (readings log, Phase 3) | 599dcd5 |
-| 4: The owner's window | human | done 2026-11-11; order and angle weight: no visible difference; withdrawal kept on; step 4 first ran on the RTX (the window ignores `--adapter`), rerun on the Radeon by Mesa's device select (readings log, Phase 4) | committed with this row |
-| 5: The defaults and the close's readings | dev | not started | |
+| 4: The owner's window | human | done 2026-11-11; order and angle weight: no visible difference; withdrawal kept on; step 4 first ran on the RTX (the window ignores `--adapter`), rerun on the Radeon by Mesa's device select (readings log, Phase 4) | 51ad42f |
+| 5: The defaults and the close's readings | dev | done; defaults unchanged in the fly-through (`score 4,tier`, withdrawal on), `QueueOrder::default()` follows them; queue step CPU p50 3.29 / 3.39 ms against the 1.119 ms bar, not met (readings log, Phase 5) | committed with this row |
 
 ### Notes
+
+- Phase 5's queue-step CPU bar is not met: tip p50 3.290 and 3.392 ms against base a8b1a2c's 1.007 and 1.006 ms
+  (bar 1.119); p99 under its line (readings log, Phase 5).
+- `bake::QueueOrder::default()` changed to the score with the class as the tier, so the library's default equals the
+  fly-through's plain start (Phase 5).
+- `frame_bytes` reads 683 273 268 B on the base and the tip; the plan's 888 490 396 B is not the line this branch's
+  base prints.
+- Followup: the window cannot pick an adapter. The shell ignores `--adapter` outside `--headless` ("the window
+  takes the default adapter"); Phase 4's Radeon step ran only through Mesa's
+  `MESA_VK_DEVICE_SELECT=1002:1638 MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE=1`.
+- Followup: far-light throughput on a slow adapter. The bake gets a per-frame slice (1.5 ms), so at the Radeon's
+  15 fps it gets about a quarter of the RTX's work a second; light the store does not hold yet shows black
+  (Phase 4, 4A: light store 526 bricks, 36 932 missing; owner: "after several seconds distant caves still black").
+  Raised with the owner by the orchestrator; not designed or built here.
 
 ### Close triggers
 

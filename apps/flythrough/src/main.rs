@@ -7740,6 +7740,7 @@ mod tests {
                 refine: Refine::Tier
             })
         );
+        assert_eq!(order(&[]), Ok(QueueOrder::default()));
         for bad in [
             &["--queue-order", "near"][..],
             &["--queue-weights", "4"],
