@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0068** (ADRs are a separate sequence; next free there is **0054**).
+**Next free number: 0069** (ADRs are a separate sequence; next free there is **0054**).
 
 ## Active roster
 
@@ -23,6 +23,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 | [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | approved | M2, ADR-0052, ADR-0053. After 0061, ahead of 0058; Phase 1 may run beside 0061. Takes 0065's Phase 6. |
+| [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | draft | M7, ADR-0054 (proposed). Order in the sequence is the owner's call; touches main.rs lightly. |
 <!-- roster:end -->
 
 ## Sequence
