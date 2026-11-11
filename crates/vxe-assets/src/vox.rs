@@ -124,6 +124,9 @@ pub struct VoxFile {
     pub palette: [[u8; 4]; 256],
     /// Scene-graph nodes by id; empty when the file has no scene graph.
     pub nodes: BTreeMap<u32, Node>,
+    /// Scene-graph node names by node id, from each node's `_name` attribute; a node without
+    /// one has no entry. MagicaVoxel lets a node go unnamed and lets two share a name.
+    pub names: BTreeMap<u32, String>,
     /// The file has an `IMAP` chunk, which remaps palette indices in the editor. This parser
     /// ignores it, so a map written against the editor's displayed order may be wrong; a
     /// caller can refuse such files.
@@ -257,10 +260,16 @@ fn frame(r: &Reader<'_>, attrs: &[Pair<'_>]) -> Result<([i32; 3], Rot), VoxError
     Ok((t, rot))
 }
 
-/// Parses one scene-graph chunk's content into `(id, node)`.
-fn node(r: &mut Reader<'_>) -> Result<(u32, Node), VoxError> {
+/// Parses one scene-graph chunk's content into `(id, node, name)`, the name from the node's
+/// `_name` attribute (MagicaVoxel writes it on transforms), its bytes read as UTF-8 with
+/// replacement characters.
+fn node(r: &mut Reader<'_>) -> Result<(u32, Node, Option<String>), VoxError> {
     let id = r.count("negative node id")?;
-    let _attrs = r.dict()?;
+    let attrs = r.dict()?;
+    let name = attrs
+        .iter()
+        .find(|(k, _)| *k == b"_name")
+        .map(|(_, v)| String::from_utf8_lossy(v).into_owned());
     let node = match &r.chunk {
         b"nTRN" => {
             let child = r.count("negative child id")?;
@@ -297,7 +306,7 @@ fn node(r: &mut Reader<'_>) -> Result<(u32, Node), VoxError> {
             Node::Shape { models }
         }
     };
-    Ok((id, node))
+    Ok((id, node, name))
 }
 
 impl VoxFile {
@@ -342,6 +351,7 @@ impl VoxFile {
             models: Vec::new(),
             palette: DEFAULT_PALETTE,
             nodes: BTreeMap::new(),
+            names: BTreeMap::new(),
             imap_present: false,
         };
         let mut pending: Option<[u32; 3]> = None;
@@ -412,9 +422,12 @@ impl VoxFile {
                     file.palette[0] = [0; 4];
                 }
                 b"nTRN" | b"nGRP" | b"nSHP" => {
-                    let (nid, node) = node(&mut c)?;
+                    let (nid, node, name) = node(&mut c)?;
                     if file.nodes.insert(nid, node).is_some() {
                         return Err(c.malformed("duplicate node id"));
+                    }
+                    if let Some(name) = name {
+                        file.names.insert(nid, name);
                     }
                 }
                 b"IMAP" => file.imap_present = true,

@@ -80,6 +80,24 @@ impl std::ops::Mul for Quat {
     }
 }
 
+/// The normalised linear blend `a * (den - num) + b * num`, along the shorter arc: `b` is negated
+/// first when its dot product with `a` is negative (`q` and `-q` are the same rotation, and the
+/// blend toward the nearer of the two turns the short way). `0 <= num <= den`, `den > 0`.
+///
+/// The blend's speed is uneven: it turns faster in the middle than at the ends, by more the
+/// farther apart the keys are (a half turn sampled at a quarter of the way is 36.9 degrees, not
+/// 45).
+pub(crate) fn nlerp(a: Quat, b: Quat, num: i64, den: i64) -> Quat {
+    debug_assert!(den > 0 && (0..=den).contains(&num));
+    let a = a.0.map(i64::from);
+    let mut b = b.0.map(i64::from);
+    let dot: i64 = (0..4).map(|k| a[k] * b[k]).sum();
+    if dot < 0 {
+        b = b.map(|c| -c);
+    }
+    normalise([0, 1, 2, 3].map(|k| i128::from(a[k] * (den - num) + b[k] * num)))
+}
+
 /// Scales a quaternion given at any fixed-point scale to unit length in Q14.
 fn normalise(q: [i128; 4]) -> Quat {
     let n2: i128 = q.iter().map(|c| c * c).sum();

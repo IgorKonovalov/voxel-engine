@@ -1,7 +1,7 @@
 # 0063: Rigs and clips: keyframe animation sampled by tick, a rig text file beside the `.vox`, a model viewer in the fly-through, and voxels from text
 
-> **Status:** approved (owner go 2026-11-10; Phases 1 and 2 start after Plan 0062's Phase 1
-> merges, Phases 3 and 4 after Plan 0062 closes)
+> **Status:** in-progress (Phases 1 and 2, stacked on `plan-0062` at bc80246; Phases 3 and 4
+> after Plan 0062 closes)
 > **Created:** 2026-11-10
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
@@ -14,6 +14,36 @@
 > **Starts after:** [Plan 0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md).
 > Phases 1 and 2 are headless and need only its Phase 1 (`vxe-entity`); they may run as a
 > side lane once that has merged. Phases 3 and 4 need Plan 0062 closed.
+
+> **Amended 2026-11-11 (architect, owner away; default taken, owner may overrule): the rest
+> pose.** Plan 0062's Phase 1 review found the gap: the `.rig` gives each part a rest place
+> (`at`), Plan 0062's answer 6 puts a child's rest layout in `PartPose::t` (`Part` has no rest
+> field), but the draft's `Rig::build` returned no rest pose and its `sample` let an untracked
+> part "keep its rest pose", which `Pose::rest` sets to zero: the part would sit on its
+> parent's pivot. **The rule:** (1) `Rig::build` returns a rest `Pose` beside the model and
+> clips, each part's `at` in its `PartPose::t` (1/256 world voxel), every rotation the
+> identity, the root at the origin; (2) `sample` and `Playback::pose` take that rest pose and
+> start from it, so a part with no track copies its rest `PartPose`; (3) a key's translation
+> is an **offset added to** the rest `t`, and a key's rotation **replaces** the rest
+> rotation. Replace, not compose: the `.rig` grammar has no rest rotation, so every rest that
+> `Rig::build` makes is unturned and the two rules agree for every rig; replacing keeps a key's
+> angle the angle the file states and the angle `blend` mixes, costs no quaternion product per
+> part per tick, and gives a consumer-built rest with a turned joint no second, hidden turn.
+> If the grammar ever gains a rest rotation, this choice is re-read. **Rejected:** a rest field
+> on `vxe_entity::Part` (contradicts answer 6, changes `Model::id` and Plan 0062's committed
+> fixed vectors, and reopens a merged crate); absolute key translations (every key repeats its
+> part's `at`, and editing `at` would not move an animated part, so the file holds two sources
+> for one place); baking `at` into a track for every part at build (an entity placed before a
+> clip plays, and `blend` from rest, still need the laid-out pose). The phases below carry the
+> rule, Phase 1 done-when 8 and Phase 2 done-when 7 defend it, and the tree's names replace
+> the draft's (Notes under Implementation log; mapping in
+> [`logs/0063.md`](logs/0063.md)). This is owner point 5 below. Phases 1 and 2 were built to
+> this rule on this branch (7aed6b7, 5c87d16) before the amendment was written; it records the
+> contract, it does not change their code. Other names from Plan 0062 Phase 1's tree: a
+> "Q14 quaternion" is `Quat([i16; 4])`; a pose's root is `root: Fixed3` and `root_q: Quat`;
+> no phase here uses `EntityHit::face: Option<Face>`. Phase 3's `DisplayPose` and
+> `Frame::set_entities` belong to Plan 0062's later phases, not in the tree yet; the tree's
+> names win when Phase 3 starts.
 
 ## TL;DR
 
@@ -72,19 +102,26 @@ times are estimates**, none measured.
 ### Phase 1: Clips in `vxe-entity`
 - **Owner skill:** dev
 - **What:**
-  - **`Clip`**: a length in ticks, a `looped` flag, and per part a track of keys sorted by
-    tick; a key holds a translation (`i32`, 1/256 voxel) and a rotation (Q14 quaternion).
+  - **`Clip`**: a length in ticks, a `looped` flag, and per part a `Track` of `Key`s sorted by
+    tick; a `Key { tick: u32, t: [i32; 3], q: Quat }` holds a translation **offset from the
+    part's rest `t`** (1/256 world voxel, along the parent's turned axes) and a rotation (the
+    tree's `Quat([i16; 4])`, Q14, `Q14_ONE` = 16384) that **replaces** the rest rotation.
     `Clip::new` refuses an unsorted track, a key past the length and a part index the model
     lacks.
-  - **`sample(model, clip, tick) -> Pose`** (the root is left at identity for the caller to
-    place): between two keys the translation is linear with rounding toward zero, the rotation
-    a normalised linear blend along the shorter arc (the second key is negated when the dot
-    product is negative). Before a track's first key and after its last, the nearest key
-    holds. A part with no track keeps its rest pose. A tick past the length wraps when
-    `looped` and holds the last tick otherwise.
+  - **`sample(model, rest: &Pose, clip, tick: u64) -> Pose`** (the root is left at the
+    origin, `root_q` the identity, for the caller to place): it starts from `rest` (the rest
+    pose `Rig::build` returns, or any the consumer lays out). Between two keys the translation
+    is linear with rounding toward zero, the rotation a normalised linear blend along the
+    shorter arc (the second key is negated when the dot product is negative); the result is
+    the rest `t` plus the sampled offset, and the sampled rotation. Before a track's first key
+    and after its last, the nearest key holds. A part with no track copies its `rest`
+    `PartPose` bit for bit. A tick past the length wraps when `looped` and holds the last tick
+    otherwise. `Pose::rest(model)` (every `t` zero) is a valid `rest` for a model whose parts
+    all share a pivot place, as the tests below use it.
   - **`blend(a, b, w) -> Pose`**, `w` from 0 to 256, the same two rules per part.
-  - **`Playback`**: `{ clip, start_tick, rate }` with `rate` in 1/256; `tick_at(now)` is
-    integer. The consumer owns it; the crate keeps no clock.
+  - **`Playback`**: `{ clip: Arc<Clip>, start_tick, rate }` with `rate` in 1/256;
+    `tick_at(now)` is integer; `pose(model, rest, now)` samples at it. The consumer owns it;
+    the crate keeps no clock.
 - **Files touched:** `crates/vxe-entity/src/clip.rs` (new), `lib.rs`, `quat.rs`,
   `tests/clip.rs` (new), `tests/determinism.rs`, `docs/plans/logs/0063.md` (new).
 - **Done when:**
@@ -106,6 +143,11 @@ times are estimates**, none measured.
   6. `clip_poses_match_the_fixed_vectors` (`tests/determinism.rs`): every tick of a committed
      three-part clip hashes to a committed constant, on Linux and Windows in CI. Under 1 s.
   7. `Clip::new`'s three refusals each return their typed error. Under 1 s.
+  8. **A part with no track keeps its rest place, and a key adds to it** (amended 2026-11-11;
+     asserted in `a_translation_key_pair_is_linear` at 7aed6b7): with a rest pose whose part 0
+     sits at `t` (5, 6, 7) and part 1 at (1000, 0, -3), and a clip that keys only part 1 from
+     0 to (256, 0, 0) over 40 ticks, tick 10 gives part 0 equal to its rest `PartPose` (not the
+     zero `t` of `Pose::rest`) and part 1 at (1064, 0, -3). Under 1 s.
 
 ### Phase 2: The `.rig` file and voxels from text
 - **Owner skill:** dev
@@ -133,8 +175,14 @@ times are estimates**, none measured.
     or by `model <index>`.
   - **`Rig::parse(text) -> Result<Rig, RigError>`** with the line number and a message in
     every error; **`Rig::build(&VoxFile, materials: &dyn Fn(&str) -> Option<MaterialId>) ->
-    Result<(Model, Vec<(String, Clip)>), RigError>`**. An unknown material name, node, parent
-    or part is an error that names it. `Rig::write` prints a rig back in a canonical form.
+    Result<RigModel, RigError>`**, `RigModel { model, part_names, rest: Pose, clips:
+    Vec<(String, Clip)> }`. **Where `at` goes:** a part's `at` is its pivot's rest place from
+    its parent's pivot, in the parent's model voxels (the part's own for a root part); build
+    divides it by that detail into 1/256 world voxel and writes it to the part's `t` in
+    `rest`; `rest`'s rotations are the identity and its root the origin. A key's `move x y z`
+    is an offset from that place in the same units, and its `rot` replaces the rest rotation
+    (the amendment above). An unknown material name, node, parent or part is an error that
+    names it. `Rig::write` prints a rig back in a canonical form.
   - **Voxels from text.** An example binary, `cargo run -p vxe-assets --example voxtext`:
     `voxtext to-vox in.voxtext out.vox` and `voxtext from-vox in.vox out.voxtext`. A
     `.voxtext` holds a legend (a character, a palette index, an rgb colour) and, per named
@@ -162,6 +210,13 @@ times are estimates**, none measured.
   6. `voxtext_round_trips_through_vox`: a two-model `.voxtext` to `.vox` to `VoxFile` gives
      the drawn voxels and node names; `from-vox` then `to-vox` gives identical bytes. Under
      1 s.
+  7. **`at` lands in the rest pose and an untracked part stays there** (amended 2026-11-11;
+     asserted in `the_sample_rig_builds_its_model_and_clips` at 5c87d16): the sample rig's
+     `rest` holds `torso` at (0, 0, 0), `head` at (0, 1536, 0) and `leg_l` at (-256, 0, 0)
+     (12 and -2 model voxels at `torso`'s detail 2, 128 each); `sample(model, rest, walk, 10)`
+     gives `head` (no track) equal to its rest `PartPose`, not (0, 0, 0) on `torso`'s pivot,
+     and `leg_l` at (-256, 0, 0) with an unturned rotation within 1 (the midpoint of +30 and
+     -30 degrees about x). Under 1 s.
 
 ### Phase 3: The viewer, display interpolation and a sample model
 - **Owner skill:** dev
@@ -193,7 +248,10 @@ times are estimates**, none measured.
      Under 1 s.
   2. `the_sample_assets_are_in_step`: `walker.voxtext` converts to bytes identical to the
      committed `walker.vox`, and `walker.rig` builds against it with the fly-through's
-     material names (no device). Under 1 s.
+     material names (no device); every part with an `at` other than zero has that place in
+     the built `rest`, and at tick 0 of `idle` every part `idle` does not key equals its rest
+     `PartPose`. The viewer samples with the built `rest` and places an instance with it
+     before a clip plays. Under 1 s.
   3. `a_changed_rig_reloads_and_a_broken_one_keeps_the_old` (`tests/viewer.rs`, no device):
      the viewer's reload step, driven with injected file contents, swaps the model on a valid
      change and reports `rig line 9` with the old model kept when line 9 is broken. Under 1 s.
@@ -281,6 +339,16 @@ No GPU memory is added: a clip changes transforms, not volumes.
 The "go" is given (owner, 2026-11-10: "move all draft plans to approved"). Open: the two
 questions under Risks.
 
+4. **The rig's axes (owner, 2026-11-11, the architect's recommendation).** z is up: a rig's
+   lengths are in the prefab's axes as `VoxMap::to_prefab` lays a `.vox` model out, as
+   MagicaVoxel and `vxe-sim`'s controller do. The rest offset is Plan 0062's answer 6.
+
+5. **Owner point, open (architect, 2026-11-11, owner away; default taken, owner may
+   overrule): the rest pose.** `Rig::build` returns a rest `Pose` holding each part's `at`;
+   `sample` starts from it; key translations add to the rest place and key rotations replace
+   the rest rotation (the amendment under the header, with the rejected alternatives). The
+   plan stays approved; an overrule is an amendment to Phases 1 and 2.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -289,10 +357,12 @@ questions under Risks.
 > Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
 > resume notes go to `docs/plans/logs/0063.md`.
 
+Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Clips in `vxe-entity` | dev | not started | |
-| 2: The `.rig` file and voxels from text | dev | not started | |
+| 1: Clips in `vxe-entity` | dev | done | 7aed6b7 |
+| 2: The `.rig` file and voxels from text | dev | done | committed with this row |
 | 3: The viewer, display interpolation and a sample model | dev | not started | |
 | 4: The owner's window | human | not started | |
 
@@ -301,6 +371,17 @@ questions under Risks.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: `sample` takes a rest `Pose` (`sample(model, rest, clip, tick)`), and a key's
+  translation is an offset from the rest translation; `Part` has no rest offset (Plan 0062's
+  option (a)). `Clip::new` also refuses a zero length, an empty track and two tracks for one
+  part; equal ticks in a track count as unsorted. `Playback` holds an `Arc<Clip>`.
+- Phase 2: `Rig::build` returns `RigModel { model, part_names, rest, clips }` (the rest pose
+  added, the plan's tuple a struct). `VoxFile` gains `names` (node `_name`s), which also
+  touched `apps/flythrough/src/castle.rs` and `crates/vxe-assets/tests/vox.rs` (one
+  `names: Default::default()` each, outside the phase's files). The `.rig` grammar adds
+  `move x y z` on a key, `at` measured in the parent's model voxels, and parents declared
+  later in the file; `.voxtext` is `color` / `model <name> [at x y z]` / `layer` / rows.
 
 ### Close triggers
 

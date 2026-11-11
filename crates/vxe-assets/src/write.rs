@@ -58,7 +58,9 @@ fn dict(out: &mut Vec<u8>, pairs: &[(&str, String)]) {
 /// The file as `.vox` bytes, which [`VoxFile::parse`] reads back to an equal file when the
 /// file holds what the parser can produce: `palette[0]` is `[0, 0, 0, 0]`, every model edge
 /// is at most [`crate::MAX_MODEL_EDGE`], node ids and model ids fit in an `i32`, and
-/// `imap_present` is false (no `IMAP` is written). A transform writes `_t` only when its
+/// `imap_present` is false (no `IMAP` is written). A node with an entry in `names` writes it
+/// as its `_name` attribute (a name for an id with no node is not written), and no other node
+/// attribute is written. A transform writes `_t` only when its
 /// translation is not zero and `_r` only when its rotation is not the identity, which the
 /// parser reads back as those defaults. The root transform's layer is -1 and every other
 /// transform's 0, as MagicaVoxel writes them.
@@ -87,7 +89,10 @@ pub fn encode(file: &VoxFile) -> Vec<u8> {
     for (&id, node) in &file.nodes {
         c.clear();
         int(&mut c, len32(id as usize) as i32);
-        dict(&mut c, &[]);
+        match file.names.get(&id) {
+            Some(name) => dict(&mut c, &[("_name", name.clone())]),
+            None => dict(&mut c, &[]),
+        }
         let tag = match node {
             Node::Transform {
                 child,

@@ -7,6 +7,9 @@
 //! with a [`Fixed3`](vxe_world::Fixed3) and a [`Quat`] in Q14, and each part relative to its
 //! parent. An [`EntitySet`] holds placed models and answers [`EntitySet::raycast`].
 //!
+//! A [`Clip`] holds keys per part; [`sample`] gives its pose at an integer tick and [`blend`]
+//! mixes two poses, both in fixed point, so a server and its clients pose alike.
+//!
 //! The world and the entities are queried separately, and the consumer orders the two: the
 //! world first, then the entities with the world's distance as their limit.
 //!
@@ -37,12 +40,14 @@
 //! assert_eq!(hit.t, 9 * 256 + 128);
 //! ```
 
+mod clip;
 mod model;
 mod pose;
 mod quat;
 mod raycast;
 mod set;
 
+pub use clip::{Clip, ClipError, Key, Playback, Track, blend, sample};
 pub use model::{MAX_EDGE, MAX_PARTS, Model, ModelError, Part};
 pub use pose::{PartPose, Pose, PoseError};
 pub use quat::{Q14_ONE, Quat};
