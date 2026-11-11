@@ -644,7 +644,7 @@ The owner, 2026-11-10, to the open questions above:
 | 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) landed with Phase 3's commit, see the readings log | c327f6a |
 | 3: The matrix with the read, the edges left, and the window's runner | dev | half-light matrix, FSR 2 at 1, the pick's pan and yaw read; the full-light, jitter 8 and sharpen 0.25 arms and the level's arms not run (see Notes) | f4989a9 |
 | 4: The owner's window | human | done by the owner, 2026-11-11 (`live/session61.sh`): (a) `normal`, (b) `[2, 6]`, (g) half with face weights, (e) FSR 2 at 1 as a setting, not the default; words in the readings log | c3fce0e |
-| 5: The picks as defaults | dev | done; one golden added, none moved (see Notes) | committed with this row |
+| 5: The picks as defaults | dev | done; one golden added, none moved (see Notes) | a2d289d |
 
 ### Notes
 
@@ -699,11 +699,28 @@ The owner, 2026-11-10, to the open questions above:
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe_render::{StoreRead, LightWeights}` and `Lighting::{store_read,
+  light_weights}` (bits 14 and 15, Phase 2); `Fsr2Settings::emitter_cap` removed; `Params`
+  (`marcher.rs`, `march.wgsl`): `emitter_cap` replaced by a pad word (`_tail: [u32; 3]`), size
+  unchanged; fly-through: `--store-read face|normal` (`Comma`), `--light-weights normal|face`
+  (`Semicolon`), defaults `normal` and `face` (`flythrough::DEFAULT_STORE_READ`,
+  `DEFAULT_LIGHT_WEIGHTS`); `--emitter-cap` removed; `hud::fsr2_knob_words` loses its cap
+  argument.
+- **Budget readings** (all loaded, indicative; exclusive perf lock; `docs/plans/logs/0061.md`,
+  Phase 2 done-when 6; `docs/nfr/02-frame-budget.md`): release binary of c327f6a's code, FSR 2
+  at 1.5, half light, `[2, 6]`, three rounds, load at lock 0.64 to 9.32. RTX 3080 Laptop GPU at
+  2530 x 1378: GPU frame hall 7.241 (old default) against 7.379 ms (new), temporal 0.077 against
+  0.163; vein 4.663 against 4.795, a-trous 0.833 against 0.903. RADV RENOIR at 1920 x 1080: hall
+  40.948 against 41.159, temporal 0.367 against 0.578; vein 19.766 against 20.214, a-trous 2.701
+  against 3.187 (over the 3.0 ms denoise line). `frame_bytes`: no target added (not read).
+- **Gate at the tip** (a2d289d's tree): `cargo build --workspace --all-targets` 0;
+  `scripts/build-guests.sh` 0; `cargo nextest run --workspace --profile gate --no-fail-fast`
+  (lavapipe, perf lock, load 1.51 at the lock) exit 0, 779 run, 779 passed, 104 skipped,
+  622.7 s; doctests 8 passed, 1 ignored; clippy `-D warnings` 0; fmt `--check` 0; `cargo deny
+  check` ok; `check-doc-links`, `check-comment-hygiene`, `check-index-rows`,
+  `check-test-tiers`, `check-plan-size` 0. Soak and full tiers not run.
+- **Outstanding `human` phases:** none (Phase 4 done by the owner, 2026-11-11).
 
 ## Followups
 
