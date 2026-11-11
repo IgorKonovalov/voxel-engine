@@ -825,6 +825,7 @@ fn mean_luma(img: &[u8]) -> f64 {
 /// pass's history off (the current colour weighing 1 still and moving); the exposure moves by
 /// more than 1/64 EV a frame over the first frames, where the clip applies.
 #[test]
+#[ignore = "soak"]
 fn the_upscaler_follows_an_exposure_step() {
     let source = scene_source();
     let world = World::generate(

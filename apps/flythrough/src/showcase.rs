@@ -1415,6 +1415,7 @@ mod tests {
     /// spanning the west wall, the floor and the shell, a coarser one across the west half,
     /// and bricks that touch each kind of feature. Each kind's sample holds `Full` bricks.
     #[test]
+    #[ignore = "soak"]
     fn the_brick_early_out_matches_per_voxel_evaluation() {
         let s = ShowcaseSource::new(1);
         let (mut uniform, mut full) = (0, 0);

@@ -15,7 +15,7 @@ agent memory).
 > **Stack (ADR-0001):** Rust stable pinned in `rust-toolchain.toml`, edition 2024, `wgpu` +
 > WGSL compute ray marching, `winit` shell, Linux + Windows. Canonical commands: `cargo build`,
 > `node scripts/test-changed.mjs --profile quick|gpu` per phase (the changed crates' tests;
-> gpu under the perf lock), `cargo nextest run --profile gate` at a plan's tip and close
+> gpu `--binaries <names>` under the perf lock), `cargo nextest run --profile gate` at a plan's tip and close
 > (`.config/nextest.toml`; `soak` (`--run-ignored only`) and `full` (`--run-ignored all`)
 > only when the owner asks; bare `run` is the gate tier),
 > `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
