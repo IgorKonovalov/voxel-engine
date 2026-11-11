@@ -3155,6 +3155,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vxe-entity"
+version = "0.45.0"
+dependencies = [
+ "vxe-world",
+]
+
+[[package]]
 name = "vxe-net"
 version = "0.45.0"
 dependencies = [
