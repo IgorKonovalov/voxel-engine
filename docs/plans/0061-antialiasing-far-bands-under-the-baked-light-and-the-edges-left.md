@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** in-progress (Phase 3 landed; Phase 4, the owner's window, next), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
+> **Status:** in-progress (Phase 4 done by the owner; Phase 5 next), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -642,8 +642,8 @@ The owner, 2026-11-10, to the open questions above:
 |---|---|---|---|
 | 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), answered by the owner's amendment; see [the readings log](logs/0061.md) | e79620f |
 | 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) landed with Phase 3's commit, see the readings log | c327f6a |
-| 3: The matrix with the read, the edges left, and the window's runner | dev | half-light matrix, FSR 2 at 1, the pick's pan and yaw read; the full-light, jitter 8 and sharpen 0.25 arms and the level's arms not run (see Notes) | committed with this row |
-| 4: The owner's window | human | not started | |
+| 3: The matrix with the read, the edges left, and the window's runner | dev | half-light matrix, FSR 2 at 1, the pick's pan and yaw read; the full-light, jitter 8 and sharpen 0.25 arms and the level's arms not run (see Notes) | f4989a9 |
+| 4: The owner's window | human | done by the owner, 2026-11-11 (`live/session61.sh`): (a) `normal`, (b) `[2, 6]`, (g) half with face weights, (e) FSR 2 at 1 as a setting, not the default; words in the readings log | committed with this row |
 | 5: The picks as defaults | dev | not started | |
 
 ### Notes
