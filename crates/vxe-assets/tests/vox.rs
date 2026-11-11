@@ -655,6 +655,7 @@ fn an_encoded_three_model_scene_parses_back_to_the_same_file() {
         models,
         palette,
         nodes,
+        names: Default::default(),
         imap_present: false,
     };
     let bytes = encode(&file);
@@ -696,6 +697,7 @@ fn a_single_model_without_a_scene_graph_round_trips() {
         models: vec![vault_model()],
         palette: DEFAULT_PALETTE,
         nodes: Default::default(),
+        names: Default::default(),
         imap_present: false,
     };
     let bytes = encode(&file);

@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0050.**
+**Next free number: 0054.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -62,8 +62,12 @@ the status.
 | [0045](0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md) | A per-face table cell stores irradiance at unit emission, and the read multiplies by its kept emitter's emission scale now | withdrawn 2026-11-10, never accepted; ADR-0046 and Plan 0059 built it over the store |
 | [0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md) | Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values | accepted (Plan 0059), Outcome: brick level only, live queue; supersedes ADR-0043's table |
 | [0047](0047-translucent-solids-filter-by-path-length-with-a-baked-reflected-share.md) | Translucent solids filter what is behind by path length, and reflect a small share of their baked face light | accepted (Plan 0059), Outcome: the face light is the brick's record |
-| [0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md) | The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed | proposed (Plan 0060); amends ADR-0046's queue clause |
+| [0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md) | The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed | accepted 2026-11-11 with an Outcome (Plan 0060); amends ADR-0046's queue clause |
 | [0049](0049-the-baked-light-is-read-by-the-far-shading-normal.md) | Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values | proposed (Plan 0061) |
+| [0050](0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md) | An entity is a set of posed voxel volumes in a pool of its own, traced after the world march, poses in fixed point | proposed (Plan 0062) |
+| [0051](0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md) | Rigs and clips are small text files, and a clip is sampled in fixed point by tick | proposed (Plan 0063) |
+| [0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md) | The live queue's bake budget is milliseconds of GPU time per second of wall time, capped per frame, not a slice per frame | accepted 2026-11-11 (owner, standing rule; values at Plan 0067's window) |
+| [0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md) | A light summary per block and a two-level parent table light a brick with no baked value | accepted 2026-11-11 (Plan 0067) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
@@ -73,5 +77,6 @@ Settled in the founding interview (2026-10-16); the first is a row of
 its M9 section. Each becomes an ADR when the plan that implements it is drafted, so the ADR
 carries the concrete shape rather than the intention:
 
-- Dynamic entities as voxel models on rigid-part rigs: with the entities plan.
+- Dynamic entities as voxel models on rigid-part rigs: recorded as ADR-0050 (proposed, Plan
+  0062).
 - Network transport (QUIC; ADR-0007 fixed only the byte channel): with the networking plan.

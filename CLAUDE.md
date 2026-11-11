@@ -15,7 +15,7 @@ agent memory).
 > **Stack (ADR-0001):** Rust stable pinned in `rust-toolchain.toml`, edition 2024, `wgpu` +
 > WGSL compute ray marching, `winit` shell, Linux + Windows. Canonical commands: `cargo build`,
 > `node scripts/test-changed.mjs --profile quick|gpu` per phase (the changed crates' tests;
-> gpu under the perf lock), `cargo nextest run --profile gate` at a plan's tip and close
+> gpu `--binaries <names>` under the perf lock), `cargo nextest run --profile gate` at a plan's tip and close
 > (`.config/nextest.toml`; `soak` (`--run-ignored only`) and `full` (`--run-ignored all`)
 > only when the owner asks; bare `run` is the gate tier),
 > `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
@@ -42,8 +42,9 @@ crates/
 ├── vxe-app/         # winit shell: window, input, surface, frame loop. Thin and optional
 ├── vxe-sim/         # cylinder sweeps and the character controller (step, slide, climb, fall).
 │                    #   HEADLESS and DETERMINISTIC like vxe-world, which is its only dependency
-├── vxe-assets/      # .vox parsing, palette, palette-to-material map producing vxe-world
-│                    #   prefabs; depends on vxe-world only
+├── vxe-assets/      # .vox parsing and writing, palette, palette-to-material map producing
+│                    #   vxe-world prefabs, .rig files to vxe-entity models and clips, voxels
+│                    #   drawn as text (.voxtext); depends on vxe-world and vxe-entity
 ├── vxe-net/         # channel abstraction, server tick and op/input logs, the Logic and
 │                    #   Host traits, shared/owned clients; later QUIC. No wall clock
 ├── vxe-script-wasm/ # wasmtime host for logic components: the WIT world, deterministic WASI
@@ -52,6 +53,9 @@ crates/
 ├── vxe-audio/       # cpal output, an HRTF mixer on the device callback, occlusion and
 │                    #   early reflections probed through the material table; the shipped
 │                    #   HRIR pack under assets/. Depends on vxe-world only; not deterministic
+├── vxe-entity/      # voxel-model entities: rigid parts as prefabs, poses in fixed point and
+│                    #   Q14 quaternions, the entity ray query. HEADLESS and DETERMINISTIC;
+│                    #   depends on vxe-world only
 └── (planned, one per plan) vxe-script-lua (mlua host, client scripts)
 apps/
 └── flythrough/      # the engine's own testbed binary: fly, dig, read edit results
@@ -90,6 +94,7 @@ scripts/
 ├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
+├── loc.mjs                    # lines of code, tests, comments, WGSL and docs per crate; the largest files
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
 .github/workflows/ci.yml  # build, nextest (gate tier), doctests, clippy, fmt, hooks, doc gates; cargo-deny
 .github/workflows/soak.yml  # the weekly soak tier

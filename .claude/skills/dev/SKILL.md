@@ -71,10 +71,17 @@ For each phase, in order:
    - **The test tiers** live in `.config/nextest.toml`; `scripts/test-changed.mjs` runs a tier
      narrowed to the crates the working tree changed and their dependents (owner, 2026-11-03:
      test what changed, iteration speed over repetition). `quick` is the CPU-only tests, takes
-     no perf lock and kills a test past 30 s. Add `--profile gpu` (under the perf lock) when the
-     phase's `Files touched` include `crates/vxe-render/`, a shader, or a fly-through render
-     test. A long series (a test over 30 s on lavapipe here, or 60 s on CI; `docs/nfr.md`
-     section 7) is marked `#[ignore = "soak"]` and runs in no gate. A measurement run by hand
+     no perf lock and kills a test past 30 s. Add `--profile gpu --binaries <names>` (under the
+     perf lock) when the phase's `Files touched` include `crates/vxe-render/`, a shader, or a
+     fly-through render test: the `gpu_*` binaries the phase names, plus the ones whose files
+     it touched, which join on their own. The whole gpu tier runs at the tip only (owner,
+     2026-11-10). A test over the soak line (`docs/nfr.md` section 7: 10 s on lavapipe here,
+     60 s on CI) is marked `#[ignore = "soak"]` and runs in no gate; the close review runs
+     the soak tests of the crates the plan changed.
+   - **A phase marked exploration** (lane rules 2b; the phases before the owner's window in a
+     look-driven plan) lands its CPU tests of data, determinism and API, and no test that
+     judges the image. Its readings run from `live/`, a `mod reading` or the strip tool. The
+     plan's last dev phase writes the image tests against the owner's picks. A measurement run by hand
      is `#[ignore]`d inside the file's `mod reading`, and run with
      `--run-ignored only -E 'test(=reading::<name>)'`. `--profile gate` (quick plus gpu,
      every crate) is for the plan's tip, not a phase. `--profile soak --run-ignored only` and

@@ -336,6 +336,7 @@ fn test_counts(samples: u32) -> BakeSettings {
 /// The records depend on each face's own samples alone: one batch, batches of 7 faces and the
 /// jobs reversed read bit-identical; and [`four_ways`].
 #[test]
+#[ignore = "soak"]
 fn a_bake_does_not_depend_on_its_slicing_or_order() {
     let (world, _) = small_box();
     let Some(mut rig) = rig_on(world, [16, 16], None) else {

@@ -5,10 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "MagicaVoxel .vox import and the palette-to-material map that turns models into vxe-world prefabs"
+description = "MagicaVoxel .vox import, the palette-to-material map, rig files and voxels from text"
 
 [lints]
 workspace = true
 
 [dependencies]
+vxe-entity.workspace = true
 vxe-world.workspace = true

@@ -2134,6 +2134,12 @@ impl Frame {
         self.bake_queue.as_ref()
     }
 
+    /// The live queue, if started, to drain its readings
+    /// ([`crate::bake::BakeQueue::take_angle_needs`]).
+    pub fn bake_queue_mut(&mut self) -> Option<&mut crate::bake::BakeQueue> {
+        self.bake_queue.as_mut()
+    }
+
     /// The live queue's slice, in milliseconds.
     pub fn set_bake_slice(&mut self, ms: f64) {
         if let Some(q) = self.bake_queue.as_mut() {
