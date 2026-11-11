@@ -6,6 +6,8 @@
 pub mod castle;
 pub mod cave;
 pub mod hud;
+pub mod path;
+pub mod report;
 pub mod showcase;
 pub mod thin_rig;
 pub use flythrough_logic as logic;

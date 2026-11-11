@@ -1,6 +1,6 @@
 # 0068: A tester build for Linux and Windows: three scenes, a camera path, free flight and a report
 
-> **Status:** approved (2026-11-11, owner go)
+> **Status:** in-progress
 > **Created:** 2026-11-11
 > **Milestone:** M7 in `docs/roadmap.md` (the benchmark lane)
 > **Related ADRs:** [ADR-0054](../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) (proposed)
@@ -330,11 +330,11 @@ for them. The release profile's build time on CI is recorded there too.
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to `docs/plans/logs/0068.md`.
+> attempts and resume notes go to [`docs/plans/logs/0068.md`](logs/0068.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: a camera path through the showcase, and its run.json | dev | not started | |
+| 1: a camera path through the showcase, and its run.json | dev | done; windowed reading owed (live/readings68.sh) | committed with this row |
 | 2: paths for the cave and the castle, the tour, and the tester mode | dev | not started | |
 | 3: the system report and Windows readings | dev | not started | |
 | 4: the launcher window, runs, logs and the zip | dev | not started | |
@@ -342,6 +342,13 @@ for them. The release profile's build time on CI is recorded there too.
 | 6: the owner's runs on Linux and Windows | human | not started | |
 
 ### Notes
+
+- Names in the tree (readings log, Phase 1 table): the showcase's air test reads
+  `ShowcaseSource::new(PATH_SEED)`, not `HallSource` (the castle's hall); `PATH_SEED` = 1 and
+  `--path` refuses another `--seed`; `run.json` gives `internal` in pixels beside
+  `internal_scale`.
+- `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
+  launcher uses, not a parser private to the test.
 
 ### Close triggers
 
