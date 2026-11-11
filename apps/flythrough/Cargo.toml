@@ -30,6 +30,10 @@ vxe-script-wasm = { workspace = true, features = ["host"], optional = true }
 vxe-audio.workspace = true
 vxe-assets.workspace = true
 
+# The peak working set behind `run.json`'s `peak_rss_bytes` on Windows.
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [dev-dependencies]
 criterion.workspace = true
 png.workspace = true

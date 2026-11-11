@@ -335,8 +335,8 @@ for them. The release profile's build time on CI is recorded there too.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: a camera path through the showcase, and its run.json | dev | done; windowed reading owed (live/readings68.sh) | 2704f51 |
-| 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench readings owed (live/readings68.sh) | committed with this row |
-| 3: the system report and Windows readings | dev | not started | |
+| 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench readings owed (live/readings68.sh) | bffba55 |
+| 3: the system report and Windows readings | dev | done; Windows `peak_rss_bytes` owed to Phase 6 | committed with this row |
 | 4: the launcher window, runs, logs and the zip | dev | not started | |
 | 5: the release archives on CI | dev | not started | |
 | 6: the owner's runs on Linux and Windows | human | not started | |
@@ -352,6 +352,9 @@ for them. The release profile's build time on CI is recorded there too.
   log, Phase 2). The dungeon leg pans at the shot's eye.
 - The cave path is 71 s, not about 60 s: the route to 1400 voxels along +x.
 - `--tester` needs `--path` and refuses `--hud`; `Esc` in a tour reports `ended` `completed`.
+- Phase 3 adds `.github/workflows/ci.yml`'s `The tester's system report` step (both arms;
+  the done-when's Windows step) and `windows-sys` to `apps/flythrough/Cargo.toml`, outside its
+  files list; `apps/tester` has a `src/lib.rs`.
 - `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
   launcher uses, not a parser private to the test.
 

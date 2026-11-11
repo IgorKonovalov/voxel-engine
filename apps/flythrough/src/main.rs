@@ -1673,8 +1673,16 @@ fn material_name(table: &MaterialTable, m: MaterialId) -> String {
         .map_or_else(|| format!("#{m}"), |row| row.name.clone())
 }
 
+/// The process's peak resident set in bytes: on Windows `GetProcessMemoryInfo`'s
+/// `PeakWorkingSetSize`, elsewhere `VmHWM` from `/proc/self/status`; `None` where neither reads.
+#[cfg(windows)]
+fn peak_rss_bytes() -> Option<u64> {
+    hud::process_memory().map(|m| m.PeakWorkingSetSize as u64)
+}
+
 /// The process's peak resident set (`VmHWM`) in bytes, read from `/proc/self/status`; `None`
 /// where that file does not exist or does not carry the line.
+#[cfg(not(windows))]
 fn peak_rss_bytes() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
