@@ -37,6 +37,16 @@
 > plan is approved; the six open points are answered with their defaults (under "Open points
 > for the owner"), and ADR-0053 records Phase 4's store shape, accepted the same day.
 
+> **Amended 2026-11-11 (owner), Plan 0060's fix-pass findings.** Two readings of Plan 0060's
+> Phase 5 fix pass (`docs/plans/logs/0060.md`, "The queue step's CPU, fix pass") move here. (1)
+> **The opening step's cost:** a step that opens reads about 9 ms p50, one that does not about
+> 1 ms at best; Phase 2 takes the opening step as a target. (2) **The run-to-run swing:** the
+> same base binary source read queue-step p50 about 1.0 ms before a reboot and 4.8 to 9.4 ms
+> after it; Phase 1 measures the swing and names its cause or says it could not. While the
+> swing is unexplained an absolute millisecond bar is not reliable, so Phase 2's bars are an
+> A/B against the plan's base read alternated in the same session, the protocol Plan 0060 was
+> amended to. "Context", "Budgets" and the risks follow. The plan stays approved.
+
 ## TL;DR
 
 On the RTX the GPU is not the lag. In the owner's window at 2560 x 1440 the march reads 6.1 to
@@ -78,10 +88,24 @@ iGPU), which Plan 0064 records as a label on windowed readings.
   in view waiting. Owner: "after several seconds distant caves still black".
 - **The step's cost grew with Plan 0060.** Its Phase 5 autopilot (RTX, quiet, headless
   2530 x 1378, `docs/plans/logs/0060.md`): the step p50 1.007 ms at the base a8b1a2c, 3.29 to
-  3.39 ms at the tip; p99 18.3 to 18.6 ms at both. About 0.77 ms of it is Phase 1's census on
-  every step, which the 0060 lane is gating to the line's cadence before it merges; the rest is
-  unattributed. The autopilot's path is lighter than the window's fast flight (3.3 against 10.3
-  ms), so this plan's readings include that flight, not only the autopilot.
+  3.39 ms at the tip; p99 18.3 to 18.6 ms at both. The autopilot's path is lighter than the
+  window's fast flight (3.3 against 10.3 ms), so this plan's readings include that flight, not
+  only the autopilot.
+- **The opening step and the swing** (Plan 0060's Phase 5 fix pass, the same protocol, 16G cap,
+  `docs/plans/logs/0060.md`, "The queue step's CPU, fix pass"; amended 2026-11-11, owner).
+  Gating the census to the line's cadence changed nothing (tip p50 3.276 ms). Lap timers on
+  the base a8b1a2c and the tip, after a reboot: a step that opens reads 9.0 to 10.6 ms p50, one
+  that does not 0.96 ms on the base's first run but 5.59 ms on its second (4.0 to 4.2 on the
+  tip). Of an opening step, building the candidates reads 2.2 to 2.3 ms and the sort 0.9 to 1.0
+  ms (together about 3.4 ms), the check-and-list loop 3.5 to 3.9 ms, then collect and dispatch;
+  the same on base and tip. The candidate count in the autopilot is not in that log (about
+  17 000 is the streamed cave's, from the code read below). The base's own queue-step p50 read
+  1.007 and 1.006 ms before the reboot (09:34 to 09:45, 6G cap) and 4.818, 9.410, 9.268 and
+  9.175 ms after it (10:22 to 11:14), same scene and binary source; its share of steps that open
+  read 1245 of 2569 (48 %) and 1826 of 2236 (82 %), the tip's 1825 to 1889 of 1917 to 1980
+  (about 95 %). p50 follows that share; the pre-reboot runs did not count it. The cause of the
+  swing is not found. The lane fixed two tip-only costs (d5c4532, `entered.retain` at the
+  census; 78740af, the pre-roll no longer withdraws its own coarse pass); neither is the swing.
 - **Where the step's time can go** (a code read of `bake.rs` at 95ce5ac, to be measured, not
   trusted): each step filters every store block against the mirror and `retain`s seven maps;
   `open` rebuilds a candidate from **every full chunk in the mirror** (about 3 000 at the
@@ -189,8 +213,25 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   `QueueStats`, printed in the per-second `bake queue:` line as `step: <stage> N ms ...` and in
   the `frames:` summary as per-stage p50 and p99, with a `step` figure in the HUD's queue row;
   a count of the in-view waiting candidates whose reach crosses the full radius; the bake's ms a
-  second in the line. The window shell takes `--adapter` as the headless run does (today it
-  prints "the window takes the default adapter"), so the Radeon arms need no Mesa variable.
+  second in the line. Every stage is also split by whether the step opened: the line and the
+  `frames:` summary print the share of steps that open and the step p50 on opening and
+  non-opening steps (amended 2026-11-11, owner). The window shell takes `--adapter` as the
+  headless run does (today it prints "the window takes the default adapter"), so the Radeon
+  arms need no Mesa variable.
+- **The swing** (amended 2026-11-11, owner). The base binary read queue-step p50 1.0 ms in one
+  session and 4.8 to 9.4 ms in the next ("Context"). This phase reads it: its own tree (the
+  stage timers are the instrument; the queue's behaviour is the start commit's) alternated with
+  the start commit's binary, under rig (c)'s protocol, in at least three sessions with a reboot
+  between two of them, each run logging the opening share, the opening and
+  non-opening p50, the pre-roll's coarse pass (chunks, samples), the slice's `ns_per_sample`
+  and samples a slice, the loop's queued samples against its two-slice open threshold, the
+  memory cap, the 1-minute load, and the machine's state (power source, CPU governor and
+  power profile, CPU and GPU clocks and temperature at start and end). Candidates to read, all
+  guesses: a GPU or CPU clock state that changes `ns_per_sample` and so how often the loop
+  falls under two slices and opens; the pre-roll's coarse pass leaving a different queue
+  behind; the memory cap (6G before the reboot, 16G after); the load at start. A candidate is
+  the cause only if setting it by hand moves the base between the two modes in alternated
+  runs of one session.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `crates/vxe-app/src/shell.rs`,
   `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/gpu_queue.rs`,
   `docs/plans/logs/0067.md` (new).
@@ -200,11 +241,22 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
     reads negative.
   - `the_window_takes_the_adapter_flag` (CPU, under 1 s): the shell's config carries the
     substring and the selector picks the first adapter whose name contains it, on a fixed list.
+  - `the_stages_split_by_opening` (`gpu_queue`, lavapipe, about 3 s, an estimate): over 20
+    steps of a seeded rig in which some steps open and some do not, the opening and
+    non-opening counts sum to 20, match the steps whose `open` ran, and each side's stage sum
+    is within 5 % of its steps' own time.
+  - **The swing:** the log holds the sessions' runs with the fields above and either names the
+    cause, with the alternated runs in which setting it by hand moves the base's opening share
+    and p50 between the two modes, or says the cause was not found and lists the candidates
+    read and what each showed. Either outcome lets Phase 2 start; a named cause that can be
+    pinned is written into the protocol of rigs (b) and (c) for every later reading.
   - The log holds, for rigs (a) to (c) on the RTX and (a) and (b) on the Radeon, headless, plus
     rig (d) on the RTX windowed: the step's p50 and p99 per stage, the frame CPU p50 and p99,
     `update + poll + sync` p99, the reach-bound count against the in-view waiting count, and
-    the bake's ms a second. **The readings decide the next phases:** the log names the stage
-    with at least half the step's p50 at rest and in flight; Phase 2 takes that stage. If the
+    the bake's ms a second, the opening share and the opening and non-opening p50 per stage.
+    **The readings decide the next phases:** the log names the stage with at least half the
+    step's p50 at rest and in flight, and the stages of an opening step; Phase 2 takes those
+    stages. If the
     reach-bound count is under a tenth of the in-view waiting at the patch, Phase 5 is struck.
     If `update + poll + sync` p99 reads over 16.6 ms in rig (b) with Plan 0064 merged, the lane
     stops for an architect amendment before Phase 2.
@@ -218,6 +270,19 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   the seven `retain`s run only when the mirror moved. Plan 0065's Phase 6 as it was written
   there, extended by the reach cache. If Phase 1 names another stage (the collect's copies, the
   placement), this phase takes that one as well and the log says so.
+- **The opening step** (amended 2026-11-11, owner). A step that opens reads about 9 ms p50 at
+  the base ("Context"): about 3.4 ms rebuilding and sorting the candidates, 3.5 to 3.9 ms in
+  the check-and-list loop. With the kept list, an opening between two rebuilds sorts nothing
+  and checks cached verdicts, so its cost is the walk of the kept, ordered list to the first
+  ready candidates plus the job's setup. The rebuild itself stays a full rebuild; making it
+  incremental is out of this phase unless Phase 1's readings name it.
+- **How the bars are read** (amended 2026-11-11, owner): an A/B against the plan's base (Phase
+  1's start commit) under the same protocol, alternated base, tip, base, tip in one session,
+  at least two rounds a side, the spread between a side's two rounds as the tolerance; the same
+  protocol Plan 0060 was amended to. The absolute figures of the draft (0.5 ms at rest, 1.0 ms
+  in flight, no step over 4 ms) are recorded beside each run as readings, not bars, until
+  Phase 1 names the swing's cause and the protocol pins it; then the architect may restore
+  them by an amendment.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `gpu_world.rs` (the sync's entered and
   left lists), `apps/flythrough/tests/gpu_queue.rs`.
 - **Done when:**
@@ -228,10 +293,21 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
     `light_radius + 1` of it.
   - The order of jobs a seeded flight opens is identical to the start commit's (`gpu_queue`'s
     order tests, with a recording of the start commit's order where none pins it).
-  - Rig (a) on the RTX: the step's p50 at rest at most **0.5 ms** with the queue holding its
-    unready candidates (3 000 at the level); rig (b): p50 at most 1.0 ms and no step over 4 ms
-    in 3 600 frames. If the bar is missed after the named stage is gone, the lane stops for the
-    architect (the thread question of "Decision").
+  - `an_opening_without_a_mirror_event_rebuilds_nothing` (`gpu_queue`, lavapipe, about 4 s,
+    an estimate): on a still camera with the mirror unchanged, a job's end makes the next step
+    open with `QueueStats`' new `rebuilt` counter at 0 and `reach_checks` at 0 for candidates
+    whose verdicts are cached, and the job it opens is the one a full rebuild at the start
+    commit opens from the same state; mirroring one chunk makes the next opening rebuild once.
+  - **The A/B on the RTX** (amended 2026-11-11, owner), each figure against the base's in the
+    same session, within the tolerance above: rigs (b) and (c): the opening step's p50 at most
+    **half** the base's (a proposal from arithmetic: the rebuild and sort alone are about 3.4
+    of about 9 ms, and the reach cache takes part of the 3.5 to 3.9 ms loop; not read), the
+    non-opening step's p50 and the step's p99 no worse than the base's; rig (a), with the queue
+    holding its unready candidates (3 000 at the level): the step's p50 at most a fifth of the
+    base's (a guess: what is left is the line's census and the collect's poll). Each run logs
+    its opening share; a tip whose share falls below the base's in the same round is read on the
+    opening and non-opening p50, not the overall p50. If a bar is missed after the named stages
+    are gone, the lane stops for the architect (the thread question of "Decision").
 
 ### Phase 3: The bake budget in milliseconds per second
 - **Owner skill:** dev
@@ -382,6 +458,8 @@ pub struct StepStages {
     pub checks_ms: f64,
     pub collect_ms: f64,
     pub submit_ms: f64,
+    /// Whether `open` ran this step; the summaries split every stage by it.
+    pub opened: bool,
 }
 ```
 
@@ -411,8 +489,9 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
 
 | `nfr.md` figure | On record (RTX window, 83e72e1, unless named) | Proposed | How the close measures it |
 |---|---|---|---|
-| §2 streaming line (1.0 ms): the queue's step, no line of its own today | 7.0 ms p50 at rest, 10.3 in flight, single steps to 56 ms; autopilot 3.3 ms p50 (Plan 0060 Phase 5) | p50 at most 0.5 ms at rest with a full queue, 1.0 ms in flight; no step over 4 ms in 3 600 frames; a line of its own in §2 | rigs (a), (b) and (c), both adapters |
-| The frame's CPU (render thread; no line) | p50 7.1 at rest, 11.5 in flight; p99 11.6 / 71.5 | p50 at most 2.0 ms at rest; p99 at most 16.6 ms in flight, Plan 0064's sync budget in | the same |
+| §2 streaming line (1.0 ms): the queue's step, no line of its own today | 7.0 ms p50 at rest, 10.3 in flight, single steps to 56 ms; autopilot 3.3 ms p50 (Plan 0060 Phase 5); the base a8b1a2c's autopilot 1.0 ms in one session and 4.8 to 9.4 ms in the next, the swing (Plan 0060's fix pass) | an A/B against Phase 1's start commit, alternated in one session (amended 2026-11-11, owner): the opening step's p50 at most half the base's, the non-opening p50 and the p99 no worse; at rest p50 at most a fifth of the base's (proposals, Phase 2). The draft's 0.5 ms at rest, 1.0 ms in flight and no step over 4 ms are logged beside them, bars again only if Phase 1 explains the swing; a line of its own in §2 | rigs (a), (b) and (c), both adapters, base and tip alternated |
+| The queue's opening step (no line; amended 2026-11-11, owner) | about 9 ms p50 on the steps that open (9.0 to 10.6), of it the candidates 2.2 to 2.3 ms, the sort 0.9 to 1.0, the check-and-list loop 3.5 to 3.9; opening share 48 % to 82 % on the base, about 95 % on Plan 0060's tip (fix pass, RTX autopilot) | at most half the base's p50 in the same session's A/B; the opening share and the swing's cause, or its absence, named in Phase 1's log | Phase 1's split by opening, rigs (b) and (c) |
+| The frame's CPU (render thread; no line) | p50 7.1 at rest, 11.5 in flight; p99 11.6 / 71.5 | p50 at most 2.0 ms at rest; p99 at most 16.6 ms in flight, Plan 0064's sync budget in; read as an A/B against the base, as the step's row, while the swing is unexplained | the same |
 | The window's wall frame (Plan 0064's row) | free pacing 10.6 ms p50 at the level, quiet, main (`docs/plans/logs/0064.md`) | p50 at most the march GPU p50 plus 2 ms at rest; p99 at most 33 ms in flight | rig (d), both pacing modes logged |
 | The bake's throughput (no line) | RTX about 150 to 210 ms a second; Radeon about 22 (arithmetic from the lines) | the same ms a second on both adapters within 10 % at the picked budget; the slow adapter's frame grows by at most the cap's share | the per-second lines, both adapters |
 | Missing light on screen (no line) | Radeon, window size: 36 932 bricks missing at 137 s, no-value share 0.10 | under the picked mode, the still-black share (no chain value) at 10 s at rest at most 0.01 on the RTX, the Radeon's recorded; the no-value share at 10 s at rest at most 0.01 on the RTX | `--read-missing` and the per-second lines' three shares |
@@ -425,8 +504,18 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
 
 - **The profile may name a stage this plan's Phase 2 does not fit** (the collect's copies, the
   placement, `refresh_tables`): the phase takes it, and the bar is what decides.
-- **Plan 0060's lane is lowering the step before it merges** (the census to the line's
-  cadence). Phase 1 reads the merged tip; "Context"'s figures are the window's and will be high.
+- **Plan 0060's lane changed the step before it merges** (the census to the line's cadence,
+  which read no change; `entered.retain` at the census; the pre-roll withdraws nothing). Phase 1
+  reads the merged tip; "Context"'s window figures will be high.
+- **The swing may stay unexplained** (amended 2026-11-11, owner). The same base read queue-step
+  p50 1.0 ms and 9 ms in two sessions, and the cause is not found. Phase 1 reads it; if it stays
+  unexplained, every step bar in this plan is an A/B in one session, and an absolute figure in
+  `docs/nfr.md` section 2 at Phase 7 carries the session's base beside it. A step bar met in a
+  session where the base read 1 ms says little about the opening step: Phase 2 reads the
+  opening and non-opening p50 apart for that reason.
+- **The opening step may not halve.** If the check-and-list loop's 3.5 to 3.9 ms is the reach
+  walk on fresh candidates rather than repeated checks, the cache saves little; Phase 1's split
+  names it, and a miss after the named stages are gone stops the lane for the architect.
 - **A per-second budget lengthens the slow adapter's frame** by up to the cap's share: 25 % of
   a 66 ms frame is 16 ms. That is the trade ADR-0052 records and the owner judges in Phase 6.
 - **The fallback is a look, and it borrows light.** A sealed cave beside a lit hall takes the
