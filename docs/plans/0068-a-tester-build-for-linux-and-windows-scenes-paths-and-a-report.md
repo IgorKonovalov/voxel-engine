@@ -375,4 +375,111 @@ for them. The release profile's build time on CI is recorded there too.
 
 ### Close triggers
 
+## Phase review (architect, 2026-11-11)
+
+Fresh-session review of Phases 1-5 at `774ca88` (main `d6d205a` merged in), to decide whether
+the plan merges into main in progress; not the close. **Verdict: not fit to merge until one
+fix pass: the report carries the home path (B1).** Everything else is fit; after B1 (and M1,
+in the same pass) the plan merges in progress without another review, the fix's own gate and
+test being the check.
+
+What was read: the diff `d6d205a..774ca88` less the merge, the plan and its Notes, the
+readings log, every new test's assertions (`apps/flythrough/tests/path.rs`, `report.rs`'s
+tests, `apps/tester/tests/{run,system,zip}.rs`), `release.yml`, `scripts/package-tester.sh`,
+`dist/`, and the saved report of the Phase 4 reading
+(`target/release/reports/vxe-report-0.47.0-linux-20261111-204658/`). Rerun here: `cargo deny
+check` (advisories, bans, licenses, sources ok) and the five doc scripts (0). The gate tier was
+not rerun: the dev's tip gate (800/800) stands, nothing found here calls it into question.
+Non-negotiables: nothing under `crates/` changed; no gameplay; no network code in
+`apps/tester` or the fly-through's new modules; `crc32fast =1.5.2` and `windows-sys =0.61.2`
+(Windows-only in both apps) are exact pins of crates the lockfile already carried, so
+`Cargo.lock` gains only `vxe-tester`; comment hygiene passes.
+
+### Blocker
+
+- **B1. The report names the home folder, and the README promises it does not.** In the saved
+  reading's zip, `tester.log` lines 3, 5, 7, 9 hold the absolute paths of `vxe-tester`,
+  `flythrough`, `system.json` and each run folder (`apps/tester/src/main.rs:201`, `:243`), and
+  every run's `log.txt` ends with the fly-through's `report: wrote <absolute path>/run.json`
+  (`apps/flythrough/src/main.rs:5306`), which the Notes did not list. A tester unpacks into
+  their home folder, so the user name goes into every report. The plan's Risks ("no names or
+  paths") and `dist/README-TESTER.txt:75` ("no file paths from your home folder") both say
+  otherwise, and the merge arms `release.yml`'s `v*` tag trigger on main, so the next such tag
+  publishes the false claim. Fix:
+  1. The launcher starts each child (the fly-through and its own `--system-json` child) with
+     its current directory at the report root and passes relative paths (`--report
+     runs/01-cave-bench`, `--system-json system.json`); `tester.log` names the executables by
+     file name only and folders relative to the report root. The command line it logs is built
+     by a function in `vxe_tester::run` so a test reaches it.
+  2. As the backstop for text the launcher does not control (driver messages, a panic's
+     message), the zip step replaces the home directory's path (`HOME`, or `USERPROFILE` on
+     Windows, as given and with the other separator) by `~` in every entry before writing.
+  3. Tests (CPU, gate, under 1 s each): (a) in `apps/tester/tests/run.rs`, a report made under
+     a base folder whose absolute path the test knows, a run of the fake child extended to
+     print its arguments and its current directory, then the zip: no entry contains the
+     base's absolute path; (b) a unit test of the scrub with a fake home string, both
+     separators.
+  4. The plan's Risks line stays true as written; no README change is needed once 1-3 hold.
+
+### Major
+
+None.
+
+### Minor
+
+- **M1. "display" output on a session's first run runs at 1280 x 720.** `Worker::run` copies
+  `self.display` (`apps/tester/src/main.rs:197`) before `self.report()` (`:198`) makes the
+  folder and writes `system.json`, which is what sets it; so the first run, or the first scene
+  of a first "run all", falls back. `run.json` records the real output, so no reading lies, but
+  the menu's choice is not honoured. Fix in the B1 pass: make the report first, then read the
+  display.
+- **M2. The key filter is defended as a function, not in the loop.** `tester_action`'s test
+  holds, but the frame loop's call to it is a tautology (`main.rs:5162`); the real filter is
+  structural (`handle_input` skipped under `--tester`). A future key read outside
+  `handle_input`, as `F2` is, would bypass it with every test green. Not for this pass: a
+  followup below.
+- **M3. The notices tool has never run.** `cargo-about 0.9.3` and `dist/about.toml` are
+  exercised first by the dispatch run on main; `about.toml` copies `deny.toml`'s accepted list
+  but not its `clarify` entries, and cargo-about's licence reading differs from deny's. If the
+  dispatch run fails there, the fix is a commit on main before Phase 6. The dev may run `cargo
+  install --locked cargo-about@0.9.3` and the workflow's generate line locally in the B1 pass
+  to take that risk out early; optional.
+
+### Nits and the flagged items, judged
+
+- The castle's `cut` keys: accepted. The air test is the binding constraint and no 1 m-clear
+  passage exists; the test pins the hold-then-cut semantics. The castle's two frames over
+  100 ms sit at the cuts (the streamer); the close's readings say so beside the castle row.
+- The cave path at 71 s: accepted; "run all" is about 140 s of flight, inside the README's
+  "about 3 minutes".
+- `vxe-tester --auto`: accepted, a recorded deviation that made the unattended reading
+  possible; not in the README, which is right for an owner's tool.
+- `system.json` from a child: accepted (one winit event loop per process). Nit: `tester.log`
+  prints its exit as `Ok(ExitStatus(unix_wait_status(0)))` (`main.rs:253`); print the code.
+- Two Linux jobs: accepted; the build stays on 22.04 for the glibc floor and the check runs
+  where the pinned lavapipe builds.
+- The launcher on the low-power adapter: accepted, and `tester.log` names it.
+- `commit` reads `unknown` locally: accepted; CI sets `VXE_COMMIT` on both build steps.
+- Zip entries dated 1980-01-01: accepted; the folder name carries the UTC time.
+- Phase 3's privacy test calls `SystemInfo::collect`, not the CLI; the CI step runs the CLI
+  on both arms. Accepted.
+- `CLAUDE.md`'s map lacked `apps/tester`, `dist/`, `scripts/package-tester.sh` and
+  `release.yml`: added on this branch with this review.
+- ADR-0054 stays `proposed` until the close: agreed.
+
+### What the merge and the close owe
+
+- Before the merge: the B1 + M1 fix pass, its tests in the gate, the tip gate on the fix.
+- After the merge, on main: the `workflow_dispatch` run of `release.yml` (Phase 5's last
+  done-when: both artifacts, the unpack-and-start steps, the glibc floor in the log and the
+  README), its release build times into the readings log.
+- Phase 6 (owner): both archives on the dev box and a Windows machine, the Windows
+  `peak_rss_bytes`, the tour's banner, help panel and hand-over seen by eye, the README read as
+  a tester; then the tag decision.
+- The close (fresh session): gate and soak of the changed crates, `velocity.mjs` and
+  `loc.mjs`, ADR-0054 accepted, the done/ move and the version bump.
+
 ## Followups
+
+- The tester mode's key filter in the loop (M2): route the frame loop's key reads under
+  `--tester` through `tester_action`, or test the loop's input handling with the filter on.
