@@ -16,20 +16,21 @@ state from `git log`. Completed plans move to `done/`.
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Amended 2026-11-10. After Plan 0034. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
-| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | approved | Code health. After Plan 0058; Phases 1, 6, 7 may run beside the drafts. Phase 0 re-inventories. |
-| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health. After Plan 0044, last before M10. Phase 0 re-measures; the architect confirms the seams. |
-| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | approved | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0061; re-read Phases 1-2 at its tip. |
+| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | approved | Code health. Side lane (0, 1, 6, 7) merged d6d2dfa; Phases 3, 4, 5, 8 after 0045 and 0058 (2026-11-11). |
+| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health. Moved ahead of 0058 (2026-11-11): starts once 0061, 0067, 0068 merge. Phase 0 re-measures. |
+| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | approved | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0045 (2026-11-11); re-read Phases 1-2 at its tip. |
 | [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | approved | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 | [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | approved | M2, ADR-0052, ADR-0053. After 0061, ahead of 0058; Phase 1 may run beside 0061. Takes 0065's Phase 6. |
-| [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | draft, awaiting owner go | M10's first, ADR-0055 (proposed). Drafted 2026-11-11, owner away. After 0045. |
+| [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
 | [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | approved | M7, ADR-0054 (proposed). Approved 2026-11-11. Side lane, may start now; touches main.rs lightly. |
 <!-- roster:end -->
 
 ## Sequence
 
-The order the active plans run in (owner, 2026-11-10, set at the review of every active plan).
+The order the active plans run in (owner, 2026-11-10, set at the review of every active plan;
+amended 2026-11-11: Plan 0045 moves ahead of Plan 0058 and the rest of Plan 0044).
 Each starts on main after the one before it closes, unless its line says otherwise.
 
 1. **Plan 0060**, the live queue: closed 2026-11-11 (v0.45.0). Plan 0061's Phase 1 (readings only) and Plan
@@ -49,28 +50,28 @@ Each starts on main after the one before it closes, unless its line says otherwi
      neighbour's or parent's light, owner 2026-11-11; ADR-0052 and ADR-0053 accepted the same
      day); the Radeon's hit and FSR 2 passes (26 and 18.5 ms at the window) stay with
      the profiles plan (step 6); 0065 closed with them over their lines.
-3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
-   before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
-   **The render settings and profiles plan is drafted before this lane starts** (owner,
-   2026-11-10; a draft only, its implementation stays at step 6), so the lights' cap has a home:
-   drafted 2026-11-11 as Plan 0069, whose per-profile light cap is a field at or under 0058's
-   `MAX_LIGHTS`; 0058 changes nothing for it.
-4. **Plan 0044**, the hot-path pass. Its Phases 1, 6 and 7 (audio, world, sim and net) touch no
-   file of 0058, 0060 or 0061 and may run as a side lane at any point above.
-5. **Plan 0045**, the structure pass, last because it moves the files every plan above edits.
-   Its Phase 0 re-measures and the architect confirms the seams before a file moves.
-6. **Plan 0069, render settings and profiles** (draft 2026-11-11, awaiting go), then the owed
-   plan removing the `own` upscaler (not drafted), whose fate Plan 0069's window decides for
-   the portable profile.
+3. **Plan 0045**, the structure pass (moved ahead of 0058 and 0044's render phases, owner
+   2026-11-11). It starts once Plans 0061, 0067 and 0068 have merged, while no lane edits the
+   files it splits. Its Phase 0 re-measures and the architect confirms the seams before a file
+   moves. Plan 0044's render device helper (its Phase 8) now follows it.
+4. **Plan 0058**, dynamic lights, on the split tree. The architect re-reads its Phases 1 and 2
+   against 0045's tip before its lane starts, since 0061 rewrote `temporal.wgsl`,
+   `composite.wgsl` and `Lighting` and 0045 moves them. Plan 0069's per-profile light cap is a
+   field at or under 0058's `MAX_LIGHTS`; 0058 changes nothing for it.
+5. **Plan 0044**, the hot-path pass, its Phases 3, 4, 5 and 8 (the side lane, Phases 0, 1, 6
+   and 7, merged at `d6d2dfa`). Phase 0's render rows re-inventory on the split tree.
+6. **Plan 0069, render settings and profiles** (approved 2026-11-11, every recommendation
+   taken), then the owed plan removing the `own` upscaler (not drafted; owner, 2026-11-11:
+   Portable takes FSR 2, so the removal goes ahead).
 7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
    because the first consumer is a cave game).
    0062's Phase 1 and 0063's Phases 1 and 2 add files only and may run as a side lane from now.
-   - **Plan 0068**, the tester build (approved 2026-11-11): a side lane beside any step above
-     until Plan 0045; it adds new files and three flags to the fly-through's `main.rs`.
+   - **Plan 0068**, the tester build (approved 2026-11-11): a side lane that merges before
+     Plan 0045 starts; it adds new files and three flags to the fly-through's `main.rs`.
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
-Every active plan but Plan 0069 (a draft) is approved (owner, 2026-11-10; Plans 0064 and 0065 the same day, after the
+Every active plan is approved (owner, 2026-11-10; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
 stays after Plan 0058. Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that

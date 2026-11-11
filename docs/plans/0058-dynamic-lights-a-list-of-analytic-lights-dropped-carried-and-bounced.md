@@ -1,7 +1,7 @@
 # 0058: Dynamic lights: a list of eight analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
 
-> **Status:** approved (owner go 2026-11-10; the lane starts after Plan 0061 merges and the
-> architect's re-read below), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
+> **Status:** approved (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
+> architect's re-read below, order amended 2026-11-11), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
 > phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
 > flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5)
 > **Created:** 2026-11-04
@@ -20,13 +20,14 @@
 > **Source:** the owner, 2026-11-04: "I want to be able to for example light cavern by dropping
 > some light source inside, and see lighting change in real time", and the answers under Owner
 > answers.
-> **Starts after:** [Plan 0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md)'s
-> merge. The owner's order of 2026-11-10 is Plan 0060, Plan 0061, this plan, then
-> [Plan 0044](0044-hot-path-and-defect-pass.md) and
-> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md). Plan 0061 edits
+> **Starts after:** [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md)'s
+> merge (owner, 2026-11-11: 0045 moves ahead of this plan; before that, Plans 0061, 0067 and
+> 0068 merge). The order is Plans 0061, 0067, 0045, this plan, then
+> [Plan 0044](0044-hot-path-and-defect-pass.md)'s render phases and Plan 0069. Plan 0061 edits
 > `temporal.wgsl` (the store read), `composite.wgsl` (the emitter cap) and `Lighting` (one bit),
-> the files Phases 1 and 2 here change. **Before the lane starts the architect re-reads Phases 1 and 2
-> against Plan 0061's tip** and refreshes their paths; bit and binding numbers in this plan are
+> the files Phases 1 and 2 here change, and 0045 moves `marcher.rs` and the shaders apart.
+> **Before the lane starts the architect re-reads Phases 1 and 2 against Plan 0045's tip** and
+> refreshes their paths; bit and binding numbers in this plan are
 > "the next free at the start commit", which dev reads from the tree.
 
 > **Amended 2026-11-10 (test cost, owner).** Phases 1 to 3 are **exploration** (lane rules 2b):
@@ -651,7 +652,8 @@ direct part, which the close reads on lavapipe.
 
 4. **The slots:** eight, and the headlamp takes slot 0 only while it is on: eight list lights
    fit with the lamp off, seven with it on.
-5. **The order:** Plan 0060, Plan 0061, this plan, then Plans 0044 and 0045.
+5. **The order:** Plan 0060, Plan 0061, this plan, then Plans 0044 and 0045. **Amended
+   (owner, 2026-11-11):** Plans 0061, 0067, 0045, this plan, then 0044's render phases.
 
 2026-11-10, after the review ("I want for example to fire a projectile and this projectile
 will be lighting up walls of cave"; "yes, amend the plan"):
@@ -661,7 +663,7 @@ will be lighting up walls of cave"; "yes, amend the plan"):
    flight; an arc stays the consumer's.
 
 The "go" is given (owner, 2026-11-10: "move all draft plans to approved"); the lane starts
-after the architect's re-read against Plan 0061's tip. The keys (`1` to `6`)
+after the architect's re-read against Plan 0045's tip (amended 2026-11-11). The keys (`1` to `6`)
 are the architect's picks from the unbound ones and dev may move them if a binding collides.
 
 ## Implementation log

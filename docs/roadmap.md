@@ -268,7 +268,8 @@ Plan 0058 (dynamic lights, redrafted over the store; ADR-0045 withdrawn), then t
 and 0045, then M10. `docs/plans/README.md` carries the sequence. Plan 0060 closed 2026-11-11 (v0.45.0, ADR-0048
 accepted with an Outcome): the queue sorts by a view score with the class kept as the leading key and withdraws
 the jobs a flight has passed; at the window the order made no visible difference, because the slice's
-throughput, not the order, limits the far light (Plan 0067 takes it).
+throughput, not the order, limits the far light (Plan 0067 takes it). Amended 2026-11-11 (owner): Plan
+0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
@@ -705,10 +706,11 @@ stands (the verdict shrinks it to scheme A or C, or drops it), then this milesto
 owes comes with the antialiasing plan, and 0048 was dropped under
 ADR-0043 (owner, 2026-11-04). Its first plan
 is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
-the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, awaiting the owner's go.
+the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, approved the same day with every recommendation taken.
 
-**Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, 0045, then the plan that removes the `own`
-upscaler and the render-profile plan (both owed, `docs/backlog.md`), then this milestone in plan order,
+**Order (owner, 2026-11-10; amended 2026-11-11):** Plans 0060, 0061, 0067, 0045, 0058, the rest of 0044,
+the render-profile plan (Plan 0069), then the plan that removes the `own` upscaler (owed,
+`docs/backlog.md`), then M6 (Plans 0062, 0063), then this milestone in plan order,
 0032 to 0037, each on main after the one before it closes. The six plans were rewritten on 2026-11-10
 against the baked store: no probe or store term takes sun or sky light.
 
