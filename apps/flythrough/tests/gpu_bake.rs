@@ -461,6 +461,7 @@ fn a_baked_view_is_final_on_its_first_frame() {
     };
     rig.bake(&test_counts(1024));
     let cells = rig.cells();
+    rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
     let accum = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
@@ -501,6 +502,63 @@ fn a_baked_view_is_final_on_its_first_frame() {
         rig.step(&camera);
     }
     assert_eq!(rig.display(), first, "frame 64 against frame 1");
+}
+
+/// The store's read counters on a fixed frame: a box of two chunks whose emitter lies in the
+/// one-chunk piece that is baked, seen from above, so its cube-face hits split between brick reads
+/// (the piece) and no value (the chunk outside, no block). With the counting pipeline
+/// (`Frame::set_count_store`) the three counts equal the ones the temporal pass wrote into the
+/// store's own words before the counters had a buffer of their own (read at 486a53e through the
+/// same `read_store_stats`); with it off the temporal pass writes nothing, so the counter buffer,
+/// cleared at the frame's start, still reads zero after it.
+#[test]
+fn the_store_counters_count_with_the_override_on() {
+    let mut t = MaterialTable::new();
+    for (id, row) in flythrough::cave_materials()
+        .rows()
+        .iter()
+        .enumerate()
+        .skip(1)
+    {
+        let mut m = row.clone();
+        if id == usize::from(ORE) {
+            m.emission = [0.05, 0.05, 0.05];
+        }
+        assert_eq!(usize::from(t.push(m)), id);
+    }
+    let world = air_world([2, 1, 1], &t);
+    fill(&world, [40, 16, 20], [88, 48, 21], ROCK);
+    fill(&world, [60, 30, 21], [61, 31, 22], ORE);
+    let Some(mut rig) = rig_on(world, [64, 36], None) else {
+        return;
+    };
+    rig.frame
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            ChunkExtent::new([1, 0, 0], [2, 1, 1]),
+            &dig_counts(),
+            &mut |_| {},
+        )
+        .expect("the piece fits");
+    let camera = Camera {
+        position: [64.0, 32.0, 40.0].into(),
+        yaw: 0.0,
+        pitch: (-80f32).to_radians(),
+        vfov: 90f32.to_radians(),
+    };
+    let counts = |s: vxe_render::StoreStats| [s.missing, s.brick_reads, s.coarse_reads];
+    rig.frame.set_count_store(true);
+    rig.step(&camera);
+    let on = counts(rig.frame.read_store_stats(&rig.device, &rig.queue));
+    println!("counting: missing, brick reads, coarse reads {on:?}");
+    assert_eq!(on, [366, 658, 0], "the counts against the start commit's");
+    rig.frame.set_count_store(false);
+    rig.step(&camera);
+    let off = counts(rig.frame.read_store_stats(&rig.device, &rig.queue));
+    assert_eq!(off, [0; 3], "the counters with the override off");
 }
 
 /// The owner's "moving fast" as a property: a frame reached by a 90 degree yaw in 2 frames reads
@@ -626,6 +684,7 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     // The hole's new faces: directions of bricks within the carve's reach that held none before.
     let new: Vec<_> = after.keys().filter(|k| !before.contains_key(k)).collect();
     assert!(!new.is_empty(), "the carve exposed no face");
+    rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
     let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
@@ -1212,6 +1271,7 @@ fn a_piece_reads_what_the_whole_world_reads() {
         pitch: (-80f32).to_radians(),
         vfov: 90f32.to_radians(),
     };
+    rig.frame.set_count_store(true);
     rig.step(&camera);
     let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
     println!("store_missing {} over the chunk outside", stats.missing);

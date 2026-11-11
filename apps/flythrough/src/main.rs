@@ -4292,8 +4292,21 @@ impl Run {
                 .map_or((vxe_render::StoreStats::default(), None), |(s, age)| {
                     (s, Some(age))
                 });
-            let missing = store_stats.missing;
             let pixels = gfx.frame.light_pixels().max(1);
+            let reads = if gfx.frame.counts_store() {
+                format!(
+                    "no value {:.4} coarse {:.4} of {} pixels ({})",
+                    f64::from(store_stats.missing) / f64::from(pixels),
+                    f64::from(store_stats.coarse_reads) / f64::from(pixels),
+                    pixels,
+                    store_age.map_or_else(
+                        || "not read back yet".to_owned(),
+                        |a| format!("read {a} frames old")
+                    ),
+                )
+            } else {
+                "store reads not counted (the HUD or --read-missing counts them)".to_owned()
+            };
             let secs = if self.args.headless {
                 f64::from(self.frame - self.queue.line_frame) / 60.0
             } else {
@@ -4306,7 +4319,7 @@ impl Run {
             let max = sl.last().copied().unwrap_or(0.0);
             let mut cpu = std::mem::take(&mut self.queue.step_cpu);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels ({}), eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -4324,13 +4337,7 @@ impl Run {
                 st.ns_per_sample,
                 st.fading,
                 st.coarse,
-                f64::from(missing) / f64::from(pixels),
-                f64::from(store_stats.coarse_reads) / f64::from(pixels),
-                pixels,
-                store_age.map_or_else(
-                    || "not read back yet".to_owned(),
-                    |a| format!("read {a} frames old")
-                ),
+                reads,
                 self.fly.camera.position.x,
                 self.fly.camera.position.y,
                 self.fly.camera.position.z,
@@ -5510,6 +5517,9 @@ impl Run {
         });
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.look);
+        // The temporal pass counts the store's reads only for a reader of them: the HUD's
+        // store row and `--read-missing`.
+        gfx.frame.set_count_store(hud || self.args.read_missing);
         let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
         } else {

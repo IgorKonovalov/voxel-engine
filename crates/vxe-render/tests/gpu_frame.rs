@@ -181,6 +181,7 @@ fn the_frame_s_timers_and_store_counts_read_back_without_waiting() {
     };
     let gpu = mirrored(&device, &queue);
     let mut frame = Frame::new(&device, 16, 16);
+    frame.set_count_store(true);
     let light = LightParams::headlamp();
     let mut sets = Vec::new();
     let mut ones = Vec::new();

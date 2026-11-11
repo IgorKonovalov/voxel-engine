@@ -261,8 +261,8 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the per-pass readings | dev | done; no phase struck (every base over 0.05 ms at the half tier) | committed with this row |
-| 2: the temporal pass | dev | not started | |
+| 1: the per-pass readings | dev | done; no phase struck (every base over 0.05 ms at the half tier) | `cc5b55d` |
+| 2: the temporal pass | dev | done; goldens byte-identical; the early-out carries the age at the pixel; `gpu_frame.rs` turns counting on (outside the files touched) | committed with this row |
 | 3: the a-trous | dev | not started | |
 | 4: the far normal and the pool read | dev | not started | |
 | 5: FSR 2 | dev | not started | |
