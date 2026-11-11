@@ -705,7 +705,7 @@ stands (the verdict shrinks it to scheme A or C, or drops it), then this milesto
 owes comes with the antialiasing plan, and 0048 was dropped under
 ADR-0043 (owner, 2026-11-04). Its first plan
 is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
-the budget and comes before Plan 0032. It is owed, not drafted, and takes its number when it is.
+the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, awaiting the owner's go.
 
 **Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, 0045, then the plan that removes the `own`
 upscaler and the render-profile plan (both owed, `docs/backlog.md`), then this milestone in plan order,

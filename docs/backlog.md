@@ -116,7 +116,10 @@ The static performance review of 2026-11-10 recommends drafting it **before Plan
 starts**, not after Plan 0045: summed from the plans' own guesses the cave frame fits the
 projected floor only at the low end and the outdoor frame not at all, and Plan 0058's eight
 lights land with no cap or profile. **Agreed (owner, 2026-11-10): the draft is written before
-Plan 0058's lane starts; its implementation stays where the Sequence has it.**
+Plan 0058's lane starts; its implementation stays where the Sequence has it.** Taken by
+[Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
+and ADR-0055 (drafted 2026-11-11, awaiting go), with the upscale line, the bake slice's line,
+the frame ledger's rewrite and the product cap below as its open question 4.
 
 ### Remove `own`, the engine's own upscaler
 
@@ -193,6 +196,8 @@ the baked light's shader waste and the queue's scan to
   its delta.
 
 Pick up: at the render-profile plan's interview, or at the next close that touches the line.
+Plan 0069 (draft, 2026-11-11) proposes the upscale, bake-slice and split lines under its
+"Budgets" and rewrites the ledger at its close.
 
 ### The a-trous under the baked light: fewer iterations, or none
 

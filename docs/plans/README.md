@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0069** (ADRs are a separate sequence; next free there is **0054**).
+**Next free number: 0070** (ADRs are a separate sequence; next free there is **0056**).
 
 ## Active roster
 
@@ -23,6 +23,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 | [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | approved | M2, ADR-0052, ADR-0053. After 0061, ahead of 0058; Phase 1 may run beside 0061. Takes 0065's Phase 6. |
+| [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | draft, awaiting owner go | M10's first, ADR-0055 (proposed). Drafted 2026-11-11, owner away. After 0045. |
 | [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | approved | M7, ADR-0054 (proposed). Approved 2026-11-11. Side lane, may start now; touches main.rs lightly. |
 <!-- roster:end -->
 
@@ -51,13 +52,16 @@ Each starts on main after the one before it closes, unless its line says otherwi
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
    before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
    **The render settings and profiles plan is drafted before this lane starts** (owner,
-   2026-11-10; a draft only, its implementation stays at step 6), so the lights' cap has a home.
+   2026-11-10; a draft only, its implementation stays at step 6), so the lights' cap has a home:
+   drafted 2026-11-11 as Plan 0069, whose per-profile light cap is a field at or under 0058's
+   `MAX_LIGHTS`; 0058 changes nothing for it.
 4. **Plan 0044**, the hot-path pass. Its Phases 1, 6 and 7 (audio, world, sim and net) touch no
    file of 0058, 0060 or 0061 and may run as a side lane at any point above.
 5. **Plan 0045**, the structure pass, last because it moves the files every plan above edits.
    Its Phase 0 re-measures and the architect confirms the seams before a file moves.
-6. **Two owed plans, not drafted**: removing the `own` upscaler, and the render settings and
-   profiles plan that holds M10 against the budget (`docs/backlog.md`).
+6. **Plan 0069, render settings and profiles** (draft 2026-11-11, awaiting go), then the owed
+   plan removing the `own` upscaler (not drafted), whose fate Plan 0069's window decides for
+   the portable profile.
 7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
    because the first consumer is a cave game).
    0062's Phase 1 and 0063's Phases 1 and 2 add files only and may run as a side lane from now.
@@ -66,7 +70,7 @@ Each starts on main after the one before it closes, unless its line says otherwi
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
-Every active plan is approved (owner, 2026-11-10; Plans 0064 and 0065 the same day, after the
+Every active plan but Plan 0069 (a draft) is approved (owner, 2026-11-10; Plans 0064 and 0065 the same day, after the
 static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
 stays after Plan 0058. Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
