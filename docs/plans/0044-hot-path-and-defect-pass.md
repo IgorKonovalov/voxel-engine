@@ -32,6 +32,23 @@
 > - The tiers select by marks (2026-11-10): a GPU test file is `tests/gpu_*.rs`, a long series
 >   is `#[ignore = "soak"]`, a hand-run measurement is `#[ignore]`d inside a `mod reading`.
 >   `scripts/check-test-tiers.mjs` enforces all three.
+>
+> **Review note (2026-11-10, the static performance review at `50b637a`; the owner approved
+> Plans 0064 and 0065 the same day):**
+> - **Phase 2 (the HUD's timers) has moved whole to
+>   [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
+>   It claims no golden and its fix is worth little behind three plans. Its text stays below
+>   as that phase's reference; `dev` does not run it here.
+> - **Phase 4's premise is weaker than written.** `docs/nfr.md` section 5 notes (2026-11-04)
+>   that the pressure rule no longer fires at the default, so "sizes the whole pending set and
+>   uploads none" is rare there. The sync's cost on record is the upload itself; Plan 0064's
+>   Phase 4 bounds it by time. Phase 4 here keeps its fixes and expects little at p50.
+> - **Phase 5 (the walk) has a case for running before Plans 0061 and 0058**, which decide by
+>   hit and light readings that include the material read it removes. It collides with their
+>   shader files and forces a re-bake, so it stays where it is (owner, 2026-11-10).
+>   [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+>   Phase 4 takes the far normal's 27 bits from the brick's mask; whichever lands second keeps
+>   the other's path.
 
 ## TL;DR
 
@@ -266,6 +283,7 @@ it lives outside the `gpu_` binaries.
     load.
 
 ### Phase 2: the HUD measures without stalling, and its allocation test covers the HUD
+- **Moved (2026-11-10):** Plan 0064's Phase 3 runs this phase; the text below is its contract.
 - **Owner skill:** dev
 - **What:**
   - `PassTimer` gets a ring of 3 query and readback sets and a `try_read_all_ms` that never

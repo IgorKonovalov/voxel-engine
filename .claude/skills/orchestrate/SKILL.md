@@ -80,7 +80,8 @@ prompt.
   fix pass.
 - **The gate tier (`--profile gate`, everything but the soak tests) is the most any step runs
   (owner, 2026-11-03).** The lane gates each phase with `scripts/test-changed.mjs` (quick, and
-  gpu under the lock for a render change), its close-out confirms the gate tier at the tip,
+  for a render change the gpu binaries the phase names, under the lock; the whole gpu tier is
+  the tip's, owner 2026-11-10), its close-out confirms the gate tier at the tip,
   and the review's run on the tree that already holds main is the plan's one gate run. The
   merge into main does not repeat it unless the merge had a conflict. A fix pass after the
   review reruns only what the findings touched. The soak and full tiers run only when the

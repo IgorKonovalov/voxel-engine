@@ -608,7 +608,7 @@ a cheap query.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   accepted at their plans' closes.
 
-### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half is not drafted and follows M2)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half is Plans 0062 and 0063, drafted 2026-11-10, after Plan 0058)
 
 - `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
@@ -618,7 +618,7 @@ a cheap query.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
@@ -632,7 +632,9 @@ a cheap query.
 - Test tiers for the gate every lane runs: `quick` (CPU only, no perf lock) after every dev
   phase, `gpu` under the lock for render phases, `gate` (everything but the soak list) at a
   plan's tip, its close and in CI, `soak` weekly and on request, `full` only when the owner
-  asks (re-cut 2026-11-03), kept true by `scripts/check-test-tiers.mjs` (Plan 0043, v0.29.1).
+  asks (re-cut 2026-11-03), kept true by `scripts/check-test-tiers.mjs` (Plan 0043, v0.29.1). The soak
+  line is 10 s on lavapipe, and a phase runs only the `gpu_*` binaries it names
+  (`test-changed.mjs --binaries`; Plan 0066, 2026-11-11).
 
 ### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 

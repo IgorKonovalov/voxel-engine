@@ -168,6 +168,7 @@ impl Digs {
 /// `drop_region_through` with the query's threshold falls through them, crushing what it
 /// passes, until it lands on a cell that bears load.
 #[test]
+#[ignore = "soak"]
 fn the_level_repro_finds_a_region_that_falls_through_slivers() {
     let mut digs = Digs::new();
     let (at, region) = (0..SWEEP)
@@ -204,6 +205,7 @@ fn the_level_repro_finds_a_region_that_falls_through_slivers() {
 /// wedged on its first drop and none is refused. The first region falls away, so the later
 /// digs that detached it again while it stayed wedged find nothing: one region in all.
 #[test]
+#[ignore = "soak"]
 fn the_level_sweep_drops_every_region() {
     let mut digs = Digs::new();
     let (mut regions, mut crushed, mut placed) = (0, 0, 0);

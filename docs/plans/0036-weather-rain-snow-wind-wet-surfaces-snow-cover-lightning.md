@@ -38,6 +38,16 @@
 > ("Interfaces this plan relies on"), and the architect re-reads this plan against them at Plan
 > 0035's close, before this lane starts.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 1 to 6 are **exploration** (lane rules 2b):
+> the owner's window in Phase 7 is their gate. Each lands its CPU tests of data, determinism
+> and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
+> settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
+> recorded in the readings log, and is written as a test in Phase 8, after the window, against
+> the picks. Phase 6 keeps its switches, banner and readings before the window; its goldens and image bars move to Phase 8. Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
+> become tests moves.
+
 ## TL;DR
 
 The game sets a `WeatherState`: rain and snow rates, a wind vector, wetness and snow-cover
@@ -537,6 +547,19 @@ names the word the banner shows, and the root `README.md` names the key `dev` pi
 - **Files touched:** this plan's log; ADR-0031's Outcome at the close.
 - **Done when:** the owner's verdict and the flash-shadow choice are recorded in the log.
 
+### Phase 8: The picks as tests
+
+- **Owner skill:** dev
+- **What:** the image tests, goldens and bars Phases 1 to 6 name, written now with the
+  values the Phase 7 window settled, and the readings they replace cited from the log.
+- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 6 name,
+  `docs/plans/logs/0036.md`.
+- **Done when:** every image test Phases 1 to 6 name exists, asserts the picked value or
+  the bar the plan states (a bar the window moved says so in the log, with the owner's words),
+  and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
+  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
+  is not written, and the log names it.
+
 ## Data shapes
 
 ```rust
@@ -713,6 +736,7 @@ The owner was away; each call takes the recommended option and is his to overtur
 | 5: Lightning, and the clouds take the weather | dev | not started | |
 | 6: The switches, the HUD and the readings | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
+| 8: The picks as tests | dev | not started | |
 
 ### Notes
 
