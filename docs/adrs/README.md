@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0055.**
+**Next free number: 0056.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -69,6 +69,7 @@ the status.
 | [0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md) | The live queue's bake budget is milliseconds of GPU time per second of wall time, capped per frame, not a slice per frame | accepted 2026-11-11 (owner, standing rule; values at Plan 0067's window) |
 | [0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md) | A light summary per block and a two-level parent table light a brick with no baked value | accepted 2026-11-11 (Plan 0067) |
 | [0054](0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) | The tester build is a launcher that runs the fly-through once per scene as a child process | proposed (Plan 0068) |
+| [0055](0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md) | Render settings are one struct with an apply class per field, and a profile is a named value of it | proposed (Plan 0069) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

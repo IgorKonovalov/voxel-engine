@@ -101,23 +101,6 @@ Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value,
 emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
 Alternative F, picked up only if a reading or the owner's flight asks.
 
-### Render settings surface and named quality profiles
-
-Parked 2026-10-22. Every mechanism choice (shadow walk, lighting tier, sampler, look, upscaler,
-later sky, clouds, far field) should be a documented engine setting a consumer picks, with named
-profiles (floor, portable, performance) the roadmap promises. Today `Frame` exposes lighting,
-resolution, look and LOD at runtime; construction-time settings (mirror budget, residency) are
-separate and live-versus-restart is undocumented. What it takes: a best-practices rule that a new
-mechanism lands as a documented setting, and a plan for the settings surface and the profiles.
-The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
-Plan 0035's allotment table (2026-11-10) spends all of section 2's 2.1 ms Headroom on the floor
-across Plans 0035, 0036 and 0037, leaving none for M8 fog or game work until this plan arbitrates.
-The static performance review of 2026-11-10 recommends drafting it **before Plan 0058's lane
-starts**, not after Plan 0045: summed from the plans' own guesses the cave frame fits the
-projected floor only at the low end and the outdoor frame not at all, and Plan 0058's eight
-lights land with no cap or profile. **Agreed (owner, 2026-11-10): the draft is written before
-Plan 0058's lane starts; its implementation stays where the Sequence has it.**
-
 ### Remove `own`, the engine's own upscaler
 
 Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
@@ -125,11 +108,13 @@ opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of
 and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
 its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
 ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
-Plan 0061's picks; it runs after Plan 0045 and before M10.
+Plan 0061's picks; it runs after Plan 0069 (owner, 2026-11-11) and before M10.
 Noted 2026-11-10 (static performance review): `own` is the only upscaler on record under or near
 section 2's 1.5 ms upscale line (0.93 to 1.3 ms at the owner's window against FSR 2's 2.9 ms) and
 reads 6 to 7 ms less on the Radeon. Removing it before the profile plan arbitrates removes the
 slow adapter's cheaper arm; the removal plan should say what the portable profile uses instead.
+Answered 2026-11-11 (owner, Plan 0069's answer 2): Portable uses FSR 2 at 720p output, and the
+removal plan goes ahead after Plan 0069.
 
 ### Far normal range: the owner picked `[1, 2]`
 
@@ -193,6 +178,8 @@ the baked light's shader waste and the queue's scan to
   its delta.
 
 Pick up: at the render-profile plan's interview, or at the next close that touches the line.
+Plan 0069 (approved 2026-11-11, its answer 4) proposes the upscale, bake-slice and split lines
+under its "Budgets", sets them at its close from the readings and rewrites the ledger then.
 
 ### The a-trous under the baked light: fewer iterations, or none
 
@@ -290,6 +277,26 @@ roadmap, budgets) plus rustdoc, with CI as a link and render guard; a getting-st
 a gallery only once the look is picked (after Plans 0067 and 0058) and Plan 0045 has moved the
 files. Starlight's npm tree falls outside `cargo deny`, and mdBook is the lighter alternative,
 so it takes an ADR. Pick up when the owner asks.
+
+### CI's cold cache after a workspace change
+
+Read 2026-11-11 (owner asked why Windows took 55 min on run 43079051216, 486a53e, against
+about 17 on 43011459965 and 42879171018). The rust-cache key changed (`...-e0aa3e4d` to
+`...-6cbf2b65`) and the job restored the old entry by its restore-key prefix only. Version bumps
+alone did not change the key (43011459965 hit fully after 0.44 to 0.45); the likely trigger is
+the new `crates/vxe-entity` manifest and the root members list (inference: the logs show the
+manifests rust-cache hashed, not the hash). Although `Cargo.lock`'s dependency set was the same,
+nearly every registry crate recompiled: Windows `cargo build` 14.8 min against about 1.3 (252
+"Compiling" lines against 48 for the whole fast job), `clippy --workspace` 6 min against 25 s,
+the gate 14.5 against 8.6; Ubuntu's build 5.7 min against 0.6. Why a prefix restore rebuilt the
+dependencies is not known. The new key's entry is saved, so the next push should hit it fully
+(unconfirmed until a run after 486a53e). Options, none taken: (1) accept one slow run per new
+workspace member, or warm the cache with a `workflow_dispatch` run; (2) one diagnostic run with
+`CARGO_LOG=cargo::core::compiler::fingerprint=info` to read why `proc-macro2` and the like are
+dirty after a prefix restore (a rust-cache quirk could be fixed by its version or the key's
+inputs); (3) cut the steady state whatever the cache does: drop `cargo build --workspace` if
+nextest builds the same targets (check bins and examples first), fold the three clippy steps,
+or lint on Ubuntu only. Pick up when a second cold run shows up or the owner wants CI faster.
 
 ### Shader toolchain spike
 
