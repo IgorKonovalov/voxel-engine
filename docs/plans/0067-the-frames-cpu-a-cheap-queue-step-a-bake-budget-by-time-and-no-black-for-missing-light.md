@@ -1,6 +1,6 @@
 # 0067: The frame's CPU: a cheap queue step, a bake budget by time, and no black for missing light
 
-> **Status:** draft
+> **Status:** approved (owner go 2026-11-11, with the defaults on the open points)
 > **Created:** 2026-11-11
 > **Milestone:** M2 (the light that holds in the dark has to hold at a playable frame), and
 > cross-cutting like [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
@@ -9,10 +9,10 @@
 > (accepted 2026-11-11, owner): the bake budget's unit. It rests on
 > [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > and [ADR-0048](../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
-> and changes nothing they decided about the order or the withdrawal. Phase 4 adds a summary
-> record per block and a parent table to ADR-0046's store; **the architect writes that ADR
-> before Phase 4 starts** (flat L and a per-brick neighbour read are its rejected
-> alternatives). If Phase 1's reading sends the queue's bookkeeping off the render thread, or
+> and changes nothing they decided about the order or the withdrawal. Phase 4 builds
+> [ADR-0053](../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
+> (accepted 2026-11-11, owner): a summary record per block and a two-level parent table in
+> ADR-0046's store. If Phase 1's reading sends the queue's bookkeeping off the render thread, or
 > Phase 5's arm is picked, the architect writes that ADR before the phase starts.
 > **Source:** the owner, 2026-11-11, after Plan 0060's and 0064's windows: "we are not there -
 > either lagging too much, or the picture is unacceptable or both"; "address performance next
@@ -32,6 +32,10 @@
 > stays in Phase 5. (4) **The Radeon's GPU frame:** left to the render settings and profiles
 > plan and Plan 0065; this plan does not carry it. (5) **ADR-0052** is accepted as a standing
 > rule; its values stay Phase 6's pick.
+
+> **Amended 2026-11-11 (owner), at the go:** "go on 0067, defaults on the open points". The
+> plan is approved; the six open points are answered with their defaults (under "Open points
+> for the owner"), and ADR-0053 records Phase 4's store shape, accepted the same day.
 
 ## TL;DR
 
@@ -123,7 +127,7 @@ iGPU), which Plan 0064 records as a label on windowed readings.
 Measure the step first, then remove its idle cost where the profile points, in `bake.rs` on the
 render thread; state the bake budget in milliseconds of GPU time per second (ADR-0052); light a
 brick with no value from its neighbour chunks' or its parent cell's summary of baked light
-(owner, 2026-11-11); read a partial-reach arm. The owner picks the values in a window.
+(owner, 2026-11-11; ADR-0053); read a partial-reach arm. The owner picks the values in a window.
 
 - We rejected **a flat constant `L` for missing light** (the draft's recommendation): the owner
   did not take it (2026-11-11). A constant lights every waiting cave alike, dark or lit, and
@@ -250,8 +254,8 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
 
 ### Phase 4: A brick without a light value takes its neighbour's or its parent's
 - **Owner skill:** dev
-- **What** (amended 2026-11-11, owner: neighbour or parent, not flat L). Before it starts, the
-  architect's ADR on the store's summary level is written (header).
+- **What** (amended 2026-11-11, owner: neighbour or parent, not flat L). The store's shape is
+  ADR-0053's.
   - **A summary per block.** When the queue places a block, and on every frame of its fade, the
     CPU writes one record in the store's record format (`BRICK_WORDS`: six rgb9e5 direction
     values, then the tail), reachable from the chunk's table word with no second table read
@@ -336,9 +340,9 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
 - **What:** the owner flies rig (d) on the RTX through `--adapter` on the Radeon at the window's
   size and at 1280 x 720, cycling the budget (`frame:1.5`, `second:150,0.25`, one higher value),
   the fallback (`black`, `neighbour`, `parent`, `chain`) and, if built, the reach arm, each
-  named on screen. The owner also answers the open points of Phase 4 the window shows (the
-  chain's order, the tile edge, a neighbour's arrival). `dev` sets the defaults to the picks and
-  names them in the banner.
+  named on screen. The owner also judges the answered open points the window shows (the
+  chain's order, the tile edge, a neighbour's arrival) and may overrule a default. `dev` sets
+  the defaults to the picks and names them in the banner.
 - **Files touched:** `apps/flythrough/src/main.rs`, `crates/vxe-render/src/bake.rs` (the
   defaults), `docs/plans/logs/0067.md`.
 - **Done when:** the log holds the owner's words per arm and adapter, the picks, and the
@@ -395,10 +399,10 @@ pub enum MissingLight {
 }
 ```
 
-The block format and the cell record are unchanged. Phase 4 adds to the store one summary
-record per block (`BRICK_WORDS`, 28 bytes) and the parent table's two levels after the chunk
-table, each cell one record of the same format, plus two header counters. A partial flag, if
-Phase 5 is built, lives in the queue's maps, not in the store.
+The block format and the cell record are unchanged. Phase 4 adds to the store (ADR-0053) one
+summary record per block (`BRICK_WORDS`, 28 bytes) and the parent table's two levels after the
+chunk table, each cell one record of the same format, plus two header counters. A partial flag,
+if Phase 5 is built, lives in the queue's maps, not in the store.
 
 ## Budgets
 
@@ -413,7 +417,7 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
 | The bake's throughput (no line) | RTX about 150 to 210 ms a second; Radeon about 22 (arithmetic from the lines) | the same ms a second on both adapters within 10 % at the picked budget; the slow adapter's frame grows by at most the cap's share | the per-second lines, both adapters |
 | Missing light on screen (no line) | Radeon, window size: 36 932 bricks missing at 137 s, no-value share 0.10 | under the picked mode, the still-black share (no chain value) at 10 s at rest at most 0.01 on the RTX, the Radeon's recorded; the no-value share at 10 s at rest at most 0.01 on the RTX | `--read-missing` and the per-second lines' three shares |
 | §2 denoise line (3.0 ms, temporal + spatial): the temporal pass | 0.07 to 0.14 ms on the RTX, about 0.5 ms on the Radeon, at 1080p output before the store (Plan 0030, `docs/nfr/02-frame-budget.md`); Phase 1 re-reads it | the chain reads up to 7 table words and 9 records at a no-value pixel only (a 0.10 share on the Radeon); a guess of at most +0.1 ms on the RTX and +0.5 ms on the Radeon at the window's size, unmeasured | Phase 4's readings, then rig (d) |
-| §3 everything else in VRAM (1.5 GB; the store is in the bake pool, 256 MiB default) | the store's use 15.4 MB at the level's 3 168 chunks (`docs/nfr/03-memory.md`) | summaries 28 B a block: 89 KB at the level, 476 KB at 17 000 chunks (arithmetic); the parent table about 0.55 MB at a window 51 chunks a side (a guess at the side from `r_lod` 24 and hysteresis 1, not read); about 1 MB in all, inside the pool | the store's bytes in Phase 4's log, rigs (a) and (b) |
+| §3 everything else in VRAM (1.5 GB; the store is in the bake pool, 256 MiB default) | the store's use 15.4 MB at the level's 3 168 chunks (`docs/nfr/03-memory.md`) | summaries 28 B a block: 89 KB at the level, 476 KB at 17 000 chunks (arithmetic); the parent table about 0.6 MB at a window 51 chunks a side (at most 27^3 + 14^3 records with world-aligned cells, ADR-0053; a guess at the side from `r_lod` 24 and hysteresis 1, not read); about 1 MB in all, inside the pool | the store's bytes in Phase 4's log, rigs (a) and (b) |
 | §2 streaming line (1.0 ms): the summaries' CPU | none (new) | a guess: a pass over a block's records at placement and per fade frame, the order of the fade's own rewrite of those words, plus two parent records; under 0.1 ms of the step p50 in flight | Phase 1's breakdown, the summaries' stage |
 | §5 residency p95 (500 ms; 365 to 379 ms on record) | Plan 0059's reading | no worse than the spread: the per-second budget takes GPU time the sync's uploads share | rig (c) |
 
@@ -447,26 +451,32 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
 
 ### Open points for the owner (from the 2026-11-11 answers)
 
-Each is the default Phase 4 builds; the owner may overrule it at the "go" or in Phase 6.
+Amended 2026-11-11 (owner): every point is answered with its default at the go ("defaults on
+the open points"); Phase 4 builds them and ADR-0053 records them. The owner may still overrule
+one in Phase 6.
 
-1. **Neighbour before parent.** The chain tries the face neighbours first, since they are the
-   nearer light; the parent (12.8 m, then 25.6 m) is smoother but farther. Swapping is an
-   order in one function, and the `neighbour` and `parent` arms let the window compare.
-2. **Neither has light: black.** With flat L declined, a chunk with no baked chunk within its
-   level-2 cell stays black and is counted as still black. The alternatives are a third
-   parent level (512 voxels) or the whole window's mean; neither is built.
-3. **"Parent" is a new coarser light level, two levels deep.** The store has no light above the
-   brick, and ADR-0003's mips hold geometry only, so "parent" is read as Phase 4's parent table
-   (2 and 4 chunks a side), plus a chunk's own summary for a missing brick in a chunk that has
-   a block. If the owner meant the coarse pass's block (`TABLE_COARSE`), that is already read
-   where it exists; a blockless chunk has none.
-4. **Six face neighbours, a plain mean.** Not the 26, and not weighted by the hit's distance to
-   the shared face: a weighted value would be per voxel and could not be the arriving block's
-   fade start.
-5. **A neighbour's arrival is not faded into its neighbours' fallback** (risk above): read in
-   Phase 4, fixed only if the window shows it.
-6. **The LOD ring is lit by the chain** (risk above): the owner may want the chain on full
-   chunks only.
+1. **Neighbour before parent.** Answered 2026-11-11 (owner: the default). The chain tries the
+   face neighbours first, since they are the nearer light; the parent (12.8 m, then 25.6 m) is
+   smoother but farther. Swapping is an order in one function, and the `neighbour` and
+   `parent` arms let the window compare.
+2. **Neither has light: black.** Answered 2026-11-11 (owner: the default). With flat L
+   declined, a chunk with no baked chunk within its level-2 cell stays black and is counted as
+   still black. The alternatives are a third parent level (512 voxels) or the whole window's
+   mean; neither is built.
+3. **"Parent" is a new coarser light level, two levels deep.** Answered 2026-11-11 (owner: the
+   default). The store has no light above the brick, and ADR-0003's mips hold geometry only, so
+   "parent" is read as Phase 4's parent table (2 and 4 chunks a side), plus a chunk's own
+   summary for a missing brick in a chunk that has a block. If the owner meant the coarse
+   pass's block (`TABLE_COARSE`), that is already read where it exists; a blockless chunk has
+   none.
+4. **Six face neighbours, a plain mean.** Answered 2026-11-11 (owner: the default). Not the 26,
+   and not weighted by the hit's distance to the shared face: a weighted value would be per
+   voxel and could not be the arriving block's fade start.
+5. **A neighbour's arrival is not faded into its neighbours' fallback** (risk above). Answered
+   2026-11-11 (owner: the default): read in Phase 4, fixed only if the window shows it, by a
+   ramp over `FADE` frames.
+6. **The LOD ring is lit by the chain** (risk above). Answered 2026-11-11 (owner: the
+   default); the window may still ask for the chain on full chunks only.
 
 ## What this plan does NOT do
 

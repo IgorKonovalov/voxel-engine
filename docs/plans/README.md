@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0068** (ADRs are a separate sequence; next free there is **0053**).
+**Next free number: 0068** (ADRs are a separate sequence; next free there is **0054**).
 
 ## Active roster
 
@@ -25,7 +25,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 | [0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: what paces it, workers that leave no core, readbacks that wait | approved | Code health. Phase 1 a spike, beside 0060; the rest after it. Takes 0044's Phase 2. |
 | [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | approved | Code health. After 0060 and 0064, before 0061's Phase 2. Phase 6 moved to 0067 (2026-11-11). |
-| [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | draft | M2, ADR-0052. After 0061, ahead of 0058 (owner, 2026-11-11); Phase 1 may run beside 0061. Takes 0065's Phase 6. |
+| [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | approved | M2, ADR-0052, ADR-0053. After 0061, ahead of 0058; Phase 1 may run beside 0061. Takes 0065's Phase 6. |
 <!-- roster:end -->
 
 ## Sequence
@@ -43,14 +43,15 @@ Each starts on main after the one before it closes, unless its line says otherwi
      before the window as exploration: image tests are written after the pick, in each plan's
      last dev phase.
 2. **Plan 0061**, antialiasing, from its Phase 2 once 0065 has merged.
-   - **Plan 0067, the frame's CPU** (draft 2026-11-11, awaits go), after 0061 and ahead of
-     0058 (owner, 2026-11-11, after Plan 0060's and 0064's windows: "we are not there - either
-     lagging too much, or the picture is unacceptable"; "address performance next after this
-     set of plans"). Its Phase 1 is readings only and may run beside 0061's Phase 2 once 0064
-     and 0065 have merged. It takes Plan 0065's Phase 6 (the queue's step) and the backlog's
-     per-second bake budget and missing-light fallback (a neighbour's or parent's light, owner
-     2026-11-11; ADR-0052 accepted the same day); the Radeon's hit and FSR 2 passes (26
-     and 18.5 ms at the window) stay with 0065 and the profiles plan (step 6).
+   - **Plan 0067, the frame's CPU** (approved 2026-11-11, owner go with the defaults on its open
+     points), after 0061 and ahead of 0058 (owner, 2026-11-11, after Plan 0060's and 0064's
+     windows: "we are not there - either lagging too much, or the picture is unacceptable";
+     "address performance next after this set of plans"). Its Phase 1 is readings only and may
+     run beside 0061's Phase 2 once 0064 and 0065 have merged. It takes Plan 0065's Phase 6 (the
+     queue's step) and the backlog's per-second bake budget and missing-light fallback (a
+     neighbour's or parent's light, owner 2026-11-11; ADR-0052 and ADR-0053 accepted the same
+     day); the Radeon's hit and FSR 2 passes (26 and 18.5 ms at the window) stay with 0065 and
+     the profiles plan (step 6).
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
    before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
    **The render settings and profiles plan is drafted before this lane starts** (owner,
