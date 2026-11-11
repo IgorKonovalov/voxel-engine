@@ -1031,6 +1031,10 @@ pub struct Frame {
     dt: f32,
     /// The next encode's exposure pass jumps the adapted level to the meter.
     reset_exposure: std::sync::atomic::AtomicBool,
+    /// Blocking reads of the store's counters ([`Frame::read_store_stats`]) so far.
+    store_blocking_reads: std::sync::atomic::AtomicU64,
+    /// The store's counters, copied out by [`Frame::copy_store_stats`].
+    store_ring: ReadbackRing,
     /// The views' rays are jittered by [`jitter_at`] of the frame index.
     jitter: bool,
     /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
@@ -1678,6 +1682,8 @@ impl Frame {
             metering: Metering::default(),
             dt: 1.0 / 60.0,
             reset_exposure: std::sync::atomic::AtomicBool::new(true),
+            store_blocking_reads: std::sync::atomic::AtomicU64::new(0),
+            store_ring: ReadbackRing::new(device, "store stats readback", STORE_STATS_BYTES),
         }
     }
 
@@ -2313,16 +2319,45 @@ impl Frame {
         &self.dig_boxes
     }
 
-    /// The store's counters; `missing` is a blocking read of the last submitted encode's count.
+    /// The store's counters; `missing` is a blocking read of the last submitted encode's
+    /// count, counted in [`Frame::store_blocking_reads`].
     pub fn read_store_stats(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> crate::bake::StoreStats {
-        let bytes = crate::readback::read_buffer(device, queue, self.store.pool(), 0, 12);
+        self.store_blocking_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let bytes =
+            crate::readback::read_buffer(device, queue, self.store.pool(), 0, STORE_STATS_BYTES);
+        self.store_stats_of(&bytes)
+    }
+
+    /// Records a copy of the store's GPU counters into a read-back ring, for
+    /// [`Frame::try_store_stats`]; call after [`Frame::encode`] in the same encoder, and submit
+    /// it before the next read.
+    pub fn copy_store_stats(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.store_ring.copy(encoder, self.store.pool(), 0);
+    }
+
+    /// The store's counters as of the newest [`Frame::copy_store_stats`] that has finished on
+    /// the GPU, without waiting, and how many copies older than the last one recorded it is (1
+    /// or 2 with the GPU keeping up and a copy a frame); `None` until the first has finished.
+    pub fn try_store_stats(&self, device: &wgpu::Device) -> Option<(crate::bake::StoreStats, u64)> {
+        self.store_ring.try_read(device, |b| self.store_stats_of(b))
+    }
+
+    /// The store's counts with its GPU counters' first three words.
+    fn store_stats_of(&self, bytes: &[u8]) -> crate::bake::StoreStats {
         let word =
             |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
         self.store.stats(word(0), word(4), word(8))
+    }
+
+    /// How many times [`Frame::read_store_stats`] waited on the GPU so far.
+    pub fn store_blocking_reads(&self) -> u64 {
+        self.store_blocking_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The store.
@@ -3776,20 +3811,218 @@ fn compute_pipeline_with(
 /// Bytes one resolved timestamp occupies: a `u64` tick count.
 const QUERY_BYTES: u64 = 8;
 
+/// Bytes of the store's GPU counters at the pool's start that [`Frame::read_store_stats`] reads:
+/// three `u32` words.
+const STORE_STATS_BYTES: u64 = 12;
+
+/// Read-back buffers a [`ReadbackRing`] cycles through: with the GPU keeping up, a frame's
+/// copy is mapped while the next two are recorded.
+pub const READBACK_RING: usize = 3;
+
+/// A ring slot's progress.
+enum RingPhase {
+    Idle,
+    /// Holds the copy of this index; not yet asked to map.
+    Copied(u64),
+    /// Asked to map the copy of this index: the flag reads 0 pending, 1 mapped, 2 failed.
+    Mapping(u64, std::sync::Arc<std::sync::atomic::AtomicU8>),
+}
+
+struct RingSlot {
+    buffer: wgpu::Buffer,
+    phase: RingPhase,
+}
+
+struct RingState {
+    slots: Vec<RingSlot>,
+    /// Copies recorded so far; the next copy's index.
+    copies: u64,
+    /// The newest copy collected and its bytes (the vector is reused).
+    newest: Option<u64>,
+    bytes: Vec<u8>,
+}
+
+/// A ring of [`READBACK_RING`] mappable buffers that reads a GPU buffer's bytes without waiting:
+/// [`ReadbackRing::copy`] records a copy into a free slot, [`ReadbackRing::try_read`] asks the
+/// copied slots to map, polls without blocking and hands over the newest copy that has finished
+/// mapping, a frame or two late. [`ReadbackRing::read`] is the blocking form, for tests and
+/// tools.
+///
+/// Every encoder holding a [`ReadbackRing::copy`] must be submitted before the next
+/// [`ReadbackRing::try_read`] or [`ReadbackRing::read`]: those ask the copied slots to map, and
+/// wgpu refuses a submit that uses a buffer with a map pending. When every slot is mapping (the
+/// GPU three copies behind) a copy is skipped; when none is free but one holds a copy not yet
+/// asked to map, the oldest such is overwritten.
+pub struct ReadbackRing {
+    state: std::sync::Mutex<RingState>,
+    size: u64,
+}
+
+impl ReadbackRing {
+    /// A ring of `size`-byte slots (`size` a multiple of 4, as a buffer copy needs).
+    pub fn new(device: &wgpu::Device, label: &str, size: u64) -> Self {
+        let slots = (0..READBACK_RING)
+            .map(|_| RingSlot {
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                phase: RingPhase::Idle,
+            })
+            .collect();
+        Self {
+            state: std::sync::Mutex::new(RingState {
+                slots,
+                copies: 0,
+                newest: None,
+                bytes: Vec::with_capacity(size as usize),
+            }),
+            size,
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, RingState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Records a copy of the ring's size from `src` at `offset` into a slot; first collects the
+    /// slots that finished mapping. Returns the copy's index, or `None` when it was skipped.
+    pub fn copy(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::Buffer,
+        offset: u64,
+    ) -> Option<u64> {
+        let mut st = self.lock();
+        st.collect();
+        let at = st.copies;
+        let oldest_copied = st
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| match s.phase {
+                RingPhase::Copied(c) => Some((c, i)),
+                _ => None,
+            })
+            .min()
+            .map(|(_, i)| i);
+        let slot = st
+            .slots
+            .iter()
+            .position(|s| matches!(s.phase, RingPhase::Idle))
+            .or(oldest_copied)?;
+        encoder.copy_buffer_to_buffer(src, offset, &st.slots[slot].buffer, 0, self.size);
+        st.slots[slot].phase = RingPhase::Copied(at);
+        st.copies += 1;
+        Some(at)
+    }
+
+    /// Asks the copied slots to map, polls `device` without waiting, collects the finished
+    /// ones, and returns `f` of the newest copy collected so far with its age in copies (0 for
+    /// the last one recorded); `None` until the first has finished mapping.
+    pub fn try_read<T>(
+        &self,
+        device: &wgpu::Device,
+        f: impl FnOnce(&[u8]) -> T,
+    ) -> Option<(T, u64)> {
+        let mut st = self.lock();
+        st.request_maps();
+        let _ = device.poll(wgpu::PollType::Poll);
+        st.collect();
+        st.newest_with(f)
+    }
+
+    /// As [`ReadbackRing::try_read`], but waits for the GPU first, so the newest copy is the
+    /// last one recorded (age 0) unless it was skipped.
+    pub fn read<T>(&self, device: &wgpu::Device, f: impl FnOnce(&[u8]) -> T) -> Option<(T, u64)> {
+        let mut st = self.lock();
+        st.request_maps();
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll for the read-back ring");
+        st.collect();
+        st.newest_with(f)
+    }
+}
+
+impl RingState {
+    /// Asks every slot holding a copy to map.
+    fn request_maps(&mut self) {
+        for slot in &mut self.slots {
+            if let RingPhase::Copied(at) = slot.phase {
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+                let flag = done.clone();
+                slot.buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+                    flag.store(
+                        if r.is_ok() { 1 } else { 2 },
+                        std::sync::atomic::Ordering::Release,
+                    );
+                });
+                slot.phase = RingPhase::Mapping(at, done);
+            }
+        }
+    }
+
+    /// Takes the bytes of every slot that finished mapping, keeping the newest copy's, and
+    /// frees those slots.
+    fn collect(&mut self) {
+        for slot in &mut self.slots {
+            let RingPhase::Mapping(at, done) = &slot.phase else {
+                continue;
+            };
+            let at = *at;
+            match done.load(std::sync::atomic::Ordering::Acquire) {
+                0 => continue,
+                1 => {
+                    if self.newest.is_none_or(|n| at > n) {
+                        let bytes = slot
+                            .buffer
+                            .get_mapped_range(..)
+                            .expect("read-back slot mapped");
+                        self.bytes.clear();
+                        self.bytes.extend_from_slice(&bytes);
+                        self.newest = Some(at);
+                    }
+                    slot.buffer.unmap();
+                }
+                _ => {}
+            }
+            slot.phase = RingPhase::Idle;
+        }
+    }
+
+    fn newest_with<T>(&self, f: impl FnOnce(&[u8]) -> T) -> Option<(T, u64)> {
+        let at = self.newest?;
+        Some((f(&self.bytes), self.copies - 1 - at))
+    }
+}
+
 /// GPU durations of one or more passes through a query set of two timestamps per pass: pass
 /// `i` writes its start and end into timestamps `2 i` and `2 i + 1`, [`PassTimer::resolve`]
-/// copies them out after the passes, and [`PassTimer::read_all_ms`] maps them.
+/// copies them out after the passes into a [`ReadbackRing`], [`PassTimer::try_read_all_ms`]
+/// hands over the newest set that has finished without waiting, and
+/// [`PassTimer::read_all_ms`] waits for the last.
 ///
-/// The resolve buffer (`QUERY_RESOLVE | COPY_SRC`) and the readback buffer (`COPY_DST |
-/// MAP_READ`) are separate because wgpu forbids one buffer carrying both usages. The
-/// timestamp period is read off the queue once, at construction.
+/// The resolve buffer (`QUERY_RESOLVE | COPY_SRC`) and the ring's buffers (`COPY_DST |
+/// MAP_READ`) are separate because wgpu forbids one buffer carrying both usages. One query set
+/// and one resolve buffer serve every frame: the queue runs a frame's resolve and copy before
+/// the next frame's passes write the queries again. The timestamp period is read off the queue
+/// once, at construction.
 pub struct PassTimer {
     queries: wgpu::QuerySet,
     resolve: wgpu::Buffer,
-    readback: wgpu::Buffer,
+    ring: ReadbackRing,
+    /// The newest copy [`PassTimer::try_read_all_ms`] handed over, plus one; 0 before any.
+    handed: std::sync::atomic::AtomicU64,
     /// Nanoseconds per timestamp tick.
     period_ns: f32,
     passes: u32,
+    /// Reads that waited on the GPU so far ([`PassTimer::read_all_ms`]).
+    blocking_reads: std::sync::atomic::AtomicU64,
 }
 
 /// The march pass's timer; the march and the HUD are timed alike.
@@ -3822,19 +4055,23 @@ impl PassTimer {
                 usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
-            readback: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pass timer readback"),
-                size: bytes,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }),
+            ring: ReadbackRing::new(device, "pass timer readback", bytes),
+            handed: std::sync::atomic::AtomicU64::new(0),
             period_ns: queue.get_timestamp_period(),
             passes,
+            blocking_reads: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
     pub fn passes(&self) -> u32 {
         self.passes
+    }
+
+    /// How many reads waited on the GPU so far: [`PassTimer::read_all_ms`] and
+    /// [`PassTimer::read_ms`] each count one.
+    pub fn blocking_reads(&self) -> u64 {
+        self.blocking_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The timestamp writes for a compute pass timed as pass 0.
@@ -3861,47 +4098,55 @@ impl PassTimer {
         }
     }
 
-    /// Records the resolve of every timestamp and their copy to the readback buffer; call
-    /// after the timed passes, in the same or a later encoder.
+    /// Records the resolve of every timestamp and their copy into the ring; call after the
+    /// timed passes, in the same or a later encoder, and submit it before the next read.
     pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
         let n = 2 * self.passes;
         encoder.resolve_query_set(&self.queries, 0..n, &self.resolve, 0);
-        encoder.copy_buffer_to_buffer(
-            &self.resolve,
-            0,
-            &self.readback,
-            0,
-            u64::from(n) * QUERY_BYTES,
-        );
+        self.ring.copy(encoder, &self.resolve, 0);
     }
 
-    /// Milliseconds of pass 0 of the last resolve; see [`PassTimer::read_all_ms`].
+    /// Milliseconds of pass 0 of the last resolve, waiting; see [`PassTimer::read_all_ms`].
     pub fn read_ms(&self, device: &wgpu::Device) -> f64 {
         self.read_all_ms(device)[0]
     }
 
+    /// Milliseconds of pass 0 of the newest finished resolve, without waiting; see
+    /// [`PassTimer::try_read_all_ms`].
+    pub fn try_read_ms(&self, device: &wgpu::Device) -> Option<f64> {
+        self.try_read_all_ms(device).map(|ms| ms[0])
+    }
+
     /// Milliseconds between each pass's two timestamps of the last resolve, by pass; zero
-    /// when they are out of order. Blocks until the GPU has finished the submission that
-    /// resolved them.
+    /// when they are out of order, and every pass zero before any resolve. Blocks until the
+    /// GPU has finished the submission that resolved them, and counts in
+    /// [`PassTimer::blocking_reads`].
     pub fn read_all_ms(&self, device: &wgpu::Device) -> Vec<f64> {
-        self.readback.map_async(wgpu::MapMode::Read, .., |r| {
-            r.expect("timer readback maps");
-        });
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("device poll for the timer readback");
-        let ticks: Vec<u64> = {
-            let bytes = self
-                .readback
-                .get_mapped_range(..)
-                .expect("timer readback mapped");
-            let t: &[u64] = bytemuck::cast_slice(&bytes);
-            t.chunks(2).map(|p| p[1].saturating_sub(p[0])).collect()
-        };
-        self.readback.unmap();
-        ticks
-            .into_iter()
-            .map(|t| t as f64 * f64::from(self.period_ns) / 1.0e6)
+        self.blocking_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.ring
+            .read(device, |b| self.to_ms(b))
+            .map_or_else(|| vec![0.0; self.passes as usize], |(ms, _)| ms)
+    }
+
+    /// As [`PassTimer::read_all_ms`] for the newest resolve that has finished on the GPU,
+    /// without waiting: a non-blocking poll, then the set if it is newer than the last this
+    /// call handed over, else `None` (none finished yet, or none new since). With the GPU
+    /// keeping up the set is one or two frames old.
+    pub fn try_read_all_ms(&self, device: &wgpu::Device) -> Option<Vec<f64>> {
+        let (ms, age) = self.ring.try_read(device, |b| self.to_ms(b))?;
+        let next = self.ring.lock().copies - age;
+        let handed = self
+            .handed
+            .fetch_max(next, std::sync::atomic::Ordering::Relaxed);
+        (next > handed).then_some(ms)
+    }
+
+    /// Milliseconds by pass from a resolve's timestamp bytes.
+    fn to_ms(&self, bytes: &[u8]) -> Vec<f64> {
+        let t: &[u64] = bytemuck::cast_slice(bytes);
+        t.chunks(2)
+            .map(|p| p[1].saturating_sub(p[0]) as f64 * f64::from(self.period_ns) / 1.0e6)
             .collect()
     }
 }

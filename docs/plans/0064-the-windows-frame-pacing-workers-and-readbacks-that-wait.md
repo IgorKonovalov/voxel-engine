@@ -256,8 +256,8 @@ pub struct SyncBudget {
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: what paces the window | dev | done: code (flag, present-mode log, HUD `pace` row, `frames:` wall, 3 CPU tests) and the owner's 24 windowed runs, `free` below `compositor` in every cell, Phase 2 stands; see [the readings log](logs/0064.md) | fc05003 (code), de791ba (readings) |
-| 2: the pacing default | human | done: owner's window 2026-11-11, pick `free` (flights loaded by other lanes' builds; no tearing or fan difference noticed, loaded); `--pace` defaults to `free`, the banner's `pace` row names it on a plain start; see [the readings log](logs/0064.md) | 7b6e3ea, aa4ee55 (readings), committed with this row (default and banner) |
-| 3: nothing waits for the GPU | dev | not started | |
+| 2: the pacing default | human | done: owner's window 2026-11-11, pick `free` (flights loaded by other lanes' builds; no tearing or fan difference noticed, loaded); `--pace` defaults to `free`, the banner's `pace` row names it on a plain start; see [the readings log](logs/0064.md) | 7b6e3ea, aa4ee55 (readings), 0248b41 (default and banner) |
+| 3: nothing waits for the GPU | dev | code done: `ReadbackRing` (3 read-back buffers) under `PassTimer` and the store's counters, `try_read_all_ms` / `try_read_ms` / `Frame::try_store_stats` on the frame path, blocking-read counters on the `frames:` line (608 before, 0 after over 300 lavapipe frames), the HUD's refresh and banner allocation-free (4749 B a frame before, 0 after); deviations: one query set and one resolve buffer serve the ring, `--lamp-toggle` and `--fade-reading` keep the waiting read; autopilot HUD on/off readings owed; see [the readings log](logs/0064.md) | committed with this row |
 | 4: workers, the sync's time, the stats | dev | not started | |
 | 5: the close's readings | dev | not started | |
 

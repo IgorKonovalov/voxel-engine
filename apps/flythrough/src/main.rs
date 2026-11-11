@@ -247,6 +247,7 @@ mod fly;
 mod pad;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -2278,7 +2279,48 @@ struct Gfx {
     hud_timer: Option<PassTimer>,
 }
 
+/// The GPU side's values the HUD's rows read: the mirror's sizes, slots and pressure, its light
+/// samples, and the internal and output sizes while the upscaler runs.
+#[derive(Clone, Copy, Debug)]
+struct GfxSample {
+    mirror_bytes: u64,
+    pool_live: u32,
+    pool_free: u32,
+    pressure: f32,
+    budget_bytes: u64,
+    light_samples: u64,
+    upscale: Option<[[u32; 2]; 2]>,
+}
+
+impl GfxSample {
+    fn of(g: &Gfx) -> Self {
+        Self {
+            mirror_bytes: g.mirror.mirror_bytes(),
+            pool_live: g.mirror.live_bricks(),
+            pool_free: g.mirror.spare_slots().min(u64::from(u32::MAX)) as u32,
+            pressure: g.mirror.pressure(),
+            budget_bytes: g.mirror.allocated_bytes(),
+            light_samples: g.mirror.light_samples(),
+            upscale: g
+                .frame
+                .upscaling()
+                .then(|| [g.frame.internal_size(), g.frame.output_size()]),
+        }
+    }
+}
+
 impl Gfx {
+    /// Reads that waited on the GPU so far: the three pass timers' and the store's counters'
+    /// (the field pass's own timing at the initial fill and the bench is among them).
+    fn blocking_reads(&self) -> u64 {
+        [&self.timer, &self.field_timer, &self.hud_timer]
+            .into_iter()
+            .flatten()
+            .map(PassTimer::blocking_reads)
+            .sum::<u64>()
+            + self.frame.store_blocking_reads()
+    }
+
     /// Runs the field pass over the band slots placed since the last, alone, and waits for
     /// it: the band slots it filled and its GPU time when timed.
     fn timed_field(&mut self, gpu: &Gpu) -> (usize, Option<f64>) {
@@ -2396,6 +2438,9 @@ struct RunTimes {
     cpu_ms: Vec<f64>,
     stream_ms: Vec<f64>,
     gpu_ms: Vec<f64>,
+    /// Reads on the frame path that waited on the GPU over the run: the pass timers' and the
+    /// store's counters'; `None` without the GPU's passes.
+    blocking_reads: Option<u64>,
 }
 
 impl RunTimes {
@@ -2433,8 +2478,11 @@ impl RunTimes {
         } else {
             stats(&self.wall_ms)
         };
+        let blocking = self
+            .blocking_reads
+            .map_or_else(|| "n/a".to_owned(), |n| n.to_string());
         Some(format!(
-            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}",
+            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}; blocking reads {blocking}",
             self.cpu_ms.len(),
             stats(&self.cpu_ms),
             stats(&self.stream_ms)
@@ -2476,12 +2524,37 @@ struct Hud {
     exposure: Option<vxe_render::ExposureReadout>,
     format_us: u32,
     page_bytes: u64,
-    /// Reused buffers: the rows' text, their colours, and the strip's samples.
+    /// Reused buffers: the rows' text, their colours, the strip's samples and the banner's
+    /// rows.
     text: String,
     colours: Vec<HudColour>,
     strip: Vec<f32>,
+    banner: String,
+    /// The far normal's words and the live queue's order and withdrawal in words, remade
+    /// only when what they name changes.
+    far_normal_words: Cached<(NormalMode, [f32; 2])>,
+    queue_words: Cached<(vxe_render::bake::QueueOrder, bool)>,
     /// The whole run's frame times, shown or not.
     run: RunTimes,
+}
+
+/// A string kept with the key it was made from, remade only when the key changes: a row's
+/// words that change on a key press, not every frame.
+#[derive(Debug, Default)]
+struct Cached<K> {
+    key: Option<K>,
+    text: String,
+}
+
+impl<K: PartialEq + Copy> Cached<K> {
+    /// The text for `key`, made by `make` when the key differs from the last one's.
+    fn get(&mut self, key: K, make: impl FnOnce() -> String) -> &str {
+        if self.key != Some(key) {
+            self.text = make();
+            self.key = Some(key);
+        }
+        &self.text
+    }
 }
 
 impl Hud {
@@ -2508,6 +2581,9 @@ impl Hud {
             text: String::new(),
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
+            banner: String::new(),
+            far_normal_words: Cached::default(),
+            queue_words: Cached::default(),
             run: RunTimes::default(),
         }
     }
@@ -3200,13 +3276,17 @@ impl Run {
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
-    /// Reads the store's counters and, with the lamp's bounce on, counts the probe volume's live
-    /// probes for the HUD: blocking reads, paid at the world sample's cadence.
+    /// Takes the store's counters as last read back (a frame or two old, without waiting) and,
+    /// with the lamp's bounce on, counts the probe volume's live probes for the HUD: a blocking
+    /// read, paid at the world sample's cadence.
     fn sample_probes(&mut self, gpu: &Gpu) {
-        self.hud.store = self
+        if let Some((stats, _)) = self
             .gfx
             .as_ref()
-            .map(|g| g.frame.read_store_stats(&gpu.device, &gpu.queue));
+            .and_then(|g| g.frame.try_store_stats(&gpu.device))
+        {
+            self.hud.store = Some(stats);
+        }
         self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
             g.frame.lighting().lamp_bounce.then(|| {
                 let probes = g.frame.probes();
@@ -3217,43 +3297,41 @@ impl Run {
         });
     }
 
-    /// Refreshes the HUD's values in place for this frame, from the O(1) sources and the
-    /// last world sample; the last edit is already there.
-    fn refresh_hud_stats(&mut self) {
-        let (mirror_bytes, pool_live, pool_free) = self.gfx.as_ref().map_or((0, 0, 0), |g| {
-            (
-                g.mirror.mirror_bytes(),
-                g.mirror.live_bricks(),
-                g.mirror.spare_slots().min(u64::from(u32::MAX)) as u32,
-            )
-        });
-        let pressure = self.gfx.as_ref().map(|g| hud::Pressure {
-            pressure: g.mirror.pressure(),
-            budget_bytes: g.mirror.allocated_bytes(),
+    /// Refreshes the HUD's values in place for this frame, from the O(1) sources, the GPU
+    /// side's values `g` and the last world sample; the last edit is already there.
+    fn refresh_hud_stats(&mut self, g: Option<GfxSample>) {
+        let (mirror_bytes, pool_live, pool_free) =
+            g.map_or((0, 0, 0), |g| (g.mirror_bytes, g.pool_live, g.pool_free));
+        let pressure = g.map(|g| hud::Pressure {
+            pressure: g.pressure,
+            budget_bytes: g.budget_bytes,
             r_full: self.stream.as_ref().map(|s| [s.rule.r_full, s.rule.max]),
         });
-        let lighting = self.gfx.as_ref().and_then(|g| {
-            let passes = self.hud.pass_ms.as_ref()?;
-            Some(hud::LightingRow {
-                passes: FRAME_PASSES
-                    .iter()
-                    .zip(passes)
-                    .map(|(&n, &ms)| (n, ms as f32))
-                    .collect(),
-                light_samples: g.mirror.light_samples(),
-                live_probes: self
+        // The lighting row is rewritten in place, its vector and strings reused.
+        match (g, self.hud.pass_ms.as_ref()) {
+            (Some(g), Some(passes)) => {
+                let row = self.hud.stats.lighting.get_or_insert_with(Default::default);
+                row.passes.clear();
+                row.passes.extend(
+                    FRAME_PASSES
+                        .iter()
+                        .zip(passes)
+                        .map(|(&n, &ms)| (n, ms as f32)),
+                );
+                row.light_samples = g.light_samples;
+                row.live_probes = self
                     .hud
                     .live_probes
-                    .filter(|_| self.modes.lighting.lamp_bounce),
-                store: self.hud.store,
-                store_note: self.queue_note(),
-                modes: self.modes.line(),
-                upscale: g
-                    .frame
-                    .upscaling()
-                    .then(|| [g.frame.internal_size(), g.frame.output_size()]),
-            })
-        });
+                    .filter(|_| self.modes.lighting.lamp_bounce);
+                row.store = self.hud.store;
+                row.store_note.clear();
+                write_queue_note(&mut row.store_note, self.queue.stats);
+                row.modes.clear();
+                self.modes.write_line(&mut row.modes);
+                row.upscale = g.upscale;
+            }
+            _ => self.hud.stats.lighting = None,
+        }
         let pos = self.fly.camera.position;
         let mode = if self.walk.is_some() {
             hud::Mode::Walk
@@ -3288,17 +3366,45 @@ impl Run {
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
         s.format_us = h.format_us;
-        s.lighting = lighting;
-        s.exposure = Some(self.modes.exposure_row());
-        s.queue = Some(hud::queue_row(
-            &self.queue.stats.unwrap_or_default(),
-            &self.args.queue_words(),
-        ));
-        s.aliasing = Some(hud::aliasing_row(
-            &self.upscaler,
-            &LookPreset::far_normal_words(self.look.normal_mode, self.look.far_normal),
-            self.pan.as_ref(),
-        ));
+        self.modes
+            .fill_exposure_row(s.exposure.get_or_insert_with(Default::default));
+        let args = &self.args;
+        let words = h
+            .queue_words
+            .get((args.queue_order(), args.queue_withdraw), || {
+                args.queue_words()
+            });
+        let queue = s.queue.get_or_insert_with(String::new);
+        queue.clear();
+        hud::write_queue_row(queue, &self.queue.stats.unwrap_or_default());
+        queue.push_str("; ");
+        queue.push_str(words);
+        let look = &self.look;
+        let far = h
+            .far_normal_words
+            .get((look.normal_mode, look.far_normal), || {
+                LookPreset::far_normal_words(look.normal_mode, look.far_normal)
+            });
+        let aliasing = s.aliasing.get_or_insert_with(String::new);
+        aliasing.clear();
+        hud::write_aliasing_row(aliasing, &self.upscaler, far, self.pan.as_ref());
+    }
+
+    /// The CPU half of [`Run::update_hud`]: refreshes the values (with the GPU side's `g`),
+    /// formats the rows and the strip, and puts the banner's rows under them in yellow.
+    /// Allocates nothing once the buffers have grown to the rows' size.
+    fn fill_hud(&mut self, g: Option<GfxSample>) {
+        self.refresh_hud_stats(g);
+        self.forget_pose_once_moved();
+        self.write_banner();
+        let h = &mut self.hud;
+        h.format_rows();
+        // The mode banner goes under the rows, hiding none of them.
+        for line in h.banner.lines() {
+            h.text.push_str(line);
+            h.text.push('\n');
+            h.colours.push(HudColour::Yellow);
+        }
     }
 
     /// Drops `--pose`'s banner row once the camera has left the pose.
@@ -3315,49 +3421,58 @@ impl Run {
     /// The banner at the frame loop's clock: `--pose`'s row until the camera first moves, the
     /// scene's row while it shows (for `hud::BANNER_MS` after it was last shown), over the
     /// lighting modes' banner and the upscaler's, whichever show.
+    ///
+    /// Written into the HUD's reused `banner` buffer, row by row; the live queue's row always
+    /// shows, so the banner is never empty.
+    fn write_banner(&mut self) {
+        let mut out = std::mem::take(&mut self.hud.banner);
+        let mut words = std::mem::take(&mut self.hud.queue_words);
+        let args = &self.args;
+        let w = words.get((args.queue_order(), args.queue_withdraw), || {
+            args.queue_words()
+        });
+        out.clear();
+        self.compose_banner(&mut out, w);
+        self.hud.queue_words = words;
+        self.hud.banner = out;
+    }
+
+    /// [`Run::write_banner`]'s rows as a new string.
+    #[cfg(test)]
     fn banner(&self) -> Option<String> {
+        let mut out = String::new();
+        self.compose_banner(&mut out, &self.args.queue_words());
+        Some(out)
+    }
+
+    /// Appends the banner's rows to `out`, the live queue's order and withdrawal in `words`.
+    fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
-        let scene = self
+        if let Some((pose, _)) = &self.pose {
+            out.push_str(pose);
+        }
+        write_pace_banner(self.args.pace, now, out);
+        hud::start_row(out);
+        write_queue_banner_row(out, &self.args, words);
+        if let Some((scene, _)) = self
             .scene
             .as_ref()
             .filter(|(_, at)| now - at < hud::BANNER_MS)
-            .map(|(s, _)| s.to_owned());
-        let pose = self.pose.as_ref().map(|(s, _)| s.to_owned());
-        let rows: Vec<String> = [
-            pose,
-            pace_banner(self.args.pace, now),
-            Some(self.queue_row()),
-            scene,
-            self.modes.banner(now),
-            self.upscaler.banner(now),
-            self.pan.and_then(|p| p.banner(now)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if rows.is_empty() {
-            None
-        } else {
-            Some(rows.join("\n"))
+        {
+            hud::start_row(out);
+            out.push_str(scene);
+        }
+        self.modes.write_banner(now, out);
+        self.upscaler.write_banner(now, out);
+        if let Some(p) = &self.pan {
+            p.write_banner(now, out);
         }
     }
 
-    /// Formats this frame's rows and strip into the overlay, timing the formatting. Allocates
-    /// nothing once the buffers have grown to the rows' size.
+    /// Formats this frame's rows and strip into the overlay, timing the formatting.
     fn update_hud(&mut self, gpu: &Gpu) {
-        self.refresh_hud_stats();
-        self.forget_pose_once_moved();
-        let banner = self.banner();
+        self.fill_hud(self.gfx.as_ref().map(GfxSample::of));
         let h = &mut self.hud;
-        h.format_rows();
-        // The mode banner goes under the rows, hiding none of them.
-        if let Some(b) = banner {
-            for line in b.lines() {
-                h.text.push_str(line);
-                h.text.push('\n');
-                h.colours.push(HudColour::Yellow);
-            }
-        }
         let Some(gfx) = self.gfx.as_mut() else { return };
         gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
@@ -4145,7 +4260,14 @@ impl Run {
             t - self.queue.line_ms >= 1000.0
         };
         if due && let Some(st) = self.queue.stats {
-            let store_stats = gfx.frame.read_store_stats(&gpu.device, &gpu.queue);
+            // The store's counters without waiting: the newest copy finished on the GPU, its
+            // age in frames on the line.
+            let (store_stats, store_age) = gfx
+                .frame
+                .try_store_stats(&gpu.device)
+                .map_or((vxe_render::StoreStats::default(), None), |(s, age)| {
+                    (s, Some(age))
+                });
             let missing = store_stats.missing;
             let pixels = gfx.frame.light_pixels().max(1);
             let secs = if self.args.headless {
@@ -4160,7 +4282,7 @@ impl Run {
             let max = sl.last().copied().unwrap_or(0.0);
             let mut cpu = std::mem::take(&mut self.queue.step_cpu);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels ({}), eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -4181,6 +4303,10 @@ impl Run {
                 f64::from(missing) / f64::from(pixels),
                 f64::from(store_stats.coarse_reads) / f64::from(pixels),
                 pixels,
+                store_age.map_or_else(
+                    || "not read back yet".to_owned(),
+                    |a| format!("read {a} frames old")
+                ),
                 self.fly.camera.position.x,
                 self.fly.camera.position.y,
                 self.fly.camera.position.z,
@@ -4271,45 +4397,9 @@ impl Run {
 
     /// The live queue's banner row: the mode, its settings and slice, its order and keys.
     fn queue_row(&self) -> String {
-        format!(
-            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}; {} (1 order, 2/3 angle, 4 withdraw)",
-            vxe_render::bake::BRICK_CELL,
-            vxe_render::bake::QUEUE_BRICK_SAMPLES,
-            if self.args.bake_coarse > 0 {
-                format!(
-                    "coarse {}/{} first, near {} at {}",
-                    vxe_render::bake::BRICK_CELL,
-                    self.args.bake_coarse,
-                    self.args.bake_near,
-                    vxe_render::bake::QUEUE_BRICK_SAMPLES
-                )
-            } else {
-                format!("no coarse pass, near {}", self.args.bake_near)
-            },
-            self.args.bake_slice,
-            self.args.bake_edit_ms,
-            if self.args.dig_reach { "on" } else { "off" },
-            self.args.queue_words(),
-        )
-    }
-
-    /// The HUD store row's queue part: `, queue depth N, jobs J, slice X ms`, or nothing.
-    fn queue_note(&self) -> String {
-        match self.queue.stats {
-            Some(st) => format!(
-                ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms{}",
-                st.depth,
-                st.coarse,
-                st.jobs,
-                st.ms,
-                if st.pool_full > 0 {
-                    format!(", pool full {}", st.pool_full)
-                } else {
-                    String::new()
-                }
-            ),
-            _ => String::new(),
-        }
+        let mut out = String::new();
+        write_queue_banner_row(&mut out, &self.args, &self.args.queue_words());
+        out
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -5333,12 +5423,17 @@ impl Run {
             self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
         }
         // With the stats HUD off the overlay draws the mode banner alone while it shows.
-        let banner = (!hud).then(|| self.banner()).flatten();
+        if !hud {
+            self.write_banner();
+        }
         if hud {
             self.update_hud(gpu);
-        } else if let (Some(b), Some(gfx)) = (&banner, self.gfx.as_mut()) {
-            gfx.hud
-                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS + 1]);
+        } else if let Some(gfx) = self.gfx.as_mut() {
+            gfx.hud.set_lines(
+                &gpu.queue,
+                &self.hud.banner,
+                &[HudColour::Yellow; hud::BANNER_ROWS + 1],
+            );
             gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
         let flying = self
@@ -5409,6 +5504,8 @@ impl Run {
             .mirror
             .update_field_timed(&mut enc, field_timer.map(MarchTimer::writes));
         let field_cpu_ms = ms_since(t_field);
+        // Read on every flying frame: a resolve finishes a frame or two after it was recorded.
+        let field_reader = field_timer;
         let field_timer = field_timer.filter(|_| field_items > 0);
         if let Some(t) = field_timer {
             t.resolve(&mut enc);
@@ -5424,10 +5521,13 @@ impl Run {
         if let Some(t) = timer {
             t.resolve(&mut enc);
         }
+        gfx.frame.copy_store_stats(&mut enc);
         gfx.frame.advance();
         gfx.presenter
             .encode(&gpu.device, &mut enc, gfx.frame.target(), surface);
-        if hud || banner.is_some() {
+        // The overlay draws on every frame: the stats HUD, or with it off the banner, whose
+        // live queue row always shows.
+        {
             let [w, h] = gpu.size;
             gfx.hud.encode_timed(
                 &mut enc,
@@ -5461,14 +5561,31 @@ impl Run {
             diag(format_args!("frame 0: the GPU finished"));
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
-        let pass_ms = timer.map(|t| t.read_all_ms(&gpu.device));
+        // The timers hand over their newest finished set without waiting (a frame or two old),
+        // `None` on a frame with nothing new. `--lamp-toggle` and `--fade-reading` file each set
+        // under the frame that drew it, so they wait for this frame's.
+        let exact = self.args.lamp_toggle.is_some() || self.args.fade_reading;
+        let pass_ms = timer.and_then(|t| {
+            if exact {
+                Some(t.read_all_ms(&gpu.device))
+            } else {
+                t.try_read_all_ms(&gpu.device)
+            }
+        });
         let gpu_ms = pass_ms.as_ref().map(|p| p.iter().sum::<f64>());
-        let field_gpu_ms = field_timer.map(|t| t.read_ms(&gpu.device));
-        let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
+        let field_gpu_ms = field_reader.and_then(|t| t.try_read_ms(&gpu.device));
+        let hud_ms = hud_timer.and_then(|t| t.try_read_ms(&gpu.device));
         self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
         self.hud.cpu_ms = cpu_ms as f32;
-        self.hud.march_ms = gpu_ms.map(|v| v as f32);
-        self.hud.pass_ms.clone_from(&pass_ms);
+        // The HUD keeps the last set read until a newer one finishes, and shows none once its
+        // timer is off.
+        if timer.is_none() {
+            self.hud.march_ms = None;
+            self.hud.pass_ms = None;
+        } else if pass_ms.is_some() {
+            self.hud.march_ms = gpu_ms.map(|v| v as f32);
+            self.hud.pass_ms.clone_from(&pass_ms);
+        }
         if self.args.lamp_toggle.is_some()
             && let Some(p) = &pass_ms
         {
@@ -5479,7 +5596,11 @@ impl Run {
             self.fade
                 .push(FadeSample::read(gpu, &gfx.frame, gpu_ms.unwrap_or(0.0)));
         }
-        self.hud.hud_ms = hud_ms.map(|v| v as f32);
+        if hud_timer.is_none() {
+            self.hud.hud_ms = None;
+        } else if let Some(ms) = hud_ms {
+            self.hud.hud_ms = Some(ms as f32);
+        }
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
             if let Some(passes) = &pass_ms {
@@ -5562,7 +5683,7 @@ impl Run {
             }
             self.sample_world();
             self.sample_probes(gpu);
-            self.refresh_hud_stats();
+            self.refresh_hud_stats(self.gfx.as_ref().map(GfxSample::of));
             let mut stats = self.hud.stats.clone();
             stats.world.age_frames = 0;
             println!("hud:\n{stats}");
@@ -5664,6 +5785,7 @@ impl Drop for Run {
     /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
         self.save();
+        self.hud.run.blocking_reads = self.gfx.as_ref().map(Gfx::blocking_reads);
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
@@ -6270,10 +6392,62 @@ fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     }
 }
 
-/// The banner's pacing row, `pace free`, for [`hud::BANNER_MS`] after the start (`now_ms` on
-/// the frame loop's clock); `None` after that.
-fn pace_banner(pace: Pacing, now_ms: f64) -> Option<String> {
-    (now_ms < hud::BANNER_MS).then(|| format!("pace {}", pace.word()))
+/// Appends the banner's pacing row, `pace free`, to `out` as a banner row (`hud::start_row`)
+/// for [`hud::BANNER_MS`] after the start (`now_ms` on the frame loop's clock); `false`, and
+/// nothing written, after that.
+fn write_pace_banner(pace: Pacing, now_ms: f64, out: &mut String) -> bool {
+    let shows = now_ms < hud::BANNER_MS;
+    if shows {
+        hud::start_row(out);
+        out.push_str("pace ");
+        out.push_str(pace.word());
+    }
+    shows
+}
+
+/// Appends the live queue's banner row to `out`: the mode, its settings and slice, then
+/// `words` (its order and withdrawal) and its keys.
+fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
+    let _ = write!(
+        out,
+        "light: live queue, bricks {}/{}, ",
+        vxe_render::bake::BRICK_CELL,
+        vxe_render::bake::QUEUE_BRICK_SAMPLES,
+    );
+    if args.bake_coarse > 0 {
+        let _ = write!(
+            out,
+            "coarse {}/{} first, near {} at {}",
+            vxe_render::bake::BRICK_CELL,
+            args.bake_coarse,
+            args.bake_near,
+            vxe_render::bake::QUEUE_BRICK_SAMPLES
+        );
+    } else {
+        let _ = write!(out, "no coarse pass, near {}", args.bake_near);
+    }
+    let _ = write!(
+        out,
+        ", slice {} ms, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw)",
+        args.bake_slice,
+        args.bake_edit_ms,
+        if args.dig_reach { "on" } else { "off" },
+    );
+}
+
+/// Appends the HUD store row's queue part to `out`: `, queue depth N, coarse C, jobs J, slice
+/// X ms` and `, pool full P` when the pool refused any; nothing without the queue's stats.
+fn write_queue_note(out: &mut String, stats: Option<vxe_render::QueueStats>) {
+    if let Some(st) = stats {
+        let _ = write!(
+            out,
+            ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms",
+            st.depth, st.coarse, st.jobs, st.ms
+        );
+        if st.pool_full > 0 {
+            let _ = write!(out, ", pool full {}", st.pool_full);
+        }
+    }
 }
 
 /// The castle's banner row for `shot`: `castle gate`.
@@ -6735,6 +6909,10 @@ mod tests {
     /// `--pace compositor` names its word.
     #[test]
     fn a_plain_start_s_banner_names_the_pace() {
+        let pace_banner = |pace, now_ms| {
+            let mut out = String::new();
+            write_pace_banner(pace, now_ms, &mut out).then_some(out)
+        };
         let a = parse_args_from(argv(&[])).expect("no flags parse");
         assert_eq!(pace_banner(a.pace, 0.0).as_deref(), Some("pace free"));
         assert_eq!(pace_banner(a.pace, hud::BANNER_MS), None);
@@ -6742,6 +6920,13 @@ mod tests {
         assert_eq!(
             pace_banner(c.pace, 10.0).as_deref(),
             Some("pace compositor")
+        );
+        let mut run = bare_run(carved_rock());
+        run.start = now();
+        let banner = run.banner().expect("the banner shows");
+        assert!(
+            banner.starts_with("pace free\nlight: live queue"),
+            "{banner}"
         );
     }
 
@@ -7477,6 +7662,49 @@ mod tests {
         world
     }
 
+    /// A shown HUD's whole CPU half (`Run::fill_hud`: the values refreshed with a lighting row
+    /// from a GPU sample and the frame's passes, the rows and strip formatted, and the banner's
+    /// rows under them, at the start where the banner shows its pace, its modes, the upscaler
+    /// and a pan) allocates on the first frame and 0 bytes on frames 2 to 100.
+    #[test]
+    fn a_shown_hud_s_refresh_and_banner_allocate_nothing_after_the_first_frame() {
+        let mut run = bare_run(carved_rock());
+        run.hud = Hud::new(true);
+        run.hud.pass_ms = Some((0..FRAME_PASSES.len()).map(|i| 0.1 * i as f64).collect());
+        run.hud.store = Some(vxe_render::StoreStats::default());
+        run.queue.stats = Some(vxe_render::QueueStats::default());
+        run.pan = Some(hud::Pan::new(1.5, 0.0));
+        run.upscaler = hud::UpscalerBanner::shown_from(hud::UpscalerMode::Fsr2, "1.5", 0.0);
+        let g = GfxSample {
+            mirror_bytes: 3 << 20,
+            pool_live: 1200,
+            pool_free: 34,
+            pressure: 0.25,
+            budget_bytes: 64 << 20,
+            light_samples: 4096,
+            upscale: Some([[640, 360], [960, 540]]),
+        };
+        run.start = now();
+        let mut per_frame = Vec::with_capacity(100);
+        for frame in 0..100u32 {
+            let before = counting::bytes();
+            run.hud.frames.record(0.016 + frame as f32 * 1e-5);
+            run.fill_hud(Some(g));
+            per_frame.push(counting::bytes() - before);
+        }
+        let text = &run.hud.text;
+        assert!(text.contains(FRAME_PASSES[0]), "the lighting row: {text}");
+        assert!(text.contains("pace free"), "the banner: {text}");
+        assert!(
+            text.contains("upscaler fsr2"),
+            "the upscaler's banner: {text}"
+        );
+        assert!(text.contains("pan 1.5 deg/s"), "the pan's banner: {text}");
+        println!("bytes per frame: {per_frame:?}");
+        assert!(per_frame[0] > 0, "the first frame grows the buffers");
+        assert_eq!(per_frame[1..], [0; 99]);
+    }
+
     /// A mirror sync that fails ends the session with its failure recorded, and the headless
     /// runner's outcome is that failure as `Err`; with none recorded it is `Ok`.
     #[test]
@@ -7750,7 +7978,7 @@ mod tests {
                 input.key_down(key);
             }
             run.handle_input(&input);
-            run.refresh_hud_stats();
+            run.refresh_hud_stats(None);
             let banner = run.banner().expect("the queue's row is on the banner");
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
             (banner, row)
@@ -7840,7 +8068,7 @@ mod tests {
             input.key_up(KeyCode::Digit4);
             input.key_down(KeyCode::Digit4);
             run.handle_input(&input);
-            run.refresh_hud_stats();
+            run.refresh_hud_stats(None);
             let banner = run.banner().expect("the queue's row is on the banner");
             assert!(
                 banner.contains(&format!("; {want} (1 order")),
@@ -7853,7 +8081,7 @@ mod tests {
             withdrawn: 7,
             ..Default::default()
         });
-        run.refresh_hud_stats();
+        run.refresh_hud_stats(None);
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
         assert!(
             row.starts_with("in view: 0 waiting (0 coarse), withdrawn 7; "),
