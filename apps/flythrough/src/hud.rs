@@ -1773,6 +1773,64 @@ pub fn start_row(out: &mut String) {
     }
 }
 
+/// Appends a path run's mode row to `out` as a banner row: `benchmark 23 s / 37 s`, `tour -
+/// move or look to fly`, `free flight - T resumes the tour`; nothing once the run ended. Under
+/// `--tester` a second row names the help key.
+pub fn write_path_row(out: &mut String, player: &crate::path::PathPlayer, tester: bool) {
+    use crate::path::{Drive, PathMode};
+    start_row(out);
+    match (player.mode, player.drive) {
+        (PathMode::Bench, Drive::Path { t_s }) => {
+            let _ = write!(
+                out,
+                "benchmark {:.0} s / {:.0} s",
+                t_s.floor(),
+                player.path.duration_s().ceil()
+            );
+        }
+        (PathMode::Tour, Drive::Path { .. }) => out.push_str("tour - move or look to fly"),
+        (_, Drive::Free) => out.push_str("free flight - T resumes the tour"),
+        (_, Drive::Aborted | Drive::Done) => return,
+    }
+    if tester {
+        start_row(out);
+        out.push_str("F1 help, Esc ends the run");
+    }
+}
+
+/// Appends the tester mode's help panel to `out` as banner rows: the scene and mode, then the
+/// keys the mode takes.
+pub fn write_help_panel(out: &mut String, player: &crate::path::PathPlayer) {
+    use crate::path::PathMode;
+    start_row(out);
+    let _ = write!(
+        out,
+        "scene {}, {}",
+        player.path.scene.name(),
+        match player.mode {
+            PathMode::Bench => "benchmark",
+            PathMode::Tour => "tour",
+        }
+    );
+    let rows: &[&str] = match player.mode {
+        PathMode::Bench => &[
+            "the camera flies the path by itself",
+            "Esc aborts the benchmark",
+        ],
+        PathMode::Tour => &[
+            "W A S D move, Space C up and down",
+            "Shift faster, the mouse looks",
+            "left click digs in free flight",
+            "T resumes the tour",
+            "F1 hides this, Esc ends the run",
+        ],
+    };
+    for r in rows {
+        start_row(out);
+        out.push_str(r);
+    }
+}
+
 /// Wraps `out` from byte `from` on, parts joined by `, `, into rows of at most [`BANNER_COLS`]
 /// characters where they fit: each `, ` before a part that would overrun its row becomes a line
 /// break. In place; the text only shrinks, so nothing is allocated.

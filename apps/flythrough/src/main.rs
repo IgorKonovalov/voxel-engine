@@ -29,7 +29,15 @@
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--emitter-cap C] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
-//! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
+//! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]
+//! [--path cave|showcase|castle] [--path-mode bench|tour] [--report DIR] [--tester]`.
+//! `--path NAME` flies that scene's camera path (`flythrough::path`; the scene's own flags and
+//! seed 1 are required): `--path-mode bench` (the default) once by wall time (1/60 s a headless
+//! frame), then exits; `tour` loops it, the first move, look or dig hands the camera to the
+//! keys and `T` resumes the path from its nearest point. The banner shows the mode always
+//! (`benchmark 23 s / 37 s`). `--report DIR` writes `DIR/run.json` at exit
+//! (`flythrough::report`). `--tester` leaves movement, look, the dig, `F1` (a help panel), `T`
+//! and `Esc` and turns every other key off, the stats HUD among them.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
 //! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
 //! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
@@ -262,7 +270,9 @@ use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB,
 use flythrough::logic::{
     DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
 };
-use flythrough::path::{CameraPath, PATH_SEED, PathMode, PathPlayer, Scene};
+use flythrough::path::{
+    CameraPath, PATH_SEED, PathMode, PathPlayer, Scene, TesterAction, TesterInput, tester_action,
+};
 use flythrough::report::{AdapterLine, Recorder, RunReport};
 use flythrough::showcase::{SHOTS, SHOWCASE_CHUNKS, Shot, ShowcaseSource};
 use flythrough::{
@@ -589,6 +599,9 @@ struct Args {
     path_mode: PathMode,
     /// `--report DIR`: where the path run writes `run.json`.
     report: Option<std::path::PathBuf>,
+    /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
+    /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
+    tester: bool,
 }
 
 /// While the exposure moves by more than 0.01 EV per half second, prints the exposure row every
@@ -910,6 +923,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         path: None,
         path_mode: PathMode::Bench,
         report: None,
+        tester: false,
     };
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
@@ -1364,6 +1378,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 path_mode_flag = true;
             }
             "--report" => args.report = Some(value()?.into()),
+            "--tester" => args.tester = true,
             "--audio" => args.audio = true,
             "--audio-debug" => {
                 args.audio = true;
@@ -1480,11 +1495,17 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
 /// and `--report` only with a path.
 fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String> {
     let Some(path) = args.path else {
-        if path_mode_flag || args.report.is_some() {
-            return Err("--path-mode and --report play a camera path; they need --path".to_owned());
+        if path_mode_flag || args.report.is_some() || args.tester {
+            return Err(
+                "--path-mode, --report and --tester play a camera path; they need --path"
+                    .to_owned(),
+            );
         }
         return Ok(());
     };
+    if args.tester && args.hud {
+        return Err("--tester keeps the stats HUD out of reach; it does not take --hud".to_owned());
+    }
     let scene = if args.castle {
         Some(Scene::Castle)
     } else if args.showcase {
@@ -3299,6 +3320,8 @@ struct Run {
     recorder: Option<Recorder>,
     /// The adapter the device was created on, for the report.
     adapter: Option<wgpu::AdapterInfo>,
+    /// `--tester`'s help panel (`F1`) is shown.
+    help: bool,
 }
 
 /// The live queue's state in the fly-through: the workers' results before the frame exists, and
@@ -3544,6 +3567,15 @@ impl Run {
     /// Appends the banner's rows to `out`, the live queue's order and withdrawal in `words`.
     fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
+        if let Some(p) = &self.player {
+            hud::write_path_row(out, p, self.args.tester);
+            if self.args.tester {
+                if self.help {
+                    hud::write_help_panel(out, p);
+                }
+                return;
+            }
+        }
         if let Some((pose, _)) = &self.pose {
             out.push_str(pose);
         }
@@ -5111,7 +5143,13 @@ impl Run {
             self.hud.frames.record(dt);
             self.hud.run.wall_ms.push(f64::from(dt) * 1e3);
         }
-        if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
+        if self.args.tester {
+            if input.pressed(KeyCode::F1)
+                && tester_action(TesterInput::Key(KeyCode::F1)) == Some(TesterAction::Help)
+            {
+                self.help = !self.help;
+            }
+        } else if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
             self.hud.visible = !self.hud.visible;
         }
         if self.frame == 0 {
@@ -5152,7 +5190,17 @@ impl Run {
             if let Some(p) = &self.pan {
                 self.fly.camera.yaw += p.yaw(dt);
             }
-            self.handle_input(input);
+            if self.args.tester {
+                // Free flight under `--tester`: the dig is the one action past moving.
+                if input.clicked(MouseButton::Left)
+                    && tester_action(TesterInput::Click(MouseButton::Left))
+                        == Some(TesterAction::Dig)
+                {
+                    self.dig();
+                }
+            } else {
+                self.handle_input(input);
+            }
             self.cutaway
                 .update(&mut self.look, &self.world, self.fly.camera.position);
         }
@@ -6205,6 +6253,7 @@ impl App for Flythrough {
                     .map(|p| PathPlayer::new(p, self.args.path_mode)),
                 recorder: self.args.path.map(|p| Recorder::for_path(p.duration_s())),
                 adapter: None,
+                help: false,
             });
         }
         match self.run.as_mut() {
@@ -7912,6 +7961,7 @@ mod tests {
             player: None,
             recorder: None,
             adapter: None,
+            help: false,
             cutaway: CutawayMode::Auto,
         }
     }

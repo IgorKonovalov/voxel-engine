@@ -334,8 +334,8 @@ for them. The release profile's build time on CI is recorded there too.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: a camera path through the showcase, and its run.json | dev | done; windowed reading owed (live/readings68.sh) | committed with this row |
-| 2: paths for the cave and the castle, the tour, and the tester mode | dev | not started | |
+| 1: a camera path through the showcase, and its run.json | dev | done; windowed reading owed (live/readings68.sh) | 2704f51 |
+| 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench readings owed (live/readings68.sh) | committed with this row |
 | 3: the system report and Windows readings | dev | not started | |
 | 4: the launcher window, runs, logs and the zip | dev | not started | |
 | 5: the release archives on CI | dev | not started | |
@@ -347,6 +347,11 @@ for them. The release profile's build time on CI is recorded there too.
   `ShowcaseSource::new(PATH_SEED)`, not `HallSource` (the castle's hall); `PATH_SEED` = 1 and
   `--path` refuses another `--seed`; `run.json` gives `internal` in pixels beside
   `internal_scale`.
+- The castle path joins its four shots with cut keys (`Keyframe::cut`: the camera holds, then
+  cuts): no passage into the keep or down to the dungeon is 1 m clear on every side (readings
+  log, Phase 2). The dungeon leg pans at the shot's eye.
+- The cave path is 71 s, not about 60 s: the route to 1400 voxels along +x.
+- `--tester` needs `--path` and refuses `--hud`; `Esc` in a tour reports `ended` `completed`.
 - `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
   launcher uses, not a parser private to the test.
 

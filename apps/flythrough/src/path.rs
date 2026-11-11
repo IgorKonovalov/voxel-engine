@@ -133,8 +133,86 @@ const SHOWCASE_KEYS: &[Keyframe] = &[
     key(37.4, [189.5, 387.5, 219.5], 135.0, 0.0),
 ];
 
+/// The streamed cave from its spawn pocket (`UNBOUNDED_SPAWN`) about 140 m along +x, down
+/// through the caverns to 31 m under the spawn and up again, crossing some twenty chunk
+/// borders, so the streamer loads new chunks the whole way. Laid like [`SHOWCASE`], to a goal
+/// 1400 voxels along +x.
+pub const CAVE: CameraPath = CameraPath {
+    name: "cave",
+    scene: Scene::Cave,
+    keys: CAVE_KEYS,
+};
+
+const CAVE_KEYS: &[Keyframe] = &[
+    key(0.0, [33.5, 33.5, 33.5], 122.0, 25.0),
+    key(1.7, [10.0, 65.5, 63.5], 112.0, 25.0),
+    key(5.9, [-15.0, 147.5, 159.5], 43.0, 20.0),
+    key(8.1, [17.0, 189.0, 199.0], 32.0, 10.0),
+    key(8.4, [22.0, 194.0, 203.0], 32.0, 8.0),
+    key(8.9, [27.5, 201.5, 213.5], 30.0, 5.0),
+    key(9.2, [33.5, 207.5, 219.5], 30.0, 3.0),
+    key(14.5, [159.5, 291.5, 261.5], 8.0, -16.0),
+    key(15.0, [171.5, 303.5, 261.5], -4.0, -20.0),
+    key(16.0, [189.5, 321.5, 249.5], -27.0, -20.0),
+    key(16.6, [207.5, 315.5, 249.5], -33.0, -23.0),
+    key(17.0, [219.5, 315.5, 243.5], -38.0, -23.0),
+    key(17.3, [225.5, 315.5, 237.5], -41.0, -22.0),
+    key(18.9, [255.5, 297.5, 207.5], -45.0, -18.0),
+    key(24.1, [357.5, 201.0, 138.0], -10.0, -4.0),
+    key(25.1, [381.5, 189.5, 153.5], 12.0, -12.0),
+    key(25.4, [387.5, 183.5, 153.5], 16.0, -13.0),
+    key(28.3, [465.5, 207.5, 123.5], 27.0, -25.0),
+    key(32.5, [549.5, 249.5, 39.5], 9.0, -14.0),
+    key(36.3, [657.5, 267.5, 3.5], -27.0, -2.0),
+    key(39.0, [729.5, 237.5, -8.5], -45.0, -7.0),
+    key(39.3, [735.5, 231.5, -2.5], -45.0, -10.0),
+    key(40.2, [753.5, 213.5, -2.5], -43.0, -15.0),
+    key(41.9, [789.5, 177.5, -8.5], -30.0, -24.0),
+    key(45.4, [855.5, 127.5, -74.0], 34.0, -8.0),
+    key(48.5, [933.5, 177.5, -92.5], 30.0, -25.0),
+    key(49.2, [945.5, 189.5, -104.5], 20.0, -25.0),
+    key(49.6, [951.5, 195.5, -110.5], 12.0, -25.0),
+    key(51.7, [993.5, 219.5, -152.5], -24.0, -25.0),
+    key(53.1, [1023.5, 225.5, -182.5], -34.0, -23.0),
+    key(58.3, [1131.5, 170.5, -280.0], 34.0, 5.0),
+    key(60.8, [1191.5, 215.0, -273.0], 13.0, 5.0),
+    key(61.4, [1197.5, 225.5, -260.5], 4.0, -2.0),
+    key(61.7, [1203.5, 231.5, -260.5], 4.0, 0.0),
+    key(65.2, [1305.5, 255.5, -248.5], -32.0, 16.0),
+    key(65.6, [1317.5, 255.5, -248.5], -36.0, 18.0),
+    key(68.4, [1371.5, 213.5, -200.5], -24.0, 6.0),
+    key(70.0, [1407.5, 189.5, -182.5], -11.0, -7.0),
+    key(71.0, [1437.5, 183.5, -188.5], -16.0, 4.0),
+];
+
+/// The castle in the streamed cave's hall, its four shots in order: from the gate (the spawn)
+/// up and south over the approach; a cut into the keep, west along the nave; a cut to the
+/// lancet outside, then west and up along the keep's south side; a cut to the dungeon's
+/// corridor, panning along the cells. No passage into the keep or down the stair is 1 m clear on
+/// every side (the stair house's doorway is 13 voxels wide), so the legs join by cuts.
+pub const CASTLE: CameraPath = CameraPath {
+    name: "castle",
+    scene: Scene::Castle,
+    keys: CASTLE_KEYS,
+};
+
+const CASTLE_KEYS: &[Keyframe] = &[
+    key(0.0, [32.5, 32.5, 32.5], 0.0, 0.0),
+    key(1.5, [32.5, 32.5, 32.5], 0.0, 0.0),
+    key(6.7, [99.5, -56.5, 141.5], -45.0, -10.0),
+    cut(8.0, [602.5, 32.5, 112.5], 180.0, 12.0),
+    key(13.0, [453.5, 15.5, 93.5], 180.0, 5.0),
+    key(14.1, [435.5, 33.5, 111.5], 180.0, 5.0),
+    cut(15.5, [492.5, -107.5, 112.5], 90.0, 0.0),
+    key(17.0, [492.5, -107.5, 112.5], 90.0, 0.0),
+    key(22.3, [339.5, -148.0, 117.5], 150.0, 10.0),
+    key(24.1, [303.5, -128.5, 153.5], 135.0, 0.0),
+    cut(25.5, [392.5, 182.5, -68.5], -25.0, 0.0),
+    key(31.5, [392.5, 182.5, -68.5], 25.0, 0.0),
+];
+
 /// Every path, by name.
-pub const PATHS: [CameraPath; 1] = [SHOWCASE];
+pub const PATHS: [CameraPath; 3] = [CAVE, SHOWCASE, CASTLE];
 
 impl CameraPath {
     /// The path named `name`.
@@ -460,5 +538,55 @@ impl PathPlayer {
             (PathMode::Bench, Drive::Done) | (PathMode::Tour, _) => "completed",
             (PathMode::Bench, _) => "aborted",
         }
+    }
+}
+
+/// An input event of the fly-through's window, as the tester mode's filter sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TesterInput {
+    Key(KeyCode),
+    /// Mouse motion (or the look stick).
+    MouseLook,
+    Click(MouseButton),
+}
+
+/// What an input does under `--tester`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TesterAction {
+    Move,
+    Look,
+    Dig,
+    /// `F1`: the help panel.
+    Help,
+    /// `T`: resume the tour.
+    Resume,
+    /// `Esc`: end the run.
+    End,
+}
+
+/// The keys `--tester` moves the camera with: `W A S D`, `Space` and `C` (up and down), `Shift`
+/// (faster).
+pub const TESTER_MOVE_KEYS: [KeyCode; 7] = [
+    KeyCode::KeyW,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::Space,
+    KeyCode::KeyC,
+    KeyCode::ShiftLeft,
+];
+
+/// The tester mode's filter: movement, look, the left click's dig, `F1`, `T` and `Esc` map to
+/// their action; every other key and button (the debug keys among them) to none.
+pub fn tester_action(input: TesterInput) -> Option<TesterAction> {
+    match input {
+        TesterInput::Key(k) if TESTER_MOVE_KEYS.contains(&k) => Some(TesterAction::Move),
+        TesterInput::Key(KeyCode::F1) => Some(TesterAction::Help),
+        TesterInput::Key(KeyCode::KeyT) => Some(TesterAction::Resume),
+        TesterInput::Key(KeyCode::Escape) => Some(TesterAction::End),
+        TesterInput::Key(_) => None,
+        TesterInput::MouseLook => Some(TesterAction::Look),
+        TesterInput::Click(MouseButton::Left) => Some(TesterAction::Dig),
+        TesterInput::Click(_) => None,
     }
 }
