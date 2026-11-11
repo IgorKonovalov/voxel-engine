@@ -42,6 +42,14 @@
 > tests' file is `apps/flythrough/tests/gpu_queue.rs`; the budgets name the right arms and the line already
 > missed.
 
+> **Amended 2026-11-11 (owner), the queue step's bar.** The base a8b1a2c read p50 about 1.0 ms before a
+> reboot and about 9 ms after it, same scene, source and protocol (readings log, Phase 5 fix pass): p50 follows
+> the share of steps that open, and that share swings between runs for a cause not found. The fixed absolute
+> bar is replaced by an A/B: the tip's queue step p50 and p99 are no worse than the base's read alternated in
+> the same session (two rounds each, the spread between a side's rounds as the tolerance). The opening step's
+> cost (about 9 ms, about 3.4 ms of it rebuilding and sorting the candidates) and the swing move to Plan 0067.
+> The pre-roll no longer withdrawing its own coarse pass (78740af) is accepted without a window check.
+
 ## TL;DR
 
 The baked light's live queue (`bake::BakeQueue`) opens chunks by distance first, so far light in the view waits
@@ -317,10 +325,10 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 
 - **Section 2, frame.** The slice stays 1.5 ms (`DEFAULT_BAKE_SLICE_MS`, owner answer 4). The queue step's CPU
   per frame: the score adds an angle and a multiply per candidate (up to about
-  17 000 on the streamed cave), so the bar is p50 within 0.1 ms of 1.019 ms and p99 at most 18.65 ms: the
-  higher of Plan 0059's two fix-pass rounds (18.424 and 18.198 ms) plus their spread of 0.226 ms. The 17.284
-  and 17.378 ms in the same table are the arm before that fix pass, not a bound here. A proposal; Phase 5
-  reads it.
+  17 000 on the streamed cave), so the bar is an A/B against the base read alternated in the same session:
+  the tip's p50 and p99 no worse than the base's, within the spread between a side's two rounds (amended
+  2026-11-11, owner; the earlier absolute bar of p50 within 0.1 ms of 1.019 ms and p99 at most 18.65 ms was
+  missed by the base itself in a later session). Phase 5 reads it.
 - **Section 3, memory.** No new buffer; `frame_bytes` unchanged (888 490 396 B), the pool unchanged; a withdrawn
   job's place returns to the pool (asserted in Phase 3).
 - **Section 7, startup.** The line is "time to first frame under 3 s on the dev reference (proposal)", and it
