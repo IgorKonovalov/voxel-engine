@@ -50,6 +50,8 @@
 //! - `VXE_STRIP_SHARPEN`: the upscaler's sharpening (default 0.5).
 //! - `VXE_STRIP_LIGHTING`: the light passes' resolution, `full` or `half` (default: the
 //!   frame's, half).
+//! - `VXE_STRIP_STORE_READ`: `face` (default) or `normal`, `Lighting::store_read` (ADR-0049);
+//!   `VXE_STRIP_WEIGHTS`: `normal` (default) or `face`, `Lighting::light_weights`.
 //! - FSR 2's candidate knobs (`Fsr2Settings`): `VXE_STRIP_JITTER_PHASES` (the jitter's phase
 //!   count; the fold's default follows it), `VXE_STRIP_EMITTER_CAP` (a pre-exposed level) and
 //!   `VXE_STRIP_DITHER=on` (the tone pass's static one-level dither).
@@ -61,9 +63,9 @@
 //! - `VXE_STRIP_SCALE`: the upscalers' internal scale, `1`, `1.5` (default) or `2`.
 //! - `VXE_STRIP_SHRINK=K`: with `off`, renders `K` times the size on each edge and box-filters
 //!   every read frame down to the output size (`R` at `K` 2 and `VXE_STRIP_FAR=4,12`).
-//! - `VXE_STRIP_REF`: an absolute path to a PNG of the output size; a fold prints its last
-//!   frame's mean level distance from it, on the whole frame and on the far crops, and the
-//!   distance by class (split by the direction map).
+//! - `VXE_STRIP_REF`: absolute paths to PNGs of the output size, separated by `,`; a fold
+//!   prints its last frame's mean level distance from each, on the whole frame and on the far
+//!   crops, and the distance by class (split by the direction map).
 //! - A fold also reads the **far crops** (the dome and the far wall, `GUARD_CROPS` 0 and 2 at
 //!   1920 x 1080, scaled to the output size): their guard energy and `T`; the class tables split
 //!   by the direction map (`aliasing::directions`), on the frame and on the far crops; the
@@ -833,8 +835,9 @@ impl FoldRead<'_> {
             "fold T jumps by class, far crops:\n{}",
             ByClass::of_where(&mask, &fold.t_jumps, &in_far).table("T jumps")
         );
-        if let Some(path) = env("VXE_STRIP_REF") {
-            let (r, rw, rh) = support::read_png(&PathBuf::from(&path));
+        let refs = env("VXE_STRIP_REF").unwrap_or_default();
+        for path in refs.split(',').filter(|p| !p.is_empty()) {
+            let (r, rw, rh) = support::read_png(&PathBuf::from(path));
             assert_eq!((rw, rh), (w, h), "VXE_STRIP_REF is {rw}x{rh}");
             let d = aliasing::levels(last, &r);
             println!(
@@ -1513,6 +1516,17 @@ mod reading {
                 Some(v) => panic!("VXE_STRIP_SHADOW takes coarse or full, not {v}"),
             },
             exposure,
+            store_read: match env("VXE_STRIP_STORE_READ").as_deref() {
+                Some(v) => vxe_render::StoreRead::from_name(v).unwrap_or_else(|| {
+                    panic!("VXE_STRIP_STORE_READ takes face or normal, not {v}")
+                }),
+                None => vxe_render::StoreRead::Face,
+            },
+            light_weights: match env("VXE_STRIP_WEIGHTS").as_deref() {
+                Some(v) => vxe_render::LightWeights::from_name(v)
+                    .unwrap_or_else(|| panic!("VXE_STRIP_WEIGHTS takes normal or face, not {v}")),
+                None => vxe_render::LightWeights::Normal,
+            },
             ..Lighting::default()
         };
         let light_mode = env("VXE_STRIP_LIGHT");

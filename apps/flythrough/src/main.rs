@@ -134,7 +134,9 @@
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
 //! default, 16 or 32). In a window
 //! `F3` toggles the shadow walk, `F5` the history killer, `F6` the lighting
-//! resolution, `F7` the lamp, `F8` the lamp's bounce and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
+//! resolution, `F7` the lamp, `F8` the lamp's bounce, `Q` the exposure, `Comma` the store read
+//! (`--store-read face|normal`, ADR-0049) and `Semicolon` the light's filter weights
+//! (`--light-weights normal|face`), each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets, naming the look on the banner.
 //! `--vault` places a 16-voxel room with an indestructible
@@ -492,6 +494,10 @@ struct Args {
     fade_reading: bool,
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     shadow_walk: ShadowWalk,
+    /// `--store-read face|normal`: how a cube face reads the store (ADR-0049; `Comma`).
+    store_read: vxe_render::StoreRead,
+    /// `--light-weights normal|face`: the normal the light's filters compare (`Semicolon`).
+    light_weights: vxe_render::LightWeights,
     /// `--filter on|off`: the a-trous filter runs (on by default).
     filter: bool,
     /// `--light-radius N`: chunks around the camera whose emitters light the frame.
@@ -770,6 +776,8 @@ impl Args {
             },
             lamp: self.lamp,
             shadow_walk: self.shadow_walk,
+            store_read: self.store_read,
+            light_weights: self.light_weights,
             filter: self.filter,
             history: self.history,
             lamp_bounce: self.lamp_bounce,
@@ -883,6 +891,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
         probe_slices: vxe_render::probes::SLICES,
         shadow_walk: ShadowWalk::default(),
+        store_read: vxe_render::StoreRead::default(),
+        light_weights: vxe_render::LightWeights::default(),
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
         history: HistoryKill::default(),
@@ -1024,6 +1034,16 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--store-read" => {
+                let v = value()?;
+                args.store_read = vxe_render::StoreRead::from_name(&v)
+                    .ok_or(format!("--store-read takes face or normal, not {v}"))?;
+            }
+            "--light-weights" => {
+                let v = value()?;
+                args.light_weights = vxe_render::LightWeights::from_name(&v)
+                    .ok_or(format!("--light-weights takes normal or face, not {v}"))?;
             }
             "--probe-rays" => {
                 let v = value()?;
@@ -3411,7 +3431,13 @@ impl Run {
             });
         let aliasing = s.aliasing.get_or_insert_with(String::new);
         aliasing.clear();
-        hud::write_aliasing_row(aliasing, &self.upscaler, far, self.pan.as_ref());
+        hud::write_aliasing_row(
+            aliasing,
+            &self.upscaler,
+            far,
+            &self.modes,
+            self.pan.as_ref(),
+        );
     }
 
     /// The CPU half of [`Run::update_hud`]: refreshes the values (with the GPU side's `g`),
@@ -5097,6 +5123,8 @@ impl Run {
             (KeyCode::F8, hud::ModeKey::LampBounce),
             (KeyCode::KeyM, hud::ModeKey::Pulse),
             (KeyCode::KeyQ, hud::ModeKey::Exposure),
+            (KeyCode::Comma, hud::ModeKey::StoreRead),
+            (KeyCode::Semicolon, hud::ModeKey::LightWeights),
         ] {
             if input.pressed(key) {
                 self.modes.press(mode, ms_since(self.start));
@@ -8002,8 +8030,13 @@ mod tests {
             assert_eq!(run.pan.map(|p| p.on), Some(on));
         }
         assert_eq!(
-            hud::aliasing_row(&run.upscaler, "far normal 2..6", run.pan.as_ref()),
-            "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; pan 1.1 deg/s"
+            hud::aliasing_row(
+                &run.upscaler,
+                "far normal 2..6",
+                &run.modes,
+                run.pan.as_ref()
+            ),
+            "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; store read face, weights normal, lighting half; pan 1.1 deg/s"
         );
         let knobs = parse_args_from(argv(&[
             "--jitter-phases",
@@ -8042,6 +8075,102 @@ mod tests {
                 parse_args_from(argv(&["--pan", bad])).err().as_deref(),
                 Some(format!("--pan takes degrees a second other than 0, not {bad}").as_str()),
                 "{bad}"
+            );
+        }
+    }
+
+    /// `--store-read` and `--light-weights` parse their two modes and refuse anything else;
+    /// `Comma` and `Semicolon` change the banner's text and the aliasing row's to each mode, and
+    /// the row names the light's resolution, which `F6` changes.
+    #[test]
+    fn the_store_read_toggle_shows_in_the_banner() {
+        use vxe_render::{LightWeights, StoreRead};
+        for (flag, modes) in [
+            ("--store-read", ["face", "normal"]),
+            ("--light-weights", ["normal", "face"]),
+        ] {
+            for m in modes {
+                let a = parse_args_from(argv(&[flag, m])).expect("a mode parses");
+                let l = a.start_lighting();
+                assert_eq!(
+                    if flag == "--store-read" {
+                        l.store_read.name()
+                    } else {
+                        l.light_weights.name()
+                    },
+                    m
+                );
+            }
+            let what = if flag == "--store-read" {
+                "face or normal"
+            } else {
+                "normal or face"
+            };
+            for bad in ["x", "Face", ""] {
+                assert_eq!(
+                    parse_args_from(argv(&[flag, bad])).err().as_deref(),
+                    Some(format!("{flag} takes {what}, not {bad}").as_str()),
+                    "{flag} {bad}"
+                );
+            }
+        }
+        let d = parse_args_from(argv(&[])).expect("parses");
+        assert_eq!(
+            (
+                d.start_lighting().store_read,
+                d.start_lighting().light_weights
+            ),
+            (StoreRead::Face, LightWeights::Normal)
+        );
+        let mut run = bare_run(carved_rock());
+        run.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
+        let mut input = Input::default();
+        let mut press = |run: &mut Run, key: KeyCode| {
+            input.end_frame();
+            input.key_up(key);
+            input.key_down(key);
+            run.handle_input(&input);
+            let row = hud::aliasing_row(&run.upscaler, "far normal 2..6", &run.modes, None);
+            (run.banner().expect("a press shows the banner"), row)
+        };
+        for (key, banner_word, row_words) in [
+            (
+                KeyCode::Comma,
+                "store read normal",
+                "store read normal, weights normal, lighting half",
+            ),
+            (
+                KeyCode::Semicolon,
+                "weights face",
+                "store read normal, weights face, lighting half",
+            ),
+            (
+                KeyCode::F6,
+                "lighting full",
+                "store read normal, weights face, lighting full",
+            ),
+            (
+                KeyCode::Comma,
+                "store read face",
+                "store read face, weights face, lighting full",
+            ),
+            (
+                KeyCode::Semicolon,
+                "weights normal",
+                "store read face, weights normal, lighting full",
+            ),
+        ] {
+            let (banner, row) = press(&mut run, key);
+            assert!(
+                banner.replace('\n', " ").contains(banner_word),
+                "{key:?}: {banner}"
+            );
+            assert_eq!(
+                row,
+                format!(
+                    "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; {row_words}; no pan"
+                ),
+                "{key:?}"
             );
         }
     }
@@ -8839,7 +8968,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags, and under the table.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +0.00 EV"
+            "lighting half, store read face, weights normal, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

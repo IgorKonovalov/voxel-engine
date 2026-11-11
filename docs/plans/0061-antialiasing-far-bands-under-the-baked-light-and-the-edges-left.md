@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** in-progress (Phase 1 readings in; its stop rule 3 answered by the owner's amendment of 2026-11-11; Phase 2 on after Plan 0060 merges), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
+> **Status:** in-progress (Phase 2 landed; Phase 3 next), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -640,8 +640,8 @@ The owner, 2026-11-10, to the open questions above:
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), Phase 2 not started; see [the readings log](logs/0061.md) | committed with this row |
-| 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | not started | |
+| 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), answered by the owner's amendment; see [the readings log](logs/0061.md) | e79620f |
+| 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) in flight at the commit, see the readings log | committed with this row |
 | 3: The matrix with the read, the edges left, and the window's runner | dev | not started | |
 | 4: The owner's window | human | not started | |
 | 5: The picks as defaults | dev | not started | |
@@ -652,6 +652,16 @@ The owner, 2026-11-10, to the open questions above:
   arms, for the attribution of done-when 3's reading; the plan names no such arm.
 - Phase 1, done-when 5 (i): the class mask leaves the far crops with no `interior` pixel, so the
   row as written is empty; the log gives the figure both as written and across every class.
+
+- Merge of main (bd2f6d2): no name mapping needed; every name the plan uses resolves in the tree.
+- Phase 2: the staircase reading lives in `gpu_bake.rs`'s `mod reading` (`staircase_read`), not
+  `gpu_look.rs`, because the CPU replica of the store read (`brick_value`, `cells_of`,
+  `hit_face`) lives there; its store is filled by a bake (Vz / Vx 2.25 and 1.85, not 4). Done-when
+  1b's golden is not written (exploration, Phase 5). The "three equal direction values" check of
+  done-when 2 was not built. The plane term keeps `rec.n` and its face-normal variant was not read.
+- Phase 2 touches `apps/flythrough/tests/gpu_strip.rs` (two env knobs and several references in
+  `VXE_STRIP_REF`) and re-blesses `apps/flythrough/tests/golden/mode_banner.png` (the banner's
+  text); neither is in the phase's Files touched.
 
 ### Close triggers
 

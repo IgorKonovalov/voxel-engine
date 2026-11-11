@@ -136,6 +136,12 @@ pub const LIGHTING_INDIRECT: u32 = 1 << 12;
 /// `Params::lighting` bit: the exposure is automatic ([`Exposure::Auto`]): the frame's is the
 /// exposure state's `current`.
 pub const LIGHTING_AUTO_EXPOSURE: u32 = 1 << 13;
+/// `Params::lighting` bit: a cube face's stored part is read by its shading normal
+/// ([`StoreRead::Normal`], ADR-0049).
+pub const LIGHTING_STORE_BY_NORMAL: u32 = 1 << 14;
+/// `Params::lighting` bit: the half-resolution upsample and the a-trous edge weights compare
+/// the taps' face normals ([`LightWeights::Face`], ADR-0049).
+pub const LIGHTING_FACE_WEIGHTS: u32 = 1 << 15;
 
 /// `Params::flags` bit: trace the shadow ray.
 pub const FLAG_SHADOWS: u32 = 1;
@@ -447,6 +453,63 @@ impl ShadowWalk {
         match self {
             Self::Full => "full",
             Self::Coarse => "coarse",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
+/// How a cube face's hit reads its emissive part from the store (ADR-0049).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StoreRead {
+    /// The face's own direction value, the same at every pixel of the face. The default.
+    #[default]
+    Face,
+    /// Where the shading normal leaves the face normal (the far normal's band, or a whole-frame
+    /// normal look), the mix of the cell's direction values by the normal's squared components,
+    /// over the directions that hold a value, renormalised; the face's own read where none
+    /// does. Where the shading normal is the face normal it is [`StoreRead::Face`] to the bit.
+    Normal,
+}
+
+impl StoreRead {
+    pub const ALL: [Self; 2] = [Self::Face, Self::Normal];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Face => "face",
+            Self::Normal => "normal",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
+/// The normal the half-resolution light's filters compare between two hits: the composite's
+/// 2 x 2 upsample (`max(n.n', 0)^32`) and the a-trous edge weight (`max(n.n', 0)^128`).
+/// The plane term keeps the shading normal under both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LightWeights {
+    /// The hit record's shading normal. The default.
+    #[default]
+    Normal,
+    /// A cube-face hit's face normal, facing the eye; a hit with no face axis (a field hit)
+    /// keeps its shading normal. Where the shading normal is the face normal it is
+    /// [`LightWeights::Normal`] to the bit.
+    Face,
+}
+
+impl LightWeights {
+    pub const ALL: [Self; 2] = [Self::Normal, Self::Face];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Face => "face",
         }
     }
 
@@ -777,6 +840,11 @@ pub struct Lighting {
     /// ([`Frame::bake_until`], [`Frame::start_bake_queue`]); a minimal one until then, which
     /// holds no light.
     pub bake_pool_bytes: u64,
+    /// How a cube face reads the store ([`StoreRead`]; default `Face`).
+    pub store_read: StoreRead,
+    /// The normal the half-resolution light's filters compare ([`LightWeights`]; default
+    /// `Normal`).
+    pub light_weights: LightWeights,
 }
 
 impl Default for Lighting {
@@ -796,6 +864,8 @@ impl Default for Lighting {
             lamp_reach: crate::probes::LAMP_REACH,
             probe_move_blend: crate::probes::DEFAULT_H_MOVE,
             bake_pool_bytes: crate::bake::DEFAULT_BAKE_POOL_BYTES,
+            store_read: StoreRead::Face,
+            light_weights: LightWeights::Normal,
         }
     }
 }
@@ -843,6 +913,16 @@ impl Lighting {
             }
             | if matches!(self.exposure, Exposure::Auto(_)) {
                 LIGHTING_AUTO_EXPOSURE
+            } else {
+                0
+            }
+            | if self.store_read == StoreRead::Normal {
+                LIGHTING_STORE_BY_NORMAL
+            } else {
+                0
+            }
+            | if self.light_weights == LightWeights::Face {
+                LIGHTING_FACE_WEIGHTS
             } else {
                 0
             }

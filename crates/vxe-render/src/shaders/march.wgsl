@@ -313,6 +313,10 @@ const LIGHTING_LAMP_CHANGED: u32 = 512u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 // The exposure is automatic: this frame's is the state's `current`, not `params.exposure`.
 const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
+// A cube face reads the store by its shading normal (temporal.wgsl, ADR-0049).
+const LIGHTING_STORE_BY_NORMAL: u32 = 16384u;
+// The half-resolution light's filters compare face normals (`filter_normal`, ADR-0049).
+const LIGHTING_FACE_WEIGHTS: u32 = 32768u;
 // Hit record flags.
 const HIT_FOUND: u32 = 1u;
 const HIT_FIELD: u32 = 2u;
@@ -1513,6 +1517,19 @@ fn store_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
 // The entry face of a hit on `axis` with face normal `nf`.
 fn store_face(axis: i32, nf: vec3<f32>) -> u32 {
     return 2u * u32(axis) + select(0u, 1u, nf[axis] > 0.0);
+}
+
+// The normal the light's filters (composite.wgsl's `lit_at`, atrous.wgsl's `edge_weight`)
+// compare for hit `rec` seen from `origin`: its shading normal; with Params.lighting bit 15, a
+// cube-face hit's face normal instead, its axis signed toward the side of the face's plane
+// `origin` lies on (the eye's side: `shadow_normal_of`'s sign of the ray `p - origin`). A hit
+// with no face axis or a field hit keeps its shading normal.
+fn filter_normal(rec: HitRecord, origin: vec3<f32>) -> vec3<f32> {
+    if ((params.lighting & LIGHTING_FACE_WEIGHTS) == 0u || rec.axis < 0 || rec.field) {
+        return rec.n;
+    }
+    let s = select(1.0, -1.0, rec.p[rec.axis] > origin[rec.axis]);
+    return select(vec3<f32>(0.0), vec3<f32>(s), axis_mask(rec.axis));
 }
 
 // The bake's random numbers (bake.wgsl): `rand` reads `px` as a stream and a sample's index and

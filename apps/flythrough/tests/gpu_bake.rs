@@ -2519,4 +2519,416 @@ mod reading {
             }
         }
     }
+
+    // ---- ADR-0049: the store read by the far normal and the filters weighed by face ----
+
+    /// A 45-degree staircase of 1-voxel steps rising along +x over chunks `[0, 5) x [0, 1) x
+    /// [0, 5)`: column `x` in 64..320 holds rock up to `z = x - 64`, its tread facing +z and its
+    /// riser -x, and an ore plate at z 300 over it lights the treads more than the risers. The
+    /// camera: [`stair_cameras`].
+    fn staircase() -> World {
+        let world = air_world([5, 1, 5], &table());
+        for x in 64..320i64 {
+            fill(&world, [x, 0, 0], [x + 1, 64, x - 63], ROCK);
+        }
+        fill(&world, [64, 0, 300], [320, 64, 304], ORE);
+        world
+    }
+
+    /// The staircase's two cameras at `size` (70 degrees horizontal): far, 194 voxels above the
+    /// slope at x 70 looking down 10 degrees along +x, whose rays descend so they see treads and
+    /// risers, from about 125 to 245 voxels away; near, 24 voxels above it at x 100 looking up
+    /// 25 degrees, whose hits start about 25 voxels away (risers only past the slope's angle).
+    fn stair_cameras(size: [u32; 2]) -> [Camera; 2] {
+        let vfov = vfov_of(size);
+        [
+            Camera {
+                position: [70.5, 32.5, 200.5].into(),
+                yaw: 0.0,
+                pitch: (-10f32).to_radians(),
+                vfov,
+            },
+            Camera {
+                position: [100.5, 32.5, 60.5].into(),
+                yaw: 0.0,
+                pitch: 25f32.to_radians(),
+                vfov,
+            },
+        ]
+    }
+
+    /// The vertical field of view of a horizontal 70 degrees at `size`.
+    fn vfov_of(size: [u32; 2]) -> f32 {
+        2.0 * (35f32.to_radians().tan() * size[1] as f32 / size[0] as f32).atan()
+    }
+
+    /// One baked frame of the staircase per arm: (store read, far normal, look, weights,
+    /// resolution) and its read-backs.
+    struct StairFrame {
+        accum: Vec<[f32; 4]>,
+        pos: Vec<[f32; 4]>,
+        info: Vec<[u16; 4]>,
+        display: Vec<u8>,
+    }
+
+    struct StairArm {
+        read: vxe_render::StoreRead,
+        weights: vxe_render::LightWeights,
+        far_normal: [f32; 2],
+        mode: vxe_render::NormalMode,
+        resolution: LightingResolution,
+    }
+
+    fn stair_frame(rig: &mut Rig, camera: &Camera, arm: &StairArm) -> StairFrame {
+        rig.frame.set_resolution(&rig.device, arm.resolution);
+        rig.frame.set_lighting(Lighting {
+            lamp: false,
+            lamp_bounce: false,
+            exposure: Exposure::Manual(8.0),
+            bake_pool_bytes: 64 << 20,
+            store_read: arm.read,
+            light_weights: arm.weights,
+            ..Lighting::default()
+        });
+        rig.frame.set_look(vxe_render::LookParams {
+            normal_mode: arm.mode,
+            far_normal: arm.far_normal,
+            ..vxe_render::LookParams::default()
+        });
+        // Two frames: the first after a setting change carries no history to differ by.
+        rig.step(camera);
+        rig.step(camera);
+        StairFrame {
+            accum: readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated()),
+            pos: readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions()),
+            info: readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+            display: rig.display(),
+        }
+    }
+
+    /// The stored part ADR-0049's read gives a hit of normal `n` on face `face` of voxel `v`:
+    /// the brick level's direction values the normal leans toward, mixed by `n_a^2` over those
+    /// held, renormalised; the face's own where none is.
+    fn by_normal(
+        cells: &HashMap<([i32; 3], u8), [u32; 2]>,
+        v: [i32; 3],
+        face: u8,
+        n: [f32; 3],
+    ) -> Option<[f32; 3]> {
+        let own = brick_value(cells, v, face);
+        let mut sum = [0f32; 3];
+        let mut weight = 0f32;
+        for (a, &na) in n.iter().enumerate() {
+            let w = na * na;
+            if w < 1e-4 {
+                continue;
+            }
+            let dir = 2 * a as u8 + u8::from(na > 0.0);
+            if let Some(r) = if dir == face {
+                own
+            } else {
+                brick_value(cells, v, dir)
+            } {
+                for k in 0..3 {
+                    sum[k] += r[k] * w;
+                }
+                weight += w;
+            }
+        }
+        if weight > 0.0 {
+            Some(sum.map(|x| x / weight))
+        } else {
+            own
+        }
+    }
+
+    fn within(a: [f32; 3], b: [f32; 3], rel: f32) -> bool {
+        (0..3).all(|k| (a[k] - b[k]).abs() <= rel * b[k].abs().max(1e-3))
+    }
+
+    fn rgb(p: [f32; 4]) -> [f32; 3] {
+        [p[0], p[1], p[2]].map(|x| x / 8.0)
+    }
+
+    /// Plan 0061 Phase 2's claims on the staircase, as a reading (the phase is exploration):
+    /// done-when 1 at 192 x 108 (`t >= 140`) and 1b at 96 x 54 (`t >= 72`), far normal `[1, 2]`:
+    /// with the read on every rock riser or tread pixel past the line reads ADR-0049's mix within
+    /// 1 % (the CPU's `by_normal` over the bake's records), with it off its face's value within
+    /// 1 % and both directions occur; done-when 2: `t <= 64` reads the same with the read on and
+    /// off under `face`, the frame is bit-identical with the far normal off, and under
+    /// `gradient27` and `trilinear8` every stored part is finite; done-when 2b: with the far
+    /// normal off the face weights leave the frame bit-identical at half and full resolution.
+    /// Counts and failures go to `live/bake-count/staircase.txt`.
+    #[test]
+    #[ignore = "a reading: Plan 0061 Phase 2, run by hand"]
+    fn staircase_read() {
+        use vxe_render::{LightWeights, NormalMode, StoreRead};
+        let mut log = Log::open("staircase.txt");
+        log.line(&format!(
+            "staircase reading, {}",
+            std::env::var("VXE_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".to_owned())
+        ));
+        for (size, line) in [([192u32, 108u32], 140f32), ([96, 54], 72.0)] {
+            let world = staircase();
+            let [camera, near_camera] = stair_cameras(size);
+            let Some(mut rig) = rig_on(world, size, None) else {
+                return;
+            };
+            rig.frame.set_lighting(Lighting {
+                lamp: false,
+                lamp_bounce: false,
+                exposure: Exposure::Manual(8.0),
+                bake_pool_bytes: 64 << 20,
+                ..Lighting::default()
+            });
+            let t0 = std::time::Instant::now();
+            let report = rig.bake(&test_counts(256));
+            log.line(&format!(
+                "{}x{}: baked {} faces in {:.1} s",
+                size[0],
+                size[1],
+                report.faces,
+                t0.elapsed().as_secs_f64()
+            ));
+            let cells = rig.cells();
+            let eye = camera.position.to_array();
+            let arm = |read, far_normal, mode, weights, resolution| StairArm {
+                read,
+                weights,
+                far_normal,
+                mode,
+                resolution,
+            };
+            let full = LightingResolution::Full;
+            let off = rig_frame(
+                &mut rig,
+                &camera,
+                arm(
+                    StoreRead::Face,
+                    [1.0, 2.0],
+                    NormalMode::Face,
+                    LightWeights::Normal,
+                    full,
+                ),
+            );
+            let on = rig_frame(
+                &mut rig,
+                &camera,
+                arm(
+                    StoreRead::Normal,
+                    [1.0, 2.0],
+                    NormalMode::Face,
+                    LightWeights::Normal,
+                    full,
+                ),
+            );
+            // Done-when 1 / 1b.
+            let (mut checked, mut bad_on, mut bad_off) = (0, 0, 0);
+            let (mut risers, mut treads) = (0, 0);
+            let (mut vx, mut vz) = (0f64, 0f64);
+            let mut worst = 0f32;
+            let mut faces = [0u32; 6];
+            let mut moved = 0;
+            let mut n_sum = [0f64; 3];
+            for i in 0..on.pos.len() {
+                if let Some((_, f)) = hit_face(eye, on.pos[i], on.info[i])
+                    && on.pos[i][3] >= line
+                {
+                    faces[usize::from(f)] += 1;
+                }
+            }
+            log.line(&format!(
+                "{}x{}: hit faces past the line by direction {faces:?}",
+                size[0], size[1]
+            ));
+            for i in 0..on.pos.len() {
+                let Some((v, face)) = hit_face(eye, on.pos[i], on.info[i]) else {
+                    continue;
+                };
+                if on.info[i][2] != ROCK || on.pos[i][3] < line || !(face == 0 || face == 5) {
+                    continue;
+                }
+                let n = support::rigs::octa16_normal(on.info[i][0], on.info[i][1]);
+                let Some(want) = by_normal(&cells, v, face, n) else {
+                    continue;
+                };
+                checked += 1;
+                let got = rgb(on.accum[i]);
+                let e = (0..3)
+                    .map(|k| (got[k] - want[k]).abs() / want[k].abs().max(1e-3))
+                    .fold(0f32, f32::max);
+                worst = worst.max(e);
+                if !within(got, want, 0.01) {
+                    bad_on += 1;
+                }
+                let own = brick_value(&cells, v, face).unwrap_or([0.0; 3]);
+                if !within(rgb(off.accum[i]), own, 0.01) {
+                    bad_off += 1;
+                }
+                if !within(got, own, 0.01) {
+                    moved += 1;
+                }
+                n_sum = [0, 1, 2].map(|k| n_sum[k] + f64::from(n[k]));
+                let l = f64::from(own[0] + own[1] + own[2]) / 3.0;
+                if face == 0 {
+                    risers += 1;
+                    vx += l;
+                } else {
+                    treads += 1;
+                    vz += l;
+                }
+            }
+            log.line(&format!(
+                "{}x{}: done-when 1: {checked} rock pixels at t >= {line}: read on, {bad_on} off the mix by over 1 % (worst {:.4}); read off, {bad_off} off their face's value; {risers} risers mean {:.4}, {treads} treads mean {:.4} (ratio {:.2})",
+                size[0],
+                size[1],
+                worst,
+                vx / f64::from(risers.max(1)),
+                vz / f64::from(treads.max(1)),
+                (vz / f64::from(treads.max(1))) / (vx / f64::from(risers.max(1))).max(1e-9),
+            ));
+            log.line(&format!(
+                "{}x{}: the read moves {moved} of {checked} past the line by over 1 % from their face's value; mean hit normal [{:.3}, {:.3}, {:.3}]",
+                size[0],
+                size[1],
+                n_sum[0] / f64::from(checked.max(1)),
+                n_sum[1] / f64::from(checked.max(1)),
+                n_sum[2] / f64::from(checked.max(1)),
+            ));
+            // Done-when 2: near pixels and the far normal off.
+            let off = rig_frame(
+                &mut rig,
+                &near_camera,
+                arm(
+                    StoreRead::Face,
+                    [1.0, 2.0],
+                    NormalMode::Face,
+                    LightWeights::Normal,
+                    full,
+                ),
+            );
+            let on = rig_frame(
+                &mut rig,
+                &near_camera,
+                arm(
+                    StoreRead::Normal,
+                    [1.0, 2.0],
+                    NormalMode::Face,
+                    LightWeights::Normal,
+                    full,
+                ),
+            );
+            let near_diff = (0..on.pos.len())
+                .filter(|&i| {
+                    on.info[i][3] & 1 != 0 && on.pos[i][3] <= 64.0 && on.accum[i] != off.accum[i]
+                })
+                .count();
+            let near = (0..on.pos.len())
+                .filter(|&i| on.info[i][3] & 1 != 0 && on.pos[i][3] <= 64.0)
+                .count();
+            let none_off = rig_frame(
+                &mut rig,
+                &camera,
+                arm(
+                    StoreRead::Face,
+                    [0.0, 0.0],
+                    NormalMode::Face,
+                    LightWeights::Normal,
+                    full,
+                ),
+            );
+            let none_on = rig_frame(
+                &mut rig,
+                &camera,
+                arm(
+                    StoreRead::Normal,
+                    [0.0, 0.0],
+                    NormalMode::Face,
+                    LightWeights::Normal,
+                    full,
+                ),
+            );
+            log.line(&format!(
+                "{}x{}: done-when 2: {near_diff} of {near} hit pixels at t <= 64 differ read on against off; far normal off, display differs in {} bytes, accumulation in {} pixels",
+                size[0],
+                size[1],
+                none_on.display.iter().zip(&none_off.display).filter(|(a, b)| a != b).count(),
+                none_on.accum.iter().zip(&none_off.accum).filter(|(a, b)| a != b).count(),
+            ));
+            for mode in [NormalMode::Gradient27, NormalMode::Trilinear8] {
+                let f = rig_frame(
+                    &mut rig,
+                    &camera,
+                    arm(
+                        StoreRead::Normal,
+                        [1.0, 2.0],
+                        mode,
+                        LightWeights::Normal,
+                        full,
+                    ),
+                );
+                let nonfinite = f
+                    .accum
+                    .iter()
+                    .filter(|p| p.iter().any(|x| !x.is_finite()))
+                    .count();
+                let face_off = rig_frame(
+                    &mut rig,
+                    &camera,
+                    arm(
+                        StoreRead::Face,
+                        [1.0, 2.0],
+                        mode,
+                        LightWeights::Normal,
+                        full,
+                    ),
+                );
+                let moved = f
+                    .accum
+                    .iter()
+                    .zip(&face_off.accum)
+                    .filter(|(a, b)| a != b)
+                    .count();
+                log.line(&format!(
+                    "{}x{}: done-when 2, {mode:?}: {nonfinite} non-finite stored parts, read on moves {moved} pixels",
+                    size[0], size[1]
+                ));
+            }
+            // Done-when 2b.
+            for resolution in [LightingResolution::Half, LightingResolution::Full] {
+                let a = rig_frame(
+                    &mut rig,
+                    &camera,
+                    arm(
+                        StoreRead::Face,
+                        [0.0, 0.0],
+                        NormalMode::Face,
+                        LightWeights::Normal,
+                        resolution,
+                    ),
+                );
+                let b = rig_frame(
+                    &mut rig,
+                    &camera,
+                    arm(
+                        StoreRead::Face,
+                        [0.0, 0.0],
+                        NormalMode::Face,
+                        LightWeights::Face,
+                        resolution,
+                    ),
+                );
+                log.line(&format!(
+                    "{}x{}: done-when 2b, {resolution:?}: face weights against normal, far normal off: display differs in {} bytes",
+                    size[0],
+                    size[1],
+                    a.display.iter().zip(&b.display).filter(|(x, y)| x != y).count()
+                ));
+            }
+        }
+    }
+
+    fn rig_frame(rig: &mut Rig, camera: &Camera, arm: StairArm) -> StairFrame {
+        stair_frame(rig, camera, &arm)
+    }
 }
