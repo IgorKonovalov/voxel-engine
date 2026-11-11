@@ -22,7 +22,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | approved | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
-| [0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: what paces it, workers that leave no core, readbacks that wait | approved | Code health. Phase 1 a spike, beside 0060; the rest after it. Takes 0044's Phase 2. |
 | [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | approved | Code health. After 0060 and 0064, before 0061's Phase 2. Phase 6 moved to 0067 (2026-11-11). |
 | [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | approved | M2, ADR-0052, ADR-0053. After 0061, ahead of 0058; Phase 1 may run beside 0061. Takes 0065's Phase 6. |
 <!-- roster:end -->
@@ -34,9 +33,7 @@ Each starts on main after the one before it closes, unless its line says otherwi
 
 1. **Plan 0060**, the live queue: closed 2026-11-11 (v0.45.0). Plan 0061's Phase 1 (readings only) and Plan
    0064's Phases 1 and 2 (the pacing spike and the owner's pick) ran beside it.
-   - **Plan 0064**, the window's frame, from its Phase 3 once 0060 has merged (owner,
-     2026-11-10). If its Phase 1 reads free pacing no better, it stops and 0065 waits for the
-     architect.
+   - **Plan 0064**, the window's frame: closed 2026-11-11 (v0.46.0).
    - **Plan 0065**, the baked light's waste, after 0064 (owner, 2026-11-10).
    - On 2026-11-10 the look-driven plans (0058, 0061, 0032 to 0037) marked their phases
      before the window as exploration: image tests are written after the pick, in each plan's
@@ -68,7 +65,7 @@ Each starts on main after the one before it closes, unless its line says otherwi
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
 Every active plan is approved (owner, 2026-11-10; Plans 0064 and 0065 the same day, after the
-static performance review). Plan 0044's Phase 2 runs as Plan 0064's Phase 3, and its Phase 5
+static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
 stays after Plan 0058. Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
@@ -80,6 +77,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: free pacing the default, below the compositor's; no frame-path GPU waits; the sync's time budget kept off | 2026-11-11, v0.46.0 |
 | [0060](done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue: a view score with the class as a tier, passed jobs withdrawn; the owner kept the withdrawal, saw no change from the order | 2026-11-11, v0.45.0 |
 | [0066](done/0066-test-cost-a-10-s-soak-line-and-named-gpu-binaries-per-phase.md) | Test cost: the soak line at 10 s on lavapipe, 26 tests to soak, gate 505 s; `--binaries` per phase; CPU vectors stay in the gate | 2026-11-11, no bump |
 | [0059](done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md) | Loaded light: the owner picked the bake; a brick store at 8/4096 filled by a live queue and re-baked by digs; the table deleted | 2026-11-09, v0.44.0 |

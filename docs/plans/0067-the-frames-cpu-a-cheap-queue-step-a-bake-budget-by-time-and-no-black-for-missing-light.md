@@ -3,7 +3,7 @@
 > **Status:** approved (owner go 2026-11-11, with the defaults on the open points)
 > **Created:** 2026-11-11
 > **Milestone:** M2 (the light that holds in the dark has to hold at a playable frame), and
-> cross-cutting like [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
+> cross-cutting like [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
 > It serves `docs/nfr.md` section 2's frame and streaming lines and section 1's slow adapter.
 > **Related ADRs:** [ADR-0052](../adrs/0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md)
 > (accepted 2026-11-11, owner): the bake budget's unit. It rests on
@@ -767,7 +767,7 @@ one in Phase 6.
 - The Radeon's GPU frame at the window's size (hit 26 ms, FSR 2 18.5 ms): the render settings
   and profiles plan (owed, Sequence step 6) and [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s passes.
 - The window's pacing, the HUD's waits, the sync's time budget and the worker count:
-  [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
+  [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
 - A worker thread for the queue: only if Phase 2 misses its bar, with its own ADR.
 - Baked light on far-field cells, and the dug chunk whose settled light differs from a
   one-shot bake (`docs/backlog.md`).

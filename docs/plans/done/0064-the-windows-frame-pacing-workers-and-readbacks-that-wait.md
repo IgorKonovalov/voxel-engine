@@ -1,10 +1,12 @@
 # 0064: The window's frame: what paces it, workers that leave no core, and readbacks that wait
 
-> **Status:** in-progress (owner go 2026-11-10); amended 2026-11-11 (owner): Phase 4b fixes the
-> sync's time budget before the close review; Phase 5's windowed reading taken at the RTX only,
-> the Radeon's window recorded as unread
+> **Status:** done (closed 2026-11-11, v0.46.0). Verdict: clean; free pacing is the default and
+> reads below the compositor's in every windowed cell, the frame path waits on the GPU nowhere,
+> and the sync's time budget stays off because no budget kept residency (the plan's rule).
+> Amended 2026-11-11 (owner): Phase 4b fixes the sync's time budget before the close review;
+> Phase 5's windowed reading taken at the RTX only, the Radeon's window recorded as unread
 > **Created:** 2026-11-10
-> **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
+> **Milestone:** cross-cutting (code health), like [Plan 0044](../0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's frame and section 5's streaming line.
 > **Related ADRs:** none yet. Phase 1 is a spike; if its reading makes the pacing a trade
 > (frames the compositor never shows against a frame of latency), the architect writes the ADR
@@ -276,7 +278,7 @@ pub struct SyncBudget {
 
 ## What this plan does NOT do
 
-- Shader work: the baked light's waste is [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md).
+- Shader work: the baked light's waste is [Plan 0065](../0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md).
 - Plan 0044's other phases (bind groups, the sync's sizing, the march's inner loop).
 - Packing slot words on the workers, or any change to the mirror's format (`docs/backlog.md`).
 - Anything about the dev box's two-GPU present path; it is recorded as a label on readings.
@@ -289,12 +291,12 @@ pub struct SyncBudget {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: what paces the window | dev | done: code (flag, present-mode log, HUD `pace` row, `frames:` wall, 3 CPU tests) and the owner's 24 windowed runs, `free` below `compositor` in every cell, Phase 2 stands; see [the readings log](logs/0064.md) | fc05003 (code), de791ba (readings) |
-| 2: the pacing default | human | done: owner's window 2026-11-11, pick `free` (flights loaded by other lanes' builds; no tearing or fan difference noticed, loaded); `--pace` defaults to `free`, the banner's `pace` row names it on a plain start; see [the readings log](logs/0064.md) | 7b6e3ea, aa4ee55 (readings), 0248b41 (default and banner) |
-| 3: nothing waits for the GPU | dev | code done: `ReadbackRing` (3 read-back buffers) under `PassTimer` and the store's counters, `try_read_all_ms` / `try_read_ms` / `Frame::try_store_stats` on the frame path, blocking-read counters on the `frames:` line (608 before, 0 after over 300 lavapipe frames), the HUD's refresh and banner allocation-free (4749 B a frame before, 0 after); deviations: one query set and one resolve buffer serve the ring, `--lamp-toggle` and `--fade-reading` keep the waiting read; autopilot HUD on/off readings on both adapters in the log; see [the readings log](logs/0064.md) | 373beb9, 284cbd9 (readings) |
-| 4: workers, the sync's time, the stats | dev | done: `resident_full` counter and `ticks()`, `stats()` once a frame, `sync_budget_time` with a test clock, `--workers N`, `--sync-ms MS`, 4 new tests; 14 against 15 workers read (RTX, three rounds, at 2 ms and at none): p99 not lower, **default reverted to cores - 1**; deviation: `--sync-ms` defaults to none, not 2 ms (residency p95 3.0 to 13.7 s at 2, 4 and 8 ms against 0.26 to 0.30 s at none); see [the readings log](logs/0064.md) | a9298c6 |
-| 4b: a time budget over the whole sync | dev | done: selection reads the clock (`SyncPoint`) and stops sizing once the budget is spent; a sized chunk keeps its size (`Sizing`) until it uploads or changes; `SyncStats::sized_chunks` / `kept_sizes`; 2 new tests, 1 extended; sweep (RTX, three rounds, loaded): residency p95 2.7 to 6.9 s at 2, 4 and 8 ms against 297 to 303 ms at none, **default stays none** by the plan's rule; see [the readings log](logs/0064.md) | 00731f9 |
-| 5: the close's readings | dev | done: headless before (37f6845), main merged (f8c1ffc) and after (a9298c6) on the RTX 3080 Laptop and RADV RENOIR, three rounds, into the log and `docs/nfr/02-frame-budget.md`; the window's after read on the RTX at 2552989 (the owner's session, `live/session64c.log`, 8 runs, HUD shown, two rounds), the RENOIR's window recorded as unread (owner, 2026-11-11); `docs/nfr.md` section 5 not edited (residency did not move out of the line on record); see [the readings log](logs/0064.md) | 4a6f8d8, 9a93156 (window) |
+| 1: what paces the window | dev | done: code (flag, present-mode log, HUD `pace` row, `frames:` wall, 3 CPU tests) and the owner's 24 windowed runs, `free` below `compositor` in every cell, Phase 2 stands; see [the readings log](../logs/0064.md) | fc05003 (code), de791ba (readings) |
+| 2: the pacing default | human | done: owner's window 2026-11-11, pick `free` (flights loaded by other lanes' builds; no tearing or fan difference noticed, loaded); `--pace` defaults to `free`, the banner's `pace` row names it on a plain start; see [the readings log](../logs/0064.md) | 7b6e3ea, aa4ee55 (readings), 0248b41 (default and banner) |
+| 3: nothing waits for the GPU | dev | code done: `ReadbackRing` (3 read-back buffers) under `PassTimer` and the store's counters, `try_read_all_ms` / `try_read_ms` / `Frame::try_store_stats` on the frame path, blocking-read counters on the `frames:` line (608 before, 0 after over 300 lavapipe frames), the HUD's refresh and banner allocation-free (4749 B a frame before, 0 after); deviations: one query set and one resolve buffer serve the ring, `--lamp-toggle` and `--fade-reading` keep the waiting read; autopilot HUD on/off readings on both adapters in the log; see [the readings log](../logs/0064.md) | 373beb9, 284cbd9 (readings) |
+| 4: workers, the sync's time, the stats | dev | done: `resident_full` counter and `ticks()`, `stats()` once a frame, `sync_budget_time` with a test clock, `--workers N`, `--sync-ms MS`, 4 new tests; 14 against 15 workers read (RTX, three rounds, at 2 ms and at none): p99 not lower, **default reverted to cores - 1**; deviation: `--sync-ms` defaults to none, not 2 ms (residency p95 3.0 to 13.7 s at 2, 4 and 8 ms against 0.26 to 0.30 s at none); see [the readings log](../logs/0064.md) | a9298c6 |
+| 4b: a time budget over the whole sync | dev | done: selection reads the clock (`SyncPoint`) and stops sizing once the budget is spent; a sized chunk keeps its size (`Sizing`) until it uploads or changes; `SyncStats::sized_chunks` / `kept_sizes`; 2 new tests, 1 extended; sweep (RTX, three rounds, loaded): residency p95 2.7 to 6.9 s at 2, 4 and 8 ms against 297 to 303 ms at none, **default stays none** by the plan's rule; see [the readings log](../logs/0064.md) | 00731f9 |
+| 5: the close's readings | dev | done: headless before (37f6845), main merged (f8c1ffc) and after (a9298c6) on the RTX 3080 Laptop and RADV RENOIR, three rounds, into the log and `docs/nfr/02-frame-budget.md`; the window's after read on the RTX at 2552989 (the owner's session, `live/session64c.log`, 8 runs, HUD shown, two rounds), the RENOIR's window recorded as unread (owner, 2026-11-11); `docs/nfr.md` section 5 not edited (residency did not move out of the line on record); see [the readings log](../logs/0064.md) | 4a6f8d8, 9a93156 (window) |
 
 ### Notes
 
@@ -350,7 +352,7 @@ pub struct SyncBudget {
   Phase 1's HUD-shown cells: wall p50 `free` level 11.235 to 11.270 against 11.682 to 11.775,
   showcase 12.194 to 12.273 against 13.360 to 13.484; `compositor` level 14.927 to 15.011
   against 13.745 to 14.141, showcase 18.022 to 18.184 against 16.766 to 17.230; blocking reads
-  0 in every run. Rows in [the readings log](logs/0064.md).
+  0 in every run. Rows in [the readings log](../logs/0064.md).
 - **Gate at the tip:** `cargo nextest run --workspace --profile gate` at 00731f9 (lavapipe for
   the gpu binaries, exclusive perf lock, 16G cap, `scripts/build-guests.sh` first, 1-minute load
   5.6 at the start and 1.9 at the end): 725 run, 725 passed, 102 skipped, 554.3 s, exit 0.
@@ -364,3 +366,23 @@ pub struct SyncBudget {
 - An open reading (the owner, 2026-11-11): the window's frame rate differs a lot with its
   workspace in or out of focus. Expected for `compositor` pacing (Hyprland throttles frame
   callbacks for a hidden window); whether it also moves `free` pacing is not isolated.
+  Parked in `docs/backlog.md` ("The window's frame rate out of focus").
+- **The window's frame CPU doubled between Phase 1 and the tip** (1.5 to 2.4 ms p50 against
+  3.8 to 4.5). Close review, 2026-11-11: it is the live queue's step at rest, Plan 0060's,
+  which Plan 0067 owns, not this plan's code. In `live/session64.log` (Phase 1, before 0060)
+  the queue keeps baking through every run and its step reads 0.43 to 1.21 ms p50 a line; in
+  `live/session64c.log` (the tip) the queue empties after 5 to 10 s (`baked +0`, `jobs 1`)
+  and the step reads 2.84 to 3.56 ms p50 on every such line (79 lines), about the 2 to 2.5 ms
+  of the rise. The lane's own suspects cannot carry it: the ring's reads run after the frame
+  CPU's timestamp is taken, the store copy is one buffer copy, `stats()` walks less than
+  before, and the headless autopilot reads the same frame CPU at `f8c1ffc` (main merged,
+  before Phases 3 and 4) and at `a9298c6`.
+- **Phase 3's 0-blocking-reads done-when runs in the soak tier only**
+  (`a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere`, 12.3 s); the gate defends the
+  ring itself (`the_frame_s_timers_and_store_counts_read_back_without_waiting`), not the
+  fly-through's wiring. The close review ran it once at 72ff4cb: pass, `blocking reads 0`.
+  A cheaper variant under the 10 s line is parked in `docs/backlog.md`.
+- **The sync's time budget left residency short** (2.7 to 6.9 s p95 at 2 to 8 ms against
+  0.30 s without): about 0.3 ms of render-thread time a chunk. The cheaper upload it needs is
+  the backlog's "Slot words packed on the workers", now with this reading.
+- `ReadbackRing` lives in `marcher.rs`; `readback.rs` is its natural home, for Plan 0045.

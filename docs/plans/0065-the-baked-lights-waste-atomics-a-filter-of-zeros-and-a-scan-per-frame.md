@@ -9,7 +9,7 @@
 > [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the baked store) and changes nothing it decided.
 > **Source:** the owner, 2026-11-10, and the static review at `50b637a` that
-> [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) also comes
+> [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) also comes
 > from. **The owner asked for no load tests, so every saving here is an estimate from reading
 > the code; Phase 1 takes the readings.**
 > **Starts after:** Plan 0060's merge (it rewrites `bake.rs`) and Plan 0064's close, and only
@@ -251,7 +251,7 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 - Narrow any target's format, fold FSR 2's input pass into the composite, or turn uniform
   branches into `override`s (`docs/backlog.md`).
 - A beam prepass or a distance value per brick (`docs/backlog.md`).
-- Plan 0044's phases, or the window's pacing ([Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md)).
+- Plan 0044's phases, or the window's pacing ([Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md)).
 - Lower the bake's 1.5 ms slice; it has no budget line yet (`docs/backlog.md`).
 
 ## Implementation log

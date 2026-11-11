@@ -36,7 +36,7 @@
 > **Review note (2026-11-10, the static performance review at `50b637a`; the owner approved
 > Plans 0064 and 0065 the same day):**
 > - **Phase 2 (the HUD's timers) has moved whole to
->   [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
+>   [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
 >   It claims no golden and its fix is worth little behind three plans. Its text stays below
 >   as that phase's reference; `dev` does not run it here.
 > - **Phase 4's premise is weaker than written.** `docs/nfr.md` section 5 notes (2026-11-04)

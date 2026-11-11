@@ -168,7 +168,7 @@ Read 2026-11-11 at Plan 0060's close review: the soak test fails with 98.6927 % 
 Parked 2026-11-10. The owner asked why the window reads 30 to 50 fps with little on screen; a
 read-only review of the tree at `50b637a` followed, with no run (the owner asked for none), so
 every figure below is an estimate. The window's pacing, the readbacks, the workers and the
-sync's time went to [Plan 0064](plans/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md);
+sync's time went to [Plan 0064](plans/done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md);
 the baked light's shader waste and the queue's scan to
 [Plan 0065](plans/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
 (both approved 2026-11-10). What neither takes:
@@ -182,8 +182,9 @@ the baked light's shader waste and the queue's scan to
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
   line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
   states (about 1 and 9 ms p50), and Plan 0067 pins the state and reads the step.
-- **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 bounds the p99 and trims
-  the p50; the upload's copy into mapped memory stays (see "Slot words packed on the workers").
+- **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 (closed 2026-11-11) left
+  it where it was: its sync time budget cost residency and stays off, and the upload's copy
+  into mapped memory stays (see "Slot words packed on the workers").
 - **The frame ledger's re-base**, owed since 2026-11-03: it still reads `own`, the table light
   and the probes, and has no row for the list lights or the bake's slice. Re-base it at Plan
   0065's close, when the per-pass table at the half tier exists.
@@ -230,7 +231,12 @@ let the compiler drop them. Small each; fits Plan 0044's Phase 5 or the shader t
 The mirror packs and copies a chunk's bricks on the render thread; `docs/roadmap.md` names an
 "upload-copy ADR" that was never drafted. The workers already prepare face masks. Moving the
 packing there needs the mirror's slot format across a thread boundary, so it is an ADR and a
-plan. Pick up if Plan 0064's time budget leaves residency short.
+plan. Read 2026-11-11 at Plan 0064's close: its time budget (`--sync-ms`, off by default) does
+leave residency short, p95 2.7 to 6.9 s at 2 to 8 ms against 0.30 s without one, at about
+0.3 ms of render-thread time a chunk (RTX, `docs/plans/logs/0064.md`, Phase 4b). A budget
+pays only once a chunk's upload is cheaper; this entry is that cheaper upload, and the
+budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
+upload-copy ADR.
 
 ### The slow adapter's walk-speed spike
 
@@ -252,6 +258,25 @@ multiply (lights by entities, a sky ray and a sun ray per lit pixel, liquid refl
 no plan budgets the product. Plans 0058, 0061 and 0062 carry dated review notes for their own
 part. Plans 0035, 0036 and 0037 project more on the RTX than their floor shares allow by their
 own figures. The render-profile plan is where the product gets a cap.
+
+### The window's frame rate out of focus
+
+Parked 2026-11-11 at Plan 0064's close (the owner's words in its window): the frame rate moves a
+lot with the window's workspace in or out of focus. Expected for `--pace compositor`, since
+Hyprland throttles frame callbacks for a hidden window; whether it also moves `--pace free`,
+the default, is not isolated, and Plan 0064's discarded session (`live/session64b.log`) was
+spoiled by it. What it takes: one windowed pair per pacing, focused and on another workspace,
+read with the `frames:` line's wall time. Pick up at the next windowed perf session (Plan
+0067's window), or if the owner reports the game slowing when tabbed back.
+
+### The frame path's GPU waits in the gate
+
+Parked 2026-11-11 at Plan 0064's close review. `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere`
+(`apps/flythrough/tests/gpu_frame_waits.rs`, 300 frames, 12.3 s on lavapipe) is soak-marked,
+so the fly-through's wiring (the frame calls the ring's reads, not the waiting ones) runs in
+no gate; the gate holds only the ring's own test. A variant of about 120 frames with the
+queue line due at least once, or a CPU test on the call sites, would bring it under the 10 s
+line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
 
 ## Tooling and process
 
