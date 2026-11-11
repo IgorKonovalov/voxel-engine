@@ -48,7 +48,8 @@ Each starts on main after the one before it closes, unless its line says otherwi
      lagging too much, or the picture is unacceptable"; "address performance next after this
      set of plans"). Its Phase 1 is readings only and may run beside 0061's Phase 2 once 0064
      and 0065 have merged. It takes Plan 0065's Phase 6 (the queue's step) and the backlog's
-     per-second bake budget and missing-light fallback; the Radeon's hit and FSR 2 passes (26
+     per-second bake budget and missing-light fallback (a neighbour's or parent's light, owner
+     2026-11-11; ADR-0052 accepted the same day); the Radeon's hit and FSR 2 passes (26
      and 18.5 ms at the window) stay with 0065 and the profiles plan (step 6).
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
    before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.

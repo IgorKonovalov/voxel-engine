@@ -1,6 +1,7 @@
 # ADR-0052: The live queue's bake budget is milliseconds per second, not a slice per frame
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-11, owner: the direction is a standing rule before Plan 0067's
+> go; the values, the default `ms_per_s` and the cap, stay the pick of its window)
 > **Date:** 2026-11-11
 > **Related plan(s):** [Plan 0067](../plans/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)
 
@@ -41,7 +42,9 @@ a `vxe-render` setting the consumer sets; the fly-through exposes it as a flag a
 - A slow adapter's frame gets longer by up to the cap's share (16 ms of a 66 ms frame at 0.25);
   the owner trades frame time for light there, in the open.
 - The Radeon still bakes a tenth of the RTX's samples in the same milliseconds; the budget gives
-  it the RTX's time, not its light. Plan 0067's fallback for missing light covers the wait.
+  it the RTX's time, not its light. Plan 0067's fallback covers the wait: a brick with no value
+  takes its neighbour chunks' or its parent cell's baked light (owner, 2026-11-11), and stays
+  black where neither has any.
 - The slice now depends on a wall-clock interval the shell measures; a headless run must pass a
   fixed interval to stay repeatable, as the tests do.
 
@@ -65,4 +68,4 @@ for now, not forever.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0067's window picks otherwise.)_
+_(Added at Plan 0067's close: the picked values, and anything its window falsified.)_

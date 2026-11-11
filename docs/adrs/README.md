@@ -66,7 +66,7 @@ the status.
 | [0049](0049-the-baked-light-is-read-by-the-far-shading-normal.md) | Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values | proposed (Plan 0061) |
 | [0050](0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md) | An entity is a set of posed voxel volumes in a pool of its own, traced after the world march, poses in fixed point | proposed (Plan 0062) |
 | [0051](0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md) | Rigs and clips are small text files, and a clip is sampled in fixed point by tick | proposed (Plan 0063) |
-| [0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md) | The live queue's bake budget is milliseconds of GPU time per second of wall time, capped per frame, not a slice per frame | proposed (Plan 0067) |
+| [0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md) | The live queue's bake budget is milliseconds of GPU time per second of wall time, capped per frame, not a slice per frame | accepted 2026-11-11 (owner, standing rule; values at Plan 0067's window) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
