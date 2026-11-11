@@ -293,7 +293,8 @@ pub struct SyncBudget {
 | 2: the pacing default | human | done: owner's window 2026-11-11, pick `free` (flights loaded by other lanes' builds; no tearing or fan difference noticed, loaded); `--pace` defaults to `free`, the banner's `pace` row names it on a plain start; see [the readings log](logs/0064.md) | 7b6e3ea, aa4ee55 (readings), 0248b41 (default and banner) |
 | 3: nothing waits for the GPU | dev | code done: `ReadbackRing` (3 read-back buffers) under `PassTimer` and the store's counters, `try_read_all_ms` / `try_read_ms` / `Frame::try_store_stats` on the frame path, blocking-read counters on the `frames:` line (608 before, 0 after over 300 lavapipe frames), the HUD's refresh and banner allocation-free (4749 B a frame before, 0 after); deviations: one query set and one resolve buffer serve the ring, `--lamp-toggle` and `--fade-reading` keep the waiting read; autopilot HUD on/off readings on both adapters in the log; see [the readings log](logs/0064.md) | 373beb9, 284cbd9 (readings) |
 | 4: workers, the sync's time, the stats | dev | done: `resident_full` counter and `ticks()`, `stats()` once a frame, `sync_budget_time` with a test clock, `--workers N`, `--sync-ms MS`, 4 new tests; 14 against 15 workers read (RTX, three rounds, at 2 ms and at none): p99 not lower, **default reverted to cores - 1**; deviation: `--sync-ms` defaults to none, not 2 ms (residency p95 3.0 to 13.7 s at 2, 4 and 8 ms against 0.26 to 0.30 s at none); see [the readings log](logs/0064.md) | a9298c6 |
-| 5: the close's readings | dev | done: headless before (37f6845), main merged (f8c1ffc) and after (a9298c6) on the RTX 3080 Laptop and RADV RENOIR, three rounds, into the log and `docs/nfr/02-frame-budget.md`; the window's after read on the RTX at 2552989 (the owner's session, `live/session64c.log`, 8 runs, HUD shown, two rounds), the RENOIR's window recorded as unread (owner, 2026-11-11); `docs/nfr.md` section 5 not edited (residency did not move out of the line on record); see [the readings log](logs/0064.md) | 4a6f8d8, committed with this row (window) |
+| 4b: a time budget over the whole sync | dev | done: selection reads the clock (`SyncPoint`) and stops sizing once the budget is spent; a sized chunk keeps its size (`Sizing`) until it uploads or changes; `SyncStats::sized_chunks` / `kept_sizes`; 2 new tests, 1 extended; sweep (RTX, three rounds, loaded): residency p95 2.7 to 6.9 s at 2, 4 and 8 ms against 297 to 303 ms at none, **default stays none** by the plan's rule; see [the readings log](logs/0064.md) | committed with this row |
+| 5: the close's readings | dev | done: headless before (37f6845), main merged (f8c1ffc) and after (a9298c6) on the RTX 3080 Laptop and RADV RENOIR, three rounds, into the log and `docs/nfr/02-frame-budget.md`; the window's after read on the RTX at 2552989 (the owner's session, `live/session64c.log`, 8 runs, HUD shown, two rounds), the RENOIR's window recorded as unread (owner, 2026-11-11); `docs/nfr.md` section 5 not edited (residency did not move out of the line on record); see [the readings log](logs/0064.md) | 4a6f8d8, 9a93156 (window) |
 
 ### Notes
 
@@ -305,6 +306,11 @@ pub struct SyncBudget {
   to the byte budget before `upload` reads the clock, and the time-deferred chunks are sized
   again in the next sync.
 - Phase 4: the 14-worker default is reverted to cores - 1 by the plan's rule (a9298c6).
+- Phase 4b: `SyncClock` takes the point it is read at (`SyncPoint`), so a test advances it for
+  selection or upload alone. A sync whose selection spent the budget writes one chunk; the
+  first done-when is read that way. Kept are sizes, not packed words. No budget met the
+  residency rule (2.7 to 6.9 s against 0.30 s); `--sync-ms` stays none, and Phase 5's
+  streaming and residency rows are not refreshed.
 - Phase 5: the window's after is the owner's session at 2552989 from `live/session64c.sh`, not
   the done-when's `live/session64b.sh` (overwritten; its 15:33 runs discarded by the owner, the
   window partly out of focus); two rounds, HUD shown only; the RADV RENOIR's window unread
@@ -322,13 +328,14 @@ pub struct SyncBudget {
   `pace` row and the `frames:` wall time; `ReadbackRing` under `PassTimer` and the store's
   counters with `try_read_all_ms` / `try_read_ms` / `Frame::try_store_stats`, a blocking-read
   counter; an allocation-free HUD refresh and banner; `Streamer::ticks()` and a kept
-  `resident_full`; `MirrorConfig::sync_budget_time` with `SyncClock`; `--workers N`,
-  `--sync-ms MS`.
+  `resident_full`; `MirrorConfig::sync_budget_time` with `SyncClock`, bounding selection and
+  upload, and kept sizes for deferred chunks; `--workers N`, `--sync-ms MS` (default none).
 - **Public API changed:** `vxe_app::Pacing::Compositor`, `Pacing::frame_callback`;
   `vxe_render::marcher::ReadbackRing`, `PassTimer::try_read_all_ms`, `try_read_ms`,
   `blocking_reads`, `Frame::copy_store_stats`, `try_store_stats`, `store_blocking_reads`;
-  `vxe_render::SyncClock`, `GpuWorld::set_sync_clock`, `MirrorConfig::sync_budget_time`,
-  `SyncStats::time_deferred_chunks`; `vxe_world::Streamer::ticks`.
+  `vxe_render::SyncClock` (takes a `SyncPoint`), `vxe_render::SyncPoint`,
+  `GpuWorld::set_sync_clock`, `MirrorConfig::sync_budget_time`,
+  `SyncStats::time_deferred_chunks`, `sized_chunks`, `kept_sizes`; `vxe_world::Streamer::ticks`.
 - **Budget readings:** windowed RTX (Phase 1, 24 runs): wall p50 `compositor` 13.0 to 17.2 ms,
   `free` 10.6 to 13.5. Blocking reads over 300 lavapipe frames 608 before, 0 after. Headless
   autopilot (`--seed 1`, 1280 x 720, loaded 5 to 13), base 37f6845 against tip a9298c6: RTX
@@ -336,7 +343,10 @@ pub struct SyncBudget {
   to 81, residency p95 302 to 341 against 301 to 338 ms; RADV RENOIR frame CPU p99 57 to 61
   against 58 to 59, streaming p50 2.66 to 2.71 against 2.61 to 2.62, residency p95 304 to 310
   against 302 to 304 ms. Workers 14 against 15 (RTX): frame CPU p99 62.5 to 65.4 against 63.5
-  to 66.0 ms. Windowed RTX at the tip (2552989, 8 runs, HUD shown, load 1.2 to 1.8) against
+  to 66.0 ms. Phase 4b's sync time budget (RTX, three rounds, loaded 7.6 to 11.6): residency
+  p95 at none 297 to 303 ms, at 2 ms 6590 to 6867, 4 ms 3787 to 4120, 8 ms 2664 to 2775;
+  streaming p99 none 44.5 to 48.6, 2 ms 31.5 to 31.6, 4 ms 38.9 to 41.9, 8 ms 92.4 to 125.4.
+  Windowed RTX at the tip (2552989, 8 runs, HUD shown, load 1.2 to 1.8) against
   Phase 1's HUD-shown cells: wall p50 `free` level 11.235 to 11.270 against 11.682 to 11.775,
   showcase 12.194 to 12.273 against 13.360 to 13.484; `compositor` level 14.927 to 15.011
   against 13.745 to 14.141, showcase 18.022 to 18.184 against 16.766 to 17.230; blocking reads

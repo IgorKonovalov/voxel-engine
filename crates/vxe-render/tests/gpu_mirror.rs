@@ -13,7 +13,7 @@ use vxe_render::gpu_world::{
 };
 use vxe_render::{
     ATROUS_WGSL, COMPOSITE_WGSL, FIELD_WGSL, GRADIENT_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL,
-    MirrorConfig, ShardLayout, TEMPORAL_WGSL, Window, readback, wgpu,
+    MirrorConfig, ShardLayout, SyncPoint, TEMPORAL_WGSL, Window, readback, wgpu,
 };
 use vxe_world::packed::PackedClass;
 use vxe_world::*;
@@ -2444,24 +2444,25 @@ fn update_field(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) 
     n
 }
 
-/// A sync clock that advances `step` on every read, from 0.
-fn stepping_clock(step: std::time::Duration) -> vxe_render::SyncClock {
-    let mut reads = 0u32;
-    Box::new(move || {
-        let t = step * reads;
-        reads += 1;
+/// A sync clock, from 0, that advances `step` on every read at `on` and holds at the others.
+fn stepping_clock(step: std::time::Duration, on: SyncPoint) -> vxe_render::SyncClock {
+    let mut t = std::time::Duration::ZERO;
+    Box::new(move |at| {
+        if at == on {
+            t += step;
+        }
         t
     })
 }
 
 /// The 64 chunks of an 8 x 8 x 1 floor, each holding 64 `Full` bricks, mirrored under a time
-/// budget of 8 steps of a clock that advances one step per read (the sync reads it at its
-/// start and after each uploaded chunk): the first sync uploads exactly 8 chunks and leaves 56
-/// pending as `time_deferred_chunks`; the second uploads the 9th to the 16th of the
-/// unbudgeted sync's order (its record indices 8 to 15). With the budget unset the same world
-/// uploads all 64 in one sync. Once the budgeted mirror has drained in 8 syncs, every chunk has
-/// the same record index in both, and the pool shards and the records read back
-/// byte-identical: the slot words do not depend on how the uploads were split.
+/// budget of 8 steps of a clock that advances one step per uploaded chunk: the first sync sizes
+/// all 64, uploads exactly 8 and leaves 56 pending as `time_deferred_chunks`; the second sizes
+/// none (56 kept sizes) and uploads the 9th to the 16th of the unbudgeted sync's order (its
+/// record indices 8 to 15). With the budget unset the same world uploads all 64 in one sync.
+/// Once the budgeted mirror has drained in 8 syncs, every chunk has the same record index in
+/// both, and the pool shards and the records read back byte-identical: the slot words do not
+/// depend on how the uploads were split.
 #[test]
 fn a_sync_stops_at_its_time_budget() {
     let Some((device, queue)) = device() else {
@@ -2500,12 +2501,13 @@ fn a_sync_stops_at_its_time_budget() {
             ..small(Window::Fixed(extent))
         },
     );
-    split.set_sync_clock(stepping_clock(step));
+    split.set_sync_clock(stepping_clock(step, SyncPoint::Uploaded));
     let s = split.sync_now(&split_world, &device, &queue).unwrap();
     assert_eq!(s.chunks, 8, "8 chunks in 8 steps");
     assert_eq!(s.time_deferred_chunks, 56);
     assert_eq!(s.deferred_chunks, 0, "none deferred for space");
     assert_eq!(s.pending_chunks, 56);
+    assert_eq!((s.sized_chunks, s.kept_sizes), (64, 0));
     let held: Vec<bool> = order(&split).iter().map(Option::is_some).collect();
     assert_eq!(
         held,
@@ -2515,6 +2517,11 @@ fn a_sync_stops_at_its_time_budget() {
     let s = split.sync_now(&split_world, &device, &queue).unwrap();
     assert_eq!(s.chunks, 8);
     assert_eq!(s.time_deferred_chunks, 48);
+    assert_eq!(
+        (s.sized_chunks, s.kept_sizes),
+        (0, 56),
+        "the deferred chunks are not sized again"
+    );
     let held: Vec<bool> = order(&split).iter().map(Option::is_some).collect();
     assert_eq!(held, first_n(16), "the second sync starts with the 9th");
     let mut syncs = 2;
@@ -2524,6 +2531,168 @@ fn a_sync_stops_at_its_time_budget() {
     }
     assert_eq!(syncs, 8);
     assert_eq!(order(&split), whole_order);
+    let read = |b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
+    for k in 0..4 {
+        assert!(
+            read(split.pool_shard(k)) == read(whole.pool_shard(k)),
+            "pool shard {k} differs"
+        );
+    }
+    assert!(read(split.records()) == read(whole.records()));
+}
+
+/// The floor of [`a_sync_stops_at_its_time_budget`] under the same budget of 8 steps, with a
+/// clock that advances one step per chunk selection sizes and holds while chunks upload: the
+/// first sync sizes 8 chunks, stops sizing once the 8th spends the budget, writes the first
+/// of them (a sync writes at least one chunk) and leaves the 7 others sized and pending
+/// (`time_deferred_chunks`), the 56 unsized behind them. Every later sync takes the kept
+/// sizes without sizing them again and sizes at most 8 new chunks, so the 64 chunks are sized
+/// 64 times over the whole drain; the sync after the last sizing writes the 56 left. The
+/// mirror's records and pool read back byte-identical to the unbudgeted sync's.
+#[test]
+fn a_sync_spent_while_sizing_keeps_what_it_sized() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    t.push(Material::named("floor"));
+    let extent = ChunkExtent::new([0, 0, 0], [8, 8, 1]);
+    let fresh = || World::generate(extent, &Floor, &t);
+    let step = std::time::Duration::from_micros(250);
+
+    let whole_world = fresh();
+    let mut whole = GpuWorld::with_config(&device, small(Window::Fixed(extent)));
+    let s = whole.sync_now(&whole_world, &device, &queue).unwrap();
+    assert_eq!((s.chunks, s.sized_chunks, s.kept_sizes), (64, 64, 0));
+    let coords = whole_world.store().coords();
+    let order = |gpu: &GpuWorld| -> Vec<Option<u32>> {
+        coords.iter().map(|&c| gpu.record_index(c)).collect()
+    };
+
+    let split_world = fresh();
+    let mut split = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            sync_budget_time: Some(8 * step),
+            ..small(Window::Fixed(extent))
+        },
+    );
+    split.set_sync_clock(stepping_clock(step, SyncPoint::Sized));
+    let s = split.sync_now(&split_world, &device, &queue).unwrap();
+    assert_eq!(s.sized_chunks, 8, "sizing stops once the budget is spent");
+    assert_eq!(s.kept_sizes, 0);
+    assert_eq!(s.chunks, 1, "the first sized chunk is written");
+    assert_eq!(s.time_deferred_chunks, 7, "the rest of what was sized");
+    assert_eq!(s.deferred_chunks, 0);
+    assert_eq!(s.pending_chunks, 63);
+    let s = split.sync_now(&split_world, &device, &queue).unwrap();
+    assert_eq!(
+        (s.sized_chunks, s.kept_sizes),
+        (8, 7),
+        "the 7 left are not sized again"
+    );
+    assert_eq!((s.chunks, s.time_deferred_chunks), (1, 14));
+    let mut sized = 16;
+    let mut syncs = 2;
+    let mut last = s;
+    while split.pending_chunks() > 0 {
+        last = split.sync_now(&split_world, &device, &queue).unwrap();
+        assert!(last.sized_chunks <= 8);
+        sized += last.sized_chunks;
+        syncs += 1;
+    }
+    assert_eq!(sized, 64, "each chunk sized once over the drain");
+    assert_eq!(syncs, 9);
+    assert_eq!(
+        (last.sized_chunks, last.kept_sizes, last.chunks),
+        (0, 56, 56)
+    );
+    assert_eq!(order(&split), order(&whole));
+    let read = |b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
+    for k in 0..4 {
+        assert!(
+            read(split.pool_shard(k)) == read(whole.pool_shard(k)),
+            "pool shard {k} differs"
+        );
+    }
+    assert!(read(split.records()) == read(whole.records()));
+}
+
+/// A chunk edited while it waits with a kept size uploads its edited words: the floor of
+/// [`a_sync_stops_at_its_time_budget`] under its budget of 8 uploads a sync; after the first
+/// sync the farthest chunk (the unbudgeted order's last) gains a 3 x 3 x 2 block of the floor
+/// material above the floor. The next sync sizes that chunk again and only it (55 kept), and
+/// once drained the mirror's records and pool read back byte-identical to an unbudgeted sync
+/// of a world edited the same way before its first sync.
+#[test]
+fn a_chunk_edited_while_deferred_uploads_its_edited_words() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    t.push(Material::named("floor"));
+    let extent = ChunkExtent::new([0, 0, 0], [8, 8, 1]);
+    let fresh = || World::generate(extent, &Floor, &t);
+    let step = std::time::Duration::from_micros(250);
+
+    // The unbudgeted order's last chunk, from an unedited mirror.
+    let probe_world = fresh();
+    let mut probe = GpuWorld::with_config(&device, small(Window::Fixed(extent)));
+    probe.sync_now(&probe_world, &device, &queue).unwrap();
+    let last = *probe_world
+        .store()
+        .coords()
+        .iter()
+        .max_by_key(|&&c| probe.record_index(c))
+        .unwrap();
+    let edit = |w: &mut World| {
+        let v = last.min_voxel().0;
+        let r = w
+            .apply(&EditOp::box_(
+                centre_of_voxel([v[0] + 1, v[1] + 1, v[2] + 3]),
+                centre_of_voxel([v[0] + 4, v[1] + 4, v[2] + 5]),
+                Mode::Fill(1),
+            ))
+            .unwrap();
+        assert_eq!(r.changed_from, [(0, 18)]);
+    };
+
+    let mut whole_world = fresh();
+    edit(&mut whole_world);
+    let mut whole = GpuWorld::with_config(&device, small(Window::Fixed(extent)));
+    whole.sync_now(&whole_world, &device, &queue).unwrap();
+
+    let mut split_world = fresh();
+    let mut split = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            sync_budget_time: Some(8 * step),
+            ..small(Window::Fixed(extent))
+        },
+    );
+    split.set_sync_clock(stepping_clock(step, SyncPoint::Uploaded));
+    let s = split.sync_now(&split_world, &device, &queue).unwrap();
+    assert_eq!((s.chunks, s.sized_chunks, s.pending_chunks), (8, 64, 56));
+    assert_eq!(
+        split.record_index(last),
+        None,
+        "the edited chunk is still deferred"
+    );
+    edit(&mut split_world);
+    let s = split.sync_now(&split_world, &device, &queue).unwrap();
+    assert_eq!(
+        (s.sized_chunks, s.kept_sizes),
+        (1, 55),
+        "only the edited chunk is sized again"
+    );
+    while split.pending_chunks() > 0 {
+        split.sync_now(&split_world, &device, &queue).unwrap();
+    }
+    let coords = whole_world.store().coords();
+    let order = |gpu: &GpuWorld| -> Vec<Option<u32>> {
+        coords.iter().map(|&c| gpu.record_index(c)).collect()
+    };
+    assert_eq!(order(&split), order(&whole));
     let read = |b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
     for k in 0..4 {
         assert!(

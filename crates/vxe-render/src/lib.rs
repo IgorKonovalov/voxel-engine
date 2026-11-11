@@ -30,7 +30,7 @@ pub use exposure::{
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncClock,
-    SyncStats, Window,
+    SyncPoint, SyncStats, Window,
 };
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
