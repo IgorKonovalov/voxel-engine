@@ -71,6 +71,8 @@ struct Q {
     cfg: MirrorConfig,
     camera: Camera,
     counts: BakeSettings,
+    /// The steps' sample count: `None` is a frame's sliced step, `Some` the pre-roll's.
+    samples: Option<u64>,
 }
 
 /// How a rig's queue and mirror start.
@@ -160,6 +162,7 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
         cfg,
         camera: camera_at(setup.eye),
         counts: setup.counts.clone(),
+        samples: None,
     })
 }
 
@@ -180,7 +183,7 @@ impl Q {
             eye,
             forward: self.camera.basis().0.to_array(),
             resident: None,
-            samples: None,
+            samples: self.samples,
             hold: None,
             half_angle: {
                 let [w, h] = self.frame.output_size();
@@ -781,6 +784,35 @@ fn a_passed_chunk_is_withdrawn() {
     let fresh = q.fresh();
     for (c, b) in &got {
         assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
+    }
+    q.assert_pool_accounted();
+}
+
+/// The cubes' row as in [`a_passed_chunk_is_withdrawn`], but the step after the move has a
+/// sample count, as the pre-roll's steps do: it withdraws nothing, and chunk 1's and 2's jobs
+/// that did not end in it are still in the loop.
+#[test]
+fn a_pre_roll_step_withdraws_nothing() {
+    let Some(mut q) = cubes_rig() else {
+        return;
+    };
+    q.step_until_job(2);
+    let held: Vec<[i32; 3]> = q.q().jobs().iter().map(|c| c.0).collect();
+    assert!(
+        held.contains(&[1, 0, 0]) && held.contains(&[2, 0, 0]),
+        "{held:?}"
+    );
+    q.camera.position.x = 5.0 * 64.0 + 32.5;
+    q.samples = Some(16_384);
+    let st = q.step();
+    let jobs: Vec<[i32; 3]> = q.q().jobs().iter().map(|c| c.0).collect();
+    println!("after the move: jobs {jobs:?}, {st:?}");
+    assert_eq!(st.withdrawn, 0, "{st:?}");
+    for c in &held {
+        assert!(
+            jobs.contains(c) || q.frame.store().block(ChunkCoord(*c)).is_some(),
+            "{c:?} left the loop with no block"
+        );
     }
     q.assert_pool_accounted();
 }

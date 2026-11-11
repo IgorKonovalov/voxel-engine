@@ -2940,7 +2940,8 @@ pub struct BakeQueue {
     /// step with a candidate in the near shell or the view cone ready, a job that is not a
     /// dig's and not a whole re-bake of a full block, whose chunk lies outside the near shell
     /// and outside the keep cone (the view cone's margin doubled), is taken out of the loop, its
-    /// place freed; its chunk keeps the block it had and is a candidate again.
+    /// place freed; its chunk keeps the block it had and is a candidate again. A step with a
+    /// sample count (the pre-roll) withdraws nothing.
     pub withdraw: bool,
     /// Edit boxes since the last step.
     boxes: Vec<[[i32; 3]; 2]>,
@@ -4018,9 +4019,11 @@ impl BakeQueue {
 
     /// Withdraws the passed jobs ([`BakeQueue::withdraw`]) when a candidate in the near shell or
     /// the view cone is ready: up to the opening's count of checks of those candidates, nearest
-    /// first, each not checked in the last [`QUEUE_RECHECK`] steps.
+    /// first, each not checked in the last [`QUEUE_RECHECK`] steps. A step with a sample count
+    /// (the pre-roll) withdraws nothing: the camera has passed nothing yet, and the coarse pass
+    /// opens chunks in every direction, so withdrawing there takes back most of what it opens.
     fn withdraw_passed(&mut self, run: &BakeRun<'_>, store: &mut Store, view: &QueueView<'_>) {
-        if !self.withdraw {
+        if !self.withdraw || view.samples.is_some() {
             return;
         }
         let (eye, near) = (self.eye, self.near);
@@ -4064,11 +4067,7 @@ impl BakeQueue {
         seen.sort_unstable();
         let steps = self.steps;
         let lr = gpu.light_radius();
-        let checks = if view.samples.is_some() {
-            QUEUE_CHECKS_UNSLICED
-        } else {
-            QUEUE_CHECKS
-        };
+        let checks = QUEUE_CHECKS;
         let mut ready = false;
         let mut checked = 0;
         for (_, c) in seen {
