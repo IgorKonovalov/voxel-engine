@@ -66,7 +66,9 @@ struct Fsr2Constants {
     rcas_con: f32,
     // Nonzero: the accumulate pass writes its history weight to its debug target.
     debug: u32,
-    _pad1: u32,
+    // The tone arithmetic RCAS applies (rcas.wgsl): bit 0 the identity tone map
+    // (LIGHTING_IDENTITY_TONE_MAP), bit 1 the shaded view, bit 2 the static dither.
+    tone: u32,
 };
 
 @group(0) @binding(0) var<uniform> cb: Fsr2Constants;

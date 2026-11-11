@@ -26,7 +26,8 @@ pub const FSR2_RECONSTRUCT_WGSL: &str =
 pub const FSR2_DEPTH_CLIP_WGSL: &str = include_str!("shaders/fsr2/depth_clip.wgsl");
 /// FSR 2's lock pass, compiled after [`FSR2_COMMON_WGSL`].
 pub const FSR2_LOCK_WGSL: &str = include_str!("shaders/fsr2/lock.wgsl");
-/// FSR 2's RCAS pass, compiled after [`FSR2_COMMON_WGSL`].
+/// FSR 2's RCAS pass ending in our tone pass's arithmetic, compiled after
+/// [`FSR2_COMMON_WGSL`].
 pub const FSR2_RCAS_WGSL: &str = include_str!("shaders/fsr2/rcas.wgsl");
 
 /// The source of an FSR pass: `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT), the common part, then
@@ -168,7 +169,9 @@ pub struct Fsr2Constants {
     pub spd_work_groups: u32,
     pub rcas_con: f32,
     pub debug: u32,
-    pub _pad: u32,
+    /// The tone arithmetic RCAS applies: bit 0 the identity tone map, bit 1 the shaded view,
+    /// bit 2 the static dither.
+    pub tone: u32,
 }
 
 /// The shading-change mip of the luminance pyramid (`FFX_FSR2_SHADING_CHANGE_MIP_LEVEL`).
@@ -370,6 +373,8 @@ pub struct Fsr2 {
     accumulate: Pass,
     rcas: Pass,
     tone: Pass,
+    /// The FSR passes the last [`Fsr2Binds::passes`] dispatched, by name ([`Fsr2::dispatched`]).
+    dispatched: std::sync::Mutex<Vec<&'static str>>,
     cb: wgpu::Buffer,
     input_tuning: wgpu::Buffer,
     res: Resources,
@@ -405,8 +410,9 @@ pub(crate) struct Fsr2Binds {
 impl Fsr2Binds {
     /// The dispatches of FSR 2's frame passes ([`FSR2_PASSES`], one slot each), after the
     /// composite, in AMD's order: our input pass, the luminance pyramid (its mips, then its
-    /// tail), reconstruct previous depth, depth clip, lock, accumulate, RCAS when sharpening
-    /// is on, and our tone pass. Bypassed, the tone pass alone runs.
+    /// tail), reconstruct previous depth, depth clip, lock, accumulate, then RCAS (which tone
+    /// maps into the frame's image) when sharpening is on, else our tone pass. Bypassed, the
+    /// tone pass alone runs. The names of the dispatched slots go to [`Fsr2::dispatched`].
     pub(crate) fn passes<'a>(
         &'a self,
         fsr: &'a Fsr2,
@@ -426,17 +432,27 @@ impl Fsr2Binds {
             workgroups: self.display_groups,
             indirect: None,
         }];
+        let record = |passes: &[Vec<Dispatch<'a>>; FSR2_PASSES.len()]| {
+            *fsr.dispatched
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = FSR2_PASSES
+                .iter()
+                .zip(passes)
+                .filter(|(_, d)| !d.is_empty())
+                .map(|(n, _)| *n)
+                .collect();
+        };
         if self.bypass {
             let mut passes: [Vec<Dispatch<'a>>; FSR2_PASSES.len()] = Default::default();
             passes[FSR2_PASSES.len() - 1] = tone;
+            record(&passes);
             return passes;
         }
-        let rcas = self
-            .rcas
-            .as_ref()
-            .map(|(b, workgroups)| fsr_pass(&fsr.rcas, b, *workgroups))
-            .unwrap_or_default();
-        [
+        let (rcas, tone) = match &self.rcas {
+            Some((b, workgroups)) => (fsr_pass(&fsr.rcas, b, *workgroups), Vec::new()),
+            None => (Vec::new(), tone),
+        };
+        let passes = [
             vec![Dispatch {
                 pipeline: &fsr.input.pipeline,
                 groups: [Some(world), None, Some(&self.input), None],
@@ -451,7 +467,9 @@ impl Fsr2Binds {
             fsr_pass(&fsr.accumulate, &self.accumulate, self.display_groups),
             rcas,
             tone,
-        ]
+        ];
+        record(&passes);
+        passes
     }
 }
 
@@ -772,7 +790,12 @@ impl Fsr2 {
             "fsr2 rcas",
             FSR2_RCAS_WGSL,
             "rcas",
-            &[tex_entry(0), tex_entry(1), store_entry(2, Rgba16Float)],
+            &[
+                tex_entry(0),
+                tex_entry(1),
+                store_entry(2, Rgba8Unorm),
+                tex_entry(3),
+            ],
         );
         let buffer = |label, size| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -793,6 +816,7 @@ impl Fsr2 {
             accumulate,
             rcas,
             tone,
+            dispatched: std::sync::Mutex::new(Vec::new()),
             cb: buffer("fsr2 constants", size_of::<Fsr2Constants>() as u64),
             input_tuning: buffer("fsr2 input tuning", size_of::<InputUniform>() as u64),
             res: Resources::new(device, render, display, false),
@@ -828,8 +852,17 @@ impl Fsr2 {
         self.bypass
     }
 
+    /// The FSR 2 passes ([`FSR2_PASSES`] names) the last encoded frame dispatched.
+    pub fn dispatched(&self) -> Vec<&'static str> {
+        self.dispatched
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Whether the next frame dispatches RCAS: sharpening above 0 and the upscaler not
-    /// bypassed. Otherwise the tone pass reads the accumulate pass's output (or, bypassed, the
+    /// bypassed; RCAS then writes the frame's image and the tone pass is not dispatched.
+    /// Otherwise the tone pass reads the accumulate pass's output (or, bypassed, the
     /// composite's colour) directly.
     pub fn sharpens(&self) -> bool {
         self.settings.sharpness > 0.0 && !self.bypass
@@ -960,7 +993,9 @@ impl Fsr2 {
             // FsrRcasCon of `-2 sharpness + 2` stops.
             rcas_con: (-(2.0 - 2.0 * self.settings.sharpness.clamp(0.0, 1.0))).exp2(),
             debug: u32::from(self.debug),
-            _pad: 0,
+            tone: u32::from(params.lighting & crate::marcher::LIGHTING_IDENTITY_TONE_MAP != 0)
+                | u32::from((params.flags >> crate::marcher::VIEW_SHIFT) & 7 == 0) << 1
+                | u32::from(params.dither != 0) << 2,
         };
         *prev = pre_exposure;
         c
@@ -1124,23 +1159,25 @@ impl Fsr2 {
                 Tex(&r.weight),
             ],
         );
-        // RCAS writes into last frame's copy of the upscaled colour: the accumulate pass has
-        // read it, and the next frame's accumulate pass overwrites it.
+        // RCAS sharpens the accumulate pass's output and tone maps it into the frame's image.
         let sharpening = self.sharpens();
         let rcas = sharpening.then(|| {
             (
                 bind(
                     device,
                     &self.rcas.layout,
-                    &[Tex(&r.upscaled[w]), Tex(&r.exposure), Tex(&r.upscaled[q])],
+                    &[
+                        Tex(&r.upscaled[w]),
+                        Tex(&r.exposure),
+                        Tex(f.output),
+                        Tex(f.blue_noise),
+                    ],
                 ),
                 r.display.map(|n| n.div_ceil(16)),
             )
         });
         let tone_in = if self.bypass {
             &r.colour
-        } else if sharpening {
-            &r.upscaled[q]
         } else {
             &r.upscaled[w]
         };
@@ -1176,6 +1213,8 @@ pub(crate) struct FrameInputs<'a> {
     pub edits: &'a wgpu::Buffer,
     pub lamp: &'a wgpu::Buffer,
     pub output: &'a wgpu::Texture,
+    /// The frame's blue noise (`blue_noise` in `march.wgsl`), RCAS's dither.
+    pub blue_noise: &'a wgpu::Texture,
     pub cur: usize,
     /// The frame's step in seconds ([`crate::Frame::set_dt`]).
     pub dt: f32,

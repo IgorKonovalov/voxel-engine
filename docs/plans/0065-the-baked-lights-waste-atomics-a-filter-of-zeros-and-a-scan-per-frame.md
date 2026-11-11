@@ -264,8 +264,8 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 | 1: the per-pass readings | dev | done; no phase struck (every base over 0.05 ms at the half tier) | `cc5b55d` |
 | 2: the temporal pass | dev | done; goldens byte-identical; the early-out carries the age at the pixel; `gpu_frame.rs` turns counting on (outside the files touched) | `051dc0e` |
 | 3: the a-trous | dev | done; both skips only with the lamp off (as worded, lamp-on goldens moved up to 72 levels, fsr2 3 with the early-out alone); goldens byte-identical; `--filter off` defect confirmed and fixed; doc lines in `main.rs`, `composite.wgsl` | `ec55df0` |
-| 4: the far normal and the pool read | dev | done: the mask path; goldens byte-identical. The pool read without a divide (a slot cache) read slower on the Cezanne and is not committed | committed with this row |
-| 5: FSR 2 | dev | not started | |
+| 4: the far normal and the pool read | dev | done: the mask path; goldens byte-identical. The pool read without a divide (a slot cache) read slower on the Cezanne and is not committed | `476fa67` |
+| 5: FSR 2 | dev | done; RCAS tone maps (rounding to half toward zero, as lavapipe stores); 8 passes with sharpening on; `frame_bytes` unchanged (the target is the accumulate history); `FrameInputs::blue_noise` in `marcher.rs` | committed with this row |
 | 6: the queue's step | dev | moved to Plan 0067 (2026-11-11) | |
 | 7: the close's readings | dev | not started | |
 

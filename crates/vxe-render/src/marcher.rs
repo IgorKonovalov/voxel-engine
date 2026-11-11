@@ -3154,6 +3154,7 @@ impl Frame {
                         edits: &self.edits,
                         lamp: &self.upscale_params,
                         output: &t.output,
+                        blue_noise: &self.blue_noise,
                         cur: c,
                         dt: self.dt,
                     },
