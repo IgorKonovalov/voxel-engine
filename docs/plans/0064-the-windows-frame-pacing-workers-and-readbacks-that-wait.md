@@ -255,8 +255,8 @@ pub struct SyncBudget {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: what paces the window | dev | done: code (flag, present-mode log, HUD `pace` row, `frames:` wall, 3 CPU tests) and the owner's 24 windowed runs, `free` below `compositor` in every cell, Phase 2 stands; see [the readings log](logs/0064.md) | fc05003 (code), readings committed with this row |
-| 2: the pacing default | human | awaits the owner's window | |
+| 1: what paces the window | dev | done: code (flag, present-mode log, HUD `pace` row, `frames:` wall, 3 CPU tests) and the owner's 24 windowed runs, `free` below `compositor` in every cell, Phase 2 stands; see [the readings log](logs/0064.md) | fc05003 (code), de791ba (readings) |
+| 2: the pacing default | human | owner's window done 2026-11-11, pick `free` (flights loaded by other lanes' builds); the default and banner change is not written yet, see [the readings log](logs/0064.md) | readings committed with this row |
 | 3: nothing waits for the GPU | dev | not started | |
 | 4: workers, the sync's time, the stats | dev | not started | |
 | 5: the close's readings | dev | not started | |
