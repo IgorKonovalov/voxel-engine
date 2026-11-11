@@ -59,9 +59,10 @@
 //! pre-exposed colour held at `C` into FSR 2) and `--dither on` (a static one-level dither in
 //! its tone pass), each named in the banner's fsr2 line when set;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
-//! stats HUD's rows; `--pace free|compositor` (default `compositor`) picks whether the window
+//! stats HUD's rows; `--pace free|compositor` (default `free`) picks whether the window
 //! asks the compositor for a frame callback before each present (`vxe_app::Pacing`): with it
 //! the next frame starts only after the compositor showed this one; `free` starts it at once.
+//! The banner's `pace` row names the mode for `hud::BANNER_MS` after the start.
 //! The stats HUD's `pace` row names the mode beside the wall, CPU and GPU time of a frame, and
 //! the `frames:` line at exit gives the wall time between frames beside the CPU and GPU; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -810,7 +811,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         seed: 1,
         render: None,
         frames: None,
-        pace: Pacing::Compositor,
+        pace: Pacing::Unthrottled,
         bench: 0,
         level: false,
         showcase: false,
@@ -3324,6 +3325,7 @@ impl Run {
         let pose = self.pose.as_ref().map(|(s, _)| s.to_owned());
         let rows: Vec<String> = [
             pose,
+            pace_banner(self.args.pace, now),
             Some(self.queue_row()),
             scene,
             self.modes.banner(now),
@@ -6268,6 +6270,12 @@ fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     }
 }
 
+/// The banner's pacing row, `pace free`, for [`hud::BANNER_MS`] after the start (`now_ms` on
+/// the frame loop's clock); `None` after that.
+fn pace_banner(pace: Pacing, now_ms: f64) -> Option<String> {
+    (now_ms < hud::BANNER_MS).then(|| format!("pace {}", pace.word()))
+}
+
 /// The castle's banner row for `shot`: `castle gate`.
 fn castle_banner(shot: castle::CastleShot) -> String {
     format!("castle {}", shot.name())
@@ -6704,12 +6712,12 @@ mod tests {
     }
     use flythrough::cave::SHELL;
 
-    /// `--pace` takes `free` (no frame callback) and `compositor`, the default; another word
+    /// `--pace` takes `free` (no frame callback), the default, and `compositor`; another word
     /// or a missing value is refused.
     #[test]
     fn the_pace_flag_parses_both_words() {
         let a = parse_args_from(argv(&[])).expect("no flags parse");
-        assert_eq!(a.pace, Pacing::Compositor);
+        assert_eq!(a.pace, Pacing::Unthrottled);
         let a = parse_args_from(argv(&["--pace", "free"])).expect("--pace free parses");
         assert_eq!(a.pace, Pacing::Unthrottled);
         assert!(!a.pace.frame_callback());
@@ -6721,6 +6729,20 @@ mod tests {
             .expect("vsync is refused");
         assert!(e.contains("free or compositor"), "{e}");
         assert!(parse_args_from(argv(&["--pace"])).is_err());
+    }
+
+    /// A plain start's banner names the pacing, `pace free`, until the banner's time is up;
+    /// `--pace compositor` names its word.
+    #[test]
+    fn a_plain_start_s_banner_names_the_pace() {
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(pace_banner(a.pace, 0.0).as_deref(), Some("pace free"));
+        assert_eq!(pace_banner(a.pace, hud::BANNER_MS), None);
+        let c = parse_args_from(argv(&["--pace", "compositor"])).unwrap();
+        assert_eq!(
+            pace_banner(c.pace, 10.0).as_deref(),
+            Some("pace compositor")
+        );
     }
 
     /// The flags of the per-face table, the reference and the cuts are refused, each naming Plan

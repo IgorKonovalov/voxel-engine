@@ -74,7 +74,8 @@ pub struct ShellConfig {
     /// Pick an sRGB surface format, where the hardware encodes on write. `false` picks a
     /// non-sRGB format, for an app that writes display-encoded values itself.
     pub prefer_srgb: bool,
-    /// When the next frame starts.
+    /// When the next frame starts; the default, [`Pacing::Unthrottled`], asks the compositor
+    /// for no frame callback.
     pub pacing: Pacing,
 }
 
