@@ -516,6 +516,9 @@ claim that line.
    recorded at Plan 0059's verdict: "Drafts first". Plans 0060, 0061 and 0058, then this plan,
    then Plan 0045 re-cut against the tree at its start. Phases 1, 6 and 7 may run as a side
    lane at any time. This replaces answer 1's order.
+3. **Rapid reverb handovers (owner, 2026-11-11),** the fix pass's finding 2: option (b), the
+   deferral with the bound raised to `2 x BLOCK` frames a line (8 192 samples, 32 KB a block),
+   no extra memory, the walk test unchanged (readings log, Fix pass, Finding 2).
 
 ## Implementation log
 
