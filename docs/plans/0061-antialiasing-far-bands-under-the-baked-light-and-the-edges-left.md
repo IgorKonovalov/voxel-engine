@@ -641,8 +641,8 @@ The owner, 2026-11-10, to the open questions above:
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), answered by the owner's amendment; see [the readings log](logs/0061.md) | e79620f |
-| 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) in flight at the commit, see the readings log | committed with this row |
-| 3: The matrix with the read, the edges left, and the window's runner | dev | not started | |
+| 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) in flight at the commit, see the readings log | c327f6a |
+| 3: The matrix with the read, the edges left, and the window's runner | dev | in progress: the FSR 2 arms read, the pick named, `live/session61.sh` written; the native arms, FSR 2 at 1, the pick's pan and yaw and done-when 6's costs in flight | |
 | 4: The owner's window | human | not started | |
 | 5: The picks as defaults | dev | not started | |
 
@@ -662,6 +662,12 @@ The owner, 2026-11-10, to the open questions above:
 - Phase 2 touches `apps/flythrough/tests/gpu_strip.rs` (two env knobs and several references in
   `VXE_STRIP_REF`) and re-blesses `apps/flythrough/tests/golden/mode_banner.png` (the banner's
   text); neither is in the phase's Files touched.
+- Phase 3 (orchestrator, 2026-11-11, to bring the owner's window forward): before the window only
+  the arms that can change the pick run (FSR 2 at 1, one pan, one yaw, at the pick); the
+  full-resolution arms, `--jitter-phases 8` and `--sharpen 0.25` are deferred to after the window.
+  The level's `vein` and `patch` arms are not run before the window either.
+- Phase 3's runner holds the perf lock for the whole session rather than run by run, so no
+  reading (this lane's or another's) runs between the owner's steps.
 
 ### Close triggers
 
