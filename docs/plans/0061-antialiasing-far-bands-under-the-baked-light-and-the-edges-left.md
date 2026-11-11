@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** in-progress (Phase 2 landed; Phase 3 next), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
+> **Status:** in-progress (Phase 3 landed; Phase 4, the owner's window, next), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -641,8 +641,8 @@ The owner, 2026-11-10, to the open questions above:
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), answered by the owner's amendment; see [the readings log](logs/0061.md) | e79620f |
-| 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) in flight at the commit, see the readings log | c327f6a |
-| 3: The matrix with the read, the edges left, and the window's runner | dev | in progress: the FSR 2 arms read, the pick named, `live/session61.sh` written; the native arms, FSR 2 at 1, the pick's pan and yaw and done-when 6's costs in flight | |
+| 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) landed with Phase 3's commit, see the readings log | c327f6a |
+| 3: The matrix with the read, the edges left, and the window's runner | dev | half-light matrix, FSR 2 at 1, the pick's pan and yaw read; the full-light, jitter 8 and sharpen 0.25 arms and the level's arms not run (see Notes) | committed with this row |
 | 4: The owner's window | human | not started | |
 | 5: The picks as defaults | dev | not started | |
 
@@ -668,6 +668,13 @@ The owner, 2026-11-10, to the open questions above:
   The level's `vein` and `patch` arms are not run before the window either.
 - Phase 3's runner holds the perf lock for the whole session rather than run by run, so no
   reading (this lane's or another's) runs between the owner's steps.
+- Phase 3: after the owner's verdict the deferred arms (full light, `--jitter-phases 8`,
+  `--sharpen 0.25`, the level's `vein` and `patch`) were not run: neither Phase 5 nor the close
+  needs them. Done-when 2's full-resolution line cites Phase 1's `bF` arms; the edge knobs are
+  unread.
+- Phase 3: "best arm" by the rule (lowest edge ratio without blur) is nnh at `[2, 6]` (1.09);
+  the runner's and the owner's pick is nfh (1.29), the weights bit the owner's amendment asked
+  for.
 
 ### Close triggers
 
