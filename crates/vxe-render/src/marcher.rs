@@ -2234,6 +2234,7 @@ impl Frame {
         world: &vxe_world::World,
         view: &crate::bake::QueueView<'_>,
     ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
+        let t0 = crate::bake::stopwatch();
         let settings = self.bake_queue.as_ref()?.settings.clone();
         let w = gpu.window();
         let f = gpu.focus().0;
@@ -2265,7 +2266,7 @@ impl Frame {
             params,
         };
         let q = self.bake_queue.as_mut()?;
-        Some(q.step(&run, &mut self.store, view))
+        Some(q.step(&run, &mut self.store, view, t0))
     }
 
     /// The frame parameters a bake dispatches with: no view but the LOD walk's camera chunk,

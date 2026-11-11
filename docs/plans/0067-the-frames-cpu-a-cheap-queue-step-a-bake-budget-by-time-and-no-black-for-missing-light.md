@@ -1,6 +1,6 @@
 # 0067: The frame's CPU: a cheap queue step, a bake budget by time, and no black for missing light
 
-> **Status:** approved (owner go 2026-11-11, with the defaults on the open points)
+> **Status:** in-progress (owner go 2026-11-11, with the defaults on the open points)
 > **Created:** 2026-11-11
 > **Milestone:** M2 (the light that holds in the dark has to hold at a playable frame), and
 > cross-cutting like [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
@@ -776,11 +776,11 @@ one in Phase 6.
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to `docs/plans/logs/0067.md`.
+> attempts and resume notes go to [`docs/plans/logs/0067.md`](logs/0067.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: where the frame's CPU goes | dev | not started | |
+| 1: where the frame's CPU goes | dev | code and tests landed; readings follow in their own commit | committed with this row |
 | 2: a step with nothing to do costs nothing | dev | not started | |
 | 2b: the queue does not starve in a flight | dev | not started | |
 | 3: the bake budget per second | dev | not started | |

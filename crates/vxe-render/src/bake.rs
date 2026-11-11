@@ -1271,7 +1271,7 @@ pub(crate) fn job_table(world: &GpuWorld, coord: ChunkCoord) -> LightTableUnifor
     clippy::disallowed_methods,
     reason = "the bake times its submits for the count reading's cost rows and its progress"
 )]
-fn stopwatch() -> Instant {
+pub(crate) fn stopwatch() -> Instant {
     Instant::now()
 }
 
@@ -2670,6 +2670,255 @@ pub struct QueueStats {
     /// faces had drawn: lost.
     pub withdrawn: u64,
     pub withdrawn_samples: u64,
+    /// The last step's CPU time by stage ([`StepStages`]).
+    pub stages: StepStages,
+    /// Steps that ran an opening since the queue started.
+    pub openings: u64,
+    /// Of the candidates in the view cone beyond the shell at the last census, waiting for
+    /// their light (blank or coarse), those whose reach crosses the streamer's full radius
+    /// ([`QueueView::full_radius`]): their distance in chunks plus the light radius exceeds it,
+    /// so a neighbour within their reach is not resident full while the camera stands still.
+    pub reach_bound: u64,
+}
+
+/// The stages a queue step is timed in ([`StepStages::ms`]), in the order they run: the
+/// frame's setup before the step (the light hold, the parameters, the bind group), the mirror
+/// filter and the per-chunk sets' `retain`s, the edit boxes, the withdrawal, the digs' jobs,
+/// then the opening's candidate build, census, sort, reach and light checks and listing (each
+/// 0 on a step that does not open), the job tables, the device poll, the read-back's copy and
+/// the blocks' placement, the submit and the fades.
+pub const STEP_STAGES: [&str; 16] = [
+    "setup",
+    "filter",
+    "boxes",
+    "withdraw",
+    "digs",
+    "candidates",
+    "census",
+    "sort",
+    "checks",
+    "list",
+    "refresh",
+    "poll",
+    "collect",
+    "place",
+    "submit",
+    "fades",
+];
+const S_SETUP: usize = 0;
+const S_FILTER: usize = 1;
+const S_BOXES: usize = 2;
+const S_WITHDRAW: usize = 3;
+const S_DIGS: usize = 4;
+const S_CANDIDATES: usize = 5;
+const S_CENSUS: usize = 6;
+const S_SORT: usize = 7;
+const S_CHECKS: usize = 8;
+const S_LIST: usize = 9;
+const S_REFRESH: usize = 10;
+const S_POLL: usize = 11;
+const S_COLLECT: usize = 12;
+const S_PLACE: usize = 13;
+const S_SUBMIT: usize = 14;
+const S_FADES: usize = 15;
+
+/// One queue step's CPU time by stage.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StepStages {
+    /// Each stage's milliseconds, [`STEP_STAGES`] in order. The stages are laps of one clock,
+    /// so they cover the step from the frame's call to the last stage's end.
+    pub ms: [f64; STEP_STAGES.len()],
+    /// The step's own milliseconds, from the frame's call to the step's return.
+    pub total_ms: f64,
+    /// Whether the step ran an opening.
+    pub opened: bool,
+}
+
+impl StepStages {
+    /// The stages' sum.
+    pub fn sum(&self) -> f64 {
+        self.ms.iter().sum()
+    }
+}
+
+/// The laps of a step's stages: each lap adds the time since the last to a stage.
+#[derive(Clone, Copy, Debug)]
+struct Laps {
+    at: Instant,
+    ms: [f64; STEP_STAGES.len()],
+}
+
+impl Laps {
+    fn new(at: Instant) -> Self {
+        Self {
+            at,
+            ms: [0.0; STEP_STAGES.len()],
+        }
+    }
+
+    fn lap(&mut self, stage: usize) {
+        let now = stopwatch();
+        self.ms[stage] += now.duration_since(self.at).as_secs_f64() * 1e3;
+        self.at = now;
+    }
+}
+
+/// The live queue's operating point over a second of a flight, read from the samples a chunk
+/// baked that second drew: [`Regime::KeepingUp`] (B) when the coarse front keeps up, every
+/// opening a small coarse job; [`Regime::Starved`] (A) when the near shell's full jobs hold the
+/// loop, few chunks baked a second at many samples each; [`Regime::Mixed`] between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Regime {
+    Starved,
+    KeepingUp,
+    Mixed,
+}
+
+/// Samples a baked chunk under which a second reads [`Regime::KeepingUp`].
+pub const REGIME_B_MAX: f64 = 3e5;
+/// Samples a baked chunk over which a second reads [`Regime::Starved`].
+pub const REGIME_A_MIN: f64 = 6e5;
+
+impl Regime {
+    /// A second's regime from the samples it read back and the chunks it baked; `None` for a
+    /// second that read no sample (an idle queue). A second that drew samples and baked no
+    /// chunk is starved.
+    pub fn of(samples: u64, chunks: u64) -> Option<Self> {
+        if samples == 0 {
+            return None;
+        }
+        if chunks == 0 {
+            return Some(Self::Starved);
+        }
+        let per = samples as f64 / chunks as f64;
+        Some(if per < REGIME_B_MAX {
+            Self::KeepingUp
+        } else if per > REGIME_A_MIN {
+            Self::Starved
+        } else {
+            Self::Mixed
+        })
+    }
+
+    /// `A`, `B` or `mixed`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Starved => "A",
+            Self::KeepingUp => "B",
+            Self::Mixed => "mixed",
+        }
+    }
+}
+
+/// A run's queue steps, each tagged with its second's regime once the second ends: the
+/// per-regime summary of the step's time, its opening share and its stages.
+#[derive(Clone, Debug, Default)]
+pub struct StepTally {
+    /// The steps of the second not yet tagged.
+    pending: Vec<StepStages>,
+    /// Tagged steps: A, B, mixed, and idle (a second that read no sample).
+    tagged: [Vec<StepStages>; 4],
+}
+
+/// The tally's buckets in order, by name.
+const TALLY_NAMES: [&str; 4] = ["A", "B", "mixed", "idle"];
+
+fn tally_index(r: Option<Regime>) -> usize {
+    match r {
+        Some(Regime::Starved) => 0,
+        Some(Regime::KeepingUp) => 1,
+        Some(Regime::Mixed) => 2,
+        None => 3,
+    }
+}
+
+/// The `p`th percentile of `v` by nearest rank (0 for none), `v` sorted in place.
+fn nearest_rank(v: &mut [f64], p: f64) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.sort_by(f64::total_cmp);
+    let i = ((p / 100.0) * v.len() as f64).ceil() as usize;
+    v[i.clamp(1, v.len()) - 1]
+}
+
+impl StepTally {
+    /// A step of the current second.
+    pub fn push(&mut self, s: StepStages) {
+        self.pending.push(s);
+    }
+
+    /// Ends the second: its steps take `regime`.
+    pub fn tag(&mut self, regime: Option<Regime>) {
+        let i = tally_index(regime);
+        self.tagged[i].append(&mut self.pending);
+    }
+
+    /// The steps tagged `regime`.
+    pub fn count(&self, regime: Option<Regime>) -> usize {
+        self.tagged[tally_index(regime)].len()
+    }
+
+    /// The step time's `p`th percentile over the steps tagged `regime`, of those that opened
+    /// (`Some(true)`), did not (`Some(false)`) or all (`None`).
+    pub fn percentile(&self, regime: Option<Regime>, opened: Option<bool>, p: f64) -> f64 {
+        let mut v: Vec<f64> = self.tagged[tally_index(regime)]
+            .iter()
+            .filter(|s| opened.is_none_or(|o| s.opened == o))
+            .map(|s| s.total_ms)
+            .collect();
+        nearest_rank(&mut v, p)
+    }
+
+    /// The summary: a line per bucket that holds a step, then the pooled line, each `queue
+    /// step <bucket>: N steps, p50 X ms, p99 Y ms, opened K (share), open p50 X ms, not p50 Y
+    /// ms; stages p50/p99 ms (open p50 / not p50): setup a/b (c/d), ...`.
+    pub fn summary(&self) -> Vec<String> {
+        let all: Vec<StepStages> = self.tagged.iter().flatten().copied().collect();
+        let mut out = Vec::new();
+        for (name, steps) in TALLY_NAMES.iter().zip(&self.tagged) {
+            if !steps.is_empty() {
+                out.push(Self::line(name, steps));
+            }
+        }
+        if !all.is_empty() {
+            out.push(Self::line("pooled", &all));
+        }
+        out
+    }
+
+    fn line(name: &str, steps: &[StepStages]) -> String {
+        use std::fmt::Write as _;
+        let pick = |opened: Option<bool>, f: &dyn Fn(&StepStages) -> f64, p: f64| {
+            let mut v: Vec<f64> = steps
+                .iter()
+                .filter(|s| opened.is_none_or(|o| s.opened == o))
+                .map(f)
+                .collect();
+            nearest_rank(&mut v, p)
+        };
+        let opened = steps.iter().filter(|s| s.opened).count();
+        let mut line = format!(
+            "queue step {name}: {} steps, p50 {:.3} ms, p99 {:.3} ms, opened {opened} ({:.3}), open p50 {:.3} ms, not p50 {:.3} ms; stages p50/p99 ms (open p50 / not p50):",
+            steps.len(),
+            pick(None, &|s| s.total_ms, 50.0),
+            pick(None, &|s| s.total_ms, 99.0),
+            opened as f64 / steps.len() as f64,
+            pick(Some(true), &|s| s.total_ms, 50.0),
+            pick(Some(false), &|s| s.total_ms, 50.0),
+        );
+        for (k, stage) in STEP_STAGES.iter().enumerate() {
+            let _ = write!(
+                line,
+                " {stage} {:.3}/{:.3} ({:.3}/{:.3})",
+                pick(None, &|s| s.ms[k], 50.0),
+                pick(None, &|s| s.ms[k], 99.0),
+                pick(Some(true), &|s| s.ms[k], 50.0),
+                pick(Some(false), &|s| s.ms[k], 50.0),
+            );
+        }
+        line
+    }
 }
 
 /// A block fading from what it showed to its target over `frames` ([`FADE`], or [`DIG_FADE`]
@@ -2709,6 +2958,10 @@ pub struct QueueView<'a> {
     /// ([`QueueStats::cone_only`]); `None` reads none. The frustum's up is the camera's, with
     /// no roll: `right = forward x Z`, `up = right x forward`.
     pub frustum: Option<[f32; 2]>,
+    /// The streamer's full radius in chunks about the camera's chunk, for the census's count
+    /// of the candidates whose reach crosses it ([`QueueStats::reach_bound`]); `None` (a
+    /// bounded world) counts none.
+    pub full_radius: Option<i32>,
 }
 
 /// The live queue's angle weight by default (ADR-0048's `W_ANGLE`, [`QueueOrder::Score`]).
@@ -3000,6 +3253,8 @@ pub struct BakeQueue {
     /// census (0.8 ms over the streamed cave's 17 000 candidates) at each opening.
     pub census_every_opening: bool,
     stats: QueueStats,
+    /// The current step's stage laps.
+    laps: Laps,
 }
 
 impl BakeQueue {
@@ -3048,6 +3303,7 @@ impl BakeQueue {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()
             },
+            laps: Laps::new(stopwatch()),
         }
     }
 
@@ -3258,13 +3514,17 @@ impl BakeQueue {
 
     /// One frame's step: follow the window, free the blocks of chunks the mirror dropped, open
     /// jobs while the open ones hold less than two slices, one submit within the slice, and the
-    /// fades a frame on. `None` from the submit when nothing was dispatched.
+    /// fades a frame on. `None` from the submit when nothing was dispatched. `t0` is when the
+    /// frame's call began: the time to here is the step's setup stage ([`StepStages`]).
     pub(crate) fn step(
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
         view: &QueueView<'_>,
+        t0: Instant,
     ) -> Result<QueueStats, BakeError> {
+        self.laps = Laps::new(t0);
+        self.laps.lap(S_SETUP);
         self.steps += 1;
         self.eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let gpu = run.gpu;
@@ -3299,26 +3559,35 @@ impl BakeQueue {
         self.digs.retain(|c, _| held(c));
         self.reach.retain(held);
         self.listed.retain(|c, _| held(c));
+        self.laps.lap(S_FILTER);
         self.take_boxes(run, store)?;
+        self.laps.lap(S_BOXES);
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
             let ms = self.slice_ms + if dig { self.edit_ms } else { 0.0 };
             ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
         });
         self.withdraw_passed(run, store, view);
+        self.laps.lap(S_WITHDRAW);
         self.open_digs(run, store, cap)?;
+        self.laps.lap(S_DIGS);
+        let mut opened_step = false;
         if self.lp.samples_left() < 2 * cap && self.steps >= self.quiet_until {
+            opened_step = true;
+            self.stats.openings += 1;
             let opened = self.lp.chunks().count();
             self.open(run, store, view, cap)?;
             if self.lp.chunks().count() == opened && self.lp.idle() {
                 // Nothing was ready: the candidates are sorted again a few frames on.
                 self.quiet_until = self.steps + QUEUE_QUIET;
             }
+            self.laps.lap(S_LIST);
         }
         self.lp.refresh_tables(run);
         let bind = run.pipeline.bind();
         run.queue
             .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
+        self.laps.lap(S_REFRESH);
         // Nothing waits on the GPU in a sliced step: the submits read back are those whose
         // results are mapped by now, and a new one goes out while fewer than IN_FLIGHT are
         // unread. A step without a slice (the pre-roll) waits for its oldest submit once
@@ -3329,6 +3598,10 @@ impl BakeQueue {
             IN_FLIGHT
         };
         let _ = run.device.poll(wgpu::PollType::Poll);
+        self.laps.lap(S_POLL);
+        // The sink's own time, the blocks' placement, taken out of the collect's and the
+        // submit's laps.
+        let place_ms = std::cell::Cell::new(0.0f64);
         let queue = run.queue;
         let stale = &mut self.stale;
         let fades = &mut self.fades;
@@ -3341,7 +3614,7 @@ impl BakeQueue {
         let ages_full = &mut self.ages_full;
         let steps = self.steps;
         let record = record_words(self.settings.cell);
-        let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
+        let mut place = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let coarse = job_coarse.remove(&coord.0).unwrap_or(false);
             let dug = dig_open.remove(&coord.0);
             if stale.remove(&coord.0) || !run.gpu.is_mirrored(coord) {
@@ -3408,6 +3681,11 @@ impl BakeQueue {
                 None => store.put(queue, coord, first, block),
             }
         };
+        let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
+            let t = stopwatch();
+            place(store, coord, first, block);
+            place_ms.set(place_ms.get() + seconds_since(t) * 1e3);
+        };
         let settings = BakeSettings {
             round: if view.samples.is_some() {
                 UNSLICED_ROUND
@@ -3419,10 +3697,23 @@ impl BakeQueue {
         let mut d = self
             .lp
             .collect(run, store, &settings, &mut sink, &mut |_| {}, IN_FLIGHT);
+        // Each lap's placement moves from its stage to the placement's.
+        let mut placed = 0.0;
+        let mut lap = |laps: &mut Laps, stage: usize| {
+            laps.lap(stage);
+            let p = place_ms.get() - placed;
+            placed = place_ms.get();
+            // The placement ran inside the lap; the clamp only absorbs rounding.
+            let p = p.min(laps.ms[stage]);
+            laps.ms[stage] -= p;
+            laps.ms[S_PLACE] += p;
+        };
+        lap(&mut self.laps, S_COLLECT);
         let sent = self.lp.in_flight() < IN_FLIGHT
             && self
                 .lp
                 .dispatch(run, bind, store, &settings, cap, &mut sink, &mut |_| {});
+        lap(&mut self.laps, S_SUBMIT);
         let submitted = if sent { self.lp.last_samples } else { 0 };
         if unread < IN_FLIGHT {
             // With nothing left to send, the pre-roll waits out what is in flight.
@@ -3435,6 +3726,7 @@ impl BakeQueue {
             if let Some(ms) = w.gpu_ms {
                 *d.gpu_ms.get_or_insert(0.0) += ms;
             }
+            lap(&mut self.laps, S_COLLECT);
         }
         // The slice is sized by the GPU's own time for the submits read back, a frame or two
         // late; without timestamps it stays at the first guess, a fixed count.
@@ -3471,6 +3763,12 @@ impl BakeQueue {
         self.stats.coarse = store.coarse.len() as u64;
         self.stats.digs = (self.digs.len() + self.dig_open.len()) as u64;
         self.stats.reach = self.reach.len() as u64;
+        self.laps.lap(S_FADES);
+        self.stats.stages = StepStages {
+            ms: self.laps.ms,
+            total_ms: stopwatch().duration_since(t0).as_secs_f64() * 1e3,
+            opened: opened_step,
+        };
         Ok(self.stats)
     }
 
@@ -3842,15 +4140,17 @@ impl BakeQueue {
                 }
             })
             .collect();
+        self.laps.lap(S_CANDIDATES);
         let census = self.census_every_opening || std::mem::take(&mut self.census_due);
         if census {
             let t = stopwatch();
             self.entered
                 .retain(|c, _| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c)));
-            self.view_census(eye, view, &cands);
+            self.view_census(eye, view, &cands, gpu.light_radius());
             self.view_reach_census(run, eye, view, &cands);
             self.stats.census_ms = seconds_since(t) * 1e3;
         }
+        self.laps.lap(S_CENSUS);
         self.stats.depth = cands.len() as u64;
         self.counted_idle = in_job.is_empty();
         let steps = self.steps;
@@ -3860,6 +4160,7 @@ impl BakeQueue {
             .filter(|k| k.class == 0 && !recent(self.blocked.get(&k.c)))
             .count() as u64;
         cands.sort_unstable_by_key(|k| (k.lead, k.key, k.tie, k.c));
+        self.laps.lap(S_SORT);
         let checks = if view.samples.is_some() {
             QUEUE_CHECKS_UNSLICED
         } else {
@@ -3935,6 +4236,7 @@ impl BakeQueue {
                 ready.push((class, c));
                 continue;
             }
+            self.laps.lap(S_CHECKS);
             let listed = self.list(run.world, coord, &classes);
             match self.push_listed(store, eye, class, coord, listed) {
                 Ok(samples) => left += samples,
@@ -3947,7 +4249,9 @@ impl BakeQueue {
                 }
                 Err(e) => return Err(e),
             }
+            self.laps.lap(S_LIST);
         }
+        self.laps.lap(S_CHECKS);
         if !ready.is_empty() {
             let threads = std::thread::available_parallelism()
                 .map_or(4, std::num::NonZero::get)
@@ -4108,8 +4412,9 @@ impl BakeQueue {
 
     /// The view's counters over the candidates of an opening ([`QueueStats::view_waiting`] and
     /// the rest), and the chunks entering the view cone or the near shell with no full block.
-    fn view_census(&mut self, eye: [i32; 3], view: &QueueView<'_>, cands: &[Cand]) {
+    fn view_census(&mut self, eye: [i32; 3], view: &QueueView<'_>, cands: &[Cand], lr: i32) {
         let mut waiting = [[0u64; 2]; 3];
+        let mut reach_bound = 0u64;
         let mut census = [[[0u32; 4]; 4]; 2];
         let mut cone_only = 0u64;
         let mut lens: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
@@ -4138,6 +4443,9 @@ impl BakeQueue {
             waiting[class][usize::from(coarse)] += 1;
             census[usize::from(coarse)][distance_band(len)][angle_band(a)] += 1;
             if class == VIEW_IN {
+                if view.full_radius.is_some_and(|r| len + lr as f32 > r as f32) {
+                    reach_bound += 1;
+                }
                 lens[usize::from(coarse)].push(len);
                 if view
                     .frustum
@@ -4154,6 +4462,7 @@ impl BakeQueue {
             }
         }
         self.stats.view_waiting = waiting;
+        self.stats.reach_bound = reach_bound;
         self.stats.weight_census = census;
         self.stats.cone_only = cone_only;
         self.stats.view_median = lens.map(|mut l| {
@@ -4382,6 +4691,65 @@ mod tests {
     /// Three neighbouring places freed in any order merge into one, which a place of their sum
     /// takes back at its first word; the pool's end is untouched while a block lies past them,
     /// and moves back over them once that block is freed too.
+    /// Seconds of 1.4e7 samples over 190 chunks, 1.5e7 over 12 and 1.5e7 over 35 read B, A and
+    /// mixed; 20 tagged steps, 12 in B and 8 in A, count 12 and 8 and take each regime's p50
+    /// from its own steps alone.
+    #[test]
+    fn the_regime_line_reads_fixed_seconds() {
+        assert_eq!(Regime::of(14_000_000, 190), Some(Regime::KeepingUp));
+        assert_eq!(Regime::of(15_000_000, 12), Some(Regime::Starved));
+        assert_eq!(Regime::of(15_000_000, 35), Some(Regime::Mixed));
+        assert_eq!(Regime::of(0, 0), None);
+        assert_eq!(Regime::of(1_000, 0), Some(Regime::Starved));
+        let step = |total_ms: f64, opened: bool| StepStages {
+            total_ms,
+            opened,
+            ..StepStages::default()
+        };
+        let mut t = StepTally::default();
+        // B's 12 steps: 9 to 9.11 ms, all opening but the last two at 1 ms.
+        for i in 0..12 {
+            let open = i < 10;
+            t.push(step(
+                if open { 9.0 + f64::from(i) * 0.01 } else { 1.0 },
+                open,
+            ));
+        }
+        t.tag(Some(Regime::KeepingUp));
+        // A's 8 steps: 0.5 to 0.57 ms, none opening.
+        for i in 0..8 {
+            t.push(step(0.5 + f64::from(i) * 0.01, false));
+        }
+        t.tag(Some(Regime::Starved));
+        assert_eq!(t.count(Some(Regime::KeepingUp)), 12);
+        assert_eq!(t.count(Some(Regime::Starved)), 8);
+        assert_eq!(t.count(Some(Regime::Mixed)), 0);
+        // Nearest rank: the 6th of B's 12 sorted (1, 1, 9.00 .. 9.09) is 9.03; of A's 8 the
+        // 4th, 0.53.
+        assert!((t.percentile(Some(Regime::KeepingUp), None, 50.0) - 9.03).abs() < 1e-9);
+        assert!((t.percentile(Some(Regime::Starved), None, 50.0) - 0.53).abs() < 1e-9);
+        assert!((t.percentile(Some(Regime::KeepingUp), Some(false), 50.0) - 1.0).abs() < 1e-9);
+        let lines = t.summary();
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(
+            lines[0].starts_with("queue step A: 8 steps, p50 0.530 ms,"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[1].starts_with(
+                "queue step B: 12 steps, p50 9.030 ms, p99 9.090 ms, opened 10 (0.833), open p50 9.040 ms, not p50 1.000 ms;"
+            ),
+            "{}",
+            lines[1]
+        );
+        assert!(
+            lines[2].starts_with("queue step pooled: 20 steps,"),
+            "{}",
+            lines[2]
+        );
+    }
+
     #[test]
     fn freed_neighbours_merge_and_their_sum_reuses_them() {
         for order in [[0, 1, 2], [2, 0, 1], [1, 2, 0], [2, 1, 0]] {

@@ -73,6 +73,8 @@ struct Q {
     counts: BakeSettings,
     /// The steps' sample count: `None` is a frame's sliced step, `Some` the pre-roll's.
     samples: Option<u64>,
+    /// The last step's `bake_queue_step` call, timed from outside, in ms.
+    last_step_ms: f64,
 }
 
 /// How a rig's queue and mirror start.
@@ -163,6 +165,7 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
         camera: camera_at(setup.eye),
         counts: setup.counts.clone(),
         samples: None,
+        last_step_ms: 0.0,
     })
 }
 
@@ -190,12 +193,24 @@ impl Q {
                 bake::view_half_angle(self.camera.vfov, w as f32 / h as f32)
             },
             frustum: None,
+            full_radius: None,
         };
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the stage test times the step from outside"
+        )]
+        let t = std::time::Instant::now();
         let st = self
             .frame
             .bake_queue_step(&self.device, &self.queue, &mut self.gpu, &self.world, &view)
             .expect("the queue runs")
             .expect("the queue's step");
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the stage test times the step from outside"
+        )]
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        self.last_step_ms = ms;
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("device poll");
@@ -1374,4 +1389,81 @@ fn a_full_pool_keeps_the_queue_alive() {
         q.frame.store().block(c1).is_some(),
         "chunk 1 bakes once the dig's old place is free"
     );
+}
+
+/// 20 steps of the row with the coarse pass on from the start, timed from outside each
+/// `bake_queue_step` call: each step's stages and opening flag, its own time, and the queue's
+/// openings before and after.
+fn staged_steps() -> Option<(Vec<(bake::StepStages, f64)>, u64)> {
+    let mut q = rig(
+        row(&[0, 1, 2, 3, 4, 5]),
+        &Setup {
+            coarse: COARSE,
+            ..Setup::at(ROW_EYE)
+        },
+    )?;
+    let before = q.q().stats().openings;
+    let mut steps = Vec::new();
+    for _ in 0..20 {
+        let st = q.step();
+        steps.push((st.stages, q.last_step_ms));
+    }
+    let openings = q.q().stats().openings - before;
+    Some((steps, openings))
+}
+
+/// Over 20 steps the stages' sum is within 5 % of the steps' own time (each call timed from
+/// outside), and no stage reads negative.
+#[test]
+fn the_step_s_stages_sum_to_its_time() {
+    let Some((steps, _)) = staged_steps() else {
+        return;
+    };
+    let sum: f64 = steps.iter().map(|(s, _)| s.sum()).sum();
+    let own: f64 = steps.iter().map(|(_, ms)| ms).sum();
+    println!("stages {sum:.4} ms, own {own:.4} ms over 20 steps");
+    for (s, _) in &steps {
+        for (k, ms) in s.ms.iter().enumerate() {
+            assert!(*ms >= 0.0, "{} reads {ms}", bake::STEP_STAGES[k]);
+        }
+    }
+    assert!(
+        (sum - own).abs() <= 0.05 * own,
+        "stages {sum} ms against the steps' {own} ms"
+    );
+}
+
+/// Over 20 steps of which some open and some do not, the opening and other counts sum to 20
+/// and match the steps whose opening ran (the queue's count of openings), and each side's
+/// stage sum is within 5 % of its steps' own time.
+#[test]
+fn the_stages_split_by_opening() {
+    let Some((steps, openings)) = staged_steps() else {
+        return;
+    };
+    let (open, not): (Vec<_>, Vec<_>) = steps.iter().partition(|(s, _)| s.opened);
+    println!(
+        "{} opened, {} not, {openings} openings",
+        open.len(),
+        not.len()
+    );
+    assert!(
+        !open.is_empty() && !not.is_empty(),
+        "the rig has both kinds of step"
+    );
+    assert_eq!(open.len() + not.len(), 20);
+    assert_eq!(open.len() as u64, openings);
+    for (what, side) in [("opening", &open), ("other", &not)] {
+        let sum: f64 = side.iter().map(|(s, _)| s.sum()).sum();
+        let own: f64 = side.iter().map(|(_, ms)| ms).sum();
+        println!("{what}: stages {sum:.4} ms, own {own:.4} ms");
+        assert!(
+            (sum - own).abs() <= 0.05 * own,
+            "{what}: stages {sum} ms against the steps' {own} ms"
+        );
+        assert!(
+            side.iter().all(|(s, _)| s.opened == (what == "opening")),
+            "{what}: the flag"
+        );
+    }
 }

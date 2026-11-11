@@ -388,12 +388,13 @@ pub struct HudStats {
 }
 
 /// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
-/// their light, and of them those with a coarse block, the jobs withdrawn since the start, then
-/// `mode` (the order and the withdrawal in words) after a semicolon when it is not empty:
-/// `in view: 12 waiting (5 coarse), withdrawn 3; order distance; withdraw on`.
-pub fn queue_row(st: &vxe_render::QueueStats, mode: &str) -> String {
+/// their light, and of them those with a coarse block, the jobs withdrawn since the start, the
+/// queue step's CPU p50 over the last second, then `mode` (the order and the withdrawal in
+/// words) after a semicolon when it is not empty:
+/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms; order distance; withdraw on`.
+pub fn queue_row(st: &vxe_render::QueueStats, step_ms: f64, mode: &str) -> String {
     let mut row = String::new();
-    write_queue_row(&mut row, st);
+    write_queue_row(&mut row, st, step_ms);
     if !mode.is_empty() {
         row.push_str("; ");
         row.push_str(mode);
@@ -402,12 +403,12 @@ pub fn queue_row(st: &vxe_render::QueueStats, mode: &str) -> String {
 }
 
 /// Appends [`queue_row`]'s text before its mode to `out`:
-/// `in view: 12 waiting (5 coarse), withdrawn 3`.
-pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats) {
+/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms`.
+pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, step_ms: f64) {
     let [blank, coarse] = st.view_waiting[vxe_render::bake::VIEW_IN];
     let _ = write!(
         out,
-        "in view: {} waiting ({coarse} coarse), withdrawn {}",
+        "in view: {} waiting ({coarse} coarse), withdrawn {}, step {step_ms:.2} ms",
         blank + coarse,
         st.withdrawn
     );
@@ -1177,18 +1178,18 @@ mod tests {
         st.view_waiting[vxe_render::bake::VIEW_IN] = [7, 5];
         st.view_waiting[vxe_render::bake::VIEW_OUT] = [40, 9];
         assert_eq!(
-            queue_row(&st, ""),
-            "in view: 12 waiting (5 coarse), withdrawn 0"
+            queue_row(&st, 1.254, ""),
+            "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms"
         );
         let (mut out, mut colours) = (String::new(), Vec::new());
         let mut s = HudStats::fixed();
         s.write_rows(&mut out, &mut colours);
         assert!(!out.contains("in view:"), "{out}");
-        s.queue = Some(queue_row(&st, ""));
+        s.queue = Some(queue_row(&st, 1.254, ""));
         s.write_rows(&mut out, &mut colours);
         assert!(
             out.lines()
-                .any(|l| l == "in view: 12 waiting (5 coarse), withdrawn 0"),
+                .any(|l| l == "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms"),
             "{out}"
         );
         assert_eq!(out.lines().count(), colours.len());

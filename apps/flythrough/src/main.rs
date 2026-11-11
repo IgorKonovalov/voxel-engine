@@ -411,7 +411,8 @@ struct Args {
     pose: Option<flythrough::Pose>,
     autopilot: bool,
     headless: bool,
-    /// `--adapter SUBSTRING`: a headless run takes the first adapter whose name contains it.
+    /// `--adapter SUBSTRING`: the run takes the first adapter whose name contains it (in a
+    /// window, of those that present to it).
     adapter: Option<String>,
     walk: bool,
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
@@ -3251,9 +3252,89 @@ struct QueueRun {
     /// The CPU ms of each `bake_queue_step` since the last line, and of the last one.
     step_cpu: Vec<f64>,
     last_step_cpu: f64,
+    /// The steps' stages since the last line, and over the run by the regime of their second
+    /// (the `frames:` summary's `queue step` lines).
+    line_stages: Vec<vxe_render::bake::StepStages>,
+    tally: vxe_render::bake::StepTally,
+    /// The jobs and the openings at the last line, and the last line's step p50 (the HUD's).
+    line_openings: u64,
+    line_step_p50: f64,
     /// The samples by view class and passed at the last line.
     line_view: [u64; 3],
     line_passed: u64,
+}
+
+/// The window's shell: `size`, the cursor locked, `pace`, and `--adapter`'s substring.
+fn shell_config(args: &Args, size: [u32; 2], pace: vxe_app::Pacing) -> ShellConfig {
+    ShellConfig {
+        title: "flythrough".to_owned(),
+        size,
+        lock_cursor: true,
+        pacing: pace,
+        adapter: args.adapter.clone(),
+        ..ShellConfig::default()
+    }
+}
+
+/// The per-second `bake queue step:` line: the second's regime from its samples a baked chunk
+/// (its steps tagged with it in the run's tally), the bake's GPU ms a second, the steps that
+/// opened, the step's p50 on opening and other steps, the in-view waiting chunks whose reach
+/// crosses the full radius, and each stage's mean ms a step. Reads the second's counters from
+/// `q`'s last line and takes its steps.
+fn queue_step_line(
+    q: &mut QueueRun,
+    st: &vxe_render::QueueStats,
+    at_s: f64,
+    secs: f64,
+    bake_ms_per_s: f64,
+) -> String {
+    use std::fmt::Write as _;
+    use vxe_render::bake::{Regime, STEP_STAGES, VIEW_IN};
+    let samples = st.total_samples - q.line_samples;
+    let baked = st.baked - q.line_baked;
+    let regime = Regime::of(samples, baked);
+    q.tally.tag(regime);
+    let steps = std::mem::take(&mut q.line_stages);
+    let p50 = |opened: Option<bool>| {
+        let mut v: Vec<f64> = steps
+            .iter()
+            .filter(|s| opened.is_none_or(|o| s.opened == o))
+            .map(|s| s.total_ms)
+            .collect();
+        if v.is_empty() {
+            0.0
+        } else {
+            percentile(&mut v, 50.0)
+        }
+    };
+    q.line_step_p50 = p50(None);
+    let opened = steps.iter().filter(|s| s.opened).count();
+    let [blank, coarse] = st.view_waiting[VIEW_IN];
+    let mut line = format!(
+        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} of {} in view waiting; stage means ms:",
+        regime.map_or("idle", Regime::name),
+        if baked > 0 {
+            format!("{:.3e}", samples as f64 / baked as f64)
+        } else {
+            "n/a".to_owned()
+        },
+        st.jobs,
+        st.coarse,
+        steps.len(),
+        st.openings - q.line_openings,
+        q.line_step_p50,
+        p50(Some(true)),
+        p50(Some(false)),
+        st.reach_bound,
+        blank + coarse,
+    );
+    q.line_openings = st.openings;
+    let n = steps.len().max(1) as f64;
+    for (k, stage) in STEP_STAGES.iter().enumerate() {
+        let mean = steps.iter().map(|s| s.ms[k]).sum::<f64>() / n;
+        let _ = write!(line, " {stage} {mean:.3}");
+    }
+    line
 }
 
 /// A dig in the live queue, from the step that first read its box until its rings are baked:
@@ -3400,7 +3481,11 @@ impl Run {
             });
         let queue = s.queue.get_or_insert_with(String::new);
         queue.clear();
-        hud::write_queue_row(queue, &self.queue.stats.unwrap_or_default());
+        hud::write_queue_row(
+            queue,
+            &self.queue.stats.unwrap_or_default(),
+            self.queue.line_step_p50,
+        );
         queue.push_str("; ");
         queue.push_str(words);
         let look = &self.look;
@@ -4071,6 +4156,7 @@ impl Run {
                 hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
                 half_angle,
                 frustum: Some(frustum),
+                full_radius: stream.map(|s| s.rule.r_full),
             };
             if let Some(Err(e)) =
                 frame.bake_queue_step(&gpu.device, &gpu.queue, mirror, &self.world, &view)
@@ -4167,6 +4253,7 @@ impl Run {
             hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
             half_angle,
             frustum: Some(frustum),
+            full_radius: stream.map(|s| s.rule.r_full),
         };
         let t_step = ms_since(self.start);
         let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
@@ -4206,6 +4293,8 @@ impl Run {
                 if st.samples > 0 {
                     self.queue.slices.push(st.ms);
                 }
+                self.queue.line_stages.push(st.stages);
+                self.queue.tally.push(st.stages);
                 if let Some(w) = self.queue.dig.as_mut() {
                     w.frames += 1;
                     if let Some(dt) = dt {
@@ -4370,6 +4459,16 @@ impl Run {
                     &needs,
                     &first,
                     &full
+                )
+            );
+            println!(
+                "{}",
+                queue_step_line(
+                    &mut self.queue,
+                    &st,
+                    t / 1e3,
+                    secs,
+                    sl.iter().sum::<f64>() / secs
                 )
             );
             self.queue.line_view = st.view_samples;
@@ -5828,6 +5927,9 @@ impl Drop for Run {
     fn drop(&mut self) {
         self.save();
         self.hud.run.blocking_reads = self.gfx.as_ref().map(Gfx::blocking_reads);
+        for line in self.queue.tally.summary() {
+            println!("frames: {line}");
+        }
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
@@ -6770,9 +6872,6 @@ fn main() {
     let camera = start_camera(&args, spawn);
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
-    if !headless && args.adapter.is_some() {
-        eprintln!("--adapter applies to --headless runs; the window takes the default adapter");
-    }
     let audio = if args.audio {
         Audio::open(
             args.audio_debug,
@@ -6813,13 +6912,7 @@ fn main() {
     let result = if headless {
         run_headless(app, size)
     } else {
-        let config = ShellConfig {
-            title: "flythrough".to_owned(),
-            size,
-            lock_cursor: true,
-            pacing: args_pace,
-            ..ShellConfig::default()
-        };
+        let config = shell_config(&app.args, size, args_pace);
         vxe_app::run(config, app)
             .map_err(|e| e.to_string())
             .and_then(|()| session_outcome(&failure))
@@ -7317,6 +7410,32 @@ mod tests {
         let amd = parse_args_from(argv(&["--headless", "--adapter", "AMD"])).unwrap();
         assert_eq!(amd.adapter.as_deref(), Some("AMD"));
         assert!(parse_args_from(argv(&["--adapter"])).is_err());
+    }
+
+    /// The window's shell carries `--adapter`'s substring, and the selector picks the first
+    /// adapter whose name contains it.
+    #[test]
+    fn the_window_takes_the_adapter_flag() {
+        let args = parse_args_from(argv(&["--adapter", "Radeon"])).unwrap();
+        let config = shell_config(&args, [640, 360], vxe_app::Pacing::Unthrottled);
+        assert_eq!(config.adapter.as_deref(), Some("Radeon"));
+        assert_eq!(config.size, [640, 360]);
+        let none = parse_args_from(argv(&[])).unwrap();
+        assert_eq!(
+            shell_config(&none, [640, 360], vxe_app::Pacing::Unthrottled).adapter,
+            None
+        );
+        let names = [
+            "NVIDIA GeForce RTX 3080 Laptop GPU",
+            "AMD Radeon Graphics (RADV RENOIR)",
+            "llvmpipe (LLVM 19.1.7, 256 bits)",
+            "AMD Radeon Graphics (RADV RENOIR) copy",
+        ]
+        .map(str::to_owned);
+        assert_eq!(vxe_app::pick_adapter(&names, "Radeon"), Some(1));
+        assert_eq!(vxe_app::pick_adapter(&names, "NVIDIA"), Some(0));
+        assert_eq!(vxe_app::pick_adapter(&names, "llvmpipe"), Some(2));
+        assert_eq!(vxe_app::pick_adapter(&names, "Intel"), None);
         let headless = parse_args_from(argv(&["--pad", "on", "--headless"])).unwrap();
         assert!(!headless.wants_pad());
         let pilot = parse_args_from(argv(&["--autopilot"])).unwrap();
@@ -8074,7 +8193,9 @@ mod tests {
             );
             assert_eq!(
                 row,
-                format!("in view: 0 waiting (0 coarse), withdrawn 0; {want}; withdraw on")
+                format!(
+                    "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on"
+                )
             );
         };
         check(
@@ -8168,7 +8289,7 @@ mod tests {
         run.refresh_hud_stats(None);
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
         assert!(
-            row.starts_with("in view: 0 waiting (0 coarse), withdrawn 7; "),
+            row.starts_with("in view: 0 waiting (0 coarse), withdrawn 7, step 0.00 ms; "),
             "{row}"
         );
         let w = |v: &str| parse_args_from(argv(&["--queue-withdraw", v])).map(|a| a.queue_withdraw);
