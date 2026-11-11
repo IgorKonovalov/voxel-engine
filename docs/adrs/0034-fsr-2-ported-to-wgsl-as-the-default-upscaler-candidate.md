@@ -217,3 +217,11 @@ the close records that as a reading, not a budget change. `frame_bytes` on the f
 309 377 468 B against 184 957 040 B at 1080p, 483 147 556 B against 273 897 312 B at 2530 x 1378.
 The Radeon reading is informational by the owner's call; a walk-speed spike there is owed
 separately. Removing our upscaler stays with Plan 0045.
+
+**2026-11-11, Plan 0061's close (v0.48.0): the slow-pan verdict.** At FSR 2 1.5 with ADR-0049's
+read and face weights, the owner panned the hall at 1.1 and 4.5 deg/s: "no edges looks fine and
+smooth", "no artifacts at all"; headless (RTX, loaded) the 1 px pan's `C` is 0.229, against 0.591
+before the read. FSR 2 at 1.5 stays the default. FSR 2 at scale 1 (`--internal-scale 1
+--far-normal 3,9`) is a quality setting ("looks fine, maybe even a bit better"), not a default;
+Plan 0069's profiles take it. The emitter cap (`Fsr2Settings::emitter_cap`), a candidate knob
+since Plan 0056, is removed.

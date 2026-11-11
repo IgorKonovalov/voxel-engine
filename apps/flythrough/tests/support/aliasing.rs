@@ -33,6 +33,12 @@
 //!
 //! **Footprint**: a voxel's width in internal pixels at the centre hit's `t`,
 //! `W / ((tan_l + tan_r) t)`, binned under 2, 2 to 6, over 6 (the far normal's band).
+//!
+//! **The direction map** ([`directions`]): a display pixel's store direction, the entry face
+//! `2 axis + (n[axis] > 0)` of the hit under it with `n` the face normal against the ray from the
+//! eye (temporal.wgsl's `store_face`), `None` on a miss or a hit with no entry face. A pixel is
+//! **at a direction change** ([`changes`]) when a hit within one display pixel (its 3 x 3) holds
+//! another direction. [`Mask::at`] carries it, and [`ByClass`] splits each class by it.
 
 use std::fmt::Write as _;
 
@@ -409,6 +415,9 @@ pub struct Mask {
     pub size: [u32; 2],
     pub class: Vec<Class>,
     pub footprint: Vec<Option<Footprint>>,
+    /// Per pixel, whether it is at a direction change ([`changes`]); empty until
+    /// [`Mask::set_directions`] fills it.
+    pub at: Vec<bool>,
 }
 
 /// The internal pixel under display pixel `x` of `display` pixels over `internal`.
@@ -446,6 +455,18 @@ impl Mask {
             size: display,
             class,
             footprint,
+            at: Vec::new(),
+        }
+    }
+
+    /// Fills [`Mask::at`] from `hits` seen from `eye`, or with another frame's merges it (a
+    /// pixel at a change in either is at one).
+    pub fn set_directions(&mut self, hits: &Hits<'_>, eye: [f32; 3]) {
+        let at = changes(&directions(hits, self.size, eye), self.size);
+        if self.at.is_empty() {
+            self.at = at;
+        } else {
+            self.at.iter_mut().zip(at).for_each(|(a, b)| *a |= b);
         }
     }
 
@@ -461,6 +482,14 @@ impl Mask {
                 *a = *b;
             }
         }
+        if self.at.is_empty() {
+            self.at = other.at.clone();
+        } else if !other.at.is_empty() {
+            self.at
+                .iter_mut()
+                .zip(&other.at)
+                .for_each(|(a, b)| *a |= *b);
+        }
     }
 
     pub fn image(&self) -> Vec<u8> {
@@ -469,11 +498,15 @@ impl Mask {
 }
 
 /// Counts per class and footprint (`None` the fourth column): pixels and a per-pixel figure's
-/// sum.
+/// sum; `at_pixels` and `at_sum` the same over the pixels at a direction change ([`Mask::at`]).
 #[derive(Clone, Debug, Default)]
 pub struct ByClass {
     pub pixels: [[u64; 4]; 6],
     pub sum: [[u64; 4]; 6],
+    pub at_pixels: [[u64; 4]; 6],
+    pub at_sum: [[u64; 4]; 6],
+    /// Whether any pixel came with a direction map, so the table prints the split.
+    pub split: bool,
 }
 
 fn fp_col(f: Option<Footprint>) -> usize {
@@ -492,12 +525,78 @@ impl ByClass {
         self.sum[r][c] += value;
     }
 
+    /// Adds display pixel `i` of `mask` with `value`, split by [`Mask::at`] when it is filled.
+    pub fn add_pixel(&mut self, mask: &Mask, i: usize, value: u64) {
+        let (c, f) = (mask.class[i], mask.footprint[i]);
+        self.add(c, f, value);
+        if let Some(&at) = mask.at.get(i) {
+            self.split = true;
+            if at {
+                let (r, col) = (c as usize, fp_col(f));
+                self.at_pixels[r][col] += 1;
+                self.at_sum[r][col] += value;
+            }
+        }
+    }
+
     pub fn of(mask: &Mask, per_pixel: &[u32]) -> ByClass {
+        Self::of_where(mask, per_pixel, &|_| true)
+    }
+
+    /// [`ByClass::of`] over the pixels `keep` names.
+    pub fn of_where(mask: &Mask, per_pixel: &[u32], keep: &dyn Fn(usize) -> bool) -> ByClass {
         let mut b = ByClass::default();
-        for ((c, f), v) in mask.class.iter().zip(&mask.footprint).zip(per_pixel) {
-            b.add(*c, *f, u64::from(*v));
+        for (i, v) in per_pixel.iter().enumerate() {
+            if keep(i) {
+                b.add_pixel(mask, i, u64::from(*v));
+            }
         }
         b
+    }
+
+    /// The sum over the pixels at a direction change, all classes.
+    pub fn at_total(&self) -> u64 {
+        self.at_sum.iter().flatten().sum()
+    }
+
+    /// The largest row of the split table by sum: each class's pixels inside one direction, and
+    /// all pixels at a direction change as one row. Its name and share of the total.
+    pub fn largest_split_row(&self) -> (String, f64) {
+        let total = self.total().max(1) as f64;
+        let mut rows: Vec<(String, u64)> = Class::ALL
+            .iter()
+            .map(|&c| {
+                let r = c as usize;
+                let inside = self.sum[r].iter().sum::<u64>() - self.at_sum[r].iter().sum::<u64>();
+                (format!("{} inside one direction", c.name()), inside)
+            })
+            .collect();
+        rows.push((
+            "at a direction change (any class)".to_owned(),
+            self.at_total(),
+        ));
+        let (name, v) = rows.into_iter().max_by_key(|r| r.1).expect("rows");
+        (name, v as f64 / total)
+    }
+
+    /// The largest class by sum, with interior split into at a direction change and inside one
+    /// direction, its name and share.
+    pub fn largest_interior_split(&self) -> (String, f64) {
+        let total = self.total().max(1) as f64;
+        let mut rows: Vec<(String, u64)> = Vec::new();
+        for c in Class::ALL {
+            let r = c as usize;
+            let all: u64 = self.sum[r].iter().sum();
+            if c == Class::Interior {
+                let at: u64 = self.at_sum[r].iter().sum();
+                rows.push(("interior at a direction change".to_owned(), at));
+                rows.push(("interior inside one direction".to_owned(), all - at));
+            } else {
+                rows.push((c.name().to_owned(), all));
+            }
+        }
+        let (name, v) = rows.into_iter().max_by_key(|r| r.1).expect("rows");
+        (name, v as f64 / total)
     }
 
     pub fn total(&self) -> u64 {
@@ -534,6 +633,40 @@ impl ByClass {
                 s,
                 " {sum} ({:.1} %) / {px} px |",
                 sum as f64 / total * 100.0
+            );
+            if self.split {
+                for (label, at) in [
+                    ("at a direction change", true),
+                    ("inside one direction", false),
+                ] {
+                    let _ = write!(s, "| {} {label} |", c.name());
+                    let cell = |col: usize| {
+                        if at {
+                            (self.at_sum[r][col], self.at_pixels[r][col])
+                        } else {
+                            (
+                                self.sum[r][col] - self.at_sum[r][col],
+                                self.pixels[r][col] - self.at_pixels[r][col],
+                            )
+                        }
+                    };
+                    let (mut ts, mut tp) = (0, 0);
+                    for col in 0..4 {
+                        let (v, p) = cell(col);
+                        ts += v;
+                        tp += p;
+                        let _ = write!(s, " {v} ({:.1} %) / {p} px |", v as f64 / total * 100.0);
+                    }
+                    let _ = writeln!(s, " {ts} ({:.1} %) / {tp} px |", ts as f64 / total * 100.0);
+                }
+            }
+        }
+        if self.split {
+            let (ts, tp): (u64, u64) = (self.at_total(), self.at_pixels.iter().flatten().sum());
+            let _ = writeln!(
+                s,
+                "| at a direction change, all classes | | | | | {ts} ({:.1} %) / {tp} px |",
+                ts as f64 / total * 100.0
             );
         }
         s
@@ -599,7 +732,7 @@ pub fn crawl(
             if let Some((mask, by, edge)) = by.as_mut() {
                 let k = (y * w + xs as u32) as usize;
                 let c = mask.class[k];
-                by.add(c, mask.footprint[k], u64::from(d > JUMP));
+                by.add_pixel(mask, k, u64::from(d > JUMP));
                 if matches!(c, Class::Crease | Class::Silhouette) {
                     edge.add(d);
                 }
@@ -866,6 +999,171 @@ impl Rings {
                 p_edge_z / p_edge_not.max(1e-9)
             );
         }
+        s
+    }
+}
+
+// ---- The direction map ----
+
+/// Per display pixel, the store direction of the hit under it (as [`Mask::of`] maps it) seen
+/// from `eye`: `2 axis + (n[axis] > 0)`, `n` the entry face's normal, `-sign(p - eye)` on the
+/// axis (temporal.wgsl's `store_face`). `None` on a miss or a hit with no entry face.
+pub fn directions(hits: &Hits<'_>, display: [u32; 2], eye: [f32; 3]) -> Vec<Option<u8>> {
+    let [w, h] = display;
+    let [iw, ih] = hits.size;
+    let mut out = Vec::with_capacity((w * h) as usize);
+    for y in 0..h {
+        let iy = under(y, h, ih) as u32;
+        for x in 0..w {
+            let ix = under(x, w, iw) as u32;
+            let i = (iy * iw + ix) as usize;
+            let (p, info) = (hits.pos[i], hits.info[i]);
+            let axis = i32::from((info[3] >> 3) & 3) - 1;
+            out.push(if is_hit(info) && p[3] < 1e30 && axis >= 0 {
+                let a = axis as usize;
+                // The ray runs along `p - eye`; the face's normal points against it.
+                let n_positive = p[a] < eye[a];
+                Some(2 * a as u8 + u8::from(n_positive))
+            } else {
+                None
+            });
+        }
+    }
+    out
+}
+
+/// Per display pixel, whether a hit within one pixel (its 3 x 3) holds another direction than
+/// its own. A miss is at no change, and a missing neighbour makes none.
+pub fn changes(dirs: &[Option<u8>], display: [u32; 2]) -> Vec<bool> {
+    let [w, h] = display;
+    let at = |x: i32, y: i32| -> Option<u8> {
+        if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+            return None;
+        }
+        dirs[(y as u32 * w + x as u32) as usize]
+    };
+    let mut out = Vec::with_capacity(dirs.len());
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let Some(d) = at(x, y) else {
+                out.push(false);
+                continue;
+            };
+            out.push(
+                (-1..=1).any(|dy| (-1..=1).any(|dx| at(x + dx, y + dy).is_some_and(|n| n != d))),
+            );
+        }
+    }
+    out
+}
+
+/// The direction map's image: one colour a direction, misses black.
+pub fn direction_image(dirs: &[Option<u8>]) -> Vec<u8> {
+    const COLOURS: [[u8; 4]; 6] = [
+        [200, 60, 60, 255],
+        [255, 150, 150, 255],
+        [60, 160, 60, 255],
+        [150, 255, 150, 255],
+        [60, 60, 200, 255],
+        [150, 150, 255, 255],
+    ];
+    dirs.iter()
+        .flat_map(|d| d.map_or([0, 0, 0, 255], |d| COLOURS[usize::from(d)]))
+        .collect()
+}
+
+/// The direction map's edge read on a crop `[x, y, w, h]` of an rgba8 image `w` wide: image-edge
+/// pixels (a horizontal or vertical neighbour's luma over [`RING_EDGE`] levels apart, as
+/// [`Rings`]) at a direction change against elsewhere, per `t` bin of [`RING_BIN`] voxels
+/// (10 m), and beyond `t_from`.
+#[derive(Clone, Debug, Default)]
+pub struct DirEdges {
+    /// Per bin: (edges, edges at a change, hit pixels, hit pixels at a change).
+    pub by_t: Vec<[u64; 4]>,
+    /// The same over every pixel with `t >= t_from`.
+    pub beyond: [u64; 4],
+    pub t_from: f32,
+}
+
+/// `P(edge | at a change) / P(edge | elsewhere)` of a bin's counts.
+pub fn edge_ratio(b: [u64; 4]) -> f64 {
+    let at = b[1] as f64 / b[3].max(1) as f64;
+    let not = (b[0] - b[1]) as f64 / (b[2] - b[3]).max(1) as f64;
+    at / not.max(1e-9)
+}
+
+impl DirEdges {
+    pub fn read(
+        rgba: &[u8],
+        dirs: &[Option<u8>],
+        at: &[bool],
+        t: &[Option<(i32, f32)>],
+        w: u32,
+        c: [u32; 4],
+        t_from: f32,
+    ) -> DirEdges {
+        let y8 = |x: u32, y: u32| luma8(&rgba[((y * w + x) * 4) as usize..]);
+        let mut r = DirEdges {
+            t_from,
+            ..DirEdges::default()
+        };
+        for py in c[1]..(c[1] + c[3]).saturating_sub(1) {
+            for px in c[0]..(c[0] + c[2]).saturating_sub(1) {
+                let i = (py * w + px) as usize;
+                let (Some(_), Some((_, ti))) = (dirs[i], t[i]) else {
+                    continue;
+                };
+                let v = y8(px, py);
+                let edge = (y8(px + 1, py) - v).abs() > RING_EDGE
+                    || (y8(px, py + 1) - v).abs() > RING_EDGE;
+                let bin = (ti / RING_BIN) as usize;
+                if r.by_t.len() <= bin {
+                    r.by_t.resize(bin + 1, [0; 4]);
+                }
+                let add = |b: &mut [u64; 4]| {
+                    b[2] += 1;
+                    b[3] += u64::from(at[i]);
+                    b[0] += u64::from(edge);
+                    b[1] += u64::from(edge && at[i]);
+                };
+                add(&mut r.by_t[bin]);
+                if ti >= t_from {
+                    add(&mut r.beyond);
+                }
+            }
+        }
+        r
+    }
+
+    pub fn lines(&self, what: &str) -> String {
+        let mut s = String::new();
+        let line = |s: &mut String, label: String, b: [u64; 4]| {
+            let _ = writeln!(
+                s,
+                "dir edges {what} {label}: {} px, {} at a change; edges {} ({} at a change); P(edge | change) {:.3}, P(edge | none) {:.3}, ratio {:.2}",
+                b[2],
+                b[3],
+                b[0],
+                b[1],
+                b[1] as f64 / b[3].max(1) as f64,
+                (b[0] - b[1]) as f64 / (b[2] - b[3]).max(1) as f64,
+                edge_ratio(b)
+            );
+        };
+        for (k, b) in self.by_t.iter().enumerate() {
+            if b[2] > 0 {
+                line(
+                    &mut s,
+                    format!("t {}..{}", k as f32 * RING_BIN, (k + 1) as f32 * RING_BIN),
+                    *b,
+                );
+            }
+        }
+        line(
+            &mut s,
+            format!("t >= {:.1} (the band's start)", self.t_from),
+            self.beyond,
+        );
         s
     }
 }

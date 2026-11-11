@@ -285,6 +285,8 @@ fn the_tester_filter_leaves_movement_look_help_and_esc() {
         KeyCode::KeyG,
         KeyCode::KeyP,
         KeyCode::F9,
+        KeyCode::Comma,
+        KeyCode::Semicolon,
     ] {
         assert_eq!(tester_action(TesterInput::Key(k)), None, "{k:?}");
     }

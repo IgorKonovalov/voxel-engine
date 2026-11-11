@@ -1,7 +1,7 @@
 # ADR-0042: The far shading normal blends from the face normal to the 27-count gradient by the voxel's size on screen
 
 > **Status:** accepted (2026-11-03, at Plan 0055's close). The mechanism is built and on by default;
-> the setting `[2, 6]` is the owner's provisional pick, reopened after Plan 0051
+> the setting `[2, 6]` was the owner's provisional pick; see Outcome (2026-11-11, Plan 0061): it stays
 > **Date:** 2026-11-03
 > **Related plan(s):** [Plan 0055](../plans/done/0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md)
 > (Phase 3's spike and Phase 4's owner answers are the evidence; the readings are in
@@ -91,3 +91,14 @@ GPU frame, which is why it is opt-in, and the owner has priced it out as the def
 The owner's word for it up close is plastic. It remains a diagnostic look. At the hall shot `[2, 6]`
 reads about the same; the two differ only where voxels span over 2 pixels, and from 6 pixels up
 the blend is the face normal.
+
+## Outcome
+
+**2026-11-11, Plan 0061's close (v0.48.0): `[2, 6]` stays the default, now under the baked store
+read by the far normal (ADR-0049).** After Plan 0059 the store was read by the face's direction,
+so the far normal reached only the lamp and the light filters' weights, and the bands came back
+(Plan 0061 Phase 1). ADR-0049 brings the far normal back to the light. In that window the owner
+picked `[2, 6]` over `[1, 2]`, which Plan 0056 had picked under the table's light and which never
+landed. `[2, 6]` costs about 1 ms more in the hit pass than `[1, 2]` on the RTX and about 6 ms more
+on the RADV RENOIR at the hall (Plan 0061 Phase 2's frame rows). FSR 2 at scale 1 takes the same
+voxels at `--far-normal 3,9`.

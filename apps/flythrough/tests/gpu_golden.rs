@@ -1371,7 +1371,7 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 /// The showcase's `hall` shot at the golden's size after `frames` frames at the
 /// fly-through's defaults (indirect light on at the default probe spacing, FSR 2 at its default
 /// scale 1.5 with sharpening 0.5, the lighting at its default resolution,
-/// `LookPreset::DEFAULT`), the lamp off, the shot's exposure and the showcase's light radius,
+/// `LookPreset::DEFAULT` with its store read and filter weights), the lamp off, the shot's exposure and the showcase's light radius,
 /// under `table`.
 fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
@@ -1427,6 +1427,8 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
         lamp: false,
         lamp_bounce: true,
         exposure: vxe_render::Exposure::Manual(shot.exposure_milli as f32 / 1000.0),
+        store_read: flythrough::DEFAULT_STORE_READ,
+        light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
         ..vxe_render::Lighting::default()
     });
     frame.set_look(vxe_render::LookParams {

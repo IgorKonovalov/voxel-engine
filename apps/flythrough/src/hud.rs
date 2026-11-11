@@ -1466,6 +1466,10 @@ pub enum ModeKey {
     Pulse,
     /// `Q`: the exposure: auto with the start's preset, auto symmetric, manual.
     Exposure,
+    /// `Comma`: the store read by face or by the shading normal (ADR-0049).
+    StoreRead,
+    /// `Semicolon`: the light's filters weigh by the shading normal or the face normal.
+    LightWeights,
 }
 
 /// The auto exposure's preset, as `--adaptation` names it.
@@ -1643,6 +1647,18 @@ impl Modes {
                     LightingResolution::Half => LightingResolution::Full,
                 }
             }
+            ModeKey::StoreRead => {
+                l.store_read = match l.store_read {
+                    vxe_render::StoreRead::Face => vxe_render::StoreRead::Normal,
+                    vxe_render::StoreRead::Normal => vxe_render::StoreRead::Face,
+                }
+            }
+            ModeKey::LightWeights => {
+                l.light_weights = match l.light_weights {
+                    vxe_render::LightWeights::Normal => vxe_render::LightWeights::Face,
+                    vxe_render::LightWeights::Face => vxe_render::LightWeights::Normal,
+                }
+            }
             ModeKey::Lamp => l.lamp = !l.lamp,
             ModeKey::LampBounce => l.lamp_bounce = !l.lamp_bounce,
             ModeKey::Pulse => self.pulse = !self.pulse,
@@ -1703,7 +1719,19 @@ impl Modes {
         };
     }
 
-    /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
+    /// The light's resolution and its filters in words, as the aliasing row names them:
+    /// `store read face, weights normal, lighting half`.
+    pub fn write_filter_words(&self, out: &mut String) {
+        let _ = write!(
+            out,
+            "store read {}, weights {}, lighting {}",
+            self.lighting.store_read.name(),
+            self.lighting.light_weights.name(),
+            self.resolution.name()
+        );
+    }
+
+    /// The modes in words: `lighting half, store read face, weights normal, shadow walk coarse, history edits, lamp on,
     /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +1.53
     /// EV` (the probe rays per update, the share of probes refreshed a frame, while the lamp's
     /// bounce is on the voxels between probes, and the exposure in EV, `log2 e`), after
@@ -1723,8 +1751,10 @@ impl Modes {
         }
         let _ = write!(
             out,
-            "lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}",
+            "lighting {}, store read {}, weights {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}",
             self.resolution.name(),
+            l.store_read.name(),
+            l.light_weights.name(),
             l.shadow_walk.name(),
             l.history.name(),
             on(l.lamp),
@@ -1927,7 +1957,7 @@ mod mode_tests {
         }
     }
 
-    /// Each of `F3`, `F5` to `F8` and `M` changes the banner's text to the new mode; the banner is
+    /// Each of `F3`, `F5` to `F8`, `M`, `Comma` and `Semicolon` changes the banner's text to the new mode; the banner is
     /// empty 3 s after the last change and shows again on the next one.
     #[test]
     fn the_banner_names_each_change_and_fades_after_three_seconds() {
@@ -1939,7 +1969,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off\nexposure manual +0.00 EV"
+            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -1951,6 +1981,10 @@ mod mode_tests {
             (ModeKey::Lamp, "lamp off"),
             (ModeKey::LampBounce, "lamp bounce on"),
             (ModeKey::Pulse, "ore pulse on"),
+            (ModeKey::StoreRead, "store read normal"),
+            (ModeKey::LightWeights, "weights face"),
+            (ModeKey::StoreRead, "store read face"),
+            (ModeKey::LightWeights, "weights normal"),
         ] {
             m.press(key, t);
             let now = m.banner(t).expect("a change shows the banner");
@@ -2140,21 +2174,18 @@ pub struct UpscalerBanner {
     pub scale: &'static str,
     /// The upscaler's RCAS sharpening (`--sharpen`, `Z`); unnamed while the upscaler is off.
     pub sharpen: f32,
-    /// FSR 2's candidate knobs as words (`, phases 8, emitter cap 1, dither`), empty when none
+    /// FSR 2's candidate knobs as words (`, phases 8, dither`), empty when none
     /// is set; named only while the mode is fsr2.
     pub fsr2_knobs: String,
     shown_at: Option<f64>,
 }
 
-/// FSR 2's candidate knobs (`--jitter-phases`, `--emitter-cap`, `--dither`) as the banner's
-/// suffix: `, phases 8, emitter cap 1, dither`, each only when set; empty when none is.
-pub fn fsr2_knob_words(phases: Option<u32>, emitter_cap: Option<f32>, dither: bool) -> String {
+/// FSR 2's candidate knobs (`--jitter-phases`, `--dither`) as the banner's suffix:
+/// `, phases 8, dither`, each only when set; empty when none is.
+pub fn fsr2_knob_words(phases: Option<u32>, dither: bool) -> String {
     let mut s = String::new();
     if let Some(n) = phases {
         s += &format!(", phases {n}");
-    }
-    if let Some(c) = emitter_cap {
-        s += &format!(", emitter cap {c}");
     }
     if dither {
         s += ", dither";
@@ -2339,11 +2370,17 @@ impl Pan {
     }
 }
 
-/// The stats HUD's aliasing row: the upscaler, its scale and sharpening, the far normal and the
-/// pan, shown the whole time.
-pub fn aliasing_row(upscaler: &UpscalerBanner, far_normal: &str, pan: Option<&Pan>) -> String {
+/// The stats HUD's aliasing row: the upscaler, its scale and sharpening, the far normal, the
+/// store read, the filters' weights and the light's resolution ([`Modes::write_filter_words`]),
+/// and the pan, shown the whole time.
+pub fn aliasing_row(
+    upscaler: &UpscalerBanner,
+    far_normal: &str,
+    modes: &Modes,
+    pan: Option<&Pan>,
+) -> String {
     let mut out = String::new();
-    write_aliasing_row(&mut out, upscaler, far_normal, pan);
+    write_aliasing_row(&mut out, upscaler, far_normal, modes, pan);
     out
 }
 
@@ -2352,11 +2389,14 @@ pub fn write_aliasing_row(
     out: &mut String,
     upscaler: &UpscalerBanner,
     far_normal: &str,
+    modes: &Modes,
     pan: Option<&Pan>,
 ) {
     upscaler.write_line(out);
     out.push_str("; ");
     out.push_str(far_normal);
+    out.push_str("; ");
+    modes.write_filter_words(out);
     out.push_str("; ");
     match pan {
         Some(p) => p.write_line(out),

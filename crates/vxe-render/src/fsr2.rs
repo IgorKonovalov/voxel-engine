@@ -68,9 +68,6 @@ pub struct Fsr2Settings {
     pub metres_per_voxel: f32,
     /// The jitter sequence's phase count; `None` is FSR's own, [`jitter_phases`].
     pub jitter_phases: Option<u32>,
-    /// A cap on an emitting hit's pre-exposed colour into FSR: the composite scales such a
-    /// pixel so that its largest channel is at most this; `None` is no cap.
-    pub emitter_cap: Option<f32>,
     /// The tone pass adds a static blue-noise dither of one 8-bit level to the shaded view: the
     /// frame's blue-noise texel at the pixel (tiled), less a half, over 255. It reads no frame
     /// index, so it holds still on a still image.
@@ -94,7 +91,6 @@ impl Default for Fsr2Settings {
             reactive_light: 1.0,
             metres_per_voxel: 0.1,
             jitter_phases: None,
-            emitter_cap: None,
             dither: false,
         }
     }
