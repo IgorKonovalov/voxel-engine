@@ -35,9 +35,10 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting, LightingResolution,
-    LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer,
-    RenderScale, ShadowWalk, SurfaceTuning, ToneMap, ViewMode, jitter_at,
+    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights, Lighting,
+    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
+    jitter_at,
 };
 pub use present::Presenter;
 pub use probes::ProbeVolume;

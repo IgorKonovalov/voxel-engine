@@ -201,13 +201,15 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057 and 0059 closed; 0049 abandoned)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059 and 0061 closed; 0049 abandoned)
 
-Plan 0061, antialiasing, drafted 2026-11-10 with ADR-0049 (proposed): the owner's "a lot of aliasing" at the
-hall (Plan 0059 Phase 13) reads as ADR-0042's far bands back, since the baked store is read by the face's
-direction and the far normal no longer reaches the light. A reading phase confirms it first; the store read by
-the far normal goes behind a toggle to a window; the far normal's setting, the emitter cap's removal and
-ADR-0034's and ADR-0042's Outcomes land with it.
+Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
+ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed
+by the half-resolution light's filters. Where the far normal leans a face's normal, the baked store is now
+read as the mix of the cell's direction values, and the filters weigh taps by the face normal; both are
+the fly-through's defaults, at far normal `[2, 6]` and FSR 2 at 1.5. The owner's window: "no aliazing",
+"maybe even a bit too soft". FSR 2 at scale 1 is a quality setting for Plan 0069's profiles; the emitter
+cap is gone. The Radeon's a-trous with the face weights is over the denoise line (Plans 0067, 0069).
 
 Plan 0056, the aliasing spike, closed 2026-11-04 (v0.42.0, no ADR): it read the final image
 under an eye lamp that cannot move. FSR 2's frame-to-frame jumps at 1.5 sit on silhouettes and

@@ -108,8 +108,9 @@ fn a_turn_with_the_lamp_on_opens_no_window() {
     assert!(open.iter().all(|&o| !o), "{open:?}");
 }
 
-/// The rig reads what the fly-through starts in: `LookPreset::DEFAULT`, FSR 2 at scale 1.5 with
-/// sharpening 0.5, over the level's table with the ore emissive.
+/// The rig reads what the fly-through starts in: `LookPreset::DEFAULT` with the fly-through's
+/// store read and filter weights, FSR 2 at scale 1.5 with sharpening 0.5, over the level's
+/// table with the ore emissive.
 #[test]
 fn the_rig_reads_the_default_look() {
     let Some(level) = vein_level() else {
@@ -142,6 +143,14 @@ fn the_rig_reads_the_default_look() {
     );
     assert_eq!(frame.output_size(), OUTPUT);
     assert_eq!(frame.internal_size(), RenderScale::OneHalf.internal(OUTPUT));
+    let lighting = frame.lighting();
+    assert_eq!(
+        (lighting.store_read, lighting.light_weights),
+        (
+            flythrough::DEFAULT_STORE_READ,
+            flythrough::DEFAULT_LIGHT_WEIGHTS
+        )
+    );
     let ore = level
         .world
         .materials()

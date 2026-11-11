@@ -17,9 +17,9 @@
 //   which lets the filter soften the shadow's edge into it.
 //   `atrous` is one iteration with the 5 x 5 B3-spline kernel at stride `step.size` (1, 2, 4,
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
-//   `max(n.n', 0)^128` and `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the
-//   pixel's variance blurred by a 3 x 3 Gaussian; the variance is carried with squared
-//   weights. A miss keeps its input. With the lamp off, a hit whose input is zero and whose
+//   `max(n.n', 0)^128` (on `filter_normal`'s normals, march.wgsl) and
+//   `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the pixel's variance blurred by a
+//   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With the lamp off, a hit whose input is zero and whose
 //   blurred variance is zero writes its input (zero), plus the store's part on the last
 //   iteration, without the 25 taps: its sigma is the epsilon, so only taps of luminance within
 //   about 1e-3 of zero weigh, and with the lamp off those are zero (a store's pixel's input is
@@ -67,12 +67,19 @@ fn inside(q: vec2<i32>) -> bool {
     return on_light_grid(q);
 }
 
-// The geometric edge weight between hit `a` and hit `b`: the distance of `b` from `a`'s
-// tangent plane and the angle between their normals.
-fn edge_weight(a: HitRecord, b: HitRecord) -> f32 {
+// The eye of lighting pixel `q`'s view, for `filter_normal`.
+fn eye_of(q: vec2<i32>) -> vec3<f32> {
+    return params.views[view_of(full_px(vec2<u32>(q)))].origin;
+}
+
+// The geometric edge weight between hit `a` and hit `b` seen from `eye`: the distance of `b`
+// from `a`'s tangent plane (along `a`'s shading normal) and the angle between their
+// `filter_normal`s (the shading normals, or with Params.lighting bit 15 a cube face's face
+// normal).
+fn edge_weight(a: HitRecord, b: HitRecord, eye: vec3<f32>) -> f32 {
     let plane = abs(dot(a.n, b.p - a.p));
     // max(n.n', 0)^128 by seven squarings.
-    var c = max(dot(a.n, b.n), 0.0);
+    var c = max(dot(filter_normal(a, eye), filter_normal(b, eye)), 0.0);
     c *= c;
     c *= c;
     c *= c;
@@ -102,6 +109,7 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     var v = max(m.y - m.x * m.x, 0.0);
     let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_LAMP) == 0u && acc.w == 0.0;
     if (rec.found && m.z < VARIANCE_AGE && !dark_store) {
+        let eye = eye_of(px);
         var w_sum = 0.0;
         var mm = vec2<f32>(0.0);
         for (var y = -3; y <= 3; y++) {
@@ -114,7 +122,7 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
                 if (!other.found) {
                     continue;
                 }
-                let w = edge_weight(rec, other);
+                let w = edge_weight(rec, other, eye);
                 w_sum += w;
                 mm += w * textureLoad(moments_in, q, 0).xy;
             }
@@ -172,6 +180,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
     var c_sum = vec3<f32>(0.0);
     var v_sum = 0.0;
     let s = i32(step.size);
+    let eye = eye_of(px);
     for (var y = -2; y <= 2; y++) {
         for (var x = -2; x <= 2; x++) {
             let q = px + vec2<i32>(x, y) * s;
@@ -184,7 +193,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             let tap = textureLoad(src_in, q, 0);
             let k = KERNEL[x + 2] * KERNEL[y + 2];
-            let w = k * edge_weight(rec, other) * exp(-abs(luminance(tap.xyz) - l) / sigma);
+            let w = k * edge_weight(rec, other, eye) * exp(-abs(luminance(tap.xyz) - l) / sigma);
             w_sum += w;
             c_sum += w * tap.xyz;
             v_sum += w * w * tap.w;
