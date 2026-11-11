@@ -20,10 +20,21 @@
 // under docs/, scripts/, .claude/, .github/ and markdown anywhere select nothing. Anything
 // else outside a package (root assets/, for one) selects every test: the safe reading.
 //
-// Usage:  node scripts/test-changed.mjs [--profile quick|gpu|gate|soak|full] [--since <rev>] [--dry-run]
+// Which gpu binaries: `apps/flythrough` depends on every crate, so `rdeps` of any render change
+// selects every flythrough gpu binary. `--binaries a,b` (gpu tier only) replaces the package
+// filter with the named `gpu_*` binaries, `binary(=a) | binary(=b)`, plus every binary whose
+// own `tests/gpu_*.rs` file the change touched. A name two packages share (`gpu_exposure`)
+// selects both when named; a touched file selects its own package's by `binary_id`. Shared
+// support files under `tests/support/` join no binary. The whole gpu tier runs at a plan's tip.
+// The soak line the tiers exclude is docs/nfr.md section 7's: 10 s on the dev reference's
+// lavapipe, 60 s on CI.
+//
+// Usage:  node scripts/test-changed.mjs [--profile quick|gpu|gate|soak|full] [--since <rev>]
+//                                       [--binaries gpu_a,gpu_b] [--dry-run]
 //                                       [-- <more nextest arguments>]
 // Exit: nextest's exit code; 0 with a message when nothing changed that a test covers;
-//       2 on a usage error.
+//       2 on a usage error (an unknown argument, a flag missing its value, `--binaries`
+//       outside the gpu tier, or a name that is no gpu test binary of the workspace).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { dirname, resolve, relative, sep } from "node:path";
@@ -35,16 +46,27 @@ const args = process.argv.slice(2);
 let profile = "quick";
 let since;
 let dryRun = false;
+let binaries;
 const passthrough = [];
+// The value after a flag; a flag that ends the arguments is a usage error.
+const value = (i) => {
+  if (i + 1 >= args.length) {
+    console.error(`test-changed: ${args[i]} needs a value`);
+    process.exit(2);
+  }
+  return args[i + 1];
+};
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--") {
     passthrough.push(...args.slice(i + 1));
     break;
-  } else if (a === "--profile") profile = args[++i];
+  } else if (a === "--profile") profile = value(i++);
   else if (a.startsWith("--profile=")) profile = a.slice("--profile=".length);
-  else if (a === "--since") since = args[++i];
+  else if (a === "--since") since = value(i++);
   else if (a.startsWith("--since=")) since = a.slice("--since=".length);
+  else if (a === "--binaries") binaries = value(i++);
+  else if (a.startsWith("--binaries=")) binaries = a.slice("--binaries=".length);
   else if (a === "--dry-run") dryRun = true;
   else {
     console.error(`test-changed: unknown argument ${a}`);
@@ -54,6 +76,17 @@ for (let i = 0; i < args.length; i++) {
 if (!profile) {
   console.error("test-changed: --profile needs a tier name");
   process.exit(2);
+}
+if (binaries !== undefined) {
+  if (profile !== "gpu") {
+    console.error(`test-changed: --binaries narrows the gpu tier only, not --profile ${profile}`);
+    process.exit(2);
+  }
+  binaries = (binaries ?? "").split(",").map((b) => b.trim()).filter(Boolean);
+  if (binaries.length === 0) {
+    console.error("test-changed: --binaries needs a comma-separated list of gpu_* binary names");
+    process.exit(2);
+  }
 }
 
 const git = (...argv) =>
@@ -74,6 +107,25 @@ const metadata = JSON.parse(
 const packages = metadata.packages
   .map((p) => ({ name: p.name, dir: relative(ROOT, dirname(p.manifest_path)).split(sep).join("/") }))
   .sort((a, b) => b.dir.length - a.dir.length);
+
+// The workspace's gpu test binaries: every integration test target named `gpu_*`, keyed by
+// its source file.
+const gpuTargets = metadata.packages.flatMap((p) =>
+  p.targets
+    .filter((t) => t.kind.includes("test") && t.name.startsWith("gpu_"))
+    .map((t) => ({
+      name: t.name,
+      id: `${p.name}::${t.name}`,
+      src: relative(ROOT, t.src_path).split(sep).join("/"),
+    })),
+);
+if (binaries) {
+  const unknown = binaries.filter((b) => !gpuTargets.some((t) => t.name === b));
+  if (unknown.length) {
+    console.error(`test-changed: --binaries names no gpu test binary of the workspace: ${unknown.join(", ")}`);
+    process.exit(2);
+  }
+}
 
 // The changed files.
 let files = new Set([
@@ -109,13 +161,31 @@ for (const f of files) {
 }
 
 console.error(`test-changed: ${files.size} changed file(s), ${described}`);
-if (!everything && selected.size === 0) {
+
+// The gpu binaries the phase names, and those whose own file the change touched.
+let binaryExpr;
+if (binaries) {
+  const terms = new Set(binaries.map((b) => `binary(=${b})`));
+  const touched = gpuTargets.filter((t) => files.has(t.src) && !binaries.includes(t.name));
+  for (const t of touched) {
+    const shared = gpuTargets.filter((u) => u.name === t.name).length > 1;
+    terms.add(shared ? `binary_id(=${t.id})` : `binary(=${t.name})`);
+  }
+  binaryExpr = [...terms].join(" | ");
+  const joined = touched.length ? `; joined by the change: ${touched.map((t) => t.id).join(", ")}` : "";
+  console.error(`test-changed: binaries ${binaries.join(", ")}${joined}`);
+}
+
+if (!binaryExpr && !everything && selected.size === 0) {
   console.error("test-changed: no crate changed, nothing to run");
   process.exit(0);
 }
 
 const nextest = ["nextest", "run", "--workspace", "--profile", profile];
-if (everything) {
+if (binaryExpr) {
+  console.error(`test-changed: the named gpu binaries -> -E '${binaryExpr}'`);
+  nextest.push("-E", binaryExpr);
+} else if (everything) {
   console.error("test-changed: a change outside the packages selects every test in the tier");
 } else {
   const expr = [...selected].sort().map((p) => `rdeps(${p})`).join(" | ");

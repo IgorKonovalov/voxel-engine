@@ -32,15 +32,24 @@ plan lanes run at once, each in its own worktree at
     Anything that loosens a bar still stops for the owner. That includes a wider tolerance, a
     lower ratio, a longer lag, a dropped assertion, or a bar re-derived against a different
     quantity.
-2b. **Exploration mode (owner, 2026-11-08).** A plan or amendment can mark phases as
-    exploration, as Plan 0059 does until its pick. In those phases:
+2b. **Exploration mode (owner, 2026-11-08; every look-driven plan since 2026-11-10).** A plan
+    or amendment marks phases as exploration: the phases before the owner's window in a plan
+    that tunes what the image looks like. In those phases:
     - The owner's window is the gate. A phase is done when its change is built, behind a key
       or flag, and named in the banner.
     - Bars become readings, taken when cheap and reported without stopping.
     - A stop is only for a design choice the plan doesn't make, or code that can't work.
     - Checks per step are build, clippy, fmt and the quick tier. The gpu tier runs before the
       merge into main and at the close.
-    - Tests and goldens are written after the pick.
+    - **What still lands per phase:** CPU tests of data, determinism and API (a list's
+      contents, a seed's output, a tick's state). **What waits for the pick:** every test that
+      judges the image (goldens, SSIM or pixel floors, stillness, settle and difference bars).
+      The plan's last dev phase, after the window, writes them against the picks.
+    - **A reading is not a committed test.** It runs from a rig under the untracked `live/`, a
+      `mod reading` (`#[ignore]`d, run by hand) or the strip tool (`tests/gpu_strip.rs`), and
+      its numbers go to the readings log. No new asserting test file for a mechanism the
+      window may drop: the harnesses of Plans 0057 to 0059 churned about 30k test lines, most
+      of them deleted with the table.
     Outside a marked phase, rule 2 holds as written.
 3. Keep anything that must survive a reboot in the worktree (committed, or under the
    untracked `live/`), never only in `/tmp` or a scratchpad.
@@ -52,8 +61,11 @@ plan lanes run at once, each in its own worktree at
    cap; with three or more, `CARGO_BUILD_JOBS=4` and `--test-threads 2`. `CARGO_BUILD_JOBS`
    caps the build; nextest's `-j` is `--test-threads`, not build jobs. The tiers are in
    `.config/nextest.toml`: the phase gate is `node scripts/test-changed.mjs --profile quick`
-   (the changed crates' CPU tests and their dependents') plus `--profile gpu` under the perf
-   lock when the change reaches the renderer; `--profile gate` (everything but the soak-marked
+   (the changed crates' CPU tests and their dependents') plus, under the perf lock when the
+   change reaches the renderer, `--profile gpu --binaries <the gpu_* binaries the phase names>`
+   (the binaries whose files the change touched join on their own; owner, 2026-11-10: the
+   whole gpu tier is the tip's, not a phase's; until Plan 0066 Phase 1 adds `--binaries`, a
+   phase runs `--profile gpu` as before); `--profile gate` (everything but the soak-marked
    tests) is the tip gate; `--profile soak --run-ignored only` and `--profile full --run-ignored all`
    run only when the orchestrator asks for a specific reading (the default profile is the gate
    tier).

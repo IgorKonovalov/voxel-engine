@@ -205,6 +205,31 @@ pub fn exposed_emitters<'a>(
     out
 }
 
+/// Where a sync reads its clock ([`SyncClock`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncPoint {
+    /// Once, at the sync's start.
+    Start,
+    /// After selection sized a pending chunk (one without a kept size).
+    Sized,
+    /// After a chunk's record was written.
+    Uploaded,
+}
+
+/// A sync clock: the time since some fixed start, read at each [`SyncPoint`]. The point lets
+/// a test advance its clock for one kind of work only.
+pub type SyncClock = Box<dyn FnMut(SyncPoint) -> std::time::Duration + Send + Sync>;
+
+/// The default sync clock: wall time since its creation.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the render thread bounds its upload time per frame; no simulation reads it"
+)]
+fn wall_clock() -> SyncClock {
+    let start = std::time::Instant::now();
+    Box::new(move |_| start.elapsed())
+}
+
 /// The render thread's light-extraction timer (`SyncStats::light_us`); no simulation reads it.
 #[allow(
     clippy::disallowed_methods,
@@ -558,6 +583,14 @@ pub struct SyncStats {
     /// Chunks selected this sync but deferred for space; they stay pending. 0 when everything
     /// fit.
     pub deferred_chunks: u64,
+    /// Chunks selected this sync but left for the next because the sync's time budget
+    /// ([`MirrorConfig::sync_budget_time`]) was spent; they stay pending, nearest first.
+    /// Pending chunks selection did not reach once the budget was spent are not counted.
+    pub time_deferred_chunks: u64,
+    /// Pending chunks selection sized this sync, and those it took a kept size for instead:
+    /// a chunk sized and not uploaded keeps its size until it uploads or changes.
+    pub sized_chunks: u64,
+    pub kept_sizes: u64,
 }
 
 /// Which chunks the mirror holds.
@@ -575,6 +608,12 @@ pub struct MirrorConfig {
     pub window: Window,
     /// Bytes a sync writes before it stops taking chunks; `u64::MAX` for no budget.
     pub sync_budget_bytes: u64,
+    /// Time a sync spends, selection and upload together, read on the mirror's sync clock
+    /// ([`GpuWorld::set_sync_clock`]) after each chunk sized and each chunk uploaded; `None`
+    /// for no budget. Selection stops sizing once it is spent, and the upload stops after the
+    /// chunk that crosses it, uploaded whole; a sync uploads at least one chunk that fits.
+    /// What is left stays pending, first in the next sync.
+    pub sync_budget_time: Option<std::time::Duration>,
     /// Caps the units per pool shard below what the device allows; for tests.
     pub max_shard_units: Option<u32>,
     /// VRAM reserved for the pool shards and records at creation, split by the
@@ -602,6 +641,7 @@ impl MirrorConfig {
         Self {
             window,
             sync_budget_bytes: u64::MAX,
+            sync_budget_time: None,
             max_shard_units: None,
             budget_bytes: DEFAULT_BUDGET_BYTES,
             record_chunks: None,
@@ -722,6 +762,20 @@ struct Mirrored {
 enum Src {
     Full(std::sync::Arc<std::sync::RwLock<vxe_world::Chunk>>),
     Lod(std::sync::Arc<ChunkMips>),
+}
+
+/// A pending chunk's size as selection estimated it, kept until the chunk uploads, leaves the
+/// queue or changes (the world reports it dirty, or it changes tier or record), so a chunk
+/// deferred by the time budget is not sized again. Only selection reads it: the upload's
+/// backstop sizes the chunk again under its write lock, exactly, so a kept size that went
+/// stale (a neighbour's edit moving a band) can defer a chunk for space, never mis-write it.
+#[derive(Clone, Copy)]
+struct Sizing {
+    lod: bool,
+    rec: Option<u32>,
+    /// New slots of each bin, and the bytes the upload writes, record included.
+    new: [u64; BIN_COUNT],
+    bytes: u64,
 }
 
 /// A chunk chosen for this sync's upload.
@@ -882,6 +936,10 @@ impl<'a> Bricks<'a> {
 pub struct GpuWorld {
     device: wgpu::Device,
     cfg: MirrorConfig,
+    /// The clock the sync's time budget reads: time since some fixed start; and its reading
+    /// at the current sync's start.
+    sync_clock: SyncClock,
+    sync_start: std::time::Duration,
     window_min: [i32; 3],
     window_size: [i32; 3],
     focus: ChunkCoord,
@@ -952,6 +1010,8 @@ pub struct GpuWorld {
     /// Chunks waiting for an upload, keyed by squared distance to `pending_focus`.
     pending: BTreeSet<(i64, ChunkCoord)>,
     pending_d2: HashMap<ChunkCoord, i64>,
+    /// Kept sizes of pending chunks ([`Sizing`]).
+    sizes: HashMap<ChunkCoord, Sizing>,
     pending_focus: ChunkCoord,
     bytes_written: u64,
     belt: Belt,
@@ -1113,6 +1173,8 @@ impl GpuWorld {
         Self {
             device: device.clone(),
             cfg,
+            sync_clock: wall_clock(),
+            sync_start: std::time::Duration::ZERO,
             window_min,
             window_size,
             focus,
@@ -1160,6 +1222,7 @@ impl GpuWorld {
             emit_lum: vec![0.0; 1 << 16],
             opaque: vec![false; 1 << 16],
             pending: BTreeSet::new(),
+            sizes: HashMap::new(),
             pending_d2: HashMap::new(),
             pending_focus: focus,
             bytes_written: 0,
@@ -1198,6 +1261,8 @@ impl GpuWorld {
         self.field_chunks.clear();
         self.field_bricks.clear();
         self.field_shells.clear();
+        // The band's slots are part of a chunk's size.
+        self.sizes.clear();
         self.band = on.then(|| Band {
             pass: crate::field::FieldPass::new(&self.device),
             slots: HashMap::new(),
@@ -1709,6 +1774,7 @@ impl GpuWorld {
     }
 
     fn unqueue(&mut self, c: ChunkCoord) {
+        self.sizes.remove(&c);
         if let Some(d) = self.pending_d2.remove(&c) {
             self.pending.remove(&(d, c));
         }
@@ -1766,8 +1832,15 @@ impl GpuWorld {
         }
     }
 
+    /// Replaces the clock the sync's time budget reads (wall time by default), for a test
+    /// that advances it by a fixed step per read.
+    pub fn set_sync_clock(&mut self, clock: SyncClock) {
+        self.sync_clock = clock;
+    }
+
     /// Uploads what the pending chunks need, nearest the focus first, until the byte budget
-    /// is spent, and clears their dirty bits. Takes one chunk lock at a time.
+    /// or the time budget ([`MirrorConfig::sync_budget_time`]) is spent, and clears their
+    /// dirty bits. Takes one chunk lock at a time.
     ///
     /// Writes what fits the reservation, nearest first, and never part of a chunk (ADR-0013):
     /// the first chunk whose slots or record do not fit is deferred, and so is every later
@@ -1787,6 +1860,7 @@ impl GpuWorld {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<SyncStats, MirrorError> {
+        self.sync_start = (self.sync_clock)(SyncPoint::Start);
         let result = self.sync_into(world, queue, encoder);
         self.belt.finish(encoder);
         result
@@ -1805,6 +1879,7 @@ impl GpuWorld {
         self.reconcile_window(world);
         self.flush_dropped_lights(enc);
         for c in world.store().take_dirty() {
+            self.forget_size(c);
             if self.in_window(c) {
                 self.enqueue(c);
             }
@@ -1860,6 +1935,30 @@ impl GpuWorld {
         st.pending_chunks = self.pending.len() as u64;
         self.bytes_written += st.bytes;
         result.map(|()| st)
+    }
+
+    /// Drops the kept size of `c`, which changed, and with the band on those of its 26
+    /// neighbours, whose band masks read it.
+    fn forget_size(&mut self, c: ChunkCoord) {
+        if self.sizes.is_empty() {
+            return;
+        }
+        if self.band.is_none() {
+            self.sizes.remove(&c);
+            return;
+        }
+        for k in 0..27 {
+            let d = [k % 3 - 1, (k / 3) % 3 - 1, k / 9 - 1];
+            self.sizes
+                .remove(&ChunkCoord([0, 1, 2].map(|a| c.0[a] + d[a])));
+        }
+    }
+
+    /// Whether the sync's time budget is spent, reading the clock at `at`.
+    fn time_spent(&mut self, at: SyncPoint) -> bool {
+        self.cfg
+            .sync_budget_time
+            .is_some_and(|budget| (self.sync_clock)(at).saturating_sub(self.sync_start) >= budget)
     }
 
     /// The units of `p`'s slot ([`slot_units`]): mask, header, payload, and a translucent unit
@@ -2000,7 +2099,9 @@ impl GpuWorld {
     /// changing tier is credited its old record's frees, then its new slots and record are
     /// checked against what is left. The first chunk that does not fit is deferred, with every
     /// later chunk but a demotion that fits; deferred chunks stay pending and do not count
-    /// against the budget. Returns the error of the first deferral, if any.
+    /// against the budget. A chunk with a kept size ([`Sizing`]) is not sized again; once the
+    /// time budget is spent no further chunk is sized, and the walk stops there. Returns the
+    /// error of the first deferral, if any.
     fn select(&mut self, world: &World, st: &mut SyncStats) -> Option<MirrorError> {
         let budget = self.cfg.sync_budget_bytes;
         // Writes that happen whatever is chosen count against the budget first.
@@ -2013,7 +2114,10 @@ impl GpuWorld {
         let mut fit = Fit::new(self);
         let mut short = None;
         let mut bands = std::mem::take(&mut self.bands);
-        for &(_, coord) in &self.pending {
+        let mut sizes = std::mem::take(&mut self.sizes);
+        let mut out_of_time = false;
+        let pending = std::mem::take(&mut self.pending);
+        for &(_, coord) in &pending {
             if bytes >= budget && !self.selected.is_empty() {
                 break;
             }
@@ -2034,38 +2138,64 @@ impl GpuWorld {
             // A record of the other tier is replaced whole.
             let rec = mirrored.filter(|m| m.lod == lod).map(|m| m.record);
             let demotion = mirrored.is_some_and(|m| !m.lod) && lod;
-            let mut chunk_bytes = RECORD_BYTES + if rec.is_none() { 4 } else { 0 };
-            let new = match &src {
-                Src::Full(chunk) => {
-                    let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
-                    if rec.is_some() && !ch.any_dirty() {
-                        self.stale.push(coord);
-                        continue;
-                    }
-                    let (new, bytes) =
-                        self.need(world, coord, &Bricks::Chunk(&ch), rec, false, &mut bands);
-                    chunk_bytes += bytes;
-                    new
-                }
-                Src::Lod(mips) => {
-                    // Mips never change: a chunk already mirrored LOD-only needs nothing.
-                    if rec.is_some() {
-                        self.stale.push(coord);
-                        continue;
-                    }
-                    let (new, bytes) =
-                        self.need(world, coord, &Bricks::Mips(mips), None, true, &mut bands);
-                    chunk_bytes += bytes;
-                    new
-                }
-            };
             // The frees of a tier change: the old record's slots.
             let frees = mirrored.filter(|m| m.lod != lod).map(|m| m.record);
+            let new_record = mirrored.is_none();
+            let kept = sizes
+                .get(&coord)
+                .filter(|z| z.lod == lod && z.rec == rec)
+                .copied();
+            let stale = match &src {
+                Src::Full(chunk) => {
+                    rec.is_some()
+                        && !chunk
+                            .read()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .any_dirty()
+                }
+                // Mips never change: a chunk already mirrored LOD-only needs nothing.
+                Src::Lod(_) => rec.is_some(),
+            };
+            if stale {
+                self.stale.push(coord);
+                continue;
+            }
+            let sizing = match kept {
+                Some(z) => {
+                    st.kept_sizes += 1;
+                    z
+                }
+                None => {
+                    if out_of_time {
+                        break;
+                    }
+                    let (new, need_bytes) = match &src {
+                        Src::Full(chunk) => {
+                            let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
+                            self.need(world, coord, &Bricks::Chunk(&ch), rec, false, &mut bands)
+                        }
+                        Src::Lod(mips) => {
+                            self.need(world, coord, &Bricks::Mips(mips), None, true, &mut bands)
+                        }
+                    };
+                    let z = Sizing {
+                        lod,
+                        rec,
+                        new,
+                        bytes: RECORD_BYTES + if rec.is_none() { 4 } else { 0 } + need_bytes,
+                    };
+                    sizes.insert(coord, z);
+                    st.sized_chunks += 1;
+                    out_of_time = self.time_spent(SyncPoint::Sized);
+                    z
+                }
+            };
+            let (new, chunk_bytes) = (sizing.new, sizing.bytes);
             if short.is_some() && !demotion {
                 st.deferred_chunks += 1;
                 continue;
             }
-            match fit.place(self, frees, new, mirrored.is_none()) {
+            match fit.place(self, frees, new, new_record) {
                 Ok(()) => {
                     bytes += chunk_bytes;
                     self.selected.push(Selected { coord, src, new });
@@ -2077,6 +2207,8 @@ impl GpuWorld {
             }
         }
         self.bands = bands;
+        self.sizes = sizes;
+        self.pending = pending;
         let mut stale = std::mem::take(&mut self.stale);
         for &c in &stale {
             self.unqueue(c);
@@ -2100,7 +2232,12 @@ impl GpuWorld {
         let mut selected = std::mem::take(&mut self.selected);
         let mut result = Ok(());
         let mut defer_rest = false;
+        let mut out_of_time = false;
         for Selected { coord, src, new } in selected.drain(..) {
+            if out_of_time {
+                st.time_deferred_chunks += 1;
+                continue;
+            }
             let lod = matches!(src, Src::Lod(_));
             let mirrored = self.mirrored.get(&coord);
             let demotion = lod && mirrored.is_some_and(|m| !m.lod);
@@ -2158,6 +2295,10 @@ impl GpuWorld {
             if result.is_err() {
                 break;
             }
+            // The time budget is read after each chunk written: the chunk that crosses it is
+            // whole, and the rest stay pending, nearest first, with their kept sizes, for the
+            // next sync. A sync whose selection spent the budget still writes its first chunk.
+            out_of_time = self.time_spent(SyncPoint::Uploaded);
         }
         self.selected = selected;
         result

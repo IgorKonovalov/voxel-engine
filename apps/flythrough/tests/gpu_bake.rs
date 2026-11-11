@@ -336,6 +336,7 @@ fn test_counts(samples: u32) -> BakeSettings {
 /// The records depend on each face's own samples alone: one batch, batches of 7 faces and the
 /// jobs reversed read bit-identical; and [`four_ways`].
 #[test]
+#[ignore = "soak"]
 fn a_bake_does_not_depend_on_its_slicing_or_order() {
     let (world, _) = small_box();
     let Some(mut rig) = rig_on(world, [16, 16], None) else {
@@ -460,6 +461,7 @@ fn a_baked_view_is_final_on_its_first_frame() {
     };
     rig.bake(&test_counts(1024));
     let cells = rig.cells();
+    rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
     let accum = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
@@ -500,6 +502,114 @@ fn a_baked_view_is_final_on_its_first_frame() {
         rig.step(&camera);
     }
     assert_eq!(rig.display(), first, "frame 64 against frame 1");
+}
+
+/// The store's read counters on a fixed frame: a box of two chunks whose emitter lies in the
+/// one-chunk piece that is baked, seen from above, so its cube-face hits split between brick reads
+/// (the piece) and no value (the chunk outside, no block). With the counting pipeline
+/// (`Frame::set_count_store`) the three counts equal the ones the temporal pass wrote into the
+/// store's own words before the counters had a buffer of their own (read at 486a53e through the
+/// same `read_store_stats`); with it off the temporal pass writes nothing, so the counter buffer,
+/// cleared at the frame's start, still reads zero after it.
+#[test]
+fn the_store_counters_count_with_the_override_on() {
+    let mut t = MaterialTable::new();
+    for (id, row) in flythrough::cave_materials()
+        .rows()
+        .iter()
+        .enumerate()
+        .skip(1)
+    {
+        let mut m = row.clone();
+        if id == usize::from(ORE) {
+            m.emission = [0.05, 0.05, 0.05];
+        }
+        assert_eq!(usize::from(t.push(m)), id);
+    }
+    let world = air_world([2, 1, 1], &t);
+    fill(&world, [40, 16, 20], [88, 48, 21], ROCK);
+    fill(&world, [60, 30, 21], [61, 31, 22], ORE);
+    let Some(mut rig) = rig_on(world, [64, 36], None) else {
+        return;
+    };
+    rig.frame
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            ChunkExtent::new([1, 0, 0], [2, 1, 1]),
+            &dig_counts(),
+            &mut |_| {},
+        )
+        .expect("the piece fits");
+    let camera = Camera {
+        position: [64.0, 32.0, 40.0].into(),
+        yaw: 0.0,
+        pitch: (-80f32).to_radians(),
+        vfov: 90f32.to_radians(),
+    };
+    let counts = |s: vxe_render::StoreStats| [s.missing, s.brick_reads, s.coarse_reads];
+    rig.frame.set_count_store(true);
+    rig.step(&camera);
+    let on = counts(rig.frame.read_store_stats(&rig.device, &rig.queue));
+    println!("counting: missing, brick reads, coarse reads {on:?}");
+    assert_eq!(on, [366, 658, 0], "the counts against the start commit's");
+    rig.frame.set_count_store(false);
+    rig.step(&camera);
+    let off = counts(rig.frame.read_store_stats(&rig.device, &rig.queue));
+    assert_eq!(off, [0; 3], "the counters with the override off");
+}
+
+/// The baked light with the filter off (`Lighting::filter`, the fly-through's `--filter off`): on
+/// the small box after its bake, lamp off, the mean display luma over the pixels whose cube face
+/// holds a lit brick value is within 2 % of the same frame's with the filter on.
+#[test]
+fn the_baked_light_shows_with_the_filter_off() {
+    let (world, camera) = small_box();
+    let Some(mut rig) = rig_on(world, [64, 36], None) else {
+        return;
+    };
+    rig.bake(&test_counts(1024));
+    let cells = rig.cells();
+    let frames = |rig: &mut Rig, filter: bool| {
+        rig.frame.set_lighting(Lighting {
+            filter,
+            ..rig.frame.lighting()
+        });
+        rig.frame.reset_history();
+        for _ in 0..4 {
+            rig.step(&camera);
+        }
+        rig.display()
+    };
+    let on = frames(&mut rig, true);
+    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let off = frames(&mut rig, false);
+    let eye = camera.position.to_array();
+    let lit: Vec<usize> = (0..pos.len())
+        .filter(|&i| {
+            hit_face(eye, pos[i], info[i])
+                .and_then(|(v, f)| brick_value(&cells, v, f))
+                .is_some_and(|value| value.iter().any(|&c| c > 0.0))
+        })
+        .collect();
+    let mean = |img: &[u8]| {
+        let l = luma(img);
+        lit.iter().map(|&i| f64::from(l[i])).sum::<f64>() / lit.len() as f64
+    };
+    let (m_on, m_off) = (mean(&on), mean(&off));
+    println!(
+        "{} lit pixels: mean luma {m_on:.3} filter on, {m_off:.3} off",
+        lit.len()
+    );
+    assert!(lit.len() > 100, "{} lit pixels", lit.len());
+    assert!(m_on > 10.0, "the lit face's luma {m_on}");
+    assert!(
+        (m_off - m_on).abs() <= 0.02 * m_on,
+        "filter off {m_off} against on {m_on}"
+    );
 }
 
 /// The owner's "moving fast" as a property: a frame reached by a 90 degree yaw in 2 frames reads
@@ -625,6 +735,7 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     // The hole's new faces: directions of bricks within the carve's reach that held none before.
     let new: Vec<_> = after.keys().filter(|k| !before.contains_key(k)).collect();
     assert!(!new.is_empty(), "the carve exposed no face");
+    rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
     let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
@@ -1211,6 +1322,7 @@ fn a_piece_reads_what_the_whole_world_reads() {
         pitch: (-80f32).to_radians(),
         vfov: 90f32.to_radians(),
     };
+    rig.frame.set_count_store(true);
     rig.step(&camera);
     let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
     println!("store_missing {} over the chunk outside", stats.missing);
@@ -2292,6 +2404,117 @@ mod reading {
                     of("temporal"),
                     pass_line(&sum, 120)
                 ));
+                }
+            }
+        }
+    }
+
+    /// The per-pass table (Plan 0065 Phase 1): at each view of `VXE_BAKE_VIEWS` (default vein and
+    /// hall), the brick store (`brick_bake`), FSR 2 at 1.5 to `NATIVE` (internal 1687 x 919),
+    /// sharpness 0.5, the far normal at `VXE_FAR_NORMAL` (`lo,hi`, default the fly-through's
+    /// `2,6`). Per arm (lighting tier half and full, lamp off and on, at rest and walking), 128
+    /// still frames from no history, then 120 timed frames: still, or walking (the eye moves at 14
+    /// voxels a second, 60 frames out and 60 back, its view held: at the vein back along the
+    /// steady flight that ends there, at the hall along the level heading). Each pass's
+    /// mean milliseconds, every pass printed to 3 decimals. Logs to `live/bake-count/passes.txt`.
+    #[test]
+    #[ignore = "a reading on a named adapter: VXE_TEST_ADAPTER, under the perf lock"]
+    fn pass_readings() {
+        let mut log = Log::open("passes.txt");
+        let names = std::env::var("VXE_BAKE_VIEWS").unwrap_or_else(|_| "vein,hall".to_owned());
+        let far = std::env::var("VXE_FAR_NORMAL")
+            .ok()
+            .and_then(|v| {
+                let (lo, hi) = v.split_once(',')?;
+                Some([lo.parse().ok()?, hi.parse().ok()?])
+            })
+            .unwrap_or([2.0, 6.0]);
+        const FRAMES: usize = 120;
+        for view in read_views() {
+            if !names.split(',').any(|n| n == view.name) {
+                continue;
+            }
+            let (mut rig, _) = view_rig(&view, NATIVE);
+            brick_bake(&mut rig, &view);
+            let timer = vxe_render::marcher::PassTimer::with_passes(
+                &rig.device,
+                &rig.queue,
+                vxe_render::marcher::FRAME_PASSES.len() as u32,
+            )
+            .expect("timestamps on the adapter");
+            let internal = vxe_render::marcher::RenderScale::OneHalf.internal(NATIVE);
+            rig.frame.set_upscaler_kind(
+                &rig.device,
+                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                    sharpness: 0.5,
+                    ..vxe_render::Fsr2Settings::default()
+                }),
+            );
+            rig.frame.set_sizes(&rig.device, internal, NATIVE);
+            rig.frame.set_look(vxe_render::marcher::LookParams {
+                far_normal: far,
+                ..rig.frame.look()
+            });
+            let still = view_camera(&view);
+            // The walk's direction: at the vein back along the steady flight that ends at its
+            // pose (a cube of 5 voxels of air around every step), elsewhere the view's level
+            // heading.
+            let ahead = if view.name == "vein" {
+                let (start, end) = support::settle::flight_path(&flythrough::VEIN_POSE);
+                (vxe_render::glam::Vec3::from(start) - vxe_render::glam::Vec3::from(end))
+                    .normalize()
+            } else {
+                vxe_render::glam::Vec3::new(still.yaw.cos(), still.yaw.sin(), 0.0)
+            };
+            let walk = |f: usize| {
+                let t = (f % FRAMES) as f32;
+                let out = if t < 60.0 { t } else { FRAMES as f32 - t };
+                Camera {
+                    position: still.position + ahead * (14.0 / 60.0 * out),
+                    ..still
+                }
+            };
+            let light = LightParams::default();
+            for tier in [LightingResolution::Half, LightingResolution::Full] {
+                rig.frame.set_resolution(&rig.device, tier);
+                for lamp in [false, true] {
+                    rig.frame.set_lighting(reference_lighting(lamp));
+                    for walking in [false, true] {
+                        rig.frame.reset_history();
+                        for _ in 0..128 {
+                            rig.frame
+                                .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
+                        }
+                        let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+                        for f in 0..FRAMES {
+                            let c = if walking { walk(f) } else { still };
+                            for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &c)) {
+                                *s += ms;
+                            }
+                        }
+                        let total: f64 = sum.iter().sum::<f64>() / FRAMES as f64;
+                        let passes: Vec<String> = vxe_render::marcher::FRAME_PASSES
+                            .iter()
+                            .zip(&sum)
+                            .filter(|(_, ms)| **ms > 0.0)
+                            .map(|(n, ms)| format!("{n} {:.3}", ms / FRAMES as f64))
+                            .collect();
+                        log.line(&format!(
+                            "passes {} adapter {} {}x{} to {}x{} fsr2 at 1.5, far normal {}..{}, tier {}, lamp {}, {}: total {total:.3} ms, {}",
+                            view.name,
+                            rig.adapter,
+                            internal[0],
+                            internal[1],
+                            NATIVE[0],
+                            NATIVE[1],
+                            far[0],
+                            far[1],
+                            tier.name(),
+                            if lamp { "on" } else { "off" },
+                            if walking { "walking" } else { "at rest" },
+                            passes.join(", ")
+                        ));
+                    }
                 }
             }
         }

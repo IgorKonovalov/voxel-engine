@@ -78,6 +78,15 @@ The lighting line (6.0 ms) holds in every arm; the cost is the denoise (a-trous 
 - ADR-0049's read alone: the half-resolution weights keep mixing a riser's and a tread's taps under the far normal, doubling the still jumps.
 - Full resolution in the far band only: a new mechanism, ADR and plan before this one could go on; the most design work.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 2 and 3 are **exploration** (lane rules 2b):
+> the owner's window in Phase 4 is their gate. Each lands its CPU tests of data and API; the image
+> tests they name (Phase 2's staircase golden, done-when 1b, and Phase 3's matrix bars) run as
+> readings from `live/`, a `mod reading` or the strip tool, recorded in the readings log, and Phase 5
+> writes them as tests against the picks (its done-when 2 already holds the staircase claim at the
+> defaults). Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). Phase 1 is readings already and is unchanged.
+
 ## TL;DR
 
 The aliasing in the owner's still (`session13-hall-aliasing.png`) is mostly **ADR-0042's far bands,
@@ -530,6 +539,16 @@ Against `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`. Today's figur
 | Upscale line, 1.5 ms | FSR 2 2.93 to 3.15 ms RTX, 9.95 to 10.0 ms RADV | unchanged; FSR 2 at 1 (opt-in) about 5 ms RTX |
 | `frame_bytes` | unchanged by design | Phase 2 done-when 4 checks it |
 | `--lighting full` against half (the arm), the hall, baked, `[2, 6]` | read 2026-11-10 at 68b7575: RTX lamp off GPU p50 +3.41 ms, wall p99 18.0 to 18.6 ms; lamp on +4.7 ms; Radeon +3.81 ms; denoise 4.35 ms against its 3.0 ms line | a pick of full misses the denoise line and the RTX's p99; Phase 5 records it and owes an ADR |
+
+**Review note (2026-11-10, the static performance review; an estimate, nothing was run).** The
++0.3 ms guess for Phase 2's read may be low. The read is `store_brick_value`, up to three of
+them where there is one today, and that read is what took the temporal pass from 0.39 to
+1.54 ms in Plan 0059 (full tier): through an atomic binding each one re-reads the store's
+header per tap. Where the hall is mostly far band, +1 ms or more is plausible at the full
+tier. [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+Phase 2 makes the read cheaper, and **Phase 2 here starts after Plan 0065 merges** (owner,
+2026-11-10; `docs/plans/README.md`, Sequence). Phase 2 here reads the temporal pass by itself, at the half
+and the full tier, so the read's cost is not lost in the frame figure.
 
 The close measures with `flythrough --headless --frames 300`, three alternated rounds, perf lock,
 both adapters, as in Phase 2. Test times are named per phase and are estimates; none is planned

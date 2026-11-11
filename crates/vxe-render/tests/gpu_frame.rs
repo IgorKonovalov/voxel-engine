@@ -1,5 +1,6 @@
 //! What a `Frame` holds and decides between encodes: the probe volume exists only once
-//! the lamp's bounce needs it, and the lamp an encode compares is the one its `Params` carry.
+//! the lamp's bounce needs it, the lamp an encode compares is the one its `Params` carry, and
+//! the pass timers and the store's counters read back without waiting on the GPU.
 
 use vxe_render::{Camera, Frame, GpuWorld, LightParams, Lighting, glam::Vec3, wgpu};
 use vxe_world::*;
@@ -16,6 +17,26 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         return None;
     };
     let desc = wgpu::DeviceDescriptor {
+        required_limits: vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits"),
+        ..Default::default()
+    };
+    Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
+}
+
+/// As [`device`], with `TIMESTAMP_QUERY` where the adapter has it.
+fn timed_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        force_fallback_adapter: true,
+        ..Default::default()
+    }))
+    .or_else(|_| pollster::block_on(instance.request_adapter(&Default::default())));
+    let Ok(adapter) = adapter else {
+        println!("skipped: no adapter");
+        return None;
+    };
+    let desc = wgpu::DeviceDescriptor {
+        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
         required_limits: vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits"),
         ..Default::default()
     };
@@ -136,4 +157,92 @@ fn a_params_built_between_encodes_does_not_move_the_lamp_the_encode_compares() {
     let _other = frame.params(&gpu, &camera(), &a);
     encode(&frame, &p);
     assert!(!frame.lamp_changed(), "lamp b after lamp b");
+}
+
+/// Five frames, each encoded with the frame's pass timer and a one-pass timer (the HUD's and
+/// the field pass's form) resolved and the store's counters copied, submitted, then read with
+/// `try_read_all_ms`, `try_read_ms` and `try_store_stats`: the reads are `None` until a set has
+/// finished, then per-pass values (one per `FRAME_PASSES` entry, finite, not all zero) and the
+/// store's counts at most 2 frames old; across all of it neither timer nor the store counts a
+/// blocking read. One `read_all_ms` after counts exactly one, and the store's non-blocking read
+/// then equals its blocking one.
+#[test]
+fn the_frame_s_timers_and_store_counts_read_back_without_waiting() {
+    let Some((device, queue)) = timed_device() else {
+        return;
+    };
+    let passes = vxe_render::FRAME_PASSES.len() as u32;
+    let (Some(timer), Some(one)) = (
+        vxe_render::PassTimer::with_passes(&device, &queue, passes),
+        vxe_render::PassTimer::new(&device, &queue),
+    ) else {
+        println!("skipped: the adapter has no TIMESTAMP_QUERY");
+        return;
+    };
+    let gpu = mirrored(&device, &queue);
+    let mut frame = Frame::new(&device, 16, 16);
+    frame.set_count_store(true);
+    let light = LightParams::headlamp();
+    let mut sets = Vec::new();
+    let mut ones = Vec::new();
+    let mut stores = Vec::new();
+    for _ in 0..5 {
+        frame.advance();
+        let p = frame.params(&gpu, &camera(), &light);
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        frame.encode(&device, &queue, &mut enc, &gpu, &p, Some(&timer));
+        timer.resolve(&mut enc);
+        {
+            // An empty compute pass timed as the one-pass timer's pass 0.
+            let _pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("one-pass timer"),
+                timestamp_writes: Some(one.writes()),
+            });
+        }
+        one.resolve(&mut enc);
+        frame.copy_store_stats(&mut enc);
+        queue.submit([enc.finish()]);
+        sets.push(timer.try_read_all_ms(&device));
+        ones.push(one.try_read_ms(&device));
+        stores.push(frame.try_store_stats(&device));
+    }
+    println!("sets {sets:?}\none-pass {ones:?}\nstore {stores:?}");
+    let first = sets
+        .iter()
+        .position(Option::is_some)
+        .expect("a set finishes within 5 frames");
+    assert!(sets[..first].iter().all(Option::is_none));
+    for set in sets.iter().flatten() {
+        assert_eq!(set.len(), passes as usize, "one value per pass");
+        assert!(set.iter().all(|ms| ms.is_finite() && *ms >= 0.0), "{set:?}");
+        assert!(
+            set.iter().sum::<f64>() > 0.0,
+            "the passes took time: {set:?}"
+        );
+    }
+    assert!(
+        ones.iter().any(Option::is_some),
+        "the one-pass timer read a set"
+    );
+    let store_first = stores
+        .iter()
+        .position(Option::is_some)
+        .expect("the store's counts finish within 5 frames");
+    assert!(stores[..store_first].iter().all(Option::is_none));
+    for (_, age) in stores.iter().flatten() {
+        assert!(*age <= 2, "the store's counts {age} frames old");
+    }
+    assert_eq!(timer.blocking_reads(), 0);
+    assert_eq!(one.blocking_reads(), 0);
+    assert_eq!(frame.store_blocking_reads(), 0);
+    let waited = timer.read_all_ms(&device);
+    assert_eq!(waited.len(), passes as usize);
+    assert_eq!(timer.blocking_reads(), 1, "a read that waits counts once");
+    let blocking = frame.read_store_stats(&device, &queue);
+    assert_eq!(frame.store_blocking_reads(), 1);
+    let (latest, age) = frame
+        .try_store_stats(&device)
+        .expect("the store's counts were read back");
+    assert_eq!(age, 0, "the GPU is idle: the last copy is in");
+    assert_eq!(latest, blocking);
 }

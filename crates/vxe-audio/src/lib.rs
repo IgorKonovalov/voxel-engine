@@ -5,7 +5,8 @@
 //! renders blocks of interleaved stereo `f32` at [`RATE`] into a caller's buffer,
 //! so every behaviour is testable without a device. [`Output`] moves a mixer onto the device
 //! callback (ADR-0006): the callback owns it, drains a bounded command channel at the top of
-//! each block and never blocks or allocates for a command.
+//! each block and never blocks, allocates or frees for a command: what a voice leaves behind
+//! goes back to the game thread through a [`Recycler`].
 //!
 //! Positions are in voxel units; the mixer turns them into metres with the world's
 //! `metres_per_voxel`. A [`Sound`] is mono PCM at [`RATE`] that the consumer decodes; the engine
@@ -45,13 +46,14 @@ pub use command::{COMMAND_CAPACITY, Command, RoomTargets};
 pub use hrtf::Hrtf;
 pub use input::Input;
 pub use mixer::{
-    MAX_VOICES, MixSettings, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
+    MAX_VOICES, MixSettings, Mixer, Recycler, TAP_JUMP_FRAMES, TAP_SILENT,
+    TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
 };
 pub use output::{Output, OutputStats};
 pub use reverb::{
     REVERB_DELAY_SLEW_FRAMES_PER_FRAME, REVERB_LINES, REVERB_MAX_DELAY_FRAMES,
-    REVERB_MAX_PREDELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, ReverbLine, ReverbNetwork, ReverbSettings,
-    TAIL_HANDOVER_RATIO, TailLines,
+    REVERB_MAX_PREDELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, ReverbClears, ReverbLine, ReverbNetwork,
+    ReverbSettings, TAIL_HANDOVER_RATIO, TailLines,
 };
 pub use room_curve::{ROOM_CURVE_POINTS, RoomCurve};
 pub use stream::{STREAM_CAPACITY_FRAMES, Stream, StreamMonitor, StreamReader, StreamWriter};

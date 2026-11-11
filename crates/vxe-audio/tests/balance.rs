@@ -3,47 +3,10 @@
 //! echoes and the tail by the room's mean free path and ramp on a room change, and the table
 //! of direct, early and tail energies in closed cubes, flat and at the defaults.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-
 use vxe_audio::*;
 use vxe_world::*;
 
-/// Counts heap allocations made on a thread that has switched counting on.
-struct Counting;
-
-thread_local! {
-    static COUNTING: Cell<bool> = const { Cell::new(false) };
-    static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
-}
-
-// SAFETY: forwards every call to `System` unchanged; the thread-locals are `const`-initialised
-// `Cell`s, which never allocate.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.with(Cell::get) {
-            ALLOCATIONS.with(|a| a.set(a.get() + 1));
-        }
-        // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract, passed through.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: `ptr` came from `System.alloc` with this layout.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.with(Cell::get) {
-            ALLOCATIONS.with(|a| a.set(a.get() + 1));
-        }
-        // SAFETY: as `alloc` and `dealloc`, passed through.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
-#[global_allocator]
-static ALLOC: Counting = Counting;
+mod support;
 
 const MPV: f32 = 0.1;
 const FS: f64 = RATE as f64;
@@ -637,43 +600,43 @@ fn a_changing_balance_renders_without_allocating() {
     }));
     let mut out = vec![0.0; 2 * BLOCK];
     m.render(&mut out, BLOCK);
-    COUNTING.with(|c| c.set(true));
-    for b in 0..64 {
-        // A room every block, through the room curves' knots and both sides of the handover
-        // ratio; every 8 blocks a jump from 8 m to 10 m hands the tail to the other network.
-        let mfp = match b % 8 {
-            0 => {
-                if b % 16 == 0 {
-                    10.0
-                } else {
-                    8.0
+    let ((), counts) = support::count(|| {
+        for b in 0..64 {
+            // A room every block, through the room curves' knots and both sides of the handover
+            // ratio; every 8 blocks a jump from 8 m to 10 m hands the tail to the other network.
+            let mfp = match b % 8 {
+                0 => {
+                    if b % 16 == 0 {
+                        10.0
+                    } else {
+                        8.0
+                    }
                 }
-            }
-            k => 2.0 + 10.0 * k as f32,
-        };
-        m.apply(Command::SetRoom(RoomTargets {
-            t60_s: 2.0,
-            mean_free_path_m: mfp,
-            energy: 0.4,
-        }));
-        m.apply(Command::SetMix(MixSettings {
-            echo_gain: 1.0 + b as f32 * 0.1,
-            echo_by_room: MixSettings::default().echo_by_room,
-            direct_delay: b % 2 == 0,
-            reverb: ReverbSettings {
-                level: 0.5 + b as f32 * 0.01,
-                predelay_s: (b % 5) as f32 * 0.03,
-                lines: if b % 3 == 0 {
-                    TailLines::Glide
-                } else {
-                    TailLines::Handover
+                k => 2.0 + 10.0 * k as f32,
+            };
+            m.apply(Command::SetRoom(RoomTargets {
+                t60_s: 2.0,
+                mean_free_path_m: mfp,
+                energy: 0.4,
+            }));
+            m.apply(Command::SetMix(MixSettings {
+                echo_gain: 1.0 + b as f32 * 0.1,
+                echo_by_room: MixSettings::default().echo_by_room,
+                direct_delay: b % 2 == 0,
+                reverb: ReverbSettings {
+                    level: 0.5 + b as f32 * 0.01,
+                    predelay_s: (b % 5) as f32 * 0.03,
+                    lines: if b % 3 == 0 {
+                        TailLines::Glide
+                    } else {
+                        TailLines::Handover
+                    },
+                    ..ReverbSettings::default()
                 },
-                ..ReverbSettings::default()
-            },
-        }));
-        m.render(&mut out, BLOCK);
-    }
-    COUNTING.with(|c| c.set(false));
-    assert_eq!(ALLOCATIONS.with(Cell::get), 0);
+            }));
+            m.render(&mut out, BLOCK);
+        }
+    });
+    assert_eq!(counts, support::Counts::NONE);
     assert!(out.iter().all(|s| s.is_finite()));
 }

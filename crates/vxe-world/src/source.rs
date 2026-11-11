@@ -1,6 +1,7 @@
 //! World sources: pure functions from a chunk coordinate to that chunk's voxels, and a wrapper
 //! that writes prefabs over another source's chunks.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::brick::Brick;
@@ -8,7 +9,7 @@ use crate::chunk::Chunk;
 use crate::coords::{CHUNK_BRICKS, ChunkCoord, VoxelCoord};
 use crate::material::MaterialId;
 use crate::prefab::{Prefab, Rot};
-use crate::stamp::{blit_into, voxel_box};
+use crate::stamp::{blit_into, chunks_of, voxel_box};
 
 /// Produces the voxels of one chunk. Implementations must be pure functions of `coord` (and
 /// their own fields, such as a seed), because chunks are generated in parallel in any order.
@@ -42,13 +43,22 @@ pub struct StampedSource<S> {
     base: S,
     /// Rotated prefab and its inclusive voxel box, minimum corner first.
     placed: Vec<(Prefab, [i64; 3], [i64; 3])>,
+    /// Per chunk a placement's box meets, the indices into `placed` of every such placement,
+    /// ascending.
+    by_chunk: HashMap<ChunkCoord, Vec<usize>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Placements [`StampedSource`]'s `chunk` has visited on this thread.
+    static PLACEMENT_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 impl<S> StampedSource<S> {
     /// `base` with `placements` written over it, each as (prefab, minimum corner of the
     /// rotated prefab, rotation). Empty prefabs are dropped.
     pub fn new(base: S, placements: Vec<(Arc<Prefab>, VoxelCoord, Rot)>) -> Self {
-        let placed = placements
+        let placed: Vec<_> = placements
             .into_iter()
             .filter_map(|(prefab, origin, rot)| {
                 let p = prefab.rotated(rot);
@@ -56,7 +66,20 @@ impl<S> StampedSource<S> {
                 Some((p, lo, hi))
             })
             .collect();
-        Self { base, placed }
+        let mut by_chunk: HashMap<ChunkCoord, Vec<usize>> = HashMap::new();
+        for (i, (_, lo, hi)) in placed.iter().enumerate() {
+            // A chunk past the i32 lattice is never generated.
+            for c in chunks_of(*lo, *hi) {
+                if let [Ok(x), Ok(y), Ok(z)] = c.map(i32::try_from) {
+                    by_chunk.entry(ChunkCoord([x, y, z])).or_default().push(i);
+                }
+            }
+        }
+        Self {
+            base,
+            placed,
+            by_chunk,
+        }
     }
 
     pub fn base(&self) -> &S {
@@ -76,8 +99,45 @@ impl<S> StampedSource<S> {
 impl<S: WorldSource> WorldSource for StampedSource<S> {
     fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
         self.base.chunk(coord, out);
-        for (p, lo, hi) in &self.placed {
+        for &i in self.by_chunk.get(&coord).into_iter().flatten() {
+            #[cfg(test)]
+            PLACEMENT_VISITS.with(|n| n.set(n.get() + 1));
+            let (p, lo, hi) = &self.placed[i];
             blit_into(out, coord, p, *lo, *hi);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 27 placements, one in each chunk of a 3 x 3 x 3 block: a chunk visits only the one
+    /// whose box meets it, and a chunk outside the block visits none.
+    #[test]
+    fn a_chunk_visits_only_the_placements_that_meet_it() {
+        let vault = Arc::new(Prefab::vault(8, 2));
+        let mut placements = Vec::new();
+        for x in 0..3 {
+            for y in 0..3 {
+                for z in 0..3 {
+                    let origin = VoxelCoord([x * 64 + 20, y * 64 + 20, z * 64 + 20]);
+                    placements.push((Arc::clone(&vault), origin, Rot::IDENTITY));
+                }
+            }
+        }
+        let source = StampedSource::new(UniformSource(0), placements);
+        let visits = |c: [i32; 3]| {
+            let before = PLACEMENT_VISITS.with(std::cell::Cell::get);
+            source.chunk(ChunkCoord(c), &mut Chunk::default());
+            PLACEMENT_VISITS.with(std::cell::Cell::get) - before
+        };
+        assert_eq!(visits([5, 5, 5]), 0, "a chunk that meets no placement");
+        assert_eq!(visits([-1, 0, 0]), 0);
+        assert_eq!(visits([1, 1, 1]), 1);
+        assert_eq!(visits([2, 0, 1]), 1);
+        let mut chunk = Chunk::default();
+        source.chunk(ChunkCoord([1, 1, 1]), &mut chunk);
+        assert_ne!(chunk, Chunk::default(), "the vault was written");
     }
 }

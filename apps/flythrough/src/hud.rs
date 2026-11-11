@@ -345,6 +345,8 @@ pub struct HudStats {
     pub frame_ms: FrameMs,
     /// Render-thread CPU of this frame, from its start to its submit.
     pub cpu_ms: f32,
+    /// The window's pacing word (`vxe_app::Pacing::word`); `None` hides the `pace` row.
+    pub pace: Option<&'static str>,
     /// GPU time of the march and the HUD pass; `None` without `TIMESTAMP_QUERY`.
     pub march_ms: Option<f32>,
     pub hud_ms: Option<f32>,
@@ -381,6 +383,34 @@ pub struct HudStats {
     pub exposure: Option<ExposureRow>,
     /// The aliasing toggles' row ([`aliasing_row`]); `None` hides it.
     pub aliasing: Option<String>,
+    /// The live queue's row ([`queue_row`]); `None` hides it.
+    pub queue: Option<String>,
+}
+
+/// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
+/// their light, and of them those with a coarse block, the jobs withdrawn since the start, then
+/// `mode` (the order and the withdrawal in words) after a semicolon when it is not empty:
+/// `in view: 12 waiting (5 coarse), withdrawn 3; order distance; withdraw on`.
+pub fn queue_row(st: &vxe_render::QueueStats, mode: &str) -> String {
+    let mut row = String::new();
+    write_queue_row(&mut row, st);
+    if !mode.is_empty() {
+        row.push_str("; ");
+        row.push_str(mode);
+    }
+    row
+}
+
+/// Appends [`queue_row`]'s text before its mode to `out`:
+/// `in view: 12 waiting (5 coarse), withdrawn 3`.
+pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats) {
+    let [blank, coarse] = st.view_waiting[vxe_render::bake::VIEW_IN];
+    let _ = write!(
+        out,
+        "in view: {} waiting ({coarse} coarse), withdrawn {}",
+        blank + coarse,
+        st.withdrawn
+    );
 }
 
 /// The exposure row: the mode in words, the exposure the next frame uses in EV (`log2 e`), the
@@ -478,6 +508,7 @@ impl HudStats {
                 max: 31.5,
             },
             cpu_ms: 4.125,
+            pace: None,
             march_ms: Some(1.75),
             hud_ms: Some(0.0375),
             upload_bytes: 1_310_720,
@@ -514,6 +545,7 @@ impl HudStats {
             lighting: None,
             exposure: None,
             aliasing: None,
+            queue: None,
         }
     }
 
@@ -559,6 +591,20 @@ impl HudStats {
             over(self.cpu_ms, FRAME_LINE_MS),
             format_args!("cpu {:.3} ms", self.cpu_ms),
         )?;
+        if let Some(pace) = self.pace {
+            // The frame window's median wall time beside this frame's CPU and GPU: with the
+            // compositor pacing, wall near their sum; free, near the larger of the two.
+            write!(
+                out,
+                "pace {pace}  wall {:.2} / cpu {:.2} / gpu ",
+                f.p50, self.cpu_ms
+            )?;
+            match self.march_ms {
+                Some(g) => write!(out, "{g:.2} ms")?,
+                None => out.write_str("n/a ms")?,
+            }
+            row(out, over(f.p50, FRAME_LINE_MS), format_args!(""))?;
+        }
         row(
             out,
             self.march_ms
@@ -590,32 +636,25 @@ impl HudStats {
             }
             out.write_str(" ms")?;
             row(out, colour, format_args!(""))?;
-            let probes = l
-                .live_probes
-                .map_or_else(String::new, |p| format!(", {p} probes live"));
-            let store = match l.store {
-                Some(s) => format!(
-                    ", store {} {:.1} MB missing {}{}{}",
+            // Written piece by piece into the rows' buffer: nothing allocated.
+            write!(out, "lights {} samples", l.light_samples)?;
+            if let Some(p) = l.live_probes {
+                write!(out, ", {p} probes live")?;
+            }
+            if let Some(s) = l.store {
+                write!(
+                    out,
+                    ", store {} {:.1} MB missing {}",
                     s.chunks,
                     s.bytes as f64 / 1e6,
-                    s.missing,
-                    if s.brick_reads > 0 {
-                        format!(" brick level {}", s.brick_reads)
-                    } else {
-                        String::new()
-                    },
-                    l.store_note
-                ),
-                None => String::new(),
-            };
-            row(
-                out,
-                HudColour::White,
-                format_args!(
-                    "lights {} samples{probes}{store}; {}",
-                    l.light_samples, l.modes
-                ),
-            )?;
+                    s.missing
+                )?;
+                if s.brick_reads > 0 {
+                    write!(out, " brick level {}", s.brick_reads)?;
+                }
+                out.write_str(&l.store_note)?;
+            }
+            row(out, HudColour::White, format_args!("; {}", l.modes))?;
             if let Some([[iw, ih], [ow, oh]]) = l.upscale {
                 // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
                 // upscale line. FSR 2's passes, when they ran, read as one total.
@@ -626,19 +665,20 @@ impl HudStats {
                     .map(|&(_, v)| v)
                     .sum();
                 let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
-                let times = if fsr > 0.0 {
-                    format!("fsr2 {fsr:.2} ms")
+                if fsr > 0.0 {
+                    write!(out, "fsr2 {fsr:.2} ms")?;
                 } else {
-                    format!(
+                    write!(
+                        out,
                         "upscale {:.2} sharpen {:.2} ms",
                         ms("upscale"),
                         ms("sharpen")
-                    )
-                };
+                    )?;
+                }
                 row(
                     out,
                     over(post, UPSCALE_LINE_MS),
-                    format_args!("{times}, {iw}x{ih} to {ow}x{oh}"),
+                    format_args!(", {iw}x{ih} to {ow}x{oh}"),
                 )?;
             }
         }
@@ -647,6 +687,9 @@ impl HudStats {
         }
         if let Some(a) = &self.aliasing {
             row(out, HudColour::White, format_args!("{a}"))?;
+        }
+        if let Some(q) = &self.queue {
+            row(out, HudColour::White, format_args!("{q}"))?;
         }
         row(
             out,
@@ -792,6 +835,38 @@ pub fn page_bytes() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `pace` row names the mode and shows the window's median wall time beside the
+    /// frame's CPU and GPU, under the cpu row, for both modes; without a mode it is hidden.
+    #[test]
+    fn a_shown_hud_names_the_pace() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.write_rows(&mut out, &mut colours);
+        assert!(!out.contains("pace "), "{out}");
+        for (pace, want) in [
+            ("free", "pace free  wall 16.50 / cpu 4.12 / gpu 1.75 ms"),
+            (
+                "compositor",
+                "pace compositor  wall 16.50 / cpu 4.12 / gpu 1.75 ms",
+            ),
+        ] {
+            s.pace = Some(pace);
+            s.write_rows(&mut out, &mut colours);
+            let lines: Vec<&str> = out.lines().collect();
+            assert_eq!(lines[1], "cpu 4.125 ms", "{out}");
+            assert_eq!(lines[2], want, "{out}");
+            assert_eq!(colours[2], HudColour::White);
+            assert_eq!(lines.len(), colours.len());
+        }
+        s.march_ms = None;
+        s.write_rows(&mut out, &mut colours);
+        assert!(
+            out.lines()
+                .any(|l| l == "pace compositor  wall 16.50 / cpu 4.12 / gpu n/a ms"),
+            "{out}"
+        );
+    }
 
     fn fed(ms: impl IntoIterator<Item = f32>) -> FrameStats {
         let mut s = FrameStats::new();
@@ -1090,6 +1165,33 @@ mod tests {
             .collect();
         assert_eq!(yellow, [0, 3]);
         assert!(colours.iter().all(|&c| c != HudColour::Red));
+    }
+
+    /// The queue row counts the chunks in the view cone beyond the shell still waiting, blank
+    /// and coarse, from the queue's counters; the shell and the chunks out of view are not
+    /// counted.
+    #[test]
+    fn the_queue_row_counts_the_view() {
+        let mut st = vxe_render::QueueStats::default();
+        st.view_waiting[vxe_render::bake::VIEW_SHELL] = [3, 1];
+        st.view_waiting[vxe_render::bake::VIEW_IN] = [7, 5];
+        st.view_waiting[vxe_render::bake::VIEW_OUT] = [40, 9];
+        assert_eq!(
+            queue_row(&st, ""),
+            "in view: 12 waiting (5 coarse), withdrawn 0"
+        );
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.write_rows(&mut out, &mut colours);
+        assert!(!out.contains("in view:"), "{out}");
+        s.queue = Some(queue_row(&st, ""));
+        s.write_rows(&mut out, &mut colours);
+        assert!(
+            out.lines()
+                .any(|l| l == "in view: 12 waiting (5 coarse), withdrawn 0"),
+            "{out}"
+        );
+        assert_eq!(out.lines().count(), colours.len());
     }
 
     /// The lighting row shows the store's chunks, megabytes and missing pixels under the store.
@@ -1537,30 +1639,42 @@ impl Modes {
     /// The exposure's mode in words, as the banner and the exposure row name it: `auto eye`,
     /// `auto symmetric`, `auto instant` or `manual`.
     pub fn exposure_mode(&self) -> String {
+        let mut out = String::new();
+        self.write_exposure_mode(&mut out);
+        out
+    }
+
+    /// Appends [`Modes::exposure_mode`]'s words to `out`.
+    pub fn write_exposure_mode(&self, out: &mut String) {
         match self.lighting.exposure {
-            vxe_render::Exposure::Manual(_) => "manual".to_owned(),
+            vxe_render::Exposure::Manual(_) => out.push_str("manual"),
             vxe_render::Exposure::Auto(a) if a == self.auto.1 => {
-                format!("auto {}", self.auto.0.name())
+                out.push_str("auto ");
+                out.push_str(self.auto.0.name());
             }
-            vxe_render::Exposure::Auto(_) => "auto symmetric".to_owned(),
+            vxe_render::Exposure::Auto(_) => out.push_str("auto symmetric"),
         }
     }
 
     /// The exposure row: the mode, the exposure in EV, the metered scene, and in auto the
     /// exposure the meter settles at.
     pub fn exposure_row(&self) -> ExposureRow {
+        let mut row = ExposureRow::default();
+        self.fill_exposure_row(&mut row);
+        row
+    }
+
+    /// Writes [`Modes::exposure_row`] into `row` in place, reusing its mode's string.
+    pub fn fill_exposure_row(&self, row: &mut ExposureRow) {
         let scene = self.readout.filter(|r| !r.held).map(|r| r.metered_log2);
-        ExposureRow {
-            mode: self.exposure_mode(),
-            ev: self.exposure_ev(),
-            scene_ev: scene,
-            target_ev: match self.lighting.exposure {
-                vxe_render::Exposure::Auto(a) => {
-                    scene.map(|t| a.exposure(f64::from(t)).log2() as f32)
-                }
-                vxe_render::Exposure::Manual(_) => None,
-            },
-        }
+        row.mode.clear();
+        self.write_exposure_mode(&mut row.mode);
+        row.ev = self.exposure_ev();
+        row.scene_ev = scene;
+        row.target_ev = match self.lighting.exposure {
+            vxe_render::Exposure::Auto(a) => scene.map(|t| a.exposure(f64::from(t)).log2() as f32),
+            vxe_render::Exposure::Manual(_) => None,
+        };
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, history edits, lamp on,
@@ -1569,18 +1683,21 @@ impl Modes {
     /// bounce is on the voxels between probes, and the exposure in EV, `log2 e`), after
     /// `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
+        let mut out = String::new();
+        self.write_line(&mut out);
+        out
+    }
+
+    /// Appends [`Modes::line`] to `out`.
+    pub fn write_line(&self, out: &mut String) {
         let l = &self.lighting;
         let on = |b: bool| if b { "on" } else { "off" };
-        let source = self
-            .source
-            .map_or_else(String::new, |s| format!("source {s}, "));
-        let probes = if l.lamp_bounce {
-            format!(", probes {}", self.probe_spacing)
-        } else {
-            String::new()
-        };
-        format!(
-            "{source}lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, exposure {} {:+.2} EV",
+        if let Some(s) = self.source {
+            let _ = write!(out, "source {s}, ");
+        }
+        let _ = write!(
+            out,
+            "lighting {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.history.name(),
@@ -1588,11 +1705,18 @@ impl Modes {
             on(l.lamp_bounce),
             l.rays(),
             l.slices(),
+        );
+        if l.lamp_bounce {
+            let _ = write!(out, ", probes {}", self.probe_spacing);
+        }
+        let _ = write!(
+            out,
+            ", filter {}, ore pulse {}, exposure ",
             on(l.filter),
-            on(self.pulse),
-            self.exposure_mode(),
-            self.exposure_ev()
-        )
+            on(self.pulse)
+        );
+        self.write_exposure_mode(out);
+        let _ = write!(out, " {:+.2} EV", self.exposure_ev());
     }
 
     /// The exposure in EV the banner names: `log2` of the manual exposure, or in auto of the
@@ -1609,39 +1733,115 @@ impl Modes {
     /// line, within [`BANNER_MS`] of the start or the last change; each wrapped at its commas
     /// into rows of at most [`BANNER_COLS`] characters, one per text line; else `None`.
     pub fn banner(&self, now_ms: f64) -> Option<String> {
-        (now_ms - self.banner_at < BANNER_MS).then(|| {
-            let mut look: Vec<&str> = self.look.iter().flat_map(|l| l.split(", ")).collect();
-            let view = self.view.map(|v| format!("view {v}"));
-            look.extend(view.as_deref());
-            let mut rows = wrap(&look);
-            rows.extend(wrap(&self.line().split(", ").collect::<Vec<_>>()));
-            rows.join("\n")
-        })
+        let mut out = String::new();
+        self.write_banner(now_ms, &mut out).then_some(out)
+    }
+
+    /// Appends [`Modes::banner`]'s rows to `out` as banner rows ([`start_row`]); `false`, and
+    /// nothing written, when the banner does not show at `now_ms`.
+    pub fn write_banner(&self, now_ms: f64, out: &mut String) -> bool {
+        if now_ms - self.banner_at >= BANNER_MS {
+            return false;
+        }
+        if self.look.is_some() || self.view.is_some() {
+            start_row(out);
+            let from = out.len();
+            if let Some(look) = &self.look {
+                out.push_str(look);
+            }
+            if let Some(v) = self.view {
+                if out.len() > from {
+                    out.push_str(", ");
+                }
+                out.push_str("view ");
+                out.push_str(v);
+            }
+            wrap_from(out, from);
+        }
+        start_row(out);
+        let from = out.len();
+        self.write_line(out);
+        wrap_from(out, from);
+        true
     }
 }
 
-/// `parts` joined by `, ` into rows of at most [`BANNER_COLS`] characters where they fit.
-fn wrap(parts: &[&str]) -> Vec<String> {
-    let mut rows = Vec::new();
-    let mut row = String::new();
-    for part in parts {
-        if !row.is_empty() && row.len() + 2 + part.len() > BANNER_COLS {
-            rows.push(std::mem::take(&mut row));
-        }
-        if !row.is_empty() {
-            row.push_str(", ");
-        }
-        row.push_str(part);
+/// Starts a banner row in `out`: a line break unless `out` is empty.
+pub fn start_row(out: &mut String) {
+    if !out.is_empty() {
+        out.push('\n');
     }
-    if !row.is_empty() {
-        rows.push(row);
+}
+
+/// Wraps `out` from byte `from` on, parts joined by `, `, into rows of at most [`BANNER_COLS`]
+/// characters where they fit: each `, ` before a part that would overrun its row becomes a line
+/// break. In place; the text only shrinks, so nothing is allocated.
+fn wrap_from(out: &mut String, from: usize) {
+    let mut row_start = from;
+    let mut search = from;
+    while let Some(i) = out[search..].find(", ").map(|i| search + i) {
+        let part_end = out[i + 2..].find(", ").map_or(out.len(), |j| i + 2 + j);
+        if part_end - row_start > BANNER_COLS {
+            out.replace_range(i..i + 2, "\n");
+            row_start = i + 1;
+            search = i + 1;
+        } else {
+            search = i + 2;
+        }
     }
-    rows
 }
 
 #[cfg(test)]
 mod mode_tests {
     use super::*;
+
+    /// `parts` joined by `, ` into rows of at most [`BANNER_COLS`] characters where they fit,
+    /// row by row: the reference [`wrap_from`] is held to.
+    fn wrap(parts: &[&str]) -> Vec<String> {
+        let mut rows = Vec::new();
+        let mut row = String::new();
+        for part in parts {
+            if !row.is_empty() && row.len() + 2 + part.len() > BANNER_COLS {
+                rows.push(std::mem::take(&mut row));
+            }
+            if !row.is_empty() {
+                row.push_str(", ");
+            }
+            row.push_str(part);
+        }
+        if !row.is_empty() {
+            rows.push(row);
+        }
+        rows
+    }
+
+    /// Wrapping in place after a prefix gives the reference's rows, for parts that fill a row
+    /// exactly, overrun it by one, a part longer than a row, and one part alone.
+    #[test]
+    fn wrapping_in_place_matches_the_row_by_row_wrap() {
+        let exact = "x".repeat(BANNER_COLS - 4);
+        let long = "y".repeat(BANNER_COLS + 5);
+        let cases: [Vec<&str>; 5] = [
+            vec![
+                "lighting half",
+                "shadow walk coarse",
+                "history edits",
+                "lamp on",
+            ],
+            vec![&exact, "ab", "c"],
+            vec![&exact, "abc", "d"],
+            vec!["a", &long, "b", "c"],
+            vec!["alone"],
+        ];
+        for parts in cases {
+            let mut out = "prefix\n".to_owned();
+            let from = out.len();
+            out.push_str(&parts.join(", "));
+            wrap_from(&mut out, from);
+            assert_eq!(out[from..], wrap(&parts).join("\n"), "{parts:?}");
+            assert_eq!(&out[..from], "prefix\n");
+        }
+    }
 
     /// Each of `F3`, `F5` to `F8` and `M` changes the banner's text to the new mode; the banner is
     /// empty 3 s after the last change and shows again on the next one.
@@ -1943,10 +2143,18 @@ impl UpscalerBanner {
 
     /// `upscaler fsr2, scale 1.5, sharpen 0.5`; `upscaler off, scale 1` with no upscaler.
     pub fn line(&self) -> String {
+        let mut out = String::new();
+        self.write_line(&mut out);
+        out
+    }
+
+    /// Appends [`UpscalerBanner::line`] to `out`.
+    pub fn write_line(&self, out: &mut String) {
         if self.mode == UpscalerMode::Off {
-            format!("upscaler off, scale {}", self.scale)
+            let _ = write!(out, "upscaler off, scale {}", self.scale);
         } else {
-            format!(
+            let _ = write!(
+                out,
                 "upscaler {}, scale {}, sharpen {}{}",
                 self.mode.name(),
                 self.scale,
@@ -1956,15 +2164,25 @@ impl UpscalerBanner {
                 } else {
                     ""
                 }
-            )
+            );
         }
     }
 
     /// The line within [`BANNER_MS`] of the last change, else `None`.
     pub fn banner(&self, now_ms: f64) -> Option<String> {
-        self.shown_at
-            .filter(|&at| now_ms - at < BANNER_MS)
-            .map(|_| self.line())
+        let mut out = String::new();
+        self.write_banner(now_ms, &mut out).then_some(out)
+    }
+
+    /// Appends the line to `out` as a banner row ([`start_row`]) within [`BANNER_MS`] of the
+    /// last change; `false`, and nothing written, otherwise.
+    pub fn write_banner(&self, now_ms: f64, out: &mut String) -> bool {
+        let shows = self.shown_at.is_some_and(|at| now_ms - at < BANNER_MS);
+        if shows {
+            start_row(out);
+            self.write_line(out);
+        }
+        shows
     }
 }
 
@@ -2004,26 +2222,62 @@ impl Pan {
 
     /// `pan 1.1 deg/s`, or `pan 1.1 deg/s stopped`.
     pub fn line(&self) -> String {
-        format!(
+        let mut out = String::new();
+        self.write_line(&mut out);
+        out
+    }
+
+    /// Appends [`Pan::line`] to `out`.
+    pub fn write_line(&self, out: &mut String) {
+        let _ = write!(
+            out,
             "pan {} deg/s{}",
             self.deg_per_s,
             if self.on { "" } else { " stopped" }
-        )
+        );
     }
 
     /// The line within [`BANNER_MS`] of the last change, else `None`.
     pub fn banner(&self, now_ms: f64) -> Option<String> {
-        self.shown_at
-            .filter(|&at| now_ms - at < BANNER_MS)
-            .map(|_| self.line())
+        let mut out = String::new();
+        self.write_banner(now_ms, &mut out).then_some(out)
+    }
+
+    /// Appends the line to `out` as a banner row ([`start_row`]) within [`BANNER_MS`] of the
+    /// last change; `false`, and nothing written, otherwise.
+    pub fn write_banner(&self, now_ms: f64, out: &mut String) -> bool {
+        let shows = self.shown_at.is_some_and(|at| now_ms - at < BANNER_MS);
+        if shows {
+            start_row(out);
+            self.write_line(out);
+        }
+        shows
     }
 }
 
 /// The stats HUD's aliasing row: the upscaler, its scale and sharpening, the far normal and the
 /// pan, shown the whole time.
 pub fn aliasing_row(upscaler: &UpscalerBanner, far_normal: &str, pan: Option<&Pan>) -> String {
-    let pan = pan.map_or_else(|| "no pan".to_owned(), Pan::line);
-    format!("{}; {far_normal}; {pan}", upscaler.line())
+    let mut out = String::new();
+    write_aliasing_row(&mut out, upscaler, far_normal, pan);
+    out
+}
+
+/// Appends [`aliasing_row`] to `out`.
+pub fn write_aliasing_row(
+    out: &mut String,
+    upscaler: &UpscalerBanner,
+    far_normal: &str,
+    pan: Option<&Pan>,
+) {
+    upscaler.write_line(out);
+    out.push_str("; ");
+    out.push_str(far_normal);
+    out.push_str("; ");
+    match pan {
+        Some(p) => p.write_line(out),
+        None => out.push_str("no pan"),
+    }
 }
 
 #[cfg(test)]

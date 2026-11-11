@@ -48,7 +48,9 @@ measurement:
 
 The upscale line is over under the fly-through's FSR 2 default since Plan 0055: 2.932 to 2.958 ms on
 the RTX 3080 Laptop, 9.967 to 9.983 ms on the RADV RENOIR. The close keeps the line and records the
-reading; the default stands on the owner's eye.
+reading; the default stands on the owner's eye. At Plan 0065's close (03b00ab, 2530 x 1378 output)
+FSR 2's passes read 2.103 to 2.424 ms on the RTX and 15.691 to 16.058 ms on the RADV RENOIR, still
+over; the lamp-on a-trous at the full lighting tier (3.088 to 3.321 ms RTX) is over the denoise line.
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
@@ -340,13 +342,19 @@ Every reading against these budgets, with its machine and commit, is in
   series on request and weekly in CI (`soak.yml`), `--profile full --run-ignored all` only
   when the owner asks; both leave the readings out.
   Budgets, proposals until read on the dev reference, quiet: quick under 60 s, so a phase gate
-  holds no lock; gpu under 10 min wall; gate under 12 min wall; **no single gate test over 30 s
-  on the dev reference's lavapipe, or over 60 s on CI's Linux arm**. A test over the line is
-  marked `#[ignore = "soak"]`, and the soak tier has no budget. `node scripts/test-times.mjs <log>` reads a run logged
+  holds no lock; gpu under 10 min wall; gate under 12 min wall; **no single gate test over 10 s
+  on the dev reference's lavapipe, or over 60 s on CI's Linux arm** (the lavapipe line was
+  30 s until 2026-11-10; the owner lowered it to bring the gate under 12 min, Plan 0066). A
+  lavapipe test over the line is marked `#[ignore = "soak"]`; a CPU test over it stays in the
+  gate on both arms, since it runs beside the lavapipe group and the cross-platform vectors
+  need the Windows arm (owner, 2026-11-11); the soak tier has no budget, runs weekly
+  in CI, and the close review runs the soak tests of the crates its plan changed. `node scripts/test-times.mjs <log>` reads a run logged
   with `--status-level pass` and names the tests over the line.
   **Reading (Plan 0057 close review, 2026-11-05, bb5fa9d with the fix pass and main merged, 731 tests, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, load 0.93 at the start and 2.03 at the end, nothing else running):** gate **1300.7 s, over the 12 min proposal**. Earlier the same day, with reads beside it, 1702.5 s, 730 tests, load 1.77 to 1.85; dev's run at 2de29c6 924.7 s. Sum of tests about 1636 s, `flythrough::settle` the largest at 358 s over 37 tests, then `golden` 218 s, `look` 182 s. Over the 30 s line: `a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_skips` 40.4 s (69.1 s in the earlier run), `a_dug_hole_settles_within_the_bar` 31.8 s.
   **Reading (2026-11-05, 7cd77ad, 729 tests, all passed, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, load 4.62 at the start and 2.81 at the end, so loaded, nothing else running):** gate **1313.4 s, over the 12 min proposal**, with those two tests on the soak list. Sum of tests about 1662 s, `flythrough::settle` 338 s over 36 tests. Over the 30 s line: `smoothed_normals_cut_the_normal_error_and_move_no_hit` 32.3 s, `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` 31.8 s, `castle_gate_golden` 31.1 s (its first render on that cache; alone 27.4 s cold, 11.4 to 13.3 s warm), `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 30.8 s.
   **Reading (Plan 0059 close review, 2026-11-09, d1e3468 with main merged, 725 tests, all passed, 75 skipped, dev reference on lavapipe, exclusive perf lock, 16G cap, build in the same timed run, `--status-level pass`, load 1.92 at the start and 2.34 at the end):** gate **850.2 s, over the 12 min proposal** but 35 % under the 1313.4 s before the table's deletion, with the `flythrough::settle` binary back in the gate. Sum of tests 20.0 min serial. None over the 30 s line; the slowest `the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn` 25.7 s.
+  **Reading (Plan 0066 Phase 2, 2026-11-10, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, nothing else running):** before the 10 s marks, 9359b82, 725 tests, all passed, load 0.70 at the start and 1.60 at the end: gate **771 s**, 18.5 min serial, 28 tests over 10 s (7.5 min of it; the list is in the plan's readings log). With the 28 marked `#[ignore = "soak"]`, 697 tests, all passed, load 1.40 at the start and 1.56 at the end: gate **505 s, under the 12 min proposal**, 11.6 min serial; four tests read 10.9 to 12.9 s that read 5.9 to 10.0 s in the first run. The 28 alone under `--profile soak --run-ignored only`: 272 s, all passed. One phase's gpu check, `binary(=gpu_look)` (what `--binaries gpu_look` selects): 60 s wall, 11 tests. At the close (owner, 2026-11-11) `castle_vector` and `showcase_vector` went back into the gate as CPU tests (548f4b9), leaving 26 soak marks; the gate was not re-read after it.
+  **Reading (Plan 0064 close review, 2026-11-11, 72ff4cb with main merged, dev reference on lavapipe, exclusive perf lock, 16G cap, `scripts/build-guests.sh` first, `-j 12`, `--status-level pass`, load 3.8 at the start and 1.2 at the end):** 757 tests, all passed, 102 skipped: nextest **553.4 s**, 597 s with the build of the merged crates; under the 12 min proposal. Over the 10 s line, none of them the plan's: `castle_vector` 17.9 and `showcase_vector` 16.0 (CPU, in the gate by the owner's call), `a_baked_view_is_final_on_its_first_frame` 12.5, `uniform_chunks_render_identically_from_their_mips` 11.5, `the_rig_reads_the_default_look` 11.3, `the_score_blends_distance_and_the_view` 10.2 s.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
   the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial
   test time; 41 tests over 60 s take 320 of those minutes, 603 tests under 5 s take 4. The

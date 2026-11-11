@@ -363,3 +363,108 @@ fn a_corner_tie_ray_hits_the_same_voxel_through_the_same_face_with_and_without_s
         }
     }
 }
+
+/// A seeded 50 % fill of the voxels 6..18 on every axis (brick 1 of chunk 0 and the voxels
+/// around it), air elsewhere.
+fn speckled(seed: u32) -> impl Fn([i32; 3]) -> MaterialId + Sync {
+    move |v| {
+        if v.iter().any(|&c| !(6..18).contains(&c)) {
+            return AIR;
+        }
+        let mut h = (v[0] as u32)
+            .wrapping_mul(0x9E37_79B1)
+            .wrapping_add((v[1] as u32).wrapping_mul(0x85EB_CA77))
+            .wrapping_add((v[2] as u32).wrapping_mul(0xC2B2_AE3D))
+            .wrapping_add(seed.wrapping_mul(0x27D4_EB2F));
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x2C1B_3C6D);
+        h ^= h >> 12;
+        if h & 1 == 0 { ROCK } else { AIR }
+    }
+}
+
+/// The far normal's mask path (`gradient27_normal` reading a Full brick's opaque mask) against
+/// its lookup path (the walk's masks off, every neighbour through `lookup`): every voxel of brick
+/// 1 (512 local coordinates) is hit once, by a one-pixel ray from the centre of an air voxel
+/// beside it, in the first of 24 seeded fills where it is solid with a horizontal air neighbour;
+/// the hit records (the 27-count gradient's normal encoded, the material, the flags) are equal
+/// bit for bit with the masks on and off.
+#[test]
+fn the_mask_path_equals_the_lookup_path() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut frame = Frame::new(&device, 1, 1);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    frame.set_look(LookParams {
+        normal_mode: vxe_render::NormalMode::Gradient27,
+        ..LookParams::default()
+    });
+    let sides: [([i32; 3], f32); 4] = [
+        ([-1, 0, 0], 0.0),
+        ([1, 0, 0], std::f32::consts::PI),
+        ([0, -1, 0], std::f32::consts::FRAC_PI_2),
+        ([0, 1, 0], -std::f32::consts::FRAC_PI_2),
+    ];
+    let mut left: Vec<[i32; 3]> = (0..512)
+        .map(|i| [8 + (i % 8), 8 + (i / 8 % 8), 8 + i / 64])
+        .collect();
+    let mut hit = 0;
+    let mut normals = std::collections::BTreeSet::new();
+    for seed in 0..24u32 {
+        if left.is_empty() {
+            break;
+        }
+        let fill = speckled(seed);
+        let world = world([1, 1, 1], &fill);
+        let mut gpu = GpuWorld::new(&device, world.extent());
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).expect("sync");
+        queue.submit([enc.finish()]);
+        left.retain(|&v| {
+            if fill(v) == AIR {
+                return true;
+            }
+            let Some(&(d, yaw)) = sides
+                .iter()
+                .find(|(d, _)| fill([v[0] + d[0], v[1] + d[1], v[2] + d[2]]) == AIR)
+            else {
+                return true;
+            };
+            let camera = Camera {
+                position: Vec3::new(
+                    (v[0] + d[0]) as f32 + 0.5,
+                    (v[1] + d[1]) as f32 + 0.5,
+                    v[2] as f32 + 0.5,
+                ),
+                yaw,
+                pitch: 0.0,
+                vfov: 0.01,
+            };
+            let records = [true, false].map(|masks| {
+                let light = LightParams {
+                    masks,
+                    ..LightParams::at_eye()
+                };
+                frame.render(&device, &queue, &gpu, &camera, &light);
+                readback::read_rgba16u(&device, &queue, frame.hit_records())[0]
+            });
+            assert_eq!(
+                records[0], records[1],
+                "voxel {v:?} (seed {seed}): the mask path against the lookup path"
+            );
+            assert_eq!(records[0][3] & 1, 1, "voxel {v:?} was not hit");
+            hit += 1;
+            normals.insert([records[0][0], records[0][1]]);
+            false
+        });
+    }
+    println!(
+        "{hit} voxels hit, {} distinct encoded normals",
+        normals.len()
+    );
+    assert!(left.is_empty(), "voxels never hit: {left:?}");
+    assert_eq!(hit, 512);
+    // The four face normals the rays enter through, and gradients beyond them.
+    assert!(normals.len() > 6, "{} distinct normals", normals.len());
+}

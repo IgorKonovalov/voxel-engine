@@ -49,6 +49,7 @@ fn fsr_level_frame() -> Option<(
 /// through the previous view less this frame's jitter and the pixel's centre, within 1e-3
 /// internal pixels.
 #[test]
+#[ignore = "soak"]
 fn motion_vectors_match_the_analytic_reprojection() {
     let Some((device, queue, gpu, mut frame, camera)) = fsr_level_frame() else {
         return;
@@ -142,6 +143,59 @@ fn off_after_fsr2_renders_the_goldens_byte_for_byte() {
         assert!(img == want, "{name} differs after FSR 2 and back");
         assert_golden(name, &img);
     }
+}
+
+/// FSR 2's dispatch list (`Fsr2::dispatched`): with sharpening on, RCAS writes the frame's image
+/// and the tone pass is not dispatched, eight passes ending in `fsr2 rcas`; with sharpening off,
+/// eight ending in `fsr2 tone`; bypassed, the tone pass alone. The frame's target bytes are the
+/// same with sharpening on and off: the accumulate pass's two display-size colour targets are
+/// its history's pair, read and written by the accumulate pass alone.
+#[test]
+fn fsr2_dispatches_rcas_or_the_tone_pass_not_both() {
+    let world = scene_world();
+    let Some((device, queue, gpu)) = mirrored(&world) else {
+        return;
+    };
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    let first: Vec<&str> = vxe_render::fsr2::FSR2_PASSES[..7].to_vec();
+    let mut bytes = Vec::new();
+    for (sharpness, last) in [(0.5, "fsr2 rcas"), (0.0, "fsr2 tone")] {
+        frame.set_upscaler_kind(
+            &device,
+            UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness,
+                ..vxe_render::Fsr2Settings::default()
+            }),
+        );
+        frame.render(
+            &device,
+            &queue,
+            &gpu,
+            &scene_camera(),
+            &LightParams::at_eye(),
+        );
+        let fsr = frame.fsr2().expect("FSR 2 is on");
+        let mut want = first.clone();
+        want.push(last);
+        assert_eq!(fsr.dispatched(), want, "sharpness {sharpness}");
+        bytes.push(frame.frame_bytes());
+    }
+    println!("frame_bytes with sharpening on and off: {bytes:?}");
+    assert_eq!(bytes[0], bytes[1], "frame_bytes with sharpening on and off");
+    frame.fsr2_mut().expect("FSR 2 is on").set_bypass(true);
+    frame.render(
+        &device,
+        &queue,
+        &gpu,
+        &scene_camera(),
+        &LightParams::at_eye(),
+    );
+    assert_eq!(
+        frame.fsr2().expect("FSR 2 is on").dispatched(),
+        ["fsr2 tone"],
+        "bypassed"
+    );
 }
 
 /// `world` mirrored over its extent on the software adapter; `None` without the adapter.
@@ -678,6 +732,7 @@ fn a_sideways_step_keeps_fsr2s_history() {
 /// the depth clip is 0 at every hit pixel not within one internal pixel of a silhouette (a
 /// neighbour whose view depth differs by more than 5 %, or a miss).
 #[test]
+#[ignore = "soak"]
 fn a_still_camera_has_no_disocclusion() {
     let Some((device, queue, gpu, mut frame, camera)) = fsr_level_frame() else {
         return;
@@ -1213,6 +1268,7 @@ fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
 /// off, and its share of values over 4/255 at most 1.15 percentage points above it (FSR 2
 /// always jitters; the jitter-off image is the stillest one Plan 0030 compared against).
 #[test]
+#[ignore = "soak"]
 fn fsr2_adds_little_flicker_on_a_still_vein() {
     let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
     let Some((off_mean, off_over)) = still_vein_flicker(false, own) else {

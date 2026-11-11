@@ -1,6 +1,7 @@
 # 0044: The hot-path and defect pass: what the frame, the sync, the walk, the edits and the audio callback do for nothing
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** in-progress (2026-11-10, side lane: Phases 1, 6, 7); approved 2026-10-22, amended
+> 2026-11-10 (review pass)
 > **Created:** 2026-10-22
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
 > figures in `docs/nfr.md` that the plans so far have already shipped.
@@ -32,6 +33,23 @@
 > - The tiers select by marks (2026-11-10): a GPU test file is `tests/gpu_*.rs`, a long series
 >   is `#[ignore = "soak"]`, a hand-run measurement is `#[ignore]`d inside a `mod reading`.
 >   `scripts/check-test-tiers.mjs` enforces all three.
+>
+> **Review note (2026-11-10, the static performance review at `50b637a`; the owner approved
+> Plans 0064 and 0065 the same day):**
+> - **Phase 2 (the HUD's timers) has moved whole to
+>   [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
+>   It claims no golden and its fix is worth little behind three plans. Its text stays below
+>   as that phase's reference; `dev` does not run it here.
+> - **Phase 4's premise is weaker than written.** `docs/nfr.md` section 5 notes (2026-11-04)
+>   that the pressure rule no longer fires at the default, so "sizes the whole pending set and
+>   uploads none" is rare there. The sync's cost on record is the upload itself; Plan 0064's
+>   Phase 4 bounds it by time. Phase 4 here keeps its fixes and expects little at p50.
+> - **Phase 5 (the walk) has a case for running before Plans 0061 and 0058**, which decide by
+>   hit and light readings that include the material read it removes. It collides with their
+>   shader files and forces a re-bake, so it stays where it is (owner, 2026-11-10).
+>   [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+>   Phase 4 takes the far normal's 27 bits from the brick's mask; whichever lands second keeps
+>   the other's path.
 
 ## TL;DR
 
@@ -259,13 +277,15 @@ it lives outside the `gpu_` binaries.
     1 free.
   - A `Play` under the counting allocator does 0 allocations and 0 frees. A ring-out that
     resets the network does no single zeroing of more than one block's worth of lines, which
-    is asserted on a counter the mixer exposes to tests.
+    is asserted on a counter the mixer exposes to tests. (Raised to two blocks' worth, owner
+    answer 3.)
   - The existing mixer, reverb and balance tests produce the same samples. Where a test compares
     output, it compares exactly, or within the tolerance it already uses.
   - `cargo bench -p vxe-audio --bench mixer` is read before and after, with the machine and
     load.
 
 ### Phase 2: the HUD measures without stalling, and its allocation test covers the HUD
+- **Moved (2026-11-10):** Plan 0064's Phase 3 runs this phase; the text below is its contract.
 - **Owner skill:** dev
 - **What:**
   - `PassTimer` gets a ring of 3 query and readback sets and a `try_read_all_ms` that never
@@ -515,6 +535,9 @@ claim that line.
    recorded at Plan 0059's verdict: "Drafts first". Plans 0060, 0061 and 0058, then this plan,
    then Plan 0045 re-cut against the tree at its start. Phases 1, 6 and 7 may run as a side
    lane at any time. This replaces answer 1's order.
+3. **Rapid reverb handovers (owner, 2026-11-11),** the fix pass's finding 2: option (b), the
+   deferral with the bound raised to `2 x BLOCK` frames a line (8 192 samples, 32 KB a block),
+   no extra memory, the walk test unchanged (readings log, Fix pass, Finding 2).
 
 ## Implementation log
 
@@ -522,17 +545,27 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the inventory at the start commit | dev | not started | |
-| 1: the audio callback frees nothing and zeroes nothing large | dev | not started | |
+| 0: the inventory at the start commit | dev | side-lane rows only (Phases 1, 6, 7); the render rows wait for Phases 2-5, 8 | e1388e1 |
+| 1: the audio callback frees nothing and zeroes nothing large | dev | done; deviations: `lib.rs` exports `Recycler` and `ReverbClears` (not in Files touched); the FDN clear swaps with a third spare set of lines (+1.8 MB); the paired mixer bench reads +0.2 to +0.8 % (kept: it removes the counted frees) | ab366e7 |
 | 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | not started | |
 | 3: the frame builds its bind groups once per size | dev | not started | |
 | 4: the sync sizes only what it uploads | dev | not started | |
 | 5: the march walks without reading what it discards | dev | not started | |
-| 6: the world reads a chunk once per run of steps | dev | not started | |
-| 7: the controller and the server stop repeating work | dev | not started | |
+| 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | ebd54e3 |
+| 7: the controller and the server stop repeating work | dev | done; deviations: the box list is per-thread scratch with a recollect past its region, and covers the usual sweeps only; the counting test is in `vxe-sim/tests/controller.rs`; inputs are logged after the logic's tick | 2ede457 |
 | 8: the guards that were missing | dev | not started | |
 
 ### Notes
+
+- Fix pass, side-lane review finding 1 (retire drops buffers): a voice hold that cannot
+  overflow, a separate source hold, buffers kept on the mixer with the recycler gone; plus the
+  output-hash test of finding 9. Commit: 45ec573.
+- Fix pass, finding 3 (raycast bench origin in rock): four origins in a carved hall with
+  boulders; base and tip re-read. Commit: c6c3bbb.
+- Fix pass, finding 2 (two handovers within the spare's cleaning time zero it in one block):
+  a clear that finds the spare dirty parks its network until the spare is clean; the
+  per-block clearing bound is `2 x BLOCK` frames a line (owner answer 3), and the ring-out
+  test's bar moved with it. Commit: c1e3665.
 
 ### Close triggers
 

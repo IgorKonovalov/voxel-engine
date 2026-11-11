@@ -9,8 +9,9 @@
 //! opaque ones are: a pane's entry face reads its brick's record (`march.wgsl`'s
 //! `glass_reflected`).
 //!
-//! **The pool** ([`Store`]), in `u32` words: the frame's counters (words 0 to 2: no value, brick
-//! reads, [`STORE_COARSE_READS`]), the mirror window's origin (word 4) and size (word 8) in
+//! **The pool** ([`Store`]), in `u32` words: words 0 to 2 unused (the frame's read counters,
+//! no value, brick reads and [`STORE_COARSE_READS`], are a buffer of their own that only the
+//! counting temporal pass writes), the mirror window's origin (word 4) and size (word 8) in
 //! chunks, the flags ([`STORE_FLAGS`]), then from word [`STORE_TABLE`] one word per window chunk
 //! naming its block's first word (0 none), bit 31 ([`TABLE_COARSE`]) set on the live queue's
 //! coarse blocks. A block is 512 directory words, a brick's `offset from the block's start << 11`
@@ -82,7 +83,7 @@ pub const STORE_TABLE: u64 = 16;
 /// A chunk table word's flag: the chunk's block is the live queue's coarse pass, refined later.
 /// The block's first word is the rest (a pool is under 2^31 words).
 pub const TABLE_COARSE: u32 = 1 << 31;
-/// The header's counter of the lighting pixels that read a coarse block (word 2).
+/// The frame's read counters' word that counts the lighting pixels that read a coarse block.
 pub const STORE_COARSE_READS: u64 = 2;
 /// The words of a block's directory.
 pub const DIRECTORY_WORDS: u64 = CHUNK_BRICKS as u64;
@@ -1004,7 +1005,7 @@ impl Store {
             header[self.table_word(ChunkCoord(*c)) as usize] =
                 self.table_value(ChunkCoord(*c), *first);
         }
-        // Words 0 to 2 are the frame's counters, which the temporal pass writes.
+        // Words 0 to 2 are unused; the frame's counters are a buffer of their own.
         queue.write_buffer(&self.pool, 12, bytemuck::cast_slice(&header[3..]));
         dropped
     }
@@ -1717,6 +1718,9 @@ struct LoopTimer {
 pub(crate) struct JobLoop {
     pending: VecDeque<Job>,
     open: Vec<OpenJob>,
+    /// Withdrawn open jobs with rounds still in flight ([`JobLoop::withdraw`]): read back into
+    /// nothing, each slot freed once its rounds are.
+    withdrawn: Vec<OpenJob>,
     free: Vec<usize>,
     in_flight: VecDeque<InFlight>,
     staging: Vec<wgpu::Buffer>,
@@ -1728,6 +1732,9 @@ pub(crate) struct JobLoop {
     pub last_samples: u64,
     /// The light epoch the open jobs' tables were last written at ([`JobLoop::refresh_tables`]).
     tables_at: Option<u64>,
+    /// Each ended job's chunk and the samples its faces drew, where the loop keeps them
+    /// (`Some`); the owner drains it.
+    pub ended: Option<Vec<(ChunkCoord, u64)>>,
     pub report: BakeReport,
     pub done: BakeProgress,
 }
@@ -1748,6 +1755,7 @@ impl JobLoop {
             },
             pending: jobs.into(),
             open: Vec::new(),
+            withdrawn: Vec::new(),
             free: slots.rev().collect(),
             in_flight: VecDeque::new(),
             staging: Vec::new(),
@@ -1755,6 +1763,7 @@ impl JobLoop {
             timer: None,
             last_samples: 0,
             tables_at: None,
+            ended: None,
         }
     }
 
@@ -1803,6 +1812,63 @@ impl JobLoop {
             .iter()
             .map(|j| j.coord)
             .chain(self.open.iter().map(|j| j.coord))
+    }
+
+    /// Takes out the pending and open jobs whose chunks `pred` holds: a pending job dropped, an
+    /// open job closed with no block, its rounds in flight read back into nothing and its table
+    /// slot freed once they are. Each job's chunk, place (first word and words, its block's
+    /// layout at `record` words a brick record) and the samples its faces drew (read back or
+    /// in flight).
+    pub fn withdraw(&mut self, pred: impl Fn(ChunkCoord) -> bool, record: usize) -> Vec<Withdrawn> {
+        let mut out = Vec::new();
+        let pending = std::mem::take(&mut self.pending);
+        for job in pending {
+            if pred(job.coord) {
+                out.push(Withdrawn {
+                    coord: job.coord,
+                    first_word: job.first_word,
+                    words: layout(&job.faces, record).1,
+                    drawn: 0,
+                });
+            } else {
+                self.pending.push_back(job);
+            }
+        }
+        let mut k = 0;
+        while k < self.open.len() {
+            if !pred(self.open[k].coord) {
+                k += 1;
+                continue;
+            }
+            let job = self.open.remove(k);
+            out.push(Withdrawn {
+                coord: job.coord,
+                first_word: job.first_word,
+                words: layout(&job.faces, record).1,
+                drawn: job
+                    .states
+                    .iter()
+                    .map(|s| u64::from(s.n) + u64::from(s.queued))
+                    .sum(),
+            });
+            if job.states.iter().all(|s| s.queued == 0) {
+                self.free.push(job.slot);
+            } else {
+                self.withdrawn.push(job);
+            }
+        }
+        out
+    }
+
+    /// The pool words the pending and open jobs' places hold, at `record` words a brick record.
+    pub fn place_words(&self, record: usize) -> u64 {
+        let pending: u64 = self
+            .pending
+            .iter()
+            .map(|j| layout(&j.faces, record).1)
+            .sum();
+        let open: u64 = self.open.iter().map(|j| layout(&j.faces, record).1).sum();
+        pending + open
     }
 
     /// Samples the pending and open jobs still have to submit, at most.
@@ -2167,11 +2233,24 @@ impl JobLoop {
             let mut at = 0usize;
             for &(slot, i, r) in &f.entries {
                 if self.open.get(at).is_none_or(|j| j.slot != slot) {
-                    at = self
-                        .open
-                        .iter()
-                        .position(|j| j.slot == slot)
-                        .expect("a job with entries in flight stays open");
+                    match self.open.iter().position(|j| j.slot == slot) {
+                        Some(k) => at = k,
+                        None => {
+                            // A withdrawn job's rounds: read into nothing.
+                            let z = self
+                                .withdrawn
+                                .iter_mut()
+                                .find(|j| j.slot == slot)
+                                .expect("a job with entries in flight stays open or withdrawn");
+                            for _ in 0..r {
+                                let samples = out_words[e * 20 + 5];
+                                e += 1;
+                                z.states[i].queued -= samples;
+                                report.wasted += u64::from(samples);
+                            }
+                            continue;
+                        }
+                    }
                 }
                 let s = &mut self.open[at].states[i];
                 for _ in 0..r {
@@ -2202,6 +2281,15 @@ impl JobLoop {
                     }
                 }
             }
+            // A withdrawn job whose rounds are all read back frees its slot.
+            let free = &mut self.free;
+            self.withdrawn.retain(|j| {
+                let drained = j.states.iter().all(|s| s.queued == 0);
+                if drained {
+                    free.push(j.slot);
+                }
+                !drained
+            });
             self.done.samples = report.samples;
             self.done.gpu_seconds = report.gpu_seconds;
             out.samples += report.samples - samples_before;
@@ -2239,6 +2327,10 @@ impl JobLoop {
             if j.live.is_empty() && j.states.iter().all(|s| s.queued == 0) {
                 let job = self.open.remove(k);
                 self.free.push(job.slot);
+                if let Some(ended) = self.ended.as_mut() {
+                    let drawn = job.states.iter().map(|s| u64::from(s.n)).sum();
+                    ended.push((job.coord, drawn));
+                }
                 let (coord, first, block) = ctx.close(job, &mut self.report);
                 sink(store, coord, first, block);
                 self.done.chunks_done += 1;
@@ -2247,6 +2339,16 @@ impl JobLoop {
             }
         }
     }
+}
+
+/// A job taken out of a [`JobLoop`] ([`JobLoop::withdraw`]): its chunk, its place and the
+/// samples its faces drew.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Withdrawn {
+    pub coord: ChunkCoord,
+    pub first_word: u64,
+    pub words: u64,
+    pub drawn: u64,
 }
 
 /// Where an ended job's block goes: the store, its chunk, its place and its words.
@@ -2540,6 +2642,34 @@ pub struct QueueStats {
     pub hook_chunks: u64,
     pub hook_ns: u64,
     pub hook_max_ns: u64,
+    /// The candidates at the last opening by where they lie against the view ([`VIEW_SHELL`],
+    /// [`VIEW_IN`], [`VIEW_OUT`]): those with no block, and those with a coarse one.
+    pub view_waiting: [[u64; 2]; 3],
+    /// Of the candidates in the view cone beyond the shell at the last opening, those outside
+    /// the frustum widened by the same margin ([`QueueView::frustum`]).
+    pub cone_only: u64,
+    /// The median distance in chunks of the candidates in the view cone beyond the shell at the
+    /// last opening, with no block and coarse (0 for none).
+    pub view_median: [f32; 2],
+    /// The samples read back for the jobs ended since the queue started, by where their chunk
+    /// lay against the view as the job ended.
+    pub view_samples: [u64; 3],
+    /// Of them, the samples of jobs whose chunk was out of view and behind the camera (its
+    /// centre's view cosine under 0) as the job ended: passed.
+    pub passed_samples: u64,
+    /// The candidates at the last opening by class (no block, coarse), distance band (chunks 0
+    /// to 2, 3 to 5, 6 to 10, over 10) and angle band (`a` 0, under 0.2, 0.2 to 0.4, over 0.4).
+    pub weight_census: [[[u32; 4]; 4]; 2],
+    /// Of the candidates in the view cone beyond the shell, the ones read at the last reach
+    /// census ([`VIEW_REACH_SAMPLE`] at most, spread by distance, every [`VIEW_REACH_EVERY`]
+    /// steps) and those whose reach was not ready.
+    pub view_reach: [u64; 2],
+    /// The CPU milliseconds of the view's counters at the last opening.
+    pub census_ms: f64,
+    /// Jobs withdrawn since the queue started ([`BakeQueue::withdraw`]), and the samples their
+    /// faces had drawn: lost.
+    pub withdrawn: u64,
+    pub withdrawn_samples: u64,
 }
 
 /// A block fading from what it showed to its target over `frames` ([`FADE`], or [`DIG_FADE`]
@@ -2571,12 +2701,205 @@ pub struct QueueView<'a> {
     /// Chunks from the focus the light-sample ranges are held out to; `None` the window's far
     /// corner plus the light radius.
     pub hold: Option<i32>,
+    /// The wider of the view's horizontal and vertical half-angles, in radians
+    /// ([`view_half_angle`]); the queue's view cone adds [`QUEUE_VIEW_MARGIN_DEG`] to it.
+    pub half_angle: f32,
+    /// The view's own horizontal and vertical half-angles, in radians, for the reading of the
+    /// chunks the cone holds outside the frustum widened by the same margin
+    /// ([`QueueStats::cone_only`]); `None` reads none. The frustum's up is the camera's, with
+    /// no roll: `right = forward x Z`, `up = right x forward`.
+    pub frustum: Option<[f32; 2]>,
+}
+
+/// The live queue's angle weight by default (ADR-0048's `W_ANGLE`, [`QueueOrder::Score`]).
+pub const QUEUE_ANGLE_WEIGHT: f32 = 4.0;
+/// The live queue's refine weight when the score folds the class in ([`Refine::Weight`],
+/// ADR-0048's `W_REFINE`). The default order keeps the class as a tier ([`Refine::Tier`]);
+/// this is the comparison arm's weight.
+pub const QUEUE_REFINE_WEIGHT: f32 = 2.0;
+
+/// How the score treats a chunk that holds a block (a coarse one to refine, or a whole re-bake
+/// of ring 3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Refine {
+    /// The score is multiplied by the weight: one list, whatever the class.
+    Weight(f32),
+    /// The class is the leading key, the score inside each class: every chunk with no block
+    /// before any refinement (ADR-0046's coarse-first rule), with its break and its per-class
+    /// reach checks.
+    Tier,
+}
+
+/// The order the live queue opens its candidates in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum QueueOrder {
+    /// ADR-0048's score ([`queue_score`]), ties by the view cosine then the coordinate.
+    Score { angle: f32, refine: Refine },
+    /// The class first, then the squared chunk distance, ties by the view (ADR-0046 as built).
+    Distance,
+}
+
+/// ADR-0048's score at [`QUEUE_ANGLE_WEIGHT`] with the class as the leading key
+/// ([`Refine::Tier`], ADR-0046's coarse-first rule).
+impl Default for QueueOrder {
+    fn default() -> Self {
+        Self::Score {
+            angle: QUEUE_ANGLE_WEIGHT,
+            refine: Refine::Tier,
+        }
+    }
+}
+
+impl QueueOrder {
+    /// The order in words: `order score, angle 4, refine 2`, `order score, angle 4, refine
+    /// tier` or `order distance`.
+    pub fn words(&self) -> String {
+        match self {
+            Self::Score { angle, refine } => format!(
+                "order score, angle {angle}, refine {}",
+                match refine {
+                    Refine::Weight(r) => r.to_string(),
+                    Refine::Tier => "tier".to_owned(),
+                }
+            ),
+            Self::Distance => "order distance".to_owned(),
+        }
+    }
+}
+
+/// A candidate of an opening: its sort key (the leading class or 0, the score's bits or the
+/// squared distance, the view tie, the coordinate), its class (1 when it holds a block), its
+/// squared chunk distance and its angle term.
+#[derive(Clone, Copy, Debug)]
+struct Cand {
+    lead: u8,
+    key: u64,
+    tie: i32,
+    c: [i32; 3],
+    class: u8,
+    /// Whether its block is coarse.
+    coarse: bool,
+    d2: i64,
+    a: f32,
+}
+
+/// Candidates in the view the reach census reads at most ([`QueueStats::view_reach`]).
+pub const VIEW_REACH_SAMPLE: usize = 64;
+/// Steps between two reach censuses of the view.
+pub const VIEW_REACH_EVERY: u64 = 60;
+
+/// Degrees the queue's view cone widens the view's half-angle by (ADR-0048's margin).
+pub const QUEUE_VIEW_MARGIN_DEG: f32 = 15.0;
+
+/// The wider of a view's half-angles, in radians: the vertical one (half of `vfov`) or the
+/// horizontal one at `aspect` (width over height), never the corner's.
+pub fn view_half_angle(vfov: f32, aspect: f32) -> f32 {
+    let v = vfov * 0.5;
+    let h = (v.tan() * aspect).atan();
+    v.max(h)
+}
+
+/// The horizontal and vertical half-angles of a view of `vfov` at `aspect`, in radians.
+pub fn view_half_angles(vfov: f32, aspect: f32) -> [f32; 2] {
+    let v = vfov * 0.5;
+    [(v.tan() * aspect).atan(), v]
+}
+
+/// Whether a chunk at integer chunk offset `offset` from the camera's lies in the near shell:
+/// within `near` chunks (Chebyshev) every way.
+pub fn in_near_shell(offset: [i32; 3], near: i32) -> bool {
+    offset.iter().all(|v| v.abs() <= near)
+}
+
+/// ADR-0048's angle term `a` of a chunk at integer chunk offset `offset` from the camera's: its
+/// angle to `forward` beyond the view cone (`half_angle` plus [`QUEUE_VIEW_MARGIN_DEG`]), over
+/// pi; 0 inside the cone and in the near shell ([`in_near_shell`]) whatever its direction.
+pub fn angle_term(offset: [i32; 3], forward: [f32; 3], half_angle: f32, near: i32) -> f32 {
+    if in_near_shell(offset, near) {
+        return 0.0;
+    }
+    let o = offset.map(|v| v as f32);
+    let len = (o[0] * o[0] + o[1] * o[1] + o[2] * o[2]).sqrt();
+    let flen = (forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2])
+        .sqrt()
+        .max(f32::MIN_POSITIVE);
+    let cos = ((o[0] * forward[0] + o[1] * forward[1] + o[2] * forward[2]) / (len * flen))
+        .clamp(-1.0, 1.0);
+    let cone = half_angle + QUEUE_VIEW_MARGIN_DEG.to_radians();
+    if cos >= cone.cos() {
+        return 0.0;
+    }
+    ((cos.acos() - cone) / std::f32::consts::PI).max(0.0)
+}
+
+/// ADR-0048's score of a candidate at integer chunk offset `offset` with angle term `a`
+/// ([`angle_term`]): `|o| x (1 + angle_weight x a) x (refine_weight for a coarse block, else
+/// 1)`. Lower opens first.
+pub fn queue_score(
+    offset: [i32; 3],
+    a: f32,
+    coarse: bool,
+    angle_weight: f32,
+    refine_weight: f32,
+) -> f32 {
+    let o = offset.map(|v| v as f32);
+    let len = (o[0] * o[0] + o[1] * o[1] + o[2] * o[2]).sqrt();
+    len * (1.0 + angle_weight * a) * if coarse { refine_weight } else { 1.0 }
+}
+
+/// Where a chunk lies against the queue's view ([`QueueStats::view_waiting`]): the near shell,
+/// in the view cone beyond it, or out of view.
+pub const VIEW_SHELL: usize = 0;
+pub const VIEW_IN: usize = 1;
+pub const VIEW_OUT: usize = 2;
+
+/// Whether `offset` lies inside the frustum of half-angles `half` (horizontal, vertical, each
+/// widened by [`QUEUE_VIEW_MARGIN_DEG`]) about `forward`, its up the camera's with no roll.
+fn in_widened_frustum(offset: [i32; 3], forward: [f32; 3], half: [f32; 2]) -> bool {
+    let f = glam::Vec3::from(forward).normalize_or_zero();
+    let right = f.cross(glam::Vec3::Z).normalize_or(glam::Vec3::NEG_Y);
+    let up = right.cross(f);
+    let o = glam::Vec3::from(offset.map(|v| v as f32));
+    let z = o.dot(f);
+    if z <= 0.0 {
+        return false;
+    }
+    let m = QUEUE_VIEW_MARGIN_DEG.to_radians();
+    o.dot(right).abs().atan2(z) <= half[0] + m && o.dot(up).abs().atan2(z) <= half[1] + m
+}
+
+/// The distance bands of the weight log ([`QueueStats::weight_census`]): chunks 0 to 2, 3 to
+/// 5, 6 to 10, over 10.
+fn distance_band(len: f32) -> usize {
+    if len < 2.5 {
+        0
+    } else if len < 5.5 {
+        1
+    } else if len < 10.5 {
+        2
+    } else {
+        3
+    }
+}
+
+/// The angle bands of the weight log: 0, under 0.2, 0.2 to 0.4, over 0.4.
+fn angle_band(a: f32) -> usize {
+    if a <= 0.0 {
+        0
+    } else if a < 0.2 {
+        1
+    } else if a <= 0.4 {
+        2
+    } else {
+        3
+    }
 }
 
 /// The live queue (ADR-0046's scheduler, Plan 0059 Phase 8 as re-read at Phase 7b): the brick
 /// level of every full chunk in the mirror, baked a slice a frame on the render thread. A chunk
-/// is opened nearest the camera first, ties by the view, once every chunk within the light radius
-/// of it is mirrored or known empty and every emitter range its table reads is held. Its faces are
+/// is opened in [`BakeQueue::order`] (ADR-0048's score of distance and angle to the view by
+/// default; [`QueueOrder`]), once every chunk within the light radius of it is mirrored or known
+/// empty and every emitter range its table reads is held. Its faces are
 /// listed from the stream workers' masks ([`FacePrep`]) where they arrived, else inline. A first
 /// block is written directly; a block that replaces one of the same layout fades over [`FADE`]
 /// frames. A chunk leaving the mirror frees its block.
@@ -2584,8 +2907,10 @@ pub struct QueueView<'a> {
 /// **Coarse first** (Plan 0059 Phase 8c). With `coarse_samples` above 0, a chunk with no block
 /// beyond `near` chunks (Chebyshev) of the camera's is first baked at `coarse_samples` a brick
 /// direction, its block flagged coarse ([`TABLE_COARSE`]); one within `near` at the full count.
-/// Every chunk with no block comes before every coarse one, so a chunk the mirror gains is lit
-/// coarse at the head of the queue, and the coarse ones are then refined nearest first. A
+/// Under the distance order and the score's tier ([`Refine::Tier`]) every chunk with no block
+/// comes before every coarse one, so a chunk the mirror gains is lit coarse at the head of the
+/// queue, and the coarse ones are then refined in order; under the score's refine weight a
+/// coarse chunk takes its place in the one list, its score times the weight. A
 /// refinement lists the same faces, so its block has the coarse one's layout and fades from it.
 ///
 /// **Digs** (ADR-0046's rings, Plan 0059 Phase 9 as re-read at Phase 7b). An edit's box
@@ -2610,6 +2935,15 @@ pub struct BakeQueue {
     pub edit_ms: f64,
     /// Whether a dig that touched lit bricks re-bakes the chunks within the light radius (ring 3).
     pub reach_ring: bool,
+    /// The order candidates open in.
+    pub order: QueueOrder,
+    /// Whether the queue withdraws the jobs of chunks the camera has passed (ADR-0048): at a
+    /// step with a candidate in the near shell or the view cone ready, a job that is not a
+    /// dig's and not a whole re-bake of a full block, whose chunk lies outside the near shell
+    /// and outside the keep cone (the view cone's margin doubled), is taken out of the loop, its
+    /// place freed; its chunk keeps the block it had and is a candidate again. A step with a
+    /// sample count (the pre-roll) withdraws nothing.
+    pub withdraw: bool,
     /// Edit boxes since the last step.
     boxes: Vec<[[i32; 3]; 2]>,
     /// Chunks with dig bricks to re-bake, not yet in a job; and those in a job, with the bricks
@@ -2646,6 +2980,25 @@ pub struct BakeQueue {
     classes: Option<(Vec<bool>, Arc<Vec<u8>>)>,
     /// The block a fade shows this step, kept between steps.
     fade_scratch: Vec<u32>,
+    /// Chunks that entered the view cone or the near shell with no full block: the step they
+    /// entered at, and whether a block has landed since. It can hold most of the mirror's full
+    /// chunks, so it is pruned to the chunks the mirror holds full at each census, not at every
+    /// step: an entry whose chunk left and came back between two censuses keeps its old step.
+    entered: std::collections::HashMap<[i32; 3], (u64, bool)>,
+    /// Steps from entering to the first block and to the full block, since the queue started.
+    ages_first: Vec<u32>,
+    ages_full: Vec<u32>,
+    /// For each candidate found ready since the last [`BakeQueue::take_angle_needs`], the angle
+    /// weight at which the nearest candidate in the cone or shell would have outranked it.
+    angle_needs: Vec<f32>,
+    /// The step of the last reach census of the view ([`QueueStats::view_reach`]).
+    reach_census_at: u64,
+    /// Whether the next opening reads the view's census ([`BakeQueue::request_census`]).
+    census_due: bool,
+    /// Every opening reads the view's census, the in-view ages and the angle weights, not only
+    /// one after a [`BakeQueue::request_census`]: a reading, which costs the step about a
+    /// census (0.8 ms over the streamed cave's 17 000 candidates) at each opening.
+    pub census_every_opening: bool,
     stats: QueueStats,
 }
 
@@ -2658,13 +3011,19 @@ impl BakeQueue {
             near: DEFAULT_NEAR,
             edit_ms: DEFAULT_BAKE_EDIT_MS,
             reach_ring: true,
+            order: QueueOrder::default(),
+            withdraw: true,
             boxes: Vec::new(),
             digs: BTreeMap::new(),
             dig_open: Default::default(),
             reach: Default::default(),
             listed: Default::default(),
             job_coarse: Default::default(),
-            lp: JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS).timed(),
+            lp: {
+                let mut lp = JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS).timed();
+                lp.ended = Some(Vec::new());
+                lp
+            },
             prepared: Default::default(),
             prepared_bytes: 0,
             eye: [0; 3],
@@ -2678,6 +3037,13 @@ impl BakeQueue {
             mirror_seen: (None, 0),
             classes: None,
             fade_scratch: Vec::new(),
+            entered: Default::default(),
+            ages_first: Vec::new(),
+            ages_full: Vec::new(),
+            angle_needs: Vec::new(),
+            reach_census_at: 0,
+            census_due: true,
+            census_every_opening: false,
             stats: QueueStats {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()
@@ -2687,6 +3053,51 @@ impl BakeQueue {
 
     pub fn stats(&self) -> QueueStats {
         self.stats
+    }
+
+    /// Steps (frames) from a chunk entering the view cone or the near shell with no full block
+    /// to its first block, and to its full block, one entry a chunk since the queue started. A
+    /// chunk that entered with a coarse block reads 0 to its first. Entry is read at the
+    /// openings that read the census ([`BakeQueue::census_every_opening`] for all of them), so
+    /// it lags by the steps between two.
+    pub fn view_ages(&self) -> (&[u32], &[u32]) {
+        (&self.ages_first, &self.ages_full)
+    }
+
+    /// The pool words the places of the jobs pending and open hold: with the store's blocks,
+    /// its header and its free words, the whole pool.
+    pub fn job_words(&self) -> u64 {
+        self.lp.place_words(self.record_words())
+    }
+
+    /// The angle weights read since the last call: for each candidate found ready, the weight
+    /// above which the nearest candidate in the view cone or the near shell at that opening
+    /// (ready or not) would have outranked it under the score at a refine weight of 1; 0 for
+    /// one in the cone or shell, or with no nearer such candidate.
+    pub fn take_angle_needs(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.angle_needs)
+    }
+
+    /// Asks the next opening for the view's census: [`QueueStats::view_waiting`],
+    /// [`QueueStats::weight_census`], [`QueueStats::cone_only`], [`QueueStats::view_median`]
+    /// and [`QueueStats::view_reach`] keep the last census's values until then. A caller that
+    /// shows them once a second asks once a second; [`BakeQueue::census_every_opening`] reads
+    /// them at every opening.
+    pub fn request_census(&mut self) {
+        self.census_due = true;
+    }
+
+    /// Where `c` lies against `view` from the camera's chunk `eye`: [`VIEW_SHELL`],
+    /// [`VIEW_IN`] or [`VIEW_OUT`].
+    fn view_class(&self, c: [i32; 3], eye: [i32; 3], view: &QueueView<'_>) -> usize {
+        let o = [0, 1, 2].map(|k| c[k] - eye[k]);
+        if in_near_shell(o, self.near) {
+            VIEW_SHELL
+        } else if angle_term(o, view.forward, view.half_angle, self.near) <= 0.0 {
+            VIEW_IN
+        } else {
+            VIEW_OUT
+        }
     }
 
     /// The chunks of the jobs open and then pending, each part in its order: the order the
@@ -2894,6 +3305,7 @@ impl BakeQueue {
             let ms = self.slice_ms + if dig { self.edit_ms } else { 0.0 };
             ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
         });
+        self.withdraw_passed(run, store, view);
         self.open_digs(run, store, cap)?;
         if self.lp.samples_left() < 2 * cap && self.steps >= self.quiet_until {
             let opened = self.lp.chunks().count();
@@ -2924,6 +3336,10 @@ impl BakeQueue {
         let job_coarse = &mut self.job_coarse;
         let dig_open = &mut self.dig_open;
         let reach = &mut self.reach;
+        let entered = &mut self.entered;
+        let ages_first = &mut self.ages_first;
+        let ages_full = &mut self.ages_full;
+        let steps = self.steps;
         let record = record_words(self.settings.cell);
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let coarse = job_coarse.remove(&coord.0).unwrap_or(false);
@@ -2940,6 +3356,17 @@ impl BakeQueue {
                     reach.insert(coord.0);
                 }
                 return;
+            }
+            if let Some(e) = entered.get_mut(&coord.0) {
+                let age = u32::try_from(steps - e.0).unwrap_or(u32::MAX);
+                if !e.1 {
+                    e.1 = true;
+                    ages_first.push(age);
+                }
+                if !coarse {
+                    ages_full.push(age);
+                    entered.remove(&coord.0);
+                }
             }
             if let Some(d) = &dug {
                 stats.digs_baked += 1;
@@ -3021,6 +3448,22 @@ impl BakeQueue {
         {
             let ns = ms * 1e6 / d.samples as f64;
             self.stats.ns_per_sample = 0.8 * self.stats.ns_per_sample + 0.2 * ns;
+        }
+        // The ended jobs' samples by where their chunk lies now.
+        let ended = self
+            .lp
+            .ended
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default();
+        for (c, drawn) in ended {
+            let class = self.view_class(c.0, self.eye, view);
+            self.stats.view_samples[class] += drawn;
+            let centre = [0, 1, 2].map(|k| (c.0[k] * 64 + 32) as f32 - view.eye[k]);
+            let cos: f32 = (0..3).map(|k| centre[k] * view.forward[k]).sum();
+            if class == VIEW_OUT && cos < 0.0 {
+                self.stats.passed_samples += drawn;
+            }
         }
         self.advance_fades(run.queue, store, record);
         self.stats.jobs = self.lp.chunks().count() as u64;
@@ -3336,8 +3779,8 @@ impl BakeQueue {
         }
     }
 
-    /// Opens jobs, nearest the camera first and ties by the view, while the open ones hold under
-    /// two slices of `cap` samples: each a ready candidate's faces at the brick level.
+    /// Opens jobs in [`BakeQueue::order`] while the open ones hold under two slices of `cap`
+    /// samples: each a ready candidate's faces at the brick level.
     fn open(
         &mut self,
         run: &BakeRun<'_>,
@@ -3348,8 +3791,11 @@ impl BakeQueue {
         let gpu = run.gpu;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
-        // Class 0: no block yet; class 1: a coarse block to refine. Every class 0 comes first.
-        let mut cands: Vec<(u8, i64, i32, [i32; 3])> = gpu
+        // Class 0: no block yet; class 1: a block to refine (coarse) or re-bake whole (ring 3).
+        // Under the distance order and the score's tier every class 0 comes first.
+        let order = self.order;
+        let near = self.near;
+        let mut cands: Vec<Cand> = gpu
             .full_chunks()
             .filter(|c| {
                 (!store.blocks.contains_key(&c.0)
@@ -3365,18 +3811,55 @@ impl BakeQueue {
                 let len = (d2 as f32).sqrt().max(1.0);
                 let dot: f32 = (0..3).map(|k| d[k] as f32 * view.forward[k]).sum::<f32>() / len;
                 let class = u8::from(store.blocks.contains_key(&c.0));
-                (class, d2, -(dot * 1000.0) as i32, c.0)
+                let coarse = class == 1 && store.is_coarse(c);
+                let a = angle_term(d, view.forward, view.half_angle, near);
+                let (lead, key) = match order {
+                    QueueOrder::Distance => (class, d2 as u64),
+                    QueueOrder::Score {
+                        angle,
+                        refine: Refine::Weight(r),
+                    } => (
+                        0,
+                        u64::from(queue_score(d, a, class == 1, angle, r).to_bits()),
+                    ),
+                    QueueOrder::Score {
+                        angle,
+                        refine: Refine::Tier,
+                    } => (
+                        class,
+                        u64::from(queue_score(d, a, false, angle, 1.0).to_bits()),
+                    ),
+                };
+                Cand {
+                    lead,
+                    key,
+                    tie: -(dot * 1000.0) as i32,
+                    c: c.0,
+                    class,
+                    coarse,
+                    d2,
+                    a,
+                }
             })
             .collect();
+        let census = self.census_every_opening || std::mem::take(&mut self.census_due);
+        if census {
+            let t = stopwatch();
+            self.entered
+                .retain(|c, _| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c)));
+            self.view_census(eye, view, &cands);
+            self.view_reach_census(run, eye, view, &cands);
+            self.stats.census_ms = seconds_since(t) * 1e3;
+        }
         self.stats.depth = cands.len() as u64;
         self.counted_idle = in_job.is_empty();
         let steps = self.steps;
         let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
         self.stats.unbaked = cands
             .iter()
-            .filter(|c| c.0 == 0 && !recent(self.blocked.get(&c.3)))
+            .filter(|k| k.class == 0 && !recent(self.blocked.get(&k.c)))
             .count() as u64;
-        cands.sort_unstable();
+        cands.sort_unstable_by_key(|k| (k.lead, k.key, k.tie, k.c));
         let checks = if view.samples.is_some() {
             QUEUE_CHECKS_UNSLICED
         } else {
@@ -3384,9 +3867,20 @@ impl BakeQueue {
         };
         let classes = self.classes(run.world.materials());
         let lr = gpu.light_radius();
-        // Class 1 (refinement) is opened only by an opening that found no class 0 candidate
-        // ready, so every chunk with no block that can bake comes first; those whose reach or
-        // lights are not ready (a streamed world's edge) cannot starve the refinement behind them.
+        // Tiered (the distance order, the score's tier): class 1 (refinement) is opened only by
+        // an opening that found no class 0 candidate ready, so every chunk with no block that
+        // can bake comes first; those whose reach or lights are not ready (a streamed world's
+        // edge) cannot starve the refinement behind them, each class counting its own checks.
+        // Under the score's refine weight the class is in the key: one count of checks runs
+        // over the sorted list, and a candidate found blocked is skipped for QUEUE_RECHECK
+        // steps, so the next openings check the candidates behind it.
+        let tiered = !matches!(
+            order,
+            QueueOrder::Score {
+                refine: Refine::Weight(_),
+                ..
+            }
+        );
         let (mut checked, mut reach, mut lights) = ([0usize; 2], 0u64, 0u64);
         let mut ready0 = 0usize;
         // A step without a slice (the pre-roll) gates up to `checks` candidates and lists them
@@ -3395,14 +3889,30 @@ impl BakeQueue {
         let mut ready: Vec<(u8, [i32; 3])> = Vec::new();
         // The loop's samples left, read once (it walks every open face) and then counted on.
         let mut left = self.lp.samples_left();
-        for (class, _, _, c) in cands {
-            if left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0) {
-                break;
+        let angle_needs = self.census_every_opening;
+        let nearest_in_view = if angle_needs {
+            cands.iter().filter(|k| k.a <= 0.0).map(|k| k.d2).min()
+        } else {
+            None
+        };
+        for Cand { class, c, .. } in cands {
+            if tiered {
+                if left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0) {
+                    break;
+                }
+                if checked[usize::from(class)] >= checks || recent(self.blocked.get(&c)) {
+                    continue;
+                }
+                checked[usize::from(class)] += 1;
+            } else {
+                if left >= 2 * cap || checked[0] >= checks {
+                    break;
+                }
+                if recent(self.blocked.get(&c)) {
+                    continue;
+                }
+                checked[0] += 1;
             }
-            if checked[usize::from(class)] >= checks || recent(self.blocked.get(&c)) {
-                continue;
-            }
-            checked[usize::from(class)] += 1;
             let coord = ChunkCoord(c);
             if !reach_ready(run, coord, lr, view.resident) {
                 reach += 1;
@@ -3417,6 +3927,9 @@ impl BakeQueue {
             self.blocked.remove(&c);
             if class == 0 {
                 ready0 += 1;
+            }
+            if angle_needs {
+                self.note_angle_need(c, eye, view, nearest_in_view);
             }
             if parallel {
                 ready.push((class, c));
@@ -3469,6 +3982,207 @@ impl BakeQueue {
         self.stats.waiting_reach = reach;
         self.stats.waiting_lights = lights;
         Ok(())
+    }
+
+    /// Once in [`VIEW_REACH_EVERY`] steps, at an opening: up to [`VIEW_REACH_SAMPLE`] of the
+    /// candidates in the view cone beyond the shell, spread evenly by distance, checked for
+    /// their reach ([`QueueStats::view_reach`]).
+    fn view_reach_census(
+        &mut self,
+        run: &BakeRun<'_>,
+        eye: [i32; 3],
+        view: &QueueView<'_>,
+        cands: &[Cand],
+    ) {
+        if self.steps < self.reach_census_at + VIEW_REACH_EVERY && self.reach_census_at > 0 {
+            return;
+        }
+        self.reach_census_at = self.steps;
+        let mut in_view: Vec<(i64, [i32; 3])> = cands
+            .iter()
+            .filter(|k| {
+                let o = [0, 1, 2].map(|i| k.c[i] - eye[i]);
+                k.a <= 0.0 && !in_near_shell(o, self.near)
+            })
+            .map(|k| (k.d2, k.c))
+            .collect();
+        in_view.sort_unstable();
+        let n = in_view.len();
+        let take = n.min(VIEW_REACH_SAMPLE);
+        let lr = run.gpu.light_radius();
+        let mut not_ready = 0;
+        for i in 0..take {
+            let (_, c) = in_view[i * n / take.max(1)];
+            not_ready += u64::from(!reach_ready(run, ChunkCoord(c), lr, view.resident));
+        }
+        self.stats.view_reach = [take as u64, not_ready];
+    }
+
+    /// Withdraws the passed jobs ([`BakeQueue::withdraw`]) when a candidate in the near shell or
+    /// the view cone is ready: up to the opening's count of checks of those candidates, nearest
+    /// first, each not checked in the last [`QUEUE_RECHECK`] steps. A step with a sample count
+    /// (the pre-roll) withdraws nothing: the camera has passed nothing yet, and the coarse pass
+    /// opens chunks in every direction, so withdrawing there takes back most of what it opens.
+    fn withdraw_passed(&mut self, run: &BakeRun<'_>, store: &mut Store, view: &QueueView<'_>) {
+        if !self.withdraw || view.samples.is_some() {
+            return;
+        }
+        let (eye, near) = (self.eye, self.near);
+        let keep = view.half_angle + QUEUE_VIEW_MARGIN_DEG.to_radians();
+        let passed: std::collections::HashSet<[i32; 3]> = self
+            .lp
+            .chunks()
+            .map(|c| c.0)
+            .filter(|c| {
+                let o = [0, 1, 2].map(|k| c[k] - eye[k]);
+                let full = store.blocks.contains_key(c) && !store.is_coarse(ChunkCoord(*c));
+                !self.dig_open.contains_key(c)
+                    && !full
+                    && !in_near_shell(o, near)
+                    && angle_term(o, view.forward, keep, near) > 0.0
+            })
+            .collect();
+        if passed.is_empty() {
+            return;
+        }
+        let gpu = run.gpu;
+        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        let mut seen: Vec<(i64, [i32; 3])> = gpu
+            .full_chunks()
+            .filter(|c| {
+                (!store.blocks.contains_key(&c.0)
+                    || store.is_coarse(*c)
+                    || self.reach.contains(&c.0))
+                    && !self.faceless.contains(&c.0)
+                    && !in_job.contains(&c.0)
+                    && !self.digs.contains_key(&c.0)
+            })
+            .filter_map(|c| {
+                let o = [0, 1, 2].map(|k| c.0[k] - eye[k]);
+                (angle_term(o, view.forward, view.half_angle, near) <= 0.0).then(|| {
+                    let d2: i64 = o.iter().map(|&v| i64::from(v).pow(2)).sum();
+                    (d2, c.0)
+                })
+            })
+            .collect();
+        seen.sort_unstable();
+        let steps = self.steps;
+        let lr = gpu.light_radius();
+        let checks = QUEUE_CHECKS;
+        let mut ready = false;
+        let mut checked = 0;
+        for (_, c) in seen {
+            if checked >= checks {
+                break;
+            }
+            if self
+                .blocked
+                .get(&c)
+                .is_some_and(|&at| steps - at < QUEUE_RECHECK)
+            {
+                continue;
+            }
+            checked += 1;
+            let coord = ChunkCoord(c);
+            if reach_ready(run, coord, lr, view.resident) && gpu.lights_ready_near(coord, lr) {
+                ready = true;
+                break;
+            }
+            self.blocked.insert(c, steps);
+        }
+        if !ready {
+            return;
+        }
+        let record = self.record_words();
+        for w in self.lp.withdraw(|c| passed.contains(&c.0), record) {
+            store.release(w.first_word, w.words);
+            self.job_coarse.remove(&w.coord.0);
+            self.stale.remove(&w.coord.0);
+            self.stats.withdrawn += 1;
+            self.stats.withdrawn_samples += w.drawn;
+        }
+        // The candidates are counted and sorted again this step.
+        self.counted_idle = false;
+        self.quiet_until = self.steps;
+    }
+
+    /// The view's counters over the candidates of an opening ([`QueueStats::view_waiting`] and
+    /// the rest), and the chunks entering the view cone or the near shell with no full block.
+    fn view_census(&mut self, eye: [i32; 3], view: &QueueView<'_>, cands: &[Cand]) {
+        let mut waiting = [[0u64; 2]; 3];
+        let mut census = [[[0u32; 4]; 4]; 2];
+        let mut cone_only = 0u64;
+        let mut lens: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
+        for &Cand {
+            d2,
+            c,
+            a,
+            class: has,
+            coarse,
+            ..
+        } in cands
+        {
+            if has == 1 && !coarse {
+                // A full block re-baking whole (ring 3): not waiting for its light.
+                continue;
+            }
+            let o = [0, 1, 2].map(|k| c[k] - eye[k]);
+            let class = if in_near_shell(o, self.near) {
+                VIEW_SHELL
+            } else if a <= 0.0 {
+                VIEW_IN
+            } else {
+                VIEW_OUT
+            };
+            let len = (d2 as f32).sqrt();
+            waiting[class][usize::from(coarse)] += 1;
+            census[usize::from(coarse)][distance_band(len)][angle_band(a)] += 1;
+            if class == VIEW_IN {
+                lens[usize::from(coarse)].push(len);
+                if view
+                    .frustum
+                    .is_some_and(|f| !in_widened_frustum(o, view.forward, f))
+                {
+                    cone_only += 1;
+                }
+            }
+            if class != VIEW_OUT && !self.entered.contains_key(&c) {
+                self.entered.insert(c, (self.steps, coarse));
+                if coarse {
+                    self.ages_first.push(0);
+                }
+            }
+        }
+        self.stats.view_waiting = waiting;
+        self.stats.weight_census = census;
+        self.stats.cone_only = cone_only;
+        self.stats.view_median = lens.map(|mut l| {
+            l.sort_unstable_by(f32::total_cmp);
+            l.get(l.len() / 2).copied().unwrap_or(0.0)
+        });
+    }
+
+    /// Notes the angle weight at which the nearest candidate in the view cone or the near shell
+    /// (squared distance `nearest`) would have outranked `c`, found ready
+    /// ([`BakeQueue::take_angle_needs`]).
+    fn note_angle_need(
+        &mut self,
+        c: [i32; 3],
+        eye: [i32; 3],
+        view: &QueueView<'_>,
+        nearest: Option<i64>,
+    ) {
+        let o = [0, 1, 2].map(|k| c[k] - eye[k]);
+        let a = angle_term(o, view.forward, view.half_angle, self.near);
+        let len = queue_score(o, 0.0, false, 0.0, 1.0);
+        let need = match nearest {
+            Some(n) if a > 0.0 && len > 0.0 => ((n as f32).sqrt() / len - 1.0).max(0.0) / a,
+            _ => 0.0,
+        };
+        // Bounded: one second of openings in a pre-roll is a few thousand.
+        if self.angle_needs.len() < 1 << 16 {
+            self.angle_needs.push(need);
+        }
     }
 
     /// Opens `coord`'s job from its listed faces (and whether its masks were prepared): its
@@ -3858,5 +4572,71 @@ mod tests {
         assert!(constant.abs() < 1e-3, "{constant}");
         let at = |n: u64| se_levels(n, n as f64 * 0.01, n as f64 * 0.0002);
         assert!(at(4096) < at(1024) * 0.51, "{} {}", at(4096), at(1024));
+    }
+
+    /// ADR-0048's angle term at the fly-through's view: a 70 degree vertical field at 16:9 is
+    /// 51.2 degrees horizontally, the cone 66.2 degrees every way. A chunk ahead reads 0, one
+    /// straight behind (180 - 66.2) / 180, one behind in the near shell 0; at an angle weight
+    /// of 0 every score is the distance (times the refine weight for a coarse block).
+    #[test]
+    fn the_view_cone_scores_a_chunk_by_its_angle() {
+        let half = view_half_angle(70f32.to_radians(), 16.0 / 9.0);
+        let want = (35f32.to_radians().tan() * 16.0 / 9.0).atan();
+        assert!((half - want).abs() < 1e-6, "{half} {want}");
+        assert!(
+            (half.to_degrees() - 51.2).abs() < 0.05,
+            "{}",
+            half.to_degrees()
+        );
+        // The wider of the two, not the corner's: a tall view takes its vertical half-angle.
+        assert!((view_half_angle(70f32.to_radians(), 0.5) - 35f32.to_radians()).abs() < 1e-6);
+        assert!((view_half_angles(70f32.to_radians(), 16.0 / 9.0)[0] - want).abs() < 1e-6);
+        let cam = [2, 0, 0];
+        let forward = [1.0, 0.0, 0.0];
+        let off = |c: [i32; 3]| [0, 1, 2].map(|k| c[k] - cam[k]);
+        let a = |c: [i32; 3]| angle_term(off(c), forward, half, 1);
+        assert_eq!(a([7, 0, 0]), 0.0);
+        let behind = a([-3, 0, 0]);
+        let cone = half.to_degrees() + QUEUE_VIEW_MARGIN_DEG;
+        assert!((cone - 66.2).abs() < 0.05, "{cone}");
+        assert!((behind - (180.0 - 66.2) / 180.0).abs() < 0.005, "{behind}");
+        assert!((behind - 0.632).abs() < 0.005, "{behind}");
+        assert_eq!(a([1, 0, 0]), 0.0, "behind, in the shell");
+        // Just inside and just outside the cone, off to the side.
+        let side = |deg: f32| {
+            let r = deg.to_radians();
+            angle_term(
+                [(100.0 * r.cos()) as i32, (100.0 * r.sin()) as i32, 0],
+                forward,
+                half,
+                1,
+            )
+        };
+        assert_eq!(side(64.0), 0.0);
+        assert!(side(70.0) > 0.0 && side(70.0) < 0.03, "{}", side(70.0));
+        for c in [[7, 0, 0], [-3, 0, 0], [1, 0, 0], [2, 5, -3]] {
+            let o = off(c);
+            let len = (o.iter().map(|v| (v * v) as f32).sum::<f32>()).sqrt();
+            let t = angle_term(o, forward, half, 1);
+            assert_eq!(queue_score(o, t, false, 0.0, 2.0), len, "{c:?}");
+            assert_eq!(queue_score(o, t, true, 0.0, 2.0), 2.0 * len, "{c:?}");
+        }
+        // The weight scales the angle: behind at |o| 5 and weight 4 scores 5 x (1 + 4 x 0.632).
+        let s = queue_score(off([-3, 0, 0]), behind, false, 4.0, 2.0);
+        assert!((s - 5.0 * (1.0 + 4.0 * behind)).abs() < 1e-4, "{s}");
+        // The widened frustum is narrower than the cone up and down: 60 degrees up is inside
+        // the cone (66.2) and outside the frustum (35 + 15).
+        let up = [100, 0, 173];
+        assert_eq!(angle_term(up, forward, half, 1), 0.0);
+        assert!(!in_widened_frustum(
+            up,
+            forward,
+            view_half_angles(70f32.to_radians(), 16.0 / 9.0)
+        ));
+        assert!(in_widened_frustum(
+            [100, 0, 50],
+            forward,
+            view_half_angles(70f32.to_radians(), 16.0 / 9.0)
+        ));
     }
 }

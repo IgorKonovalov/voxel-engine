@@ -2,7 +2,9 @@
 //!
 //! The callback drains every queued command at the top of each buffer, then renders the
 //! buffer. It takes no lock and blocks on nothing; finished voices go back over a second
-//! bounded channel, dropped if the game never reads them.
+//! bounded channel, dropped if the game never reads them. What ended voices leave behind (their
+//! sources and buffers) comes back through the mixer's [`Recycler`], which [`Output::play`],
+//! [`Output::finished`] and [`Output::recycle`] run on the game's thread.
 //!
 //! The callback also meters itself ([`OutputStats`]): its buffer sizes, how long it ran and
 //! the gap since the previous one, the output's peak, clipped samples and largest fourth
@@ -17,7 +19,7 @@ use std::time::Instant;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::command::{CommandSender, channel};
-use crate::mixer::{MAX_VOICES, Mixer};
+use crate::mixer::{MAX_VOICES, Mixer, Recycler};
 use crate::voice::{PlayParams, Sound, VoiceId};
 use crate::{AudioError, Command, Listener, RATE};
 
@@ -26,6 +28,8 @@ pub struct Output {
     stream: cpal::Stream,
     commands: CommandSender,
     finished: Receiver<VoiceId>,
+    /// `None` when the mixer's recycler was taken before [`Output::open`].
+    recycler: Option<Recycler>,
     next_id: u32,
     device: String,
     errors: Arc<AtomicU64>,
@@ -201,8 +205,10 @@ impl Recorder {
 
 impl Output {
     /// Opens the host's default output device at 48 kHz stereo `f32` and starts `mixer` on
-    /// its callback.
+    /// its callback. The output takes the mixer's [`Recycler`] unless it was taken already;
+    /// then its holder recycles.
     pub fn open(mut mixer: Mixer) -> Result<Output, AudioError> {
+        let recycler = mixer.take_recycler();
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
         let name = device
@@ -288,6 +294,7 @@ impl Output {
             stream,
             commands,
             finished,
+            recycler,
             next_id: 0,
             device: format!("{name}, 48000 Hz, 2 ch, f32"),
             errors,
@@ -340,8 +347,15 @@ impl Output {
         self.commands.send(cmd)
     }
 
+    /// Drops what ended voices left behind and returns their buffers to the mixer's pool
+    /// ([`Recycler::recycle`]). [`Output::play`] and [`Output::finished`] call it too.
+    pub fn recycle(&self) -> usize {
+        self.recycler.as_ref().map_or(0, Recycler::recycle)
+    }
+
     /// Starts `sound` and returns the voice's id.
     pub fn play(&mut self, sound: &Sound, params: PlayParams) -> Result<VoiceId, AudioError> {
+        self.recycle();
         let id = VoiceId(self.next_id);
         self.send(Command::Play(id, sound.clone(), params))?;
         self.next_id = self.next_id.wrapping_add(1);
@@ -366,6 +380,7 @@ impl Output {
 
     /// Voices that ended since the last call.
     pub fn finished(&self) -> impl Iterator<Item = VoiceId> + '_ {
+        self.recycle();
         self.finished.try_iter()
     }
 

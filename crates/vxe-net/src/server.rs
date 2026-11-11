@@ -32,7 +32,7 @@ use vxe_world::{
 
 use crate::channel::{Channel, Endpoint};
 use crate::logic::{ClientInput, Host, Logic, LogicError};
-use crate::message::Message;
+use crate::message::{Message, encode_applied, encode_refused};
 
 /// The support parameters a server starts with: a cell is load-bearing at 64 solid voxels
 /// (an eighth of its brick), a flood gives up past 4 096 cells, and the cells on the world
@@ -122,33 +122,27 @@ struct TickHost<'a> {
 impl TickHost<'_> {
     /// Applies `op` under `seq`, keeps the coarse grid current, logs the op when it applied,
     /// and announces the outcome.
+    /// The announcement is encoded from the op and the result in place, and only when a
+    /// client is attached; the op then moves into the log.
     fn apply_seq(&mut self, seq: u32, op: Op) -> Result<OpResult, EditError> {
         let result = op.apply(self.world, self.prefabs);
-        let msg = match &result {
+        match &result {
             Ok(r) => {
                 self.coarse.update_aabb(self.world, r.aabb());
                 self.applied += 1;
-                Message::Applied {
-                    tick: self.tick,
-                    seq,
-                    op: op.clone(),
-                    result: r.clone(),
-                }
             }
-            Err(e) => {
-                self.refused += 1;
-                Message::Refused {
-                    tick: self.tick,
-                    seq,
-                    op: op.clone(),
-                    error: *e,
-                }
-            }
-        };
+            Err(_) => self.refused += 1,
+        }
+        if !self.clients.is_empty() {
+            let bytes = match &result {
+                Ok(r) => encode_applied(self.tick, seq, &op, r),
+                Err(e) => encode_refused(self.tick, seq, &op, e),
+            };
+            send_all(self.clients, bytes);
+        }
         if result.is_ok() {
             self.ops.record(self.tick, seq, op);
         }
-        broadcast(self.clients, &msg);
         result
     }
 }
@@ -228,8 +222,12 @@ fn broadcast(clients: &[Endpoint], msg: &Message) {
     if clients.is_empty() {
         return;
     }
-    // One encode, shared: every client's queue holds the same allocation.
-    let bytes: Arc<[u8]> = msg.encode().into();
+    send_all(clients, msg.encode());
+}
+
+/// One encode, shared: every client's queue holds the same allocation.
+fn send_all(clients: &[Endpoint], bytes: Vec<u8>) {
+    let bytes: Arc<[u8]> = bytes.into();
     for c in clients {
         c.send(Arc::clone(&bytes));
     }
@@ -386,13 +384,15 @@ impl Server {
         if let Some(seq) = boundary {
             host.ops.record_boundary(tick, seq);
         }
-        for input in &inputs {
-            self.inputs.push(tick, input.client, input.bytes.clone());
-        }
         let out = logic.tick(&mut host, tick, &inputs);
         let logic_error = logic.take_error();
         let restart = logic.take_restart();
         let (applied, refused) = (host.applied, host.refused);
+        // Logged after the logic read them, so they move in instead of being copied.
+        let input_count = u32::try_from(inputs.len()).expect("input count fits u32");
+        for input in inputs {
+            self.inputs.push(tick, input.client, input.bytes);
+        }
         if logic_error.is_none() && !out.broadcast.is_empty() {
             broadcast(
                 &self.clients,
@@ -407,7 +407,7 @@ impl Server {
             tick,
             applied,
             refused,
-            inputs: u32::try_from(inputs.len()).expect("input count fits u32"),
+            inputs: input_count,
             logic_error,
             restart,
         }

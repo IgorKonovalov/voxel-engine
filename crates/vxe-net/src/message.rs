@@ -50,6 +50,26 @@ pub enum Message {
     Input { bytes: Vec<u8> },
 }
 
+/// The bytes of [`Message::Applied`] for these fields, from borrowed parts.
+pub(crate) fn encode_applied(tick: u64, seq: u32, op: &Op, result: &OpResult) -> Vec<u8> {
+    let mut out = vec![MSG_APPLIED];
+    out.extend_from_slice(&tick.to_le_bytes());
+    out.extend_from_slice(&seq.to_le_bytes());
+    encode_op(&mut out, op);
+    encode_op_result(&mut out, result);
+    out
+}
+
+/// The bytes of [`Message::Refused`] for these fields, from borrowed parts.
+pub(crate) fn encode_refused(tick: u64, seq: u32, op: &Op, error: &EditError) -> Vec<u8> {
+    let mut out = vec![MSG_REFUSED];
+    out.extend_from_slice(&tick.to_le_bytes());
+    out.extend_from_slice(&seq.to_le_bytes());
+    encode_op(&mut out, op);
+    encode_error(&mut out, error);
+    out
+}
+
 impl Message {
     /// The message's bytes. Panics when an `Input` payload exceeds `u16::MAX` bytes or an
     /// `Event` payload exceeds `u32::MAX` bytes.
@@ -61,25 +81,13 @@ impl Message {
                 seq,
                 op,
                 result,
-            } => {
-                out.push(MSG_APPLIED);
-                out.extend_from_slice(&tick.to_le_bytes());
-                out.extend_from_slice(&seq.to_le_bytes());
-                encode_op(&mut out, op);
-                encode_op_result(&mut out, result);
-            }
+            } => return encode_applied(*tick, *seq, op, result),
             Self::Refused {
                 tick,
                 seq,
                 op,
                 error,
-            } => {
-                out.push(MSG_REFUSED);
-                out.extend_from_slice(&tick.to_le_bytes());
-                out.extend_from_slice(&seq.to_le_bytes());
-                encode_op(&mut out, op);
-                encode_error(&mut out, error);
-            }
+            } => return encode_refused(*tick, *seq, op, error),
             Self::Event { tick, bytes } => {
                 let len = u32::try_from(bytes.len()).expect("event payloads fit u32");
                 out.push(MSG_EVENT);

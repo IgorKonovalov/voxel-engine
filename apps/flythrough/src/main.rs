@@ -16,7 +16,7 @@
 //!
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
-//! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
+//! [--autopilot] [--census] [--sync-budget MIB] [--sync-ms MS] [--workers N] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
@@ -27,7 +27,7 @@
 //! [--history edits|gradient] [--lighting full|half]
 //! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
-//! [--jitter-phases N] [--emitter-cap C] [--dither on|off]
+//! [--jitter-phases N] [--emitter-cap C] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
@@ -59,13 +59,20 @@
 //! pre-exposed colour held at `C` into FSR 2) and `--dither on` (a static one-level dither in
 //! its tone pass), each named in the banner's fsr2 line when set;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
-//! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
+//! stats HUD's rows; `--pace free|compositor` (default `free`) picks whether the window
+//! asks the compositor for a frame callback before each present (`vxe_app::Pacing`): with it
+//! the next frame starts only after the compositor showed this one; `free` starts it at once.
+//! The banner's `pace` row names the mode for `hud::BANNER_MS` after the start.
+//! The stats HUD's `pace` row names the mode beside the wall, CPU and GPU time of a frame, and
+//! the `frames:` line at exit gives the wall time between frames beside the CPU and GPU; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
 //! [`Autopilot`]); `--cutaway auto|on|off` sets the cutaway view's start state (default `auto`:
 //! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
 //! the world sees each cavern's far wall through the rock; `X` cycles the three, and the
 //! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
-//! after any bench; `--sync-budget` sets the mirror's upload bytes per frame; `--mirror-budget`
+//! after any bench; `--sync-budget` sets the mirror's upload bytes per frame and `--sync-ms` its
+//! upload time per frame (default none; 0 is none); `--workers N` sets the streamer's
+//! generation workers (default one fewer than the logical cores, at least 1); `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
 //! need, with records for the residency's ball when streaming), and while streaming the full
@@ -99,7 +106,7 @@
 //! and prints how the screen centre's light fades, by source (see [`FadeSample`]);
 //! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
 //! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
-//! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
+//! `--filter off` shows the temporal pass's accumulation unfiltered;
 //! `--light-radius N` sets the chunks around the camera whose emitters light the frame
 //! (default 4);
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
@@ -242,6 +249,7 @@ mod fly;
 mod pad;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -260,7 +268,7 @@ use flythrough::{
     chunk_ram, chunks_hash, level_mirror_budget, level_pool_units, mips_ram, percentile,
 };
 use pad::Pad;
-use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
+use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, Pacing, PadButton, ShellConfig};
 use vxe_audio::{
     Acoustics, BlockClock, Command, Hrtf, MixSettings, Mixer, Output, PlayParams, ReverbSettings,
     RoomEstimate, RoomTargets, Sound, TailLines, VoiceId,
@@ -390,6 +398,8 @@ struct Args {
     seed: u64,
     render: Option<[u32; 2]>,
     frames: Option<u32>,
+    /// `--pace`: whether the window waits for the compositor's frame callback.
+    pace: Pacing,
     bench: u32,
     level: bool,
     /// `--source showcase`: the bounded showcase cavern (`flythrough::showcase`).
@@ -413,6 +423,11 @@ struct Args {
     /// `--castle-shot NAME`: the castle pose the camera starts at.
     castle_shot: castle::CastleShot,
     sync_budget: u64,
+    /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
+    /// for no limit.
+    sync_time: Option<std::time::Duration>,
+    /// `--workers`: the streamer's generation workers; `None` for [`default_workers`].
+    workers: Option<usize>,
     /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
     mirror_budget: Option<u64>,
     /// `--residency`: the streamed full and LOD radii in chunks, hysteresis as
@@ -497,6 +512,24 @@ struct Args {
     /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
     /// before the first frame (default `vxe_render::bake::DEFAULT_NEAR`).
     bake_near: i32,
+    /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
+    /// the class and the distance first); `1` cycles score, score with the class as a tier,
+    /// distance.
+    queue_distance: bool,
+    /// `--queue-weights A,R` or `A,tier`: the score's angle weight (`2` halves it, `3` doubles
+    /// it) and its refine weight, or the class as the leading key (defaults
+    /// `vxe_render::bake::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
+    /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `1` cycles to).
+    queue_angle: f32,
+    queue_refine: f32,
+    queue_tier: bool,
+    /// `--queue-withdraw on|off`: whether the live queue withdraws the jobs of chunks the camera
+    /// has passed (default on); `4` toggles it.
+    queue_withdraw: bool,
+    /// `--queue-census`: the live queue reads its view census, the in-view ages and the angle
+    /// weights at every opening (a reading; by default once a second, for the stdout line and
+    /// the HUD's queue row, and no angle weights).
+    queue_census: bool,
     /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
     /// of these frames, for a headless reading.
     dig_at: Vec<u32>,
@@ -646,6 +679,33 @@ impl Args {
         a
     }
 
+    /// The live queue's order and withdrawal in words: `order score, angle 4, refine 2;
+    /// withdraw on`.
+    fn queue_words(&self) -> String {
+        format!(
+            "{}; withdraw {}",
+            self.queue_order().words(),
+            if self.queue_withdraw { "on" } else { "off" }
+        )
+    }
+
+    /// The live queue's order from `--queue-order` and `--queue-weights` (and their keys).
+    fn queue_order(&self) -> vxe_render::bake::QueueOrder {
+        use vxe_render::bake::{QueueOrder, Refine};
+        if self.queue_distance {
+            QueueOrder::Distance
+        } else {
+            QueueOrder::Score {
+                angle: self.queue_angle,
+                refine: if self.queue_tier {
+                    Refine::Tier
+                } else {
+                    Refine::Weight(self.queue_refine)
+                },
+            }
+        }
+    }
+
     /// The lighting modes at the start, the banner shown from `now_ms`, the auto exposure's
     /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
     /// and the probe spacing while the lamp's bounce is on, and the look's rows `--view`'s view.
@@ -759,6 +819,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         seed: 1,
         render: None,
         frames: None,
+        pace: Pacing::Unthrottled,
         bench: 0,
         level: false,
         showcase: false,
@@ -773,6 +834,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         castle_out: None,
         castle_shot: castle::CastleShot::Gate,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        sync_time: None,
+        workers: None,
         mirror_budget: None,
         residency: RESIDENCY,
         audio: false,
@@ -804,6 +867,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
         bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
         bake_near: vxe_render::bake::DEFAULT_NEAR,
+        queue_distance: false,
+        queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
+        queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
+        queue_tier: true,
+        queue_withdraw: true,
+        queue_census: false,
         bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
         dig_reach: true,
         dig_at: Vec::new(),
@@ -854,12 +923,28 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--frames" => {
                 args.frames = Some(value()?.parse().map_err(|e| format!("--frames: {e}"))?)
             }
+            "--pace" => {
+                let v = value()?;
+                args.pace = Pacing::from_word(&v)
+                    .ok_or(format!("--pace takes free or compositor, not {v}"))?;
+            }
             "--bench" => args.bench = value()?.parse().map_err(|e| format!("--bench: {e}"))?,
             "--sync-budget" => {
                 let mib: u64 = value()?
                     .parse()
                     .map_err(|e| format!("--sync-budget: {e}"))?;
                 args.sync_budget = mib << 20;
+            }
+            "--sync-ms" => {
+                let ms: u64 = value()?.parse().map_err(|e| format!("--sync-ms: {e}"))?;
+                args.sync_time = (ms > 0).then(|| std::time::Duration::from_millis(ms));
+            }
+            "--workers" => {
+                let n: usize = value()?.parse().map_err(|e| format!("--workers: {e}"))?;
+                if n == 0 {
+                    return Err("--workers takes at least 1".to_owned());
+                }
+                args.workers = Some(n);
             }
             "--residency" => args.residency = parse_residency(&value()?)?,
             "--mirror-budget" => {
@@ -1095,6 +1180,43 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok()
                     .filter(|r: &i32| (0..=8).contains(r))
                     .ok_or(format!("--near takes 0 to 8 chunks, not {v}"))?;
+            }
+            "--queue-order" => {
+                let v = value()?;
+                args.queue_distance = match v.as_str() {
+                    "score" => false,
+                    "distance" => true,
+                    _ => return Err(format!("--queue-order takes score or distance, not {v}")),
+                };
+            }
+            "--queue-census" => args.queue_census = true,
+            "--queue-withdraw" => {
+                let v = value()?;
+                args.queue_withdraw = match v.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(format!("--queue-withdraw takes on or off, not {v}")),
+                };
+            }
+            "--queue-weights" => {
+                let v = value()?;
+                let bad = || format!("--queue-weights takes A,R or A,tier, not {v}");
+                let (a, r) = v.split_once(',').ok_or_else(bad)?;
+                args.queue_angle = a
+                    .parse()
+                    .ok()
+                    .filter(|x: &f32| x.is_finite() && *x >= 0.0)
+                    .ok_or_else(bad)?;
+                if r == "tier" {
+                    args.queue_tier = true;
+                } else {
+                    args.queue_refine = r
+                        .parse()
+                        .ok()
+                        .filter(|x: &f32| x.is_finite() && *x > 0.0)
+                        .ok_or_else(bad)?;
+                    args.queue_tier = false;
+                }
             }
             "--edit-ms" => {
                 let v = value()?;
@@ -2177,7 +2299,48 @@ struct Gfx {
     hud_timer: Option<PassTimer>,
 }
 
+/// The GPU side's values the HUD's rows read: the mirror's sizes, slots and pressure, its light
+/// samples, and the internal and output sizes while the upscaler runs.
+#[derive(Clone, Copy, Debug)]
+struct GfxSample {
+    mirror_bytes: u64,
+    pool_live: u32,
+    pool_free: u32,
+    pressure: f32,
+    budget_bytes: u64,
+    light_samples: u64,
+    upscale: Option<[[u32; 2]; 2]>,
+}
+
+impl GfxSample {
+    fn of(g: &Gfx) -> Self {
+        Self {
+            mirror_bytes: g.mirror.mirror_bytes(),
+            pool_live: g.mirror.live_bricks(),
+            pool_free: g.mirror.spare_slots().min(u64::from(u32::MAX)) as u32,
+            pressure: g.mirror.pressure(),
+            budget_bytes: g.mirror.allocated_bytes(),
+            light_samples: g.mirror.light_samples(),
+            upscale: g
+                .frame
+                .upscaling()
+                .then(|| [g.frame.internal_size(), g.frame.output_size()]),
+        }
+    }
+}
+
 impl Gfx {
+    /// Reads that waited on the GPU so far: the three pass timers' and the store's counters'
+    /// (the field pass's own timing at the initial fill and the bench is among them).
+    fn blocking_reads(&self) -> u64 {
+        [&self.timer, &self.field_timer, &self.hud_timer]
+            .into_iter()
+            .flatten()
+            .map(PassTimer::blocking_reads)
+            .sum::<u64>()
+            + self.frame.store_blocking_reads()
+    }
+
     /// Runs the field pass over the band slots placed since the last, alone, and waits for
     /// it: the band slots it filled and its GPU time when timed.
     fn timed_field(&mut self, gpu: &Gpu) -> (usize, Option<f64>) {
@@ -2285,14 +2448,19 @@ struct Samples {
     hud_ms: Vec<f64>,
 }
 
-/// Every frame's render-thread CPU, its `update + poll + sync` (the sync alone without
+/// Every frame's wall time since the frame before, its render-thread CPU, its `update + poll + sync` (the sync alone without
 /// streaming) and, on frames the march timer is on, the march's GPU time, over the whole run:
 /// the `frames:` line printed at exit.
 #[derive(Default)]
 struct RunTimes {
+    /// The wall time between frame starts, from the second frame on.
+    wall_ms: Vec<f64>,
     cpu_ms: Vec<f64>,
     stream_ms: Vec<f64>,
     gpu_ms: Vec<f64>,
+    /// Reads on the frame path that waited on the GPU over the run: the pass timers' and the
+    /// store's counters'; `None` without the GPU's passes.
+    blocking_reads: Option<u64>,
 }
 
 impl RunTimes {
@@ -2325,8 +2493,16 @@ impl RunTimes {
                 self.gpu_ms.len()
             )
         };
+        let wall = if self.wall_ms.is_empty() {
+            "n/a".to_owned()
+        } else {
+            stats(&self.wall_ms)
+        };
+        let blocking = self
+            .blocking_reads
+            .map_or_else(|| "n/a".to_owned(), |n| n.to_string());
         Some(format!(
-            "frames: {} frames; frame CPU {}; update + poll + sync {}; march GPU {gpu}",
+            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}; blocking reads {blocking}",
             self.cpu_ms.len(),
             stats(&self.cpu_ms),
             stats(&self.stream_ms)
@@ -2368,12 +2544,37 @@ struct Hud {
     exposure: Option<vxe_render::ExposureReadout>,
     format_us: u32,
     page_bytes: u64,
-    /// Reused buffers: the rows' text, their colours, and the strip's samples.
+    /// Reused buffers: the rows' text, their colours, the strip's samples and the banner's
+    /// rows.
     text: String,
     colours: Vec<HudColour>,
     strip: Vec<f32>,
+    banner: String,
+    /// The far normal's words and the live queue's order and withdrawal in words, remade
+    /// only when what they name changes.
+    far_normal_words: Cached<(NormalMode, [f32; 2])>,
+    queue_words: Cached<(vxe_render::bake::QueueOrder, bool)>,
     /// The whole run's frame times, shown or not.
     run: RunTimes,
+}
+
+/// A string kept with the key it was made from, remade only when the key changes: a row's
+/// words that change on a key press, not every frame.
+#[derive(Debug, Default)]
+struct Cached<K> {
+    key: Option<K>,
+    text: String,
+}
+
+impl<K: PartialEq + Copy> Cached<K> {
+    /// The text for `key`, made by `make` when the key differs from the last one's.
+    fn get(&mut self, key: K, make: impl FnOnce() -> String) -> &str {
+        if self.key != Some(key) {
+            self.text = make();
+            self.key = Some(key);
+        }
+        &self.text
+    }
 }
 
 impl Hud {
@@ -2400,6 +2601,9 @@ impl Hud {
             text: String::new(),
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
+            banner: String::new(),
+            far_normal_words: Cached::default(),
+            queue_words: Cached::default(),
             run: RunTimes::default(),
         }
     }
@@ -2553,13 +2757,17 @@ struct Stream {
     light_wait_ms: f64,
     full_residency: bool,
     workers: usize,
+    /// The streamer's counters as `stream_step` last read them, once a frame: what the
+    /// autopilot and the HUD read after it (and the autopilot's settle, before it, a frame
+    /// late). `None` before the first step.
+    stats: Option<vxe_world::StreamStats>,
 }
 
 impl Stream {
     /// Records every chunk `loaded` full with its wanted tick, and moves the ones the mirror
     /// now holds full into `latency_ms`.
     fn track(&mut self, ev: &vxe_world::StreamEvents, mirror: &GpuWorld) {
-        let tick = self.streamer.stats().ticks;
+        let tick = self.streamer.ticks();
         let full = ev.loaded.iter().filter(|(_, t)| *t == Tier::Full);
         for (&(c, _), &lat) in full.zip(&ev.latency_ticks) {
             self.awaiting.insert(c, tick.saturating_sub(u64::from(lat)));
@@ -3043,6 +3251,9 @@ struct QueueRun {
     /// The CPU ms of each `bake_queue_step` since the last line, and of the last one.
     step_cpu: Vec<f64>,
     last_step_cpu: f64,
+    /// The samples by view class and passed at the last line.
+    line_view: [u64; 3],
+    line_passed: u64,
 }
 
 /// A dig in the live queue, from the step that first read its box until its rings are baked:
@@ -3083,19 +3294,23 @@ impl Run {
         let lod = self
             .stream
             .as_ref()
-            .map(|st| st.streamer.stats().resident_lod as u32);
+            .map(|st| st.stats.unwrap_or_else(|| st.streamer.stats()).resident_lod as u32);
         // The world keeps no brick-array pool: no spare arrays to count.
         self.hud.world = WorldSample::from_stats(&s, lod, 0, ms_since(t) as f32);
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
-    /// Reads the store's counters and, with the lamp's bounce on, counts the probe volume's live
-    /// probes for the HUD: blocking reads, paid at the world sample's cadence.
+    /// Takes the store's counters as last read back (a frame or two old, without waiting) and,
+    /// with the lamp's bounce on, counts the probe volume's live probes for the HUD: a blocking
+    /// read, paid at the world sample's cadence.
     fn sample_probes(&mut self, gpu: &Gpu) {
-        self.hud.store = self
+        if let Some((stats, _)) = self
             .gfx
             .as_ref()
-            .map(|g| g.frame.read_store_stats(&gpu.device, &gpu.queue));
+            .and_then(|g| g.frame.try_store_stats(&gpu.device))
+        {
+            self.hud.store = Some(stats);
+        }
         self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
             g.frame.lighting().lamp_bounce.then(|| {
                 let probes = g.frame.probes();
@@ -3106,43 +3321,41 @@ impl Run {
         });
     }
 
-    /// Refreshes the HUD's values in place for this frame, from the O(1) sources and the
-    /// last world sample; the last edit is already there.
-    fn refresh_hud_stats(&mut self) {
-        let (mirror_bytes, pool_live, pool_free) = self.gfx.as_ref().map_or((0, 0, 0), |g| {
-            (
-                g.mirror.mirror_bytes(),
-                g.mirror.live_bricks(),
-                g.mirror.spare_slots().min(u64::from(u32::MAX)) as u32,
-            )
-        });
-        let pressure = self.gfx.as_ref().map(|g| hud::Pressure {
-            pressure: g.mirror.pressure(),
-            budget_bytes: g.mirror.allocated_bytes(),
+    /// Refreshes the HUD's values in place for this frame, from the O(1) sources, the GPU
+    /// side's values `g` and the last world sample; the last edit is already there.
+    fn refresh_hud_stats(&mut self, g: Option<GfxSample>) {
+        let (mirror_bytes, pool_live, pool_free) =
+            g.map_or((0, 0, 0), |g| (g.mirror_bytes, g.pool_live, g.pool_free));
+        let pressure = g.map(|g| hud::Pressure {
+            pressure: g.pressure,
+            budget_bytes: g.budget_bytes,
             r_full: self.stream.as_ref().map(|s| [s.rule.r_full, s.rule.max]),
         });
-        let lighting = self.gfx.as_ref().and_then(|g| {
-            let passes = self.hud.pass_ms.as_ref()?;
-            Some(hud::LightingRow {
-                passes: FRAME_PASSES
-                    .iter()
-                    .zip(passes)
-                    .map(|(&n, &ms)| (n, ms as f32))
-                    .collect(),
-                light_samples: g.mirror.light_samples(),
-                live_probes: self
+        // The lighting row is rewritten in place, its vector and strings reused.
+        match (g, self.hud.pass_ms.as_ref()) {
+            (Some(g), Some(passes)) => {
+                let row = self.hud.stats.lighting.get_or_insert_with(Default::default);
+                row.passes.clear();
+                row.passes.extend(
+                    FRAME_PASSES
+                        .iter()
+                        .zip(passes)
+                        .map(|(&n, &ms)| (n, ms as f32)),
+                );
+                row.light_samples = g.light_samples;
+                row.live_probes = self
                     .hud
                     .live_probes
-                    .filter(|_| self.modes.lighting.lamp_bounce),
-                store: self.hud.store,
-                store_note: self.queue_note(),
-                modes: self.modes.line(),
-                upscale: g
-                    .frame
-                    .upscaling()
-                    .then(|| [g.frame.internal_size(), g.frame.output_size()]),
-            })
-        });
+                    .filter(|_| self.modes.lighting.lamp_bounce);
+                row.store = self.hud.store;
+                row.store_note.clear();
+                write_queue_note(&mut row.store_note, self.queue.stats);
+                row.modes.clear();
+                self.modes.write_line(&mut row.modes);
+                row.upscale = g.upscale;
+            }
+            _ => self.hud.stats.lighting = None,
+        }
         let pos = self.fly.camera.position;
         let mode = if self.walk.is_some() {
             hud::Mode::Walk
@@ -3155,6 +3368,7 @@ impl Run {
         s.fps = h.frames.fps();
         s.frame_ms = h.frames.frame_ms();
         s.cpu_ms = h.cpu_ms;
+        s.pace = Some(self.args.pace.word());
         s.march_ms = h.march_ms;
         s.hud_ms = h.hud_ms;
         s.upload_bytes = sync.bytes;
@@ -3176,13 +3390,45 @@ impl Run {
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
         s.format_us = h.format_us;
-        s.lighting = lighting;
-        s.exposure = Some(self.modes.exposure_row());
-        s.aliasing = Some(hud::aliasing_row(
-            &self.upscaler,
-            &LookPreset::far_normal_words(self.look.normal_mode, self.look.far_normal),
-            self.pan.as_ref(),
-        ));
+        self.modes
+            .fill_exposure_row(s.exposure.get_or_insert_with(Default::default));
+        let args = &self.args;
+        let words = h
+            .queue_words
+            .get((args.queue_order(), args.queue_withdraw), || {
+                args.queue_words()
+            });
+        let queue = s.queue.get_or_insert_with(String::new);
+        queue.clear();
+        hud::write_queue_row(queue, &self.queue.stats.unwrap_or_default());
+        queue.push_str("; ");
+        queue.push_str(words);
+        let look = &self.look;
+        let far = h
+            .far_normal_words
+            .get((look.normal_mode, look.far_normal), || {
+                LookPreset::far_normal_words(look.normal_mode, look.far_normal)
+            });
+        let aliasing = s.aliasing.get_or_insert_with(String::new);
+        aliasing.clear();
+        hud::write_aliasing_row(aliasing, &self.upscaler, far, self.pan.as_ref());
+    }
+
+    /// The CPU half of [`Run::update_hud`]: refreshes the values (with the GPU side's `g`),
+    /// formats the rows and the strip, and puts the banner's rows under them in yellow.
+    /// Allocates nothing once the buffers have grown to the rows' size.
+    fn fill_hud(&mut self, g: Option<GfxSample>) {
+        self.refresh_hud_stats(g);
+        self.forget_pose_once_moved();
+        self.write_banner();
+        let h = &mut self.hud;
+        h.format_rows();
+        // The mode banner goes under the rows, hiding none of them.
+        for line in h.banner.lines() {
+            h.text.push_str(line);
+            h.text.push('\n');
+            h.colours.push(HudColour::Yellow);
+        }
     }
 
     /// Drops `--pose`'s banner row once the camera has left the pose.
@@ -3199,48 +3445,58 @@ impl Run {
     /// The banner at the frame loop's clock: `--pose`'s row until the camera first moves, the
     /// scene's row while it shows (for `hud::BANNER_MS` after it was last shown), over the
     /// lighting modes' banner and the upscaler's, whichever show.
+    ///
+    /// Written into the HUD's reused `banner` buffer, row by row; the live queue's row always
+    /// shows, so the banner is never empty.
+    fn write_banner(&mut self) {
+        let mut out = std::mem::take(&mut self.hud.banner);
+        let mut words = std::mem::take(&mut self.hud.queue_words);
+        let args = &self.args;
+        let w = words.get((args.queue_order(), args.queue_withdraw), || {
+            args.queue_words()
+        });
+        out.clear();
+        self.compose_banner(&mut out, w);
+        self.hud.queue_words = words;
+        self.hud.banner = out;
+    }
+
+    /// [`Run::write_banner`]'s rows as a new string.
+    #[cfg(test)]
     fn banner(&self) -> Option<String> {
+        let mut out = String::new();
+        self.compose_banner(&mut out, &self.args.queue_words());
+        Some(out)
+    }
+
+    /// Appends the banner's rows to `out`, the live queue's order and withdrawal in `words`.
+    fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
-        let scene = self
+        if let Some((pose, _)) = &self.pose {
+            out.push_str(pose);
+        }
+        write_pace_banner(self.args.pace, now, out);
+        hud::start_row(out);
+        write_queue_banner_row(out, &self.args, words);
+        if let Some((scene, _)) = self
             .scene
             .as_ref()
             .filter(|(_, at)| now - at < hud::BANNER_MS)
-            .map(|(s, _)| s.to_owned());
-        let pose = self.pose.as_ref().map(|(s, _)| s.to_owned());
-        let rows: Vec<String> = [
-            pose,
-            Some(self.queue_row()),
-            scene,
-            self.modes.banner(now),
-            self.upscaler.banner(now),
-            self.pan.and_then(|p| p.banner(now)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if rows.is_empty() {
-            None
-        } else {
-            Some(rows.join("\n"))
+        {
+            hud::start_row(out);
+            out.push_str(scene);
+        }
+        self.modes.write_banner(now, out);
+        self.upscaler.write_banner(now, out);
+        if let Some(p) = &self.pan {
+            p.write_banner(now, out);
         }
     }
 
-    /// Formats this frame's rows and strip into the overlay, timing the formatting. Allocates
-    /// nothing once the buffers have grown to the rows' size.
+    /// Formats this frame's rows and strip into the overlay, timing the formatting.
     fn update_hud(&mut self, gpu: &Gpu) {
-        self.refresh_hud_stats();
-        self.forget_pose_once_moved();
-        let banner = self.banner();
+        self.fill_hud(self.gfx.as_ref().map(GfxSample::of));
         let h = &mut self.hud;
-        h.format_rows();
-        // The mode banner goes under the rows, hiding none of them.
-        if let Some(b) = banner {
-            for line in b.lines() {
-                h.text.push_str(line);
-                h.text.push('\n');
-                h.colours.push(HudColour::Yellow);
-            }
-        }
         let Some(gfx) = self.gfx.as_mut() else { return };
         gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
@@ -3750,6 +4006,11 @@ impl Run {
         frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice);
         frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
         frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
+        if let Some(q) = frame.bake_queue_mut() {
+            q.order = self.args.queue_order();
+            q.withdraw = self.args.queue_withdraw;
+            q.census_every_opening = self.args.queue_census;
+        }
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
         let camera = start_camera(&self.args, self.spawn);
@@ -3801,12 +4062,15 @@ impl Run {
             let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
                 .is_some()
                 .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+            let (half_angle, frustum) = queue_view_angles(camera.vfov, frame.output_size());
             let view = vxe_render::QueueView {
                 eye,
                 forward: forward.to_array(),
                 resident,
                 samples: Some(PRE_ROLL_SAMPLES),
                 hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+                half_angle,
+                frustum: Some(frustum),
             };
             if let Some(Err(e)) =
                 frame.bake_queue_step(&gpu.device, &gpu.queue, mirror, &self.world, &view)
@@ -3893,12 +4157,16 @@ impl Run {
         let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
             .is_some()
             .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+        let (half_angle, frustum) =
+            queue_view_angles(self.fly.camera.vfov, gfx.frame.output_size());
         let view = vxe_render::QueueView {
             eye: self.fly.camera.position.to_array(),
             forward: forward.to_array(),
             resident,
             samples: None,
             hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+            half_angle,
+            frustum: Some(frustum),
         };
         let t_step = ms_since(self.start);
         let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
@@ -4016,9 +4284,29 @@ impl Run {
             t - self.queue.line_ms >= 1000.0
         };
         if due && let Some(st) = self.queue.stats {
-            let store_stats = gfx.frame.read_store_stats(&gpu.device, &gpu.queue);
-            let missing = store_stats.missing;
+            // The store's counters without waiting: the newest copy finished on the GPU, its
+            // age in frames on the line.
+            let (store_stats, store_age) = gfx
+                .frame
+                .try_store_stats(&gpu.device)
+                .map_or((vxe_render::StoreStats::default(), None), |(s, age)| {
+                    (s, Some(age))
+                });
             let pixels = gfx.frame.light_pixels().max(1);
+            let reads = if gfx.frame.counts_store() {
+                format!(
+                    "no value {:.4} coarse {:.4} of {} pixels ({})",
+                    f64::from(store_stats.missing) / f64::from(pixels),
+                    f64::from(store_stats.coarse_reads) / f64::from(pixels),
+                    pixels,
+                    store_age.map_or_else(
+                        || "not read back yet".to_owned(),
+                        |a| format!("read {a} frames old")
+                    ),
+                )
+            } else {
+                "store reads not counted (the HUD or --read-missing counts them)".to_owned()
+            };
             let secs = if self.args.headless {
                 f64::from(self.frame - self.queue.line_frame) / 60.0
             } else {
@@ -4031,7 +4319,7 @@ impl Run {
             let max = sl.last().copied().unwrap_or(0.0);
             let mut cpu = std::mem::take(&mut self.queue.step_cpu);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, no value {:.4} coarse {:.4} of {} pixels, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -4049,15 +4337,43 @@ impl Run {
                 st.ns_per_sample,
                 st.fading,
                 st.coarse,
-                f64::from(missing) / f64::from(pixels),
-                f64::from(store_stats.coarse_reads) / f64::from(pixels),
-                pixels,
+                reads,
                 self.fly.camera.position.x,
                 self.fly.camera.position.y,
                 self.fly.camera.position.z,
                 percentile(&mut cpu, 50.0),
                 percentile(&mut cpu, 100.0),
             );
+            let needs = gfx
+                .frame
+                .bake_queue_mut()
+                .map(|q| {
+                    // The next second's line and the HUD's row read the next opening's census.
+                    q.request_census();
+                    q.take_angle_needs()
+                })
+                .unwrap_or_default();
+            let (first, full) = gfx
+                .frame
+                .bake_queue()
+                .map(|q| {
+                    let (a, b) = q.view_ages();
+                    (a.to_vec(), b.to_vec())
+                })
+                .unwrap_or_default();
+            println!(
+                "{}",
+                queue_view_line(
+                    &st,
+                    self.queue.line_view,
+                    self.queue.line_passed,
+                    &needs,
+                    &first,
+                    &full
+                )
+            );
+            self.queue.line_view = st.view_samples;
+            self.queue.line_passed = st.passed_samples;
             self.queue.line_ms = t;
             self.queue.line_frame = self.frame;
             self.queue.line_baked = st.baked;
@@ -4068,46 +4384,53 @@ impl Run {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
     }
 
-    /// The live queue's banner row: the mode, its settings and slice, and the read.
-    fn queue_row(&self) -> String {
-        format!(
-            "light: live queue, bricks {}/{}, {}, slice {} ms, digs +{} ms, ring 3 {}",
-            vxe_render::bake::BRICK_CELL,
-            vxe_render::bake::QUEUE_BRICK_SAMPLES,
-            if self.args.bake_coarse > 0 {
-                format!(
-                    "coarse {}/{} first, near {} at {}",
-                    vxe_render::bake::BRICK_CELL,
-                    self.args.bake_coarse,
-                    self.args.bake_near,
-                    vxe_render::bake::QUEUE_BRICK_SAMPLES
-                )
+    /// The live queue's keys: `1` cycles the order (score, score with the class as a tier,
+    /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25), `4`
+    /// toggles the withdrawal. A change goes to the queue at once and prints the order and the
+    /// withdrawal.
+    fn queue_keys(&mut self, input: &Input) {
+        let a = &mut self.args;
+        let mut changed = false;
+        if input.pressed(KeyCode::Digit1) {
+            (a.queue_distance, a.queue_tier) = match (a.queue_distance, a.queue_tier) {
+                (false, false) => (false, true),
+                (false, true) => (true, false),
+                (true, _) => (false, false),
+            };
+            changed = true;
+        }
+        if input.pressed(KeyCode::Digit2) {
+            a.queue_angle *= 0.5;
+            changed = true;
+        }
+        if input.pressed(KeyCode::Digit3) {
+            a.queue_angle = if a.queue_angle > 0.0 {
+                a.queue_angle * 2.0
             } else {
-                format!("no coarse pass, near {}", self.args.bake_near)
-            },
-            self.args.bake_slice,
-            self.args.bake_edit_ms,
-            if self.args.dig_reach { "on" } else { "off" },
-        )
+                0.25
+            };
+            changed = true;
+        }
+        if input.pressed(KeyCode::Digit4) {
+            a.queue_withdraw = !a.queue_withdraw;
+            changed = true;
+        }
+        if changed {
+            let order = self.args.queue_order();
+            println!("bake queue: {}", self.args.queue_words());
+            let withdraw = self.args.queue_withdraw;
+            if let Some(q) = self.gfx.as_mut().and_then(|g| g.frame.bake_queue_mut()) {
+                q.order = order;
+                q.withdraw = withdraw;
+            }
+        }
     }
 
-    /// The HUD store row's queue part: `, queue depth N, jobs J, slice X ms`, or nothing.
-    fn queue_note(&self) -> String {
-        match self.queue.stats {
-            Some(st) => format!(
-                ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms{}",
-                st.depth,
-                st.coarse,
-                st.jobs,
-                st.ms,
-                if st.pool_full > 0 {
-                    format!(", pool full {}", st.pool_full)
-                } else {
-                    String::new()
-                }
-            ),
-            _ => String::new(),
-        }
+    /// The live queue's banner row: the mode, its settings and slice, its order and keys.
+    fn queue_row(&self) -> String {
+        let mut out = String::new();
+        write_queue_banner_row(&mut out, &self.args, &self.args.queue_words());
+        out
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -4163,6 +4486,7 @@ impl Run {
             gpu,
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
+                sync_budget_time: self.args.sync_time,
                 record_chunks: Some(flythrough::stream_record_chunks(self.args.residency)),
                 ..MirrorConfig::new(Window::Follow {
                     side: flythrough::window_side(self.args.residency),
@@ -4287,7 +4611,7 @@ impl Run {
         // A sync writes the nearest chunks that fit and defers the rest, which stay queued; an
         // empty sync (nothing fit) is an error that wrote nothing. The pressure rule below
         // lowers the radius until they fit.
-        let tick = stream.streamer.stats().ticks;
+        let tick = stream.streamer.ticks();
         let (deferred, empty, error) = match synced {
             Ok(s) => {
                 self.hud.sync = (s, sync_ms);
@@ -4344,6 +4668,7 @@ impl Run {
         }
         stream.track(&ev, &gfx.mirror);
         let st = stream.streamer.stats();
+        stream.stats = Some(st);
         if !stream.full_residency
             && st.in_flight == 0
             && st.queued == 0
@@ -4383,7 +4708,7 @@ impl Run {
         match p.leg {
             Leg::Settle => {
                 if !stream.full_residency {
-                    let st = stream.streamer.stats();
+                    let st = stream.stats.unwrap_or_else(|| stream.streamer.stats());
                     let pending =
                         (st.in_flight + st.queued) as u64 + gfx.mirror.pending_chunks() as u64;
                     return p.settle.step(false, pending, &self.failure);
@@ -4418,7 +4743,10 @@ impl Run {
                 p.leg = Leg::Out;
                 p.leg_start = now();
                 p.latency_from = stream.latency_ms.len();
-                p.generated_at_takeoff = stream.streamer.stats().generated_chunks;
+                p.generated_at_takeoff = stream
+                    .stats
+                    .unwrap_or_else(|| stream.streamer.stats())
+                    .generated_chunks;
                 println!("autopilot: flying +x at 10 m/s for 30 s");
             }
             Leg::Out | Leg::Back => {
@@ -4521,9 +4849,12 @@ impl Run {
         p.peak_belt = p.peak_belt.max(gfx.mirror.belt_chunks());
         let terms = pressure_terms(&gfx.mirror);
         p.peak_terms = [0, 1].map(|k| p.peak_terms[k].max(terms[k]));
-        p.peak_persisted = p
-            .peak_persisted
-            .max(stream.streamer.stats().persisted_ram_bytes);
+        p.peak_persisted = p.peak_persisted.max(
+            stream
+                .stats
+                .unwrap_or_else(|| stream.streamer.stats())
+                .persisted_ram_bytes,
+        );
         if let Some(r) = resident {
             p.peak_resident = p.peak_resident.max(r);
         }
@@ -4704,6 +5035,7 @@ impl Run {
         // The first frame's delta spans startup, not a frame.
         if self.frame > 0 {
             self.hud.frames.record(dt);
+            self.hud.run.wall_ms.push(f64::from(dt) * 1e3);
         }
         if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
             self.hud.visible = !self.hud.visible;
@@ -4756,6 +5088,7 @@ impl Run {
     /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
     /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
+        self.queue_keys(input);
         for (key, mode) in [
             (KeyCode::F3, hud::ModeKey::ShadowWalk),
             (KeyCode::F5, hud::ModeKey::History),
@@ -5129,12 +5462,17 @@ impl Run {
             self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
         }
         // With the stats HUD off the overlay draws the mode banner alone while it shows.
-        let banner = (!hud).then(|| self.banner()).flatten();
+        if !hud {
+            self.write_banner();
+        }
         if hud {
             self.update_hud(gpu);
-        } else if let (Some(b), Some(gfx)) = (&banner, self.gfx.as_mut()) {
-            gfx.hud
-                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS + 1]);
+        } else if let Some(gfx) = self.gfx.as_mut() {
+            gfx.hud.set_lines(
+                &gpu.queue,
+                &self.hud.banner,
+                &[HudColour::Yellow; hud::BANNER_ROWS + 1],
+            );
             gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
         let flying = self
@@ -5179,6 +5517,9 @@ impl Run {
         });
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.look);
+        // The temporal pass counts the store's reads only for a reader of them: the HUD's
+        // store row and `--read-missing`.
+        gfx.frame.set_count_store(hud || self.args.read_missing);
         let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
         } else {
@@ -5205,6 +5546,8 @@ impl Run {
             .mirror
             .update_field_timed(&mut enc, field_timer.map(MarchTimer::writes));
         let field_cpu_ms = ms_since(t_field);
+        // Read on every flying frame: a resolve finishes a frame or two after it was recorded.
+        let field_reader = field_timer;
         let field_timer = field_timer.filter(|_| field_items > 0);
         if let Some(t) = field_timer {
             t.resolve(&mut enc);
@@ -5220,10 +5563,13 @@ impl Run {
         if let Some(t) = timer {
             t.resolve(&mut enc);
         }
+        gfx.frame.copy_store_stats(&mut enc);
         gfx.frame.advance();
         gfx.presenter
             .encode(&gpu.device, &mut enc, gfx.frame.target(), surface);
-        if hud || banner.is_some() {
+        // The overlay draws on every frame: the stats HUD, or with it off the banner, whose
+        // live queue row always shows.
+        {
             let [w, h] = gpu.size;
             gfx.hud.encode_timed(
                 &mut enc,
@@ -5257,14 +5603,31 @@ impl Run {
             diag(format_args!("frame 0: the GPU finished"));
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
-        let pass_ms = timer.map(|t| t.read_all_ms(&gpu.device));
+        // The timers hand over their newest finished set without waiting (a frame or two old),
+        // `None` on a frame with nothing new. `--lamp-toggle` and `--fade-reading` file each set
+        // under the frame that drew it, so they wait for this frame's.
+        let exact = self.args.lamp_toggle.is_some() || self.args.fade_reading;
+        let pass_ms = timer.and_then(|t| {
+            if exact {
+                Some(t.read_all_ms(&gpu.device))
+            } else {
+                t.try_read_all_ms(&gpu.device)
+            }
+        });
         let gpu_ms = pass_ms.as_ref().map(|p| p.iter().sum::<f64>());
-        let field_gpu_ms = field_timer.map(|t| t.read_ms(&gpu.device));
-        let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
+        let field_gpu_ms = field_reader.and_then(|t| t.try_read_ms(&gpu.device));
+        let hud_ms = hud_timer.and_then(|t| t.try_read_ms(&gpu.device));
         self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
         self.hud.cpu_ms = cpu_ms as f32;
-        self.hud.march_ms = gpu_ms.map(|v| v as f32);
-        self.hud.pass_ms.clone_from(&pass_ms);
+        // The HUD keeps the last set read until a newer one finishes, and shows none once its
+        // timer is off.
+        if timer.is_none() {
+            self.hud.march_ms = None;
+            self.hud.pass_ms = None;
+        } else if pass_ms.is_some() {
+            self.hud.march_ms = gpu_ms.map(|v| v as f32);
+            self.hud.pass_ms.clone_from(&pass_ms);
+        }
         if self.args.lamp_toggle.is_some()
             && let Some(p) = &pass_ms
         {
@@ -5275,7 +5638,11 @@ impl Run {
             self.fade
                 .push(FadeSample::read(gpu, &gfx.frame, gpu_ms.unwrap_or(0.0)));
         }
-        self.hud.hud_ms = hud_ms.map(|v| v as f32);
+        if hud_timer.is_none() {
+            self.hud.hud_ms = None;
+        } else if let Some(ms) = hud_ms {
+            self.hud.hud_ms = Some(ms as f32);
+        }
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
             if let Some(passes) = &pass_ms {
@@ -5358,7 +5725,7 @@ impl Run {
             }
             self.sample_world();
             self.sample_probes(gpu);
-            self.refresh_hud_stats();
+            self.refresh_hud_stats(self.gfx.as_ref().map(GfxSample::of));
             let mut stats = self.hud.stats.clone();
             stats.world.age_frames = 0;
             println!("hud:\n{stats}");
@@ -5460,6 +5827,7 @@ impl Drop for Run {
     /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
         self.save();
+        self.hud.run.blocking_reads = self.gfx.as_ref().map(Gfx::blocking_reads);
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
@@ -5551,6 +5919,7 @@ impl App for Flythrough {
                             light_wait_ms: 0.0,
                             full_residency: false,
                             workers,
+                            stats: None,
                         }),
                     )
                 }
@@ -5945,6 +6314,106 @@ fn shot_camera(shot: &Shot) -> Camera {
 
 /// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
 /// camera, or the spawn facing +x.
+/// The live queue's view angles for a camera of `vfov` drawn at `size` (output pixels): the
+/// cone's half-angle (the wider of the two) and the frustum's horizontal and vertical ones.
+fn queue_view_angles(vfov: f32, size: [u32; 2]) -> (f32, [f32; 2]) {
+    let aspect = size[0].max(1) as f32 / size[1].max(1) as f32;
+    (
+        vxe_render::bake::view_half_angle(vfov, aspect),
+        vxe_render::bake::view_half_angles(vfov, aspect),
+    )
+}
+
+/// The live queue's view line, a second: the candidates by where they lie (blank / coarse),
+/// those the cone adds over the widened frustum, the samples of ended jobs by where their chunk
+/// lay (since the start, and since the last line with `line_view` and `line_passed` then), the
+/// in-view ages in frames over the run, and the weight log: the angle weights `needs` read
+/// since the last line at p50 and p90, the refine weight at which the in-view median coarse
+/// chunk ranks with the median blank one, and the census by class, distance band and angle
+/// band.
+fn queue_view_line(
+    st: &vxe_render::QueueStats,
+    line_view: [u64; 3],
+    line_passed: u64,
+    needs: &[f32],
+    first: &[u32],
+    full: &[u32],
+) -> String {
+    let w = st.view_waiting;
+    let total: u64 = st.view_samples.iter().sum();
+    let d: [u64; 3] = std::array::from_fn(|k| st.view_samples[k] - line_view[k]);
+    let d_total: u64 = d.iter().sum();
+    let d_passed = st.passed_samples - line_passed;
+    let share = |v: u64, of: u64| 100.0 * v as f64 / of.max(1) as f64;
+    let pct = |v: &[u32], p: f64| {
+        let mut f: Vec<f64> = v.iter().map(|&x| f64::from(x)).collect();
+        if f.is_empty() {
+            "-".to_owned()
+        } else {
+            format!("{:.0}", percentile(&mut f, p))
+        }
+    };
+    let mut n: Vec<f64> = needs.iter().map(|&x| f64::from(x)).collect();
+    let need = |n: &mut Vec<f64>, p: f64| {
+        if n.is_empty() {
+            "-".to_owned()
+        } else {
+            format!("{:.2}", percentile(n, p))
+        }
+    };
+    let refine = if st.view_median[1] > 0.0 && st.view_median[0] > 0.0 {
+        format!("{:.2}", st.view_median[0] / st.view_median[1])
+    } else {
+        "-".to_owned()
+    };
+    let census = |c: usize| {
+        st.weight_census[c]
+            .iter()
+            .map(|a| format!("{} {} {} {}", a[0], a[1], a[2], a[3]))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    format!(
+        "bake queue view: waiting (blank/coarse) shell {}/{} in view {}/{} out {}/{} (reach not ready {} of {} read, census {:.3} ms), cone only {}, in-view median {:.1}/{:.1} chunks; samples shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e} since the start, last line shell {:.1} view {:.1} out {:.1} passed {:.1} % of {:.3e}; in-view ages (frames) first p50 {} p95 {} of {}, full p50 {} p95 {} of {}; angle weight needed p50 {} p90 {} of {}, refine {} (3 at 5..6: 1.67..2.00); census blank [{}] coarse [{}] (distance 0-2 | 3-5 | 6-10 | >10, a 0 <0.2 0.2-0.4 >0.4); withdrawn {} jobs, {:.3e} samples",
+        w[0][0],
+        w[0][1],
+        w[1][0],
+        w[1][1],
+        w[2][0],
+        w[2][1],
+        st.view_reach[1],
+        st.view_reach[0],
+        st.census_ms,
+        st.cone_only,
+        st.view_median[0],
+        st.view_median[1],
+        share(st.view_samples[0], total),
+        share(st.view_samples[1], total),
+        share(st.view_samples[2], total),
+        share(st.passed_samples, total),
+        total as f64,
+        share(d[0], d_total),
+        share(d[1], d_total),
+        share(d[2], d_total),
+        share(d_passed, d_total),
+        d_total as f64,
+        pct(first, 50.0),
+        pct(first, 95.0),
+        first.len(),
+        pct(full, 50.0),
+        pct(full, 95.0),
+        full.len(),
+        need(&mut n, 50.0),
+        need(&mut n, 90.0),
+        n.len(),
+        refine,
+        census(0),
+        census(1),
+        st.withdrawn,
+        st.withdrawn_samples as f64,
+    )
+}
+
 fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     if args.castle {
         castle_camera(args.castle_shot)
@@ -5962,6 +6431,73 @@ fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
             yaw: 0.0,
             pitch: 0.0,
             vfov: 70f32.to_radians(),
+        }
+    }
+}
+
+/// The streamer's default generation workers: one fewer than the logical cores, at least 1,
+/// leaving a core to the render thread.
+fn default_workers() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .saturating_sub(1)
+        .max(1)
+}
+
+/// Appends the banner's pacing row, `pace free`, to `out` as a banner row (`hud::start_row`)
+/// for [`hud::BANNER_MS`] after the start (`now_ms` on the frame loop's clock); `false`, and
+/// nothing written, after that.
+fn write_pace_banner(pace: Pacing, now_ms: f64, out: &mut String) -> bool {
+    let shows = now_ms < hud::BANNER_MS;
+    if shows {
+        hud::start_row(out);
+        out.push_str("pace ");
+        out.push_str(pace.word());
+    }
+    shows
+}
+
+/// Appends the live queue's banner row to `out`: the mode, its settings and slice, then
+/// `words` (its order and withdrawal) and its keys.
+fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
+    let _ = write!(
+        out,
+        "light: live queue, bricks {}/{}, ",
+        vxe_render::bake::BRICK_CELL,
+        vxe_render::bake::QUEUE_BRICK_SAMPLES,
+    );
+    if args.bake_coarse > 0 {
+        let _ = write!(
+            out,
+            "coarse {}/{} first, near {} at {}",
+            vxe_render::bake::BRICK_CELL,
+            args.bake_coarse,
+            args.bake_near,
+            vxe_render::bake::QUEUE_BRICK_SAMPLES
+        );
+    } else {
+        let _ = write!(out, "no coarse pass, near {}", args.bake_near);
+    }
+    let _ = write!(
+        out,
+        ", slice {} ms, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw)",
+        args.bake_slice,
+        args.bake_edit_ms,
+        if args.dig_reach { "on" } else { "off" },
+    );
+}
+
+/// Appends the HUD store row's queue part to `out`: `, queue depth N, coarse C, jobs J, slice
+/// X ms` and `, pool full P` when the pool refused any; nothing without the queue's stats.
+fn write_queue_note(out: &mut String, stats: Option<vxe_render::QueueStats>) {
+    if let Some(st) = stats {
+        let _ = write!(
+            out,
+            ", queue depth {}, coarse {}, jobs {}, slice {:.2} ms",
+            st.depth, st.coarse, st.jobs, st.ms
+        );
+        if st.pool_full > 0 {
+            let _ = write!(out, ", pool full {}", st.pool_full);
         }
     }
 }
@@ -6178,10 +6714,7 @@ fn main() {
         (source.spawn(), Pending::Level(generation))
     } else {
         let source = CaveSource::unbounded(seed);
-        let workers = std::thread::available_parallelism()
-            .map_or(1, usize::from)
-            .saturating_sub(1)
-            .max(1);
+        let workers = args.workers.unwrap_or_else(default_workers);
         let world = World::new(&materials(&args));
         let cfg = StreamConfig {
             residency: args.residency,
@@ -6264,6 +6797,7 @@ fn main() {
                 .map_or_else(|| "pad: none".to_owned(), Pad::startup_line)
         );
     }
+    let args_pace = args.pace;
     let app = Flythrough {
         start,
         args,
@@ -6283,6 +6817,7 @@ fn main() {
             title: "flythrough".to_owned(),
             size,
             lock_cursor: true,
+            pacing: args_pace,
             ..ShellConfig::default()
         };
         vxe_app::run(config, app)
@@ -6399,6 +6934,85 @@ mod tests {
         assert_eq!(hud.strip.len(), 100);
     }
     use flythrough::cave::SHELL;
+
+    /// `--pace` takes `free` (no frame callback), the default, and `compositor`; another word
+    /// or a missing value is refused.
+    #[test]
+    fn the_pace_flag_parses_both_words() {
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(a.pace, Pacing::Unthrottled);
+        let a = parse_args_from(argv(&["--pace", "free"])).expect("--pace free parses");
+        assert_eq!(a.pace, Pacing::Unthrottled);
+        assert!(!a.pace.frame_callback());
+        let a = parse_args_from(argv(&["--pace", "compositor"])).expect("--pace compositor parses");
+        assert_eq!(a.pace, Pacing::Compositor);
+        assert!(a.pace.frame_callback());
+        let e = parse_args_from(argv(&["--pace", "vsync"]))
+            .err()
+            .expect("vsync is refused");
+        assert!(e.contains("free or compositor"), "{e}");
+        assert!(parse_args_from(argv(&["--pace"])).is_err());
+    }
+
+    /// `--workers N` sets the streamer's workers (unset: `default_workers`, one fewer than
+    /// the logical cores and at least 1); 0, a non-number or a missing value is refused.
+    #[test]
+    fn the_workers_flag_parses_and_refuses_zero() {
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(a.workers, None);
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        assert_eq!(default_workers(), cores.saturating_sub(1).max(1));
+        let a = parse_args_from(argv(&["--workers", "14"])).expect("--workers 14 parses");
+        assert_eq!(a.workers, Some(14));
+        let a = parse_args_from(argv(&["--workers", "1"])).expect("--workers 1 parses");
+        assert_eq!(a.workers, Some(1));
+        let e = parse_args_from(argv(&["--workers", "0"]))
+            .err()
+            .expect("0 workers is refused");
+        assert!(e.contains("at least 1"), "{e}");
+        assert!(parse_args_from(argv(&["--workers", "many"])).is_err());
+        assert!(parse_args_from(argv(&["--workers"])).is_err());
+    }
+
+    /// `--sync-ms MS` sets the mirror's upload time per frame (default none); `--sync-ms 0`
+    /// is no time budget; a non-number or a missing value is refused.
+    #[test]
+    fn the_sync_ms_flag_parses_and_zero_is_no_budget() {
+        let ms = std::time::Duration::from_millis;
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(a.sync_time, None);
+        let a = parse_args_from(argv(&["--sync-ms", "5"])).expect("--sync-ms 5 parses");
+        assert_eq!(a.sync_time, Some(ms(5)));
+        let a = parse_args_from(argv(&["--sync-ms", "0"])).expect("--sync-ms 0 parses");
+        assert_eq!(a.sync_time, None);
+        assert!(parse_args_from(argv(&["--sync-ms", "-1"])).is_err());
+        assert!(parse_args_from(argv(&["--sync-ms"])).is_err());
+    }
+
+    /// A plain start's banner names the pacing, `pace free`, until the banner's time is up;
+    /// `--pace compositor` names its word.
+    #[test]
+    fn a_plain_start_s_banner_names_the_pace() {
+        let pace_banner = |pace, now_ms| {
+            let mut out = String::new();
+            write_pace_banner(pace, now_ms, &mut out).then_some(out)
+        };
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(pace_banner(a.pace, 0.0).as_deref(), Some("pace free"));
+        assert_eq!(pace_banner(a.pace, hud::BANNER_MS), None);
+        let c = parse_args_from(argv(&["--pace", "compositor"])).unwrap();
+        assert_eq!(
+            pace_banner(c.pace, 10.0).as_deref(),
+            Some("pace compositor")
+        );
+        let mut run = bare_run(carved_rock());
+        run.start = now();
+        let banner = run.banner().expect("the banner shows");
+        assert!(
+            banner.starts_with("pace free\nlight: live queue"),
+            "{banner}"
+        );
+    }
 
     /// The flags of the per-face table, the reference and the cuts are refused, each naming Plan
     /// 0059 and the flag; with none of them the run parses and its frame takes the store.
@@ -7132,6 +7746,49 @@ mod tests {
         world
     }
 
+    /// A shown HUD's whole CPU half (`Run::fill_hud`: the values refreshed with a lighting row
+    /// from a GPU sample and the frame's passes, the rows and strip formatted, and the banner's
+    /// rows under them, at the start where the banner shows its pace, its modes, the upscaler
+    /// and a pan) allocates on the first frame and 0 bytes on frames 2 to 100.
+    #[test]
+    fn a_shown_hud_s_refresh_and_banner_allocate_nothing_after_the_first_frame() {
+        let mut run = bare_run(carved_rock());
+        run.hud = Hud::new(true);
+        run.hud.pass_ms = Some((0..FRAME_PASSES.len()).map(|i| 0.1 * i as f64).collect());
+        run.hud.store = Some(vxe_render::StoreStats::default());
+        run.queue.stats = Some(vxe_render::QueueStats::default());
+        run.pan = Some(hud::Pan::new(1.5, 0.0));
+        run.upscaler = hud::UpscalerBanner::shown_from(hud::UpscalerMode::Fsr2, "1.5", 0.0);
+        let g = GfxSample {
+            mirror_bytes: 3 << 20,
+            pool_live: 1200,
+            pool_free: 34,
+            pressure: 0.25,
+            budget_bytes: 64 << 20,
+            light_samples: 4096,
+            upscale: Some([[640, 360], [960, 540]]),
+        };
+        run.start = now();
+        let mut per_frame = Vec::with_capacity(100);
+        for frame in 0..100u32 {
+            let before = counting::bytes();
+            run.hud.frames.record(0.016 + frame as f32 * 1e-5);
+            run.fill_hud(Some(g));
+            per_frame.push(counting::bytes() - before);
+        }
+        let text = &run.hud.text;
+        assert!(text.contains(FRAME_PASSES[0]), "the lighting row: {text}");
+        assert!(text.contains("pace free"), "the banner: {text}");
+        assert!(
+            text.contains("upscaler fsr2"),
+            "the upscaler's banner: {text}"
+        );
+        assert!(text.contains("pan 1.5 deg/s"), "the pan's banner: {text}");
+        println!("bytes per frame: {per_frame:?}");
+        assert!(per_frame[0] > 0, "the first frame grows the buffers");
+        assert_eq!(per_frame[1..], [0; 99]);
+    }
+
     /// A mirror sync that fails ends the session with its failure recorded, and the headless
     /// runner's outcome is that failure as `Err`; with none recorded it is `Ok`.
     #[test]
@@ -7387,6 +8044,138 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    /// `--queue-order` parses `score` and `distance` and refuses the rest, `--queue-weights` `A,R`
+    /// and `A,tier`; a plain start reads the score with the class as the tier; `1` cycles the
+    /// order, `2` halves the angle weight and `3` doubles it, each press changing the banner and
+    /// the HUD's queue row in the same frame.
+    #[test]
+    fn the_banner_names_the_queue_order_and_its_weights() {
+        use vxe_render::bake::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        let mut shown = |run: &mut Run, key: Option<KeyCode>| {
+            input.end_frame();
+            if let Some(key) = key {
+                input.key_up(key);
+                input.key_down(key);
+            }
+            run.handle_input(&input);
+            run.refresh_hud_stats(None);
+            let banner = run.banner().expect("the queue's row is on the banner");
+            let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+            (banner, row)
+        };
+        let check = |(banner, row): (String, String), want: String| {
+            assert!(
+                banner.contains(&format!("; {want}; withdraw on (1 order")),
+                "{want}: {banner}"
+            );
+            assert_eq!(
+                row,
+                format!("in view: 0 waiting (0 coarse), withdrawn 0; {want}; withdraw on")
+            );
+        };
+        check(
+            shown(&mut run, None),
+            format!("order score, angle {A}, refine tier"),
+        );
+        for want in [
+            "order distance".to_owned(),
+            format!("order score, angle {A}, refine {R}"),
+            format!("order score, angle {A}, refine tier"),
+            "order distance".to_owned(),
+            format!("order score, angle {A}, refine {R}"),
+        ] {
+            check(shown(&mut run, Some(KeyCode::Digit1)), want);
+        }
+        for (key, angle) in [
+            (KeyCode::Digit2, A / 2.0),
+            (KeyCode::Digit3, A),
+            (KeyCode::Digit3, A * 2.0),
+        ] {
+            check(
+                shown(&mut run, Some(key)),
+                format!("order score, angle {angle}, refine {R}"),
+            );
+        }
+        use vxe_render::bake::{QueueOrder, Refine};
+        let order = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.queue_order());
+        assert_eq!(
+            order(&["--queue-order", "distance"]),
+            Ok(QueueOrder::Distance)
+        );
+        assert_eq!(
+            order(&["--queue-order", "score", "--queue-weights", "1.5,3"]),
+            Ok(QueueOrder::Score {
+                angle: 1.5,
+                refine: Refine::Weight(3.0)
+            })
+        );
+        assert_eq!(
+            order(&["--queue-weights", "4,tier"]),
+            Ok(QueueOrder::Score {
+                angle: 4.0,
+                refine: Refine::Tier
+            })
+        );
+        assert_eq!(
+            order(&[]),
+            Ok(QueueOrder::Score {
+                angle: A,
+                refine: Refine::Tier
+            })
+        );
+        assert_eq!(order(&[]), Ok(QueueOrder::default()));
+        for bad in [
+            &["--queue-order", "near"][..],
+            &["--queue-weights", "4"],
+            &["--queue-weights", "x,2"],
+            &["--queue-weights", "-1,2"],
+            &["--queue-weights", "4,0"],
+            &["--queue-weights", "4,flat"],
+        ] {
+            assert!(order(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// `--queue-withdraw` parses `on` and `off` and refuses the rest; `4` toggles the
+    /// withdrawal, the banner and the HUD's queue row saying so in the same frame; the row
+    /// shows the withdrawn count from the queue's counters.
+    #[test]
+    fn the_banner_names_the_withdrawal() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        for want in ["withdraw off", "withdraw on", "withdraw off"] {
+            input.end_frame();
+            input.key_up(KeyCode::Digit4);
+            input.key_down(KeyCode::Digit4);
+            run.handle_input(&input);
+            run.refresh_hud_stats(None);
+            let banner = run.banner().expect("the queue's row is on the banner");
+            assert!(
+                banner.contains(&format!("; {want} (1 order")),
+                "{want}: {banner}"
+            );
+            let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+            assert!(row.ends_with(&format!("; {want}")), "{want}: {row}");
+        }
+        run.queue.stats = Some(vxe_render::QueueStats {
+            withdrawn: 7,
+            ..Default::default()
+        });
+        run.refresh_hud_stats(None);
+        let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+        assert!(
+            row.starts_with("in view: 0 waiting (0 coarse), withdrawn 7; "),
+            "{row}"
+        );
+        let w = |v: &str| parse_args_from(argv(&["--queue-withdraw", v])).map(|a| a.queue_withdraw);
+        assert_eq!(w("on"), Ok(true));
+        assert_eq!(w("off"), Ok(false));
+        assert!(w("yes").is_err());
+        assert!(parse_args_from(argv(&[])).unwrap().queue_withdraw);
     }
 
     /// `F9` cycles the views shaded, normals, hitmask, steps, cracks, albedo, shaded; each

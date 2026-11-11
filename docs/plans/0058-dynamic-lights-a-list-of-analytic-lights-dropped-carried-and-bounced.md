@@ -1,7 +1,9 @@
 # 0058: Dynamic lights: a list of eight analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
 
-> **Status:** draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
-> phase and ADR-0045 are gone, Plan 0059 built that)
+> **Status:** approved (owner go 2026-11-10; the lane starts after Plan 0061 merges and the
+> architect's re-read below), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
+> phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
+> flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5)
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the consumer's "headlamp, flares,
 > glowing crystal"; the per-source switch on feeding the probes, parked 2026-10-22)
@@ -23,9 +25,19 @@
 > [Plan 0044](0044-hot-path-and-defect-pass.md) and
 > [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md). Plan 0061 edits
 > `temporal.wgsl` (the store read), `composite.wgsl` (the emitter cap) and `Lighting` (one bit),
-> the files Phases 1 and 2 here change. **Before the go the architect re-reads Phases 1 and 2
+> the files Phases 1 and 2 here change. **Before the lane starts the architect re-reads Phases 1 and 2
 > against Plan 0061's tip** and refreshes their paths; bit and binding numbers in this plan are
 > "the next free at the start commit", which dev reads from the tree.
+
+> **Amended 2026-11-10 (test cost, owner).** Phases 1 to 3 are **exploration** (lane rules 2b):
+> the owner's window in Phase 4 is their gate. Each lands its CPU tests of data, determinism
+> and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
+> settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
+> recorded in the readings log, and is written as a test in Phase 5, after the window, against
+> the picks. Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
+> become tests moves.
 
 ## TL;DR
 
@@ -34,7 +46,8 @@ This plan makes it one entry of **a list of eight analytic lights** (point or sp
 intensity, reach, flags) that the consumer hands the frame every frame. A lit pixel shades every
 light in reach **exactly, with one shadow ray each**: no random number, no settle, no dots. The
 fly-through drops a light where you look (`1`), carries the newest one in front of the camera
-(`2`), cycles its colour (`3`), removes it (`4`) and flags it for bounce (`5`), and shows the
+(`2`), cycles its colour (`3`), removes it (`4`), flags it for bounce (`5`) and fires one along
+the view ray (`6`), and shows the
 count and each mode in the window. The direct part of the frame widens from a white scalar to
 rgb, in a target of its own. Then **a `bounce` flag per light** feeds ADR-0043's lamp channel
 from the flagged lights, off for dropped lights by default. The first thing anyone sees: press
@@ -168,7 +181,7 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
 - **Owner skill:** dev
 - **What:** ADR-0044's list in every reader of the lamp, white only, the slot rule, the reach
   and the per-pixel cull, the change detection, the upscalers' change mask over the list, and
-  the fly-through's `1`, `2`, HUD row and `--lights N`. No target is added: each light's term is
+  the fly-through's `1`, `2`, `6`, HUD row and `--lights N`. No target is added: each light's term is
   summed as luminance into the irradiance's `a`, where the lamp's part is today, so the
   temporal, a-trous and composite passes are untouched.
 - **The list:**
@@ -207,13 +220,20 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
 - **The fly-through:** `1` adds a white point light of intensity 1200 at the looked-at hit, 2
   voxels off the surface along its normal (a miss drops it 20 voxels ahead); `2` toggles **carry**
   of the newest light: its position is the eye plus 2 m forward and 0.3 m down each frame until
-  `2` again, which leaves it where it is. `--lights N` (headless or windowed) places `N` white
+  `2` again, which leaves it where it is. `6` **fires** a white point light of intensity 1200
+  from the eye along the view ray at 200 voxels a second (20 m/s; 3.3 voxels a frame at 60 fps),
+  its `BOUNCE` flag clear as a dropped light's: its position advances by the frame's time step
+  each frame, it stops 2 voxels short of the first surface on that ray (the drop's ray, cast
+  once at the key press; an edit on its path afterwards is not seen) or at 400 voxels with no
+  hit, and it stays there as a dropped light. Several may fly at once; `2` on a light in flight
+  ends the flight and carries it; `4` removes it. The light has no visible body (What this plan
+  does NOT do). `--lights N` (headless or windowed) places `N` white
   lights of intensity 600 on a ring of radius 3 m around the spawn pose at eye height, for the
-  readings. The HUD's lighting row gains `lights <n>/8 [carry] over <k>`, where `n` counts the
+  readings. The HUD's lighting row gains `lights <n>/8 [carry] [fly <m>] over <k>`, where `m` counts the lights in flight and `n` counts the
   headlamp while it is on; the banner names `lights <n>/8` on `1` and `carry on` or `carry off`
-  on `2`. A drop into a full list (eight with the lamp off, seven list lights with it on) prints
-  a line and adds nothing. `Digit1` to `Digit5` are unbound in `apps/flythrough/src` and
-  `crates/vxe-app/src` at 82ea836 and no active plan claims them; `C`, `V` and `Z` are bound
+  on `2` and `fire` with `lights <n>/8` on `6`. A drop or a shot into a full list (eight with the lamp off, seven list lights with it on) prints
+  a line and adds nothing. `Digit1` to `Digit6` are unbound in `apps/flythrough/src` and
+  `crates/vxe-app/src` at a8b1a2c and no active plan claims them; `C`, `V` and `Z` are bound
   (fly down, far normal, sharpen).
 - **The readings** (fly-through runs): the light pass and the frame at the level's spawn and the
   vein, lamp off at `--lights` 0, 1, 2, 4, 8 and lamp on at 0, 1, 2, 4, 7 (the slot rule), both
@@ -275,10 +295,34 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
      reads `lights 3/8 carry over 0` for three lights with carry on and the lamp off, and
      `lights 4/8` for the same with the lamp on; the banner reads `lights 3/8` after `1` and
      `carry on` after `2`; `--lights 3` parses; `1` on a full list is refused with a line that
-     names this plan's number.
+     names this plan's number. With two lights, one of them in flight, the row reads `lights 2/8
+     fly 1 over 0`; the banner reads `fire` and `lights 2/8` after `6`; `6` on a full list is
+     refused with the same line.
   10. The readings are in the log, with the shadow-ray count per pixel beside each cost. The
       prediction: the light pass grows by 0.08 to 0.12 ms per light in reach on the RTX and by
       0.6 to 1.0 ms on the Cezanne; a figure outside that range is a reading, not a failure.
+  11. `a_light_in_flight_leaves_no_trail_in_the_direct_part` asserts, on done-when 1's box
+      (lamp off, no jitter) with one list light of intensity 1200 at 20 voxels above the floor,
+      held still for 32 frames and then moved 4 voxels a frame along the floor for 16 frames:
+      on every frame of the flight the direct part at the floor pixel under the start position
+      and at the pixel under the light's position that frame equals the analytic value for that
+      frame's position within 2 %, computed in the test from the term above; on the last frame
+      of the flight the start pixel reads **0.185** within 2 %, down from 9.40 (64 voxels to
+      the side: `d^2` = 4496, `cos` = 0.2983, `E = PI * 1200 * 0.2983 / 4496` = 0.2501, window
+      `(1 - 0.6121^4)^2` = 0.739); `lights_changed()` is true on each frame of the flight and
+      false on the second frame after it. The box is at least 100 voxels long. About 4 s (an
+      estimate).
+  12. `fsr2_leaves_no_trail_behind_a_light_in_flight` (`gpu_fsr2.rs`) asserts, under FSR 2 at
+      1.5 with the lamp off and done-when 11's flight: the output's luminance at the pixel under
+      the start position never rises from one frame of the flight to the next by more than the
+      tolerance `fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step` allows, and within
+      that test's frame count after the light stops it is within that tolerance of a reference
+      settled with the light still at the end position; the floor pixels within half the reach
+      of the light's position are marked reactive on each frame of the flight. **The trail's
+      length is a reading:** the frames from the light's last move until the start pixel is
+      within the tolerance, in the log, on lavapipe and labelled on the RTX. About 15 s (an
+      estimate; over 30 s it is marked `#[ignore = "soak"]` and an 8-frame flight stays in the
+      gate).
 
 ### Phase 2: Colour: the direct part in a target of its own
 - **Owner skill:** dev
@@ -334,7 +378,7 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
      at 1280 x 720 internal on the half tier counts the direct target and its pair at 5 529 600 B
      and that `frame_bytes` equals the inventory's sum; `gpu_fsr2.rs`'s inventory test gains the
      same three targets. Under 5 s each (an estimate).
-  5. Phase 1's done-whens 6, 7 and 8 hold on the direct target (the bit renamed), and no gate
+  5. Phase 1's done-whens 6, 7, 8, 11 and 12 hold on the direct target (the bit renamed), and no gate
      golden without a list light is re-blessed in this phase.
   6. The HUD and banner tests cover `3` and `4` (no device, under 1 s): the banner reads the
      colour's name after `3` and `lights 2/8` after `4` on three lights.
@@ -396,7 +440,10 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
      lights in reach, both adapters, against the channel's cost at the start commit (the
      prediction: the update grows with the flagged lights' shadow rays per probe ray, about
      linearly); the count of probes inside rock traced while a light moves (the backlog's third
-     fault, a reading).
+     fault, a reading); **the bounce's lag behind a light in flight:** with a flagged light on
+     Phase 1's done-when 11 flight, the frames from its last move until the mean of the probe
+     nearest the end position is within 10 % of its frozen value (a reading at the default
+     `probe_move_blend`, no bar).
 
 ### Phase 4: The owner's window
 - **Owner skill:** human
@@ -419,6 +466,12 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
 
   # 4. Eight lights on the ring, lamp off, for the cost on screen.
   target/release/flythrough --level --seed 1 --lights 8 --lamp off --hud
+
+  # 5. A light in flight (6): down the hall's length with the lamp off; along the vein's passage
+  #    and across the cavern, camera still and then following it; three in a row; one with the
+  #    bounce flag set after it lands (5).
+  target/release/flythrough --source showcase --shot hall --exposure 8 --hud --lamp off
+  target/release/flythrough --level --seed 1 --pose vein --hud --lamp off
   ```
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's words on: (a) whether anything moves with a dropped
@@ -426,10 +479,25 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
   against the headlamp; (c) the frame of the drop (does the cavern light "that frame"); (d) hard
   shadows and the reach's edge at `light_floor` 0.1, the headlamp's included; (e) the bounce
   flag's look and lag, and whether dropped lights should default to it; (f) eight lights' cost on
-  screen; (g) whether the defaults are accepted. **Stop rule:** a "no" on (a) or (b) that names
+  screen; (g) whether the defaults are accepted; (h) the light in flight under FSR 2 at 1.5:
+  whether the walls it passes are lit that frame, whether a trail stays behind it, and whether
+  the lit walls shimmer while it flies. **Stop rule:** a "no" on (a), (b) or (h) that names
   shimmer or a trail under FSR 2 stops the close and goes to the architect with Phase 1's mask
-  readings; the narrowed reset under Risks is the first amendment. A "no" on (g) names the run
+  readings and done-when 12's trail length; the narrowed reset under Risks is the first amendment. A "no" on (g) names the run
   and goes to the architect with the tables. The plan closes with that record.
+
+### Phase 5: The picks as tests
+
+- **Owner skill:** dev
+- **What:** the image tests, goldens and bars Phases 1 to 3 name, written now with the
+  values the Phase 4 window settled, and the readings they replace cited from the log.
+- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 3 name,
+  `docs/plans/logs/0058.md`.
+- **Done when:** every image test Phases 1 to 3 name exists, asserts the picked value or
+  the bar the plan states (a bar the window moved says so in the log, with the owner's words),
+  and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
+  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
+  is not written, and the log names it.
 
 ## Data shapes
 
@@ -497,6 +565,18 @@ default; this plan's reading there is its delta.
 | §2 upscale line (over at the base) | the start commit's reading | the mask's loop over a still list: **a guess** of under + 0.05 ms on the RTX at 8 lights, skipped at 0 | the same runs, `--lights` 0 and 8 |
 | §3 `Frame::frame_bytes` | the start commit's figure at the run's resolution | **arithmetic:** + 8 B x 3 per lighting pixel (5 529 600 B at 1280 x 720 internal, half tier); the lights uniform + 1040 B | `frame_bytes` asserted in `gpu_upscale.rs` and `gpu_fsr2.rs`, printed at the close |
 
+**Review note (2026-11-10, the static performance review; estimates, nothing was run).** The
+per-light projection above comes from one loaded reading of the headlamp: a spot cone at the
+eye, whose shadow rays retrace the open path the primary ray crossed. A dropped point light
+has no cone and its shadow rays are incoherent across the cave, so its cost may sit nearer a
+share of the hit pass per light than 0.1 ms: **a guess of 0.15 to 1.1 ms each in the hall on
+the RTX**. The close's readings therefore add one arm to the table's command: `--lights` 1, 4
+and 8 as **dropped point lights at the hall**, beside the vein. A reading over 0.3 ms per
+light on the RTX is not a failure; it goes to the owner with the cap the render-profile plan
+would set (`docs/backlog.md`). If
+[Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
+has landed, the a-trous row's base is its early-out, which a moving light switches off.
+
 Determinism is not touched: everything is in `vxe-render` and the fly-through. The list's
 shading draws no random number, so two runs of the same still frame are bit-identical in the
 direct part, which the close reads on lavapipe.
@@ -514,6 +594,13 @@ direct part, which the close reads on lavapipe.
   each frame it moves; FSR 2's history is clipped there as under the sweeping headlamp, which the
   owner accepted for one lamp. Several carried lights widen that area. Phase 1's done-when 7
   bounds one light; Phase 4 (a) and (b) judge the rest.
+- **A light in flight is the worst case of the two risks above.** It changes the list on every
+  frame for a second or two and sweeps its reach across the walls: the direct part there is one
+  unblended sample a frame on the half tier's grid, and FSR 2 holds no history under it. Exact
+  shading means no trail can come from the direct part (Phase 1 done-when 11); a trail or a
+  shimmer can only come from the upscaler and the half grid, which done-when 12 reads and Phase
+  4 (h) judges. The bounce of a flagged light in flight lags by the channel's blend (Phase 3's
+  reading); the default leaves a fired light unflagged.
 - **The headlamp gains a reach.** At the default floor its light ends at 109.5 voxels where
   today it falls off without end; Phase 1 re-blesses the lamp-lit goldens for it and Phase 4 (d)
   judges it. If the owner refuses the edge, the lamp's slot takes floor 0 and the list keeps its
@@ -544,8 +631,11 @@ direct part, which the close reads on lavapipe.
   light").
 - A channel volume that follows a light instead of the camera, or a second volume.
 - Light persistence, replication or physics: the consumer's; a light that is part of the world
-  is an emissive voxel through an op, as today. A thrown light's arc is the consumer's motion,
-  not the testbed's.
+  is an emissive voxel through an op, as today. The testbed flies a light on a straight line
+  at one speed (`6`); gravity, an arc, a ricochet, a light that dies on impact and collision
+  with anything that is not a voxel are the consumer's motion.
+- A visible body for a light. A list light lights surfaces and is itself not drawn; a glowing
+  projectile is an entity with an emissive model (M6) that also writes a slot.
 - Entities (M6) carrying lights: they write a slot each frame; the entity itself is M6.
 - Volumetrics (M8): a light in fog is M8's.
 
@@ -563,7 +653,15 @@ direct part, which the close reads on lavapipe.
    fit with the lamp off, seven with it on.
 5. **The order:** Plan 0060, Plan 0061, this plan, then Plans 0044 and 0045.
 
-Open: the "go", after the architect's re-read against Plan 0061's tip. The keys (`1` to `5`)
+2026-11-10, after the review ("I want for example to fire a projectile and this projectile
+will be lighting up walls of cave"; "yes, amend the plan"):
+
+6. **A light in flight:** the fly-through fires a light along the view ray (`6`), and the plan
+   reads the trail behind it. This replaces "no thrown arc" in answer 3 as far as a straight
+   flight; an arc stays the consumer's.
+
+The "go" is given (owner, 2026-11-10: "move all draft plans to approved"); the lane starts
+after the architect's re-read against Plan 0061's tip. The keys (`1` to `6`)
 are the architect's picks from the unbound ones and dev may move them if a binding collides.
 
 ## Implementation log
@@ -580,6 +678,7 @@ are the architect's picks from the unbound ones and dev may move them if a bindi
 | 2: Colour: the direct part in a target of its own | dev | not started | |
 | 3: The bounce flag | dev | not started | |
 | 4: The owner's window | human | not started | |
+| 5: The picks as tests | dev | not started | |
 
 ### Notes
 

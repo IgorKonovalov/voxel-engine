@@ -44,13 +44,34 @@
 //!
 //! Nothing here allocates after construction: the voice list, the scratch and every voice's
 //! buffers come from pools sized once for [`MAX_VOICES`]; a `Play` beyond it is dropped.
+//!
+//! Nothing here frees or zeroes a voice's memory on the callback either. A voice that ends or
+//! is stopped, and a `Play` that is dropped, hand their source (which may hold the last
+//! reference to its samples) and the voice's buffers to the game thread over a bounded channel
+//! of [`MAX_VOICES`] slots. The game thread's [`Recycler`] drops the source there, clears the
+//! buffers and sends them back over a second channel, from which a `Play` takes them. While
+//! the first channel is full the callback holds what it retires and retries every block, in
+//! two stores of [`MAX_VOICES`] slots each:
+//! - a retired voice (source and buffers) waits in the voice hold. It cannot overflow: there
+//!   are [`MAX_VOICES`] buffer sets, and each is in exactly one place (spare, playing, held,
+//!   in a channel, or with the game thread), so a voice's buffers are never dropped and the
+//!   pool never shrinks. Held voices go out before held sources;
+//! - a dropped `Play`'s source waits in the source hold. `Play`s are unbounded, so past
+//!   [`MAX_VOICES`] waiting sources a further one is dropped on the callback; that frees only
+//!   when the `Play` carried the last reference to its samples.
+//!
+//! With the [`Recycler`] dropped (the channel disconnected) no thread is left to recycle: the
+//! callback keeps a retired voice's buffers on the mixer and clears them when a `Play` takes
+//! them, so the pool still never shrinks, and drops the source itself.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 
 use crate::acoustics::{BlockClock, reflection_directions};
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::reverb::{Reverb, ReverbLine, ReverbNetwork, ReverbSettings, flush};
+use crate::reverb::{Reverb, ReverbClears, ReverbLine, ReverbNetwork, ReverbSettings, flush};
 use crate::room_curve::{ECHO_KNOTS, RoomCurve, curve_of};
 use crate::voice::{
     MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Source, Tap, TapState, Voice,
@@ -151,11 +172,61 @@ pub const TAP_JUMP_FRAMES: f32 = 480.0;
 /// A tap gain below this is silent: a jumping tap takes its new delay once its gain is below it.
 pub const TAP_SILENT: f32 = 1e-3;
 
+/// What the callback hands to the game thread: a source, which may hold the last reference
+/// to its samples, and the buffers of the voice that played it, when one did.
+pub(crate) struct Retired {
+    source: Source,
+    buffers: Option<VoiceBuffers>,
+}
+
+/// The game thread's end of a [`Mixer`]'s recycling (module comment), taken with
+/// [`Mixer::take_recycler`].
+pub struct Recycler {
+    retired: Receiver<Retired>,
+    cleared: SyncSender<VoiceBuffers>,
+}
+
+impl Recycler {
+    /// Drops every source the mixer retired since the last call, clears the buffers that came
+    /// with them and returns those to the mixer's pool. Returns how many items it took. Runs
+    /// on the caller's thread and never blocks.
+    pub fn recycle(&self) -> usize {
+        let mut n = 0;
+        while let Ok(Retired { source, buffers }) = self.retired.try_recv() {
+            n += 1;
+            drop(source);
+            if let Some(mut b) = buffers {
+                b.clear();
+                // The pool holds every voice's buffers at most once, so the channel, sized for
+                // all of them, has room.
+                let _ = self.cleared.try_send(b);
+            }
+        }
+        n
+    }
+}
+
 /// Mixes voices into interleaved stereo `f32` at [`RATE`].
 pub struct Mixer {
     voices: Vec<Voice>,
-    /// Buffers of voices not playing.
+    /// Cleared buffers of voices not playing, from construction; later ones arrive on
+    /// `cleared`.
     spare: Vec<VoiceBuffers>,
+    /// Retired sources and buffers, to the game thread.
+    retire: SyncSender<Retired>,
+    /// Retired voices `retire` had no room for, retried every block before `held_sources`.
+    /// Never overflows (module comment).
+    held_voices: VecDeque<Retired>,
+    /// Sources of dropped `Play`s `retire` had no room for, retried every block.
+    held_sources: VecDeque<Source>,
+    /// Buffers of voices retired after the game's end was dropped, cleared when taken.
+    dirty: Vec<VoiceBuffers>,
+    /// Buffers the game thread cleared.
+    cleared: Receiver<VoiceBuffers>,
+    /// The game thread's end, until [`Mixer::take_recycler`] takes it. While the mixer holds
+    /// it, a `Play` that finds no cleared buffers recycles on the caller's thread: the
+    /// headless use, where the caller is the game thread.
+    recycler: Option<Recycler>,
     hrtf: Option<Arc<Hrtf>>,
     listener: Listener,
     metres_per_voxel: f32,
@@ -205,9 +276,20 @@ impl Mixer {
 
     fn build(hrtf: Option<Arc<Hrtf>>, metres_per_voxel: f32) -> Self {
         let taps = hrtf.as_ref().map_or(1, |h| h.taps());
+        let (retire, retired) = std::sync::mpsc::sync_channel(MAX_VOICES);
+        let (cleared_tx, cleared) = std::sync::mpsc::sync_channel(MAX_VOICES);
         Self {
             voices: Vec::with_capacity(MAX_VOICES),
             spare: (0..MAX_VOICES).map(|_| VoiceBuffers::new(taps)).collect(),
+            retire,
+            held_voices: VecDeque::with_capacity(MAX_VOICES),
+            held_sources: VecDeque::with_capacity(MAX_VOICES),
+            dirty: Vec::with_capacity(MAX_VOICES),
+            cleared,
+            recycler: Some(Recycler {
+                retired,
+                cleared: cleared_tx,
+            }),
             hrtf,
             listener: Listener::default(),
             metres_per_voxel,
@@ -243,6 +325,13 @@ impl Mixer {
         if self.clock.blocks() == 0 {
             self.echo_gain = self.echo_target;
         }
+    }
+
+    /// The game thread's end of the recycling (module comment), once: `None` after the first
+    /// call. Whoever takes it calls [`Recycler::recycle`] on a thread other than the
+    /// callback's, often enough that the [`MAX_VOICES`] buffers come back for new voices.
+    pub fn take_recycler(&mut self) -> Option<Recycler> {
+        self.recycler.take()
     }
 
     /// The balance applied last.
@@ -308,7 +397,13 @@ impl Mixer {
         self.reverb.jump(line, frames);
     }
 
-    /// Bytes the tail's delay lines hold, both networks.
+    /// How the tail's clears ran so far, for tests.
+    #[doc(hidden)]
+    pub fn reverb_clears(&self) -> ReverbClears {
+        self.reverb.clears()
+    }
+
+    /// Bytes the tail's delay lines hold: both networks and the spare set they swap with.
     pub fn reverb_bytes(&self) -> usize {
         Reverb::line_bytes()
     }
@@ -344,7 +439,10 @@ impl Mixer {
             Command::Stop(id) => {
                 if let Some(i) = self.voices.iter().position(|v| v.id == id) {
                     let v = self.voices.swap_remove(i);
-                    self.spare.push(v.buffers);
+                    self.retire(Retired {
+                        source: v.source,
+                        buffers: Some(v.buffers),
+                    });
                 }
             }
             Command::SetListener(l) => self.listener = l,
@@ -377,10 +475,87 @@ impl Mixer {
     }
 
     fn start(&mut self, id: VoiceId, source: Source, params: PlayParams) {
-        if !self.is_playing(id)
-            && let Some(buffers) = self.spare.pop()
-        {
-            self.voices.push(Voice::new(id, source, params, buffers));
+        let buffers = if self.is_playing(id) {
+            None
+        } else {
+            self.spare
+                .pop()
+                .or_else(|| self.cleared.try_recv().ok())
+                .or_else(|| {
+                    self.recycler.as_ref()?.recycle();
+                    self.cleared.try_recv().ok()
+                })
+                .or_else(|| {
+                    let mut b = self.dirty.pop()?;
+                    b.clear();
+                    Some(b)
+                })
+        };
+        match buffers {
+            Some(buffers) => self.voices.push(Voice::new(id, source, params, buffers)),
+            None => self.retire(Retired {
+                source,
+                buffers: None,
+            }),
+        }
+    }
+
+    /// Hands `r` to the game thread, or holds it while the channel is full: a voice in the
+    /// voice hold, which has room for every buffer set, a source alone in the source hold,
+    /// dropped here when that is full. With the game's end gone, buffers stay on the mixer
+    /// (module comment).
+    fn retire(&mut self, r: Retired) {
+        let r = if self.held_voices.is_empty() && self.held_sources.is_empty() {
+            match self.retire.try_send(r) {
+                Ok(()) => return,
+                Err(TrySendError::Full(r)) => r,
+                Err(TrySendError::Disconnected(r)) => return self.keep(r),
+            }
+        } else {
+            r
+        };
+        match r.buffers {
+            Some(_) => {
+                debug_assert!(self.held_voices.len() < MAX_VOICES);
+                self.held_voices.push_back(r);
+            }
+            None if self.held_sources.len() < MAX_VOICES => self.held_sources.push_back(r.source),
+            None => {}
+        }
+    }
+
+    /// Keeps `r`'s buffers on the mixer once the game's end is gone; the source drops here.
+    fn keep(&mut self, r: Retired) {
+        if let Some(b) = r.buffers {
+            self.dirty.push(b);
+        }
+    }
+
+    /// Retries what [`Mixer::retire`] held, voices first, oldest first, until the channel is
+    /// full.
+    fn flush_held(&mut self) {
+        while let Some(r) = self.held_voices.pop_front() {
+            match self.retire.try_send(r) {
+                Ok(()) => {}
+                Err(TrySendError::Disconnected(r)) => self.keep(r),
+                Err(TrySendError::Full(r)) => {
+                    self.held_voices.push_front(r);
+                    return;
+                }
+            }
+        }
+        while let Some(source) = self.held_sources.pop_front() {
+            let r = Retired {
+                source,
+                buffers: None,
+            };
+            match self.retire.try_send(r) {
+                Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+                Err(TrySendError::Full(r)) => {
+                    self.held_sources.push_front(r.source);
+                    return;
+                }
+            }
         }
     }
 
@@ -554,6 +729,7 @@ impl Mixer {
         let sends = &mut self.sends[..n];
         self.reverb.render(sends, out);
         sends.fill(0.0);
+        self.flush_held();
         let mut i = 0;
         while i < self.voices.len() {
             if self.voices[i].finished {
@@ -561,7 +737,10 @@ impl Mixer {
                 if self.finished.len() < self.finished.capacity() {
                     self.finished.push(v.id);
                 }
-                self.spare.push(v.buffers);
+                self.retire(Retired {
+                    source: v.source,
+                    buffers: Some(v.buffers),
+                });
             } else {
                 i += 1;
             }

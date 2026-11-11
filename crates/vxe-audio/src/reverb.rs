@@ -43,6 +43,21 @@
 //! new one over [`crate::SMOOTHING_SECONDS`]; a change asked for while one crossfades waits for
 //! it to finish.
 //!
+//! # Clearing
+//!
+//! A network that rings out, or finishes a fade-out, is cleared, and so is the network a
+//! handover takes. Its lines are not zeroed there: they swap with a third, spare set of lines
+//! that is already zero; lines that never took a nonzero sample since they were last zero stay.
+//! The spare then has zeroed, a block at a time, only the run of ring frames that took nonzero
+//! samples, at most [`CLEAR_FRAMES_PER_BLOCK`] (two blocks) frames of each line per block; a
+//! run over the whole ring is clean after `RING / CLEAR_FRAMES_PER_BLOCK` blocks, rounded up. A
+//! clear that finds the spare not yet clean (a second handover within the spare's cleaning time)
+//! parks the network instead: it goes silent and inactive with its lines as they are, and swaps
+//! them at the end of the first block that leaves the spare clean. A handover that falls to a
+//! parked network waits for that swap; a room taken in place by a parked network wakes it on its
+//! own lines, the tail it rang out to. So no block zeroes more than [`CLEAR_FRAMES_PER_BLOCK`]
+//! frames of each line.
+//!
 //! # Level
 //!
 //! Every line takes the same input `b * x`, `x` the sum of the voices' sends. At frequency `w`
@@ -102,6 +117,9 @@ const HF_HZ: f32 = 4_000.0;
 const ENERGY_BANDS: usize = 64;
 /// Each ring holds the longest line plus a block.
 const RING: usize = REVERB_MAX_DELAY_FRAMES + BLOCK;
+
+/// Frames of each spare line zeroed at most per block (module comment, "Clearing").
+const CLEAR_FRAMES_PER_BLOCK: usize = 2 * BLOCK;
 
 /// How the tail sounds beyond what the room gives it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -170,22 +188,75 @@ fn spread(i: usize) -> f32 {
     0.5 * 3f32.powf(i as f32 / (REVERB_LINES - 1) as f32)
 }
 
-fn is_prime(n: u32) -> bool {
-    n >= 2
-        && (2..)
-            .take_while(|d| d * d <= n)
-            .all(|d| !n.is_multiple_of(d))
+/// [`PRIMES`] holds every prime below this: past [`REVERB_MAX_DELAY_FRAMES`] by more than the
+/// gap after the last prime under it, so [`nearest_prime`] of any length up to the cap finds
+/// the prime above it too.
+const PRIME_LIMIT: usize = REVERB_MAX_DELAY_FRAMES + 64;
+
+/// Sieve of Eratosthenes: `true` at every composite below [`PRIME_LIMIT`], and at 0 and 1.
+const fn composites() -> [bool; PRIME_LIMIT] {
+    let mut c = [false; PRIME_LIMIT];
+    c[0] = true;
+    c[1] = true;
+    let mut i = 2;
+    while i * i < PRIME_LIMIT {
+        if !c[i] {
+            let mut j = i * i;
+            while j < PRIME_LIMIT {
+                c[j] = true;
+                j += i;
+            }
+        }
+        i += 1;
+    }
+    c
 }
 
-/// The prime nearest to `n`, the lower one on a tie.
+const fn prime_count() -> usize {
+    let c = composites();
+    let mut n = 0;
+    let mut i = 0;
+    while i < PRIME_LIMIT {
+        if !c[i] {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+}
+
+/// Every prime below [`PRIME_LIMIT`], ascending, built at compile time.
+static PRIMES: [u32; prime_count()] = {
+    let c = composites();
+    let mut p = [0u32; prime_count()];
+    let (mut i, mut k) = (0, 0);
+    while i < PRIME_LIMIT {
+        if !c[i] {
+            p[k] = i as u32;
+            k += 1;
+        }
+        i += 1;
+    }
+    p
+};
+
+/// The prime nearest to `n`, the lower one on a tie. `n` is at most
+/// [`REVERB_MAX_DELAY_FRAMES`], so the prime above it is in [`PRIMES`].
 fn nearest_prime(n: u32) -> u32 {
-    (0..)
-        .find_map(|k| {
-            [n.saturating_sub(k), n + k]
-                .into_iter()
-                .find(|&c| is_prime(c))
-        })
-        .unwrap_or(2)
+    let i = PRIMES.partition_point(|&p| p < n);
+    match (i.checked_sub(1).map(|j| PRIMES[j]), PRIMES.get(i)) {
+        (_, Some(&above)) if above == n => n,
+        (Some(below), Some(&above)) => {
+            if n - below <= above - n {
+                below
+            } else {
+                above
+            }
+        }
+        (Some(below), None) => below,
+        (None, Some(&above)) => above,
+        (None, None) => 2,
+    }
 }
 
 /// Line `i`'s target length for mean free path `mfp` metres.
@@ -202,9 +273,10 @@ fn target_length(i: usize, mfp: f32) -> u32 {
     }
 }
 
-/// The largest prime at or below `n` (`n >= 2`).
+/// The largest prime at or below `n` (`2 <= n < PRIME_LIMIT`).
 fn largest_prime_at_most(n: u32) -> u32 {
-    (2..=n).rev().find(|&c| is_prime(c)).unwrap_or(2)
+    let i = PRIMES.partition_point(|&p| p <= n);
+    i.checked_sub(1).map_or(2, |j| PRIMES[j])
 }
 
 /// The loop gain `g` and low-pass pole `a` of a line of `m` frames for decay `t60` seconds:
@@ -281,6 +353,18 @@ struct Network {
     active: bool,
     /// Output gain while fading out before a clear: `Some(g)`, `g` falling to 0.
     fade: Option<f32>,
+    /// Frames written since the network was made, of which `write` is the ring position.
+    written: u64,
+    /// Since the lines were last all zero, the first frame of the first block that wrote a
+    /// nonzero sample and the end of the last one: every nonzero sample lies in that run of
+    /// frames (its last [`RING`] of them).
+    nonzero: Option<(u64, u64)>,
+    /// The decay, the HF ratio and each line's length `coef` was computed for, as bits; `None`
+    /// until a block computes them.
+    coef_for: Option<(u32, u32, [u32; REVERB_LINES])>,
+    /// [`Network::input_gain`]'s inputs as bits (the decay, the HF ratio, the level trim, the
+    /// room level, the energy, each line's length) and its value for them.
+    gain_for: Option<([u32; 5 + REVERB_LINES], f32)>,
 }
 
 impl Network {
@@ -303,13 +387,26 @@ impl Network {
             started: false,
             active: false,
             fade: None,
+            written: 0,
+            nonzero: None,
+            coef_for: None,
+            gain_for: None,
         }
     }
 
-    /// Silences every line and filter.
-    fn clear(&mut self) {
-        for line in &mut self.lines {
-            line.fill(0.0);
+    /// Silences every line and filter: lines that may hold signal swap with `spare`'s clean
+    /// ones, or, while the spare is dirty, wait parked (module comment, "Clearing").
+    fn clear(&mut self, spare: &mut SpareLines) {
+        if let Some((first, end)) = self.nonzero {
+            if !spare.has_clean() {
+                if !self.parked() {
+                    spare.stats.deferred += 1;
+                }
+            } else {
+                self.nonzero = None;
+                let len = (end - first).min(RING as u64) as usize;
+                spare.take(&mut self.lines, (end % RING as u64) as usize, len);
+            }
         }
         self.lowpass = [0.0; REVERB_LINES];
         self.active = false;
@@ -334,6 +431,11 @@ impl Network {
             let (g, a) = line_filter(m, self.t60, settings.hf_ratio);
             *c = (g * (1.0 - a), a);
         }
+        self.coef_for = Some((
+            self.t60.to_bits(),
+            settings.hf_ratio.to_bits(),
+            self.length.map(f32::to_bits),
+        ));
         self.started = true;
         self.active |= self.energy > 0.0;
     }
@@ -374,6 +476,11 @@ impl Network {
         self.room_level = settings.level_by_room.gain_at(mfp);
     }
 
+    /// Cleared while the spare was dirty: silent, its lines not yet swapped.
+    fn parked(&self) -> bool {
+        !self.active && self.nonzero.is_some()
+    }
+
     /// Whether any line or filter state is nonzero.
     fn holds_signal(&self) -> bool {
         self.lowpass.iter().any(|&x| x != 0.0)
@@ -403,9 +510,33 @@ impl Network {
         (2.0 * e / (REVERB_LINES as f32 * mean.max(1e-9))).sqrt()
     }
 
+    /// [`Network::input_gain`], reused while its inputs hold their values bit for bit.
+    fn input_gain_cached(&mut self, t60: f32, settings: &ReverbSettings, band_cos: &[f32]) -> f32 {
+        let mut key = [0u32; 5 + REVERB_LINES];
+        key[..5].copy_from_slice(&[
+            t60.to_bits(),
+            settings.hf_ratio.to_bits(),
+            settings.level.to_bits(),
+            self.room_level.to_bits(),
+            self.energy.to_bits(),
+        ]);
+        for (k, m) in key[5..].iter_mut().zip(&self.length) {
+            *k = m.to_bits();
+        }
+        if let Some((k, b)) = self.gain_for
+            && k == key
+        {
+            return b;
+        }
+        let b = self.input_gain(t60, settings, band_cos);
+        self.gain_for = Some((key, b));
+        b
+    }
+
     /// Runs one block: `input` (the voices' summed sends, `n` frames) times an input weight
     /// moving linearly from `w0` to `w1` across the block, both ears added to interleaved
-    /// `out` times the fade's gain. A finished fade-out clears the network.
+    /// `out` times the fade's gain. Returns whether the network has faded out or rung out
+    /// with nothing coming in, and so is to be cleared.
     fn render(
         &mut self,
         input: &[f32],
@@ -413,9 +544,9 @@ impl Network {
         (w0, w1): (f32, f32),
         settings: &ReverbSettings,
         band_cos: &[f32],
-    ) {
+    ) -> bool {
         if !self.active {
-            return;
+            return false;
         }
         let n = input.len();
         let inv_n = 1.0 / n as f32;
@@ -426,7 +557,7 @@ impl Network {
             self.t60 += (self.t60_target - self.t60) * k_block;
         }
         // From the longer of the two decays, so the input never runs ahead of the loop gains.
-        let b_target = self.input_gain(self.t60.max(self.t60_target), settings, band_cos);
+        let b_target = self.input_gain_cached(self.t60.max(self.t60_target), settings, band_cos);
         let b0 = self.b;
         self.b = if b_target < b0 {
             b_target
@@ -447,11 +578,21 @@ impl Network {
         let mut dl = [0.0f32; REVERB_LINES];
         let c0 = self.coef;
         let mut dc = [(0.0f32, 0.0f32); REVERB_LINES];
+        // A line whose length, decay and HF ratio are those of the last block keeps its filter.
+        let (t60_bits, hf_bits) = (self.t60.to_bits(), settings.hf_ratio.to_bits());
+        let mut coef_for = match self.coef_for {
+            Some((t, h, m)) if t == t60_bits && h == hf_bits => m,
+            // No length is NaN, so every line recomputes.
+            _ => [f32::NAN.to_bits(); REVERB_LINES],
+        };
         for i in 0..REVERB_LINES {
             let m0 = self.length[i];
             let m1 = m0 + (self.target[i] as f32 - m0).clamp(-reach, reach);
-            let (g, a) = line_filter(m1, self.t60, settings.hf_ratio);
-            self.coef[i] = (g * (1.0 - a), a);
+            if coef_for[i] != m1.to_bits() {
+                let (g, a) = line_filter(m1, self.t60, settings.hf_ratio);
+                self.coef[i] = (g * (1.0 - a), a);
+                coef_for[i] = m1.to_bits();
+            }
             dc[i] = (
                 (self.coef[i].0 - c0[i].0) * inv_n,
                 (self.coef[i].1 - c0[i].1) * inv_n,
@@ -460,12 +601,14 @@ impl Network {
             dl[i] = (m1 - m0) * inv_n;
             self.length[i] = m1;
         }
+        self.coef_for = Some((t60_bits, hf_bits, coef_for));
         // A line that holds a whole length over the block reads one ring sample per frame.
         let whole: [Option<usize>; REVERB_LINES] = std::array::from_fn(|i| {
             (dl[i] == 0.0 && l0[i].fract() == 0.0 && l0[i] >= 1.0).then_some(l0[i] as usize)
         });
         let (bw0, bw1) = (b0 * w0, b1 * w1);
         let mut peak = 0.0f32;
+        let mut wrote_nonzero = false;
         for (j, (&x, f)) in input.iter().zip(out.chunks_exact_mut(2)).enumerate() {
             let t = (j + 1) as f32;
             let bx = (bw0 + (bw1 - bw0) * t * inv_n) * x;
@@ -508,14 +651,133 @@ impl Network {
             peak = peak.max(left.abs()).max(right.abs()).max(bx.abs());
             let feedback = 2.0 * sum / REVERB_LINES as f32;
             for (line, &yi) in self.lines.iter_mut().zip(&y) {
-                line[self.write] = flush(yi - feedback + bx);
+                let w = flush(yi - feedback + bx);
+                line[self.write] = w;
+                wrote_nonzero |= w != 0.0;
             }
             self.write = wrap(self.write + 1);
         }
-        // Faded out, or rung out with nothing coming in: clear and stop.
-        if self.fade == Some(0.0) || (bw1 < 1e-9 && peak < 1e-9) {
-            self.clear();
+        let start = self.written;
+        self.written += n as u64;
+        if wrote_nonzero {
+            let first = self.nonzero.map_or(start, |(first, _)| first);
+            self.nonzero = Some((first, self.written));
         }
+        // Faded out, or rung out with nothing coming in: clear and stop.
+        self.fade == Some(0.0) || (bw1 < 1e-9 && peak < 1e-9)
+    }
+}
+
+/// How the tail's clears ran, for tests ([`crate::Mixer::reverb_clears`]).
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReverbClears {
+    /// Clears that swapped a network's lines with the spare.
+    pub swaps: u64,
+    /// Of those, the ones that found the spare not yet clean and finished zeroing it first.
+    /// A clear defers instead, so this stays 0.
+    pub forced: u64,
+    /// Clears that found the spare dirty and parked their network until it was clean.
+    pub deferred: u64,
+    /// The most samples zeroed in one block.
+    pub max_zeroed: usize,
+}
+
+/// Spare line sets a cleared network swaps with (module comment, "Clearing").
+pub(crate) const SPARE_SETS: usize = 1;
+
+/// One spare set: all zero except the run of `len` ring frames ending before index `end`.
+struct SpareSet {
+    lines: [Vec<f32>; REVERB_LINES],
+    end: usize,
+    len: usize,
+}
+
+impl SpareSet {
+    /// Zeroes the oldest `frames` frames of the dirty run, at most all of it, in every line;
+    /// returns how many frames it zeroed.
+    fn zero(&mut self, frames: usize) -> usize {
+        let k = frames.min(self.len);
+        if k == 0 {
+            return 0;
+        }
+        let start = (self.end + RING - self.len) % RING;
+        let first = (RING - start).min(k);
+        for line in &mut self.lines {
+            line[start..start + first].fill(0.0);
+            line[..k - first].fill(0.0);
+        }
+        self.len -= k;
+        k
+    }
+}
+
+/// The [`SPARE_SETS`] spare sets and how their clears ran.
+struct SpareLines {
+    sets: [SpareSet; SPARE_SETS],
+    stats: ReverbClears,
+    /// Samples zeroed in the block running now.
+    zeroed: usize,
+}
+
+impl SpareLines {
+    fn new() -> Self {
+        Self {
+            sets: std::array::from_fn(|_| SpareSet {
+                lines: std::array::from_fn(|_| vec![0.0; RING]),
+                end: 0,
+                len: 0,
+            }),
+            stats: ReverbClears::default(),
+            zeroed: 0,
+        }
+    }
+
+    /// Whether a set is clean, so a clear can swap at once.
+    fn has_clean(&self) -> bool {
+        self.sets.iter().any(|s| s.len == 0)
+    }
+
+    /// Swaps `lines`, nonzero only over the `dirty` frames ending before ring index `end`,
+    /// with a clean set's lines. With no set clean (a caller that did not check
+    /// [`SpareLines::has_clean`]), the first set finishes zeroing itself first.
+    fn take(&mut self, lines: &mut [Vec<f32>; REVERB_LINES], end: usize, dirty: usize) {
+        let i = match self.sets.iter().position(|s| s.len == 0) {
+            Some(i) => i,
+            None => {
+                self.stats.forced += 1;
+                let k = self.sets[0].zero(usize::MAX);
+                self.zeroed += k * REVERB_LINES;
+                0
+            }
+        };
+        let set = &mut self.sets[i];
+        std::mem::swap(&mut set.lines, lines);
+        set.end = end;
+        set.len = dirty;
+        self.stats.swaps += 1;
+    }
+
+    /// Ends a block: zeroes up to [`CLEAR_FRAMES_PER_BLOCK`] more frames of each line in all,
+    /// the set with the shortest dirty run first so it comes clean soonest, and records the
+    /// block's total.
+    fn end_block(&mut self) {
+        let mut budget = CLEAR_FRAMES_PER_BLOCK;
+        while budget > 0 {
+            let Some(set) = self
+                .sets
+                .iter_mut()
+                .filter(|s| s.len > 0)
+                .min_by_key(|s| s.len)
+            else {
+                break;
+            };
+            let k = set.zero(budget);
+            budget -= k;
+            self.zeroed += k * REVERB_LINES;
+        }
+        self.stats.max_zeroed = self.stats.max_zeroed.max(self.zeroed);
+        self.zeroed = 0;
     }
 }
 
@@ -532,6 +794,7 @@ pub(crate) struct Reverb {
     /// `cos w` at the centre of each of the [`ENERGY_BANDS`] bands.
     band_cos: [f32; ENERGY_BANDS],
     pre: PreDelay,
+    spare: SpareLines,
 }
 
 /// The pre-delay line and its crossfade between two read points (module comment).
@@ -628,12 +891,18 @@ impl Reverb {
                 (std::f32::consts::PI * (k as f32 + 0.5) / ENERGY_BANDS as f32).cos()
             }),
             pre: PreDelay::new(),
+            spare: SpareLines::new(),
         }
     }
 
-    /// Bytes the lines of both networks hold.
+    /// Bytes the lines hold: both networks' and the spare set.
     pub fn line_bytes() -> usize {
-        2 * REVERB_LINES * RING * 4
+        (2 + SPARE_SETS) * REVERB_LINES * RING * 4
+    }
+
+    /// How the clears ran so far.
+    pub fn clears(&self) -> ReverbClears {
+        self.spare.stats
     }
 
     /// Bytes the pre-delay line holds.
@@ -682,11 +951,15 @@ impl Reverb {
         }
     }
 
-    /// Hands the pending room to the other network if it is silent: it takes the room's
-    /// lengths and decay at once and the input starts crossfading to it.
+    /// Hands the pending room to the other network if it is silent and not parked: it takes the
+    /// room's lengths and decay at once and the input starts crossfading to it.
     fn take_pending(&mut self) {
         let other = 1 - self.fed;
-        if self.nets[other].active {
+        if self.nets[other].active || self.pending.is_none() {
+            return;
+        }
+        self.nets[other].clear(&mut self.spare);
+        if self.nets[other].parked() {
             return;
         }
         let Some(room) = self.pending.take() else {
@@ -694,7 +967,6 @@ impl Reverb {
         };
         let settings = self.settings;
         let net = &mut self.nets[other];
-        net.clear();
         // Its input weight starts at 0, so its input gain starts at its target.
         net.set_at_once(room, &settings, 0.0);
         net.b = net.input_gain(net.t60, &settings, &self.band_cos);
@@ -761,7 +1033,15 @@ impl Reverb {
         let (w0, w1) = (self.weights(x0), self.weights(x1));
         let input = self.pre.process(input);
         for (k, net) in self.nets.iter_mut().enumerate() {
-            net.render(input, out, (w0[k], w1[k]), &self.settings, &self.band_cos);
+            if net.render(input, out, (w0[k], w1[k]), &self.settings, &self.band_cos) {
+                net.clear(&mut self.spare);
+            }
+        }
+        self.spare.end_block();
+        if self.spare.has_clean()
+            && let Some(net) = self.nets.iter_mut().find(|n| n.parked())
+        {
+            net.clear(&mut self.spare);
         }
     }
 }
@@ -769,6 +1049,40 @@ impl Reverb {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn is_prime(n: u32) -> bool {
+        n >= 2
+            && (2..)
+                .take_while(|d| d * d <= n)
+                .all(|d| !n.is_multiple_of(d))
+    }
+
+    /// The trial-division search the table replaces.
+    fn nearest_prime_by_trial(n: u32) -> u32 {
+        (0..)
+            .find_map(|k| {
+                [n.saturating_sub(k), n + k]
+                    .into_iter()
+                    .find(|&c| is_prime(c))
+            })
+            .unwrap_or(2)
+    }
+
+    #[test]
+    fn the_prime_table_matches_trial_division_up_to_the_cap() {
+        assert!(PRIMES.iter().all(|&p| is_prime(p)));
+        assert_eq!(
+            PRIMES.len(),
+            (0..PRIME_LIMIT as u32).filter(|&n| is_prime(n)).count()
+        );
+        for n in 0..=REVERB_MAX_DELAY_FRAMES as u32 {
+            assert_eq!(nearest_prime(n), nearest_prime_by_trial(n), "n = {n}");
+        }
+        for n in 2..=REVERB_MAX_DELAY_FRAMES as u32 {
+            let by_trial = (2..=n).rev().find(|&c| is_prime(c)).unwrap();
+            assert_eq!(largest_prime_at_most(n), by_trial, "n = {n}");
+        }
+    }
 
     #[test]
     fn primes_and_lengths() {

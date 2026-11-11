@@ -43,6 +43,16 @@
 > commit; a moved path is not a deviation.
 > **Readings** go in `docs/plans/logs/0037.md`, which `dev` starts at Phase 1.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 1 to 9 are **exploration** (lane rules 2b):
+> the owner's window in Phase 10 is their gate. Each lands its CPU tests of data, determinism
+> and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
+> settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
+> recorded in the readings log, and is written as a test in Phase 11, after the window, against
+> the picks. Phase 9 keeps its switches, banner and readings before the window; its goldens and image bars move to Phase 11. Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
+> become tests moves.
+
 ## TL;DR
 
 The night gets a sky worth looking at. A seeded star catalogue to magnitude 6.5 (or one the
@@ -825,6 +835,19 @@ banner's mode word, not the key, is the contract.
   bounds, whether a dim lamp-lit wall holds its colour still, and whether the outdoor testbed
   keeps the tint on by default); every switch's banner was seen on screen.
 
+### Phase 11: The picks as tests
+
+- **Owner skill:** dev
+- **What:** the image tests, goldens and bars Phases 1 to 9 name, written now with the
+  values the Phase 10 window settled, and the readings they replace cited from the log.
+- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 9 name,
+  `docs/plans/logs/0037.md`.
+- **Done when:** every image test Phases 1 to 9 name exists, asserts the picked value or
+  the bar the plan states (a bar the window moved says so in the log, with the owner's words),
+  and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
+  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
+  is not written, and the log names it.
+
 ## Data shapes
 
 ```rust
@@ -1079,6 +1102,7 @@ the tint's bounds follow.
 | 8: The night tint | dev | not started | |
 | 9: The testbed's night, the goldens and the readings on both adapters | dev | not started | |
 | 10: The owner's windowed check | human | not started | |
+| 11: The picks as tests | dev | not started | |
 
 ### Notes
 

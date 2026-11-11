@@ -38,6 +38,16 @@
 > lamp's bounce channel (ADR-0043) and takes no sky, sun or cloud term; nothing here touches
 > it. Readings go in `docs/plans/logs/0035.md`.
 
+> **Amended 2026-11-10 (test cost, owner).** Phases 1 to 7 are **exploration** (lane rules 2b):
+> the owner's window in Phase 8 is their gate. Each lands its CPU tests of data, determinism
+> and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
+> settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
+> recorded in the readings log, and is written as a test in Phase 9, after the window, against
+> the picks. Phase 7 keeps its switches, banner and readings before the window; its goldens and image bars move to Phase 9. Per phase the gpu check runs only the `gpu_*` binaries the phase names
+> (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
+> `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
+> become tests moves.
+
 ## TL;DR
 
 Two things make an outdoor view read as outdoors: distance haze and a sky with weight in it.
@@ -629,6 +639,19 @@ is the word its banner shows, and a done-when asserts that word.
   reconstruction, no ghost trailing a turn, no shimmer under a moving shadow); every
   toggle's banner was seen on screen.
 
+### Phase 9: The picks as tests
+
+- **Owner skill:** dev
+- **What:** the image tests, goldens and bars Phases 1 to 7 name, written now with the
+  values the Phase 8 window settled, and the readings they replace cited from the log.
+- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 7 name,
+  `docs/plans/logs/0035.md`.
+- **Done when:** every image test Phases 1 to 7 name exists, asserts the picked value or
+  the bar the plan states (a bar the window moved says so in the log, with the owner's words),
+  and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
+  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
+  is not written, and the log names it.
+
 ## Data shapes
 
 ```rust
@@ -828,6 +851,7 @@ Frostbite" (SIGGRAPH 2015 Advances), for the froxel design M8 may take.
 | 6: Cloud shadow on the directional sample, the sky ray under clouds | dev | not started | |
 | 7: Presets, goldens, readings on both adapters | dev | not started | |
 | 8: The owner's windowed check | human | not started | |
+| 9: The picks as tests | dev | not started | |
 
 ### Notes
 

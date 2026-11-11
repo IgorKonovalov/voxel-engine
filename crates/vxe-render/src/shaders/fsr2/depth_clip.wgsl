@@ -133,12 +133,12 @@ fn compute_temporal_motion_divergence(px: vec2<i32>) -> f32 {
 }
 
 // PreProcessReactiveMasks: the reactive and composition masks dilated over the 3 x 3,
-// weighted by colour similarity (compensating the accumulate pass's bilinear sampling).
+// weighted by colour similarity (compensating the accumulate pass's bilinear sampling). The
+// nine masks are read first; the colours only where they sum above zero, the one case that
+// reads them.
 fn pre_process_reactive_masks(px: vec2<i32>, motion_divergence: f32) -> vec2<f32> {
-    let reference = load_clamped(colour_in, px).xyz;
     var reactive = vec2<f32>(0.0, motion_divergence);
     var masks_sum = 0.0;
-    var colours: array<vec3<f32>, 9>;
     var reactives: array<f32, 9>;
     var compositions: array<f32, 9>;
     for (var y = -1; y < 2; y++) {
@@ -146,15 +146,15 @@ fn pre_process_reactive_masks(px: vec2<i32>, motion_divergence: f32) -> vec2<f32
             let sc = clamp_load(px, vec2<i32>(x, y), render_size());
             let i = (y + 1) * 3 + x + 1;
             let masks = load_clamped(reactive_in, sc);
-            colours[i] = load_clamped(colour_in, sc).xyz;
             reactives[i] = masks.x;
             compositions[i] = masks.y;
             masks_sum += masks.x + masks.y;
         }
     }
     if (masks_sum > 0.0) {
+        let reference = load_clamped(colour_in, px).xyz;
         for (var i = 0; i < 9; i++) {
-            let c = colours[i];
+            let c = load_clamped(colour_in, clamp_load(px, vec2<i32>(i % 3 - 1, i / 3 - 1), render_size())).xyz;
             let max_len_sq = max(dot(reference, reference), dot(c, c));
             let similarity = dot(reference, c) / max_len_sq;
             // A higher power for dissimilar samples.
