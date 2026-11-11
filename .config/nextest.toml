@@ -24,8 +24,9 @@
 #
 # GPU      every test binary named `gpu_*` (`tests/gpu_*.rs`): `binary(/^gpu_/)`, and
 #          `not binary(/^gpu_/)` for the CPU tests.
-# SOAK     every test over the line in docs/nfr.md section 7 (10 s on the dev reference's
-#          lavapipe, read quiet; 60 s on CI's Linux arm) is `#[ignore = "soak"]`. Only `--run-ignored`
+# SOAK     every lavapipe test over the line in docs/nfr.md section 7 (10 s on the dev
+#          reference's lavapipe, read quiet; 60 s on CI's Linux arm) is `#[ignore = "soak"]`;
+#          a CPU test over it stays in the gate on both arms. Only `--run-ignored`
 #          reaches it, which a profile cannot set, so the soak and full commands above pass it.
 #          `node scripts/test-times.mjs <log>` ranks a run's tests by time and names the ones
 #          over the line; a run logs per-test times with `--status-level pass`.

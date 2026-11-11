@@ -112,9 +112,10 @@ specific. Vague plans get ignored.
   the readings log only at its resume notes.
 - **Headless proof is mandatory.** Every plan names at least one test that runs without a window.
   A render plan also names its golden image and the SSIM or pixel floor.
-- **Every named test states its expected wall time on lavapipe.** One over the soak line
+- **Every named test states its expected wall time on lavapipe.** A GPU test over the soak line
   (10 s there, or 60 s on CI; `docs/nfr.md` section 7) is born `#[ignore = "soak"]`
-  (`.config/nextest.toml`), named as such in the phase, and is never a gate.
+  (`.config/nextest.toml`), named as such in the phase, and is never a gate. A CPU test over
+  it stays in the gate on both arms (cross-platform vectors need the Windows arm).
 - **A phase that names GPU tests names their `gpu_*` binaries**, which is what it runs per
   phase (`test-changed.mjs --binaries`); the whole gpu tier is the tip's (owner, 2026-11-10).
 - **A look-driven plan marks its phases before the owner's window as exploration** (lane rules
