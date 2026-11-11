@@ -33,8 +33,8 @@
 //                                       [--binaries gpu_a,gpu_b] [--dry-run]
 //                                       [-- <more nextest arguments>]
 // Exit: nextest's exit code; 0 with a message when nothing changed that a test covers;
-//       2 on a usage error (an unknown argument, `--binaries` outside the gpu tier, or a name
-//       that is no gpu test binary of the workspace).
+//       2 on a usage error (an unknown argument, a flag missing its value, `--binaries`
+//       outside the gpu tier, or a name that is no gpu test binary of the workspace).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { dirname, resolve, relative, sep } from "node:path";
@@ -48,16 +48,24 @@ let since;
 let dryRun = false;
 let binaries;
 const passthrough = [];
+// The value after a flag; a flag that ends the arguments is a usage error.
+const value = (i) => {
+  if (i + 1 >= args.length) {
+    console.error(`test-changed: ${args[i]} needs a value`);
+    process.exit(2);
+  }
+  return args[i + 1];
+};
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--") {
     passthrough.push(...args.slice(i + 1));
     break;
-  } else if (a === "--profile") profile = args[++i];
+  } else if (a === "--profile") profile = value(i++);
   else if (a.startsWith("--profile=")) profile = a.slice("--profile=".length);
-  else if (a === "--since") since = args[++i];
+  else if (a === "--since") since = value(i++);
   else if (a.startsWith("--since=")) since = a.slice("--since=".length);
-  else if (a === "--binaries") binaries = args[++i];
+  else if (a === "--binaries") binaries = value(i++);
   else if (a.startsWith("--binaries=")) binaries = a.slice("--binaries=".length);
   else if (a === "--dry-run") dryRun = true;
   else {
