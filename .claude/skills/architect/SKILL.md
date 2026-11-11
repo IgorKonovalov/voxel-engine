@@ -192,7 +192,9 @@ followup for a future plan, not a finding.
   it: a test over the line in `docs/nfr.md` section 7 is a `minor` finding that names the
   test for the soak mark, and a gate tier over its wall-time budget there is a `major`. Run
   `node scripts/velocity.mjs` too and put its last three lines under the bookkeeping owed: a
-  window at half the one before is a finding for the owner, not for the plan.
+  window at half the one before is a finding for the owner, not for the plan. Run
+  `node scripts/loc.mjs` and put its totals line there too; its largest-files list feeds the
+  god-module check in section 2.
 - **Check every budget reading** in the close triggers against `nfr.md`: is there a number, a
   machine, a commit? A missing reading on a touched figure is a `major`.
 - Was any ADR silently reversed? Then either the code changes or a new ADR supersedes the old one.
@@ -202,7 +204,8 @@ followup for a future plan, not a finding.
   name a gameplay concept?
 - Does the renderer mutate world data, or does it mirror it? Is any GPU type outside `vxe-render`?
 - Does a shader branch on the backend, or depend on a feature not checked against the adapter?
-- God modules: a chunk store that also uploads and also pathfinds.
+- God modules: a chunk store that also uploads and also pathfinds. A file the plan grew near
+  the top of `node scripts/loc.mjs`'s largest-files list is where to look first.
 
 ### 3. Correctness (the engine-specific risks)
 Check against `references/best-practices.md`. The high-yield greps:

@@ -90,6 +90,7 @@ scripts/
 ├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
+├── loc.mjs                    # lines of code, tests, comments, WGSL and docs per crate; the largest files
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
 .github/workflows/ci.yml  # build, nextest (gate tier), doctests, clippy, fmt, hooks, doc gates; cargo-deny
 .github/workflows/soak.yml  # the weekly soak tier
