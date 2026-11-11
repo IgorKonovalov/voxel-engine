@@ -252,6 +252,9 @@ pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
 
 fn lighting(pose: &Pose, setting: Setting) -> Lighting {
     setting.steady.apply(Lighting {
+        // The fly-through's store read and filter weights, with its look.
+        store_read: flythrough::DEFAULT_STORE_READ,
+        light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
         lamp: setting.lamp,
         lamp_bounce: setting.indirect,
         // The moving lamp's blend: `VXE_PROBE_MOVE` (h_move).

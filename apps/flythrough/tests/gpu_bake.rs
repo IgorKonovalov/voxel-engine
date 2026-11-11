@@ -1673,6 +1673,247 @@ fn brick_bake(rig: &mut ReadRig, view: &ReadView) -> f64 {
 /// Frames of a yaw's read, as the settle rig's fast yaw.
 const YAW_DOT_FRAMES: usize = 60;
 
+// ---- ADR-0049: the store read by the far normal and the filters weighed by face ----
+
+/// A 45-degree staircase of 1-voxel steps rising along +x over chunks `[0, 5) x [0, 1) x
+/// [0, 5)`: column `x` in 64..320 holds rock up to `z = x - 64`, its tread facing +z and its
+/// riser -x, and an ore plate at z 300 over it lights the treads more than the risers. The
+/// camera: [`stair_cameras`].
+fn staircase() -> World {
+    let world = air_world([5, 1, 5], &table());
+    for x in 64..320i64 {
+        fill(&world, [x, 0, 0], [x + 1, 64, x - 63], ROCK);
+    }
+    fill(&world, [64, 0, 300], [320, 64, 304], ORE);
+    world
+}
+
+/// The staircase's two cameras at `size` (70 degrees horizontal): far, 194 voxels above the
+/// slope at x 70 looking down 10 degrees along +x, whose rays descend so they see treads and
+/// risers, from about 125 to 245 voxels away; near, 24 voxels above it at x 100 looking up
+/// 25 degrees, whose hits start about 25 voxels away (risers only past the slope's angle).
+fn stair_cameras(size: [u32; 2]) -> [Camera; 2] {
+    let vfov = vfov_of(size);
+    [
+        Camera {
+            position: [70.5, 32.5, 200.5].into(),
+            yaw: 0.0,
+            pitch: (-10f32).to_radians(),
+            vfov,
+        },
+        Camera {
+            position: [100.5, 32.5, 60.5].into(),
+            yaw: 0.0,
+            pitch: 25f32.to_radians(),
+            vfov,
+        },
+    ]
+}
+
+/// The vertical field of view of a horizontal 70 degrees at `size`.
+fn vfov_of(size: [u32; 2]) -> f32 {
+    2.0 * (35f32.to_radians().tan() * size[1] as f32 / size[0] as f32).atan()
+}
+
+/// One baked frame of the staircase per arm: (store read, far normal, look, weights,
+/// resolution) and its read-backs.
+struct StairFrame {
+    accum: Vec<[f32; 4]>,
+    pos: Vec<[f32; 4]>,
+    info: Vec<[u16; 4]>,
+    display: Vec<u8>,
+}
+
+struct StairArm {
+    read: vxe_render::StoreRead,
+    weights: vxe_render::LightWeights,
+    far_normal: [f32; 2],
+    mode: vxe_render::NormalMode,
+    resolution: LightingResolution,
+}
+
+fn stair_frame(rig: &mut Rig, camera: &Camera, arm: &StairArm) -> StairFrame {
+    rig.frame.set_resolution(&rig.device, arm.resolution);
+    rig.frame.set_lighting(Lighting {
+        lamp: false,
+        lamp_bounce: false,
+        exposure: Exposure::Manual(8.0),
+        bake_pool_bytes: 64 << 20,
+        store_read: arm.read,
+        light_weights: arm.weights,
+        ..Lighting::default()
+    });
+    rig.frame.set_look(vxe_render::LookParams {
+        normal_mode: arm.mode,
+        far_normal: arm.far_normal,
+        ..vxe_render::LookParams::default()
+    });
+    // Two frames: the first after a setting change carries no history to differ by.
+    rig.step(camera);
+    rig.step(camera);
+    StairFrame {
+        accum: readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated()),
+        pos: readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions()),
+        info: readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+        display: rig.display(),
+    }
+}
+
+/// The stored part ADR-0049's read gives a hit of normal `n` on face `face` of voxel `v`:
+/// the brick level's direction values the normal leans toward, mixed by `n_a^2` over those
+/// held, renormalised; the face's own where none is.
+fn by_normal(
+    cells: &HashMap<([i32; 3], u8), [u32; 2]>,
+    v: [i32; 3],
+    face: u8,
+    n: [f32; 3],
+) -> Option<[f32; 3]> {
+    let own = brick_value(cells, v, face);
+    let mut sum = [0f32; 3];
+    let mut weight = 0f32;
+    for (a, &na) in n.iter().enumerate() {
+        let w = na * na;
+        if w < 1e-4 {
+            continue;
+        }
+        let dir = 2 * a as u8 + u8::from(na > 0.0);
+        if let Some(r) = if dir == face {
+            own
+        } else {
+            brick_value(cells, v, dir)
+        } {
+            for k in 0..3 {
+                sum[k] += r[k] * w;
+            }
+            weight += w;
+        }
+    }
+    if weight > 0.0 {
+        Some(sum.map(|x| x / weight))
+    } else {
+        own
+    }
+}
+
+fn within(a: [f32; 3], b: [f32; 3], rel: f32) -> bool {
+    (0..3).all(|k| (a[k] - b[k]).abs() <= rel * b[k].abs().max(1e-3))
+}
+
+fn rgb(p: [f32; 4]) -> [f32; 3] {
+    [p[0], p[1], p[2]].map(|x| x / 8.0)
+}
+
+/// The staircase at 96 x 54 (Plan 0061 Phase 2 done-when 1b, at Phase 5's defaults): the
+/// fly-through's far normal (`LookPreset::DEFAULT`, `[2, 6]`) gives a voxel the far normal's
+/// full weight where it covers at most 2 pixels, `t >= 96 / (2 tan 35 deg) / 2 = 34.3` voxels;
+/// every rock riser or tread pixel the far camera hits past `t = 36` (all of them: its hits start
+/// about 125 voxels away) reads, with the fly-through's store read and weights at full light
+/// resolution, ADR-0049's mix within 1 % (the CPU's `by_normal` over the bake's records), and
+/// with the library's (`Face`, `Normal`) its own face's value within 1 %, risers and treads
+/// both occurring. The frame at the fly-through's defaults (half light resolution) matches
+/// `far_staircase_store_normal.png` at the harness's floor (at most 0.1 % of pixels over
+/// 2/255; lavapipe).
+#[test]
+fn a_small_far_staircase_reads_the_mix_and_matches_its_golden() {
+    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    const SIZE: [u32; 2] = [96, 54];
+    const LINE: f32 = 36.0;
+    let [camera, _] = stair_cameras(SIZE);
+    let Some(mut rig) = rig_on(staircase(), SIZE, None) else {
+        return;
+    };
+    rig.frame.set_lighting(Lighting {
+        lamp: false,
+        lamp_bounce: false,
+        exposure: Exposure::Manual(8.0),
+        bake_pool_bytes: 64 << 20,
+        ..Lighting::default()
+    });
+    rig.bake(&test_counts(256));
+    let cells = rig.cells();
+    let eye = camera.position.to_array();
+    let far_normal = flythrough::LookPreset::DEFAULT.far_normal;
+    let arm = |read, weights, resolution| StairArm {
+        read,
+        weights,
+        far_normal,
+        mode: NormalMode::Face,
+        resolution,
+    };
+    let on = stair_frame(
+        &mut rig,
+        &camera,
+        &arm(
+            flythrough::DEFAULT_STORE_READ,
+            flythrough::DEFAULT_LIGHT_WEIGHTS,
+            LightingResolution::Full,
+        ),
+    );
+    let off = stair_frame(
+        &mut rig,
+        &camera,
+        &arm(
+            StoreRead::Face,
+            LightWeights::Normal,
+            LightingResolution::Full,
+        ),
+    );
+    let (mut checked, mut bad_on, mut bad_off, mut risers, mut treads) = (0, 0, 0, 0, 0);
+    for i in 0..on.pos.len() {
+        let Some((v, face)) = hit_face(eye, on.pos[i], on.info[i]) else {
+            continue;
+        };
+        if on.info[i][2] != ROCK || on.pos[i][3] < LINE || !(face == 0 || face == 5) {
+            continue;
+        }
+        let n = support::rigs::octa16_normal(on.info[i][0], on.info[i][1]);
+        let Some(want) = by_normal(&cells, v, face, n) else {
+            continue;
+        };
+        checked += 1;
+        if !within(rgb(on.accum[i]), want, 0.01) {
+            bad_on += 1;
+        }
+        let own = brick_value(&cells, v, face).expect("a mixed face has its own value");
+        if !within(rgb(off.accum[i]), own, 0.01) {
+            bad_off += 1;
+        }
+        if face == 0 {
+            risers += 1;
+        } else {
+            treads += 1;
+        }
+    }
+    println!(
+        "{checked} rock pixels past t {LINE}: {risers} risers, {treads} treads; {bad_on} off the mix, {bad_off} off their face's value"
+    );
+    assert!(risers > 0 && treads > 0, "{risers} risers, {treads} treads");
+    assert_eq!((bad_on, bad_off), (0, 0), "of {checked}");
+    let defaults = stair_frame(
+        &mut rig,
+        &camera,
+        &arm(
+            flythrough::DEFAULT_STORE_READ,
+            flythrough::DEFAULT_LIGHT_WEIGHTS,
+            LightingResolution::default(),
+        ),
+    );
+    let path = support::golden_path("far_staircase_store_normal.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        support::write_png(&path, &defaults.display, SIZE[0], SIZE[1]);
+        println!("blessed {path:?}");
+        return;
+    }
+    let (golden, w, h) = support::read_png(&path);
+    assert_eq!([w, h], SIZE);
+    let f = support::fraction_differing(&defaults.display, &golden, 2);
+    println!(
+        "far_staircase_store_normal.png: {:.4} % of pixels differ by more than 2/255",
+        f * 100.0
+    );
+    assert!(f <= 0.001, "{:.4} % of pixels differ", f * 100.0);
+}
+
 /// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
 /// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
 /// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
@@ -2518,136 +2759,6 @@ mod reading {
                 }
             }
         }
-    }
-
-    // ---- ADR-0049: the store read by the far normal and the filters weighed by face ----
-
-    /// A 45-degree staircase of 1-voxel steps rising along +x over chunks `[0, 5) x [0, 1) x
-    /// [0, 5)`: column `x` in 64..320 holds rock up to `z = x - 64`, its tread facing +z and its
-    /// riser -x, and an ore plate at z 300 over it lights the treads more than the risers. The
-    /// camera: [`stair_cameras`].
-    fn staircase() -> World {
-        let world = air_world([5, 1, 5], &table());
-        for x in 64..320i64 {
-            fill(&world, [x, 0, 0], [x + 1, 64, x - 63], ROCK);
-        }
-        fill(&world, [64, 0, 300], [320, 64, 304], ORE);
-        world
-    }
-
-    /// The staircase's two cameras at `size` (70 degrees horizontal): far, 194 voxels above the
-    /// slope at x 70 looking down 10 degrees along +x, whose rays descend so they see treads and
-    /// risers, from about 125 to 245 voxels away; near, 24 voxels above it at x 100 looking up
-    /// 25 degrees, whose hits start about 25 voxels away (risers only past the slope's angle).
-    fn stair_cameras(size: [u32; 2]) -> [Camera; 2] {
-        let vfov = vfov_of(size);
-        [
-            Camera {
-                position: [70.5, 32.5, 200.5].into(),
-                yaw: 0.0,
-                pitch: (-10f32).to_radians(),
-                vfov,
-            },
-            Camera {
-                position: [100.5, 32.5, 60.5].into(),
-                yaw: 0.0,
-                pitch: 25f32.to_radians(),
-                vfov,
-            },
-        ]
-    }
-
-    /// The vertical field of view of a horizontal 70 degrees at `size`.
-    fn vfov_of(size: [u32; 2]) -> f32 {
-        2.0 * (35f32.to_radians().tan() * size[1] as f32 / size[0] as f32).atan()
-    }
-
-    /// One baked frame of the staircase per arm: (store read, far normal, look, weights,
-    /// resolution) and its read-backs.
-    struct StairFrame {
-        accum: Vec<[f32; 4]>,
-        pos: Vec<[f32; 4]>,
-        info: Vec<[u16; 4]>,
-        display: Vec<u8>,
-    }
-
-    struct StairArm {
-        read: vxe_render::StoreRead,
-        weights: vxe_render::LightWeights,
-        far_normal: [f32; 2],
-        mode: vxe_render::NormalMode,
-        resolution: LightingResolution,
-    }
-
-    fn stair_frame(rig: &mut Rig, camera: &Camera, arm: &StairArm) -> StairFrame {
-        rig.frame.set_resolution(&rig.device, arm.resolution);
-        rig.frame.set_lighting(Lighting {
-            lamp: false,
-            lamp_bounce: false,
-            exposure: Exposure::Manual(8.0),
-            bake_pool_bytes: 64 << 20,
-            store_read: arm.read,
-            light_weights: arm.weights,
-            ..Lighting::default()
-        });
-        rig.frame.set_look(vxe_render::LookParams {
-            normal_mode: arm.mode,
-            far_normal: arm.far_normal,
-            ..vxe_render::LookParams::default()
-        });
-        // Two frames: the first after a setting change carries no history to differ by.
-        rig.step(camera);
-        rig.step(camera);
-        StairFrame {
-            accum: readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated()),
-            pos: readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions()),
-            info: readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
-            display: rig.display(),
-        }
-    }
-
-    /// The stored part ADR-0049's read gives a hit of normal `n` on face `face` of voxel `v`:
-    /// the brick level's direction values the normal leans toward, mixed by `n_a^2` over those
-    /// held, renormalised; the face's own where none is.
-    fn by_normal(
-        cells: &HashMap<([i32; 3], u8), [u32; 2]>,
-        v: [i32; 3],
-        face: u8,
-        n: [f32; 3],
-    ) -> Option<[f32; 3]> {
-        let own = brick_value(cells, v, face);
-        let mut sum = [0f32; 3];
-        let mut weight = 0f32;
-        for (a, &na) in n.iter().enumerate() {
-            let w = na * na;
-            if w < 1e-4 {
-                continue;
-            }
-            let dir = 2 * a as u8 + u8::from(na > 0.0);
-            if let Some(r) = if dir == face {
-                own
-            } else {
-                brick_value(cells, v, dir)
-            } {
-                for k in 0..3 {
-                    sum[k] += r[k] * w;
-                }
-                weight += w;
-            }
-        }
-        if weight > 0.0 {
-            Some(sum.map(|x| x / weight))
-        } else {
-            own
-        }
-    }
-
-    fn within(a: [f32; 3], b: [f32; 3], rel: f32) -> bool {
-        (0..3).all(|k| (a[k] - b[k]).abs() <= rel * b[k].abs().max(1e-3))
-    }
-
-    fn rgb(p: [f32; 4]) -> [f32; 3] {
-        [p[0], p[1], p[2]].map(|x| x / 8.0)
     }
 
     /// Plan 0061 Phase 2's claims on the staircase, as a reading (the phase is exploration):

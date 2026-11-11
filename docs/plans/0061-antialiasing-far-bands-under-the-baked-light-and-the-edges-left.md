@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** in-progress (Phase 4 done by the owner; Phase 5 next), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
+> **Status:** in-progress (Phase 5 landed; awaits the close review), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -643,8 +643,8 @@ The owner, 2026-11-10, to the open questions above:
 | 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), answered by the owner's amendment; see [the readings log](logs/0061.md) | e79620f |
 | 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) landed with Phase 3's commit, see the readings log | c327f6a |
 | 3: The matrix with the read, the edges left, and the window's runner | dev | half-light matrix, FSR 2 at 1, the pick's pan and yaw read; the full-light, jitter 8 and sharpen 0.25 arms and the level's arms not run (see Notes) | f4989a9 |
-| 4: The owner's window | human | done by the owner, 2026-11-11 (`live/session61.sh`): (a) `normal`, (b) `[2, 6]`, (g) half with face weights, (e) FSR 2 at 1 as a setting, not the default; words in the readings log | committed with this row |
-| 5: The picks as defaults | dev | not started | |
+| 4: The owner's window | human | done by the owner, 2026-11-11 (`live/session61.sh`): (a) `normal`, (b) `[2, 6]`, (g) half with face weights, (e) FSR 2 at 1 as a setting, not the default; words in the readings log | c3fce0e |
+| 5: The picks as defaults | dev | done; one golden added, none moved (see Notes) | committed with this row |
 
 ### Notes
 
@@ -675,6 +675,25 @@ The owner, 2026-11-10, to the open questions above:
 - Phase 3: "best arm" by the rule (lowest edge ratio without blur) is nnh at `[2, 6]` (1.09);
   the runner's and the owner's pick is nfh (1.29), the weights bit the owner's amendment asked
   for.
+- Phase 5: the fly-through's defaults are `flythrough::DEFAULT_STORE_READ` and
+  `DEFAULT_LIGHT_WEIGHTS` (`apps/flythrough/src/lib.rs`); `LookPreset::DEFAULT` was already
+  `[2, 6]` and is unchanged; the light stays half. `--jitter-phases` and `--dither` stay opt-in
+  ((c) and (d) named nothing).
+- Phase 5: the gate-sized staircase test (`a_small_far_staircase_reads_the_mix_and_matches_its_golden`)
+  lives in `gpu_bake.rs`, not `gpu_look.rs` (the CPU replica of the read is there), with the
+  staircase helpers moved out of its `mod reading`. Its claim is checked at full light
+  resolution (the per-pixel stored part), its golden at the fly-through's defaults (half).
+  Done-when 1 (192 x 108) stays a reading (`reading::staircase_read`).
+- Phase 5: `README.md` gains the `--store-read` and `--light-weights` rows and the FSR 2 at 1
+  quality setting (`--upscaler fsr2 --internal-scale 1 --far-normal 3,9`), outside the phase's
+  Files touched; no code adds a quality key (owner: a setting, profiles are Plan 0069's).
+- Phase 5: the settle rig (`tests/support/settle.rs`) and the hall golden's render
+  (`gpu_golden.rs`, `showcase_hall`) take the fly-through's store read and weights. The hall's
+  golden (soak, a known failure before this plan) was not run or re-blessed: the orchestrator's
+  no-soak instruction. Done-when 4's re-bless of it is open for the close.
+- Phase 5 done-when 5: the default's cost is Phase 2 done-when 6's `nf` `[2, 6]` arms against
+  `fn` (the old default) on c327f6a's code; not re-read on Phase 5's binary, which differs by the
+  emitter cap's removal (a 0 cap: no branch taken) and the defaults.
 
 ### Close triggers
 
@@ -687,3 +706,11 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:** which, or none
 
 ## Followups
+
+- The owner at the window, step 1a (2026-11-11), on the pick: "looks good, maybe even a bit too
+  soft - but no aliazing". A remark, no change asked.
+- The Radeon at the pick, step 6: "ok but fps are low" (hall GPU frame 41.2 ms at 1920 x 1080);
+  performance, for Plans 0067 and 0069. The face weights put the RADV vein's a-trous pass at
+  3.19 ms, over the 3.0 ms denoise line.
+- FSR 2 at 1 (`--far-normal 3,9`) as a quality setting: "looks fine, maybe even a bit better";
+  Plan 0069's profiles take it.

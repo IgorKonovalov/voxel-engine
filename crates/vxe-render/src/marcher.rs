@@ -93,12 +93,10 @@ pub struct Params {
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
     pub _pad9: u32,
-    /// [`Fsr2Settings::emitter_cap`] while FSR 2 runs unbypassed; 0 is no cap.
-    pub emitter_cap: f32,
     /// 1: [`Fsr2Settings::dither`] while FSR 2 runs unbypassed.
     pub dither: u32,
     /// Pads the block to a multiple of 16 bytes, as the shaders' struct is.
-    pub _tail: [u32; 2],
+    pub _tail: [u32; 3],
 }
 
 const _: () = assert!(size_of::<Params>().is_multiple_of(16));
@@ -2859,7 +2857,6 @@ impl Frame {
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.manual_exposure(),
-            emitter_cap: fsr.and_then(|f| f.emitter_cap).unwrap_or(0.0),
             dither: u32::from(fsr.is_some_and(|f| f.dither)),
             output_size: if self.upscaling() {
                 self.output

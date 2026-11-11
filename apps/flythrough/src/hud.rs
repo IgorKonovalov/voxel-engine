@@ -2090,21 +2090,18 @@ pub struct UpscalerBanner {
     pub scale: &'static str,
     /// The upscaler's RCAS sharpening (`--sharpen`, `Z`); unnamed while the upscaler is off.
     pub sharpen: f32,
-    /// FSR 2's candidate knobs as words (`, phases 8, emitter cap 1, dither`), empty when none
+    /// FSR 2's candidate knobs as words (`, phases 8, dither`), empty when none
     /// is set; named only while the mode is fsr2.
     pub fsr2_knobs: String,
     shown_at: Option<f64>,
 }
 
-/// FSR 2's candidate knobs (`--jitter-phases`, `--emitter-cap`, `--dither`) as the banner's
-/// suffix: `, phases 8, emitter cap 1, dither`, each only when set; empty when none is.
-pub fn fsr2_knob_words(phases: Option<u32>, emitter_cap: Option<f32>, dither: bool) -> String {
+/// FSR 2's candidate knobs (`--jitter-phases`, `--dither`) as the banner's suffix:
+/// `, phases 8, dither`, each only when set; empty when none is.
+pub fn fsr2_knob_words(phases: Option<u32>, dither: bool) -> String {
     let mut s = String::new();
     if let Some(n) = phases {
         s += &format!(", phases {n}");
-    }
-    if let Some(c) = emitter_cap {
-        s += &format!(", emitter cap {c}");
     }
     if dither {
         s += ", dither";

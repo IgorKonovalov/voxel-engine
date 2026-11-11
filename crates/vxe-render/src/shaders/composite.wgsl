@@ -241,11 +241,6 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         if ((params.flags & FLAG_CUTAWAY) == 0u) {
             let e = emission_of(rec.material);
             c += e * ex;
-            // FSR 2's emitter cap: an emitting hit's largest channel held at the cap.
-            let top = max(c.x, max(c.y, c.z));
-            if (params.emitter_cap > 0.0 && any(e > vec3<f32>(0.0)) && top > params.emitter_cap) {
-                c *= params.emitter_cap / top;
-            }
         }
     }
     if (view == VIEW_CRACKS) {

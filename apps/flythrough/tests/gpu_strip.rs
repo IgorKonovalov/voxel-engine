@@ -53,8 +53,8 @@
 //! - `VXE_STRIP_STORE_READ`: `face` (default) or `normal`, `Lighting::store_read` (ADR-0049);
 //!   `VXE_STRIP_WEIGHTS`: `normal` (default) or `face`, `Lighting::light_weights`.
 //! - FSR 2's candidate knobs (`Fsr2Settings`): `VXE_STRIP_JITTER_PHASES` (the jitter's phase
-//!   count; the fold's default follows it), `VXE_STRIP_EMITTER_CAP` (a pre-exposed level) and
-//!   `VXE_STRIP_DITHER=on` (the tone pass's static one-level dither).
+//!   count; the fold's default follows it) and `VXE_STRIP_DITHER=on` (the tone pass's static
+//!   one-level dither).
 //! - `VXE_STRIP_READ=fold`: after the settle, `VXE_STRIP_FRAMES` still frames folded over
 //!   `VXE_STRIP_PHASES` (default: `fsr2::jitter_phases`, `own`'s `JITTER_PHASES`, 18 for
 //!   `off`): `T`, `L`, `J` (`support::aliasing`), the guard's energy, the jumps by class and
@@ -1475,10 +1475,6 @@ mod reading {
                         jitter_phases: env("VXE_STRIP_JITTER_PHASES").map(|v| {
                             v.parse()
                                 .expect("VXE_STRIP_JITTER_PHASES takes a phase count")
-                        }),
-                        emitter_cap: env("VXE_STRIP_EMITTER_CAP").map(|v| {
-                            v.parse()
-                                .expect("VXE_STRIP_EMITTER_CAP takes a pre-exposed level")
                         }),
                         dither: on_off("VXE_STRIP_DITHER", false),
                         ..Fsr2Settings::default()
