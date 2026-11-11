@@ -2989,6 +2989,12 @@ pub struct BakeQueue {
     angle_needs: Vec<f32>,
     /// The step of the last reach census of the view ([`QueueStats::view_reach`]).
     reach_census_at: u64,
+    /// Whether the next opening reads the view's census ([`BakeQueue::request_census`]).
+    census_due: bool,
+    /// Every opening reads the view's census, the in-view ages and the angle weights, not only
+    /// one after a [`BakeQueue::request_census`]: a reading, which costs the step about a
+    /// census (0.8 ms over the streamed cave's 17 000 candidates) at each opening.
+    pub census_every_opening: bool,
     stats: QueueStats,
 }
 
@@ -3032,6 +3038,8 @@ impl BakeQueue {
             ages_full: Vec::new(),
             angle_needs: Vec::new(),
             reach_census_at: 0,
+            census_due: true,
+            census_every_opening: false,
             stats: QueueStats {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()
@@ -3046,7 +3054,8 @@ impl BakeQueue {
     /// Steps (frames) from a chunk entering the view cone or the near shell with no full block
     /// to its first block, and to its full block, one entry a chunk since the queue started. A
     /// chunk that entered with a coarse block reads 0 to its first. Entry is read at the
-    /// openings, so it lags by the steps between two.
+    /// openings that read the census ([`BakeQueue::census_every_opening`] for all of them), so
+    /// it lags by the steps between two.
     pub fn view_ages(&self) -> (&[u32], &[u32]) {
         (&self.ages_first, &self.ages_full)
     }
@@ -3063,6 +3072,15 @@ impl BakeQueue {
     /// one in the cone or shell, or with no nearer such candidate.
     pub fn take_angle_needs(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.angle_needs)
+    }
+
+    /// Asks the next opening for the view's census: [`QueueStats::view_waiting`],
+    /// [`QueueStats::weight_census`], [`QueueStats::cone_only`], [`QueueStats::view_median`]
+    /// and [`QueueStats::view_reach`] keep the last census's values until then. A caller that
+    /// shows them once a second asks once a second; [`BakeQueue::census_every_opening`] reads
+    /// them at every opening.
+    pub fn request_census(&mut self) {
+        self.census_due = true;
     }
 
     /// Where `c` lies against `view` from the camera's chunk `eye`: [`VIEW_SHELL`],
@@ -3821,10 +3839,13 @@ impl BakeQueue {
                 }
             })
             .collect();
-        let t = stopwatch();
-        self.view_census(eye, view, &cands);
-        self.view_reach_census(run, eye, view, &cands);
-        self.stats.census_ms = seconds_since(t) * 1e3;
+        let census = self.census_every_opening || std::mem::take(&mut self.census_due);
+        if census {
+            let t = stopwatch();
+            self.view_census(eye, view, &cands);
+            self.view_reach_census(run, eye, view, &cands);
+            self.stats.census_ms = seconds_since(t) * 1e3;
+        }
         self.stats.depth = cands.len() as u64;
         self.counted_idle = in_job.is_empty();
         let steps = self.steps;
@@ -3863,7 +3884,12 @@ impl BakeQueue {
         let mut ready: Vec<(u8, [i32; 3])> = Vec::new();
         // The loop's samples left, read once (it walks every open face) and then counted on.
         let mut left = self.lp.samples_left();
-        let nearest_in_view = cands.iter().filter(|k| k.a <= 0.0).map(|k| k.d2).min();
+        let angle_needs = self.census_every_opening;
+        let nearest_in_view = if angle_needs {
+            cands.iter().filter(|k| k.a <= 0.0).map(|k| k.d2).min()
+        } else {
+            None
+        };
         for Cand { class, c, .. } in cands {
             if tiered {
                 if left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0) {
@@ -3897,7 +3923,9 @@ impl BakeQueue {
             if class == 0 {
                 ready0 += 1;
             }
-            self.note_angle_need(c, eye, view, nearest_in_view);
+            if angle_needs {
+                self.note_angle_need(c, eye, view, nearest_in_view);
+            }
             if parallel {
                 ready.push((class, c));
                 continue;

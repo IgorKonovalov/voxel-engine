@@ -511,6 +511,10 @@ struct Args {
     /// `--queue-withdraw on|off`: whether the live queue withdraws the jobs of chunks the camera
     /// has passed (default on); `4` toggles it.
     queue_withdraw: bool,
+    /// `--queue-census`: the live queue reads its view census, the in-view ages and the angle
+    /// weights at every opening (a reading; by default once a second, for the stdout line and
+    /// the HUD's queue row, and no angle weights).
+    queue_census: bool,
     /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
     /// of these frames, for a headless reading.
     dig_at: Vec<u32>,
@@ -850,6 +854,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
         queue_tier: true,
         queue_withdraw: true,
+        queue_census: false,
         bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
         dig_reach: true,
         dig_at: Vec::new(),
@@ -1150,6 +1155,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     _ => return Err(format!("--queue-order takes score or distance, not {v}")),
                 };
             }
+            "--queue-census" => args.queue_census = true,
             "--queue-withdraw" => {
                 let v = value()?;
                 args.queue_withdraw = match v.as_str() {
@@ -3842,6 +3848,7 @@ impl Run {
         if let Some(q) = frame.bake_queue_mut() {
             q.order = self.args.queue_order();
             q.withdraw = self.args.queue_withdraw;
+            q.census_every_opening = self.args.queue_census;
         }
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
@@ -4161,7 +4168,11 @@ impl Run {
             let needs = gfx
                 .frame
                 .bake_queue_mut()
-                .map(vxe_render::BakeQueue::take_angle_needs)
+                .map(|q| {
+                    // The next second's line and the HUD's row read the next opening's census.
+                    q.request_census();
+                    q.take_angle_needs()
+                })
                 .unwrap_or_default();
             let (first, full) = gfx
                 .frame
