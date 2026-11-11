@@ -29,7 +29,16 @@
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
-//! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
+//! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]
+//! [--path cave|showcase|castle] [--path-mode bench|tour] [--report DIR] [--tester]`.
+//! `--path NAME` flies that scene's camera path (`flythrough::path`; the scene's own flags and
+//! seed 1 are required): `--path-mode bench` (the default) once by wall time (1/60 s a headless
+//! frame), then exits; `tour` loops it, the first move, look or dig hands the camera to the
+//! keys and `T` resumes the path from its nearest point. The banner shows the mode always
+//! (`benchmark 23 s / 37 s`). `--report DIR` writes `DIR/run.json` at exit
+//! (`flythrough::report`). `--tester` leaves movement, look, the dig, `F1` (a help panel), `T`
+//! and `Esc` and turns every other key off, the stats HUD among them. `--check-args` parses the
+//! arguments, prints `flythrough: arguments ok` and exits 0, opening nothing.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
 //! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
 //! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
@@ -265,6 +274,10 @@ use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB,
 use flythrough::logic::{
     DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
 };
+use flythrough::path::{
+    CameraPath, PATH_SEED, PathMode, PathPlayer, Scene, TesterAction, TesterInput, tester_action,
+};
+use flythrough::report::{AdapterLine, Recorder, RunReport};
 use flythrough::showcase::{SHOTS, SHOWCASE_CHUNKS, Shot, ShowcaseSource};
 use flythrough::{
     LogicChoice, LookPreset, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials,
@@ -586,6 +599,17 @@ struct Args {
     adapt: Option<[f32; 4]>,
     /// `--metering centre|average`: how the meter weights the frame (centre by default).
     metering: vxe_render::Metering,
+    /// `--path NAME`: the camera path the run flies (`flythrough::path`), and `--path-mode`.
+    path: Option<&'static CameraPath>,
+    path_mode: PathMode,
+    /// `--report DIR`: where the path run writes `run.json`.
+    report: Option<std::path::PathBuf>,
+    /// `--check-args`: parse the arguments, print `arguments ok` and exit 0 (the tester
+    /// build's launcher test checks its command lines with it).
+    check_args: bool,
+    /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
+    /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
+    tester: bool,
 }
 
 /// While the exposure moves by more than 0.01 EV per half second, prints the exposure row every
@@ -906,12 +930,18 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         metering: vxe_render::Metering::default(),
         jitter_set: false,
         upscaler: None,
+        path: None,
+        path_mode: PathMode::Bench,
+        report: None,
+        tester: false,
+        check_args: false,
     };
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
     let mut shot_flag = false;
     let mut exposure_flag = false;
     let mut light_radius_flag = None;
+    let mut path_mode_flag = false;
     // The part flags, applied to the `--look` preset after every flag is read.
     let mut face_mix = None;
     let mut far_normal = None;
@@ -1346,6 +1376,22 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     format!("--castle-shot takes gate, nave, window or dungeon, not {v}")
                 })?;
             }
+            "--path" => {
+                let v = value()?;
+                args.path = Some(
+                    CameraPath::named(&v)
+                        .ok_or_else(|| format!("--path takes {}, not {v}", CameraPath::names()))?,
+                );
+            }
+            "--path-mode" => {
+                let v = value()?;
+                args.path_mode = PathMode::from_name(&v)
+                    .ok_or(format!("--path-mode takes bench or tour, not {v}"))?;
+                path_mode_flag = true;
+            }
+            "--report" => args.report = Some(value()?.into()),
+            "--tester" => args.tester = true,
+            "--check-args" => args.check_args = true,
             "--audio" => args.audio = true,
             "--audio-debug" => {
                 args.audio = true;
@@ -1454,7 +1500,55 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         return Err(flythrough::WASM_NEEDS_FEATURE.to_owned());
     }
     args.mix.check()?;
+    check_path(&args, path_mode_flag)?;
     Ok(args)
+}
+
+/// `--path`'s rules: the path's scene and seed, nothing else steering the camera; `--path-mode`
+/// and `--report` only with a path.
+fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String> {
+    let Some(path) = args.path else {
+        if path_mode_flag || args.report.is_some() || args.tester {
+            return Err(
+                "--path-mode, --report and --tester play a camera path; they need --path"
+                    .to_owned(),
+            );
+        }
+        return Ok(());
+    };
+    if args.tester && args.hud {
+        return Err("--tester keeps the stats HUD out of reach; it does not take --hud".to_owned());
+    }
+    let scene = if args.castle {
+        Some(Scene::Castle)
+    } else if args.showcase {
+        Some(Scene::Showcase)
+    } else if args.level || args.room.is_some() || args.thin_rig || args.seam_rig {
+        None
+    } else {
+        Some(Scene::Cave)
+    };
+    if scene != Some(path.scene) {
+        return Err(format!(
+            "--path {} flies the {} scene; it needs {}",
+            path.name,
+            path.scene.name(),
+            path.scene.flags().join(" ")
+        ));
+    }
+    if args.seed != PATH_SEED {
+        return Err(format!(
+            "--path {} is laid against seed {PATH_SEED}; it does not take --seed {}",
+            path.name, args.seed
+        ));
+    }
+    if args.autopilot || args.walk || args.glide.is_some() || args.pan.is_some() {
+        return Err(
+            "--path drives the camera; it does not take --autopilot, --walk, --glide or --pan"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// `R_FULL,R_LOD`: radii in chunks with `1 <= R_FULL <= R_LOD`, hysteresis as
@@ -1592,8 +1686,16 @@ fn material_name(table: &MaterialTable, m: MaterialId) -> String {
         .map_or_else(|| format!("#{m}"), |row| row.name.clone())
 }
 
+/// The process's peak resident set in bytes: on Windows `GetProcessMemoryInfo`'s
+/// `PeakWorkingSetSize`, elsewhere `VmHWM` from `/proc/self/status`; `None` where neither reads.
+#[cfg(windows)]
+fn peak_rss_bytes() -> Option<u64> {
+    hud::process_memory().map(|m| m.PeakWorkingSetSize as u64)
+}
+
 /// The process's peak resident set (`VmHWM`) in bytes, read from `/proc/self/status`; `None`
 /// where that file does not exist or does not carry the line.
+#[cfg(not(windows))]
 fn peak_rss_bytes() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
@@ -3234,6 +3336,13 @@ struct Run {
     exposure_print: Option<(f64, f32)>,
     /// The live queue's readings.
     queue: QueueRun,
+    /// `--path`'s player and the frame times its report reads.
+    player: Option<PathPlayer>,
+    recorder: Option<Recorder>,
+    /// The adapter the device was created on, for the report.
+    adapter: Option<wgpu::AdapterInfo>,
+    /// `--tester`'s help panel (`F1`) is shown.
+    help: bool,
 }
 
 /// The live queue's state in the fly-through: the workers' results before the frame exists, and
@@ -3485,6 +3594,15 @@ impl Run {
     /// Appends the banner's rows to `out`, the live queue's order and withdrawal in `words`.
     fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
+        if let Some(p) = &self.player {
+            hud::write_path_row(out, p, self.args.tester);
+            if self.args.tester {
+                if self.help {
+                    hud::write_help_panel(out, p);
+                }
+                return;
+            }
+        }
         if let Some((pose, _)) = &self.pose {
             out.push_str(pose);
         }
@@ -3928,6 +4046,7 @@ impl Run {
     }
 
     fn init(&mut self, gpu: &Gpu) {
+        self.adapter = Some(gpu.adapter.get_info());
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
@@ -5042,7 +5161,8 @@ impl Run {
 
     fn frame(&mut self, gpu: &Gpu, input: &Input, dt: f32, surface: &wgpu::TextureView) -> Flow {
         let t0 = now();
-        if input.pressed(KeyCode::Escape) {
+        // A path run ends through its player, so its report can say how.
+        if input.pressed(KeyCode::Escape) && self.player.is_none() {
             return Flow::Exit;
         }
         // The first frame's delta spans startup, not a frame.
@@ -5050,7 +5170,13 @@ impl Run {
             self.hud.frames.record(dt);
             self.hud.run.wall_ms.push(f64::from(dt) * 1e3);
         }
-        if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
+        if self.args.tester {
+            if input.pressed(KeyCode::F1)
+                && tester_action(TesterInput::Key(KeyCode::F1)) == Some(TesterAction::Help)
+            {
+                self.help = !self.help;
+            }
+        } else if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
             self.hud.visible = !self.hud.visible;
         }
         if self.frame == 0 {
@@ -5067,7 +5193,15 @@ impl Run {
         if self.args.bench_at.contains(&self.frame) {
             self.bench();
         }
-        if self.pilot.is_some() {
+        let driven = match self.path_step(input, dt) {
+            Some(Flow::Exit) => return Flow::Exit,
+            Some(Flow::Continue) => true,
+            None => false,
+        };
+        if driven {
+            self.cutaway
+                .update(&mut self.look, &self.world, self.fly.camera.position);
+        } else if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
             }
@@ -5083,7 +5217,17 @@ impl Run {
             if let Some(p) = &self.pan {
                 self.fly.camera.yaw += p.yaw(dt);
             }
-            self.handle_input(input);
+            if self.args.tester {
+                // Free flight under `--tester`: the dig is the one action past moving.
+                if input.clicked(MouseButton::Left)
+                    && tester_action(TesterInput::Click(MouseButton::Left))
+                        == Some(TesterAction::Dig)
+                {
+                    self.dig();
+                }
+            } else {
+                self.handle_input(input);
+            }
             self.cutaway
                 .update(&mut self.look, &self.world, self.fly.camera.position);
         }
@@ -5094,6 +5238,87 @@ impl Run {
             self.samples = Some(Samples::default());
         }
         self.draw(gpu, surface, t0, dt)
+    }
+
+    /// Steps `--path`'s player by the frame's interval (1/60 s a headless frame, none on the
+    /// first frame, whose interval spans the startup): `Some(Exit)` once the run ended,
+    /// `Some(Continue)` when the path placed the camera, `None` when the tester flies or there
+    /// is no path.
+    fn path_step(&mut self, input: &Input, dt: f32) -> Option<Flow> {
+        let p = self.player.as_mut()?;
+        let step = if self.frame == 0 {
+            0.0
+        } else if self.args.headless {
+            1.0 / 60.0
+        } else {
+            dt
+        };
+        let eye = self.fly.camera.position.to_array();
+        let pose = p.step(step, flythrough::path::Controls::read(input), eye);
+        if p.ended() {
+            return Some(Flow::Exit);
+        }
+        let pose = pose?;
+        let c = &mut self.fly.camera;
+        c.position = pose.eye.into();
+        c.yaw = pose.yaw_deg.to_radians();
+        c.pitch = pose.pitch_deg.to_radians();
+        Some(Flow::Continue)
+    }
+
+    /// Writes `--report`'s `run.json`: what ran, on which adapter, and the recorder's frame
+    /// times; `failed` when the session ended on an error.
+    fn write_report(&self) {
+        let (Some(dir), Some(p), Some(rec)) = (&self.args.report, &self.player, &self.recorder)
+        else {
+            return;
+        };
+        let (_, scale, _) = self.args.upscaler_settings(self.upscaler.mode);
+        let sizes = self
+            .gfx
+            .as_ref()
+            .map(|g| (g.frame.output_size(), g.frame.internal_size()));
+        let mut r = RunReport {
+            version: env!("CARGO_PKG_VERSION"),
+            commit: flythrough::report::COMMIT,
+            scene: p.path.scene.name(),
+            path: p.path.name,
+            mode: p.mode.name(),
+            output: sizes.map_or([0, 0], |s| s.0),
+            internal: sizes.map_or([0, 0], |s| s.1),
+            internal_scale: scale.name(),
+            upscaler: self.upscaler.mode.name(),
+            adapter: self.adapter.as_ref().map(|a| AdapterLine {
+                name: a.name.clone(),
+                vendor: a.vendor,
+                device: a.device,
+                device_type: format!("{:?}", a.device_type),
+                driver: a.driver.clone(),
+                driver_info: a.driver_info.clone(),
+                backend: vxe_app::backend_label(a.backend),
+            }),
+            path_s: p.path.duration_s(),
+            frames: 0,
+            warmup_frames: 0,
+            warmup_s: 0.0,
+            wall_ms: None,
+            cpu_ms: None,
+            gpu_ms: None,
+            over_33ms: 0,
+            over_100ms: 0,
+            peak_rss_bytes: peak_rss_bytes(),
+            ended: if self.failure.is_some() {
+                "failed"
+            } else {
+                p.ended_word()
+            },
+        };
+        rec.fill(&mut r);
+        let file = dir.join("run.json");
+        match std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, r.to_json())) {
+            Ok(()) => println!("report: wrote {}", file.display()),
+            Err(e) => eprintln!("flythrough: --report {}: {e}", file.display()),
+        }
     }
 
     /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
@@ -5549,6 +5774,7 @@ impl Run {
             self.samples.is_some()
                 || flying
                 || hud
+                || self.recorder.is_some()
                 || self.args.lamp_toggle.is_some()
                 || self.args.fade_reading
         });
@@ -5633,6 +5859,11 @@ impl Run {
         let field_gpu_ms = field_reader.and_then(|t| t.try_read_ms(&gpu.device));
         let hud_ms = hud_timer.and_then(|t| t.try_read_ms(&gpu.device));
         self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
+        if self.frame > 0
+            && let (Some(rec), Some(p)) = (self.recorder.as_mut(), self.player.as_ref())
+        {
+            rec.push(p.clock_s, f64::from(dt) * 1e3, cpu_ms, gpu_ms);
+        }
         self.hud.cpu_ms = cpu_ms as f32;
         // The HUD keeps the last set read until a newer one finishes, and shows none once its
         // timer is off.
@@ -5846,6 +6077,7 @@ impl Drop for Run {
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
+        self.write_report();
         if self.args.census {
             println!("{}", self.world.brick_census());
             println!("packed: {:?}", self.world.packed_stats());
@@ -6043,6 +6275,13 @@ impl App for Flythrough {
                 room_probe: self.room_probe.take(),
                 exposure_print: None,
                 queue: QueueRun::default(),
+                player: self
+                    .args
+                    .path
+                    .map(|p| PathPlayer::new(p, self.args.path_mode)),
+                recorder: self.args.path.map(|p| Recorder::for_path(p.duration_s())),
+                adapter: None,
+                help: false,
             });
         }
         match self.run.as_mut() {
@@ -6429,7 +6668,15 @@ fn queue_view_line(
 }
 
 fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
-    if args.castle {
+    if let Some(path) = args.path {
+        let pose = path.sample(0.0);
+        Camera {
+            position: pose.eye.into(),
+            yaw: pose.yaw_deg.to_radians(),
+            pitch: pose.pitch_deg.to_radians(),
+            vfov: 70f32.to_radians(),
+        }
+    } else if args.castle {
         castle_camera(args.castle_shot)
     } else if args.showcase {
         shot_camera(&args.shot)
@@ -6591,6 +6838,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.check_args {
+        println!("flythrough: arguments ok");
+        return;
+    }
 
     let load_logic = |choice: &LogicChoice| match choice.load() {
         Ok(l) => l,
@@ -7739,6 +7990,10 @@ mod tests {
             room_probe: None,
             exposure_print: None,
             queue: QueueRun::default(),
+            player: None,
+            recorder: None,
+            adapter: None,
+            help: false,
             cutaway: CutawayMode::Auto,
         }
     }

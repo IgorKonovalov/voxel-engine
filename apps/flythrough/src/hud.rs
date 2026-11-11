@@ -808,8 +808,34 @@ impl fmt::Display for HudStats {
     }
 }
 
+/// The process's memory counters (`GetProcessMemoryInfo`); `None` when the call fails.
+#[cfg(windows)]
+pub fn process_memory() -> Option<windows_sys::Win32::System::ProcessStatus::PROCESS_MEMORY_COUNTERS>
+{
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let size = size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    // SAFETY: the counters are zeroed with their size given, which bounds what the call
+    // writes; `GetCurrentProcess` is a pseudo-handle that needs no closing.
+    unsafe {
+        let mut m: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+        m.cb = size;
+        (GetProcessMemoryInfo(GetCurrentProcess(), &mut m, size) != 0).then_some(m)
+    }
+}
+
+/// The process's resident set in bytes: on Windows the working set (`process_memory`), the
+/// page size unused.
+#[cfg(windows)]
+pub fn rss_bytes(_page_bytes: u64) -> Option<u64> {
+    process_memory().map(|m| m.WorkingSetSize as u64)
+}
+
 /// The process's resident set in bytes: the second field of `/proc/self/statm` (pages) times
 /// `page_bytes`. `None` where the file does not exist.
+#[cfg(not(windows))]
 pub fn rss_bytes(page_bytes: u64) -> Option<u64> {
     let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
     let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
@@ -1800,6 +1826,64 @@ impl Modes {
 pub fn start_row(out: &mut String) {
     if !out.is_empty() {
         out.push('\n');
+    }
+}
+
+/// Appends a path run's mode row to `out` as a banner row: `benchmark 23 s / 37 s`, `tour -
+/// move or look to fly`, `free flight - T resumes the tour`; nothing once the run ended. Under
+/// `--tester` a second row names the help key.
+pub fn write_path_row(out: &mut String, player: &crate::path::PathPlayer, tester: bool) {
+    use crate::path::{Drive, PathMode};
+    start_row(out);
+    match (player.mode, player.drive) {
+        (PathMode::Bench, Drive::Path { t_s }) => {
+            let _ = write!(
+                out,
+                "benchmark {:.0} s / {:.0} s",
+                t_s.floor(),
+                player.path.duration_s().ceil()
+            );
+        }
+        (PathMode::Tour, Drive::Path { .. }) => out.push_str("tour - move or look to fly"),
+        (_, Drive::Free) => out.push_str("free flight - T resumes the tour"),
+        (_, Drive::Aborted | Drive::Done) => return,
+    }
+    if tester {
+        start_row(out);
+        out.push_str("F1 help, Esc ends the run");
+    }
+}
+
+/// Appends the tester mode's help panel to `out` as banner rows: the scene and mode, then the
+/// keys the mode takes.
+pub fn write_help_panel(out: &mut String, player: &crate::path::PathPlayer) {
+    use crate::path::PathMode;
+    start_row(out);
+    let _ = write!(
+        out,
+        "scene {}, {}",
+        player.path.scene.name(),
+        match player.mode {
+            PathMode::Bench => "benchmark",
+            PathMode::Tour => "tour",
+        }
+    );
+    let rows: &[&str] = match player.mode {
+        PathMode::Bench => &[
+            "the camera flies the path by itself",
+            "Esc aborts the benchmark",
+        ],
+        PathMode::Tour => &[
+            "W A S D move, Space C up and down",
+            "Shift faster, the mouse looks",
+            "left click digs in free flight",
+            "T resumes the tour",
+            "F1 hides this, Esc ends the run",
+        ],
+    };
+    for r in rows {
+        start_row(out);
+        out.push_str(r);
     }
 }
 

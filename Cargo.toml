@@ -19,6 +19,7 @@ default-members = [
     "crates/vxe-world",
     "apps/flythrough",
     "apps/flythrough/logic",
+    "apps/tester",
 ]
 
 [workspace.package]
@@ -48,6 +49,8 @@ unimplemented = "warn"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 # The audio output stream (ADR-0006): ALSA on Linux, WASAPI on Windows.
 cpal = "=0.18.2"
+# The tester's zip writer's CRC-32 per entry, at the version the lockfile already carries.
+crc32fast = "=1.5.2"
 criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
 env_logger = { version = "=0.11.11", default-features = false }
 # The probe component's entropy source: what a logic crate reaching for randomness would use.
@@ -74,6 +77,17 @@ vxe-sim = { path = "crates/vxe-sim", version = "=0.48.0" }
 # Without its default `host` feature, so a guest takes only the bindings (`guest`).
 vxe-script-wasm = { path = "crates/vxe-script-wasm", version = "=0.48.0", default-features = false }
 vxe-world = { path = "crates/vxe-world", version = "=0.48.0" }
+# The Windows readers of the tester's system report and the fly-through's peak memory: the OS
+# version, the processor and memory facts, the registry and the process's memory counters. A
+# Windows-only dependency, at the version the lockfile already carries.
+windows-sys = { version = "=0.61.2", features = [
+    "Wdk_System_SystemServices",
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
 # The WebAssembly host for the logic component (ADR-0010) and the guest bindings. The three
 # move together (wit-bindgen at the release on wasmtime's wasm-tools, 0.258): a bump is its
 # own commit, gated by the native-versus-component equality test.

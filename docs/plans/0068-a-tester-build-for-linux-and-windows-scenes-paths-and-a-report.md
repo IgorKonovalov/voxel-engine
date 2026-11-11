@@ -1,6 +1,6 @@
 # 0068: A tester build for Linux and Windows: three scenes, a camera path, free flight and a report
 
-> **Status:** approved (2026-11-11, owner go)
+> **Status:** in-progress
 > **Created:** 2026-11-11
 > **Milestone:** M7 in `docs/roadmap.md` (the benchmark lane)
 > **Related ADRs:** [ADR-0054](../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) (proposed)
@@ -330,19 +330,164 @@ for them. The release profile's build time on CI is recorded there too.
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to `docs/plans/logs/0068.md`.
+> attempts and resume notes go to [`docs/plans/logs/0068.md`](logs/0068.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: a camera path through the showcase, and its run.json | dev | not started | |
-| 2: paths for the cave and the castle, the tour, and the tester mode | dev | not started | |
-| 3: the system report and Windows readings | dev | not started | |
-| 4: the launcher window, runs, logs and the zip | dev | not started | |
-| 5: the release archives on CI | dev | not started | |
+| 1: a camera path through the showcase, and its run.json | dev | done; windowed reading taken 2026-11-11 (readings log) | 2704f51 |
+| 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench and tour readings taken 2026-11-11; the tour not seen by eye | bffba55 |
+| 3: the system report and Windows readings | dev | done; Windows `peak_rss_bytes` owed to Phase 6 | 32ca789 |
+| 4: the launcher window, runs, logs and the zip | dev | done; "run all" + zip reading taken 2026-11-11 through `--auto` | 6fa1f39 |
+| 5: the release archives on CI | dev | files and local checks done; done-when's workflow_dispatch run owed after the merge to main (owner, 2026-11-11: dispatch release.yml on main, no push of the plan branch) | 12ffee5 |
+| readings | dev | Phases 1, 2, 4 windowed readings written | e0b7d91 |
+| fix pass: B1, M1 of the phase review | dev | done; quick tier, clippy, fmt, deny, doc scripts (readings log) | fdfb04b |
+| merge of main at b017d93 (Plan 0061, v0.48.0) | dev | merged 57093ee (Cargo.toml conflict); gate tier green; B1 checked on a real `--auto` report (readings log) | committed with this row |
 | 6: the owner's runs on Linux and Windows | human | not started | |
 
 ### Notes
 
+- Names in the tree (readings log, Phase 1 table): the showcase's air test reads
+  `ShowcaseSource::new(PATH_SEED)`, not `HallSource` (the castle's hall); `PATH_SEED` = 1 and
+  `--path` refuses another `--seed`; `run.json` gives `internal` in pixels beside
+  `internal_scale`.
+- The castle path joins its four shots with cut keys (`Keyframe::cut`: the camera holds, then
+  cuts): no passage into the keep or down to the dungeon is 1 m clear on every side (readings
+  log, Phase 2). The dungeon leg pans at the shot's eye.
+- The cave path is 71 s, not about 60 s: the route to 1400 voxels along +x.
+- `--tester` needs `--path` and refuses `--hud`; `Esc` in a tour reports `ended` `completed`.
+- Phase 3 adds `.github/workflows/ci.yml`'s `The tester's system report` step (both arms;
+  the done-when's Windows step) and `windows-sys` to `apps/flythrough/Cargo.toml`, outside its
+  files list; `apps/tester` has a `src/lib.rs`.
+- Phase 4 adds `--check-args` to the fly-through (`apps/flythrough/src/main.rs`, outside its
+  files list; the done-when names it) and `vxe-tester --auto` (not in the plan: run all, save,
+  quit, for the unattended reading); the report's `system.json` comes from a child
+  `vxe-tester --system-json PATH --displays`.
+- Phase 5: the notices are generated in each workflow run (cargo-about 0.9.3), not committed
+  as `dist/THIRD-PARTY-NOTICES.txt`; `dist/about.toml`, `dist/about.hbs` and
+  `dist/DXC-LICENSE.txt` are committed instead. The Linux archive builds on `ubuntu-22.04` and is
+  checked on `ubuntu-latest` (the lavapipe action needs LLVM 21). The done-when's dispatch run
+  waits for main (owner, 2026-11-11).
+- The windowed readings (2026-11-11) were unattended: `run.json`'s `commit` reads `unknown`
+  (no `VXE_COMMIT` locally); the tour's banner, help panel and input hand-over were not seen.
+- The saved report's `tester.log` holds each command line with absolute paths under the home
+  directory (the user name); the plan's Risks say the report holds no paths. Not changed.
+- Fix pass (phase review B1, M1; commit of the fix-pass row): the launcher starts its children
+  in the report root with relative paths, `tester.log` names executables by file name
+  (`vxe_tester::run::{child_command, logged_command}`), and the zip writes the home folder `~`
+  (`vxe_tester::zip::scrub_home`); the report is made before the display size is read.
+  `apps/flythrough/src/main.rs`'s `report: wrote` line is unchanged: it prints the relative
+  `--report` it is handed. `tester.log`'s `system:` exit line prints `exit N`.
+- The zip's entries carry the DOS date 1980-01-01 00:00.
+- `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
+  launcher uses, not a parser private to the test.
+
 ### Close triggers
 
+## Phase review (architect, 2026-11-11)
+
+Fresh-session review of Phases 1-5 at `774ca88` (main `d6d205a` merged in), to decide whether
+the plan merges into main in progress; not the close. **Verdict: not fit to merge until one
+fix pass: the report carries the home path (B1).** Everything else is fit; after B1 (and M1,
+in the same pass) the plan merges in progress without another review, the fix's own gate and
+test being the check.
+
+What was read: the diff `d6d205a..774ca88` less the merge, the plan and its Notes, the
+readings log, every new test's assertions (`apps/flythrough/tests/path.rs`, `report.rs`'s
+tests, `apps/tester/tests/{run,system,zip}.rs`), `release.yml`, `scripts/package-tester.sh`,
+`dist/`, and the saved report of the Phase 4 reading
+(`target/release/reports/vxe-report-0.47.0-linux-20261111-204658/`). Rerun here: `cargo deny
+check` (advisories, bans, licenses, sources ok) and the five doc scripts (0). The gate tier was
+not rerun: the dev's tip gate (800/800) stands, nothing found here calls it into question.
+Non-negotiables: nothing under `crates/` changed; no gameplay; no network code in
+`apps/tester` or the fly-through's new modules; `crc32fast =1.5.2` and `windows-sys =0.61.2`
+(Windows-only in both apps) are exact pins of crates the lockfile already carried, so
+`Cargo.lock` gains only `vxe-tester`; comment hygiene passes.
+
+### Blocker
+
+- **B1. The report names the home folder, and the README promises it does not.** In the saved
+  reading's zip, `tester.log` lines 3, 5, 7, 9 hold the absolute paths of `vxe-tester`,
+  `flythrough`, `system.json` and each run folder (`apps/tester/src/main.rs:201`, `:243`), and
+  every run's `log.txt` ends with the fly-through's `report: wrote <absolute path>/run.json`
+  (`apps/flythrough/src/main.rs:5306`), which the Notes did not list. A tester unpacks into
+  their home folder, so the user name goes into every report. The plan's Risks ("no names or
+  paths") and `dist/README-TESTER.txt:75` ("no file paths from your home folder") both say
+  otherwise, and the merge arms `release.yml`'s `v*` tag trigger on main, so the next such tag
+  publishes the false claim. Fix:
+  1. The launcher starts each child (the fly-through and its own `--system-json` child) with
+     its current directory at the report root and passes relative paths (`--report
+     runs/01-cave-bench`, `--system-json system.json`); `tester.log` names the executables by
+     file name only and folders relative to the report root. The command line it logs is built
+     by a function in `vxe_tester::run` so a test reaches it.
+  2. As the backstop for text the launcher does not control (driver messages, a panic's
+     message), the zip step replaces the home directory's path (`HOME`, or `USERPROFILE` on
+     Windows, as given and with the other separator) by `~` in every entry before writing.
+  3. Tests (CPU, gate, under 1 s each): (a) in `apps/tester/tests/run.rs`, a report made under
+     a base folder whose absolute path the test knows, a run of the fake child extended to
+     print its arguments and its current directory, then the zip: no entry contains the
+     base's absolute path; (b) a unit test of the scrub with a fake home string, both
+     separators.
+  4. The plan's Risks line stays true as written; no README change is needed once 1-3 hold.
+
+### Major
+
+None.
+
+### Minor
+
+- **M1. "display" output on a session's first run runs at 1280 x 720.** `Worker::run` copies
+  `self.display` (`apps/tester/src/main.rs:197`) before `self.report()` (`:198`) makes the
+  folder and writes `system.json`, which is what sets it; so the first run, or the first scene
+  of a first "run all", falls back. `run.json` records the real output, so no reading lies, but
+  the menu's choice is not honoured. Fix in the B1 pass: make the report first, then read the
+  display.
+- **M2. The key filter is defended as a function, not in the loop.** `tester_action`'s test
+  holds, but the frame loop's call to it is a tautology (`main.rs:5162`); the real filter is
+  structural (`handle_input` skipped under `--tester`). A future key read outside
+  `handle_input`, as `F2` is, would bypass it with every test green. Not for this pass: a
+  followup below.
+- **M3. The notices tool has never run.** `cargo-about 0.9.3` and `dist/about.toml` are
+  exercised first by the dispatch run on main; `about.toml` copies `deny.toml`'s accepted list
+  but not its `clarify` entries, and cargo-about's licence reading differs from deny's. If the
+  dispatch run fails there, the fix is a commit on main before Phase 6. The dev may run `cargo
+  install --locked cargo-about@0.9.3` and the workflow's generate line locally in the B1 pass
+  to take that risk out early; optional.
+
+### Nits and the flagged items, judged
+
+- The castle's `cut` keys: accepted. The air test is the binding constraint and no 1 m-clear
+  passage exists; the test pins the hold-then-cut semantics. The castle's two frames over
+  100 ms sit at the cuts (the streamer); the close's readings say so beside the castle row.
+- The cave path at 71 s: accepted; "run all" is about 140 s of flight, inside the README's
+  "about 3 minutes".
+- `vxe-tester --auto`: accepted, a recorded deviation that made the unattended reading
+  possible; not in the README, which is right for an owner's tool.
+- `system.json` from a child: accepted (one winit event loop per process). Nit: `tester.log`
+  prints its exit as `Ok(ExitStatus(unix_wait_status(0)))` (`main.rs:253`); print the code.
+- Two Linux jobs: accepted; the build stays on 22.04 for the glibc floor and the check runs
+  where the pinned lavapipe builds.
+- The launcher on the low-power adapter: accepted, and `tester.log` names it.
+- `commit` reads `unknown` locally: accepted; CI sets `VXE_COMMIT` on both build steps.
+- Zip entries dated 1980-01-01: accepted; the folder name carries the UTC time.
+- Phase 3's privacy test calls `SystemInfo::collect`, not the CLI; the CI step runs the CLI
+  on both arms. Accepted.
+- `CLAUDE.md`'s map lacked `apps/tester`, `dist/`, `scripts/package-tester.sh` and
+  `release.yml`: added on this branch with this review.
+- ADR-0054 stays `proposed` until the close: agreed.
+
+### What the merge and the close owe
+
+- Before the merge: the B1 + M1 fix pass, its tests in the gate, the tip gate on the fix.
+- After the merge, on main: the `workflow_dispatch` run of `release.yml` (Phase 5's last
+  done-when: both artifacts, the unpack-and-start steps, the glibc floor in the log and the
+  README), its release build times into the readings log.
+- Phase 6 (owner): both archives on the dev box and a Windows machine, the Windows
+  `peak_rss_bytes`, the tour's banner, help panel and hand-over seen by eye, the README read as
+  a tester; then the tag decision.
+- The close (fresh session): gate and soak of the changed crates, `velocity.mjs` and
+  `loc.mjs`, ADR-0054 accepted, the done/ move and the version bump.
+
 ## Followups
+
+- The tester mode's key filter in the loop (M2): route the frame loop's key reads under
+  `--tester` through `tester_action`, or test the loop's input handling with the filter on.
