@@ -703,7 +703,7 @@ fn a_silent_tail_rings_out_to_zero_not_subnormals() {
 /// the same way. The clears here are each further apart than the spare takes to clean, so none
 /// finds it dirty.
 #[test]
-fn a_ring_out_clears_no_more_than_a_block_of_lines_per_block() {
+fn a_ring_out_clears_no_more_than_two_blocks_of_lines_per_block() {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
     m.set_mix(MixSettings::flat());
     let room = |mfp: f32| {
@@ -787,7 +787,7 @@ fn a_ring_out_clears_no_more_than_a_block_of_lines_per_block() {
 /// and then goes through. No block zeroes more than two blocks of every line
 /// (`REVERB_LINES x 2 x BLOCK` samples).
 #[test]
-fn rapid_handovers_zero_no_more_than_a_block_of_lines_per_block() {
+fn rapid_handovers_zero_no_more_than_two_blocks_of_lines_per_block() {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
     m.set_mix(MixSettings::flat());
     let room = |mfp: f32| {
