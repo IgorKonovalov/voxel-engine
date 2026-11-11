@@ -1,6 +1,8 @@
 # 0066: Test cost: a 10 s soak line, and the gpu binaries a phase names
 
-> **Status:** in-progress (owner go 2026-11-10; side lane beside Plan 0060)
+> **Status:** done 2026-11-11. The soak line is 10 s on lavapipe, 26 gate tests moved to soak,
+> the gate read 505 s against its 12 min budget, and `--binaries` names a phase's gpu binaries; the
+> two CPU generation vectors stay in the gate (owner). No version bump (harness chore).
 > **Created:** 2026-11-10
 > **Milestone:** none (harness chore; `docs/nfr.md` section 7)
 > **Related ADRs:** none. The rejected alternatives (below, Decision) are a process call, recorded
@@ -124,7 +126,7 @@ phase** (a render phase would reach the tip blind).
 > resume notes go to the plan's readings log, `docs/plans/logs/0066.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings log: [logs/0066.md](logs/0066.md).
+Readings log: [logs/0066.md](../logs/0066.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|

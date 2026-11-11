@@ -25,7 +25,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 | [0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: what paces it, workers that leave no core, readbacks that wait | approved | Code health. Phase 1 a spike, beside 0060; the rest after it. Takes 0044's Phase 2. |
 | [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | approved | Code health. After 0060 and 0064, before 0061's Phase 2; only if 0064's spike confirms. |
-| [0066](0066-test-cost-a-10-s-soak-line-and-named-gpu-binaries-per-phase.md) | Test cost: a 10 s soak line, and the gpu binaries a phase names | approved | Harness chore. Side lane beside 0060; touches no render source. Gate under 12 min is its done-when. |
 <!-- roster:end -->
 
 ## Sequence
@@ -39,9 +38,9 @@ Each starts on main after the one before it closes, unless its line says otherwi
      2026-11-10). If its Phase 1 reads free pacing no better, it stops and 0065 waits for the
      architect.
    - **Plan 0065**, the baked light's waste, after 0064 (owner, 2026-11-10).
-   - **Plan 0066**, test cost, as a side lane from now (owner, 2026-11-10). On the same day
-     the look-driven plans (0058, 0061, 0032 to 0037) marked their phases before the window as
-     exploration: image tests are written after the pick, in each plan's last dev phase.
+   - On 2026-11-10 the look-driven plans (0058, 0061, 0032 to 0037) marked their phases
+     before the window as exploration: image tests are written after the pick, in each plan's
+     last dev phase.
 2. **Plan 0061**, antialiasing, from its Phase 2 once 0065 has merged.
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
    before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
@@ -72,6 +71,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0066](done/0066-test-cost-a-10-s-soak-line-and-named-gpu-binaries-per-phase.md) | Test cost: the soak line at 10 s on lavapipe, 26 tests to soak, gate 505 s; `--binaries` per phase; CPU vectors stay in the gate | 2026-11-11, no bump |
 | [0059](done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md) | Loaded light: the owner picked the bake; a brick store at 8/4096 filled by a live queue and re-baked by digs; the table deleted | 2026-11-09, v0.44.0 |
 | [0057](done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) | Steady light: the table holds still, the lamp channel stands; the owner moved to a look-first bake, vein bars left to it | 2026-11-05, v0.43.0 |
 | [0056](done/0056-aliasing-spike-what-moves-on-the-final-image.md) | The aliasing spike: FSR 2's jumps are jitter on silhouettes, the dots light on creases; FSR 2 at 1.5 stays, far normal `[1, 2]` picked by eye (next plan) | 2026-11-04, v0.42.0 |
