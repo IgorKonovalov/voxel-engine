@@ -334,11 +334,12 @@ for them. The release profile's build time on CI is recorded there too.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: a camera path through the showcase, and its run.json | dev | done; windowed reading owed (live/readings68.sh) | 2704f51 |
-| 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench readings owed (live/readings68.sh) | bffba55 |
+| 1: a camera path through the showcase, and its run.json | dev | done; windowed reading taken 2026-11-11 (readings log) | 2704f51 |
+| 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench and tour readings taken 2026-11-11; the tour not seen by eye | bffba55 |
 | 3: the system report and Windows readings | dev | done; Windows `peak_rss_bytes` owed to Phase 6 | 32ca789 |
-| 4: the launcher window, runs, logs and the zip | dev | done; "run all" reading owed (live/readings68.sh) | 6fa1f39 |
-| 5: the release archives on CI | dev | files and local checks done; the workflow_dispatch run owed on main after the merge | committed with this row |
+| 4: the launcher window, runs, logs and the zip | dev | done; "run all" + zip reading taken 2026-11-11 through `--auto` | 6fa1f39 |
+| 5: the release archives on CI | dev | files and local checks done; done-when's workflow_dispatch run owed after the merge to main (owner, 2026-11-11: dispatch release.yml on main, no push of the plan branch) | 12ffee5 |
+| readings | dev | Phases 1, 2, 4 windowed readings written | committed with this row |
 | 6: the owner's runs on Linux and Windows | human | not started | |
 
 ### Notes
@@ -364,6 +365,11 @@ for them. The release profile's build time on CI is recorded there too.
   `dist/DXC-LICENSE.txt` are committed instead. The Linux archive builds on `ubuntu-22.04` and is
   checked on `ubuntu-latest` (the lavapipe action needs LLVM 21). The done-when's dispatch run
   waits for main (owner, 2026-11-11).
+- The windowed readings (2026-11-11) were unattended: `run.json`'s `commit` reads `unknown`
+  (no `VXE_COMMIT` locally); the tour's banner, help panel and input hand-over were not seen.
+- The saved report's `tester.log` holds each command line with absolute paths under the home
+  directory (the user name); the plan's Risks say the report holds no paths. Not changed.
+- The zip's entries carry the DOS date 1980-01-01 00:00.
 - `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
   launcher uses, not a parser private to the test.
 
