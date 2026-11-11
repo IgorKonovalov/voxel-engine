@@ -3340,9 +3340,10 @@ pub struct BakeQueue {
     /// Whether the queue withdraws the jobs of chunks the camera has passed (ADR-0048): at a
     /// step with a candidate in the near shell or the view cone ready, a job that is not a
     /// dig's and not a whole re-bake of a full block, whose chunk lies outside the near shell
-    /// and outside the keep cone (the view cone's margin doubled), is taken out of the loop, its
-    /// place freed; its chunk keeps the block it had and is a candidate again. A step with a
-    /// sample count (the pre-roll) withdraws nothing.
+    /// and outside the keep cone (the view cone's margin doubled), and that opened before the
+    /// camera's chunk last changed, is taken out of the loop, its place freed; its chunk keeps
+    /// the block it had and is a candidate again. A still camera withdraws nothing. A step with
+    /// a sample count (the pre-roll) withdraws nothing.
     pub withdraw: bool,
     /// Edit boxes since the last step.
     boxes: Vec<[[i32; 3]; 2]>,
@@ -3361,6 +3362,12 @@ pub struct BakeQueue {
     prepared_bytes: usize,
     /// The camera's chunk at the last step.
     eye: [i32; 3],
+    /// The steps at which the camera's chunk changed, counted since the queue started.
+    eye_moves: u64,
+    /// Each listed job's [`BakeQueue::eye_moves`] when it opened: a job is withdrawn only once
+    /// the camera's chunk has changed since (ADR-0048's Outcome), so a still camera withdraws
+    /// nothing and the queue drains.
+    job_eye: std::collections::HashMap<[i32; 3], u64>,
     faceless: std::collections::HashSet<[i32; 3]>,
     /// Chunks an edit touched while their job ran: the job's block is thrown away.
     stale: std::collections::HashSet<[i32; 3]>,
@@ -3450,6 +3457,8 @@ impl BakeQueue {
             prepared: Default::default(),
             prepared_bytes: 0,
             eye: [0; 3],
+            eye_moves: 0,
+            job_eye: Default::default(),
             faceless: Default::default(),
             stale: Default::default(),
             blocked: Default::default(),
@@ -3829,7 +3838,11 @@ impl BakeQueue {
         self.laps = Laps::new(t0);
         self.laps.lap(S_SETUP);
         self.steps += 1;
-        self.eye = view.eye.map(|v| (v / 64.0).floor() as i32);
+        let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
+        if eye != self.eye {
+            self.eye_moves += 1;
+        }
+        self.eye = eye;
         let gpu = run.gpu;
         self.stats.scanned = 0;
         self.stats.reach_checks = 0;
@@ -3949,6 +3962,7 @@ impl BakeQueue {
         let fades = &mut self.fades;
         let stats = &mut self.stats;
         let job_coarse = &mut self.job_coarse;
+        let job_eye = &mut self.job_eye;
         let dig_open = &mut self.dig_open;
         let reach = &mut self.reach;
         let entered = &mut self.entered;
@@ -3958,6 +3972,7 @@ impl BakeQueue {
         let record = record_words(self.settings.cell);
         let mut place = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let coarse = job_coarse.remove(&coord.0).unwrap_or(false);
+            job_eye.remove(&coord.0);
             let dug = dig_open.remove(&coord.0);
             if stale.remove(&coord.0) || !run.gpu.is_mirrored(coord) {
                 store.release(first, block.len() as u64);
@@ -4669,8 +4684,9 @@ impl BakeQueue {
         if !self.withdraw || view.samples.is_some() {
             return;
         }
-        let (eye, near) = (self.eye, self.near);
+        let (eye, near, moves) = (self.eye, self.near, self.eye_moves);
         let keep = view.half_angle + QUEUE_VIEW_MARGIN_DEG.to_radians();
+        let job_eye = &self.job_eye;
         let passed: std::collections::HashSet<[i32; 3]> = self
             .lp
             .chunks()
@@ -4678,7 +4694,10 @@ impl BakeQueue {
             .filter(|c| {
                 let o = [0, 1, 2].map(|k| c[k] - eye[k]);
                 let full = store.blocks.contains_key(c) && !store.is_coarse(ChunkCoord(*c));
-                !self.dig_open.contains_key(c)
+                // Only a job opened before the camera's chunk last changed: the camera has moved
+                // since, so it can have passed the chunk.
+                job_eye.get(c).is_some_and(|&at| at < moves)
+                    && !self.dig_open.contains_key(c)
                     && !full
                     && !in_near_shell(o, near)
                     && angle_term(o, view.forward, keep, near) > 0.0
@@ -4733,6 +4752,7 @@ impl BakeQueue {
         for w in self.lp.withdraw(|c| passed.contains(&c.0), record) {
             store.release(w.first_word, w.words);
             self.job_coarse.remove(&w.coord.0);
+            self.job_eye.remove(&w.coord.0);
             self.stale.remove(&w.coord.0);
             self.stats.withdrawn += 1;
             self.stats.withdrawn_samples += w.drawn;
@@ -4888,6 +4908,7 @@ impl BakeQueue {
             brick_samples: coarse.then_some(brick_samples),
         });
         self.job_coarse.insert(c, coarse);
+        self.job_eye.insert(c, self.eye_moves);
         Ok(samples)
     }
 

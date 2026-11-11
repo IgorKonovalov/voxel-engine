@@ -937,6 +937,128 @@ fn the_edge_of_the_view_does_not_churn() {
     assert!(out_of_view > 0, "a job's chunk left the view cone");
 }
 
+/// The rock cubes of [`still_rig`]: chunks 0, 1, 2, 6 and 7 of an eight-chunk row.
+const STILL_ROCKS: [i32; 5] = [0, 1, 2, 6, 7];
+
+/// An eight-chunk row with a 32^3 rock cube in chunks 0, 1, 2, 6 and 7 (3 to 5 air), the camera
+/// in chunk 2 looking +x, `near` 0, the coarse pass on, the default order (angle weight 4,
+/// class as a tier), 1024 samples a brick direction and the smallest slice. Once the coarse
+/// passes land, the order's first refinement is chunk 1 behind the camera (score 1 x 3.53)
+/// ahead of chunk 6 in the view (4): a job outside the near shell and the keep cone while a
+/// candidate in the view cone is ready, the patch's state at rest. Steps until chunk 1's
+/// refinement is in the loop and chunk 6 holds its coarse block outside a job, and asserts that
+/// state.
+fn still_rig() -> Option<Q> {
+    let world = world_of([8, 1, 1], AIR);
+    for x in STILL_ROCKS.map(i64::from) {
+        fill(&world, [x * 64 + 16, 16, 16], [x * 64 + 48, 48, 48], ROCK);
+    }
+    fill(&world, [140, 28, 48], [150, 36, 50], ORE);
+    let mut q = rig(
+        world,
+        &Setup {
+            coarse: COARSE,
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 1024,
+                ..counts()
+            },
+            ..Setup::at(ROW_EYE)
+        },
+    )?;
+    let (one, six) = (ChunkCoord([1, 0, 0]), ChunkCoord([6, 0, 0]));
+    let mut n = 0;
+    loop {
+        let st = q.step_with(false);
+        assert_eq!(st.withdrawn, 0, "step {n}: {st:?}");
+        let jobs = q.q().jobs();
+        let store = q.frame.store();
+        if jobs.contains(&one)
+            && store.is_coarse(one)
+            && store.is_coarse(six)
+            && !jobs.contains(&six)
+        {
+            break;
+        }
+        n += 1;
+        assert!(n < MAX_STEPS, "chunk 1's refinement opens: jobs {jobs:?}");
+    }
+    let half = {
+        let [w, h] = q.frame.output_size();
+        bake::view_half_angle(q.camera.vfov, w as f32 / h as f32)
+    };
+    let keep = half + bake::QUEUE_VIEW_MARGIN_DEG.to_radians();
+    let forward = q.camera.basis().0.to_array();
+    assert!(
+        !bake::in_near_shell([-1, 0, 0], 0) && bake::angle_term([-1, 0, 0], forward, keep, 0) > 0.0,
+        "chunk 1 lies outside the near shell and the keep cone"
+    );
+    assert_eq!(
+        bake::angle_term([4, 0, 0], forward, half, 0),
+        0.0,
+        "chunk 6 lies in the view cone"
+    );
+    assert!(
+        q.gpu.is_mirrored(six) && !q.gpu.is_lod(six),
+        "chunk 6 is resident full: its reach is ready in the bounded row"
+    );
+    Some(q)
+}
+
+/// [`still_rig`]'s state, the camera still: every step withdraws nothing. Within `N` steps,
+/// `N` the refinements' samples (at most four chunks of 56 surface bricks, three directions
+/// each, at 1024 samples) over the step's cap floor (16 384), plus 8 steps a job for the
+/// read-back's lag and the quiet box, every chunk of the row holds a full block; the 100 steps
+/// after push no job and scan nothing. A second rig moved one chunk along +x from that state
+/// withdraws chunk 1's job at its next step: the flight's withdrawal is kept.
+#[test]
+fn a_still_camera_drains_and_withdraws_nothing() {
+    let Some(mut q) = still_rig() else {
+        return;
+    };
+    let refinements = (STILL_ROCKS.len() - 1) as u64;
+    let n = (refinements * 56 * 3 * 1024).div_ceil(16_384) + 8 * refinements;
+    let full = |q: &Q| {
+        STILL_ROCKS.iter().all(|&x| {
+            let c = ChunkCoord([x, 0, 0]);
+            q.frame.store().block(c).is_some() && !q.frame.store().is_coarse(c)
+        })
+    };
+    let mut steps = 0;
+    while !(full(&q) && q.q().empty()) {
+        let st = q.step_with(false);
+        assert_eq!(st.withdrawn, 0, "still step {steps}: {st:?}");
+        steps += 1;
+        assert!(
+            steps <= n,
+            "drained within {n} steps: jobs {:?}, {st:?}",
+            q.q().jobs()
+        );
+    }
+    println!("drained after {steps} still steps of at most {n}");
+    for k in 0..100 {
+        let st = q.step_with(false);
+        assert_eq!(
+            (st.withdrawn, st.jobs, st.scanned),
+            (0, 0, 0),
+            "drained step {k}: {st:?}"
+        );
+        assert!(q.q().jobs().is_empty(), "drained step {k} pushes no job");
+    }
+    let Some(mut q) = still_rig() else {
+        return;
+    };
+    q.camera.position.x += 64.0;
+    let st = q.step_with(false);
+    println!("after the move: jobs {:?}, {st:?}", q.q().jobs());
+    assert!(st.withdrawn > 0, "{st:?}");
+    assert!(
+        !q.q().jobs().contains(&ChunkCoord([1, 0, 0])),
+        "chunk 1's job is withdrawn"
+    );
+}
+
 /// A record fading from `from` to `to` over `frames` steps, shown each step: every value word
 /// moves by at most `|to - from| / frames` a step plus one `rgb9e5` step, and the last shows `to`.
 fn assert_fade(what: &str, from: &[u32], shown: &[Vec<u32>], to: &[u32], frames: u32) {
