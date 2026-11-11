@@ -1,8 +1,8 @@
 # ADR-0048: The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed
 
-> **Status:** proposed
+> **Status:** accepted 2026-11-11 (Plan 0060's close), with an Outcome
 > **Date:** 2026-11-10
-> **Related plan(s):** [Plan 0060](../plans/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md)
+> **Related plan(s):** [Plan 0060](../plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md)
 > (builds it; its close accepts this ADR, and the owner's window in its Phase 4 can overturn it).
 > Amends the queue clause of
 > [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)'s
@@ -120,3 +120,29 @@ cheaper and loses no samples; it lost on the owner's words ("cancel it when came
 pick of 2026-11-10) and because a refinement at 4096 (about 1.2 x 10^6 samples) holds tens of
 frames of slice. If Plan 0060's first reading shows the work in flight on passed chunks is a small
 share, the plan stops for the owner before building the withdrawal.
+
+## Outcome (2026-11-11, Plan 0060's close)
+
+Built as decided, with one change to the default: **the class stays the leading key.** Plan 0060 Phase 2's
+stop rule fired (in the streamed cave at `--glide 300` the no-value share of the lighting pixels read 0.80 to
+0.83 under the blended score against 0.76 under the distance order), so the fly-through and
+`QueueOrder::default()` order by the score inside each class (`Refine::Tier`, `W_ANGLE` 4): every chunk with no
+block opens before any refinement, as in ADR-0046. The blended arm (`--queue-weights 4,2`) and the distance
+order stay as comparison flags. The Consequence "ADR-0046's coarse-first rule is given up" therefore does not
+hold for the default.
+
+- **The owner's window (Plan 0060 Phase 4):** "no difference between the options at all (order, angle weight)"
+  at rest, and a very subtle one in flight. The queue bakes 40 to 60 chunks a second on the RTX against about
+  5 000 chunks waiting in view, so the order cannot show. The slice's throughput, not the order, is the limit;
+  Plan 0067 takes it (ADR-0052).
+- **Withdrawal kept on:** "without it everything starts lagging, so keep it." As built, a job is withdrawn only
+  at a sliced step (the pre-roll withdraws nothing, since its coarse pass opens chunks in every direction), and
+  never when its chunk has a dig open or holds a full block.
+- **The result does not move:** the gate's `gpu_queue` tests compare every block with a one-shot bake after a
+  turn, a withdrawal and a dig. A dug chunk's neighbour that differs from a one-shot bake predates this ADR
+  and is in `docs/backlog.md`.
+- **The step's CPU** reads one of two states, about 1 ms and about 9 ms p50, whatever the order (Plan 0060's
+  readings log, Phase 5); the tip equals the base in the same state. Pinning the state and the step's cost are
+  Plan 0067's.
+- **The cone:** about 1 000 of 5 100 in-view waiting chunks in the streamed cave lie in the cone outside the
+  widened frustum. The owner did not name it at the window; the frustum fallback was not built.

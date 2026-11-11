@@ -49,6 +49,7 @@ fn fsr_level_frame() -> Option<(
 /// through the previous view less this frame's jitter and the pixel's centre, within 1e-3
 /// internal pixels.
 #[test]
+#[ignore = "soak"]
 fn motion_vectors_match_the_analytic_reprojection() {
     let Some((device, queue, gpu, mut frame, camera)) = fsr_level_frame() else {
         return;
@@ -678,6 +679,7 @@ fn a_sideways_step_keeps_fsr2s_history() {
 /// the depth clip is 0 at every hit pixel not within one internal pixel of a silhouette (a
 /// neighbour whose view depth differs by more than 5 %, or a miss).
 #[test]
+#[ignore = "soak"]
 fn a_still_camera_has_no_disocclusion() {
     let Some((device, queue, gpu, mut frame, camera)) = fsr_level_frame() else {
         return;
@@ -1213,6 +1215,7 @@ fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
 /// off, and its share of values over 4/255 at most 1.15 percentage points above it (FSR 2
 /// always jitters; the jitter-off image is the stillest one Plan 0030 compared against).
 #[test]
+#[ignore = "soak"]
 fn fsr2_adds_little_flicker_on_a_still_vein() {
     let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
     let Some((off_mean, off_over)) = still_vein_flicker(false, own) else {

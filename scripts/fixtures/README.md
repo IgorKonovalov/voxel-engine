@@ -127,6 +127,18 @@ The other profiles are green here (`quick` and `gpu` are the prefix filter and i
 `gate` has none, `soak` and `full` leave out `reading::`), so the six lines above are the whole
 output.
 
+## `test-times/`: for `test-times.mjs`
+
+```
+node scripts/test-times.mjs scripts/fixtures/test-times/seeded.log
+```
+
+Expect **exit 1 and exactly one test over the line**, printed as
+`12.0 flythrough::gpu_castle_golden castle_gate_golden -> over the 10 s line: ...`. The seeded
+log is a nextest `--status-level pass` run of four tests: one CPU test at 0.012 s, one at 9.950 s
+under the line, one at exactly 10.000 s (on the line, not over it) and the one at 12.000 s. With
+`--over 60`, CI's line, it exits 0.
+
 ## `plan-size/`: for `check-plan-size.mjs`
 
 ```

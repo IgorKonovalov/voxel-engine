@@ -15,7 +15,7 @@ agent memory).
 > **Stack (ADR-0001):** Rust stable pinned in `rust-toolchain.toml`, edition 2024, `wgpu` +
 > WGSL compute ray marching, `winit` shell, Linux + Windows. Canonical commands: `cargo build`,
 > `node scripts/test-changed.mjs --profile quick|gpu` per phase (the changed crates' tests;
-> gpu under the perf lock), `cargo nextest run --profile gate` at a plan's tip and close
+> gpu `--binaries <names>` under the perf lock), `cargo nextest run --profile gate` at a plan's tip and close
 > (`.config/nextest.toml`; `soak` (`--run-ignored only`) and `full` (`--run-ignored all`)
 > only when the owner asks; bare `run` is the gate tier),
 > `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
@@ -93,6 +93,7 @@ scripts/
 ├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
+├── loc.mjs                    # lines of code, tests, comments, WGSL and docs per crate; the largest files
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
 .github/workflows/ci.yml  # build, nextest (gate tier), doctests, clippy, fmt, hooks, doc gates; cargo-deny
 .github/workflows/soak.yml  # the weekly soak tier

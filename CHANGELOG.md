@@ -6,6 +6,14 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-11-11
+
+Plan 0060 (a minor bump: public API added; ADR-0048 accepted with an Outcome). The baked light's live queue orders its candidates by a score of distance and angle to the view, with the class (no block before a refinement) kept as the leading key after the blended score raised the no-value share in a fast flight, and withdraws the jobs of chunks a flight has passed. At the owner's window the order made no visible difference (the slice's throughput limits the far light, Plan 0067's); the withdrawal stays on ("without it everything starts lagging"). Blocks stay bit-identical to a one-shot bake under every order and after a withdrawal. The queue step's CPU equals the base's in the same of its two states (about 1 and 9 ms p50 on the RTX).
+
+- **Added: `bake::{QueueOrder, Refine, QUEUE_ANGLE_WEIGHT, QUEUE_REFINE_WEIGHT, QUEUE_VIEW_MARGIN_DEG, angle_term, queue_score, in_near_shell, view_half_angle, view_half_angles, VIEW_SHELL, VIEW_IN, VIEW_OUT}`, `QueueView::{half_angle, frustum}`, `BakeQueue::{order, withdraw, census_every_opening, view_ages, job_words, take_angle_needs, request_census}`, `QueueStats`' view, passed and withdrawn counters, `Frame::bake_queue_mut`.**
+- **Changed: `BakeQueue` opens by `QueueOrder::default()` (the score at angle weight 4, the class as a tier); a sliced step withdraws passed jobs, the pre-roll none.**
+- **Added (fly-through): `--queue-order score|distance`, `--queue-weights A,R|A,tier`, `--queue-withdraw on|off`, `--queue-census` (a reading), keys `1` (order), `2`/`3` (halve, double the angle weight), `4` (withdrawal), the HUD's queue row, the `bake queue view:` stdout line.**
+
 ## [0.44.0] - 2026-11-09
 
 Plan 0059 (a minor bump: public API removed and changed, the emissive light replaced; ADR-0046 and ADR-0047 accepted with Outcomes, ADR-0043's table superseded). Look first, cut later: a reference baked with no budget, the owner's yes, then cuts one at a time by eye down to a brick-level store. The owner's verdict at the window: "of course backet, table as a fallback maybe". Emissive light is baked per chunk into one record a brick (8-voxel cell, 4096 samples a brick direction, a bilinear read), filled by a live queue nearest first, near chunks before the first frame, a coarse pass, fades, and re-baked by digs in three rings. Glass filters by path length and reflects its brick's light. The per-face table and its machinery are deleted. On the RTX at 2530 x 1378, a dig settles in 7 frames with none over 33 ms. The cross-adapter difference is at most 0.204 levels. **Recorded misses:** the 3 s first frame (2.2 to 11.6 s at the window), and the 3.0 ms denoise line, which the a-trous pass misses alone in either light. Goldens re-blessed once on lavapipe.
