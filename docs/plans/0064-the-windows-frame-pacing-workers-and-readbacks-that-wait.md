@@ -1,6 +1,8 @@
 # 0064: The window's frame: what paces it, workers that leave no core, and readbacks that wait
 
-> **Status:** in-progress (owner go 2026-11-10); every phase implemented, awaits the close review
+> **Status:** in-progress (owner go 2026-11-10); amended 2026-11-11 (owner): Phase 4b fixes the
+> sync's time budget before the close review; Phase 5's windowed reading taken at the RTX only,
+> the Radeon's window recorded as unread
 > **Created:** 2026-11-10
 > **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's frame and section 5's streaming line.
@@ -189,6 +191,35 @@ reading on the dev box also says "RTX rendering, iGPU compositing".
     default is kept only if p99 is lower and residency p95 is within the spread; otherwise it
     is reverted and the log says so.
 
+### Phase 4b: A time budget that bounds the whole sync
+- **Owner skill:** dev
+- **Amended 2026-11-11 (owner).** Phase 4's time budget made residency p95 8.2 to 8.8 s against
+  261 to 301 ms without it (RTX, the autopilot; readings log, Phase 4), and 2, 4 and 8 ms all
+  missed. Read in the code: `select` sizes chunks up to the byte budget before `upload` reads the
+  clock, and the deferred chunks are sized again at every later sync, so the budget bounds only
+  the upload's tail and the work left grows. Phase 4 set the default to no budget; the owner
+  chose to fix the mechanism in this plan rather than leave it off or drop it.
+- **What:**
+  - The time budget bounds the whole sync: selection reads the clock too, and stops sizing
+    once the budget is spent, not only once the byte budget is.
+  - A chunk sized and then deferred is not sized again: its size (or its packed words) is kept
+    with it until it uploads or its chunk changes (an edit, a demotion, an eviction drops it).
+  - The default is the smallest budget that meets the done-when's residency rule, read from a
+    sweep; if none does, the default stays no budget and the log says why.
+- **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `crates/vxe-render/tests/gpu_mirror.rs`,
+  `apps/flythrough/src/main.rs` (the default), `docs/plans/logs/0064.md`.
+- **Done when:**
+  - `a_sync_stops_at_its_time_budget` also holds when the test's clock advances in selection:
+    a sync whose budget is spent while sizing uploads what it has sized within the budget and
+    defers the rest, and the deferred chunks are not sized again at the next sync (a counter
+    the test reads). The slot words stay byte-identical to an unbudgeted sync.
+  - A chunk edited while deferred uploads its edited words, not the kept ones (a test).
+  - The world's pinned hashes and every golden are unchanged.
+  - The autopilot of `docs/nfr.md` section 5's protocol, RTX, three alternated rounds against no
+    budget, at 2, 4 and 8 ms: residency p95 within the no-budget arm's spread plus 10 % (a
+    proposal), and streaming CPU p99 and frame CPU p99 read. The default is the smallest budget
+    that meets the residency rule and lowers streaming p99 outside the spread; otherwise none.
+
 ### Phase 5: The close's readings
 - **Owner skill:** dev
 - **What:** the readings of "Budgets", headless and windowed, into `docs/nfr/02-frame-budget.md`
@@ -196,7 +227,10 @@ reading on the dev box also says "RTX rendering, iGPU compositing".
 - **Files touched:** `docs/plans/logs/0064.md`, `docs/nfr/02-frame-budget.md`, `docs/nfr.md`
   (section 5's residency line, if it moved).
 - **Done when:** every row of "Budgets" has a before (Phase 1's start commit) and an after,
-  on both adapters where the row is a GPU or frame figure.
+  on both adapters where the row is a GPU or frame figure. Amended 2026-11-11 (owner): the
+  window's wall-frame row is read on the RTX only (the owner's session at the tip,
+  `live/session64b.sh`); the Radeon's window is recorded as unread. Phase 4b's readings refresh
+  the streaming and residency rows if its default is a budget.
 
 ## Data shapes
 
