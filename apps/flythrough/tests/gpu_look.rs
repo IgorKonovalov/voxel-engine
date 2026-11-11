@@ -162,6 +162,7 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
 
 /// Mode A: both smoothed normals cut the cavity's normal error and move no hit.
 #[test]
+#[ignore = "soak"]
 fn smoothed_normals_cut_the_normal_error_and_move_no_hit() {
     let Some((face_error, face_silhouette)) = metrics(NormalMode::Face) else {
         return;
@@ -224,6 +225,7 @@ fn smoothed_normal_goldens() {
 /// Mode B: contour planes halve the pillar's silhouette error and bring the cavity's normal
 /// error under 12 degrees.
 #[test]
+#[ignore = "soak"]
 fn contour_planes_cut_the_silhouette_and_normal_errors() {
     let Some((_, face_silhouette)) = metrics(NormalMode::Face) else {
         return;
@@ -239,6 +241,7 @@ fn contour_planes_cut_the_silhouette_and_normal_errors() {
 /// The axis fraction `A`: face mode's normals are all axes; contour's is printed,
 /// and contour still meets the cavity normal error and silhouette guardrails.
 #[test]
+#[ignore = "soak"]
 fn axis_fraction_of_face_and_contour() {
     let Some(face) = guardrails_of(NormalMode::Face, false) else {
         return;
@@ -270,6 +273,7 @@ type Scene<'a> = (&'a World, &'a [(&'a str, LightParams)], bool);
 /// render byte for byte over a mirror with the field's band slots, over one shard and over two
 /// to four.
 #[test]
+#[ignore = "soak"]
 fn band_slots_leave_the_face_goldens_byte_for_byte() {
     if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
         return;
@@ -1442,6 +1446,7 @@ fn records_differ(a: &(Vec<[f32; 4]>, Vec<[u16; 4]>), b: &(Vec<[f32; 4]>, Vec<[u
 /// reads the same hit position and record at every pixel split and unsplit; with every row that
 /// is not translucent crisp, the field look reads `face`'s at every pixel, split and unsplit.
 #[test]
+#[ignore = "soak"]
 fn the_split_walk_moves_no_hit_record() {
     let Some((device, queue)) = software_device(256 << 20) else {
         return;

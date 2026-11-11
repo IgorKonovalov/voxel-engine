@@ -30,7 +30,7 @@ The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), n
 
 ### The live queue's order and cancellation, after Plan 0059
 
-Taken 2026-11-10 by [Plan 0060](plans/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
+Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
 
 
 ## Engine mechanisms
@@ -147,6 +147,22 @@ the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 005
 
 Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): ADR-0034's dated Outcome is written at its close.
 
+### Far light on a slow adapter: a bake budget per second, and no black for missing light
+
+Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
+
+### A dug chunk's settled light differs from a one-shot bake
+
+Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never_withdrawn`). In that test's rig, after the dig settles, chunk [2, 0, 0] differs from a one-shot bake of the edited world. Chunks 0, 1 and 3 to 7 match, and so does the dug chunk the test now compares. The difference reads the same under the score order with withdrawal on, under `distance` with withdrawal off, and at the default `edit_ms` (the lane's `live/p3-digexp.log` and `p3-digexp2.log`, untracked). So it is not the withdrawal and not the order. It predates Plan 0060 by that reading, but it was not read at the base. A guess, not isolated: a neighbour chunk whose light reads the dug chunk is not re-baked after the dig, or is re-baked before the dig's own job lands. What it takes: a headless test that digs, settles and compares every chunk with a one-shot bake, read at main first, then a fix in the live queue's dirty-neighbour rule. Added at the owner's call (2026-11-11).
+
+### The near shell's cost in a flight, and the streaming edge
+
+Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its close (owner's amendment). In the streamed cave at `--glide 300` the near shell (Chebyshev 2, baked at the full count) takes 98 to 99 % of the slice, and about 0.70 of the in-view chunks still waiting have their reach not ready (the mirror's edge), so neither the order nor the withdrawal can light them. What it would take: a shell baked coarse first in a flight, or a smaller shell at speed; and a streamer that loads the light radius ahead of the view. Pick up with Plan 0067's bake budget by time, which reads the same flight (`docs/plans/logs/0060.md`, Phase 1).
+
+### A stale soak golden: `showcase_hall_golden_is_lit_by_its_four_ores`
+
+Read 2026-11-11 at Plan 0060's close review: the soak test fails with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c, so it predates Plan 0060. `showcase_hall.png` was last blessed at Plan 0057 (2de29c6, the table light), before Plan 0059 replaced the light. The weekly soak workflow should be failing on it. What it takes: re-bless it on lavapipe under the baked light after a look at the image, and re-read its luma band and hue classes. Pick up at the next plan that touches the goldens, or as a chore.
+
 ## Performance: the static review of 2026-11-10
 
 Parked 2026-11-10. The owner asked why the window reads 30 to 50 fps with little on screen; a
@@ -164,7 +180,8 @@ the baked light's shader waste and the queue's scan to
   the line moves or a profile owns it: the render-profile plan's call.
 - **The bake's slice and the queue's step have no line.** 1.5 ms of GPU a frame while the queue
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
-  line at the next `docs/nfr.md` revision; Plan 0060's close is the natural place.
+  line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
+  states (about 1 and 9 ms p50), and Plan 0067 pins the state and reads the step.
 - **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 bounds the p99 and trims
   the p50; the upload's copy into mapped memory stays (see "Slot words packed on the workers").
 - **The frame ledger's re-base**, owed since 2026-11-03: it still reads `own`, the table light

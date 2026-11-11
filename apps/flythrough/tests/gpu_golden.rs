@@ -119,6 +119,7 @@ fn differing_bytes(a: &[u8], b: &[u8]) -> usize {
 /// 384 voxels) and with the mask tests alone off, on one device, and the image with every
 /// skip on is the golden file's bytes, `lod.png` included.
 #[test]
+#[ignore = "soak"]
 fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
@@ -554,6 +555,7 @@ fn lod_golden_walks_the_ring_at_level_1() {
 /// r_full = 0 forced level 3. A chunk at squared distance 9 with r_full = 1 is walked at
 /// level 2.
 #[test]
+#[ignore = "soak"]
 fn the_lod_level_follows_the_distance_to_the_camera_chunk() {
     let world = lod_scene();
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -1179,6 +1181,7 @@ fn darkened(shadowed: &[u8], plain: &[u8]) -> usize {
 /// walk darkens at least as many pixels as the full walk. An interior hole's light lands on
 /// wall the slab hides from the camera beside the lamp.
 #[test]
+#[ignore = "soak"]
 fn the_coarse_shadow_walk_closes_a_one_voxel_hole() {
     use vxe_render::ShadowWalk::{Coarse, Full};
     let Some([full_solid, plain]) = slab_renders(&slab_world(None), Full) else {
@@ -1545,6 +1548,7 @@ fn level_spawn_camera() -> Camera {
 /// scaled by `s` under a manual exposure of `1 / s` land, for `s` = 1/64 and 64, within 1/255
 /// of `s` = 1 in every pixel.
 #[test]
+#[ignore = "soak"]
 fn the_lighting_targets_are_scale_free() {
     let source = flythrough::cave::CaveSource::new(
         1,

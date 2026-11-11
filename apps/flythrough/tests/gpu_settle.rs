@@ -43,6 +43,7 @@ fn window_frame(level: &stillness::VeinLevel, lamp: bool) -> Frame {
 /// fills from zero); switching it off runs no probe pass, so no frame traces a ray or opens a
 /// window.
 #[test]
+#[ignore = "soak"]
 fn the_lamp_toggle_opens_the_light_window() {
     let Some(level) = vein_level() else {
         return;
@@ -83,6 +84,7 @@ fn the_lamp_toggle_opens_the_light_window() {
 /// A 90-degree yaw over 10 frames with the lamp on leaves the light-change window closed: the
 /// lamp's pose is not in the window's key (the gap the settle spike reads).
 #[test]
+#[ignore = "soak"]
 fn a_turn_with_the_lamp_on_opens_no_window() {
     let Some(level) = vein_level() else {
         return;
@@ -593,6 +595,7 @@ fn traced_probe(
 /// every probe's texels and state are bit-identical across the next 64 encoded frames, and a
 /// probe in reach with light in it reached the freeze.
 #[test]
+#[ignore = "soak"]
 fn a_still_lamp_freezes_the_channel() {
     let Some(level) = vein_level() else {
         return;
@@ -633,6 +636,7 @@ fn a_still_lamp_freezes_the_channel() {
 /// them (blending at `h_move`, its age restarting at 1) and keeps a probe beyond the reach
 /// bit-identical (never listed), and the near probe freezes again once the lamp holds still.
 #[test]
+#[ignore = "soak"]
 fn a_lamp_step_moves_the_probes_in_reach_only() {
     let Some(level) = vein_level() else {
         return;
@@ -704,6 +708,7 @@ fn a_lamp_step_moves_the_probes_in_reach_only() {
 
 /// A probe inside rock keeps its texels and its state bit-identical over 64 frames.
 #[test]
+#[ignore = "soak"]
 fn an_inside_probe_is_not_traced() {
     let Some(level) = vein_level() else {
         return;

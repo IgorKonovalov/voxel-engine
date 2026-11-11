@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0067** (ADRs are a separate sequence; next free there is **0052**).
+**Next free number: 0068** (ADRs are a separate sequence; next free there is **0054**).
 
 ## Active roster
 
@@ -19,13 +19,12 @@ state from `git log`. Completed plans move to `done/`.
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | approved | Code health. After Plan 0058; Phases 1, 6, 7 may run beside the drafts. Phase 0 re-inventories. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health. After Plan 0044, last before M10. Phase 0 re-measures; the architect confirms the seams. |
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | approved | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0061; re-read Phases 1-2 at its tip. |
-| [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: one score of distance and angle, tuned by eye; passed jobs withdrawn | approved | M2, ADR-0048 (proposed). Amended 2026-11-10. First in the order; 0061's Phase 1 beside it. |
 | [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | approved | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
 | [0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) | The window's frame: what paces it, workers that leave no core, readbacks that wait | approved | Code health. Phase 1 a spike, beside 0060; the rest after it. Takes 0044's Phase 2. |
-| [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | approved | Code health. After 0060 and 0064, before 0061's Phase 2; only if 0064's spike confirms. |
-| [0066](0066-test-cost-a-10-s-soak-line-and-named-gpu-binaries-per-phase.md) | Test cost: a 10 s soak line, and the gpu binaries a phase names | approved | Harness chore. Side lane beside 0060; touches no render source. Gate under 12 min is its done-when. |
+| [0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: atomics per pixel, a filter of zeros, a scan per frame | approved | Code health. After 0060 and 0064, before 0061's Phase 2. Phase 6 moved to 0067 (2026-11-11). |
+| [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | approved | M2, ADR-0052, ADR-0053. After 0061, ahead of 0058; Phase 1 may run beside 0061. Takes 0065's Phase 6. |
 <!-- roster:end -->
 
 ## Sequence
@@ -33,16 +32,25 @@ state from `git log`. Completed plans move to `done/`.
 The order the active plans run in (owner, 2026-11-10, set at the review of every active plan).
 Each starts on main after the one before it closes, unless its line says otherwise.
 
-1. **Plan 0060**, the live queue. Plan 0061's Phase 1 (readings only) and Plan 0064's Phases 1
-   and 2 (the pacing spike and the owner's pick) may run beside it.
+1. **Plan 0060**, the live queue: closed 2026-11-11 (v0.45.0). Plan 0061's Phase 1 (readings only) and Plan
+   0064's Phases 1 and 2 (the pacing spike and the owner's pick) ran beside it.
    - **Plan 0064**, the window's frame, from its Phase 3 once 0060 has merged (owner,
      2026-11-10). If its Phase 1 reads free pacing no better, it stops and 0065 waits for the
      architect.
    - **Plan 0065**, the baked light's waste, after 0064 (owner, 2026-11-10).
-   - **Plan 0066**, test cost, as a side lane from now (owner, 2026-11-10). On the same day
-     the look-driven plans (0058, 0061, 0032 to 0037) marked their phases before the window as
-     exploration: image tests are written after the pick, in each plan's last dev phase.
+   - On 2026-11-10 the look-driven plans (0058, 0061, 0032 to 0037) marked their phases
+     before the window as exploration: image tests are written after the pick, in each plan's
+     last dev phase.
 2. **Plan 0061**, antialiasing, from its Phase 2 once 0065 has merged.
+   - **Plan 0067, the frame's CPU** (approved 2026-11-11, owner go with the defaults on its open
+     points), after 0061 and ahead of 0058 (owner, 2026-11-11, after Plan 0060's and 0064's
+     windows: "we are not there - either lagging too much, or the picture is unacceptable";
+     "address performance next after this set of plans"). Its Phase 1 is readings only and may
+     run beside 0061's Phase 2 once 0064 and 0065 have merged. It takes Plan 0065's Phase 6 (the
+     queue's step) and the backlog's per-second bake budget and missing-light fallback (a
+     neighbour's or parent's light, owner 2026-11-11; ADR-0052 and ADR-0053 accepted the same
+     day); the Radeon's hit and FSR 2 passes (26 and 18.5 ms at the window) stay with 0065 and
+     the profiles plan (step 6).
 3. **Plan 0058**, dynamic lights. The architect re-reads its Phases 1 and 2 against 0061's tip
    before its lane starts, since both rewrite `temporal.wgsl`, `composite.wgsl` and `Lighting`.
    **The render settings and profiles plan is drafted before this lane starts** (owner,
@@ -72,6 +80,8 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0060](done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue: a view score with the class as a tier, passed jobs withdrawn; the owner kept the withdrawal, saw no change from the order | 2026-11-11, v0.45.0 |
+| [0066](done/0066-test-cost-a-10-s-soak-line-and-named-gpu-binaries-per-phase.md) | Test cost: the soak line at 10 s on lavapipe, 26 tests to soak, gate 505 s; `--binaries` per phase; CPU vectors stay in the gate | 2026-11-11, no bump |
 | [0059](done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md) | Loaded light: the owner picked the bake; a brick store at 8/4096 filled by a live queue and re-baked by digs; the table deleted | 2026-11-09, v0.44.0 |
 | [0057](done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md) | Steady light: the table holds still, the lamp channel stands; the owner moved to a look-first bake, vein bars left to it | 2026-11-05, v0.43.0 |
 | [0056](done/0056-aliasing-spike-what-moves-on-the-final-image.md) | The aliasing spike: FSR 2's jumps are jitter on silhouettes, the dots light on creases; FSR 2 at 1.5 stays, far normal `[1, 2]` picked by eye (next plan) | 2026-11-04, v0.42.0 |
