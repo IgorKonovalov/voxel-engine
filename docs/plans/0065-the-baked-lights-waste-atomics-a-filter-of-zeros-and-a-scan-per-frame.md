@@ -192,20 +192,16 @@ stored bake once; the phase's log says so.
     says what reads it.
   - FSR 2's passes are read against Phase 1's base on both adapters.
 
-### Phase 6: The queue's step scans only when the mirror moved
+### Phase 6: The queue's step scans only when the mirror moved (moved to Plan 0067)
 - **Owner skill:** dev
-- **What:** the `gone` filter and the six `retain`s run only when `moved` is true or the sync
-  reported an evicted or demoted chunk; `open` rebuilds its candidate list only then or when
-  the view's chunk changed, and re-scores the list it holds otherwise.
-- **Files touched:** `crates/vxe-render/src/bake.rs`, `apps/flythrough/tests/gpu_queue.rs`.
-- **Done when:**
-  - `a_still_step_scans_nothing` (lavapipe, about 5 s, an estimate): after the queue drains
-    on a still camera, 100 further steps read `QueueStats`' new `scanned` counter at 0;
-    evicting one chunk makes the next step scan and free exactly that chunk's block.
-  - Every test of `gpu_queue.rs` passes unchanged, and the order of jobs a seeded flight
-    opens is identical to the start commit's (the test that pins the order, or a new one that
-    records it before the change).
-  - The step's CPU is read at rest and walking against Plan 0060's close figure.
+- **What:** struck here 2026-11-11 (architect): the step is the frame's largest CPU item in
+  Plan 0060's window (7.0 ms p50 at rest, 10.3 in flight, against the 1.0 ms this plan was
+  written to), so it belongs with the profile that attributes it.
+  [Plan 0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)'s
+  Phase 2 carries this phase's mechanism and its `a_still_step_scans_nothing` test as written,
+  with a reach cache added. Nothing to do in this plan; the log row reads "moved".
+- **Files touched:** none.
+- **Done when:** nothing; the row is marked moved when Phase 7 lands.
 
 ### Phase 7: The close's readings
 - **Owner skill:** dev
@@ -230,7 +226,7 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 | §2 denoise line, 3.0 ms | a-trous 2.96 to 6.95 ms RTX, 4.26 to 10.85 ms RENOIR, full tier | lamp off or still: most of the pass gone; lamp moving: unchanged | the same |
 | §2 primary line, the hit pass | hall 4.21 ms at `2..6`, 3.07 ms at `1..2` | the gap between the two ranges mostly closed in halls; the vein unchanged | the same, both ranges |
 | §2 upscale line, 1.5 ms (over) | FSR 2 2.93 to 3.15 ms RTX | lower by 0.2 to 0.5 ms; still over | the same |
-| The queue's step (no line) | 1.0 ms p50 at rest (Plan 0059's fix pass) | under 0.1 ms at rest; walking unchanged or lower | the autopilot and a still run |
+| The queue's step (no line) | 1.0 ms p50 at rest (Plan 0059's fix pass); 7.0 ms in Plan 0060's window | moved to Plan 0067 with Phase 6 (2026-11-11) | Plan 0067's Budgets |
 | §3 `frame_bytes` | the start commit's figure | minus 27 890 720 B at the window if Phase 5 frees the target | asserted in `gpu_fsr2.rs` |
 
 ## Risks & open questions
@@ -270,7 +266,7 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 | 3: the a-trous | dev | not started | |
 | 4: the far normal and the pool read | dev | not started | |
 | 5: FSR 2 | dev | not started | |
-| 6: the queue's step | dev | not started | |
+| 6: the queue's step | dev | moved to Plan 0067 (2026-11-11) | |
 | 7: the close's readings | dev | not started | |
 
 ### Notes
