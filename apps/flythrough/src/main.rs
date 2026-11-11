@@ -37,7 +37,8 @@
 //! keys and `T` resumes the path from its nearest point. The banner shows the mode always
 //! (`benchmark 23 s / 37 s`). `--report DIR` writes `DIR/run.json` at exit
 //! (`flythrough::report`). `--tester` leaves movement, look, the dig, `F1` (a help panel), `T`
-//! and `Esc` and turns every other key off, the stats HUD among them.
+//! and `Esc` and turns every other key off, the stats HUD among them. `--check-args` parses the
+//! arguments, prints `flythrough: arguments ok` and exits 0, opening nothing.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
 //! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
 //! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
@@ -599,6 +600,9 @@ struct Args {
     path_mode: PathMode,
     /// `--report DIR`: where the path run writes `run.json`.
     report: Option<std::path::PathBuf>,
+    /// `--check-args`: parse the arguments, print `arguments ok` and exit 0 (the tester
+    /// build's launcher test checks its command lines with it).
+    check_args: bool,
     /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
     /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
     tester: bool,
@@ -924,6 +928,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         path_mode: PathMode::Bench,
         report: None,
         tester: false,
+        check_args: false,
     };
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
@@ -1379,6 +1384,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--report" => args.report = Some(value()?.into()),
             "--tester" => args.tester = true,
+            "--check-args" => args.check_args = true,
             "--audio" => args.audio = true,
             "--audio-debug" => {
                 args.audio = true;
@@ -6818,6 +6824,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.check_args {
+        println!("flythrough: arguments ok");
+        return;
+    }
 
     let load_logic = |choice: &LogicChoice| match choice.load() {
         Ok(l) => l,

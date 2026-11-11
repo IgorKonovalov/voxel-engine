@@ -336,8 +336,8 @@ for them. The release profile's build time on CI is recorded there too.
 |---|---|---|---|
 | 1: a camera path through the showcase, and its run.json | dev | done; windowed reading owed (live/readings68.sh) | 2704f51 |
 | 2: paths for the cave and the castle, the tour, and the tester mode | dev | done; bench readings owed (live/readings68.sh) | bffba55 |
-| 3: the system report and Windows readings | dev | done; Windows `peak_rss_bytes` owed to Phase 6 | committed with this row |
-| 4: the launcher window, runs, logs and the zip | dev | not started | |
+| 3: the system report and Windows readings | dev | done; Windows `peak_rss_bytes` owed to Phase 6 | 32ca789 |
+| 4: the launcher window, runs, logs and the zip | dev | done; "run all" reading owed (live/readings68.sh) | committed with this row |
 | 5: the release archives on CI | dev | not started | |
 | 6: the owner's runs on Linux and Windows | human | not started | |
 
@@ -355,6 +355,10 @@ for them. The release profile's build time on CI is recorded there too.
 - Phase 3 adds `.github/workflows/ci.yml`'s `The tester's system report` step (both arms;
   the done-when's Windows step) and `windows-sys` to `apps/flythrough/Cargo.toml`, outside its
   files list; `apps/tester` has a `src/lib.rs`.
+- Phase 4 adds `--check-args` to the fly-through (`apps/flythrough/src/main.rs`, outside its
+  files list; the done-when names it) and `vxe-tester --auto` (not in the plan: run all, save,
+  quit, for the unattended reading); the report's `system.json` comes from a child
+  `vxe-tester --system-json PATH --displays`.
 - `report.rs`'s JSON test round-trips through `flythrough::report::json`, the reader the
   launcher uses, not a parser private to the test.
 

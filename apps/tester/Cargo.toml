@@ -20,7 +20,10 @@ name = "vxe-tester"
 path = "src/main.rs"
 
 [dependencies]
+crc32fast.workspace = true
+env_logger.workspace = true
 flythrough = { path = "../flythrough" }
+log.workspace = true
 vxe-app.workspace = true
 vxe-render.workspace = true
 

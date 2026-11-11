@@ -3,4 +3,7 @@
 //! tester sends back by hand. Its parts live here so the tests reach them; `main.rs` is the
 //! binary `vxe-tester`.
 
+pub mod menu;
+pub mod run;
 pub mod system;
+pub mod zip;

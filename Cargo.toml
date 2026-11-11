@@ -49,6 +49,8 @@ unimplemented = "warn"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 # The audio output stream (ADR-0006): ALSA on Linux, WASAPI on Windows.
 cpal = "=0.18.2"
+# The tester's zip writer's CRC-32 per entry, at the version the lockfile already carries.
+crc32fast = "=1.5.2"
 criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
 env_logger = { version = "=0.11.11", default-features = false }
 # The probe component's entropy source: what a logic crate reaching for randomness would use.

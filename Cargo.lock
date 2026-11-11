@@ -3213,7 +3213,10 @@ dependencies = [
 name = "vxe-tester"
 version = "0.47.0"
 dependencies = [
+ "crc32fast",
+ "env_logger",
  "flythrough",
+ "log",
  "vxe-app",
  "vxe-render",
  "windows-sys 0.61.2",

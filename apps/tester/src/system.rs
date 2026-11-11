@@ -386,3 +386,38 @@ mod os {
         }
     }
 }
+
+/// The displays `winit` reports: each monitor's size, refresh and scale, read from an event
+/// loop that opens no window and exits at once. `None` where no event loop starts (no display
+/// server). One event loop per process: the launcher asks a child of itself for this.
+pub fn displays() -> Option<Vec<Display>> {
+    use vxe_app::winit::application::ApplicationHandler;
+    use vxe_app::winit::event::WindowEvent;
+    use vxe_app::winit::event_loop::{ActiveEventLoop, EventLoop};
+    use vxe_app::winit::window::WindowId;
+
+    struct Probe(Option<Vec<Display>>);
+
+    impl ApplicationHandler for Probe {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            self.0 = Some(
+                event_loop
+                    .available_monitors()
+                    .map(|m| Display {
+                        size: [m.size().width, m.size().height],
+                        refresh_mhz: m.refresh_rate_millihertz(),
+                        scale: m.scale_factor(),
+                    })
+                    .collect(),
+            );
+            event_loop.exit();
+        }
+
+        fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
+    }
+
+    let event_loop = EventLoop::new().ok()?;
+    let mut probe = Probe(None);
+    event_loop.run_app(&mut probe).ok()?;
+    probe.0
+}
