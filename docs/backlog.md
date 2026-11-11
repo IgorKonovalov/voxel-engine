@@ -130,6 +130,10 @@ the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 005
 
 Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): ADR-0034's dated Outcome is written at its close.
 
+### Far light on a slow adapter: a bake budget per second, and no black for missing light
+
+Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`). On the RTX the order and angle weight made no visible difference: about 5 000 in-view chunks wait and the queue bakes 40 to 60 a second, so the far caves stay coarse whatever the order. On the Radeon (RADV RENOIR, window size, 15 fps) the distant caves were still black after several seconds: the store held 526 bricks with 36 932 missing. The bake's slice is per frame (1.5 ms), so a 66 ms frame gets about a quarter of the RTX's bake time a second, and a brick with no light value renders black. Owner, 2026-11-11: the architect drafts a short plan after Plan 0060 closes, covering a bake budget per second rather than per frame, and a non-black fallback for missing light.
+
 ### A dug chunk's settled light differs from a one-shot bake
 
 Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never_withdrawn`). In that test's rig, after the dig settles, chunk [2, 0, 0] differs from a one-shot bake of the edited world. Chunks 0, 1 and 3 to 7 match, and so does the dug chunk the test now compares. The difference reads the same under the score order with withdrawal on, under `distance` with withdrawal off, and at the default `edit_ms` (the lane's `live/p3-digexp.log` and `p3-digexp2.log`, untracked). So it is not the withdrawal and not the order. It predates Plan 0060 by that reading, but it was not read at the base. A guess, not isolated: a neighbour chunk whose light reads the dug chunk is not re-baked after the dig, or is re-baked before the dig's own job lands. What it takes: a headless test that digs, settles and compares every chunk with a one-shot bake, read at main first, then a fix in the live queue's dirty-neighbour rule. Added at the owner's call (2026-11-11).
