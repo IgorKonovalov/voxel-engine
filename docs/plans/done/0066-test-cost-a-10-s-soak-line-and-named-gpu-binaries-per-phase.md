@@ -1,6 +1,8 @@
 # 0066: Test cost: a 10 s soak line, and the gpu binaries a phase names
 
-> **Status:** approved (owner go 2026-11-10; side lane beside Plan 0060)
+> **Status:** done 2026-11-11. The soak line is 10 s on lavapipe, 26 gate tests moved to soak,
+> the gate read 505 s against its 12 min budget, and `--binaries` names a phase's gpu binaries; the
+> two CPU generation vectors stay in the gate (owner). No version bump (harness chore).
 > **Created:** 2026-11-10
 > **Milestone:** none (harness chore; `docs/nfr.md` section 7)
 > **Related ADRs:** none. The rejected alternatives (below, Decision) are a process call, recorded
@@ -45,6 +47,15 @@ Rejected (owner, 2026-11-10): **re-cutting the slow GPU tests to smaller renders
 the gate, but costs a plan of test rewrites and moves their goldens); **a golden-only gate** (every
 other flythrough GPU test to soak, which drops the CPU-visible bars too); **no GPU test per
 phase** (a render phase would reach the tip blind).
+
+> **Amended 2026-11-11 (owner), the close review's two calls.** The owner took the recommended
+> option on both (readings log, Close review):
+> 1. **The four flippers stay in the gate.** A test that read 5.9 to 10.0 s in the first quiet
+>    run and 10.8 to 13.1 s after is not marked (Risks, Load).
+> 2. **`castle_vector` and `showcase_vector` stay in the gate.** The 10 s line applies to the
+>    lavapipe group only; a CPU test runs beside that group and keeps its Windows arm. The
+>    cross-platform generation vectors are not traded for gate time. `docs/nfr.md` section 7
+>    says so.
 
 ## Implementation phases
 
@@ -115,12 +126,20 @@ phase** (a render phase would reach the tip blind).
 > resume notes go to the plan's readings log, `docs/plans/logs/0066.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings log: [logs/0066.md](../logs/0066.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `--binaries`, the 10 s line in the scripts | dev | not started | |
-| 2: Mark the tests over the line, and read the gate | dev | not started | |
+| 1: `--binaries`, the 10 s line in the scripts | dev | done; `CLAUDE.md` canonical-commands line names `--binaries`; fixture `scripts/fixtures/test-times/` | 9359b82 |
+| 2: Mark the tests over the line, and read the gate | dev | 28 tests marked; gate 505 s; done-when 2 not met as stated: 4 tests read over 10 s in gate 2, under it in gate 1, unmarked (question open); soak run narrowed to the 28 | 05a281e |
 
 ### Notes
+
+- Close review major (owner, 2026-11-11): `castle_vector` and `showcase_vector` unmarked, 26
+  soak marks remain (548f4b9).
+- Close review nit: a flag missing its value is the usage error in `test-changed.mjs` (edcc1b1).
+- Close review nit: the stale resume notes deleted from the readings log (committed with this
+  note).
 
 ### Close triggers
 

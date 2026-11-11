@@ -1,15 +1,16 @@
 # 0060: The live queue by the view, nearest first, and withdrawing the work a flight has passed
 
-> **Status:** approved (owner go 2026-11-10), amended 2026-11-10 (review pass)
+> **Status:** done 2026-11-11 (close review: clean; the queue sorts by the score with the class as a tier and withdraws
+> passed work, the owner kept the withdrawal and saw no difference from the order), amended 2026-11-10 (review pass)
 > **Created:** 2026-11-10
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes, emissive voxels
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the emissive light behind "dark scenes, emissive voxels
 > as the light")
 > **Related ADRs:**
-> [ADR-0048](../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
+> [ADR-0048](../../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
 > (proposed; this plan builds it, its close accepts it), which amends the queue clause of
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)'s Outcome.
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)'s Outcome.
 > **Source:** the owner's window of 2026-11-09, Plan 0059 Phase 13 (`docs/plans/logs/0059.md`), parked in
-> [`docs/backlog.md`](../backlog.md) and taken here. Drafted without an interview (orchestrator's instruction);
+> [`docs/backlog.md`](../../backlog.md) and taken here. Drafted without an interview (orchestrator's instruction);
 > the owner answered its four questions on 2026-11-10 (Owner answers, below).
 > **Starts after:** Plan 0059's close (done, v0.44.0). The owner's order (2026-11-10): this plan, then Plan
 > 0061 (antialiasing), then Plan 0058 (dynamic lights), then Plans 0044 and 0045. 0061's Phase 1 (readings
@@ -26,6 +27,14 @@
 > 3. **The view:** the frustum widened by 15 degrees, plus the near shell (as drafted).
 > 4. **Bake speed:** keep the 1.5 ms slice and judge the order first (as drafted).
 
+> **Amended 2026-11-10 (owner), Phase 1's two stop rules.** Both fired (`docs/plans/logs/0060.md`, Phase 1):
+> in the streamed cave about 0.70 of the in-view waiting chunks are `waiting reach`, the near shell takes 98 to
+> 99 % of the slice at `--glide 300`, and the passed samples there are 0.7 to 1.2 % (46 to 84 % in the vein
+> flights, 62 % on the autopilot). Readings taken at load 17 to 44. The owner's answers:
+> 1. **Before Phase 2: build Phase 2 as written.** The score is the lever at rest; the near shell's cost in
+>    flight and the streaming edge are out of this plan and go to `docs/backlog.md` at its close.
+> 2. **Before Phase 3: build the withdrawal** (answer 2 stands), not demote only.
+
 > **Amended 2026-11-10 (review pass, before any code).** The score, the withdrawal and the owner's four
 > answers stand. What changed: the view enters the queue as one half-angle, not a basis and four tangents
 > (Decision, and the note on answer 3 there); Phase 2 says what replaces the class gate and the check caps,
@@ -33,6 +42,20 @@
 > chunks small enough for two jobs to be in the loop at once; every toggle's text has a named test; the
 > tests' file is `apps/flythrough/tests/gpu_queue.rs`; the budgets name the right arms and the line already
 > missed.
+
+> **Amended 2026-11-11 (owner), the queue step's bar.** The base a8b1a2c read p50 about 1.0 ms before a
+> reboot and about 9 ms after it, same scene, source and protocol (readings log, Phase 5 fix pass): p50 follows
+> the share of steps that open, and that share swings between runs for a cause not found. The fixed absolute
+> bar is replaced by an A/B: the tip's queue step p50 and p99 are no worse than the base's read alternated in
+> the same session (two rounds each, the spread between a side's rounds as the tolerance). The opening step's
+> cost (about 9 ms, about 3.4 ms of it rebuilding and sorting the candidates) and the swing move to Plan 0067.
+> The pre-roll no longer withdrawing its own coarse pass (78740af) is accepted without a window check.
+> **Owner, 2026-11-11, at the close review:** the queue step runs in one of two self-sustaining states, about
+> 1 ms p50 (the near shell has outrun the coarse front and one full job is open at a time) and about 9 ms p50
+> (small coarse jobs, an opening nearly every step); the same binary can land in either (readings log, Phase
+> 5, the two states). The A/B bar holds only when both arms read in the same state. The fix pass's A/B had both
+> arms in the 9 ms state (tip 9.0 to 9.3, base 9.2 to 9.4 ms), so the bar is met. No new runs for this plan; the
+> run-to-run swing and pinning the state go to Plan 0067.
 
 ## TL;DR
 
@@ -309,10 +332,11 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 
 - **Section 2, frame.** The slice stays 1.5 ms (`DEFAULT_BAKE_SLICE_MS`, owner answer 4). The queue step's CPU
   per frame: the score adds an angle and a multiply per candidate (up to about
-  17 000 on the streamed cave), so the bar is p50 within 0.1 ms of 1.019 ms and p99 at most 18.65 ms: the
-  higher of Plan 0059's two fix-pass rounds (18.424 and 18.198 ms) plus their spread of 0.226 ms. The 17.284
-  and 17.378 ms in the same table are the arm before that fix pass, not a bound here. A proposal; Phase 5
-  reads it.
+  17 000 on the streamed cave), so the bar is an A/B against the base read alternated in the same session:
+  the tip's p50 and p99 no worse than the base's, within the spread between a side's two rounds (amended
+  2026-11-11, owner; the earlier absolute bar of p50 within 0.1 ms of 1.019 ms and p99 at most 18.65 ms was
+  missed by the base itself in a later session). Phase 5 reads it. The A/B holds only when both arms read
+  in the same state of the queue step (about 1 ms or about 9 ms p50; owner, 2026-11-11, at the close review).
 - **Section 3, memory.** No new buffer; `frame_bytes` unchanged (888 490 396 B), the pool unchanged; a withdrawn
   job's place returns to the pool (asserted in Phase 3).
 - **Section 7, startup.** The line is "time to first frame under 3 s on the dev reference (proposal)", and it
@@ -364,18 +388,73 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings, attempts and resume
-> notes go to `docs/plans/logs/0060.md`.
+> notes go to [`docs/plans/logs/0060.md`](../logs/0060.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The view cone as a reading | dev | not started | |
-| 2: The blended score | dev | not started | |
-| 3: Withdrawing passed work | dev | not started | |
-| 4: The owner's window | human | not started | |
-| 5: The defaults and the close's readings | dev | not started | |
+| 1: The view cone as a reading | dev | done; both stop rules read as firing (readings log, Phase 1); the census and the in-view reach count are Phase 2 tree code | f371e66 |
+| 2: The blended score | dev | done; code and tests at 17a6454 (`wip(render)`, before the owner's answer); the coarse-first stop rule read as firing, so the plain start is `4,tier` (readings log, Phase 2) | 49428d7 |
+| 3: Withdrawing passed work | dev | done; code at 903cbda (`wip(render)`); `withdrawn_samples` counts rounds in flight and the dig test's rig sets `edit_ms` 0 (readings log, Phase 3) | 599dcd5 |
+| 4: The owner's window | human | done 2026-11-11; order and angle weight: no visible difference; withdrawal kept on; step 4 first ran on the RTX (the window ignores `--adapter`), rerun on the Radeon by Mesa's device select (readings log, Phase 4) | 51ad42f |
+| 5: The defaults and the close's readings | dev | done; defaults unchanged in the fly-through (`score 4,tier`, withdrawal on), `QueueOrder::default()` follows them; queue step CPU p50 against the 1.119 ms bar not met by the tip or the base after the fix pass (d5c4532, 78740af; readings log, Phase 5) | 95ce5ac |
 
 ### Notes
 
+- Phase 5's queue-step CPU bar is not met: tip p50 3.290 and 3.392 ms against base a8b1a2c's 1.007 and 1.006 ms
+  (bar 1.119); p99 under its line (readings log, Phase 5).
+- Fix pass on that bar (readings log, Phase 5, the fix pass): d5c4532 prunes the queue's in-view entries at the census
+  instead of every step (1.31 ms a step); 78740af stops the pre-roll withdrawing (it withdrew about 8 400 jobs of its
+  own coarse pass); test `a_pre_roll_step_withdraws_nothing`. After them the A/B reads tip p50 9.290 and 9.009 ms
+  against base 9.268 and 9.175 ms (p99 tip 19.549 and 18.149, base 19.176 and 18.813 ms). The base read 1.007 and
+  1.006 ms before the reboot in the same protocol: the step is about 1 ms with no opening and about 9 ms with one,
+  and p50 follows the share of steps that open, which moves between runs of the same binary.
+- `bake::QueueOrder::default()` changed to the score with the class as the tier, so the library's default equals the
+  fly-through's plain start (Phase 5).
+- `frame_bytes` reads 683 273 268 B on the base and the tip; the plan's 888 490 396 B is not the line this branch's
+  base prints.
+- Followup: the window cannot pick an adapter. The shell ignores `--adapter` outside `--headless` ("the window
+  takes the default adapter"); Phase 4's Radeon step ran only through Mesa's
+  `MESA_VK_DEVICE_SELECT=1002:1638 MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE=1`.
+- Followup: far-light throughput on a slow adapter. The bake gets a per-frame slice (1.5 ms), so at the Radeon's
+  15 fps it gets about a quarter of the RTX's work a second; light the store does not hold yet shows black
+  (Phase 4, 4A: light store 526 bricks, 36 932 missing; owner: "after several seconds distant caves still black").
+  Raised with the owner by the orchestrator; not designed or built here.
+- `the_score_blends_distance_and_the_view` reads 10.463 s in the tip's gate run and 10.405 s in Phase 5's gpu run
+  (both loaded, load 6.7 to 6.9), over the 10 s soak line on lavapipe; not marked `soak`.
+
 ### Close triggers
 
+- Gate at 95ce5ac: `cargo nextest run --workspace --profile gate` exit 0, 736 run, 736 passed, 75 skipped,
+  832.1 s (lavapipe, exclusive perf lock, load 6.9); doctests 7 passed; clippy 0; fmt 0; `cargo deny check` 0;
+  doc, comment, index-row, test-tier and plan-size scripts 0.
+- Queue step CPU per frame, autopilot (RTX 3080 Laptop, 2530 x 1378, FSR 2 at 1.5, `--seed 1`, exclusive perf
+  lock, started under load 1.5), p50 / p99 / max ms: base a8b1a2c 1.007 / 18.318 / 31.443 and 1.006 / 17.670 /
+  38.234; tip 95ce5ac's tree 3.290 / 18.572 / 30.563 and 3.392 / 18.542 / 45.475. After the fix pass, the same
+  protocol, 11:03 to 11:14: base a8b1a2c 9.268 / 19.176 / 28.603 and 9.175 / 18.813 / 23.393; tip 78740af's tree
+  9.290 / 19.549 / 27.585 and 9.009 / 18.149 / 22.979.
+- Gate after the fix pass (78740af's tree): clippy 0, fmt 0, quick tier 176 passed; gpu tier of the changed crates
+  185 run, 185 passed, 71 skipped, 604.8 s (lavapipe, exclusive perf lock, load 5.19: loaded). The full gate tier
+  not re-run.
+- `frame_bytes` (`autopilot: frame targets`): 683 273 268 B on the base and the tip.
+- Section 7's first frame at the vein and the hall: Phase 2's readings (readings log, Phase 2); not re-read here.
+
 ## Followups
+
+Close review, 2026-11-11 (fresh session, the tree at 0a660e7 with main merged; clean):
+
+- **Gate** (lavapipe, exclusive perf lock, 16G cap, 12 build jobs, load 0.89 at the start, 1.86 at the end):
+  `cargo nextest run --workspace --profile gate --no-fail-fast` exit 0, 711 run, 711 passed, 101 skipped, 437 s;
+  doctests 7 passed; clippy 0; fmt 0; `cargo deny check` ok; the doc, comment, index-row, plan-size and test-tier
+  scripts 0. The plan's tests: `gpu_queue` 2.0 to 8.2 s (`the_score_blends_distance_and_the_view` 8.182 s), the
+  CPU ones under 0.02 s. Over the 10 s line: `castle_vector` and `showcase_vector` (CPU, kept in the gate by the
+  owner) and `gpu_bake`'s `a_baked_view_is_final_on_its_first_frame` 12.3 s (read 5.9 to 13.1 s in Plan 0066,
+  not this plan's).
+- **Soak tests of `flythrough` and `vxe-render`:** all run, one fails:
+  `showcase_hall_golden_is_lit_by_its_four_ores` (98.6927 % of pixels over 2/255), the same on the base a8b1a2c:
+  a golden blessed before Plan 0059, in `docs/backlog.md`.
+- **Routed:** the queue step's two states and their swing, and the withdrawal's per-step scan of the full chunks
+  (`BakeQueue::withdraw_passed` builds two sets and a sorted list each step a job is passed), to Plan 0067. The
+  first frame's delta (section 7) was read only loaded, in Phase 2 (vein 9169 ms, hall 3842 ms at load 27); not
+  re-read at the owner's call (no new runs), so the 10 % proposal is unread at a quiet load. The near shell's
+  cost in a flight and the streaming edge are in `docs/backlog.md`.
+

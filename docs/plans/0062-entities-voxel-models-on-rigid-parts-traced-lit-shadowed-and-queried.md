@@ -528,6 +528,10 @@ Architect's calls the owner may overturn: detail 1, 2 or 4 per part; 16 parts an
 side per part; entities absent from the bounce and the bake; the fallback for the world's
 emissive light on an entity; the walker and its keys (`7`, `8`, `Minus`).
 
+6. **The rest offset (owner, 2026-11-11, the architect's recommendation).** A child's rest
+   layout is carried by its `PartPose::t`; `Part` has no rest-offset field (as built in
+   Phase 1, readings log).
+
 The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 
 ## Implementation log

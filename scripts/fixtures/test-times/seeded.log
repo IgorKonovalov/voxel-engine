@@ -1,0 +1,7 @@
+    Starting 4 tests across 2 binaries
+        PASS [   0.012s] (1/4) vxe-world brick::tests::empty_brick_is_air
+        PASS [   9.950s] (2/4) flythrough::gpu_golden golden::under_the_line
+        PASS [  12.000s] (3/4) flythrough::gpu_castle_golden castle_gate_golden
+        PASS [  10.000s] (4/4) flythrough::gpu_look look::on_the_line
+------------
+     Summary [  22.000s] 4 tests run: 4 passed, 0 skipped

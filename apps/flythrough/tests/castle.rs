@@ -80,6 +80,7 @@ fn the_tiles_cover_the_box_in_27_models_of_at_most_256() {
 /// The gate, the wall beside it, the spawn's air and the rock under the floor, and every
 /// stone voxel the generator lists lands in the world as castle stone.
 #[test]
+#[ignore = "soak"]
 fn the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn() {
     let file = castle::castle_vox();
     let src = source(&file);
@@ -113,6 +114,7 @@ fn the_castle_generator_holds_no_floating_point() {
 /// bars, the stair, the crypt, the rock around the dungeon and the gate's torches; and the
 /// kept prefabs' sizes and bytes.
 #[test]
+#[ignore = "soak"]
 fn the_whole_castle_holds_its_parts() {
     let file = castle::castle_vox();
     let placements = castle::castle_prefabs(&file).expect("every index is mapped");
@@ -169,6 +171,7 @@ fn the_whole_castle_holds_its_parts() {
 
 /// Every shot's eye is air with at least 10 voxels of air along each axis both ways.
 #[test]
+#[ignore = "soak"]
 fn every_shot_has_room_around_its_eye() {
     let file = castle::castle_vox();
     let src = castle::castle_source(1, castle::castle_prefabs(&file).unwrap());
