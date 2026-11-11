@@ -2181,6 +2181,16 @@ impl Frame {
         if let Some(q) = self.bake_queue.as_mut() {
             q.coarse_samples = samples;
             q.near = near;
+            q.full_first = Some(near);
+        }
+    }
+
+    /// The live queue's full-first radius ([`crate::bake::BakeQueue::full_first`]): the chunks
+    /// (Chebyshev) around the camera's within which a chunk with no block takes the full count
+    /// directly; `None` gives every such chunk the coarse pass first.
+    pub fn set_bake_full_first(&mut self, radius: Option<i32>) {
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.full_first = radius;
         }
     }
 

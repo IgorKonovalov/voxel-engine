@@ -1811,3 +1811,256 @@ fn a_flight_opens_in_the_start_commit_s_order() {
 
 /// [`a_flight_opens_in_the_start_commit_s_order`]'s recording at the start commit (4bc8100).
 const FLIGHT_ORDER: [i32; 10] = [0, 1, 2, 3, 4, 5, 2, 3, 4, 5];
+
+/// The samples of `c`'s job at `brick_samples` a brick direction: its listed bricks' distinct
+/// directions times the count, as the queue sizes a job.
+fn job_samples(world: &World, c: [i32; 3], brick_samples: u32) -> u64 {
+    let classes = bake::face_classes(world.materials());
+    let faces = bake::list_world_chunk(world, ChunkCoord(c), &classes).expect("the chunk is held");
+    faces
+        .bricks
+        .iter()
+        .map(|(_, keys)| {
+            let mut dirs = [false; 6];
+            for k in keys {
+                dirs[usize::from(k & 7)] = true;
+            }
+            dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
+        })
+        .sum()
+}
+
+/// A slab of `n` x `w` chunks, a 32^3 rock cube in each and an ore patch on chunk 0's.
+fn rock_slab(n: i32, w: i32) -> World {
+    let world = world_of([n, w, 1], AIR);
+    for x in 0..i64::from(n) {
+        for y in 0..i64::from(w) {
+            fill(
+                &world,
+                [x * 64 + 16, y * 64 + 16, 16],
+                [x * 64 + 48, y * 64 + 48, 48],
+                ROCK,
+            );
+        }
+    }
+    fill(&world, [24, 28, 48], [34, 36, 50], ORE);
+    world
+}
+
+/// A row of `n` chunks, a 32^3 rock cube in each and an ore patch on chunk 0's.
+fn rock_row(n: i32) -> World {
+    rock_slab(n, 1)
+}
+
+/// Steps between two advances of [`a_starved_queue_recovers`]'s camera.
+const ADVANCE_STEPS: usize = 5;
+
+/// A slab of 24 x 5 chunks of rock cubes at 1024 samples a brick direction and a coarse pass of 64 (the
+/// live queue's 4096 and 256 scaled down by the same 16), the smallest slice (a step draws the
+/// cap's floor, 16 384 samples), `near` and the full-first radius 2. The camera starts in chunk
+/// [0, 2, 0] looking +x and advances one chunk every [`ADVANCE_STEPS`] steps; the test asserts
+/// that a full job is over two steps' samples, the five chunks entering the near shell at an
+/// advance over the advance's at full and under half of it at coarse, and a coarse job under
+/// one step's. Under `Some(2)`, after 10
+/// advances the near shell holds more chunks with no block than after the first, the last
+/// five advances open no coarse job and some opening is counted starved. Then, from that state
+/// under `None` (the camera held still until the jobs the loop held at the switch end, since
+/// the coarse jobs are planned behind them): the near shell's blank count falls then and at
+/// every advance until 0 and stays 0 for the rest, every opening while a blank candidate waits pushes a coarse job, and no opening
+/// is counted starved.
+#[test]
+fn a_starved_queue_recovers() {
+    const CAP: u64 = 16_384;
+    let Some(mut q) = rig(
+        rock_slab(24, 5),
+        &Setup {
+            coarse: 64,
+            near: 2,
+            slice_ms: 1e-6,
+            pool_bytes: 32 << 20,
+            counts: BakeSettings {
+                brick_samples: 1024,
+                ..counts()
+            },
+            ..Setup::at([32.5, 160.5, 60.5])
+        },
+    ) else {
+        return;
+    };
+    let full = job_samples(&q.world, [3, 0, 0], 1024);
+    let coarse = job_samples(&q.world, [3, 0, 0], 64);
+    let k = ADVANCE_STEPS as u64;
+    println!("a job: full {full}, coarse {coarse} samples; a step {CAP}");
+    assert!(full > 2 * CAP, "a full job outlasts two steps");
+    assert!(coarse < CAP, "a coarse job fits a step");
+    assert!(
+        5 * full > k * CAP && 2 * 5 * coarse < k * CAP,
+        "an advance's entering chunks outlast it at full and take under half of it at coarse"
+    );
+    let shell_blank = |q: &Q| {
+        let cx = (q.camera.position.x / 64.0).floor() as i32;
+        (cx - 2..=cx + 2)
+            .filter(|x| (0..24).contains(x))
+            .flat_map(|x| (0..5).map(move |y| ChunkCoord([x, y, 0])))
+            .filter(|&c| q.frame.store().block(c).is_none())
+            .count()
+    };
+    // A blank candidate: a chunk with no block and no job.
+    let blank_waiting = |q: &Q| {
+        let jobs = q.q().jobs();
+        (0..24)
+            .flat_map(|x| (0..5).map(move |y| ChunkCoord([x, y, 0])))
+            .any(|c| q.frame.store().block(c).is_none() && !jobs.contains(&c))
+    };
+    let mut first = None;
+    let mut coarse_late = 0;
+    for a in 1..=10 {
+        q.camera.position.x += 64.0;
+        let before = q.q().stats().coarse_opened;
+        for _ in 0..ADVANCE_STEPS {
+            q.step_with(false);
+        }
+        if a > 5 {
+            coarse_late += q.q().stats().coarse_opened - before;
+        }
+        let n = shell_blank(&q);
+        println!("full-first 2, advance {a}: {n} blank in the shell");
+        first.get_or_insert(n);
+    }
+    let starved = shell_blank(&q);
+    let st = q.q().stats();
+    assert!(
+        starved > first.unwrap_or(0),
+        "the shell's blank count grows"
+    );
+    assert_eq!(coarse_late, 0, "the last five advances open no coarse job");
+    assert!(
+        st.starved_openings > 0,
+        "an opening is counted starved: {st:?}"
+    );
+    // The switch to `None`, the camera still until the jobs the loop held at the switch
+    // (pushed under `Some(2)`, coarse jobs planned behind them) have ended.
+    q.frame.set_bake_full_first(None);
+    let held = q.q().jobs();
+    for n in 0.. {
+        assert!(n < MAX_STEPS, "the jobs held at the switch end");
+        if !q.q().jobs().iter().any(|c| held.contains(c)) {
+            break;
+        }
+        q.step_with(false);
+    }
+    let after_switch = shell_blank(&q);
+    println!("full-first off, the switch's jobs ended: {after_switch} blank in the shell");
+    assert!(
+        after_switch < starved,
+        "the shell's blank count falls after the switch"
+    );
+    let (starved_before, mut last) = (st.starved_openings, after_switch);
+    let mut zeros = 0;
+    for a in 1..=10 {
+        q.camera.position.x += 64.0;
+        for s in 0..ADVANCE_STEPS {
+            let waiting = blank_waiting(&q);
+            let before = q.q().stats();
+            let after = q.step_with(false);
+            if waiting && after.openings > before.openings {
+                assert!(
+                    after.coarse_opened > before.coarse_opened,
+                    "off, advance {a} step {s}: an opening with a blank candidate waiting pushes a coarse job: {after:?}"
+                );
+            }
+        }
+        let n = shell_blank(&q);
+        println!("full-first off, advance {a}: {n} blank in the shell");
+        if last > 0 {
+            assert!(
+                n < last,
+                "off, advance {a}: the shell's blank count falls ({last} to {n})"
+            );
+        } else {
+            assert_eq!(
+                n, 0,
+                "off, advance {a}: the shell stays without a blank chunk"
+            );
+        }
+        zeros += usize::from(n == 0);
+        last = n;
+    }
+    assert!(
+        zeros >= 5,
+        "the shell holds no blank chunk for the later advances"
+    );
+    assert_eq!(
+        q.q().stats().starved_openings,
+        starved_before,
+        "no opening is starved under off"
+    );
+}
+
+/// An eight-chunk row of rock cubes, the camera in chunk 2 looking +x and still, the coarse
+/// pass on, `near` 2: the order in which the chunks take their first job is the same under the
+/// full-first radius `Some(2)` and `None`; under `Some(2)` it, and which chunks' first block is
+/// coarse (0 to 4 full, 5 to 7 coarse), equal the start commit's recording
+/// ([`FULL_FIRST_ORDER`]); under `None` every first block is coarse.
+#[test]
+fn the_full_first_radius_leaves_the_order_alone() {
+    let mut seen = Vec::new();
+    for r in [Some(2), None] {
+        let Some(mut q) = rig(
+            rock_row(8),
+            &Setup {
+                coarse: COARSE,
+                near: 2,
+                slice_ms: 1e-6,
+                ..Setup::at(ROW_EYE)
+            },
+        ) else {
+            return;
+        };
+        q.frame.set_bake_full_first(r);
+        let mut order: Vec<i32> = Vec::new();
+        let mut first_coarse: BTreeMap<i32, bool> = BTreeMap::new();
+        for _ in 0..MAX_STEPS {
+            q.step_with(false);
+            for c in q.q().jobs() {
+                if !order.contains(&c.0[0]) {
+                    order.push(c.0[0]);
+                }
+            }
+            for x in 0..8 {
+                let c = ChunkCoord([x, 0, 0]);
+                if q.frame.store().block(c).is_some() {
+                    first_coarse
+                        .entry(x)
+                        .or_insert_with(|| q.frame.store().is_coarse(c));
+                }
+            }
+            if first_coarse.len() == 8 {
+                break;
+            }
+        }
+        let coarse: Vec<bool> = first_coarse.values().copied().collect();
+        println!("full-first {r:?}: order {order:?}, first block coarse {coarse:?}");
+        seen.push((order, coarse));
+    }
+    assert_eq!(
+        seen[0].0, seen[1].0,
+        "the same order under Some(2) and None"
+    );
+    assert_eq!(
+        (seen[0].0.as_slice(), seen[0].1.as_slice()),
+        (FULL_FIRST_ORDER.0.as_slice(), FULL_FIRST_ORDER.1.as_slice()),
+        "Some(2) against the start commit"
+    );
+    assert!(
+        seen[1].1.iter().all(|&c| c),
+        "every first block coarse under None"
+    );
+}
+
+/// [`the_full_first_radius_leaves_the_order_alone`]'s recording at the start commit (4bc8100):
+/// the order of first jobs and whether each chunk's first block was coarse.
+const FULL_FIRST_ORDER: ([i32; 8], [bool; 8]) = (
+    [2, 3, 1, 4, 0, 5, 6, 7],
+    [false, false, false, false, false, true, true, true],
+);

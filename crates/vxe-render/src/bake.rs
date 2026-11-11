@@ -298,6 +298,40 @@ impl ChunkMasks {
     pub fn bytes(&self) -> usize {
         CHUNK_BRICKS + self.masked.len() * std::mem::size_of::<(u16, Masks)>()
     }
+
+    /// An upper bound on the brick directions a listing of the chunk finds: six for a masked
+    /// brick; for a uniform opaque or translucent brick, its sides toward the chunk's border or
+    /// toward a brick that is not uniform opaque (or, for a translucent one, toward one that
+    /// is masked or air); none for air.
+    pub fn dirs_bound(&self) -> u64 {
+        let mut dirs = 0u64;
+        for slot in 0..CHUNK_BRICKS {
+            let own = self.classes[slot];
+            if own == MASKED {
+                dirs += 6;
+                continue;
+            }
+            if own == CLASS_AIR {
+                continue;
+            }
+            let b = vxe_world::brick_of_slot(slot);
+            for face in 0..6 {
+                let mut n = b;
+                n[face / 2] += if face % 2 == 1 { 1 } else { -1 };
+                if !(0..8).contains(&n[face / 2]) {
+                    dirs += 1;
+                    continue;
+                }
+                let other = self.classes[vxe_world::brick_slot(n)];
+                let exposed = match own {
+                    CLASS_OPAQUE => other != CLASS_OPAQUE,
+                    _ => other == MASKED || other == CLASS_AIR,
+                };
+                dirs += u64::from(exposed);
+            }
+        }
+        dirs
+    }
 }
 
 /// The stream workers' hook (ADR-0017, `vxe_world::ChunkPrep`): each full chunk's
@@ -2711,6 +2745,21 @@ pub struct QueueStats {
     /// ([`QueueView::full_radius`]): their distance in chunks plus the light radius exceeds it,
     /// so a neighbour within their reach is not resident full while the camera stands still.
     pub reach_bound: u64,
+    /// Openings since the queue started that pushed a full job on a chunk with no block while a
+    /// blank candidate outside [`BakeQueue::full_first`] was ready and left unpushed: the near
+    /// shell starving the coarse front.
+    pub starved_openings: u64,
+    /// Coarse-pass jobs pushed since the queue started.
+    pub coarse_opened: u64,
+}
+
+/// What [`BakeQueue::push_batch`] pushed: the jobs' samples, the chunks with no block the pool
+/// refused, and whether a job was a full first pass on a chunk with no block.
+#[derive(Default)]
+struct Pushed {
+    samples: u64,
+    refused0: usize,
+    full_blank: bool,
 }
 
 /// The stages a queue step is timed in ([`StepStages::ms`]), in the order they run: the
@@ -3329,8 +3378,14 @@ pub struct BakeQueue {
     pub slice_ms: f64,
     /// A brick direction's samples in the coarse pass; 0 bakes every chunk at the full count.
     pub coarse_samples: u32,
-    /// Chunks (Chebyshev) around the camera's whose first pass is the full count.
+    /// Chunks (Chebyshev) around the camera's that the score's angle term and the withdrawal
+    /// treat as the near shell.
     pub near: i32,
+    /// Chunks (Chebyshev) around the camera's within which a chunk with no block takes the full
+    /// count directly; beyond it, or everywhere when `None`, its first pass is the coarse pass
+    /// and a chunk refines as class 1. [`Frame::set_bake_coarse`](crate::Frame::set_bake_coarse)
+    /// sets it to `Some(near)`.
+    pub full_first: Option<i32>,
     /// Milliseconds a frame the slice grows by while a dig's bricks wait.
     pub edit_ms: f64,
     /// Whether a dig that touched lit bricks re-bakes the chunks within the light radius (ring 3).
@@ -3439,6 +3494,7 @@ impl BakeQueue {
             slice_ms,
             coarse_samples: DEFAULT_COARSE_SAMPLES,
             near: DEFAULT_NEAR,
+            full_first: Some(DEFAULT_NEAR),
             edit_ms: DEFAULT_BAKE_EDIT_MS,
             reach_ring: true,
             order: QueueOrder::default(),
@@ -4524,7 +4580,8 @@ impl BakeQueue {
         let (mut checked, mut reach, mut lights) = ([0usize; 2], 0u64, 0u64);
         let mut ready0 = 0usize;
         // A step without a slice (the pre-roll) gates up to `checks` candidates and lists them
-        // across threads; a sliced step lists each in turn and stops at two slices of samples.
+        // across threads; a sliced step lists them in batches and stops at two slices of
+        // samples.
         let parallel = view.samples.is_some();
         let mut ready: Vec<(u8, [i32; 3])> = Vec::new();
         // The loop's samples left, read once (it walks every open face) and then counted on.
@@ -4540,6 +4597,21 @@ impl BakeQueue {
             None
         };
         let mut next = 0;
+        // A sliced opening lists its ready candidates in batches: a candidate joins the batch
+        // while the loop's samples left plus the batch's bounds ([`BakeQueue::listing_bound`],
+        // at least its listing's samples) stay under two slices, the batch is listed across
+        // threads and pushed in the walk's order, and the walk goes on from the samples the
+        // pushes left. Every candidate the one-at-a-time walk would push is pushed, in its order.
+        let mut batch: Vec<(u8, [i32; 3])> = Vec::new();
+        let mut est = left;
+        let mut full_blank = false;
+        let stops = |left: u64, checked: &[usize; 2], class: u8, ready0: usize| {
+            if tiered {
+                left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0)
+            } else {
+                left >= 2 * cap || checked[0] >= checks
+            }
+        };
         while let Some(Cand {
             class, coarse, c, ..
         }) = self.ordered.get(next)
@@ -4550,18 +4622,29 @@ impl BakeQueue {
             if self.pool.get(&c) != Some(&(class, coarse)) {
                 continue;
             }
-            if tiered {
-                if left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0) {
+            if stops(est, &checked, class, ready0) {
+                if batch.is_empty() {
+                    next -= 1;
                     break;
                 }
+                self.laps.lap(S_CHECKS);
+                let pushed = self.push_batch(run, store, eye, &classes, &mut batch)?;
+                self.laps.lap(S_LIST);
+                left += pushed.samples;
+                ready0 -= pushed.refused0;
+                full_blank |= pushed.full_blank;
+                est = left;
+                if stops(est, &checked, class, ready0) {
+                    next -= 1;
+                    break;
+                }
+            }
+            if tiered {
                 if checked[usize::from(class)] >= checks || recent(self.blocked.get(&c)) {
                     continue;
                 }
                 checked[usize::from(class)] += 1;
             } else {
-                if left >= 2 * cap || checked[0] >= checks {
-                    break;
-                }
                 if recent(self.blocked.get(&c)) {
                     continue;
                 }
@@ -4589,52 +4672,20 @@ impl BakeQueue {
                 ready.push((class, c));
                 continue;
             }
-            self.laps.lap(S_CHECKS);
-            let listed = self.list(run.world, coord, &classes);
-            match self.push_listed(store, eye, class, coord, listed) {
-                Ok(samples) => left += samples,
-                // A chunk the pool refuses waits, and the opening goes on to the next one: a
-                // smaller block (a refinement) may fit, and what is in flight is still read
-                // back and faded, so an eviction frees room.
-                Err(BakeError::PoolFull { .. }) => {
-                    self.stats.pool_full += 1;
-                    ready0 -= usize::from(class == 0);
-                }
-                Err(e) => return Err(e),
-            }
-            self.laps.lap(S_LIST);
+            est += self.listing_bound(c, class, eye);
+            batch.push((class, c));
         }
         self.laps.lap(S_CHECKS);
+        if !batch.is_empty() {
+            let pushed = self.push_batch(run, store, eye, &classes, &mut batch)?;
+            full_blank |= pushed.full_blank;
+            self.laps.lap(S_LIST);
+        }
         if !ready.is_empty() {
-            let threads = std::thread::available_parallelism()
-                .map_or(4, std::num::NonZero::get)
-                .clamp(1, 16);
-            let per = ready.len().div_ceil(threads);
-            let this = &*self;
-            let listed: Vec<(ChunkFaces, bool)> = std::thread::scope(|scope| {
-                let handles: Vec<_> = ready
-                    .chunks(per)
-                    .map(|part| {
-                        let classes = &classes;
-                        scope.spawn(move || {
-                            part.iter()
-                                .map(|&(_, c)| this.list(run.world, ChunkCoord(c), classes))
-                                .collect::<Vec<_>>()
-                        })
-                    })
-                    .collect();
-                handles
-                    .into_iter()
-                    .flat_map(|h| h.join().expect("a listing thread panicked"))
-                    .collect()
-            });
-            for ((class, c), l) in ready.into_iter().zip(listed) {
-                match self.push_listed(store, eye, class, ChunkCoord(c), l) {
-                    Ok(_) => {}
-                    Err(BakeError::PoolFull { .. }) => self.stats.pool_full += 1,
-                    Err(e) => return Err(e),
-                }
-            }
+            self.push_batch(run, store, eye, &classes, &mut ready)?;
+        }
+        if full_blank && !parallel {
+            self.note_starved(run, view, eye, next, checks);
         }
         self.stats.waiting_reach = reach;
         self.stats.waiting_lights = lights;
@@ -4846,9 +4897,132 @@ impl BakeQueue {
         }
     }
 
+    /// An upper bound on the samples of `c`'s job before it is listed: its brick directions'
+    /// bound from its prepared masks ([`ChunkMasks::dirs_bound`]), or six for every brick of
+    /// the chunk where none arrived, at the count [`BakeQueue::push_listed`] would give it.
+    fn listing_bound(&self, c: [i32; 3], class: u8, eye: [i32; 3]) -> u64 {
+        let coarse = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
+        let brick_samples = if coarse {
+            self.coarse_samples
+        } else {
+            self.settings.brick_samples
+        };
+        let dirs = self
+            .prepared
+            .get(&c)
+            .map_or(CHUNK_BRICKS as u64 * 6, |m| m.masks.dirs_bound());
+        dirs * u64::from(brick_samples)
+    }
+
+    /// Lists `batch`'s chunks (across scoped threads when there are several) and pushes their
+    /// jobs in the batch's order ([`BakeQueue::push_listed`]); a chunk the pool refuses waits.
+    /// Empties `batch`.
+    fn push_batch(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        eye: [i32; 3],
+        classes: &[u8],
+        batch: &mut Vec<(u8, [i32; 3])>,
+    ) -> Result<Pushed, BakeError> {
+        let listed: Vec<(ChunkFaces, bool)> = if batch.len() == 1 {
+            vec![self.list(run.world, ChunkCoord(batch[0].1), classes)]
+        } else {
+            let threads = std::thread::available_parallelism()
+                .map_or(4, std::num::NonZero::get)
+                .clamp(1, 16);
+            let per = batch.len().div_ceil(threads);
+            let this = &*self;
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = batch
+                    .chunks(per)
+                    .map(|part| {
+                        scope.spawn(move || {
+                            part.iter()
+                                .map(|&(_, c)| this.list(run.world, ChunkCoord(c), classes))
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|h| h.join().expect("a listing thread panicked"))
+                    .collect()
+            })
+        };
+        let mut out = Pushed::default();
+        for ((class, c), l) in batch.drain(..).zip(listed) {
+            match self.push_listed(store, eye, class, ChunkCoord(c), l) {
+                Ok(samples) => {
+                    out.samples += samples;
+                    out.full_blank |= class == 0
+                        && samples > 0
+                        && self.job_coarse.get(&c).is_some_and(|coarse| !coarse);
+                }
+                // A chunk the pool refuses waits, and the opening goes on to the next one: a
+                // smaller block (a refinement) may fit, and what is in flight is still read
+                // back and faded, so an eviction frees room.
+                Err(BakeError::PoolFull { .. }) => {
+                    self.stats.pool_full += 1;
+                    out.refused0 += usize::from(class == 0);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
+    }
+
+    /// After a sliced opening that pushed a full job on a chunk with no block: counts it in
+    /// [`QueueStats::starved_openings`] if, among up to `checks` candidates of the order from
+    /// `next` not found blocked in the last [`QUEUE_RECHECK`] steps, one with no block outside
+    /// [`BakeQueue::full_first`] is ready and was left unpushed. Nothing with no coarse pass,
+    /// or with every blank chunk's first pass coarse.
+    fn note_starved(
+        &mut self,
+        run: &BakeRun<'_>,
+        view: &QueueView<'_>,
+        eye: [i32; 3],
+        mut next: usize,
+        checks: usize,
+    ) {
+        if self.coarse_samples == 0 || self.full_first.is_none() {
+            return;
+        }
+        let lr = run.gpu.light_radius();
+        let steps = self.steps;
+        let mut looked = 0;
+        while let Some(Cand {
+            class, coarse, c, ..
+        }) = self.ordered.get(next)
+        {
+            next += 1;
+            if looked >= checks {
+                break;
+            }
+            if class != 0
+                || self.pool.get(&c) != Some(&(class, coarse))
+                || self.full_first_at(c, eye)
+                || self
+                    .blocked
+                    .get(&c)
+                    .is_some_and(|&at| steps - at < QUEUE_RECHECK)
+            {
+                continue;
+            }
+            looked += 1;
+            let coord = ChunkCoord(c);
+            if self.reach_cached(run, coord, lr, view.resident)
+                && run.gpu.lights_ready_near(coord, lr)
+            {
+                self.stats.starved_openings += 1;
+                return;
+            }
+        }
+    }
+
     /// Opens `coord`'s job from its listed faces (and whether its masks were prepared): its
-    /// place allocated, its count the coarse pass's for a chunk of `class` 0 (no block) beyond
-    /// [`BakeQueue::near`] of `eye` (chunks), else the settings'. A chunk with no face is marked
+    /// place allocated, its count the coarse pass's for a chunk of `class` 0 (no block) outside
+    /// [`BakeQueue::full_first`] of `eye` (chunks), else the settings'. A chunk with no face is marked
     /// faceless instead. The job's samples at most (0 for none).
     fn push_listed(
         &mut self,
@@ -4881,8 +5055,7 @@ impl BakeQueue {
             }
         };
         self.reach.remove(&c);
-        let far = (0..3).map(|k| (c[k] - eye[k]).abs()).max().unwrap_or(0) > self.near;
-        let coarse = class == 0 && self.coarse_samples > 0 && far;
+        let coarse = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
         let brick_samples = if coarse {
             self.coarse_samples
         } else {
@@ -4909,7 +5082,15 @@ impl BakeQueue {
         });
         self.job_coarse.insert(c, coarse);
         self.job_eye.insert(c, self.eye_moves);
+        self.stats.coarse_opened += u64::from(coarse);
         Ok(samples)
+    }
+
+    /// Whether a chunk with no block at `c` takes the full count directly: within
+    /// [`BakeQueue::full_first`] of `eye` (Chebyshev, chunks).
+    fn full_first_at(&self, c: [i32; 3], eye: [i32; 3]) -> bool {
+        self.full_first
+            .is_some_and(|r| (0..3).map(|k| (c[k] - eye[k]).abs()).max().unwrap_or(0) <= r)
     }
 
     /// `coord`'s faces: from its prepared masks and its neighbours' where they are held, the

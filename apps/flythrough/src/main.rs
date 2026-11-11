@@ -116,7 +116,9 @@
 //! 2, Chebyshev) of the camera's at 4096 and every other mirrored chunk a coarse pass at
 //! `--coarse N` (default 256; 0 none, and then the near chunks alone); after it, a slice a frame
 //! refines the coarse chunks nearest first, each fading from its coarse value, and a chunk the
-//! mirror gains takes its coarse pass first; its row in the banner, its depth on the HUD's store
+//! mirror gains takes its coarse pass first, unless it lies within `--full-first off|N` of the
+//! camera's (default `--near`'s radius; `off` gives every blank chunk the coarse pass first; key
+//! `6` toggles `off` and `2`); its row in the banner, its depth on the HUD's store
 //! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
 //! 1.5); a dig re-bakes its rings in the queue, ahead of
 //! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
@@ -513,6 +515,10 @@ struct Args {
     /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
     /// before the first frame (default `vxe_render::bake::DEFAULT_NEAR`).
     bake_near: i32,
+    /// `--full-first off|N`: the live queue's full-first radius after the pre-roll
+    /// (`vxe_render::bake::BakeQueue::full_first`); `None` follows `--near`. `6` toggles it
+    /// between `off` and `2`.
+    bake_full_first: Option<Option<i32>>,
     /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
     /// the class and the distance first); `1` cycles score, score with the class as a tier,
     /// distance.
@@ -678,6 +684,11 @@ impl Args {
         }
         a.metering = self.metering;
         a
+    }
+
+    /// The live queue's full-first radius: `--full-first`, else `--near`'s.
+    fn full_first(&self) -> Option<i32> {
+        self.bake_full_first.unwrap_or(Some(self.bake_near))
     }
 
     /// The live queue's order and withdrawal in words: `order score, angle 4, refine 2;
@@ -868,6 +879,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
         bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
         bake_near: vxe_render::bake::DEFAULT_NEAR,
+        bake_full_first: None,
         queue_distance: false,
         queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
         queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
@@ -1173,6 +1185,18 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok()
                     .filter(|n: &u32| *n <= vxe_render::bake::QUEUE_BRICK_SAMPLES)
                     .ok_or(format!("--coarse takes 0 to 4096 samples, not {v}"))?;
+            }
+            "--full-first" => {
+                let v = value()?;
+                args.bake_full_first = Some(match v.as_str() {
+                    "off" => None,
+                    _ => Some(
+                        v.parse()
+                            .ok()
+                            .filter(|r: &i32| (0..=8).contains(r))
+                            .ok_or(format!("--full-first takes off or 0 to 8 chunks, not {v}"))?,
+                    ),
+                });
             }
             "--near" => {
                 let v = value()?;
@@ -3258,6 +3282,8 @@ struct QueueRun {
     tally: vxe_render::bake::StepTally,
     /// The jobs and the openings at the last line, and the last line's step p50 (the HUD's).
     line_openings: u64,
+    /// [`vxe_render::QueueStats::starved_openings`] at the last line.
+    line_starved: u64,
     line_step_p50: f64,
     /// The samples by view class and passed at the last line.
     line_view: [u64; 3],
@@ -3311,7 +3337,7 @@ fn queue_step_line(
     let opened = steps.iter().filter(|s| s.opened).count();
     let [blank, coarse] = st.view_waiting[VIEW_IN];
     let mut line = format!(
-        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} of {} in view waiting; stage means ms:",
+        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} of {} in view waiting; stage means ms:",
         regime.map_or("idle", Regime::name),
         if baked > 0 {
             format!("{:.3e}", samples as f64 / baked as f64)
@@ -3322,6 +3348,7 @@ fn queue_step_line(
         st.coarse,
         steps.len(),
         st.openings - q.line_openings,
+        st.starved_openings - q.line_starved,
         q.line_step_p50,
         p50(Some(true)),
         p50(Some(false)),
@@ -3329,6 +3356,7 @@ fn queue_step_line(
         blank + coarse,
     );
     q.line_openings = st.openings;
+    q.line_starved = st.starved_openings;
     let n = steps.len().max(1) as f64;
     for (k, stage) in STEP_STAGES.iter().enumerate() {
         let mean = steps.iter().map(|s| s.ms[k]).sum::<f64>() / n;
@@ -3488,6 +3516,12 @@ impl Run {
         );
         queue.push_str("; ");
         queue.push_str(words);
+        match args.full_first() {
+            Some(r) => {
+                let _ = write!(queue, "; full-first {r}");
+            }
+            None => queue.push_str("; full-first off"),
+        }
         let look = &self.look;
         let far = h
             .far_normal_words
@@ -4222,6 +4256,9 @@ impl Run {
             st.prepared,
             ms_since(self.start)
         );
+        // The pre-roll's near chunks take the full count under `--near`; the live queue's
+        // full-first radius starts here.
+        frame.set_bake_full_first(self.args.full_first());
     }
 
     /// One frame of the live queue, ahead of the encode: `enc` (the sync's copies) is submitted
@@ -4485,9 +4522,20 @@ impl Run {
 
     /// The live queue's keys: `1` cycles the order (score, score with the class as a tier,
     /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25), `4`
-    /// toggles the withdrawal. A change goes to the queue at once and prints the order and the
-    /// withdrawal.
+    /// toggles the withdrawal, `6` the full-first radius between `off` and `2`. A change goes to
+    /// the queue at once and prints the order and the withdrawal, or the radius.
     fn queue_keys(&mut self, input: &Input) {
+        if input.pressed(KeyCode::Digit6) {
+            let r = match self.args.full_first() {
+                Some(_) => None,
+                None => Some(vxe_render::bake::DEFAULT_NEAR),
+            };
+            self.args.bake_full_first = Some(r);
+            println!("bake queue: full-first {}", FullFirstWords(r));
+            if let Some(g) = self.gfx.as_mut() {
+                g.frame.set_bake_full_first(r);
+            }
+        }
         let a = &mut self.args;
         let mut changed = false;
         if input.pressed(KeyCode::Digit1) {
@@ -6559,6 +6607,18 @@ fn write_pace_banner(pace: Pacing, now_ms: f64, out: &mut String) -> bool {
     shows
 }
 
+/// The full-first radius in words, written without allocating: `off` or the radius, `2`.
+struct FullFirstWords(Option<i32>);
+
+impl std::fmt::Display for FullFirstWords {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(r) => write!(f, "{r}"),
+            None => f.write_str("off"),
+        }
+    }
+}
+
 /// Appends the live queue's banner row to `out`: the mode, its settings and slice, then
 /// `words` (its order and withdrawal) and its keys.
 fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
@@ -6582,7 +6642,8 @@ fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
     }
     let _ = write!(
         out,
-        ", slice {} ms, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw)",
+        ", full-first {}, slice {} ms, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 6 full-first)",
+        FullFirstWords(args.full_first()),
         args.bake_slice,
         args.bake_edit_ms,
         if args.dig_reach { "on" } else { "off" },
@@ -8194,7 +8255,7 @@ mod tests {
             assert_eq!(
                 row,
                 format!(
-                    "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on"
+                    "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on; full-first 2"
                 )
             );
         };
@@ -8280,7 +8341,10 @@ mod tests {
                 "{want}: {banner}"
             );
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
-            assert!(row.ends_with(&format!("; {want}")), "{want}: {row}");
+            assert!(
+                row.ends_with(&format!("; {want}; full-first 2")),
+                "{want}: {row}"
+            );
         }
         run.queue.stats = Some(vxe_render::QueueStats {
             withdrawn: 7,
@@ -8297,6 +8361,46 @@ mod tests {
         assert_eq!(w("off"), Ok(false));
         assert!(w("yes").is_err());
         assert!(parse_args_from(argv(&[])).unwrap().queue_withdraw);
+    }
+
+    /// `--full-first` parses `off` and 0 to 8 and refuses the rest, and follows `--near` when
+    /// absent; a plain start reads `2`; `6` toggles `off` and `2`, each press changing the
+    /// banner and the HUD's queue row in the same frame.
+    #[test]
+    fn the_banner_names_the_full_first_radius() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        run.refresh_hud_stats(None);
+        let banner = run.banner().expect("the queue's row is on the banner");
+        assert!(banner.contains(", full-first 2, slice "), "{banner}");
+        assert!(banner.contains("6 full-first)"), "{banner}");
+        let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+        assert!(row.ends_with("; full-first 2"), "{row}");
+        for want in ["off", "2", "off"] {
+            input.end_frame();
+            input.key_up(KeyCode::Digit6);
+            input.key_down(KeyCode::Digit6);
+            run.handle_input(&input);
+            run.refresh_hud_stats(None);
+            let banner = run.banner().expect("the queue's row is on the banner");
+            assert!(
+                banner.contains(&format!(", full-first {want}, slice ")),
+                "{want}: {banner}"
+            );
+            let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+            assert!(
+                row.ends_with(&format!("; full-first {want}")),
+                "{want}: {row}"
+            );
+        }
+        let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.full_first());
+        assert_eq!(f(&[]), Ok(Some(2)));
+        assert_eq!(f(&["--near", "0"]), Ok(Some(0)));
+        assert_eq!(f(&["--full-first", "off"]), Ok(None));
+        assert_eq!(f(&["--near", "0", "--full-first", "3"]), Ok(Some(3)));
+        for bad in ["9", "-1", "on", "x"] {
+            assert!(f(&["--full-first", bad]).is_err(), "{bad}");
+        }
     }
 
     /// `F9` cycles the views shaded, normals, hitmask, steps, cracks, albedo, shaded; each
