@@ -42,8 +42,9 @@ crates/
 ├── vxe-app/         # winit shell: window, input, surface, frame loop. Thin and optional
 ├── vxe-sim/         # cylinder sweeps and the character controller (step, slide, climb, fall).
 │                    #   HEADLESS and DETERMINISTIC like vxe-world, which is its only dependency
-├── vxe-assets/      # .vox parsing, palette, palette-to-material map producing vxe-world
-│                    #   prefabs; depends on vxe-world only
+├── vxe-assets/      # .vox parsing and writing, palette, palette-to-material map producing
+│                    #   vxe-world prefabs, .rig files to vxe-entity models and clips, voxels
+│                    #   drawn as text (.voxtext); depends on vxe-world and vxe-entity
 ├── vxe-net/         # channel abstraction, server tick and op/input logs, the Logic and
 │                    #   Host traits, shared/owned clients; later QUIC. No wall clock
 ├── vxe-script-wasm/ # wasmtime host for logic components: the WIT world, deterministic WASI
@@ -52,6 +53,9 @@ crates/
 ├── vxe-audio/       # cpal output, an HRTF mixer on the device callback, occlusion and
 │                    #   early reflections probed through the material table; the shipped
 │                    #   HRIR pack under assets/. Depends on vxe-world only; not deterministic
+├── vxe-entity/      # voxel-model entities: rigid parts as prefabs, poses in fixed point and
+│                    #   Q14 quaternions, the entity ray query. HEADLESS and DETERMINISTIC;
+│                    #   depends on vxe-world only
 └── (planned, one per plan) vxe-script-lua (mlua host, client scripts)
 apps/
 └── flythrough/      # the engine's own testbed binary: fly, dig, read edit results

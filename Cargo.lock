@@ -3141,6 +3141,7 @@ dependencies = [
 name = "vxe-assets"
 version = "0.45.0"
 dependencies = [
+ "vxe-entity",
  "vxe-world",
 ]
 
@@ -3151,6 +3152,13 @@ dependencies = [
  "cpal",
  "criterion",
  "sofar",
+ "vxe-world",
+]
+
+[[package]]
+name = "vxe-entity"
+version = "0.45.0"
+dependencies = [
  "vxe-world",
 ]
 
