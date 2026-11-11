@@ -281,6 +281,10 @@ No GPU memory is added: a clip changes transforms, not volumes.
 The "go" is given (owner, 2026-11-10: "move all draft plans to approved"). Open: the two
 questions under Risks.
 
+4. **The rig's axes (owner, 2026-11-11, the architect's recommendation).** z is up: a rig's
+   lengths are in the prefab's axes as `VoxMap::to_prefab` lays a `.vox` model out, as
+   MagicaVoxel and `vxe-sim`'s controller do. The rest offset is Plan 0062's answer 6.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
