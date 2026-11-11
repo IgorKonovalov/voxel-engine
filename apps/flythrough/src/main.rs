@@ -16,7 +16,7 @@
 //!
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
-//! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
+//! [--autopilot] [--census] [--sync-budget MIB] [--sync-ms MS] [--workers N] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
@@ -70,7 +70,9 @@
 //! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
 //! the world sees each cavern's far wall through the rock; `X` cycles the three, and the
 //! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
-//! after any bench; `--sync-budget` sets the mirror's upload bytes per frame; `--mirror-budget`
+//! after any bench; `--sync-budget` sets the mirror's upload bytes per frame and `--sync-ms` its
+//! upload time per frame (default 2 ms, 0 for none); `--workers N` sets the streamer's
+//! generation workers (default two fewer than the logical cores, at least 1); `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
 //! need, with records for the residency's ball when streaming), and while streaming the full
@@ -332,6 +334,8 @@ const SAMPLES: usize = 30;
 const NEAR_D2: i32 = 4;
 /// Default mirror upload budget per frame.
 const SYNC_BUDGET_MIB: u64 = 2;
+/// Default mirror upload time per frame, in milliseconds.
+const SYNC_BUDGET_MS: u64 = 2;
 /// Autopilot: dig reach (30 m) and radius (1 m), flight speed (10 m/s) and leg length.
 const PILOT_REACH: i64 = 300 * FIXED_ONE;
 const PILOT_RADIUS: i64 = 10 * FIXED_ONE;
@@ -421,6 +425,10 @@ struct Args {
     /// `--castle-shot NAME`: the castle pose the camera starts at.
     castle_shot: castle::CastleShot,
     sync_budget: u64,
+    /// `--sync-ms`: the mirror's upload time per frame; `None` (`--sync-ms 0`) for no limit.
+    sync_time: Option<std::time::Duration>,
+    /// `--workers`: the streamer's generation workers; `None` for [`default_workers`].
+    workers: Option<usize>,
     /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
     mirror_budget: Option<u64>,
     /// `--residency`: the streamed full and LOD radii in chunks, hysteresis as
@@ -827,6 +835,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         castle_out: None,
         castle_shot: castle::CastleShot::Gate,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        sync_time: Some(std::time::Duration::from_millis(SYNC_BUDGET_MS)),
+        workers: None,
         mirror_budget: None,
         residency: RESIDENCY,
         audio: false,
@@ -925,6 +935,21 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .parse()
                     .map_err(|e| format!("--sync-budget: {e}"))?;
                 args.sync_budget = mib << 20;
+            }
+            "--sync-ms" => {
+                let ms: u64 = value()?
+                    .parse()
+                    .map_err(|e| format!("--sync-ms: {e}"))?;
+                args.sync_time = (ms > 0).then(|| std::time::Duration::from_millis(ms));
+            }
+            "--workers" => {
+                let n: usize = value()?
+                    .parse()
+                    .map_err(|e| format!("--workers: {e}"))?;
+                if n == 0 {
+                    return Err("--workers takes at least 1".to_owned());
+                }
+                args.workers = Some(n);
             }
             "--residency" => args.residency = parse_residency(&value()?)?,
             "--mirror-budget" => {
@@ -2737,13 +2762,17 @@ struct Stream {
     light_wait_ms: f64,
     full_residency: bool,
     workers: usize,
+    /// The streamer's counters as `stream_step` last read them, once a frame: what the
+    /// autopilot and the HUD read after it (and the autopilot's settle, before it, a frame
+    /// late). `None` before the first step.
+    stats: Option<vxe_world::StreamStats>,
 }
 
 impl Stream {
     /// Records every chunk `loaded` full with its wanted tick, and moves the ones the mirror
     /// now holds full into `latency_ms`.
     fn track(&mut self, ev: &vxe_world::StreamEvents, mirror: &GpuWorld) {
-        let tick = self.streamer.stats().ticks;
+        let tick = self.streamer.ticks();
         let full = ev.loaded.iter().filter(|(_, t)| *t == Tier::Full);
         for (&(c, _), &lat) in full.zip(&ev.latency_ticks) {
             self.awaiting.insert(c, tick.saturating_sub(u64::from(lat)));
@@ -3270,7 +3299,7 @@ impl Run {
         let lod = self
             .stream
             .as_ref()
-            .map(|st| st.streamer.stats().resident_lod as u32);
+            .map(|st| st.stats.unwrap_or_else(|| st.streamer.stats()).resident_lod as u32);
         // The world keeps no brick-array pool: no spare arrays to count.
         self.hud.world = WorldSample::from_stats(&s, lod, 0, ms_since(t) as f32);
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
@@ -4455,6 +4484,7 @@ impl Run {
             gpu,
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
+                sync_budget_time: self.args.sync_time,
                 record_chunks: Some(flythrough::stream_record_chunks(self.args.residency)),
                 ..MirrorConfig::new(Window::Follow {
                     side: flythrough::window_side(self.args.residency),
@@ -4579,7 +4609,7 @@ impl Run {
         // A sync writes the nearest chunks that fit and defers the rest, which stay queued; an
         // empty sync (nothing fit) is an error that wrote nothing. The pressure rule below
         // lowers the radius until they fit.
-        let tick = stream.streamer.stats().ticks;
+        let tick = stream.streamer.ticks();
         let (deferred, empty, error) = match synced {
             Ok(s) => {
                 self.hud.sync = (s, sync_ms);
@@ -4636,6 +4666,7 @@ impl Run {
         }
         stream.track(&ev, &gfx.mirror);
         let st = stream.streamer.stats();
+        stream.stats = Some(st);
         if !stream.full_residency
             && st.in_flight == 0
             && st.queued == 0
@@ -4675,7 +4706,7 @@ impl Run {
         match p.leg {
             Leg::Settle => {
                 if !stream.full_residency {
-                    let st = stream.streamer.stats();
+                    let st = stream.stats.unwrap_or_else(|| stream.streamer.stats());
                     let pending =
                         (st.in_flight + st.queued) as u64 + gfx.mirror.pending_chunks() as u64;
                     return p.settle.step(false, pending, &self.failure);
@@ -4710,7 +4741,10 @@ impl Run {
                 p.leg = Leg::Out;
                 p.leg_start = now();
                 p.latency_from = stream.latency_ms.len();
-                p.generated_at_takeoff = stream.streamer.stats().generated_chunks;
+                p.generated_at_takeoff = stream
+                    .stats
+                    .unwrap_or_else(|| stream.streamer.stats())
+                    .generated_chunks;
                 println!("autopilot: flying +x at 10 m/s for 30 s");
             }
             Leg::Out | Leg::Back => {
@@ -4813,9 +4847,12 @@ impl Run {
         p.peak_belt = p.peak_belt.max(gfx.mirror.belt_chunks());
         let terms = pressure_terms(&gfx.mirror);
         p.peak_terms = [0, 1].map(|k| p.peak_terms[k].max(terms[k]));
-        p.peak_persisted = p
-            .peak_persisted
-            .max(stream.streamer.stats().persisted_ram_bytes);
+        p.peak_persisted = p.peak_persisted.max(
+            stream
+                .stats
+                .unwrap_or_else(|| stream.streamer.stats())
+                .persisted_ram_bytes,
+        );
         if let Some(r) = resident {
             p.peak_resident = p.peak_resident.max(r);
         }
@@ -5877,6 +5914,7 @@ impl App for Flythrough {
                             light_wait_ms: 0.0,
                             full_residency: false,
                             workers,
+                            stats: None,
                         }),
                     )
                 }
@@ -6392,6 +6430,15 @@ fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     }
 }
 
+/// The streamer's default generation workers: two fewer than the logical cores, at least 1,
+/// leaving a core to the render thread and one to the compositor and the driver.
+fn default_workers() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .saturating_sub(2)
+        .max(1)
+}
+
 /// Appends the banner's pacing row, `pace free`, to `out` as a banner row (`hud::start_row`)
 /// for [`hud::BANNER_MS`] after the start (`now_ms` on the frame loop's clock); `false`, and
 /// nothing written, after that.
@@ -6662,10 +6709,7 @@ fn main() {
         (source.spawn(), Pending::Level(generation))
     } else {
         let source = CaveSource::unbounded(seed);
-        let workers = std::thread::available_parallelism()
-            .map_or(1, usize::from)
-            .saturating_sub(1)
-            .max(1);
+        let workers = args.workers.unwrap_or_else(default_workers);
         let world = World::new(&materials(&args));
         let cfg = StreamConfig {
             residency: args.residency,

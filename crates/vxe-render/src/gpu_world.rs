@@ -205,6 +205,20 @@ pub fn exposed_emitters<'a>(
     out
 }
 
+/// A sync clock: the time since some fixed start, read once at a sync's start and once after
+/// each uploaded chunk.
+pub type SyncClock = Box<dyn FnMut() -> std::time::Duration + Send + Sync>;
+
+/// The default sync clock: wall time since its creation.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the render thread bounds its upload time per frame; no simulation reads it"
+)]
+fn wall_clock() -> SyncClock {
+    let start = std::time::Instant::now();
+    Box::new(move || start.elapsed())
+}
+
 /// The render thread's light-extraction timer (`SyncStats::light_us`); no simulation reads it.
 #[allow(
     clippy::disallowed_methods,
@@ -558,6 +572,9 @@ pub struct SyncStats {
     /// Chunks selected this sync but deferred for space; they stay pending. 0 when everything
     /// fit.
     pub deferred_chunks: u64,
+    /// Chunks selected this sync but left for the next because the sync's time budget
+    /// ([`MirrorConfig::sync_budget_time`]) was spent; they stay pending, nearest first.
+    pub time_deferred_chunks: u64,
 }
 
 /// Which chunks the mirror holds.
@@ -575,6 +592,10 @@ pub struct MirrorConfig {
     pub window: Window,
     /// Bytes a sync writes before it stops taking chunks; `u64::MAX` for no budget.
     pub sync_budget_bytes: u64,
+    /// Time a sync spends before it stops uploading chunks, read on the mirror's sync clock
+    /// ([`GpuWorld::set_sync_clock`]) after each chunk; `None` for no budget. The chunk that
+    /// crosses it is uploaded whole, and the rest stay pending, first in the next sync.
+    pub sync_budget_time: Option<std::time::Duration>,
     /// Caps the units per pool shard below what the device allows; for tests.
     pub max_shard_units: Option<u32>,
     /// VRAM reserved for the pool shards and records at creation, split by the
@@ -602,6 +623,7 @@ impl MirrorConfig {
         Self {
             window,
             sync_budget_bytes: u64::MAX,
+            sync_budget_time: None,
             max_shard_units: None,
             budget_bytes: DEFAULT_BUDGET_BYTES,
             record_chunks: None,
@@ -882,6 +904,10 @@ impl<'a> Bricks<'a> {
 pub struct GpuWorld {
     device: wgpu::Device,
     cfg: MirrorConfig,
+    /// The clock the sync's time budget reads: time since some fixed start; and its reading
+    /// at the current sync's start.
+    sync_clock: SyncClock,
+    sync_start: std::time::Duration,
     window_min: [i32; 3],
     window_size: [i32; 3],
     focus: ChunkCoord,
@@ -1113,6 +1139,8 @@ impl GpuWorld {
         Self {
             device: device.clone(),
             cfg,
+            sync_clock: wall_clock(),
+            sync_start: std::time::Duration::ZERO,
             window_min,
             window_size,
             focus,
@@ -1781,12 +1809,19 @@ impl GpuWorld {
     /// field pass and the march, or one of its own outside a frame. A sync whose encoder is
     /// never submitted keeps its belt chunks. `queue` is kept for the field pass's own
     /// writes.
+    /// Replaces the clock the sync's time budget reads (wall time by default), for a test
+    /// that advances it by a fixed step per read.
+    pub fn set_sync_clock(&mut self, clock: SyncClock) {
+        self.sync_clock = clock;
+    }
+
     pub fn sync(
         &mut self,
         world: &World,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<SyncStats, MirrorError> {
+        self.sync_start = (self.sync_clock)();
         let result = self.sync_into(world, queue, encoder);
         self.belt.finish(encoder);
         result
@@ -2100,7 +2135,12 @@ impl GpuWorld {
         let mut selected = std::mem::take(&mut self.selected);
         let mut result = Ok(());
         let mut defer_rest = false;
+        let mut out_of_time = false;
         for Selected { coord, src, new } in selected.drain(..) {
+            if out_of_time {
+                st.time_deferred_chunks += 1;
+                continue;
+            }
             let lod = matches!(src, Src::Lod(_));
             let mirrored = self.mirrored.get(&coord);
             let demotion = lod && mirrored.is_some_and(|m| !m.lod);
@@ -2157,6 +2197,11 @@ impl GpuWorld {
             };
             if result.is_err() {
                 break;
+            }
+            // The time budget is read after each chunk written: the chunk that crosses it is
+            // whole, and the rest stay pending, nearest first, for the next sync.
+            if let Some(budget) = self.cfg.sync_budget_time {
+                out_of_time = (self.sync_clock)().saturating_sub(self.sync_start) >= budget;
             }
         }
         self.selected = selected;
