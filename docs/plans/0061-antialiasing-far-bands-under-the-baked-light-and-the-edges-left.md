@@ -1,6 +1,6 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** in-progress (Phase 1 readings in, stopped at its stop rule 3 for an architect amendment; owner go 2026-11-10: Phase 1 beside Plan 0060, Phase 2 on after 0060 merges), amended 2026-11-10 (review pass)
+> **Status:** in-progress (Phase 1 readings in; its stop rule 3 answered by the owner's amendment of 2026-11-11; Phase 2 on after Plan 0060 merges), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
 > **Created:** 2026-11-10
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
@@ -32,56 +32,51 @@
 > a per-adapter default (answer 4); Phase 5 names every site of the emitter cap and gives its
 > re-bless a floor.
 
-**Amendment drafted 2026-11-11 (architect), awaiting the owner's pick.** Phase 1 stopped at
-done-when 3. The phases below are unchanged until the owner picks; the readings are in
-[the readings log](logs/0061.md), Phase 1 (RTX, loaded, indicative).
+> **Amended 2026-11-11 (owner).** Phase 1 stopped at its done-when 3; the owner picked option 1,
+> "read + face weights". Phase 2 builds ADR-0049's read as planned **plus a second `Lighting` bit**:
+> `lit_at` (`composite.wgsl`) and `edge_weight` (`atrous.wgsl`) weigh their taps by the face normal
+> (from `rec.axis`) instead of `rec.n`. `--lighting full` (`F6`) joins Phase 3's matrix and Phase 4's
+> window as an existing comparison arm, its cost now read. Rewritten: Phase 1's stop rules 3
+> (answered) and 5(i) (restated), Phase 2 (the second bit, its done-when, its key), Phase 3 (`R`
+> normal beside `R` face; judged by edge ratio, `T` and the eye), Phase 4 and 5 (the light's
+> resolution and weights as a pick), the Budgets, and ADR-0049 (proposed, edited in place: the
+> weight rule). Phase 2 still starts only after Plan 0060 merges into main.
 
-*The finding.* Under `baked`, `[2, 6]` moves the far crops' energy just over 10 % against far
-normal off (native far wall −10.6 %, FSR 2 dome −10.0 %); `[1, 2]` stays under. With the light
-passes at full resolution the three far-normal arms read the same to the printed digit, so the
-far normal changes no light value: ADR-0049's Context (the store is read by face) holds, and the
-10 % comes from the half-resolution grid. `lit_at` upsamples with `max(n.n', 0)^32` on `rec.n` and
-the a-trous `edge_weight` uses `^128`; with the far normal on, a riser's and a tread's taps stop
-being orthogonal and mix, which blurs the far crops and doubles FSR 2's still jumps (20 739 to
-43 605). Full-resolution light alone cut them to 1 309 and brought the far crops nearer `R` (dome
-2.74 to 1.71 levels). The direction bands remain at full resolution (far-crop edge ratio 2.52).
-Stop rule 5 holds in substance: no far-crop pixel is `interior` (sub-pixel terraces class as
-silhouette), but across every class the pixels at a direction change carry 97.4 % of the distance
-from `R`, and the edge ratio is 2.09 to 2.92 in every bin. Two caveats: `R` reads the store by face
-too, so it carries the same bands and penalises ADR-0049's read by construction; and lavapipe at
-384 x 216 does not reproduce the energy move (it does reproduce `T`'s rise).
+*The finding* ([the readings log](logs/0061.md), Phase 1, RTX, loaded, indicative). Under `baked`,
+`[2, 6]` moves the far crops' energy just over 10 % against far normal off (native far wall
+−10.6 %, FSR 2 dome −10.0 %); `[1, 2]` stays under. With the light passes at full resolution the
+three far-normal arms read the same to the printed digit, so the far normal changes no light value:
+ADR-0049's Context (the store is read by face) holds, and the 10 % comes from the half-resolution
+grid. `lit_at` upsamples with `max(n.n', 0)^32` on `rec.n` and the a-trous `edge_weight` uses
+`^128`; with the far normal on, a riser's and a tread's taps stop being orthogonal and mix, which
+blurs the far crops and doubles FSR 2's still jumps (20 739 to 43 605). Full-resolution light alone
+cut them to 1 309 and brought the far crops nearer `R` (dome 2.74 to 1.71 levels). The direction
+bands remain at full resolution (far-crop edge ratio 2.52). Stop rule 5 holds in substance: no
+far-crop pixel is `interior` (sub-pixel terraces class as silhouette), but across every class the
+pixels at a direction change carry 97.4 % of the distance from `R`, and the edge ratio is 2.09 to
+2.92 in every bin. Two caveats: `R` reads the store by face too, so it carries the same bands and
+penalises ADR-0049's read by construction (hence `R` normal in Phase 3); and lavapipe at 384 x 216
+does not reproduce the energy move (it does reproduce `T`'s rise).
 
-*Frame-cost risk of full-resolution light (a guess, no reading under the baked defaults).* The
-fly-through already has it (`--lighting full`, `F6`; ADR-0018's Outcome picked half as "the only
-tier under the lines"). Plan 0024's 1080p readings (lamp on, path-traced) put full at about 4x the
-light, temporal and a-trous passes: +9 to +12.5 ms a frame on the RTX, over `docs/nfr.md` section 2's 6.0 ms
-lighting and 3.0 ms denoise lines. Scaled by pixels to the window's internal 1687 x 919, a guess of
-+6 to +10 ms RTX, which takes the defaults' 12 to 13.5 ms frame past 16.6 ms; the RADV, already at
-55 ms, several times that. The baked lamp-off light may be cheaper; Phase 2 would read it.
+*The cost of full-resolution light, read* ([the readings log](logs/0061.md), "Full-resolution
+light cost": the hall, the baked defaults, FSR 2 at 1.5, `[2, 6]`, 600 frames, 3 alternated runs,
+quiet; RTX at 2530 x 1378, Radeon RENOIR at 1280 x 720). It replaces the draft's guess of +6 to
++10 ms RTX.
 
-*Options (recommended first).*
+| adapter | GPU p50, full against half | wall p50 / p99, full | denoise, full (line 3.0 ms) |
+|---|---|---|---|
+| RTX, lamp off | +3.41 ms (8.79 to 12.20) | 15.6 to 15.8 / 18.0 to 18.6 ms (p99 over 16.6) | 4.35 ms, +1.35 over |
+| RTX, lamp on | +4.7 ms (9.5 to 14.2) | 17.8 to 17.9 ms p50, over 16.6 | 4.38 ms, +1.38 over |
+| Radeon, lamp off | +3.81 ms (20.2 to 24.0) | 27.1 ms p50 (half already 23.3) | 5.28 ms, +2.28 over |
 
-1. **Read, face-normal weights, full as an arm.** Phase 2 builds ADR-0049's read as planned plus a
-   second `Lighting` bit: `lit_at` and `edge_weight` weigh by the face normal (from `rec.axis`)
-   instead of `rec.n`, so a riser's and tread's taps stay apart while their values are smooth. Cost
-   about 0 ms (a guess); whether it recovers far-normal-off's 20 739 jumps is unread. `--lighting
-   full` joins Phase 3's matrix and Phase 4's window as an existing arm, its cost read at both
-   adapters. Phase 2 text: the second bit, its done-when (near faces bit-identical; far crops'
-   energy within 10 % of far normal off under the knob), its key. Stop rules: 3 marked answered by
-   this reading; 5(i) restated as "at a direction change, across every class" (met, 97.4 %); Phase
-   3 adds `R` with the read on (`R` normal) beside `R` face, and judges the read by edge ratio, `T`
-   and the eye, not by distance from `R` face alone. ADR-0049 (proposed) is edited in place to add
-   the weight rule; a default flip to full, if the window picks it, owes a new ADR on ADR-0018's pick.
-2. **Full resolution as the fix.** Phase 2 becomes the cost reading of `--lighting full` at the
-   defaults and Phase 5 flips the fly-through's default if the window keeps it; ADR-0049 is
-   withdrawn. The best figures read so far, at the largest cost (above, a guess), and the direction
-   bands stay (edge ratio 2.52). A new ADR supersedes ADR-0018's resolution pick; stop rule 5 drops.
-3. **ADR-0049's read as planned.** Phase 2 unchanged; only 5(i) is restated and stop rule 3 marked
-   answered. Least work; the half-resolution weights keep doubling the still jumps under the far
-   normal, and the window may still cycle `F6`. No ADR change.
-4. **Full resolution in the far band only.** A new mechanism (the light grid's resolution by the
-   voxel's size on screen), a new ADR and a later plan; Plan 0061 waits on it. Cost between half and
-   full, unread; the most design work.
+The lighting line (6.0 ms) holds in every arm; the cost is the denoise (a-trous +2.27, temporal
++0.98 ms RTX). Frame targets +56.8 MB RTX, +15.0 MB Radeon.
+
+*Rejected, owner 2026-11-11:*
+
+- Full resolution as the fix: +3.4 to +4.7 ms RTX, denoise over its line, and the direction bands stay (edge ratio 2.52); it stays an arm.
+- ADR-0049's read alone: the half-resolution weights keep mixing a riser's and a tread's taps under the far normal, doubling the still jumps.
+- Full resolution in the far band only: a new mechanism, ADR and plan before this one could go on; the most design work.
 
 ## TL;DR
 
@@ -98,7 +93,9 @@ Phase 1 checks this by measurement before any mechanism: under the baked light, 
 change the far crops at all, and which class carries the distance from a 4-ray reference? Phase 2
 builds ADR-0049 behind a toggle: where the far normal's weight is above 0, the store is read as the
 squared-cosine mix of the cell's direction values by the shading normal. It is exactly today's read
-up close. Phase 3 reads the matrix and the edges left. Phase 4 is the owner's window. Phase 5 lands
+up close. Since Phase 1 (owner amendment, 2026-11-11) a second bit makes the half-resolution
+light's filters weigh by the face normal, and `--lighting full` is a comparison arm. Phase 3 reads
+the matrix and the edges left. Phase 4 is the owner's window. Phase 5 lands
 the picks as defaults. The first thing anyone sees is a table: far normal on against off under the
 baked light, which Phase 1 predicts reads the same.
 
@@ -169,6 +166,14 @@ one.
 - **ADR-0049** (proposed) is the mechanism for the far bands: where the far normal's weight is above
   0, a cube-face hit reads the store as `sum_a n_a^2 value(cell, dir_a(n))` over the directions the
   cell holds, renormalised. At weight 0 it is today's read to the bit. No storage, no pass.
+- **The half-resolution light's filters weigh by the face normal** (ADR-0049, the weight rule;
+  owner 2026-11-11), a second `Lighting` bit: `lit_at`'s upsample and the a-trous `edge_weight`
+  compare the taps' face normals, not `rec.n`, so a far riser's and tread's taps stay apart while
+  the read makes their values smooth. Phase 1 read the mixing under `rec.n` as the far normal's
+  10 % energy move and its doubled still jumps.
+- **Full-resolution light (`--lighting full`) is a comparison arm**, not the mechanism: read at
+  +3.4 ms RTX (lamp off), it goes to the window beside the bits; a default flip to it owes a new
+  ADR on ADR-0018's resolution pick.
 - **The edges are read, not fixed:** jitter phases, sharpening and FSR 2 at scale 1 already exist
   as knobs and go to the window. A mechanism for them is a later plan if the window asks for one.
 - **The far normal's setting is picked again** under the new read, since `[1, 2]` was picked under
@@ -193,7 +198,9 @@ flowchart LR
     end
     subgraph Plan 0061
         K[Lighting bit: read by rec.n] --> T
+        K2[Lighting bit: weights by face normal] --> F[lit_at, edge_weight]
     end
+    F --> C
     O --> M[gpu_strip.rs: T, L, J, C, distance from R, class]
     M --> W[owner's window]
 ```
@@ -250,7 +257,9 @@ The wall times below are estimates until a phase reads them.
   3. **The stop rule, the code read.** If under `baked` the far normal moves the far crops' energy
      by more than 10 % against off, at either setting, the code read above is wrong and the bands
      have another source: dev stops for an architect amendment before Phase 2. The log gives the
-     figure either way.
+     figure either way. **Answered 2026-11-11 (owner):** met at `[2, 6]` (−10.6 % native far
+     wall, −10.0 % FSR 2 dome); the source is the half-resolution filters' weights on `rec.n`,
+     not the store's read, and Phase 2's second bit is the answer.
   4. **The class table under `baked`, in the log:** for the defaults and native, the share of `T`
      jumps, `C` jumps and the distance from `R` on interior, seam, crease, silhouette, emitter and
      miss pixels, by footprint (under 2, 2 to 6, over 6 internal pixels), and the direction map's edge
@@ -259,24 +268,26 @@ The wall times below are estimates until a phase reads them.
      0056's R3).
   5. **The stop rule, the attribution.** Phase 2 builds a fix for direction changes, so it starts
      only if the reading puts the bands there. Both must hold on the far crops under `baked` at
-     the defaults: (i) of the class table's classes, the pixels within 1 pixel of a direction
-     change carry the largest share of the distance from `R` (the table gains that row: interior
-     pixels split into "at a direction change" and "inside one direction"); (ii) the direction
+     the defaults: (i) the pixels within 1 pixel of a direction change, across every class, carry
+     the largest share of the distance from `R` against each class's pixels inside one direction
+     (restated 2026-11-11: the far crops hold no `interior` pixel, since sub-pixel terraces class
+     as silhouette; met, 97.4 %); (ii) the direction
      map's edge ratio in the bins beyond the far normal's band start is above 2 (an image edge is
      more than twice as likely at a direction change as elsewhere; a ratio near 1 says the edges
      are not the store's directions). If either fails (silhouettes, emitters or seams carry the
      distance, or the ratio is near 1), dev stops for an architect amendment before Phase 2 and
      the log names the class that leads. The threshold 2 is a proposal; the log gives the figures
-     either way.
+     either way. (ii) met: 2.09 to 2.92 in every bin, 2.64 pooled.
   6. **The re-read on lavapipe,** per lane rule 9c: the far crops' guard and `T` for `baked`, far normal
      off and `[2, 6]`, FSR 2 at 384 x 216, as an arm of `reading::strip_run` (no tier runs it). The
      log says whether it agrees.
 
-### Phase 2: The store read by the far normal (ADR-0049), behind a toggle
+### Phase 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles
 
 - **Owner skill:** dev
-- **What:** ADR-0049's read in `temporal.wgsl`, a `Lighting` bit off in the library, a fly-through
-  flag and key that show their mode, its tests and its cost.
+- **What:** ADR-0049's read in `temporal.wgsl` and its weight rule in `composite.wgsl` and
+  `atrous.wgsl`, two `Lighting` bits off in the library, a fly-through flag and key for each that
+  show their mode, their tests and their cost. Starts after Plan 0060 merges into main.
 - **The read:** at a cube-face hit with `rec.n` not equal to the face normal, for each axis `a` with `n_a^2` above 1e-4, `store_brick_value(voxel, 2a + (n_a > 0))` at
   the hit's voxel; the values with `w > 0` summed by `n_a^2` and renormalised; the face's own read
   where none has a value. The hit face's term is today's call. The counters `store[0..2]` count the
@@ -290,11 +301,25 @@ The wall times below are estimates until a phase reads them.
   side effect; done-when 2 covers it with a finite-and-renormalised check, and those looks get no
   golden. The field look's hits do not read the store by face (`reads_store`), so the knob does not
   reach them.
+- **The weights (the second bit).** With it on, `lit_at`'s 2 x 2 upsample weight
+  (`max(n.n', 0)^32`) and the a-trous `edge_weight` (`max(n.n', 0)^128`) take the dot of the two
+  hits' face normals instead of their `rec.n`: the unit vector on `rec.axis`, signed against the
+  view ray as `shadow_normal_of` signs it (dev states how each pass gets the ray to a tap). A hit
+  with no face axis (`rec.axis < 0`: the field look, a miss) keeps `rec.n`. The plane term
+  (`exp(-plane / SIGMA_PLANE)`) keeps `rec.n` (a proposal: it measures distance from the surface,
+  not direction; dev reads the far crops with it on `rec.n` and on the face normal and logs both).
+  Under `--look face` with the far normal's weight at 0, `rec.n` is the face normal, so the bit
+  changes no near pixel. Under `--lighting full`, `lit_at` reads its own pixel and only the a-trous
+  weight moves. The temporal pass's history weights are not changed.
 - **The window:** `--store-read face|normal` (default `face` in this phase); a key cycles it (`Comma`
-  reads free at 9ce251d; dev moves it if taken and says so). The banner and the stats HUD's aliasing
-  row show `store read face` or `store read normal` beside the far normal, the whole time.
-- **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`, `crates/vxe-render/src/marcher.rs`
-  (the `Lighting` bit and its doc), `crates/vxe-render/src/lib.rs` if the bit is re-exported,
+  reads free at 9ce251d; dev moves it if taken and says so). `--light-weights normal|face` (default
+  `normal`, today's) and a key that cycles it (`Semicolon`, free at 0d9f782; the same rule). The
+  banner and the stats HUD's aliasing row show `store read face|normal` and `weights normal|face`
+  beside the far normal and the light's resolution (`F6`), the whole time.
+- **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`,
+  `crates/vxe-render/src/shaders/composite.wgsl` (`lit_at`), `crates/vxe-render/src/shaders/atrous.wgsl`
+  (`edge_weight`), `crates/vxe-render/src/marcher.rs`
+  (the two `Lighting` bits and their docs), `crates/vxe-render/src/lib.rs` if the bits are re-exported,
   `apps/flythrough/src/main.rs`, `apps/flythrough/src/hud.rs`, `apps/flythrough/src/lib.rs`,
   `apps/flythrough/tests/gpu_look.rs` (the staircase tests and their golden under
   `apps/flythrough/tests/golden/`), `apps/flythrough/tests/gpu_hud_golden.rs` if the row's golden
@@ -324,33 +349,61 @@ The wall times below are estimates until a phase reads them.
      normal off. Under `gradient27` and `trilinear8` with the knob on, every stored part read is
      finite, and a pixel whose three direction values are equal reads that value within 1e-5 (the
      weights renormalise).
-  3. `the_store_read_toggle_shows_in_the_banner` (no GPU, under 1 s): the flag parses `face` and
-     `normal` and refuses anything else; the key changes the banner's and the row's text to each mode.
-  4. Knob off: the existing goldens unchanged (`gpu_golden.rs`, `gpu_castle_golden.rs`),
+  2b. `the_face_weights_leave_near_faces_alone` (lavapipe, the same world at 96 x 54, under 10 s,
+     an estimate): under `--look face` with the far normal off, the whole frame is bit-identical
+     with the weights bit on and off, at half and at full light resolution. (No per-pixel claim
+     with the far normal on: the a-trous passes carry a far tap's weight across most of a
+     96 x 54 frame, so a near pixel may move by its far neighbours.)
+  3. `the_store_read_toggle_shows_in_the_banner` (no GPU, under 1 s): each flag parses its two
+     modes and refuses anything else; each key changes the banner's and the row's text to each of
+     its modes, and the row names the light's resolution.
+  4. Both knobs off: the existing goldens unchanged (`gpu_golden.rs`, `gpu_castle_golden.rs`),
      `frame_bytes` as main's.
-  5. **Cost, in the log and `docs/nfr/02-frame-budget.md`:** the temporal pass and the GPU frame with
-     the knob off and on, far normal `[1, 2]` and `[2, 6]`, `flythrough --headless --frames 300` at
-     the hall shot and `--level --pose vein`, RTX at 2530 x 1378 and RADV RENOIR at 1920 x 1080, three
-     alternated rounds, perf lock, load per run. A proposed line, a guess: +0.3 ms RTX and +1.5 ms
-     RADV at the hall; a miss goes to the window as a cost, not a stop.
+  5. **The weights' claim, a reading in the log (RTX, the strip rig's Phase 1 conditions):** the
+     far crops' guard energy under `baked`, FSR 2 at 1.5 and native, far normal `[1, 2]` and
+     `[2, 6]`, weights bit on (read off and on), against far normal off; and FSR 2's still jumps
+     beside Phase 1's 20 739 (far normal off) and 43 605 (`[2, 6]`). The bit exists for the energy
+     to stay within 10 % of far normal off; a miss is named in the log and goes to Phase 3 and the
+     window as a reading, not a stop (the phases before the window are exploration).
+  6. **Cost, in the log and `docs/nfr/02-frame-budget.md`:** the temporal, composite and a-trous
+     passes and the GPU frame with each knob off and on, far normal `[1, 2]` and `[2, 6]`,
+     `flythrough --headless --frames 300` at the hall shot and `--level --pose vein`, RTX at
+     2530 x 1378 and RADV RENOIR at 1920 x 1080, three alternated rounds, perf lock, load per run.
+     Proposed lines, guesses: the read +0.3 ms RTX and +1.5 ms RADV at the hall, the weights about
+     0; a miss goes to the window as a cost, not a stop. `--lighting full` is not re-read here:
+     its cost is the readings log's "Full-resolution light cost".
 
 ### Phase 3: The matrix with the read, the edges left, and the window's runner
 
 - **Owner skill:** dev
-- **What:** Phase 1's tables again with the knob, the edge knobs that exist, and a runner for Phase 4.
+- **What:** Phase 1's tables again with the two knobs and full-resolution light, the edge knobs
+  that exist, and a runner for Phase 4.
 - **Arms (hall, `baked`; the level's `vein` and `patch` for the defaults and the pick):** store read
-  `face` and `normal`; far normal off, `[1, 2]`, `[2, 6]`; FSR 2 at 1.5, native, FSR 2 at 1 with the
-  far normal scaled to the same voxels (`[1.5, 3]` for `[1, 2]`); for the edges, at the knob's best
-  arm: `--jitter-phases 8`, `--sharpen 0.25`. Still, the 1 px pan, the 10 px yaw.
+  `face` and `normal`; weights `normal` and `face`; light `half` and `full` (`--lighting full`, the
+  comparison arm: no new code, its cost already read); far normal off, `[1, 2]`, `[2, 6]`; FSR 2 at
+  1.5, native, FSR 2 at 1 with the far normal scaled to the same voxels (`[1.5, 3]` for `[1, 2]`);
+  for the edges, at the knobs' best arm: `--jitter-phases 8`, `--sharpen 0.25`. Still, the 1 px
+  pan, the 10 px yaw. Not every product: dev names the arms run and why (the bits are read on and
+  off at each far normal and resolution; the edge knobs and FSR 2 at 1 at the best arm only).
+- **Two references.** `R face` is Phase 1's `R` (it reads the store by face, so it carries the
+  direction bands and penalises the read by construction). `R normal` is the same `R` with the
+  store read on, far normal scaled as Phase 1 (`[2, 4]`, `[4, 12]`). Every arm's distance is given
+  from both. Neither is ground truth for the read; the plan judges it by the edge ratio, `T` and
+  the eye.
 - **Files touched:** `apps/flythrough/tests/gpu_strip.rs` (the matrix's arms, inside `mod reading`),
   `apps/flythrough/tests/support/aliasing.rs`, `docs/plans/logs/0061.md`, `live/session61.sh`
   (local, untracked; named as Plan 0060's `live/session60.sh`).
 - **Done when:**
-  1. Every arm's `T`, `L`, `J`, `C`, distance from `R` and guard are in the log, with the class table
-     of what is left at the knob's best arm.
-  2. The log names, in one line each with its reading: the far crops' distance from `R` with the knob
-     against without; whether the guard's energy fell below `R`'s (a blurred arm wins `T`, so a fall
-     below `R` by more than 10 % is named as blur); the class now largest; what the edge knobs move.
+  1. Every arm's `T`, `L`, `J`, `C`, distance from `R face` and from `R normal`, the direction
+     map's edge ratio by bin, and the guard are in the log, with the class table of what is left
+     at the knobs' best arm.
+  2. The log names, in one line each with its reading, for the read, the weights and full
+     resolution, each against its off arm: the far crops' edge ratio (the direction bands' own
+     measure: toward 1 is the bands gone); `T` still and the pan's `C`; the distance from both
+     references; whether the guard's energy fell below `R`'s (a blurred arm wins `T`, so a fall
+     below `R` by more than 10 % is named as blur); the class now largest; what the edge knobs
+     move. "Best arm" is the lowest edge ratio without blur, with `T` beside it; the log says
+     which arm that is, and the eye decides in Phase 4.
   3. The runner prints and runs Phase 4's steps one by one, each started on Enter, under the perf lock
      and the memory cap, stdout on screen and teed to a log, and pings the owner when ready.
 
@@ -362,7 +415,8 @@ The wall times below are estimates until a phase reads them.
 
   ```
   cargo build --release -p flythrough
-  # 1. The hall, still: a minute each. Comma (store read), V (far normal), F10 (upscaler).
+  # 1. The hall, still: a minute each. Comma (store read), Semicolon (weights),
+  #    F6 (light half or full), V (far normal), F10 (upscaler).
   target/release/flythrough --source showcase --shot hall --hud
   # 2. The hall, a slow pan and a head turn. The same keys.
   target/release/flythrough --source showcase --shot hall --hud --pan 1.1
@@ -384,8 +438,10 @@ The wall times below are estimates until a phase reads them.
   normal's setting, or off; (c) what is still seen, by class and scene (bands, rings, silhouettes,
   emitters' edges, the edge dots); (d) whether an edge fix is wanted and what it may cost; (e) FSR 2
   at 1 as a quality setting, yes or no; (f) what the Radeon run showed at the pick, as words for
-  the log. The Radeon keeps the same default (owner answer 4); a per-adapter default is the
-  render-settings plan's question, not this window's.
+  the log; (g) the light's filters and resolution: half with face weights, half with `rec.n`
+  weights, or full (read at +3.4 ms RTX lamp off, +3.8 ms Radeon; the readings log's
+  "Full-resolution light cost"). The Radeon keeps the same default (owner answer 4); a per-adapter
+  default is the render-settings plan's question, not this window's.
 
 ### Phase 5: The picks as defaults
 
@@ -395,7 +451,10 @@ The wall times below are estimates until a phase reads them.
   takes (a) (the library default stays `face`); `Fsr2Settings::emitter_cap` and `--emitter-cap` are
   removed (Plan 0056's verdict: a fault); `--jitter-phases` and `--dither` stay opt-in or go, as (c)
   and (d) say, and the log states which. If (a) is `face`, the read stays as an opt-in knob or is
-  removed, as the owner says.
+  removed, as the owner says. The fly-through's weights and light resolution take (g) (the
+  library defaults stay `normal` weights and half). If (g) is full, the architect writes a new
+  ADR on ADR-0018's resolution pick before this phase lands it, and the denoise line's miss
+  (4.35 ms against 3.0 ms RTX) is recorded in `docs/nfr/02-frame-budget.md`.
 - **Files touched:** `apps/flythrough/src/lib.rs`, `apps/flythrough/src/main.rs` (the flag, its
   field and its banner test), `apps/flythrough/src/hud.rs` (`fsr2_knob_words`). The emitter cap's
   sites: `crates/vxe-render/src/fsr2.rs` (`Fsr2Settings::emitter_cap`),
@@ -408,9 +467,9 @@ The wall times below are estimates until a phase reads them.
   Removing `Params.emitter_cap` changes `march.wgsl`, which the bake compiles: a store written to
   a `--bake-file` re-bakes once (ADR-0047, Negative).
 - **Done when:**
-  1. `the_default_look_is_the_windows_pick` (no GPU, under 1 s): `LookPreset::DEFAULT.far_normal` and
-     the fly-through's default store read equal the log's (a) and (b), and the banner's first row
-     names both.
+  1. `the_default_look_is_the_windows_pick` (no GPU, under 1 s): `LookPreset::DEFAULT.far_normal`,
+     the fly-through's default store read, weights and light resolution equal the log's (a), (b)
+     and (g), and the banner's first row names them.
   2. Phase 2's gate-sized staircase test (done-when 1b) runs at the defaults and holds its claim
      (or, if (a) is `face`, its knob-off half); it is in the gate whether or not the 192 x 108 test
      went to soak. If (b) is not `[1, 2]`, its distances follow the picked band and the plan's log
@@ -419,9 +478,10 @@ The wall times below are estimates until a phase reads them.
      and no shader or `Params` field names the cap (`the_emitter_cap_is_gone`, no GPU, under 1 s,
      for the flag; a grep line in the log for the rest).
   4. Re-blessed goldens on lavapipe, each with its old and new image's mean and max difference in the
-     log, and the reason (the far normal or the read). The floor: a golden none of whose pixels
-     has a far-normal weight above 0 under the old or the new band does not move (max difference
-     0), and dev lists which those are; every re-blessed golden passes its own test at the
+     log, and the reason (the far normal, the read, the weights or the resolution). The floor: a
+     golden none of whose pixels has a far-normal weight above 0 under the old or the new band does
+     not move (max difference 0), unless (g) is full, which moves every lit golden and the log
+     says so; dev lists which those are; every re-blessed golden passes its own test at the
      harness's floor on a second run. The hall's golden is a soak test, so its re-bless is run by
      name with `--run-ignored only` and the log says so; it is not part of the gate.
   5. The default's cost on both adapters at the hall and the vein, three rounds, in the log and
@@ -446,7 +506,16 @@ fn store_value_by_normal(voxel: vec3<i32>, face: u32, n: vec3<f32>) -> vec4<f32>
 }
 ```
 
-No new buffer, binding or stored byte. One `Lighting` bit.
+```wgsl
+// illustrative: the weights bit, in lit_at and edge_weight; face_normal_of is
+// shadow_normal_of's face branch with the view ray to that hit
+let na = select(a.n, face_normal_of(a), weigh_by_face && a.axis >= 0);
+let nb = select(b.n, face_normal_of(b), weigh_by_face && b.axis >= 0);
+var c = max(dot(na, nb), 0.0); // then ^32 (lit_at) or ^128 (edge_weight), as today
+```
+
+No new buffer, binding or stored byte. Two `Lighting` bits; `--lighting full` (an existing
+knob) adds its frame targets (+56.8 MB RTX at 2530 x 1378) only when picked.
 
 ## Budgets
 
@@ -460,6 +529,7 @@ Against `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`. Today's figur
 | Hit pass, far normal `[2, 6]` against `[1, 2]` against `face` | RTX 4.34 / 3.37 to 3.77 / 2.85 ms; RADV 21.1 / 17.0 / 14.5 ms | a pick of `[1, 2]` saves about 0.6 to 1 ms RTX and 4 ms RADV against today's default |
 | Upscale line, 1.5 ms | FSR 2 2.93 to 3.15 ms RTX, 9.95 to 10.0 ms RADV | unchanged; FSR 2 at 1 (opt-in) about 5 ms RTX |
 | `frame_bytes` | unchanged by design | Phase 2 done-when 4 checks it |
+| `--lighting full` against half (the arm), the hall, baked, `[2, 6]` | read 2026-11-10 at 68b7575: RTX lamp off GPU p50 +3.41 ms, wall p99 18.0 to 18.6 ms; lamp on +4.7 ms; Radeon +3.81 ms; denoise 4.35 ms against its 3.0 ms line | a pick of full misses the denoise line and the RTX's p99; Phase 5 records it and owes an ADR |
 
 The close measures with `flythrough --headless --frames 300`, three alternated rounds, perf lock,
 both adapters, as in Phase 2. Test times are named per phase and are estimates; none is planned
@@ -476,6 +546,11 @@ under the FSR 2 default (the table's row); this plan reads its delta and does no
 - **A cell's direction mean leaks** (ADR-0046's Alternative E): a riser value from another room's
   faces spreads onto far treads. Read in the class table; a dark or bright cast at distance is the
   sign.
+- **Face weights may bring back half-resolution blocks at distance.** With a far riser's and
+  tread's taps apart, `lit_at` falls back to fewer taps (or the nearest) where the steps are under
+  a light cell, which is far normal off's filtering. The read is meant to make the two taps' values
+  agree there; if it does not, the bit trades blur for blocks. Phase 2 done-when 5 and Phase 3
+  read it; the window judges it beside full resolution.
 - **The far normal's band is in internal pixels:** comparisons across scales use the scaled settings
   named in each phase.
 - **The attribution may not hold.** The stills were read by eye; if Phase 1's class table puts the
@@ -547,7 +622,7 @@ The owner, 2026-11-10, to the open questions above:
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), Phase 2 not started; see [the readings log](logs/0061.md) | committed with this row |
-| 2: The store read by the far normal (ADR-0049), behind a toggle | dev | not started | |
+| 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | not started | |
 | 3: The matrix with the read, the edges left, and the window's runner | dev | not started | |
 | 4: The owner's window | human | not started | |
 | 5: The picks as defaults | dev | not started | |

@@ -20,7 +20,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health. After Plan 0044, last before M10. Phase 0 re-measures; the architect confirms the seams. |
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | draft | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0061; re-read Phases 1-2 at its tip. |
 | [0060](0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) | The live queue by the view: one score of distance and angle, tuned by eye; passed jobs withdrawn | approved | M2, ADR-0048 (proposed). Amended 2026-11-10. First in the order; 0061's Phase 1 beside it. |
-| [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | approved | M2, ADR-0049 (proposed). Amended 2026-11-10. Phase 1 beside 0060, the rest after it; before 0058. |
+| [0061](0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far bands under the baked light; a split by measurement, the store read by the far normal | in-progress | M2, ADR-0049 (proposed). Amended 2026-11-11 (owner). Phase 1 read; Phase 2 after 0060 merges; before 0058. |
 <!-- roster:end -->
 
 ## Sequence
