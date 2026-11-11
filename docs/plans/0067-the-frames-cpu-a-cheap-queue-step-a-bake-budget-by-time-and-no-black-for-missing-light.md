@@ -40,7 +40,8 @@
 > **Amended 2026-11-11 (owner), Plan 0060's fix-pass findings.** Two readings of Plan 0060's
 > Phase 5 fix pass (`docs/plans/logs/0060.md`, "The queue step's CPU, fix pass") move here. (1)
 > **The opening step's cost:** a step that opens reads about 9 ms p50, one that does not about
-> 1 ms at best; Phase 2 takes the opening step as a target. (2) **The run-to-run swing:** the
+> 1 ms at best (Phase 1, loaded, regime A: 1.39 ms at slice 3, 0.68 at 0.75); Phase 2 takes
+> the opening step as a target. (2) **The run-to-run swing:** the
 > same base binary source read queue-step p50 about 1.0 ms before a reboot and 4.8 to 9.4 ms
 > after it; Phase 1 measures the swing and names its cause or says it could not. While the
 > swing is unexplained an absolute millisecond bar is not reliable, so Phase 2's bars are an
@@ -61,6 +62,25 @@
 > near shell too, an arm until the owner's window (Phase 6) picks it. "Decision", "Data shapes",
 > "Budgets" and the risks follow. The plan stays approved.
 
+> **Amended 2026-11-11 (architect, owner away; default taken, owner may overrule), Phase 1's
+> stop.** The lane stopped at Phase 1's rule: no slice-3 run held B (`docs/plans/logs/0067.md`,
+> "The slice test"). Every run of that test was loaded (1-minute load 1.4 to 13.5 at the start,
+> 7 to 23 at the end, other lanes' GPU jobs and a nice-19 build), and load lowers the frame
+> rate, which pushes a run toward A, so the readings cannot decide the model. What they do
+> show: every run read B for its first 14 to 22 s and A from about 22 to 25 s to the end, and
+> `--near 0` held B on both binaries. (1) **The verdict waits for a quiet re-read**: the slice
+> test and the queued pins and rigs (`live/p1-readings3.sh`) run again on a machine with no
+> other lane building or rendering, which the orchestrator arranges after Plans 0061 and 0068
+> merge; a run whose 1-minute load at its start reads over 2 is marked loaded and does not
+> count (Phase 1, "The quiet re-read"). (2) **Phase 2's A/B does not wait for the model**: it
+> runs against the base 4bc8100 under both pins, judged per regime by the existing bars and by
+> the step's cost with an empty queue at rest (Plan 0064's trace, about 3 ms; Phase 2); the
+> unpinned flights are reported, not judged. (3) **Phase 2b goes ahead if the quiet slice-3
+> runs fall into A**, the near shell's starvation; if every quiet slice-3 run holds B, Phase 2b
+> becomes a reading and the lane goes on to Phase 3 (Phase 2b, "The premise"). Phase 2 takes
+> the incremental candidate pool, since Phase 1 names the candidates as the opening step's
+> largest stage. "Context", "Budgets" and the risks take Phase 1's figures.
+
 ## TL;DR
 
 On the RTX the GPU is not the lag. In the owner's window at 2560 x 1440 the march reads 6.1 to
@@ -73,9 +93,10 @@ step's time goes, then makes a step that has nothing to do cost nothing**, gives
 in milliseconds per second rather than a slice per frame (ADR-0052), lights a brick with no
 value from its neighbour chunk's or its parent cell's summary instead of black, and reads an arm
 that bakes far chunks whose reach can never be resident. In a flight the queue falls into one of
-two regimes, starved (a step of about 1 ms, little light) or keeping up (about 9 ms, every step
-opening); the plan confirms that with the slice, reads every bar inside one regime, and stops
-the queue starving. The owner picks the budget, the fallback, the starvation fix and the reach
+two regimes, starved (A: a step of 0.7 to 1.4 ms when it opens nothing, about 7 ms when it
+opens, little light) or keeping up (B: 10 ms or more, nearly every step opening; Phase 1,
+loaded); the plan confirms that with the slice on a quiet machine, reads every bar inside one
+regime, and stops the queue starving if the quiet re-read shows it starves. The owner picks the budget, the fallback, the starvation fix and the reach
 arm in a window on both adapters. The first thing anyone sees: a `step` breakdown in the per-second `bake queue:` line and
 the HUD's queue row, so the 7 ms has a name.
 
@@ -164,6 +185,18 @@ iGPU), which Plan 0064 records as a label on windowed readings.
     second, weaker loop toward A. What tips the race (the GPU's `ns_per_sample` when the shell
     reaches the pre-roll's coarse edge, at 16 to 20 s, ranked first) is a hypothesis; Phase 1
     tests the model with the slice.
+- **Phase 1's readings** (amended 2026-11-11, architect, owner away; RTX, headless 2530 x
+  1378, rig (c), seed 1, `docs/plans/logs/0067.md`; **all loaded**: 1-minute load 1.4 to 13.5
+  at the starts, 7 to 23 at the ends, and four tip runs under 1 300 frames). Both slices on
+  both binaries read B on their first flight lines (14 to 22 s) and A from about 22 to 25 s to
+  the end, the coarse count at 0 by about 35 s; no slice-3 run held B. `--near 0` held B on
+  every flight line on both binaries: the base's step p50 13.56 ms (load 23 at the start), the
+  tip's 10.10 ms over 20 of 20 lines, opening share 0.955. The tip's stages at slice 3: A's
+  opening step 7.05 ms p50 (candidates 2.65, list 1.44, sort 1.23, checks 0.39), A's
+  non-opening step 1.39 ms (submit 0.70, collect 0.42); B's opening step 19.9 ms (list 6.0,
+  candidates 4.1, sort 1.7, checks 1.35), from B's 241 steps of one loaded run. So the
+  candidates and the list, not the sort, carry the opening step, and the slice test's verdict
+  is open until a quiet re-read (Phase 1).
 - **Where the step's time can go** (a code read of `bake.rs` at 95ce5ac, to be measured, not
   trusted): each step filters every store block against the mirror and `retain`s seven maps;
   `open` rebuilds a candidate from **every full chunk in the mirror** (about 3 000 at the
@@ -325,16 +358,29 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   prediction** (inferred from "The two regimes", not read): at 0.75 ms the coarse front bakes
   about 100 chunks a second at best, near the 83 a second the shell's leading edge needs (a
   guess), so every run ends in A, step p50 about 1 ms; at 3 ms the loop's threshold doubles and
-  the front bakes about 400 a second, so every run holds B, about 9 ms. **The model is
-  confirmed** if every 0.75 run is A and every 3 run is B on both binaries. A slice of 3 does
+  the front bakes about 400 a second, so every run holds B, about 9 ms. The first reading's
+  rule was that the model is confirmed if every 0.75 run is A and every 3 run is B on both
+  binaries; the quiet re-read below replaces it. A slice of 3 does
   not pin B: once in A the shell still needs about 4.5e7 samples a second against 3e7, so a run
   that falls into A stays there, and the log says so if one does. **If the regime does not
   follow the slice**, the fallback is the hunt: per opening, the pool's refusals (`pool_full`),
   the blocked hits and the near shell's class-0 count, and per run the pre-roll's coarse pass
   (chunks, samples), `ns_per_sample` at frames 120 to 240, the memory cap, the 1-minute load
   and the machine's state (power source, governor and profile, CPU and GPU clocks and
-  temperature at start and end); the lane then stops for an architect amendment before Phase 2,
-  since the bars below rest on the model.
+  temperature at start and end), logged beside the quiet re-read. The first, loaded reading did
+  not confirm the model and the lane stopped; the stop is answered by the next bullet.
+- **The quiet re-read** (amended 2026-11-11, architect, owner away; default taken, owner may
+  overrule). The slice test, the pins and the rigs of `live/p1-readings3.sh` run again on a
+  quiet machine: no other lane building or rendering, arranged by the orchestrator after Plans
+  0061 and 0068 merge. Every run logs the 1-minute load at its start and end; **a run whose
+  start reads over 2 is marked loaded**, is reported, does not count for any verdict or bar,
+  and is re-run while the quiet window lasts. The verdict counts at least two quiet runs a
+  side; with fewer the log says it is still open. It is read as two questions: **does the
+  default queue starve** (a quiet slice-3 run that falls into A and stays there to its end is
+  starvation, since a doubled slice does not get the front ahead again) and **do the pins
+  hold**. The 0.75 runs are a reading. What the answer moves is Phase 2b's premise, not Phase
+  2, whose A/B rests on the pins alone. A pin that does not hold on the quiet machine still
+  stops the lane for the architect, and that pin's bars are not read.
 - **The pins** (amended 2026-11-11, owner). The same session reads the two pins Phase 2's A/B
   uses, three runs each on both binaries: `--near 0` (B: only the camera's own chunk takes a
   full blank job, about 1.8e6 samples a second at 1.56 chunks a second, an eighth of the
@@ -358,10 +404,11 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
     chunks, 1.5e7 over 12 and 1.5e7 over 35 read B, A and mixed; a run of 20 tagged steps, 12
     in B and 8 in A, prints per-regime counts of 12 and 8 and each regime's p50 from its own
     steps alone.
-  - **The slice test:** the log holds every run's regime lines, its regime by the 80 % rule,
-    its per-regime p50 and opening share, and the verdict: the model confirmed (every 0.75 run
-    A, every 3 run B, on both binaries) or not, with the fallback's fields if not. The pins'
-    runs say whether each pin held.
+  - **The slice test:** the log holds every run's start and end load, loaded or quiet, its
+    regime lines, its regime by the 80 % rule, its per-regime p50 and opening share, and,
+    from the quiet runs only, the verdict: whether the quiet slice-3 runs fall into A (Phase
+    2b goes ahead) or every one holds B (Phase 2b becomes a reading), with the fallback's
+    fields beside it. The pins' quiet runs say whether each pin held.
   - The log holds, for rigs (a) to (c) on the RTX and (a) and (b) on the Radeon, headless, plus
     rig (d) on the RTX windowed: the step's p50 and p99 per stage, the frame CPU p50 and p99,
     `update + poll + sync` p99, the reach-bound count against the in-view waiting count, and
@@ -383,12 +430,15 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   the seven `retain`s run only when the mirror moved. Plan 0065's Phase 6 as it was written
   there, extended by the reach cache. If Phase 1 names another stage (the collect's copies, the
   placement), this phase takes that one as well and the log says so.
-- **The opening step** (amended 2026-11-11, owner). A step that opens reads about 9 ms p50 at
-  the base ("Context"; regime B's step, where nearly every step opens): about 3.4 ms rebuilding and sorting the candidates, 3.5 to 3.9 ms in
-  the check-and-list loop. With the kept list, an opening between two rebuilds sorts nothing
-  and checks cached verdicts, so its cost is the walk of the kept, ordered list to the first
-  ready candidates plus the job's setup. The rebuild itself stays a full rebuild; making it
-  incremental is out of this phase unless Phase 1's readings name it.
+- **The opening step** (amended 2026-11-11, owner; Phase 1's split, architect, owner away). A
+  step that opens reads 7.05 ms p50 in A and 10.3 ms under `--near 0` at the tip (Phase 1,
+  loaded; "Context"): the candidates 2.65 and 3.03 ms, the list 1.44 and 2.89, the sort 1.23
+  and 1.58, the checks 0.39 and 0.66. With the kept list, an opening between two rebuilds sorts
+  nothing and checks cached verdicts, so its cost is the walk of the kept, ordered list to the
+  first ready candidates plus the job's setup. Phase 1 names the candidates as the opening
+  step's largest stage, so **the pool is kept incrementally** (entered and left chunks
+  applied, a partial heap for the order), as `wip` 5201ab6 has it; a debug assertion that the
+  kept pool equals a whole re-read at every opening stays in the tree.
 - **How the bars are read** (amended 2026-11-11, owner, twice): an A/B against the plan's base
   (Phase 1's start commit) under the same protocol, alternated base, tip, base, tip in one
   session, at least two rounds a side, the spread between a side's two rounds as the tolerance;
@@ -405,6 +455,16 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   rest, 1.0 ms in flight, no step over 4 ms) are recorded beside each run as readings, not
   bars; the architect may restore them by an amendment once Phase 2b's pick has settled which
   regime the default flight runs in.
+- **The A/B does not wait for the regime model** (amended 2026-11-11, architect, owner away;
+  default taken, owner may overrule). The pins remove the race by construction, so the A/B's
+  footing is that each pin holds, not the slice test's verdict. It runs in the quiet session
+  after the slice re-read, the base binary `live/base/flythrough-4bc8100` against the tip,
+  under `--near 0` (B) and `--coarse 0` (A), judged per regime by the bars below; the quiet
+  re-read's load rule holds (a run over load 2 at its start does not count, and the tolerance
+  comes from quiet rounds only). It is also judged at rest on **the step's cost with an empty
+  queue**, the frame CPU Plan 0064's close traced to this plan (the step 2.84 to 3.56 ms p50 on
+  every line once the queue drained, `baked +0`, `jobs 1`). The unpinned flights (slice 1.5
+  and 3) are run beside it and reported per regime, not judged.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `gpu_world.rs` (the sync's entered and
   left lists), `apps/flythrough/tests/gpu_queue.rs`.
 - **Done when:**
@@ -423,14 +483,21 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   - **The A/B on the RTX** (amended 2026-11-11, owner, twice), each figure against the base's
     in the same session and the same pin, within the tolerance above: rigs (b) and (c) under
     `--near 0` (B): the opening step's p50 at most **half** the base's (a proposal from
-    arithmetic: the rebuild and sort alone are about 3.4 of about 9 ms, and the reach cache
-    takes part of the 3.5 to 3.9 ms loop; not read); rigs (b) and (c) under `--coarse 0` (A):
+    arithmetic on Phase 1's loaded split: the candidates and the sort are 4.6 of the tip's
+    10.3 ms, and the reach cache takes part of the list's 2.9 and the checks' 0.7; not read);
+    rigs (b) and (c) under `--coarse 0` (A):
     the non-opening step's p50 and the step's p99 no worse than the base's, and the opening
     step's p50 no worse; rig (a), with the queue holding its unready candidates (3 000 at the
     level): the step's p50 at most a fifth of the base's (a guess: what is left is the line's
-    census and the collect's poll). Each run logs its regime lines and opening share; the
-    overall p50 is read only within one pinned regime, never pooled across regimes. The default
-    flight (no pin), alternated in the same way, is logged per regime as a reading. If a bar is
+    census and the collect's poll); **rig (a) once the queue has drained** (the lines that
+    read `baked +0` with no job ready, at least 30 of them a run): the step's p50 at most a
+    fifth of the base's on its own drained lines (the base read 2.84 to 3.56 ms there in Plan
+    0064's window; a guess at what is left, as above), with the run's frame CPU p50 logged on
+    both sides beside it as a reading. Each run logs its start
+    load, regime lines and opening share; the
+    overall p50 is read only within one pinned regime, never pooled across regimes. The
+    unpinned flights (slice 1.5 and 3), alternated in the same way, are logged per regime as
+    readings, not judged. If a bar is
     missed after the named stages are gone, the lane stops for the architect (the thread
     question of "Decision").
 
@@ -445,7 +512,19 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   HUD's queue row and the banner name it. The per-second line counts the **starved openings**:
   an opening that pushed a full job on a blank chunk while a blank candidate outside the
   full-first radius was ready and left unpushed. The phase lands after Phase 2, so the window
-  sees regime B's opening step at Phase 2's cost, not the base's 9 ms.
+  sees regime B's opening step at Phase 2's cost, not the base's 10 ms or more.
+- **The premise** (amended 2026-11-11, architect, owner away; default taken, owner may
+  overrule). The phase rests on the near shell's starvation, which Phase 1's loaded runs and
+  the `--near 0` pin suggest but do not decide. It waits for Phase 1's quiet re-read, and the
+  lane may take Phase 3 meanwhile. **If the quiet slice-3 runs fall into A** (one or more
+  falls and stays), the phase goes ahead as written. **If every quiet slice-3 run holds B**,
+  the loaded fall into A came from the frame rate (the second loop of "The two regimes"), and
+  the phase becomes a reading: no `full_first` setting, no key; rig (c) on the RTX and rig (b)
+  on the Radeon at 1280 x 720, default against `--near 0`, three runs a side, logging each
+  run's regime lines, the frames and the no-value and coarse pixel shares, for Phase 6 to see
+  whether the slow adapter starves where the RTX does not. The lane then goes on to Phase 3,
+  whose per-second budget removes that loop, and the architect amends the plan if the window
+  asks for the setting.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `apps/flythrough/src/main.rs`, `hud.rs`,
   `apps/flythrough/tests/gpu_queue.rs`.
 - **Done when:**
@@ -583,7 +662,8 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   size and at 1280 x 720, cycling the budget (`frame:1.5`, `second:150,0.25`, one higher value),
   the fallback (`black`, `neighbour`, `parent`, `chain`), the full-first radius (`2`, `off`;
   Phase 2b: the near shell's coarse light against a starved flight's blank far field, flown
-  fast through the streamed cave and at rest at the patch) and, if built, the reach arm, each
+  fast through the streamed cave and at rest at the patch; if Phase 2b was a reading only, its
+  log is shown instead and `--near 0` stands in) and, if built, the reach arm, each
   named on screen. The owner also judges the answered open points the window shows (the
   chain's order, the tile edge, a neighbour's arrival) and may overrule a default. `dev` sets
   the defaults to the picks and names them in the banner.
@@ -665,8 +745,8 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
 
 | `nfr.md` figure | On record (RTX window, 83e72e1, unless named) | Proposed | How the close measures it |
 |---|---|---|---|
-| §2 streaming line (1.0 ms): the queue's step, no line of its own today | 7.0 ms p50 at rest, 10.3 in flight, single steps to 56 ms; autopilot 3.3 ms p50 (Plan 0060 Phase 5); the base a8b1a2c's autopilot 1.0 ms in one session and 4.8 to 9.4 ms in the next, the swing (Plan 0060's fix pass) | an A/B against Phase 1's start commit, alternated in one session, the regime pinned on both sides (amended 2026-11-11, owner, twice): under `--coarse 0` (A) the non-opening p50, the opening p50 and the p99 no worse; at rest p50 at most a fifth of the base's (proposals, Phase 2). The default flight's p50 per regime and the draft's 0.5 ms at rest, 1.0 ms in flight and no step over 4 ms are logged beside them as readings; a line of its own in §2 | rigs (a), (b) and (c), both adapters, base and tip alternated, flight runs pinned |
-| The queue's opening step (no line; amended 2026-11-11, owner, twice): the main target | about 9 ms p50 on the steps that open (9.0 to 10.6), regime B's step, of it the candidates 2.2 to 2.3 ms, the sort 0.9 to 1.0, the check-and-list loop 3.5 to 3.9; the swing between about 1 and 9 ms is the regime, A or B, not the commit ("Context") | under `--near 0` (B) at most half the base's p50 in the same session's A/B (a proposal) | Phase 1's split by opening and regime, rigs (b) and (c) |
+| §2 streaming line (1.0 ms): the queue's step, no line of its own today | 7.0 ms p50 at rest, 10.3 in flight, single steps to 56 ms; autopilot 3.3 ms p50 (Plan 0060 Phase 5); the base a8b1a2c's autopilot 1.0 ms in one session and 4.8 to 9.4 ms in the next, the swing (Plan 0060's fix pass) | an A/B against Phase 1's start commit, alternated in one session, the regime pinned on both sides (amended 2026-11-11, owner, twice): under `--coarse 0` (A) the non-opening p50, the opening p50 and the p99 no worse; at rest p50 at most a fifth of the base's, with unready candidates and with the queue drained (the base's 2.84 to 3.56 ms in Plan 0064's window) (proposals, Phase 2); quiet runs only, start load at most 2 (amended 2026-11-11, architect). The default flight's p50 per regime and the draft's 0.5 ms at rest, 1.0 ms in flight and no step over 4 ms are logged beside them as readings; a line of its own in §2 | rigs (a), (b) and (c), both adapters, base and tip alternated, flight runs pinned |
+| The queue's opening step (no line; amended 2026-11-11, owner, twice): the main target | about 9 ms p50 on the steps that open (9.0 to 10.6), regime B's step, of it the candidates 2.2 to 2.3 ms, the sort 0.9 to 1.0, the check-and-list loop 3.5 to 3.9; the swing between about 1 and 9 ms is the regime, A or B, not the commit ("Context"). Phase 1, loaded, tip: A's 7.05 ms, `--near 0`'s 10.3 ms (candidates 3.03, list 2.89, sort 1.58) | under `--near 0` (B) at most half the base's p50 in the same session's A/B (a proposal) | Phase 1's split by opening and regime, rigs (b) and (c) |
 | The queue's regime in a flight (no line; amended 2026-11-11, owner) | the base and Plan 0060's tip fall into A or B run by run, and a run in B can fall into A (fix pass, RTX autopilot, `live/p5/*.log` on Plan 0060's branch); the one return to B read came on the flight's way back (lap-base-1, at about 50 s) | under the picked full-first radius, no run of rig (c) reads A and no opening is starved; a reading judged by the owner's eye in Phase 6, not a bar | Phase 2b's readings, then the regime lines of Phase 7's runs |
 | The frame's CPU (render thread; no line) | p50 7.1 at rest, 11.5 in flight; p99 11.6 / 71.5 | p50 at most 2.0 ms at rest; p99 at most 16.6 ms in flight, Plan 0064's sync budget in; read as an A/B against the base, as the step's row, while the swing is unexplained | the same |
 | The window's wall frame (Plan 0064's row) | free pacing 10.6 ms p50 at the level, quiet, main (`docs/plans/logs/0064.md`) | p50 at most the march GPU p50 plus 2 ms at rest; p99 at most 33 ms in flight | rig (d), both pacing modes logged |
@@ -685,9 +765,14 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
   which read no change; `entered.retain` at the census; the pre-roll withdraws nothing). Phase 1
   reads the merged tip; "Context"'s window figures will be high.
 - **The regime model may be wrong** (amended 2026-11-11, owner, twice). The two regimes are
-  read in the logs, but the mechanism and what tips the race are inferred. If the regime does
-  not follow the slice in Phase 1, the pins lose their footing: the lane stops for an
-  amendment, and the fallback hunt's fields are what the architect reads. Until Phase 2b's pick
+  read in the logs, but the mechanism and what tips the race are inferred. Phase 1's first,
+  loaded slice test did not confirm it (no slice-3 run held B), and load alone pushes a run
+  toward A, so the verdict waits for a quiet re-read (amended 2026-11-11, architect, owner
+  away). The pins do not rest on the model, only on holding, so Phase 2's A/B goes on; what
+  the model decides is Phase 2b's premise. A pin that does not hold on the quiet machine stops
+  the lane for an amendment, and the fallback hunt's fields are what the architect reads. The
+  quiet window may also be too short for every run: the log says which verdicts are still
+  open, and the lane goes on with what was read. Until Phase 2b's pick
   settles the default flight's regime, every step bar is an A/B in one session with the regime
   pinned, and an absolute figure in `docs/nfr.md` section 2 at Phase 7 names its regime and
   carries the session's base beside it.
@@ -708,9 +793,11 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
   judges both in Phase 6; `2` stays the default until then, and a refinement share for the near
   shell is the known lever if the window asks for it (an ADR on ADR-0046's coarse-first tier
   first).
-- **The opening step may not halve.** If the check-and-list loop's 3.5 to 3.9 ms is the reach
-  walk on fresh candidates rather than repeated checks, the cache saves little; Phase 1's split
-  names it, and a miss after the named stages are gone stops the lane for the architect.
+- **The opening step may not halve.** Phase 1 splits the loop into the list (1.44 ms in A,
+  2.89 under `--near 0`, loaded) and the checks (0.39, 0.66); if the list is the job's setup
+  for fresh candidates rather than repeated work, the cache saves little and the pool and the
+  partial heap carry the bar alone. A miss after the named stages are gone stops the lane for
+  the architect.
 - **A per-second budget lengthens the slow adapter's frame** by up to the cap's share: 25 % of
   a 66 ms frame is 16 ms. That is the trade ADR-0052 records and the owner judges in Phase 6.
 - **The fallback is a look, and it borrows light.** A sealed cave beside a lit hall takes the
