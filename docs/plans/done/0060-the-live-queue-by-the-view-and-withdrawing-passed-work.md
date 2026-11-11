@@ -1,15 +1,16 @@
 # 0060: The live queue by the view, nearest first, and withdrawing the work a flight has passed
 
-> **Status:** in-progress (owner go 2026-11-10), amended 2026-11-10 (review pass)
+> **Status:** done 2026-11-11 (close review: clean; the queue sorts by the score with the class as a tier and withdraws
+> passed work, the owner kept the withdrawal and saw no difference from the order), amended 2026-11-10 (review pass)
 > **Created:** 2026-11-10
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the emissive light behind "dark scenes, emissive voxels
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the emissive light behind "dark scenes, emissive voxels
 > as the light")
 > **Related ADRs:**
-> [ADR-0048](../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
+> [ADR-0048](../../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
 > (proposed; this plan builds it, its close accepts it), which amends the queue clause of
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)'s Outcome.
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)'s Outcome.
 > **Source:** the owner's window of 2026-11-09, Plan 0059 Phase 13 (`docs/plans/logs/0059.md`), parked in
-> [`docs/backlog.md`](../backlog.md) and taken here. Drafted without an interview (orchestrator's instruction);
+> [`docs/backlog.md`](../../backlog.md) and taken here. Drafted without an interview (orchestrator's instruction);
 > the owner answered its four questions on 2026-11-10 (Owner answers, below).
 > **Starts after:** Plan 0059's close (done, v0.44.0). The owner's order (2026-11-10): this plan, then Plan
 > 0061 (antialiasing), then Plan 0058 (dynamic lights), then Plans 0044 and 0045. 0061's Phase 1 (readings
@@ -49,6 +50,12 @@
 > the same session (two rounds each, the spread between a side's rounds as the tolerance). The opening step's
 > cost (about 9 ms, about 3.4 ms of it rebuilding and sorting the candidates) and the swing move to Plan 0067.
 > The pre-roll no longer withdrawing its own coarse pass (78740af) is accepted without a window check.
+> **Owner, 2026-11-11, at the close review:** the queue step runs in one of two self-sustaining states, about
+> 1 ms p50 (the near shell has outrun the coarse front and one full job is open at a time) and about 9 ms p50
+> (small coarse jobs, an opening nearly every step); the same binary can land in either (readings log, Phase
+> 5, the two states). The A/B bar holds only when both arms read in the same state. The fix pass's A/B had both
+> arms in the 9 ms state (tip 9.0 to 9.3, base 9.2 to 9.4 ms), so the bar is met. No new runs for this plan; the
+> run-to-run swing and pinning the state go to Plan 0067.
 
 ## TL;DR
 
@@ -328,7 +335,8 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
   17 000 on the streamed cave), so the bar is an A/B against the base read alternated in the same session:
   the tip's p50 and p99 no worse than the base's, within the spread between a side's two rounds (amended
   2026-11-11, owner; the earlier absolute bar of p50 within 0.1 ms of 1.019 ms and p99 at most 18.65 ms was
-  missed by the base itself in a later session). Phase 5 reads it.
+  missed by the base itself in a later session). Phase 5 reads it. The A/B holds only when both arms read
+  in the same state of the queue step (about 1 ms or about 9 ms p50; owner, 2026-11-11, at the close review).
 - **Section 3, memory.** No new buffer; `frame_bytes` unchanged (888 490 396 B), the pool unchanged; a withdrawn
   job's place returns to the pool (asserted in Phase 3).
 - **Section 7, startup.** The line is "time to first frame under 3 s on the dev reference (proposal)", and it
@@ -380,7 +388,7 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings, attempts and resume
-> notes go to [`docs/plans/logs/0060.md`](logs/0060.md).
+> notes go to [`docs/plans/logs/0060.md`](../logs/0060.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -431,3 +439,22 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 - Section 7's first frame at the vein and the hall: Phase 2's readings (readings log, Phase 2); not re-read here.
 
 ## Followups
+
+Close review, 2026-11-11 (fresh session, the tree at 0a660e7 with main merged; clean):
+
+- **Gate** (lavapipe, exclusive perf lock, 16G cap, 12 build jobs, load 0.89 at the start, 1.86 at the end):
+  `cargo nextest run --workspace --profile gate --no-fail-fast` exit 0, 711 run, 711 passed, 101 skipped, 437 s;
+  doctests 7 passed; clippy 0; fmt 0; `cargo deny check` ok; the doc, comment, index-row, plan-size and test-tier
+  scripts 0. The plan's tests: `gpu_queue` 2.0 to 8.2 s (`the_score_blends_distance_and_the_view` 8.182 s), the
+  CPU ones under 0.02 s. Over the 10 s line: `castle_vector` and `showcase_vector` (CPU, kept in the gate by the
+  owner) and `gpu_bake`'s `a_baked_view_is_final_on_its_first_frame` 12.3 s (read 5.9 to 13.1 s in Plan 0066,
+  not this plan's).
+- **Soak tests of `flythrough` and `vxe-render`:** all run, one fails:
+  `showcase_hall_golden_is_lit_by_its_four_ores` (98.6927 % of pixels over 2/255), the same on the base a8b1a2c:
+  a golden blessed before Plan 0059, in `docs/backlog.md`.
+- **Routed:** the queue step's two states and their swing, and the withdrawal's per-step scan of the full chunks
+  (`BakeQueue::withdraw_passed` builds two sets and a sorted list each step a job is passed), to Plan 0067. The
+  first frame's delta (section 7) was read only loaded, in Phase 2 (vein 9169 ms, hall 3842 ms at load 27); not
+  re-read at the owner's call (no new runs), so the 10 % proposal is unread at a quiet load. The near shell's
+  cost in a flight and the streaming edge are in `docs/backlog.md`.
+
