@@ -1794,8 +1794,15 @@ impl GpuWorld {
         }
     }
 
+    /// Replaces the clock the sync's time budget reads (wall time by default), for a test
+    /// that advances it by a fixed step per read.
+    pub fn set_sync_clock(&mut self, clock: SyncClock) {
+        self.sync_clock = clock;
+    }
+
     /// Uploads what the pending chunks need, nearest the focus first, until the byte budget
-    /// is spent, and clears their dirty bits. Takes one chunk lock at a time.
+    /// or the time budget ([`MirrorConfig::sync_budget_time`]) is spent, and clears their
+    /// dirty bits. Takes one chunk lock at a time.
     ///
     /// Writes what fits the reservation, nearest first, and never part of a chunk (ADR-0013):
     /// the first chunk whose slots or record do not fit is deferred, and so is every later
@@ -1809,12 +1816,6 @@ impl GpuWorld {
     /// field pass and the march, or one of its own outside a frame. A sync whose encoder is
     /// never submitted keeps its belt chunks. `queue` is kept for the field pass's own
     /// writes.
-    /// Replaces the clock the sync's time budget reads (wall time by default), for a test
-    /// that advances it by a fixed step per read.
-    pub fn set_sync_clock(&mut self, clock: SyncClock) {
-        self.sync_clock = clock;
-    }
-
     pub fn sync(
         &mut self,
         world: &World,

@@ -2507,7 +2507,11 @@ fn a_sync_stops_at_its_time_budget() {
     assert_eq!(s.deferred_chunks, 0, "none deferred for space");
     assert_eq!(s.pending_chunks, 56);
     let held: Vec<bool> = order(&split).iter().map(Option::is_some).collect();
-    assert_eq!(held, first_n(8), "the nearest 8, as the whole sync ordered them");
+    assert_eq!(
+        held,
+        first_n(8),
+        "the nearest 8, as the whole sync ordered them"
+    );
     let s = split.sync_now(&split_world, &device, &queue).unwrap();
     assert_eq!(s.chunks, 8);
     assert_eq!(s.time_deferred_chunks, 48);
@@ -2520,12 +2524,12 @@ fn a_sync_stops_at_its_time_budget() {
     }
     assert_eq!(syncs, 8);
     assert_eq!(order(&split), whole_order);
-    let read = |gpu: &GpuWorld, b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
+    let read = |b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
     for k in 0..4 {
         assert!(
-            read(&split, split.pool_shard(k)) == read(&whole, whole.pool_shard(k)),
+            read(split.pool_shard(k)) == read(whole.pool_shard(k)),
             "pool shard {k} differs"
         );
     }
-    assert!(read(&split, split.records()) == read(&whole, whole.records()));
+    assert!(read(split.records()) == read(whole.records()));
 }

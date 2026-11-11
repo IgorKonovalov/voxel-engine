@@ -71,8 +71,8 @@
 //! the world sees each cavern's far wall through the rock; `X` cycles the three, and the
 //! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
 //! after any bench; `--sync-budget` sets the mirror's upload bytes per frame and `--sync-ms` its
-//! upload time per frame (default 2 ms, 0 for none); `--workers N` sets the streamer's
-//! generation workers (default two fewer than the logical cores, at least 1); `--mirror-budget`
+//! upload time per frame (default none; 0 is none); `--workers N` sets the streamer's
+//! generation workers (default one fewer than the logical cores, at least 1); `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
 //! need, with records for the residency's ball when streaming), and while streaming the full
@@ -334,8 +334,6 @@ const SAMPLES: usize = 30;
 const NEAR_D2: i32 = 4;
 /// Default mirror upload budget per frame.
 const SYNC_BUDGET_MIB: u64 = 2;
-/// Default mirror upload time per frame, in milliseconds.
-const SYNC_BUDGET_MS: u64 = 2;
 /// Autopilot: dig reach (30 m) and radius (1 m), flight speed (10 m/s) and leg length.
 const PILOT_REACH: i64 = 300 * FIXED_ONE;
 const PILOT_RADIUS: i64 = 10 * FIXED_ONE;
@@ -425,7 +423,8 @@ struct Args {
     /// `--castle-shot NAME`: the castle pose the camera starts at.
     castle_shot: castle::CastleShot,
     sync_budget: u64,
-    /// `--sync-ms`: the mirror's upload time per frame; `None` (`--sync-ms 0`) for no limit.
+    /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
+    /// for no limit.
     sync_time: Option<std::time::Duration>,
     /// `--workers`: the streamer's generation workers; `None` for [`default_workers`].
     workers: Option<usize>,
@@ -835,7 +834,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         castle_out: None,
         castle_shot: castle::CastleShot::Gate,
         sync_budget: SYNC_BUDGET_MIB << 20,
-        sync_time: Some(std::time::Duration::from_millis(SYNC_BUDGET_MS)),
+        sync_time: None,
         workers: None,
         mirror_budget: None,
         residency: RESIDENCY,
@@ -937,15 +936,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.sync_budget = mib << 20;
             }
             "--sync-ms" => {
-                let ms: u64 = value()?
-                    .parse()
-                    .map_err(|e| format!("--sync-ms: {e}"))?;
+                let ms: u64 = value()?.parse().map_err(|e| format!("--sync-ms: {e}"))?;
                 args.sync_time = (ms > 0).then(|| std::time::Duration::from_millis(ms));
             }
             "--workers" => {
-                let n: usize = value()?
-                    .parse()
-                    .map_err(|e| format!("--workers: {e}"))?;
+                let n: usize = value()?.parse().map_err(|e| format!("--workers: {e}"))?;
                 if n == 0 {
                     return Err("--workers takes at least 1".to_owned());
                 }
@@ -6430,12 +6425,12 @@ fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     }
 }
 
-/// The streamer's default generation workers: two fewer than the logical cores, at least 1,
-/// leaving a core to the render thread and one to the compositor and the driver.
+/// The streamer's default generation workers: one fewer than the logical cores, at least 1,
+/// leaving a core to the render thread.
 fn default_workers() -> usize {
     std::thread::available_parallelism()
         .map_or(1, usize::from)
-        .saturating_sub(2)
+        .saturating_sub(1)
         .max(1)
 }
 
@@ -6947,6 +6942,41 @@ mod tests {
             .expect("vsync is refused");
         assert!(e.contains("free or compositor"), "{e}");
         assert!(parse_args_from(argv(&["--pace"])).is_err());
+    }
+
+    /// `--workers N` sets the streamer's workers (unset: `default_workers`, one fewer than
+    /// the logical cores and at least 1); 0, a non-number or a missing value is refused.
+    #[test]
+    fn the_workers_flag_parses_and_refuses_zero() {
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(a.workers, None);
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        assert_eq!(default_workers(), cores.saturating_sub(1).max(1));
+        let a = parse_args_from(argv(&["--workers", "14"])).expect("--workers 14 parses");
+        assert_eq!(a.workers, Some(14));
+        let a = parse_args_from(argv(&["--workers", "1"])).expect("--workers 1 parses");
+        assert_eq!(a.workers, Some(1));
+        let e = parse_args_from(argv(&["--workers", "0"]))
+            .err()
+            .expect("0 workers is refused");
+        assert!(e.contains("at least 1"), "{e}");
+        assert!(parse_args_from(argv(&["--workers", "many"])).is_err());
+        assert!(parse_args_from(argv(&["--workers"])).is_err());
+    }
+
+    /// `--sync-ms MS` sets the mirror's upload time per frame (default none); `--sync-ms 0`
+    /// is no time budget; a non-number or a missing value is refused.
+    #[test]
+    fn the_sync_ms_flag_parses_and_zero_is_no_budget() {
+        let ms = std::time::Duration::from_millis;
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(a.sync_time, None);
+        let a = parse_args_from(argv(&["--sync-ms", "5"])).expect("--sync-ms 5 parses");
+        assert_eq!(a.sync_time, Some(ms(5)));
+        let a = parse_args_from(argv(&["--sync-ms", "0"])).expect("--sync-ms 0 parses");
+        assert_eq!(a.sync_time, None);
+        assert!(parse_args_from(argv(&["--sync-ms", "-1"])).is_err());
+        assert!(parse_args_from(argv(&["--sync-ms"])).is_err());
     }
 
     /// A plain start's banner names the pacing, `pace free`, until the banner's time is up;

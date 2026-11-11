@@ -683,7 +683,11 @@ fn stats_counts_match_a_walk() {
         let axis = (next() % 3) as usize;
         focus[axis] = (focus[axis] + next() % 5 - 2).clamp(-6, 6);
         if step % 25 == 24 {
-            let r_full = if s.config().residency.r_full == 2 { 1 } else { 2 };
+            let r_full = if s.config().residency.r_full == 2 {
+                1
+            } else {
+                2
+            };
             s.set_radii(r_full, 4);
         }
         s.update(&world, &[VoxelCoord(focus.map(|c| c * CHUNK_EDGE))]);
@@ -703,5 +707,8 @@ fn stats_counts_match_a_walk() {
         assert_eq!(st.ticks, s.ticks());
     }
     println!("{demotions} demotions, {evictions} evictions over the flight");
-    assert!(demotions > 0 && evictions > 0, "the flight demoted and evicted");
+    assert!(
+        demotions > 0 && evictions > 0,
+        "the flight demoted and evicted"
+    );
 }
