@@ -16,6 +16,7 @@ const FRAMES: u32 = 300;
 /// set on all but at most two frames. Before the timers and the store read through rings, the
 /// same run read 608 (two timer reads a frame and the queue line's).
 #[test]
+#[ignore = "soak"]
 fn a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere() {
     let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
         .args([
