@@ -293,7 +293,7 @@ pub struct SyncBudget {
 | 2: the pacing default | human | done: owner's window 2026-11-11, pick `free` (flights loaded by other lanes' builds; no tearing or fan difference noticed, loaded); `--pace` defaults to `free`, the banner's `pace` row names it on a plain start; see [the readings log](logs/0064.md) | 7b6e3ea, aa4ee55 (readings), 0248b41 (default and banner) |
 | 3: nothing waits for the GPU | dev | code done: `ReadbackRing` (3 read-back buffers) under `PassTimer` and the store's counters, `try_read_all_ms` / `try_read_ms` / `Frame::try_store_stats` on the frame path, blocking-read counters on the `frames:` line (608 before, 0 after over 300 lavapipe frames), the HUD's refresh and banner allocation-free (4749 B a frame before, 0 after); deviations: one query set and one resolve buffer serve the ring, `--lamp-toggle` and `--fade-reading` keep the waiting read; autopilot HUD on/off readings on both adapters in the log; see [the readings log](logs/0064.md) | 373beb9, 284cbd9 (readings) |
 | 4: workers, the sync's time, the stats | dev | done: `resident_full` counter and `ticks()`, `stats()` once a frame, `sync_budget_time` with a test clock, `--workers N`, `--sync-ms MS`, 4 new tests; 14 against 15 workers read (RTX, three rounds, at 2 ms and at none): p99 not lower, **default reverted to cores - 1**; deviation: `--sync-ms` defaults to none, not 2 ms (residency p95 3.0 to 13.7 s at 2, 4 and 8 ms against 0.26 to 0.30 s at none); see [the readings log](logs/0064.md) | a9298c6 |
-| 5: the close's readings | dev | done in part: headless before (37f6845), main merged (f8c1ffc) and after (a9298c6) on the RTX 3080 Laptop and RADV RENOIR, three rounds, into the log and `docs/nfr/02-frame-budget.md`; **not met:** the window's wall frame has no windowed after at the tip and no windowed reading on the RENOIR (both need the owner's window); `docs/nfr.md` section 5 not edited (residency did not move out of the line on record); see [the readings log](logs/0064.md) | 4a6f8d8 |
+| 5: the close's readings | dev | done: headless before (37f6845), main merged (f8c1ffc) and after (a9298c6) on the RTX 3080 Laptop and RADV RENOIR, three rounds, into the log and `docs/nfr/02-frame-budget.md`; the window's after read on the RTX at 2552989 (the owner's session, `live/session64c.log`, 8 runs, HUD shown, two rounds), the RENOIR's window recorded as unread (owner, 2026-11-11); `docs/nfr.md` section 5 not edited (residency did not move out of the line on record); see [the readings log](logs/0064.md) | 4a6f8d8, committed with this row (window) |
 
 ### Notes
 
@@ -305,8 +305,10 @@ pub struct SyncBudget {
   to the byte budget before `upload` reads the clock, and the time-deferred chunks are sized
   again in the next sync.
 - Phase 4: the 14-worker default is reverted to cores - 1 by the plan's rule (a9298c6).
-- Phase 5 not met as stated: the window's wall frame has no windowed reading after Phases 3 and
-  4, and none on the RADV RENOIR; both need the owner's window.
+- Phase 5: the window's after is the owner's session at 2552989 from `live/session64c.sh`, not
+  the done-when's `live/session64b.sh` (overwritten; its 15:33 runs discarded by the owner, the
+  window partly out of focus); two rounds, HUD shown only; the RADV RENOIR's window unread
+  (owner, 2026-11-11).
 - Phase 2's tearing and fan words were given under load ("no difference noticed, loaded").
 - `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` marked `#[ignore = "soak"]` (12.3 s
   alone on lavapipe; 98f1a2a): Phase 3's 0-blocking-reads done-when runs in no gate.
@@ -334,12 +336,20 @@ pub struct SyncBudget {
   to 81, residency p95 302 to 341 against 301 to 338 ms; RADV RENOIR frame CPU p99 57 to 61
   against 58 to 59, streaming p50 2.66 to 2.71 against 2.61 to 2.62, residency p95 304 to 310
   against 302 to 304 ms. Workers 14 against 15 (RTX): frame CPU p99 62.5 to 65.4 against 63.5
-  to 66.0 ms. Rows in [the readings log](logs/0064.md).
+  to 66.0 ms. Windowed RTX at the tip (2552989, 8 runs, HUD shown, load 1.2 to 1.8) against
+  Phase 1's HUD-shown cells: wall p50 `free` level 11.235 to 11.270 against 11.682 to 11.775,
+  showcase 12.194 to 12.273 against 13.360 to 13.484; `compositor` level 14.927 to 15.011
+  against 13.745 to 14.141, showcase 18.022 to 18.184 against 16.766 to 17.230; blocking reads
+  0 in every run. Rows in [the readings log](logs/0064.md).
 - **Gate at the tip:** `cargo nextest run --workspace --profile gate` at 4a6f8d8: 724 run, 724
   passed, 101 skipped, 559.6 s, exit 0; then 98f1a2a marks one test soak (passes alone,
   12.3 s). Doctests 7 passed; clippy, fmt, `cargo deny check`, doc links, comment hygiene,
   index rows, plan size, test tiers: exit 0.
-- **Outstanding `human` phases:** none in the plan; the windowed after-readings of the first
-  "Budgets" row (RTX at the tip, and the RADV RENOIR) need the owner's window.
+- **Outstanding `human` phases:** none; the RADV RENOIR's window is recorded as unread (owner,
+  2026-11-11).
 
 ## Followups
+
+- An open reading (the owner, 2026-11-11): the window's frame rate differs a lot with its
+  workspace in or out of focus. Expected for `compositor` pacing (Hyprland throttles frame
+  callbacks for a hidden window); whether it also moves `free` pacing is not isolated.
