@@ -255,6 +255,16 @@ own figures. The render-profile plan is where the product gets a cap.
 
 ## Tooling and process
 
+### A documentation site
+
+Parked 2026-11-11 (owner: "no plan needed yet, will address this later"). A public site in the
+manner of Ritmolux's (Starlight, rustdoc beside it, mermaid built in CI, a Pages workflow that
+checks every PR and deploys from main). Two steps: first the existing `docs/` (ADRs, plans,
+roadmap, budgets) plus rustdoc, with CI as a link and render guard; a getting-started guide and
+a gallery only once the look is picked (after Plans 0067 and 0058) and Plan 0045 has moved the
+files. Starlight's npm tree falls outside `cargo deny`, and mdBook is the lighter alternative,
+so it takes an ADR. Pick up when the owner asks.
+
 ### Shader toolchain spike
 
 Parked 2026-10-31. Compare naga's SPIR-V against `spirv-opt -O` on the hit shader (VGPRs,
