@@ -574,7 +574,7 @@ the RTX**. The close's readings therefore add one arm to the table's command: `-
 and 8 as **dropped point lights at the hall**, beside the vein. A reading over 0.3 ms per
 light on the RTX is not a failure; it goes to the owner with the cap the render-profile plan
 would set (`docs/backlog.md`). If
-[Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
+[Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
 has landed, the a-trous row's base is its early-out, which a moving light switches off.
 
 Determinism is not touched: everything is in `vxe-render` and the fly-through. The list's

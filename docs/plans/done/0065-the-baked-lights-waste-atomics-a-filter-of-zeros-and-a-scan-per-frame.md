@@ -1,15 +1,18 @@
 # 0065: The baked light's waste: atomics on every pixel, a filter of zeros, a scan per frame
 
-> **Status:** in-progress (owner go 2026-11-10; the lane starts after Plans 0060 and 0064)
+> **Status:** done 2026-11-11 (v0.47.0). Close review clean: the temporal pass reads the store
+> plainly and counts only for a reader, the lamp-off a-trous and variance skip their zeros, the
+> far normal reads a Full brick's mask, RCAS tone maps; every golden byte-identical. FSR 2 and the
+> lamp-on full-tier a-trous stay over their lines, as the plan expected.
 > **Created:** 2026-11-10
-> **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
+> **Milestone:** cross-cutting (code health), like [Plan 0044](../0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's lighting, denoise and upscale lines.
 > **Related ADRs:** none. Each fix keeps its mechanism and removes work whose result is
 > discarded or already known. It rests on
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the baked store) and changes nothing it decided.
 > **Source:** the owner, 2026-11-10, and the static review at `50b637a` that
-> [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) also comes
+> [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md) also comes
 > from. **The owner asked for no load tests, so every saving here is an estimate from reading
 > the code; Phase 1 takes the readings.**
 > **Starts after:** Plan 0060's merge (it rewrites `bake.rs`) and Plan 0064's close, and only
@@ -197,7 +200,7 @@ stored bake once; the phase's log says so.
 - **What:** struck here 2026-11-11 (architect): the step is the frame's largest CPU item in
   Plan 0060's window (7.0 ms p50 at rest, 10.3 in flight, against the 1.0 ms this plan was
   written to), so it belongs with the profile that attributes it.
-  [Plan 0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)'s
+  [Plan 0067](../0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)'s
   Phase 2 carries this phase's mechanism and its `a_still_step_scans_nothing` test as written,
   with a reach cache added. Nothing to do in this plan; the log row reads "moved".
 - **Files touched:** none.
@@ -251,13 +254,13 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 - Narrow any target's format, fold FSR 2's input pass into the composite, or turn uniform
   branches into `override`s (`docs/backlog.md`).
 - A beam prepass or a distance value per brick (`docs/backlog.md`).
-- Plan 0044's phases, or the window's pacing ([Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md)).
+- Plan 0044's phases, or the window's pacing ([Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md)).
 - Lower the bake's 1.5 ms slice; it has no budget line yet (`docs/backlog.md`).
 
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to [`docs/plans/logs/0065.md`](logs/0065.md).
+> attempts and resume notes go to [`docs/plans/logs/0065.md`](../logs/0065.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -314,3 +317,26 @@ Every "expected" is an estimate from the code; the base is Phase 1's reading.
 - **Outstanding `human` phases:** none.
 
 ## Followups
+
+From the close review (2026-11-11, fresh session; no blocker or major):
+
+- **The far normal's mask path saved little.** The hall's hit pass at `[2, 6]` reads about 1.7 %
+  lower on the RADV RENOIR and within the RTX's spread; the gap to `[1, 2]` (about 1 ms RTX,
+  10 ms RENOIR) stays, against the Budgets row's "mostly closed". The 26 lookups were not the
+  cost. Plan 0061's far-normal pick reads that gap as it is.
+- **The pool read without a divide** was tried as a slot cache, read slower and was dropped;
+  `descend` returning the shard and base was not tried. Plan 0044's Phase 5 (shifts for
+  divides) owns it and keeps the mask path in `gradient27_normal`. (The log's Phase 4 line
+  "and `slot_word`'s cache" names a form that is not in the tree.)
+- **RCAS rounds to half toward zero (`half_rtz`)** to reproduce lavapipe's `rgba16float` store
+  and keep `fsr2.png` byte-identical. It is shipped arithmetic shaped by the test adapter; drop
+  it the next time FSR 2's goldens re-bless for another reason.
+- **The temporal pass's lamp-off early-out carries the age on the pixel**, not reprojected: a
+  pixel disoccluded during a lamp-off walk keeps its pixel's age. With the lamp off the age
+  feeds nothing; in the frames after the lamp switches on, such a pixel can skip the variance
+  pass's 7 x 7 estimate. Nothing reads it today; Plan 0058 rewrites `temporal.wgsl` and
+  re-reads this.
+- **The counting pipeline compiles on the first frame the HUD shows** (`OnceLock`): one hitch
+  at the first HUD toggle. Not measured.
+- **The lamp-on a-trous** keeps its cost by design (both skips gated on the lamp off, the plan's
+  image rule over its estimate); fewer iterations stay the owner's look call (`docs/backlog.md`).

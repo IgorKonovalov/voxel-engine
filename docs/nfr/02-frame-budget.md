@@ -744,6 +744,8 @@ default surface is honest cubes" above and "The `face` default carries no attrib
 
 *Noted 2026-11-03:* the figures below read `own` at 1.5, but the default is now FSR 2 at 1.5 with the far normal at `[2, 6]`; the readings that exist are in [Plan 0055's readings log](../plans/logs/0055.md) and [its close](../plans/done/0055-clarity-pass-no-detail-fsr2-default-and-a-far-normal-spike.md), and re-basing this ledger is owed.
 
+*Re-based 2026-11-11 (Plan 0065 close, 03b00ab):* the default frame (FSR 2 at 1.5 to 2530 x 1378, half lighting tier, far normal `[2, 6]`, the baked store, lamp on, at rest) reads 4.097 ms GPU at the vein and 8.569 ms at the hall on the RTX 3080 Laptop, 30.450 and 72.922 ms on the RADV RENOIR; FSR 2's passes are 2.144 to 2.170 ms (RTX) and 15.715 to 15.720 ms (RENOIR) of it, the hall's hit pass 4.659 and 45.657 ms. Every pass, both lighting tiers, lamp off and walking: [Plan 0065's readings log](../plans/logs/0065.md), Phase 7, and the paragraph "The baked light's wasted work removed" below. The scenario tables that follow are the 2026-10-31 frame and stay as history.
+
 **Conditions.** The level's spawn, `flythrough --level --seed 1 --headless --render 1920x1080
 --frames 300 --adapter NVIDIA|AMD [--look L]`: 1080p output from 1280 x 720 internal (`own` at
 1.5), half lighting tier, coarse shadow walk, lamp on, release, exclusive perf lock and memory
