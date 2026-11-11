@@ -694,6 +694,11 @@ The owner, 2026-11-10, to the open questions above:
 - Phase 5 done-when 5: the default's cost is Phase 2 done-when 6's `nf` `[2, 6]` arms against
   `fn` (the old default) on c327f6a's code; not re-read on Phase 5's binary, which differs by the
   emitter cap's removal (a 0 cap: no branch taken) and the defaults.
+- Fix pass (close review majors 1, 2, nit 9; readings log "Fix pass"): the two near-face gate
+  tests in `gpu_bake.rs` (3.3 and 3.2 s); `showcase_hall.png` re-blessed (the read and weights
+  move none of its pixels; its compare passes, its hue assert still fails at `[336, 0, 209,
+  121]` and its luma reads 2.7 against 11..40); `gpu_settle` soak 5 of 5; the `atrous.wgsl`
+  comment reworded. Committed with this note.
 
 ### Close triggers
 

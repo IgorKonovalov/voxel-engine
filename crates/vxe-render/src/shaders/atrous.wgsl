@@ -17,9 +17,9 @@
 //   which lets the filter soften the shadow's edge into it.
 //   `atrous` is one iteration with the 5 x 5 B3-spline kernel at stride `step.size` (1, 2, 4,
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
-//   `max(n.n', 0)^128` (the normals march.wgsl's `filter_normal`s) and `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the
-//   pixel's variance blurred by a 3 x 3 Gaussian; the variance is carried with squared
-//   weights. A miss keeps its input. With the lamp off, a hit whose input is zero and whose
+//   `max(n.n', 0)^128` (on `filter_normal`'s normals, march.wgsl) and
+//   `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the pixel's variance blurred by a
+//   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With the lamp off, a hit whose input is zero and whose
 //   blurred variance is zero writes its input (zero), plus the store's part on the last
 //   iteration, without the 25 taps: its sigma is the epsilon, so only taps of luminance within
 //   about 1e-3 of zero weigh, and with the lamp off those are zero (a store's pixel's input is

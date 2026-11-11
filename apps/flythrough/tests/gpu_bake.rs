@@ -1914,6 +1914,176 @@ fn a_small_far_staircase_reads_the_mix_and_matches_its_golden() {
     assert!(f <= 0.001, "{:.4} % of pixels differ", f * 100.0);
 }
 
+/// The staircase baked for the near-face tests at `size`, lit as the staircase tests are.
+fn baked_staircase(size: [u32; 2]) -> Option<Rig> {
+    let mut rig = rig_on(staircase(), size, None)?;
+    rig.frame.set_lighting(Lighting {
+        lamp: false,
+        lamp_bounce: false,
+        exposure: Exposure::Manual(8.0),
+        bake_pool_bytes: 64 << 20,
+        ..Lighting::default()
+    });
+    rig.bake(&test_counts(256));
+    Some(rig)
+}
+
+/// The pixels of two staircase frames whose read-backs differ: (display bytes, accumulation
+/// pixels).
+fn frame_diff(a: &StairFrame, b: &StairFrame) -> (usize, usize) {
+    (
+        a.display
+            .iter()
+            .zip(&b.display)
+            .filter(|(x, y)| x != y)
+            .count(),
+        a.accum.iter().zip(&b.accum).filter(|(x, y)| x != y).count(),
+    )
+}
+
+/// ADR-0049's read leaves a near face to the bit (Plan 0061 Phase 2 done-when 2). At 192 x 108
+/// under `--look face` with far normal `[1, 2]` the far normal's weight is 0 where a voxel spans
+/// 2 pixels or more, `t <= 192 / (2 tan 35 deg) / 2 = 68.6` voxels, so the hit's normal is its
+/// face's there and the read takes the face's own value: every hit pixel of the near camera at
+/// `t <= 64` holds the same accumulated (stored) value bit for bit with the store read `Normal`
+/// and `Face` (full light resolution, weights `Normal`), over at least 10 000 such pixels. With
+/// the far normal off the far camera's display and accumulation are bit-identical, read
+/// `Normal` against `Face`. Under `gradient27` and `trilinear8` (the normal leaves the face at
+/// every distance) with the read on, every stored part of the far camera's frame is finite.
+#[test]
+fn the_store_read_by_normal_leaves_near_faces_alone() {
+    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    const SIZE: [u32; 2] = [192, 108];
+    const NEAR: f32 = 64.0;
+    let [camera, near_camera] = stair_cameras(SIZE);
+    let Some(mut rig) = baked_staircase(SIZE) else {
+        return;
+    };
+    let arm = |read, far_normal, mode| StairArm {
+        read,
+        weights: LightWeights::Normal,
+        far_normal,
+        mode,
+        resolution: LightingResolution::Full,
+    };
+    let face = stair_frame(
+        &mut rig,
+        &near_camera,
+        &arm(StoreRead::Face, [1.0, 2.0], NormalMode::Face),
+    );
+    let normal = stair_frame(
+        &mut rig,
+        &near_camera,
+        &arm(StoreRead::Normal, [1.0, 2.0], NormalMode::Face),
+    );
+    let near: Vec<usize> = (0..normal.pos.len())
+        .filter(|&i| normal.info[i][3] & 1 != 0 && normal.pos[i][3] <= NEAR)
+        .collect();
+    let moved = near
+        .iter()
+        .filter(|&&i| normal.accum[i] != face.accum[i])
+        .count();
+    println!(
+        "near camera, far normal [1, 2]: {moved} of {} hit pixels at t <= {NEAR} differ read Normal against Face",
+        near.len()
+    );
+    assert!(near.len() >= 10_000, "{} near hit pixels", near.len());
+    assert_eq!(moved, 0, "of {}", near.len());
+
+    let face = stair_frame(
+        &mut rig,
+        &camera,
+        &arm(StoreRead::Face, [0.0, 0.0], NormalMode::Face),
+    );
+    let normal = stair_frame(
+        &mut rig,
+        &camera,
+        &arm(StoreRead::Normal, [0.0, 0.0], NormalMode::Face),
+    );
+    let diff = frame_diff(&normal, &face);
+    println!(
+        "far camera, far normal off: read Normal against Face differs in {} display bytes, {} accumulated pixels",
+        diff.0, diff.1
+    );
+    assert_eq!(diff, (0, 0));
+
+    for mode in [NormalMode::Gradient27, NormalMode::Trilinear8] {
+        let f = stair_frame(&mut rig, &camera, &arm(StoreRead::Normal, [1.0, 2.0], mode));
+        let nonfinite = f
+            .accum
+            .iter()
+            .filter(|p| p.iter().any(|x| !x.is_finite()))
+            .count();
+        println!("{mode:?}, read Normal: {nonfinite} non-finite stored parts");
+        assert_eq!(nonfinite, 0, "{mode:?}");
+    }
+}
+
+/// The face weights leave a frame with the far normal off to the bit (Plan 0061 Phase 2
+/// done-when 2b): there every hit's normal is its face's, so the 2 x 2 upsample's and the
+/// a-trous pass's weights read the same dot either way. At 96 x 54 under `--look face`, for the
+/// far and the near camera, the display is bit-identical with weights `Face` against `Normal`
+/// (store read `Face`) at half and at full light resolution, and with the fly-through's store
+/// read and weights against the library's (`Face`, `Normal`) at half.
+#[test]
+fn the_face_weights_leave_near_faces_alone() {
+    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    const SIZE: [u32; 2] = [96, 54];
+    let Some(mut rig) = baked_staircase(SIZE) else {
+        return;
+    };
+    let arm = |read, weights, resolution| StairArm {
+        read,
+        weights,
+        far_normal: [0.0, 0.0],
+        mode: NormalMode::Face,
+        resolution,
+    };
+    let half = LightingResolution::Half;
+    let pairs = [
+        (
+            "weights Face against Normal, half",
+            arm(StoreRead::Face, LightWeights::Face, half),
+            arm(StoreRead::Face, LightWeights::Normal, half),
+        ),
+        (
+            "weights Face against Normal, full",
+            arm(
+                StoreRead::Face,
+                LightWeights::Face,
+                LightingResolution::Full,
+            ),
+            arm(
+                StoreRead::Face,
+                LightWeights::Normal,
+                LightingResolution::Full,
+            ),
+        ),
+        (
+            "the fly-through's read and weights against the library's, half",
+            arm(
+                flythrough::DEFAULT_STORE_READ,
+                flythrough::DEFAULT_LIGHT_WEIGHTS,
+                half,
+            ),
+            arm(StoreRead::Face, LightWeights::Normal, half),
+        ),
+    ];
+    for (c, camera) in stair_cameras(SIZE).iter().enumerate() {
+        for (name, a, b) in &pairs {
+            let fa = stair_frame(&mut rig, camera, a);
+            let fb = stair_frame(&mut rig, camera, b);
+            let lit = fa.display.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+            let (bytes, _) = frame_diff(&fa, &fb);
+            println!(
+                "camera {c}, far normal off, {name}: {bytes} display bytes differ ({lit} lit pixels)"
+            );
+            assert!(lit > 0, "camera {c}, {name}: a black frame");
+            assert_eq!(bytes, 0, "camera {c}, {name}");
+        }
+    }
+}
+
 /// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
 /// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
 /// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
