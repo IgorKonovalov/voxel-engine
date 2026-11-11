@@ -546,7 +546,7 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 - Fix pass, finding 2 (two handovers within the spare's cleaning time zero it in one block):
   a clear that finds the spare dirty parks its network until the spare is clean; the
   per-block clearing bound is `2 x BLOCK` frames a line (owner answer 3), and the ring-out
-  test's bar moved with it. Commit: committed with this row.
+  test's bar moved with it. Commit: c1e3665.
 
 ### Close triggers
 
