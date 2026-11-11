@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0070** (ADRs are a separate sequence; next free there is **0056**).
+**Next free number: 0073** (ADRs are a separate sequence; next free there is **0058**).
 
 ## Active roster
 
@@ -24,6 +24,9 @@ state from `git log`. Completed plans move to `done/`.
 | [0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a cheap queue step, a bake budget by time, no black for missing light | approved | M2, ADR-0052, ADR-0053. After 0061, ahead of 0058; Phase 1 may run beside 0061. Takes 0065's Phase 6. |
 | [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
 | [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | approved | M7, ADR-0054 (proposed). Approved 2026-11-11. Side lane, may start now; touches main.rs lightly. |
+| [0070](0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md) | The sync off the frame: a chunk's slot image packed on the stream workers, the render thread copies | draft | M2, ADR-0056 (proposed). From the 2026-11-12 review; Plan 0067's stop-rule amendment. After 0067, before 0045 (recommended). |
+| [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | draft | Cross-cutting, ADR-0057 (proposed). From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
+| [0072](0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) | Development speed: the build graph, a narrowed gate, the lavapipe group at two, one compile per CI profile | draft | Cross-cutting, no ADR at draft. From the 2026-11-12 review. Any slot; Phase 1 needs a quiet box. |
 <!-- roster:end -->
 
 ## Sequence
@@ -70,7 +73,15 @@ Each starts on main after the one before it closes, unless its line says otherwi
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
-Every active plan is approved (owner, 2026-11-10; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Drafts from the architecture review of 2026-11-12** (`../reviews/2026-11-12-architecture-review.md`),
+awaiting the owner's go, with the slots the review recommends: **Plan 0070** (the sync off the
+frame) between Plan 0067 and Plan 0045, as the amendment 0067's Phase 1 stop rule asks for;
+**Plan 0072** (development speed) beside Plan 0045 or right after 0070, its Phase 1 on a quiet
+box; **Plan 0071** (the consumer's path) after Plans 0045, 0069 and 0044's Phase 8, before M10.
+The review's amendment notes for Plans 0044, 0045, 0067 and 0069 are in its sections 1.1, 1.2,
+2.1 to 2.3, and in `../backlog.md`; no approved plan was edited.
+
+Every active plan but the three drafts is approved (owner, 2026-11-10; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
 stays after Plan 0058. Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
