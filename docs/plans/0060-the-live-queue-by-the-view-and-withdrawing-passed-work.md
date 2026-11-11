@@ -378,8 +378,8 @@ pub const QUEUE_REFINE_WEIGHT: f32 = 2.0; // the same
 |---|---|---|---|
 | 1: The view cone as a reading | dev | done; both stop rules read as firing (readings log, Phase 1); the census and the in-view reach count are Phase 2 tree code | f371e66 |
 | 2: The blended score | dev | done; code and tests at 17a6454 (`wip(render)`, before the owner's answer); the coarse-first stop rule read as firing, so the plain start is `4,tier` (readings log, Phase 2) | 49428d7 |
-| 3: Withdrawing passed work | dev | done; code at 903cbda (`wip(render)`); `withdrawn_samples` counts rounds in flight and the dig test's rig sets `edit_ms` 0 (readings log, Phase 3) | committed with this row |
-| 4: The owner's window | human | not started | |
+| 3: Withdrawing passed work | dev | done; code at 903cbda (`wip(render)`); `withdrawn_samples` counts rounds in flight and the dig test's rig sets `edit_ms` 0 (readings log, Phase 3) | 599dcd5 |
+| 4: The owner's window | human | done 2026-11-11; order and angle weight: no visible difference; withdrawal kept on; step 4 first ran on the RTX (the window ignores `--adapter`), rerun on the Radeon by Mesa's device select (readings log, Phase 4) | committed with this row |
 | 5: The defaults and the close's readings | dev | not started | |
 
 ### Notes
