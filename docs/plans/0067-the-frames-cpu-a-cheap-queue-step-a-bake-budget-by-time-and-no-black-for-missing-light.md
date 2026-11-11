@@ -780,8 +780,8 @@ one in Phase 6.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: where the frame's CPU goes | dev | code and tests landed; readings follow in their own commit | committed with this row |
-| 2: a step with nothing to do costs nothing | dev | not started | |
+| 1: where the frame's CPU goes | dev | code and tests landed; slice test read: model not confirmed (loaded); pins and rigs (a), (b) queued; lane stops for the architect | 87bf0d2 (code), readings with this row |
+| 2: a step with nothing to do costs nothing | dev | code as `wip`, A/B held for the architect | 5201ab6 |
 | 2b: the queue does not starve in a flight | dev | not started | |
 | 3: the bake budget per second | dev | not started | |
 | 4: no black for missing light | dev | not started | |
