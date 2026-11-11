@@ -10,7 +10,10 @@
 use vxe_world::{FIXED_ONE, Fixed3, World};
 
 use crate::body::{Body, Contact, isqrt};
-use crate::sweep::{Sweep, overlaps, sweep};
+use std::cell::RefCell;
+
+use crate::body::Boxes;
+use crate::sweep::{Sweep, overlaps_in, sweep_in, sweep_region};
 
 /// Contacts a [`MoveResult`] keeps.
 pub const MAX_CONTACTS: usize = 4;
@@ -156,6 +159,29 @@ fn on_floor(s: &Sweep) -> bool {
     s.contact.is_some_and(|c| c.is_floor())
 }
 
+thread_local! {
+    /// The solid boxes of the tick running on this thread.
+    static BOXES: RefCell<Boxes> = const { RefCell::new(Boxes::new()) };
+}
+
+/// A tick's world queries, over the boxes it collected.
+struct Query<'a> {
+    world: &'a World,
+    boxes: &'a mut Boxes,
+}
+
+impl Query<'_> {
+    fn sweep(&mut self, body: &Body, delta: Fixed3) -> Sweep {
+        let (lo, hi) = sweep_region(body, delta);
+        sweep_in(self.boxes.select(self.world, lo, hi), body, delta)
+    }
+
+    fn overlaps(&mut self, body: &Body) -> bool {
+        let (lo, hi) = sweep_region(body, Fixed3::default());
+        overlaps_in(self.boxes.select(self.world, lo, hi), body)
+    }
+}
+
 /// Moves a body through a world, one tick at a time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CharacterController {
@@ -177,12 +203,8 @@ impl CharacterController {
     }
 
     /// Whether a downward sweep of `ground_probe` from `foot` hits a floor.
-    fn probe_floor(&self, world: &World, foot: [i64; 3]) -> bool {
-        let s = sweep(
-            world,
-            &self.body(foot),
-            Fixed3([0, 0, -self.params.ground_probe]),
-        );
+    fn probe_floor(&self, q: &mut Query<'_>, foot: [i64; 3]) -> bool {
+        let s = q.sweep(&self.body(foot), Fixed3([0, 0, -self.params.ground_probe]));
         s.contact.is_some_and(|c| c.is_floor())
     }
 
@@ -190,29 +212,29 @@ impl CharacterController {
     /// contact, or it spent its delta and the ground probe from there hits one (a sweep that
     /// spends its delta reports no contact even when it ends touching, and a fall can end
     /// exactly on the floor).
-    fn lands_on_floor(&self, world: &World, s: &Sweep, foot: [i64; 3]) -> bool {
+    fn lands_on_floor(&self, q: &mut Query<'_>, s: &Sweep, foot: [i64; 3]) -> bool {
         match s.contact {
             Some(c) => c.is_floor(),
-            None => self.probe_floor(world, foot),
+            None => self.probe_floor(q, foot),
         }
     }
 
     /// Sweep up by `step_height` (fully), forward by `rem` (more than zero), down by
     /// `step_height`; the landing foot when that ends on a floor at most `step_height` up,
     /// which may be no rise at all.
-    fn step_attempt(&self, world: &World, foot: [i64; 3], rem: [i64; 2]) -> Option<[i64; 3]> {
+    fn step_attempt(&self, q: &mut Query<'_>, foot: [i64; 3], rem: [i64; 2]) -> Option<[i64; 3]> {
         let h = self.params.step_height;
-        let up = sweep(world, &self.body(foot), Fixed3([0, 0, h]));
+        let up = q.sweep(&self.body(foot), Fixed3([0, 0, h]));
         if up.moved != Fixed3([0, 0, h]) {
             return None;
         }
         let f1 = add(foot, up.moved);
-        let fw = sweep(world, &self.body(f1), Fixed3([rem[0], rem[1], 0]));
+        let fw = q.sweep(&self.body(f1), Fixed3([rem[0], rem[1], 0]));
         if fw.moved == Fixed3::default() {
             return None;
         }
         let f2 = add(f1, fw.moved);
-        let down = sweep(world, &self.body(f2), Fixed3([0, 0, -h]));
+        let down = q.sweep(&self.body(f2), Fixed3([0, 0, -h]));
         let f3 = add(f2, down.moved);
         (on_floor(&down) && f3[2] - foot[2] <= h).then_some(f3)
     }
@@ -234,21 +256,21 @@ impl CharacterController {
     /// `climb_height`. The rise is not required to be the full `climb_height`: a ledge under a
     /// ceiling closer than `height + climb_height` above the foot is climbable when the body
     /// fits over it.
-    fn climb_probe(&self, world: &World, foot: [i64; 3], dir: [i64; 2]) -> Option<[i64; 3]> {
+    fn climb_probe(&self, q: &mut Query<'_>, foot: [i64; 3], dir: [i64; 2]) -> Option<[i64; 3]> {
         let p = &self.params;
-        let up = sweep(world, &self.body(foot), Fixed3([0, 0, p.climb_height]));
+        let up = q.sweep(&self.body(foot), Fixed3([0, 0, p.climb_height]));
         let rose = up.moved.0[2];
         if rose <= p.step_height {
             return None;
         }
         let f1 = add(foot, up.moved);
         let fw_delta = Fixed3([dir[0], dir[1], 0]);
-        let fw = sweep(world, &self.body(f1), fw_delta);
+        let fw = q.sweep(&self.body(f1), fw_delta);
         if fw.moved != fw_delta || dir == [0, 0] {
             return None;
         }
         let f2 = add(f1, fw.moved);
-        let down = sweep(world, &self.body(f2), Fixed3([0, 0, -rose]));
+        let down = q.sweep(&self.body(f2), Fixed3([0, 0, -rose]));
         let f3 = add(f2, down.moved);
         let rise = f3[2] - foot[2];
         (on_floor(&down) && rise > p.step_height && rise <= p.climb_height).then_some(f3)
@@ -258,7 +280,7 @@ impl CharacterController {
     /// by 1 voxel at a time to `step_height`, then for each distance `d` from 1 voxel to
     /// `climb_height` in voxel steps, `+x, -x, +y, -y, +z, -z` scaled by `d`. `None` when no
     /// candidate is free. The result depends on the world and the body alone.
-    fn depenetrate(&self, world: &World, foot: [i64; 3]) -> Option<[i64; 3]> {
+    fn depenetrate(&self, q: &mut Query<'_>, foot: [i64; 3]) -> Option<[i64; 3]> {
         let p = &self.params;
         let up = (1..)
             .map(|k| k * FIXED_ONE)
@@ -278,7 +300,7 @@ impl CharacterController {
                 ]
             });
         up.chain(around)
-            .find(|off| !overlaps(world, &self.body([0, 1, 2].map(|k| foot[k] + off[k]))))
+            .find(|off| !q.overlaps(&self.body([0, 1, 2].map(|k| foot[k] + off[k]))))
     }
 
     /// Advances `state` by one tick of `input` and reports what happened.
@@ -289,12 +311,83 @@ impl CharacterController {
     /// horizontal move, which may start a climb and run its first rise; then, unless the body
     /// is still climbing, the vertical move. A climbing tick takes no horizontal input and no
     /// gravity.
+    ///
+    /// The tick collects the world's solid boxes once, over the region its usual sweeps stay
+    /// inside ([`Self::reach`]), into a scratch list kept per thread, and every sweep and
+    /// overlap test reads them there. A sweep reaching past that region collects again over
+    /// the smallest region holding both; either way each reads the boxes [`crate::sweep`]
+    /// would.
     pub fn tick(&self, world: &World, state: &mut CharacterState, input: &MoveInput) -> MoveResult {
+        BOXES.with(|boxes| {
+            let mut boxes = boxes.borrow_mut();
+            let (lo, hi) = self.reach(state, input);
+            boxes.collect(world, lo, hi);
+            let mut q = Query {
+                world,
+                boxes: &mut boxes,
+            };
+            self.tick_in(&mut q, state, input)
+        })
+    }
+
+    /// Solid-box collections the ticks on this thread have made so far, for tests.
+    #[doc(hidden)]
+    pub fn box_collections() -> u64 {
+        BOXES.with(|b| b.borrow().collections)
+    }
+
+    /// The region the usual sweeps of a tick from `state` under `input` stay inside: the
+    /// body's box at the foot, widened on each horizontal side by the wish (both components),
+    /// up by the vertical speed when rising or `jump_speed` when the input jumps, down by
+    /// `ground_probe`, the falling speed and the gravity; one unit more each way. A step, a
+    /// slide, a climb or a depenetration reaches further and collects again
+    /// ([`Boxes::cover`]).
+    fn reach(&self, state: &CharacterState, input: &MoveInput) -> ([i64; 3], [i64; 3]) {
+        let p = &self.params;
+        let f = state.foot.0;
+        let sum = |xs: &[i64]| xs.iter().fold(0i64, |a, &x| a.saturating_add(x.max(0)));
+        let rising = if input.jump {
+            p.jump_speed.max(state.vz)
+        } else {
+            state.vz
+        };
+        let side = sum(&[
+            p.radius,
+            input.wish[0].saturating_abs(),
+            input.wish[1].saturating_abs(),
+            1,
+        ]);
+        let up = sum(&[p.height, rising, 1]);
+        let down = sum(&[
+            p.ground_probe,
+            state.vz.saturating_neg(),
+            p.gravity.saturating_abs(),
+            1,
+        ]);
+        let lo = [
+            f[0].saturating_sub(side),
+            f[1].saturating_sub(side),
+            f[2].saturating_sub(down),
+        ];
+        let hi = [
+            f[0].saturating_add(side),
+            f[1].saturating_add(side),
+            f[2].saturating_add(up),
+        ];
+        (lo, hi)
+    }
+
+    fn tick_in(
+        &self,
+        q: &mut Query<'_>,
+        state: &mut CharacterState,
+        input: &MoveInput,
+    ) -> MoveResult {
         let mut r = MoveResult::default();
         let start = state.foot.0;
         let mut foot = start;
-        if overlaps(world, &self.body(foot)) {
-            let Some(off) = self.depenetrate(world, foot) else {
+        if q.overlaps(&self.body(foot)) {
+            let Some(off) = self.depenetrate(q, foot) else {
                 r.embedded = true;
                 r.grounded = state.grounded;
                 return r;
@@ -306,12 +399,12 @@ impl CharacterController {
             state.climbing = None;
         }
         if state.climbing.is_some() {
-            self.climb(world, state, &mut foot, &mut r);
+            self.climb(q, state, &mut foot, &mut r);
         } else if input.wish != [0, 0] {
-            self.horizontal(world, state, &mut foot, input, &mut r);
+            self.horizontal(q, state, &mut foot, input, &mut r);
         }
         if state.climbing.is_none() {
-            self.vertical(world, state, &mut foot, input, &mut r);
+            self.vertical(q, state, &mut foot, input, &mut r);
         }
         state.foot = Fixed3(foot);
         r.grounded = state.grounded;
@@ -321,14 +414,14 @@ impl CharacterController {
 
     fn horizontal(
         &self,
-        world: &World,
+        q: &mut Query<'_>,
         state: &mut CharacterState,
         foot: &mut [i64; 3],
         input: &MoveInput,
         r: &mut MoveResult,
     ) {
         let wish = input.wish;
-        let s = sweep(world, &self.body(*foot), Fixed3([wish[0], wish[1], 0]));
+        let s = q.sweep(&self.body(*foot), Fixed3([wish[0], wish[1], 0]));
         r.touch(s.contact);
         *foot = add(*foot, s.moved);
         let mut rem = [wish[0] - s.moved.0[0], wish[1] - s.moved.0[1]];
@@ -340,7 +433,7 @@ impl CharacterController {
             return;
         }
         if state.grounded
-            && let Some(f) = self.step_attempt(world, *foot, rem)
+            && let Some(f) = self.step_attempt(q, *foot, rem)
         {
             // A sweep can stop short of a box it does not touch (every component rounds to
             // zero, or the iteration cap); the attempt then lifts, moves and drops back to the
@@ -354,7 +447,7 @@ impl CharacterController {
             if p == [0, 0] {
                 break;
             }
-            let s = sweep(world, &self.body(*foot), Fixed3([p[0], p[1], 0]));
+            let s = q.sweep(&self.body(*foot), Fixed3([p[0], p[1], 0]));
             r.touch(s.contact);
             *foot = add(*foot, s.moved);
             rem = [p[0] - s.moved.0[0], p[1] - s.moved.0[1]];
@@ -377,7 +470,7 @@ impl CharacterController {
             return;
         };
         let dir = self.wall_direction(probe_wall.normal);
-        r.climb_available = self.climb_probe(world, *foot, dir).map(Fixed3);
+        r.climb_available = self.climb_probe(q, *foot, dir).map(Fixed3);
         if let Some(landing) = r.climb_available
             && input.climb
         {
@@ -385,7 +478,7 @@ impl CharacterController {
                 target_z: landing.0[2],
                 dir,
             });
-            self.climb(world, state, foot, r);
+            self.climb(q, state, foot, r);
         }
     }
 
@@ -394,7 +487,7 @@ impl CharacterController {
     /// the climb where it is.
     fn climb(
         &self,
-        world: &World,
+        q: &mut Query<'_>,
         state: &mut CharacterState,
         foot: &mut [i64; 3],
         r: &mut MoveResult,
@@ -405,7 +498,7 @@ impl CharacterController {
         state.vz = 0;
         state.grounded = false;
         let rise = self.params.climb_speed.min(c.target_z - foot[2]).max(0);
-        let up = sweep(world, &self.body(*foot), Fixed3([0, 0, rise]));
+        let up = q.sweep(&self.body(*foot), Fixed3([0, 0, rise]));
         r.touch(up.contact);
         *foot = add(*foot, up.moved);
         if up.moved.0[2] < rise {
@@ -413,7 +506,7 @@ impl CharacterController {
             return;
         }
         if foot[2] >= c.target_z {
-            let fw = sweep(world, &self.body(*foot), Fixed3([c.dir[0], c.dir[1], 0]));
+            let fw = q.sweep(&self.body(*foot), Fixed3([c.dir[0], c.dir[1], 0]));
             r.touch(fw.contact);
             *foot = add(*foot, fw.moved);
             r.climbed = true;
@@ -423,14 +516,14 @@ impl CharacterController {
 
     fn vertical(
         &self,
-        world: &World,
+        q: &mut Query<'_>,
         state: &mut CharacterState,
         foot: &mut [i64; 3],
         input: &MoveInput,
         r: &mut MoveResult,
     ) {
         let p = &self.params;
-        state.grounded = state.vz <= 0 && self.probe_floor(world, *foot);
+        state.grounded = state.vz <= 0 && self.probe_floor(q, *foot);
         if state.grounded && input.jump {
             state.vz = p.jump_speed;
             state.grounded = false;
@@ -442,11 +535,11 @@ impl CharacterController {
         if state.vz == 0 {
             return;
         }
-        let s = sweep(world, &self.body(*foot), Fixed3([0, 0, state.vz]));
+        let s = q.sweep(&self.body(*foot), Fixed3([0, 0, state.vz]));
         r.touch(s.contact);
         *foot = add(*foot, s.moved);
         if state.vz < 0 {
-            if self.lands_on_floor(world, &s, *foot) {
+            if self.lands_on_floor(q, &s, *foot) {
                 state.grounded = true;
                 r.landed = Some(-state.vz);
                 state.vz = 0;

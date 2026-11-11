@@ -76,7 +76,7 @@ pub(crate) fn voxel_box(origin: VoxelCoord, size: [u32; 3]) -> Option<([i64; 3],
 }
 
 /// The chunks a voxel box meets, ascending.
-fn chunks_of(lo: [i64; 3], hi: [i64; 3]) -> impl Iterator<Item = [i64; 3]> {
+pub(crate) fn chunks_of(lo: [i64; 3], hi: [i64; 3]) -> impl Iterator<Item = [i64; 3]> {
     let edge = i64::from(CHUNK_EDGE);
     let clo = lo.map(|v| v.div_euclid(edge));
     let chi = hi.map(|v| v.div_euclid(edge));

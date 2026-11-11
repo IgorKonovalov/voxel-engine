@@ -4,13 +4,17 @@
 //! behind a `RwLock` written only on insert and remove. An edit holds the map's read lock for
 //! its whole run and takes one chunk write lock at a time in ascending coordinate order, so
 //! no chunk can be inserted or removed between its residency check and its last write.
-//! Readers take short per-chunk read locks.
+//! Readers take short per-chunk read locks; a walk that reads many voxels (a raycast, a
+//! collapse scan, a grid update) holds the map's read lock for its run and keeps the read lock
+//! of the chunk it is in until it steps into another ([`ChunkReader`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::brick::Brick;
 use crate::chunk::Chunk;
+use crate::coarse::CellCoord;
 use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
 use crate::limits::WorldLimits;
 use crate::material::{MaterialId, MaterialTable};
@@ -38,7 +42,7 @@ pub(crate) fn write<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
 /// [`ChunkStore::mark_dirty`].
 #[derive(Default, Debug)]
 pub struct ChunkStore {
-    pub(crate) chunks: RwLock<HashMap<ChunkCoord, Arc<RwLock<Chunk>>>>,
+    pub(crate) chunks: RwLock<ChunkMap>,
     dirty: Mutex<HashSet<ChunkCoord>>,
 }
 
@@ -106,6 +110,46 @@ impl ChunkStore {
         let mut v: Vec<_> = read(&self.chunks).keys().copied().collect();
         v.sort_unstable();
         v
+    }
+}
+
+/// The store's map from coordinate to chunk.
+pub(crate) type ChunkMap = HashMap<ChunkCoord, Arc<RwLock<Chunk>>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Map lookups [`ChunkReader`] has made on this thread.
+    pub(crate) static READER_LOOKUPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Chunk reads over a held store map, with the current chunk's read lock kept between reads:
+/// a run of reads in one chunk costs one map lookup and one lock.
+pub(crate) struct ChunkReader<'m> {
+    map: &'m ChunkMap,
+    cur: Option<(ChunkCoord, RwLockReadGuard<'m, Chunk>)>,
+}
+
+impl<'m> ChunkReader<'m> {
+    pub(crate) fn new(map: &'m ChunkMap) -> Self {
+        Self { map, cur: None }
+    }
+
+    /// The chunk at `coord`, or `None` when it is not resident.
+    pub(crate) fn chunk(&mut self, coord: ChunkCoord) -> Option<&Chunk> {
+        if self.cur.as_ref().is_none_or(|(k, _)| *k != coord) {
+            self.cur = None;
+            #[cfg(test)]
+            READER_LOOKUPS.with(|n| n.set(n.get() + 1));
+            let lock = self.map.get(&coord)?;
+            self.cur = Some((coord, read(lock)));
+        }
+        self.cur.as_ref().map(|(_, guard)| &**guard)
+    }
+
+    /// The brick of cell `c`, or its chunk's coordinate when that is not resident.
+    pub(crate) fn brick(&mut self, c: CellCoord) -> Result<&Brick, ChunkCoord> {
+        let (chunk, slot) = c.split();
+        Ok(self.chunk(chunk).ok_or(chunk)?.brick(slot))
     }
 }
 

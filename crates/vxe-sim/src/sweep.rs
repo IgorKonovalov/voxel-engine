@@ -94,9 +94,17 @@ pub fn distance2_with_stats(world: &World, body: &Body) -> (Option<(i64, Contact
 /// Whether `body` strictly overlaps a solid voxel. Touching is not overlapping.
 pub fn overlaps(world: &World, body: &Body) -> bool {
     let (lo, hi) = swept_region(body, [0; 3]);
-    collect(world, lo, hi, &mut QueryStats::default())
-        .iter()
-        .any(|x| x.overlaps(body))
+    overlaps_in(&collect(world, lo, hi, &mut QueryStats::default()), body)
+}
+
+/// [`overlaps`] over `boxes`, which hold at least the boxes of the body's region.
+pub(crate) fn overlaps_in(boxes: &[SolidBox], body: &Body) -> bool {
+    boxes.iter().any(|x| x.overlaps(body))
+}
+
+/// The region [`sweep`] collects its boxes over.
+pub(crate) fn sweep_region(body: &Body, delta: Fixed3) -> ([i64; 3], [i64; 3]) {
+    swept_region(body, delta.0)
 }
 
 /// Moves `body` along `delta` until it touches a solid box, by conservative advancement.
@@ -118,11 +126,19 @@ pub fn sweep(world: &World, body: &Body, delta: Fixed3) -> Sweep {
 /// [`sweep`] plus the work its region scan did.
 pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, QueryStats) {
     let mut stats = QueryStats::default();
+    let (lo, hi) = swept_region(body, delta.0);
+    let boxes = collect(world, lo, hi, &mut stats);
+    (sweep_in(&boxes, body, delta), stats)
+}
+
+/// [`sweep`] over `boxes`, which hold at least the boxes of [`sweep_region`] in
+/// [`collect`]'s order (see [`crate::body::Boxes`]): every query below takes only the boxes
+/// meeting its own region, or the first in order of those it looks for.
+pub(crate) fn sweep_in(boxes: &[SolidBox], body: &Body, delta: Fixed3) -> Sweep {
     let start = body.foot.0;
     let (lo, hi) = swept_region(body, delta.0);
     // Every later region is inside this one: it starts at the body's current box, which lies
     // on the segment, and extends along what is left of the same delta.
-    let boxes = collect(world, lo, hi, &mut stats);
     let mut out = Sweep {
         moved: Fixed3::default(),
         contact: None,
@@ -131,8 +147,8 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
     };
     if boxes.iter().any(|x| x.overlaps(body)) {
         out.started_overlapping = true;
-        out.contact = nearest(&boxes, body, lo, hi).map(|(_, c)| c);
-        return (out, stats);
+        out.contact = nearest(boxes, body, lo, hi).map(|(_, c)| c);
+        return out;
     }
     let mut pos = start;
     let mut rem = delta.0;
@@ -140,7 +156,7 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
         out.iterations += 1;
         let b = body.at(pos);
         let (rlo, rhi) = swept_region(&b, rem);
-        let (nearest, left_out) = nearest_blocking(&boxes, &b, rlo, rhi, rem);
+        let (nearest, left_out) = nearest_blocking(boxes, &b, rlo, rhi, rem);
         let Some((key, contact)) = nearest else {
             pos = [0, 1, 2].map(|k| pos[k] + rem[k]);
             rem = [0; 3];
@@ -187,10 +203,8 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
     if rem != [0; 3] && out.contact.is_none() {
         let b = body.at(pos);
         let (rlo, rhi) = swept_region(&b, rem);
-        out.contact = nearest_blocking(&boxes, &b, rlo, rhi, rem)
-            .0
-            .map(|(_, c)| c);
+        out.contact = nearest_blocking(boxes, &b, rlo, rhi, rem).0.map(|(_, c)| c);
     }
     out.moved = Fixed3([0, 1, 2].map(|k| pos[k] - start[k]));
-    (out, stats)
+    out
 }

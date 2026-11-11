@@ -469,3 +469,13 @@ fn a_body_enclosed_in_solid_reports_embedded_and_stays() {
         assert_eq!(st, before);
     }
 }
+
+/// A tick collects the world's solid boxes once and every sweep in it reads them: 60 ticks of
+/// the F1 walk make 60 collections.
+#[test]
+fn a_tick_on_a_flat_course_collects_its_boxes_once() {
+    let before = CharacterController::box_collections();
+    let steps = run(&f1(), S, 60, walk(WISH));
+    assert_eq!(steps.len(), 60);
+    assert_eq!(CharacterController::box_collections() - before, 60);
+}
