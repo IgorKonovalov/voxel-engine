@@ -222,12 +222,17 @@ leave residency short, p95 2.7 to 6.9 s at 2 to 8 ms against 0.30 s without one,
 pays only once a chunk's upload is cheaper; this entry is that cheaper upload, and the
 budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
 upload-copy ADR.
+Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+and ADR-0056, awaiting the owner's go; this entry leaves when the plan is approved.
 
 ### The slow adapter's walk-speed spike
 
 Owed since Plan 0054 (ADR-0034 and ADR-0041 name it) and in no plan or backlog entry until now:
 why the Radeon's hit pass reads 7 to 8 times the RTX's when the light pass under the store reads
 about twice. Run with the shader toolchain spike, when no lane holds the GPU.
+Noted 2026-11-12 (the architecture review): the slot is Plan 0069's Phase 4, which reads both
+adapters anyway; the review's amendment note asks it to read the hit pass alone at Portable's
+internal size on the RENOIR and to run this spike before Phase 6 if the hit reads over 10 ms there.
 
 ### The dev box presents across two GPUs
 
@@ -265,6 +270,45 @@ line. Pick up as a dev chore with the next plan that touches the frame's read-ba
 
 ## Tooling and process
 
+### A pipeline cache for the renderer's shaders
+
+Parked 2026-11-12 (the architecture review, section 1.4). Every pipeline creates its own shader
+module and 13 of them prepend the 2496-line `march.wgsl`; no descriptor passes a
+`wgpu::PipelineCache` (`cache: None` everywhere). Cold creation of the eleven pipelines read
+1396 ms on the RTX, 458 ms on RADV, 299 ms on lavapipe (Plan 0046). wgpu 30's `PipelineCache`
+is Vulkan-only and keyed by the driver, so it helps a second start on the same machine, not the
+first; the driver's own disk cache already does part of that. What it takes: `pipeline_times`
+read with and without a cache file across two starts, on both adapters, after Plan 0045's
+Phase 4 has split the shaders (which changes what is compiled). Pick up at 0045's close.
+
+### Comment, manifest and index drift found by the 2026-11-12 review
+
+Parked 2026-11-12; a dev chore of one commit, no plan. `apps/flythrough/examples/world_budget.rs`
+describes ADR-0011's attribute pages and planes (26 "contour" lines; :35, :41, :656), removed in
+Plan 0054. `apps/flythrough/tests/gpu_lights.rs:610` "the emissive table's path" (deleted in
+Plan 0059), `:614` and `:687` "Reservoir reuse's bar", `crates/vxe-render/src/exposure.rs:21`
+"reservoirs", `apps/flythrough/tests/gpu_upscale.rs:635` "reservoir textures" (Plan 0057).
+`crates/vxe-world/Cargo.toml` and `crates/vxe-render/Cargo.toml` carry
+`description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`.
+`vxe-render/tests/gpu_frame.rs:86` calls `lamp_bounce` off "the default", which is the
+library's default and not the fly-through's (Plan 0069's amendment note takes the default
+itself). `CLAUDE.md:39-40` gives `vxe-render` "voxel-model entities" it does not have yet
+(Plan 0062) and omits the bake store and FSR 2: the owner's edit. Pick up with the next chore
+lane; it touches no file a plan lane edits except `gpu_lights.rs` (Plan 0058's).
+
+### Amendment notes from the 2026-11-12 review, awaiting the owner
+
+Parked 2026-11-12. The review (`docs/reviews/2026-11-12-architecture-review.md`) proposes
+amendments to approved plans that only the owner accepts; none was written into a plan. In
+brief: **Plan 0067**, do not stop at the sync stop rule, Plan 0070 takes the sync (section 1.1);
+**Plan 0044**, Phase 4 struck into 0070 (1.1); **Plan 0069**, a `Delete` class for the fields
+with no setter and no caller, `Floor` equal to the fly-through's defaults and every `Default`
+equal to `Floor`, the setter gate over the 22 existing setters, and the RENOIR hit pass read
+alone in Phase 4 (1.2, 2.2); **Plan 0045**, the reservoir code is live, `hud.rs` and
+`showcase.rs` named unconditionally, `table()` and `now()` in Phase 1, `gpu_strip.rs` out of
+`tests/`, a pub-item count as Phase 2's done-when (2.1, 2.3). Each leaves when the owner
+accepts or refuses it.
+
 ### A documentation site
 
 Parked 2026-11-11 (owner: "no plan needed yet, will address this later"). A public site in the
@@ -294,6 +338,8 @@ dirty after a prefix restore (a rust-cache quirk could be fixed by its version o
 inputs); (3) cut the steady state whatever the cache does: drop `cargo build --workspace` if
 nextest builds the same targets (check bins and examples first), fold the three clippy steps,
 or lint on Ubuntu only. Pick up when a second cold run shows up or the owner wants CI faster.
+Options (2) and (3) are [Plan 0072](plans/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md)'s
+Phase 5 (drafted 2026-11-12, awaiting go); this entry leaves when it is approved.
 
 ### Shader toolchain spike
 
@@ -308,7 +354,7 @@ Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With t
 
 ### The gate tier is over its wall-time budget
 
-Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions.
+Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-12 (the architecture review, on `live/plan-0068/merge-gate.log`): 809 tests, 610 s; the 177 lavapipe tests sum to 610 s serial, the whole wall, the 632 CPU tests to 273 s beside them, so the lever is the lavapipe group's thread count or the GPU tests' pixels, not the CPU tests; [Plan 0072](plans/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) Phase 4 measures the group at 2 and 3 (drafted, awaiting go). Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions.
 
 ### `vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7
 
