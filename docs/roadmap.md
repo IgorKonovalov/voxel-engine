@@ -265,7 +265,10 @@ bake, a brick-level store at 8 voxels and 4096 samples a direction filled by a l
 digs, and the table is deleted. The order from here (owner, 2026-11-10, at the review of every active
 plan): Plan 0060 (the queue's view order and withdrawal, ADR-0048), Plan 0061 (antialiasing, ADR-0049),
 Plan 0058 (dynamic lights, redrafted over the store; ADR-0045 withdrawn), then the code-health Plans 0044
-and 0045, then M10. `docs/plans/README.md` carries the sequence.
+and 0045, then M10. `docs/plans/README.md` carries the sequence. Plan 0060 closed 2026-11-11 (v0.45.0, ADR-0048
+accepted with an Outcome): the queue sorts by a view score with the class kept as the leading key and withdraws
+the jobs a flight has passed; at the window the order made no visible difference, because the slice's
+throughput, not the order, limits the far light (Plan 0067 takes it).
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the

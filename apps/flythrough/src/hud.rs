@@ -381,6 +381,26 @@ pub struct HudStats {
     pub exposure: Option<ExposureRow>,
     /// The aliasing toggles' row ([`aliasing_row`]); `None` hides it.
     pub aliasing: Option<String>,
+    /// The live queue's row ([`queue_row`]); `None` hides it.
+    pub queue: Option<String>,
+}
+
+/// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
+/// their light, and of them those with a coarse block, the jobs withdrawn since the start, then
+/// `mode` (the order and the withdrawal in words) after a semicolon when it is not empty:
+/// `in view: 12 waiting (5 coarse), withdrawn 3; order distance; withdraw on`.
+pub fn queue_row(st: &vxe_render::QueueStats, mode: &str) -> String {
+    let [blank, coarse] = st.view_waiting[vxe_render::bake::VIEW_IN];
+    let row = format!(
+        "in view: {} waiting ({coarse} coarse), withdrawn {}",
+        blank + coarse,
+        st.withdrawn
+    );
+    if mode.is_empty() {
+        row
+    } else {
+        format!("{row}; {mode}")
+    }
 }
 
 /// The exposure row: the mode in words, the exposure the next frame uses in EV (`log2 e`), the
@@ -514,6 +534,7 @@ impl HudStats {
             lighting: None,
             exposure: None,
             aliasing: None,
+            queue: None,
         }
     }
 
@@ -647,6 +668,9 @@ impl HudStats {
         }
         if let Some(a) = &self.aliasing {
             row(out, HudColour::White, format_args!("{a}"))?;
+        }
+        if let Some(q) = &self.queue {
+            row(out, HudColour::White, format_args!("{q}"))?;
         }
         row(
             out,
@@ -1090,6 +1114,33 @@ mod tests {
             .collect();
         assert_eq!(yellow, [0, 3]);
         assert!(colours.iter().all(|&c| c != HudColour::Red));
+    }
+
+    /// The queue row counts the chunks in the view cone beyond the shell still waiting, blank
+    /// and coarse, from the queue's counters; the shell and the chunks out of view are not
+    /// counted.
+    #[test]
+    fn the_queue_row_counts_the_view() {
+        let mut st = vxe_render::QueueStats::default();
+        st.view_waiting[vxe_render::bake::VIEW_SHELL] = [3, 1];
+        st.view_waiting[vxe_render::bake::VIEW_IN] = [7, 5];
+        st.view_waiting[vxe_render::bake::VIEW_OUT] = [40, 9];
+        assert_eq!(
+            queue_row(&st, ""),
+            "in view: 12 waiting (5 coarse), withdrawn 0"
+        );
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.write_rows(&mut out, &mut colours);
+        assert!(!out.contains("in view:"), "{out}");
+        s.queue = Some(queue_row(&st, ""));
+        s.write_rows(&mut out, &mut colours);
+        assert!(
+            out.lines()
+                .any(|l| l == "in view: 12 waiting (5 coarse), withdrawn 0"),
+            "{out}"
+        );
+        assert_eq!(out.lines().count(), colours.len());
     }
 
     /// The lighting row shows the store's chunks, megabytes and missing pixels under the store.
