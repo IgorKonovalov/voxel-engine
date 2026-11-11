@@ -1,9 +1,10 @@
 # ADR-0049: Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-11, at Plan 0061's close; see Outcome: the read and the weight rule are
+> the fly-through's defaults, off in the library)
 > **Date:** 2026-11-10, amended 2026-11-11 (proposed, edited in place: the weight rule, after
 > Plan 0061 Phase 1's readings and the owner's pick)
-> **Related plan(s):** [Plan 0061](../plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md)
+> **Related plan(s):** [Plan 0061](../plans/done/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md)
 > (Phase 1 checks the source this ADR assumes and can reject it, by two stop rules: the far normal
 > must not move the far crops under the store, and direction changes must carry the largest share
 > of their distance from the reference; Phase 4's window picks or drops it). Extends
@@ -145,3 +146,32 @@ It stays a comparison arm; a default flip to it supersedes ADR-0018's resolution
 
 The read as first proposed. Phase 1 read the mixing it leaves under the far normal: the far crops'
 energy down 10 % and the still jumps doubled. Rejected by the owner, 2026-11-11.
+
+## Outcome
+
+**2026-11-11, Plan 0061's close (v0.48.0): built as decided, both bits the fly-through's defaults
+by the owner's window; the library keeps them off.** `Lighting::store_read` (`StoreRead::Face |
+Normal`, bit 14) and `Lighting::light_weights` (`LightWeights::Normal | Face`, bit 15);
+`flythrough::DEFAULT_STORE_READ` is `Normal` and `DEFAULT_LIGHT_WEIGHTS` is `Face`, with `--store-read`
+(`Comma`) and `--light-weights` (`Semicolon`). The read runs only where the shading normal differs
+from the face normal, and the hit face's term reuses the face's own read. The face normal for the
+weights is signed toward the eye's side of the face plane (`filter_normal`, `march.wgsl`). The
+plane term stays on the shading normal; its face-normal variant was not read.
+
+- **Held, by gate tests on lavapipe:** a far staircase reads the mix within 1 % of a CPU replica
+  over the bake's records (1417 pixels), and its frame at the defaults matches
+  `far_staircase_store_normal.png`; near faces (weight 0) read today's value to the bit (0 of
+  12 063 pixels move); with the far normal off the whole frame is bit-identical under either bit,
+  at half and full light resolution.
+- **Read (RTX 3080 Laptop, the hall, `baked`, loaded, indicative):** at FSR 2 1.5 and `[2, 6]`,
+  the pick (read `normal`, weights `face`) takes the far crops' direction-map edge ratio from 3.18
+  to 1.29 and FSR 2's still jumps from 20 759 to 786; the pan's `C` from 0.591 to 0.229. The read
+  with `rec.n` weights reads lowest by the plan's rule (edge ratio 1.09); the owner picked the face
+  weights. The far crops' detail energy falls 50 to 80 % against the face-read reference and stays
+  within 5 % of the normal-read one: the owner's "maybe even a bit too soft - but no aliazing".
+- **Cost (loaded, indicative):** the read adds 0.08 ms on the RTX and 0.21 ms on the RADV RENOIR to
+  the hall's temporal pass at `[2, 6]`, against the 0.3 and 1.5 ms guessed. The face weights
+  add 0.5 ms to the Radeon's a-trous at the vein, 3.19 ms, **over the 3.0 ms denoise line**
+  (routed to Plans 0067 and 0069). `frame_bytes` unchanged.
+- The Negative "half-resolution blocks" did not show at the window. The leak through a cell's
+  direction mean was not read separately.

@@ -1,18 +1,18 @@
 # 0061: Antialiasing: the far bands are back under the baked light; split them by measurement, read the store by the far normal, and pick by eye
 
-> **Status:** in-progress (close review 2026-11-11: not clean, two majors; a dev fix pass is owed, see Close review), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
+> **Status:** done (closed 2026-11-11, v0.48.0: the far store read by the shading normal and the filters weighed by face are the fly-through's defaults; the owner saw no aliasing; ADR-0049 accepted), amended 2026-11-10 (review pass), amended 2026-11-11 (owner: read + face weights)
 > **Created:** 2026-11-10
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the upscaler and surface-look bullets;
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the upscaler and surface-look bullets;
 > "a stable image" is the owner's one priority, 2026-11-03)
-> **Related ADRs:** [ADR-0049](../adrs/0049-the-baked-light-is-read-by-the-far-shading-normal.md)
+> **Related ADRs:** [ADR-0049](../../adrs/0049-the-baked-light-is-read-by-the-far-shading-normal.md)
 > (proposed; the store read by the far normal; Phase 1 can reject it, the window picks it or not),
-> [ADR-0042](../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
+> [ADR-0042](../../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
 > (the far normal; its setting gets its Outcome at this plan's close),
-> [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) (FSR 2 at 1.5
+> [ADR-0034](../../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) (FSR 2 at 1.5
 > stays; its slow-pan Outcome is owed and written at this close),
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the store this plan reads, unchanged).
-> **Source:** [`docs/backlog.md`](../backlog.md), "Antialiasing after the look-first light", with
+> **Source:** [`docs/backlog.md`](../../backlog.md), "Antialiasing after the look-first light", with
 > "Far normal range" and "Slow-pan verdict for FSR 2". The owner, Plan 0059's Phase 13 window
 > (2026-11-09, the defaults: FSR 2 at 1.5, far normal `[2, 6]`, the baked light), at the hall: "a lot
 > of aliasing on this step, doesn't look good".
@@ -42,7 +42,7 @@
 > resolution and weights as a pick), the Budgets, and ADR-0049 (proposed, edited in place: the
 > weight rule). Phase 2 still starts only after Plan 0060 merges into main.
 
-*The finding* ([the readings log](logs/0061.md), Phase 1, RTX, loaded, indicative). Under `baked`,
+*The finding* ([the readings log](../logs/0061.md), Phase 1, RTX, loaded, indicative). Under `baked`,
 `[2, 6]` moves the far crops' energy just over 10 % against far normal off (native far wall
 −10.6 %, FSR 2 dome −10.0 %); `[1, 2]` stays under. With the light passes at full resolution the
 three far-normal arms read the same to the printed digit, so the far normal changes no light value:
@@ -58,7 +58,7 @@ pixels at a direction change carry 97.4 % of the distance from `R`, and the edge
 penalises ADR-0049's read by construction (hence `R` normal in Phase 3); and lavapipe at 384 x 216
 does not reproduce the energy move (it does reproduce `T`'s rise).
 
-*The cost of full-resolution light, read* ([the readings log](logs/0061.md), "Full-resolution
+*The cost of full-resolution light, read* ([the readings log](../logs/0061.md), "Full-resolution
 light cost": the hall, the baked defaults, FSR 2 at 1.5, `[2, 6]`, 600 frames, 3 alternated runs,
 quiet; RTX at 2530 x 1378, Radeon RENOIR at 1280 x 720). It replaces the draft's guess of +6 to
 +10 ms RTX.
@@ -545,7 +545,7 @@ Against `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`. Today's figur
 them where there is one today, and that read is what took the temporal pass from 0.39 to
 1.54 ms in Plan 0059 (full tier): through an atomic binding each one re-reads the store's
 header per tap. Where the hall is mostly far band, +1 ms or more is plausible at the full
-tier. [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+tier. [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
 Phase 2 makes the read cheaper, and **Phase 2 here starts after Plan 0065 merges** (owner,
 2026-11-10; `docs/plans/README.md`, Sequence). Phase 2 here reads the temporal pass by itself, at the half
 and the full tier, so the read's cost is not lost in the frame figure.
@@ -623,7 +623,7 @@ The owner, 2026-11-10, to the open questions above:
 - Fix the silhouettes', emitters' or edge dots' jumps: read only; a later plan if the window asks.
 - Change the generators' terraces (the consumer's geometry), or the glass's reflected share.
 - Remove `own` or any upscaler, or re-base the frame ledger's `own` line. Removing `own` is its own
-  small plan, owed and not yet drafted ([`docs/backlog.md`](../backlog.md); the owner, 2026-11-10);
+  small plan, owed and not yet drafted ([`docs/backlog.md`](../../backlog.md); the owner, 2026-11-10);
   Plan 0045 stays a structure move and does not remove it.
 - Render profiles per adapter (backlog, "render settings + profiles").
 - Write ADR outcomes: the architect writes ADR-0042's and ADR-0034's at the close, and accepts or
@@ -640,7 +640,7 @@ The owner, 2026-11-10, to the open questions above:
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), answered by the owner's amendment; see [the readings log](logs/0061.md) | e79620f |
+| 1: Which aliasing it is, under the baked light | dev | readings in; stop rule 3 met (done-when 3), answered by the owner's amendment; see [the readings log](../logs/0061.md) | e79620f |
 | 2: The store read by the far normal and the filters weighed by face (ADR-0049), behind two toggles | dev | code, staircase reading and gate in; done-whens 5 and 6 (strip and cost readings) landed with Phase 3's commit, see the readings log | c327f6a |
 | 3: The matrix with the read, the edges left, and the window's runner | dev | half-light matrix, FSR 2 at 1, the pick's pan and yaw read; the full-light, jitter 8 and sharpen 0.25 arms and the level's arms not run (see Notes) | f4989a9 |
 | 4: The owner's window | human | done by the owner, 2026-11-11 (`live/session61.sh`): (a) `normal`, (b) `[2, 6]`, (g) half with face weights, (e) FSR 2 at 1 as a setting, not the default; words in the readings log | c3fce0e |
@@ -807,3 +807,22 @@ active days, 18 plans closed; commits per active day 0.50x the window before (fo
 this plan). `node scripts/loc.mjs`: total 42,772 / 50,313 / 14,420 / 5,422 / 73,142; functional
 48,194, test : code 1.18; `apps/flythrough/src/main.rs` heads the largest files at 9443 lines
 (+249 here), Plan 0045's.
+
+**The fix pass (6287e88), judged 2026-11-11:** both majors met and the nit fixed; the plan
+closes.
+
+- Major 1: `the_store_read_by_normal_leaves_near_faces_alone` (192 x 108, 3.3 s) and
+  `the_face_weights_leave_near_faces_alone` (96 x 54, 3.2 s) are in the gate in `gpu_bake.rs`.
+  Read: 0 of 12 063 near hit pixels move under the read, against a floor of 10 000; far normal off,
+  the frame is bit-identical with the read and with the weights, at half and full, and with the
+  fly-through's defaults against the library's; no non-finite part under `gradient27` and
+  `trilinear8`; every half asserts a lit frame.
+- Major 2: `showcase_hall.png` re-blessed by name; the defaults' read and weights move none of
+  its pixels (the library's render matches the new golden at every pixel). The golden compare
+  passes. The hue assert still fails (`[336, 0, 209, 121]`, ember 0), and the luma assert would
+  fail at 2.7 against 11..40. The re-blessed image shows the ores' faces on black, against the
+  dimly lit walls of the Plan 0057 image (mean luma 11.97). The owner's window saw a lit hall, so
+  this is more likely the headless rig (its bake or settle state) than the look, unverified. The
+  backlog's entry records it as a likely rig regression since Plan 0057, to bisect; the new
+  golden pins today's render and does not say the hall is right. `gpu_settle`'s soak tests,
+  by name: 5 of 5 pass.

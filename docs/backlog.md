@@ -116,10 +116,6 @@ slow adapter's cheaper arm; the removal plan should say what the portable profil
 Answered 2026-11-11 (owner, Plan 0069's answer 2): Portable uses FSR 2 at 720p output, and the
 removal plan goes ahead after Plan 0069.
 
-### Far normal range: the owner picked `[1, 2]`
-
-Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): picked again under the store read in its window, landed in its Phase 5, ADR-0042's Outcome at its close; the emitter cap goes in Phase 5.
-
 ### The lamp channel's faults
 
 Parked 2026-11-05 at Plan 0057's close. `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` takes
@@ -127,10 +123,6 @@ its `D` from the shader's output, so it does not defend the albedo: `D` wants an
 of the lamp's irradiance at the rays' hits. Inside probes are traced while the lamp moves
 (`probe_update.wgsl`'s `probe_idle` returns on `MOVED_BIT` before its inside check): cost only, unread on
 the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 0058's Phase 3 (redrafted 2026-11-10) takes the furnace's `D` and the one-probe step test; the inside-probe trace is a reading there.
-
-### Slow-pan verdict for FSR 2 (ADR-0034)
-
-Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): ADR-0034's dated Outcome is written at its close.
 
 ### Far light on a slow adapter: a bake budget per second, and no black for missing light
 
@@ -144,9 +136,9 @@ Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never
 
 Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its close (owner's amendment). In the streamed cave at `--glide 300` the near shell (Chebyshev 2, baked at the full count) takes 98 to 99 % of the slice, and about 0.70 of the in-view chunks still waiting have their reach not ready (the mirror's edge), so neither the order nor the withdrawal can light them. What it would take: a shell baked coarse first in a flight, or a smaller shell at speed; and a streamer that loads the light radius ahead of the view. Pick up with Plan 0067's bake budget by time, which reads the same flight (`docs/plans/logs/0060.md`, Phase 1).
 
-### A stale soak golden: `showcase_hall_golden_is_lit_by_its_four_ores`
+### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
-Read 2026-11-11 at Plan 0060's close review: the soak test fails with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c, so it predates Plan 0060. `showcase_hall.png` was last blessed at Plan 0057 (2de29c6, the table light), before Plan 0059 replaced the light. The weekly soak workflow should be failing on it. What it takes: re-bless it on lavapipe under the baked light after a look at the image, and re-read its luma band and hue classes. Pick up at the next plan that touches the goldens, or as a chore.
+Read 2026-11-11 at Plan 0060's close review: the soak test failed with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c. Re-blessed 2026-11-11 at Plan 0061's close (fix pass 6287e88): the new golden pins today's render, which Plan 0061's defaults do not move (the library's read and weights give the same pixels), but it is not a correct hall. Mean sRGB luma fell from 11.97 (Plan 0057's image, 2de29c6) to 2.73; the walls are black and only the ores' faces are lit; ember covers 0 pixels. The test still fails its hue assert (`[336, 0, 209, 121]`) and would fail its luma band (11..40). The owner's window at Plan 0061 saw a lit hall, so the likely cause is the headless rig (`gpu_golden.rs`'s `showcase_hall`: its bake or settle state under the baked light since Plan 0059), not the look; unverified. What it takes: bisect the rig's render between 2de29c6 and today, fix the rig, re-bless after a look, and keep the hue and luma asserts as they are. The weekly soak fails on it until then.
 
 ## Performance: the static review of 2026-11-10
 
@@ -163,6 +155,11 @@ the baked light's shader waste and the queue's scan to
 - **Upscale, 1.5 ms:** FSR 2 reads 2.1 to 2.4 ms on the RTX and 15.7 to 16.1 ms on the Radeon
   at 2530 x 1378 after Plan 0065 (closed 2026-11-11); every plan "reads its delta and does not
   claim the line". Either the line moves or a profile owns it: the render-profile plan's call.
+- **Denoise, 3.0 ms, on the Radeon with the face weights:** at the vein the a-trous pass reads
+  3.19 ms with Plan 0061's default face weights against 2.70 ms without (RADV RENOIR, 1920 x
+  1080, loaded; `docs/plans/logs/0061.md`, Phase 2 done-when 6). Routed at Plan 0061's close to
+  Plan 0067 (the frame's cost) and Plan 0069 (a per-profile default for the weights is its
+  question).
 - **The bake's slice and the queue's step have no line.** 1.5 ms of GPU a frame while the queue
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
   line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
@@ -430,6 +427,3 @@ its own app under `apps/`. The fly-through and the native paths never change or 
 for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
 materials, a sky and a way to build interesting architecture.
 
-### Antialiasing after the look-first light
-
-Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) and [ADR-0049](adrs/0049-the-baked-light-is-read-by-the-far-shading-normal.md) (both draft, 2026-11-10). The history of the owner's words is in the plan's Context.
