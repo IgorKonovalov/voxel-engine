@@ -436,8 +436,8 @@ impl JobLoop {
         (budget, plan)
     }
 
-    /// The dispatch's entries by the plan: each names its job's slot and its face's samples
-    /// from the first no submit has drawn. Returns the input rows, the entries'
+    /// The dispatch's entries from `plan`'s rounds per face: each names its job's slot and its
+    /// face's samples from the first no submit has drawn. Returns the input rows, the entries'
     /// `(slot, face, rounds)` and the count of jobs with an entry.
     fn fill_entries(
         &mut self,

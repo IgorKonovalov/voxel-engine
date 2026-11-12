@@ -882,8 +882,8 @@ own start commit, not against Plan 0044's close: other commits may land between 
 |---|---|---|---|
 | 0: the inventory at the start commit | dev | inventory done, "before" readings owed (scheduled by the orchestrator); drift (3 rows) ruled at `70793b6`; [`logs/0045.md`](logs/0045.md) | `22df5d4` |
 | 1: one home for each shared fixture | dev | done; bench fixtures at `benches/support/`; five same-named audio helpers stay local; deviations in the log | `1d5b932` |
-| 2: `GpuWorld` becomes a directory of owned parts | dev | done; 11 fields; root 100 names, `debug` 15, `internals` 95; 13 items past Phase 0's 131 paths housed; `opaque_table`, `is_glass` deleted; `unnameable_types` denied too; deviations in the log | `2a53aa2`, `032b3ee`, committed with this row |
-| 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories | dev | not started | |
+| 2: `GpuWorld` becomes a directory of owned parts | dev | done; 11 fields; root 100 names, `debug` 15, `internals` 95; 13 items past Phase 0's 131 paths housed; `opaque_table`, `is_glass` deleted; `unnameable_types` denied too; deviations in the log | `2a53aa2`, `032b3ee`, `efaeeab` |
+| 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories | dev | code and CPU gate done; `Frame` 15 fields, no fn over 150, 1 readback copy; gpu gate on the tip owed; timing done-when waits on Phase 0's "before" set; deviations in the log | `8b51a31`..`54f7b56`, committed with this row |
 | 4: the shaders become modules a pass picks | dev | not started | |
 | 5: the world crate's three big modules split | dev | not started | |
 | 6: audio, net, wasm and assets split their long functions | dev | not started | |

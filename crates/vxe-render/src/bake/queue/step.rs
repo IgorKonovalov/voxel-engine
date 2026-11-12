@@ -35,7 +35,7 @@ impl BakeQueue {
     }
 
     /// The step's window stages: the eye's cell, the store's window, and the blocks of the chunks
-    /// the mirror no longer holds full. Returns the mirror's changes since the last step, each
+    /// the mirror does not hold full. Returns the mirror's changes since the last step, each
     /// chunk once (`None` untracked, the first step).
     fn follow_window(
         &mut self,
