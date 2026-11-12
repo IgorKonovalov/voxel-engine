@@ -140,7 +140,7 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
             "0",
         ])
         .args(extra)
-        .env("RUST_LOG", "flythrough=info")
+        .env("RUST_LOG", "flythrough=info,vxe_app=info")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

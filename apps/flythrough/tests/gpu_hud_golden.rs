@@ -1,6 +1,7 @@
 //! The stats HUD over the golden scene on the software adapter (lavapipe): `primary.png`'s
-//! view after its carve, the overlay drawn from `HudStats::fixed()` and a fixed 240-sample
-//! strip at scale 1, compared pixel-exact with `hud.png`. `VXE_BLESS=1` rewrites it.
+//! view after its carve, the overlay drawn from [`fixed_stats`] (`HudStats::fixed()` with the
+//! start's mode block) and a fixed 240-sample strip at scale 1, compared pixel-exact with
+//! `hud.png`. `VXE_BLESS=1` rewrites it.
 //!
 //! The overlay is drawn onto a copy of the march target, the way the fly-through draws it
 //! onto the surface after the blit. Integer scale and no filtering make every pixel exact.
@@ -15,6 +16,20 @@ use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, wgpu};
 const CELL: u32 = 8;
 /// The strip's height at scale 1 (`STRIP_PX` of `vxe-render`'s HUD).
 const STRIP: u32 = 64;
+
+/// `HudStats::fixed()` with the mode block the fly-through shows at its start: the five rows
+/// of `Modes::write_rows` at the default lighting and resolution, as the banner golden builds
+/// the start's modes.
+fn fixed_stats() -> HudStats {
+    let mut stats = HudStats::fixed();
+    flythrough::hud::Modes::new(
+        vxe_render::Lighting::default(),
+        vxe_render::LightingResolution::default(),
+        0.0,
+    )
+    .write_rows(&mut stats.modes);
+    stats
+}
 
 /// A fixed strip: a 12 to 23.5 ms sawtooth with a 40 ms spike (clamped at the ceiling)
 /// every 60 frames, so bars of many heights, the red line and the clamp all show.
@@ -80,7 +95,7 @@ fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
     });
     let mut overlay = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 1);
     let (mut text, mut colours) = (String::new(), Vec::new());
-    HudStats::fixed().write_rows(&mut text, &mut colours);
+    fixed_stats().write_rows(&mut text, &mut colours);
     let rows: Vec<(&[u8], HudColour)> = text
         .lines()
         .map(str::as_bytes)
@@ -131,7 +146,7 @@ fn hud_golden_over_the_carved_view_is_pixel_exact() {
 
     // The overlay touches only the text rows (plus their one-pixel shadow) and the strip;
     // every other pixel is the march target's.
-    let rows = HudStats::fixed().to_string().lines().count() as u32;
+    let rows = fixed_stats().to_string().lines().count() as u32;
     let text_bottom = rows * CELL + 1;
     let strip_top = HEIGHT - CELL - STRIP;
     let strip_cols = RING as u32;
