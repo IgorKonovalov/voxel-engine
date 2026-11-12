@@ -12,10 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use flythrough::cave::{ORE, ROCK};
 use support::{SyncNow, cave_table};
-use vxe_render::bake::{self, BakeSettings, QueueStats};
-use vxe_render::gpu_world::{GpuWorld, MirrorConfig, Window};
-use vxe_render::marcher::LightingResolution;
-use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, QueueView, readback, wgpu};
+use vxe_render::LightingResolution;
+use vxe_render::{BakeSettings, QueueStats};
+use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, QueueView, wgpu};
+use vxe_render::{GpuWorld, MirrorConfig, Window};
 use vxe_world::{
     AIR, ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, VoxelCoord, World,
 };
@@ -87,7 +87,7 @@ struct Setup {
     near: i32,
     slice_ms: f64,
     /// The queue's order; `None` keeps its default.
-    order: Option<bake::QueueOrder>,
+    order: Option<vxe_render::QueueOrder>,
     /// The queue's counts.
     counts: BakeSettings,
     /// The mirror's light radius in chunks.
@@ -102,7 +102,7 @@ impl Setup {
             pool_bytes: 16 << 20,
             sync_budget: u64::MAX,
             coarse: 0,
-            near: bake::DEFAULT_NEAR,
+            near: vxe_render::DEFAULT_NEAR,
             slice_ms: 1.5,
             order: None,
             counts: counts(),
@@ -200,7 +200,7 @@ impl Q {
             hold: None,
             half_angle: {
                 let [w, h] = self.frame.output_size();
-                bake::view_half_angle(self.camera.vfov, w as f32 / h as f32)
+                vxe_render::internals::view_half_angle(self.camera.vfov, w as f32 / h as f32)
             },
             frustum: None,
             full_radius: self.full_radius,
@@ -231,7 +231,7 @@ impl Q {
         self.step_with(true)
     }
 
-    fn q(&self) -> &bake::BakeQueue {
+    fn q(&self) -> &vxe_render::BakeQueue {
         self.frame.bake_queue().expect("the queue started")
     }
 
@@ -318,7 +318,7 @@ impl Q {
             &self.camera,
             &LightParams::default(),
         );
-        readback::read_rgba8(&self.device, &self.queue, self.frame.target())
+        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 
     /// No two blocks of `chunks` share a pool word.
@@ -375,7 +375,7 @@ fn blocks_of(
 fn value_words(block: &[u32]) -> impl Iterator<Item = usize> + '_ {
     block[..512].iter().filter(|&&d| d != 0).flat_map(|&d| {
         let end = (d >> 11) as usize;
-        end - bake::BRICK_WORDS..end - bake::BRICK_WORDS + 6
+        end - vxe_render::internals::BRICK_WORDS..end - vxe_render::internals::BRICK_WORDS + 6
     })
 }
 
@@ -546,10 +546,10 @@ fn row(rocks: &[i64]) -> World {
 const ROW_EYE: [f32; 3] = [150.5, 32.5, 60.5];
 
 /// The score at angle weight `angle` and refine weight 2.
-fn score(angle: f32) -> bake::QueueOrder {
-    bake::QueueOrder::Score {
+fn score(angle: f32) -> vxe_render::QueueOrder {
+    vxe_render::QueueOrder::Score {
         angle,
-        refine: bake::Refine::Weight(2.0),
+        refine: vxe_render::Refine::Weight(2.0),
     }
 }
 
@@ -581,7 +581,7 @@ fn the_score_blends_distance_and_the_view() {
         (score(4.0), [2, 3, 4, 5, 1, 0]),
         (score(1.0), [2, 3, 1, 4, 5, 0]),
         (score(0.0), [2, 3, 1, 4, 0, 5]),
-        (bake::QueueOrder::Distance, [2, 3, 1, 4, 0, 5]),
+        (vxe_render::QueueOrder::Distance, [2, 3, 1, 4, 0, 5]),
     ] {
         let Some(mut q) = rig(
             row(&[0, 1, 2, 3, 4, 5]),
@@ -611,13 +611,13 @@ fn a_blank_chunk_waits_behind_a_nearer_refinement_only_under_the_score() {
     for (order, first) in [
         (score(4.0), 3),
         (
-            bake::QueueOrder::Score {
+            vxe_render::QueueOrder::Score {
                 angle: 4.0,
-                refine: bake::Refine::Tier,
+                refine: vxe_render::Refine::Tier,
             },
             5,
         ),
-        (bake::QueueOrder::Distance, 5),
+        (vxe_render::QueueOrder::Distance, 5),
     ] {
         let Some(mut q) = rig(
             row(&[0, 1, 2, 4]),
@@ -913,8 +913,8 @@ fn the_edge_of_the_view_does_not_churn() {
     ) else {
         return;
     };
-    let edge = bake::view_half_angle(70f32.to_radians(), 16.0 / 9.0)
-        + bake::QUEUE_VIEW_MARGIN_DEG.to_radians();
+    let edge = vxe_render::internals::view_half_angle(70f32.to_radians(), 16.0 / 9.0)
+        + vxe_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians();
     let mut out_of_view = 0;
     for n in 0..64 {
         let sign = if n % 2 == 0 { 1.0 } else { -1.0 };
@@ -927,10 +927,10 @@ fn the_edge_of_the_view_does_not_churn() {
             .jobs()
             .iter()
             .filter(|c| {
-                bake::angle_term(
+                vxe_render::internals::angle_term(
                     c.0,
                     forward,
-                    edge - bake::QUEUE_VIEW_MARGIN_DEG.to_radians(),
+                    edge - vxe_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians(),
                     0,
                 ) > 0.0
             })
@@ -989,16 +989,17 @@ fn still_rig() -> Option<Q> {
     }
     let half = {
         let [w, h] = q.frame.output_size();
-        bake::view_half_angle(q.camera.vfov, w as f32 / h as f32)
+        vxe_render::internals::view_half_angle(q.camera.vfov, w as f32 / h as f32)
     };
-    let keep = half + bake::QUEUE_VIEW_MARGIN_DEG.to_radians();
+    let keep = half + vxe_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians();
     let forward = q.camera.basis().0.to_array();
     assert!(
-        !bake::in_near_shell([-1, 0, 0], 0) && bake::angle_term([-1, 0, 0], forward, keep, 0) > 0.0,
+        !vxe_render::internals::in_near_shell([-1, 0, 0], 0)
+            && vxe_render::internals::angle_term([-1, 0, 0], forward, keep, 0) > 0.0,
         "chunk 1 lies outside the near shell and the keep cone"
     );
     assert_eq!(
-        bake::angle_term([4, 0, 0], forward, half, 0),
+        vxe_render::internals::angle_term([4, 0, 0], forward, half, 0),
         0.0,
         "chunk 6 lies in the view cone"
     );
@@ -1078,8 +1079,14 @@ fn assert_fade(what: &str, from: &[u32], shown: &[Vec<u32>], to: &[u32], frames:
     let mut prev = from;
     for (k, now) in shown.iter().enumerate() {
         for w in value_words(to) {
-            let (a, b) = (bake::rgb9e5_unpack(prev[w]), bake::rgb9e5_unpack(now[w]));
-            let (x, y) = (bake::rgb9e5_unpack(from[w]), bake::rgb9e5_unpack(to[w]));
+            let (a, b) = (
+                vxe_render::internals::rgb9e5_unpack(prev[w]),
+                vxe_render::internals::rgb9e5_unpack(now[w]),
+            );
+            let (x, y) = (
+                vxe_render::internals::rgb9e5_unpack(from[w]),
+                vxe_render::internals::rgb9e5_unpack(to[w]),
+            );
             let ulp = step_of(prev[w]).max(step_of(now[w]));
             for ch in 0..3 {
                 let share = (y[ch] - x[ch]).abs() / frames as f32;
@@ -1159,13 +1166,25 @@ fn a_fade_moves_a_record_by_its_share_a_frame() {
         value_words(to).any(|w| from[w] != to[w]),
         "the refinement changes a record"
     );
-    assert_fade("the refinement", from, shown, to, bake::FADE);
+    assert_fade(
+        "the refinement",
+        from,
+        shown,
+        to,
+        vxe_render::internals::FADE,
+    );
     // A carve in the lit top of the box, inside chunk 1.
     q.edit(&box_op([70, 26, 37], [74, 30, 40], Mode::Carve));
     let dug = record_fades(&mut q, [1, 0, 0]);
     assert!(!dug.is_empty(), "the dig's job fades in");
     for (k, (from, shown, to)) in dug.iter().enumerate() {
-        assert_fade(&format!("dig fade {k}"), from, shown, to, bake::DIG_FADE);
+        assert_fade(
+            &format!("dig fade {k}"),
+            from,
+            shown,
+            to,
+            vxe_render::internals::DIG_FADE,
+        );
     }
 }
 
@@ -1177,7 +1196,7 @@ fn a_fade_moves_a_record_by_its_share_a_frame() {
 /// block's value. Under `black` that step shows the block itself.
 #[test]
 fn a_first_block_fades_from_its_fallback() {
-    use vxe_render::bake::{LightSummaries, MissingLight};
+    use vxe_render::{MissingLight, debug::LightSummaries};
     for mode in [MissingLight::Chain, MissingLight::Black] {
         let world = world_of([2, 1, 1], AIR);
         fill(&world, [16, 12, 16], [28, 16, 28], ROCK);
@@ -1232,19 +1251,19 @@ fn a_first_block_fades_from_its_fallback() {
             if d == 0 {
                 continue;
             }
-            let start = (d >> 11) as usize - bake::BRICK_WORDS;
+            let start = (d >> 11) as usize - vxe_render::internals::BRICK_WORDS;
             for f in 0..6 {
                 let w = start + f;
                 let from = if fallback[6] >> (16 + f) & 1 != 0 {
-                    bake::rgb9e5_unpack(fallback[f])
+                    vxe_render::internals::rgb9e5_unpack(fallback[f])
                 } else {
                     [0.0; 3]
                 };
-                let target = bake::rgb9e5_unpack(to[w]);
-                let got = bake::rgb9e5_unpack(shown[w]);
+                let target = vxe_render::internals::rgb9e5_unpack(to[w]);
+                let got = vxe_render::internals::rgb9e5_unpack(shown[w]);
                 let ulp = step_of(shown[w]);
                 for k in 0..3 {
-                    let want = from[k] + (target[k] - from[k]) / bake::FADE as f32;
+                    let want = from[k] + (target[k] - from[k]) / vxe_render::internals::FADE as f32;
                     assert!(
                         (got[k] - want).abs() <= ulp * 1.0001 + want.abs() * 1e-6,
                         "word {w} channel {k}: {} against {want} (fallback {}, block {})",
@@ -1363,7 +1382,7 @@ fn a_partial_reach_chunk_bakes_and_is_rebaked_when_its_reach_arrives() {
         "under full the centre waits for its reach"
     );
     assert_eq!(q.q().stats().partial_opened, 0);
-    q.frame.set_bake_reach(bake::ReachMode::Partial);
+    q.frame.set_bake_reach(vxe_render::ReachMode::Partial);
     let n = q.settle();
     println!("partial: settled in {n} steps, {:?}", q.q().stats());
     assert!(
@@ -1508,7 +1527,10 @@ fn far_end(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> BTreeMap<([i32; 3], usize),
                 continue;
             }
             let end = (d >> 11) as usize;
-            out.insert((c, slot), block[end - bake::BRICK_WORDS..end].to_vec());
+            out.insert(
+                (c, slot),
+                block[end - vxe_render::internals::BRICK_WORDS..end].to_vec(),
+            );
         }
     }
     out
@@ -1727,7 +1749,7 @@ fn a_full_pool_keeps_the_queue_alive() {
 /// 20 steps of the row with the coarse pass on from the start, timed from outside each
 /// `bake_queue_step` call: each step's stages and opening flag, its own time, and the queue's
 /// openings before and after.
-fn staged_steps() -> Option<(Vec<(bake::StepStages, f64)>, u64)> {
+fn staged_steps() -> Option<(Vec<(vxe_render::debug::StepStages, f64)>, u64)> {
     let mut q = rig(
         row(&[0, 1, 2, 3, 4, 5]),
         &Setup {
@@ -1757,7 +1779,11 @@ fn the_step_s_stages_sum_to_its_time() {
     println!("stages {sum:.4} ms, own {own:.4} ms over 20 steps");
     for (s, _) in &steps {
         for (k, ms) in s.ms.iter().enumerate() {
-            assert!(*ms >= 0.0, "{} reads {ms}", bake::STEP_STAGES[k]);
+            assert!(
+                *ms >= 0.0,
+                "{} reads {ms}",
+                vxe_render::debug::STEP_STAGES[k]
+            );
         }
     }
     assert!(
@@ -2019,8 +2045,9 @@ const FLIGHT_ORDER: [i32; 10] = [0, 1, 2, 3, 4, 5, 2, 3, 4, 5];
 /// The samples of `c`'s job at `brick_samples` a brick direction: its listed bricks' distinct
 /// directions times the count, as the queue sizes a job.
 fn job_samples(world: &World, c: [i32; 3], brick_samples: u32) -> u64 {
-    let classes = bake::face_classes(world.materials());
-    let faces = bake::list_world_chunk(world, ChunkCoord(c), &classes).expect("the chunk is held");
+    let classes = vxe_render::internals::face_classes(world.materials());
+    let faces = vxe_render::internals::list_world_chunk(world, ChunkCoord(c), &classes)
+        .expect("the chunk is held");
     faces
         .bricks
         .iter()

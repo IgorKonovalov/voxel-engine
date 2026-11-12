@@ -4,16 +4,21 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use vxe_render::gpu_world::{
-    ABSENT, BIN_COUNT, BINS, BITS_WORDS, CLASS_MASK, CLASS_SHIFT, CLASS_UNIFORM, CLASS_WIDE,
-    EMPTY_BIT, ENTRY_WORD, FULL_BIT, HEADER_BAND_BIT, HEADER_BAND_PREFIX_WORD, HEADER_BAND_WORD,
-    HEADER_TRANSLUCENT_WORD, LOD_BIT, LOD_LEVEL_ENTRY, PAGE_BYTES, PAGE_UNITS, PLACEHOLDER_BYTES,
-    RECORD_BYTES, RECORD_MASK, RECORD_WORDS, SLOT_BINS, TRANSLUCENT_BIT, UNIT_BYTES, UNIT_MASK,
-    UNIT_WORDS, band_bin_of, bin_of, budget_for, payload_units, slots_per_page,
-};
 use vxe_render::{
     ATROUS_WGSL, COMPOSITE_WGSL, FIELD_WGSL, GRADIENT_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL,
-    MirrorConfig, ShardLayout, SyncPoint, TEMPORAL_WGSL, Window, readback, wgpu,
+    MirrorConfig, ShardLayout, SyncPoint, TEMPORAL_WGSL, Window, wgpu,
+};
+use vxe_render::{
+    internals::ABSENT, internals::BIN_COUNT, internals::BINS, internals::BITS_WORDS,
+    internals::CLASS_MASK, internals::CLASS_SHIFT, internals::CLASS_UNIFORM, internals::CLASS_WIDE,
+    internals::EMPTY_BIT, internals::ENTRY_WORD, internals::FULL_BIT, internals::HEADER_BAND_BIT,
+    internals::HEADER_BAND_PREFIX_WORD, internals::HEADER_BAND_WORD,
+    internals::HEADER_TRANSLUCENT_WORD, internals::LOD_BIT, internals::LOD_LEVEL_ENTRY,
+    internals::PAGE_BYTES, internals::PAGE_UNITS, internals::PLACEHOLDER_BYTES,
+    internals::RECORD_BYTES, internals::RECORD_MASK, internals::RECORD_WORDS, internals::SLOT_BINS,
+    internals::TRANSLUCENT_BIT, internals::UNIT_BYTES, internals::UNIT_MASK, internals::UNIT_WORDS,
+    internals::band_bin_of, internals::bin_of, internals::budget_for, internals::payload_units,
+    internals::slots_per_page,
 };
 use vxe_world::packed::PackedClass;
 use vxe_world::*;
@@ -197,7 +202,7 @@ fn sync_uploads_dirty_bricks_once() {
 
     // The GPU records equal the CPU entries, and carry no palette.
     let rec = gpu.record_index(ChunkCoord([1, 0, 0])).unwrap() as u64;
-    let bytes = readback::read_buffer(
+    let bytes = vxe_render::debug::read_buffer(
         &device,
         &queue,
         gpu.records(),
@@ -220,7 +225,7 @@ fn sync_uploads_dirty_bricks_once() {
     // The slot: its opaque mask is the brick's solid bits, its header's palette the one
     // material, its translucent words clear.
     let u = u64::from(e & UNIT_MASK);
-    let slot = readback::read_buffer(
+    let slot = vxe_render::debug::read_buffer(
         &device,
         &queue,
         gpu.pool_shard(0),
@@ -320,7 +325,7 @@ fn a_collapsed_brick_frees_its_slot_for_the_next_expansion() {
 
     let rec = gpu.record_index(ChunkCoord([0, 0, 0])).unwrap() as u64;
     let at = rec * RECORD_BYTES + ENTRY_WORD as u64 * 4;
-    let bytes = readback::read_buffer(&device, &queue, gpu.records(), at, 4);
+    let bytes = vxe_render::debug::read_buffer(&device, &queue, gpu.records(), at, 4);
     assert_eq!(bytemuck::cast_slice::<u8, u32>(&bytes), [0]);
 }
 
@@ -332,7 +337,7 @@ fn table_entry(
     coord: ChunkCoord,
 ) -> u32 {
     let at = u64::from(gpu.table_index(coord)) * 4;
-    let bytes = readback::read_buffer(device, queue, gpu.table(), at, 4);
+    let bytes = vxe_render::debug::read_buffer(device, queue, gpu.table(), at, 4);
     bytemuck::cast_slice::<u8, u32>(&bytes)[0]
 }
 
@@ -414,12 +419,12 @@ struct Readback {
 
 impl Readback {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &GpuWorld) -> Self {
-        let all = |b: &wgpu::Buffer| readback::read_buffer(device, queue, b, 0, b.size());
+        let all = |b: &wgpu::Buffer| vxe_render::debug::read_buffer(device, queue, b, 0, b.size());
         let units = u64::from(gpu.pool_units());
         let ups = u64::from(gpu.shard_layout().units_per_shard);
         let shard = |k: usize| {
             let n = units.saturating_sub(k as u64 * ups).min(ups);
-            readback::read_buffer(device, queue, gpu.pool_shard(k), 0, n * UNIT_BYTES)
+            vxe_render::debug::read_buffer(device, queue, gpu.pool_shard(k), 0, n * UNIT_BYTES)
         };
         let pool: Vec<u8> = (0..gpu.shards_in_use()).flat_map(shard).collect();
         Self {
@@ -504,7 +509,7 @@ impl Readback {
         let class = brick.class().expect("a Full brick has a class");
         assert_eq!(
             class_of(e),
-            vxe_render::gpu_world::class_code(class),
+            vxe_render::internals::class_code(class),
             "{what} class"
         );
     }
@@ -1351,7 +1356,7 @@ fn slot_bytes(
     len: u64,
 ) -> Vec<u8> {
     let ups = gpu.shard_layout().units_per_shard;
-    readback::read_buffer(
+    vxe_render::debug::read_buffer(
         device,
         queue,
         gpu.pool_shard((u / ups) as usize),
@@ -2416,7 +2421,7 @@ fn a_band_air_brick_s_slot_is_pinned() {
     let c = ChunkCoord([0, 0, 0]);
     let e = gpu.entry(c, brick_slot([1, 0, 0])).unwrap();
     assert_eq!(e & !UNIT_MASK, FULL_BIT | CLASS_UNIFORM << CLASS_SHIFT);
-    let pool: Vec<u32> = bytemuck::pod_collect_to_vec(&readback::read_buffer(
+    let pool: Vec<u32> = bytemuck::pod_collect_to_vec(&vxe_render::debug::read_buffer(
         &device,
         &queue,
         gpu.pool_shard(0),
@@ -2555,7 +2560,7 @@ fn a_sync_stops_at_its_time_budget() {
     }
     assert_eq!(syncs, 8);
     assert_eq!(order(&split), whole_order);
-    let read = |b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
+    let read = |b: &wgpu::Buffer| vxe_render::debug::read_buffer(&device, &queue, b, 0, b.size());
     for k in 0..4 {
         assert!(
             read(split.pool_shard(k)) == read(whole.pool_shard(k)),
@@ -2632,7 +2637,7 @@ fn a_sync_spent_while_sizing_keeps_what_it_sized() {
         (0, 56, 56)
     );
     assert_eq!(order(&split), order(&whole));
-    let read = |b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
+    let read = |b: &wgpu::Buffer| vxe_render::debug::read_buffer(&device, &queue, b, 0, b.size());
     for k in 0..4 {
         assert!(
             read(split.pool_shard(k)) == read(whole.pool_shard(k)),
@@ -2717,7 +2722,7 @@ fn a_chunk_edited_while_deferred_uploads_its_edited_words() {
         coords.iter().map(|&c| gpu.record_index(c)).collect()
     };
     assert_eq!(order(&split), order(&whole));
-    let read = |b: &wgpu::Buffer| readback::read_buffer(&device, &queue, b, 0, b.size());
+    let read = |b: &wgpu::Buffer| vxe_render::debug::read_buffer(&device, &queue, b, 0, b.size());
     for k in 0..4 {
         assert!(
             read(split.pool_shard(k)) == read(whole.pool_shard(k)),

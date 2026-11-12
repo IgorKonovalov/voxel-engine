@@ -41,7 +41,7 @@ use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::showcase::{SHOTS, Shot, ShowcaseSource};
 use vxe_render::{
     AutoExposure, Camera, Exposure, Frame, GpuWorld, HistoryKill, LightParams, Lighting,
-    LightingResolution, MirrorConfig, RenderScale, ShadowWalk, readback, wgpu,
+    LightingResolution, MirrorConfig, RenderScale, ShadowWalk, wgpu,
 };
 use vxe_world::*;
 
@@ -315,7 +315,7 @@ impl Args {
                     .map(|s| single(self.out_dir.join(format!("hero-{}.png", s.name)), s))
                     .collect();
                 let mut fine = single(self.out_dir.join("hero-hall-spacing16.png"), &SHOTS[0]);
-                fine.probe_spacing = vxe_render::probes::DEFAULT_PROBE_SPACING;
+                fine.probe_spacing = vxe_render::DEFAULT_PROBE_SPACING;
                 v.push(fine);
                 v
             }
@@ -380,11 +380,7 @@ fn main() -> Result<(), String> {
                 &source,
                 &flythrough::with_emissive_ore(&flythrough::cave_materials()),
             );
-            (
-                world,
-                source.spawn(),
-                vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
-            )
+            (world, source.spawn(), vxe_render::DEFAULT_LIGHT_RADIUS)
         }
     };
     let light_radius = args.light_radius.unwrap_or(light_radius);
@@ -430,7 +426,7 @@ fn main() -> Result<(), String> {
     println!("rendering on {adapter_name}");
     let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
     let pool_bytes =
-        flythrough::level_pool_units(&world, field) * vxe_render::gpu_world::UNIT_BYTES;
+        flythrough::level_pool_units(&world, field) * vxe_render::internals::UNIT_BYTES;
     let (device, queue) =
         pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
@@ -522,7 +518,7 @@ fn main() -> Result<(), String> {
                 &mut gpu,
                 &world,
                 world.extent(),
-                &vxe_render::bake::queue_settings(),
+                &vxe_render::queue_settings(),
                 &mut |_| {},
             )
             .map_err(|e| format!("bake: {e:?}"))?;
@@ -536,7 +532,7 @@ fn main() -> Result<(), String> {
                 &LightParams::headlamp(),
             );
         }
-        let rgba = readback::read_rgba8(&device, &queue, frame.target());
+        let rgba = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
         write_png(&still.path, &rgba, [w, h])?;
         println!(
             "wrote {}: adapter {adapter_name}, {} light samples, {frames} frames, exposure {}, probe spacing {}, mean sRGB luma {:.1}/255",

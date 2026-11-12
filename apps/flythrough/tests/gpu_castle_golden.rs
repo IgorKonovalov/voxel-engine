@@ -81,7 +81,7 @@ fn castle_gate_golden() {
             &vxe_render::LightParams::headlamp(),
         );
     }
-    let img = vxe_render::readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     println!(
         "castle_gate.png: {} light samples, bins covering 1 %: {}",
         rig.gpu.light_samples(),

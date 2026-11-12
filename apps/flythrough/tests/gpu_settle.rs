@@ -75,7 +75,7 @@ fn the_lamp_toggle_opens_the_light_window() {
         }
         println!("lamp {from} -> {}: window per frame {open:?}", !from);
         let want: Vec<bool> = (0..32)
-            .map(|i| !from && i < vxe_render::probes::WINDOW_FRAMES as usize)
+            .map(|i| !from && i < vxe_render::internals::WINDOW_FRAMES as usize)
             .collect();
         assert_eq!(open, want, "lamp {from} -> {}", !from);
     }
@@ -563,7 +563,7 @@ fn steady_frame(level: &stillness::VeinLevel, lighting: Lighting) -> Frame {
 
 fn probe_words(level: &stillness::VeinLevel, frame: &Frame) -> Vec<u8> {
     let data = frame.probes().data();
-    vxe_render::readback::read_buffer(&level.device, &level.queue, data, 0, data.size())
+    vxe_render::debug::read_buffer(&level.device, &level.queue, data, 0, data.size())
 }
 
 /// The slot of a traced probe outside rock, with light in it if `lit`, nearest the eye, of the
@@ -936,7 +936,7 @@ mod reading {
                 let freeze = setting
                     .steady
                     .a1
-                    .unwrap_or(vxe_render::marcher::DEFAULT_PROBE_FREEZE);
+                    .unwrap_or(vxe_render::DEFAULT_PROBE_FREEZE);
                 let mut frame = make_frame(&level, &pose, setting);
                 let light = LightParams::headlamp();
                 let cam = pose.camera();
@@ -984,7 +984,6 @@ mod reading {
     #[test]
     #[ignore = "reading only: run with --ignored"]
     fn lamp_reach_readings() {
-        use vxe_render::readback;
         let Some(level) = reading_level() else {
             return;
         };
@@ -1028,7 +1027,7 @@ mod reading {
             }
             let params = frame.params(gpu, &camera, &light);
             let lamp = Vec3::from(params.light_pos);
-            let irr = readback::read_float(device, queue, frame.irradiance());
+            let irr = vxe_render::debug::read_float(device, queue, frame.irradiance());
             let (cx, cy) = (size[0] / 2, size[1] / 2);
             let mut d_sum = 0.0f64;
             for y in cy - 4..cy + 4 {
@@ -1058,9 +1057,9 @@ mod reading {
                 probe_band[b] = probe_band[b].max(hi);
                 probe_count[b] += 1;
             }
-            let pos = readback::read_float(device, queue, frame.hit_positions());
-            let info = readback::read_rgba16u(device, queue, frame.hit_records());
-            let gather = readback::read_float(device, queue, frame.indirect_irradiance());
+            let pos = vxe_render::debug::read_float(device, queue, frame.hit_positions());
+            let info = vxe_render::debug::read_rgba16u(device, queue, frame.hit_records());
+            let gather = vxe_render::debug::read_float(device, queue, frame.indirect_irradiance());
             let mut hit_band = [0.0f64; BANDS];
             for ((p, i), g) in pos.iter().zip(&info).zip(&gather) {
                 if i[3] & 1 == 0 {
@@ -1107,8 +1106,8 @@ mod reading {
             .collect();
         let mean_gather = |frame: &Frame| -> f64 {
             let (d, q) = (&level.device, &level.queue);
-            let g = vxe_render::readback::read_float(d, q, frame.indirect_irradiance());
-            let info = vxe_render::readback::read_rgba16u(d, q, frame.hit_records());
+            let g = vxe_render::debug::read_float(d, q, frame.indirect_irradiance());
+            let info = vxe_render::debug::read_rgba16u(d, q, frame.hit_records());
             let (mut sum, mut n) = (0.0f64, 0u32);
             for (g, i) in g.iter().zip(&info) {
                 if i[3] & 1 != 0 {
@@ -1310,7 +1309,7 @@ mod reading {
                 frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
             }
             let read = |frame: &Frame| {
-                vxe_render::readback::read_rgba8(&level.device, &level.queue, frame.target())
+                vxe_render::debug::read_rgba8(&level.device, &level.queue, frame.target())
             };
             let mut last = read(&frame);
             let mut moved = Vec::new();

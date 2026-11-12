@@ -4,8 +4,8 @@ mod support;
 
 use flythrough::cave_materials;
 use support::*;
-use vxe_render::gpu_world::{LIGHT_SAMPLE_BYTES, LightSample};
-use vxe_render::{GpuWorld, MirrorConfig, Window, readback};
+use vxe_render::{GpuWorld, MirrorConfig, Window};
+use vxe_render::{internals::LIGHT_SAMPLE_BYTES, internals::LightSample};
 use vxe_world::*;
 
 /// The cave's table plus an emissive `glow` row and its non-emissive twin `dull`.
@@ -38,7 +38,7 @@ fn read_samples(
     gpu: &GpuWorld,
     (start, len): (u32, u32),
 ) -> Vec<LightSample> {
-    let bytes = readback::read_buffer(
+    let bytes = vxe_render::debug::read_buffer(
         device,
         queue,
         gpu.light_buffer(),
@@ -280,11 +280,11 @@ fn an_emissive_ceiling_gives_the_analytic_irradiance_at_the_floor_centre() {
         );
         let mut frame = vxe_render::Frame::new(&device, 1, 1);
         // The floor brick's 64 +z faces share a direction's samples: 4096 each.
-        let settings = vxe_render::bake::BakeSettings {
+        let settings = vxe_render::BakeSettings {
             brick_samples: 64 * 4096,
             keep_faces: true,
             filter: Some(std::sync::Arc::new(|v, f| v == [32, 32, 19] && f == 5)),
-            ..vxe_render::bake::BakeSettings::default()
+            ..vxe_render::BakeSettings::default()
         };
         let report = frame
             .bake_until(
@@ -328,9 +328,9 @@ fn read_frame(
     frame: &vxe_render::Frame,
 ) -> FrameRead {
     FrameRead {
-        pos: readback::read_rgba32f(device, queue, frame.hit_positions()),
-        info: readback::read_rgba16u(device, queue, frame.hit_records()),
-        age: readback::read_rgba16f(device, queue, frame.moments())
+        pos: vxe_render::debug::read_rgba32f(device, queue, frame.hit_positions()),
+        info: vxe_render::debug::read_rgba16u(device, queue, frame.hit_records()),
+        age: vxe_render::debug::read_rgba16f(device, queue, frame.moments())
             .iter()
             .map(|m| m[2])
             .collect(),
@@ -598,7 +598,7 @@ fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::C
 
 /// The luminance of `frame`'s filtered irradiance per pixel: what the composite shades with.
 fn accumulated_lum(rig: &LookRig) -> Vec<f64> {
-    readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.filtered())
+    vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.filtered())
         .iter()
         .map(|e| 0.2126 * f64::from(e[0]) + 0.7152 * f64::from(e[1]) + 0.0722 * f64::from(e[2]))
         .collect()
@@ -632,7 +632,7 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
                 return;
             };
             let lamp_part = |rig: &LookRig| -> Vec<f64> {
-                readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated())
+                vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated())
                     .iter()
                     .map(|e| f64::from(e[3]))
                     .collect()
@@ -713,13 +713,15 @@ fn the_gradient_keeps_history_where_nothing_changed() {
         let Some((rig, _)) = lamp_cave(vxe_render::HistoryKill::Gradient) else {
             return;
         };
-        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-        let ages: Vec<f32> = readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments())
-            .iter()
-            .zip(&info)
-            .filter(|(_, r)| r[3] & 1 == 1)
-            .map(|(m, _)| m[2])
-            .collect();
+        let info =
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let ages: Vec<f32> =
+            vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments())
+                .iter()
+                .zip(&info)
+                .filter(|(_, r)| r[3] & 1 == 1)
+                .map(|(m, _)| m[2])
+                .collect();
         let full = ages.iter().filter(|&&a| a == 31.0).count();
         let mut hist = std::collections::BTreeMap::new();
         for a in &ages {
@@ -752,7 +754,7 @@ fn a_moving_lamp_leaves_the_static_lights_history_alone() {
             return;
         };
         let before = read_frame(&rig.device, &rig.queue, &rig.frame);
-        let acc = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+        let acc = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
         let lum = |e: &[f32; 4]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
         let hit = |i: usize| before.info[i][3] & 1 == 1;
         let largest = (0..acc.len())
@@ -819,7 +821,7 @@ fn an_emission_step_settles_within_eleven_frames() {
     });
     let light = vxe_render::LightParams::headlamp();
     let read = |frame: &vxe_render::Frame| {
-        f64::from(readback::read_float(&device, &queue, frame.accumulated())[0][0])
+        f64::from(vxe_render::debug::read_float(&device, &queue, frame.accumulated())[0][0])
     };
     // The store the floor's face reads.
     bake_around(

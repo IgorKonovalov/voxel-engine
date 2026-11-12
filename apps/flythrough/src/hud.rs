@@ -405,7 +405,7 @@ pub fn queue_row(st: &vxe_render::QueueStats, step_ms: f64, mode: &str) -> Strin
 /// Appends [`queue_row`]'s text before its mode to `out`:
 /// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms`.
 pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, step_ms: f64) {
-    let [blank, coarse] = st.view_waiting[vxe_render::bake::VIEW_IN];
+    let [blank, coarse] = st.view_waiting[vxe_render::internals::VIEW_IN];
     let _ = write!(
         out,
         "in view: {} waiting ({coarse} coarse), withdrawn {}, step {step_ms:.2} ms",
@@ -487,7 +487,7 @@ pub struct StepsSample {
 }
 
 impl StepsSample {
-    pub fn from_histogram(h: &vxe_render::readback::StepHistogram) -> Self {
+    pub fn from_histogram(h: &vxe_render::debug::StepHistogram) -> Self {
         Self {
             mean_steps: h.mean_steps() as f32,
             p99_steps: h.p99_steps(),
@@ -1210,9 +1210,9 @@ mod tests {
     #[test]
     fn the_queue_row_counts_the_view() {
         let mut st = vxe_render::QueueStats::default();
-        st.view_waiting[vxe_render::bake::VIEW_SHELL] = [3, 1];
-        st.view_waiting[vxe_render::bake::VIEW_IN] = [7, 5];
-        st.view_waiting[vxe_render::bake::VIEW_OUT] = [40, 9];
+        st.view_waiting[vxe_render::internals::VIEW_SHELL] = [3, 1];
+        st.view_waiting[vxe_render::internals::VIEW_IN] = [7, 5];
+        st.view_waiting[vxe_render::internals::VIEW_OUT] = [40, 9];
         assert_eq!(
             queue_row(&st, 1.254, ""),
             "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms"
@@ -1582,7 +1582,7 @@ impl Modes {
             readout: None,
             look: None,
             view: None,
-            probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
+            probe_spacing: vxe_render::DEFAULT_PROBE_SPACING,
         }
     }
 

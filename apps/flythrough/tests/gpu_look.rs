@@ -5,7 +5,7 @@
 mod support;
 
 use support::*;
-use vxe_render::gpu_world::PAGE_UNITS;
+use vxe_render::internals::PAGE_UNITS;
 use vxe_render::{LightParams, LookParams, NormalMode, ViewMode};
 use vxe_world::World;
 
@@ -567,7 +567,7 @@ use support::rigs::{
     field_rig_on, floor_camera, floor_world, pose_level, pose_rig_on, pose_rig_with,
     tilted_slab_camera, tilted_slab_world, wall_camera, wall_world,
 };
-use vxe_render::{CrackShares, Exposure, readback};
+use vxe_render::{CrackShares, Exposure};
 
 /// Frames a crack reading renders in each view before it reads the last: the lamp's term is
 /// whole from the first frame; the level's emissive estimate needs a few.
@@ -615,13 +615,14 @@ fn crack_reading(
             rig.frame
                 .render(&rig.device, &rig.queue, &rig.gpu, camera, light);
         }
-        readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+        vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
     };
     let shaded = run(ViewMode::Shaded);
     run(ViewMode::Cracks);
-    let layers = readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.layers());
-    let records = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let layers = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.layers());
+    let records = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let positions =
+        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     let pixels: Vec<Option<bool>> = layers
         .iter()
         .zip(&records)
@@ -802,9 +803,10 @@ fn box_reading(
         rig.frame
             .render(&rig.device, &rig.queue, &rig.gpu, camera, light);
     }
-    let normals = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
-    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let records = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let normals = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let positions =
+        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let records = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let field = look.normal_mode == NormalMode::Contour;
     let cos_box = FIELD_BOX_DEGREES.to_radians().cos();
     let [w, h] = crack.size.map(|v| v as usize);
@@ -946,7 +948,8 @@ fn field_crack_reading(
         look,
         Some(analytic_window(world)),
     );
-    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let positions =
+        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     (r, positions)
 }
 
@@ -1015,7 +1018,10 @@ fn the_field_surface_lies_on_the_flat_faces() {
 /// hit and 0 leaks on lavapipe.
 #[test]
 fn a_carve_gives_the_exposed_air_brick_a_band_slot() {
-    use vxe_render::gpu_world::{CLASS_MASK, CLASS_SHIFT, CLASS_UNIFORM, FULL_BIT};
+    use vxe_render::{
+        internals::CLASS_MASK, internals::CLASS_SHIFT, internals::CLASS_UNIFORM,
+        internals::FULL_BIT,
+    };
     use vxe_world::{Brick, ChunkCoord, EditOp, FIXED_ONE, Fixed3, Mode, brick_slot};
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
@@ -1234,8 +1240,9 @@ fn thin_reading(
         look,
         None,
     );
-    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let records = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let positions =
+        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let records = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     ThinReading {
         crack,
         positions,
@@ -1430,8 +1437,8 @@ fn thin_records(
         look,
     );
     (
-        readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
-        readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+        vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
     )
 }
 
@@ -1615,8 +1622,8 @@ fn the_default_look_reads_the_same_hit_records_with_and_without_band_slots() {
         };
         let _ = rig.render(&camera, &LightParams::headlamp(), look);
         (
-            readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
-            readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
         )
     };
     let default = preset_look(flythrough::LookPreset::DEFAULT, ViewMode::HitMask);
@@ -1808,8 +1815,12 @@ fn seam_reading(
     );
     SeamReading {
         crack,
-        positions: readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
-        records: readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+        positions: vxe_render::debug::read_rgba32f(
+            &rig.device,
+            &rig.queue,
+            rig.frame.hit_positions(),
+        ),
+        records: vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
     }
 }
 

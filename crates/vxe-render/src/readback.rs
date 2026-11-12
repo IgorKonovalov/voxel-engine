@@ -107,18 +107,6 @@ pub fn read_rgba32f(
         .collect()
 }
 
-/// The pixels of an `rgba32uint` texture, rows top to bottom.
-pub fn read_texels_u32(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-) -> Vec<[u32; 4]> {
-    read_texels(device, queue, texture, 16)
-        .chunks(16)
-        .map(|p| [0, 1, 2, 3].map(|k| u32::from_le_bytes(p[4 * k..4 * k + 4].try_into().unwrap())))
-        .collect()
-}
-
 /// The pixels of an `rgba16uint` texture, rows top to bottom.
 pub fn read_rgba16u(
     device: &wgpu::Device,
@@ -228,7 +216,7 @@ pub struct StepHistogram {
 
 /// Edge in pixels of the blocks `StepHistogram` takes the maximum over: the marcher's
 /// workgroup, the rays that run in lockstep.
-pub const STEP_BLOCK: usize = 8;
+pub(crate) const STEP_BLOCK: usize = 8;
 
 impl StepHistogram {
     /// The histograms of `pixels`, tightly packed RGBA bytes in rows of `width` pixels: red is

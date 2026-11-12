@@ -132,21 +132,22 @@ pub fn stream_record_chunks(r: Residency) -> u64 {
 
 /// The mirror budget of the streamed cave unless `--mirror-budget` sets one: the world line
 /// of `nfr.md` §3, 3 GiB, of which the residency's records take their share.
-pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
+pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::DEFAULT_BUDGET_BYTES;
 
 /// `Full` bricks of headroom beyond the bounded level's own, so digging has room: 64 Ki
 /// bricks, each at the largest slot the level's rock takes (6 units), and with the field a
-/// band slot of the most units ([`vxe_render::field::MAX_BAND_UNITS`]) beside each.
+/// band slot of the most units ([`vxe_render::internals::MAX_BAND_UNITS`]) beside each.
 pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
 
 /// The pool units the bounded level `world` needs: each bin's `Full` bricks in whole pages
 /// of that bin, and when `field` each band brick's band slot and each uniform band brick's
 /// slot in pages of theirs (the band as [`band_census`] reads it), plus the headroom.
 pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
-    use vxe_render::field::{MAX_BAND_UNITS, band_slot_units};
-    use vxe_render::gpu_world::{
-        BIN_COUNT, BINS, PAGE_UNITS, band_bin_of, bin_of, slot_units, slots_per_page,
+    use vxe_render::{
+        internals::BIN_COUNT, internals::BINS, internals::PAGE_UNITS, internals::band_bin_of,
+        internals::bin_of, internals::slot_units, internals::slots_per_page,
     };
+    use vxe_render::{internals::MAX_BAND_UNITS, internals::band_slot_units};
     let table = world.materials();
     let translucent = |m| {
         table
@@ -206,7 +207,7 @@ pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
 /// [`level_pool_units`] needs and a record for each of its `chunks`, sized from the world it
 /// loads rather than the streamed default.
 pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, field: bool) -> u64 {
-    vxe_render::gpu_world::budget_for(level_pool_units(world, field), chunks)
+    vxe_render::internals::budget_for(level_pool_units(world, field), chunks)
 }
 
 /// The audio listener for `camera`: its position (voxel units), its forward and its up. The

@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 pub const EXPOSURE_WGSL: &str = include_str!("shaders/exposure.wgsl");
 
 /// Pixels on a meter tile's edge: the composite's workgroup.
-pub const METER_TILE: u32 = 8;
+pub(crate) const METER_TILE: u32 = 8;
 /// The log2 luminance a pixel adds to its tile is clamped to `[-METER_LOG2_LIMIT,
 /// METER_LOG2_LIMIT]`.
 pub const METER_LOG2_LIMIT: f32 = 16.0;
@@ -306,7 +306,7 @@ pub(crate) const EX_RESET: u32 = 4;
 
 impl ExposureUniform {
     /// The auto fields of `auto`.
-    pub fn set_auto(&mut self, auto: &AutoExposure) {
+    pub(crate) fn set_auto(&mut self, auto: &AutoExposure) {
         self.key = auto.key * auto.compensation_ev.exp2();
         self.min = auto.min;
         self.max = auto.max;
@@ -356,7 +356,7 @@ pub(crate) struct ExposurePass {
 }
 
 impl ExposurePass {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -443,16 +443,16 @@ impl ExposurePass {
         }
     }
 
-    pub fn state(&self) -> &wgpu::Buffer {
+    pub(crate) fn state(&self) -> &wgpu::Buffer {
         &self.state
     }
 
-    pub fn state_uniform(&self) -> &wgpu::Buffer {
+    pub(crate) fn state_uniform(&self) -> &wgpu::Buffer {
         &self.state_uniform
     }
 
     /// Bytes the state, its uniform copy, the pass's parameters and the ring occupy.
-    pub fn bytes(&self) -> u64 {
+    pub(crate) fn bytes(&self) -> u64 {
         2 * size_of::<ExposureState>() as u64
             + size_of::<ExposureUniform>() as u64
             + RING as u64 * RING_BYTES
@@ -462,7 +462,7 @@ impl ExposurePass {
     /// state's copies: into the uniform the next frame reads, and into a free ring slot.
     /// Slots copied by an earlier encode are asked to map first: every encode's commands are
     /// submitted before the next encode.
-    pub fn encode(
+    pub(crate) fn encode(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -520,7 +520,7 @@ impl ExposurePass {
 
     /// The newest state a ring slot has finished mapping, after a non-blocking poll; slots
     /// copied before the last encode are asked to map first.
-    pub fn readout(&self, device: &wgpu::Device) -> Option<ExposureReadout> {
+    pub(crate) fn readout(&self, device: &wgpu::Device) -> Option<ExposureReadout> {
         let mut ring = self
             .ring
             .lock()

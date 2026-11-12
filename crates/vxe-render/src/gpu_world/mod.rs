@@ -116,7 +116,7 @@ pub use self::format::*;
 pub use self::lights::*;
 use self::slot::*;
 pub use self::stage::*;
-pub use self::window::*;
+pub(crate) use self::window::*;
 
 /// Where a sync reads its clock ([`SyncClock`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

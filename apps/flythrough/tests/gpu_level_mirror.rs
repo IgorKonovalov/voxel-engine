@@ -7,13 +7,15 @@ mod support;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
 use support::SyncNow;
-use vxe_render::gpu_world::{
-    ABSENT, BELT_CHUNK_BYTES, BELT_KEEP_CHUNKS, BINS, BITS_WORDS, CLASS_MASK, CLASS_SHIFT,
-    EMPTY_BIT, ENTRY_WORD, FULL_BIT, HEADER_TRANSLUCENT_WORD, LOD_BIT, PAGE_BYTES, PAGE_UNITS,
-    PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS, UNIT_BYTES, UNIT_MASK, UNIT_WORDS,
-    payload_units,
+use vxe_render::{
+    BELT_CHUNK_BYTES, internals::ABSENT, internals::BELT_KEEP_CHUNKS, internals::BINS,
+    internals::BITS_WORDS, internals::CLASS_MASK, internals::CLASS_SHIFT, internals::EMPTY_BIT,
+    internals::ENTRY_WORD, internals::FULL_BIT, internals::HEADER_TRANSLUCENT_WORD,
+    internals::LOD_BIT, internals::PAGE_BYTES, internals::PAGE_UNITS, internals::PLACEHOLDER_BYTES,
+    internals::RECORD_BYTES, internals::RECORD_MASK, internals::RECORD_WORDS,
+    internals::UNIT_BYTES, internals::UNIT_MASK, internals::UNIT_WORDS, internals::payload_units,
 };
-use vxe_render::{GpuWorld, MirrorConfig, Window, readback, wgpu};
+use vxe_render::{GpuWorld, MirrorConfig, Window, wgpu};
 use vxe_world::hash::SplitMix64;
 use vxe_world::*;
 
@@ -152,11 +154,17 @@ fn mirror_bytes(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &GpuWorld) -> V
     let mut out: Vec<Vec<u8>> = (0..gpu.shards_in_use())
         .map(|k| {
             let units = (pool - k as u64 * ups).min(ups);
-            readback::read_buffer(device, queue, gpu.pool_shard(k), 0, units * UNIT_BYTES)
+            vxe_render::debug::read_buffer(device, queue, gpu.pool_shard(k), 0, units * UNIT_BYTES)
         })
         .collect();
     for b in [gpu.records(), gpu.table()] {
-        out.push(readback::read_buffer(device, queue, b, 0, b.size()));
+        out.push(vxe_render::debug::read_buffer(
+            device,
+            queue,
+            b,
+            0,
+            b.size(),
+        ));
     }
     out
 }
@@ -283,10 +291,17 @@ fn the_level_spreads_over_capped_shards() {
     let shards: Vec<Vec<u32>> = (0..4)
         .map(|k| {
             let b = gpu.pool_shard(k);
-            le_words(&readback::read_buffer(&device, &queue, b, 0, b.size()))
+            le_words(&vxe_render::debug::read_buffer(
+                &device,
+                &queue,
+                b,
+                0,
+                b.size(),
+            ))
         })
         .collect();
-    let records = readback::read_buffer(&device, &queue, gpu.records(), 0, gpu.records().size());
+    let records =
+        vxe_render::debug::read_buffer(&device, &queue, gpu.records(), 0, gpu.records().size());
     let records: Vec<u32> = le_words(&records);
     let mut by_shard = [0; 4];
     for &(c, slot) in &picks {
@@ -358,7 +373,7 @@ fn the_level_s_brick_bits_and_empty_bits_match_its_bricks() {
     gpu.set_focus(source.spawn());
     gpu.sync_now(&world, &device, &queue).unwrap();
     let words = |b: &wgpu::Buffer| -> Vec<u32> {
-        readback::read_buffer(&device, &queue, b, 0, b.size())
+        vxe_render::debug::read_buffer(&device, &queue, b, 0, b.size())
             .chunks_exact(4)
             .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
             .collect()
@@ -409,7 +424,7 @@ fn the_level_s_opaque_masks_are_its_solid_bits() {
         .sum();
     assert_eq!(units, gpu.live_units());
     assert_eq!(gpu.shards_in_use(), 1);
-    let pool: Vec<u32> = le_words(&readback::read_buffer(
+    let pool: Vec<u32> = le_words(&vxe_render::debug::read_buffer(
         &device,
         &queue,
         gpu.pool_shard(0),

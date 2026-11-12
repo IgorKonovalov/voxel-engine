@@ -9,11 +9,11 @@ mod support;
 
 use flythrough::hud::{CEILING_MS, HudStats, RING};
 use support::*;
-use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, readback, wgpu};
+use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, wgpu};
 
 /// Glyph cells are 8 pixels; the overlay is drawn at scale 1.
 const CELL: u32 = 8;
-/// The strip's height at scale 1 (`vxe_render::hud::STRIP_PX`).
+/// The strip's height at scale 1 (`STRIP_PX` of `vxe-render`'s HUD).
 const STRIP: u32 = 64;
 
 /// A fixed strip: a 12 to 23.5 ms sawtooth with a 40 ms spike (clamped at the ceiling)
@@ -59,7 +59,7 @@ fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
         &scene_camera(),
         &LightParams::at_eye(),
     );
-    let march = readback::read_rgba8(&device, &queue, marcher.target());
+    let march = vxe_render::debug::read_rgba8(&device, &queue, marcher.target());
 
     let size = wgpu::Extent3d {
         width: WIDTH,
@@ -108,7 +108,7 @@ fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
         overlay.encode(&mut encoder, &view, WIDTH, HEIGHT);
     }
     queue.submit([encoder.finish()]);
-    let composed = readback::read_rgba8(&device, &queue, &target);
+    let composed = vxe_render::debug::read_rgba8(&device, &queue, &target);
     Some(Frame { march, composed })
 }
 

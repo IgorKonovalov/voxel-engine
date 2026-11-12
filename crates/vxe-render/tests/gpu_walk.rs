@@ -3,8 +3,7 @@
 //! every `t` of the walk is exact.
 
 use vxe_render::{
-    Camera, Frame, GpuWorld, LightParams, Lighting, LookParams, ToneMap, ViewMode, glam::Vec3,
-    readback, wgpu,
+    Camera, Frame, GpuWorld, LightParams, Lighting, LookParams, ToneMap, ViewMode, glam::Vec3, wgpu,
 };
 use vxe_world::*;
 
@@ -99,7 +98,7 @@ fn pixel(
         vfov: 1.0,
     };
     frame.render(device, queue, &gpu, &camera, &light);
-    let px = readback::read_rgba8(device, queue, frame.target());
+    let px = vxe_render::debug::read_rgba8(device, queue, frame.target());
     [px[0], px[1], px[2], px[3]]
 }
 
@@ -426,7 +425,7 @@ fn the_mask_path_equals_the_lookup_path() {
                     ..LightParams::at_eye()
                 };
                 frame.render(&device, &queue, &gpu, &camera, &light);
-                readback::read_rgba16u(&device, &queue, frame.hit_records())[0]
+                vxe_render::debug::read_rgba16u(&device, &queue, frame.hit_records())[0]
             });
             assert_eq!(
                 records[0], records[1],

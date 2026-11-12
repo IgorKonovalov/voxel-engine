@@ -94,7 +94,7 @@ pub const DEFAULT_LIGHT_SAMPLES: u32 = 1 << 20;
 pub const DEFAULT_LIGHT_CHUNK_CAP: u32 = 8192;
 /// The light radius in chunks and the light samples one sync writes, by default.
 pub const DEFAULT_LIGHT_RADIUS: i32 = 4;
-pub const DEFAULT_LIGHT_SYNC_SAMPLES: u32 = 16_384;
+pub(crate) const DEFAULT_LIGHT_SYNC_SAMPLES: u32 = 16_384;
 
 /// One exposed emissive voxel in the light-sample buffer, 16 bytes: its world voxel
 /// coordinate, then its material in bits 0..16 and the faces it shows in bits 16..22 (bit
@@ -122,7 +122,7 @@ pub const LIGHT_SAMPLE_BYTES: u64 = 16;
 
 /// Sample-sized slots past the reservation that hold the frame's candidate table: a header
 /// and up to 1024 entries (`Frame` writes them; ADR-0025).
-pub const LIGHT_TABLE_SLOTS: u64 = 1025;
+pub(crate) const LIGHT_TABLE_SLOTS: u64 = 1025;
 
 /// The exposed emissive voxels of `Full` brick `brick` at brick slot `slot` of chunk `coord`,
 /// in voxel-index order (x fastest); `emissive` and `opaque` are by material id. A voxel on
@@ -192,7 +192,7 @@ pub fn exposed_emitters<'a>(
 
 /// `samples` thinned to at most `cap` by keeping every `k`-th by index, `k` the least that
 /// fits.
-pub fn thin_samples(samples: Vec<LightSample>, cap: u32) -> Vec<LightSample> {
+pub(crate) fn thin_samples(samples: Vec<LightSample>, cap: u32) -> Vec<LightSample> {
     let n = samples.len();
     let cap = cap.max(1) as usize;
     if n <= cap {

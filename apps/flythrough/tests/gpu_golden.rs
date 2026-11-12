@@ -5,11 +5,10 @@ mod support;
 use flythrough::cave::ROCK;
 use flythrough::cave_materials;
 use support::*;
-use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
 use vxe_render::{
-    Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, ShadowWalk, Window, readback,
-    wgpu,
+    Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, ShadowWalk, Window, wgpu,
 };
+use vxe_render::{internals::PAGE_UNITS, internals::UNIT_BYTES};
 use vxe_world::*;
 
 /// The scene from the spawn pose under each of `lights`, on one device.
@@ -46,7 +45,7 @@ fn render_lit(
             .iter()
             .map(|light| {
                 frame.render(&device, &queue, &gpu, camera, light);
-                readback::read_rgba8(&device, &queue, frame.target())
+                vxe_render::debug::read_rgba8(&device, &queue, frame.target())
             })
             .collect(),
     )
@@ -373,7 +372,7 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         }
         for (name, light, golden) in &goldens {
             frame.render(&device, &queue, &gpu, &scene_camera(), light);
-            let img = readback::read_rgba8(&device, &queue, frame.target());
+            let img = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
             let differing = img.iter().zip(golden).filter(|(a, b)| a != b).count();
             assert_eq!(
                 differing, 0,
@@ -439,7 +438,7 @@ fn render_walk(
         .iter()
         .map(|light| {
             frame.render(device, queue, &gpu, camera, light);
-            readback::read_rgba8(device, queue, frame.target())
+            vxe_render::debug::read_rgba8(device, queue, frame.target())
         })
         .collect()
 }
@@ -781,7 +780,7 @@ fn an_asymmetric_view_renders_the_left_half_of_the_symmetric_one() {
     whole.set_resolution(&device, vxe_render::LightingResolution::Full);
     whole.set_lighting(unfiltered);
     whole.render(&device, &queue, &gpu, &camera, &light);
-    let whole_px = readback::read_rgba8(&device, &queue, whole.target());
+    let whole_px = vxe_render::debug::read_rgba8(&device, &queue, whole.target());
 
     let half_w = WIDTH / 2;
     let mut half = Frame::new(&device, half_w, HEIGHT);
@@ -794,7 +793,7 @@ fn an_asymmetric_view_renders_the_left_half_of_the_symmetric_one() {
         vxe_render::View::with_tangents(&camera, [t, 0.0, ty, ty], aspect, [0, 0, half_w, HEIGHT]);
     let params = half.params_for(&gpu, &[view], &camera, &light);
     half.submit(&device, &queue, &gpu, &params);
-    let half_px = readback::read_rgba8(&device, &queue, half.target());
+    let half_px = vxe_render::debug::read_rgba8(&device, &queue, half.target());
 
     let mut worst = 0;
     for row in 0..HEIGHT as usize {
@@ -970,9 +969,9 @@ fn carve_reading(
         &camera,
         &LightParams::headlamp(),
     );
-    let after = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
-    let now = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let age = readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments());
+    let after = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let now = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let age = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments());
     let rect = box_projection(&camera, aabb);
     let mut out = CarveReading {
         in_box: 0,
@@ -1034,7 +1033,7 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
     else {
         return;
     };
-    let before = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let before = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     assert_golden("dark_cave.png", &before);
     let samples = rig.gpu.light_samples();
     let bright = before
@@ -1054,8 +1053,8 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
 
     // The carve at the brightest rock pixel 15 to 25 voxels away, and the frame right after
     // it.
-    let pos = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let target = (0..pos.len())
         .filter(|&i| {
             // The radius-6 sphere stays inside the scene's 384-voxel extent.
@@ -1101,7 +1100,7 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
 
     let (_, off) = settled_dark_cave(&cave_materials()).unwrap();
     assert_eq!(off.gpu.light_samples(), 0);
-    let off = readback::read_rgba8(&off.device, &off.queue, off.frame.target());
+    let off = vxe_render::debug::read_rgba8(&off.device, &off.queue, off.frame.target());
     let lit_off = off.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
     assert_eq!(
         lit_off, 0,
@@ -1219,7 +1218,7 @@ fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
     let Some((_, rig)) = settled_dark_cave_at(&table, vxe_render::LightingResolution::Half) else {
         return;
     };
-    let half = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let half = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     assert_golden("dark_cave_half.png", &half);
     let (full, _, _) = read_png(&golden_path("dark_cave.png"));
     let n = (WIDTH * HEIGHT) as f64;
@@ -1260,13 +1259,13 @@ fn upscaled_cavity(sharpness: &[f32]) -> Option<(Vec<Vec<u8>>, History16)> {
             );
         }
         if history.is_empty() {
-            history = readback::read_rgba16f(
+            history = vxe_render::debug::read_rgba16f(
                 &rig.device,
                 &rig.queue,
                 frame.upscale_history().expect("the upscaler runs"),
             );
         }
-        out.push(readback::read_rgba8(
+        out.push(vxe_render::debug::read_rgba8(
             &rig.device,
             &rig.queue,
             frame.target(),
@@ -1434,7 +1433,7 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
         frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
     }
     Some((
-        readback::read_rgba8(&device, &queue, frame.target()),
+        vxe_render::debug::read_rgba8(&device, &queue, frame.target()),
         gpu.light_samples(),
     ))
 }
@@ -1585,7 +1584,7 @@ fn the_lighting_targets_are_scale_free() {
         for _ in 0..64 {
             frame.step(&device, &queue, &gpu, &camera, &light);
         }
-        readback::read_rgba8(&device, &queue, frame.target())
+        vxe_render::debug::read_rgba8(&device, &queue, frame.target())
     };
     let base = shot(1.0);
     let lit = base
@@ -1648,8 +1647,8 @@ fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
         }
         let fsr = frame.fsr2().expect("FSR mode");
         out.push(Fsr2Shot {
-            image: readback::read_rgba8(&rig.device, &rig.queue, frame.target()),
-            accumulated: readback::read_rgba16f(
+            image: vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target()),
+            accumulated: vxe_render::debug::read_rgba16f(
                 &rig.device,
                 &rig.queue,
                 fsr.upscaled(frame.current_copy()),
@@ -1786,8 +1785,8 @@ mod reading {
                 &outside_level_camera(),
                 &LightParams::headlamp(),
             );
-            let px = readback::read_rgba8(&device, &queue, frame.target());
-            let hist = readback::StepHistogram::from_rgba8(&px, w as usize);
+            let px = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+            let hist = vxe_render::debug::StepHistogram::from_rgba8(&px, w as usize);
             let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
             println!(
                 "{} at {w}x{h}, cutaway {cutaway}: steps per ray mean {:.2} p99 {}, rays at the 255 clamp {saturated} of {}",

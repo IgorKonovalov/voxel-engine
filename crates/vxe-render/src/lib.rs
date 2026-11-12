@@ -5,23 +5,79 @@
 //! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Frame`] draws it
 //! (its hit pass is the [`Marcher`]) and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
 
-pub mod bake;
-pub mod camera;
-pub mod exposure;
-pub mod field;
-pub mod font8x8;
-pub mod fsr2;
-pub mod gpu_world;
-pub mod hud;
-pub mod light;
-pub mod marcher;
-pub mod present;
-pub mod probes;
-pub mod readback;
+#![deny(unreachable_pub, unnameable_types)]
+
+mod bake;
+mod camera;
+mod exposure;
+mod field;
+mod font8x8;
+mod fsr2;
+mod gpu_world;
+mod hud;
+mod light;
+mod marcher;
+mod present;
+mod probes;
+mod readback;
+
+/// Readings: the readbacks of a texture or buffer, the march's step histogram, the bake
+/// queue step's stages and regimes, and the light summaries a getter returns. For tools and
+/// tests that measure the renderer; the API it reads may change with what is measured.
+pub mod debug {
+    pub use crate::bake::{
+        LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally,
+    };
+    pub use crate::probes::ProbeRead;
+    pub use crate::readback::{
+        StepHistogram, f16_to_f32, read_buffer, read_float, read_rgba8, read_rgba16f, read_rgba16u,
+        read_rgba32f,
+    };
+}
+
+/// Not API, and no semver promise: the GPU contract (the mirror's record and slot layout, the
+/// bake's record and view constants, the field's band units), the WGSL sources and composers
+/// not at the root, and pure functions the white-box tests assert against.
+#[doc(hidden)]
+pub mod internals {
+    pub use crate::bake::{
+        BAKE_ROUND, BRICK_CELL, BRICK_WORDS, ChunkFaces, DIG_FADE, FADE, FacePrep,
+        QUEUE_VIEW_MARGIN_DEG, STORE_COARSE_READS, SUMMARY_AT, VIEW_IN, VIEW_OUT, VIEW_SHELL,
+        angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk, rgb9e5_unpack,
+        tone_level, view_half_angle, view_half_angles,
+    };
+    pub use crate::exposure::{METER_LOG2_LIMIT, STATE_HELD};
+    pub use crate::field::{
+        BAND_CUBES_BIT, CRISP_COUNT_BIT, MAX_BAND_UNITS, SMOOTH_COUNT_BIT, band_index,
+        band_slot_units,
+    };
+    pub use crate::font8x8::{FONT, glyph};
+    pub use crate::fsr2::{
+        FSR2_ACCUMULATE_WGSL, FSR2_DEPTH_CLIP_WGSL, FSR2_INPUT_WGSL, FSR2_LOCK_WGSL,
+        FSR2_LUMINANCE_PYRAMID_WGSL, FSR2_PASSES, FSR2_RCAS_WGSL, FSR2_RECONSTRUCT_WGSL,
+        FSR2_TONE_WGSL, fsr2_source, jitter_offset, jitter_phases,
+    };
+    pub use crate::gpu_world::{
+        ABSENT, BELT_KEEP_CHUNKS, BIN_COUNT, BINS, BITS_WORDS, CLASS_MASK, CLASS_SHIFT,
+        CLASS_UNIFORM, CLASS_WIDE, EMPTY_BIT, ENTRY_WORD, FULL_BIT, HEADER_BAND_BIT,
+        HEADER_BAND_PREFIX_WORD, HEADER_BAND_WORD, HEADER_TRANSLUCENT_WORD, LIGHT_SAMPLE_BYTES,
+        LOD_BIT, LOD_LEVEL_ENTRY, LightSample, MATERIAL_FLOATS, MATERIAL_MASK, PAGE_BYTES,
+        PAGE_UNITS, PALETTE_ENTRIES, PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS,
+        SLOT_BINS, TRANSLUCENT_BIT, UNIT_BYTES, UNIT_MASK, UNIT_WORDS, band_bin_of, bin_of,
+        budget_for, class_code, exposed_emitters, layer_prefix, payload_units, slot_units,
+        slots_per_page,
+    };
+    pub use crate::marcher::{JITTER_PHASES, composite_hdr_source};
+    pub use crate::probes::{
+        MAX_AGE, ProbeUniform, RAYS_PER_PROBE, SLICES, TestProbe, WINDOW_FRAMES,
+    };
+}
 
 pub use bake::{
-    BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, DigReport, QueueStats, QueueView,
-    StoreStats,
+    BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Budget, DEFAULT_BAKE_EDIT_MS,
+    DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR, DigReport, FaceOutcome,
+    MissingLight, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder,
+    QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, queue_settings,
 };
 pub use camera::{Camera, View};
 pub use exposure::{
@@ -29,8 +85,9 @@ pub use exposure::{
 };
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
-    BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncClock,
-    SyncPoint, SyncStats, Window,
+    BELT_CHUNK_BYTES, BinStats, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP,
+    DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout,
+    SyncClock, SyncPoint, SyncStats, Window,
 };
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
@@ -40,8 +97,9 @@ pub use marcher::{
     NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
     jitter_at,
 };
+pub use marcher::{DEFAULT_PROBE_FREEZE, Params, Upscaler};
 pub use present::Presenter;
-pub use probes::ProbeVolume;
+pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
 pub use {glam, wgpu};
 
 /// The source of the hit pass, whose walk and helpers the other frame shaders are compiled

@@ -5,7 +5,7 @@ mod support;
 
 use support::rigs::*;
 use support::*;
-use vxe_render::{Frame, GpuWorld, LightParams, LookParams, UpscalerKind, View, readback, wgpu};
+use vxe_render::{Frame, GpuWorld, LightParams, LookParams, UpscalerKind, View, wgpu};
 
 /// FSR 2 on the stripe wall at arm's length, a still camera at scale 1.5 for 32 frames,
 /// recovers what a blit cannot: its gradient energy is above the bilinear blit's
@@ -75,7 +75,7 @@ fn motion_vectors_match_the_analytic_reprojection() {
     let jitter = frame.params(&gpu, &stepped, &light).views[0].jitter;
     let fsr = frame.fsr2().expect("FSR mode");
     let motion = read_f32_texels(&device, &queue, fsr.motion());
-    let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
+    let pos = vxe_render::debug::read_rgba32f(&device, &queue, frame.hit_positions());
     let (mut hits, mut worst) = (0usize, 0.0f64);
     for (i, p) in pos.iter().enumerate() {
         if p[3] >= 1e30 {
@@ -138,8 +138,8 @@ fn off_after_fsr2_renders_the_goldens_byte_for_byte() {
     ] {
         frame.render(&device, &queue, &gpu, &scene_camera(), &light);
         plain.render(&device, &queue, &gpu, &scene_camera(), &light);
-        let img = readback::read_rgba8(&device, &queue, frame.target());
-        let want = readback::read_rgba8(&device, &queue, plain.target());
+        let img = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+        let want = vxe_render::debug::read_rgba8(&device, &queue, plain.target());
         assert!(img == want, "{name} differs after FSR 2 and back");
         assert_golden(name, &img);
     }
@@ -158,7 +158,7 @@ fn fsr2_dispatches_rcas_or_the_tone_pass_not_both() {
     };
     let mut frame = Frame::new(&device, WIDTH, HEIGHT);
     frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    let first: Vec<&str> = vxe_render::fsr2::FSR2_PASSES[..7].to_vec();
+    let first: Vec<&str> = vxe_render::internals::FSR2_PASSES[..7].to_vec();
     let mut bytes = Vec::new();
     for (sharpness, last) in [(0.5, "fsr2 rcas"), (0.0, "fsr2 tone")] {
         frame.set_upscaler_kind(
@@ -230,8 +230,8 @@ fn assert_the_tone_pass_is_lossless(
         f.set_lod(lod);
         f.render(&device, &queue, &gpu, camera, light);
     }
-    let want = readback::read_rgba8(&device, &queue, plain.target());
-    let got = readback::read_rgba8(&device, &queue, toned.target());
+    let want = vxe_render::debug::read_rgba8(&device, &queue, plain.target());
+    let got = vxe_render::debug::read_rgba8(&device, &queue, toned.target());
     let differing = want.iter().zip(&got).filter(|(a, b)| a != b).count();
     let lit = want.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
     println!("{name}: {differing} bytes differ, {lit} lit pixels");
@@ -320,7 +320,7 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
     };
     let byte = |v: f32| (v * 255.0).round() as u8;
     let reactive = |frame: &Frame| -> Vec<u8> {
-        readback::read_rgba8(&device, &queue, frame.fsr2().unwrap().reactive())
+        vxe_render::debug::read_rgba8(&device, &queue, frame.fsr2().unwrap().reactive())
             .chunks(4)
             .map(|p| p[0])
             .collect()
@@ -348,8 +348,8 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
         frame.set_lighting(lighting);
         frame.step(&device, &queue, &gpu, &camera, &light);
         let params = frame.params(&gpu, &camera, &light);
-        let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
-        let info = readback::read_rgba16u(&device, &queue, frame.hit_records());
+        let pos = vxe_render::debug::read_rgba32f(&device, &queue, frame.hit_positions());
+        let info = vxe_render::debug::read_rgba16u(&device, &queue, frame.hit_records());
         let r = reactive(&frame);
         let (mut lit, mut dark, mut wrong) = (0usize, 0usize, 0usize);
         for i in 0..r.len() {
@@ -383,7 +383,7 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
     gpu.sync_now(&world, &device, &queue).unwrap();
     frame.invalidate(aabb.0.0, aabb.1.0);
     frame.step(&device, &queue, &gpu, &camera, &light);
-    let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
+    let pos = vxe_render::debug::read_rgba32f(&device, &queue, frame.hit_positions());
     let r = reactive(&frame);
     let (mut inside, mut outside, mut wrong) = (0usize, 0usize, 0usize);
     for i in 0..r.len() {
@@ -414,13 +414,14 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
     let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
     frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
     frame.step(&device, &queue, &gpu, &translucent_camera(), &light);
-    let r: Vec<u8> = readback::read_rgba8(&device, &queue, frame.fsr2().unwrap().reactive())
-        .chunks(4)
-        .map(|p| p[0])
-        .collect();
-    let info = readback::read_rgba16u(&device, &queue, frame.hit_records());
-    let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
-    let layer = readback::read_rgba16f(&device, &queue, frame.layers());
+    let r: Vec<u8> =
+        vxe_render::debug::read_rgba8(&device, &queue, frame.fsr2().unwrap().reactive())
+            .chunks(4)
+            .map(|p| p[0])
+            .collect();
+    let info = vxe_render::debug::read_rgba16u(&device, &queue, frame.hit_records());
+    let pos = vxe_render::debug::read_rgba32f(&device, &queue, frame.hit_positions());
+    let layer = vxe_render::debug::read_rgba16f(&device, &queue, frame.layers());
     let (mut behind, mut worst) = (0usize, 0i32);
     for i in 0..r.len() {
         if info[i][3] & 4 == 0 || pos[i][3] >= 1e30 {
@@ -473,8 +474,8 @@ fn doubling_the_exposure_reaches_fsr_the_same_frame() {
     for _ in 0..SETTLE {
         native.step(device, queue, &rig.gpu, &camera, &light);
     }
-    let a = readback::read_rgba8(device, queue, fsr.target());
-    let b = readback::read_rgba8(device, queue, native.target());
+    let a = vxe_render::debug::read_rgba8(device, queue, fsr.target());
+    let b = vxe_render::debug::read_rgba8(device, queue, native.target());
     let m = mad(&a, &b);
     let mean = m.iter().sum::<f64>() / 3.0;
     println!("FSR at 2x exposure against Plan 0024's frame: mean {mean:.3}/255 ({m:.3?})");
@@ -510,7 +511,7 @@ fn fsr_follows_the_eyes_moving_exposure() {
         ..bright
     };
     let state = |f: &Frame| {
-        vxe_render::ExposureState::from_bytes(&readback::read_buffer(
+        vxe_render::ExposureState::from_bytes(&vxe_render::debug::read_buffer(
             device,
             queue,
             f.exposure_state(),
@@ -530,8 +531,8 @@ fn fsr_follows_the_eyes_moving_exposure() {
         let texel = read_f32_texels(device, queue, fsr.fsr2().unwrap().exposure())[0];
         assert_eq!(texel.to_bits(), used.to_bits(), "frame {k}: {texel} {used}");
         if [5, 15, 30, 60].contains(&k) {
-            let a = readback::read_rgba8(device, queue, fsr.target());
-            let b = readback::read_rgba8(device, queue, native.target());
+            let a = vxe_render::debug::read_rgba8(device, queue, fsr.target());
+            let b = vxe_render::debug::read_rgba8(device, queue, native.target());
             let m = mad(&a, &b);
             let mean = m.iter().sum::<f64>() / 3.0;
             println!(
@@ -605,7 +606,7 @@ fn a_carve_leaves_no_ghost_under_fsr2() {
             f.step(&device, &queue, &gpu, &camera, &light);
         }
         let j = kept.params(&gpu, &camera, &light).views[0].jitter;
-        let pos = readback::read_rgba32f(&device, &queue, kept.hit_positions());
+        let pos = vxe_render::debug::read_rgba32f(&device, &queue, kept.hit_positions());
         let mut at = Vec::new();
         for y in 0..OUTPUT[1] {
             for x in 0..OUTPUT[0] {
@@ -615,8 +616,8 @@ fn a_carve_leaves_no_ghost_under_fsr2() {
                 }
             }
         }
-        let a = readback::read_rgba8(&device, &queue, kept.target());
-        let b = readback::read_rgba8(&device, &queue, reset.target());
+        let a = vxe_render::debug::read_rgba8(&device, &queue, kept.target());
+        let b = vxe_render::debug::read_rgba8(&device, &queue, reset.target());
         let (mean, over) = difference_over(&a, &b, &at);
         println!(
             "carve at t = {t:.1}, frame {frame} after: {} output pixels in the dilated box, mean difference from the reset frame {mean:.3}/255, {over} over 8/255",
@@ -665,8 +666,8 @@ fn a_sideways_step_keeps_fsr2s_history() {
     }
     let read_hits = |rig: &LookRig, camera: &vxe_render::Camera| {
         (
-            readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
-            readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
             rig.frame.params(&rig.gpu, camera, &light).views[0],
         )
     };
@@ -742,7 +743,7 @@ fn a_still_camera_has_no_disocclusion() {
         frame.step(&device, &queue, &gpu, &camera, &light);
     }
     let fsr = frame.fsr2().expect("FSR mode");
-    let clip = readback::read_rgba16f(&device, &queue, fsr.prepared());
+    let clip = vxe_render::debug::read_rgba16f(&device, &queue, fsr.prepared());
     let depth = read_f32_texels(&device, &queue, fsr.depth());
     let [w, h] = INTERNAL.map(|n| n as i32);
     let at = |x: i32, y: i32| depth[(y * w + x) as usize];
@@ -800,7 +801,7 @@ fn locks_form_on_the_stripe_edges() {
     for _ in 0..SETTLE {
         f.step(device, queue, &rig.gpu, &camera, &light);
     }
-    let img = readback::read_rgba8(device, queue, f.target());
+    let img = vxe_render::debug::read_rgba8(device, queue, f.target());
     let fsr = f.fsr2().expect("FSR mode");
     let lock = read_f32_texels(device, queue, fsr.lock_status(f.current_copy()));
     let [w, h] = OUTPUT.map(|n| n as usize);
@@ -906,7 +907,7 @@ fn fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length() {
     let Some(rig) = stripe_rig() else {
         return;
     };
-    let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
+    let own = UpscalerKind::Own(vxe_render::Upscaler::default());
     let mut failures = Vec::new();
     for dist in [NEAR, FAR] {
         let near = dist == NEAR;
@@ -1031,11 +1032,11 @@ fn fsr2_pan_ge(rig: &StripeRig, dist: f32, pan_px: f32) -> (f64, f64) {
             }
             f.step(device, queue, &rig.gpu, &camera, &light);
             if i + 1 == SETTLE {
-                let img = readback::read_rgba8(device, queue, f.target());
+                let img = vxe_render::debug::read_rgba8(device, queue, f.target());
                 still += sharpness(&img, &camera, dist).ge / f64::from(PHASES);
             }
         }
-        let img = readback::read_rgba8(device, queue, f.target());
+        let img = vxe_render::debug::read_rgba8(device, queue, f.target());
         last += sharpness(&img, &camera, dist).ge / f64::from(PHASES);
     }
     (still, last)
@@ -1110,13 +1111,19 @@ fn a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_th
             f.step(&device, &queue, &gpu, &camera, &light);
         }
     }
-    let big_img = readback::read_rgba8(&device, &queue, ssaa.target());
+    let big_img = vxe_render::debug::read_rgba8(&device, &queue, ssaa.target());
     let truth = downsample_2x2_linear(&big_img);
     let display_truth = downsample_2x2(&big_img, OUTPUT);
     let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
     let images = [
-        ("FSR", readback::read_rgba8(&device, &queue, fsr.target())),
-        ("ours", readback::read_rgba8(&device, &queue, ours.target())),
+        (
+            "FSR",
+            vxe_render::debug::read_rgba8(&device, &queue, fsr.target()),
+        ),
+        (
+            "ours",
+            vxe_render::debug::read_rgba8(&device, &queue, ours.target()),
+        ),
         (
             "bilinear",
             blit_texture(&device, &queue, low.target(), OUTPUT),
@@ -1191,15 +1198,15 @@ fn pan_per_pass_readings(dist: f32, pan_px: f32) -> Vec<String> {
         if !(n == SETTLE || n == SETTLE + 1 || n == SETTLE + 2 || n == SETTLE + 4 || n % 8 == 0) {
             continue;
         }
-        let img = readback::read_rgba8(device, queue, f.target());
+        let img = vxe_render::debug::read_rgba8(device, queue, f.target());
         let ge = sharpness(&img, &camera, dist).ge;
         let fsr = f.fsr2().unwrap();
         let cur = f.current_copy();
-        let prepared = readback::read_rgba16f(device, queue, fsr.prepared());
-        let masks = readback::read_rgba8(device, queue, fsr.dilated_reactive());
+        let prepared = vxe_render::debug::read_rgba16f(device, queue, fsr.prepared());
+        let masks = vxe_render::debug::read_rgba8(device, queue, fsr.dilated_reactive());
         let lock = read_f32_texels(device, queue, fsr.lock_status(cur));
         let weight = read_f32_texels(device, queue, fsr.history_weight());
-        let up = readback::read_rgba16f(device, queue, fsr.upscaled(cur));
+        let up = vxe_render::debug::read_rgba16f(device, queue, fsr.upscaled(cur));
         let rn = rmid.len() as f64;
         let on = mid.len() as f64;
         let clip = rmid.iter().map(|&k| f64::from(prepared[k][3])).sum::<f64>() / rn;
@@ -1270,7 +1277,7 @@ fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
 #[test]
 #[ignore = "soak"]
 fn fsr2_adds_little_flicker_on_a_still_vein() {
-    let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
+    let own = UpscalerKind::Own(vxe_render::Upscaler::default());
     let Some((off_mean, off_over)) = still_vein_flicker(false, own) else {
         return;
     };
@@ -1314,10 +1321,14 @@ fn shadow_boundary(
         f
     };
     let lit_frame = settled(true);
-    let lit = lumas(&readback::read_rgba8(device, queue, lit_frame.target()));
-    let pos = readback::read_rgba32f(device, queue, lit_frame.hit_positions());
-    let rec = readback::read_rgba16u(device, queue, lit_frame.hit_records());
-    let off = lumas(&readback::read_rgba8(
+    let lit = lumas(&vxe_render::debug::read_rgba8(
+        device,
+        queue,
+        lit_frame.target(),
+    ));
+    let pos = vxe_render::debug::read_rgba32f(device, queue, lit_frame.hit_positions());
+    let rec = vxe_render::debug::read_rgba16u(device, queue, lit_frame.hit_records());
+    let off = lumas(&vxe_render::debug::read_rgba8(
         device,
         queue,
         settled(false).target(),
@@ -1387,7 +1398,7 @@ fn wobble(
     let fsr = kind.is_fsr2() && pipe != Pipe::Reference;
     for _ in 0..pipe.phases(kind) {
         f.step(device, queue, gpu, camera, &light);
-        for (i, v) in lumas(&readback::read_rgba8(device, queue, f.target()))
+        for (i, v) in lumas(&vxe_render::debug::read_rgba8(device, queue, f.target()))
             .into_iter()
             .enumerate()
         {
@@ -1445,7 +1456,7 @@ fn fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera() {
         boundary.iter().filter(|&&b| b).count(),
         boundary.len()
     );
-    let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
+    let own = UpscalerKind::Own(vxe_render::Upscaler::default());
     let (ra, re, _) = wobble(
         &device,
         &queue,
@@ -1536,9 +1547,9 @@ fn fsr2_wobble_per_pass_readings() {
             let cur = f.current_copy();
             let weight = read_f32_texels(&device, &queue, fsr.history_weight());
             let lock = read_f32_texels(&device, &queue, fsr.lock_status(cur));
-            let up = readback::read_rgba16f(&device, &queue, fsr.upscaled(cur));
-            let masks = readback::read_rgba8(&device, &queue, fsr.dilated_reactive());
-            let prepared = readback::read_rgba16f(&device, &queue, fsr.prepared());
+            let up = vxe_render::debug::read_rgba16f(&device, &queue, fsr.upscaled(cur));
+            let masks = vxe_render::debug::read_rgba8(&device, &queue, fsr.dilated_reactive());
+            let prepared = vxe_render::debug::read_rgba16f(&device, &queue, fsr.prepared());
             let hist = at.iter().map(|&i| f64::from(weight[i])).sum::<f64>() / n;
             let locked = at.iter().filter(|&&i| lock[2 * i] > 0.0).count() as f64 / n;
             let tr = at.iter().map(|&i| f64::from(up[i][3].abs())).sum::<f64>() / n;

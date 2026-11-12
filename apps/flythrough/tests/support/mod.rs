@@ -254,7 +254,7 @@ pub fn assert_golden(name: &str, rgba: &[u8]) {
 
 use flythrough::cave::ROCK;
 use vxe_render::glam::Vec3;
-use vxe_render::{Frame, GpuWorld, LightParams, LodParams, LookParams, MirrorConfig, readback};
+use vxe_render::{Frame, GpuWorld, LightParams, LodParams, LookParams, MirrorConfig};
 
 /// Rows 0 (air) and 1..=5, plain, row 3 with the cave's rock albedo: the solid material-3
 /// world of the cavity scene.
@@ -515,7 +515,7 @@ impl LookRig {
         self.frame.set_look(look);
         self.frame
             .render(&self.device, &self.queue, &self.gpu, camera, light);
-        readback::read_rgba8(&self.device, &self.queue, self.frame.target())
+        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 }
 
@@ -533,16 +533,16 @@ pub fn bake_around(
     centre: [i32; 3],
     radius: i32,
     samples: u32,
-) -> vxe_render::bake::BakeReport {
+) -> vxe_render::BakeReport {
     let w = world.extent();
     let size = w.size();
     let c = centre.map(|v| v.div_euclid(64));
     let lo = [0, 1, 2].map(|k| (c[k] - radius).max(w.min.0[k]));
     let hi = [0, 1, 2].map(|k| (c[k] + radius + 1).min(w.min.0[k] + size[k]).max(lo[k]));
-    let settings = vxe_render::bake::BakeSettings {
+    let settings = vxe_render::BakeSettings {
         round: 64,
         brick_samples: samples,
-        ..vxe_render::bake::BakeSettings::default()
+        ..vxe_render::BakeSettings::default()
     };
     frame
         .bake_until(
@@ -565,7 +565,7 @@ impl LookRig {
         centre: [i32; 3],
         radius: i32,
         samples: u32,
-    ) -> vxe_render::bake::BakeReport {
+    ) -> vxe_render::BakeReport {
         bake_around(
             &self.device,
             &self.queue,
@@ -598,7 +598,7 @@ pub fn centre_pixel(rgba: &[u8]) -> [u8; 3] {
 // ---- The field surface and the sharpness scenes (tests/gpu_look.rs, tests/sharpness.rs) ----
 
 use vxe_render::LightingResolution;
-use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
+use vxe_render::{internals::PAGE_UNITS, internals::UNIT_BYTES};
 
 /// Pool bytes a mirror with the field's band slots needs for `world`'s bricks, with a page of
 /// headroom for each bin's partly filled page.

@@ -55,14 +55,14 @@ use crate::gpu_world::{CHANGES_MAX, GpuWorld};
 use crate::marcher::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
 
 /// The sampler, compiled after [`crate::MARCH_WGSL`] and [`crate::LIGHT_WGSL`].
-pub const BAKE_WGSL: &str = include_str!("shaders/bake.wgsl");
+pub(crate) const BAKE_WGSL: &str = include_str!("shaders/bake.wgsl");
 
 /// Samples a face takes between two looks at its stop.
 pub const BAKE_ROUND: u32 = 1024;
 /// Entries (one round of one face) one submit's working buffer holds at most.
-pub const BAKE_BATCH_FACES: usize = 65_536;
+pub(crate) const BAKE_BATCH_FACES: usize = 65_536;
 /// Jobs open at once, each with a slot of the tables buffer.
-pub const OPEN_JOBS: usize = 256;
+pub(crate) const OPEN_JOBS: usize = 256;
 /// The bytes of the job uniform (`BakeJob` in `bake.wgsl`).
 const JOB_BYTES: u64 = 32;
 /// A slot's 16-byte words (`TABLE_SLOT` in `bake.wgsl`): the candidate table (a header, then
@@ -71,26 +71,26 @@ const TABLE_SLOT_WORDS: u64 = 2 + LIGHT_TABLE_ENTRIES as u64;
 const TABLE_SLOT_BYTES: u64 = TABLE_SLOT_WORDS * 16;
 const _: () = assert!(TABLE_SLOT_WORDS == 1026, "TABLE_SLOT in bake.wgsl");
 /// The stop's standard error, in display levels.
-pub const BAKE_SE: f32 = 0.5;
+pub(crate) const BAKE_SE: f32 = 0.5;
 /// Samples one submit holds at most, so the driver sees short dispatches with a wait between.
-pub const SUBMIT_SAMPLES: u64 = 10_000_000;
+pub(crate) const SUBMIT_SAMPLES: u64 = 10_000_000;
 /// The exposure the stop reads the display at (the owner's windows' fixed exposure).
-pub const BAKE_EXPOSURE: f32 = 8.0;
+pub(crate) const BAKE_EXPOSURE: f32 = 8.0;
 /// [`Lighting::bake_pool_bytes`](crate::Lighting) by default; the device's storage binding clamps it.
-pub const DEFAULT_BAKE_POOL_BYTES: u64 = 256 << 20;
+pub(crate) const DEFAULT_BAKE_POOL_BYTES: u64 = 256 << 20;
 /// The pool before the first bake or live queue: the header's words only, which hold no block.
-pub const MINIMAL_POOL_BYTES: u64 = 64;
+pub(crate) const MINIMAL_POOL_BYTES: u64 = 64;
 /// The word of the pool's chunk table.
-pub const STORE_TABLE: u64 = 16;
+pub(crate) const STORE_TABLE: u64 = 16;
 /// A chunk table word's flag: the chunk's block is the live queue's coarse pass, refined later.
 /// The block's first word is the rest (a pool is under 2^31 words).
-pub const TABLE_COARSE: u32 = 1 << 31;
+pub(crate) const TABLE_COARSE: u32 = 1 << 31;
 /// The frame's read counters' word that counts the lighting pixels that read a coarse block.
 pub const STORE_COARSE_READS: u64 = 2;
 /// The words of a block's directory.
-pub const DIRECTORY_WORDS: u64 = CHUNK_BRICKS as u64;
+pub(crate) const DIRECTORY_WORDS: u64 = CHUNK_BRICKS as u64;
 /// The bytes of one face in the working buffer (`BakeFace` in `bake.wgsl`).
-pub const FACE_BYTES: u64 = 80;
+pub(crate) const FACE_BYTES: u64 = 80;
 
 /// The display's level, 0 to 255, of luminance `l` at unit exposure: `tone.wgsl`'s ACES and 2.2
 /// encode at [`BAKE_EXPOSURE`], unrounded.
@@ -102,7 +102,7 @@ pub fn tone_level(l: f64) -> f64 {
 
 /// The standard error, in display levels, of the mean of `n` samples whose luminances sum to `sum`
 /// and whose squares sum to `sum2`.
-pub fn se_levels(n: u64, sum: f64, sum2: f64) -> f64 {
+pub(crate) fn se_levels(n: u64, sum: f64, sum2: f64) -> f64 {
     if n == 0 {
         return f64::INFINITY;
     }
@@ -114,7 +114,7 @@ pub fn se_levels(n: u64, sum: f64, sum2: f64) -> f64 {
 
 /// `c` as an `rgb9e5` word: 9-bit mantissas over a shared exponent, red in the low bits, the
 /// exponent (bias 15) in the top five.
-pub fn rgb9e5_pack(c: [f32; 3]) -> u32 {
+pub(crate) fn rgb9e5_pack(c: [f32; 3]) -> u32 {
     const MAX: f32 = 65408.0;
     let c = c.map(|v| if v.is_nan() { 0.0 } else { v.clamp(0.0, MAX) });
     let top = c[0].max(c[1]).max(c[2]);
@@ -139,20 +139,12 @@ pub fn rgb9e5_unpack(w: u32) -> [f32; 3] {
 }
 
 /// [`face_classes`]' class of air.
-pub const CLASS_AIR: u8 = 0;
+pub(crate) const CLASS_AIR: u8 = 0;
 /// [`face_classes`]' class of a material that stops light.
-pub const CLASS_OPAQUE: u8 = 1;
+pub(crate) const CLASS_OPAQUE: u8 = 1;
 /// [`face_classes`]' class of a translucent material: air to the walk and the shadow rays, a
 /// filter to the view.
-pub const CLASS_TRANSLUCENT: u8 = 2;
-
-/// Which materials stop light: not air, not translucent.
-pub fn opaque_table(materials: &MaterialTable) -> Vec<bool> {
-    face_classes(materials)
-        .iter()
-        .map(|&c| c == CLASS_OPAQUE)
-        .collect()
-}
+pub(crate) const CLASS_TRANSLUCENT: u8 = 2;
 
 /// Each material id's class: [`CLASS_AIR`], [`CLASS_OPAQUE`] or [`CLASS_TRANSLUCENT`].
 pub fn face_classes(materials: &MaterialTable) -> Vec<u8> {
@@ -180,13 +172,8 @@ pub struct ChunkFaces {
 
 impl ChunkFaces {
     /// Faces over the chunk's bricks.
-    pub fn faces(&self) -> usize {
+    pub(crate) fn faces(&self) -> usize {
         self.bricks.iter().map(|(_, k)| k.len()).sum()
-    }
-
-    /// Whether the face `key` of brick `slot` is a translucent voxel's.
-    pub fn is_glass(&self, slot: u16, key: u16) -> bool {
-        self.glass.binary_search(&(slot, key)).is_ok()
     }
 }
 
@@ -241,7 +228,7 @@ fn mask_bit(mask: &[u64; 8], l: [usize; 3]) -> bool {
 }
 
 /// A brick's opaque and solid masks ([`class_masks`]).
-pub type Masks = ([u64; 8], [u64; 8]);
+pub(crate) type Masks = ([u64; 8], [u64; 8]);
 
 /// The masks of a uniform brick of class `c`.
 fn uniform_masks(c: u8) -> Masks {
@@ -258,14 +245,14 @@ const MASKED: u8 = u8::MAX;
 /// A chunk's brick masks, the listing's decode done ahead of it (on a stream worker, through
 /// [`FacePrep`]): a uniform brick by its class, any other by its masks.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChunkMasks {
+pub(crate) struct ChunkMasks {
     classes: Box<[u8; CHUNK_BRICKS]>,
     masked: Vec<(u16, Masks)>,
 }
 
 impl ChunkMasks {
     /// `chunk`'s masks under `classes` ([`face_classes`]).
-    pub fn of(chunk: &Chunk, classes: &[u8]) -> Self {
+    pub(crate) fn of(chunk: &Chunk, classes: &[u8]) -> Self {
         let mut out = Self {
             classes: Box::new([CLASS_AIR; CHUNK_BRICKS]),
             masked: Vec::new(),
@@ -283,7 +270,7 @@ impl ChunkMasks {
     }
 
     /// Brick `slot`'s masks.
-    pub fn get(&self, slot: usize) -> Masks {
+    pub(crate) fn get(&self, slot: usize) -> Masks {
         match self.classes[slot] {
             MASKED => {
                 let i = self
@@ -297,7 +284,7 @@ impl ChunkMasks {
     }
 
     /// Bytes held, for the prepared results' cap.
-    pub fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         CHUNK_BRICKS + self.masked.len() * std::mem::size_of::<(u16, Masks)>()
     }
 
@@ -305,7 +292,7 @@ impl ChunkMasks {
     /// brick; for a uniform opaque or translucent brick, its sides toward the chunk's border or
     /// toward a brick that is not uniform opaque (or, for a translucent one, toward one that
     /// is masked or air); none for air.
-    pub fn dirs_bound(&self) -> u64 {
+    pub(crate) fn dirs_bound(&self) -> u64 {
         let mut dirs = 0u64;
         for slot in 0..CHUNK_BRICKS {
             let own = self.classes[slot];
@@ -356,7 +343,7 @@ impl vxe_world::ChunkPrep for FacePrep {
 
 /// What [`FacePrep`] hands back: the masks and the classes they were taken under, and the
 /// nanoseconds the worker took over them.
-pub struct PreparedMasks {
+pub(crate) struct PreparedMasks {
     pub classes: Arc<Vec<u8>>,
     pub masks: ChunkMasks,
     pub ns: u64,
@@ -366,7 +353,7 @@ pub struct PreparedMasks {
 /// opaque, and a translucent voxel's toward air (`classes`, [`face_classes`]). The neighbours are
 /// in face order (`-x, +x, -y, +y, -z, +z`); across a neighbour that is `None` no ray arrives (an
 /// absent chunk is rock to the walk), so no face is listed there.
-pub fn list_chunk_faces(
+pub(crate) fn list_chunk_faces(
     chunk: &Chunk,
     neighbours: &[Option<&Chunk>; 6],
     classes: &[u8],
@@ -383,7 +370,7 @@ pub fn list_chunk_faces(
 
 /// A chunk's faces as [`list_chunk_faces`] lists them, from its bricks' masks (`own`, by slot)
 /// and its neighbours' (`beside`, by face and slot; `None` where that neighbour is absent).
-pub fn list_faces_by(
+pub(crate) fn list_faces_by(
     own: &dyn Fn(usize) -> Masks,
     beside: &dyn Fn(usize, usize) -> Option<Masks>,
 ) -> ChunkFaces {
@@ -463,7 +450,7 @@ pub fn list_world_chunk(world: &World, coord: ChunkCoord, classes: &[u8]) -> Opt
 }
 
 /// A test of a voxel and its face.
-pub type FaceFilter = Arc<dyn Fn([i32; 3], u8) -> bool + Send + Sync>;
+pub(crate) type FaceFilter = Arc<dyn Fn([i32; 3], u8) -> bool + Send + Sync>;
 
 /// Words of a brick-level cell's record: six direction values in [`rgb9e5_pack`], face order, then
 /// `material | direction mask << 16`, the mask's bit `face` set where the cell has a face
@@ -471,14 +458,14 @@ pub type FaceFilter = Arc<dyn Fn([i32; 3], u8) -> bool + Send + Sync>;
 /// one cell of 8 voxels, or eight of 4 (`x + 2 y + 4 z`).
 pub const BRICK_WORDS: usize = 7;
 /// The store header's flags word: bit 1 ([`FLAG_CELL4`]) where the records' cells are 4 voxels.
-pub const STORE_FLAGS: u64 = 12;
+pub(crate) const STORE_FLAGS: u64 = 12;
 /// The brick records hold eight cells of 4 voxels.
-pub const FLAG_CELL4: u32 = 2;
+pub(crate) const FLAG_CELL4: u32 = 2;
 /// The brick level's cell by default, in voxels: the brick.
 pub const BRICK_CELL: u32 = 8;
 
 /// Words of a brick's record of cells of `cell` voxels: [`BRICK_WORDS`] a cell.
-pub fn record_words(cell: u32) -> usize {
+pub(crate) fn record_words(cell: u32) -> usize {
     BRICK_WORDS * (8 / cell).pow(3) as usize
 }
 
@@ -486,9 +473,9 @@ pub fn record_words(cell: u32) -> usize {
 /// just past the directory, so the chunk table's word reaches it with no second read.
 pub const SUMMARY_AT: u64 = DIRECTORY_WORDS;
 /// A block's words before its first brick record: the directory, then the summary.
-pub const BLOCK_HEAD_WORDS: u64 = DIRECTORY_WORDS + BRICK_WORDS as u64;
+pub(crate) const BLOCK_HEAD_WORDS: u64 = DIRECTORY_WORDS + BRICK_WORDS as u64;
 /// The flags word's bits 2 and 3: the missing-light mode ([`MissingLight::bits`]).
-pub const FLAG_MISSING_SHIFT: u32 = 2;
+pub(crate) const FLAG_MISSING_SHIFT: u32 = 2;
 
 /// What a cube face with no brick value reads (ADR-0053): black as before, or the first value
 /// for its direction along a chain of summaries, nearest first.
@@ -668,7 +655,7 @@ impl RecordMean {
 /// `block`'s light summary (ADR-0053) from its brick records of `record` words: a direction's
 /// value the mean over the cells that hold it, the material the most of those cells keep, the
 /// mask their union; `None` for a block with no lit direction.
-pub fn block_summary(block: &[u32], record: usize) -> Option<[u32; BRICK_WORDS]> {
+pub(crate) fn block_summary(block: &[u32], record: usize) -> Option<[u32; BRICK_WORDS]> {
     let mut mean = RecordMean::default();
     for &dir in &block[..CHUNK_BRICKS] {
         if dir == 0 {
@@ -684,7 +671,7 @@ pub fn block_summary(block: &[u32], record: usize) -> Option<[u32; BRICK_WORDS]>
 
 /// The mean by direction of `records` ([`block_summary`]'s rule over whole records): a parent
 /// cell's record from its children's.
-pub fn mean_record<'a>(
+pub(crate) fn mean_record<'a>(
     records: impl IntoIterator<Item = &'a [u32; BRICK_WORDS]>,
 ) -> Option<[u32; BRICK_WORDS]> {
     let mut mean = RecordMean::default();
@@ -1145,9 +1132,9 @@ pub struct BakeSettings {
 }
 
 /// Candidates a sample resamples in the reference: the arm the count reading keeps.
-pub const KEPT_CANDIDATES: u32 = 32;
+pub(crate) const KEPT_CANDIDATES: u32 = 32;
 /// Whether the reference clamps a sample: the arm the count reading keeps.
-pub const KEPT_CLAMP: bool = false;
+pub(crate) const KEPT_CLAMP: bool = false;
 
 impl Default for BakeSettings {
     fn default() -> Self {
@@ -1736,7 +1723,7 @@ impl Store {
 }
 
 /// The compute pipeline and the buffers of a bake, built on the first bake.
-pub struct BakePipeline {
+pub(crate) struct BakePipeline {
     pipeline: wgpu::ComputePipeline,
     job: wgpu::Buffer,
     faces: wgpu::Buffer,
@@ -1763,7 +1750,7 @@ fn replace_once(source: &str, from: &str, to: &str) -> String {
 /// The bake's module: march.wgsl and light.wgsl, with the candidate table and the LOD walk's
 /// camera chunk read from the face's job slot (`bake_table_slot`, `bake_origin_chunk`), so one
 /// dispatch serves faces of many jobs; then bake.wgsl.
-pub fn bake_source() -> String {
+pub(crate) fn bake_source() -> String {
     let march = replace_once(
         crate::MARCH_WGSL,
         LOD_ORIGIN,
@@ -2219,7 +2206,7 @@ pub fn dig_ring(boxes: &[[[i32; 3]; 2]], piece: ChunkExtent) -> BTreeMap<[i32; 3
 }
 
 /// Voxels from a dig's box within which bricks re-bake (ADR-0046's rings 1 and 2).
-pub const DIG_REACH: i32 = 32;
+pub(crate) const DIG_REACH: i32 = 32;
 
 /// What a dig's re-bake did.
 #[derive(Clone, Debug, Default)]
@@ -2311,11 +2298,11 @@ fn run_jobs(
 /// jobs' tables.
 const LOOP_SLOTS: usize = OPEN_JOBS - QUEUE_SLOTS;
 /// Slots the live queue's open jobs take, the last of [`OPEN_JOBS`].
-pub const QUEUE_SLOTS: usize = 16;
+pub(crate) const QUEUE_SLOTS: usize = 16;
 
 /// What one submit of a [`JobLoop`] did.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SubmitDone {
+pub(crate) struct SubmitDone {
     pub samples: u64,
     /// From the submit to the readback.
     pub seconds: f64,
@@ -2324,11 +2311,11 @@ pub struct SubmitDone {
 }
 
 /// Lanes of a workgroup that share an entry's samples (`BAKE_LANES` in bake.wgsl).
-pub const BAKE_LANES: u32 = 64;
+pub(crate) const BAKE_LANES: u32 = 64;
 /// Workgroups a dispatch row holds (`BAKE_ROW` in bake.wgsl): the entries span x then y.
 const BAKE_ROW: u32 = 32_768;
 /// Submits a loop holds unread at most ([`JobLoop::dispatch`]).
-pub const IN_FLIGHT: usize = 2;
+pub(crate) const IN_FLIGHT: usize = 2;
 /// Bytes at the head of a submit's readback: its dispatch's two timestamps.
 const STAMP_BYTES: u64 = 16;
 
@@ -2379,7 +2366,7 @@ pub(crate) struct JobLoop {
 
 impl JobLoop {
     /// A loop over `jobs`, its open jobs' tables in `slots`.
-    pub fn new(jobs: Vec<Job>, slots: std::ops::Range<usize>) -> Self {
+    pub(crate) fn new(jobs: Vec<Job>, slots: std::ops::Range<usize>) -> Self {
         let faces: u64 = jobs.iter().map(|j| j.faces.faces() as u64).sum();
         Self {
             report: BakeReport {
@@ -2407,13 +2394,13 @@ impl JobLoop {
 
     /// The loop, timing each submit on its own GPU timestamps where the device has them
     /// ([`SubmitDone::gpu_ms`]).
-    pub fn timed(mut self) -> Self {
+    pub(crate) fn timed(mut self) -> Self {
         self.timed = true;
         self
     }
 
     /// Adds a job behind the pending ones.
-    pub fn push(&mut self, job: Job) {
+    pub(crate) fn push(&mut self, job: Job) {
         self.report.chunks += 1;
         self.done.chunks += 1;
         self.done.faces += job.faces.faces() as u64;
@@ -2421,7 +2408,7 @@ impl JobLoop {
     }
 
     /// Adds a job ahead of the pending ones.
-    pub fn push_front(&mut self, job: Job) {
+    pub(crate) fn push_front(&mut self, job: Job) {
         self.report.chunks += 1;
         self.done.chunks += 1;
         self.done.faces += job.faces.faces() as u64;
@@ -2430,22 +2417,22 @@ impl JobLoop {
 
     /// Moves the open jobs `first` holds ahead of the others, each part in its order: a dispatch
     /// plans the open jobs' rounds in order. A submit in flight finds its jobs by slot.
-    pub fn promote(&mut self, first: impl Fn(ChunkCoord) -> bool) {
+    pub(crate) fn promote(&mut self, first: impl Fn(ChunkCoord) -> bool) {
         self.open.sort_by_key(|j| !first(j.coord));
     }
 
     /// No job pending or open.
-    pub fn idle(&self) -> bool {
+    pub(crate) fn idle(&self) -> bool {
         self.pending.is_empty() && self.open.is_empty()
     }
 
     /// Submits not read back yet.
-    pub fn in_flight(&self) -> usize {
+    pub(crate) fn in_flight(&self) -> usize {
         self.in_flight.len()
     }
 
     /// The chunks of the jobs pending or open.
-    pub fn chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+    pub(crate) fn chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
         self.pending
             .iter()
             .map(|j| j.coord)
@@ -2457,7 +2444,11 @@ impl JobLoop {
     /// slot freed once they are. Each job's chunk, place (first word and words, its block's
     /// layout at `record` words a brick record) and the samples its faces drew (read back or
     /// in flight).
-    pub fn withdraw(&mut self, pred: impl Fn(ChunkCoord) -> bool, record: usize) -> Vec<Withdrawn> {
+    pub(crate) fn withdraw(
+        &mut self,
+        pred: impl Fn(ChunkCoord) -> bool,
+        record: usize,
+    ) -> Vec<Withdrawn> {
         let mut out = Vec::new();
         let pending = std::mem::take(&mut self.pending);
         for job in pending {
@@ -2499,7 +2490,7 @@ impl JobLoop {
     }
 
     /// The pool words the pending and open jobs' places hold, at `record` words a brick record.
-    pub fn place_words(&self, record: usize) -> u64 {
+    pub(crate) fn place_words(&self, record: usize) -> u64 {
         let pending: u64 = self
             .pending
             .iter()
@@ -2510,7 +2501,7 @@ impl JobLoop {
     }
 
     /// Samples the pending and open jobs still have to submit, at most.
-    pub fn samples_left(&self) -> u64 {
+    pub(crate) fn samples_left(&self) -> u64 {
         let live = |s: &FaceState| {
             if s.done {
                 0
@@ -2553,7 +2544,7 @@ impl JobLoop {
     /// Writes each open job's candidate table again from the ranges `run.gpu` holds now, when a
     /// sync since the last write moved, wrote or dropped a range ([`GpuWorld::light_epoch`]). A
     /// job opened since then wrote its own table from the same ranges.
-    pub fn refresh_tables(&mut self, run: &BakeRun<'_>) {
+    pub(crate) fn refresh_tables(&mut self, run: &BakeRun<'_>) {
         let epoch = run.gpu.light_epoch();
         if self.tables_at == Some(epoch) {
             return;
@@ -2571,7 +2562,7 @@ impl JobLoop {
         clippy::too_many_arguments,
         reason = "the frame's parts, the store, the settings, the cap and the two callbacks are independent"
     )]
-    pub fn submit(
+    pub(crate) fn submit(
         &mut self,
         run: &BakeRun<'_>,
         bind: &wgpu::BindGroup,
@@ -2597,7 +2588,7 @@ impl JobLoop {
         clippy::too_many_arguments,
         reason = "the frame's parts, the store, the settings, the cap and the two callbacks are independent"
     )]
-    pub fn dispatch(
+    pub(crate) fn dispatch(
         &mut self,
         run: &BakeRun<'_>,
         bind: &wgpu::BindGroup,
@@ -2810,7 +2801,7 @@ impl JobLoop {
     /// that is not, after polling the device until at most `unread` are left unread: each face's
     /// rounds added in sample order, its stop read after each, and each ended job's block to
     /// `sink`. The sum of what the submits read did; zero samples when none was read.
-    pub fn collect(
+    pub(crate) fn collect(
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
@@ -3199,7 +3190,7 @@ pub const DIG_FADE: u32 = 4;
 pub const DEFAULT_BAKE_SLICE_MS: f64 = 1.5;
 /// The least slice a per-second budget gives a step, in milliseconds: what a step with no
 /// interval yet (the first) or a very short one bakes.
-pub const BAKE_SLICE_FLOOR_MS: f64 = 0.25;
+pub(crate) const BAKE_SLICE_FLOOR_MS: f64 = 0.25;
 
 /// The live queue's bake budget (ADR-0052): a slice a frame, or milliseconds of GPU time a
 /// second of wall time spent in slices sized by the frame's interval.
@@ -3352,9 +3343,9 @@ pub fn queue_settings() -> BakeSettings {
 
 /// Samples a face draws in one entry of the live queue's slices: one a lane of the entry's
 /// workgroup ([`BAKE_LANES`]).
-pub const QUEUE_ROUND: u32 = BAKE_LANES;
+pub(crate) const QUEUE_ROUND: u32 = BAKE_LANES;
 /// Samples a face draws in one entry of a step without a slice ([`QueueView::samples`]).
-pub const UNSLICED_ROUND: u32 = BAKE_LANES;
+pub(crate) const UNSLICED_ROUND: u32 = BAKE_LANES;
 
 /// The live queue's counters, for the HUD and stdout.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -3579,9 +3570,9 @@ pub enum Regime {
 }
 
 /// Samples a baked chunk under which a second reads [`Regime::KeepingUp`].
-pub const REGIME_B_MAX: f64 = 3e5;
+pub(crate) const REGIME_B_MAX: f64 = 3e5;
 /// Samples a baked chunk over which a second reads [`Regime::Starved`].
-pub const REGIME_A_MIN: f64 = 6e5;
+pub(crate) const REGIME_A_MIN: f64 = 6e5;
 
 impl Regime {
     /// A second's regime from the samples it read back and the chunks it baked; `None` for a
@@ -3959,9 +3950,9 @@ fn cand_of(
 }
 
 /// Candidates in the view the reach census reads at most ([`QueueStats::view_reach`]).
-pub const VIEW_REACH_SAMPLE: usize = 64;
+pub(crate) const VIEW_REACH_SAMPLE: usize = 64;
 /// Steps between two reach censuses of the view.
-pub const VIEW_REACH_EVERY: u64 = 60;
+pub(crate) const VIEW_REACH_EVERY: u64 = 60;
 
 /// Degrees the queue's view cone widens the view's half-angle by (ADR-0048's margin).
 pub const QUEUE_VIEW_MARGIN_DEG: f32 = 15.0;
@@ -4010,7 +4001,7 @@ pub fn angle_term(offset: [i32; 3], forward: [f32; 3], half_angle: f32, near: i3
 /// ADR-0048's score of a candidate at integer chunk offset `offset` with angle term `a`
 /// ([`angle_term`]): `|o| x (1 + angle_weight x a) x (refine_weight for a coarse block, else
 /// 1)`. Lower opens first.
-pub fn queue_score(
+pub(crate) fn queue_score(
     offset: [i32; 3],
     a: f32,
     coarse: bool,

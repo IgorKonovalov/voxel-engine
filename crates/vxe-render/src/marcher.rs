@@ -23,7 +23,7 @@ pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
 pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
-pub const WORKGROUP: u32 = 8;
+pub(crate) const WORKGROUP: u32 = 8;
 
 /// Views a frame holds at most; must match `MAX_VIEWS` in `march.wgsl`.
 pub const MAX_VIEWS: usize = 2;
@@ -102,63 +102,63 @@ pub struct Params {
 const _: () = assert!(size_of::<Params>().is_multiple_of(16));
 
 /// `Params::lighting` bit: the headlamp lights the frame.
-pub const LIGHTING_LAMP: u32 = 1;
+pub(crate) const LIGHTING_LAMP: u32 = 1;
 /// `Params::lighting` bit: shadow rays take the coarse walk ([`ShadowWalk::Coarse`]).
-pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
+pub(crate) const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
 /// `Params::lighting` bit: the temporal pass also shortens history by A-SVGF's gradient
 /// ([`History::Gradient`]).
-pub const LIGHTING_GRADIENT: u32 = 1 << 3;
+pub(crate) const LIGHTING_GRADIENT: u32 = 1 << 3;
 /// [`Lighting::probe_freeze`] by default: where a running mean's noise, `1 / n`, roughly
 /// equals hysteresis 0.97's steady noise, `0.03 / 1.97`.
 pub const DEFAULT_PROBE_FREEZE: u32 = 64;
 /// Frames after an emission-scale change (the frame of the change too) during which the
 /// emissive part blends at no less
 /// than the lamp's 0.2 (`0.8^11 = 0.086`: a step settles within 10 % in them).
-pub const EMISSION_CHANGE_FRAMES: u32 = 11;
+pub(crate) const EMISSION_CHANGE_FRAMES: u32 = 11;
 /// `Params::lighting` bit: an emission scale changed within the last
 /// [`EMISSION_CHANGE_FRAMES`] frames.
-pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
+pub(crate) const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// `Params::lighting` bit: the lamp's light changed since the last encode with history (its
 /// switch, a parameter, or the walk its shadow rays take): the temporal pass takes this
 /// frame's lamp part as it is, the way an edit box resets a pixel (ADR-0018), and keeps the
 /// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
 /// point light, one shadow ray), so the reset adds none.
-pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
+pub(crate) const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
-pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
+pub(crate) const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
-pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
+pub(crate) const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 /// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
 /// irradiance ([`Lighting::lamp_bounce`]).
-pub const LIGHTING_INDIRECT: u32 = 1 << 12;
+pub(crate) const LIGHTING_INDIRECT: u32 = 1 << 12;
 /// `Params::lighting` bit: the exposure is automatic ([`Exposure::Auto`]): the frame's is the
 /// exposure state's `current`.
-pub const LIGHTING_AUTO_EXPOSURE: u32 = 1 << 13;
+pub(crate) const LIGHTING_AUTO_EXPOSURE: u32 = 1 << 13;
 /// `Params::lighting` bit: a cube face's stored part is read by its shading normal
 /// ([`StoreRead::Normal`], ADR-0049).
-pub const LIGHTING_STORE_BY_NORMAL: u32 = 1 << 14;
+pub(crate) const LIGHTING_STORE_BY_NORMAL: u32 = 1 << 14;
 /// `Params::lighting` bit: the half-resolution upsample and the a-trous edge weights compare
 /// the taps' face normals ([`LightWeights::Face`], ADR-0049).
-pub const LIGHTING_FACE_WEIGHTS: u32 = 1 << 15;
+pub(crate) const LIGHTING_FACE_WEIGHTS: u32 = 1 << 15;
 
 /// `Params::flags` bit: trace the shadow ray.
-pub const FLAG_SHADOWS: u32 = 1;
+pub(crate) const FLAG_SHADOWS: u32 = 1;
 /// `Params::flags` bit: skip empty blocks through the brick occupancy masks.
-pub const FLAG_MASKS: u32 = 2;
+pub(crate) const FLAG_MASKS: u32 = 2;
 /// `Params::flags` bits 2..4: the [`NormalMode`].
-pub const NORMAL_SHIFT: u32 = 2;
+pub(crate) const NORMAL_SHIFT: u32 = 2;
 /// `Params::flags` bits 5..8: the [`ViewMode`].
-pub const VIEW_SHIFT: u32 = 5;
+pub(crate) const VIEW_SHIFT: u32 = 5;
 /// `Params::flags` bit: skip empty cells larger than a voxel (`LightParams::skips`).
-pub const FLAG_SKIPS: u32 = 1 << 9;
+pub(crate) const FLAG_SKIPS: u32 = 1 << 9;
 /// `Params::flags` bit: the primary ray passes through solid until it has crossed real air
 /// (`LookParams::cutaway`).
-pub const FLAG_CUTAWAY: u32 = 1 << 10;
+pub(crate) const FLAG_CUTAWAY: u32 = 1 << 10;
 /// `Params::flags` bit, set by the frame and not by a look: the field look's split walk. The
 /// hit pipeline walks each ray as the cube walk does until it enters a brick the field can hit
 /// in (a band brick of a full chunk with a smooth solid voxel in it or its shell), and a second
 /// dispatch walks the field from there ([`Frame::set_field_split`]).
-pub const FLAG_FIELD_SPLIT: u32 = 1 << 19;
+pub(crate) const FLAG_FIELD_SPLIT: u32 = 1 << 19;
 
 /// `field_resume`'s workgroup size in `march.wgsl`: the split walk hands at most
 /// `SPLIT_GROUP` times the dispatch limit of rays on, and a frame of more pixels walks the
@@ -684,7 +684,7 @@ pub struct Upscaler {
 }
 
 /// Frames of lamp parameters the frame keeps for [`Upscaler::change_frames`].
-pub const LAMP_FRAMES: usize = 32;
+pub(crate) const LAMP_FRAMES: usize = 32;
 
 impl Default for Upscaler {
     /// The Gaussian of width 0.6 over the 3 x 3, the Catmull-Rom fetch and the
@@ -1136,7 +1136,7 @@ pub struct Frame {
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
-pub const ATROUS_ITERATIONS: usize = 4;
+pub(crate) const ATROUS_ITERATIONS: usize = 4;
 
 /// Edit boxes one frame takes; one more flushes all history.
 pub const MAX_EDITS: usize = 64;
@@ -1214,7 +1214,7 @@ impl LightKey {
 }
 
 /// Entries the candidate table holds at most.
-pub const LIGHT_TABLE_ENTRIES: usize = 1024;
+pub(crate) const LIGHT_TABLE_ENTRIES: usize = 1024;
 
 /// The light pass's candidate table as written past the light-sample reservation
 /// (`GpuWorld::light_table_base`): a header slot `count, total (f32 bits), 0, 0`, then per
@@ -3997,7 +3997,7 @@ const STORE_STATS_BYTES: u64 = 20;
 
 /// Read-back buffers a [`ReadbackRing`] cycles through: with the GPU keeping up, a frame's
 /// copy is mapped while the next two are recorded.
-pub const READBACK_RING: usize = 3;
+pub(crate) const READBACK_RING: usize = 3;
 
 /// A ring slot's progress.
 enum RingPhase {
@@ -4033,14 +4033,14 @@ struct RingState {
 /// wgpu refuses a submit that uses a buffer with a map pending. When every slot is mapping (the
 /// GPU three copies behind) a copy is skipped; when none is free but one holds a copy not yet
 /// asked to map, the oldest such is overwritten.
-pub struct ReadbackRing {
+pub(crate) struct ReadbackRing {
     state: std::sync::Mutex<RingState>,
     size: u64,
 }
 
 impl ReadbackRing {
     /// A ring of `size`-byte slots (`size` a multiple of 4, as a buffer copy needs).
-    pub fn new(device: &wgpu::Device, label: &str, size: u64) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, label: &str, size: u64) -> Self {
         let slots = (0..READBACK_RING)
             .map(|_| RingSlot {
                 buffer: device.create_buffer(&wgpu::BufferDescriptor {
@@ -4071,7 +4071,7 @@ impl ReadbackRing {
 
     /// Records a copy of the ring's size from `src` at `offset` into a slot; first collects the
     /// slots that finished mapping. Returns the copy's index, or `None` when it was skipped.
-    pub fn copy(
+    pub(crate) fn copy(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         src: &wgpu::Buffer,
@@ -4104,7 +4104,7 @@ impl ReadbackRing {
     /// Asks the copied slots to map, polls `device` without waiting, collects the finished
     /// ones, and returns `f` of the newest copy collected so far with its age in copies (0 for
     /// the last one recorded); `None` until the first has finished mapping.
-    pub fn try_read<T>(
+    pub(crate) fn try_read<T>(
         &self,
         device: &wgpu::Device,
         f: impl FnOnce(&[u8]) -> T,
@@ -4118,7 +4118,11 @@ impl ReadbackRing {
 
     /// As [`ReadbackRing::try_read`], but waits for the GPU first, so the newest copy is the
     /// last one recorded (age 0) unless it was skipped.
-    pub fn read<T>(&self, device: &wgpu::Device, f: impl FnOnce(&[u8]) -> T) -> Option<(T, u64)> {
+    pub(crate) fn read<T>(
+        &self,
+        device: &wgpu::Device,
+        f: impl FnOnce(&[u8]) -> T,
+    ) -> Option<(T, u64)> {
         let mut st = self.lock();
         st.request_maps();
         device

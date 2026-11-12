@@ -17,10 +17,10 @@ use std::collections::{BTreeMap, HashMap};
 use flythrough::cave::{ORE, ROCK};
 use support::rigs::tone_bytes;
 use support::{SyncNow, cave_table, reading_device};
-use vxe_render::bake::{self, BakeSettings};
-use vxe_render::gpu_world::{GpuWorld, MirrorConfig, UNIT_BYTES, Window};
-use vxe_render::marcher::LightingResolution;
-use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, readback, wgpu};
+use vxe_render::BakeSettings;
+use vxe_render::LightingResolution;
+use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, wgpu};
+use vxe_render::{GpuWorld, MirrorConfig, Window, internals::UNIT_BYTES};
 use vxe_world::{
     AIR, ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, UniformSource,
     World,
@@ -110,7 +110,7 @@ fn new_frame(device: &wgpu::Device, size: [u32; 2]) -> Frame {
 }
 
 impl Rig {
-    fn bake(&mut self, settings: &BakeSettings) -> bake::BakeReport {
+    fn bake(&mut self, settings: &BakeSettings) -> vxe_render::BakeReport {
         let extent = self.world.extent();
         self.frame
             .bake_until(
@@ -137,7 +137,11 @@ impl Rig {
 
     /// Applies `op`, mirrors it, and re-bakes its ring to `settings` as the window's frame does:
     /// the report and the edit's box.
-    fn dig(&mut self, op: &EditOp, settings: &BakeSettings) -> (bake::DigReport, [[i32; 3]; 2]) {
+    fn dig(
+        &mut self,
+        op: &EditOp,
+        settings: &BakeSettings,
+    ) -> (vxe_render::DigReport, [[i32; 3]; 2]) {
         let r = self.world.apply(op).expect("the dig is resident");
         let (min, max) = r.aabb.expect("the dig changed voxels");
         self.gpu
@@ -197,7 +201,7 @@ impl Rig {
     }
 
     fn accum(&self) -> Vec<[f32; 4]> {
-        readback::read_float(&self.device, &self.queue, self.frame.accumulated())
+        vxe_render::debug::read_float(&self.device, &self.queue, self.frame.accumulated())
     }
 }
 
@@ -234,7 +238,8 @@ fn cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> HashMap<([i32; 3], u8), [u
             if dir == 0 {
                 continue;
             }
-            let rec = &block[(dir >> 11) as usize - bake::BRICK_WORDS..(dir >> 11) as usize];
+            let rec = &block
+                [(dir >> 11) as usize - vxe_render::internals::BRICK_WORDS..(dir >> 11) as usize];
             let b = vxe_world::brick_of_slot(slot);
             let g = [0, 1, 2].map(|k| c[k] * 8 + b[k]);
             for f in 0..6u8 {
@@ -271,7 +276,7 @@ fn brick_value(
         let wa = if oa == 1 { f[ta] } else { 1.0 - f[ta] };
         let wb = if ob == 1 { f[tb] } else { 1.0 - f[tb] };
         if let Some(c) = cells.get(&(b, face)) {
-            let x = bake::rgb9e5_unpack(c[0]);
+            let x = vxe_render::internals::rgb9e5_unpack(c[0]);
             for k in 0..3 {
                 sum[k] += x[k] * (wa * wb);
             }
@@ -281,7 +286,9 @@ fn brick_value(
     if weight > 0.0 {
         return Some(sum.map(|x| x / weight));
     }
-    cells.get(&(own, face)).map(|c| bake::rgb9e5_unpack(c[0]))
+    cells
+        .get(&(own, face))
+        .map(|c| vxe_render::internals::rgb9e5_unpack(c[0]))
 }
 
 impl Rig {
@@ -296,7 +303,7 @@ impl Rig {
     }
 
     fn display(&self) -> Vec<u8> {
-        readback::read_rgba8(&self.device, &self.queue, self.frame.target())
+        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 }
 
@@ -375,7 +382,7 @@ fn four_ways(rig: &mut Rig) {
         keep_faces: true,
         ..test_counts(4096)
     };
-    let samples_of = |r: &bake::BakeReport| -> HashMap<([i32; 3], u8), u32> {
+    let samples_of = |r: &vxe_render::BakeReport| -> HashMap<([i32; 3], u8), u32> {
         r.outcomes
             .iter()
             .map(|o| ((o.voxel, o.face), o.samples))
@@ -460,10 +467,10 @@ fn a_baked_view_is_final_on_its_first_frame() {
     rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
-    let accum = readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
-    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let light = readback::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
+    let accum = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let light = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
     let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
     assert_eq!(stats.missing, 0, "store_missing");
     let eye = camera.position.to_array();
@@ -617,7 +624,7 @@ fn fallback_camera() -> Camera {
 /// words are the CPU's.
 #[test]
 fn a_missing_brick_reads_its_neighbour_then_its_parent() {
-    use vxe_render::bake::MissingLight;
+    use vxe_render::MissingLight;
     let Some(mut rig) = fallback_rig([128, 72]) else {
         return;
     };
@@ -640,8 +647,12 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
             .frame
             .read_store_block(&rig.device, &rig.queue, ChunkCoord(c))
             .expect("a baked block");
-        let at = bake::SUMMARY_AT as usize;
-        assert_eq!(block[at..at + bake::BRICK_WORDS], s, "{c:?}'s pool summary");
+        let at = vxe_render::internals::SUMMARY_AT as usize;
+        assert_eq!(
+            block[at..at + vxe_render::internals::BRICK_WORDS],
+            s,
+            "{c:?}'s pool summary"
+        );
     }
     for c in [[1, 0, 0], [1, 1, 0], [4, 0, 0]] {
         assert!(
@@ -658,8 +669,9 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
         rig.frame.set_missing_light(&rig.queue, mode);
         rig.step(&camera);
         let accum = rig.accum();
-        let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let info =
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
         assert_eq!(
             *missing.get_or_insert(stats.missing),
@@ -680,7 +692,9 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
             let want = light
                 .chain(c, mode)
                 .filter(|r| r[6] >> (16 + u32::from(f)) & 1 != 0)
-                .map_or([0.0; 3], |r| bake::rgb9e5_unpack(r[usize::from(f)]));
+                .map_or([0.0; 3], |r| {
+                    vxe_render::internals::rgb9e5_unpack(r[usize::from(f)])
+                });
             if want.iter().any(|&x| x > 0.0) {
                 fallback += 1;
             } else {
@@ -719,7 +733,7 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
             t
         };
         let all_near = |c: [i32; 3], w: u32| {
-            let want = bake::rgb9e5_unpack(w);
+            let want = vxe_render::internals::rgb9e5_unpack(w);
             let step = 2f32.powi((w >> 27) as i32 - 24);
             reads(c)
                 .iter()
@@ -771,7 +785,7 @@ fn the_missing_light_golden() {
     };
     assert_eq!(
         rig.frame.missing_light(),
-        bake::MissingLight::Chain,
+        vxe_render::MissingLight::Chain,
         "the default missing light"
     );
     rig.step(&fallback_camera());
@@ -801,8 +815,8 @@ fn the_baked_light_shows_with_the_filter_off() {
         rig.display()
     };
     let on = frames(&mut rig, true);
-    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let off = frames(&mut rig, false);
     let eye = camera.position.to_array();
     let lit: Vec<usize> = (0..pos.len())
@@ -847,8 +861,9 @@ fn a_moving_camera_reads_what_a_still_one_reads() {
     };
     rig.bake(&test_counts(1024));
     let faced = |rig: &Rig, cam: &Camera, img: &[u8]| -> Vec<(usize, [u8; 4])> {
-        let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let info =
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         (0..pos.len())
             .filter(|&i| hit_face(cam.position.to_array(), pos[i], info[i]).is_some())
             .map(|i| {
@@ -936,7 +951,7 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     let (dig, aabb) = rig.dig(&sphere([48, 48, 56], 3, Mode::Carve), &dig_counts());
     assert!(dig.bake.faces > 0, "the dig baked no face");
     let piece = rig.world.extent();
-    let ring = bake::dig_ring(&[aabb], piece);
+    let ring = vxe_render::internals::dig_ring(&[aabb], piece);
     let after = rig.cells();
     let fresh = rig.fresh_cells(piece, &dig_counts());
     let (a, f) = (in_ring(&after, &ring), in_ring(&fresh, &ring));
@@ -955,8 +970,8 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
-    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let eye = camera.position.to_array();
     let on_screen = (0..pos.len())
         .filter_map(|i| hit_face(eye, pos[i], info[i]))
@@ -999,7 +1014,7 @@ fn a_dug_emitter_leaves_the_near_ring_at_once() {
         &dig_counts(),
     );
     let piece = rig.world.extent();
-    let ring = bake::dig_ring(&[aabb], piece);
+    let ring = vxe_render::internals::dig_ring(&[aabb], piece);
     let after = in_ring(&rig.cells(), &ring);
     println!("{} directions in the ring", after.len());
     // The slab's 16 bricks, each with its +z and -z.
@@ -1153,7 +1168,8 @@ fn a_glass_pane_does_not_brighten_what_it_covers() {
         for _ in 0..16 {
             rig.step(&camera);
         }
-        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let info =
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let covered = info.iter().filter(|r| r[3] & 4 != 0).count();
         println!("{name}: {covered} pixels behind a translucent voxel");
         (rig.display(), covered)
@@ -1212,13 +1228,13 @@ fn hit_radiance(
     ex: f32,
 ) -> Vec<[f32; 3]> {
     let filter = frame.lighting().filter;
-    let info = readback::read_rgba16u(device, queue, frame.hit_records());
+    let info = vxe_render::debug::read_rgba16u(device, queue, frame.hit_records());
     let lit_tex = if filter {
         frame.filtered()
     } else {
         frame.irradiance()
     };
-    let lit = readback::read_float(device, queue, lit_tex);
+    let lit = vxe_render::debug::read_float(device, queue, lit_tex);
     info.iter()
         .zip(&lit)
         .map(|(r, l)| {
@@ -1356,8 +1372,9 @@ fn a_glass_pane_filters_by_path_length() {
     ] {
         settle(&mut rig, camera);
         let shown = luma(&rig.display());
-        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-        let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let info =
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
         let eye = camera.position.to_array().map(f64::from);
         let (mut worst, mut n) = (0f32, 0usize);
         let mut by_half: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
@@ -1413,9 +1430,9 @@ fn a_glass_pane_filters_by_path_length() {
     // The lit pane over the black wall: its reflected share from its +x face's brick record.
     settle(&mut rig, &lit_view);
     let shown = luma(&rig.display());
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let layer = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
     let cells = rig.cells();
     let scale = rig.frame.emission_scale(ORE);
     let eye = lit_view.position.to_array().map(f64::from);
@@ -1468,7 +1485,7 @@ fn a_glass_pane_filters_by_path_length() {
         &settings,
     );
     settle(&mut rig, &lit_view);
-    let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let layer = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
     let unlit = lit
         .iter()
         .filter(|&&i| layer[i][0] != 0.0 || layer[i][1] != 0.0 || layer[i][2] != 0.0)
@@ -1824,7 +1841,7 @@ fn view_camera(view: &ReadView) -> Camera {
 }
 
 /// One timed frame: the passes' milliseconds by name.
-fn timed_step(rig: &mut ReadRig, timer: &vxe_render::marcher::PassTimer, c: &Camera) -> Vec<f64> {
+fn timed_step(rig: &mut ReadRig, timer: &vxe_render::PassTimer, c: &Camera) -> Vec<f64> {
     rig.frame.advance();
     let params = rig.frame.params(&rig.gpu, c, &LightParams::default());
     let mut enc = rig
@@ -1845,7 +1862,7 @@ fn timed_step(rig: &mut ReadRig, timer: &vxe_render::marcher::PassTimer, c: &Cam
 
 fn pass_line(sum: &[f64], frames: usize) -> String {
     let total: f64 = sum.iter().sum::<f64>() / frames as f64;
-    let mut parts: Vec<String> = vxe_render::marcher::FRAME_PASSES
+    let mut parts: Vec<String> = vxe_render::FRAME_PASSES
         .iter()
         .zip(sum)
         .filter(|(_, ms)| **ms / frames as f64 >= 0.05)
@@ -1969,9 +1986,9 @@ fn stair_frame(rig: &mut Rig, camera: &Camera, arm: &StairArm) -> StairFrame {
     rig.step(camera);
     rig.step(camera);
     StairFrame {
-        accum: readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated()),
-        pos: readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions()),
-        info: readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+        accum: vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated()),
+        pos: vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions()),
+        info: vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
         display: rig.display(),
     }
 }
@@ -2329,7 +2346,7 @@ mod reading {
                 &mut rig.gpu,
                 &rig.world,
                 piece,
-                &bake::queue_settings(),
+                &vxe_render::queue_settings(),
                 &mut |_| {},
             )
             .expect("the piece fits the pool");
@@ -2380,8 +2397,8 @@ mod reading {
         };
         let (ca, cb) = (cells_of(&a), cells_of(&b));
         let level = |w: u32| {
-            let v = bake::rgb9e5_unpack(w);
-            bake::tone_level(
+            let v = vxe_render::internals::rgb9e5_unpack(w);
+            vxe_render::internals::tone_level(
                 0.2126 * f64::from(v[0]) + 0.7152 * f64::from(v[1]) + 0.0722 * f64::from(v[2]),
             )
         };
@@ -2469,9 +2486,10 @@ mod reading {
             let b = tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
             0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
         };
-        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-        let layer = readback::read_float(&rig.device, &rig.queue, rig.frame.layers());
-        let shown = luma(&readback::read_rgba8(
+        let info =
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let layer = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
+        let shown = luma(&vxe_render::debug::read_rgba8(
             &rig.device,
             &rig.queue,
             rig.frame.target(),
@@ -2518,7 +2536,7 @@ mod reading {
     }
 
     /// The live queue's dig against a fresh bake (Plan 0059 Phase 8e): at the far pose, a radius-1
-    /// piece baked at the queue's settings ([`bake::queue_settings`], 8/4096), one 5-voxel carve at
+    /// piece baked at the queue's settings ([`vxe_render::queue_settings`], 8/4096), one 5-voxel carve at
     /// the view's centre, its ring re-baked to each arm's settings in turn (the same box each time,
     /// so each arm re-bakes the same bricks from the same edited world), then a fresh bake of the
     /// edited world at the queue's settings. For each arm, every ring brick's six direction values
@@ -2553,7 +2571,7 @@ mod reading {
             let hi = [0, 1, 2].map(|k| (piece.min.0[k] + 3).min(world_extent.min.0[k] + s[k]));
             ChunkExtent::new(lo, hi)
         };
-        let queue_settings = bake::queue_settings();
+        let queue_settings = vxe_render::queue_settings();
         let t = std::time::Instant::now();
         let r = rig
             .frame
@@ -2588,8 +2606,9 @@ mod reading {
         );
         // The hit in the view's central half nearest 30 voxels whose carve (radius 5, plus the
         // ring's voxel) lies inside the piece: the view's centre can hit past the level's edge.
-        let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let info =
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let dist = |p: &[f32; 3]| (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
         let hit = (size[1] / 4..3 * size[1] / 4)
             .flat_map(|y| (size[0] / 4..3 * size[0] / 4).map(move |x| (y * size[0] + x) as usize))
@@ -2609,7 +2628,7 @@ mod reading {
         rig.gpu
             .sync_now(&rig.world, &rig.device, &rig.queue)
             .expect("the mirror fits");
-        let ring = bake::dig_ring(&[dug], piece);
+        let ring = vxe_render::internals::dig_ring(&[dug], piece);
         log.line(&format!(
         "queue dig: carve at {:?} ({:.1} voxels from the eye), box {:?}..{:?}, ring {} bricks in {} chunks",
         hit.map(|v| v.floor() as i32),
@@ -2624,7 +2643,7 @@ mod reading {
             (
                 "the queue's settings, round BAKE_ROUND",
                 BakeSettings {
-                    round: bake::BAKE_ROUND,
+                    round: vxe_render::internals::BAKE_ROUND,
                     ..queue_settings.clone()
                 },
             ),
@@ -2716,19 +2735,24 @@ mod reading {
                         }
                         let (ra, rf) = ((da >> 11) as usize, (df >> 11) as usize);
                         for d in 0..6 {
-                            let (wa, wf) =
-                                (a[ra - bake::BRICK_WORDS + d], f[rf - bake::BRICK_WORDS + d]);
+                            let (wa, wf) = (
+                                a[ra - vxe_render::internals::BRICK_WORDS + d],
+                                f[rf - vxe_render::internals::BRICK_WORDS + d],
+                            );
                             if wa == wf {
                                 equal += 1;
                             }
-                            let (va, vf) = (bake::rgb9e5_unpack(wa), bake::rgb9e5_unpack(wf));
+                            let (va, vf) = (
+                                vxe_render::internals::rgb9e5_unpack(wa),
+                                vxe_render::internals::rgb9e5_unpack(wf),
+                            );
                             let step = |w: u32| 2f32.powi((w >> 27) as i32 - 24);
                             let ulp = step(wa).max(step(wf));
                             if (0..3).all(|k| (va[k] - vf[k]).abs() <= ulp * 1.0001) {
                                 one_step += 1;
                             }
                             let l = |v: [f32; 3]| {
-                                bake::tone_level(
+                                vxe_render::internals::tone_level(
                                     0.2126 * f64::from(v[0])
                                         + 0.7152 * f64::from(v[1])
                                         + 0.0722 * f64::from(v[2]),
@@ -2782,10 +2806,10 @@ mod reading {
             }
             let (mut rig, _) = view_rig(&view, NATIVE);
             let load_ms = brick_bake(&mut rig, &view);
-            let timer = vxe_render::marcher::PassTimer::with_passes(
+            let timer = vxe_render::PassTimer::with_passes(
                 &rig.device,
                 &rig.queue,
-                vxe_render::marcher::FRAME_PASSES.len() as u32,
+                vxe_render::FRAME_PASSES.len() as u32,
             )
             .expect("timestamps on the RTX");
             let still = view_camera(&view);
@@ -2818,12 +2842,12 @@ mod reading {
                         rig.frame.set_upscaler_kind(&rig.device, k);
                         rig.frame.set_sizes(
                             &rig.device,
-                            vxe_render::marcher::RenderScale::OneHalf.internal(NATIVE),
+                            vxe_render::RenderScale::OneHalf.internal(NATIVE),
                             NATIVE,
                         );
                     }
                 }
-                rig.frame.set_look(vxe_render::marcher::LookParams {
+                rig.frame.set_look(vxe_render::LookParams {
                     far_normal: far,
                     ..rig.frame.look()
                 });
@@ -2832,7 +2856,7 @@ mod reading {
                     rig.frame
                         .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
                 }
-                let img = luma(&readback::read_rgba8(
+                let img = luma(&vxe_render::debug::read_rgba8(
                     &rig.device,
                     &rig.queue,
                     rig.frame.target(),
@@ -2859,7 +2883,7 @@ mod reading {
                         )
                     }
                 };
-                let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+                let mut sum = vec![0.0; vxe_render::FRAME_PASSES.len()];
                 for _ in 0..120 {
                     for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
                         *s += ms;
@@ -2867,7 +2891,8 @@ mod reading {
                 }
                 let passes = pass_line(&sum, 120);
                 let dots = |rig: &ReadRig| -> f64 {
-                    let px = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+                    let px =
+                        vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
                     support::aliasing::dots(&px, NATIVE[0], NATIVE[1])
                         .iter()
                         .filter(|d| **d)
@@ -2940,10 +2965,10 @@ mod reading {
             }
             let (mut rig, _) = view_rig(&view, size);
             brick_bake(&mut rig, &view);
-            let timer = vxe_render::marcher::PassTimer::with_passes(
+            let timer = vxe_render::PassTimer::with_passes(
                 &rig.device,
                 &rig.queue,
-                vxe_render::marcher::FRAME_PASSES.len() as u32,
+                vxe_render::FRAME_PASSES.len() as u32,
             )
             .expect("timestamps on the adapter");
             let still = view_camera(&view);
@@ -2962,7 +2987,7 @@ mod reading {
                         );
                         rig.frame.set_sizes(
                             &rig.device,
-                            vxe_render::marcher::RenderScale::OneHalf.internal(size),
+                            vxe_render::RenderScale::OneHalf.internal(size),
                             size,
                         );
                     } else {
@@ -2971,13 +2996,13 @@ mod reading {
                         rig.frame.set_jitter(&rig.device, false);
                         rig.frame.set_sizes(&rig.device, size, size);
                     }
-                    rig.frame.set_look(vxe_render::marcher::LookParams {
+                    rig.frame.set_look(vxe_render::LookParams {
                         far_normal: [1.0, 2.0],
                         ..rig.frame.look()
                     });
                     rig.frame.reset_history();
                     let read = |rig: &ReadRig| {
-                        readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+                        vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
                     };
                     let mut at512 = Vec::new();
                     for f in 1..=1024 {
@@ -3009,14 +3034,14 @@ mod reading {
                     };
                     let one = change(&at1024, &at1025);
                     let drift = change(&at512, &at1024);
-                    let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+                    let mut sum = vec![0.0; vxe_render::FRAME_PASSES.len()];
                     for _ in 0..120 {
                         for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
                             *s += ms;
                         }
                     }
                     let of = |n: &str| {
-                        vxe_render::marcher::FRAME_PASSES
+                        vxe_render::FRAME_PASSES
                             .iter()
                             .position(|p| *p == n)
                             .map_or(0.0, |i| sum[i] / 120.0)
@@ -3064,13 +3089,13 @@ mod reading {
             }
             let (mut rig, _) = view_rig(&view, NATIVE);
             brick_bake(&mut rig, &view);
-            let timer = vxe_render::marcher::PassTimer::with_passes(
+            let timer = vxe_render::PassTimer::with_passes(
                 &rig.device,
                 &rig.queue,
-                vxe_render::marcher::FRAME_PASSES.len() as u32,
+                vxe_render::FRAME_PASSES.len() as u32,
             )
             .expect("timestamps on the adapter");
-            let internal = vxe_render::marcher::RenderScale::OneHalf.internal(NATIVE);
+            let internal = vxe_render::RenderScale::OneHalf.internal(NATIVE);
             rig.frame.set_upscaler_kind(
                 &rig.device,
                 vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
@@ -3079,7 +3104,7 @@ mod reading {
                 }),
             );
             rig.frame.set_sizes(&rig.device, internal, NATIVE);
-            rig.frame.set_look(vxe_render::marcher::LookParams {
+            rig.frame.set_look(vxe_render::LookParams {
                 far_normal: far,
                 ..rig.frame.look()
             });
@@ -3113,7 +3138,7 @@ mod reading {
                             rig.frame
                                 .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
                         }
-                        let mut sum = vec![0.0; vxe_render::marcher::FRAME_PASSES.len()];
+                        let mut sum = vec![0.0; vxe_render::FRAME_PASSES.len()];
                         for f in 0..FRAMES {
                             let c = if walking { walk(f) } else { still };
                             for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &c)) {
@@ -3121,7 +3146,7 @@ mod reading {
                             }
                         }
                         let total: f64 = sum.iter().sum::<f64>() / FRAMES as f64;
-                        let passes: Vec<String> = vxe_render::marcher::FRAME_PASSES
+                        let passes: Vec<String> = vxe_render::FRAME_PASSES
                             .iter()
                             .zip(&sum)
                             .filter(|(_, ms)| **ms > 0.0)

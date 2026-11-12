@@ -60,9 +60,11 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use flythrough::cave::CaveSource;
 use flythrough::showcase::{SHOWCASE_CHUNKS, ShowcaseSource};
 use flythrough::{cave_materials, chunk_ram, mips_ram, now, stream_record_chunks, window_side};
-use vxe_render::gpu_world::{
-    BIN_COUNT, MATERIAL_FLOATS, PAGE_UNITS, RECORD_BYTES, SLOT_BINS, UNIT_BYTES, bin_of,
-    budget_for, class_code, payload_units, slot_units, slots_per_page,
+use vxe_render::{
+    internals::BIN_COUNT, internals::MATERIAL_FLOATS, internals::PAGE_UNITS,
+    internals::RECORD_BYTES, internals::SLOT_BINS, internals::UNIT_BYTES, internals::bin_of,
+    internals::budget_for, internals::class_code, internals::payload_units, internals::slot_units,
+    internals::slots_per_page,
 };
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::packed::PackedClass;

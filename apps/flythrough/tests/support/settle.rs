@@ -47,11 +47,10 @@ use std::collections::HashMap;
 use super::stillness::{FULL_LOG2, PATCH_POSE, Pose, SIZE, TILE, VEIN_POSE, VeinLevel, meter_log2};
 use super::*;
 use flythrough::LookPreset;
-use vxe_render::exposure::ExposureState;
+use vxe_render::ExposureState;
 use vxe_render::glam::Vec3;
 use vxe_render::{
     AutoExposure, Exposure, Frame, Fsr2Settings, LightParams, Lighting, LookParams, UpscalerKind,
-    readback,
 };
 
 /// The display size with the upscaler at the fly-through's default scale 1.5 over `SIZE`.
@@ -154,7 +153,7 @@ impl Steady {
 
     pub fn apply(self, lighting: Lighting) -> Lighting {
         Lighting {
-            probe_freeze: self.a1.unwrap_or(vxe_render::marcher::DEFAULT_PROBE_FREEZE),
+            probe_freeze: self.a1.unwrap_or(vxe_render::DEFAULT_PROBE_FREEZE),
             ..lighting
         }
     }
@@ -225,10 +224,7 @@ pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
     let mut frame = if setting.bridge {
         let mut f = Frame::with_sizes(device, SIZE, OUTPUT);
         f.set_jitter(device, true);
-        f.set_upscaler_kind(
-            device,
-            UpscalerKind::Own(vxe_render::marcher::Upscaler::default()),
-        );
+        f.set_upscaler_kind(device, UpscalerKind::Own(vxe_render::Upscaler::default()));
         f.set_sharpness(queue, 0.5);
         f.set_look(look_of(LookPreset::FACE));
         f
@@ -261,7 +257,7 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
         probe_move_blend: std::env::var("VXE_PROBE_MOVE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(vxe_render::probes::DEFAULT_H_MOVE),
+            .unwrap_or(vxe_render::DEFAULT_H_MOVE),
         exposure: if setting.auto {
             Exposure::Auto(AutoExposure::eye())
         } else {
@@ -303,7 +299,7 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
     let (device, queue) = (&level.device, &level.queue);
     let [tw, th] = SIZE.map(|n| n.div_ceil(TILE));
     let n = (tw * th) as u64;
-    let b = readback::read_buffer(device, queue, frame.exposure_tiles(), 0, 8 * n);
+    let b = vxe_render::debug::read_buffer(device, queue, frame.exposure_tiles(), 0, 8 * n);
     let meter = b
         .chunks_exact(8)
         .map(|c| {
@@ -313,7 +309,7 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
             (m, k >= (TILE * TILE) as f32 && m > FULL_LOG2)
         })
         .collect();
-    let st = readback::read_buffer(device, queue, frame.exposure_state(), 0, 32);
+    let st = vxe_render::debug::read_buffer(device, queue, frame.exposure_state(), 0, 32);
     let exposure = ExposureState::from_bytes(&st).previous;
     let acc = frame.accumulated();
     let grid = [acc.width(), acc.height()];
@@ -322,7 +318,7 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
         camera,
         exposure,
         meter,
-        display: readback::read_rgba8(device, queue, t),
+        display: vxe_render::debug::read_rgba8(device, queue, t),
         display_size: [t.width(), t.height()],
         composite: if want.composite {
             read_composite(level, frame)
@@ -330,21 +326,21 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
             Vec::new()
         },
         grid,
-        accum: readback::read_float(device, queue, acc),
-        filtered: readback::read_float(device, queue, frame.filtered()),
-        gather: readback::read_float(device, queue, frame.indirect_irradiance()),
+        accum: vxe_render::debug::read_float(device, queue, acc),
+        filtered: vxe_render::debug::read_float(device, queue, frame.filtered()),
+        gather: vxe_render::debug::read_float(device, queue, frame.indirect_irradiance()),
         moments: if want.moments {
-            readback::read_float(device, queue, frame.moments())
+            vxe_render::debug::read_float(device, queue, frame.moments())
         } else {
             Vec::new()
         },
         hit_pos: if want.hits {
-            readback::read_float(device, queue, frame.hit_positions())
+            vxe_render::debug::read_float(device, queue, frame.hit_positions())
         } else {
             Vec::new()
         },
         hit_info: if want.hits {
-            readback::read_rgba16u(device, queue, frame.hit_records())
+            vxe_render::debug::read_rgba16u(device, queue, frame.hit_records())
         } else {
             Vec::new()
         },
@@ -360,13 +356,13 @@ fn read_composite(level: &VeinLevel, frame: &Frame) -> Vec<[f32; 3]> {
             let x = x.max(0.0);
             ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
         };
-        return readback::read_float(device, queue, fsr.colour_in())
+        return vxe_render::debug::read_float(device, queue, fsr.colour_in())
             .into_iter()
             .map(|c| [c[0], c[1], c[2]].map(|v| aces(v).powf(1.0 / 2.2)))
             .collect();
     }
     let capture = frame.composite_capture().expect("captured");
-    readback::read_rgba8(device, queue, capture)
+    vxe_render::debug::read_rgba8(device, queue, capture)
         .chunks_exact(4)
         .map(|c| [c[0], c[1], c[2]].map(|v| f32::from(v) / 255.0))
         .collect()
@@ -2143,7 +2139,8 @@ pub fn eye_exposure(level: &VeinLevel, pose: &Pose, setting: Setting, frames: us
     };
     let mut frame = make_frame(level, pose, auto);
     render(level, &mut frame, &pose.camera(), frames);
-    let st = readback::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
+    let st =
+        vxe_render::debug::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
     ExposureState::from_bytes(&st).previous
 }
 
@@ -2162,16 +2159,17 @@ pub fn eye_after_lamp_off(level: &VeinLevel, pose: &Pose) -> f32 {
     render(level, &mut frame, &pose.camera(), 600);
     frame.set_lighting(lighting(pose, Setting { lamp: false, ..on }));
     render(level, &mut frame, &pose.camera(), 900);
-    let st = readback::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
+    let st =
+        vxe_render::debug::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
     ExposureState::from_bytes(&st).previous
 }
 
 /// The probe volume's state at rest: of the slots holding their probe (traced), how many are
 /// inside rock.
 pub fn probe_census(level: &VeinLevel, frame: &Frame) -> (u32, u32) {
-    use vxe_render::probes::MAX_AGE;
+    use vxe_render::internals::MAX_AGE;
     let v = frame.probes();
-    let b = readback::read_buffer(
+    let b = vxe_render::debug::read_buffer(
         &level.device,
         &level.queue,
         v.data(),
@@ -2206,9 +2204,9 @@ pub fn freeze_census(
     camera: &Camera,
     freeze: u32,
 ) -> FreezeCensus {
-    use vxe_render::probes::MAX_AGE;
+    use vxe_render::internals::MAX_AGE;
     let v = frame.probes();
-    let b = readback::read_buffer(
+    let b = vxe_render::debug::read_buffer(
         &level.device,
         &level.queue,
         v.data(),
@@ -2287,7 +2285,7 @@ pub fn flight_cost(
     run: KRun,
     settle: usize,
 ) -> Option<Vec<(&'static str, f64)>> {
-    use vxe_render::marcher::FRAME_PASSES;
+    use vxe_render::FRAME_PASSES;
     let (device, queue) = (&level.device, &level.queue);
     let timer = vxe_render::PassTimer::with_passes(device, queue, FRAME_PASSES.len() as u32)?;
     let output = [1920, 1080];

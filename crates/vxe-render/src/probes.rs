@@ -28,15 +28,16 @@
 use crate::readback;
 
 /// Probes on each axis of the volume at most.
-pub const MAX_PROBES_PER_AXIS: u32 = 32;
+pub(crate) const MAX_PROBES_PER_AXIS: u32 = 32;
 /// Probes in the largest volume.
-pub const MAX_PROBE_COUNT: u32 = MAX_PROBES_PER_AXIS * MAX_PROBES_PER_AXIS * MAX_PROBES_PER_AXIS;
+pub(crate) const MAX_PROBE_COUNT: u32 =
+    MAX_PROBES_PER_AXIS * MAX_PROBES_PER_AXIS * MAX_PROBES_PER_AXIS;
 /// The spacing between probes in voxels, by default (1.6 m at 10 cm voxels).
 pub const DEFAULT_PROBE_SPACING: u32 = 16;
 /// The irradiance map's interior edge in texels; the tile adds a border on each side.
-pub const IRRADIANCE_TEXELS: u32 = 6;
+pub(crate) const IRRADIANCE_TEXELS: u32 = 6;
 /// The visibility map's interior edge in texels.
-pub const VISIBILITY_TEXELS: u32 = 14;
+pub(crate) const VISIBILITY_TEXELS: u32 = 14;
 /// Rays each updated probe traces per update at most, and by default
 /// ([`crate::Lighting::probe_rays`]).
 pub const RAYS_PER_PROBE: u32 = 64;
@@ -44,40 +45,40 @@ pub const RAYS_PER_PROBE: u32 = 64;
 /// ([`crate::Lighting::probe_slices`]); the fewest slices allowed.
 pub const SLICES: u32 = 8;
 /// The most slices allowed: one probe in 32 a frame.
-pub const MAX_SLICES: u32 = 32;
+pub(crate) const MAX_SLICES: u32 = 32;
 /// Probes an edit or the lamp's reach can add to one frame's update beyond its slice; the rest
 /// wait for a later frame.
-pub const MAX_TOUCHED: u32 = 4096;
+pub(crate) const MAX_TOUCHED: u32 = 4096;
 /// Entries of one frame's update list at most: the largest volume's window slice and
 /// [`MAX_TOUCHED`].
-pub const MAX_UPDATES: u32 = MAX_PROBE_COUNT / WINDOW_SLICES;
+pub(crate) const MAX_UPDATES: u32 = MAX_PROBE_COUNT / WINDOW_SLICES;
 /// Slices while a light-change window is open: one probe in 4 a frame, whatever
 /// [`crate::Lighting::probe_slices`] says.
-pub const WINDOW_SLICES: u32 = 4;
+pub(crate) const WINDOW_SLICES: u32 = 4;
 /// Visits of every probe a light-change window lasts.
-pub const WINDOW_VISITS: u32 = 4;
+pub(crate) const WINDOW_VISITS: u32 = 4;
 /// Encoded frames with a probe update a light-change window lasts (16). A lamp switch-on or a
 /// change of its parameters opens one, after clearing every probe's state, so the channel
 /// fills from zero at one probe in 4 a frame.
 pub const WINDOW_FRAMES: u32 = WINDOW_SLICES * WINDOW_VISITS;
 /// Storage buffers the probe passes bind beyond the frame's world group.
-pub const PROBE_STORAGE_BUFFERS: u32 = 2;
+pub(crate) const PROBE_STORAGE_BUFFERS: u32 = 2;
 /// The age a probe's state word saturates at.
 pub const MAX_AGE: u32 = 127;
 /// The update-list flag of a restarted probe (an edit touched it, or it entered the lamp's
 /// reach since the last update): it blends at hysteresis 0 and its age restarts at 1.
-pub const TOUCHED_BIT: u32 = 1 << 31;
+pub(crate) const TOUCHED_BIT: u32 = 1 << 31;
 /// The update-list flag of a probe the lamp moved past since its last visit (the lamp's
 /// position or direction changed while the probe lay within its reach): it blends at
 /// [`crate::Lighting::probe_move_blend`] and its age restarts at 1, so it runs a fresh mean
 /// once the lamp is still.
-pub const MOVED_BIT: u32 = 1 << 30;
+pub(crate) const MOVED_BIT: u32 = 1 << 30;
 
 /// The lamp's reach in voxels by default ([`crate::Lighting::lamp_reach`]): beyond it the
 /// lamp's bounce at a probe falls under 1 % of the direct irradiance on the wall the lamp
 /// lights at arm's length (a reading, `lamp_reach_readings`), rounded up to whole default
 /// spacings.
-pub const LAMP_REACH: f32 = 64.0;
+pub(crate) const LAMP_REACH: f32 = 64.0;
 /// A probe's blend while the lamp moves, by default ([`crate::Lighting::probe_move_blend`]): the
 /// lowest flicker of the flight of 0.5, 0.8 and 0.9 (`flicker_readings`), against the slowest
 /// follow of a lamp step (`lamp_step_readings`).
@@ -86,7 +87,7 @@ pub const DEFAULT_H_MOVE: f32 = 0.9;
 /// The probes per axis of a volume covering `reach` voxels at `spacing`: the smallest power of
 /// two, at least 4 and at most [`MAX_PROBES_PER_AXIS`], whose half-side covers the reach; the
 /// largest for a reach of 0 or less (no cut) or past the largest volume.
-pub fn probes_per_axis(reach: f32, spacing: u32) -> u32 {
+pub(crate) fn probes_per_axis(reach: f32, spacing: u32) -> u32 {
     let half = reach / spacing.max(1) as f32;
     if half.is_nan() || half <= 0.0 || half > (MAX_PROBES_PER_AXIS / 2) as f32 {
         return MAX_PROBES_PER_AXIS;
@@ -206,24 +207,24 @@ fn mix_slot(slot: u32, count: u32) -> u32 {
 /// neighbouring probes, whose slots differ in their low bits (x) or by a multiple of the axis
 /// (y, z), fall in slices spread by the hash rather than in one slice per x column, so the
 /// probes lighting one view update on different frames, each with its own frame's rotation.
-pub fn slot_slice(slot: u32, slices: u32, count: u32) -> u32 {
+pub(crate) fn slot_slice(slot: u32, slices: u32, count: u32) -> u32 {
     mix_slot(slot, count) & (slices - 1)
 }
 
 /// The storage slot of world probe `w` in a volume of `axis` probes a side.
-pub fn probe_slot(w: [i32; 3], axis: u32) -> u32 {
+pub(crate) fn probe_slot(w: [i32; 3], axis: u32) -> u32 {
     let m = w.map(|v| v.rem_euclid(axis as i32) as u32);
     m[0] + axis * (m[1] + axis * m[2])
 }
 
 /// The tag a slot holding world probe `w` carries in its state word's bits 8..32.
-pub fn probe_tag(w: [i32; 3], axis: u32) -> u32 {
+pub(crate) fn probe_tag(w: [i32; 3], axis: u32) -> u32 {
     let t = w.map(|v| (floor_div(v, axis as i32) as u32) & 0xFF);
     t[0] | t[1] << 8 | t[2] << 16
 }
 
 /// The state word of world probe `w` at `age` updates, inside rock or not.
-pub fn state_word(w: [i32; 3], axis: u32, age: u32, inside: bool) -> u32 {
+pub(crate) fn state_word(w: [i32; 3], axis: u32, age: u32, inside: bool) -> u32 {
     u32::from(inside) | age.min(MAX_AGE) << 1 | probe_tag(w, axis) << 8
 }
 

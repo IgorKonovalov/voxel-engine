@@ -303,9 +303,8 @@ use vxe_audio::{
 };
 use vxe_net::{Client, DEFAULT_SUPPORT, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::UpscalerKind;
+use vxe_render::debug::StepHistogram;
 use vxe_render::glam::Vec3;
-use vxe_render::gpu_world;
-use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld, HistoryKill,
     HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams,
@@ -533,32 +532,32 @@ struct Args {
     /// by default).
     lamp_bounce: bool,
     /// `--bake-budget frame:MS|second:MS,CAP` (or `--bake-slice MS`, `frame:MS`): the live
-    /// queue's bake budget (default `frame:` `vxe_render::bake::DEFAULT_BAKE_SLICE_MS`); key `5`
+    /// queue's bake budget (default `frame:` `vxe_render::DEFAULT_BAKE_SLICE_MS`); key `5`
     /// cycles it through [`BUDGET_CYCLE`].
-    bake_budget: vxe_render::bake::Budget,
+    bake_budget: vxe_render::Budget,
     /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
-    /// default `vxe_render::bake::DEFAULT_COARSE_SAMPLES`).
+    /// default `vxe_render::DEFAULT_COARSE_SAMPLES`).
     bake_coarse: u32,
     /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
-    /// before the first frame (default `vxe_render::bake::DEFAULT_NEAR`).
+    /// before the first frame (default `vxe_render::DEFAULT_NEAR`).
     bake_near: i32,
     /// `--full-first off|N`: the live queue's full-first radius after the pre-roll
-    /// (`vxe_render::bake::BakeQueue::full_first`); `None` follows `--near`. `6` toggles it
+    /// (`vxe_render::BakeQueue::full_first`); `None` follows `--near`. `6` toggles it
     /// between `off` and `2`.
     bake_full_first: Option<Option<i32>>,
     /// `--missing-light black|neighbour|parent|chain`: what a cube face with no baked value
     /// reads (ADR-0053); `7` cycles it.
-    missing_light: vxe_render::bake::MissingLight,
+    missing_light: vxe_render::MissingLight,
     /// `--reach full|partial`: whether a chunk whose reach crosses the streamer's full radius
-    /// bakes from the chunks resident full (`vxe_render::bake::ReachMode`); `8` toggles it.
-    reach: vxe_render::bake::ReachMode,
+    /// bakes from the chunks resident full (`vxe_render::ReachMode`); `8` toggles it.
+    reach: vxe_render::ReachMode,
     /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
     /// the class and the distance first); `1` cycles score, score with the class as a tier,
     /// distance.
     queue_distance: bool,
     /// `--queue-weights A,R` or `A,tier`: the score's angle weight (`2` halves it, `3` doubles
     /// it) and its refine weight, or the class as the leading key (defaults
-    /// `vxe_render::bake::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
+    /// `vxe_render::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
     /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `1` cycles to).
     queue_angle: f32,
     queue_refine: f32,
@@ -578,7 +577,7 @@ struct Args {
     /// each frame (blocking) for the `dig settled:` line.
     read_missing: bool,
     /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
-    /// (default `vxe_render::bake::DEFAULT_BAKE_EDIT_MS`).
+    /// (default `vxe_render::DEFAULT_BAKE_EDIT_MS`).
     bake_edit_ms: f64,
     /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
     /// light radius (ring 3; on by default).
@@ -743,8 +742,8 @@ impl Args {
     }
 
     /// The live queue's order from `--queue-order` and `--queue-weights` (and their keys).
-    fn queue_order(&self) -> vxe_render::bake::QueueOrder {
-        use vxe_render::bake::{QueueOrder, Refine};
+    fn queue_order(&self) -> vxe_render::QueueOrder {
+        use vxe_render::{QueueOrder, Refine};
         if self.queue_distance {
             QueueOrder::Distance
         } else {
@@ -795,7 +794,7 @@ impl Args {
             hud::UpscalerMode::Own => {
                 let jitter = !self.jitter_set || self.jitter;
                 (
-                    UpscalerKind::Own(vxe_render::marcher::Upscaler::default()),
+                    UpscalerKind::Own(vxe_render::Upscaler::default()),
                     self.internal_scale,
                     jitter,
                 )
@@ -918,32 +917,32 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp_toggle: None,
         fade_reading: false,
         lamp_bounce: true,
-        bake_budget: vxe_render::bake::Budget::default(),
-        bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
-        bake_near: vxe_render::bake::DEFAULT_NEAR,
+        bake_budget: vxe_render::Budget::default(),
+        bake_coarse: vxe_render::DEFAULT_COARSE_SAMPLES,
+        bake_near: vxe_render::DEFAULT_NEAR,
         bake_full_first: None,
-        missing_light: vxe_render::bake::MissingLight::Chain,
-        reach: vxe_render::bake::ReachMode::Full,
+        missing_light: vxe_render::MissingLight::Chain,
+        reach: vxe_render::ReachMode::Full,
         queue_distance: false,
-        queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
-        queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
+        queue_angle: vxe_render::QUEUE_ANGLE_WEIGHT,
+        queue_refine: vxe_render::QUEUE_REFINE_WEIGHT,
         queue_tier: true,
         queue_withdraw: true,
         queue_census: false,
-        bake_edit_ms: vxe_render::bake::DEFAULT_BAKE_EDIT_MS,
+        bake_edit_ms: vxe_render::DEFAULT_BAKE_EDIT_MS,
         dig_reach: true,
         dig_at: Vec::new(),
         bench_at: Vec::new(),
         read_missing: false,
         glide: None,
-        probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
-        probe_rays: vxe_render::probes::RAYS_PER_PROBE,
-        probe_slices: vxe_render::probes::SLICES,
+        probe_spacing: vxe_render::DEFAULT_PROBE_SPACING,
+        probe_rays: vxe_render::internals::RAYS_PER_PROBE,
+        probe_slices: vxe_render::internals::SLICES,
         shadow_walk: ShadowWalk::default(),
         store_read: flythrough::DEFAULT_STORE_READ,
         light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
         filter: true,
-        light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
+        light_radius: vxe_render::DEFAULT_LIGHT_RADIUS,
         history: HistoryKill::default(),
         lighting: LightingResolution::default(),
         internal_scale: DEFAULT_SCALE,
@@ -1104,7 +1103,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.probe_rays = v
                     .parse()
                     .ok()
-                    .filter(|n| (1..=vxe_render::probes::RAYS_PER_PROBE).contains(n))
+                    .filter(|n| (1..=vxe_render::internals::RAYS_PER_PROBE).contains(n))
                     .ok_or(format!("--probe-rays takes 1 to 64 rays, not {v}"))?;
             }
             "--probe-slices" => {
@@ -1229,25 +1228,25 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok()
                     .filter(|ms: &f64| (0.1..=100.0).contains(ms))
                     .ok_or(format!("--bake-slice takes 0.1 to 100 ms, not {v}"))?;
-                args.bake_budget = vxe_render::bake::Budget::PerFrame { ms };
+                args.bake_budget = vxe_render::Budget::PerFrame { ms };
             }
             "--bake-budget" => {
                 let v = value()?;
-                args.bake_budget = vxe_render::bake::Budget::parse(&v)?;
+                args.bake_budget = vxe_render::Budget::parse(&v)?;
             }
             "--coarse" => {
                 let v = value()?;
                 args.bake_coarse = v
                     .parse()
                     .ok()
-                    .filter(|n: &u32| *n <= vxe_render::bake::QUEUE_BRICK_SAMPLES)
+                    .filter(|n: &u32| *n <= vxe_render::QUEUE_BRICK_SAMPLES)
                     .ok_or(format!("--coarse takes 0 to 4096 samples, not {v}"))?;
             }
             "--missing-light" => {
-                args.missing_light = vxe_render::bake::MissingLight::parse(&value()?)?;
+                args.missing_light = vxe_render::MissingLight::parse(&value()?)?;
             }
             "--reach" => {
-                args.reach = vxe_render::bake::ReachMode::parse(&value()?)?;
+                args.reach = vxe_render::ReachMode::parse(&value()?)?;
             }
             "--full-first" => {
                 let v = value()?;
@@ -1457,7 +1456,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     args.light_radius = light_radius_flag.unwrap_or(if args.showcase {
         SHOWCASE_LIGHT_RADIUS
     } else {
-        vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS
+        vxe_render::DEFAULT_LIGHT_RADIUS
     });
     // The showcase starts at its shot's manual exposure unless `--exposure` is given.
     if args.showcase && !exposure_flag {
@@ -1850,11 +1849,11 @@ impl FadeSample {
             (0..edge * edge).map(|i| f(v[at(i)])).sum::<f64>() / f64::from(edge * edge)
         };
         let (dev, q) = (&gpu.device, &gpu.queue);
-        let filtered = readback::read_rgba16f(dev, q, frame.filtered());
-        let raw = readback::read_rgba16f(dev, q, frame.irradiance());
-        let indirect = readback::read_rgba16f(dev, q, frame.indirect_irradiance());
+        let filtered = vxe_render::debug::read_rgba16f(dev, q, frame.filtered());
+        let raw = vxe_render::debug::read_rgba16f(dev, q, frame.irradiance());
+        let indirect = vxe_render::debug::read_rgba16f(dev, q, frame.indirect_irradiance());
         let out_tex = frame.target();
-        let out: Vec<[f32; 4]> = readback::read_rgba8(dev, q, out_tex)
+        let out: Vec<[f32; 4]> = vxe_render::debug::read_rgba8(dev, q, out_tex)
             .chunks(4)
             .map(|p| [0, 1, 2, 3].map(|k| f32::from(p[k]) / 255.0))
             .collect();
@@ -2526,7 +2525,7 @@ fn field_line(mirror: &GpuWorld) -> String {
     format!(
         "field band: {} band bricks, {} B of band slots, mirror {} B live, {} B allocated",
         mirror.band_bricks(),
-        mirror.band_units() * vxe_render::gpu_world::UNIT_BYTES,
+        mirror.band_units() * vxe_render::internals::UNIT_BYTES,
         mirror.mirror_bytes(),
         mirror.allocated_bytes()
     )
@@ -2712,7 +2711,7 @@ struct Hud {
     /// The far normal's words and the live queue's order and withdrawal in words, remade
     /// only when what they name changes.
     far_normal_words: Cached<(NormalMode, [f32; 2])>,
-    queue_words: Cached<(vxe_render::bake::QueueOrder, bool)>,
+    queue_words: Cached<(vxe_render::QueueOrder, bool)>,
     /// The whole run's frame times, shown or not.
     run: RunTimes,
 }
@@ -3419,8 +3418,8 @@ struct QueueRun {
     last_step_cpu: f64,
     /// The steps' stages since the last line, and over the run by the regime of their second
     /// (the `frames:` summary's `queue step` lines).
-    line_stages: Vec<vxe_render::bake::StepStages>,
-    tally: vxe_render::bake::StepTally,
+    line_stages: Vec<vxe_render::debug::StepStages>,
+    tally: vxe_render::debug::StepTally,
     /// The jobs and the openings at the last line, and the last line's step p50 (the HUD's).
     line_openings: u64,
     /// [`vxe_render::QueueStats::starved_openings`] at the last line.
@@ -3455,10 +3454,10 @@ fn queue_step_line(
     at_s: f64,
     secs: f64,
     bake_ms_per_s: f64,
-    reach: vxe_render::bake::ReachMode,
+    reach: vxe_render::ReachMode,
 ) -> String {
     use std::fmt::Write as _;
-    use vxe_render::bake::{Regime, STEP_STAGES, VIEW_IN};
+    use vxe_render::{debug::Regime, debug::STEP_STAGES, internals::VIEW_IN};
     let samples = st.total_samples - q.line_samples;
     let baked = st.baked - q.line_baked;
     let regime = Regime::of(samples, baked);
@@ -4111,7 +4110,8 @@ impl Run {
         // Under the field look, the smooth share of the last frame's hit pixels: hits whose
         // material is not crisp. No other look reads the hit records back.
         let share = if self.look.normal_mode == NormalMode::Contour && gfx.mirror.field_surface() {
-            let records = readback::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
+            let records =
+                vxe_render::debug::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
             let table = self.world.materials();
             let (mut hits, mut smooth) = (0u64, 0u64);
             for r in &records {
@@ -4195,7 +4195,8 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            level_pool_units(&self.world, self.args.field_surface()) * gpu_world::UNIT_BYTES
+            level_pool_units(&self.world, self.args.field_surface())
+                * vxe_render::internals::UNIT_BYTES
         };
         // An adapter below the shaders' floor: name the limit, then request the floor, which
         // the device request refuses on the same limit and the shell reports as a setup error.
@@ -4295,12 +4296,12 @@ impl Run {
     /// later chunks take theirs in the live queue). Prints the two times; the rest is refined a
     /// slice a frame.
     fn queue_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
-        let settings = vxe_render::bake::queue_settings();
+        let settings = vxe_render::queue_settings();
         frame.start_bake_queue(
             &gpu.queue,
             mirror,
             settings,
-            vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+            vxe_render::DEFAULT_BAKE_SLICE_MS,
         );
         frame.set_bake_budget(self.args.bake_budget);
         frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
@@ -4714,7 +4715,7 @@ impl Run {
     /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25), `4`
     /// toggles the withdrawal, `5` steps the bake budget through [`BUDGET_CYCLE`], `6` toggles
     /// the full-first radius between `off` and `2`, `7` cycles the missing light through
-    /// [`vxe_render::bake::MissingLight::ALL`], `8` toggles the reach between `full` and
+    /// [`vxe_render::MissingLight::ALL`], `8` toggles the reach between `full` and
     /// `partial`. A change goes to the queue at once (the missing light at the next frame) and
     /// prints the order and the withdrawal, the budget, the radius, the missing light or the
     /// reach.
@@ -4736,7 +4737,7 @@ impl Run {
         if input.pressed(KeyCode::Digit6) {
             let r = match self.args.full_first() {
                 Some(_) => None,
-                None => Some(vxe_render::bake::DEFAULT_NEAR),
+                None => Some(vxe_render::DEFAULT_NEAR),
             };
             self.args.bake_full_first = Some(r);
             println!("bake queue: full-first {}", FullFirstWords(r));
@@ -5920,7 +5921,7 @@ impl Run {
             && self.look.view == ViewMode::Steps
             && let Some(gfx) = &self.gfx
         {
-            let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+            let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
             let width = gfx.frame.target().width() as usize;
             let h = StepHistogram::from_rgba8(&px, width);
             self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
@@ -6188,11 +6189,14 @@ impl Run {
             if self.look.view == ViewMode::Steps
                 && let Some(gfx) = &self.gfx
             {
-                let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+                let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
                 let width = gfx.frame.target().width() as usize;
                 println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
-                let shadow =
-                    readback::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.irradiance());
+                let shadow = vxe_render::debug::read_rgba16f(
+                    &gpu.device,
+                    &gpu.queue,
+                    gfx.frame.irradiance(),
+                );
                 println!(
                     "{}",
                     shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
@@ -6252,8 +6256,8 @@ const ORE_PULSE_MEAN: f32 = 1.0;
 /// The cracks view's shares of the frame `frame` last rendered, read back from its hit pass's
 /// layers and records: a blocking copy of each.
 fn crack_shares(gpu: &Gpu, frame: &vxe_render::Frame) -> vxe_render::CrackShares {
-    let layers = readback::read_rgba16f(&gpu.device, &gpu.queue, frame.layers());
-    let records = readback::read_rgba16u(&gpu.device, &gpu.queue, frame.hit_records());
+    let layers = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, frame.layers());
+    let records = vxe_render::debug::read_rgba16u(&gpu.device, &gpu.queue, frame.hit_records());
     vxe_render::CrackShares::from_layers(&layers, &records)
 }
 
@@ -6810,8 +6814,8 @@ fn shot_camera(shot: &Shot) -> Camera {
 fn queue_view_angles(vfov: f32, size: [u32; 2]) -> (f32, [f32; 2]) {
     let aspect = size[0].max(1) as f32 / size[1].max(1) as f32;
     (
-        vxe_render::bake::view_half_angle(vfov, aspect),
-        vxe_render::bake::view_half_angles(vfov, aspect),
+        vxe_render::internals::view_half_angle(vfov, aspect),
+        vxe_render::internals::view_half_angles(vfov, aspect),
     )
 }
 
@@ -6968,56 +6972,56 @@ impl std::fmt::Display for FullFirstWords {
     }
 }
 
-/// The missing-light mode after `m` in [`vxe_render::bake::MissingLight::ALL`] (key `7`).
-fn next_missing_light(m: vxe_render::bake::MissingLight) -> vxe_render::bake::MissingLight {
-    use vxe_render::bake::MissingLight;
+/// The missing-light mode after `m` in [`vxe_render::MissingLight::ALL`] (key `7`).
+fn next_missing_light(m: vxe_render::MissingLight) -> vxe_render::MissingLight {
+    use vxe_render::MissingLight;
     let i = MissingLight::ALL.iter().position(|&x| x == m).unwrap_or(0);
     MissingLight::ALL[(i + 1) % MissingLight::ALL.len()]
 }
 
-/// The reach mode after `m` in [`vxe_render::bake::ReachMode::ALL`] (key `8`).
-fn next_reach(m: vxe_render::bake::ReachMode) -> vxe_render::bake::ReachMode {
-    use vxe_render::bake::ReachMode;
+/// The reach mode after `m` in [`vxe_render::ReachMode::ALL`] (key `8`).
+fn next_reach(m: vxe_render::ReachMode) -> vxe_render::ReachMode {
+    use vxe_render::ReachMode;
     let i = ReachMode::ALL.iter().position(|&x| x == m).unwrap_or(0);
     ReachMode::ALL[(i + 1) % ReachMode::ALL.len()]
 }
 
 /// The budgets key `5` steps through (Phase 6's arms): today's slice, 150 ms a second and 300
 /// ms a second, each capped at a quarter of the frame.
-const BUDGET_CYCLE: [vxe_render::bake::Budget; 3] = [
-    vxe_render::bake::Budget::PerFrame {
-        ms: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+const BUDGET_CYCLE: [vxe_render::Budget; 3] = [
+    vxe_render::Budget::PerFrame {
+        ms: vxe_render::DEFAULT_BAKE_SLICE_MS,
     },
-    vxe_render::bake::Budget::PerSecond {
+    vxe_render::Budget::PerSecond {
         ms_per_s: 150.0,
         cap: 0.25,
     },
-    vxe_render::bake::Budget::PerSecond {
+    vxe_render::Budget::PerSecond {
         ms_per_s: 300.0,
         cap: 0.25,
     },
 ];
 
 /// The budget after `b` in [`BUDGET_CYCLE`]; one not in it goes to the first.
-fn next_budget(b: vxe_render::bake::Budget) -> vxe_render::bake::Budget {
+fn next_budget(b: vxe_render::Budget) -> vxe_render::Budget {
     let i = BUDGET_CYCLE.iter().position(|&x| x == b);
     BUDGET_CYCLE[i.map_or(0, |i| (i + 1) % BUDGET_CYCLE.len())]
 }
 
 /// Appends the HUD queue row's reach part to `out`: `; reach full`, or `; reach partial (N
 /// partial)` with the chunks whose block was baked from a partial reach.
-fn write_reach_note(out: &mut String, reach: vxe_render::bake::ReachMode, partial: u64) {
+fn write_reach_note(out: &mut String, reach: vxe_render::ReachMode, partial: u64) {
     let _ = write!(out, "; reach {}", reach.name());
-    if reach == vxe_render::bake::ReachMode::Partial {
+    if reach == vxe_render::ReachMode::Partial {
         let _ = write!(out, " ({partial} partial)");
     }
 }
 
 /// Appends the HUD queue row's budget part to `out`: `; budget frame:1.5`, and the last step's
 /// slice under a per-second budget, `; budget second:150,0.25 (slice 2.31 ms)`.
-fn write_budget_note(out: &mut String, budget: vxe_render::bake::Budget, slice_ms: f64) {
+fn write_budget_note(out: &mut String, budget: vxe_render::Budget, slice_ms: f64) {
     let _ = write!(out, "; budget {budget}");
-    if matches!(budget, vxe_render::bake::Budget::PerSecond { .. }) {
+    if matches!(budget, vxe_render::Budget::PerSecond { .. }) {
         let _ = write!(out, " (slice {slice_ms:.2} ms)");
     }
 }
@@ -7028,17 +7032,17 @@ fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
     let _ = write!(
         out,
         "light: live queue, bricks {}/{}, ",
-        vxe_render::bake::BRICK_CELL,
-        vxe_render::bake::QUEUE_BRICK_SAMPLES,
+        vxe_render::internals::BRICK_CELL,
+        vxe_render::QUEUE_BRICK_SAMPLES,
     );
     if args.bake_coarse > 0 {
         let _ = write!(
             out,
             "coarse {}/{} first, near {} at {}",
-            vxe_render::bake::BRICK_CELL,
+            vxe_render::internals::BRICK_CELL,
             args.bake_coarse,
             args.bake_near,
-            vxe_render::bake::QUEUE_BRICK_SAMPLES
+            vxe_render::QUEUE_BRICK_SAMPLES
         );
     } else {
         let _ = write!(out, "no coarse pass, near {}", args.bake_near);
@@ -7308,8 +7312,8 @@ fn main() {
             Streamer::new(Arc::new(source), cfg)
         };
         // The live queue's listing runs on the workers (ADR-0017), from the first chunk on.
-        streamer.set_prep(Some(Arc::new(vxe_render::bake::FacePrep {
-            classes: Arc::new(vxe_render::bake::face_classes(world.materials())),
+        streamer.set_prep(Some(Arc::new(vxe_render::internals::FacePrep {
+            classes: Arc::new(vxe_render::internals::face_classes(world.materials())),
         })));
         // Workers start on the spawn's chunks while the shell opens the window.
         streamer.update(&world, &[source.spawn()]);
@@ -8786,7 +8790,7 @@ mod tests {
     /// the HUD's queue row in the same frame.
     #[test]
     fn the_banner_names_the_queue_order_and_its_weights() {
-        use vxe_render::bake::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
+        use vxe_render::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
         let mut run = bare_run(carved_rock());
         let mut input = Input::default();
         let mut shown = |run: &mut Run, key: Option<KeyCode>| {
@@ -8836,7 +8840,7 @@ mod tests {
                 format!("order score, angle {angle}, refine {R}"),
             );
         }
-        use vxe_render::bake::{QueueOrder, Refine};
+        use vxe_render::{QueueOrder, Refine};
         let order = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.queue_order());
         assert_eq!(
             order(&["--queue-order", "distance"]),
@@ -8972,7 +8976,7 @@ mod tests {
     /// the banner's queue row in the same frame.
     #[test]
     fn the_banner_names_the_missing_light() {
-        use vxe_render::bake::MissingLight;
+        use vxe_render::MissingLight;
         let mut run = bare_run(carved_rock());
         let mut input = Input::default();
         let banner = run.banner().expect("the queue's row is on the banner");
@@ -9007,7 +9011,7 @@ mod tests {
     /// in the same frame, the row adding the partial blocks under `partial`.
     #[test]
     fn the_banner_names_the_reach() {
-        use vxe_render::bake::ReachMode;
+        use vxe_render::ReachMode;
         let mut run = bare_run(carved_rock());
         let mut input = Input::default();
         run.refresh_hud_stats(None);
@@ -9050,7 +9054,7 @@ mod tests {
     /// budget.
     #[test]
     fn the_banner_names_the_budget() {
-        use vxe_render::bake::Budget;
+        use vxe_render::Budget;
         let mut run = bare_run(carved_rock());
         let mut input = Input::default();
         run.refresh_hud_stats(None);
@@ -9593,10 +9597,7 @@ mod tests {
         assert!(parse_args_from(argv(&["--level", "--shot", "hall"])).is_err());
         let level = parse_args_from(argv(&["--source", "level"])).expect("parses");
         assert!(level.level && !level.showcase && level.lamp);
-        assert_eq!(
-            level.light_radius,
-            vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS
-        );
+        assert_eq!(level.light_radius, vxe_render::DEFAULT_LIGHT_RADIUS);
         let cave = parse_args_from(argv(&["--level", "--source", "cave"])).expect("parses");
         assert!(!cave.level && !cave.showcase && cave.lamp);
         assert_eq!(

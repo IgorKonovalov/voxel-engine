@@ -19,17 +19,17 @@ pub const SLOT_BINS: [u32; 13] = [2, 3, 4, 6, 8, 12, 16, 20, 24, 36, 5, 7, 9];
 /// How many bins there are.
 pub const BIN_COUNT: usize = SLOT_BINS.len();
 /// Storage buffers the pool is sharded over: every frame shader binds all four.
-pub const MAX_SHARDS: u32 = 4;
+pub(crate) const MAX_SHARDS: u32 = 4;
 /// Storage buffers the frame's passes bind besides the pool shards: records, table,
 /// materials, light samples and the emission scale, plus the face store the hit pass reads
 /// for a translucent face's reflected light (ADR-0047).
-pub const OTHER_STORAGE_BUFFERS: u32 = 6;
+pub(crate) const OTHER_STORAGE_BUFFERS: u32 = 6;
 /// `u32` words of a slot's opaque mask (its unit 0): one bit per voxel.
-pub const OPAQUE_WORDS: usize = 16;
+pub(crate) const OPAQUE_WORDS: usize = 16;
 /// The header unit's words: the palette (16 `u16`), the two translucent words (one bit per
 /// 2^3 block), two words held at 0 (10 and 11), the band prefix (two words,
 /// [`pack_prefix`]: the band voxels below each layer), word 14 held at 0, then the band slot.
-pub const HEADER_PALETTE_WORD: usize = 0;
+pub(crate) const HEADER_PALETTE_WORD: usize = 0;
 pub const HEADER_TRANSLUCENT_WORD: usize = 8;
 /// The band prefix of a band brick (ADR-0041), [`pack_prefix`] of its band mask.
 pub const HEADER_BAND_PREFIX_WORD: usize = 12;
@@ -55,7 +55,7 @@ pub(super) const PREFIX_FIELDS: [(usize, u32, u32); 8] = [
 /// The packed prefix of `mask` (bit `x + 8 y` of word `z` for voxel `(x, y, z)`): for each
 /// layer `z`, the set bits of the layers below it, in two words ([`PREFIX_FIELDS`]). The
 /// shaders read it back with `layer_prefix`.
-pub fn pack_prefix(mask: &[u64; 8]) -> [u32; 2] {
+pub(crate) fn pack_prefix(mask: &[u64; 8]) -> [u32; 2] {
     let mut out = [0u32; 2];
     let mut below = 0u32;
     for (z, w) in mask.iter().enumerate() {
@@ -76,7 +76,7 @@ pub fn layer_prefix(words: [u32; 2], z: usize) -> u32 {
 
 /// Writes into `header` (a slot's header unit) the band slot `unit` of a band brick of band
 /// mask `mask`: [`HEADER_BAND_WORD`], and its band prefix in [`HEADER_BAND_PREFIX_WORD`].
-pub fn band_header(header: &mut [u32], unit: u32, mask: &[u64; 8]) {
+pub(crate) fn band_header(header: &mut [u32], unit: u32, mask: &[u64; 8]) {
     header[HEADER_BAND_WORD] = HEADER_BAND_BIT | unit;
     let p = pack_prefix(mask);
     header[HEADER_BAND_PREFIX_WORD] = p[0];

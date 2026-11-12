@@ -93,7 +93,7 @@ pub(super) struct Selected {
 }
 
 /// Changes [`GpuWorld::take_changes`] keeps at most between two calls.
-pub const CHANGES_MAX: usize = 1 << 16;
+pub(crate) const CHANGES_MAX: usize = 1 << 16;
 
 /// The mirror's changed chunks between two [`GpuWorld::take_changes`]: kept once a reader took
 /// them once, and given up past [`CHANGES_MAX`].

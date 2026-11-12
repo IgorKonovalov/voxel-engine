@@ -1,7 +1,7 @@
 //! Shader constructs that validate under naga and run on Vulkan but fail to compile on one of
 //! the backends we ship, caught headless on any host.
 
-use vxe_render::fsr2::fsr2_source;
+use vxe_render::internals::fsr2_source;
 use vxe_render::wgpu::naga::{self, Block, Expression, Statement, TypeInner};
 
 use vxe_render::MARCH_WGSL as MARCH;
@@ -76,43 +76,43 @@ fn shaders() -> Vec<(&'static str, String)> {
         ),
         (
             "fsr2/input.wgsl",
-            format!("{MARCH}\n{}", vxe_render::fsr2::FSR2_INPUT_WGSL),
+            format!("{MARCH}\n{}", vxe_render::internals::FSR2_INPUT_WGSL),
         ),
         (
             "fsr2/tone.wgsl",
-            format!("{MARCH}\n{}", vxe_render::fsr2::FSR2_TONE_WGSL),
+            format!("{MARCH}\n{}", vxe_render::internals::FSR2_TONE_WGSL),
         ),
         (
             "composite.wgsl (FSR 2's HDR variant)",
-            format!("{MARCH}\n{}", vxe_render::marcher::composite_hdr_source()),
+            format!("{MARCH}\n{}", vxe_render::internals::composite_hdr_source()),
         ),
         (
             "fsr2/luminance_pyramid.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_LUMINANCE_PYRAMID_WGSL, true),
+            fsr2_source(vxe_render::internals::FSR2_LUMINANCE_PYRAMID_WGSL, true),
         ),
         (
             "fsr2/reconstruct_previous_depth.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_RECONSTRUCT_WGSL, true),
+            fsr2_source(vxe_render::internals::FSR2_RECONSTRUCT_WGSL, true),
         ),
         (
             "fsr2/depth_clip.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_DEPTH_CLIP_WGSL, true),
+            fsr2_source(vxe_render::internals::FSR2_DEPTH_CLIP_WGSL, true),
         ),
         (
             "fsr2/lock.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_LOCK_WGSL, true),
+            fsr2_source(vxe_render::internals::FSR2_LOCK_WGSL, true),
         ),
         (
             "fsr2/rcas.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_RCAS_WGSL, true),
+            fsr2_source(vxe_render::internals::FSR2_RCAS_WGSL, true),
         ),
         (
             "fsr2/accumulate.wgsl (LDR)",
-            fsr2_source(vxe_render::fsr2::FSR2_ACCUMULATE_WGSL, false),
+            fsr2_source(vxe_render::internals::FSR2_ACCUMULATE_WGSL, false),
         ),
         (
             "fsr2/accumulate.wgsl (HDR)",
-            fsr2_source(vxe_render::fsr2::FSR2_ACCUMULATE_WGSL, true),
+            fsr2_source(vxe_render::internals::FSR2_ACCUMULATE_WGSL, true),
         ),
     ]
 }

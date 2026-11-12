@@ -93,11 +93,11 @@ use flythrough::showcase::{SHOTS, ShowcaseSource};
 use flythrough::{LookPreset, Pose};
 use support::aliasing::{self, ByClass, Hits, Mask};
 use support::{reading_device, write_png};
-use vxe_render::gpu_world::{GpuWorld, MirrorConfig, UNIT_BYTES, Window};
 use vxe_render::{
     AutoExposure, Camera, Exposure, Frame, Fsr2Settings, LightParams, Lighting, LookParams,
-    RenderScale, UpscalerKind, readback, wgpu,
+    RenderScale, UpscalerKind, wgpu,
 };
+use vxe_render::{GpuWorld, MirrorConfig, Window, internals::UNIT_BYTES};
 use vxe_world::*;
 
 fn env(name: &str) -> Option<String> {
@@ -423,15 +423,15 @@ fn magnify(rgba: &[u8], w: u32, h: u32, k: u32) -> Vec<u8> {
 /// The frame's internal hit buffer: positions with `t`, and records.
 fn read_hits(scene: &Scene, frame: &Frame) -> (Vec<[f32; 4]>, Vec<[u16; 4]>) {
     (
-        readback::read_float(&scene.device, &scene.queue, frame.hit_positions()),
-        readback::read_rgba16u(&scene.device, &scene.queue, frame.hit_records()),
+        vxe_render::debug::read_float(&scene.device, &scene.queue, frame.hit_positions()),
+        vxe_render::debug::read_rgba16u(&scene.device, &scene.queue, frame.hit_records()),
     )
 }
 
 /// The display image: the target, box-filtered down by `shrink` (`R`).
 fn display(scene: &Scene, frame: &Frame, shrink: u32) -> Vec<u8> {
     let t = frame.target();
-    let rgba = readback::read_rgba8(&scene.device, &scene.queue, t);
+    let rgba = vxe_render::debug::read_rgba8(&scene.device, &scene.queue, t);
     if shrink > 1 {
         shrink_image(&rgba, t.width(), t.height(), shrink).0
     } else {
@@ -444,9 +444,9 @@ fn display(scene: &Scene, frame: &Frame, shrink: u32) -> Vec<u8> {
 /// (`gpu_bake.rs`'s `brick_bake`), before any frame reads it.
 fn bake_view(scene: &mut Scene, frame: &mut Frame) {
     let radius: i32 = env_or("VXE_STRIP_BAKE_RADIUS", 12);
-    let settings = vxe_render::bake::BakeSettings {
+    let settings = vxe_render::BakeSettings {
         round: 512,
-        ..vxe_render::bake::BakeSettings::default()
+        ..vxe_render::BakeSettings::default()
     };
     let world = scene.world.extent();
     let size = world.size();
@@ -1230,7 +1230,11 @@ fn the_eye_lamp_holds_the_native_frame_bit_identical() {
     let mut frames = Vec::new();
     for _ in 0..=128 {
         frame.step(&device, &queue, &gpu, &camera, &light);
-        frames.push(readback::read_rgba8(&device, &queue, frame.target()));
+        frames.push(vxe_render::debug::read_rgba8(
+            &device,
+            &queue,
+            frame.target(),
+        ));
     }
     let last = frames.last().expect("frames");
     let from = (0..frames.len())
@@ -1278,7 +1282,11 @@ fn the_pan_moves_the_centre_band_one_pixel() {
     let mut frames = Vec::new();
     for _ in 0..8 {
         frame.step(&device, &queue, &gpu, &camera, &light);
-        frames.push(readback::read_rgba8(&device, &queue, frame.target()));
+        frames.push(vxe_render::debug::read_rgba8(
+            &device,
+            &queue,
+            frame.target(),
+        ));
         camera.yaw += step;
     }
     let residual: Vec<(i32, f64)> = (-2..=2)
@@ -1489,7 +1497,7 @@ mod reading {
             "fsr2" => frame
                 .fsr2()
                 .map_or(0, |f| f.settings().phases(internal[0], w)),
-            "own" => vxe_render::marcher::JITTER_PHASES,
+            "own" => vxe_render::internals::JITTER_PHASES,
             _ => 18,
         };
         let phases: u32 = env_or("VXE_STRIP_PHASES", phases);
@@ -1549,12 +1557,12 @@ mod reading {
             if light_mode.is_some() && !baked {
                 HERO_PROBE_SPACING
             } else {
-                vxe_render::probes::DEFAULT_PROBE_SPACING
+                vxe_render::DEFAULT_PROBE_SPACING
             },
         );
         frame.set_probe_spacing(device, spacing);
         if let Some(v) = env("VXE_STRIP_LIGHTING") {
-            let r = vxe_render::marcher::LightingResolution::from_name(&v)
+            let r = vxe_render::LightingResolution::from_name(&v)
                 .unwrap_or_else(|| panic!("VXE_STRIP_LIGHTING takes full or half, not {v}"));
             frame.set_resolution(device, r);
         }
@@ -1678,7 +1686,7 @@ mod reading {
                 );
             }
             frame.step(device, queue, &scene.gpu, &camera, &light);
-            let rgba = readback::read_rgba8(device, queue, frame.target());
+            let rgba = vxe_render::debug::read_rgba8(device, queue, frame.target());
             let y: Vec<f32> = rgba.chunks_exact(4).map(luma).collect();
             let mean = y.iter().sum::<f32>() / n as f32;
             let mut d_mean = 0.0;

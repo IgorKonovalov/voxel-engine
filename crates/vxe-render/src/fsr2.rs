@@ -10,7 +10,7 @@
 use crate::marcher::{Dispatch, Params, Upscaler, WORKGROUP};
 
 /// The parts of FSR 2 every FSR pass is compiled after; carries AMD's notice.
-pub const FSR2_COMMON_WGSL: &str = include_str!("shaders/fsr2/common.wgsl");
+pub(crate) const FSR2_COMMON_WGSL: &str = include_str!("shaders/fsr2/common.wgsl");
 /// FSR 2's accumulate pass, compiled after [`FSR2_COMMON_WGSL`].
 pub const FSR2_ACCUMULATE_WGSL: &str = include_str!("shaders/fsr2/accumulate.wgsl");
 /// Our input pass (depth, motion vectors, reactive mask), compiled after `march.wgsl`.
@@ -52,7 +52,7 @@ pub const FSR2_PASSES: [&str; 9] = [
 
 /// The near plane FSR's depth is taken against, in voxels: below any hit's view depth that
 /// matters (a hit nearer than it still gets a finite depth above 1).
-pub const NEAR: f32 = 0.01;
+pub(crate) const NEAR: f32 = 0.01;
 
 /// FSR 2's knobs in the engine ([`UpscalerKind::Fsr2`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -141,7 +141,7 @@ pub fn jitter_offset(index: u32, phases: u32) -> [f32; 2] {
 /// `Fsr2Constants` in `common.wgsl`, field for field.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Fsr2Constants {
+pub(crate) struct Fsr2Constants {
     pub render_size: [i32; 2],
     pub max_render_size: [i32; 2],
     pub display_size: [i32; 2],
@@ -171,7 +171,7 @@ pub struct Fsr2Constants {
 }
 
 /// The shading-change mip of the luminance pyramid (`FFX_FSR2_SHADING_CHANGE_MIP_LEVEL`).
-pub const SHADING_CHANGE_MIP: i32 = 4;
+pub(crate) const SHADING_CHANGE_MIP: i32 = 4;
 
 /// `Fsr2InputTuning` in `input.wgsl`.
 #[repr(C)]
