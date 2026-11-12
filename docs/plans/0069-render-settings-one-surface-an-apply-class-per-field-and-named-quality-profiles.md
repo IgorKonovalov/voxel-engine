@@ -21,6 +21,17 @@
 > **Owner, 2026-11-11, Plan 0061's window:** FSR 2 at internal scale 1 looked "fine, maybe even
 > a bit better". Offered as a quality setting, not the default: Phase 4 reads it as a candidate
 > profile value (`High`, Floor at scale 1, or Performance's scale) and Phase 5 places it.
+> **Amended 2026-11-12 (owner, the architecture review's notes taken as recommended;
+> `docs/reviews/2026-11-12-architecture-review.md` sections 1.2 and 2.2).** The architect's
+> re-read before the lane writes these into the phases:
+> - Phase 1's table carries a fourth class, **`Delete`**: a field with no setter and no caller
+>   (the review's section 2.2 list is the first draft) is removed, not documented.
+> - `Floor` equals the fly-through's defaults, and every settings struct's `Default`
+>   (`Lighting::default()` included) equals `Floor`, with a CPU test that says so.
+> - Phase 2's setter gate counts the existing setters, not only new ones.
+> - Phase 4 reads the hit pass alone at `Portable`'s internal size on the RADV RENOIR before the
+>   profile values are set. Over 10 ms there, the backlog's walk-speed spike runs before
+>   Phase 6, not after M10.
 
 ## TL;DR
 
