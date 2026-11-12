@@ -121,7 +121,11 @@
 //! `6` toggles `off` and `2`); its row in the banner, its depth on the HUD's store
 //! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
 //! 1.5), `--bake-budget frame:MS|second:MS,CAP` the budget as a slice a frame or milliseconds a
-//! second capped at a share of the frame (ADR-0052; key `5` cycles it); a dig re-bakes its rings in the queue, ahead of
+//! second capped at a share of the frame (ADR-0052; key `5` cycles it);
+//! `--missing-light black|neighbour|parent|chain` what a cube face with no baked value reads
+//! (ADR-0053: its chunk's summary, its face neighbours', its parent cells'; default `black`; key
+//! `7` cycles it; the banner's queue row and the HUD's store row name it, and the `bake queue:`
+//! line prints the no-value, fallback and still-black shares); a dig re-bakes its rings in the queue, ahead of
 //! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
 //! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
 //! lit bricks); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
@@ -521,6 +525,9 @@ struct Args {
     /// (`vxe_render::bake::BakeQueue::full_first`); `None` follows `--near`. `6` toggles it
     /// between `off` and `2`.
     bake_full_first: Option<Option<i32>>,
+    /// `--missing-light black|neighbour|parent|chain`: what a cube face with no baked value
+    /// reads (ADR-0053); `7` cycles it.
+    missing_light: vxe_render::bake::MissingLight,
     /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
     /// the class and the distance first); `1` cycles score, score with the class as a tier,
     /// distance.
@@ -882,6 +889,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
         bake_near: vxe_render::bake::DEFAULT_NEAR,
         bake_full_first: None,
+        missing_light: vxe_render::bake::MissingLight::Black,
         queue_distance: false,
         queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
         queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
@@ -1192,6 +1200,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .ok()
                     .filter(|n: &u32| *n <= vxe_render::bake::QUEUE_BRICK_SAMPLES)
                     .ok_or(format!("--coarse takes 0 to 4096 samples, not {v}"))?;
+            }
+            "--missing-light" => {
+                args.missing_light = vxe_render::bake::MissingLight::parse(&value()?)?;
             }
             "--full-first" => {
                 let v = value()?;
@@ -3464,6 +3475,7 @@ impl Run {
                     .live_probes
                     .filter(|_| self.modes.lighting.lamp_bounce);
                 row.store = self.hud.store;
+                row.missing_light = self.args.missing_light.name();
                 row.store_note.clear();
                 write_queue_note(&mut row.store_note, self.queue.stats);
                 row.modes.clear();
@@ -4441,10 +4453,16 @@ impl Run {
             let pixels = gfx.frame.light_pixels().max(1);
             let reads = if gfx.frame.counts_store() {
                 format!(
-                    "no value {:.4} coarse {:.4} of {} pixels ({})",
+                    "no value {:.4} fallback {:.4} still black {:.4} coarse {:.4} of {} pixels (missing light {}; store {} B, summaries {} B, parents {} B; {})",
                     f64::from(store_stats.missing) / f64::from(pixels),
+                    f64::from(store_stats.fallback) / f64::from(pixels),
+                    f64::from(store_stats.still_black) / f64::from(pixels),
                     f64::from(store_stats.coarse_reads) / f64::from(pixels),
                     pixels,
+                    self.args.missing_light.name(),
+                    store_stats.bytes,
+                    store_stats.summary_bytes,
+                    store_stats.parent_bytes,
                     store_age.map_or_else(
                         || "not read back yet".to_owned(),
                         |a| format!("read {a} frames old")
@@ -4543,9 +4561,18 @@ impl Run {
     /// The live queue's keys: `1` cycles the order (score, score with the class as a tier,
     /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25), `4`
     /// toggles the withdrawal, `5` steps the bake budget through [`BUDGET_CYCLE`], `6` toggles
-    /// the full-first radius between `off` and `2`. A change goes to the queue at once and
-    /// prints the order and the withdrawal, the budget or the radius.
+    /// the full-first radius between `off` and `2`, `7` cycles the missing light through
+    /// [`vxe_render::bake::MissingLight::ALL`]. A change goes to the queue at once (the missing
+    /// light at the next frame) and prints the order and the withdrawal, the budget, the radius
+    /// or the missing light.
     fn queue_keys(&mut self, input: &Input) {
+        if input.pressed(KeyCode::Digit7) {
+            self.args.missing_light = next_missing_light(self.args.missing_light);
+            println!(
+                "bake queue: missing light {}",
+                self.args.missing_light.name()
+            );
+        }
         if input.pressed(KeyCode::Digit6) {
             let r = match self.args.full_first() {
                 Some(_) => None,
@@ -5696,6 +5723,10 @@ impl Run {
         // The temporal pass counts the store's reads only for a reader of them: the HUD's
         // store row and `--read-missing`.
         gfx.frame.set_count_store(hud || self.args.read_missing);
+        if gfx.frame.missing_light() != self.args.missing_light {
+            gfx.frame
+                .set_missing_light(&gpu.queue, self.args.missing_light);
+        }
         let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
         } else {
@@ -6648,6 +6679,13 @@ impl std::fmt::Display for FullFirstWords {
     }
 }
 
+/// The missing-light mode after `m` in [`vxe_render::bake::MissingLight::ALL`] (key `7`).
+fn next_missing_light(m: vxe_render::bake::MissingLight) -> vxe_render::bake::MissingLight {
+    use vxe_render::bake::MissingLight;
+    let i = MissingLight::ALL.iter().position(|&x| x == m).unwrap_or(0);
+    MissingLight::ALL[(i + 1) % MissingLight::ALL.len()]
+}
+
 /// The budgets key `5` steps through (Phase 6's arms): today's slice, 150 ms a second and 300
 /// ms a second, each capped at a quarter of the frame.
 const BUDGET_CYCLE: [vxe_render::bake::Budget; 3] = [
@@ -6702,9 +6740,10 @@ fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 5 budget, 6 full-first)",
+        ", full-first {}, budget {}, missing light {}, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 5 budget, 6 full-first, 7 missing light)",
         FullFirstWords(args.full_first()),
         args.bake_budget,
+        args.missing_light.name(),
         args.bake_edit_ms,
         if args.dig_reach { "on" } else { "off" },
     );
@@ -8433,7 +8472,10 @@ mod tests {
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(banner.contains(", full-first 2, budget "), "{banner}");
-        assert!(banner.contains("6 full-first)"), "{banner}");
+        assert!(
+            banner.contains("6 full-first, 7 missing light)"),
+            "{banner}"
+        );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
         assert!(row.ends_with("; full-first 2; budget frame:1.5"), "{row}");
         for want in ["off", "2", "off"] {
@@ -8463,6 +8505,38 @@ mod tests {
         }
     }
 
+    /// `--missing-light` parses the four modes and refuses the rest, a plain start reads
+    /// `black`, and `7` cycles neighbour, parent, chain and back to black, each press changing
+    /// the banner's queue row in the same frame.
+    #[test]
+    fn the_banner_names_the_missing_light() {
+        use vxe_render::bake::MissingLight;
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        let banner = run.banner().expect("the queue's row is on the banner");
+        assert!(banner.contains(", missing light black, digs "), "{banner}");
+        assert!(banner.contains("7 missing light)"), "{banner}");
+        for want in ["neighbour", "parent", "chain", "black"] {
+            input.end_frame();
+            input.key_up(KeyCode::Digit7);
+            input.key_down(KeyCode::Digit7);
+            run.handle_input(&input);
+            let banner = run.banner().expect("the queue's row is on the banner");
+            assert!(
+                banner.contains(&format!(", missing light {want}, digs ")),
+                "{want}: {banner}"
+            );
+        }
+        let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.missing_light);
+        assert_eq!(f(&[]), Ok(MissingLight::Black));
+        for m in MissingLight::ALL {
+            assert_eq!(f(&["--missing-light", m.name()]), Ok(m));
+        }
+        for bad in ["neighbor", "parents", "on", ""] {
+            assert!(f(&["--missing-light", bad]).is_err(), "{bad}");
+        }
+    }
+
     /// `--bake-budget` parses `frame:MS` and `second:MS,CAP` and refuses the rest, `--bake-slice
     /// MS` reads `frame:MS`; a plain start reads `frame:1.5`; `5` steps the budget through
     /// `frame:1.5`, `second:150,0.25` and `second:300,0.25`, each press changing the banner and
@@ -8475,7 +8549,10 @@ mod tests {
         let mut input = Input::default();
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
-        assert!(banner.contains(", budget frame:1.5, digs +"), "{banner}");
+        assert!(
+            banner.contains(", budget frame:1.5, missing light black, digs +"),
+            "{banner}"
+        );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
         assert!(row.ends_with("; budget frame:1.5"), "{row}");
         run.queue.stats = Some(vxe_render::QueueStats {
@@ -8495,10 +8572,13 @@ mod tests {
             run.refresh_hud_stats(None);
             let banner = run.banner().expect("the queue's row is on the banner");
             assert!(
-                banner.contains(&format!(", budget {want}, digs +")),
+                banner.contains(&format!(", budget {want}, missing light black, digs +")),
                 "{want}: {banner}"
             );
-            assert!(banner.contains("5 budget, 6 full-first)"), "{banner}");
+            assert!(
+                banner.contains("5 budget, 6 full-first, 7 missing light)"),
+                "{banner}"
+            );
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
             assert!(
                 row.ends_with(&format!("; budget {want}{slice}")),

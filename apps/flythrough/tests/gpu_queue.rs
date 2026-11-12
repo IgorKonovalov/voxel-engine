@@ -1168,6 +1168,110 @@ fn a_fade_moves_a_record_by_its_share_a_frame() {
     }
 }
 
+/// ADR-0053's arrival. Chunk 0 holds a small rock slab under an ore cube, chunk 1 a large rock
+/// floor (at 4096 samples a brick direction, many submits' work), so chunk 0's block lands
+/// first (asserted). Under `chain`, chunk 1's first block fades from the chain's value at its
+/// landing, chunk 0's summary through its face neighbour: on the step it lands, every value word
+/// of its records shows `fallback + (block - fallback) / FADE` within one `rgb9e5` step, not the
+/// block's value. Under `black` that step shows the block itself.
+#[test]
+fn a_first_block_fades_from_its_fallback() {
+    use vxe_render::bake::{LightSummaries, MissingLight};
+    for mode in [MissingLight::Chain, MissingLight::Black] {
+        let world = world_of([2, 1, 1], AIR);
+        fill(&world, [16, 12, 16], [28, 16, 28], ROCK);
+        fill(&world, [20, 22, 20], [24, 26, 24], ORE);
+        fill(&world, [68, 12, 4], [124, 16, 60], ROCK);
+        let Some(mut q) = rig(
+            world,
+            &Setup {
+                counts: BakeSettings {
+                    brick_samples: 4096,
+                    ..counts()
+                },
+                ..Setup::at([10.5, 30.5, 22.5])
+            },
+        ) else {
+            return;
+        };
+        q.frame.set_missing_light(&q.queue, mode);
+        let mut landed = false;
+        for _ in 0..MAX_STEPS {
+            let before = q.target([0, 0, 0]);
+            q.step();
+            if q.target([1, 0, 0]).is_some() {
+                assert!(
+                    before.is_some(),
+                    "{mode:?}: chunk 0's block lands before chunk 1's (the rig's premise)"
+                );
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "{mode:?}: chunk 1's block lands");
+        let to = q.target([1, 0, 0]).expect("chunk 1's target");
+        let shown = q.shown([1, 0, 0]).expect("chunk 1's pool block");
+        if mode == MissingLight::Black {
+            assert_eq!(shown, to, "black: the first block is written directly");
+            continue;
+        }
+        let a0 = *q
+            .frame
+            .store()
+            .light()
+            .summary([0, 0, 0])
+            .expect("chunk 0's summary");
+        let mut only_a0 = LightSummaries::default();
+        only_a0.set([0, 0, 0], Some(a0));
+        let fallback = only_a0
+            .chain([1, 0, 0], mode)
+            .expect("the chain has chunk 0's value");
+        let (mut checked, mut differ, mut moved) = (0, 0, 0);
+        for &d in &to[..512] {
+            if d == 0 {
+                continue;
+            }
+            let start = (d >> 11) as usize - bake::BRICK_WORDS;
+            for f in 0..6 {
+                let w = start + f;
+                let from = if fallback[6] >> (16 + f) & 1 != 0 {
+                    bake::rgb9e5_unpack(fallback[f])
+                } else {
+                    [0.0; 3]
+                };
+                let target = bake::rgb9e5_unpack(to[w]);
+                let got = bake::rgb9e5_unpack(shown[w]);
+                let ulp = step_of(shown[w]);
+                for k in 0..3 {
+                    let want = from[k] + (target[k] - from[k]) / bake::FADE as f32;
+                    assert!(
+                        (got[k] - want).abs() <= ulp * 1.0001 + want.abs() * 1e-6,
+                        "word {w} channel {k}: {} against {want} (fallback {}, block {})",
+                        got[k],
+                        from[k],
+                        target[k]
+                    );
+                }
+                checked += 1;
+                // A word whose fallback and block differ: the fade has not reached the block.
+                if from != target {
+                    differ += 1;
+                    moved += usize::from(shown[w] != to[w]);
+                }
+            }
+        }
+        assert!(checked > 100, "{checked} value words");
+        assert!(
+            differ > 20,
+            "{differ} words whose fallback and block differ"
+        );
+        assert!(
+            moved > differ / 2,
+            "{moved} of {differ} differing words not yet at the block"
+        );
+    }
+}
+
 /// Chunk 0's wall faces an ore block in chunk 1 across their border. With the mirror taking one
 /// chunk a sync, nearest the focus first, chunk 0 is mirrored and chunk 1 waits: chunk 0 is not
 /// baked (its reach holds a chunk waiting to upload) and is held as blocked. Once chunk 1 is

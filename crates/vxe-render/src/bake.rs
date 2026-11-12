@@ -480,11 +480,368 @@ pub fn record_words(cell: u32) -> usize {
     BRICK_WORDS * (8 / cell).pow(3) as usize
 }
 
-/// The block's directory and its words: each surface brick's record of `record` words, the
-/// directory pointing past it (`run offset << 11`, no cell after it).
+/// A block's word holding its light summary (ADR-0053): one record in the cell record's format,
+/// just past the directory, so the chunk table's word reaches it with no second read.
+pub const SUMMARY_AT: u64 = DIRECTORY_WORDS;
+/// A block's words before its first brick record: the directory, then the summary.
+pub const BLOCK_HEAD_WORDS: u64 = DIRECTORY_WORDS + BRICK_WORDS as u64;
+/// The flags word's bits 2 and 3: the missing-light mode ([`MissingLight::bits`]).
+pub const FLAG_MISSING_SHIFT: u32 = 2;
+
+/// What a cube face with no brick value reads (ADR-0053): black as before, or the first value
+/// for its direction along a chain of summaries, nearest first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MissingLight {
+    /// 0, as before the summaries.
+    #[default]
+    Black,
+    /// The chunk's own summary, then the mean of its six face neighbours' summaries.
+    Neighbour,
+    /// The chunk's own summary, then the level-1 and the level-2 parent records.
+    Parent,
+    /// Own, neighbours, level 1, level 2.
+    Chain,
+}
+
+impl MissingLight {
+    /// Every mode, in the order key `7` cycles them.
+    pub const ALL: [Self; 4] = [Self::Black, Self::Neighbour, Self::Parent, Self::Chain];
+
+    /// The mode's value in the flags word's bits 2 and 3 (`temporal.wgsl`'s `store_mode`).
+    pub fn bits(self) -> u32 {
+        match self {
+            Self::Black => 0,
+            Self::Neighbour => 1,
+            Self::Parent => 2,
+            Self::Chain => 3,
+        }
+    }
+
+    /// The mode's name, as `--missing-light` takes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Black => "black",
+            Self::Neighbour => "neighbour",
+            Self::Parent => "parent",
+            Self::Chain => "chain",
+        }
+    }
+
+    /// The mode named `s`.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|m| m.name() == s).ok_or(format!(
+            "the missing light is black, neighbour, parent or chain, not {s}"
+        ))
+    }
+
+    fn neighbours(self) -> bool {
+        matches!(self, Self::Neighbour | Self::Chain)
+    }
+
+    fn parents(self) -> bool {
+        matches!(self, Self::Parent | Self::Chain)
+    }
+}
+
+/// A running mean of records by direction: each direction over the records that hold it, the
+/// material the most of them keep (the lowest on a tie), the mask their union.
+#[derive(Default)]
+struct RecordMean {
+    sums: [[f64; 3]; 6],
+    counts: [u32; 6],
+    /// Material and how many records keep it.
+    materials: Vec<(u32, u32)>,
+}
+
+impl RecordMean {
+    fn add(&mut self, r: &[u32]) {
+        let mask = r[6] >> 16;
+        if mask == 0 {
+            return;
+        }
+        for (f, (sum, count)) in self.sums.iter_mut().zip(&mut self.counts).enumerate() {
+            if mask & 1 << f != 0 {
+                let v = rgb9e5_unpack(r[f]);
+                for (s, x) in sum.iter_mut().zip(v) {
+                    *s += f64::from(x);
+                }
+                *count += 1;
+            }
+        }
+        let m = r[6] & 0xFFFF;
+        match self.materials.iter_mut().find(|e| e.0 == m) {
+            Some(e) => e.1 += 1,
+            None => self.materials.push((m, 1)),
+        }
+    }
+
+    /// The mean as a record; `None` when no record held a direction.
+    fn record(&self) -> Option<[u32; BRICK_WORDS]> {
+        let (material, _) = self
+            .materials
+            .iter()
+            .copied()
+            .max_by_key(|&(m, n)| (n, std::cmp::Reverse(m)))?;
+        let mut out = [0u32; BRICK_WORDS];
+        let mut mask = 0;
+        for (f, (w, (sum, &count))) in out
+            .iter_mut()
+            .zip(self.sums.iter().zip(&self.counts))
+            .enumerate()
+        {
+            if count > 0 {
+                let n = f64::from(count);
+                *w = rgb9e5_pack(sum.map(|s| (s / n) as f32));
+                mask |= 1 << f;
+            }
+        }
+        out[6] = material | mask << 16;
+        Some(out)
+    }
+}
+
+/// `block`'s light summary (ADR-0053) from its brick records of `record` words: a direction's
+/// value the mean over the cells that hold it, the material the most of those cells keep, the
+/// mask their union; `None` for a block with no lit direction.
+pub fn block_summary(block: &[u32], record: usize) -> Option<[u32; BRICK_WORDS]> {
+    let mut mean = RecordMean::default();
+    for &dir in &block[..CHUNK_BRICKS] {
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            mean.add(&block[cell..cell + BRICK_WORDS]);
+        }
+    }
+    mean.record()
+}
+
+/// The mean by direction of `records` ([`block_summary`]'s rule over whole records): a parent
+/// cell's record from its children's.
+pub fn mean_record<'a>(
+    records: impl IntoIterator<Item = &'a [u32; BRICK_WORDS]>,
+) -> Option<[u32; BRICK_WORDS]> {
+    let mut mean = RecordMean::default();
+    for r in records {
+        mean.add(r);
+    }
+    mean.record()
+}
+
+/// The two-level parent table's shape over a mirror window (ADR-0053): level `l` (1 or 2) of
+/// cells `1 << l` chunks a side, world-aligned (`c >> l`), indexed from the window's origin's
+/// cell over `(size + (1 << l) - 1) >> l` plus one cells a side, level 2 after level 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParentTable {
+    /// The level-1 table's first word.
+    pub first: u64,
+    origin: [[i32; 3]; 2],
+    side: [[i32; 3]; 2],
+}
+
+impl ParentTable {
+    /// The table after `window`'s chunk table.
+    pub fn of(window: ChunkExtent) -> Self {
+        let size = window.size();
+        let o = window.min.0;
+        let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
+        let lv = |l: i32| {
+            (
+                o.map(|v| v.div_euclid(1 << l)),
+                size.map(|s| ((s + (1 << l) - 1) >> l) + 1),
+            )
+        };
+        let (o1, s1) = lv(1);
+        let (o2, s2) = lv(2);
+        Self {
+            first: STORE_TABLE + table_words,
+            origin: [o1, o2],
+            side: [s1, s2],
+        }
+    }
+
+    fn cells(&self, level: usize) -> u64 {
+        self.side[level].iter().map(|&s| s as u64).product()
+    }
+
+    /// The table's words, both levels.
+    pub fn words(&self) -> u64 {
+        (self.cells(0) + self.cells(1)) * BRICK_WORDS as u64
+    }
+
+    /// The first word of level `level` (1 or 2) cell `p`'s record, `None` outside the table.
+    pub fn word(&self, level: usize, p: [i32; 3]) -> Option<u64> {
+        let i = level - 1;
+        let w = [0, 1, 2].map(|k| p[k] - self.origin[i][k]);
+        if (0..3).any(|k| w[k] < 0 || w[k] >= self.side[i][k]) {
+            return None;
+        }
+        let s = self.side[i];
+        let index = (w[0] + s[0] * (w[1] + s[1] * w[2])) as u64;
+        let base = self.first
+            + if i == 1 {
+                self.cells(0) * BRICK_WORDS as u64
+            } else {
+                0
+            };
+        Some(base + index * BRICK_WORDS as u64)
+    }
+}
+
+/// The level-`level` cell (1 or 2) holding chunk `c`.
+fn parent_of(c: [i32; 3], level: usize) -> [i32; 3] {
+    c.map(|v| v.div_euclid(1 << level))
+}
+
+/// The blocks' light summaries and the two parent levels over them, as the CPU keeps them
+/// (ADR-0053): each change returns the parent records to write. No GPU here.
+#[derive(Clone, Debug, Default)]
+pub struct LightSummaries {
+    summaries: std::collections::HashMap<[i32; 3], [u32; BRICK_WORDS]>,
+    levels: [std::collections::HashMap<[i32; 3], [u32; BRICK_WORDS]>; 2],
+}
+
+impl LightSummaries {
+    /// Chunk `c`'s summary.
+    pub fn summary(&self, c: [i32; 3]) -> Option<&[u32; BRICK_WORDS]> {
+        self.summaries.get(&c)
+    }
+
+    /// Level `level`'s (1 or 2) record of cell `p`.
+    pub fn parent(&self, level: usize, p: [i32; 3]) -> Option<&[u32; BRICK_WORDS]> {
+        self.levels[level - 1].get(&p)
+    }
+
+    /// Empties every summary and parent.
+    pub fn clear(&mut self) {
+        self.summaries.clear();
+        self.levels.iter_mut().for_each(|l| l.clear());
+    }
+
+    /// Sets `c`'s summary (`None`: its block was freed or holds no light) and recomputes the two
+    /// parent records above it: the level-1 and level-2 cells and their records (zero for none),
+    /// `None` where the summary did not change.
+    #[allow(
+        clippy::type_complexity,
+        reason = "two (level, cell, record) writes, named in the doc"
+    )]
+    pub fn set(
+        &mut self,
+        c: [i32; 3],
+        summary: Option<[u32; BRICK_WORDS]>,
+    ) -> Option<[(usize, [i32; 3], [u32; BRICK_WORDS]); 2]> {
+        if self.summaries.get(&c).copied() == summary {
+            return None;
+        }
+        match summary {
+            Some(s) => self.summaries.insert(c, s),
+            None => self.summaries.remove(&c),
+        };
+        Some([
+            self.recompute(1, parent_of(c, 1)),
+            self.recompute(2, parent_of(c, 2)),
+        ])
+    }
+
+    /// Recomputes level `level`'s record of cell `p` from its eight children (chunks for level
+    /// 1, level-1 cells for level 2).
+    fn recompute(&mut self, level: usize, p: [i32; 3]) -> (usize, [i32; 3], [u32; BRICK_WORDS]) {
+        let children = (0..8).map(|i| [0, 1, 2].map(|k| p[k] * 2 + (i >> k & 1)));
+        let below = if level == 1 {
+            &self.summaries
+        } else {
+            &self.levels[0]
+        };
+        let rec = mean_record(children.filter_map(|c| below.get(&c)));
+        match rec {
+            Some(r) => self.levels[level - 1].insert(p, r),
+            None => self.levels[level - 1].remove(&p),
+        };
+        (level, p, rec.unwrap_or_default())
+    }
+
+    /// Drops the summaries of `dropped` and recomputes every parent.
+    pub fn drop_chunks(&mut self, dropped: &[[i32; 3]]) {
+        for c in dropped {
+            self.summaries.remove(c);
+        }
+        self.levels[0].clear();
+        self.levels[1].clear();
+        let cells1: std::collections::BTreeSet<[i32; 3]> =
+            self.summaries.keys().map(|&c| parent_of(c, 1)).collect();
+        for p in cells1 {
+            self.recompute(1, p);
+        }
+        let cells2: std::collections::BTreeSet<[i32; 3]> =
+            self.levels[0].keys().map(|&p| parent_of(p, 1)).collect();
+        for p in cells2 {
+            self.recompute(2, p);
+        }
+    }
+
+    /// The parent table's words for `table` (both levels, zero where a cell holds no value).
+    pub fn table_words(&self, table: &ParentTable) -> Vec<u32> {
+        let mut out = vec![0u32; table.words() as usize];
+        for level in 1..=2 {
+            for (&p, r) in &self.levels[level - 1] {
+                if let Some(w) = table.word(level, p) {
+                    let at = (w - table.first) as usize;
+                    out[at..at + BRICK_WORDS].copy_from_slice(r);
+                }
+            }
+        }
+        out
+    }
+
+    /// The value the read chain (`temporal.wgsl`'s `store_fallback`) gives chunk `c` under
+    /// `mode`, direction by direction, at emission scale 1: its own summary, the mean of its six
+    /// face neighbours' that hold the direction, level 1's record, level 2's; the mask the
+    /// directions found. `None` under [`MissingLight::Black`] or where no direction is found.
+    pub fn chain(&self, c: [i32; 3], mode: MissingLight) -> Option<[u32; BRICK_WORDS]> {
+        if mode == MissingLight::Black {
+            return None;
+        }
+        let own = self.summaries.get(&c);
+        let neighbours: Vec<&[u32; BRICK_WORDS]> = if mode.neighbours() {
+            (0..6)
+                .filter_map(|f| {
+                    let mut n = c;
+                    n[f / 2] += if f % 2 == 0 { -1 } else { 1 };
+                    self.summaries.get(&n)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let near = mean_record(neighbours.iter().copied());
+        let parents = [1, 2].map(|l| {
+            mode.parents()
+                .then(|| self.levels[l - 1].get(&parent_of(c, l)))
+                .flatten()
+        });
+        let mut out = [0u32; BRICK_WORDS];
+        let mut mask = 0u32;
+        let mut material = None;
+        let sources = [own, near.as_ref(), parents[0], parents[1]];
+        for (f, w) in out.iter_mut().take(6).enumerate() {
+            if let Some(r) = sources.iter().flatten().find(|r| r[6] >> (16 + f) & 1 != 0) {
+                *w = r[f];
+                mask |= 1 << f;
+                material.get_or_insert(r[6] & 0xFFFF);
+            }
+        }
+        out[6] = material? | mask << 16;
+        Some(out)
+    }
+}
+
+/// The block's directory and its words: the summary's place after the directory, then each
+/// surface brick's record of `record` words, the directory pointing past it (`run offset << 11`,
+/// no cell after it). The returned head is the directory and the (zero) summary.
 fn layout(faces: &ChunkFaces, record: usize) -> (Vec<u32>, u64) {
-    let mut dir = vec![0u32; DIRECTORY_WORDS as usize];
-    let mut at = DIRECTORY_WORDS as u32;
+    let mut dir = vec![0u32; BLOCK_HEAD_WORDS as usize];
+    let mut at = BLOCK_HEAD_WORDS as u32;
     for (slot, _) in &faces.bricks {
         at += record as u32;
         dir[usize::from(*slot)] = at << 11;
@@ -520,8 +877,8 @@ fn provisional_block(
     record: usize,
     touched: &[u16],
 ) -> Vec<u32> {
-    let (dir, words) = layout(faces, record);
-    let mut block = dir;
+    let (head, words) = layout(faces, record);
+    let mut block = head;
     block.reserve(words as usize);
     let record_at = |chunk: [i32; 3], slot: usize| -> Option<&[u32]> {
         let b = store.words.get(&chunk)?;
@@ -602,6 +959,26 @@ fn provisional_block(
     }
     debug_assert_eq!(block.len() as u64, words);
     block
+}
+
+/// The block a first block fades from under a fallback mode (ADR-0053): `block`'s layout and
+/// tails, every cell's direction values the chain's `chain` for that direction (0 where the chain
+/// holds none).
+fn fallback_block(block: &[u32], chain: &[u32; BRICK_WORDS], record: usize) -> Vec<u32> {
+    let mut from = block.to_vec();
+    let mask = chain[6] >> 16;
+    for &dir in &block[..CHUNK_BRICKS] {
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            for f in 0..6 {
+                from[cell + f] = if mask & 1 << f != 0 { chain[f] } else { 0 };
+            }
+        }
+    }
+    from
 }
 
 /// A brick record's directions it holds no value for take the mean of those it does: a brick a
@@ -798,6 +1175,16 @@ pub struct StoreStats {
     pub coarse_reads: u32,
     /// Chunks whose block is coarse.
     pub coarse_chunks: u64,
+    /// Lighting pixels of the last encode with no brick value that took a value from the
+    /// missing-light chain (ADR-0053; 0 under [`MissingLight::Black`]).
+    pub fallback: u32,
+    /// Lighting pixels of the last encode with no brick value that the chain left black (under
+    /// [`MissingLight::Black`], every pixel with no value).
+    pub still_black: u32,
+    /// Bytes of the blocks' summaries (one record a block).
+    pub summary_bytes: u64,
+    /// Bytes of the parent table (both levels).
+    pub parent_bytes: u64,
 }
 
 /// A place of `words` words from `free`'s smallest place that holds it (its rest left free),
@@ -873,9 +1260,82 @@ pub struct Store {
     /// Chunks whose block or coarse mark changed since the live queue last took them
     /// ([`Store::take_touched`]); `None` once more than [`CHANGES_MAX`] went untaken.
     touched: Option<Vec<[i32; 3]>>,
+    /// The blocks' summaries as shown and the parent levels over them (ADR-0053).
+    light: LightSummaries,
+    /// The parent table's shape over the window.
+    parents: Option<ParentTable>,
+    /// What a cube face with no brick value reads; in the flags word.
+    missing: MissingLight,
+    /// Milliseconds spent on summaries and parents since [`Store::take_summary_ms`].
+    summary_ms: f64,
 }
 
 impl Store {
+    /// The flags word: the cell bit and the missing-light mode.
+    fn flags(&self) -> u32 {
+        (if self.cell == 4 { FLAG_CELL4 } else { 0 }) | self.missing.bits() << FLAG_MISSING_SHIFT
+    }
+
+    /// What a cube face with no brick value reads.
+    pub fn missing_light(&self) -> MissingLight {
+        self.missing
+    }
+
+    /// Sets what a cube face with no brick value reads (the flags word follows at once).
+    pub(crate) fn set_missing_light(&mut self, queue: &wgpu::Queue, mode: MissingLight) {
+        self.missing = mode;
+        let flags = self.flags();
+        queue.write_buffer(&self.pool, STORE_FLAGS * 4, bytemuck::bytes_of(&flags));
+    }
+
+    /// Sets the mode without writing the flags word: a new pool's header carries it from its
+    /// first reset.
+    pub(crate) fn keep_missing_light(&mut self, mode: MissingLight) {
+        self.missing = mode;
+    }
+
+    /// The summaries and parents the CPU keeps.
+    pub fn light(&self) -> &LightSummaries {
+        &self.light
+    }
+
+    /// The milliseconds spent on summaries and parents since the last call.
+    pub(crate) fn take_summary_ms(&mut self) -> f64 {
+        std::mem::take(&mut self.summary_ms)
+    }
+
+    /// Sets `c`'s summary to `block`'s (`None`: no block) and writes the parent records above
+    /// it that changed.
+    fn set_summary(
+        &mut self,
+        queue: &wgpu::Queue,
+        c: [i32; 3],
+        summary: Option<[u32; BRICK_WORDS]>,
+    ) {
+        let Some(writes) = self.light.set(c, summary) else {
+            return;
+        };
+        let Some(table) = self.parents else {
+            return;
+        };
+        for (level, p, rec) in writes {
+            if let Some(w) = table.word(level, p) {
+                queue.write_buffer(&self.pool, w * 4, bytemuck::cast_slice(&rec));
+            }
+        }
+    }
+
+    /// Writes `block`'s summary into its words and records it: the parents follow.
+    fn summarise(&mut self, queue: &wgpu::Queue, c: [i32; 3], block: &mut [u32]) {
+        let t = stopwatch();
+        let record = record_words(self.cell);
+        let s = block_summary(block, record);
+        let at = SUMMARY_AT as usize;
+        block[at..at + BRICK_WORDS].copy_from_slice(&s.unwrap_or_default());
+        self.set_summary(queue, c, s);
+        self.summary_ms += seconds_since(t) * 1e3;
+    }
+
     /// Notes that `c`'s block or its coarse mark changed.
     fn touch(&mut self, c: [i32; 3]) {
         if let Some(t) = self.touched.as_mut() {
@@ -914,6 +1374,10 @@ impl Store {
             free: Vec::new(),
             coarse: Default::default(),
             touched: Some(Vec::new()),
+            light: LightSummaries::default(),
+            parents: None,
+            missing: MissingLight::Black,
+            summary_ms: 0.0,
         }
     }
 
@@ -932,6 +1396,10 @@ impl Store {
             brick_reads,
             coarse_reads,
             coarse_chunks: self.coarse.len() as u64,
+            fallback: 0,
+            still_black: 0,
+            summary_bytes: self.blocks.len() as u64 * BRICK_WORDS as u64 * 4,
+            parent_bytes: self.parents.map_or(0, |t| t.words() * 4),
         }
     }
 
@@ -969,7 +1437,7 @@ impl Store {
     /// Sets the header's flags word for brick records of cells of `cell` voxels.
     fn set_cell(&mut self, queue: &wgpu::Queue, cell: u32) {
         self.cell = cell;
-        let flags = if cell == 4 { FLAG_CELL4 } else { 0 };
+        let flags = self.flags();
         queue.write_buffer(&self.pool, STORE_FLAGS * 4, bytemuck::bytes_of(&flags));
     }
 
@@ -998,16 +1466,19 @@ impl Store {
     /// Empties the store for `window`'s chunk table: the header written, no block.
     fn reset(&mut self, queue: &wgpu::Queue, window: ChunkExtent) {
         let size = window.size();
-        let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
-        let mut header = vec![0u32; (STORE_TABLE + table_words) as usize];
+        let parents = ParentTable::of(window);
+        let mut header = vec![0u32; (parents.first + parents.words()) as usize];
         for k in 0..3 {
             header[4 + k] = window.min.0[k] as u32;
             header[8 + k] = size[k] as u32;
         }
+        header[STORE_FLAGS as usize] = self.flags();
         queue.write_buffer(&self.pool, 0, bytemuck::cast_slice(&header));
         self.blocks.clear();
         self.words.clear();
-        self.head_words = STORE_TABLE + table_words;
+        self.light.clear();
+        self.parents = Some(parents);
+        self.head_words = header.len() as u64;
         self.end_words = self.head_words;
         self.piece = None;
         self.window = Some(window);
@@ -1052,17 +1523,24 @@ impl Store {
             self.coarse.remove(c);
         }
         self.window = Some(window);
-        let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
-        let mut header = vec![0u32; (STORE_TABLE + table_words) as usize];
+        // The parent table is world-aligned: a move re-bins no chunk, only its index moves, so
+        // the whole table is written again with the chunk table.
+        let t = stopwatch();
+        self.light.drop_chunks(&dropped);
+        let parents = ParentTable::of(window);
+        self.parents = Some(parents);
+        let mut header = vec![0u32; parents.first as usize];
         for k in 0..3 {
             header[4 + k] = window.min.0[k] as u32;
             header[8 + k] = size[k] as u32;
         }
-        header[STORE_FLAGS as usize] = if self.cell == 4 { FLAG_CELL4 } else { 0 };
+        header[STORE_FLAGS as usize] = self.flags();
         for (c, (first, _)) in &self.blocks {
             header[self.table_word(ChunkCoord(*c)) as usize] =
                 self.table_value(ChunkCoord(*c), *first);
         }
+        header.extend(self.light.table_words(&parents));
+        self.summary_ms += seconds_since(t) * 1e3;
         // Words 0 to 2 are unused; the frame's counters are a buffer of their own.
         queue.write_buffer(&self.pool, 12, bytemuck::cast_slice(&header[3..]));
         dropped
@@ -1094,7 +1572,15 @@ impl Store {
 
     /// Writes `words` at `first` in the pool alone: what a fading block shows while the store's
     /// copy holds its target.
-    pub(crate) fn show(&self, queue: &wgpu::Queue, first: u64, words: &[u32]) {
+    /// Its summary is written into `words` first, and the parents follow it.
+    pub(crate) fn show(
+        &mut self,
+        queue: &wgpu::Queue,
+        coord: ChunkCoord,
+        first: u64,
+        words: &mut [u32],
+    ) {
+        self.summarise(queue, coord.0, words);
         queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(words));
     }
 
@@ -1108,7 +1594,8 @@ impl Store {
     }
 
     /// Writes `block` as `coord`'s at `first`, and points the chunk table at it.
-    fn put(&mut self, queue: &wgpu::Queue, coord: ChunkCoord, first: u64, block: Vec<u32>) {
+    fn put(&mut self, queue: &wgpu::Queue, coord: ChunkCoord, first: u64, mut block: Vec<u32>) {
+        self.summarise(queue, coord.0, &mut block);
         queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(&block));
         queue.write_buffer(
             &self.pool,
@@ -1133,6 +1620,9 @@ impl Store {
                 self.table_word(coord) * 4,
                 bytemuck::bytes_of(&0u32),
             );
+            let t = stopwatch();
+            self.set_summary(queue, coord.0, None);
+            self.summary_ms += seconds_since(t) * 1e3;
         }
     }
 
@@ -1562,10 +2052,10 @@ pub(crate) fn run(
     }
     let record = record_words(settings.cell);
     let window = run.gpu.window();
-    let size = window.size();
-    let table_words = (size[0] as u64) * (size[1] as u64) * (size[2] as u64);
-    let needed_words =
-        STORE_TABLE + table_words + listed.iter().map(|(_, f)| layout(f, record).1).sum::<u64>();
+    let parents = ParentTable::of(window);
+    let needed_words = parents.first
+        + parents.words()
+        + listed.iter().map(|(_, f)| layout(f, record).1).sum::<u64>();
     let capacity = store.pool.size();
     if needed_words * 4 > capacity {
         return Err(BakeError::PoolFull {
@@ -2849,7 +3339,7 @@ struct Pushed {
 /// then the opening's candidate build, census, sort, reach and light checks and listing (each
 /// 0 on a step that does not open), the job tables, the device poll, the read-back's copy and
 /// the blocks' placement, the submit and the fades.
-pub const STEP_STAGES: [&str; 16] = [
+pub const STEP_STAGES: [&str; 17] = [
     "setup",
     "filter",
     "boxes",
@@ -2866,6 +3356,7 @@ pub const STEP_STAGES: [&str; 16] = [
     "place",
     "submit",
     "fades",
+    "summaries",
 ];
 const S_SETUP: usize = 0;
 const S_FILTER: usize = 1;
@@ -2883,6 +3374,7 @@ const S_COLLECT: usize = 12;
 const S_PLACE: usize = 13;
 const S_SUBMIT: usize = 14;
 const S_FADES: usize = 15;
+const S_SUMMARIES: usize = 16;
 
 /// One queue step's CPU time by stage.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -3978,6 +4470,8 @@ impl BakeQueue {
         t0: Instant,
     ) -> Result<QueueStats, BakeError> {
         self.laps = Laps::new(t0);
+        // Summary time spent outside a step (a one-shot bake, a dig's ring) is not this step's.
+        store.take_summary_ms();
         self.laps.lap(S_SETUP);
         self.steps += 1;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
@@ -4163,7 +4657,8 @@ impl BakeQueue {
                     // fades to the new ones.
                     store.release(first, block.len() as u64);
                     store.put(queue, coord, f, block);
-                    store.show(queue, f, &from);
+                    let mut from = from;
+                    store.show(queue, coord, f, &mut from);
                     fades.insert(
                         coord.0,
                         Fade {
@@ -4179,7 +4674,25 @@ impl BakeQueue {
                     fades.remove(&coord.0);
                     store.put(queue, coord, first, block);
                 }
-                None => store.put(queue, coord, first, block),
+                None => match store.light.chain(coord.0, store.missing) {
+                    // A first block under a fallback mode fades from the chain's value, read
+                    // before the block's own summary joins the chain (ADR-0053).
+                    Some(chain) => {
+                        let mut from = fallback_block(&block, &chain, record);
+                        store.put(queue, coord, first, block);
+                        store.show(queue, coord, first, &mut from);
+                        fades.insert(
+                            coord.0,
+                            Fade {
+                                first,
+                                from,
+                                frame: 0,
+                                frames: FADE,
+                            },
+                        );
+                    }
+                    None => store.put(queue, coord, first, block),
+                },
             }
         };
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
@@ -4265,6 +4778,15 @@ impl BakeQueue {
         self.stats.digs = (self.digs.len() + self.dig_open.len()) as u64;
         self.stats.reach = self.reach.len() as u64;
         self.laps.lap(S_FADES);
+        // The summaries' and parents' time ran inside the placement, the fades and the filter's
+        // evictions: it moves to its own stage, from those in that order.
+        let mut summaries = store.take_summary_ms();
+        for stage in [S_PLACE, S_FADES, S_FILTER] {
+            let p = summaries.min(self.laps.ms[stage]);
+            self.laps.ms[stage] -= p;
+            self.laps.ms[S_SUMMARIES] += p;
+            summaries -= p;
+        }
         self.stats.stages = StepStages {
             ms: self.laps.ms,
             total_ms: stopwatch().duration_since(t0).as_secs_f64() * 1e3,
@@ -4529,7 +5051,7 @@ impl BakeQueue {
     /// Moves every fade a frame on: each record's direction values at
     /// `frame / FADE` of the way from what it showed to the store's copy; the last frame writes
     /// the copy itself.
-    fn advance_fades(&mut self, queue: &wgpu::Queue, store: &Store, record: usize) {
+    fn advance_fades(&mut self, queue: &wgpu::Queue, store: &mut Store, record: usize) {
         let mut ended = Vec::new();
         let mut shown = std::mem::take(&mut self.fade_scratch);
         for (c, f) in &mut self.fades {
@@ -4553,7 +5075,9 @@ impl BakeQueue {
                 continue;
             }
             if f.frame >= f.frames {
-                store.show(queue, f.first, to);
+                shown.clear();
+                shown.extend_from_slice(to);
+                store.show(queue, ChunkCoord(*c), f.first, &mut shown);
                 ended.push(*c);
                 continue;
             }
@@ -4576,7 +5100,7 @@ impl BakeQueue {
                     }
                 }
             }
-            store.show(queue, f.first, &shown);
+            store.show(queue, ChunkCoord(*c), f.first, &mut shown);
         }
         self.fade_scratch = shown;
         for c in ended {
@@ -5567,14 +6091,205 @@ mod tests {
             bricks: vec![(3, vec![1, 2, 3]), (9, vec![4])],
             glass: Vec::new(),
         };
+        // The directory's 512 words, then the summary's 7 (ADR-0053), then the records.
         let (d, words) = layout(&faces, record_words(8));
-        assert_eq!(d[3], (512 + 7) << 11);
-        assert_eq!(d[9], (512 + 14) << 11);
+        assert_eq!(d.len(), 512 + 7, "the head: directory and summary");
+        assert_eq!(d[3], (512 + 7 + 7) << 11);
+        assert_eq!(d[9], (512 + 7 + 14) << 11);
         assert_eq!(d[4], 0);
-        assert_eq!(words, 512 + 14);
+        assert_eq!(words, 512 + 7 + 14);
         let (d, words) = layout(&faces, record_words(4));
-        assert_eq!(d[9], (512 + 2 * 56) << 11);
-        assert_eq!(words, 512 + 2 * 56);
+        assert_eq!(d[9], (512 + 7 + 2 * 56) << 11);
+        assert_eq!(words, 512 + 7 + 2 * 56);
+    }
+
+    /// A record of one cell: `dirs` (face, value) held, material `m`.
+    fn cell_record(dirs: &[(usize, [f32; 3])], m: u32) -> [u32; BRICK_WORDS] {
+        let mut r = [0u32; BRICK_WORDS];
+        let mut mask = 0;
+        for &(f, v) in dirs {
+            r[f] = rgb9e5_pack(v);
+            mask |= 1 << f;
+        }
+        r[6] = m | mask << 16;
+        r
+    }
+
+    /// Whether `w` decodes within one `rgb9e5` step of `want`, channel by channel.
+    fn within_a_step(w: u32, want: [f64; 3]) -> bool {
+        let got = rgb9e5_unpack(w);
+        let step = 2f64.powi((w >> 27) as i32 - 24);
+        (0..3).all(|k| (f64::from(got[k]) - want[k]).abs() <= step * 1.0001)
+    }
+
+    /// ADR-0053's summary and parents on fixed records: a block's summary is the mean by
+    /// direction over the cells holding it, its material the one most of them keep, its mask
+    /// their union; a level-1 record over two present children of eight is their mean by
+    /// direction; a cell with no present child holds no value, and freeing a child's block takes
+    /// it out of its parents' means. The chain reads own, neighbours, level 1, level 2 per mode.
+    #[test]
+    fn a_block_summary_is_its_cells_mean_by_direction() {
+        // Three bricks of one cell: +x on two (1.0 and 0.5 red), -y on one, material 5 twice.
+        let faces = ChunkFaces {
+            bricks: vec![(3, vec![1]), (9, vec![2]), (40, vec![3])],
+            glass: Vec::new(),
+        };
+        let (mut block, _) = layout(&faces, BRICK_WORDS);
+        block.extend(cell_record(&[(1, [1.0, 0.25, 0.0])], 5));
+        block.extend(cell_record(
+            &[(1, [0.5, 0.75, 0.0]), (2, [0.0, 0.0, 2.0])],
+            5,
+        ));
+        block.extend(cell_record(&[(2, [0.0, 0.0, 1.0])], 7));
+        let s = block_summary(&block, BRICK_WORDS).expect("a lit block");
+        assert!(
+            within_a_step(s[1], [0.75, 0.5, 0.0]),
+            "+x: {:?}",
+            rgb9e5_unpack(s[1])
+        );
+        assert!(
+            within_a_step(s[2], [0.0, 0.0, 1.5]),
+            "-y: {:?}",
+            rgb9e5_unpack(s[2])
+        );
+        assert_eq!(s[6] & 0xFFFF, 5, "the material most cells keep");
+        assert_eq!(s[6] >> 16, 0b110, "the union of the masks");
+        assert_eq!([s[0], s[3], s[4], s[5]], [0; 4], "directions no cell holds");
+        // A block whose cells hold no direction has no summary.
+        let (mut dark, _) = layout(&faces, BRICK_WORDS);
+        dark.extend([0u32; 3 * BRICK_WORDS]);
+        assert_eq!(block_summary(&dark, BRICK_WORDS), None);
+        // Cells of 4 voxels: every cell of a brick's eight counts.
+        let one = ChunkFaces {
+            bricks: vec![(0, vec![1])],
+            glass: Vec::new(),
+        };
+        let (mut b4, _) = layout(&one, record_words(4));
+        for i in 0..8 {
+            b4.extend(cell_record(&[(0, [i as f32, 0.0, 0.0])], 2));
+        }
+        let s4 = block_summary(&b4, record_words(4)).expect("a lit block");
+        assert!(within_a_step(s4[0], [3.5, 0.0, 0.0]), "cells of 4");
+
+        // Two present children of level-1 cell (0,0,0): their mean by direction.
+        let a1 = cell_record(&[(1, [1.0, 0.0, 0.0]), (3, [0.5, 0.5, 0.5])], 5);
+        let a2 = cell_record(&[(1, [0.0, 1.0, 0.0])], 5);
+        let mut l = LightSummaries::default();
+        let w = l.set([0, 0, 0], Some(a1)).expect("a change");
+        assert_eq!(w[0].0, 1);
+        assert_eq!(w[0].1, [0, 0, 0]);
+        assert_eq!(w[0].2, a1, "level 1 over one child is that child");
+        l.set([0, 0, 1], Some(a2)).expect("a change");
+        assert_eq!(
+            l.set([0, 0, 1], Some(a2)),
+            None,
+            "an unchanged summary writes nothing"
+        );
+        let p1 = *l.parent(1, [0, 0, 0]).expect("level 1 holds a value");
+        assert!(
+            within_a_step(p1[1], [0.5, 0.5, 0.0]),
+            "+x: the two children's mean"
+        );
+        assert!(
+            within_a_step(p1[3], [0.5, 0.5, 0.5]),
+            "+y: the one child holding it"
+        );
+        assert_eq!(p1[6] >> 16, 0b1010);
+        let p2 = *l.parent(2, [0, 0, 0]).expect("level 2 holds a value");
+        assert_eq!(
+            p2, p1,
+            "level 2 over one level-1 cell is that cell's record"
+        );
+        // A cell with no present child holds no value.
+        assert_eq!(l.parent(1, [1, 0, 0]), None);
+        assert_eq!(l.parent(1, [-1, 0, 0]), None);
+
+        // The chain for blockless chunks: B (1,0,0) touches A1 alone; C (1,1,0) neither but
+        // shares level-1 cell (0,0,0); D (4,0,0) lies in a level-2 cell with no block.
+        let b = l
+            .chain([1, 0, 0], MissingLight::Chain)
+            .expect("B's neighbour");
+        assert_eq!(b[1], a1[1], "B under chain: A1's +x");
+        assert_eq!(b[3], a1[3], "B under chain: A1's +y, not the parent's");
+        let c = l.chain([1, 1, 0], MissingLight::Chain).expect("C's parent");
+        assert_eq!(c[1], p1[1], "C under chain: level 1's");
+        assert_eq!(
+            l.chain([4, 0, 0], MissingLight::Chain),
+            None,
+            "D under chain"
+        );
+        let bp = l
+            .chain([1, 0, 0], MissingLight::Parent)
+            .expect("B's parent");
+        assert_eq!(bp[1], p1[1], "B under parent: level 1's");
+        assert_eq!(
+            l.chain([1, 1, 0], MissingLight::Neighbour),
+            None,
+            "C under neighbour"
+        );
+        assert_eq!(
+            l.chain([1, 0, 0], MissingLight::Black),
+            None,
+            "B under black"
+        );
+        assert_eq!(
+            l.chain([0, 0, 0], MissingLight::Neighbour).map(|r| r[1]),
+            Some(a1[1]),
+            "a chunk with a block reads its own summary first"
+        );
+
+        // Freeing A1's block takes it out of its parents.
+        l.set([0, 0, 0], None).expect("a change");
+        assert_eq!(l.parent(1, [0, 0, 0]), Some(&a2), "level 1 without A1");
+        l.set([0, 0, 1], None).expect("a change");
+        assert_eq!(l.parent(1, [0, 0, 0]), None, "level 1 with no child");
+        assert_eq!(l.parent(2, [0, 0, 0]), None, "level 2 with no child");
+    }
+
+    /// The parent table's cells cover the window at any alignment, levels 1 and 2 apart and
+    /// after the chunk table; `temporal.wgsl` reads it with the same constants.
+    #[test]
+    fn the_parent_table_covers_the_window() {
+        for (min, size) in [
+            ([0, 0, 0], [3, 3, 3]),
+            ([-5, 1, 7], [51, 9, 2]),
+            ([1, 1, 1], [2, 2, 2]),
+        ] {
+            let window = ChunkExtent::new(min, [0, 1, 2].map(|k| min[k] + size[k]));
+            let t = ParentTable::of(window);
+            let chunks = (size[0] * size[1] * size[2]) as u64;
+            assert_eq!(t.first, STORE_TABLE + chunks);
+            let mut seen = std::collections::HashSet::new();
+            for z in 0..size[2] {
+                for y in 0..size[1] {
+                    for x in 0..size[0] {
+                        let c = [min[0] + x, min[1] + y, min[2] + z];
+                        for level in 1..=2 {
+                            let w = t.word(level, parent_of(c, level)).expect("inside");
+                            assert!(w >= t.first && w + BRICK_WORDS as u64 <= t.first + t.words());
+                            assert_eq!((w - t.first) % BRICK_WORDS as u64, 0);
+                            seen.insert((level, w));
+                        }
+                    }
+                }
+            }
+            let l1: Vec<u64> = seen.iter().filter(|e| e.0 == 1).map(|e| e.1).collect();
+            let l2_min = seen
+                .iter()
+                .filter(|e| e.0 == 2)
+                .map(|e| e.1)
+                .min()
+                .expect("level 2");
+            assert!(l1.iter().all(|&w| w < l2_min), "level 1 before level 2");
+        }
+        let wgsl = include_str!("shaders/temporal.wgsl");
+        assert!(wgsl.contains(&format!("const STORE_SUMMARY_AT: u32 = {SUMMARY_AT}u;")));
+        assert!(wgsl.contains("(store[STORE_FLAGS] >> 2u) & 3u"));
+        assert_eq!(FLAG_MISSING_SHIFT, 2);
+        assert_eq!(MissingLight::Neighbour.bits(), 1);
+        assert_eq!(MissingLight::Parent.bits(), 2);
+        assert!(wgsl.contains("const MISSING_NEIGHBOUR: u32 = 1u;"));
+        assert!(wgsl.contains("const MISSING_PARENT: u32 = 2u;"));
     }
 
     #[test]

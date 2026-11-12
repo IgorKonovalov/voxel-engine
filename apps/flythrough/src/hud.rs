@@ -452,6 +452,9 @@ pub struct LightingRow {
     pub store: Option<vxe_render::StoreStats>,
     /// The light queue's state in words (the fly-through's queue note), after the store's counts.
     pub store_note: String,
+    /// The missing-light mode's name (ADR-0053), after the missing count with the pixels that
+    /// took a fallback and those left black; empty, nothing.
+    pub missing_light: &'static str,
     pub modes: String,
     /// The internal and output sizes while the upscaler runs: a row then reads its passes.
     pub upscale: Option<[[u32; 2]; 2]>,
@@ -650,6 +653,13 @@ impl HudStats {
                     s.bytes as f64 / 1e6,
                     s.missing
                 )?;
+                if !l.missing_light.is_empty() {
+                    write!(
+                        out,
+                        " (light {}: fallback {} black {})",
+                        l.missing_light, s.fallback, s.still_black
+                    )?;
+                }
                 if s.brick_reads > 0 {
                     write!(out, " brick level {}", s.brick_reads)?;
                 }
@@ -1195,7 +1205,8 @@ mod tests {
         assert_eq!(out.lines().count(), colours.len());
     }
 
-    /// The lighting row shows the store's chunks, megabytes and missing pixels under the store.
+    /// The lighting row shows the store's chunks, megabytes and missing pixels under the store,
+    /// and the missing-light mode with its fallback and still-black pixels.
     #[test]
     fn the_store_row_reads_its_counts() {
         let (mut out, mut colours) = (String::new(), Vec::new());
@@ -1211,7 +1222,11 @@ mod tests {
                 brick_reads: 0,
                 coarse_reads: 0,
                 coarse_chunks: 0,
+                fallback: 40,
+                still_black: 16,
+                ..Default::default()
             }),
+            missing_light: "chain",
             store_note: ", queue depth 4, coarse 2, jobs 9, slice 1.25 ms".to_owned(),
             modes: "light baked".to_owned(),
             upscale: None,
@@ -1219,7 +1234,7 @@ mod tests {
         s.write_rows(&mut out, &mut colours);
         assert!(
             out.contains(
-                "store 12 3.4 MB missing 56, queue depth 4, coarse 2, jobs 9, slice 1.25 ms; light baked"
+                "store 12 3.4 MB missing 56 (light chain: fallback 40 black 16), queue depth 4, coarse 2, jobs 9, slice 1.25 ms; light baked"
             ),
             "{out}"
         );
@@ -1251,6 +1266,7 @@ mod tests {
                 ..Default::default()
             }),
             store_note: String::new(),
+            missing_light: "",
             modes: "lighting full".to_owned(),
             upscale: None,
         });
@@ -1302,6 +1318,7 @@ mod tests {
             live_probes: None,
             store: None,
             store_note: String::new(),
+            missing_light: "",
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
         });
@@ -1371,6 +1388,7 @@ mod tests {
             live_probes: None,
             store: None,
             store_note: String::new(),
+            missing_light: "",
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
         });

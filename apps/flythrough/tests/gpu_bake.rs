@@ -561,6 +561,196 @@ fn the_store_counters_count_with_the_override_on() {
     assert_eq!(off, [0; 3], "the counters with the override off");
 }
 
+/// ADR-0053's read chain on the GPU. Chunks A1 (0,0,0) and A2 (0,0,1) are baked, each with its
+/// own ore emitter over a rock floor (A2's larger), inside level-1 cell (0,0,0); B (1,0,0) is
+/// face-adjacent to A1 alone and C (1,1,0) to neither, both blockless floors in the same cell; D
+/// (4,0,0) is a blockless floor in a level-2 cell with no block. Seen from above, lamp off, each
+/// floor's top face (+z) reads: under `chain` B's stored term A1's summary within one `rgb9e5`
+/// step, C's the mean of A1's and A2's (their level-1 record), D's 0; under `parent` B reads that
+/// mean; under `neighbour` C reads 0; under `black` B, C and D read 0. Every pixel with no brick
+/// value reads the CPU's chain (`LightSummaries::chain`) for its chunk and face; `store_missing`
+/// is the same in every mode, and the fallback and still-black counters split it as the chain
+/// does (under `chain` B's and C's lit faces are fallback, D's still black). The pool's summary
+/// words are the CPU's.
+#[test]
+fn a_missing_brick_reads_its_neighbour_then_its_parent() {
+    use vxe_render::bake::MissingLight;
+    // z is up. Four chunks tall, so the eye above the floors lies inside the mirrored world.
+    let world = air_world([5, 2, 4], &table());
+    // Floors 4 voxels thick, their top faces at z 8 (layer 0) or 72 (layer 1), inset from the
+    // chunk's sides so each floor is its own chunk's.
+    let floor = |c: [i64; 3]| {
+        let o = c.map(|v| v * 64);
+        fill(
+            &world,
+            [o[0] + 4, o[1] + 4, o[2] + 4],
+            [o[0] + 60, o[1] + 60, o[2] + 8],
+            ROCK,
+        );
+    };
+    for c in [[0, 0, 0], [0, 0, 1], [1, 0, 0], [1, 1, 0], [4, 0, 0]] {
+        floor(c);
+    }
+    fill(&world, [28, 28, 20], [36, 36, 22], ORE);
+    fill(&world, [20, 20, 84], [44, 44, 88], ORE);
+    let Some(mut rig) = rig_on(world, [128, 72], None) else {
+        return;
+    };
+    rig.frame
+        .bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            ChunkExtent::new([0, 0, 0], [1, 1, 2]),
+            &dig_counts(),
+            &mut |_| {},
+        )
+        .expect("the piece fits");
+    let light = rig.frame.store().light().clone();
+    let (a1, a2) = (
+        *light.summary([0, 0, 0]).expect("A1 is lit"),
+        *light.summary([0, 0, 1]).expect("A2 is lit"),
+    );
+    // The floors' top faces, +z.
+    let top = 5;
+    assert_ne!(
+        a1[top], a2[top],
+        "the two emitters light their floors apart"
+    );
+    let p1 = *light
+        .parent(1, [0, 0, 0])
+        .expect("A1 and A2's level-1 cell");
+    for (c, s) in [([0, 0, 0], a1), ([0, 0, 1], a2)] {
+        let block = rig
+            .frame
+            .read_store_block(&rig.device, &rig.queue, ChunkCoord(c))
+            .expect("a baked block");
+        let at = bake::SUMMARY_AT as usize;
+        assert_eq!(block[at..at + bake::BRICK_WORDS], s, "{c:?}'s pool summary");
+    }
+    for c in [[1, 0, 0], [1, 1, 0], [4, 0, 0]] {
+        assert!(
+            rig.frame.store().block(ChunkCoord(c)).is_none(),
+            "{c:?} is blockless"
+        );
+    }
+    let cells = rig.cells();
+    let camera = Camera {
+        position: [160.0, 64.0, 220.0].into(),
+        yaw: 0.0,
+        pitch: (-85f32).to_radians(),
+        vfov: 90f32.to_radians(),
+    };
+    let eye = camera.position.to_array();
+    rig.frame.set_count_store(true);
+    let mut missing = None;
+    for mode in MissingLight::ALL {
+        rig.frame.set_missing_light(&rig.queue, mode);
+        rig.step(&camera);
+        let accum = rig.accum();
+        let pos = readback::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
+        assert_eq!(
+            *missing.get_or_insert(stats.missing),
+            stats.missing,
+            "{mode:?}: store_missing"
+        );
+        let (mut fallback, mut black) = (0u32, 0u32);
+        // Lit +y pixels of B, C and D, and the value each read.
+        let mut tops: HashMap<[i32; 3], Vec<[f32; 3]>> = HashMap::new();
+        for i in 0..pos.len() {
+            let Some((v, f)) = hit_face(eye, pos[i], info[i]) else {
+                continue;
+            };
+            if brick_value(&cells, v, f).is_some() {
+                continue;
+            }
+            let c = v.map(|x| x.div_euclid(64));
+            let want = light
+                .chain(c, mode)
+                .filter(|r| r[6] >> (16 + u32::from(f)) & 1 != 0)
+                .map_or([0.0; 3], |r| bake::rgb9e5_unpack(r[usize::from(f)]));
+            if want.iter().any(|&x| x > 0.0) {
+                fallback += 1;
+            } else {
+                black += 1;
+            }
+            let got = [accum[i][0], accum[i][1], accum[i][2]];
+            for k in 0..3 {
+                let w = want[k] * 8.0;
+                let step = (w.abs() / 1024.0).max(1.0 / 16384.0);
+                assert!(
+                    (got[k] - w).abs() <= step,
+                    "{mode:?}: pixel {i} of chunk {c:?} face {f}, channel {k}: {} against {w}",
+                    got[k]
+                );
+            }
+            if usize::from(f) == top {
+                tops.entry(c).or_default().push(got.map(|x| x / 8.0));
+            }
+        }
+        assert_eq!(
+            [stats.fallback, stats.still_black],
+            [fallback, black],
+            "{mode:?}: the fallback and still-black counters"
+        );
+        assert_eq!(
+            fallback + black,
+            stats.missing,
+            "{mode:?}: they split the missing"
+        );
+        let reads = |c: [i32; 3]| -> &Vec<[f32; 3]> {
+            let t = tops.get(&c).unwrap_or_else(|| {
+                let seen: BTreeMap<_, _> = tops.iter().map(|(k, v)| (*k, v.len())).collect();
+                panic!("{mode:?}: no top pixel of {c:?}; seen {seen:?}")
+            });
+            assert!(t.len() > 20, "{mode:?}: {} top pixels of {c:?}", t.len());
+            t
+        };
+        let all_near = |c: [i32; 3], w: u32| {
+            let want = bake::rgb9e5_unpack(w);
+            let step = 2f32.powi((w >> 27) as i32 - 24);
+            reads(c)
+                .iter()
+                .all(|g| (0..3).all(|k| (g[k] - want[k]).abs() <= step * 1.01 + want[k] / 1024.0))
+        };
+        let all_zero = |c: [i32; 3]| reads(c).iter().all(|g| *g == [0.0; 3]);
+        match mode {
+            MissingLight::Chain => {
+                assert!(all_near([1, 0, 0], a1[top]), "chain: B reads A1's summary");
+                assert!(
+                    all_near([1, 1, 0], p1[top]),
+                    "chain: C reads A1's and A2's mean"
+                );
+                assert!(all_zero([4, 0, 0]), "chain: D reads 0");
+            }
+            MissingLight::Parent => {
+                assert!(all_near([1, 0, 0], p1[top]), "parent: B reads the mean");
+                assert!(all_zero([4, 0, 0]), "parent: D reads 0");
+            }
+            MissingLight::Neighbour => {
+                assert!(
+                    all_near([1, 0, 0], a1[top]),
+                    "neighbour: B reads A1's summary"
+                );
+                assert!(all_zero([1, 1, 0]), "neighbour: C reads 0");
+            }
+            MissingLight::Black => {
+                for c in [[1, 0, 0], [1, 1, 0], [4, 0, 0]] {
+                    assert!(all_zero(c), "black: {c:?} reads 0");
+                }
+                assert_eq!(stats.fallback, 0, "black: no fallback");
+            }
+        }
+        println!(
+            "{mode:?}: missing {}, fallback {}, still black {}",
+            stats.missing, stats.fallback, stats.still_black
+        );
+    }
+}
+
 /// The baked light with the filter off (`Lighting::filter`, the fly-through's `--filter off`): on
 /// the small box after its bake, lamp off, the mean display luma over the pixels whose cube face
 /// holds a lit brick value is within 2 % of the same frame's with the filter on.

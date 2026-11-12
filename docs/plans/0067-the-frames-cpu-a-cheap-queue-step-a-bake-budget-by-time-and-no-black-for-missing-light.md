@@ -959,8 +959,8 @@ one in Phase 6.
 | 2: a step with nothing to do costs nothing | dev | code as `wip`, A/B held for the architect | 5201ab6 |
 | 2b: the queue does not starve in a flight | dev | not started | |
 | 3: the bake budget per second | dev | not started | |
-| 4: no black for missing light | dev | not started | |
-| 5: far light beyond the bake radius | dev | not started | |
+| 4: no black for missing light | dev | code and tests as `wip` (summary after the directory, parent table, `temporal.wgsl` chain, `--missing-light`, key 7); readings queued | the Phase 4 `wip` commit (log, Phase 4) |
+| 5: far light beyond the bake radius | dev | struck by Phase 1's rule: reach-bound 0 of 1121 to 1201 in view waiting at the patch (a bounded world counts 0; log, Phase 4) | |
 | 6: the owner's window | human | not started | |
 | 7: the bars and the close's readings | dev | not started | |
 

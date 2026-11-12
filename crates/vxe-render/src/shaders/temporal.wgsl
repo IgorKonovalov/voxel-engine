@@ -26,17 +26,22 @@
 //                                        over the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
 //  11  storage, read      store           the store (ADR-0046, `bake::Store`)
-//  12  storage           counters        three words, written only where the pipeline's
+//  12  storage           counters        five words, written only where the pipeline's
 //                                        COUNT_STORE is true: word 0 counts this frame's
 //                                        cube-face hits with no brick record value
 //                                        (`store_missing`), word 1 those that read one, word 2
 //                                        those whose voxel's chunk holds a coarse block
-//                                        (TABLE_COARSE)
+//                                        (TABLE_COARSE); of word 0's, word 3 those the
+//                                        missing-light chain gave a value, word 4 those it left
+//                                        black (every one of them under `black`)
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`), times the dominant material's
 // emission scale now and this frame's exposure, with no screen history, the same value at every
-// pixel of the face; 0 with neither.
+// pixel of the face. With no value, the flags word's missing-light mode (ADR-0053,
+// `store_fallback`) reads a chain of summaries, nearest first: the chunk's own block's, the
+// mean of its six face neighbours', the level-1 then level-2 parent record; 0 where none holds
+// the direction, and 0 at once under `black`.
 // Any other hit (no face: the field look, a translucent hit, a ray from inside rock) is a
 // fallback: its own emissive samples' running mean over the pixel's age, `1 / (age + 1)`, until
 // the age reaches FALLBACK_CAP, then held, so a still fallback pixel holds still; it restarts
@@ -93,7 +98,7 @@ struct Edits {
 @group(2) @binding(9) var<uniform> edits: Edits;
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
 @group(2) @binding(11) var<storage, read> store: array<u32>;
-@group(2) @binding(12) var<storage, read_write> counters: array<atomic<u32>, 3>;
+@group(2) @binding(12) var<storage, read_write> counters: array<atomic<u32>, 5>;
 
 // Whether this pipeline counts the store's reads into `counters` (the HUD's and
 // `--read-missing`'s pipeline); off, `counters` is never written.
@@ -187,6 +192,93 @@ fn store_brick_value(head: StoreHead, v: vec3<i32>, face: u32) -> vec4<f32> {
     return store_cell(head, v >> vec3<u32>(head.shift), face);
 }
 
+// A block's summary record (`bake::SUMMARY_AT`): just past its 512-word directory.
+const STORE_SUMMARY_AT: u32 = 512u;
+// The flags word's missing-light mode, bits 2 and 3 (`bake::MissingLight::bits`): 0 black.
+const MISSING_NEIGHBOUR: u32 = 1u;
+const MISSING_PARENT: u32 = 2u;
+
+fn store_mode() -> u32 {
+    return (store[STORE_FLAGS] >> 2u) & 3u;
+}
+
+// The record at word `rec`'s value for direction `face` times its material's emission scale now
+// in rgb, with a 1 in a; 0 where its mask lacks the direction.
+fn store_record(rec: u32, face: u32) -> vec4<f32> {
+    let tail = store[rec + 6u];
+    if (((tail >> (16u + face)) & 1u) == 0u) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(rgb9e5_decode(store[rec + face]) * emission_scale[tail & 0xFFFFu], 1.0);
+}
+
+// Chunk `c`'s summary's value for `face`; 0 where the chunk holds no block.
+fn store_summary(head: StoreHead, c: vec3<i32>, face: u32) -> vec4<f32> {
+    let block = store_table(head, c) & ~TABLE_COARSE;
+    if (block == 0u) {
+        return vec4<f32>(0.0);
+    }
+    return store_record(block + STORE_SUMMARY_AT, face);
+}
+
+// The level-`level` (1 or 2) parent record over chunk `c` for `face` (`bake::ParentTable`): after
+// the chunk table, level 1 over cells of 2 chunks a side, `(size + 1) / 2 + 1` cells a side from
+// the window origin's cell, then level 2 over 4, `(size + 3) / 4 + 1`; cells world-aligned.
+fn store_parent(head: StoreHead, c: vec3<i32>, level: u32, face: u32) -> vec4<f32> {
+    let first = STORE_TABLE + u32(head.size.x * head.size.y * head.size.z);
+    let s1 = ((head.size + vec3<i32>(1)) >> vec3<u32>(1u)) + vec3<i32>(1);
+    var base = first;
+    var side = s1;
+    if (level == 2u) {
+        base = first + u32(s1.x * s1.y * s1.z) * BRICK_WORDS;
+        side = ((head.size + vec3<i32>(3)) >> vec3<u32>(2u)) + vec3<i32>(1);
+    }
+    let w = (c >> vec3<u32>(level)) - (head.origin >> vec3<u32>(level));
+    if (any(w < vec3<i32>(0)) || any(w >= side)) {
+        return vec4<f32>(0.0);
+    }
+    return store_record(base + u32(w.x + side.x * (w.y + side.y * w.z)) * BRICK_WORDS, face);
+}
+
+// The missing-light chain (ADR-0053) for face `face` of voxel `v`, which has no brick value:
+// the first source holding the direction, nearest first, under the flags word's mode: the
+// chunk's own summary; the mean of its six face neighbours' summaries that hold it (not under
+// `parent`); the level-1 then level-2 parent record (not under `neighbour`). 0 in a for none,
+// and at once under `black`. One value a chunk and direction, never per voxel.
+fn store_fallback(head: StoreHead, v: vec3<i32>, face: u32) -> vec4<f32> {
+    let mode = store_mode();
+    if (mode == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let c = v >> vec3<u32>(6u);
+    let own = store_summary(head, c, face);
+    if (own.w > 0.0) {
+        return own;
+    }
+    if (mode != MISSING_PARENT) {
+        var sum = vec3<f32>(0.0);
+        var n = 0.0;
+        for (var f = 0u; f < 6u; f++) {
+            var o = vec3<i32>(0);
+            o[f / 2u] = select(1, -1, (f & 1u) == 0u);
+            let r = store_summary(head, c + o, face);
+            sum += r.xyz * r.w;
+            n += r.w;
+        }
+        if (n > 0.0) {
+            return vec4<f32>(sum / n, 1.0);
+        }
+    }
+    if (mode != MISSING_NEIGHBOUR) {
+        let p1 = store_parent(head, c, 1u, face);
+        if (p1.w > 0.0) {
+            return p1;
+        }
+        return store_parent(head, c, 2u, face);
+    }
+    return vec4<f32>(0.0);
+}
+
 // The gradient's gain: lambda = |new - old| / max(new, old) reads 0.9 where light fell to a
 // tenth, and a blend at 0.9 would keep a tenth of the old light; twice lambda, clamped, takes
 // such a pixel to its new light at once.
@@ -256,18 +348,27 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         let face = store_face(rec.axis, nf);
         let head = store_head();
         let c = store_brick_value(head, voxel, face);
+        var value = c;
+        if (c.w == 0.0) {
+            value = store_fallback(head, voxel, face);
+        }
         if (COUNT_STORE) {
             if (c.w > 0.0) {
                 atomicAdd(&counters[1], 1u);
             }
             if (c.w == 0.0) {
                 atomicAdd(&counters[0], 1u);
+                if (value.w > 0.0) {
+                    atomicAdd(&counters[3], 1u);
+                } else {
+                    atomicAdd(&counters[4], 1u);
+                }
             } else if ((store_table(head, voxel >> vec3<u32>(6u)) & TABLE_COARSE) != 0u) {
                 atomicAdd(&counters[2], 1u);
             }
         }
         stored = true;
-        sample = vec4<f32>(c.xyz * exposure_now(), sample.w);
+        sample = vec4<f32>(value.xyz * exposure_now(), sample.w);
         if ((params.lighting & LIGHTING_LAMP) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;
