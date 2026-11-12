@@ -39,7 +39,7 @@ impl Run {
         else {
             return;
         };
-        let (_, scale, _) = self.args.upscaler_settings(self.upscaler.mode);
+        let (_, scale, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
         let sizes = self
             .gfx
             .as_ref()
@@ -53,7 +53,7 @@ impl Run {
             output: sizes.map_or([0, 0], |s| s.0),
             internal: sizes.map_or([0, 0], |s| s.1),
             internal_scale: scale.name(),
-            upscaler: self.upscaler.mode.name(),
+            upscaler: self.modes.upscaler.mode.name(),
             adapter: self.adapter.as_ref().map(|a| AdapterLine {
                 name: a.name.clone(),
                 vendor: a.vendor,

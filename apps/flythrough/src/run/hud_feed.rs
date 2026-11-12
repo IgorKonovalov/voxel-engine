@@ -669,7 +669,7 @@ impl Run {
         s.steps = h.steps;
         s.cracks = h.cracks;
         s.camera = pos.to_array();
-        s.cutaway = self.look.cutaway.then_some(self.cutaway.name());
+        s.cutaway = self.modes.look.cutaway.then_some(self.modes.cutaway.name());
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
         s.format_us = h.format_us;
@@ -706,7 +706,9 @@ impl Run {
             args.bake.budget,
             self.queue.stats.map_or(0.0, |st| st.slice_ms),
         );
-        let look = &self.look;
+        s.modes.clear();
+        self.modes.write_rows(&mut s.modes);
+        let look = &self.modes.look;
         let far = h
             .far_normal_words
             .get((look.normal_mode, look.far_normal), || {
@@ -716,10 +718,10 @@ impl Run {
         aliasing.clear();
         hud::write_aliasing_row(
             aliasing,
-            &self.upscaler,
+            &self.modes.upscaler,
             far,
             &self.modes,
-            self.pan.as_ref(),
+            self.modes.pan.as_ref(),
         );
     }
 
@@ -805,8 +807,8 @@ impl Run {
             out.push_str(scene);
         }
         self.modes.write_banner(now, out);
-        self.upscaler.write_banner(now, out);
-        if let Some(p) = &self.pan {
+        self.modes.upscaler.write_banner(now, out);
+        if let Some(p) = &self.modes.pan {
             p.write_banner(now, out);
         }
     }
@@ -849,7 +851,9 @@ impl Run {
         };
         // Under the field look, the smooth share of the last frame's hit pixels: hits whose
         // material is not crisp. No other look reads the hit records back.
-        let share = if self.look.normal_mode == NormalMode::Contour && gfx.mirror.field_surface() {
+        let share = if self.modes.look.normal_mode == NormalMode::Contour
+            && gfx.mirror.field_surface()
+        {
             let records =
                 vxe_render::debug::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
             let table = self.world.materials();
@@ -868,7 +872,7 @@ impl Run {
         println!(
             "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu_line}{hud}{share}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
-            look_line(&self.look, &self.preset),
+            look_line(&self.modes.look, &self.modes.preset),
             median(&mut cpu_ms),
             gfx.frame.frame_bytes(),
             self.world.stats().full_bricks,

@@ -89,7 +89,7 @@ impl Run {
         self.send(DigInput::Dig {
             origin,
             dir,
-            radius: self.dig_radius,
+            radius: self.modes.dig_radius,
         });
     }
 

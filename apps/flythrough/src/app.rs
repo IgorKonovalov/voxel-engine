@@ -5,7 +5,7 @@ use crate::ScrollSteps;
 use crate::audio::{Audio, RoomProbe};
 use crate::autopilot::Autopilot;
 use crate::cli::Args;
-use crate::edits::{Coarse, DIG_RADIUS, Failure, Net, voxel_of};
+use crate::edits::{Coarse, Failure, Net, voxel_of};
 use crate::fly::{Fly, Walk};
 use crate::hud::{self};
 use crate::now;
@@ -147,22 +147,8 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 modes: self.args.start_modes(0.0),
-                upscaler: hud::UpscalerBanner::shown_from(
-                    self.args.start_upscaler(),
-                    {
-                        let mode = self.args.start_upscaler();
-                        self.args.upscaler_settings(mode).1.name()
-                    },
-                    0.0,
-                )
-                .with_sharpen(self.args.look.sharpen)
-                .with_fsr2_knobs(hud::fsr2_knob_words(
-                    self.args.look.jitter_phases,
-                    self.args.look.dither,
-                )),
                 upscaler_changed: false,
                 sharpen_changed: false,
-                pan: self.args.look.pan.map(|d| hud::Pan::new(d, 0.0)),
                 scene: self
                     .args
                     .castle
@@ -172,10 +158,6 @@ impl App for Flythrough {
                     .args
                     .pose
                     .map(|p| (hud::pose_banner(p.name), self.camera)),
-                look: self.args.start_look(),
-                preset: self.args.look.preset,
-                cutaway: self.args.look.cutaway,
-                dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
                 triggers: [false; 2],
                 bench_runs: 0,

@@ -6,7 +6,7 @@ use crate::autopilot::Autopilot;
 use crate::castle;
 use crate::cli::Args;
 use crate::edits::{Coarse, Failure, Net, ball};
-use crate::fly::{CutawayMode, Fly, Walk};
+use crate::fly::{Fly, Walk};
 use crate::hud::{self};
 use crate::now;
 use crate::path::PathPlayer;
@@ -19,15 +19,14 @@ use crate::run::queue::QueueRun;
 use crate::setup::{CrispRows, Gfx};
 use crate::streaming::{NEAR_D2, STREAM_POOL_BYTES, Stream};
 use crate::{
-    LookPreset, STREAM_MIRROR_BUDGET, ScrollSteps, chunk_ram, level_mirror_budget,
-    level_pool_units, mips_ram,
+    STREAM_MIRROR_BUDGET, ScrollSteps, chunk_ram, level_mirror_budget, level_pool_units, mips_ram,
 };
 use std::sync::Arc;
 use std::time::Instant;
 use vxe_app::{Flow, Gpu};
 use vxe_render::{
-    Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, LodParams, LookParams,
-    MarchTimer, MirrorConfig, PassTimer, Presenter, SyncStats, Window, wgpu,
+    Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, LodParams, MarchTimer,
+    MirrorConfig, PassTimer, Presenter, SyncStats, Window, wgpu,
 };
 use vxe_world::{ChunkCoord, MaterialTable, VoxelCoord, World};
 
@@ -54,16 +53,14 @@ pub(crate) struct Run {
     pub(crate) args: Args,
     pub(crate) fly: Fly,
     pub(crate) light: LightParams,
-    /// The lighting modes `F3` to `F7` and `M` switch, and the banner naming them; the frame
-    /// takes them at the start of each frame (`F6`'s resolution needs the device).
+    /// Every mode a key toggles (`toggles::TOGGLES`) and the banner naming them; the frame
+    /// takes the lighting, the look, the cutaway and the upscaler from them at the start of
+    /// each frame (`F6`'s resolution and `F10`'s upscaler need the device).
     pub(crate) modes: hud::Modes,
-    /// The upscaler `F10` cycles and its banner; a change is applied at the next frame.
-    pub(crate) upscaler: hud::UpscalerBanner,
+    /// `F10` changed the upscaler: applied at the next frame.
     pub(crate) upscaler_changed: bool,
     /// `Z` changed the sharpening: applied at the next frame.
     pub(crate) sharpen_changed: bool,
-    /// `--pan`'s yaw, which `Period` stops and starts.
-    pub(crate) pan: Option<hud::Pan>,
     /// The scene's banner row (`castle gate`) and when it was last shown, by the frame loop's
     /// clock; `None` without one.
     pub(crate) scene: Option<(String, f64)>,
@@ -72,12 +69,6 @@ pub(crate) struct Run {
     /// `--pose`'s banner row (`pose vein`) and the camera it starts at: the row shows until
     /// the camera first moves.
     pub(crate) pose: Option<(String, Camera)>,
-    pub(crate) look: LookParams,
-    /// The preset `N` last chose, or `--look`'s with its part flags.
-    pub(crate) preset: LookPreset,
-    /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
-    pub(crate) cutaway: CutawayMode,
-    pub(crate) dig_radius: i64,
     /// Scroll banked toward the next dig-radius step.
     pub(crate) scroll: ScrollSteps,
     /// `L2` and `R2` held, for their press edges.
@@ -168,7 +159,7 @@ impl Run {
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
         let field_timer = MarchTimer::new(&gpu.device, &gpu.queue);
-        let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
+        let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
         let mut frame = Frame::with_sizes(&gpu.device, scale.internal(output), output);
         diag(format_args!(
             "frame created, {} B of targets",
@@ -178,7 +169,7 @@ impl Run {
         frame.set_jitter(&gpu.device, jitter);
         frame.set_upscaler_kind(&gpu.device, kind);
         frame.set_sharpness(&gpu.queue, self.args.look.sharpen);
-        println!("{}", self.upscaler.line());
+        println!("{}", self.modes.upscaler.line());
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         diag(format_args!(
@@ -385,7 +376,7 @@ impl Run {
 
     pub(crate) fn resized(&mut self, gpu: &Gpu) {
         if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render) {
-            let (_, scale, _) = self.args.upscaler_settings(self.upscaler.mode);
+            let (_, scale, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
             gfx.frame
                 .set_sizes(&gpu.device, scale.internal(gpu.size), gpu.size);
         }

@@ -377,6 +377,9 @@ pub struct HudStats {
     pub aliasing: Option<String>,
     /// The live queue's row ([`queue_row`]); `None` hides it.
     pub queue: Option<String>,
+    /// The mode block ([`Modes::write_rows`]): every toggle's mode, one row per [`HudRow`];
+    /// empty hides it.
+    pub modes: String,
 }
 
 /// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
@@ -542,6 +545,7 @@ impl HudStats {
             exposure: None,
             aliasing: None,
             queue: None,
+            modes: String::new(),
         }
     }
 
@@ -611,6 +615,9 @@ impl HudStats {
         }
         if let Some(q) = &self.queue {
             row(out, HudColour::White, format_args!("{q}"))?;
+        }
+        for m in self.modes.lines() {
+            row(out, HudColour::White, format_args!("{m}"))?;
         }
         self.memory_rows(out, &mut row)?;
         let [x, y, z] = self.camera;

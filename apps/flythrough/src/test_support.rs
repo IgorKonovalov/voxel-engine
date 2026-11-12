@@ -3,8 +3,8 @@
 
 use crate::cave::ROCK;
 use crate::cli::parse_args_from;
-use crate::edits::{DIG_RADIUS, Failure, Net, voxel_of};
-use crate::fly::{CutawayMode, Fly};
+use crate::edits::{Failure, Net, voxel_of};
+use crate::fly::Fly;
 use crate::hud::{self};
 use crate::logic::DigInput;
 use crate::now;
@@ -105,7 +105,8 @@ pub(crate) fn bare_run(world: World) -> Run {
     let world = Arc::new(world);
     let net = native_net(&world);
     let args = parse_args_from(argv(&["--level"])).expect("--level parses");
-    let modes = args.start_modes(0.0);
+    let mut modes = args.start_modes(0.0);
+    modes.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Off, "1");
     let camera = Camera {
         position: Vec3::splat(0.5),
         yaw: 0.0,
@@ -118,20 +119,15 @@ pub(crate) fn bare_run(world: World) -> Run {
         world,
         net: Some(net),
         spawn: voxel_of(camera.position),
-        look: args.start_look(),
-        preset: args.look.preset,
         args,
         fly: Fly::new(camera),
         light: LightParams::headlamp(),
         modes,
-        upscaler: hud::UpscalerBanner::new(hud::UpscalerMode::Off, "1"),
         upscaler_changed: false,
         sharpen_changed: false,
-        pan: None,
         scene: None,
         castle_shot: None,
         pose: None,
-        dig_radius: DIG_RADIUS,
         scroll: ScrollSteps::default(),
         triggers: [false; 2],
         bench_runs: 0,
@@ -153,7 +149,6 @@ pub(crate) fn bare_run(world: World) -> Run {
         recorder: None,
         adapter: None,
         help: false,
-        cutaway: CutawayMode::Auto,
     }
 }
 

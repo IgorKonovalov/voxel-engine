@@ -102,13 +102,125 @@ pub struct Modes {
     /// The exposure state as last read back.
     readout: Option<vxe_render::ExposureReadout>,
     /// The look's words, from the first [`Modes::show_look`]: the banner's first row on.
-    look: Option<String>,
+    look_words: Option<String>,
     /// The view's name after the look's words, from [`Modes::show_view`] with any view but
     /// `shaded`.
     view: Option<&'static str>,
     /// Voxels between the probe volume's probes: the line names it (`probes 16`) while the
     /// lamp's bounce is on.
     probe_spacing: u32,
+    /// The look the frame takes: `N` steps its preset's normal mode and tuning, `V` its far
+    /// normal, `F9` its view.
+    pub(crate) look: vxe_render::LookParams,
+    /// The preset `N` last chose, or `--look`'s with its part flags.
+    pub(crate) preset: crate::LookPreset,
+    /// The run's mirror holds the field's band slots, so `N` steps through the field look.
+    pub(crate) field_surface: bool,
+    /// The upscaler `F10` cycles and `Z`'s sharpening, with their banner.
+    pub(crate) upscaler: UpscalerBanner,
+    /// The internal scale's name the upscaler runs at when it is not off.
+    pub(crate) scale: &'static str,
+    /// `--pan`'s yaw, which `Period` stops and starts.
+    pub(crate) pan: Option<Pan>,
+    /// The cutaway's mode, `X` (or the pad's `West`) cycles it.
+    pub(crate) cutaway: crate::fly::CutawayMode,
+    /// The lamp's shadow ray, `L` toggles it.
+    pub(crate) shadow_ray: bool,
+    /// The dig's radius in fixed point; the scroll wheel and the D-pad step it.
+    pub(crate) dig_radius: i64,
+    /// The live queue's modes, keys `1` to `8`.
+    pub(crate) queue: QueueModes,
+}
+
+/// The live queue's modes the number keys step: `1` the order, `2` and `3` the score's angle
+/// weight, `4` the withdrawal, `5` the budget, `6` the full-first radius, `7` the missing
+/// light, `8` the reach.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct QueueModes {
+    /// The class and the distance first, rather than the score.
+    pub distance: bool,
+    /// The class as the score's leading key, rather than a weight.
+    pub tier: bool,
+    pub angle: f32,
+    pub refine: f32,
+    pub withdraw: bool,
+    pub budget: vxe_render::Budget,
+    pub full_first: Option<i32>,
+    pub missing_light: vxe_render::MissingLight,
+    pub reach: vxe_render::ReachMode,
+}
+
+impl Default for QueueModes {
+    fn default() -> Self {
+        QueueModes {
+            distance: false,
+            tier: true,
+            angle: vxe_render::QUEUE_ANGLE_WEIGHT,
+            refine: vxe_render::QUEUE_REFINE_WEIGHT,
+            withdraw: true,
+            budget: vxe_render::Budget::default(),
+            full_first: Some(vxe_render::DEFAULT_NEAR),
+            missing_light: vxe_render::MissingLight::Chain,
+            reach: vxe_render::ReachMode::Full,
+        }
+    }
+}
+
+impl QueueModes {
+    /// The live queue's order.
+    pub fn order(&self) -> vxe_render::QueueOrder {
+        use vxe_render::{QueueOrder, Refine};
+        if self.distance {
+            QueueOrder::Distance
+        } else {
+            QueueOrder::Score {
+                angle: self.angle,
+                refine: if self.tier {
+                    Refine::Tier
+                } else {
+                    Refine::Weight(self.refine)
+                },
+            }
+        }
+    }
+}
+
+/// A row of the HUD's mode block ([`Modes::write_rows`]); each toggle names the row that
+/// shows its mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HudRow {
+    /// `look face, far normal [2, 6], view shaded`.
+    Look,
+    /// The lighting modes' line ([`Modes::line`]).
+    Lighting,
+    /// `upscaler fsr2 at 1.5, sharpen 0.50, pan off`.
+    Upscaler,
+    /// `queue order score, ...; withdraw on; budget ...; full-first 2; missing light chain;
+    /// reach full`.
+    Queue,
+    /// `cutaway auto, shadow ray on, dig radius 0.5 m`.
+    Controls,
+}
+
+impl HudRow {
+    pub const ALL: [Self; 5] = [
+        Self::Look,
+        Self::Lighting,
+        Self::Upscaler,
+        Self::Queue,
+        Self::Controls,
+    ];
+
+    /// The first word of the row, which no other HUD row starts with.
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Self::Look => "look ",
+            Self::Lighting => "lighting ",
+            Self::Upscaler => "upscaler ",
+            Self::Queue => "queue ",
+            Self::Controls => "cutaway ",
+        }
+    }
 }
 
 impl Modes {
@@ -129,9 +241,117 @@ impl Modes {
                 vxe_render::Exposure::Manual(_) => (Adaptation::Eye, Adaptation::Eye.preset()),
             },
             readout: None,
-            look: None,
+            look_words: None,
             view: None,
             probe_spacing: vxe_render::DEFAULT_PROBE_SPACING,
+            look: vxe_render::LookParams::default(),
+            preset: crate::LookPreset::DEFAULT,
+            field_surface: false,
+            upscaler: UpscalerBanner::new(UpscalerMode::Off, "1"),
+            scale: "1.5",
+            pan: None,
+            cutaway: crate::fly::CutawayMode::Auto,
+            shadow_ray: true,
+            dig_radius: crate::edits::DIG_RADIUS,
+            queue: QueueModes::default(),
+        }
+    }
+
+    /// These modes with `--pan`'s yaw at `deg_per_s`, started at `now_ms`.
+    pub fn with_pan(self, deg_per_s: f32, now_ms: f64) -> Self {
+        Self {
+            pan: Some(Pan::new(deg_per_s, now_ms)),
+            ..self
+        }
+    }
+
+    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break.
+    pub fn write_rows(&self, out: &mut String) {
+        for row in HudRow::ALL {
+            self.write_row(row, out);
+            out.push('\n');
+        }
+    }
+
+    /// The row `row` of the mode block, as the HUD shows it and a key press prints it.
+    pub fn row(&self, row: HudRow) -> String {
+        let mut out = String::new();
+        self.write_row(row, &mut out);
+        out
+    }
+
+    /// Appends the row `row` of the mode block to `out`.
+    pub fn write_row(&self, row: HudRow, out: &mut String) {
+        let on = |b: bool| if b { "on" } else { "off" };
+        match row {
+            HudRow::Look => {
+                // Written in place, as `LookPreset::far_normal_words` words it: the HUD
+                // allocates nothing after its first frame.
+                let _ = write!(out, "look {}, far normal ", self.preset.name);
+                let [lo, hi] = self.look.far_normal;
+                if self.look.normal_mode == vxe_render::NormalMode::Face && hi > lo {
+                    let _ = write!(out, "{lo}..{hi}");
+                } else {
+                    out.push_str("off");
+                }
+                let _ = write!(out, ", view {}", self.look.view.name());
+            }
+            HudRow::Lighting => self.write_line(out),
+            HudRow::Upscaler => {
+                let _ = write!(
+                    out,
+                    "upscaler {}, sharpen {:.2}, pan ",
+                    self.upscaler.mode.name(),
+                    self.upscaler.sharpen
+                );
+                match &self.pan {
+                    Some(p) => out.push_str(on(p.on)),
+                    None => out.push_str("none"),
+                }
+            }
+            HudRow::Queue => {
+                let q = &self.queue;
+                // `QueueOrder::words`, written in place.
+                match q.order() {
+                    vxe_render::QueueOrder::Score { angle, refine } => {
+                        let _ = write!(out, "queue order score, angle {angle}, refine ");
+                        match refine {
+                            vxe_render::Refine::Weight(r) => {
+                                let _ = write!(out, "{r}");
+                            }
+                            vxe_render::Refine::Tier => out.push_str("tier"),
+                        }
+                    }
+                    vxe_render::QueueOrder::Distance => out.push_str("queue order distance"),
+                }
+                let _ = write!(
+                    out,
+                    "; withdraw {}; budget {}; full-first ",
+                    on(q.withdraw),
+                    q.budget
+                );
+                match q.full_first {
+                    Some(r) => {
+                        let _ = write!(out, "{r}");
+                    }
+                    None => out.push_str("off"),
+                }
+                let _ = write!(
+                    out,
+                    "; missing light {}; reach {}",
+                    q.missing_light.name(),
+                    q.reach.name()
+                );
+            }
+            HudRow::Controls => {
+                let _ = write!(
+                    out,
+                    "cutaway {}, shadow ray {}, dig radius {:.1} m",
+                    self.cutaway.name(),
+                    on(self.shadow_ray),
+                    self.dig_radius as f64 / (10 * vxe_world::FIXED_ONE) as f64
+                );
+            }
         }
     }
 
@@ -176,7 +396,7 @@ impl Modes {
     /// the first row of every banner from then on. `far_normal` is the run's
     /// (`LookParams::far_normal`), which `N` leaves alone; it is named in face mode only.
     pub fn show_look(&mut self, preset: &crate::LookPreset, far_normal: [f32; 2], now_ms: f64) {
-        self.look = Some(format!(
+        self.look_words = Some(format!(
             "look {}, {}",
             preset.name,
             crate::LookPreset::far_normal_words(preset.normal_mode, far_normal)
@@ -367,10 +587,10 @@ impl Modes {
         if now_ms - self.banner_at >= BANNER_MS {
             return false;
         }
-        if self.look.is_some() || self.view.is_some() {
+        if self.look_words.is_some() || self.view.is_some() {
             start_row(out);
             let from = out.len();
-            if let Some(look) = &self.look {
+            if let Some(look) = &self.look_words {
                 out.push_str(look);
             }
             if let Some(v) = self.view {

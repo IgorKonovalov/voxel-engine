@@ -12,7 +12,7 @@ pub mod castle;
 pub mod cave;
 mod census;
 pub mod cli;
-mod edits;
+pub(crate) mod edits;
 mod fly;
 pub mod hud;
 mod look;
@@ -28,6 +28,7 @@ mod streaming;
 #[cfg(test)]
 mod test_support;
 pub mod thin_rig;
+pub mod toggles;
 pub use flythrough_logic as logic;
 
 pub use census::*;

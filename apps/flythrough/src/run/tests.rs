@@ -11,9 +11,9 @@ use crate::fly::{CutawayMode, Fly};
 use crate::hud::{self};
 use crate::now;
 use crate::run::hud_feed::{Hud, look_line, write_pace_banner};
-use crate::run::keys::next_look;
 use crate::setup::{GfxSample, castle_camera, start_camera};
 use crate::test_support::{applied, argv, bare_run, carved_rock, counting};
+use crate::toggles::TOGGLES;
 use vxe_app::{Axis, Flow, Input, KeyCode, MouseButton, PadButton};
 use vxe_render::glam::Vec3;
 use vxe_render::{FRAME_PASSES, LightingResolution, ViewMode};
@@ -55,8 +55,8 @@ fn a_shown_hud_s_refresh_and_banner_allocate_nothing_after_the_first_frame() {
     run.hud.pass_ms = Some((0..FRAME_PASSES.len()).map(|i| 0.1 * i as f64).collect());
     run.hud.store = Some(vxe_render::StoreStats::default());
     run.queue.stats = Some(vxe_render::QueueStats::default());
-    run.pan = Some(hud::Pan::new(1.5, 0.0));
-    run.upscaler = hud::UpscalerBanner::shown_from(hud::UpscalerMode::Fsr2, "1.5", 0.0);
+    run.modes.pan = Some(hud::Pan::new(1.5, 0.0));
+    run.modes.upscaler = hud::UpscalerBanner::shown_from(hud::UpscalerMode::Fsr2, "1.5", 0.0);
     let g = GfxSample {
         mirror_bytes: 3 << 20,
         pool_live: 1200,
@@ -194,10 +194,10 @@ fn the_dpad_steps_the_dig_radius() {
         input.end_frame();
         input.pad_up(PadButton::DpadUp);
     }
-    assert_eq!(run.dig_radius, DIG_RADIUS + 2 * DIG_STEP);
+    assert_eq!(run.modes.dig_radius, DIG_RADIUS + 2 * DIG_STEP);
     input.pad_down(PadButton::DpadDown);
     run.handle_input(&input);
-    assert_eq!(run.dig_radius, DIG_RADIUS + DIG_STEP);
+    assert_eq!(run.modes.dig_radius, DIG_RADIUS + DIG_STEP);
 }
 
 /// `--level --pose vein|patch` starts the camera at exactly the settle rig's pose (its
@@ -252,8 +252,8 @@ fn pose_starts_the_level_at_the_rigs_still_camera() {
 #[test]
 fn the_aliasing_toggles_show_in_the_banner() {
     let mut run = bare_run(carved_rock());
-    run.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
-    run.pan = Some(hud::Pan::new(1.1, -1.0e9));
+    run.modes.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
+    run.modes.pan = Some(hud::Pan::new(1.1, -1.0e9));
     let mut input = Input::default();
     let mut press = |run: &mut Run, key: KeyCode| {
         input.end_frame();
@@ -279,14 +279,14 @@ fn the_aliasing_toggles_show_in_the_banner() {
     for (want, on) in [("pan 1.1 deg/s stopped", false), ("pan 1.1 deg/s", true)] {
         let banner = press(&mut run, KeyCode::Period);
         assert!(banner.lines().any(|l| l == want), "{want}: {banner}");
-        assert_eq!(run.pan.map(|p| p.on), Some(on));
+        assert_eq!(run.modes.pan.map(|p| p.on), Some(on));
     }
     assert_eq!(
         hud::aliasing_row(
-            &run.upscaler,
+            &run.modes.upscaler,
             "far normal 2..6",
             &run.modes,
-            run.pan.as_ref()
+            run.modes.pan.as_ref()
         ),
         "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; store read normal, weights face, lighting half; pan 1.1 deg/s"
     );
@@ -354,8 +354,8 @@ fn the_default_look_is_the_windows_pick() {
     let run = bare_run(carved_rock());
     assert_eq!(
         hud::aliasing_row(
-            &run.upscaler,
-            &LookPreset::far_normal_words(run.look.normal_mode, run.look.far_normal),
+            &run.modes.upscaler,
+            &LookPreset::far_normal_words(run.modes.look.normal_mode, run.modes.look.far_normal),
             &run.modes,
             None
         ),
@@ -407,14 +407,14 @@ fn the_store_read_toggle_shows_in_the_banner() {
         (StoreRead::Normal, LightWeights::Face)
     );
     let mut run = bare_run(carved_rock());
-    run.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
+    run.modes.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
     let mut input = Input::default();
     let mut press = |run: &mut Run, key: KeyCode| {
         input.end_frame();
         input.key_up(key);
         input.key_down(key);
         run.handle_input(&input);
-        let row = hud::aliasing_row(&run.upscaler, "far normal 2..6", &run.modes, None);
+        let row = hud::aliasing_row(&run.modes.upscaler, "far normal 2..6", &run.modes, None);
         (run.banner().expect("a press shows the banner"), row)
     };
     for (key, banner_word, row_words) in [
@@ -807,14 +807,14 @@ fn f9_cycles_the_views_and_the_banner_names_them() {
         let named = banner
             .lines()
             .any(|l| l.split(", ").any(|p| p == "view cracks"));
-        assert_eq!(named, run.look.view == ViewMode::Cracks, "{banner}");
-        if run.look.view != ViewMode::Shaded {
-            let want = format!("view {}", run.look.view.name());
+        assert_eq!(named, run.modes.look.view == ViewMode::Cracks, "{banner}");
+        if run.modes.look.view != ViewMode::Shaded {
+            let want = format!("view {}", run.modes.look.view.name());
             assert!(banner.contains(&want), "{banner}");
         } else {
             assert!(!banner.contains("view "), "{banner}");
         }
-        seen.push(run.look.view.name());
+        seen.push(run.modes.look.view.name());
     }
     assert_eq!(
         seen,
@@ -876,7 +876,7 @@ fn x_and_west_cycle_the_cutaway() {
         for _ in 0..3 {
             press(&mut input);
             run.handle_input(&input);
-            seen.push(run.cutaway);
+            seen.push(run.modes.cutaway);
             input.end_frame();
             input.key_up(KeyCode::KeyX);
             input.pad_up(PadButton::West);
@@ -1004,15 +1004,19 @@ fn the_start_banner_names_the_look_and_n_cycles() {
 #[test]
 fn the_far_normal_is_named_in_face_mode_only() {
     let a = parse_args_from(argv(&[])).unwrap();
-    let (mut preset, mut look, mut modes) = (a.look.preset, a.start_look(), a.start_modes(0.0));
+    let mut modes = a.start_modes(0.0);
+    let n = TOGGLES
+        .iter()
+        .find(|t| t.name == "look")
+        .expect("N is a toggle");
     let mut t = 5000.0;
     for (name, far) in [
         ("trilinear8", "off"),
         ("gradient27", "off"),
         ("face", "2..6"),
     ] {
-        preset = next_look(preset, &mut look, false);
-        modes.show_look(&preset, look.far_normal, t);
+        (n.flip)(&mut modes, t);
+        let (preset, look) = (modes.preset, modes.look);
         assert_eq!(look.far_normal, [2.0, 6.0], "{name}");
         let banner = modes.banner(t).expect("a press shows the banner");
         assert!(

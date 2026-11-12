@@ -189,8 +189,9 @@ impl Run {
             None => false,
         };
         if driven {
-            self.cutaway
-                .update(&mut self.look, &self.world, self.fly.camera.position);
+            self.modes
+                .cutaway
+                .update(&mut self.modes.look, &self.world, self.fly.camera.position);
         } else if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
@@ -204,7 +205,7 @@ impl Run {
                 }
                 None => self.fly.update(input, dt),
             }
-            if let Some(p) = &self.pan {
+            if let Some(p) = &self.modes.pan {
                 self.fly.camera.yaw += p.yaw(dt);
             }
             if self.args.tester {
@@ -218,8 +219,9 @@ impl Run {
             } else {
                 self.handle_input(input);
             }
-            self.cutaway
-                .update(&mut self.look, &self.world, self.fly.camera.position);
+            self.modes
+                .cutaway
+                .update(&mut self.modes.look, &self.world, self.fly.camera.position);
         }
         self.audio_step();
         if let Some(n) = self.args.frames
@@ -579,7 +581,7 @@ impl Run {
         // overwrites it: a blocking copy, paid only with the HUD and that view both on.
         self.hud.steps = None;
         if hud
-            && self.look.view == ViewMode::Steps
+            && self.modes.look.view == ViewMode::Steps
             && let Some(gfx) = &self.gfx
         {
             let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
@@ -589,7 +591,7 @@ impl Run {
         }
         self.hud.cracks = None;
         if hud
-            && self.look.view == ViewMode::Cracks
+            && self.modes.look.view == ViewMode::Cracks
             && let Some(gfx) = &self.gfx
         {
             self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
@@ -628,7 +630,7 @@ impl Run {
             return;
         };
         if std::mem::take(&mut self.upscaler_changed) {
-            let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
+            let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
             let output = gfx.frame.output_size();
             gfx.frame.set_jitter(&gpu.device, jitter);
             gfx.frame.set_upscaler_kind(&gpu.device, kind);
@@ -637,8 +639,8 @@ impl Run {
         }
         if std::mem::take(&mut self.sharpen_changed) {
             gfx.frame.set_sharpness(&gpu.queue, self.args.look.sharpen);
-            if self.upscaler.mode == hud::UpscalerMode::Fsr2 {
-                let (kind, _, _) = self.args.upscaler_settings(self.upscaler.mode);
+            if self.modes.upscaler.mode == hud::UpscalerMode::Fsr2 {
+                let (kind, _, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
                 gfx.frame.set_upscaler_kind(&gpu.device, kind);
             }
         }
@@ -651,7 +653,7 @@ impl Run {
             dt.clamp(0.0, 0.1)
         });
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
-        gfx.frame.set_look(self.look);
+        gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's
         // store row and `--read-missing`.
         gfx.frame
@@ -688,12 +690,12 @@ impl Run {
         if self.coarse.is_some() {
             println!("{}", self.coarse_line());
         }
-        if self.look.view == ViewMode::Cracks
+        if self.modes.look.view == ViewMode::Cracks
             && let Some(gfx) = &self.gfx
         {
             println!("{}", hud::cracks_row(&crack_shares(gpu, &gfx.frame)));
         }
-        if self.look.view == ViewMode::Steps
+        if self.modes.look.view == ViewMode::Steps
             && let Some(gfx) = &self.gfx
         {
             let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());

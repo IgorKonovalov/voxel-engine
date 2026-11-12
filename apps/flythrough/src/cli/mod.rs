@@ -716,7 +716,7 @@ impl Args {
         }
     }
 
-    /// The lighting modes at the start, the banner shown from `now_ms`, the auto exposure's
+    /// Every toggle's mode at the start (`toggles::TOGGLES`), the banner shown from `now_ms`, the auto exposure's
     /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
     /// and the probe spacing while the lamp's bounce is on, and the look's rows `--view`'s view.
     pub(crate) fn start_modes(&self, now_ms: f64) -> hud::Modes {
@@ -726,6 +726,35 @@ impl Args {
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);
         m.show_view(self.look.view, now_ms);
+        let upscaler = self.start_upscaler();
+        m.upscaler = hud::UpscalerBanner::shown_from(
+            upscaler,
+            self.upscaler_settings(upscaler).1.name(),
+            now_ms,
+        )
+        .with_sharpen(self.look.sharpen)
+        .with_fsr2_knobs(hud::fsr2_knob_words(
+            self.look.jitter_phases,
+            self.look.dither,
+        ));
+        m.scale = self.look.internal_scale.name();
+        m.pan = self.look.pan.map(|d| hud::Pan::new(d, now_ms));
+        m.look = self.start_look();
+        m.preset = self.look.preset;
+        m.field_surface = self.field_surface();
+        m.cutaway = self.look.cutaway;
+        let b = &self.bake;
+        m.queue = hud::QueueModes {
+            distance: b.queue_distance,
+            tier: b.queue_tier,
+            angle: b.queue_angle,
+            refine: b.queue_refine,
+            withdraw: b.queue_withdraw,
+            budget: b.budget,
+            full_first: self.full_first(),
+            missing_light: b.missing_light,
+            reach: b.reach,
+        };
         m
     }
 
