@@ -1,6 +1,6 @@
 # ADR-0057: The render API is three objects and a settings struct, with a compiled example as the contract
 
-> **Status:** proposed
+> **Status:** accepted (owner, 2026-11-12, with its plan)
 > **Date:** 2026-11-12
 > **Related plan(s):** [Plan 0071](../plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)
 

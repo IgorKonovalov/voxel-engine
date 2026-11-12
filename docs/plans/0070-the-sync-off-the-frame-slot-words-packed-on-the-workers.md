@@ -1,6 +1,9 @@
 # 0070: The sync off the frame: a chunk's slot image packed on the stream workers, the render thread copies
 
-> **Status:** draft, awaiting owner go
+> **Status:** approved (owner, 2026-11-12: "45 after 67, 70 after 45. all draft plans can be
+> approved"). Review question 1 answered against the recommendation: this plan starts after
+> Plan 0045 merges, on the split tree. Question 2 takes the recommendation: Plan 0044's Phase 4
+> is struck into this plan.
 > **Created:** 2026-11-12 (the overnight architecture review, `docs/reviews/2026-11-12-architecture-review.md`)
 > **Milestone:** M2 (a playable frame under the light that holds), cross-cutting like Plans
 > 0064 and 0067. It serves `docs/nfr.md` section 2's streaming line and section 5's residency.
@@ -11,9 +14,8 @@
 > 0067's Phase 1 stop rule ("if `update + poll + sync` p99 reads over 16.6 ms in rig (b) ... the
 > lane stops for an architect amendment"), which those readings already trip at 39.9 ms. The
 > owner, 2026-11-11: "we are not there - either lagging too much, or the picture is unacceptable".
-> **Starts after:** Plan 0067 has merged (recommended; the owner's call, review question 1).
-> Before Plan 0045, whose Phase 0 re-cuts `gpu_world.rs`'s seams at its own start commit.
-> If the owner puts it after 0045, every path below is read from the split tree.
+> **Starts after:** Plan 0045 has merged (owner, 2026-11-12), and before Plan 0058. Every path
+> below is read from 0045's split tree; the lane maps them in its Notes at its start commit.
 
 ## TL;DR
 

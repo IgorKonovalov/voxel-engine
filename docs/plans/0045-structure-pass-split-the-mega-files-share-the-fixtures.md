@@ -40,8 +40,8 @@
 > **Source:** the owner, 2026-10-22, the same review as Plan 0044. The owner's answers: two
 > plans, performance first; full splits, engine crates included.
 > **After:** Plans 0061, 0067 and 0068 merged (amended 2026-11-11; was 0060, 0061, 0058 and
-> 0044). **Before:** Plan 0058, Plan 0044's Phases 3, 4, 5 and 8, Plan 0069 (render settings)
-> and M10.
+> 0044). **Before:** Plan 0070 (owner, 2026-11-12: "70 after 45"), Plan 0058, Plan 0044's
+> Phases 3, 5 and 8, Plan 0069 (render settings) and M10.
 
 ## TL;DR
 

@@ -1,6 +1,7 @@
 # 0071: The consumer's path: a render example as the contract, a renderer tested without the testbed, one name per thing, every error an `Error`
 
-> **Status:** draft, awaiting owner go
+> **Status:** approved (owner, 2026-11-12: "all draft plans can be approved"; review question 3
+> as recommended: after Plans 0045 and 0069, renames with deprecated re-exports for one minor)
 > **Created:** 2026-11-12 (the overnight architecture review, `docs/reviews/2026-11-12-architecture-review.md`)
 > **Milestone:** cross-cutting (the first consumer's hand-off; `docs/roadmap.md`, "The first
 > consumer's needs, mapped", every P0 row). No budget figure moves.

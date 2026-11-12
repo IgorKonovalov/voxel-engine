@@ -70,8 +70,8 @@ the status.
 | [0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md) | A light summary per block and a two-level parent table light a brick with no baked value | accepted 2026-11-11 (Plan 0067) |
 | [0054](0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) | The tester build is a launcher that runs the fly-through once per scene as a child process | proposed (Plan 0068) |
 | [0055](0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md) | Render settings are one struct with an apply class per field, and a profile is a named value of it | proposed (Plan 0069) |
-| [0056](0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md) | The mirror's slot image is packed on the stream workers; the render thread only allocates and copies | proposed (Plan 0070, draft) |
-| [0057](0057-the-render-api-is-three-objects-and-a-settings-struct-with-a-compiled-example-as-the-contract.md) | The render API is three objects and a settings struct, with a compiled example as the contract | proposed (Plan 0071, draft) |
+| [0056](0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md) | The mirror's slot image is packed on the stream workers; the render thread only allocates and copies | accepted (Plan 0070) |
+| [0057](0057-the-render-api-is-three-objects-and-a-settings-struct-with-a-compiled-example-as-the-contract.md) | The render API is three objects and a settings struct, with a compiled example as the contract | accepted (Plan 0071) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

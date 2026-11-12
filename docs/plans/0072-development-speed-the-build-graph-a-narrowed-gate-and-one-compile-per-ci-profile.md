@@ -1,6 +1,8 @@
 # 0072: Development speed: the build graph read, a dev profile that pays for what it buys, a gate narrowed to the change, the lavapipe queue measured at two, and one compile per CI profile
 
-> **Status:** draft, awaiting owner go
+> **Status:** approved (owner, 2026-11-12: "all draft plans can be approved"; review questions 4
+> and 5 as recommended: the pinned cache only on Phase 1's number, the lavapipe group at two
+> kept only on a quarter's cut with no flake in three runs)
 > **Created:** 2026-11-12 (the overnight architecture review, `docs/reviews/2026-11-12-architecture-review.md`)
 > **Milestone:** cross-cutting (the harness; `docs/nfr.md` section 7, "Startup and build").
 > **Related ADRs:** none at the draft. Phase 6 writes one (a compilation cache is a tool

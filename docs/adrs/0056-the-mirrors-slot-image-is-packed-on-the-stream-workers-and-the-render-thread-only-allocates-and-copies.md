@@ -1,6 +1,6 @@
 # ADR-0056: The mirror's slot image is packed on the stream workers; the render thread only allocates and copies
 
-> **Status:** proposed
+> **Status:** accepted (owner, 2026-11-12, with its plan)
 > **Date:** 2026-11-12
 > **Related plan(s):** [Plan 0070](../plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
 

@@ -13,6 +13,10 @@
 > that goes after all plans that are active are finished". The review ran at `87e4b67`; its
 > structural findings are Plan 0045.
 >
+> **Amended (owner, 2026-11-12):** Phase 4 is struck into Plan 0070 (the review's question 2,
+> taken as recommended with the plan's approval). The order is Plans 0067, 0045, 0070, 0058,
+> then Phases 3, 5 and 8 here, then Plan 0069.
+>
 > **Order amended (owner, 2026-11-11):** Plan 0045 moves ahead of Plan 0058 and of this
 > plan's remaining phases. The order is Plans 0061, 0067, 0045, 0058, then Phases 3, 4, 5 and 8
 > here, then Plan 0069. The side lane (Phases 0, 1, 6, 7) merged at `d6d2dfa`. The remaining
