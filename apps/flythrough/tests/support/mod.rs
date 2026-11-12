@@ -4,6 +4,8 @@
 
 pub mod aliasing;
 pub mod bake;
+pub mod look;
+pub mod queue;
 pub mod rigs;
 pub mod settle;
 pub mod stillness;
