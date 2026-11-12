@@ -3207,6 +3207,51 @@ pub const DEFAULT_NEAR: i32 = 2;
 const QUEUE_RECHECK: u64 = 30;
 /// Steps an opening that found nothing ready waits before sorting the candidates again.
 const QUEUE_QUIET: u64 = 8;
+
+/// A hasher for chunk coordinates in the queue step's per-change sets: one multiply and rotate
+/// a word (FxHash's mix), where std's SipHash costs several times as much a key, and a flight
+/// hashes about a thousand mirror changes a step. No key comes from outside the process and no
+/// set's iteration order is read.
+#[derive(Clone, Copy, Debug, Default)]
+struct ChunkHasher(u64);
+
+impl ChunkHasher {
+    fn add(&mut self, w: u64) {
+        self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+impl std::hash::Hasher for ChunkHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for w in bytes.chunks(4) {
+            let mut b = [0u8; 4];
+            b[..w.len()].copy_from_slice(w);
+            self.add(u64::from(u32::from_le_bytes(b)));
+        }
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.add(u64::from(i));
+    }
+
+    fn write_i32(&mut self, i: i32) {
+        self.add(u64::from(i as u32));
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+}
+
+/// A set of chunk coordinates under [`ChunkHasher`].
+type ChunkSet = std::collections::HashSet<[i32; 3], std::hash::BuildHasherDefault<ChunkHasher>>;
+/// A map from chunk coordinates under [`ChunkHasher`].
+type ChunkMap<V> =
+    std::collections::HashMap<[i32; 3], V, std::hash::BuildHasherDefault<ChunkHasher>>;
 /// Bytes of prepared masks the queue holds at most; the farthest from the camera go first.
 const PREPARED_BYTES_MAX: usize = 64 << 20;
 
@@ -4059,7 +4104,7 @@ pub struct BakeQueue {
     /// Re-read for the chunks the mirror, the store or the queue changed ([`BakeQueue::touched`]).
     pool: std::collections::HashMap<[i32; 3], (u8, bool)>,
     /// Chunks whose candidacy is read again at the next opening.
-    touched: std::collections::HashSet<[i32; 3]>,
+    touched: ChunkSet,
     /// The pool is read again whole at the next opening: at the start, and when the mirror's
     /// or the store's changes went untracked.
     pool_stale: bool,
@@ -4073,7 +4118,7 @@ pub struct BakeQueue {
     order_dirty: bool,
     /// Each checked candidate's reach verdict ([`reach_ready`]), dropped when a chunk within
     /// the light radius and one of it changes in the mirror.
-    reach_cache: std::collections::HashMap<[i32; 3], bool>,
+    reach_cache: ChunkMap<bool>,
 }
 
 impl BakeQueue {
@@ -4528,19 +4573,25 @@ impl BakeQueue {
         // reads each changed chunk once.
         let changes = gpu.take_changes().map(|mut ch| {
             self.stats.scanned += ch.len() as u64;
-            ch.sort_unstable_by_key(|c| c.0);
-            ch.dedup_by_key(|c| c.0);
+            let mut seen = ChunkSet::with_capacity_and_hasher(ch.len(), Default::default());
+            ch.retain(|c| seen.insert(c.0));
             ch
         });
         let unheld = |c: &[i32; 3]| !gpu.is_mirrored(ChunkCoord(*c)) || gpu.is_lod(ChunkCoord(*c));
         // A chunk the mirror does not hold full (evicted, or LOD-only) frees its block. Every
         // such chunk is among the mirror's changes since the step that last read them.
+        // In coordinate order, so the freed places return to the free list in the same order
+        // run to run.
         let gone: Vec<[i32; 3]> = match &changes {
-            Some(ch) => ch
-                .iter()
-                .map(|c| c.0)
-                .filter(|c| store.blocks.contains_key(c) && unheld(c))
-                .collect(),
+            Some(ch) => {
+                let mut g: Vec<[i32; 3]> = ch
+                    .iter()
+                    .map(|c| c.0)
+                    .filter(|c| store.blocks.contains_key(c) && unheld(c))
+                    .collect();
+                g.sort_unstable();
+                g
+            }
             None => {
                 self.stats.scanned += store.blocks.len() as u64;
                 store.blocks.keys().copied().filter(unheld).collect()
