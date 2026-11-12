@@ -6,7 +6,7 @@
 //   0  texture_2d<f32>   in_pos          this frame's hit positions (rgba32float, t in w)
 //   1  texture_2d<u32>   in_info         this frame's hit records
 //   2  texture_2d<f32>   in_layer        the hit pass's translucent layers (transmittance w)
-//   3  uniform           in_tuning       `Fsr2InputUniform` in fsr2.rs
+//   3  uniform           in_tuning       `InputUniform` in fsr2/prepare.rs
 //   4  uniform           in_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
 //   5  uniform           in_lamp         the upscale pass's tuning (`UpTuning` in
 //                                        upscale.wgsl): the older lamp and the change thresholds

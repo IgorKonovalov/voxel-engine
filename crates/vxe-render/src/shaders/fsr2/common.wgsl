@@ -37,7 +37,7 @@
 // to its edge.
 //
 // Bindings, group 0 of every FSR pass:
-//   0  uniform  cb   `Fsr2Constants` in fsr2.rs, field for field (AMD's `cbFSR2`, plus the
+//   0  uniform  cb   `Fsr2Constants` in fsr2/prepare.rs, field for field (AMD's `cbFSR2`, plus the
 //                    luminance pyramid's `cbSPD` mip and workgroup counts and RCAS's
 //                    sharpening constant)
 
