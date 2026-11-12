@@ -4380,7 +4380,8 @@ impl BakeQueue {
     /// Whether `coord` may bake under [`BakeQueue::reach`], and whether from a partial reach:
     /// `Some(false)` when its reach is ready, `Some(true)` under [`ReachMode::Partial`] when
     /// nothing in its reach waits to upload and the reach crosses the streamer's full radius
-    /// about `eye` (its distance in chunks plus `lr` exceeds it), else `None`.
+    /// about `eye`: a chunk within it lies past the full sphere (`d2 > r^2` in chunks, the
+    /// streamer's rule), so a still camera never makes it whole. Else `None`.
     fn bakeable(
         &mut self,
         run: &BakeRun<'_>,
@@ -4394,8 +4395,11 @@ impl BakeQueue {
             Reach::Partial
                 if self.reach_mode == ReachMode::Partial
                     && view.full_radius.is_some_and(|r| {
-                        let d2: i64 = (0..3).map(|k| i64::from(coord.0[k] - eye[k]).pow(2)).sum();
-                        (d2 as f32).sqrt() + lr as f32 > r as f32
+                        let o = [0, 1, 2].map(|k| coord.0[k] - eye[k]);
+                        reach_offsets(lr).any(|n| {
+                            (0..3).map(|k| i64::from(o[k] + n[k]).pow(2)).sum::<i64>()
+                                > i64::from(r).pow(2)
+                        })
                     }) =>
             {
                 Some(true)
