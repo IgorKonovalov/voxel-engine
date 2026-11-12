@@ -311,9 +311,9 @@ mod tests {
     /// `Off` ignore the camera.
     #[test]
     fn auto_cutaway_follows_the_camera_voxel() {
-        use flythrough::cave::CaveSource;
+        use crate::cave::CaveSource;
         let source = CaveSource::new(1, vxe_world::ChunkExtent::new([0, 0, 0], [4, 4, 2]));
-        let world = World::generate(source.extent, &source, &flythrough::cave_materials());
+        let world = World::generate(source.extent, &source, &crate::cave_materials());
         let pocket = Vec3::from_array(source.spawn().0.map(|v| v as f32 + 0.5));
         // The shell: two voxels of indestructible rock inside each face of the extent.
         let rock = Vec3::new(0.5, 0.5, 0.5);
@@ -618,10 +618,10 @@ mod tests {
     /// body's feet first, which the next tick lifts it out of.
     #[test]
     fn random_walks_on_the_level_never_freeze_or_overlap() {
-        use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
+        use crate::cave::{CaveSource, LEVEL_CHUNKS};
         use vxe_sim::sweep;
         let source = CaveSource::new(1, vxe_world::ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
-        let world = World::generate(source.extent, &source, &flythrough::cave_materials());
+        let world = World::generate(source.extent, &source, &crate::cave_materials());
         let c = CharacterController::new(walk_params());
         let mut st = CharacterState::new(Fixed3(source.spawn().0.map(|v| i64::from(v) * 256)));
         let mut rng = 1u64;
@@ -645,7 +645,7 @@ mod tests {
                 let r = world.apply(&vxe_world::EditOp::sphere(
                     Fixed3([f[0], f[1], f[2] + 256]),
                     768,
-                    vxe_world::Mode::Fill(flythrough::cave::ROCK),
+                    vxe_world::Mode::Fill(crate::cave::ROCK),
                 ));
                 assert!(r.is_ok_and(|r| !r.changed_from.is_empty()), "walk {walk}");
                 assert!(overlaps(&world, &c.body(f)), "walk {walk}");

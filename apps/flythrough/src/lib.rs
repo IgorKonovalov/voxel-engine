@@ -3,12 +3,24 @@
 //! native or hosted build, save replay, the streaming defaults, and the small measurement
 //! helpers its readings use. The engine ships no terrain; this cave is the testbed's own.
 
+pub mod app;
+mod audio;
+mod autopilot;
 pub mod castle;
 pub mod cave;
+pub mod cli;
+mod edits;
+mod fly;
 pub mod hud;
+mod pad;
 pub mod path;
 pub mod report;
+mod run;
+pub mod setup;
 pub mod showcase;
+mod streaming;
+#[cfg(test)]
+mod test_support;
 pub mod thin_rig;
 pub use flythrough_logic as logic;
 
