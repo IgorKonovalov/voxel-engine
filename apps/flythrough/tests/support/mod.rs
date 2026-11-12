@@ -3,6 +3,7 @@
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
 pub mod aliasing;
+pub mod bake;
 pub mod rigs;
 pub mod settle;
 pub mod stillness;
@@ -108,6 +109,17 @@ pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
 /// [`software_device`] and stay on lavapipe, CI's adapter.
 pub fn reading_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue, String)> {
     let want = std::env::var("VXE_TEST_ADAPTER").unwrap_or_default();
+    adapter_device(&want, "VXE_TEST_ADAPTER=", pool_bytes)
+}
+
+/// [`reading_device`] for the adapter `want` names (empty or `fallback`: lavapipe), as a
+/// reading example's `--adapter` flag gives it; `by` labels where the name came from in the
+/// printed and panic lines (`--adapter `).
+pub fn adapter_device(
+    want: &str,
+    by: &str,
+    pool_bytes: u64,
+) -> Option<(wgpu::Device, wgpu::Queue, String)> {
     if want.is_empty() || want.eq_ignore_ascii_case("fallback") {
         let (device, queue) = software_device(pool_bytes)?;
         return Some((device, queue, "llvmpipe (lavapipe)".to_owned()));
@@ -123,11 +135,11 @@ pub fn reading_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue, Str
         .into_iter()
         .find(|a| a.get_info().name.to_lowercase().contains(&needle))
     else {
-        panic!("VXE_TEST_ADAPTER={want} matches no adapter; the adapters are {names:?}");
+        panic!("{by}{want} matches no adapter; the adapters are {names:?}");
     };
     let info = adapter.get_info();
     println!(
-        "adapter: {} ({:?}, driver {} {}), chosen by VXE_TEST_ADAPTER={want}",
+        "adapter: {} ({:?}, driver {} {}), chosen by {by}{want}",
         info.name, info.backend, info.driver, info.driver_info
     );
     let desc = wgpu::DeviceDescriptor {
