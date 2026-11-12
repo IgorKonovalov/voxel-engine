@@ -1036,8 +1036,8 @@ pub struct Frame {
     temporal_counting: std::sync::OnceLock<wgpu::ComputePipeline>,
     /// Whether the temporal pass counts the store's reads ([`Frame::set_count_store`]).
     count_store: bool,
-    /// The store's three read counters (`counters` in `temporal.wgsl`): missing, brick reads,
-    /// coarse reads.
+    /// The store's five read counters (`counters` in `temporal.wgsl`): missing, brick reads,
+    /// coarse reads, fallback, still black.
     store_counters: wgpu::Buffer,
     gradient_layout: wgpu::BindGroupLayout,
     gradient: wgpu::ComputePipeline,
@@ -2246,10 +2246,15 @@ impl Frame {
         self.bake_queue.as_mut()
     }
 
-    /// The live queue's slice, in milliseconds.
+    /// The live queue's slice, in milliseconds a frame ([`crate::bake::Budget::PerFrame`]).
     pub fn set_bake_slice(&mut self, ms: f64) {
+        self.set_bake_budget(crate::bake::Budget::PerFrame { ms });
+    }
+
+    /// The live queue's bake budget (ADR-0052).
+    pub fn set_bake_budget(&mut self, budget: crate::bake::Budget) {
         if let Some(q) = self.bake_queue.as_mut() {
-            q.slice_ms = ms;
+            q.budget = budget;
         }
     }
 
@@ -2259,6 +2264,24 @@ impl Frame {
         if let Some(q) = self.bake_queue.as_mut() {
             q.coarse_samples = samples;
             q.near = near;
+            q.full_first = Some(near);
+        }
+    }
+
+    /// The live queue's full-first radius ([`crate::bake::BakeQueue::full_first`]): the chunks
+    /// (Chebyshev) around the camera's within which a chunk with no block takes the full count
+    /// directly; `None` gives every such chunk the coarse pass first.
+    pub fn set_bake_full_first(&mut self, radius: Option<i32>) {
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.full_first = radius;
+        }
+    }
+
+    /// The live queue's reach mode ([`crate::bake::BakeQueue::reach_mode`]): whether a chunk
+    /// whose reach crosses the streamer's full radius bakes from the chunks resident full.
+    pub fn set_bake_reach(&mut self, mode: crate::bake::ReachMode) {
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.set_reach_mode(mode);
         }
     }
 
@@ -2312,6 +2335,7 @@ impl Frame {
         world: &vxe_world::World,
         view: &crate::bake::QueueView<'_>,
     ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
+        let t0 = crate::bake::stopwatch();
         let settings = self.bake_queue.as_ref()?.settings.clone();
         let w = gpu.window();
         let f = gpu.focus().0;
@@ -2343,7 +2367,7 @@ impl Frame {
             params,
         };
         let q = self.bake_queue.as_mut()?;
-        Some(q.step(&run, &mut self.store, view))
+        Some(q.step(&run, &mut self.store, view, t0))
     }
 
     /// The frame parameters a bake dispatches with: no view but the LOD walk's camera chunk,
@@ -2461,11 +2485,26 @@ impl Frame {
         self.store_ring.try_read(device, |b| self.store_stats_of(b))
     }
 
-    /// The store's counts with its GPU counters' three words.
+    /// The store's counts with its GPU counters' five words.
     fn store_stats_of(&self, bytes: &[u8]) -> crate::bake::StoreStats {
         let word =
             |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
-        self.store.stats(word(0), word(4), word(8))
+        crate::bake::StoreStats {
+            fallback: word(12),
+            still_black: word(16),
+            ..self.store.stats(word(0), word(4), word(8))
+        }
+    }
+
+    /// What a cube face with no brick value reads (ADR-0053); [`crate::bake::MissingLight::Chain`]
+    /// by default.
+    pub fn set_missing_light(&mut self, queue: &wgpu::Queue, mode: crate::bake::MissingLight) {
+        self.store.set_missing_light(queue, mode);
+    }
+
+    /// What a cube face with no brick value reads.
+    pub fn missing_light(&self) -> crate::bake::MissingLight {
+        self.store.missing_light()
     }
 
     /// How many times [`Frame::read_store_stats`] waited on the GPU so far.
@@ -2645,7 +2684,10 @@ impl Frame {
             .min(limits.max_buffer_size)
             & !3;
         if bytes != self.store.pool().size() {
+            let missing = self.store.missing_light();
             self.store = crate::bake::Store::new(&self.device, bytes);
+            // The new pool's header, the flags with it, is written at its first reset.
+            self.store.keep_missing_light(missing);
         }
     }
 
@@ -3949,8 +3991,9 @@ fn compute_pipeline_with(
 /// Bytes one resolved timestamp occupies: a `u64` tick count.
 const QUERY_BYTES: u64 = 8;
 
-/// Bytes of the store's GPU counters that [`Frame::read_store_stats`] reads: three `u32` words.
-const STORE_STATS_BYTES: u64 = 12;
+/// Bytes of the store's GPU counters that [`Frame::read_store_stats`] reads: five `u32` words
+/// (missing, brick reads, coarse reads, fallback, still black).
+const STORE_STATS_BYTES: u64 = 20;
 
 /// Read-back buffers a [`ReadbackRing`] cycles through: with the GPU keeping up, a frame's
 /// copy is mapped while the next two are recorded.

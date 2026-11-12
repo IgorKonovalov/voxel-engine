@@ -201,7 +201,16 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059 and 0061 closed; 0049 abandoned)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059, 0061 and 0067 closed; 0049 abandoned)
+
+Plan 0067, the frame's CPU, closed 2026-11-12 (v0.49.0; Outcomes on ADR-0052, ADR-0053, ADR-0048 and
+ADR-0046): the live queue's step is split into stages and read per regime (A starved, B keeping up). At
+rest it drains instead of withdrawing the same job every step, 0.075 ms p50 against 3.26 on the RTX. A
+brick with no baked value reads its chunk's summary, then its neighbours', then a two-level parent table
+(`chain`, the owner's pick), and a first block fades in from it. The owner kept the bake at `frame:1.5`,
+the near shell's full jobs at 2 and the reach rule; the other modes stay render settings for Plan 0069's
+profiles. Under `chain` a regime-B step pays about 1.7 ms of first-block fades (backlog); the sync's
+p99 in flight is Plan 0070's.
 
 Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
 ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed

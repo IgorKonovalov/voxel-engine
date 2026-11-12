@@ -71,6 +71,10 @@ pub struct ShellConfig {
     pub present_mode: wgpu::PresentMode,
     /// Which adapter the shell asks for.
     pub power_preference: wgpu::PowerPreference,
+    /// A substring of the adapter's name: the first adapter that can present to the surface
+    /// and whose name contains it ([`pick_adapter`]); `None`, or no such adapter, asks by
+    /// `power_preference`.
+    pub adapter: Option<String>,
     /// Pick an sRGB surface format, where the hardware encodes on write. `false` picks a
     /// non-sRGB format, for an app that writes display-encoded values itself.
     pub prefer_srgb: bool,
@@ -89,6 +93,7 @@ impl Default for ShellConfig {
             lock_cursor: false,
             present_mode: wgpu::PresentMode::AutoNoVsync,
             power_preference: wgpu::PowerPreference::HighPerformance,
+            adapter: None,
             prefer_srgb: false,
             pacing: Pacing::Unthrottled,
         }
@@ -250,6 +255,12 @@ pub fn backend_label(backend: wgpu::Backend) -> String {
     format!("{backend:?}, shader compiler: {compiler}")
 }
 
+/// The index of the first of `names` that contains `want`, as `--adapter` picks in a window and
+/// headless.
+pub fn pick_adapter(names: &[String], want: &str) -> Option<usize> {
+    names.iter().position(|n| n.contains(want))
+}
+
 /// Runs one teardown stage between two log lines, so the last line before a hang is the
 /// stage that hangs.
 fn stage(what: &str, f: impl FnOnce()) {
@@ -331,12 +342,30 @@ impl<A: App> Shell<A> {
         let surface = instance
             .create_surface(window.clone())
             .map_err(|e| e.to_string())?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: self.config.power_preference,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))
-        .map_err(|e| e.to_string())?;
+        let named = self.config.adapter.as_deref().and_then(|want| {
+            let all: Vec<wgpu::Adapter> =
+                pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+                    .into_iter()
+                    .filter(|a| a.is_surface_supported(&surface))
+                    .collect();
+            let names: Vec<String> = all.iter().map(|a| a.get_info().name).collect();
+            let found = pick_adapter(&names, want);
+            if found.is_none() {
+                log::warn!(
+                    "adapter {want:?}: no adapter that presents to the window has it in its name ({names:?}); asking by power preference"
+                );
+            }
+            found.map(|i| all[i].clone())
+        });
+        let adapter = match named {
+            Some(a) => a,
+            None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: self.config.power_preference,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            }))
+            .map_err(|e| e.to_string())?,
+        };
         let (required_features, required_limits) = self.app.device_request(&adapter);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,

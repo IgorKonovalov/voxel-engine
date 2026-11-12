@@ -73,6 +73,12 @@ struct Q {
     counts: BakeSettings,
     /// The steps' sample count: `None` is a frame's sliced step, `Some` the pre-roll's.
     samples: Option<u64>,
+    /// The last step's `bake_queue_step` call, timed from outside, in ms.
+    last_step_ms: f64,
+    /// Whether a chunk is resident full, as a streamer's would say; `None` is a bounded world.
+    resident: Option<fn(ChunkCoord) -> bool>,
+    /// The streamer's full radius in chunks the view hands the queue; `None` a bounded world.
+    full_radius: Option<i32>,
 }
 
 /// How a rig's queue and mirror start.
@@ -89,6 +95,8 @@ struct Setup {
     order: Option<bake::QueueOrder>,
     /// The queue's counts.
     counts: BakeSettings,
+    /// The mirror's light radius in chunks.
+    light_radius: i32,
 }
 
 impl Setup {
@@ -103,6 +111,7 @@ impl Setup {
             slice_ms: 1.5,
             order: None,
             counts: counts(),
+            light_radius: 2,
         }
     }
 }
@@ -139,7 +148,7 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
     let (device, queue) = support::software_device(64 << 20)?;
     let cfg = MirrorConfig {
         budget_bytes: 64 << 20,
-        light_radius: 2,
+        light_radius: setup.light_radius,
         sync_budget_bytes: setup.sync_budget,
         ..MirrorConfig::new(setup.window.unwrap_or(Window::Fixed(world.extent())))
     };
@@ -163,6 +172,9 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
         camera: camera_at(setup.eye),
         counts: setup.counts.clone(),
         samples: None,
+        last_step_ms: 0.0,
+        resident: None,
+        full_radius: None,
     })
 }
 
@@ -179,23 +191,41 @@ impl Q {
                 .sync_now(&self.world, &self.device, &self.queue)
                 .expect("the mirror fits");
         }
+        let resident = self.resident;
+        let resident_fn = move |c: ChunkCoord| resident.is_some_and(|f| f(c));
         let view = QueueView {
             eye,
             forward: self.camera.basis().0.to_array(),
-            resident: None,
+            resident: resident
+                .is_some()
+                .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool),
             samples: self.samples,
+            // A fixed 60 Hz frame: a per-second budget sizes the slice repeatably.
+            interval_s: 1.0 / 60.0,
             hold: None,
             half_angle: {
                 let [w, h] = self.frame.output_size();
                 bake::view_half_angle(self.camera.vfov, w as f32 / h as f32)
             },
             frustum: None,
+            full_radius: self.full_radius,
         };
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the stage test times the step from outside"
+        )]
+        let t = std::time::Instant::now();
         let st = self
             .frame
             .bake_queue_step(&self.device, &self.queue, &mut self.gpu, &self.world, &view)
             .expect("the queue runs")
             .expect("the queue's step");
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the stage test times the step from outside"
+        )]
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        self.last_step_ms = ms;
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("device poll");
@@ -915,6 +945,128 @@ fn the_edge_of_the_view_does_not_churn() {
     assert!(out_of_view > 0, "a job's chunk left the view cone");
 }
 
+/// The rock cubes of [`still_rig`]: chunks 0, 1, 2, 6 and 7 of an eight-chunk row.
+const STILL_ROCKS: [i32; 5] = [0, 1, 2, 6, 7];
+
+/// An eight-chunk row with a 32^3 rock cube in chunks 0, 1, 2, 6 and 7 (3 to 5 air), the camera
+/// in chunk 2 looking +x, `near` 0, the coarse pass on, the default order (angle weight 4,
+/// class as a tier), 1024 samples a brick direction and the smallest slice. Once the coarse
+/// passes land, the order's first refinement is chunk 1 behind the camera (score 1 x 3.53)
+/// ahead of chunk 6 in the view (4): a job outside the near shell and the keep cone while a
+/// candidate in the view cone is ready, the patch's state at rest. Steps until chunk 1's
+/// refinement is in the loop and chunk 6 holds its coarse block outside a job, and asserts that
+/// state.
+fn still_rig() -> Option<Q> {
+    let world = world_of([8, 1, 1], AIR);
+    for x in STILL_ROCKS.map(i64::from) {
+        fill(&world, [x * 64 + 16, 16, 16], [x * 64 + 48, 48, 48], ROCK);
+    }
+    fill(&world, [140, 28, 48], [150, 36, 50], ORE);
+    let mut q = rig(
+        world,
+        &Setup {
+            coarse: COARSE,
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 1024,
+                ..counts()
+            },
+            ..Setup::at(ROW_EYE)
+        },
+    )?;
+    let (one, six) = (ChunkCoord([1, 0, 0]), ChunkCoord([6, 0, 0]));
+    let mut n = 0;
+    loop {
+        let st = q.step_with(false);
+        assert_eq!(st.withdrawn, 0, "step {n}: {st:?}");
+        let jobs = q.q().jobs();
+        let store = q.frame.store();
+        if jobs.contains(&one)
+            && store.is_coarse(one)
+            && store.is_coarse(six)
+            && !jobs.contains(&six)
+        {
+            break;
+        }
+        n += 1;
+        assert!(n < MAX_STEPS, "chunk 1's refinement opens: jobs {jobs:?}");
+    }
+    let half = {
+        let [w, h] = q.frame.output_size();
+        bake::view_half_angle(q.camera.vfov, w as f32 / h as f32)
+    };
+    let keep = half + bake::QUEUE_VIEW_MARGIN_DEG.to_radians();
+    let forward = q.camera.basis().0.to_array();
+    assert!(
+        !bake::in_near_shell([-1, 0, 0], 0) && bake::angle_term([-1, 0, 0], forward, keep, 0) > 0.0,
+        "chunk 1 lies outside the near shell and the keep cone"
+    );
+    assert_eq!(
+        bake::angle_term([4, 0, 0], forward, half, 0),
+        0.0,
+        "chunk 6 lies in the view cone"
+    );
+    assert!(
+        q.gpu.is_mirrored(six) && !q.gpu.is_lod(six),
+        "chunk 6 is resident full: its reach is ready in the bounded row"
+    );
+    Some(q)
+}
+
+/// [`still_rig`]'s state, the camera still: every step withdraws nothing. Within `N` steps,
+/// `N` the refinements' samples (at most four chunks of 56 surface bricks, three directions
+/// each, at 1024 samples) over the step's cap floor (16 384), plus 8 steps a job for the
+/// read-back's lag and the quiet box, every chunk of the row holds a full block; the 100 steps
+/// after push no job and scan nothing. A second rig moved one chunk along +x from that state
+/// withdraws chunk 1's job at its next step: the flight's withdrawal is kept.
+#[test]
+fn a_still_camera_drains_and_withdraws_nothing() {
+    let Some(mut q) = still_rig() else {
+        return;
+    };
+    let refinements = (STILL_ROCKS.len() - 1) as u64;
+    let n = (refinements * 56 * 3 * 1024).div_ceil(16_384) + 8 * refinements;
+    let full = |q: &Q| {
+        STILL_ROCKS.iter().all(|&x| {
+            let c = ChunkCoord([x, 0, 0]);
+            q.frame.store().block(c).is_some() && !q.frame.store().is_coarse(c)
+        })
+    };
+    let mut steps = 0;
+    while !(full(&q) && q.q().empty()) {
+        let st = q.step_with(false);
+        assert_eq!(st.withdrawn, 0, "still step {steps}: {st:?}");
+        steps += 1;
+        assert!(
+            steps <= n,
+            "drained within {n} steps: jobs {:?}, {st:?}",
+            q.q().jobs()
+        );
+    }
+    println!("drained after {steps} still steps of at most {n}");
+    for k in 0..100 {
+        let st = q.step_with(false);
+        assert_eq!(
+            (st.withdrawn, st.jobs, st.scanned),
+            (0, 0, 0),
+            "drained step {k}: {st:?}"
+        );
+        assert!(q.q().jobs().is_empty(), "drained step {k} pushes no job");
+    }
+    let Some(mut q) = still_rig() else {
+        return;
+    };
+    q.camera.position.x += 64.0;
+    let st = q.step_with(false);
+    println!("after the move: jobs {:?}, {st:?}", q.q().jobs());
+    assert!(st.withdrawn > 0, "{st:?}");
+    assert!(
+        !q.q().jobs().contains(&ChunkCoord([1, 0, 0])),
+        "chunk 1's job is withdrawn"
+    );
+}
+
 /// A record fading from `from` to `to` over `frames` steps, shown each step: every value word
 /// moves by at most `|to - from| / frames` a step plus one `rgb9e5` step, and the last shows `to`.
 fn assert_fade(what: &str, from: &[u32], shown: &[Vec<u32>], to: &[u32], frames: u32) {
@@ -1022,6 +1174,110 @@ fn a_fade_moves_a_record_by_its_share_a_frame() {
     }
 }
 
+/// ADR-0053's arrival. Chunk 0 holds a small rock slab under an ore cube, chunk 1 a large rock
+/// floor (at 4096 samples a brick direction, many submits' work), so chunk 0's block lands
+/// first (asserted). Under `chain`, chunk 1's first block fades from the chain's value at its
+/// landing, chunk 0's summary through its face neighbour: on the step it lands, every value word
+/// of its records shows `fallback + (block - fallback) / FADE` within one `rgb9e5` step, not the
+/// block's value. Under `black` that step shows the block itself.
+#[test]
+fn a_first_block_fades_from_its_fallback() {
+    use vxe_render::bake::{LightSummaries, MissingLight};
+    for mode in [MissingLight::Chain, MissingLight::Black] {
+        let world = world_of([2, 1, 1], AIR);
+        fill(&world, [16, 12, 16], [28, 16, 28], ROCK);
+        fill(&world, [20, 22, 20], [24, 26, 24], ORE);
+        fill(&world, [68, 12, 4], [124, 16, 60], ROCK);
+        let Some(mut q) = rig(
+            world,
+            &Setup {
+                counts: BakeSettings {
+                    brick_samples: 4096,
+                    ..counts()
+                },
+                ..Setup::at([10.5, 30.5, 22.5])
+            },
+        ) else {
+            return;
+        };
+        q.frame.set_missing_light(&q.queue, mode);
+        let mut landed = false;
+        for _ in 0..MAX_STEPS {
+            let before = q.target([0, 0, 0]);
+            q.step();
+            if q.target([1, 0, 0]).is_some() {
+                assert!(
+                    before.is_some(),
+                    "{mode:?}: chunk 0's block lands before chunk 1's (the rig's premise)"
+                );
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "{mode:?}: chunk 1's block lands");
+        let to = q.target([1, 0, 0]).expect("chunk 1's target");
+        let shown = q.shown([1, 0, 0]).expect("chunk 1's pool block");
+        if mode == MissingLight::Black {
+            assert_eq!(shown, to, "black: the first block is written directly");
+            continue;
+        }
+        let a0 = *q
+            .frame
+            .store()
+            .light()
+            .summary([0, 0, 0])
+            .expect("chunk 0's summary");
+        let mut only_a0 = LightSummaries::default();
+        only_a0.set([0, 0, 0], Some(a0));
+        let fallback = only_a0
+            .chain([1, 0, 0], mode)
+            .expect("the chain has chunk 0's value");
+        let (mut checked, mut differ, mut moved) = (0, 0, 0);
+        for &d in &to[..512] {
+            if d == 0 {
+                continue;
+            }
+            let start = (d >> 11) as usize - bake::BRICK_WORDS;
+            for f in 0..6 {
+                let w = start + f;
+                let from = if fallback[6] >> (16 + f) & 1 != 0 {
+                    bake::rgb9e5_unpack(fallback[f])
+                } else {
+                    [0.0; 3]
+                };
+                let target = bake::rgb9e5_unpack(to[w]);
+                let got = bake::rgb9e5_unpack(shown[w]);
+                let ulp = step_of(shown[w]);
+                for k in 0..3 {
+                    let want = from[k] + (target[k] - from[k]) / bake::FADE as f32;
+                    assert!(
+                        (got[k] - want).abs() <= ulp * 1.0001 + want.abs() * 1e-6,
+                        "word {w} channel {k}: {} against {want} (fallback {}, block {})",
+                        got[k],
+                        from[k],
+                        target[k]
+                    );
+                }
+                checked += 1;
+                // A word whose fallback and block differ: the fade has not reached the block.
+                if from != target {
+                    differ += 1;
+                    moved += usize::from(shown[w] != to[w]);
+                }
+            }
+        }
+        assert!(checked > 100, "{checked} value words");
+        assert!(
+            differ > 20,
+            "{differ} words whose fallback and block differ"
+        );
+        assert!(
+            moved > differ / 2,
+            "{moved} of {differ} differing words not yet at the block"
+        );
+    }
+}
+
 /// Chunk 0's wall faces an ore block in chunk 1 across their border. With the mirror taking one
 /// chunk a sync, nearest the focus first, chunk 0 is mirrored and chunk 1 waits: chunk 0 is not
 /// baked (its reach holds a chunk waiting to upload) and is held as blocked. Once chunk 1 is
@@ -1065,6 +1321,103 @@ fn a_chunk_waits_for_its_reach() {
         .filter(|&w| got[&c0.0][w] != 0)
         .count();
     assert!(lit > 0, "chunk 0's wall is lit by chunk 1's ore");
+}
+
+/// A 3 x 3 x 3 world at light radius 1, the camera in the centre chunk: the centre's rock wall
+/// faces an ore block in chunk (2, 1, 1), which is LOD-only, as a streamer leaves a chunk past
+/// its full radius (0 chunks here, so the centre's reach crosses it). Under `full` the centre
+/// waits over 50 steps; under `partial` it bakes from its resident reach, flagged partial.
+/// Loading the neighbour full re-queues it as a refinement: settled, its block equals a
+/// one-shot bake of the whole rig, its wall is lit by the ore, and its flag is gone.
+#[test]
+fn a_partial_reach_chunk_bakes_and_is_rebaked_when_its_reach_arrives() {
+    fn but_lod(c: ChunkCoord) -> bool {
+        c != ChunkCoord([2, 1, 1])
+    }
+    fn every(_: ChunkCoord) -> bool {
+        true
+    }
+    let scene = || {
+        let world = world_of([3, 3, 3], AIR);
+        fill(&world, [104, 72, 72], [112, 120, 120], ROCK);
+        fill(&world, [134, 92, 92], [138, 100, 100], ORE);
+        world
+    };
+    let (centre, lod) = (ChunkCoord([1, 1, 1]), ChunkCoord([2, 1, 1]));
+    let world = scene();
+    support::make_lod(&world, |c| c == lod);
+    let Some(mut q) = rig(
+        world,
+        &Setup {
+            light_radius: 1,
+            ..Setup::at([96.5, 96.5, 96.5])
+        },
+    ) else {
+        return;
+    };
+    q.resident = Some(but_lod);
+    q.full_radius = Some(0);
+    assert!(q.gpu.is_lod(lod), "the neighbour is LOD-only");
+    assert!(q.gpu.is_mirrored(centre) && !q.gpu.is_lod(centre));
+    for _ in 0..50 {
+        q.step();
+    }
+    assert_eq!(
+        q.frame.store().block(centre),
+        None,
+        "under full the centre waits for its reach"
+    );
+    assert_eq!(q.q().stats().partial_opened, 0);
+    q.frame.set_bake_reach(bake::ReachMode::Partial);
+    let n = q.settle();
+    println!("partial: settled in {n} steps, {:?}", q.q().stats());
+    assert!(
+        q.frame.store().block(centre).is_some(),
+        "under partial the centre bakes"
+    );
+    assert!(
+        q.q().tracks(centre).contains(&"partial"),
+        "flagged partial: {:?}",
+        q.q().tracks(centre)
+    );
+    let requeued = q.q().stats().partial_requeued;
+    // The neighbour arrives full.
+    let full = scene()
+        .store()
+        .remove(lod)
+        .expect("the twin holds the chunk");
+    let full = full.read().expect("the chunk's lock").clone();
+    q.world.remove_lod(lod);
+    q.world.store().insert(lod, full);
+    q.world.store().mark_dirty(lod);
+    q.resident = Some(every);
+    q.step();
+    assert!(
+        q.gpu.is_mirrored(lod) && !q.gpu.is_lod(lod),
+        "the neighbour is full"
+    );
+    assert!(
+        q.q().stats().partial_requeued > requeued,
+        "the arrival re-queues the centre: {:?}",
+        q.q().stats()
+    );
+    let n = q.settle();
+    println!("re-queued: settled in {n} steps, {:?}", q.q().stats());
+    assert!(
+        !q.q().tracks(centre).contains(&"partial"),
+        "its reach is whole: {:?}",
+        q.q().tracks(centre)
+    );
+    let got = q.blocks();
+    let fresh = q.fresh();
+    assert_eq!(
+        got.get(&centre.0),
+        fresh.get(&centre.0),
+        "against a one-shot bake of the whole rig"
+    );
+    let block = &got[&centre.0];
+    let lit = value_words(block).filter(|&w| block[w] != 0).count();
+    assert!(lit > 0, "the centre's wall is lit by the ore");
 }
 
 /// A window of 3 chunks following the focus over four chunks in a row (chunk 3 air): with the
@@ -1375,3 +1728,548 @@ fn a_full_pool_keeps_the_queue_alive() {
         "chunk 1 bakes once the dig's old place is free"
     );
 }
+
+/// 20 steps of the row with the coarse pass on from the start, timed from outside each
+/// `bake_queue_step` call: each step's stages and opening flag, its own time, and the queue's
+/// openings before and after.
+fn staged_steps() -> Option<(Vec<(bake::StepStages, f64)>, u64)> {
+    let mut q = rig(
+        row(&[0, 1, 2, 3, 4, 5]),
+        &Setup {
+            coarse: COARSE,
+            ..Setup::at(ROW_EYE)
+        },
+    )?;
+    let before = q.q().stats().openings;
+    let mut steps = Vec::new();
+    for _ in 0..20 {
+        let st = q.step();
+        steps.push((st.stages, q.last_step_ms));
+    }
+    let openings = q.q().stats().openings - before;
+    Some((steps, openings))
+}
+
+/// Over 20 steps the stages' sum is within 5 % of the steps' own time (each call timed from
+/// outside), and no stage reads negative.
+#[test]
+fn the_step_s_stages_sum_to_its_time() {
+    let Some((steps, _)) = staged_steps() else {
+        return;
+    };
+    let sum: f64 = steps.iter().map(|(s, _)| s.sum()).sum();
+    let own: f64 = steps.iter().map(|(_, ms)| ms).sum();
+    println!("stages {sum:.4} ms, own {own:.4} ms over 20 steps");
+    for (s, _) in &steps {
+        for (k, ms) in s.ms.iter().enumerate() {
+            assert!(*ms >= 0.0, "{} reads {ms}", bake::STEP_STAGES[k]);
+        }
+    }
+    assert!(
+        (sum - own).abs() <= 0.05 * own,
+        "stages {sum} ms against the steps' {own} ms"
+    );
+}
+
+/// Over 20 steps of which some open and some do not, the opening and other counts sum to 20
+/// and match the steps whose opening ran (the queue's count of openings), and each side's
+/// stage sum is within 5 % of its steps' own time.
+#[test]
+fn the_stages_split_by_opening() {
+    let Some((steps, openings)) = staged_steps() else {
+        return;
+    };
+    let (open, not): (Vec<_>, Vec<_>) = steps.iter().partition(|(s, _)| s.opened);
+    println!(
+        "{} opened, {} not, {openings} openings",
+        open.len(),
+        not.len()
+    );
+    assert!(
+        !open.is_empty() && !not.is_empty(),
+        "the rig has both kinds of step"
+    );
+    assert_eq!(open.len() + not.len(), 20);
+    assert_eq!(open.len() as u64, openings);
+    for (what, side) in [("opening", &open), ("other", &not)] {
+        let sum: f64 = side.iter().map(|(s, _)| s.sum()).sum();
+        let own: f64 = side.iter().map(|(_, ms)| ms).sum();
+        println!("{what}: stages {sum:.4} ms, own {own:.4} ms");
+        assert!(
+            (sum - own).abs() <= 0.05 * own,
+            "{what}: stages {sum} ms against the steps' {own} ms"
+        );
+        assert!(
+            side.iter().all(|(s, _)| s.opened == (what == "opening")),
+            "{what}: the flag"
+        );
+    }
+}
+
+/// `n` chunks in a row along x, a rock block in each and an ore plate in chunk 2, mirrored one
+/// chunk a sync nearest the camera (in chunk 2) first, `syncs` times: 7 syncs of 8, chunk 7
+/// waits to upload and the chunks within the light radius of it (5 and 6) wait for their
+/// reach.
+fn row_n(n: i64, syncs: usize, setup: Setup) -> Option<Q> {
+    let world = world_of([n as i32, 1, 1], AIR);
+    for x in 0..n {
+        fill(&world, [x * 64 + 16, 16, 16], [x * 64 + 48, 48, 48], ROCK);
+    }
+    fill(&world, [140, 28, 48], [150, 36, 50], ORE);
+    let mut q = rig(
+        world,
+        &Setup {
+            sync_budget: 1,
+            ..setup
+        },
+    )?;
+    for _ in 1..syncs {
+        q.gpu
+            .sync_now(&q.world, &q.device, &q.queue)
+            .expect("the mirror fits");
+    }
+    Some(q)
+}
+
+/// Mirrors one chunk: one sync at the rig's budget.
+fn sync_one(q: &mut Q) {
+    q.gpu
+        .sync_now(&q.world, &q.device, &q.queue)
+        .expect("the mirror fits");
+}
+
+/// Nine chunks in a row, chunks 7 and 8 waiting to upload: once the queue has baked chunks 0
+/// to 4 and checked 5 and 6, 100 further steps on a still mirror scan nothing, walk no reach
+/// and score nothing. Evicting chunk 3 makes the next step scan exactly that chunk and free
+/// its block, no other. Mirroring chunk 7 re-checks exactly the candidates within the light
+/// radius and one of it, chunks 5, 6 and 7, each once: 5 bakes, 6 and 7 wait for chunk 8.
+#[test]
+fn a_still_step_scans_nothing() {
+    let Some(mut q) = row_n(9, 7, Setup::at(ROW_EYE)) else {
+        return;
+    };
+    let blocks = |q: &Q| -> Vec<i32> {
+        (0..9)
+            .filter(|&x| q.frame.store().block(ChunkCoord([x, 0, 0])).is_some())
+            .collect()
+    };
+    for _ in 0..300 {
+        q.step_with(false);
+    }
+    let st = q.q().stats();
+    assert_eq!((st.jobs, st.fading), (0, 0), "drained: {st:?}");
+    assert_eq!(
+        blocks(&q),
+        [0, 1, 2, 3, 4],
+        "chunks 5 and 6 wait for their reach"
+    );
+    for n in 0..100 {
+        let st = q.step_with(false);
+        assert_eq!(
+            (st.scanned, st.reach_checks, st.rebuilt),
+            (0, 0, 0),
+            "still step {n}: {st:?}"
+        );
+    }
+    q.gpu.apply_events(&vxe_world::StreamEvents {
+        evicted: vec![ChunkCoord([3, 0, 0])],
+        ..Default::default()
+    });
+    let st = q.step_with(false);
+    assert_eq!(st.scanned, 1, "the eviction's step scans its chunk");
+    assert_eq!(
+        blocks(&q),
+        [0, 1, 2, 4],
+        "chunk 3's block is freed, no other"
+    );
+    sync_one(&mut q);
+    assert!(
+        q.gpu.is_mirrored(ChunkCoord([7, 0, 0])),
+        "chunk 7 is mirrored"
+    );
+    assert!(
+        q.gpu.is_pending(ChunkCoord([8, 0, 0])),
+        "chunk 8 still waits"
+    );
+    let mut checks = 0;
+    for _ in 0..40 {
+        checks += q.step_with(false).reach_checks;
+    }
+    assert_eq!(checks, 3, "chunks 5, 6 and 7 are checked again, once each");
+    assert_eq!(blocks(&q), [0, 1, 2, 4, 5], "chunk 5 bakes");
+}
+
+/// The eight-chunk row with chunk 7 waiting to upload, at 1024 samples a brick direction and
+/// the smallest slice: one job opens at a time, nearest first with the view's tie (2, 3, 1,
+/// 4, 0), as the start commit opens them. Every opening after the first, the mirror still and
+/// jobs ending between them, scores nothing again, and each candidate's reach is walked once
+/// over the run (0 to 6).
+/// Mirroring chunk 7 makes the next opening score once; 7 opens, then 5 and 6 once their
+/// last check is old enough to be read again.
+#[test]
+fn an_opening_without_a_mirror_event_rebuilds_nothing() {
+    let Some(mut q) = row_n(
+        8,
+        7,
+        Setup {
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 1024,
+                ..counts()
+            },
+            ..Setup::at(ROW_EYE)
+        },
+    ) else {
+        return;
+    };
+    let mut order: Vec<i32> = Vec::new();
+    let (mut checks, mut openings, mut rebuilt) = (0, 0, 0);
+    let mut steps = 0;
+    while !(q.q().jobs().is_empty() && order.len() == 5) {
+        steps += 1;
+        assert!(steps <= MAX_STEPS, "the five ready chunks bake");
+        let before = q.q().stats().openings;
+        let st = q.step_with(false);
+        checks += st.reach_checks;
+        if st.openings > before {
+            openings += 1;
+            rebuilt += st.rebuilt;
+            assert!(
+                openings == 1 || st.rebuilt == 0,
+                "opening {openings} scores again: {st:?}"
+            );
+        }
+        for c in q.q().jobs() {
+            if !order.contains(&c.0[0]) {
+                order.push(c.0[0]);
+            }
+        }
+    }
+    for _ in 0..40 {
+        checks += q.step_with(false).reach_checks;
+    }
+    println!("order {order:?}, {openings} openings, {rebuilt} scored, {checks} reach walks");
+    assert_eq!(order, [2, 3, 1, 4, 0]);
+    assert!(openings >= 5, "one opening a job at least");
+    assert_eq!(rebuilt, 1, "only the first opening scores");
+    assert_eq!(checks, 7, "chunks 0 to 6 each walked once");
+    sync_one(&mut q);
+    let mut rebuilt = None;
+    for _ in 0..20 {
+        let before = q.q().stats().openings;
+        let st = q.step_with(false);
+        if st.openings > before {
+            rebuilt = Some(st.rebuilt);
+            break;
+        }
+    }
+    assert_eq!(rebuilt, Some(1), "chunk 7's arrival scores the order once");
+    for _ in 0..MAX_STEPS {
+        q.step_with(false);
+        for c in q.q().jobs() {
+            if !order.contains(&c.0[0]) {
+                order.push(c.0[0]);
+            }
+        }
+        if q.q().empty() {
+            break;
+        }
+    }
+    // 5 and 6 were found blocked at the last openings and wait out the recheck: 7 first.
+    assert_eq!(order, [2, 3, 1, 4, 0, 7, 5, 6]);
+}
+
+/// The order of a flight: the six-chunk row, the coarse pass on, the near shell 1 and the
+/// smallest slice, the camera flown along +x from chunk 0 six voxels a step for 60 steps,
+/// then held until the queue is empty. Each job's chunk is recorded as it first appears in
+/// the jobs (a refinement appears again), against the start commit's recording.
+#[test]
+fn a_flight_opens_in_the_start_commit_s_order() {
+    let Some(mut q) = rig(
+        row(&[0, 1, 2, 3, 4, 5]),
+        &Setup {
+            coarse: COARSE,
+            near: 1,
+            slice_ms: 1e-6,
+            ..Setup::at([20.5, 32.5, 60.5])
+        },
+    ) else {
+        return;
+    };
+    let mut seen: Vec<i32> = Vec::new();
+    let mut prev: Vec<ChunkCoord> = Vec::new();
+    for n in 0..MAX_STEPS {
+        if n < 60 {
+            q.camera.position.x += 6.0;
+        }
+        q.step();
+        let jobs = q.q().jobs();
+        for c in &jobs {
+            if !prev.contains(c) {
+                seen.push(c.0[0]);
+            }
+        }
+        prev = jobs;
+        if n >= 60 && q.q().empty() {
+            break;
+        }
+    }
+    println!("flight order {seen:?}");
+    assert_eq!(seen, FLIGHT_ORDER);
+}
+
+/// [`a_flight_opens_in_the_start_commit_s_order`]'s recording at the start commit (4bc8100).
+const FLIGHT_ORDER: [i32; 10] = [0, 1, 2, 3, 4, 5, 2, 3, 4, 5];
+
+/// The samples of `c`'s job at `brick_samples` a brick direction: its listed bricks' distinct
+/// directions times the count, as the queue sizes a job.
+fn job_samples(world: &World, c: [i32; 3], brick_samples: u32) -> u64 {
+    let classes = bake::face_classes(world.materials());
+    let faces = bake::list_world_chunk(world, ChunkCoord(c), &classes).expect("the chunk is held");
+    faces
+        .bricks
+        .iter()
+        .map(|(_, keys)| {
+            let mut dirs = [false; 6];
+            for k in keys {
+                dirs[usize::from(k & 7)] = true;
+            }
+            dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
+        })
+        .sum()
+}
+
+/// A slab of `n` x `w` chunks, a 32^3 rock cube in each and an ore patch on chunk 0's.
+fn rock_slab(n: i32, w: i32) -> World {
+    let world = world_of([n, w, 1], AIR);
+    for x in 0..i64::from(n) {
+        for y in 0..i64::from(w) {
+            fill(
+                &world,
+                [x * 64 + 16, y * 64 + 16, 16],
+                [x * 64 + 48, y * 64 + 48, 48],
+                ROCK,
+            );
+        }
+    }
+    fill(&world, [24, 28, 48], [34, 36, 50], ORE);
+    world
+}
+
+/// A row of `n` chunks, a 32^3 rock cube in each and an ore patch on chunk 0's.
+fn rock_row(n: i32) -> World {
+    rock_slab(n, 1)
+}
+
+/// Steps between two advances of [`a_starved_queue_recovers`]'s camera.
+const ADVANCE_STEPS: usize = 5;
+
+/// A slab of 24 x 5 chunks of rock cubes at 1024 samples a brick direction and a coarse pass of 64 (the
+/// live queue's 4096 and 256 scaled down by the same 16), the smallest slice (a step draws the
+/// cap's floor, 16 384 samples), `near` and the full-first radius 2. The camera starts in chunk
+/// [0, 2, 0] looking +x and advances one chunk every [`ADVANCE_STEPS`] steps; the test asserts
+/// that a full job is over two steps' samples, the five chunks entering the near shell at an
+/// advance over the advance's at full and under half of it at coarse, and a coarse job under
+/// one step's. Under `Some(2)`, after 10
+/// advances the near shell holds more chunks with no block than after the first, the last
+/// five advances open no coarse job and some opening is counted starved. Then, from that state
+/// under `None` (the camera held still until the jobs the loop held at the switch end, since
+/// the coarse jobs are planned behind them): the near shell's blank count falls then and at
+/// every advance until 0 and stays 0 for the rest, every opening while a blank candidate waits pushes a coarse job, and no opening
+/// is counted starved.
+#[test]
+fn a_starved_queue_recovers() {
+    const CAP: u64 = 16_384;
+    let Some(mut q) = rig(
+        rock_slab(24, 5),
+        &Setup {
+            coarse: 64,
+            near: 2,
+            slice_ms: 1e-6,
+            pool_bytes: 32 << 20,
+            counts: BakeSettings {
+                brick_samples: 1024,
+                ..counts()
+            },
+            ..Setup::at([32.5, 160.5, 60.5])
+        },
+    ) else {
+        return;
+    };
+    let full = job_samples(&q.world, [3, 0, 0], 1024);
+    let coarse = job_samples(&q.world, [3, 0, 0], 64);
+    let k = ADVANCE_STEPS as u64;
+    println!("a job: full {full}, coarse {coarse} samples; a step {CAP}");
+    assert!(full > 2 * CAP, "a full job outlasts two steps");
+    assert!(coarse < CAP, "a coarse job fits a step");
+    assert!(
+        5 * full > k * CAP && 2 * 5 * coarse < k * CAP,
+        "an advance's entering chunks outlast it at full and take under half of it at coarse"
+    );
+    let shell_blank = |q: &Q| {
+        let cx = (q.camera.position.x / 64.0).floor() as i32;
+        (cx - 2..=cx + 2)
+            .filter(|x| (0..24).contains(x))
+            .flat_map(|x| (0..5).map(move |y| ChunkCoord([x, y, 0])))
+            .filter(|&c| q.frame.store().block(c).is_none())
+            .count()
+    };
+    // A blank candidate: a chunk with no block and no job.
+    let blank_waiting = |q: &Q| {
+        let jobs = q.q().jobs();
+        (0..24)
+            .flat_map(|x| (0..5).map(move |y| ChunkCoord([x, y, 0])))
+            .any(|c| q.frame.store().block(c).is_none() && !jobs.contains(&c))
+    };
+    let mut first = None;
+    let mut coarse_late = 0;
+    for a in 1..=10 {
+        q.camera.position.x += 64.0;
+        let before = q.q().stats().coarse_opened;
+        for _ in 0..ADVANCE_STEPS {
+            q.step_with(false);
+        }
+        if a > 5 {
+            coarse_late += q.q().stats().coarse_opened - before;
+        }
+        let n = shell_blank(&q);
+        println!("full-first 2, advance {a}: {n} blank in the shell");
+        first.get_or_insert(n);
+    }
+    let starved = shell_blank(&q);
+    let st = q.q().stats();
+    assert!(
+        starved > first.unwrap_or(0),
+        "the shell's blank count grows"
+    );
+    assert_eq!(coarse_late, 0, "the last five advances open no coarse job");
+    assert!(
+        st.starved_openings > 0,
+        "an opening is counted starved: {st:?}"
+    );
+    // The switch to `None`, the camera still until the jobs the loop held at the switch
+    // (pushed under `Some(2)`, coarse jobs planned behind them) have ended.
+    q.frame.set_bake_full_first(None);
+    let held = q.q().jobs();
+    for n in 0.. {
+        assert!(n < MAX_STEPS, "the jobs held at the switch end");
+        if !q.q().jobs().iter().any(|c| held.contains(c)) {
+            break;
+        }
+        q.step_with(false);
+    }
+    let after_switch = shell_blank(&q);
+    println!("full-first off, the switch's jobs ended: {after_switch} blank in the shell");
+    assert!(
+        after_switch < starved,
+        "the shell's blank count falls after the switch"
+    );
+    let (starved_before, mut last) = (st.starved_openings, after_switch);
+    let mut zeros = 0;
+    for a in 1..=10 {
+        q.camera.position.x += 64.0;
+        for s in 0..ADVANCE_STEPS {
+            let waiting = blank_waiting(&q);
+            let before = q.q().stats();
+            let after = q.step_with(false);
+            if waiting && after.openings > before.openings {
+                assert!(
+                    after.coarse_opened > before.coarse_opened,
+                    "off, advance {a} step {s}: an opening with a blank candidate waiting pushes a coarse job: {after:?}"
+                );
+            }
+        }
+        let n = shell_blank(&q);
+        println!("full-first off, advance {a}: {n} blank in the shell");
+        if last > 0 {
+            assert!(
+                n < last,
+                "off, advance {a}: the shell's blank count falls ({last} to {n})"
+            );
+        } else {
+            assert_eq!(
+                n, 0,
+                "off, advance {a}: the shell stays without a blank chunk"
+            );
+        }
+        zeros += usize::from(n == 0);
+        last = n;
+    }
+    assert!(
+        zeros >= 5,
+        "the shell holds no blank chunk for the later advances"
+    );
+    assert_eq!(
+        q.q().stats().starved_openings,
+        starved_before,
+        "no opening is starved under off"
+    );
+}
+
+/// An eight-chunk row of rock cubes, the camera in chunk 2 looking +x and still, the coarse
+/// pass on, `near` 2: the order in which the chunks take their first job is the same under the
+/// full-first radius `Some(2)` and `None`; under `Some(2)` it, and which chunks' first block is
+/// coarse (0 to 4 full, 5 to 7 coarse), equal the start commit's recording
+/// ([`FULL_FIRST_ORDER`]); under `None` every first block is coarse.
+#[test]
+fn the_full_first_radius_leaves_the_order_alone() {
+    let mut seen = Vec::new();
+    for r in [Some(2), None] {
+        let Some(mut q) = rig(
+            rock_row(8),
+            &Setup {
+                coarse: COARSE,
+                near: 2,
+                slice_ms: 1e-6,
+                ..Setup::at(ROW_EYE)
+            },
+        ) else {
+            return;
+        };
+        q.frame.set_bake_full_first(r);
+        let mut order: Vec<i32> = Vec::new();
+        let mut first_coarse: BTreeMap<i32, bool> = BTreeMap::new();
+        for _ in 0..MAX_STEPS {
+            q.step_with(false);
+            for c in q.q().jobs() {
+                if !order.contains(&c.0[0]) {
+                    order.push(c.0[0]);
+                }
+            }
+            for x in 0..8 {
+                let c = ChunkCoord([x, 0, 0]);
+                if q.frame.store().block(c).is_some() {
+                    first_coarse
+                        .entry(x)
+                        .or_insert_with(|| q.frame.store().is_coarse(c));
+                }
+            }
+            if first_coarse.len() == 8 {
+                break;
+            }
+        }
+        let coarse: Vec<bool> = first_coarse.values().copied().collect();
+        println!("full-first {r:?}: order {order:?}, first block coarse {coarse:?}");
+        seen.push((order, coarse));
+    }
+    assert_eq!(
+        seen[0].0, seen[1].0,
+        "the same order under Some(2) and None"
+    );
+    assert_eq!(
+        (seen[0].0.as_slice(), seen[0].1.as_slice()),
+        (FULL_FIRST_ORDER.0.as_slice(), FULL_FIRST_ORDER.1.as_slice()),
+        "Some(2) against the start commit"
+    );
+    assert!(
+        seen[1].1.iter().all(|&c| c),
+        "every first block coarse under None"
+    );
+}
+
+/// [`the_full_first_radius_leaves_the_order_alone`]'s recording at the start commit (4bc8100):
+/// the order of first jobs and whether each chunk's first block was coarse.
+const FULL_FIRST_ORDER: ([i32; 8], [bool; 8]) = (
+    [2, 3, 1, 4, 0, 5, 6, 7],
+    [false, false, false, false, false, true, true, true],
+);

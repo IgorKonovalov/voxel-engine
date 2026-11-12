@@ -200,7 +200,7 @@ stored bake once; the phase's log says so.
 - **What:** struck here 2026-11-11 (architect): the step is the frame's largest CPU item in
   Plan 0060's window (7.0 ms p50 at rest, 10.3 in flight, against the 1.0 ms this plan was
   written to), so it belongs with the profile that attributes it.
-  [Plan 0067](../0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)'s
+  [Plan 0067](0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)'s
   Phase 2 carries this phase's mechanism and its `a_still_step_scans_nothing` test as written,
   with a reach cache added. Nothing to do in this plan; the log row reads "moved".
 - **Files touched:** none.

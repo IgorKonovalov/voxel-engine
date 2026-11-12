@@ -1,6 +1,6 @@
 # ADR-0048: The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed
 
-> **Status:** accepted 2026-11-11 (Plan 0060's close), with an Outcome
+> **Status:** accepted 2026-11-11 (Plan 0060's close), with an Outcome; a second at Plan 0067 (2026-11-12)
 > **Date:** 2026-11-10
 > **Related plan(s):** [Plan 0060](../plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md)
 > (builds it; its close accepts this ADR, and the owner's window in its Phase 4 can overturn it).
@@ -146,3 +146,25 @@ hold for the default.
   Plan 0067's.
 - **The cone:** about 1 000 of 5 100 in-view waiting chunks in the streamed cave lie in the cone outside the
   widened frustum. The owner did not name it at the window; the frustum fallback was not built.
+
+## Outcome (2026-11-12, Plan 0067 Phase 2; architect, owner away; default taken, owner may overrule)
+
+**"Passed" means the camera moved past it.** As built, the withdrawal fired whenever a candidate in
+the view cone was ready, whether or not the camera had moved. At rest that is a loop: at the patch
+the opening's best candidate by the score is a coarse refinement outside the keep cone and the near
+shell, the next step finds a ready candidate in the view cone and withdraws the job, and the next
+opening picks it again. Plan 0067's quiet session read 8 590 withdrawals in one run at rest and
+2 967 coarse chunks never refined (`docs/plans/logs/0067.md`, Phase 2); Plan 0064's 2.84 to
+3.56 ms "drained" step was this loop, not an idle queue.
+
+- **The rule, amended:** a job is withdrawn only if it opened before the camera's chunk last
+  changed (the queue counts the steps at which the camera's chunk changes; a job records the count
+  at its opening). The Decision's other conditions (not a dig, not a full block, outside the near
+  shell and the keep cone, a ready candidate in the shell or the view) are unchanged.
+- **What it gives up:** a turn in place withdraws nothing; the open job runs to its end (one
+  refinement, a few frames of slice on the RTX) before the order takes the new view.
+- **Rejected:** withdrawing only when the ready candidate outranks the job in the score. It also
+  ends the loop, but it ties the withdrawal to the score's ties and still cancels at rest on a
+  turn, where the owner's words were about places "the camera is already passed".
+- Plan 0067 Phase 2 builds it, with a test that a still camera drains with no withdrawal; the
+  flight's withdrawal (`a_passed_chunk_is_withdrawn`) is kept.

@@ -1,9 +1,10 @@
 # ADR-0053: A light summary per block and a two-level parent table light a brick with no baked value
 
 > **Status:** accepted (2026-11-11, owner: the go on Plan 0067 with the defaults on its open
-> points; the design is that plan's Phase 4 as approved)
+> points; the design is that plan's Phase 4 as approved), with an Outcome at its close (2026-11-12):
+> `chain` is the default
 > **Date:** 2026-11-11
-> **Related plan(s):** [Plan 0067](../plans/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)
+> **Related plan(s):** [Plan 0067](../plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)
 > (Phase 4 builds it; Phase 6's window picks the default mode and may overrule a default below).
 > Adds two levels above the brick level of
 > [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)'s
@@ -126,3 +127,33 @@ A pass that reduces the store's records into coarse levels each frame or on chan
 sit at scattered places in one pool with no fixed layout, so the pass would walk every chunk's
 directory; the CPU already holds every record it writes (`Store::words`) and changes a summary
 only when it writes a block or a fade frame, two parent records at a time.
+
+## Outcome
+
+Plan 0067 closed 2026-11-12. Built as decided, and **`chain` is the default.** The owner's window
+of 2026-11-12 (both adapters, the four modes cycled): "chain is the best (default); order is ok",
+neighbour before parent as decided. `MissingLight::Chain` is the store's and the fly-through's
+default; `black`, `neighbour` and `parent` stay as render settings (`--missing-light`, key `7`).
+The summary sits at word 512 of a block, just past its directory (`bake::SUMMARY_AT`); the parent
+cells are world-aligned as decided. The readings against the guesses above
+(`docs/plans/logs/0067.md`, Phases 4 and 7; RTX 3080 Laptop at 2530 x 1378, RADV RENOIR at
+1280 x 720, headless, quiet):
+
+- **Memory** (met): at the level, summaries 88 704 B and the parent table 19 964 B in a 15.5 MB
+  store; in the streamed glide 54 600 B and 627 956 B.
+- **The read's GPU cost** (within the guess): the temporal pass 0.126 ms at rest and 0.182 in the
+  glide on the RTX, 0.265 and 0.322 on the RENOIR.
+- **The CPU per change** (the guess falsified): the "under 0.1 ms of the step p50 in flight" holds
+  under `black` (the summaries stage about 0.05 to 0.07 ms) but not under `chain`. There every
+  first block fades from its fallback, and the CPU rewrites the fading block and its summary each
+  frame of the fade: in a flight where nearly every step opens (regime B, `--near 0`) `fades`
+  reads 1.05 to 1.10 ms p50 and `summaries` 0.61 to 0.63 (0.965 p50 in the default glide), against
+  0.002 and 0.05 under `black`. The owner saw no lag in the window at this cost. A cheaper
+  first-block fade is in `docs/backlog.md` ("The first-block fallback fade's CPU under `chain`").
+- **Arrival:** a block landing on a chunk whose fade still runs starts its fade from what that fade
+  shows, not from its target (under `chain` a coarse block refined during its first fade popped
+  without it). A neighbour's arrival is still not faded into its neighbours' fallback; the window
+  did not ask for the ramp.
+- **The still-black remainder:** at rest on both adapters no pixel is left black by the first
+  counted line (about 16 s); in the glide past its baked region the RENOIR reads nearly every
+  lighting pixel still black (presumably no chunk within a level-2 cell holds a block there; not read).

@@ -126,7 +126,7 @@ the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 005
 
 ### Far light on a slow adapter: a bake budget per second, and no black for missing light
 
-Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
+Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
 
 ### A dug chunk's settled light differs from a one-shot bake
 
@@ -135,6 +135,22 @@ Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never
 ### The near shell's cost in a flight, and the streaming edge
 
 Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its close (owner's amendment). In the streamed cave at `--glide 300` the near shell (Chebyshev 2, baked at the full count) takes 98 to 99 % of the slice, and about 0.70 of the in-view chunks still waiting have their reach not ready (the mirror's edge), so neither the order nor the withdrawal can light them. What it would take: a shell baked coarse first in a flight, or a smaller shell at speed; and a streamer that loads the light radius ahead of the view. Pick up with Plan 0067's bake budget by time, which reads the same flight (`docs/plans/logs/0060.md`, Phase 1).
+
+### The queue step's remaining `filter` cost on a moving camera
+
+Parked 2026-11-12 at Plan 0067's Phase 7 (followup F1, the owner's amendment of that day; `docs/plans/logs/0067.md`, Phase 2). On a step that opens nothing, with the camera moving (rig (b) glide 300, `--coarse 0`, RTX, quiet), the mirror-change filter reads about 0.074 ms p50 (`gone` 0.030, `drop_reach` 0.022, `touched` 0.017, `forget` 0.003) against the start commit's 0.019, the most of a +0.118 ms non-opening p50 Phase 2 accepted under a +0.1 tolerance. Each part scales with the mirror's changes a step (about a thousand at that speed, estimated, not printed). What it would take: print the change count, then make the per-change work one pass (the reach drop and the candidate marks share their walk), or move the change list's dedup into `GpuWorld::take_changes`. Pick up when a frame-CPU plan needs the 0.05 ms, or with Plan 0070's sync off the frame.
+
+### The RTX's submits draw less than their per-second slice
+
+Parked 2026-11-12 at Plan 0067's Phase 7 (followup F2; `docs/plans/logs/0067.md`, Phase 3). Under `--bake-budget second:150,0.25` on rig (b) glide 150 the Radeon bakes 148 ms a wall second and the RTX 91 to 92: the RTX's submits read slice p50 5.31 ms, max 7.20, against a granted slice of about 8 ms (150 ms a second x a 53 ms mean interval), at 5.1 ns a sample with `jobs 10`. The sample cap (1e7, 51 ms) does not bind; the open jobs' rounds and `IN_FLIGHT` 2 are candidates, not readings. The default is `frame:1.5` (owner, 2026-11-12), where both adapters read what they read before, so this bites only a per-second profile. What it takes: a lap on the dispatch (rounds planned against the slice, rounds sent, the wait on `IN_FLIGHT`), then the fix it names. Pick up with Plan 0069's profiles if one sets a per-second budget.
+
+### The census's reach-bound estimate undercounts
+
+Parked 2026-11-12 at Plan 0067's Phase 7 (`docs/plans/logs/0067.md`, Phase 5, attempt 1). The per-second line's `reach-bound N of M in view waiting` counts an in-view waiting chunk whose distance in chunks plus the light radius exceeds the streamer's full radius. The reach's own extent is larger (a gap under the radius reaches about 5.4 chunks at a light radius of 4), so the estimate misses chunks whose reach does cross; `--reach partial` uses the exact test (a chunk within the reach past the full sphere) since 2f3450f. The estimate is kept because Phases 1 to 5's readings used it. What it takes: the exact test in the census over its sample (`VIEW_REACH_SAMPLE` chunks a line, up to 1 331 lookups each, at the line's cadence), printed beside the estimate for one release, then the estimate dropped. Pick up when a plan reads the reach-bound count again.
+
+### The first-block fallback fade's CPU under `chain`
+
+Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 7, the opening row). Under the default missing light, `chain`, every chunk's first block fades over `FADE` frames from its fallback value, and the render thread rewrites the fading block (`advance_fades`) and its summary and two parent records (`Store::show`) every frame of the fade. In regime B, where nearly every step opens, that reads `fades` 1.05 to 1.10 ms p50 and `summaries` 0.61 to 0.63 on the RTX 3080 Laptop (`--near 0`, rig (c)), against 0.002 and 0.05 under `black`, and takes the opening step from 0.75 to 0.86 to 0.88 of the start commit's (bar 0.8); the default glide's `summaries` read 0.965 ms p50, p99 2.86. The owner saw no lag at this cost in the window. Levers, unbuilt: a shorter fade for a first block (a look change, the owner's eye), the summary and parents written once at the fade's end instead of every frame (ADR-0053 has a parent fade with its children, so this one needs an Outcome there), or the blend on the GPU (the temporal read mixes the fallback with the block by a per-chunk weight). Pick up with the next frame-CPU plan, or if a profile (Plan 0069) runs regime B by default (`full_first` off).
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
