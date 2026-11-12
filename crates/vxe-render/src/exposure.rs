@@ -26,6 +26,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use crate::gpu_util::{Io, compute_pipeline, io_layout};
+
 /// The exposure pass's source.
 pub const EXPOSURE_WGSL: &str = include_str!("shaders/exposure.wgsl");
 
@@ -357,41 +359,18 @@ pub(crate) struct ExposurePass {
 
 impl ExposurePass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("exposure"),
-            entries: &[
-                entry(0, wgpu::BufferBindingType::Uniform),
-                entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
-                entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
-            ],
-        });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("exposure"),
-            source: wgpu::ShaderSource::Wgsl(EXPOSURE_WGSL.into()),
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("exposure"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("exposure"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("exposure"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let layout = io_layout(
+            device,
+            "exposure",
+            &[Io::Uniform, Io::Storage, Io::ReadStorage],
+        );
+        let pipeline = compute_pipeline(
+            device,
+            "exposure",
+            EXPOSURE_WGSL.into(),
+            &[Some(&layout)],
+            "exposure",
+        );
         let init = |label, usage| {
             wgpu::util::DeviceExt::create_buffer_init(
                 device,

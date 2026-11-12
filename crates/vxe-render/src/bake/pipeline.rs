@@ -138,29 +138,7 @@ pub(crate) fn bake_source() -> String {
 
 impl BakePipeline {
     pub(crate) fn new(device: &wgpu::Device, world_layout: &wgpu::BindGroupLayout) -> Self {
-        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bake"),
-            entries: &[
-                entry(0, wgpu::BufferBindingType::Uniform),
-                entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
-                entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bake"),
-            bind_group_layouts: &[Some(world_layout), None, None, Some(&layout)],
-            immediate_size: 0,
-        });
+        let layout = io_layout(device, "bake", &[Io::Uniform, Io::Storage, Io::ReadStorage]);
         let job = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bake job"),
             size: JOB_BYTES,
@@ -181,21 +159,14 @@ impl BakePipeline {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bake"),
-            source: wgpu::ShaderSource::Wgsl(bake_source().into()),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("bake"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("bake_round"),
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &[("RAND_HASHED", 1.0), ("EMISSION_UNIT", 1.0)],
-                ..Default::default()
-            },
-            cache: None,
-        });
+        let pipeline = compute_pipeline_with(
+            device,
+            "bake",
+            bake_source(),
+            &[Some(world_layout), None, None, Some(&layout)],
+            "bake_round",
+            &[("RAND_HASHED", 1.0), ("EMISSION_UNIT", 1.0)],
+        );
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bake"),
             layout: &layout,

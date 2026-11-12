@@ -88,7 +88,7 @@ impl Presenter {
         source: &wgpu::Texture,
         target: &wgpu::TextureView,
     ) {
-        let view = source.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_util::view(source);
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("present"),
             layout: &self.layout,

@@ -17,6 +17,8 @@
 
 use vxe_world::{CHUNK_EDGE_BRICKS, ChunkMips, brick_of_slot, brick_slot};
 
+use crate::gpu_util::{Io, compute_pipeline, io_layout_at};
+
 /// Units of a band slot of `n` band voxels: its band mask and `ceil(n / 64)` units of `u8`
 /// counts.
 pub fn band_slot_units(n: u32) -> u32 {
@@ -191,49 +193,28 @@ pub(crate) struct FieldPass {
 
 impl FieldPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("field.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(crate::FIELD_WGSL.into()),
-        });
-        let buffer = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let rw = wgpu::BufferBindingType::Storage { read_only: false };
-        let ro = wgpu::BufferBindingType::Storage { read_only: true };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("field"),
-            entries: &[
-                buffer(0, wgpu::BufferBindingType::Uniform),
-                buffer(1, rw),
-                buffer(2, rw),
-                buffer(3, rw),
-                buffer(4, rw),
-                buffer(5, ro),
-                buffer(6, ro),
-                buffer(11, ro),
-                buffer(12, ro),
+        let layout = io_layout_at(
+            device,
+            "field",
+            &[
+                (0, Io::Uniform),
+                (1, Io::Storage),
+                (2, Io::Storage),
+                (3, Io::Storage),
+                (4, Io::Storage),
+                (5, Io::ReadStorage),
+                (6, Io::ReadStorage),
+                (11, Io::ReadStorage),
+                (12, Io::ReadStorage),
             ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("field"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("field"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("field_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        );
+        let pipeline = compute_pipeline(
+            device,
+            "field",
+            crate::FIELD_WGSL.into(),
+            &[Some(&layout)],
+            "field_main",
+        );
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("field params"),
             size: size_of::<Params>() as u64,

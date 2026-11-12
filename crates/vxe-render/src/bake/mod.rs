@@ -52,6 +52,7 @@ use vxe_world::{
 };
 
 use crate::frame::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
+use crate::gpu_util::{Io, compute_pipeline_with, io_layout};
 use crate::gpu_world::{CHANGES_MAX, GpuWorld};
 
 mod budget;
