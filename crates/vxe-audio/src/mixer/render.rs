@@ -1,10 +1,10 @@
 //! The mixer's block: every voice read, gained, delayed, filtered and spatialised, its taps
 //! summed into the direction buses, then the buses, the tail and the voices that ended.
 
-use super::spatialiser::{ListenerFrame, pan, pan_gains, spatialise};
+use super::spatialiser::{ListenerFrame, Placement};
 use super::{Mixer, Retired, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME};
 use crate::reverb::flush;
-use crate::voice::{MAX_DELAY_FRAMES, OPEN_CUTOFF_HZ, Tap, TapState};
+use crate::voice::{MAX_DELAY_FRAMES, OPEN_CUTOFF_HZ, Tap, TapState, Voice};
 use crate::{BLOCK, RATE, SPEED_OF_SOUND, length, normalize_or, sub};
 
 /// How near its target a one-pole smoother settles on it, at a block edge. Left alone, a
@@ -50,9 +50,7 @@ impl Mixer {
             let dry = &mut self.dry[..n];
             // The taps read the delay line until their longest delay has passed; the direct
             // path's FIR rings for its length. The buses ring out on their own.
-            let tail = v
-                .tap_tail()
-                .max(self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
+            let tail = v.tap_tail().max(self.spatialiser.ring_frames());
             v.read(dry, tail);
             v.since_acoustics = v.since_acoustics.saturating_add(n as u32);
             let delay_to = if self.mix.direct_delay {
@@ -67,40 +65,10 @@ impl Mixer {
                 v.send = v.acoustic.send;
                 v.direct_delay = delay_to;
             }
-            // The delay line takes the voice's own-gained signal before distance and occlusion.
-            let echo_start = v.echo_pos;
-            {
-                let ring = &mut v.buffers.echo;
-                let len = ring.len();
-                // The block lands in at most two runs: up to the ring's end, then from its start.
-                let first = (len - echo_start).min(n);
-                let (head, wrap) = ring.split_at_mut(echo_start);
-                let runs = wrap[..first].iter_mut().chain(&mut head[..n - first]);
-                // The tail's send: the same own-gained signal times the smoothed send.
-                let (mut og, mut send) = (v.own_gain, v.send);
-                let send_to = v.acoustic.send;
-                for ((r, &s), t) in runs.zip(dry.iter()).zip(self.sends.iter_mut()) {
-                    og += (v.params.gain - og) * k;
-                    send += (send_to - send) * k;
-                    *r = s * og;
-                    *t += s * og * send;
-                }
-                // Settled at the block's edge, as every smoother is: none rests in subnormals.
-                v.own_gain = settle(og, v.params.gain);
-                v.send = settle(send, send_to);
-                v.echo_pos = (echo_start + n) % len;
-            }
+            let echo_start = write_echo(v, dry, &mut self.sends, k);
             // The gain smoother's decay over this block.
             let decay = (1.0 - k).powi(n as i32);
-            // The direct delay: the smoother's share of the way to its target, at most the
-            // slew, linear across the block; back at 0 it settles there exactly.
-            let dd0 = v.direct_delay;
-            let reach = TAP_SLEW_FRAMES_PER_FRAME * n as f32;
-            let mut dd1 = dd0 + ((delay_to - dd0) * (1.0 - decay)).clamp(-reach, reach);
-            if delay_to == 0.0 && dd1 < 1e-3 {
-                dd1 = 0.0;
-            }
-            v.direct_delay = dd1;
+            let delay = advance_direct_delay(v, delay_to, decay, n);
             for ((state, target), bus) in
                 v.taps.iter_mut().zip(&v.acoustic.taps).zip(&mut self.buses)
             {
@@ -109,7 +77,7 @@ impl Mixer {
                     *target,
                     &v.buffers.echo,
                     echo_start,
-                    (dd0, dd1),
+                    delay,
                     &mut bus.block[..n],
                     decay,
                 );
@@ -119,64 +87,16 @@ impl Mixer {
                 v.started = true;
                 continue;
             }
-            if dd0 == 0.0 && dd1 == 0.0 {
-                let mut g = v.gain;
-                for s in dry.iter_mut() {
-                    g += (target_gain - g) * k;
-                    *s *= g;
-                }
-                v.gain = settle(g, target_gain);
-                v.dist_gain = settle(dist_gain + (v.dist_gain - dist_gain) * decay, dist_gain);
-            } else {
-                // The delay line carries the own gain; the distance and acoustic gain follow.
-                let mut g = v.dist_gain;
-                for_each_delayed(&v.buffers.echo, echo_start, (dd0, dd1), n, |j, x| {
-                    g += (dist_gain - g) * k;
-                    dry[j] = x * g;
-                });
-                v.dist_gain = settle(g, dist_gain);
-                v.gain = settle(target_gain + (v.gain - target_gain) * decay, target_gain);
-            }
-            // The coefficient moves every sample, so neither a probe's new cutoff nor the step
-            // into or out of the bypass (a = 1) changes the output's slope at a block edge.
-            let target_a = lowpass_coefficient(v.acoustic.cutoff_hz);
-            if v.lowpass_a < 1.0 || target_a < 1.0 {
-                let mut a = v.lowpass_a;
-                let mut y = v.lowpass;
-                for s in dry.iter_mut() {
-                    a += (target_a - a) * k;
-                    y += a * (*s - y);
-                    *s = y;
-                }
-                // Within float reach of the bypass, take it.
-                v.lowpass_a = if target_a == 1.0 && a > 1.0 - 1e-6 {
-                    1.0
-                } else {
-                    a
-                };
-                v.lowpass = flush(y);
-            } else if let Some(&last) = dry.last() {
-                v.lowpass = flush(last);
-            }
-            match &self.hrtf {
-                Some(hrtf) => {
-                    let to = hrtf.nearest(dir);
-                    if !v.started {
-                        v.dir = to;
-                    }
-                    let from = v.dir;
-                    v.dir = to;
-                    let scratch = (&mut self.input, &mut self.wet);
-                    spatialise(hrtf, &mut v.buffers.history, dry, from, to, scratch, out);
-                }
-                None => {
-                    let target = pan_gains(dir, d);
-                    if !v.started {
-                        v.pan = target;
-                    }
-                    pan(&mut v.pan, target, k, dry, out);
-                }
-            }
+            let gains = (dist_gain, target_gain);
+            render_direct(v, dry, echo_start, delay, gains, (k, decay));
+            lowpass(v, dry, k);
+            let at = Placement {
+                history: &mut v.buffers.history,
+                dir: &mut v.dir,
+                pan: &mut v.pan,
+                started: v.started,
+            };
+            self.spatialiser.render(at, dir, d, k, dry, out);
             v.started = true;
         }
         self.render_buses(&frame, out);
@@ -184,6 +104,12 @@ impl Mixer {
         self.reverb.render(sends, out);
         sends.fill(0.0);
         self.flush_held();
+        self.reap_finished();
+    }
+
+    /// Retires every voice that ended this block and records its id for
+    /// [`Mixer::drain_finished`].
+    fn reap_finished(&mut self) {
         let mut i = 0;
         while i < self.voices.len() {
             if self.voices[i].finished {
@@ -199,6 +125,109 @@ impl Mixer {
                 i += 1;
             }
         }
+    }
+}
+
+/// Writes `v`'s block `dry` into its delay line times its own gain, and adds it into `sends`
+/// times its own gain and its send, both gains moving through the one-pole of step `k`.
+/// Returns where the block starts in the line.
+fn write_echo(v: &mut Voice, dry: &[f32], sends: &mut [f32], k: f32) -> usize {
+    let n = dry.len();
+    // The delay line takes the voice's own-gained signal before distance and occlusion.
+    let echo_start = v.echo_pos;
+    let ring = &mut v.buffers.echo;
+    let len = ring.len();
+    // The block lands in at most two runs: up to the ring's end, then from its start.
+    let first = (len - echo_start).min(n);
+    let (head, wrap) = ring.split_at_mut(echo_start);
+    let runs = wrap[..first].iter_mut().chain(&mut head[..n - first]);
+    // The tail's send: the same own-gained signal times the smoothed send.
+    let (mut og, mut send) = (v.own_gain, v.send);
+    let send_to = v.acoustic.send;
+    for ((r, &s), t) in runs.zip(dry.iter()).zip(sends.iter_mut()) {
+        og += (v.params.gain - og) * k;
+        send += (send_to - send) * k;
+        *r = s * og;
+        *t += s * og * send;
+    }
+    // Settled at the block's edge, as every smoother is: none rests in subnormals.
+    v.own_gain = settle(og, v.params.gain);
+    v.send = settle(send, send_to);
+    v.echo_pos = (echo_start + n) % len;
+    echo_start
+}
+
+/// Moves `v`'s direct delay toward `delay_to` over an `n`-frame block: the smoother's share of
+/// the way (`decay` its factor over the block), at most the slew, linear across the block;
+/// back at 0 it settles there exactly. Returns the delay at the block's start and end.
+fn advance_direct_delay(v: &mut Voice, delay_to: f32, decay: f32, n: usize) -> (f32, f32) {
+    let dd0 = v.direct_delay;
+    let reach = TAP_SLEW_FRAMES_PER_FRAME * n as f32;
+    let mut dd1 = dd0 + ((delay_to - dd0) * (1.0 - decay)).clamp(-reach, reach);
+    if delay_to == 0.0 && dd1 < 1e-3 {
+        dd1 = 0.0;
+    }
+    v.direct_delay = dd1;
+    (dd0, dd1)
+}
+
+/// Gains `v`'s direct path in place: `dry` times its gain moving toward `target_gain`, or, with
+/// a direct delay `(dd0, dd1)` running, the delay line read from `echo_start` that far back
+/// times the distance gain moving toward `dist_gain` (the line already carries the own gain).
+/// Each gain moves through the one-pole of step `k` (`decay` its factor over the block); the
+/// one not applied follows at the block's edge.
+fn render_direct(
+    v: &mut Voice,
+    dry: &mut [f32],
+    echo_start: usize,
+    (dd0, dd1): (f32, f32),
+    (dist_gain, target_gain): (f32, f32),
+    (k, decay): (f32, f32),
+) {
+    let n = dry.len();
+    if dd0 == 0.0 && dd1 == 0.0 {
+        let mut g = v.gain;
+        for s in dry.iter_mut() {
+            g += (target_gain - g) * k;
+            *s *= g;
+        }
+        v.gain = settle(g, target_gain);
+        v.dist_gain = settle(dist_gain + (v.dist_gain - dist_gain) * decay, dist_gain);
+    } else {
+        // The delay line carries the own gain; the distance and acoustic gain follow.
+        let mut g = v.dist_gain;
+        for_each_delayed(&v.buffers.echo, echo_start, (dd0, dd1), n, |j, x| {
+            g += (dist_gain - g) * k;
+            dry[j] = x * g;
+        });
+        v.dist_gain = settle(g, dist_gain);
+        v.gain = settle(target_gain + (v.gain - target_gain) * decay, target_gain);
+    }
+}
+
+/// Runs `v`'s direct path `dry` through its one-pole low-pass in place, the coefficient moving
+/// toward the acoustic cutoff's through the one-pole of step `k`.
+fn lowpass(v: &mut Voice, dry: &mut [f32], k: f32) {
+    // The coefficient moves every sample, so neither a probe's new cutoff nor the step
+    // into or out of the bypass (a = 1) changes the output's slope at a block edge.
+    let target_a = lowpass_coefficient(v.acoustic.cutoff_hz);
+    if v.lowpass_a < 1.0 || target_a < 1.0 {
+        let mut a = v.lowpass_a;
+        let mut y = v.lowpass;
+        for s in dry.iter_mut() {
+            a += (target_a - a) * k;
+            y += a * (*s - y);
+            *s = y;
+        }
+        // Within float reach of the bypass, take it.
+        v.lowpass_a = if target_a == 1.0 && a > 1.0 - 1e-6 {
+            1.0
+        } else {
+            a
+        };
+        v.lowpass = flush(y);
+    } else if let Some(&last) = dry.last() {
+        v.lowpass = flush(last);
     }
 }
 
@@ -261,26 +290,16 @@ impl Mixer {
                     *x *= r;
                 }
             }
-            match &self.hrtf {
-                Some(hrtf) => {
-                    let to = hrtf.nearest(dir);
-                    if !bus.started {
-                        bus.dir = to;
-                    }
-                    let from = bus.dir;
-                    bus.dir = to;
-                    let scratch = (&mut self.input, &mut self.wet);
-                    spatialise(hrtf, &mut bus.history, block, from, to, scratch, out);
-                    bus.ringing = bus.history.iter().any(|&x| x != 0.0);
-                }
-                None => {
-                    let target = pan_gains(dir, 1.0);
-                    if !bus.started {
-                        bus.pan = target;
-                    }
-                    pan(&mut bus.pan, target, self.smooth_k, block, out);
-                }
-            }
+            let at = Placement {
+                history: &mut bus.history,
+                dir: &mut bus.dir,
+                pan: &mut bus.pan,
+                started: bus.started,
+            };
+            self.spatialiser
+                .render(at, dir, 1.0, self.smooth_k, block, out);
+            // Without an HRTF the history is empty, and the bus never rings.
+            bus.ringing = bus.history.iter().any(|&x| x != 0.0);
             bus.started = true;
             if bus.live {
                 block.fill(0.0);

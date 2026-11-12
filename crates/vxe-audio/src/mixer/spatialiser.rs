@@ -1,15 +1,95 @@
 //! Spatialisation: the HRTF's FIR pair with a crossfade between measurements, the
 //! constant-power pan, and the listener's frame.
 
+use std::sync::Arc;
+
 use crate::hrtf::Hrtf;
-use crate::{Listener, cross, dot, normalize_or};
+use crate::{BLOCK, Listener, cross, dot, normalize_or};
+
+/// One source as the [`Spatialiser`] places it, borrowed from a voice or a bus.
+pub(super) struct Placement<'a> {
+    /// HRTF path: the last `taps - 1` inputs, oldest first.
+    pub history: &'a mut [f32],
+    /// HRTF path: the measurement the last block was filtered with.
+    pub dir: &'a mut usize,
+    /// Panning path: left and right gain as smoothed so far.
+    pub pan: &'a mut [f32; 2],
+    /// Whether the source has rendered; a fresh one starts at its direction instead of fading
+    /// to it.
+    pub started: bool,
+}
+
+/// Places voices and buses alike in the listener's frame: through the two FIRs of the
+/// measurement nearest to a direction, crossfading when that measurement changes, or, without
+/// an HRTF, by a constant-power pan. Holds the scratch the FIRs run in, sized once.
+pub(super) struct Spatialiser {
+    hrtf: Option<Arc<Hrtf>>,
+    /// The FIR input of one source: its history, then this block.
+    input: Vec<f32>,
+    /// The old and new FIR outputs of one source for a crossfade, per ear.
+    wet: [[Vec<f32>; 2]; 2],
+}
+
+impl Spatialiser {
+    pub fn new(hrtf: Option<Arc<Hrtf>>) -> Self {
+        let taps = hrtf.as_ref().map_or(1, |h| h.taps());
+        Self {
+            hrtf,
+            input: vec![0.0; taps - 1 + BLOCK],
+            wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
+        }
+    }
+
+    pub fn hrtf(&self) -> Option<&Arc<Hrtf>> {
+        self.hrtf.as_ref()
+    }
+
+    /// Frames a FIR rings for after its input stops: `taps - 1`, 0 when panning.
+    pub fn ring_frames(&self) -> usize {
+        self.hrtf.as_ref().map_or(0, |h| h.taps() - 1)
+    }
+
+    /// Adds `block`, heard from unit direction `dir` in the listener's frame at `d` metres, to
+    /// interleaved `out`, moving `at` on. On the HRTF path a changed nearest measurement
+    /// crossfades ([`spatialise`]); on the panning path the gains of [`pan_gains`] move through
+    /// the one-pole of step `k`.
+    pub fn render(
+        &mut self,
+        at: Placement<'_>,
+        dir: [f32; 3],
+        d: f32,
+        k: f32,
+        block: &[f32],
+        out: &mut [f32],
+    ) {
+        match &self.hrtf {
+            Some(hrtf) => {
+                let to = hrtf.nearest(dir);
+                if !at.started {
+                    *at.dir = to;
+                }
+                let from = *at.dir;
+                *at.dir = to;
+                let scratch = (&mut self.input, &mut self.wet);
+                spatialise(hrtf, at.history, block, from, to, scratch, out);
+            }
+            None => {
+                let target = pan_gains(dir, d);
+                if !at.started {
+                    *at.pan = target;
+                }
+                pan(at.pan, target, k, block, out);
+            }
+        }
+    }
+}
 
 /// Filters `block` through measurement `to`'s two FIRs, continuing from `history` (the last
 /// `taps - 1` inputs, updated here), and adds the result to interleaved `out`. When `from`
 /// differs from `to` the block is filtered with both and crossfaded from old to new along
 /// [`crossfade_weight`]. `scratch` is the mixer's FIR input buffer and its two pairs of ear
 /// outputs.
-pub(super) fn spatialise(
+fn spatialise(
     hrtf: &Hrtf,
     history: &mut [f32],
     block: &[f32],
@@ -48,7 +128,7 @@ pub(super) fn spatialise(
 
 /// Adds `block` to interleaved `out` through left and right gains `gains`, which move toward
 /// `target` through the one-pole of step `k` every sample.
-pub(super) fn pan(gains: &mut [f32; 2], target: [f32; 2], k: f32, block: &[f32], out: &mut [f32]) {
+fn pan(gains: &mut [f32; 2], target: [f32; 2], k: f32, block: &[f32], out: &mut [f32]) {
     let [mut gl, mut gr] = *gains;
     for (f, &s) in out.chunks_exact_mut(2).zip(block) {
         gl += (target[0] - gl) * k;
@@ -122,7 +202,7 @@ impl ListenerFrame {
 
 /// Constant-power pan gains for unit direction `dir` in the listener's frame (`cos`, `sin` of
 /// an angle from 0 at hard left to pi/2 at hard right); centre for a source at the listener.
-pub(super) fn pan_gains(dir: [f32; 3], d: f32) -> [f32; 2] {
+fn pan_gains(dir: [f32; 3], d: f32) -> [f32; 2] {
     let right = if d > 1e-6 {
         (-dir[1]).clamp(-1.0, 1.0)
     } else {
@@ -135,7 +215,6 @@ pub(super) fn pan_gains(dir: [f32; 3], d: f32) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BLOCK;
 
     /// A seeded SplitMix64 stream of `f32` in [-1, 1).
     fn noise(seed: u64, count: usize) -> Vec<f32> {

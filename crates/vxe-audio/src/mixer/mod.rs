@@ -11,7 +11,7 @@
 //!    (smoothed like the others, no distance gain; the acoustics fold the occlusion into each
 //!    tap's gain) go into a [`MAX_DELAY_FRAMES`] delay line, and tap slot `i` adds the line's
 //!    sample its delay back times its gain into bus `i`. A slot glides toward its
-//!    [`crate::Tap`] target (see [`render_tap`]): the delay covers the step to a new target
+//!    [`crate::Tap`] target (see `render_tap`): the delay covers the step to a new target
 //!    over as many frames as passed since the voice's previous targets, at most
 //!    [`TAP_SLEW_FRAMES_PER_FRAME`] per frame, read between ring samples by linear
 //!    interpolation, and the gain follows the one-pole smoother. A slot whose target
@@ -82,6 +82,7 @@ mod render;
 mod spatialiser;
 
 use render::{Bus, lowpass_coefficient};
+use spatialiser::Spatialiser;
 
 /// Voices the mixer holds at once.
 pub const MAX_VOICES: usize = 64;
@@ -214,15 +215,12 @@ pub struct Mixer {
     /// it, a `Play` that finds no cleared buffers recycles on the caller's thread: the
     /// headless use, where the caller is the game thread.
     recycler: Option<Recycler>,
-    hrtf: Option<Arc<Hrtf>>,
+    /// The HRTF or the pan every voice and bus is placed through, and its scratch.
+    spatialiser: Spatialiser,
     listener: Listener,
     metres_per_voxel: f32,
     /// One block of one voice's mono samples.
     dry: Vec<f32>,
-    /// The FIR input of one voice: its history, then this block, gained.
-    input: Vec<f32>,
-    /// The old and new FIR outputs of one voice for a crossfade, per ear.
-    wet: [[Vec<f32>; 2]; 2],
     /// The direction buses: one per reflection direction, every voice's tap slot `i` summed
     /// into bus `i` and spatialised once on the bus's direction.
     buses: [Bus; MAX_TAPS],
@@ -277,12 +275,10 @@ impl Mixer {
                 retired,
                 cleared: cleared_tx,
             }),
-            hrtf,
+            spatialiser: Spatialiser::new(hrtf),
             listener: Listener::default(),
             metres_per_voxel,
             dry: vec![0.0; BLOCK],
-            input: vec![0.0; taps - 1 + BLOCK],
-            wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
             buses: std::array::from_fn(|_| Bus::new(taps)),
             bus_dirs: reflection_directions(),
             reverb: Reverb::new(),
@@ -336,7 +332,7 @@ impl Mixer {
     }
 
     pub fn hrtf(&self) -> Option<&Arc<Hrtf>> {
-        self.hrtf.as_ref()
+        self.spatialiser.hrtf()
     }
 
     /// Voices playing, finished ones excluded.
