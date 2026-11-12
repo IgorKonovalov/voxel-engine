@@ -545,6 +545,69 @@ impl MissingLight {
     }
 }
 
+/// Whether the live queue bakes a chunk whose reach is not resident full (ADR-0046's reach
+/// rule, Plan 0067 Phase 5).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ReachMode {
+    /// A chunk waits until every chunk within its light reach is mirrored full and current.
+    #[default]
+    Full,
+    /// A chunk whose reach crosses the streamer's full radius ([`QueueView::full_radius`]),
+    /// with nothing in its reach waiting to upload, bakes from the chunks resident full and is
+    /// flagged partial; a chunk within its reach that later arrives full re-queues it as a
+    /// refinement.
+    Partial,
+}
+
+impl ReachMode {
+    /// Both modes, in the order a key cycles them.
+    pub const ALL: [Self; 2] = [Self::Full, Self::Partial];
+
+    /// The mode's name, as `--reach` takes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Partial => "partial",
+        }
+    }
+
+    /// The mode named `s`.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|m| m.name() == s)
+            .ok_or(format!("the reach is full or partial, not {s}"))
+    }
+}
+
+/// A chunk's reach ([`reach_ready`]): every chunk within it mirrored full and current; nothing
+/// waiting to upload but a chunk not resident full (a streamed world's edge); or a chunk
+/// waiting to upload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reach {
+    Ready,
+    Partial,
+    Waiting,
+}
+
+/// Whether offset `o` (chunks) lies within a chunk's light reach of `lr` chunks: the gap
+/// between the two chunks' boxes under `lr` chunks.
+fn in_reach(o: [i32; 3], lr: i32) -> bool {
+    let gap2: i64 = o
+        .iter()
+        .map(|&d| i64::from((d.abs() - 1).max(0)).pow(2))
+        .sum();
+    gap2 < i64::from(lr).pow(2)
+}
+
+/// The offsets (chunks) within a light reach of `lr` chunks ([`in_reach`]).
+fn reach_offsets(lr: i32) -> impl Iterator<Item = [i32; 3]> {
+    let r = lr + 1;
+    (-r..=r)
+        .flat_map(move |z| (-r..=r).flat_map(move |y| (-r..=r).map(move |x| [x, y, z])))
+        .filter(move |&o| in_reach(o, lr))
+}
+
 /// A running mean of records by direction: each direction over the records that hold it, the
 /// material the most of them keep (the lowest on a tie), the mask their union.
 #[derive(Default)]
@@ -3369,6 +3432,13 @@ pub struct QueueStats {
     pub starved_openings: u64,
     /// Coarse-pass jobs pushed since the queue started.
     pub coarse_opened: u64,
+    /// Chunks whose block was baked from a partial reach ([`ReachMode::Partial`]).
+    pub partial: u64,
+    /// Jobs pushed from a partial reach since the queue started.
+    pub partial_opened: u64,
+    /// Flagged chunks re-queued since the queue started, a chunk within their reach having
+    /// arrived full.
+    pub partial_requeued: u64,
 }
 
 /// What [`BakeQueue::push_batch`] pushed: the jobs' samples, the chunks with no block the pool
@@ -3383,7 +3453,7 @@ struct Pushed {
 /// The stages a queue step is timed in ([`StepStages::ms`]), in the order they run: the
 /// frame's setup before the step (the light hold, the parameters, the bind group); the mirror
 /// filter in five (the store following the window, the mirror's change list and the blocks of
-/// chunks it no longer holds full, the per-chunk sets' removals, the reach verdicts dropped
+/// chunks it does not hold full, the per-chunk sets' removals, the reach verdicts dropped
 /// near a change, the changes marked for the candidate pool); the edit boxes, the withdrawal,
 /// the digs' jobs, then the opening's candidate build, census, sort, reach and light checks and
 /// listing (each 0 on a step that does not open), the job tables, the device poll, the
@@ -4034,6 +4104,9 @@ pub struct BakeQueue {
     /// the block it had and is a candidate again. A still camera withdraws nothing. A step with
     /// a sample count (the pre-roll) withdraws nothing.
     pub withdraw: bool,
+    /// Whether a chunk whose reach is not resident full bakes from the chunks that are
+    /// ([`ReachMode`]).
+    pub reach_mode: ReachMode,
     /// Edit boxes since the last step.
     boxes: Vec<[[i32; 3]; 2]>,
     /// Chunks with dig bricks to re-bake, not yet in a job; and those in a job, with the bricks
@@ -4118,7 +4191,16 @@ pub struct BakeQueue {
     order_dirty: bool,
     /// Each checked candidate's reach verdict ([`reach_ready`]), dropped when a chunk within
     /// the light radius and one of it changes in the mirror.
-    reach_cache: ChunkMap<bool>,
+    reach_cache: ChunkMap<Reach>,
+    /// Chunks whose block was baked from a partial reach ([`ReachMode::Partial`]).
+    partial: ChunkSet,
+    /// The jobs pending or open that bake from a partial reach.
+    job_partial: ChunkSet,
+    /// Chunks the opening's checks found bakeable from a partial reach, read when listed.
+    partial_checked: ChunkSet,
+    /// Flagged chunks (block or job) a chunk within whose reach arrived full: candidates again,
+    /// as a refinement.
+    partial_due: ChunkSet,
 }
 
 impl BakeQueue {
@@ -4180,6 +4262,11 @@ impl BakeQueue {
             order_view: None,
             order_dirty: true,
             reach_cache: Default::default(),
+            reach_mode: ReachMode::Full,
+            partial: Default::default(),
+            job_partial: Default::default(),
+            partial_checked: Default::default(),
+            partial_due: Default::default(),
         }
     }
 
@@ -4198,7 +4285,7 @@ impl BakeQueue {
         }
         let has = store.blocks.contains_key(&c);
         let coarse = has && store.is_coarse(cc);
-        let wants = !has || coarse || self.reach.contains(&c);
+        let wants = !has || coarse || self.reach.contains(&c) || self.partial_due.contains(&c);
         (wants
             && !self.faceless.contains(&c)
             && !in_job.contains(&c)
@@ -4271,23 +4358,110 @@ impl BakeQueue {
         coord: ChunkCoord,
         lr: i32,
         resident: Option<&dyn Fn(ChunkCoord) -> bool>,
-    ) -> bool {
+    ) -> Reach {
         if resident.is_none() && run.gpu.pending_chunks() == 0 {
-            return true;
+            return Reach::Ready;
         }
         if let Some(&v) = self.reach_cache.get(&coord.0) {
             // A streamer's residency can move a frame ahead of the mirror; a bounded world's
             // verdict reads the mirror alone.
             debug_assert!(
-                resident.is_some() || v == reach_ready(run, coord, lr, resident),
+                resident.is_some() || v == reach_of(run, coord, lr, resident),
                 "the cached reach of {coord:?}"
             );
             return v;
         }
         self.stats.reach_checks += 1;
-        let v = reach_ready(run, coord, lr, resident);
+        let v = reach_of(run, coord, lr, resident);
         self.reach_cache.insert(coord.0, v);
         v
+    }
+
+    /// Whether `coord` may bake under [`BakeQueue::reach`], and whether from a partial reach:
+    /// `Some(false)` when its reach is ready, `Some(true)` under [`ReachMode::Partial`] when
+    /// nothing in its reach waits to upload and the reach crosses the streamer's full radius
+    /// about `eye` (its distance in chunks plus `lr` exceeds it), else `None`.
+    fn bakeable(
+        &mut self,
+        run: &BakeRun<'_>,
+        coord: ChunkCoord,
+        lr: i32,
+        view: &QueueView<'_>,
+        eye: [i32; 3],
+    ) -> Option<bool> {
+        match self.reach_cached(run, coord, lr, view.resident) {
+            Reach::Ready => Some(false),
+            Reach::Partial
+                if self.reach_mode == ReachMode::Partial
+                    && view.full_radius.is_some_and(|r| {
+                        let d2: i64 = (0..3).map(|k| i64::from(coord.0[k] - eye[k]).pow(2)).sum();
+                        (d2 as f32).sqrt() + lr as f32 > r as f32
+                    }) =>
+            {
+                Some(true)
+            }
+            _ => None,
+        }
+    }
+
+    /// Re-queues as a refinement each chunk flagged partial (its block, or its job's) within
+    /// whose reach a chunk of `changed` is now held full: a chunk arriving, or a held one
+    /// changing. `None` (the changes went untracked) re-queues every flagged chunk. Nothing to
+    /// do under [`ReachMode::Full`], which flags none.
+    fn requeue_partial(&mut self, gpu: &GpuWorld, changed: Option<&[ChunkCoord]>) {
+        if self.partial.is_empty() && self.job_partial.is_empty() {
+            return;
+        }
+        let due: Vec<[i32; 3]> = match changed {
+            None => self
+                .partial
+                .iter()
+                .chain(self.job_partial.iter())
+                .copied()
+                .collect(),
+            Some(ch) => {
+                let lr = gpu.light_radius();
+                let held: ChunkSet = ch
+                    .iter()
+                    .filter(|c| gpu.is_mirrored(**c) && !gpu.is_lod(**c))
+                    .map(|c| c.0)
+                    .collect();
+                if held.is_empty() {
+                    return;
+                }
+                let flagged =
+                    |c: &[i32; 3]| self.partial.contains(c) || self.job_partial.contains(c);
+                let mut due = Vec::new();
+                // Each side walks its reach over the other's set: the smaller side walks.
+                if self.partial.len() + self.job_partial.len() <= held.len() {
+                    for p in self.partial.iter().chain(self.job_partial.iter()) {
+                        let near = reach_offsets(lr)
+                            .any(|o| held.contains(&[p[0] + o[0], p[1] + o[1], p[2] + o[2]]));
+                        if near {
+                            due.push(*p);
+                        }
+                    }
+                } else {
+                    for n in &held {
+                        for o in reach_offsets(lr) {
+                            let p = [n[0] + o[0], n[1] + o[1], n[2] + o[2]];
+                            if flagged(&p) {
+                                due.push(p);
+                            }
+                        }
+                    }
+                }
+                due
+            }
+        };
+        for p in due {
+            if self.partial_due.insert(p) {
+                self.stats.partial_requeued += 1;
+                self.touched.insert(p);
+                self.counted_idle = false;
+                self.quiet_until = self.steps;
+            }
+        }
     }
 
     /// Drops the cached reach verdicts within `lr + 1` chunks (Chebyshev) of a chunk of
@@ -4398,6 +4572,9 @@ impl BakeQueue {
             ("blocked", self.blocked.contains_key(&c)),
             ("job_coarse", self.job_coarse.contains_key(&c)),
             ("stale", self.stale.contains(&c)),
+            ("partial", self.partial.contains(&c)),
+            ("job_partial", self.job_partial.contains(&c)),
+            ("partial_due", self.partial_due.contains(&c)),
         ]
         .into_iter()
         .filter_map(|(name, held)| held.then_some(name))
@@ -4414,6 +4591,7 @@ impl BakeQueue {
             && self.boxes.is_empty()
             && self.digs.is_empty()
             && self.reach.is_empty()
+            && self.partial_due.is_empty()
     }
 
     /// Whether an edit box waits for the next step.
@@ -4438,6 +4616,7 @@ impl BakeQueue {
             && !self.lp.chunks().any(|j| j == c)
             && !self.digs.contains_key(&c.0)
             && !self.reach.contains(&c.0)
+            && !self.partial_due.contains(&c.0)
     }
 
     /// Whether `c` has had its first pass: it holds a block (coarse or full), is known to have
@@ -4619,7 +4798,9 @@ impl BakeQueue {
             + self.blocked.len()
             + self.digs.len()
             + self.reach.len()
-            + self.listed.len();
+            + self.listed.len()
+            + self.partial.len()
+            + self.partial_due.len();
         let by_keys = changes.as_ref().is_some_and(|ch| 4 * ch.len() < entries);
         if !by_keys {
             self.fades.retain(|c, _| held(c));
@@ -4628,6 +4809,8 @@ impl BakeQueue {
             self.digs.retain(|c, _| held(c));
             self.reach.retain(held);
             self.listed.retain(|c, _| held(c));
+            self.partial.retain(held);
+            self.partial_due.retain(held);
         }
         match changes {
             Some(ch) => {
@@ -4639,18 +4822,22 @@ impl BakeQueue {
                         self.digs.remove(&c);
                         self.reach.remove(&c);
                         self.listed.remove(&c);
+                        self.partial.remove(&c);
+                        self.partial_due.remove(&c);
                     }
                 }
                 self.laps.lap(S_FORGET);
                 self.drop_reach(&ch, gpu.light_radius());
                 self.laps.lap(S_DROP_REACH);
                 self.touched.extend(ch.iter().map(|c| c.0));
+                self.requeue_partial(gpu, Some(ch.as_slice()));
             }
             None => {
                 self.laps.lap(S_FORGET);
                 self.reach_cache.clear();
                 self.laps.lap(S_DROP_REACH);
                 self.pool_stale = true;
+                self.requeue_partial(gpu, None);
             }
         }
         self.laps.lap(S_TOUCHED);
@@ -4706,6 +4893,8 @@ impl BakeQueue {
         let job_eye = &mut self.job_eye;
         let dig_open = &mut self.dig_open;
         let reach = &mut self.reach;
+        let partial = &mut self.partial;
+        let job_partial = &mut self.job_partial;
         let entered = &mut self.entered;
         let ages_first = &mut self.ages_first;
         let ages_full = &mut self.ages_full;
@@ -4714,6 +4903,7 @@ impl BakeQueue {
         let mut place = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let coarse = job_coarse.remove(&coord.0).unwrap_or(false);
             job_eye.remove(&coord.0);
+            let from_partial = job_partial.remove(&coord.0);
             let dug = dig_open.remove(&coord.0);
             if stale.remove(&coord.0) || !run.gpu.is_mirrored(coord) {
                 store.release(first, block.len() as u64);
@@ -4742,6 +4932,15 @@ impl BakeQueue {
             if let Some(d) = &dug {
                 stats.digs_baked += 1;
                 stats.dig_bricks += d.slots.len() as u64;
+            }
+            // A whole chunk's block carries its job's reach; a dig's keeps the rest of the
+            // block's, and with it the flag.
+            if dug.is_none() {
+                if from_partial {
+                    partial.insert(coord.0);
+                } else {
+                    partial.remove(&coord.0);
+                }
             }
             let dug = dug.is_some();
             stats.baked += 1;
@@ -4880,6 +5079,7 @@ impl BakeQueue {
         self.stats.coarse = store.coarse.len() as u64;
         self.stats.digs = (self.digs.len() + self.dig_open.len()) as u64;
         self.stats.reach = self.reach.len() as u64;
+        self.stats.partial = self.partial.len() as u64;
         self.laps.lap(S_FADES);
         // The summaries' and parents' time ran inside the placement, the fades, the evictions
         // and the window's move: it moves to its own stage, from those in that order.
@@ -5366,17 +5566,22 @@ impl BakeQueue {
                 checked[0] += 1;
             }
             let coord = ChunkCoord(c);
-            if !self.reach_cached(run, coord, lr, view.resident) {
+            let Some(partial) = self.bakeable(run, coord, lr, view, eye) else {
                 reach += 1;
                 self.blocked.insert(c, self.steps);
                 continue;
-            }
+            };
             if !gpu.lights_ready_near(coord, lr) {
                 lights += 1;
                 self.blocked.insert(c, self.steps);
                 continue;
             }
             self.blocked.remove(&c);
+            if partial {
+                self.partial_checked.insert(c);
+            } else {
+                self.partial_checked.remove(&c);
+            }
             if class == 0 {
                 ready0 += 1;
             }
@@ -5404,6 +5609,8 @@ impl BakeQueue {
         }
         self.stats.waiting_reach = reach;
         self.stats.waiting_lights = lights;
+        // A checked candidate not listed (a refused place) is checked again before its listing.
+        self.partial_checked.clear();
         Ok(())
     }
 
@@ -5504,7 +5711,8 @@ impl BakeQueue {
             }
             checked += 1;
             let coord = ChunkCoord(c);
-            if self.reach_cached(run, coord, lr, view.resident) && gpu.lights_ready_near(coord, lr)
+            if self.bakeable(run, coord, lr, view, eye).is_some()
+                && gpu.lights_ready_near(coord, lr)
             {
                 ready = true;
                 break;
@@ -5519,6 +5727,7 @@ impl BakeQueue {
             store.release(w.first_word, w.words);
             self.job_coarse.remove(&w.coord.0);
             self.job_eye.remove(&w.coord.0);
+            self.job_partial.remove(&w.coord.0);
             self.stale.remove(&w.coord.0);
             self.stats.withdrawn += 1;
             self.stats.withdrawn_samples += w.drawn;
@@ -5726,7 +5935,7 @@ impl BakeQueue {
             }
             looked += 1;
             let coord = ChunkCoord(c);
-            if self.reach_cached(run, coord, lr, view.resident)
+            if self.bakeable(run, coord, lr, view, eye).is_some()
                 && run.gpu.lights_ready_near(coord, lr)
             {
                 self.stats.starved_openings += 1;
@@ -5754,8 +5963,11 @@ impl BakeQueue {
         if let Some(m) = self.prepared.remove(&c) {
             self.prepared_bytes -= m.masks.bytes();
         }
+        let partial = self.partial_checked.remove(&c);
         if faces.faces() == 0 {
             self.reach.remove(&c);
+            self.partial_due.remove(&c);
+            self.partial.remove(&c);
             self.faceless.insert(c);
             return Ok(0);
         }
@@ -5770,6 +5982,13 @@ impl BakeQueue {
             }
         };
         self.reach.remove(&c);
+        self.partial_due.remove(&c);
+        if partial {
+            self.job_partial.insert(c);
+            self.stats.partial_opened += 1;
+        } else {
+            self.job_partial.remove(&c);
+        }
         let coarse = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
         let brick_samples = if coarse {
             self.coarse_samples
@@ -5860,35 +6079,47 @@ fn reach_ready(
     lr: i32,
     resident: Option<&dyn Fn(ChunkCoord) -> bool>,
 ) -> bool {
+    reach_of(run, coord, lr, resident) == Reach::Ready
+}
+
+/// `coord`'s reach as [`reach_ready`] reads it: [`Reach::Waiting`] at the first chunk within it
+/// waiting to upload, else [`Reach::Partial`] if a chunk within it is not resident full (a
+/// streamed world only), else [`Reach::Ready`].
+fn reach_of(
+    run: &BakeRun<'_>,
+    coord: ChunkCoord,
+    lr: i32,
+    resident: Option<&dyn Fn(ChunkCoord) -> bool>,
+) -> Reach {
     let gpu = run.gpu;
     if resident.is_none() && gpu.pending_chunks() == 0 {
-        return true;
+        return Reach::Ready;
     }
     let r = lr + 1;
-    let rr = i64::from(lr).pow(2);
+    let mut partial = false;
     for z in -r..=r {
         for y in -r..=r {
             for x in -r..=r {
-                let gap2: i64 = [x, y, z]
-                    .iter()
-                    .map(|&d| i64::from((d.abs() - 1).max(0)).pow(2))
-                    .sum();
-                if gap2 >= rr {
+                if !in_reach([x, y, z], lr) {
                     continue;
                 }
                 let n = ChunkCoord([coord.0[0] + x, coord.0[1] + y, coord.0[2] + z]);
                 if gpu.is_pending(n) {
-                    return false;
+                    return Reach::Waiting;
                 }
                 if let Some(res) = resident
                     && !(res(n) && gpu.is_mirrored(n) && !gpu.is_lod(n))
                 {
-                    return false;
+                    partial = true;
                 }
             }
         }
     }
-    true
+    if partial {
+        Reach::Partial
+    } else {
+        Reach::Ready
+    }
 }
 
 #[cfg(test)]

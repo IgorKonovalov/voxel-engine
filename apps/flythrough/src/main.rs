@@ -125,7 +125,11 @@
 //! `--missing-light black|neighbour|parent|chain` what a cube face with no baked value reads
 //! (ADR-0053: its chunk's summary, its face neighbours', its parent cells'; default `black`; key
 //! `7` cycles it; the banner's queue row and the HUD's store row name it, and the `bake queue:`
-//! line prints the no-value, fallback and still-black shares); a dig re-bakes its rings in the queue, ahead of
+//! line prints the no-value, fallback and still-black shares); `--reach full|partial` whether a
+//! chunk whose light reach crosses the streamer's full radius waits for it (`full`, the default)
+//! or bakes from the chunks resident full, flagged partial and re-queued as a refinement when a
+//! chunk within its reach arrives (`partial`; key `8` toggles it; the banner's queue row, the
+//! HUD's queue row and the `bake queue step:` line name it); a dig re-bakes its rings in the queue, ahead of
 //! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
 //! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
 //! lit bricks); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
@@ -528,6 +532,9 @@ struct Args {
     /// `--missing-light black|neighbour|parent|chain`: what a cube face with no baked value
     /// reads (ADR-0053); `7` cycles it.
     missing_light: vxe_render::bake::MissingLight,
+    /// `--reach full|partial`: whether a chunk whose reach crosses the streamer's full radius
+    /// bakes from the chunks resident full (`vxe_render::bake::ReachMode`); `8` toggles it.
+    reach: vxe_render::bake::ReachMode,
     /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
     /// the class and the distance first); `1` cycles score, score with the class as a tier,
     /// distance.
@@ -890,6 +897,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_near: vxe_render::bake::DEFAULT_NEAR,
         bake_full_first: None,
         missing_light: vxe_render::bake::MissingLight::Black,
+        reach: vxe_render::bake::ReachMode::Full,
         queue_distance: false,
         queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
         queue_refine: vxe_render::bake::QUEUE_REFINE_WEIGHT,
@@ -1203,6 +1211,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--missing-light" => {
                 args.missing_light = vxe_render::bake::MissingLight::parse(&value()?)?;
+            }
+            "--reach" => {
+                args.reach = vxe_render::bake::ReachMode::parse(&value()?)?;
             }
             "--full-first" => {
                 let v = value()?;
@@ -3323,7 +3334,8 @@ fn shell_config(args: &Args, size: [u32; 2], pace: vxe_app::Pacing) -> ShellConf
 /// The per-second `bake queue step:` line: the second's regime from its samples a baked chunk
 /// (its steps tagged with it in the run's tally), the bake's GPU ms a second, the steps that
 /// opened, the step's p50 on opening and other steps, the in-view waiting chunks whose reach
-/// crosses the full radius, and each stage's mean ms a step. Reads the second's counters from
+/// crosses the full radius, the `reach` mode with its partial blocks, partial jobs opened and
+/// re-queues since the start, and each stage's mean ms a step. Reads the second's counters from
 /// `q`'s last line and takes its steps.
 fn queue_step_line(
     q: &mut QueueRun,
@@ -3331,6 +3343,7 @@ fn queue_step_line(
     at_s: f64,
     secs: f64,
     bake_ms_per_s: f64,
+    reach: vxe_render::bake::ReachMode,
 ) -> String {
     use std::fmt::Write as _;
     use vxe_render::bake::{Regime, STEP_STAGES, VIEW_IN};
@@ -3355,7 +3368,7 @@ fn queue_step_line(
     let opened = steps.iter().filter(|s| s.opened).count();
     let [blank, coarse] = st.view_waiting[VIEW_IN];
     let mut line = format!(
-        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} of {} in view waiting; stage means ms:",
+        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} of {} in view waiting, reach {} ({} partial, {} opened partial, {} re-queued); stage means ms:",
         regime.map_or("idle", Regime::name),
         if baked > 0 {
             format!("{:.3e}", samples as f64 / baked as f64)
@@ -3372,6 +3385,10 @@ fn queue_step_line(
         p50(Some(false)),
         st.reach_bound,
         blank + coarse,
+        reach.name(),
+        st.partial,
+        st.partial_opened,
+        st.partial_requeued,
     );
     q.line_openings = st.openings;
     q.line_starved = st.starved_openings;
@@ -3541,6 +3558,11 @@ impl Run {
             }
             None => queue.push_str("; full-first off"),
         }
+        write_reach_note(
+            queue,
+            args.reach,
+            self.queue.stats.map_or(0, |st| st.partial),
+        );
         write_budget_note(
             queue,
             args.bake_budget,
@@ -4155,6 +4177,7 @@ impl Run {
         frame.set_bake_budget(self.args.bake_budget);
         frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
         frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
+        frame.set_bake_reach(self.args.reach);
         if let Some(q) = frame.bake_queue_mut() {
             q.order = self.args.queue_order();
             q.withdraw = self.args.queue_withdraw;
@@ -4543,7 +4566,8 @@ impl Run {
                     &st,
                     t / 1e3,
                     secs,
-                    sl.iter().sum::<f64>() / secs
+                    sl.iter().sum::<f64>() / secs,
+                    self.args.reach,
                 )
             );
             self.queue.line_view = st.view_samples;
@@ -4562,10 +4586,18 @@ impl Run {
     /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25), `4`
     /// toggles the withdrawal, `5` steps the bake budget through [`BUDGET_CYCLE`], `6` toggles
     /// the full-first radius between `off` and `2`, `7` cycles the missing light through
-    /// [`vxe_render::bake::MissingLight::ALL`]. A change goes to the queue at once (the missing
-    /// light at the next frame) and prints the order and the withdrawal, the budget, the radius
-    /// or the missing light.
+    /// [`vxe_render::bake::MissingLight::ALL`], `8` toggles the reach between `full` and
+    /// `partial`. A change goes to the queue at once (the missing light at the next frame) and
+    /// prints the order and the withdrawal, the budget, the radius, the missing light or the
+    /// reach.
     fn queue_keys(&mut self, input: &Input) {
+        if input.pressed(KeyCode::Digit8) {
+            self.args.reach = next_reach(self.args.reach);
+            println!("bake queue: reach {}", self.args.reach.name());
+            if let Some(g) = self.gfx.as_mut() {
+                g.frame.set_bake_reach(self.args.reach);
+            }
+        }
         if input.pressed(KeyCode::Digit7) {
             self.args.missing_light = next_missing_light(self.args.missing_light);
             println!(
@@ -6686,6 +6718,13 @@ fn next_missing_light(m: vxe_render::bake::MissingLight) -> vxe_render::bake::Mi
     MissingLight::ALL[(i + 1) % MissingLight::ALL.len()]
 }
 
+/// The reach mode after `m` in [`vxe_render::bake::ReachMode::ALL`] (key `8`).
+fn next_reach(m: vxe_render::bake::ReachMode) -> vxe_render::bake::ReachMode {
+    use vxe_render::bake::ReachMode;
+    let i = ReachMode::ALL.iter().position(|&x| x == m).unwrap_or(0);
+    ReachMode::ALL[(i + 1) % ReachMode::ALL.len()]
+}
+
 /// The budgets key `5` steps through (Phase 6's arms): today's slice, 150 ms a second and 300
 /// ms a second, each capped at a quarter of the frame.
 const BUDGET_CYCLE: [vxe_render::bake::Budget; 3] = [
@@ -6706,6 +6745,15 @@ const BUDGET_CYCLE: [vxe_render::bake::Budget; 3] = [
 fn next_budget(b: vxe_render::bake::Budget) -> vxe_render::bake::Budget {
     let i = BUDGET_CYCLE.iter().position(|&x| x == b);
     BUDGET_CYCLE[i.map_or(0, |i| (i + 1) % BUDGET_CYCLE.len())]
+}
+
+/// Appends the HUD queue row's reach part to `out`: `; reach full`, or `; reach partial (N
+/// partial)` with the chunks whose block was baked from a partial reach.
+fn write_reach_note(out: &mut String, reach: vxe_render::bake::ReachMode, partial: u64) {
+    let _ = write!(out, "; reach {}", reach.name());
+    if reach == vxe_render::bake::ReachMode::Partial {
+        let _ = write!(out, " ({partial} partial)");
+    }
 }
 
 /// Appends the HUD queue row's budget part to `out`: `; budget frame:1.5`, and the last step's
@@ -6740,10 +6788,11 @@ fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 5 budget, 6 full-first, 7 missing light)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 5 budget, 6 full-first, 7 missing light, 8 reach)",
         FullFirstWords(args.full_first()),
         args.bake_budget,
         args.missing_light.name(),
+        args.reach.name(),
         args.bake_edit_ms,
         if args.dig_reach { "on" } else { "off" },
     );
@@ -8354,7 +8403,7 @@ mod tests {
             assert_eq!(
                 row,
                 format!(
-                    "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on; full-first 2; budget frame:1.5"
+                    "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on; full-first 2; reach full; budget frame:1.5"
                 )
             );
         };
@@ -8441,7 +8490,9 @@ mod tests {
             );
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
             assert!(
-                row.ends_with(&format!("; {want}; full-first 2; budget frame:1.5")),
+                row.ends_with(&format!(
+                    "; {want}; full-first 2; reach full; budget frame:1.5"
+                )),
                 "{want}: {row}"
             );
         }
@@ -8473,11 +8524,14 @@ mod tests {
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(banner.contains(", full-first 2, budget "), "{banner}");
         assert!(
-            banner.contains("6 full-first, 7 missing light)"),
+            banner.contains("6 full-first, 7 missing light, 8 reach)"),
             "{banner}"
         );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
-        assert!(row.ends_with("; full-first 2; budget frame:1.5"), "{row}");
+        assert!(
+            row.ends_with("; full-first 2; reach full; budget frame:1.5"),
+            "{row}"
+        );
         for want in ["off", "2", "off"] {
             input.end_frame();
             input.key_up(KeyCode::Digit6);
@@ -8491,7 +8545,9 @@ mod tests {
             );
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
             assert!(
-                row.ends_with(&format!("; full-first {want}; budget frame:1.5")),
+                row.ends_with(&format!(
+                    "; full-first {want}; reach full; budget frame:1.5"
+                )),
                 "{want}: {row}"
             );
         }
@@ -8514,8 +8570,11 @@ mod tests {
         let mut run = bare_run(carved_rock());
         let mut input = Input::default();
         let banner = run.banner().expect("the queue's row is on the banner");
-        assert!(banner.contains(", missing light black, digs "), "{banner}");
-        assert!(banner.contains("7 missing light)"), "{banner}");
+        assert!(
+            banner.contains(", missing light black, reach full, digs "),
+            "{banner}"
+        );
+        assert!(banner.contains("7 missing light, 8 reach)"), "{banner}");
         for want in ["neighbour", "parent", "chain", "black"] {
             input.end_frame();
             input.key_up(KeyCode::Digit7);
@@ -8523,7 +8582,7 @@ mod tests {
             run.handle_input(&input);
             let banner = run.banner().expect("the queue's row is on the banner");
             assert!(
-                banner.contains(&format!(", missing light {want}, digs ")),
+                banner.contains(&format!(", missing light {want}, reach full, digs ")),
                 "{want}: {banner}"
             );
         }
@@ -8534,6 +8593,47 @@ mod tests {
         }
         for bad in ["neighbor", "parents", "on", ""] {
             assert!(f(&["--missing-light", bad]).is_err(), "{bad}");
+        }
+    }
+
+    /// `--reach` parses `full` and `partial` and refuses the rest; a plain start reads `full`;
+    /// `8` toggles `partial` and `full`, each press changing the banner and the HUD's queue row
+    /// in the same frame, the row adding the partial blocks under `partial`.
+    #[test]
+    fn the_banner_names_the_reach() {
+        use vxe_render::bake::ReachMode;
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        run.refresh_hud_stats(None);
+        let banner = run.banner().expect("the queue's row is on the banner");
+        assert!(banner.contains(", reach full, digs "), "{banner}");
+        assert!(banner.contains("7 missing light, 8 reach)"), "{banner}");
+        let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+        assert!(row.contains("; reach full; budget "), "{row}");
+        for (want, note) in [("partial", "partial (0 partial)"), ("full", "full")] {
+            input.end_frame();
+            input.key_up(KeyCode::Digit8);
+            input.key_down(KeyCode::Digit8);
+            run.handle_input(&input);
+            run.refresh_hud_stats(None);
+            let banner = run.banner().expect("the queue's row is on the banner");
+            assert!(
+                banner.contains(&format!(", reach {want}, digs ")),
+                "{want}: {banner}"
+            );
+            let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+            assert!(
+                row.contains(&format!("; reach {note}; budget ")),
+                "{want}: {row}"
+            );
+        }
+        let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.reach);
+        assert_eq!(f(&[]), Ok(ReachMode::Full));
+        for m in ReachMode::ALL {
+            assert_eq!(f(&["--reach", m.name()]), Ok(m));
+        }
+        for bad in ["partials", "on", "chain", ""] {
+            assert!(f(&["--reach", bad]).is_err(), "{bad}");
         }
     }
 
@@ -8550,7 +8650,7 @@ mod tests {
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
-            banner.contains(", budget frame:1.5, missing light black, digs +"),
+            banner.contains(", budget frame:1.5, missing light black, reach full, digs +"),
             "{banner}"
         );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
@@ -8572,11 +8672,13 @@ mod tests {
             run.refresh_hud_stats(None);
             let banner = run.banner().expect("the queue's row is on the banner");
             assert!(
-                banner.contains(&format!(", budget {want}, missing light black, digs +")),
+                banner.contains(&format!(
+                    ", budget {want}, missing light black, reach full, digs +"
+                )),
                 "{want}: {banner}"
             );
             assert!(
-                banner.contains("5 budget, 6 full-first, 7 missing light)"),
+                banner.contains("5 budget, 6 full-first, 7 missing light, 8 reach)"),
                 "{banner}"
             );
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");

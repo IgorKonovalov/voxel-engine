@@ -77,6 +77,8 @@ struct Q {
     last_step_ms: f64,
     /// Whether a chunk is resident full, as a streamer's would say; `None` is a bounded world.
     resident: Option<fn(ChunkCoord) -> bool>,
+    /// The streamer's full radius in chunks the view hands the queue; `None` a bounded world.
+    full_radius: Option<i32>,
 }
 
 /// How a rig's queue and mirror start.
@@ -93,6 +95,8 @@ struct Setup {
     order: Option<bake::QueueOrder>,
     /// The queue's counts.
     counts: BakeSettings,
+    /// The mirror's light radius in chunks.
+    light_radius: i32,
 }
 
 impl Setup {
@@ -107,6 +111,7 @@ impl Setup {
             slice_ms: 1.5,
             order: None,
             counts: counts(),
+            light_radius: 2,
         }
     }
 }
@@ -143,7 +148,7 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
     let (device, queue) = support::software_device(64 << 20)?;
     let cfg = MirrorConfig {
         budget_bytes: 64 << 20,
-        light_radius: 2,
+        light_radius: setup.light_radius,
         sync_budget_bytes: setup.sync_budget,
         ..MirrorConfig::new(setup.window.unwrap_or(Window::Fixed(world.extent())))
     };
@@ -169,6 +174,7 @@ fn rig(world: World, setup: &Setup) -> Option<Q> {
         samples: None,
         last_step_ms: 0.0,
         resident: None,
+        full_radius: None,
     })
 }
 
@@ -202,7 +208,7 @@ impl Q {
                 bake::view_half_angle(self.camera.vfov, w as f32 / h as f32)
             },
             frustum: None,
-            full_radius: None,
+            full_radius: self.full_radius,
         };
         #[allow(
             clippy::disallowed_methods,
@@ -1315,6 +1321,103 @@ fn a_chunk_waits_for_its_reach() {
         .filter(|&w| got[&c0.0][w] != 0)
         .count();
     assert!(lit > 0, "chunk 0's wall is lit by chunk 1's ore");
+}
+
+/// A 3 x 3 x 3 world at light radius 1, the camera in the centre chunk: the centre's rock wall
+/// faces an ore block in chunk (2, 1, 1), which is LOD-only, as a streamer leaves a chunk past
+/// its full radius (0 chunks here, so the centre's reach crosses it). Under `full` the centre
+/// waits over 50 steps; under `partial` it bakes from its resident reach, flagged partial.
+/// Loading the neighbour full re-queues it as a refinement: settled, its block equals a
+/// one-shot bake of the whole rig, its wall is lit by the ore, and its flag is gone.
+#[test]
+fn a_partial_reach_chunk_bakes_and_is_rebaked_when_its_reach_arrives() {
+    fn but_lod(c: ChunkCoord) -> bool {
+        c != ChunkCoord([2, 1, 1])
+    }
+    fn every(_: ChunkCoord) -> bool {
+        true
+    }
+    let scene = || {
+        let world = world_of([3, 3, 3], AIR);
+        fill(&world, [104, 72, 72], [112, 120, 120], ROCK);
+        fill(&world, [134, 92, 92], [138, 100, 100], ORE);
+        world
+    };
+    let (centre, lod) = (ChunkCoord([1, 1, 1]), ChunkCoord([2, 1, 1]));
+    let world = scene();
+    support::make_lod(&world, |c| c == lod);
+    let Some(mut q) = rig(
+        world,
+        &Setup {
+            light_radius: 1,
+            ..Setup::at([96.5, 96.5, 96.5])
+        },
+    ) else {
+        return;
+    };
+    q.resident = Some(but_lod);
+    q.full_radius = Some(0);
+    assert!(q.gpu.is_lod(lod), "the neighbour is LOD-only");
+    assert!(q.gpu.is_mirrored(centre) && !q.gpu.is_lod(centre));
+    for _ in 0..50 {
+        q.step();
+    }
+    assert_eq!(
+        q.frame.store().block(centre),
+        None,
+        "under full the centre waits for its reach"
+    );
+    assert_eq!(q.q().stats().partial_opened, 0);
+    q.frame.set_bake_reach(bake::ReachMode::Partial);
+    let n = q.settle();
+    println!("partial: settled in {n} steps, {:?}", q.q().stats());
+    assert!(
+        q.frame.store().block(centre).is_some(),
+        "under partial the centre bakes"
+    );
+    assert!(
+        q.q().tracks(centre).contains(&"partial"),
+        "flagged partial: {:?}",
+        q.q().tracks(centre)
+    );
+    let requeued = q.q().stats().partial_requeued;
+    // The neighbour arrives full.
+    let full = scene()
+        .store()
+        .remove(lod)
+        .expect("the twin holds the chunk");
+    let full = full.read().expect("the chunk's lock").clone();
+    q.world.remove_lod(lod);
+    q.world.store().insert(lod, full);
+    q.world.store().mark_dirty(lod);
+    q.resident = Some(every);
+    q.step();
+    assert!(
+        q.gpu.is_mirrored(lod) && !q.gpu.is_lod(lod),
+        "the neighbour is full"
+    );
+    assert!(
+        q.q().stats().partial_requeued > requeued,
+        "the arrival re-queues the centre: {:?}",
+        q.q().stats()
+    );
+    let n = q.settle();
+    println!("re-queued: settled in {n} steps, {:?}", q.q().stats());
+    assert!(
+        !q.q().tracks(centre).contains(&"partial"),
+        "its reach is whole: {:?}",
+        q.q().tracks(centre)
+    );
+    let got = q.blocks();
+    let fresh = q.fresh();
+    assert_eq!(
+        got.get(&centre.0),
+        fresh.get(&centre.0),
+        "against a one-shot bake of the whole rig"
+    );
+    let block = &got[&centre.0];
+    let lit = value_words(block).filter(|&w| block[w] != 0).count();
+    assert!(lit > 0, "the centre's wall is lit by the ore");
 }
 
 /// A window of 3 chunks following the focus over four chunks in a row (chunk 3 air): with the

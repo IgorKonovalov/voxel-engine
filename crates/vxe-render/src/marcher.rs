@@ -2199,6 +2199,14 @@ impl Frame {
         }
     }
 
+    /// The live queue's reach mode ([`crate::bake::BakeQueue::reach_mode`]): whether a chunk
+    /// whose reach crosses the streamer's full radius bakes from the chunks resident full.
+    pub fn set_bake_reach(&mut self, mode: crate::bake::ReachMode) {
+        if let Some(q) = self.bake_queue.as_mut() {
+            q.reach_mode = mode;
+        }
+    }
+
     /// The live queue's digs: the slice's growth while a dig's bricks wait, and whether a dig
     /// that touched lit bricks re-bakes the chunks within the light radius (ring 3).
     pub fn set_bake_digs(&mut self, edit_ms: f64, reach_ring: bool) {
