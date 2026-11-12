@@ -260,8 +260,15 @@ fn store_fallback(head: StoreHead, v: vec3<i32>, face: u32) -> vec4<f32> {
         var sum = vec3<f32>(0.0);
         var n = 0.0;
         for (var f = 0u; f < 6u; f++) {
-            var o = vec3<i32>(0);
-            o[f / 2u] = select(1, -1, (f & 1u) == 0u);
+            // Face f's axis f / 2, toward -1 for an even face; built per component, since a
+            // store through a runtime vector index is not portable.
+            let sign = select(1, -1, (f & 1u) == 0u);
+            let axis = f / 2u;
+            let o = vec3<i32>(
+                select(0, sign, axis == 0u),
+                select(0, sign, axis == 1u),
+                select(0, sign, axis == 2u),
+            );
             let r = store_summary(head, c + o, face);
             sum += r.xyz * r.w;
             n += r.w;
