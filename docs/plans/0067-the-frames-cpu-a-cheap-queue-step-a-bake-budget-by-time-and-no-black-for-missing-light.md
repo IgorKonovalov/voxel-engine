@@ -956,10 +956,10 @@ one in Phase 6.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: where the frame's CPU goes | dev | code and tests landed; slice test read: model not confirmed (loaded); pins and rigs (a), (b) queued; lane stops for the architect | 87bf0d2 (code), readings with this row |
-| 2: a step with nothing to do costs nothing | dev | code as `wip`, A/B held for the architect | 5201ab6 |
-| 2b: the queue does not starve in a flight | dev | not started | |
-| 3: the bake budget per second | dev | not started | |
-| 4: no black for missing light | dev | code and tests as `wip` (summary after the directory, parent table, `temporal.wgsl` chain, `--missing-light`, key 7); readings queued | the Phase 4 `wip` commit (log, Phase 4) |
+| 2: a step with nothing to do costs nothing | dev | A/B read: rig (a) drains (140 to 146 s, 0 withdrawn, 0.07 ms), the `--near 0` bars met, rig (b) `--coarse 0` non-opening p50 missed in `filter` after one fix; held for the architect | 5201ab6, 57484db, bdbe008 (`wip`) |
+| 2b: the queue does not starve in a flight | dev | code as `wip`; readings running (`live/p2b/`) | 04a7e6b (`wip`) |
+| 3: the bake budget per second | dev | code as `wip`; readings queued (`live/p3/`) | c19098f (`wip`) |
+| 4: no black for missing light | dev | code and tests as `wip` (summary after the directory, parent table, `temporal.wgsl` chain, `--missing-light`, key 7); readings queued | edcb9e0 (`wip`) |
 | 5: far light beyond the bake radius | dev | struck by Phase 1's rule: reach-bound 0 of 1121 to 1201 in view waiting at the patch (a bounded world counts 0; log, Phase 4) | |
 | 6: the owner's window | human | not started | |
 | 7: the bars and the close's readings | dev | not started | |
