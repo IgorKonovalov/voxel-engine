@@ -528,6 +528,26 @@ pub mod json {
     }
 }
 
+/// The wall clock now: the fly-through's one clock read, for its printed timings (startup,
+/// edits, frames) and its examples'. The engine crates it drives read no clock.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the fly-through times startup, edits and frames for its printed readings"
+)]
+pub fn now() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
+/// The `p`-th percentile (0 to 100) of `v` by nearest rank; `NaN` when empty. Sorts `v`.
+pub fn percentile(v: &mut [f64], p: f64) -> f64 {
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    v.sort_by(f64::total_cmp);
+    let rank = ((p / 100.0) * v.len() as f64).ceil() as usize;
+    v[rank.clamp(1, v.len()) - 1]
+}
+
 #[cfg(test)]
 mod tests {
     use super::json::{Value, parse};
@@ -669,5 +689,15 @@ mod tests {
         assert_eq!(r.over_100ms, 10);
         assert_eq!(r.wall_ms.map(|p| p.max), Some(1.0));
         assert_eq!(rec.wall.v.capacity(), cap);
+    }
+
+    #[test]
+    fn percentiles_by_nearest_rank() {
+        let mut v: Vec<f64> = (1..=100).rev().map(f64::from).collect();
+        assert_eq!(percentile(&mut v, 50.0), 50.0);
+        assert_eq!(percentile(&mut v, 99.0), 99.0);
+        assert_eq!(percentile(&mut v, 100.0), 100.0);
+        assert_eq!(percentile(&mut [3.0], 95.0), 3.0);
+        assert!(percentile(&mut [], 50.0).is_nan());
     }
 }

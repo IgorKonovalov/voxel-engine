@@ -2,7 +2,6 @@
 //! simulation split's client and server ([`Net`]), the bench's sum, the session's failure, and
 //! the bounded level's coarse grid.
 
-use crate::ScrollSteps;
 use crate::app::ms_since;
 use crate::cave::vault;
 use crate::hud::EditLine;
@@ -315,6 +314,34 @@ pub(crate) fn centre_fixed(p: Vec3) -> Fixed3 {
 
 /// The hit record's flag bit (word 3) for a hit: `hitrec.wgsl`'s `HIT_FOUND`.
 pub(crate) const HIT_FOUND_BIT: u16 = 1;
+
+/// Scroll lines banked into whole steps: smooth or touchpad scrolling delivers a fraction of
+/// a line per frame, which rounding per frame would turn into no step at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollSteps {
+    carry: f32,
+}
+
+impl ScrollSteps {
+    /// Adds a frame's scroll in lines and returns the whole steps banked, rounded toward
+    /// zero; the fraction stays for the next frame.
+    pub fn add(&mut self, delta: f32) -> i64 {
+        self.carry += delta;
+        let steps = self.carry.trunc();
+        self.carry -= steps;
+        steps as i64
+    }
+
+    /// The fraction of a step banked.
+    pub fn carry(&self) -> f32 {
+        self.carry
+    }
+
+    /// Drops the banked fraction.
+    pub fn clear(&mut self) {
+        self.carry = 0.0;
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -961,5 +988,18 @@ mod tests {
                 st.resident_lod
             );
         }
+    }
+
+    #[test]
+    fn scroll_steps_bank_fractions_and_step_toward_zero() {
+        let mut s = ScrollSteps::default();
+        let quarters: Vec<i64> = [0.25; 4].iter().map(|&d| s.add(d)).collect();
+        assert_eq!(quarters, [0, 0, 0, 1]);
+        assert_eq!(s.carry(), 0.0);
+        assert_eq!([s.add(0.3), s.add(-0.3)], [0, 0]);
+        assert_eq!(s.add(2.0), 2);
+        let mut s = ScrollSteps::default();
+        assert_eq!([s.add(-0.6), s.add(-0.6)], [0, -1]);
+        assert!((s.carry() + 0.2).abs() < 1e-6, "carry {}", s.carry());
     }
 }
