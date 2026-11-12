@@ -1,6 +1,6 @@
 # 0045: The structure pass: split the mega files, share the fixtures, and gate their regrowth
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass), 2026-11-11 (order) and
+> **Status:** in-progress (approved 2026-10-22), amended 2026-11-10 (review pass), 2026-11-11 (order) and
 > 2026-11-12 (the architecture review's notes)
 > **Created:** 2026-10-22
 > **Amended 2026-11-12 (architect; the review's notes taken as recommended):** from
@@ -818,7 +818,7 @@ own start commit, not against Plan 0044's close: other commits may land between 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the inventory at the start commit | dev | not started | |
+| 0: the inventory at the start commit | dev | inventory done, "before" readings running; drift found (3 rows), Phase 2 waits for the architect; [`logs/0045.md`](logs/0045.md) | committed with this row |
 | 1: one home for each shared fixture | dev | not started | |
 | 2: `GpuWorld` becomes a directory of owned parts | dev | not started | |
 | 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories | dev | not started | |
