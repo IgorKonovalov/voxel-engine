@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use super::BE;
 use super::snapshot::Snapshot;
-use crate::brick::{Brick, RawBrick, SpareArrays};
+use crate::brick::Brick;
+#[cfg(feature = "bench-internals")]
+use crate::brick::{RawBrick, SpareArrays};
 use crate::coarse::CellCoord;
 use crate::coords::ChunkCoord;
 use crate::material::{AIR, MaterialId};
@@ -14,7 +16,7 @@ use crate::store::{ChunkMap, ChunkReader, World, write};
 use crate::support::{CellKey, CellMap};
 
 /// A brick as [`Compose`] holds it while an op writes it: the packed [`Brick`] itself (the
-/// native path: palette merges and layer words) or decoded [`RawBrick`] ids (the reference
+/// native path: palette merges and layer words) or decoded `RawBrick` ids (the reference
 /// path, written voxel by voxel).
 pub(super) trait Composed: Sized {
     /// The world's brick.
@@ -82,6 +84,7 @@ impl Composed for Brick {
     }
 }
 
+#[cfg(feature = "bench-internals")]
 impl Composed for RawBrick {
     fn of_world(b: &Brick) -> Self {
         RawBrick::of(b)
@@ -156,6 +159,7 @@ impl Composed for RawBrick {
 }
 
 /// Calls `f(i)` for the brick index of every set bit of `shape`, ascending.
+#[cfg(feature = "bench-internals")]
 fn for_each_bit(shape: &[u64; 8], mut f: impl FnMut(usize)) {
     for (z, &w) in shape.iter().enumerate() {
         let mut bits = w;

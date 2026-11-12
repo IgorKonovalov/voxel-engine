@@ -48,6 +48,7 @@ mod walkable;
 pub mod wire;
 
 pub use brick::Brick;
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub use brick::RawBrick;
 pub use census::{BrickCensus, WorldCensus, solid_mask, surface_mask};
@@ -61,6 +62,7 @@ pub use coords::{
 #[cfg(feature = "edit-stages")]
 #[doc(hidden)]
 pub use edit::EditStages;
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub use edit::{CapturedBrickEdit, PlanarWriter, RowWriter, WriterResult};
 pub use edit::{EditError, EditOp, EditResult, Mode};

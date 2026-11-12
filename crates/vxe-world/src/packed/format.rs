@@ -249,7 +249,8 @@ impl Packed {
     }
 
     /// The box moved into a larger planar class (not canonical): for the kernel bench's class
-    /// change figure.
+    /// change figure. Feature `bench-internals`.
+    #[cfg(feature = "bench-internals")]
     #[doc(hidden)]
     pub fn reclass(&self, class: PackedClass) -> Self {
         Self(self.0.reclass(class))

@@ -18,13 +18,19 @@ edit-stages = []
 # `Streamer::oracle_checks`): every one-step queue shift and sweep recomputed the full way and
 # compared. For tests; this crate's own tests turn it on through the dev-dependency below.
 stream-oracle = []
+# The kernel bench's and the reference tests' internals: the row and planar reference writers
+# (`RowWriter`, `PlanarWriter`), `World::apply_capturing` and its `CapturedBrickEdit`,
+# `World::apply_counting_spans`, `RawBrick`, `Packed::reclass` and the collapse ops composed
+# over decoded voxels (`World::*_decoded`). Off by default; this crate's own tests and benches
+# turn it on through the dev-dependency below.
+bench-internals = []
 
 [dependencies]
 
 [dev-dependencies]
 criterion.workspace = true
 # This crate's tests and benches build it with its test features on.
-vxe-world = { workspace = true, features = ["stream-oracle"] }
+vxe-world = { workspace = true, features = ["bench-internals", "stream-oracle"] }
 
 [[bench]]
 name = "edits"

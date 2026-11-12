@@ -51,11 +51,11 @@ impl KernelMode<'_> {
 }
 
 impl Brick {
-    /// Applies `mode` to the voxels of `shape` (from [`shape_words`]) in place, counting each
-    /// changed voxel under its old material through `count`, and leaves the brick canonical.
-    /// Returns the brick-local bounds of the changed voxels, `None` when nothing changed.
-    #[doc(hidden)]
-    pub fn edit_planar(
+    /// Applies `mode` to the voxels of `shape` (from [`shape_words`](super::shape_words)) in
+    /// place, counting each changed voxel under its old material through `count`, and leaves
+    /// the brick canonical. Returns the brick-local bounds of the changed voxels, `None` when
+    /// nothing changed.
+    pub(crate) fn edit_planar(
         &mut self,
         mode: KernelMode<'_>,
         shape: &[u64; LAYERS],

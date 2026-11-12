@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::compose::{Compose, Composed, check_landings};
 use super::snapshot::{Column, Snapshot, Yield};
 use super::{BE, DropResult, bit_of, counts_under, index_of, local_bounds, wide};
-use crate::brick::{Brick, RawBrick};
+use crate::brick::Brick;
+#[cfg(feature = "bench-internals")]
+use crate::brick::RawBrick;
 use crate::coarse::CellCoord;
 use crate::coords::{ChunkCoord, VoxelCoord};
 use crate::edit::EditError;
@@ -67,7 +69,8 @@ impl World {
     }
 
     /// [`World::drop_region`] composed over decoded voxels, written id by id: the reference the
-    /// native path is tested against.
+    /// native path is tested against. Feature `bench-internals`.
+    #[cfg(feature = "bench-internals")]
     #[doc(hidden)]
     pub fn drop_region_decoded(
         &self,
@@ -102,7 +105,8 @@ impl World {
     }
 
     /// [`World::drop_region_through`] composed over decoded voxels, written id by id: the
-    /// reference the native path is tested against.
+    /// reference the native path is tested against. Feature `bench-internals`.
+    #[cfg(feature = "bench-internals")]
     #[doc(hidden)]
     pub fn drop_region_through_decoded(
         &self,

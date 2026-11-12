@@ -6,7 +6,9 @@ use super::compose::{Compose, Composed};
 use super::rubble::RubbleStage;
 use super::snapshot::Snapshot;
 use super::{BE, RemoveResult, counts_under, local_bounds, wide};
-use crate::brick::{Brick, RawBrick};
+use crate::brick::Brick;
+#[cfg(feature = "bench-internals")]
+use crate::brick::RawBrick;
 use crate::coarse::CellCoord;
 use crate::edit::EditError;
 use crate::material::{AIR, MaterialId};
@@ -43,7 +45,8 @@ impl World {
     }
 
     /// [`World::remove_region`] composed over decoded voxels, written id by id: the reference
-    /// the native path is tested against.
+    /// the native path is tested against. Feature `bench-internals`.
+    #[cfg(feature = "bench-internals")]
     #[doc(hidden)]
     pub fn remove_region_decoded(
         &self,
