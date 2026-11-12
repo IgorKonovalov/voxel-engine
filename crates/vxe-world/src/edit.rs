@@ -855,17 +855,8 @@ impl<'a> OpRows<'a> {
 
     /// Brick row `(by, bz)`'s rows inside the bounds: `(ylo, yhi)`, `(zlo, zhi)`.
     fn clipped(&self, by: i64, bz: i64) -> ((i64, i64), (i64, i64)) {
-        let be = i64::from(BRICK_EDGE);
-        (
-            (
-                (by * be).max(self.lo[1]),
-                (by * be + be - 1).min(self.hi[1]),
-            ),
-            (
-                (bz * be).max(self.lo[2]),
-                (bz * be + be - 1).min(self.hi[2]),
-            ),
-        )
+        let (lo, hi) = clip_box([0, by, bz], i64::from(BRICK_EDGE), self.lo, self.hi);
+        ((lo[1], hi[1]), (lo[2], hi[2]))
     }
 
     /// The place in `slabs` of brick row `(by, bz)`'s slab, a brick row of the bounds,
