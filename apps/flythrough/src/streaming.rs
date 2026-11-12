@@ -164,6 +164,29 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
+    /// A stream over `streamer` with `workers` generation workers: the radius rule at its
+    /// configured `r_full`, and every reading empty.
+    pub(crate) fn new(streamer: Streamer, workers: usize) -> Self {
+        Stream {
+            rule: RadiusRule::new(streamer.config().residency.r_full),
+            radius_changes: 0,
+            deferrals: Deferrals::default(),
+            streamer,
+            tick_ms: Vec::new(),
+            awaiting: HashMap::new(),
+            latency_ms: Vec::new(),
+            cpu_ms: Vec::new(),
+            stages_ms: [0.0; 4],
+            light_ms: 0.0,
+            light_evicted: 0,
+            light_refused: 0,
+            light_wait_ms: 0.0,
+            full_residency: false,
+            workers,
+            stats: None,
+        }
+    }
+
     /// Records every chunk `loaded` full with its wanted tick, and moves the ones the mirror
     /// now holds full into `latency_ms`.
     pub(crate) fn track(&mut self, ev: &vxe_world::StreamEvents, mirror: &GpuWorld) {

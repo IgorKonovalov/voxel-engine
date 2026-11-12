@@ -544,6 +544,18 @@ impl Run {
             }
             None => {}
         }
+        self.print_queue_line(gpu);
+        gpu.device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
+    }
+
+    /// The live queue's lines, once a second of wall time in a window or once every 60 frames
+    /// headless: the step line with the store's counters read without waiting, the view line
+    /// and the stage line; then the next line's starting counts.
+    fn print_queue_line(&mut self, gpu: &Gpu) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
         // A line a second: of wall time in a window, of 60 frames headless (a headless frame is
         // 1/60 s of the glide and the exposure).
         let t = ms_since(self.start);
@@ -666,8 +678,6 @@ impl Run {
             self.queue.line_samples = st.total_samples;
             self.queue.line_prepared = st.prepared;
         }
-        gpu.device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
     }
 
     /// The live queue's banner row: the mode, its settings and slice, its order and keys.

@@ -363,138 +363,21 @@ impl Run {
         t0: Instant,
         dt: f32,
     ) -> Flow {
-        self.tick(gpu);
-        if let Some(v) = self.args.glide {
-            let step = if self.args.headless {
-                1.0 / 60.0
-            } else {
-                dt.clamp(0.0, 0.1)
-            };
-            let (forward, _, _) = self.fly.camera.basis();
-            self.fly.camera.position += forward * (v * step);
-        }
-        // The sync's copies are recorded first, so the field pass and the march read
-        // them in the same submission.
-        let mut enc = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let mut stream_ms = None;
-        if self.stream.is_some() {
-            if let Err(e) = self.stream_step(gpu, &mut enc) {
-                return self.mirror_failed(e);
-            }
-            stream_ms = self.stream.as_ref().and_then(|s| s.cpu_ms.last().copied());
-        } else if let Some(gfx) = self.gfx.as_mut() {
-            // The light radius follows the camera on the bounded level too.
-            gfx.mirror.set_focus(voxel_of(self.fly.camera.position));
-            let t = now();
-            match gfx.mirror.sync(&self.world, &gpu.queue, &mut enc) {
-                Ok(s) => {
-                    let ms = ms_since(t);
-                    self.hud.sync = (s, ms);
-                    stream_ms = Some(ms);
-                }
-                Err(e) => return self.mirror_failed(e),
-            }
-        }
-        let mut enc = self.step_bake_queue(gpu, enc);
-        self.pilot_sample();
-        let hud = self.hud.visible;
-        if self.hud.cadence.due(hud) {
-            self.sample_world();
-            self.sample_probes(gpu);
-        }
-        // The steps row reads the last frame's target back before this frame's march
-        // overwrites it: a blocking copy, paid only with the HUD and that view both on.
-        self.hud.steps = None;
-        if hud
-            && self.look.view == ViewMode::Steps
-            && let Some(gfx) = &self.gfx
-        {
-            let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
-            let width = gfx.frame.target().width() as usize;
-            let h = StepHistogram::from_rgba8(&px, width);
-            self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
-        }
-        self.hud.cracks = None;
-        if hud
-            && self.look.view == ViewMode::Cracks
-            && let Some(gfx) = &self.gfx
-        {
-            self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
-        }
-        // With the stats HUD off the overlay draws the mode banner alone while it shows.
-        if !hud {
-            self.write_banner();
-        }
-        if hud {
-            self.update_hud(gpu);
-        } else if let Some(gfx) = self.gfx.as_mut() {
-            gfx.hud.set_lines(
-                &gpu.queue,
-                &self.hud.banner,
-                &[HudColour::Yellow; hud::BANNER_ROWS + 1],
-            );
-            gfx.hud.set_samples(&gpu.queue, &[], 0.0);
-        }
+        let (mut enc, stream_ms, hud) = match self.prepare_frame(gpu, dt) {
+            Ok(v) => v,
+            Err(flow) => return flow,
+        };
         let flying = self
             .pilot
             .as_ref()
             .is_some_and(|p| matches!(p.leg, Leg::Out | Leg::Back));
-
-        if let Some(n) = self.args.lamp_toggle
-            && self.frame > 0
-            && self.frame.is_multiple_of(n)
-        {
-            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
+        if self.gfx.is_none() {
+            return Flow::Exit;
         }
-        if self.args.fade_reading && self.modes.lighting.lamp != fade_lamp(self.frame) {
-            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
-        }
+        self.configure_frame(gpu, dt, hud);
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
-        if std::mem::take(&mut self.upscaler_changed) {
-            let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
-            let output = gfx.frame.output_size();
-            gfx.frame.set_jitter(&gpu.device, jitter);
-            gfx.frame.set_upscaler_kind(&gpu.device, kind);
-            gfx.frame
-                .set_sizes(&gpu.device, scale.internal(output), output);
-        }
-        if std::mem::take(&mut self.sharpen_changed) {
-            gfx.frame.set_sharpness(&gpu.queue, self.args.sharpen);
-            if self.upscaler.mode == hud::UpscalerMode::Fsr2 {
-                let (kind, _, _) = self.args.upscaler_settings(self.upscaler.mode);
-                gfx.frame.set_upscaler_kind(&gpu.device, kind);
-            }
-        }
-        gfx.frame.set_lighting(self.modes.lighting);
-        // Headless frames step the exposure by exactly 1/60 s; the window by its measured
-        // interval, at most 0.1 s, so a hitch adapts by no more than that.
-        gfx.frame.set_dt(if self.args.headless {
-            1.0 / 60.0
-        } else {
-            dt.clamp(0.0, 0.1)
-        });
-        gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
-        gfx.frame.set_look(self.look);
-        // The temporal pass counts the store's reads only for a reader of them: the HUD's
-        // store row and `--read-missing`.
-        gfx.frame.set_count_store(hud || self.args.read_missing);
-        if gfx.frame.missing_light() != self.args.missing_light {
-            gfx.frame
-                .set_missing_light(&gpu.queue, self.args.missing_light);
-        }
-        let scale = if self.modes.pulse {
-            ore_pulse(ms_since(self.start))
-        } else {
-            1.0
-        };
-        // The probes see the pulse at its average, so it opens no light-change window; the
-        // pixels' light keeps its full swing.
-        gfx.frame
-            .set_emission_scales(&gpu.queue, crate::cave::ORE, scale, ORE_PULSE_MEAN);
         let params = gfx.frame.params(&gfx.mirror, &self.fly.camera, &self.light);
         let timer = gfx.timer.as_ref().filter(|_| {
             self.samples.is_some()
@@ -564,11 +447,7 @@ impl Run {
         );
 
         if self.frame == 0 {
-            // The first frame counts once the GPU has finished it.
-            diag(format_args!("frame 0: waiting for the GPU"));
-            let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-            diag(format_args!("frame 0: the GPU finished"));
-            println!("first frame after {:.0} ms", ms_since(self.start));
+            wait_first_frame(gpu, self.start);
         }
         // The timers hand over their newest finished set without waiting (a frame or two old),
         // `None` on a frame with nothing new. `--lamp-toggle` and `--fade-reading` file each set
@@ -630,12 +509,232 @@ impl Run {
         {
             p.field.push(field_items, field_cpu_ms, field_gpu_ms);
         }
+        self.push_samples(gpu, cpu_ms, gpu_ms, pass_ms.as_deref(), hud_ms);
+        self.frame += 1;
+        if self.args.fade_reading && self.frame >= FADE_END {
+            for line in fade_report(&self.fade) {
+                println!("{line}");
+            }
+            return Flow::Exit;
+        }
+        if self.args.frames.is_some_and(|n| self.frame >= n) {
+            self.print_exit_readings(gpu);
+            return Flow::Exit;
+        }
+        Flow::Continue
+    }
+
+    /// The frame's work before the encode: the tick, the glide, the mirror's sync (streamed or
+    /// bounded) recorded into a new encoder, the live queue's step, the autopilot's sample, the
+    /// HUD's samples and rows (or the banner alone), and the lamp's scripted presses. Gives the
+    /// encoder, the sync's CPU time and whether the stats HUD shows; a failed sync gives the
+    /// `Flow` that `mirror_failed` ends the session with.
+    fn prepare_frame(
+        &mut self,
+        gpu: &Gpu,
+        dt: f32,
+    ) -> Result<(wgpu::CommandEncoder, Option<f64>, bool), Flow> {
+        self.tick(gpu);
+        if let Some(v) = self.args.glide {
+            let step = if self.args.headless {
+                1.0 / 60.0
+            } else {
+                dt.clamp(0.0, 0.1)
+            };
+            let (forward, _, _) = self.fly.camera.basis();
+            self.fly.camera.position += forward * (v * step);
+        }
+        // The sync's copies are recorded first, so the field pass and the march read
+        // them in the same submission.
+        let mut enc = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut stream_ms = None;
+        if self.stream.is_some() {
+            if let Err(e) = self.stream_step(gpu, &mut enc) {
+                return Err(self.mirror_failed(e));
+            }
+            stream_ms = self.stream.as_ref().and_then(|s| s.cpu_ms.last().copied());
+        } else if let Some(gfx) = self.gfx.as_mut() {
+            // The light radius follows the camera on the bounded level too.
+            gfx.mirror.set_focus(voxel_of(self.fly.camera.position));
+            let t = now();
+            match gfx.mirror.sync(&self.world, &gpu.queue, &mut enc) {
+                Ok(s) => {
+                    let ms = ms_since(t);
+                    self.hud.sync = (s, ms);
+                    stream_ms = Some(ms);
+                }
+                Err(e) => return Err(self.mirror_failed(e)),
+            }
+        }
+        let enc = self.step_bake_queue(gpu, enc);
+        self.pilot_sample();
+        let hud = self.hud.visible;
+        if self.hud.cadence.due(hud) {
+            self.sample_world();
+            self.sample_probes(gpu);
+        }
+        // The steps row reads the last frame's target back before this frame's march
+        // overwrites it: a blocking copy, paid only with the HUD and that view both on.
+        self.hud.steps = None;
+        if hud
+            && self.look.view == ViewMode::Steps
+            && let Some(gfx) = &self.gfx
+        {
+            let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+            let width = gfx.frame.target().width() as usize;
+            let h = StepHistogram::from_rgba8(&px, width);
+            self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
+        }
+        self.hud.cracks = None;
+        if hud
+            && self.look.view == ViewMode::Cracks
+            && let Some(gfx) = &self.gfx
+        {
+            self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
+        }
+        // With the stats HUD off the overlay draws the mode banner alone while it shows.
+        if !hud {
+            self.write_banner();
+        }
+        if hud {
+            self.update_hud(gpu);
+        } else if let Some(gfx) = self.gfx.as_mut() {
+            gfx.hud.set_lines(
+                &gpu.queue,
+                &self.hud.banner,
+                &[HudColour::Yellow; hud::BANNER_ROWS + 1],
+            );
+            gfx.hud.set_samples(&gpu.queue, &[], 0.0);
+        }
+        if let Some(n) = self.args.lamp_toggle
+            && self.frame > 0
+            && self.frame.is_multiple_of(n)
+        {
+            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
+        }
+        if self.args.fade_reading && self.modes.lighting.lamp != fade_lamp(self.frame) {
+            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
+        }
+        Ok((enc, stream_ms, hud))
+    }
+
+    /// The frame's settings ahead of its `params`: an upscaler or sharpening change, the
+    /// lighting modes, the exposure's step, the resolution, the look, the store's read count,
+    /// the missing light and the ore's emission pulse.
+    fn configure_frame(&mut self, gpu: &Gpu, dt: f32, hud: bool) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if std::mem::take(&mut self.upscaler_changed) {
+            let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
+            let output = gfx.frame.output_size();
+            gfx.frame.set_jitter(&gpu.device, jitter);
+            gfx.frame.set_upscaler_kind(&gpu.device, kind);
+            gfx.frame
+                .set_sizes(&gpu.device, scale.internal(output), output);
+        }
+        if std::mem::take(&mut self.sharpen_changed) {
+            gfx.frame.set_sharpness(&gpu.queue, self.args.sharpen);
+            if self.upscaler.mode == hud::UpscalerMode::Fsr2 {
+                let (kind, _, _) = self.args.upscaler_settings(self.upscaler.mode);
+                gfx.frame.set_upscaler_kind(&gpu.device, kind);
+            }
+        }
+        gfx.frame.set_lighting(self.modes.lighting);
+        // Headless frames step the exposure by exactly 1/60 s; the window by its measured
+        // interval, at most 0.1 s, so a hitch adapts by no more than that.
+        gfx.frame.set_dt(if self.args.headless {
+            1.0 / 60.0
+        } else {
+            dt.clamp(0.0, 0.1)
+        });
+        gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
+        gfx.frame.set_look(self.look);
+        // The temporal pass counts the store's reads only for a reader of them: the HUD's
+        // store row and `--read-missing`.
+        gfx.frame.set_count_store(hud || self.args.read_missing);
+        if gfx.frame.missing_light() != self.args.missing_light {
+            gfx.frame
+                .set_missing_light(&gpu.queue, self.args.missing_light);
+        }
+        let scale = if self.modes.pulse {
+            ore_pulse(ms_since(self.start))
+        } else {
+            1.0
+        };
+        // The probes see the pulse at its average, so it opens no light-change window; the
+        // pixels' light keeps its full swing.
+        gfx.frame
+            .set_emission_scales(&gpu.queue, crate::cave::ORE, scale, ORE_PULSE_MEAN);
+    }
+
+    /// `--frames`' readings at the exit: the walk's foot, the coarse grid, the cracks or steps
+    /// view's line, the mirror's belt, the lamp toggle's windows and the stats HUD's rows.
+    fn print_exit_readings(&mut self, gpu: &Gpu) {
+        if let Some(w) = &self.walk {
+            println!(
+                "walk: foot at {:?} (fixed), {}",
+                w.state.foot.0,
+                if w.state.grounded {
+                    "grounded"
+                } else {
+                    "airborne"
+                }
+            );
+        }
+        if self.coarse.is_some() {
+            println!("{}", self.coarse_line());
+        }
+        if self.look.view == ViewMode::Cracks
+            && let Some(gfx) = &self.gfx
+        {
+            println!("{}", hud::cracks_row(&crack_shares(gpu, &gfx.frame)));
+        }
+        if self.look.view == ViewMode::Steps
+            && let Some(gfx) = &self.gfx
+        {
+            let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+            let width = gfx.frame.target().width() as usize;
+            println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
+            let shadow =
+                vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.irradiance());
+            println!(
+                "{}",
+                shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
+            );
+        }
+        if let Some(gfx) = &self.gfx {
+            println!("mirror: {}", belt_line(&gfx.mirror));
+        }
+        if let Some(n) = self.args.lamp_toggle {
+            println!("{}", window_line(n, &self.window_ms));
+        }
+        self.sample_world();
+        self.sample_probes(gpu);
+        self.refresh_hud_stats(self.gfx.as_ref().map(GfxSample::of));
+        let mut stats = self.hud.stats.clone();
+        stats.world.age_frames = 0;
+        println!("hud:\n{stats}");
+    }
+
+    /// Files this frame's times into the `F1` samples, when they are being taken, and prints
+    /// their report once they hold `SAMPLES` frames.
+    fn push_samples(
+        &mut self,
+        gpu: &Gpu,
+        cpu_ms: f64,
+        gpu_ms: Option<f64>,
+        pass_ms: Option<&[f64]>,
+        hud_ms: Option<f64>,
+    ) {
         if let Some(s) = self.samples.as_mut() {
             s.cpu_ms.push(cpu_ms);
             if let Some(ms) = gpu_ms {
                 s.gpu_ms.push(ms);
             }
-            if let Some(p) = &pass_ms {
+            if let Some(p) = pass_ms {
                 s.pass_ms.resize(p.len(), Vec::new());
                 for (v, &ms) in s.pass_ms.iter_mut().zip(p) {
                     v.push(ms);
@@ -649,63 +748,14 @@ impl Run {
                 self.report(gpu, s);
             }
         }
-        self.frame += 1;
-        if self.args.fade_reading && self.frame >= FADE_END {
-            for line in fade_report(&self.fade) {
-                println!("{line}");
-            }
-            return Flow::Exit;
-        }
-        if self.args.frames.is_some_and(|n| self.frame >= n) {
-            if let Some(w) = &self.walk {
-                println!(
-                    "walk: foot at {:?} (fixed), {}",
-                    w.state.foot.0,
-                    if w.state.grounded {
-                        "grounded"
-                    } else {
-                        "airborne"
-                    }
-                );
-            }
-            if self.coarse.is_some() {
-                println!("{}", self.coarse_line());
-            }
-            if self.look.view == ViewMode::Cracks
-                && let Some(gfx) = &self.gfx
-            {
-                println!("{}", hud::cracks_row(&crack_shares(gpu, &gfx.frame)));
-            }
-            if self.look.view == ViewMode::Steps
-                && let Some(gfx) = &self.gfx
-            {
-                let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
-                let width = gfx.frame.target().width() as usize;
-                println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
-                let shadow = vxe_render::debug::read_rgba16f(
-                    &gpu.device,
-                    &gpu.queue,
-                    gfx.frame.irradiance(),
-                );
-                println!(
-                    "{}",
-                    shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
-                );
-            }
-            if let Some(gfx) = &self.gfx {
-                println!("mirror: {}", belt_line(&gfx.mirror));
-            }
-            if let Some(n) = self.args.lamp_toggle {
-                println!("{}", window_line(n, &self.window_ms));
-            }
-            self.sample_world();
-            self.sample_probes(gpu);
-            self.refresh_hud_stats(self.gfx.as_ref().map(GfxSample::of));
-            let mut stats = self.hud.stats.clone();
-            stats.world.age_frames = 0;
-            println!("hud:\n{stats}");
-            return Flow::Exit;
-        }
-        Flow::Continue
     }
+}
+
+/// Waits for the GPU to finish the first frame, which counts from then: prints when, from the
+/// session's `start`.
+fn wait_first_frame(gpu: &Gpu, start: Instant) {
+    diag(format_args!("frame 0: waiting for the GPU"));
+    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+    diag(format_args!("frame 0: the GPU finished"));
+    println!("first frame after {:.0} ms", ms_since(start));
 }

@@ -78,6 +78,45 @@ pub(crate) struct Autopilot {
     pub(crate) generated_at_takeoff: u64,
 }
 
+impl Autopilot {
+    /// An autopilot starting at `start` from `origin`, settling first, with its near ring over
+    /// `r_full` and every reading empty.
+    pub(crate) fn new(start: Instant, origin: Vec3, r_full: i32) -> Self {
+        Autopilot {
+            leg: Leg::Settle,
+            leg_start: start,
+            settle: SettleClock::default(),
+            origin,
+            touched: Vec::new(),
+            hash: 0,
+            near: NearRing::new(r_full),
+            flight_frames: 0,
+            flight_span_ms: None,
+            unready_frames: 0,
+            peak_belt: 0,
+            gpu_ms: Vec::new(),
+            cpu_ms: Vec::new(),
+            stages_ms: Default::default(),
+            queue_ms: Vec::new(),
+            light_ms: Vec::new(),
+            pass_ms: Vec::new(),
+            peak_light: 0,
+            light_evicted: 0,
+            light_refused: 0,
+            light_wait_ms: 0.0,
+            field: FieldSamples::default(),
+            latency_from: 0,
+            peak_mirror: 0,
+            peak_allocated: 0,
+            peak_pressure: 0.0,
+            peak_terms: [0.0; 2],
+            peak_resident: 0,
+            peak_persisted: 0,
+            generated_at_takeoff: 0,
+        }
+    }
+}
+
 /// The chunk offsets the unready-near count checks: every offset within `r_full - 2` chunks,
 /// recomputed when the streamer's `r_full` changes (the pressure rule's `set_radii`).
 pub(crate) struct NearRing {

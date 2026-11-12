@@ -1,11 +1,12 @@
 //! The autopilot's steps in the run: the flight, its samples and the report.
 
 use crate::app::{ms_since, peak_rss_bytes};
-use crate::autopilot::{Leg, PILOT_LEG_SECS, PILOT_RADIUS, PILOT_REACH, PILOT_SPEED};
+use crate::autopilot::{Autopilot, Leg, PILOT_LEG_SECS, PILOT_RADIUS, PILOT_REACH, PILOT_SPEED};
 use crate::edits::{centre_fixed, edit_line, voxel_of};
 use crate::now;
 use crate::run::Run;
 use crate::run::hud_feed::{belt_line, probe_bytes_line};
+use crate::setup::Gfx;
 use crate::streaming::pressure_terms;
 use crate::{chunks_hash, percentile};
 use vxe_app::Flow;
@@ -303,39 +304,7 @@ impl Run {
                 f.streak
             );
         }
-        if p.gpu_ms.is_empty() {
-            println!("autopilot: march GPU n/a (no TIMESTAMP_QUERY)");
-        } else {
-            let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
-            println!(
-                "autopilot: march GPU at {w}x{h} over the flight: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames",
-                percentile(&mut p.gpu_ms, 50.0),
-                percentile(&mut p.gpu_ms, 99.0),
-                percentile(&mut p.gpu_ms, 100.0),
-                p.gpu_ms.len()
-            );
-            for (name, v) in FRAME_PASSES.iter().zip(&mut p.pass_ms) {
-                println!(
-                    "autopilot: pass {name}: p50 {:.3} ms, p99 {:.3} ms",
-                    percentile(v, 50.0),
-                    percentile(v, 99.0)
-                );
-            }
-        }
-        let [iw, ih] = gfx.frame.internal_size();
-        println!(
-            "autopilot: frame targets {} B at {}x{} from {iw}x{ih} ({} lighting)",
-            gfx.frame.frame_bytes(),
-            gfx.frame.target().width(),
-            gfx.frame.target().height(),
-            gfx.frame.resolution().name()
-        );
-        println!("autopilot: {}", probe_bytes_line(gfx.frame.probes()));
-        if !p.field.items.is_empty() {
-            for line in p.field.lines() {
-                println!("{line}");
-            }
-        }
+        pilot_gpu_lines(p, gfx);
         let generated = st.generated_chunks - p.generated_at_takeoff;
         let secs = 2.0 * PILOT_LEG_SECS + (now() - p.leg_start).as_secs_f64();
         println!(
@@ -343,5 +312,43 @@ impl Run {
             stream.workers,
             generated as f64 * 262_144.0 / secs / stream.workers as f64
         );
+    }
+}
+
+/// Prints the autopilot's GPU readings over the flight: the march's time, each pass's, the
+/// frame targets' bytes and the probe volume's line, and the field pass's lines when it ran.
+fn pilot_gpu_lines(p: &mut Autopilot, gfx: &Gfx) {
+    if p.gpu_ms.is_empty() {
+        println!("autopilot: march GPU n/a (no TIMESTAMP_QUERY)");
+    } else {
+        let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
+        println!(
+            "autopilot: march GPU at {w}x{h} over the flight: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames",
+            percentile(&mut p.gpu_ms, 50.0),
+            percentile(&mut p.gpu_ms, 99.0),
+            percentile(&mut p.gpu_ms, 100.0),
+            p.gpu_ms.len()
+        );
+        for (name, v) in FRAME_PASSES.iter().zip(&mut p.pass_ms) {
+            println!(
+                "autopilot: pass {name}: p50 {:.3} ms, p99 {:.3} ms",
+                percentile(v, 50.0),
+                percentile(v, 99.0)
+            );
+        }
+    }
+    let [iw, ih] = gfx.frame.internal_size();
+    println!(
+        "autopilot: frame targets {} B at {}x{} from {iw}x{ih} ({} lighting)",
+        gfx.frame.frame_bytes(),
+        gfx.frame.target().width(),
+        gfx.frame.target().height(),
+        gfx.frame.resolution().name()
+    );
+    println!("autopilot: {}", probe_bytes_line(gfx.frame.probes()));
+    if !p.field.items.is_empty() {
+        for line in p.field.lines() {
+            println!("{line}");
+        }
     }
 }

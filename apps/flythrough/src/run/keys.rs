@@ -311,6 +311,13 @@ impl Run {
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
+        self.audio_keys(input);
+    }
+
+    /// The audio's keys, when it runs: `H` (or the pad's `East`) knocks, `T` a looping pulse,
+    /// `J` a looping hum, `E` and `Y` the echoes and the tail, and the mix's trims, pre-delay,
+    /// glide and direct delay, each change sent to the output and printed.
+    pub(crate) fn audio_keys(&mut self, input: &Input) {
         if let Some(audio) = self.audio.as_mut() {
             if input.pressed(KeyCode::KeyH) || input.pad_pressed(PadButton::East) {
                 audio.play("knock", PlayParams::at);

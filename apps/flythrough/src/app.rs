@@ -3,7 +3,7 @@
 
 use crate::ScrollSteps;
 use crate::audio::{Audio, RoomProbe};
-use crate::autopilot::{Autopilot, Leg, NearRing, SettleClock};
+use crate::autopilot::Autopilot;
 use crate::cli::Args;
 use crate::edits::{Coarse, DIG_RADIUS, Failure, Net, voxel_of};
 use crate::fly::{Fly, Walk};
@@ -12,12 +12,11 @@ use crate::now;
 use crate::pad::Pad;
 use crate::path::PathPlayer;
 use crate::report::Recorder;
-use crate::run::hud_feed::{FieldSamples, Hud};
+use crate::run::hud_feed::Hud;
 use crate::run::queue::QueueRun;
 use crate::run::{Run, teardown_stage};
 use crate::setup::{castle_banner, shell_config};
-use crate::streaming::{Deferrals, RadiusRule, Stream};
-use std::collections::HashMap;
+use crate::streaming::Stream;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -116,60 +115,11 @@ impl App for Flythrough {
                 Pending::Failed => return (wgpu::Features::empty(), wgpu::Limits::default()),
                 Pending::Stream(boxed) => {
                     let (world, streamer, workers) = *boxed;
-                    (
-                        world,
-                        Some(Stream {
-                            rule: RadiusRule::new(streamer.config().residency.r_full),
-                            radius_changes: 0,
-                            deferrals: Deferrals::default(),
-                            streamer,
-                            tick_ms: Vec::new(),
-                            awaiting: HashMap::new(),
-                            latency_ms: Vec::new(),
-                            cpu_ms: Vec::new(),
-                            stages_ms: [0.0; 4],
-                            light_ms: 0.0,
-                            light_evicted: 0,
-                            light_refused: 0,
-                            light_wait_ms: 0.0,
-                            full_residency: false,
-                            workers,
-                            stats: None,
-                        }),
-                    )
+                    (world, Some(Stream::new(streamer, workers)))
                 }
             };
-            let pilot = self.args.autopilot.then(|| Autopilot {
-                leg: Leg::Settle,
-                leg_start: self.start,
-                settle: SettleClock::default(),
-                origin: self.camera.position,
-                touched: Vec::new(),
-                hash: 0,
-                near: NearRing::new(self.args.residency.r_full),
-                flight_frames: 0,
-                flight_span_ms: None,
-                unready_frames: 0,
-                peak_belt: 0,
-                gpu_ms: Vec::new(),
-                cpu_ms: Vec::new(),
-                stages_ms: Default::default(),
-                queue_ms: Vec::new(),
-                light_ms: Vec::new(),
-                pass_ms: Vec::new(),
-                peak_light: 0,
-                light_evicted: 0,
-                light_refused: 0,
-                light_wait_ms: 0.0,
-                field: FieldSamples::default(),
-                latency_from: 0,
-                peak_mirror: 0,
-                peak_allocated: 0,
-                peak_pressure: 0.0,
-                peak_terms: [0.0; 2],
-                peak_resident: 0,
-                peak_persisted: 0,
-                generated_at_takeoff: 0,
+            let pilot = self.args.autopilot.then(|| {
+                Autopilot::new(self.start, self.camera.position, self.args.residency.r_full)
             });
             let coarse = stream.is_none().then(|| Coarse::build(&world));
             let world = Arc::new(world);

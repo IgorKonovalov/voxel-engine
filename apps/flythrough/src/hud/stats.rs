@@ -561,13 +561,6 @@ impl HudStats {
             out.write_fmt(args)?;
             out.write_char('\n')
         };
-        let over = |v: f32, line: f32| {
-            if v > line {
-                HudColour::Yellow
-            } else {
-                HudColour::White
-            }
-        };
         let f = self.frame_ms;
         let frame_colour = if f.max > 2.0 * FRAME_LINE_MS {
             HudColour::Red
@@ -608,82 +601,7 @@ impl HudStats {
             format_args!("gpu march {}  hud {}", Ms(self.march_ms), Ms(self.hud_ms)),
         )?;
         if let Some(l) = &self.lighting {
-            // Yellow when the lighting passes (light, temporal and the probe update and gather)
-            // exceed the lighting line or the filter the denoise line.
-            let ms = |name: &str| {
-                l.passes
-                    .iter()
-                    .filter(|(n, _)| *n == name)
-                    .map(|&(_, v)| v)
-                    .sum::<f32>()
-            };
-            let colour = if ms("light") + ms("temporal") + ms("probes") + ms("gather")
-                > LIGHTING_LINE_MS
-                || ms("atrous") > DENOISE_LINE_MS
-            {
-                HudColour::Yellow
-            } else {
-                HudColour::White
-            };
-            out.write_str("gpu")?;
-            // FSR 2's passes are summed on the upscale row instead.
-            for (name, v) in l.passes.iter().filter(|(n, _)| !n.starts_with("fsr2 ")) {
-                write!(out, " {name} {v:.2}")?;
-            }
-            out.write_str(" ms")?;
-            row(out, colour, format_args!(""))?;
-            // Written piece by piece into the rows' buffer: nothing allocated.
-            write!(out, "lights {} samples", l.light_samples)?;
-            if let Some(p) = l.live_probes {
-                write!(out, ", {p} probes live")?;
-            }
-            if let Some(s) = l.store {
-                write!(
-                    out,
-                    ", store {} {:.1} MB missing {}",
-                    s.chunks,
-                    s.bytes as f64 / 1e6,
-                    s.missing
-                )?;
-                if !l.missing_light.is_empty() {
-                    write!(
-                        out,
-                        " (light {}: fallback {} black {})",
-                        l.missing_light, s.fallback, s.still_black
-                    )?;
-                }
-                if s.brick_reads > 0 {
-                    write!(out, " brick level {}", s.brick_reads)?;
-                }
-                out.write_str(&l.store_note)?;
-            }
-            row(out, HudColour::White, format_args!("; {}", l.modes))?;
-            if let Some([[iw, ih], [ow, oh]]) = l.upscale {
-                // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
-                // upscale line. FSR 2's passes, when they ran, read as one total.
-                let fsr: f32 = l
-                    .passes
-                    .iter()
-                    .filter(|(n, _)| n.starts_with("fsr2 "))
-                    .map(|&(_, v)| v)
-                    .sum();
-                let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
-                if fsr > 0.0 {
-                    write!(out, "fsr2 {fsr:.2} ms")?;
-                } else {
-                    write!(
-                        out,
-                        "upscale {:.2} sharpen {:.2} ms",
-                        ms("upscale"),
-                        ms("sharpen")
-                    )?;
-                }
-                row(
-                    out,
-                    over(post, UPSCALE_LINE_MS),
-                    format_args!(", {iw}x{ih} to {ow}x{oh}"),
-                )?;
-            }
+            lighting_rows(l, out, &mut row)?;
         }
         if let Some(e) = &self.exposure {
             row(out, HudColour::White, format_args!("{e}"))?;
@@ -694,6 +612,51 @@ impl HudStats {
         if let Some(q) = &self.queue {
             row(out, HudColour::White, format_args!("{q}"))?;
         }
+        self.memory_rows(out, &mut row)?;
+        let [x, y, z] = self.camera;
+        let [cx, cy, cz] = self.chunk;
+        let mode = match self.mode {
+            Mode::Fly => "fly",
+            Mode::Walk => "walk",
+        };
+        row(
+            out,
+            HudColour::White,
+            format_args!("{mode} at {x:.1} {y:.1} {z:.1} (voxels), chunk {cx} {cy} {cz}"),
+        )?;
+        if let Some(c) = self.cutaway {
+            row(out, HudColour::White, format_args!("cutaway ({c})"))?;
+        }
+        if let Some(s) = self.steps {
+            row(
+                out,
+                HudColour::White,
+                format_args!(
+                    "steps per ray mean {:.2} p99 {} block-max mean {:.2}; loads mean {:.2}, pool {:.2}",
+                    s.mean_steps, s.p99_steps, s.block_max_mean, s.mean_loads, s.mean_pool_reads
+                ),
+            )?;
+        }
+        if let Some(c) = self.cracks {
+            row(out, HudColour::White, format_args!("{}", cracks_row(&c)))?;
+        }
+        if let Some(p) = &self.pad {
+            row(out, HudColour::White, format_args!("{p}"))?;
+        }
+        row(
+            out,
+            HudColour::White,
+            format_args!("format {} us", self.format_us),
+        )
+    }
+
+    /// The upload, the mirror, its pressure, the world's counts, the RSS and the last edit,
+    /// through `row`.
+    fn memory_rows(
+        &self,
+        out: &mut String,
+        row: &mut impl FnMut(&mut String, HudColour, fmt::Arguments<'_>) -> fmt::Result,
+    ) -> fmt::Result {
         row(
             out,
             over(self.upload_ms, UPLOAD_LINE_MS),
@@ -765,42 +728,102 @@ impl HudStats {
             Some(e) => row(out, HudColour::White, format_args!("{e}"))?,
             None => row(out, HudColour::White, format_args!("no edit yet"))?,
         }
-        let [x, y, z] = self.camera;
-        let [cx, cy, cz] = self.chunk;
-        let mode = match self.mode {
-            Mode::Fly => "fly",
-            Mode::Walk => "walk",
-        };
-        row(
+        Ok(())
+    }
+}
+
+/// Yellow when `v` is over `line`, else white.
+fn over(v: f32, line: f32) -> HudColour {
+    if v > line {
+        HudColour::Yellow
+    } else {
+        HudColour::White
+    }
+}
+
+/// The lighting's rows through `row`: the GPU passes, the lights and the light store, and the
+/// upscale row when it ran.
+fn lighting_rows(
+    l: &LightingRow,
+    out: &mut String,
+    row: &mut impl FnMut(&mut String, HudColour, fmt::Arguments<'_>) -> fmt::Result,
+) -> fmt::Result {
+    // Yellow when the lighting passes (light, temporal and the probe update and gather)
+    // exceed the lighting line or the filter the denoise line.
+    let ms = |name: &str| {
+        l.passes
+            .iter()
+            .filter(|(n, _)| *n == name)
+            .map(|&(_, v)| v)
+            .sum::<f32>()
+    };
+    let colour = if ms("light") + ms("temporal") + ms("probes") + ms("gather") > LIGHTING_LINE_MS
+        || ms("atrous") > DENOISE_LINE_MS
+    {
+        HudColour::Yellow
+    } else {
+        HudColour::White
+    };
+    out.write_str("gpu")?;
+    // FSR 2's passes are summed on the upscale row instead.
+    for (name, v) in l.passes.iter().filter(|(n, _)| !n.starts_with("fsr2 ")) {
+        write!(out, " {name} {v:.2}")?;
+    }
+    out.write_str(" ms")?;
+    row(out, colour, format_args!(""))?;
+    // Written piece by piece into the rows' buffer: nothing allocated.
+    write!(out, "lights {} samples", l.light_samples)?;
+    if let Some(p) = l.live_probes {
+        write!(out, ", {p} probes live")?;
+    }
+    if let Some(s) = l.store {
+        write!(
             out,
-            HudColour::White,
-            format_args!("{mode} at {x:.1} {y:.1} {z:.1} (voxels), chunk {cx} {cy} {cz}"),
+            ", store {} {:.1} MB missing {}",
+            s.chunks,
+            s.bytes as f64 / 1e6,
+            s.missing
         )?;
-        if let Some(c) = self.cutaway {
-            row(out, HudColour::White, format_args!("cutaway ({c})"))?;
-        }
-        if let Some(s) = self.steps {
-            row(
+        if !l.missing_light.is_empty() {
+            write!(
                 out,
-                HudColour::White,
-                format_args!(
-                    "steps per ray mean {:.2} p99 {} block-max mean {:.2}; loads mean {:.2}, pool {:.2}",
-                    s.mean_steps, s.p99_steps, s.block_max_mean, s.mean_loads, s.mean_pool_reads
-                ),
+                " (light {}: fallback {} black {})",
+                l.missing_light, s.fallback, s.still_black
             )?;
         }
-        if let Some(c) = self.cracks {
-            row(out, HudColour::White, format_args!("{}", cracks_row(&c)))?;
+        if s.brick_reads > 0 {
+            write!(out, " brick level {}", s.brick_reads)?;
         }
-        if let Some(p) = &self.pad {
-            row(out, HudColour::White, format_args!("{p}"))?;
+        out.write_str(&l.store_note)?;
+    }
+    row(out, HudColour::White, format_args!("; {}", l.modes))?;
+    if let Some([[iw, ih], [ow, oh]]) = l.upscale {
+        // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
+        // upscale line. FSR 2's passes, when they ran, read as one total.
+        let fsr: f32 = l
+            .passes
+            .iter()
+            .filter(|(n, _)| n.starts_with("fsr2 "))
+            .map(|&(_, v)| v)
+            .sum();
+        let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
+        if fsr > 0.0 {
+            write!(out, "fsr2 {fsr:.2} ms")?;
+        } else {
+            write!(
+                out,
+                "upscale {:.2} sharpen {:.2} ms",
+                ms("upscale"),
+                ms("sharpen")
+            )?;
         }
         row(
             out,
-            HudColour::White,
-            format_args!("format {} us", self.format_us),
-        )
+            over(post, UPSCALE_LINE_MS),
+            format_args!(", {iw}x{ih} to {ow}x{oh}"),
+        )?;
     }
+    Ok(())
 }
 
 impl fmt::Display for HudStats {
