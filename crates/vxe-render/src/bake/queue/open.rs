@@ -15,54 +15,9 @@ impl BakeQueue {
         let gpu = run.gpu;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let order = self.order;
-        let near = self.near;
-        self.sync_pool(run, store);
-        // The kept order is scored again when a candidate joined or changed class, or the view
-        // the scores read changed; else it is walked as it stands.
-        let key = OrderView {
-            eye,
-            forward: view.forward.map(f32::to_bits),
-            half_angle: view.half_angle.to_bits(),
-            order,
-            near,
-        };
-        if self.order_dirty || self.order_view != Some(key) {
-            let cands: Vec<Cand> = self
-                .pool
-                .iter()
-                .map(|(&c, &(class, coarse))| cand_of(c, class, coarse, eye, view, order, near))
-                .collect();
-            self.ordered = Ordered::new(cands);
-            self.order_dirty = false;
-            self.order_view = Some(key);
-            self.stats.rebuilt += 1;
-        }
-        self.laps.lap(S_CANDIDATES);
-        let census = self.census_every_opening || std::mem::take(&mut self.census_due);
+        self.score_and_census(run, store, view, eye);
         let steps = self.steps;
         let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
-        if census {
-            let t = stopwatch();
-            self.entered
-                .retain(|c, _| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c)));
-            let cands: Vec<Cand> = self
-                .ordered
-                .all()
-                .filter(|k| self.pool.contains_key(&k.c))
-                .copied()
-                .collect();
-            self.view_census(eye, view, &cands, gpu.light_radius());
-            self.view_reach_census(run, eye, view, &cands);
-            self.stats.unbaked = cands
-                .iter()
-                .filter(|k| k.class == 0 && !recent(self.blocked.get(&k.c)))
-                .count() as u64;
-            self.stats.census_ms = seconds_since(t) * 1e3;
-        }
-        self.laps.lap(S_CENSUS);
-        self.stats.depth = self.pool.len() as u64;
-        self.counted_idle = self.lp.chunks().next().is_none();
-        self.laps.lap(S_SORT);
         let checks = if view.samples.is_some() {
             QUEUE_CHECKS_UNSLICED
         } else {
@@ -204,6 +159,68 @@ impl BakeQueue {
         // A checked candidate not listed (a refused place) is checked again before its listing.
         self.partial_checked.clear();
         Ok(())
+    }
+
+    /// The opening's candidates, census and sort stages: the kept order scored again when a
+    /// candidate joined or changed class or the view it reads changed, and the census of the
+    /// candidates by view and reach when one is due.
+    fn score_and_census(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        view: &QueueView<'_>,
+        eye: [i32; 3],
+    ) {
+        let gpu = run.gpu;
+        let order = self.order;
+        let near = self.near;
+        self.sync_pool(run, store);
+        // The kept order is scored again when a candidate joined or changed class, or the view
+        // the scores read changed; else it is walked as it stands.
+        let key = OrderView {
+            eye,
+            forward: view.forward.map(f32::to_bits),
+            half_angle: view.half_angle.to_bits(),
+            order,
+            near,
+        };
+        if self.order_dirty || self.order_view != Some(key) {
+            let cands: Vec<Cand> = self
+                .pool
+                .iter()
+                .map(|(&c, &(class, coarse))| cand_of(c, class, coarse, eye, view, order, near))
+                .collect();
+            self.ordered = Ordered::new(cands);
+            self.order_dirty = false;
+            self.order_view = Some(key);
+            self.stats.rebuilt += 1;
+        }
+        self.laps.lap(S_CANDIDATES);
+        let census = self.census_every_opening || std::mem::take(&mut self.census_due);
+        let steps = self.steps;
+        let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
+        if census {
+            let t = stopwatch();
+            self.entered
+                .retain(|c, _| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c)));
+            let cands: Vec<Cand> = self
+                .ordered
+                .all()
+                .filter(|k| self.pool.contains_key(&k.c))
+                .copied()
+                .collect();
+            self.view_census(eye, view, &cands, gpu.light_radius());
+            self.view_reach_census(run, eye, view, &cands);
+            self.stats.unbaked = cands
+                .iter()
+                .filter(|k| k.class == 0 && !recent(self.blocked.get(&k.c)))
+                .count() as u64;
+            self.stats.census_ms = seconds_since(t) * 1e3;
+        }
+        self.laps.lap(S_CENSUS);
+        self.stats.depth = self.pool.len() as u64;
+        self.counted_idle = self.lp.chunks().next().is_none();
+        self.laps.lap(S_SORT);
     }
 
     /// Once in [`VIEW_REACH_EVERY`] steps, at an opening: up to [`VIEW_REACH_SAMPLE`] of the

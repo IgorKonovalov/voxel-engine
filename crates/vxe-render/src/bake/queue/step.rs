@@ -18,6 +18,31 @@ impl BakeQueue {
         // Summary time spent outside a step (a one-shot bake, a dig's ring) is not this step's.
         store.take_summary_ms();
         self.laps.lap(S_SETUP);
+        let changes = self.follow_window(run, store, view);
+        self.forget_unheld(run.gpu, changes);
+        self.laps.lap(S_TOUCHED);
+        self.take_boxes(run, store)?;
+        self.laps.lap(S_BOXES);
+        let (cap, opened_step) = self.open_step(run, store, view)?;
+        self.lp.refresh_tables(run);
+        let bind = run.pipeline.bind();
+        run.queue
+            .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
+        self.laps.lap(S_REFRESH);
+        self.submit(run, bind, store, view, cap);
+        self.close_step(run, store, view, t0, opened_step);
+        Ok(self.stats)
+    }
+
+    /// The step's window stages: the eye's cell, the store's window, and the blocks of the chunks
+    /// the mirror no longer holds full. Returns the mirror's changes since the last step, each
+    /// chunk once (`None` untracked, the first step).
+    fn follow_window(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        view: &QueueView<'_>,
+    ) -> Option<Vec<ChunkCoord>> {
         self.steps += 1;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         if eye != self.eye {
@@ -75,6 +100,11 @@ impl BakeQueue {
             store.remove(run.queue, ChunkCoord(c));
         }
         self.laps.lap(S_GONE);
+        changes
+    }
+
+    /// The step's forget, reach-drop and touched stages over the mirror's changes.
+    fn forget_unheld(&mut self, gpu: &GpuWorld, changes: Option<Vec<ChunkCoord>>) {
         // What the queue knows of a chunk the mirror does not hold full goes with it, block or
         // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
         // A job in flight for it ends in the sink, which drops its block.
@@ -133,9 +163,16 @@ impl BakeQueue {
                 self.requeue_partial(gpu, None);
             }
         }
-        self.laps.lap(S_TOUCHED);
-        self.take_boxes(run, store)?;
-        self.laps.lap(S_BOXES);
+    }
+
+    /// The step's withdrawal, digs and listing stages: the submit's sample cap, and whether jobs
+    /// were opened this step.
+    fn open_step(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        view: &QueueView<'_>,
+    ) -> Result<(u64, bool), BakeError> {
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
             let slice = self.budget.slice_ms(view.interval_s);
@@ -159,11 +196,19 @@ impl BakeQueue {
             }
             self.laps.lap(S_LIST);
         }
-        self.lp.refresh_tables(run);
-        let bind = run.pipeline.bind();
-        run.queue
-            .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
-        self.laps.lap(S_REFRESH);
+        Ok((cap, opened_step))
+    }
+
+    /// The step's poll, collect, place and submit stages, and the stats they read: the submits
+    /// read back go to the sink, and one new submit goes out within `cap` samples.
+    fn submit(
+        &mut self,
+        run: &BakeRun<'_>,
+        bind: &wgpu::BindGroup,
+        store: &mut Store,
+        view: &QueueView<'_>,
+        cap: u64,
+    ) {
         // Nothing waits on the GPU in a sliced step: the submits read back are those whose
         // results are mapped by now, and a new one goes out while fewer than IN_FLIGHT are
         // unread. A step without a slice (the pre-roll) waits for its oldest submit once
@@ -178,136 +223,27 @@ impl BakeQueue {
         // The sink's own time, the blocks' placement, taken out of the collect's and the
         // submit's laps.
         let place_ms = std::cell::Cell::new(0.0f64);
-        let queue = run.queue;
-        let stale = &mut self.stale;
-        let fades = &mut self.fades;
-        let stats = &mut self.stats;
-        let job_coarse = &mut self.job_coarse;
-        let job_eye = &mut self.job_eye;
-        let dig_open = &mut self.dig_open;
-        let reach = &mut self.reach;
-        let partial = &mut self.partial;
-        let job_partial = &mut self.job_partial;
-        let entered = &mut self.entered;
-        let ages_first = &mut self.ages_first;
-        let ages_full = &mut self.ages_full;
-        let steps = self.steps;
-        let record = record_words(self.settings.cell);
-        let mut place = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
-            let coarse = job_coarse.remove(&coord.0).unwrap_or(false);
-            job_eye.remove(&coord.0);
-            let from_partial = job_partial.remove(&coord.0);
-            let dug = dig_open.remove(&coord.0);
-            if stale.remove(&coord.0) || !run.gpu.is_mirrored(coord) {
-                store.release(first, block.len() as u64);
-                // A dig job's bricks went back to the waiting digs at the edit; a whole chunk's
-                // job that would have replaced a full block re-bakes whole.
-                if dug.is_none()
-                    && run.gpu.is_mirrored(coord)
-                    && store.blocks.contains_key(&coord.0)
-                    && !store.is_coarse(coord)
-                {
-                    reach.insert(coord.0);
-                }
-                return;
-            }
-            if let Some(e) = entered.get_mut(&coord.0) {
-                let age = u32::try_from(steps - e.0).unwrap_or(u32::MAX);
-                if !e.1 {
-                    e.1 = true;
-                    ages_first.push(age);
-                }
-                if !coarse {
-                    ages_full.push(age);
-                    entered.remove(&coord.0);
-                }
-            }
-            if let Some(d) = &dug {
-                stats.digs_baked += 1;
-                stats.dig_bricks += d.slots.len() as u64;
-            }
-            // A whole chunk's block carries its job's reach; a dig's keeps the rest of the
-            // block's, and with it the flag.
-            if dug.is_none() {
-                if from_partial {
-                    partial.insert(coord.0);
-                } else {
-                    partial.remove(&coord.0);
-                }
-            }
-            let dug = dug.is_some();
-            stats.baked += 1;
-            // The table word's flag follows at the put below.
-            store.mark_coarse(coord, coarse);
-            let old = store
-                .blocks
-                .get(&coord.0)
-                .and_then(|&(f, _)| store.words.get(&coord.0).map(|w| (f, w.clone())));
-            match old {
-                Some((f, from))
-                    if from.len() == block.len()
-                        && from[..CHUNK_BRICKS] == block[..CHUNK_BRICKS] =>
-                {
-                    // The same layout: the block takes its old place, shows its old values and
-                    // fades to the new ones. Under a running fade the old values are what that
-                    // fade shows now, not its target: a refinement landing while a first block
-                    // fades from its fallback goes on from where the pool is.
-                    let mut from = match fades.get(&coord.0) {
-                        Some(fd)
-                            if fd.first == f
-                                && fd.frame < fd.frames
-                                && fd.from.len() == from.len()
-                                && fd.from[..CHUNK_BRICKS] == from[..CHUNK_BRICKS] =>
-                        {
-                            let mut now = Vec::new();
-                            let t = fd.frame as f32 / fd.frames as f32;
-                            fade_mix(&mut now, &fd.from, &from, t, record);
-                            now
-                        }
-                        _ => from,
-                    };
-                    store.release(first, block.len() as u64);
-                    store.put(queue, coord, f, block);
-                    store.show(queue, coord, f, &mut from);
-                    fades.insert(
-                        coord.0,
-                        Fade {
-                            first: f,
-                            from,
-                            frame: 0,
-                            frames: if dug { DIG_FADE } else { FADE },
-                        },
-                    );
-                }
-                Some((f, from)) => {
-                    store.release(f, from.len() as u64);
-                    fades.remove(&coord.0);
-                    store.put(queue, coord, first, block);
-                }
-                None => match store.light.chain(coord.0, store.missing) {
-                    // A first block under a fallback mode fades from the chain's value, read
-                    // before the block's own summary joins the chain (ADR-0053).
-                    Some(chain) => {
-                        let mut from = fallback_block(&block, &chain, record);
-                        store.put(queue, coord, first, block);
-                        store.show(queue, coord, first, &mut from);
-                        fades.insert(
-                            coord.0,
-                            Fade {
-                                first,
-                                from,
-                                frame: 0,
-                                frames: FADE,
-                            },
-                        );
-                    }
-                    None => store.put(queue, coord, first, block),
-                },
-            }
+        let mut placement = Placement {
+            gpu: run.gpu,
+            queue: run.queue,
+            stale: &mut self.stale,
+            fades: &mut self.fades,
+            stats: &mut self.stats,
+            job_coarse: &mut self.job_coarse,
+            job_eye: &mut self.job_eye,
+            dig_open: &mut self.dig_open,
+            reach: &mut self.reach,
+            partial: &mut self.partial,
+            job_partial: &mut self.job_partial,
+            entered: &mut self.entered,
+            ages_first: &mut self.ages_first,
+            ages_full: &mut self.ages_full,
+            steps: self.steps,
+            record: record_words(self.settings.cell),
         };
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let t = stopwatch();
-            place(store, coord, first, block);
+            placement.place(store, coord, first, block);
             place_ms.set(place_ms.get() + seconds_since(t) * 1e3);
         };
         let settings = BakeSettings {
@@ -365,6 +301,19 @@ impl BakeQueue {
             let ns = ms * 1e6 / d.samples as f64;
             self.stats.ns_per_sample = 0.8 * self.stats.ns_per_sample + 0.2 * ns;
         }
+    }
+
+    /// The step's fades and summaries stages, and its stats: the ended jobs' samples by where
+    /// their chunk lies, the counts, and the stage times.
+    fn close_step(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        view: &QueueView<'_>,
+        t0: Instant,
+        opened_step: bool,
+    ) {
+        let record = record_words(self.settings.cell);
         // The ended jobs' samples by where their chunk lies now.
         let ended = self
             .lp
@@ -403,6 +352,155 @@ impl BakeQueue {
             total_ms: stopwatch().duration_since(t0).as_secs_f64() * 1e3,
             opened: opened_step,
         };
-        Ok(self.stats)
+    }
+}
+
+/// What the step's sink writes of the queue while the job loop is borrowed: a read-back block's
+/// placement in the store, its fade, and the queue's books on its chunk.
+struct Placement<'a> {
+    gpu: &'a GpuWorld,
+    queue: &'a wgpu::Queue,
+    stale: &'a mut std::collections::HashSet<[i32; 3]>,
+    fades: &'a mut BTreeMap<[i32; 3], Fade>,
+    stats: &'a mut QueueStats,
+    job_coarse: &'a mut std::collections::HashMap<[i32; 3], bool>,
+    job_eye: &'a mut std::collections::HashMap<[i32; 3], u64>,
+    dig_open: &'a mut std::collections::HashMap<[i32; 3], DigChunk>,
+    reach: &'a mut std::collections::BTreeSet<[i32; 3]>,
+    partial: &'a mut ChunkSet,
+    job_partial: &'a mut ChunkSet,
+    entered: &'a mut std::collections::HashMap<[i32; 3], (u64, bool)>,
+    ages_first: &'a mut Vec<u32>,
+    ages_full: &'a mut Vec<u32>,
+    steps: u64,
+    record: usize,
+}
+
+impl Placement<'_> {
+    /// Places chunk `coord`'s block read back at `first`, or releases it when the chunk went
+    /// stale or left the mirror.
+    fn place(&mut self, store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>) {
+        let coarse = self.job_coarse.remove(&coord.0).unwrap_or(false);
+        self.job_eye.remove(&coord.0);
+        let from_partial = self.job_partial.remove(&coord.0);
+        let dug = self.dig_open.remove(&coord.0);
+        if self.stale.remove(&coord.0) || !self.gpu.is_mirrored(coord) {
+            store.release(first, block.len() as u64);
+            // A dig job's bricks went back to the waiting digs at the edit; a whole chunk's
+            // job that would have replaced a full block re-bakes whole.
+            if dug.is_none()
+                && self.gpu.is_mirrored(coord)
+                && store.blocks.contains_key(&coord.0)
+                && !store.is_coarse(coord)
+            {
+                self.reach.insert(coord.0);
+            }
+            return;
+        }
+        if let Some(e) = self.entered.get_mut(&coord.0) {
+            let age = u32::try_from(self.steps - e.0).unwrap_or(u32::MAX);
+            if !e.1 {
+                e.1 = true;
+                self.ages_first.push(age);
+            }
+            if !coarse {
+                self.ages_full.push(age);
+                self.entered.remove(&coord.0);
+            }
+        }
+        if let Some(d) = &dug {
+            self.stats.digs_baked += 1;
+            self.stats.dig_bricks += d.slots.len() as u64;
+        }
+        // A whole chunk's block carries its job's reach; a dig's keeps the rest of the
+        // block's, and with it the flag.
+        if dug.is_none() {
+            if from_partial {
+                self.partial.insert(coord.0);
+            } else {
+                self.partial.remove(&coord.0);
+            }
+        }
+        let dug = dug.is_some();
+        self.stats.baked += 1;
+        // The table word's flag follows at the put below.
+        store.mark_coarse(coord, coarse);
+        let old = store
+            .blocks
+            .get(&coord.0)
+            .and_then(|&(f, _)| store.words.get(&coord.0).map(|w| (f, w.clone())));
+        match old {
+            Some((f, from))
+                if from.len() == block.len() && from[..CHUNK_BRICKS] == block[..CHUNK_BRICKS] =>
+            {
+                self.refade(store, coord, (first, f), from, block, dug);
+            }
+            Some((f, from)) => {
+                store.release(f, from.len() as u64);
+                self.fades.remove(&coord.0);
+                store.put(self.queue, coord, first, block);
+            }
+            None => match store.light.chain(coord.0, store.missing) {
+                // A first block under a fallback mode fades from the chain's value, read
+                // before the block's own summary joins the chain (ADR-0053).
+                Some(chain) => {
+                    let mut from = fallback_block(&block, &chain, self.record);
+                    store.put(self.queue, coord, first, block);
+                    store.show(self.queue, coord, first, &mut from);
+                    self.fades.insert(
+                        coord.0,
+                        Fade {
+                            first,
+                            from,
+                            frame: 0,
+                            frames: FADE,
+                        },
+                    );
+                }
+                None => store.put(self.queue, coord, first, block),
+            },
+        }
+    }
+
+    /// The same layout: the block takes its old place `f`, its words read back at `first` are
+    /// released, it shows its old values `from` and fades to the new ones.
+    fn refade(
+        &mut self,
+        store: &mut Store,
+        coord: ChunkCoord,
+        (first, f): (u64, u64),
+        from: Vec<u32>,
+        block: Vec<u32>,
+        dug: bool,
+    ) {
+        // Under a running fade the old values are what that fade shows now, not its target: a
+        // refinement landing while a first block fades from its fallback goes on from where the
+        // pool is.
+        let mut from = match self.fades.get(&coord.0) {
+            Some(fd)
+                if fd.first == f
+                    && fd.frame < fd.frames
+                    && fd.from.len() == from.len()
+                    && fd.from[..CHUNK_BRICKS] == from[..CHUNK_BRICKS] =>
+            {
+                let mut now = Vec::new();
+                let t = fd.frame as f32 / fd.frames as f32;
+                fade_mix(&mut now, &fd.from, &from, t, self.record);
+                now
+            }
+            _ => from,
+        };
+        store.release(first, block.len() as u64);
+        store.put(self.queue, coord, f, block);
+        store.show(self.queue, coord, f, &mut from);
+        self.fades.insert(
+            coord.0,
+            Fade {
+                first: f,
+                from,
+                frame: 0,
+                frames: if dug { DIG_FADE } else { FADE },
+            },
+        );
     }
 }

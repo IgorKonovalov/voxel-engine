@@ -311,6 +311,37 @@ impl JobLoop {
         sink: &mut BlockSink<'_>,
         progress: &mut dyn FnMut(&BakeProgress),
     ) -> bool {
+        self.start_timer(run);
+        let round = settings.round.max(1);
+        let per_submit = (SUBMIT_SAMPLES / u64::from(round)).max(1) as usize;
+        let batch = settings
+            .batch_faces
+            .clamp(1, BAKE_BATCH_FACES)
+            .min(per_submit);
+        let ctx = JobCtx {
+            run,
+            settings,
+            round,
+            rounds_cap: if settings.submit_rounds == 0 {
+                u32::MAX
+            } else {
+                settings.submit_rounds
+            },
+        };
+        let (budget, plan) = self.plan_rounds(&ctx, store, batch, sample_cap, sink, progress);
+        if budget.entries == 0 {
+            self.last_samples = 0;
+            return false;
+        }
+        self.last_samples = budget.samples;
+        let (input, entries, jobs_in) = self.fill_entries(&plan, round, budget.entries);
+        self.send(run, bind, settings, &input, entries, jobs_in);
+        true
+    }
+
+    /// The loop's own timestamp queries, made at its first timed dispatch where the device
+    /// has them.
+    fn start_timer(&mut self, run: &BakeRun<'_>) {
         let (device, queue) = (run.device, run.queue);
         if self.timed && self.timer.is_none() {
             self.timer = Some(
@@ -333,22 +364,21 @@ impl JobLoop {
                     }),
             );
         }
-        let round = settings.round.max(1);
-        let per_submit = (SUBMIT_SAMPLES / u64::from(round)).max(1) as usize;
-        let batch = settings
-            .batch_faces
-            .clamp(1, BAKE_BATCH_FACES)
-            .min(per_submit);
-        let ctx = JobCtx {
-            run,
-            settings,
-            round,
-            rounds_cap: if settings.submit_rounds == 0 {
-                u32::MAX
-            } else {
-                settings.submit_rounds
-            },
-        };
+    }
+
+    /// The rounds each live face takes in a submit of at most about `sample_cap` samples and
+    /// `batch` entries: the open jobs' first, then pending jobs opened into free slots (a job
+    /// with nothing to draw ends into `sink`), then further rounds while room is left.
+    fn plan_rounds(
+        &mut self,
+        ctx: &JobCtx<'_, '_>,
+        store: &mut Store,
+        batch: usize,
+        sample_cap: u64,
+        sink: &mut BlockSink<'_>,
+        progress: &mut dyn FnMut(&BakeProgress),
+    ) -> (SubmitRoom, Vec<Vec<(usize, u32)>>) {
+        let (settings, round) = (ctx.settings, ctx.round);
         let report = &mut self.report;
         let done = &mut self.done;
         let open = &mut self.open;
@@ -400,17 +430,25 @@ impl JobLoop {
                 break;
             }
         }
-        if budget.entries == 0 {
-            self.last_samples = 0;
-            return false;
-        }
-        self.last_samples = budget.samples;
+        (budget, plan)
+    }
+
+    /// The dispatch's entries by the plan: each names its job's slot and its face's samples
+    /// from the first no submit has drawn. Returns the input rows, the entries'
+    /// `(slot, face, rounds)` and the count of jobs with an entry.
+    fn fill_entries(
+        &mut self,
+        plan: &[Vec<(usize, u32)>],
+        round: u32,
+        capacity: usize,
+    ) -> (Vec<[u32; 20]>, Vec<(usize, usize, u32)>, u64) {
+        let report = &mut self.report;
         // One dispatch: each entry names its job's slot, and its face's samples from the first
         // no submit has drawn.
-        let mut input: Vec<[u32; 20]> = Vec::with_capacity(budget.entries);
+        let mut input: Vec<[u32; 20]> = Vec::with_capacity(capacity);
         let mut entries = Vec::new();
         let mut jobs_in = 0u64;
-        for (job, p) in open.iter_mut().zip(&plan) {
+        for (job, p) in self.open.iter_mut().zip(plan) {
             jobs_in += u64::from(p.iter().any(|&(_, r)| r > 0));
             for &(i, r) in p {
                 if r == 0 {
@@ -427,6 +465,22 @@ impl JobLoop {
                 entries.push((job.slot, i, r));
             }
         }
+        (input, entries, jobs_in)
+    }
+
+    /// Writes the dispatch's input, records the pass and its readback, submits and maps it,
+    /// and puts it in flight.
+    fn send(
+        &mut self,
+        run: &BakeRun<'_>,
+        bind: &wgpu::BindGroup,
+        settings: &BakeSettings,
+        input: &[[u32; 20]],
+        entries: Vec<(usize, usize, u32)>,
+        jobs_in: u64,
+    ) {
+        let (device, queue) = (run.device, run.queue);
+        let report = &mut self.report;
         let count = input.len() as u32;
         let uniform = [
             count,
@@ -439,7 +493,7 @@ impl JobLoop {
             0,
         ];
         queue.write_buffer(&run.pipeline.job, 0, bytemuck::cast_slice(&uniform));
-        queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(&input));
+        queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(input));
         let own = self.timer.as_ref().and_then(Option::as_ref);
         let size = STAMP_BYTES + u64::from(count) * FACE_BYTES;
         let staging = match self.staging.iter().position(|b| b.size() >= size) {
@@ -507,7 +561,6 @@ impl JobLoop {
             timed: own.is_some(),
             t,
         });
-        true
     }
 
     /// Reads back the submits whose results are mapped, oldest first, stopping at the first
