@@ -17,7 +17,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | approved | Code health. Side lane (0, 1, 6, 7) merged d6d2dfa; Phases 3, 4, 5, 8 after 0045 and 0058 (2026-11-11). |
-| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health. Amended 2026-11-12 (review notes; seams re-cut at 5909af8). Lane beside 0072; before 0070. |
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: eight analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | approved | M2, ADR-0044 (proposed). Redrafted 2026-11-10. After Plan 0045 (2026-11-11); re-read Phases 1-2 at its tip. |
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
@@ -52,7 +51,8 @@ Each starts on main after the one before it closes, unless its line says otherwi
      neighbour's or parent's light, owner 2026-11-11; ADR-0052 and ADR-0053 accepted the same
      day); the Radeon's hit and FSR 2 passes (26 and 18.5 ms at the window) stay with
      the profiles plan (step 6); 0065 closed with them over their lines.
-3. **Plan 0045**, the structure pass (moved ahead of 0058 and 0044's render phases, owner
+3. **Plan 0045**, the structure pass: closed 2026-11-13 (v0.50.0); later plans read old paths
+   through its "Where things moved". Moved ahead of 0058 and 0044's render phases (owner
    2026-11-11). It starts once Plans 0061, 0067 and 0068 have merged, while no lane edits the
    files it splits. Its Phase 0 re-measures and the architect confirms the seams before a file
    moves. Plan 0044's render device helper (its Phase 8) now follows it.
@@ -94,6 +94,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: GpuWorld 11 fields, Frame 15, main.rs 36 lines; vxe-render's root 100 names; file-size and fn-length gates; benches at the start's | 2026-11-13, v0.50.0 |
 | [0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a still queue drains at 0.075 ms a step; missing light reads neighbour, then parent (`chain`); bake stays frame:1.5 | 2026-11-12, v0.49.0 |
 | [0061](done/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far store read by the shading normal and filters weighed by face; the owner: "no aliazing", a bit soft | 2026-11-11, v0.48.0 |
 | [0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: temporal 0.32 to 0.07 ms, lamp-off a-trous a third, FSR 2 0.8 ms less; images byte-identical | 2026-11-11, v0.47.0 |

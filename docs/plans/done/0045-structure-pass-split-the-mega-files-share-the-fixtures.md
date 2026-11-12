@@ -1,6 +1,11 @@
 # 0045: The structure pass: split the mega files, share the fixtures, and gate their regrowth
 
-> **Status:** in-progress (approved 2026-10-22), amended 2026-11-10 (review pass), 2026-11-11 (order) and
+> **Status:** done (closed 2026-11-13, v0.50.0). Verdict: clean after rulings. The mega files
+> are directories of owned parts (`GpuWorld` 11 fields, `Frame` 15, `main.rs` 36 lines),
+> `vxe-render`'s root holds 100 names with `debug` and `internals` beside it, two gates cap
+> file and function size, and every golden but `hud.png` is byte-identical. A few CPU benches
+> read at most 0.6 % over the before range (`pile_rubble` 4.3 %, about 1 µs), ruled noise.
+> Earlier: approved 2026-10-22, amended 2026-11-10 (review pass), 2026-11-11 (order) and
 > 2026-11-12 (the architecture review's notes; Phase 0's drift)
 > **Created:** 2026-10-22
 > **Amended 2026-11-12 (architect, Phase 0's drift; recommended taken):** the three drift rows
@@ -880,7 +885,7 @@ own start commit, not against Plan 0044's close: other commits may land between 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the inventory at the start commit | dev | inventory done; "before" readings at `c7072b7` (21 runs, 2026-11-12) and the close's "after" at `5283ad7`, met or missed per bar in the log's close section; drift (3 rows) ruled at `70793b6`; [`logs/0045.md`](logs/0045.md) | `22df5d4` |
+| 0: the inventory at the start commit | dev | inventory done; "before" readings at `c7072b7` (21 runs, 2026-11-12) and the close's "after" at `5283ad7`, met or missed per bar in the log's close section; drift (3 rows) ruled at `70793b6`; [`logs/0045.md`](../logs/0045.md) | `22df5d4` |
 | 1: one home for each shared fixture | dev | done; bench fixtures at `benches/support/`; five same-named audio helpers stay local; deviations in the log | `1d5b932` |
 | 2: `GpuWorld` becomes a directory of owned parts | dev | done; 11 fields; root 100 names, `debug` 15, `internals` 95; 13 items past Phase 0's 131 paths housed; `opaque_table`, `is_glass` deleted; `unnameable_types` denied too; deviations in the log | `2a53aa2`, `032b3ee`, `efaeeab` |
 | 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories | dev | done; `Frame` 15 fields, no fn over 150, 1 readback copy; gpu gate 189/189 at `d71c21b`; frame CPU p50 (for `encode`, orchestrator's pick) and pooled queue step p50 met on both adapters; queue step B p50 on the RTX missed (9.149 over 9.103); deviations in the log | `8b51a31`..`54f7b56`, `d71c21b` |
@@ -889,7 +894,7 @@ own start commit, not against Plan 0044's close: other commits may land between 
 | 6: audio, net, wasm and assets split their long functions | dev | done; `reverb/`, `acoustics/`, `mixer/`; `render_block` in five parts, one `Spatialiser`, one `fibonacci_sphere`; `test-hooks` feature; `format_error`; `parse` per chunk; `add_host` per import; the `placements` cache not built (deviations in the log); mixer bench: 3 of 6 met, 3 missed by 0.1 to 0.6 % | `0c410a5`..`730ba26`, `7ecfc0e` |
 | 7: the testbed's library takes the binary's contents | dev | done; `main.rs` 36 lines, its contents in `cli/`, `run/` and seven lib modules; no `src` file over 1200 or function over 150; one flag table with `--help` and refused rows; `toggles::TOGGLES` 26 rows, one-shot keys listed; typed `DigEvent`; `vxe_app::run_headless`; `nearest_rank`; `N(gate)` 291 to 295, `N(full)` 356 to 360 (the four new tests); `hud.png` re-blessed with the five mode rows; `hero.rs`'s `main` 181 lines (Phase 8's lint); deviations in the log | `bac0903`..`79e7b26`, `3078033`, `b48392d`..`3782fb6`, `a2b8538` |
 | 8: the mega test files split, and two gates keep everything small | dev | done; `gpu_mirror` in three, `gpu_look`, `gpu_queue` and `support/settle` split; the strip, settle and bake readings are examples on the flag table (26 readings); `Steady` gone; `check-file-size` and the env-name cap gate the tree and CI; `too_many_lines` denied at 150, no `src` fn carries the expect, four tests and `settle_run` do; quick 655, gpu 189, gate 844, soak 68, full 912 before and after (full does not fall: readings were already outside it); deviations in the log | `8a12301`..`bcfface`, `0c7ba09` |
-| 9: the owner reads every toggle on screen | human | done 2026-11-12 (`live/session45.sh`, 21:31 to 21:40, after a first attempt that closed the window after one step); every answer "yes": each toggle's mode shows in the window, the frame looks as before; no rejection; [`logs/0045.md`](logs/0045.md) | `c943df6` |
+| 9: the owner reads every toggle on screen | human | done 2026-11-12 (`live/session45.sh`, 21:31 to 21:40, after a first attempt that closed the window after one step); every answer "yes": each toggle's mode shows in the window, the frame looks as before; no rejection; [`logs/0045.md`](../logs/0045.md) | `c943df6` |
 
 ### Notes
 
@@ -899,14 +904,130 @@ own start commit, not against Plan 0044's close: other commits may land between 
   drops read 6.87 to 8.69 ms against before 6.87 to 8.66 and after 8.86 to 10.60; seven of
   ten collapse bars met; slab `drop_region` 10 (+0.4 %), `remove_region` (+0.3 %) and
   `pile_rubble` (+4.3 %) over the before max. Edits, raycast and coarse unchanged by the fix.
-  Readings in [`logs/0045.md`](logs/0045.md), "Fix pass".
+  Readings in [`logs/0045.md`](../logs/0045.md), "Fix pass".
 
 ### Close triggers
+
+The facts live in [`logs/0045.md`](../logs/0045.md): the public items removed from `vxe-render` in
+its Phase 2 section, `World`'s and `vxe-audio`'s feature-gated items in Phases 5 and 6, and the
+before and after readings in "Close: the before and after readings" and "Fix pass".
+
+## Close review (2026-11-13, architect, fresh session)
+
+Clean after rulings; no code changed at the close. The owner was asleep with "keep going", so
+each ruling below is the recommended default, listed for the morning.
+
+1. **Phase 3's CPU `encode` bar: `frame CPU p50` stands in for it, accepted.** The autopilot
+   prints no encode figure. The encode runs inside the frame's CPU time, so a slower encode
+   would show there, and that figure fell on both adapters (RTX 12.82 to 10.30 ms, RADV 7.337
+   to 7.177).
+2. **Bars just over the before range: accepted as noise and recorded, with no fix pass.** The
+   plan's rule (a reading outside three "before" runs is a finding) is too tight for
+   sub-percent CPU benches, and the fix pass shows why: the same code read twice spreads
+   wider than these excesses.
+   - **RTX queue step B** 9.149 against a max of 9.103 (+0.5 %). The before range is 9 % wide
+     (8.294 to 9.103), RADV's B is met, and the pooled step and A are faster on both.
+   - **Edit `expand/*`** (+0.4 to 3.1 %). Back-to-back reads of the tip and fix builds spread
+     0.0624 to 0.0658 ms on `alloc_drop`, which is wider than its excess. The edit path takes no
+     `ChunkReader`.
+   - **Mixer, three 32-voice cases** (+0.1 to 0.6 %). The samples are bit-identical (the pinned
+     hash and six scene hashes), and the reads were not paired, which is how ADR-0020 reads a
+     mixer bound.
+   - **Slab `pile_rubble`** (+4.3 %). In each of four paired rounds the fix read 1.7 to 5.2 %
+     above the base, so a real cost of about 1 µs is likely, not only drift. `pile_rubble`'s own
+     symbol is 16 % of the bench and the rest is setup, which Phase 1 changed (fixtures from
+     `benches/support`, `solid_world` by `collect`); this split is unverified. It reads 33 µs
+     against the 200 µs budget in `docs/nfr.md` section 4.
+   - **Slab `drop_region` 10 and `remove_region`** (+0.4 %, +0.3 %), and **RADV `sync` p99**
+     (+1.1 %, a p99 over three runs): noise.
+3. **Deviations: all accepted.** Two of them in detail:
+   - **The `placements` cache is not built.** `VoxFile`'s fields are public and callers build
+     it by literal, so a correct cache needs private fields, an API change outside a structure
+     pass. The cost is one extra graph walk at load.
+   - **`N(full)` does not fall.** The done-when was written against a `.config/nextest.toml`
+     that already left `reading::` out of soak and full. The readings that moved show where the
+     done-when meant: `--run-ignored only` falls from 104 to 78 by exactly the 26 named, and
+     the partition holds.
+   The other deviations are listed in the readings log. A pass's source is composed at run
+   time after a prelude generated from Rust consts, not by `concat!`. Phase 4 added the
+   `field_walk`, `hit`, `edits` and `fsr2/motion` modules. Phase 7 changed the `RunMode`
+   refusal order and the logger target names. Phase 8's examples take the whole `tests/support`
+   tree. None changes behaviour a test or the owner's window defends.
+4. **`showcase_hall_golden_is_lit_by_its_four_ores`: pre-existing, not this plan's.** It is
+   `#[ignore = "soak"]`. The backlog entry dates its hue and luma failure to before Plans 0060
+   and 0061 (`[336, 0, 209, 121]`, luma 2.7/255), and Phase 4 read the same classes on Phase 3's
+   and Phase 4's archives. The Phase 8 log line saying it "passed in both runs" (the gpu and
+   gate tiers) is wrong: both tiers skip soak tests. Run by name at the close tip, its golden
+   compare passes and its hue census fails as the backlog records. The backlog entry stands.
+5. **Stale paths in other docs: mapped, not rewritten.** "Where things moved" below maps each
+   old path to its new home. Approved Plans 0032 to 0037, 0044, 0058, 0062, 0063, 0069 and
+   0070 each gained one dated header line that points to it. `docs/backlog.md`'s `diag:` path
+   and its pipeline-cache entry are updated. Left as they are: accepted ADRs (append-only;
+   ADR-0057's `main.rs:4033-4120` and the `march.wgsl` mentions in ADRs 0012, 0028, 0038,
+   0039, 0041, 0047, 0049 and 0053 describe the code at their dates); Plan 0072, which another
+   lane edits; and Plan 0068's notes, which are history.
+
+**Test audit.** Every test the plan names exists, and its assertion defends its done-when:
+`a_collected_table_numbers_its_rows_from_one`, the four composed-source scans in
+`frame/compose.rs`, `every_toggle_shows_its_mode_in_the_hud_grid`,
+`an_event_with_no_matching_op_is_an_error`, `help_lists_every_flag_the_parser_accepts` and
+`the_median_and_the_p50_agree`. One is narrower than its done-when, and it is a followup:
+`no_constant_rust_defines_is_a_wgsl_literal` scans `const NAME:` declarations, so an inline
+literal such as the store's `& 2u` is not seen.
+
+**Gate at the close (`13fa2e6`, main merged).** `scripts/build-guests.sh` passed, then
+`cargo nextest run --workspace --profile gate --no-fail-fast` ran under the exclusive perf
+lock in a 6 GiB scope at nice 19, with `-j4`, on lavapipe. 844 run, 844 passed, 78 skipped,
+613 s. The whole run, guests included, took 10.4 min against the 12 min budget (`docs/nfr.md`
+section 7). The load was about 3.5 during the run (Plan 0072's lane building) and 1.25 at the
+end. `scripts/test-times.mjs` names the tests over the 10 s line. All of them were over it at
+Phase 8's quiet gate too, and this plan moved them unchanged. Plan 0072's Context already names
+them, so they are not a finding here. The whole soak tier did not run, because this plan touched
+every crate and the owner runs that tier only when he asks. Phase 4 ran the 11 soak byte
+comparisons by name. `cargo test --workspace --doc` passed 10 doctests, `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo fmt --all --check` and `cargo deny check` each exit 0,
+and so do the doc gates and `check-file-size`.
+
+**Layering.** `vxe-world` and `vxe-sim` link no GPU crate. The `HashMap` and `HashSet` in
+`stream/` and `collapse/snapshot.rs` were in the moved code at `c7072b7`, and none feeds an edit
+result or a hash. No gameplay name appears under `crates/`. The self dev-dependencies that turn
+on `bench-internals`, `stream-oracle` and `test-hooks` reach only those crates' own test
+builds. Phase 5's log reads `cargo clippy -p vxe-world` with no feature at exit 0.
+
+### Where things moved
+
+The old paths that other docs name, and where their contents live from this plan's close.
+Read a later plan's old path through this map; each plan re-cuts its Files touched at its
+start.
+
+| Old path | Now |
+|---|---|
+| `crates/vxe-render/src/gpu_world.rs` | `gpu_world/`: `format.rs` (the GPU contract), `alloc.rs`, `slot.rs`, `lights.rs`, `stage.rs`, `window.rs`, `mod.rs` (`GpuWorld`) |
+| `crates/vxe-render/src/marcher.rs` | `frame/`: `settings.rs`, `targets.rs`, `timer.rs`, `readback_ring.rs`, `upscale.rs`, `pipelines.rs` (`PASSES`), `state.rs`, `baked.rs`, `probe_channel.rs`, `encode.rs`, `compose.rs` (the prelude and `shader_sources`), `marcher.rs` (the hit pass), `mod.rs` (`Frame`); helpers in `gpu_util.rs` |
+| `crates/vxe-render/src/bake.rs` | `bake/`: `record.rs`, `faces.rs`, `summary.rs`, `store.rs`, `pipeline.rs` (`bake_source`), `job.rs`, `job_loop.rs`, `budget.rs`, `stages.rs`, `order.rs`, `queue/` |
+| `crates/vxe-render/src/fsr2.rs` | `fsr2/`: `settings.rs`, `pipelines.rs`, `prepare.rs`, `resources.rs`, `mod.rs` |
+| `crates/vxe-render/src/shaders/march.wgsl` | `common.wgsl`, `mirror.wgsl`, `walk.wgsl` (`march`, `descend`, `lookup`), `hitrec.wgsl`, `field_walk.wgsl`, `hit.wgsl`, `edits.wgsl`; the emissive estimator from `light.wgsl` is `emissive.wgsl`; each pass's module list is its `PASSES` row |
+| `vxe_render::<module>::<item>` | the root, `vxe_render::debug` or `#[doc(hidden)] vxe_render::internals` (the Phase 2 table in the readings log) |
+| `crates/vxe-render/tests/gpu_mirror.rs` | `gpu_mirror_alloc.rs`, `gpu_mirror_tiers.rs`, `gpu_mirror_budget.rs`, `tests/support/mod.rs` |
+| `apps/flythrough/src/main.rs` | `cli/` (`flags.rs` the flag table, `parse.rs`), `run/` (`Run`: `frame.rs`, `keys.rs`, `queue.rs`, `hud_feed.rs`, `tour.rs`, `edit.rs`, `pilot.rs`, `fade.rs`), `app.rs`, `setup.rs`, `streaming.rs`, `edits.rs`, `autopilot.rs`, `audio.rs`, `toggles.rs` (key bindings) |
+| `apps/flythrough/src/hud.rs`, `showcase.rs` | `hud/` (`stats.rs`, `modes.rs`, `upscaler.rs`), `showcase/` |
+| `apps/flythrough/tests/gpu_strip.rs` (the reading) | `apps/flythrough/examples/strip.rs` (flags, `--help`); the five gate tests stay in `tests/gpu_strip.rs` |
+| `gpu_settle.rs`, `gpu_bake.rs` readings | `examples/settle.rs`, `examples/bake.rs` |
+| `gpu_look.rs`, `gpu_queue.rs`, `tests/support/settle.rs` | plus `gpu_look_field.rs`, `gpu_queue_reach.rs`, `support/settle/{mod,runs}.rs` |
+| `crates/vxe-world/src/{stream,collapse,packed}.rs` | `stream/`, `collapse/`, `packed/` |
+| `crates/vxe-audio/src/{reverb,acoustics,mixer}.rs` | `reverb/`, `acoustics/`, `mixer/` |
 
 ## Followups
 
 1. A shared cave-scene crate so `vxe-render`'s behaviour can be tested from `vxe-render` alone.
 2. `CellCoord::from(chunk, slot)` renamed so it does not read as the `From` trait. This is an
    API rename and needs a consumer check.
-3. Plan 0033's measurement phase names `tests/gpu_strip.rs` as the strip rig; the architect
-   points it at `examples/strip.rs` when M10 starts.
+3. Plan 0033's measurement phase names `tests/gpu_strip.rs` as the strip rig. Its header now
+   points at "Where things moved" (close, 2026-11-13); its phase is re-cut to
+   `examples/strip.rs` when M10 starts.
+4. `no_constant_rust_defines_is_a_wgsl_literal` scans only `const NAME:` declarations. A scan
+   of the literals inside expressions, or the masks named, would close the gap (close review,
+   test audit).
+5. A plan that reads CPU benches against a before set states a tolerance, or reads the builds
+   paired as ADR-0020 does for the mixer. A three-run spread alone flags sub-percent drift
+   (close review, ruling 2).
