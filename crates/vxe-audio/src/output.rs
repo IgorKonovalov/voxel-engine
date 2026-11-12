@@ -203,6 +203,29 @@ impl Recorder {
     }
 }
 
+/// The [`AudioError::Format`] of a device none of whose `configs` fits: each offer as its
+/// channels, sample format and rate range, or `nothing` for a device that offers none.
+pub(crate) fn format_error(configs: &[cpal::SupportedStreamConfigRange]) -> AudioError {
+    let offered = configs
+        .iter()
+        .map(|c| {
+            format!(
+                "{} ch {} {}..{} Hz",
+                c.channels(),
+                c.sample_format(),
+                c.min_sample_rate(),
+                c.max_sample_rate()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    AudioError::Format(if offered.is_empty() {
+        "nothing".to_owned()
+    } else {
+        offered
+    })
+}
+
 impl Output {
     /// Opens the host's default output device at 48 kHz stereo `f32` and starts `mixer` on
     /// its callback. The output takes the mixer's [`Recycler`] unless it was taken already;
@@ -224,24 +247,7 @@ impl Output {
                 && (c.min_sample_rate()..=c.max_sample_rate()).contains(&RATE)
         });
         if !fits {
-            let offered = configs
-                .iter()
-                .map(|c| {
-                    format!(
-                        "{} ch {} {}..{} Hz",
-                        c.channels(),
-                        c.sample_format(),
-                        c.min_sample_rate(),
-                        c.max_sample_rate()
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(AudioError::Format(if offered.is_empty() {
-                "nothing".to_owned()
-            } else {
-                offered
-            }));
+            return Err(format_error(&configs));
         }
         let config = cpal::StreamConfig {
             channels: 2,
