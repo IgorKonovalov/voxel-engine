@@ -819,7 +819,7 @@ own start commit, not against Plan 0044's close: other commits may land between 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 0: the inventory at the start commit | dev | inventory done, "before" readings running; drift found (3 rows), Phase 2 waits for the architect; [`logs/0045.md`](logs/0045.md) | `22df5d4` |
-| 1: one home for each shared fixture | dev | done; bench fixtures at `benches/support/`; five same-named audio helpers stay local; deviations in the log | committed with this row |
+| 1: one home for each shared fixture | dev | done; bench fixtures at `benches/support/`; five same-named audio helpers stay local; deviations in the log | `1d5b932` |
 | 2: `GpuWorld` becomes a directory of owned parts | dev | not started | |
 | 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories | dev | not started | |
 | 4: the shaders become modules a pass picks | dev | not started | |
