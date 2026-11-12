@@ -1,7 +1,7 @@
 # 0070: The sync off the frame: a chunk's slot image packed on the stream workers, the render thread copies
 
-> **Status:** approved (owner, 2026-11-12: "45 after 67, 70 after 45. all draft plans can be
-> approved"). Review question 1 answered against the recommendation: this plan starts after
+> **Status:** in-progress (dev lane `plan-0070`, started 2026-11-13 at `c1d1d3f`; approved by the
+> owner, 2026-11-12: "45 after 67, 70 after 45. all draft plans can be approved"). Review question 1 answered against the recommendation: this plan starts after
 > Plan 0045 merges, on the split tree. Question 2 takes the recommendation: Plan 0044's Phase 4
 > is struck into this plan.
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
@@ -315,7 +315,22 @@ A figure without a measurement above is a proposal; Phase 4 reads it, Phase 6 wr
 
 ### Notes
 
-_(empty)_
+**Paths at the start (`c1d1d3f`, Plan 0045's "Where things moved"; the tree's names win):**
+
+| plan names | tree |
+|---|---|
+| `crates/vxe-render/src/gpu_world.rs` | `gpu_world/`: `mod.rs` (`GpuWorld`, `SyncStats`, `MirrorConfig`, `sync`), `window.rs` (`select`, `upload`, the sync's clocks), `slot.rs` (`need`, `upload_record`, `upload_brick`, `fill_slot`, `fix_band`), `stage.rs` (the staged runs and the belt), `lights.rs` (`note_lights`, `place_lights`), `alloc.rs`, `format.rs` |
+| `crates/vxe-render/src/bake.rs` (`FacePrep`) | `bake/faces.rs`; its results are taken in `bake/queue/mod.rs` (`take_prepared`) |
+| `crates/vxe-render/tests/gpu_mirror.rs` | `gpu_mirror_alloc.rs`, `gpu_mirror_tiers.rs`, `gpu_mirror_budget.rs`, `tests/support/mod.rs` |
+| `crates/vxe-world/src/stream.rs` (`ChunkPrep`, `Prepared`) | `stream/workers.rs`, `stream/mod.rs` |
+| `apps/flythrough/src/main.rs`: the `frames:` exit line | `run/hud_feed.rs` (`RunTimes::line`) |
+| `apps/flythrough/src/main.rs`: the per-second `sync` line | none in the tree; the queue's once-a-second lines are in `run/queue.rs`. Phase 1 adds a `sync:` line at their cadence in `run/frame.rs`, with its state in `streaming.rs` |
+| `apps/flythrough/src/main.rs`: the autopilot summary | `run/pilot.rs` (its series in `autopilot.rs`) |
+| `apps/flythrough/src/main.rs`: `--pack` and the sync's caller | `cli/flags.rs`, `cli/mod.rs`, `setup.rs` (the streamer's hook), `run/frame.rs`, `run/mod.rs` (`init_stream`), `toggles.rs` (a key) |
+| `apps/flythrough/src/hud.rs` (the streaming row) | `hud/` (`stats.rs`, `modes.rs`) and `run/hud_feed.rs` |
+| the tester's `run.json` | `apps/flythrough/src/report.rs`; written in `run/tour.rs` |
+
+Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
 ### Close triggers
 
