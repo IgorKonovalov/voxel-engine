@@ -1057,11 +1057,11 @@ one in Phase 6.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: where the frame's CPU goes | dev | code and tests landed; slice test read: model not confirmed (loaded); pins and rigs (a), (b) queued; lane stops for the architect | 87bf0d2 (code), readings with this row |
-| 2: a step with nothing to do costs nothing | dev | A/B read: rig (a) drains (140 to 146 s, 0 withdrawn, 0.07 ms), the `--near 0` bars met, rig (b) `--coarse 0` non-opening p50 missed in `filter` after one fix; held for the architect | 5201ab6, 57484db, bdbe008 (`wip`) |
-| 2b: the queue does not starve in a flight | dev | code as `wip`; readings running (`live/p2b/`) | 04a7e6b (`wip`) |
-| 3: the bake budget per second | dev | code as `wip`; readings queued (`live/p3/`) | c19098f (`wip`) |
-| 4: no black for missing light | dev | code and tests as `wip` (summary after the directory, parent table, `temporal.wgsl` chain, `--missing-light`, key 7); readings queued | edcb9e0 (`wip`) |
-| 5: far light beyond the bake radius | dev | struck by Phase 1's rule: reach-bound 0 of 1121 to 1201 in view waiting at the patch (a bounded world counts 0; log, Phase 4) | |
+| 2: a step with nothing to do costs nothing | dev | rig (a), rig (c) and the `--near 0` bars met; the filter lapped in five, fixed (dedup, cheaper clear, ChunkHasher: 0.25 to 0.07 ms); rig (b) `--coarse 0` non-opening: glide 150 met, glide 300 +0.118 ms over the base, past the +0.1 tolerance: lane stopped for the architect (log) | 5201ab6, 57484db, bdbe008, 7e263bb, c8a621d (`wip`) |
+| 2b: the queue does not starve in a flight | dev | readings in the log: every `off` run B with 0 starved openings, `2` falls into A; rig (a) under `off` coarse 0 at 135 s; listing cut 0.24 ms off `list` | 04a7e6b (`wip`) |
+| 3: the bake budget per second | dev | read: the Radeon's frame CPU and the RTX's `frame:1.5` met; the cross-adapter ms a second missed (RTX 91 against Radeon 148 ms a wall second: the RTX's submits draw under the slice); held for the architect | c19098f (`wip`) |
+| 4: no black for missing light | dev | code and tests as `wip`; readings in the log (no bar): the summaries stage reads about 0.95 ms p50 under a fallback mode on the RTX's rig (b) | edcb9e0 (`wip`) |
+| 5: far light beyond the bake radius | dev | reinstated by the streamed at-rest reading (reach-bound 3044 of 3641 in view waiting, 0.84); not built, the lane stopped at Phase 2 | |
 | 6: the owner's window | human | not started | |
 | 7: the bars and the close's readings | dev | not started | |
 
