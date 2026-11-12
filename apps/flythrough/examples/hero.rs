@@ -475,13 +475,9 @@ fn write_png(path: &Path, rgba: &[u8], [w, h]: [u32; 2]) -> Result<(), String> {
         .map_err(|e| format!("png: {e}"))
 }
 
-fn main() -> Result<(), String> {
-    let args = parse_args_from(std::env::args().skip(1))?;
-    if args.help {
-        print!("{}", table().help());
-        return Ok(());
-    }
-    let (world, level_spawn, light_radius) = match args.source {
+/// The world the run renders, its spawn, and the source's light radius.
+fn build_world(args: &Args) -> (World, VoxelCoord, i32) {
+    match args.source {
         Source::Showcase => {
             let source = ShowcaseSource::new(args.seed);
             let world = World::generate(
@@ -502,12 +498,12 @@ fn main() -> Result<(), String> {
             );
             (world, source.spawn(), vxe_render::DEFAULT_LIGHT_RADIUS)
         }
-    };
-    let light_radius = args.light.radius.unwrap_or(light_radius);
-    let stills = args.stills(level_spawn);
+    }
+}
 
+/// With `--carve R`, carves a sphere of radius `R` voxels just past where the first still's view ray meets rock.
+fn carve(args: &Args, world: &World, camera: &Camera) -> Result<(), String> {
     if args.carve > 0 {
-        let camera = &stills[0].camera;
         let eye = VoxelCoord(camera.position.to_array().map(|v| v.floor() as i32));
         let (dir, _, _) = camera.basis();
         let dir = Fixed3([dir.x, dir.y, dir.z].map(|c| (c * FIXED_ONE as f32).round() as i64));
@@ -524,7 +520,11 @@ fn main() -> Result<(), String> {
         let removed: u64 = r.changed_from.iter().map(|&(_, n)| u64::from(n)).sum();
         println!("carved {removed} voxels");
     }
+    Ok(())
+}
 
+/// The adapter `--adapter` names (or the default), and a device sized for `world`'s pool.
+fn open_device(args: &Args, world: &World) -> Result<(wgpu::Device, wgpu::Queue, String), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let named = args.adapter.as_deref().and_then(|want| {
         let all = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
@@ -545,8 +545,7 @@ fn main() -> Result<(), String> {
     let adapter_name = adapter.get_info().name;
     println!("rendering on {adapter_name}");
     let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
-    let pool_bytes =
-        flythrough::level_pool_units(&world, field) * vxe_render::internals::UNIT_BYTES;
+    let pool_bytes = flythrough::level_pool_units(world, field) * vxe_render::internals::UNIT_BYTES;
     let (device, queue) =
         pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
@@ -556,34 +555,40 @@ fn main() -> Result<(), String> {
             }),
         )
         .map_err(|e| format!("no device: {e}"))?;
+    Ok((device, queue, adapter_name))
+}
 
+/// The mirror over the whole world, synced until its light samples stop changing.
+fn fill_mirror(
+    args: &Args,
+    world: &World,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    light_radius: i32,
+    eye: &Camera,
+) -> Result<GpuWorld, String> {
+    let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
     // The bounded path's mirror budget, with the field's band slots under the field look.
     let chunks = world.extent().len() as u64;
     let cfg = MirrorConfig {
-        budget_bytes: flythrough::level_mirror_budget(&world, chunks, field),
+        budget_bytes: flythrough::level_mirror_budget(world, chunks, field),
         light_radius,
         ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
     };
     let mut gpu = if field {
-        GpuWorld::with_field_surface(&device, cfg)
+        GpuWorld::with_field_surface(device, cfg)
     } else {
-        GpuWorld::with_config(&device, cfg)
+        GpuWorld::with_config(device, cfg)
     };
     // The light ranges around the eye take several syncs of the sample budget: sync until the
     // count stops changing.
-    let focus = VoxelCoord(
-        stills[0]
-            .camera
-            .position
-            .to_array()
-            .map(|v| v.floor() as i32),
-    );
+    let focus = VoxelCoord(eye.position.to_array().map(|v| v.floor() as i32));
     gpu.set_focus(focus);
     let mut syncs = 0;
     let mut last = None;
     while syncs < 256 {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        gpu.sync(&world, &queue, &mut enc)
+        gpu.sync(world, queue, &mut enc)
             .map_err(|e| format!("mirror: {e:?}"))?;
         gpu.update_field(&mut enc);
         queue.submit([enc.finish()]);
@@ -601,67 +606,103 @@ fn main() -> Result<(), String> {
         "mirror: {} light samples after {syncs} syncs",
         gpu.light_samples()
     );
+    Ok(gpu)
+}
 
+/// Renders `still` after a bake and `args.frames` frames, writes it and prints its line.
+fn render_still(
+    args: &Args,
+    world: &World,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &mut GpuWorld,
+    adapter_name: &str,
+    still: &Still,
+) -> Result<(), String> {
     let [w, h] = args.size;
     let frames = args.frames.max(1);
-    for still in &stills {
-        let mut frame =
-            Frame::with_sizes(&device, args.internal_scale.internal(args.size), args.size);
-        frame.set_probe_spacing(&device, still.probe_spacing);
-        if args.fsr2() {
-            frame.set_upscaler_kind(
-                &device,
-                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
-                    sharpness: args.sharpen,
-                    ..vxe_render::Fsr2Settings::default()
-                }),
-            );
-        } else {
-            frame.set_jitter(&device, args.jitter());
-            frame.set_sharpness(&queue, args.sharpen);
-        }
-        frame.set_lighting(Lighting {
-            exposure: still.exposure,
-            ..args.lighting()
-        });
-        frame.set_look(vxe_render::LookParams {
-            normal_mode: args.look.normal_mode,
-            tuning: args.look.tuning,
-            far_normal: args.look.far_normal,
-            ..vxe_render::LookParams::default()
-        });
-        frame.set_resolution(&device, args.light.resolution);
-        let r = frame
-            .bake_until(
-                &device,
-                &queue,
-                &mut gpu,
-                &world,
-                world.extent(),
-                &vxe_render::queue_settings(),
-                &mut |_| {},
-            )
-            .map_err(|e| format!("bake: {e:?}"))?;
-        println!("baked {} chunks, {} faces", r.chunks, r.faces);
-        for _ in 0..frames {
-            frame.step(
-                &device,
-                &queue,
-                &gpu,
-                &still.camera,
-                &LightParams::headlamp(),
-            );
-        }
-        let rgba = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
-        write_png(&still.path, &rgba, [w, h])?;
-        println!(
-            "wrote {}: adapter {adapter_name}, {} light samples, {frames} frames, exposure {}, probe spacing {}, mean sRGB luma {:.1}/255",
-            still.path.display(),
-            gpu.light_samples(),
-            exposure_words(still.exposure),
-            still.probe_spacing,
-            mean_luma(&rgba)
+    let mut frame = Frame::with_sizes(device, args.internal_scale.internal(args.size), args.size);
+    frame.set_probe_spacing(device, still.probe_spacing);
+    if args.fsr2() {
+        frame.set_upscaler_kind(
+            device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness: args.sharpen,
+                ..vxe_render::Fsr2Settings::default()
+            }),
         );
+    } else {
+        frame.set_jitter(device, args.jitter());
+        frame.set_sharpness(queue, args.sharpen);
+    }
+    frame.set_lighting(Lighting {
+        exposure: still.exposure,
+        ..args.lighting()
+    });
+    frame.set_look(vxe_render::LookParams {
+        normal_mode: args.look.normal_mode,
+        tuning: args.look.tuning,
+        far_normal: args.look.far_normal,
+        ..vxe_render::LookParams::default()
+    });
+    frame.set_resolution(device, args.light.resolution);
+    let r = frame
+        .bake_until(
+            device,
+            queue,
+            gpu,
+            world,
+            world.extent(),
+            &vxe_render::queue_settings(),
+            &mut |_| {},
+        )
+        .map_err(|e| format!("bake: {e:?}"))?;
+    println!("baked {} chunks, {} faces", r.chunks, r.faces);
+    for _ in 0..frames {
+        frame.step(device, queue, gpu, &still.camera, &LightParams::headlamp());
+    }
+    let rgba = vxe_render::debug::read_rgba8(device, queue, frame.target());
+    write_png(&still.path, &rgba, [w, h])?;
+    println!(
+        "wrote {}: adapter {adapter_name}, {} light samples, {frames} frames, exposure {}, probe spacing {}, mean sRGB luma {:.1}/255",
+        still.path.display(),
+        gpu.light_samples(),
+        exposure_words(still.exposure),
+        still.probe_spacing,
+        mean_luma(&rgba)
+    );
+    Ok(())
+}
+
+fn main() -> Result<(), String> {
+    let args = parse_args_from(std::env::args().skip(1))?;
+    if args.help {
+        print!("{}", table().help());
+        return Ok(());
+    }
+    let (world, level_spawn, light_radius) = build_world(&args);
+    let light_radius = args.light.radius.unwrap_or(light_radius);
+    let stills = args.stills(level_spawn);
+    carve(&args, &world, &stills[0].camera)?;
+    let (device, queue, adapter_name) = open_device(&args, &world)?;
+    let mut gpu = fill_mirror(
+        &args,
+        &world,
+        &device,
+        &queue,
+        light_radius,
+        &stills[0].camera,
+    )?;
+    for still in &stills {
+        render_still(
+            &args,
+            &world,
+            &device,
+            &queue,
+            &mut gpu,
+            &adapter_name,
+            still,
+        )?;
     }
     Ok(())
 }
