@@ -886,7 +886,7 @@ own start commit, not against Plan 0044's close: other commits may land between 
 | 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories | dev | done; `Frame` 15 fields, no fn over 150, 1 readback copy; gpu gate 189/189 at `d71c21b`; timing done-when waits on Phase 0's "before" set; deviations in the log | `8b51a31`..`54f7b56`, `d71c21b` |
 | 4: the shaders become modules a pass picks | dev | done; modules common, mirror, walk, hitrec, field_walk, hit, emissive, edits; a Rust-generated prelude; `shader_sources` the one list; gpu gate 189/189; pass times wait on Phase 0's "before" set; deviations in the log | `6c93fa5`..`26f7a34`, `ee48120` |
 | 5: the world crate's three big modules split | dev | done; `stream/`, `collapse/`, `packed/`, one `Tally`, `clip_box`, `local_of_index`, `wire::Writer`; `bench-internals` and `stream-oracle` features; benches wait on Phase 0's "before" set; deviations in the log | `deb7348`..`23fbe78`, committed with this row |
-| 6: audio, net, wasm and assets split their long functions | dev | not started | |
+| 6: audio, net, wasm and assets split their long functions | dev | done; `reverb/`, `acoustics/`, `mixer/`; `render_block` in five parts, one `Spatialiser`, one `fibonacci_sphere`; `test-hooks` feature; `format_error`; `parse` per chunk; `add_host` per import; the `placements` cache not built (deviations in the log); mixer bench waits on Phase 0's "before" set | `0c410a5`..`730ba26`, committed with this row |
 | 7: the testbed's library takes the binary's contents | dev | not started | |
 | 8: the mega test files split, and two gates keep everything small | dev | not started | |
 | 9: the owner reads every toggle on screen | human | not started | |
