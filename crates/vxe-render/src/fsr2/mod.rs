@@ -8,6 +8,7 @@
 //! least as precise), and four-tap loads for AMD's bilinear samples.
 
 use crate::frame::{Dispatch, Params, Upscaler, WORKGROUP};
+use crate::gpu_util::*;
 
 mod pipelines;
 mod prepare;

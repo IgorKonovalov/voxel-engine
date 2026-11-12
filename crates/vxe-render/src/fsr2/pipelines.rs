@@ -93,173 +93,153 @@ impl Fsr2Binds {
     }
 }
 
-pub(super) fn layout(
-    device: &wgpu::Device,
-    label: &str,
-    entries: &[wgpu::BindGroupLayoutEntry],
-) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some(label),
-        entries,
-    })
+/// Which groups an FSR 2 pass binds: ours read the frame's world at group 0 and the pass's at
+/// 2, after `march.wgsl`; AMD's read the constants at 0 and the pass's at 1, after FSR 2's common
+/// parts ([`fsr2_source`]).
+#[derive(Clone, Copy)]
+pub(crate) enum Side {
+    Ours,
+    Amd,
 }
 
-pub(super) fn entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty,
-        count: None,
+/// One FSR 2 pass: its label, its WGSL, its entry point, whose groups it binds, and its own
+/// bindings.
+pub(crate) struct FsrPassSpec {
+    pub(crate) label: &'static str,
+    pub(crate) source: &'static str,
+    pub(crate) entry: &'static str,
+    pub(crate) side: Side,
+    pub(crate) io: &'static [(u32, Io)],
+}
+
+impl FsrPassSpec {
+    /// The pass's composed source.
+    pub(crate) fn composed(&self) -> String {
+        match self.side {
+            Side::Ours => format!("{}\n{}", crate::MARCH_WGSL, self.source),
+            Side::Amd => fsr2_source(self.source, true),
+        }
     }
 }
 
-pub(super) fn tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-    )
-}
+const R32F: Io = Io::Store(wgpu::TextureFormat::R32Float);
+const RG32F: Io = Io::Store(wgpu::TextureFormat::Rg32Float);
+const RGBA8: Io = Io::Store(wgpu::TextureFormat::Rgba8Unorm);
+const RGBA16F: Io = Io::Store(wgpu::TextureFormat::Rgba16Float);
 
-pub(super) fn uint_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Uint,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-    )
-}
-
-pub(super) fn store_entry(binding: u32, format: wgpu::TextureFormat) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::StorageTexture {
-            access: wgpu::StorageTextureAccess::WriteOnly,
-            format,
-            view_dimension: wgpu::TextureViewDimension::D2,
-        },
-    )
-}
-
-pub(super) fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-    )
-}
-
-pub(super) fn rw_buffer_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: false },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-    )
-}
-
-/// A binding of a bind group: a texture's whole view or a buffer.
-pub(super) enum Bind<'a> {
-    Tex(&'a wgpu::Texture),
-    Buf(&'a wgpu::Buffer),
-}
-
-pub(super) fn bind(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    res: &[Bind<'_>],
-) -> wgpu::BindGroup {
-    let at: Vec<(u32, &Bind<'_>)> = res.iter().enumerate().map(|(i, r)| (i as u32, r)).collect();
-    bind_refs(device, layout, &at)
-}
-
-/// A bind group of `res` at explicit binding numbers.
-pub(super) fn bind_at(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    res: &[(u32, Bind<'_>)],
-) -> wgpu::BindGroup {
-    let at: Vec<(u32, &Bind<'_>)> = res.iter().map(|(b, r)| (*b, r)).collect();
-    bind_refs(device, layout, &at)
-}
-
-pub(super) fn bind_refs(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    res: &[(u32, &Bind<'_>)],
-) -> wgpu::BindGroup {
-    let views: Vec<Option<wgpu::TextureView>> = res
-        .iter()
-        .map(|(_, r)| match r {
-            Bind::Tex(t) => Some(t.create_view(&wgpu::TextureViewDescriptor::default())),
-            Bind::Buf(_) => None,
-        })
-        .collect();
-    let entries: Vec<wgpu::BindGroupEntry<'_>> = res
-        .iter()
-        .zip(&views)
-        .map(|((binding, r), v)| wgpu::BindGroupEntry {
-            binding: *binding,
-            resource: match (r, v) {
-                (Bind::Buf(b), _) => b.as_entire_binding(),
-                (_, Some(v)) => wgpu::BindingResource::TextureView(v),
-                (Bind::Tex(_), None) => unreachable!("a texture binding has its view"),
-            },
-        })
-        .collect();
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout,
-        entries: &entries,
-    })
-}
-
-pub(super) fn pipeline(
-    device: &wgpu::Device,
-    label: &str,
-    source: String,
-    layouts: &[Option<&wgpu::BindGroupLayout>],
-    entry: &str,
-) -> wgpu::ComputePipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: layouts,
-        immediate_size: 0,
-    });
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some(label),
-        layout: Some(&layout),
-        module: &module,
-        entry_point: Some(entry),
-        compilation_options: Default::default(),
-        cache: None,
-    })
-}
-
-pub(super) fn ro_buffer_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-    )
-}
+/// FSR 2's passes in the order [`Fsr2::new`] builds them: our input and tone passes, then AMD's
+/// luminance pyramid (its mips and its tail), reconstruct previous depth, depth clip, lock,
+/// accumulate and RCAS.
+pub(crate) const FSR2_PIPES: [FsrPassSpec; 9] = [
+    FsrPassSpec {
+        label: "fsr2 input",
+        source: FSR2_INPUT_WGSL,
+        entry: "fsr2_input",
+        side: Side::Ours,
+        io: &[
+            (0, Io::Float),
+            (1, Io::Uint),
+            (2, Io::Float),
+            (3, Io::Uniform),
+            (4, Io::Uniform),
+            (5, Io::Uniform),
+            (6, R32F),
+            (7, RG32F),
+            (8, RGBA8),
+        ],
+    },
+    FsrPassSpec {
+        label: "fsr2 tone",
+        source: FSR2_TONE_WGSL,
+        entry: "tone",
+        side: Side::Ours,
+        io: &[(0, Io::Float), (1, RGBA8)],
+    },
+    FsrPassSpec {
+        label: "fsr2 luminance pyramid",
+        source: FSR2_LUMINANCE_PYRAMID_WGSL,
+        entry: "spd_mips",
+        side: Side::Amd,
+        io: &[(0, Io::Float), (1, R32F), (2, R32F)],
+    },
+    FsrPassSpec {
+        label: "fsr2 luminance pyramid tail",
+        source: FSR2_LUMINANCE_PYRAMID_WGSL,
+        entry: "spd_tail",
+        side: Side::Amd,
+        io: &[(3, Io::Float), (4, RG32F), (5, Io::Float)],
+    },
+    FsrPassSpec {
+        label: "fsr2 reconstruct previous depth",
+        source: FSR2_RECONSTRUCT_WGSL,
+        entry: "reconstruct_and_dilate",
+        side: Side::Amd,
+        io: &[
+            (0, Io::Float),
+            (1, Io::Float),
+            (2, Io::Float),
+            (3, Io::Float),
+            (4, Io::Storage),
+            (5, R32F),
+            (6, RG32F),
+            (7, R32F),
+        ],
+    },
+    FsrPassSpec {
+        label: "fsr2 depth clip",
+        source: FSR2_DEPTH_CLIP_WGSL,
+        entry: "depth_clip",
+        side: Side::Amd,
+        io: &[
+            (0, Io::Float),
+            (1, Io::Float),
+            (2, Io::Float),
+            (3, Io::Float),
+            (4, Io::Float),
+            (5, Io::Float),
+            (6, Io::Float),
+            (7, Io::Float),
+            (8, Io::ReadStorage),
+            (9, RGBA16F),
+            (10, RGBA8),
+        ],
+    },
+    FsrPassSpec {
+        label: "fsr2 lock",
+        source: FSR2_LOCK_WGSL,
+        entry: "compute_lock",
+        side: Side::Amd,
+        io: &[(0, Io::Float), (1, Io::Storage), (2, Io::Storage)],
+    },
+    FsrPassSpec {
+        label: "fsr2 accumulate",
+        source: FSR2_ACCUMULATE_WGSL,
+        entry: "accumulate",
+        side: Side::Amd,
+        io: &[
+            (0, Io::Float),
+            (1, Io::Float),
+            (2, Io::Float),
+            (3, Io::Float),
+            (4, Io::Float),
+            (5, Io::Float),
+            (6, Io::Float),
+            (7, Io::Float),
+            (8, Io::Storage),
+            (9, RG32F),
+            (10, RGBA16F),
+            (11, RGBA8),
+            (12, R32F),
+        ],
+    },
+    FsrPassSpec {
+        label: "fsr2 rcas",
+        source: FSR2_RCAS_WGSL,
+        entry: "rcas",
+        side: Side::Amd,
+        io: &[(0, Io::Float), (1, Io::Float), (2, RGBA8), (3, Io::Float)],
+    },
+];
 
 impl Fsr2 {
     /// FSR 2's pipelines and its resources for `render`-sized frames shown at `display`;
@@ -271,152 +251,27 @@ impl Fsr2 {
         display: [u32; 2],
         settings: Fsr2Settings,
     ) -> Self {
-        use wgpu::TextureFormat::{R32Float, Rg32Float, Rgba8Unorm, Rgba16Float};
-        let cb_layout = layout(device, "fsr2 constants", &[uniform_entry(0)]);
-        // Ours: group 0 is the frame's world, group 2 the pass's.
-        let ours = |label: &str,
-                    source: &str,
-                    entry_point: &str,
-                    entries: &[wgpu::BindGroupLayoutEntry]| {
-            let l = layout(device, label, entries);
-            let p = pipeline(
-                device,
-                label,
-                format!("{}\n{source}", crate::MARCH_WGSL),
-                &[Some(world_layout), None, Some(&l)],
-                entry_point,
-            );
-            Pass {
-                layout: l,
-                pipeline: p,
-            }
-        };
-        // AMD's: group 0 is the constants, group 1 the pass's.
-        let amd = |label: &str,
-                   source: &str,
-                   entry_point: &str,
-                   entries: &[wgpu::BindGroupLayoutEntry]| {
-            let l = layout(device, label, entries);
-            let p = pipeline(
-                device,
-                label,
-                fsr2_source(source, true),
-                &[Some(&cb_layout), Some(&l)],
-                entry_point,
-            );
-            Pass {
-                layout: l,
-                pipeline: p,
-            }
-        };
-        let input = ours(
-            "fsr2 input",
-            FSR2_INPUT_WGSL,
-            "fsr2_input",
-            &[
-                tex_entry(0),
-                uint_entry(1),
-                tex_entry(2),
-                uniform_entry(3),
-                uniform_entry(4),
-                uniform_entry(5),
-                store_entry(6, R32Float),
-                store_entry(7, Rg32Float),
-                store_entry(8, Rgba8Unorm),
-            ],
-        );
-        let tone = ours(
-            "fsr2 tone",
-            FSR2_TONE_WGSL,
-            "tone",
-            &[tex_entry(0), store_entry(1, Rgba8Unorm)],
-        );
-        let spd_mips = amd(
-            "fsr2 luminance pyramid",
-            FSR2_LUMINANCE_PYRAMID_WGSL,
-            "spd_mips",
-            &[
-                tex_entry(0),
-                store_entry(1, R32Float),
-                store_entry(2, R32Float),
-            ],
-        );
-        let spd_tail = amd(
-            "fsr2 luminance pyramid tail",
-            FSR2_LUMINANCE_PYRAMID_WGSL,
-            "spd_tail",
-            &[tex_entry(3), store_entry(4, Rg32Float), tex_entry(5)],
-        );
-        let reconstruct = amd(
-            "fsr2 reconstruct previous depth",
-            FSR2_RECONSTRUCT_WGSL,
-            "reconstruct_and_dilate",
-            &[
-                tex_entry(0),
-                tex_entry(1),
-                tex_entry(2),
-                tex_entry(3),
-                rw_buffer_entry(4),
-                store_entry(5, R32Float),
-                store_entry(6, Rg32Float),
-                store_entry(7, R32Float),
-            ],
-        );
-        let depth_clip = amd(
-            "fsr2 depth clip",
-            FSR2_DEPTH_CLIP_WGSL,
-            "depth_clip",
-            &[
-                tex_entry(0),
-                tex_entry(1),
-                tex_entry(2),
-                tex_entry(3),
-                tex_entry(4),
-                tex_entry(5),
-                tex_entry(6),
-                tex_entry(7),
-                ro_buffer_entry(8),
-                store_entry(9, Rgba16Float),
-                store_entry(10, Rgba8Unorm),
-            ],
-        );
-        let lock = amd(
-            "fsr2 lock",
-            FSR2_LOCK_WGSL,
-            "compute_lock",
-            &[tex_entry(0), rw_buffer_entry(1), rw_buffer_entry(2)],
-        );
-        let accumulate = amd(
-            "fsr2 accumulate",
-            FSR2_ACCUMULATE_WGSL,
-            "accumulate",
-            &[
-                tex_entry(0),
-                tex_entry(1),
-                tex_entry(2),
-                tex_entry(3),
-                tex_entry(4),
-                tex_entry(5),
-                tex_entry(6),
-                tex_entry(7),
-                rw_buffer_entry(8),
-                store_entry(9, Rg32Float),
-                store_entry(10, Rgba16Float),
-                store_entry(11, Rgba8Unorm),
-                store_entry(12, R32Float),
-            ],
-        );
-        let rcas = amd(
-            "fsr2 rcas",
-            FSR2_RCAS_WGSL,
-            "rcas",
-            &[
-                tex_entry(0),
-                tex_entry(1),
-                store_entry(2, Rgba8Unorm),
-                tex_entry(3),
-            ],
-        );
+        let cb_layout = io_layout(device, "fsr2 constants", &[Io::Uniform]);
+        let [
+            input,
+            tone,
+            spd_mips,
+            spd_tail,
+            reconstruct,
+            depth_clip,
+            lock,
+            accumulate,
+            rcas,
+        ] = FSR2_PIPES.each_ref().map(|spec| {
+            let layout = io_layout_at(device, spec.label, spec.io);
+            let groups = match spec.side {
+                Side::Ours => vec![Some(world_layout), None, Some(&layout)],
+                Side::Amd => vec![Some(&cb_layout), Some(&layout)],
+            };
+            let pipeline =
+                compute_pipeline(device, spec.label, spec.composed(), &groups, spec.entry);
+            Pass { layout, pipeline }
+        });
         let buffer = |label, size| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
