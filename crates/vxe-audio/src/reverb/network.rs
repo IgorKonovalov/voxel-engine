@@ -1,187 +1,13 @@
-//! The late tail: feedback delay networks shared by every voice (ADR-0015).
-//!
-//! [`REVERB_LINES`] delay lines are mixed by the Householder matrix `I - (2/N) 1 1^T` (an
-//! orthogonal, energy-preserving feedback: each output is the line's input minus twice the
-//! lines' mean), and each line's output runs through a first-order low-pass
-//! `y = g (1 - a) x + a y` (Jot and Chaigne 1991; Smith, "Delay-Line Damping Filter Design").
-//! For a line of length `M`, `g = 10 ^ (-3 M / (T60 f_s))` gives the decay `T60` at DC, and `a`
-//! is solved so the gain at 4 kHz is the same expression at `T60 * hf_ratio`.
-//!
-//! Line `i`'s target length is the mean free path's travel time times
-//! `spread_i = 0.5 * 3 ^ (i / 15)`, clamped to `[32, REVERB_MAX_DELAY_FRAMES]` and rounded to
-//! the nearest prime, so the lines share no common period. The cap covers every mean free path
-//! a room fan can report (`4V / S <= (4/3) x` the ray range), so no fan's room clamps a line;
-//! a larger one from a caller clamps to the largest prime under the cap. Lines that clamped to
-//! one length would carry equal signals, which the ears' alternating-sign sums cancel.
-//!
-//! # A change of room
-//!
-//! There are two networks, one of them fed. How a room with another mean free path reaches
-//! them is [`TailLines`]:
-//! - [`TailLines::Handover`] (the default) never moves a line that holds signal, since a
-//!   recirculating signal read through a moving line is shifted in pitch on every pass. A room
-//!   whose mean free path differs from the fed network's by more than [`TAIL_HANDOVER_RATIO`]
-//!   either way goes to the other network: it is cleared, takes the new lengths at once, and
-//!   the input crossfades to it over [`crate::SMOOTHING_SECONDS`] (equal power, the two being
-//!   uncorrelated), while the old network keeps its lengths and rings out at its own decay with
-//!   no input. If the other network still rings when a handover is due, it first fades to
-//!   silence over [`crate::SMOOTHING_SECONDS`], then is cleared. A room within the ratio
-//!   changes the fed network's decay and energy in place, its lengths unchanged.
-//! - [`TailLines::Glide`] keeps one network and glides each line's length toward its target
-//!   by at most [`REVERB_DELAY_SLEW_FRAMES_PER_FRAME`] per frame through a linearly
-//!   interpolated fractional read.
-//!
-//! The first room sets the fed network's lengths and decay at once and its input gain rises
-//! from 0 through the smoother. A decay changed in place moves through the smoother; the loop
-//! gains follow the current lengths and the smoothed `T60` every block.
-//!
-//! # Pre-delay
-//!
-//! The voices' summed sends pass a mono line of [`REVERB_MAX_PREDELAY_FRAMES`] plus a block
-//! before the networks, read [`ReverbSettings::predelay_s`] back. A new pre-delay never glides
-//! (that would repitch the input): the read crossfades linearly from the old read point to the
-//! new one over [`crate::SMOOTHING_SECONDS`]; a change asked for while one crossfades waits for
-//! it to finish.
-//!
-//! # Clearing
-//!
-//! A network that rings out, or finishes a fade-out, is cleared, and so is the network a
-//! handover takes. Its lines are not zeroed there: they swap with a third, spare set of lines
-//! that is already zero; lines that never took a nonzero sample since they were last zero stay.
-//! The spare then has zeroed, a block at a time, only the run of ring frames that took nonzero
-//! samples, at most [`CLEAR_FRAMES_PER_BLOCK`] (two blocks) frames of each line per block; a
-//! run over the whole ring is clean after `RING / CLEAR_FRAMES_PER_BLOCK` blocks, rounded up. A
-//! clear that finds the spare not yet clean (a second handover within the spare's cleaning time)
-//! parks the network instead: it goes silent and inactive with its lines as they are, and swaps
-//! them at the end of the first block that leaves the spare clean. A handover that falls to a
-//! parked network waits for that swap; a room taken in place by a parked network wakes it on its
-//! own lines, the tail it rang out to. So no block zeroes more than [`CLEAR_FRAMES_PER_BLOCK`]
-//! frames of each line.
-//!
-//! # Level
-//!
-//! Every line takes the same input `b * x`, `x` the sum of the voices' sends. At frequency `w`
-//! a pass through line `i` keeps `|H_i(w)|^2` of the energy and the Householder matrix
-//! preserves it, so with `G(w)` the mean of `|H_i(w)|^2` over the lines, a unit impulse leaves
-//! `N b^2 G (1 + G + G^2 + ...) = N b^2 G / (1 - G)` in the filtered line outputs at `w`. Each
-//! ear takes half the lines (disjoint halves, alternating signs, so the ears decorrelate), so
-//! `b^2 = 2 E / (N mean_w [G / (1 - G)])`, the mean over [`ENERGY_BANDS`] frequencies spread
-//! evenly to Nyquist, gives each ear the tail energy `E` the room asks for. `E` is the room's
-//! energy times `level^2`, `level` the [`ReverbSettings::level`] trim times
-//! [`ReverbSettings::level_by_room`] at the mean free path of the room that network took last;
-//! a handover's new network carries its own room's level, and what a network already holds
-//! keeps the level it was fed at.
-//!
-//! The steady output for a steady input is `b^2` times a loop factor that grows with `T60`.
-//! So that a change in place never overshoots the new steady level, `b` is computed from the
-//! larger of the smoothed and the target `T60` (the loop gains rise no faster than the
-//! smoother lets them, `b` already at the longer decay's value), and `b` moves up through the
-//! smoother but down to its target within the block.
+//! One feedback delay network: its line lengths (primes over the mean free path), its loop
+//! filters, its input gain for the room's energy, its block render, and the spare line sets a
+//! cleared network swaps with.
 
+use super::{
+    CLEAR_FRAMES_PER_BLOCK, HF_HZ, REVERB_DELAY_SLEW_FRAMES_PER_FRAME, REVERB_LINES,
+    REVERB_MAX_DELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, RING, ReverbClears, ReverbSettings,
+};
 use crate::command::RoomTargets;
-use crate::room_curve::{RoomCurve, TAIL_KNOTS, curve_of};
-use crate::{BLOCK, RATE, SMOOTHING_SECONDS, SPEED_OF_SOUND};
-
-/// How a change of room reaches the tail's lines (module comment).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TailLines {
-    /// Two networks: a room with another mean free path goes to the silent one, the input
-    /// crossfades to it, and no line that holds signal moves.
-    #[default]
-    Handover,
-    /// One network whose lines glide to their new lengths.
-    Glide,
-}
-
-/// The longest pre-delay: 200 ms.
-pub const REVERB_MAX_PREDELAY_FRAMES: usize = 9_600;
-/// The pre-delay line holds the longest pre-delay plus a block.
-const PRE_RING: usize = REVERB_MAX_PREDELAY_FRAMES + BLOCK;
-
-/// A room whose mean free path differs from the fed network's by more than this factor,
-/// either way, is handed to the other network ([`TailLines::Handover`]).
-pub const TAIL_HANDOVER_RATIO: f32 = 1.15;
-
-/// Delay lines in the network.
-pub const REVERB_LINES: usize = 16;
-/// The longest line: 583 ms, line 15's length at the largest mean free path a room fan can
-/// report (`1.5 x (4/3) x 100 m / 343 m/s x 48 000 = 27 988` frames).
-pub const REVERB_MAX_DELAY_FRAMES: usize = 28_000;
-/// The shortest line.
-pub const REVERB_MIN_DELAY_FRAMES: usize = 32;
-/// The most a line's length moves toward its target per frame of audio.
-pub const REVERB_DELAY_SLEW_FRAMES_PER_FRAME: f32 = 0.02;
-/// The frequency at which a line's decay is `T60 * hf_ratio`.
-const HF_HZ: f32 = 4_000.0;
-/// Frequencies the input gain's energy average samples, evenly from 0 to Nyquist.
-const ENERGY_BANDS: usize = 64;
-/// Each ring holds the longest line plus a block.
-const RING: usize = REVERB_MAX_DELAY_FRAMES + BLOCK;
-
-/// Frames of each spare line zeroed at most per block (module comment, "Clearing").
-const CLEAR_FRAMES_PER_BLOCK: usize = 2 * BLOCK;
-
-/// How the tail sounds beyond what the room gives it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ReverbSettings {
-    /// The decay time at 4 kHz as a fraction of the decay time at DC.
-    pub hf_ratio: f32,
-    /// Amplitude scale of the whole tail, a trim on top of `level_by_room`.
-    pub level: f32,
-    /// The tail's level in dB by the mean free path of the room a network takes; it multiplies
-    /// `level` where the level enters the network's input gain.
-    pub level_by_room: RoomCurve,
-    /// The longest decay time the tail takes.
-    pub max_t60_s: f32,
-    /// How a change of room reaches the lines.
-    pub lines: TailLines,
-    /// Seconds the voices' sends wait before they enter the networks, 0 to 0.2.
-    pub predelay_s: f32,
-}
-
-impl ReverbSettings {
-    /// The pre-delay in whole frames, clamped to `[0, REVERB_MAX_PREDELAY_FRAMES]`.
-    pub fn predelay_frames(&self) -> usize {
-        (self.predelay_s.max(0.0) * RATE as f32)
-            .round()
-            .min(REVERB_MAX_PREDELAY_FRAMES as f32) as usize
-    }
-}
-
-impl Default for ReverbSettings {
-    fn default() -> Self {
-        Self {
-            hf_ratio: 0.5,
-            level: 1.0,
-            level_by_room: curve_of(&TAIL_KNOTS),
-            max_t60_s: 8.0,
-            lines: TailLines::Handover,
-            predelay_s: 0.0,
-        }
-    }
-}
-
-/// One network as [`crate::Mixer::reverb_networks`] reads it.
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ReverbNetwork {
-    pub lines: [ReverbLine; REVERB_LINES],
-    /// Some line or filter state is nonzero.
-    pub holds_signal: bool,
-    /// The network is the fed one.
-    pub fed: bool,
-    /// Its input weight now, 0 to 1.
-    pub input: f32,
-}
-
-/// One line as [`crate::Mixer::reverb_lines`] reads it.
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ReverbLine {
-    /// Frames, fractional while gliding.
-    pub length: f32,
-    pub target: u32,
-}
+use crate::{RATE, SMOOTHING_SECONDS, SPEED_OF_SOUND};
 
 /// `spread_i = 0.5 * 3 ^ (i / 15)`.
 fn spread(i: usize) -> f32 {
@@ -321,54 +147,54 @@ pub(crate) fn flush(x: f32) -> f32 {
 }
 
 /// One network and its state, allocated once.
-struct Network {
-    lines: [Vec<f32>; REVERB_LINES],
+pub(super) struct Network {
+    pub(super) lines: [Vec<f32>; REVERB_LINES],
     /// Where the next frame is written, the same in every ring.
-    write: usize,
-    length: [f32; REVERB_LINES],
-    target: [u32; REVERB_LINES],
+    pub(super) write: usize,
+    pub(super) length: [f32; REVERB_LINES],
+    pub(super) target: [u32; REVERB_LINES],
     /// The mean free path the targets were set for.
-    mfp: f32,
+    pub(super) mfp: f32,
     /// The mean free path of the room taken last, as it arrived.
-    room_mfp: f32,
+    pub(super) room_mfp: f32,
     /// `level_by_room` at `room_mfp`, as an amplitude factor.
-    room_level: f32,
+    pub(super) room_level: f32,
     /// Each line's low-pass state.
-    lowpass: [f32; REVERB_LINES],
+    pub(super) lowpass: [f32; REVERB_LINES],
     /// Each line's filter at the end of the last block, `(g (1 - a), a)`, which this block's
     /// coefficients ramp from, sample by sample, so a change of decay or length never steps
     /// the loop gain at a block edge.
-    coef: [(f32, f32); REVERB_LINES],
+    pub(super) coef: [(f32, f32); REVERB_LINES],
     /// `T60` and input gain `b` as smoothed so far, and the `T60` target.
-    t60: f32,
-    t60_target: f32,
-    b: f32,
-    energy: f32,
+    pub(super) t60: f32,
+    pub(super) t60_target: f32,
+    pub(super) b: f32,
+    pub(super) energy: f32,
     /// Frames the decay holds at `t60` before it moves toward `t60_target` (a longer decay
     /// with less energy waits for the stored tail to fall to the new level).
-    hold: f32,
+    pub(super) hold: f32,
     /// Lengths and decay have been set.
-    started: bool,
+    pub(super) started: bool,
     /// The network may hold signal; cleared once it has rung out with no input.
-    active: bool,
+    pub(super) active: bool,
     /// Output gain while fading out before a clear: `Some(g)`, `g` falling to 0.
-    fade: Option<f32>,
+    pub(super) fade: Option<f32>,
     /// Frames written since the network was made, of which `write` is the ring position.
-    written: u64,
+    pub(super) written: u64,
     /// Since the lines were last all zero, the first frame of the first block that wrote a
     /// nonzero sample and the end of the last one: every nonzero sample lies in that run of
     /// frames (its last [`RING`] of them).
-    nonzero: Option<(u64, u64)>,
+    pub(super) nonzero: Option<(u64, u64)>,
     /// The decay, the HF ratio and each line's length `coef` was computed for, as bits; `None`
     /// until a block computes them.
-    coef_for: Option<(u32, u32, [u32; REVERB_LINES])>,
+    pub(super) coef_for: Option<(u32, u32, [u32; REVERB_LINES])>,
     /// [`Network::input_gain`]'s inputs as bits (the decay, the HF ratio, the level trim, the
     /// room level, the energy, each line's length) and its value for them.
-    gain_for: Option<([u32; 5 + REVERB_LINES], f32)>,
+    pub(super) gain_for: Option<([u32; 5 + REVERB_LINES], f32)>,
 }
 
 impl Network {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             lines: std::array::from_fn(|_| vec![0.0; RING]),
             write: 0,
@@ -396,7 +222,7 @@ impl Network {
 
     /// Silences every line and filter: lines that may hold signal swap with `spare`'s clean
     /// ones, or, while the spare is dirty, wait parked (module comment, "Clearing").
-    fn clear(&mut self, spare: &mut SpareLines) {
+    pub(super) fn clear(&mut self, spare: &mut SpareLines) {
         if let Some((first, end)) = self.nonzero {
             if !spare.has_clean() {
                 if !self.parked() {
@@ -414,7 +240,7 @@ impl Network {
     }
 
     /// Takes `room`'s lengths and decay at once, the input gain `b` from `b`.
-    fn set_at_once(&mut self, room: RoomTargets, settings: &ReverbSettings, b: f32) {
+    pub(super) fn set_at_once(&mut self, room: RoomTargets, settings: &ReverbSettings, b: f32) {
         let mfp = room.mean_free_path_m.max(0.0);
         for (i, t) in self.target.iter_mut().enumerate() {
             *t = target_length(i, mfp);
@@ -441,7 +267,12 @@ impl Network {
     }
 
     /// Takes `room`'s decay and energy in place; `glide` also retargets the lengths.
-    fn set_in_place(&mut self, room: RoomTargets, settings: &ReverbSettings, glide: bool) {
+    pub(super) fn set_in_place(
+        &mut self,
+        room: RoomTargets,
+        settings: &ReverbSettings,
+        glide: bool,
+    ) {
         if glide {
             let mfp = room.mean_free_path_m.max(0.0);
             for (i, t) in self.target.iter_mut().enumerate() {
@@ -471,18 +302,18 @@ impl Network {
     }
 
     /// Records the room's mean free path and the tail curve's level there.
-    fn take_room_level(&mut self, mfp: f32, settings: &ReverbSettings) {
+    pub(super) fn take_room_level(&mut self, mfp: f32, settings: &ReverbSettings) {
         self.room_mfp = mfp;
         self.room_level = settings.level_by_room.gain_at(mfp);
     }
 
     /// Cleared while the spare was dirty: silent, its lines not yet swapped.
-    fn parked(&self) -> bool {
+    pub(super) fn parked(&self) -> bool {
         !self.active && self.nonzero.is_some()
     }
 
     /// Whether any line or filter state is nonzero.
-    fn holds_signal(&self) -> bool {
+    pub(super) fn holds_signal(&self) -> bool {
         self.lowpass.iter().any(|&x| x != 0.0)
             || self.lines.iter().any(|l| l.iter().any(|&x| x != 0.0))
     }
@@ -490,7 +321,7 @@ impl Network {
     /// `b` for the network's energy at decay `t60` and its current lengths:
     /// `b^2 = 2 E level^2 / (N mean_w [G / (1 - G)])` (module comment), `level` the trim
     /// times the room curve's factor at the network's room.
-    fn input_gain(&self, t60: f32, settings: &ReverbSettings, band_cos: &[f32]) -> f32 {
+    pub(super) fn input_gain(&self, t60: f32, settings: &ReverbSettings, band_cos: &[f32]) -> f32 {
         let level = settings.level * self.room_level;
         let e = self.energy * level * level;
         if e <= 0.0 {
@@ -511,7 +342,12 @@ impl Network {
     }
 
     /// [`Network::input_gain`], reused while its inputs hold their values bit for bit.
-    fn input_gain_cached(&mut self, t60: f32, settings: &ReverbSettings, band_cos: &[f32]) -> f32 {
+    pub(super) fn input_gain_cached(
+        &mut self,
+        t60: f32,
+        settings: &ReverbSettings,
+        band_cos: &[f32],
+    ) -> f32 {
         let mut key = [0u32; 5 + REVERB_LINES];
         key[..5].copy_from_slice(&[
             t60.to_bits(),
@@ -537,7 +373,7 @@ impl Network {
     /// moving linearly from `w0` to `w1` across the block, both ears added to interleaved
     /// `out` times the fade's gain. Returns whether the network has faded out or rung out
     /// with nothing coming in, and so is to be cleared.
-    fn render(
+    pub(super) fn render(
         &mut self,
         input: &[f32],
         out: &mut [f32],
@@ -668,21 +504,6 @@ impl Network {
     }
 }
 
-/// How the tail's clears ran, for tests ([`crate::Mixer::reverb_clears`]).
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ReverbClears {
-    /// Clears that swapped a network's lines with the spare.
-    pub swaps: u64,
-    /// Of those, the ones that found the spare not yet clean and finished zeroing it first.
-    /// A clear defers instead, so this stays 0.
-    pub forced: u64,
-    /// Clears that found the spare dirty and parked their network until it was clean.
-    pub deferred: u64,
-    /// The most samples zeroed in one block.
-    pub max_zeroed: usize,
-}
-
 /// Spare line sets a cleared network swaps with (module comment, "Clearing").
 pub(crate) const SPARE_SETS: usize = 1;
 
@@ -713,15 +534,15 @@ impl SpareSet {
 }
 
 /// The [`SPARE_SETS`] spare sets and how their clears ran.
-struct SpareLines {
+pub(super) struct SpareLines {
     sets: [SpareSet; SPARE_SETS],
-    stats: ReverbClears,
+    pub(super) stats: ReverbClears,
     /// Samples zeroed in the block running now.
     zeroed: usize,
 }
 
 impl SpareLines {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             sets: std::array::from_fn(|_| SpareSet {
                 lines: std::array::from_fn(|_| vec![0.0; RING]),
@@ -734,7 +555,7 @@ impl SpareLines {
     }
 
     /// Whether a set is clean, so a clear can swap at once.
-    fn has_clean(&self) -> bool {
+    pub(super) fn has_clean(&self) -> bool {
         self.sets.iter().any(|s| s.len == 0)
     }
 
@@ -761,7 +582,7 @@ impl SpareLines {
     /// Ends a block: zeroes up to [`CLEAR_FRAMES_PER_BLOCK`] more frames of each line in all,
     /// the set with the shortest dirty run first so it comes clean soonest, and records the
     /// block's total.
-    fn end_block(&mut self) {
+    pub(super) fn end_block(&mut self) {
         let mut budget = CLEAR_FRAMES_PER_BLOCK;
         while budget > 0 {
             let Some(set) = self
@@ -778,271 +599,6 @@ impl SpareLines {
         }
         self.stats.max_zeroed = self.stats.max_zeroed.max(self.zeroed);
         self.zeroed = 0;
-    }
-}
-
-/// The tail: two networks, one fed, and how a change of room moves between them.
-pub(crate) struct Reverb {
-    nets: [Network; 2],
-    /// The network the input goes to.
-    fed: usize,
-    /// The input crossfade from the other network to `fed`, 0 to 1; 1 when done.
-    xfade: f32,
-    /// A room waiting for the other network to fade out and clear.
-    pending: Option<RoomTargets>,
-    settings: ReverbSettings,
-    /// `cos w` at the centre of each of the [`ENERGY_BANDS`] bands.
-    band_cos: [f32; ENERGY_BANDS],
-    pre: PreDelay,
-    spare: SpareLines,
-}
-
-/// The pre-delay line and its crossfade between two read points (module comment).
-struct PreDelay {
-    ring: Vec<f32>,
-    write: usize,
-    /// The read point being left and the one being taken, frames back.
-    from: usize,
-    to: usize,
-    /// Crossfade progress from `from` to `to`, 0 to 1; 1 when done.
-    x: f32,
-    /// A pre-delay waiting for the crossfade in progress.
-    pending: Option<usize>,
-    /// One block of the delayed input.
-    out: Vec<f32>,
-}
-
-impl PreDelay {
-    fn new() -> Self {
-        Self {
-            ring: vec![0.0; PRE_RING],
-            write: 0,
-            from: 0,
-            to: 0,
-            x: 1.0,
-            pending: None,
-            out: vec![0.0; BLOCK],
-        }
-    }
-
-    /// Asks for a read point `frames` back.
-    fn set(&mut self, frames: usize) {
-        if self.x < 1.0 {
-            self.pending = (frames != self.to).then_some(frames);
-        } else if frames != self.to {
-            self.from = self.to;
-            self.to = frames;
-            self.x = 0.0;
-        }
-    }
-
-    /// Writes `input` into the line and returns it delayed.
-    fn process(&mut self, input: &[f32]) -> &[f32] {
-        let n = input.len();
-        if self.x >= 1.0 && self.pending.is_none() && self.to == 0 {
-            // No pre-delay: the line still records, so a later one has history to read.
-            for &v in input {
-                self.ring[self.write] = v;
-                self.write = if self.write + 1 == PRE_RING {
-                    0
-                } else {
-                    self.write + 1
-                };
-            }
-            self.out[..n].copy_from_slice(input);
-            return &self.out[..n];
-        }
-        let step = 1.0 / (SMOOTHING_SECONDS * RATE as f32);
-        let back = |w: usize, d: usize| if w >= d { w - d } else { w + PRE_RING - d };
-        for (j, &v) in input.iter().enumerate() {
-            self.ring[self.write] = v;
-            let a = self.ring[back(self.write, self.from)];
-            let b = self.ring[back(self.write, self.to)];
-            if self.x < 1.0 {
-                self.x = (self.x + step).min(1.0);
-            }
-            self.out[j] = a + (b - a) * self.x;
-            self.write = if self.write + 1 == PRE_RING {
-                0
-            } else {
-                self.write + 1
-            };
-            if self.x >= 1.0
-                && let Some(next) = self.pending.take()
-            {
-                self.from = self.to;
-                self.to = next;
-                self.x = 0.0;
-            }
-        }
-        &self.out[..n]
-    }
-}
-
-impl Reverb {
-    pub fn new() -> Self {
-        Self {
-            nets: [Network::new(), Network::new()],
-            fed: 0,
-            xfade: 1.0,
-            pending: None,
-            settings: ReverbSettings::default(),
-            band_cos: std::array::from_fn(|k| {
-                (std::f32::consts::PI * (k as f32 + 0.5) / ENERGY_BANDS as f32).cos()
-            }),
-            pre: PreDelay::new(),
-            spare: SpareLines::new(),
-        }
-    }
-
-    /// Bytes the lines hold: both networks' and the spare set.
-    pub fn line_bytes() -> usize {
-        (2 + SPARE_SETS) * REVERB_LINES * RING * 4
-    }
-
-    /// How the clears ran so far.
-    pub fn clears(&self) -> ReverbClears {
-        self.spare.stats
-    }
-
-    /// Bytes the pre-delay line holds.
-    pub fn predelay_bytes() -> usize {
-        PRE_RING * 4
-    }
-
-    pub fn set_settings(&mut self, settings: ReverbSettings) {
-        self.settings = settings;
-        self.pre.set(settings.predelay_frames());
-        for net in &mut self.nets {
-            net.t60_target = net.t60_target.min(settings.max_t60_s);
-            net.take_room_level(net.room_mfp, &settings);
-        }
-    }
-
-    /// Takes a room (module comment, "A change of room").
-    pub fn set_room(&mut self, room: RoomTargets) {
-        let settings = self.settings;
-        let fed = &mut self.nets[self.fed];
-        if !fed.started {
-            fed.set_at_once(room, &settings, 0.0);
-            return;
-        }
-        match settings.lines {
-            TailLines::Glide => {
-                self.pending = None;
-                fed.set_in_place(room, &settings, true);
-            }
-            TailLines::Handover => {
-                let (a, b) = (fed.mfp, room.mean_free_path_m.max(0.0));
-                let within = (a == 0.0 && b == 0.0)
-                    || (a > 0.0 && b > 0.0 && a.max(b) <= TAIL_HANDOVER_RATIO * a.min(b));
-                if within {
-                    self.pending = None;
-                    fed.set_in_place(room, &settings, false);
-                } else {
-                    self.pending = Some(room);
-                    let other = &mut self.nets[1 - self.fed];
-                    if other.active && other.fade.is_none() {
-                        other.fade = Some(1.0);
-                    }
-                    self.take_pending();
-                }
-            }
-        }
-    }
-
-    /// Hands the pending room to the other network if it is silent and not parked: it takes the
-    /// room's lengths and decay at once and the input starts crossfading to it.
-    fn take_pending(&mut self) {
-        let other = 1 - self.fed;
-        if self.nets[other].active || self.pending.is_none() {
-            return;
-        }
-        self.nets[other].clear(&mut self.spare);
-        if self.nets[other].parked() {
-            return;
-        }
-        let Some(room) = self.pending.take() else {
-            return;
-        };
-        let settings = self.settings;
-        let net = &mut self.nets[other];
-        // Its input weight starts at 0, so its input gain starts at its target.
-        net.set_at_once(room, &settings, 0.0);
-        net.b = net.input_gain(net.t60, &settings, &self.band_cos);
-        self.fed = other;
-        self.xfade = 0.0;
-    }
-
-    /// Moves the fed network's line `i` current length by `frames` at once, within the ring.
-    pub fn jump(&mut self, i: usize, frames: f32) {
-        let net = &mut self.nets[self.fed];
-        net.length[i] = (net.length[i] + frames).clamp(1.0, REVERB_MAX_DELAY_FRAMES as f32);
-    }
-
-    /// The fed network's current and target length per line.
-    pub fn lines(&self) -> [ReverbLine; REVERB_LINES] {
-        let net = &self.nets[self.fed];
-        std::array::from_fn(|i| ReverbLine {
-            length: net.length[i],
-            target: net.target[i],
-        })
-    }
-
-    /// Both networks, for tests.
-    pub fn networks(&self) -> [ReverbNetwork; 2] {
-        let weights = self.weights(self.xfade);
-        std::array::from_fn(|k| {
-            let net = &self.nets[k];
-            ReverbNetwork {
-                lines: std::array::from_fn(|i| ReverbLine {
-                    length: net.length[i],
-                    target: net.target[i],
-                }),
-                holds_signal: net.holds_signal(),
-                fed: k == self.fed,
-                input: weights[k],
-            }
-        })
-    }
-
-    /// Each network's input weight at crossfade position `x`: equal power, `sin` for the fed
-    /// network and `cos` for the other.
-    fn weights(&self, x: f32) -> [f32; 2] {
-        let (fed, other) = if x >= 1.0 {
-            (1.0, 0.0)
-        } else if x <= 0.0 {
-            (0.0, 1.0)
-        } else {
-            (std::f32::consts::FRAC_PI_2 * x).sin_cos()
-        };
-        let mut w = [0.0; 2];
-        w[self.fed] = fed;
-        w[1 - self.fed] = other;
-        w
-    }
-
-    /// Runs one block: `input` (the voices' summed sends, `n` frames) in, both ears of both
-    /// networks added to interleaved `out`.
-    pub fn render(&mut self, input: &[f32], out: &mut [f32]) {
-        self.take_pending();
-        let n = input.len();
-        let x0 = self.xfade;
-        let x1 = (x0 + n as f32 / (SMOOTHING_SECONDS * RATE as f32)).min(1.0);
-        self.xfade = x1;
-        let (w0, w1) = (self.weights(x0), self.weights(x1));
-        let input = self.pre.process(input);
-        for (k, net) in self.nets.iter_mut().enumerate() {
-            if net.render(input, out, (w0[k], w1[k]), &self.settings, &self.band_cos) {
-                net.clear(&mut self.spare);
-            }
-        }
-        self.spare.end_block();
-        if self.spare.has_clean()
-            && let Some(net) = self.nets.iter_mut().find(|n| n.parked())
-        {
-            net.clear(&mut self.spare);
-        }
     }
 }
 
