@@ -1,33 +1,80 @@
 # 0045: The structure pass: split the mega files, share the fixtures, and gate their regrowth
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass) and 2026-11-11 (order)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass), 2026-11-11 (order) and
+> 2026-11-12 (the architecture review's notes)
 > **Created:** 2026-10-22
+> **Amended 2026-11-12 (architect; the review's notes taken as recommended):** from
+> `docs/reviews/2026-11-12-architecture-review.md` sections 2.1 (items 1 to 5) and 2.3, and a
+> re-read against main at `5909af8` (v0.49.0: Plans 0061 and 0067 closed and merged, Plan 0068
+> merged with its owner phase open). Owner order of 2026-11-12: 0067, **0045**, 0070, 0058, the
+> rest of 0044 (its Phase 4 struck into 0070), 0069, 0071, 0073.
+> - **The seams are re-cut at `5909af8`.** Every "as of" below names it. Phase 3's `bake/` is
+>   re-cut for what Plan 0067 added; `fsr2.rs` and the fly-through's `hud.rs` and
+>   `showcase.rs` split unconditionally; `gpu_queue.rs` joins the test files over the cap.
+>   Phase 0's done-when takes the confirmation from this line when no commit since `5909af8`
+>   touches a file Phases 2 to 4 or 7 split; otherwise its drift rows go to the architect.
+> - **A premise corrected (review 2.1, item 1).** Plan 0057 removed the screen-space
+>   reservoirs, not the emissive estimator: `struct Reservoir`, `merge`, `draw_candidates` and
+>   `resolve_emissive` in `light.wgsl` are live, called from the light pass and from
+>   `bake.wgsl`. Phase 4 gives them a module, `emissive.wgsl`; Phase 0 names them.
+> - **Added:** `fn table()` and `fn now()` to Phase 1 (2.1, item 4); a numeric done-when for
+>   Phase 2's narrowing (item 5); `hud.rs` and `showcase.rs` named in Phase 7 (item 2);
+>   `gpu_strip.rs`'s reading out of `tests/`, the reading harnesses with more than two switches
+>   as examples with flags, the `Steady` shim and `VXE_STEADY` deleted, and a cap on
+>   environment variables per test file in `check-test-tiers.mjs` (item 3, section 2.3), all in
+>   Phase 8.
+> - **Recount at `5909af8`** (`node scripts/loc.mjs` and greps; a snapshot, Phase 0's log
+>   supersedes it), against the review's figures at `56008fa`:
+>
+>   | Figure | Review | `5909af8` |
+>   |---|---|---|
+>   | `main.rs` / its in-file `mod tests` | 9698 / 2555 lines, 62 tests | 10226 / 2781 lines (7446 on), 67 tests |
+>   | `parse_args_from` | 660 lines, 111 flag arms | 689 lines (874-1562), 111 arms, no `--help` |
+>   | `Args` / `Run` fields; `impl Run` blocks | 90 / 41; 641 + 1951 | 93 / 41; 663 + 2030 |
+>   | `bake.rs` / `marcher.rs` / `gpu_world.rs` / `march.wgsl` | 4642 / 4390 / 3589 / 2496 | 6776 / 4433 / 3643 / 2496 |
+>   | `Frame` / `GpuWorld` fields | 75 / 61 | 75 / 62 |
+>   | `hud.rs` / `showcase.rs` / `fsr2.rs` (source cap 1200) | 2458 / 1570 / not named | 2477 / 1570 / 1256 |
+>   | test files over 2000 | `gpu_bake`, `gpu_mirror`, `settle`, `gpu_look` | the same (3436, 2704, 2342, 2203) and `gpu_queue.rs` 2275 |
+>   | `vxe-render` bare `pub` items | 680 (412 fn, 191 const), 13 `pub mod` | 761 (448 fn, 203 const) by `grep -E '^\s*pub (const\|fn\|struct\|enum\|type\|mod\|use)\b'`; 13 `pub mod`; 76 root names |
+>   | `fn table()` / `fn now()` copies | 9 / 6 | 9 / 8 (6 in benches, examples, `main.rs`; 2 in `vxe-app` and `vxe-audio` `src/`, kept) |
+>   | `VXE_*` names in the fly-through's tests | about 75; `gpu_strip.rs` 40, `gpu_settle.rs` 16 | 69; `gpu_strip.rs` 48, `gpu_settle.rs` 13, `gpu_bake.rs` 6 |
+>
+> - **Two lanes run: this plan and Plan 0072** (development speed). Shared files and who owns
+>   which edit: root `Cargo.toml` (0072 the `[profile.*]` tables, 0045 the
+>   `[workspace.lints.clippy]` line); `.github/workflows/ci.yml` (0072 the build, test and
+>   clippy steps, 0045 one `check-file-size.mjs` step in the doc-gate block);
+>   `CLAUDE.md`'s `scripts/` list (0072 the `test-changed.mjs` row, 0045 a `check-file-size.mjs`
+>   row and the `check-test-tiers.mjs` row); `scripts/fixtures/README.md` (a row each);
+>   `.claude/skills/orchestrate/references/lane-rules.md` (0072 the gate and setup lines, 0045
+>   the strip tool's path). 0045 alone edits `clippy.toml` and `check-test-tiers.mjs`; 0072
+>   alone edits `.config/nextest.toml`, `scripts/test-changed.mjs`, the dev skill and
+>   `docs/nfr.md` section 7. The lane that merges second takes main and keeps both hunks.
+>   Readings: 0072's Phase 1 and 4 and this plan's Phase 0 and close readings each hold the
+>   exclusive perf lock with the other lane's builds paused (lane rules).
+>
 > **Amended 2026-11-11 (owner, the order):** this plan moves ahead of Plan 0058 and of Plan
 > 0044's remaining phases (3, 4, 5 and 8; its side lane, Phases 0, 1, 6 and 7, merged to main
 > at `d6d2dfa`). It starts once Plans 0061, 0067 and 0068 have merged, while no lane edits a
-> file it splits. Plan 0058 then starts on the split tree, then 0044's render phases, then Plan
-> 0069. What moves with it:
+> file it splits (the order after it is 2026-11-12's, above). What moves with it:
 > - **The render device helper is not there yet.** It is Plan 0044's Phase 8, which now runs
 >   after this plan. Here the render tests keep their device setup as found and Phase 8's test
 >   splits move it unchanged; 0044's Phase 8 lands the helper in the split files.
 > - **Fewer plans rewrite the seams first:** Plans 0060, 0061 and 0067 have edited the files;
->   0058 and 0044's render phases have not. Phase 0 still re-measures, and the architect
->   still confirms the seams before Phase 2. The 2026-11-10 order below is superseded.
+>   0058 and 0044's render phases have not. Phase 0 still re-measures (its done-when says when
+>   the seams count as confirmed).
 > **Amended 2026-11-10 (architect, review pass; this header replaces the amendments of
-> 2026-11-03 and 2026-11-04):**
-> - **Order (owner, 2026-11-10; superseded 2026-11-11, above):** Plans 0060, 0061, 0058, 0044,
->   then this plan, then M10.
-> - **The seams below are provisional.** They are cut against main at `82ea836` and marked
->   so. Phase 0 re-measures at this plan's start commit, and the architect confirms or amends
->   the seams from that inventory before Phase 2 starts.
-> - **No size or copy count is restated here.** The review of 2026-10-22 was read at
->   `87e4b67`; every file it named has grown or moved since. The figures live in Phase 0's
->   inventory, in `docs/plans/logs/0045.md`.
+> 2026-11-03 and 2026-11-04; its order, Plans 0060, 0061, 0058, 0044 then this plan, is
+> superseded):**
+> - **The seams below are provisional** (re-cut at `5909af8` on 2026-11-12, above). Phase 0
+>   re-measures at this plan's start commit.
+> - **No size or copy count is restated in the body.** The 2026-11-12 recount above is a dated
+>   snapshot; the figures that bind live in Phase 0's inventory, in `docs/plans/logs/0045.md`.
 > - **This plan does not remove `own`.** Removing the engine's own upscaler deletes tests and
 >   goldens, which is a behaviour change. It is another plan's (the backlog carries it);
 >   Phase 3 moves `Upscaler` as it finds it.
 > - **Gone since the draft, so struck:** the attribute scheduler and `attrib.*` (Plan 0054),
->   `detail.wgsl` (Plan 0055), the reservoir and its unpack (Plan 0057), the per-face table
+>   `detail.wgsl` (Plan 0055), the screen reservoirs and their unpack (Plan 0057; the emissive
+>   estimator's `Reservoir` stays, 2026-11-12 above), the per-face table
 >   and its `cache_*` passes (Plan 0059). **New since the draft, so placed:** `bake.rs`,
 >   `bake.wgsl`, `light.rs`, `probes.rs`, `fsr2.rs` and `fsr2/`, `field.rs`.
 > - **Tests select their tier by marks** (2026-11-10): a GPU test file is `tests/gpu_*.rs`, a
@@ -40,15 +87,18 @@
 > **Source:** the owner, 2026-10-22, the same review as Plan 0044. The owner's answers: two
 > plans, performance first; full splits, engine crates included.
 > **After:** Plans 0061, 0067 and 0068 merged (amended 2026-11-11; was 0060, 0061, 0058 and
-> 0044). **Before:** Plan 0070 (owner, 2026-11-12: "70 after 45"), Plan 0058, Plan 0044's
-> Phases 3, 5 and 8, Plan 0069 (render settings) and M10.
+> 0044). **Beside:** Plan 0072 (2026-11-12 above). **Before:** Plan 0070 (owner, 2026-11-12:
+> "70 after 45"), Plan 0058, Plan 0044's Phases 3, 5 and 8, Plan 0069 (render settings),
+> Plans 0071 and 0073, and M10.
 
 ## TL;DR
 
 The review of 2026-10-22 found a handful of files and types that hold several jobs each, and
-the same test fixtures copied from crate to crate. Both have grown since. As of `82ea836` the
-mega files are `apps/flythrough/src/main.rs`, and `marcher.rs`, `bake.rs`, `gpu_world.rs` and
-`march.wgsl` in `vxe-render`; Phase 0's inventory holds the sizes at the start commit.
+the same test fixtures copied from crate to crate. Both have grown since. As of `5909af8` the
+mega files are `apps/flythrough/src/main.rs`, and `bake.rs`, `marcher.rs`, `gpu_world.rs` and
+`march.wgsl` in `vxe-render`; Phase 0's inventory holds the sizes at the start commit. The
+reading harnesses in the fly-through's `tests/` have also grown dozens of environment
+switches each; they become tools with flags.
 
 This plan splits each along a named seam and moves the shared fixtures to one home. It then
 adds two gates so the files cannot regrow unnoticed: a file-size cap script and clippy's
@@ -61,17 +111,19 @@ printed line.
 ## Context & problem
 
 The sizes and copy counts are Phase 0's to read; this section names what is wrong, as of
-`82ea836`.
+`5909af8`.
 
 **Mega files and god types:**
 - **`apps/flythrough/src/main.rs`** mixes CLI parsing (`Args` and `parse_args_from`), audio,
   streaming pressure policy, autopilot benchmarking, input bindings in several dispatch
   styles, edit-event routing, the bake queue's run state, reports, setup and the frame loop.
   Everything in it is private to the binary, so its tests live inside it. `impl Run` is split
-  across two blocks. A library half already exists (`src/lib.rs` with `castle`, `cave`,
-  `hud`, `showcase` and `thin_rig`), and `lib.rs` itself holds poses, materials, the look
-  presets, the census, replay and `percentile` in one file. `fly.rs` and `pad.rs` are private
-  modules of the binary.
+  across two blocks. Plan 0067 added the queue's banner and note rows (`next_missing_light`,
+  `next_reach`, `next_budget`, `write_*_note`); Plan 0068 added the camera path, the tour and
+  the report flags. A library half already exists (`src/lib.rs` with `castle`, `cave`, `hud`,
+  `path`, `report`, `showcase` and `thin_rig`), and `lib.rs` itself holds poses, materials,
+  the look presets, the census, replay and `percentile` in one file. `fly.rs` and `pad.rs` are
+  private modules of the binary. `apps/tester` depends on the library (`report`'s reader).
 - **`vxe-render/src/gpu_world.rs`.** `GpuWorld` holds the window and its pending queue, the
   page and slot allocator, record staging and the belt, light extraction and its range
   allocator, and several per-material `Vec`s. Every `vxe-render` module is `pub mod`, so the
@@ -83,9 +135,11 @@ The sizes and copy counts are Phase 0's to read; this section names what is wron
   one `impl` is most of the file. The layout and pipeline helpers are written again in other
   render modules (`fsr2.rs` confirmed; the others are Phase 0's to check). `readback.rs`
   holds three copies of one padded copy-and-depad.
-- **`vxe-render/src/bake.rs`** (Plan 0059) holds the CPU face masks, the store, the bake
-  pipeline and its shader composition, the per-face job state, the job loop and the live
-  queue in one file.
+- **`vxe-render/src/bake.rs`** (Plan 0059, grown by Plan 0067) holds the record codecs, the
+  CPU face masks, the light summaries and the missing-light chain, the store, the bake
+  pipeline and its shader composition, the per-face job state, the job loop, the time budget,
+  the step's stage timers and regimes, the queue's order, and the live queue, whose one
+  `impl BakeQueue` is about 1900 lines, in one file.
 - **`march.wgsl`** holds bindings, mirror decode, DDA traversal, normals, the hit record and
   reprojection, and rand. Each frame pass is `format!("{MARCH_WGSL}\n{source}")`, so
   `sharpen.wgsl`, which needs `params.output_size` only, compiles all of it. Helpers are
@@ -94,7 +148,9 @@ The sizes and copy counts are Phase 0's to read; this section names what is wron
   test (`temporal.wgsl`, `upscale.wgsl`, `fsr2/input.wgsl`), and the mirror decode
   (`floor_div`, `payload_units`, `pool_word` in `march.wgsl` and `field.wgsl`). The bake
   composes its own source from `march.wgsl` and `light.wgsl` with two text substitutions
-  (`bake_source` in `bake.rs`).
+  (`bake_source` in `bake.rs`). The emissive estimator (`Reservoir`, `merge`,
+  `draw_candidates`, `resolve_emissive`) sits inside `light.wgsl` and is called by the light
+  pass and by `bake.wgsl`.
 - **`vxe-world`:**
   - `Streamer` mixes residency policy, the worker pool and spill scheduling.
   - `collapse.rs` mixes the snapshot, the composition, rubble and three ops.
@@ -109,16 +165,21 @@ The sizes and copy counts are Phase 0's to read; this section names what is wron
 - **`vxe-net` and `vxe-script-wasm`:** the support-query host in `vxe-net/src/server.rs` is
   copied into `vxe-script-wasm/tests/determinism.rs`.
 
-**Duplicated fixtures** (each kind confirmed present at `82ea836`; Phase 0 counts the copies):
+**Duplicated fixtures** (each kind confirmed present at `5909af8`; Phase 0 counts the copies):
 
 | Fixture | Where |
 |---|---|
 | closure `WorldSource` | `vxe-audio/tests`, `vxe-render/tests`, `vxe-world/tests/support`, `vxe-sim/tests/support` |
 | `SplitMix64` | `vxe-world/tests/support`, `vxe-net/src/test_logic.rs`, `vxe-audio/tests/hrtf.rs`, the fly-through's `gpu_level_mirror.rs`, and inline forms |
 | `Fnv1a` and `world_hash` | `vxe-world/tests/support`; duplicate the public `hash::Fnv1a` and `World::voxel_hash` |
-| `hash_result` | the fly-through's `determinism.rs` and `replay.rs` |
+| `hash_result` | the fly-through's `determinism.rs` and `replay.rs` (byte-identical bodies) |
+| `carved_world` | the fly-through's `tests/support/mod.rs` and `gpu_golden.rs`, which imports the support module |
+| `fn table()` (a `MaterialTable`) | `gpu_walk.rs`, `gpu_translucent.rs`, `occlusion.rs`, `vxe-sim/tests/support`, `census.rs`, `brick_kernel.rs`, `edits.rs` (benches), the fly-through's `gpu_bake.rs` and `gpu_queue.rs` (one cave table) |
+| `fn now()` | `vxe-world/benches/brick_kernel.rs`, `vxe-net/benches/tick.rs`, `vxe-script-wasm/benches/boundary.rs`, the fly-through's `castle_gen.rs` and `world_budget.rs` examples and `main.rs` |
 | bench clocks and `solid_world` | across `vxe-world/benches` |
+| world-backed `Host` | `vxe-net/src/server.rs` (`TickHost`), `vxe-script-wasm/tests/determinism.rs` and `benches/boundary.rs` (`WorldHost`) |
 | squared chunk distance `d2` | `stream.rs`, `gpu_world.rs` (a function and inline forms), `marcher.rs` |
+| a rank statistic | `lib.rs` `percentile`, `report.rs` `nearest_rank`, `main.rs` `median` (the fly-through); `bake.rs` `nearest_rank` (`vxe-render`, its own crate's, kept) |
 
 The wgpu test device helper is Plan 0044's (its Phase 8), which runs after this plan since
 2026-11-11; the tests keep their device setup as found here.
@@ -129,7 +190,14 @@ The wgpu test device helper is Plan 0044's (its Phase 8), which runs after this 
 - `examples/hero.rs` has its own lighting-flag parser beside `main.rs`'s.
 - `run_headless` copies `vxe-app`'s shell setup and hand-rolls `pollster_block_on`.
 - `median` (`main.rs`) and `percentile` (`lib.rs`) use different rank conventions, so F1's
-  "median" and the exit line's "p50" disagree.
+  "median" and the exit line's "p50" disagree; `report.rs` (Plan 0068) added a third.
+
+**The reading harnesses in `tests/`** (review 2.3). `gpu_strip.rs` is a strip tool whose one
+reading is narrowed by 48 `VXE_STRIP_*` variables; `gpu_settle.rs` reads 13 names and
+`gpu_bake.rs` 6. Their switches are undiscoverable and untested. `VXE_STEADY` drives a
+`Steady` shim (`tests/support/settle.rs`) whose names map to the default but for `aN`, a probe
+freeze count, for a `--steady` flag the binary has refused since Plan 0057. Production `src/`
+reads environment variables in four files, none in `vxe-render` or `vxe-world`.
 
 ## Decision
 
@@ -161,6 +229,16 @@ a long `match` passes. No phase states a tighter number of its own.
   owner's call.
 - We rejected **a WGSL preprocessor dependency** (naga_oil or similar). `concat!` over
   `include_str!` composes modules with no dependency.
+
+**A reading with more than two switches is a tool, not a test** (2026-11-12): an example of
+the fly-through (`apps/flythrough/examples/<name>.rs`) whose flags come from Phase 7's flag
+table and print under `--help`. A test file names at most 4 `VXE_*` variables, and
+`check-test-tiers.mjs` counts them.
+- We rejected **`src/bin` tools**. They build with every `cargo build` of the package and sit
+  beside the binaries the tester archive packs; an example builds when asked for or with the
+  package's test targets, and ships nowhere.
+- We rejected **keeping the harnesses and documenting their variables**. `gpu_strip.rs`
+  documents its 48 already; a doc comment does not make a switch tested or discoverable.
 
 ## Architecture diagram
 
@@ -221,12 +299,19 @@ Existing tests move without change, and their times with them.
     `too-many-lines-threshold = 150` set locally and not committed.
   - **Types:** the field counts of `GpuWorld`, `Frame`, `Streamer` and the fly-through's `Run`
     and `Args`, and the line span of each `impl`.
-  - **Copies:** each fixture of the Context table and each duplicated WGSL helper, by file.
-  - **Public surface:** each `pub` item of `vxe-render` outside the curated `pub use` list in
-    `lib.rs`, with its in-repo users. As of `82ea836` `readback::read_texels_u32` has none.
+  - **Copies:** each fixture of the Context table and each duplicated WGSL helper, by file;
+    and where each of the emissive estimator's four items (`Reservoir`, `merge`,
+    `draw_candidates`, `resolve_emissive`) is defined and called.
+  - **Public surface:** the bare `pub` item count of `vxe-render/src` by the header's grep,
+    the root names `lib.rs` exports, and each `vxe_render::<module>::<item>` path used under
+    `crates/` and `apps/` (73 distinct at `5909af8`). At `5909af8`
+    `readback::read_texels_u32` still has no user.
   - **The first consumer:** a grep of `~/Work/voxel-roguelite` for `vxe_render::` module
-    paths (`gpu_world::`, `marcher::`, `bake::`, `readback::`) and for `vxe-world`'s
-    `#[doc(hidden)]` `*_decoded` ops. Each use is listed.
+    paths and for `vxe-world`'s `#[doc(hidden)]` `*_decoded` ops. Each use is listed. (At
+    `5909af8` the consumer does not depend on `vxe-render`.)
+  - **The reading harnesses:** the distinct `VXE_*` names per file under any `tests/`, and
+    the tier counts `N(quick)`, `N(gpu)`, `N(gate)`, `N(soak)`, `N(full)` from
+    `cargo nextest list`.
   - **Readings ("before"):** the figures of `## Budgets`, three runs each.
   - **Drift:** each place where a seam below no longer matches the tree, in one line each.
 - **Files touched:** `docs/plans/logs/0045.md`.
@@ -234,17 +319,32 @@ Existing tests move without change, and their times with them.
   - The log holds every list above, with the start commit named.
   - Every use the first-consumer grep found is marked "kept as a re-export" in the log, or
     the log says the grep found none.
-  - **The architect has read the inventory and written, in this plan's header, either "seams
-    confirmed at `<commit>`" or an amendment to Phases 2 to 4 and 7.** Phase 1 may run before
-    that line; Phase 2 does not start without it.
+  - **The seams are confirmed.** If `git log 5909af8..<start> -- <the files Phases 2 to 4 and
+    7 split>` is empty and the drift list is empty, the log says "seams confirmed at
+    `5909af8` (2026-11-12 amendment)" and Phase 2 may start. Otherwise the architect reads the
+    drift and writes, in this plan's header, either "seams confirmed at `<commit>`" or an
+    amendment to Phases 2 to 4 and 7; Phase 1 may run meanwhile, Phase 2 waits.
 
 ### Phase 1: one home for each shared fixture
 - **Owner skill:** dev
 - **What:**
   - **New public items in `vxe-world`:** `pub struct FnSource<F>(pub F)` in `source.rs`,
-    `pub struct SplitMix64` in `hash.rs` (built on `mix64`), and `ChunkCoord::distance2`.
+    `pub struct SplitMix64` in `hash.rs` (built on `mix64`), `ChunkCoord::distance2`, and
+    `impl FromIterator<Material> for MaterialTable` in `material.rs` (ids in iteration
+    order from 1, as `push` gives them).
   - **Copies deleted:** the closure sources, the SplitMix64 streams and every `d2`, as Phase 0
     listed them.
+  - **`fn table()`:** each copy that pushes only `Material::named` rows becomes a `collect`
+    (`gpu_walk.rs`, `vxe-sim/tests/support`, `brick_kernel.rs`, `edits.rs`); the cave table
+    of `gpu_bake.rs` and `gpu_queue.rs` becomes one `cave_table()` in the fly-through's
+    `tests/support`. A table whose rows set properties (acoustics in `occlusion.rs`, a
+    translucent row in `gpu_translucent.rs`, twenty ids in `census.rs`) stays local with a
+    doc line saying what its rows carry.
+  - **`fn now()`:** the benches take `vxe-world/benches/support.rs`'s (below); the fly-through
+    has one in its library, which `main.rs` and the `castle_gen` and `world_budget` examples
+    use, with the clippy allow and its reason once. `vxe-app/src/shell.rs`'s and
+    `vxe-audio/src/output.rs`'s are production clock reads of their own crates and stay.
+  - **`carved_world`:** `gpu_golden.rs` uses the support module's.
   - **`vxe-world/tests/support`** uses `hash::Fnv1a` and `World::voxel_hash`, or keeps them as
     an oracle with a test asserting equality. Which one it is is stated in its doc comment.
   - **`vxe-audio/tests/support/mod.rs`** (Plan 0044 creates it for its allocator) gains the
@@ -257,22 +357,29 @@ Existing tests move without change, and their times with them.
     `differing_bytes` move into `apps/flythrough/tests/support`. `assert_golden_exact` joins
     `assert_golden`.
   - **`vxe_net::WorldHost`:** the world-backed `Host` that `TickHost` wraps and that
-    `vxe-script-wasm`'s tests use.
-- **Files touched:** `crates/vxe-world/src/{source.rs,hash.rs,coords.rs,lib.rs,stream.rs}`,
+    `vxe-script-wasm`'s tests and its `boundary` bench use.
+- **Files touched:** `crates/vxe-world/src/{source.rs,hash.rs,coords.rs,material.rs,lib.rs,stream.rs}`,
   `crates/vxe-world/{tests,benches}/`, `crates/vxe-audio/{tests,benches}/`,
   `crates/vxe-render/{src/gpu_world.rs,src/marcher.rs,tests}`, `crates/vxe-sim/tests/`,
   `crates/vxe-net/{src,benches}/`, `crates/vxe-script-wasm/{tests,benches}/`,
-  `apps/flythrough/tests/`.
+  `apps/flythrough/{src/lib.rs,src/main.rs,examples,tests}/`.
 - **Done when:**
-  - Over `crates/` and `apps/`, `struct SplitMix64` and `fn hash_result` are each defined in
-    exactly one file. A `WorldSource` impl for a closure-backed type appears only in
-    `vxe-world/src/source.rs`. `fn unsupported_with_steps` is defined only in `vxe-net/src`.
+  - Over `crates/` and `apps/`, `struct SplitMix64`, `fn hash_result` and the fly-through's
+    `fn carved_world` are each defined in exactly one file (`vxe-world/tests/support`'s
+    `carved_world` is its own crate's and stays). A `WorldSource` impl for a closure-backed
+    type appears only in `vxe-world/src/source.rs`. `fn unsupported_with_steps` and a
+    world-backed `Host` are defined only in `vxe-net/src`.
+  - `fn table()` is defined in at most 3 files (9 at `5909af8`), each with its doc line.
+  - `fn now()` is defined in exactly 4 files (8 at `5909af8`): `vxe-world/benches/support.rs`,
+    the fly-through's library, `vxe-app/src/shell.rs`, `vxe-audio/src/output.rs`.
+  - `a_collected_table_numbers_its_rows_from_one` (`vxe-world`'s material unit tests, CPU,
+    under 1 s): `["rock", "ore"]` collected gives ids 1 and 2, equal to two `push`es.
   - Every pinned hash and every audio test's expected value is unchanged.
   - `cargo test --doc -p vxe-world` covers a `FnSource` doctest.
 
 ### Phase 2: `GpuWorld` becomes a directory of owned parts
 - **Owner skill:** dev
-- **What (seams as of `82ea836`):** `gpu_world.rs` becomes `gpu_world/`:
+- **What (seams as of `5909af8`):** `gpu_world.rs` becomes `gpu_world/`:
   - `format.rs`: the GPU contract constants, `class_code`, `payload_units`,
     `slot_units`, `bin_of`, `ShardLayout` and `budget_for`.
   - `alloc.rs`: a `PoolAlloc` owning the bins (`BinAlloc`), page state and `Fit`.
@@ -288,14 +395,24 @@ Existing tests move without change, and their times with them.
   - The `lod: bool` parameters become `Bricks::is_lod()`.
 
   `vxe-render`'s modules become private behind the existing curated `pub use` list, and
-  layout items become `pub(crate)`. `readback::read_texels_u32` is deleted if Phase 0 still
-  finds no user. `OPAQUE_WORDS` (used inside `gpu_world`) becomes `pub(crate)`.
-  `GpuWorld::free_pages()` stays public: the fly-through prints its length, and the mirror
-  tests read it.
-- **Files touched:** `crates/vxe-render/src/{gpu_world/,lib.rs,readback.rs,marcher.rs,bake.rs}`,
-  `crates/vxe-render/tests/`, `apps/flythrough/` (imports only), `apps/flythrough/examples/`.
+  layout items become `pub(crate)`. An item an in-repo user reaches by a module path (Phase
+  0's list) is re-exported at the root, or its user moves to an item already there.
+  `vxe-render`'s `lib.rs` sets `#![deny(unreachable_pub)]`, so a bare `pub` that the root
+  does not reach is a compile error rather than an intent. `readback::read_texels_u32` is
+  deleted if Phase 0 still finds no user. `OPAQUE_WORDS` (used inside `gpu_world`) becomes
+  `pub(crate)`. `GpuWorld::free_pages()` stays public: the fly-through prints its length, and
+  the mirror tests read it.
+- **Files touched:** `crates/vxe-render/src/{gpu_world/,gpu_world.rs,lib.rs,readback.rs,marcher.rs,bake.rs,fsr2.rs,light.rs,probes.rs,field.rs,exposure.rs,hud.rs,present.rs,camera.rs,font8x8.rs}`
+  (visibility only outside `gpu_world/`), `crates/vxe-render/tests/`,
+  `apps/flythrough/{src,tests,examples}/` (imports only), `apps/tester/src/` (imports only, if
+  any).
 - **Done when:**
   - `GpuWorld` has at most 15 fields, each a part or a scalar.
+  - **The narrowing is a number.** `vxe-render`'s `lib.rs` declares no `pub mod` (13 at
+    `5909af8`); the crate root exports at most 150 names (76 at `5909af8`, plus at most the 73
+    distinct module-path items in-repo users reach: 149); `cargo clippy -p vxe-render` passes
+    with `unreachable_pub` denied; and the log states the header's bare-`pub` grep count
+    before (761 at `5909af8`) and after.
   - `node scripts/check-file-size.mjs crates/vxe-render/src/gpu_world` would pass: no file in
     `gpu_world/` is over the source cap. (The script lands in Phase 8; until then `wc -l`.)
   - Every mirror test passes unchanged, and slot words are byte-identical to the phase's start
@@ -307,14 +424,14 @@ Existing tests move without change, and their times with them.
 
 ### Phase 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories
 - **Owner skill:** dev
-- **What (seams as of `82ea836`; Plans 0060, 0061 and 0067 edit these files first, Plan
-  0058 after this plan since 2026-11-11):**
+- **What (seams as of `5909af8`, after Plans 0060, 0061 and 0067; Plans 0070 and 0058 edit
+  the split files after this plan):**
   - **`marcher.rs` becomes `frame/`:**
     - `settings.rs`: `Params`, the enums and flags, `Lighting`, `LookParams`, `LodParams`.
       A `macro_rules!` generates `ALL`, `name` and `from_name`; `light.rs` and `bake/` use
       it for their pairs too.
-    - `targets.rs`: `Targets`. `timer.rs`: `PassTimer`. `marcher.rs` keeps `Marcher`, the hit
-      pass, alone.
+    - `targets.rs`: `Targets`. `timer.rs`: `PassTimer`. `readback_ring.rs`: `ReadbackRing`,
+      `RingSlot`, `RingState`. `marcher.rs` keeps `Marcher`, the hit pass, alone.
     - `upscale.rs`: `Upscaler`, `halton`, `jitter_at`, and an `UpscaleState` that owns the
       upscaler's uniforms, the sharpen parameters, the history, the jitter, the kind and the
       FSR 2 handle.
@@ -322,8 +439,9 @@ Existing tests move without change, and their times with them.
       from a `const PASSES: [PassSpec; N]` table instead of the hand-written pairs in
       `Frame::with_sizes`.
     - `state.rs`: a `FrameState` that owns the uniforms and what they are built from (the
-      params and edits buffers, the look, the LOD, the lighting, the emission scale, the
-      blue noise, the frame counter, the `LightKey` and `LampKey` change keys).
+      params and edits buffers, the look, the LOD, the lighting, the `Lamp`, the emission
+      scale, the blue noise, the frame counter, the `LightKey` and `LampKey` change keys).
+      `History` goes with the part that reads it (Phase 0 names which).
     - `baked.rs`: a `BakeLink` that owns the store, the bake pipeline, the dig boxes and the
       bake queue, with `Frame`'s bake methods.
     - `probe_channel.rs`: a `ProbeChannel` that owns the probe volume, its layouts and
@@ -332,23 +450,37 @@ Existing tests move without change, and their times with them.
       with `Dispatch`. Its `keep_history: bool` becomes an enum.
     - `mod.rs`: `Frame` as the composition (the device, the targets, the output, the
       exposure and the parts above) and its public setters.
-  - **`bake.rs` becomes `bake/`:**
-    - `faces.rs`: `ChunkFaces`, `ChunkMasks`, `FacePrep`, `PreparedMasks`. Pure CPU.
-    - `store.rs`: `Store`, `StoreStats`.
-    - `pipeline.rs`: `BakeSettings`, `BakePipeline`, `bake_source` and its substitutions.
-    - `face_state.rs`: `FaceState`. `job.rs`: `JobLoop`, `Budget`, `OpenJob`, `JobCtx`,
-      `DigReport`.
-    - `queue.rs`: `BakeQueue`, `QueueView`, `QueueStats`, and whatever order and withdrawal
-      Plan 0060 leaves there; a second file for the opening order if `queue.rs` is over the
-      cap.
-    - `mod.rs`: `BakeReport`, `BakeProgress`, `BakeError` and the re-exports.
+  - **`bake.rs` becomes `bake/`** (re-cut at `5909af8` for Plan 0067's additions):
+    - `record.rs`: the record words and their codecs (`tone_level`, `se_levels`,
+      `rgb9e5_*`, `record_words`, the store and brick constants and flags). Pure CPU.
+    - `faces.rs`: the face classes, `ChunkFaces`, `ChunkMasks`, `FacePrep`, `PreparedMasks`
+      and the `list_*` functions. Pure CPU.
+    - `summary.rs`: `MissingLight`, `ReachMode`, `RecordMean`, `block_summary`,
+      `mean_record`, `ParentTable`, `LightSummaries`, the provisional and fallback blocks and
+      `fade_mix` (Plan 0067's missing-light chain). Pure CPU.
+    - `store.rs`: `Store`, `StoreStats` and the placement allocator.
+    - `pipeline.rs`: `BakeSettings`, `BakePipeline`, `bake_source`, `replace_once` and
+      `job_table`.
+    - `job.rs`: `FaceState`, `BakeRun`, `Job`, `run`, `rebake`, `dig_ring`, `DigReport`.
+    - `job_loop.rs`: `JobLoop`, `InFlight`, `LoopTimer`, `SubmitRoom`, `OpenJob`, `JobCtx`.
+    - `budget.rs`: `Budget` and the slice constants. `stages.rs`: `StepStages`, `Laps`,
+      `Regime`, `StepTally`.
+    - `order.rs`: `QueueOrder`, `Refine`, the candidate heap and the view-angle and score
+      functions. Pure CPU.
+    - `queue/`: `BakeQueue` and `QueueView`, `QueueStats` in `mod.rs`; its one `impl` split
+      into one file per group of step stages (the `S_*` stage names are the seams: window and
+      reach, digs and withdrawal, candidates and checks, poll, collect, place and submit,
+      fades and summaries), each under the cap.
+    - `mod.rs`: `BakeReport`, `BakeProgress`, `BakeError`, `FaceOutcome` and the re-exports.
+    - The in-file `mod tests` (about 600 lines) goes to the modules it tests.
   - **`fsr2.rs` becomes `fsr2/`** along its own sections (settings and tuning, the pipelines,
-    the per-frame `prepare`), if Phase 0 still reads it over the source cap.
+    the per-frame `prepare`); it is over the source cap at `5909af8`.
   - **`gpu_util.rs`** takes the layout, bind-group and pipeline helpers. `frame/`, `bake/`,
     `fsr2/`, `field.rs`, `exposure.rs`, `probes.rs`, `hud.rs` and `present.rs` use it.
     `light.rs` and `probes.rs` stay single files.
   - **`readback.rs`'s three copies** become one `read_texels` and thin wrappers.
-- **Files touched:** `crates/vxe-render/src/{frame/,bake/,fsr2/,gpu_util.rs,marcher.rs,bake.rs,fsr2.rs,light.rs,probes.rs,field.rs,exposure.rs,hud.rs,present.rs,readback.rs,lib.rs}`.
+- **Files touched:** `crates/vxe-render/src/{frame/,bake/,fsr2/,gpu_util.rs,marcher.rs,bake.rs,fsr2.rs,light.rs,probes.rs,field.rs,exposure.rs,hud.rs,present.rs,readback.rs,lib.rs}`,
+  `crates/vxe-render/src/shaders/fsr2/` (only if a pass's `include_str!` path moves).
 - **Done when:**
   - `Frame` has at most 20 fields, each a part or a scalar.
   - No file under `frame/`, `bake/` or `fsr2/` is over the source cap, and no function in
@@ -361,12 +493,18 @@ Existing tests move without change, and their times with them.
 
 ### Phase 4: the shaders become modules a pass picks
 - **Owner skill:** dev
-- **What (seams as of `82ea836`):** `march.wgsl` splits into four modules:
+- **What (seams as of `5909af8`):** `march.wgsl` splits into four modules:
   - `common.wgsl`: Params, View, flags, luminance, hash and rand.
   - `mirror.wgsl`: the layout constants and pure decode over words.
   - `walk.wgsl`: the walk, `descend`, `lookup` and the DDA, with `enter_window` and
     `exit_cell` extracted.
   - `hitrec.wgsl`: the octahedral encoding, the hit record and reprojection.
+
+  And `light.wgsl` gives up a fifth: `emissive.wgsl`, the emissive estimator (`Reservoir`,
+  `merge`, `Candidate`, `candidate` and the helpers only it calls, `draw_candidates`,
+  `resolve_emissive`), composed after `walk.wgsl` by the light pass and by the bake. Its
+  names stay as they are (a rename is not a structure move); it is not the screen reservoirs
+  Plan 0057 removed.
 
   Each pass is composed with `concat!(include_str!(…), …)` of only what it uses. Each helper
   Phase 0 found in more than one file collapses to one definition: the octahedral pair, the
@@ -380,8 +518,10 @@ Existing tests move without change, and their times with them.
   module, and `bake_source` names that module. The bit constants come from a WGSL prelude that
   Rust generates from the `gpu_world/format.rs` and `frame/settings.rs` consts. Plan 0044's
   layout test keeps guarding the structs.
-- **Files touched:** `crates/vxe-render/src/shaders/`, `crates/vxe-render/src/{frame/,bake/pipeline.rs,field.rs,fsr2/,probes.rs,gpu_world/format.rs,lib.rs}`,
-  `crates/vxe-render/tests/gpu_shader_portability.rs`.
+- **Files touched:** `crates/vxe-render/src/shaders/` (`emissive.wgsl` new; `light.wgsl`,
+  `bake.wgsl`, `fsr2/`), `crates/vxe-render/src/{frame/,bake/pipeline.rs,field.rs,fsr2/,probes.rs,exposure.rs,gpu_world/format.rs,lib.rs}`,
+  `crates/vxe-render/tests/{gpu_shader_portability.rs,gpu_mirror.rs}` (the composed sources
+  they read only).
 - **Done when:**
   - Every golden is byte-identical.
   - A baked chunk's store bytes are equal before and after the phase
@@ -389,6 +529,9 @@ Existing tests move without change, and their times with them.
     source, the log says that saved stores re-bake once (not verified at the draft).
   - `the_composed_sharpen_and_present_sources_hold_no_walk`, a unit test over the composed
     strings in `vxe-render/src`, finds no `fn descend` in either.
+  - `the_emissive_estimator_is_defined_once`: `fn draw_candidates` and `struct Reservoir`
+    occur only in `emissive.wgsl`, and the light pass's and the bake's composed sources each
+    hold them exactly once (part of the scan below).
   - `no_wgsl_function_is_defined_in_two_shader_files`, a unit test that scans
     `src/shaders/`, passes.
   - `gpu_shader_portability.rs` validates every composed pass, the bake's included, from one
@@ -445,9 +588,9 @@ Existing tests move without change, and their times with them.
 
 ### Phase 7: the testbed's library takes the binary's contents
 - **Owner skill:** dev
-- **What (seams as of `82ea836`):** `apps/flythrough/src/lib.rs` already exports `castle`,
-  `cave`, `hud`, `showcase` and `thin_rig`. This phase moves `main.rs` into that library and
-  splits what is over the cap in it.
+- **What (seams as of `5909af8`):** `apps/flythrough/src/lib.rs` already exports `castle`,
+  `cave`, `hud`, `path`, `report`, `showcase` and `thin_rig`. This phase moves `main.rs` into
+  that library and splits what is over the cap in it.
   - **`main.rs`'s contents become lib modules:**
     - `cli.rs`: `Args` grouped into `AudioArgs`, `LightingArgs`, `LookArgs`, `BakeArgs` and a
       `RunMode` enum; one flag table; shared on/off and enum helpers; and a `--help`
@@ -458,30 +601,43 @@ Existing tests move without change, and their times with them.
     - `audio.rs`: `Audio`, `Mix`, `Mic`, `RoomProbe`.
     - `setup.rs`: `build_world` and `Gfx`.
     - `toggles.rs`: one table of key, name, getter and flip over `hud::Modes`, which owns no
-      GPU object. It feeds the HUD rows, the banner and the printed line.
+      GPU object. It feeds the HUD rows, the banner and the printed line. Plan 0067's
+      missing-light, reach and budget cycles (`next_*`) are rows of it; their `write_*_note`
+      and banner rows go to `hud_feed.rs`.
     - `run/`: `Run` in one `impl` per file: `mod.rs` (the struct and its construction),
       `frame.rs` (the per-frame update), `keys.rs` (key dispatch through the toggle table),
-      `queue.rs` (`QueueRun`, `DigWatch`), `hud_feed.rs` (the HUD's rows and samples).
+      `queue.rs` (`QueueRun`, `DigWatch`, `queue_step_line`, the queue view lines),
+      `hud_feed.rs` (the HUD's rows and samples), `tour.rs` (Plan 0068's path, tour and
+      tester-mode state, if `path.rs` does not already hold it).
     - `app.rs`: `Flythrough` and its `App` impl.
   - **`fly.rs` and `pad.rs`** become modules of the library, unchanged.
   - **`lib.rs`'s own contents** move to `scene.rs` (poses, cameras, material tables),
-    `look.rs` (`LookPreset`), `census.rs`, `replay.rs` and `report.rs`. `report.rs` holds the
-    one `percentile` (already in `lib.rs`); `median` is deleted for it, with one procfs
-    reader and capped per-frame series. `lib.rs` keeps the module list and re-exports every
-    item at its present path.
-  - **`hud.rs` and `showcase.rs`** split along their sections if Phase 0 reads them over the
-    source cap.
+    `look.rs` (`LookPreset`), `census.rs` and `replay.rs`. `report.rs` (Plan 0068's) keeps its
+    `nearest_rank` as the one rank statistic: `lib.rs`'s `percentile` becomes a re-export or
+    a thin call of it, and `main.rs`'s `median` is deleted for it, with one procfs reader
+    (`peak_rss_bytes`) and capped per-frame series. `lib.rs` keeps the module list and
+    re-exports every item at its present path, so `apps/tester` compiles unchanged.
+  - **`hud.rs` and `showcase.rs` become directories** along their sections (both are over
+    the source cap at `5909af8`; Phase 0 names the sections), each file under the cap.
   - **A typed `DigEvent`** with `encode`/`decode` and the op index replaces the `"op <verb>"`
     text lines and their FIFO pairing.
   - **`vxe_app::run_headless(app, HeadlessConfig)`** replaces the testbed's copy and its
     hand-rolled `pollster_block_on`.
   - **The in-binary tests** move to `tests/` or into the lib modules they test. One that
     opens a device lands in a `tests/gpu_*.rs` file.
-- **Files touched:** `apps/flythrough/src/`, `apps/flythrough/logic/src/lib.rs`,
-  `apps/flythrough/{examples,tests}/`, `crates/vxe-app/src/{shell.rs,lib.rs}`.
+  - **The refusals of removed flags** (`gone_since_0059` and the other removed-flag arms)
+    are table rows marked refused, so `--help` does not list them and the parser still
+    names the plan that removed each.
+- **Files touched:** `apps/flythrough/src/` (`hud/`, `showcase/`, `run/` and the modules
+  above new; `main.rs`, `lib.rs`, `hud.rs`, `showcase.rs`, `report.rs`, `fly.rs`, `pad.rs`
+  moved or edited), `apps/flythrough/logic/src/lib.rs`, `apps/flythrough/{examples,tests}/`,
+  `apps/tester/src/` (imports only, if a path changes), `crates/vxe-app/src/{shell.rs,lib.rs}`.
 - **Done when:**
   - `main.rs` is under 200 lines, and no file under `apps/flythrough/src/` is over the source
-    cap.
+    cap, `hud/` and `showcase/` included.
+  - The test count is unchanged: `cargo nextest list -p flythrough` gives the same
+    `N(gate)` and `N(full)` before and after the phase (67 in-binary tests at `5909af8` among
+    them, now under new paths).
   - Every key the testbed binds is in the toggle table, or is listed in the log as a one-shot
     action with no mode.
   - `every_toggle_shows_its_mode_in_the_hud_grid` (`apps/flythrough/tests/toggles.rs`, CPU,
@@ -505,10 +661,28 @@ Existing tests move without change, and their times with them.
   - **`vxe-render/tests/gpu_mirror.rs`** splits into `gpu_mirror_alloc.rs`,
     `gpu_mirror_tiers.rs` and `gpu_mirror_budget.rs`.
   - **Any other file over the test cap** in Phase 0's list splits along its sections, a
-    `tests/support/` file included. As of `82ea836` that names the fly-through's
-    `tests/support/settle.rs`, `tests/gpu_bake.rs` and `tests/gpu_look.rs`.
+    `tests/support/` file included. As of `5909af8` that names the fly-through's
+    `tests/support/settle.rs`, `tests/gpu_bake.rs`, `tests/gpu_queue.rs` and
+    `tests/gpu_look.rs`.
   - **Any source file still over the source cap** after Phases 2 to 7 splits along its
     sections too.
+  - **The reading harnesses become examples** (Decision). `gpu_strip.rs`'s reading becomes
+    `apps/flythrough/examples/strip.rs`, its `VXE_STRIP_*` switches flags of Phase 7's
+    table with `--help`; its five gate tests stay in `tests/gpu_strip.rs`. Each other `mod
+    reading` that reads more than two switches of its own (at `5909af8`: `gpu_settle.rs`'s
+    and `gpu_bake.rs`'s; Phase 0's count decides) becomes an example the same way. The
+    helpers an example shares with the tests live in one `tests/support/` file the example
+    takes by `#[path]`, not in the library the tester archive ships. A reading with at most
+    two switches stays a `mod reading`.
+  - **The `Steady` shim goes:** `Steady` in `tests/support/settle.rs`, `VXE_STEADY` in
+    `gpu_settle.rs`, and the strip's `VXE_STRIP_STEADY` and `VXE_STRIP_SAMPLER` refusals. The
+    probe freeze count it carried (`aN`) becomes the settle example's `--probe-freeze N` flag,
+    if that reading survives the move.
+  - **`scripts/check-test-tiers.mjs` gains a cap:** a file under any crate's `tests/` (its
+    `support/` included) names at most 4 distinct `VXE_*` environment variables, counted as
+    string literals, so a wrapper (`env`, `env_or`, `on_off`, `list`) does not hide one.
+    `VXE_BLESS`, `VXE_REQUIRE_SOFTWARE_ADAPTER` and `VXE_TEST_ADAPTER` count. A seeded
+    fixture holds one file at 5 (a finding) and one at 4 (passes).
   - **`scripts/check-file-size.mjs`** enforces the two file caps of the Decision. It has an
     optional `root` argument and a seeded fixture tree, like the other gates, and joins CI.
   - **`clippy.toml`** sets `too-many-lines-threshold = 150`, and `[workspace.lints.clippy]`
@@ -517,20 +691,34 @@ Existing tests move without change, and their times with them.
   - **Tiers.** No profile lists a test, so `.config/nextest.toml` is not edited. Each new
     file that opens a device is named `gpu_*.rs`; each moved soak test keeps its
     `#[ignore = "soak"]`; each moved reading stays in a `mod reading`.
-- **Files touched:** `crates/vxe-render/tests/`, `apps/flythrough/tests/`, any file over a
-  cap, `scripts/check-file-size.mjs`, `scripts/fixtures/file-size/`,
-  `scripts/fixtures/README.md`, `clippy.toml`, `Cargo.toml`, `.github/workflows/ci.yml`,
-  `CLAUDE.md` (the `scripts/` list).
+- **Files touched:** `crates/vxe-render/tests/`, `apps/flythrough/tests/` (`gpu_strip.rs`,
+  `gpu_settle.rs`, `gpu_bake.rs`, `gpu_queue.rs`, `gpu_look.rs`, `support/settle.rs` and the
+  files they split into), `apps/flythrough/examples/` (`strip.rs` and the other readings,
+  new), `apps/flythrough/Cargo.toml` (an `[[example]]` entry each, if needed), any file over
+  a cap, `scripts/check-file-size.mjs`, `scripts/fixtures/file-size/`,
+  `scripts/check-test-tiers.mjs`, `scripts/fixtures/test-tiers/` (the env-name case),
+  `scripts/fixtures/README.md` (two rows), `clippy.toml`, `Cargo.toml` (the
+  `[workspace.lints.clippy]` line only), `.github/workflows/ci.yml` (one step),
+  `CLAUDE.md` (the `scripts/` list's two rows), `.claude/skills/orchestrate/references/lane-rules.md`
+  (the strip tool's path, one line).
 - **Done when:**
   - `node scripts/check-file-size.mjs` exits 0 on the tree. On its fixture it exits 1 with
     exactly the findings its README row names: one source file over, one test file over, one
     `tests/support/` file over, and one file exactly at the cap that passes.
   - `cargo clippy --workspace --all-targets -- -D warnings` exits 0 with the lint denied, and
     no `src/` function carries the `expect`. Test functions may carry it, and they are listed.
+  - `node scripts/check-test-tiers.mjs` exits 0 on the tree, and on its fixture names
+    exactly the 5-variable file. No `VXE_STEADY` or `struct Steady` remains under `apps/` or
+    `crates/`.
+  - Each new example parses its flags through Phase 7's table helpers, so its `--help` and
+    its parser read one table (what `help_lists_every_flag_the_parser_accepts` defends);
+    `cargo run -p flythrough --example strip -- --help` is run once and its output is in the
+    log.
   - The tier partition holds, read with `cargo nextest list` before and after the phase:
     `N(quick) + N(gpu) = N(gate)`; `N(gate) + N(soak)` (`--profile soak --run-ignored only`)
-    `= N(full)` (`--profile full --run-ignored all`); and each of the four counts is equal
-    before and after. `node scripts/check-test-tiers.mjs` exits 0.
+    `= N(full)` (`--profile full --run-ignored all`); `N(quick)`, `N(gpu)`, `N(gate)` and
+    `N(soak)` are equal before and after; `N(full)` falls by exactly the readings that became
+    examples, each named in the log.
 
 ### Phase 9: the owner reads every toggle on screen
 - **Owner skill:** human
@@ -574,15 +762,19 @@ own start commit, not against Plan 0044's close: other commits may land between 
 
 ## Risks & open questions
 
-- **The seams will be stale at the start.** Plans 0060, 0061, 0067 and 0068 rewrite
-  `bake.rs`, `marcher.rs`, the shaders and `main.rs` before this plan starts. Phase 0 and the
-  architect's confirmation exist for that; `dev` does not re-cut a seam alone.
+- **The seams may be stale at the start.** They were re-cut at `5909af8`, after Plans 0060,
+  0061 and 0067 and Plan 0068's code. Phase 0's drift list and the architect's confirmation
+  exist for anything that lands after; `dev` does not re-cut a seam alone.
 - **Size of the diff.** Phases 2 to 7 move thousands of lines. A move commit is kept apart from
   a change commit within a phase where `git` would otherwise lose the history (`git mv`, then
   edit), so the reviewer can diff moves with `--color-moved`.
 - **Public API.** Phase 2 narrows `vxe-render`, and Phase 5 hides `World`'s reference ops.
   Phase 0 greps the first consumer (`~/Work/voxel-roguelite`), and Phases 2 and 5 keep each
   use it found as a re-export.
+- **The lane beside Plan 0072** (header, 2026-11-12). Its profile change (Phase 2) moves the
+  build times this plan reads under `## Budgets`. If this lane merges main after 0072's
+  Phase 2 has landed there, it re-takes the build "before" on the merged base, so both sides
+  of the comparison share the profiles.
 - **Shader composition.** `concat!` of shared modules means a module's identifiers are global to
   every pass that includes it. Name clashes surface as naga errors at pipeline build, which the
   existing validation tests catch headlessly. The bake's text substitutions fail loudly if
@@ -601,6 +793,11 @@ own start commit, not against Plan 0044's close: other commits may land between 
 - **Move the fly-through's render tests into `vxe-render`.** They need the cave scene builders.
   A shared scene crate is a followup if the owner wants the renderer testable alone.
 - **Add a `vxe-testkit` crate** (rejected above).
+- **Rename the emissive estimator's `Reservoir`, or fix the stale "reservoir", "contour" and
+  "emissive table" comments.** The rename is not a move; the comments are the backlog's
+  comment-and-manifest chore (review 2.4).
+- **Edit `.config/nextest.toml`, `scripts/test-changed.mjs` or the build profiles.** They are
+  Plan 0072's.
 
 ## Owner answers
 
@@ -612,6 +809,10 @@ own start commit, not against Plan 0044's close: other commits may land between 
 4. **The order, amended (owner, 2026-11-11).** This plan moves ahead of Plan 0058 and the rest
    of Plan 0044. It starts once Plans 0061, 0067 and 0068 have merged, while no lane edits the
    files it splits. Plan 0069 stays after it. This replaces answer 2's order.
+5. **The order and the review's notes (owner, 2026-11-12).** Order 0067, 0045, 0070, 0058,
+   the rest of 0044 (its Phase 4 struck into 0070), 0069, 0071, 0073; Plan 0072 runs beside
+   this plan. The review's amendment notes for this plan are taken as recommended under the
+   owner's standing rule for non-blocking questions (header, 2026-11-12).
 
 ## Implementation log
 
@@ -637,3 +838,5 @@ own start commit, not against Plan 0044's close: other commits may land between 
 1. A shared cave-scene crate so `vxe-render`'s behaviour can be tested from `vxe-render` alone.
 2. `CellCoord::from(chunk, slot)` renamed so it does not read as the `From` trait. This is an
    API rename and needs a consumer check.
+3. Plan 0033's measurement phase names `tests/gpu_strip.rs` as the strip rig; the architect
+   points it at `examples/strip.rs` when M10 starts.

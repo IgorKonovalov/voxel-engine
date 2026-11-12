@@ -338,10 +338,8 @@ brief: **Plan 0067**, do not stop at the sync stop rule, Plan 0070 takes the syn
 **Plan 0044**, Phase 4 struck into 0070 (1.1); **Plan 0069**, a `Delete` class for the fields
 with no setter and no caller, `Floor` equal to the fly-through's defaults and every `Default`
 equal to `Floor`, the setter gate over the 22 existing setters, and the RENOIR hit pass read
-alone in Phase 4 (1.2, 2.2); **Plan 0045**, the reservoir code is live, `hud.rs` and
-`showcase.rs` named unconditionally, `table()` and `now()` in Phase 1, `gpu_strip.rs` out of
-`tests/`, a pub-item count as Phase 2's done-when (2.1, 2.3). Each leaves when the owner
-accepts or refuses it.
+alone in Phase 4 (1.2, 2.2). Plan 0045's notes (2.1, 2.3) were taken into it on 2026-11-12.
+Each leaves when the owner accepts or refuses it.
 
 ### A documentation site
 
