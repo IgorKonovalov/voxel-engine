@@ -3,6 +3,31 @@
 
 use super::*;
 
+/// Implements `ALL` (the values in the listed order, the order a key cycles them), `name` (the
+/// lower-case name the fly-through prints and parses) and `from_name` for a fieldless enum,
+/// from its variants and their names.
+macro_rules! named_enum {
+    ($ty:ident { $($variant:ident => $name:literal),+ $(,)? }) => {
+        impl $ty {
+            /// Every value, in the order a key cycles them.
+            pub const ALL: [Self; [$($name),+].len()] = [$(Self::$variant),+];
+
+            /// The lower-case name the fly-through prints and parses.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+
+            /// The value named `name`.
+            pub fn from_name(name: &str) -> Option<Self> {
+                Self::ALL.into_iter().find(|m| m.name() == name)
+            }
+        }
+    };
+}
+pub(crate) use named_enum;
+
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub(crate) const WORKGROUP: u32 = 8;
 
@@ -186,28 +211,14 @@ pub enum NormalMode {
     Contour,
 }
 
+named_enum!(NormalMode {
+    Face => "face",
+    Trilinear8 => "trilinear8",
+    Gradient27 => "gradient27",
+    Contour => "contour",
+});
+
 impl NormalMode {
-    pub const ALL: [Self; 4] = [
-        Self::Face,
-        Self::Trilinear8,
-        Self::Gradient27,
-        Self::Contour,
-    ];
-
-    /// The lower-case name the fly-through prints and parses.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Face => "face",
-            Self::Trilinear8 => "trilinear8",
-            Self::Gradient27 => "gradient27",
-            Self::Contour => "contour",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-
     /// The next mode in `ALL` order, wrapping, skipping `Contour` unless `contour` is set.
     pub fn next(self, contour: bool) -> Self {
         let i = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
@@ -248,32 +259,16 @@ pub enum ViewMode {
     Cracks = 5,
 }
 
+named_enum!(ViewMode {
+    Shaded => "shaded",
+    Normals => "normals",
+    HitMask => "hitmask",
+    Steps => "steps",
+    Cracks => "cracks",
+    Albedo => "albedo",
+});
+
 impl ViewMode {
-    /// The cycle's order.
-    pub const ALL: [Self; 6] = [
-        Self::Shaded,
-        Self::Normals,
-        Self::HitMask,
-        Self::Steps,
-        Self::Cracks,
-        Self::Albedo,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Shaded => "shaded",
-            Self::Normals => "normals",
-            Self::HitMask => "hitmask",
-            Self::Steps => "steps",
-            Self::Albedo => "albedo",
-            Self::Cracks => "cracks",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-
     /// The next view in [`ViewMode::ALL`] order, wrapping.
     pub fn next(self) -> Self {
         let i = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
@@ -443,20 +438,10 @@ pub enum ShadowWalk {
     Coarse,
 }
 
-impl ShadowWalk {
-    pub const ALL: [Self; 2] = [Self::Full, Self::Coarse];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Coarse => "coarse",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-}
+named_enum!(ShadowWalk {
+    Full => "full",
+    Coarse => "coarse",
+});
 
 /// How a cube face's hit reads its emissive part from the store (ADR-0049).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -471,20 +456,10 @@ pub enum StoreRead {
     Normal,
 }
 
-impl StoreRead {
-    pub const ALL: [Self; 2] = [Self::Face, Self::Normal];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Face => "face",
-            Self::Normal => "normal",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-}
+named_enum!(StoreRead {
+    Face => "face",
+    Normal => "normal",
+});
 
 /// The normal the half-resolution light's filters compare between two hits: the composite's
 /// 2 x 2 upsample (`max(n.n', 0)^32`) and the a-trous edge weight (`max(n.n', 0)^128`).
@@ -500,20 +475,10 @@ pub enum LightWeights {
     Face,
 }
 
-impl LightWeights {
-    pub const ALL: [Self; 2] = [Self::Normal, Self::Face];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::Face => "face",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-}
+named_enum!(LightWeights {
+    Normal => "normal",
+    Face => "face",
+});
 
 /// What kills the temporal pass's history.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -526,20 +491,10 @@ pub enum HistoryKill {
     Gradient,
 }
 
-impl HistoryKill {
-    pub const ALL: [Self; 2] = [Self::Edits, Self::Gradient];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Edits => "edits",
-            Self::Gradient => "gradient",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-}
+named_enum!(HistoryKill {
+    Edits => "edits",
+    Gradient => "gradient",
+});
 
 /// The resolution the light, gradient, temporal and a-trous passes run at.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -553,20 +508,12 @@ pub enum LightingResolution {
     Half,
 }
 
+named_enum!(LightingResolution {
+    Full => "full",
+    Half => "half",
+});
+
 impl LightingResolution {
-    pub const ALL: [Self; 2] = [Self::Full, Self::Half];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Half => "half",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-
     /// Full-resolution pixels per lighting pixel on an edge.
     pub fn scale(self) -> u32 {
         match self {
@@ -593,22 +540,13 @@ pub enum RenderScale {
     Two,
 }
 
+named_enum!(RenderScale {
+    One => "1",
+    OneHalf => "1.5",
+    Two => "2",
+});
+
 impl RenderScale {
-    pub const ALL: [Self; 3] = [Self::One, Self::OneHalf, Self::Two];
-
-    /// The name the fly-through prints and parses.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::One => "1",
-            Self::OneHalf => "1.5",
-            Self::Two => "2",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.name() == name)
-    }
-
     /// The internal size for an `output`-sized image: each edge divided by the scale and
     /// rounded to the nearest pixel, at least 1.
     pub fn internal(self, output: [u32; 2]) -> [u32; 2] {

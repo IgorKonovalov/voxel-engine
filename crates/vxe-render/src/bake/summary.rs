@@ -2,6 +2,7 @@
 //! and fallback blocks and the fade between them. Pure CPU.
 
 use super::*;
+use crate::frame::named_enum;
 
 /// What a cube face with no brick value reads (ADR-0053): black as before, or the first value
 /// for its direction along a chain of summaries, nearest first.
@@ -18,10 +19,14 @@ pub enum MissingLight {
     Chain,
 }
 
-impl MissingLight {
-    /// Every mode, in the order key `7` cycles them.
-    pub const ALL: [Self; 4] = [Self::Black, Self::Neighbour, Self::Parent, Self::Chain];
+named_enum!(MissingLight {
+    Black => "black",
+    Neighbour => "neighbour",
+    Parent => "parent",
+    Chain => "chain",
+});
 
+impl MissingLight {
     /// The mode's value in the flags word's bits 2 and 3 (`temporal.wgsl`'s `store_mode`).
     pub fn bits(self) -> u32 {
         match self {
@@ -29,16 +34,6 @@ impl MissingLight {
             Self::Neighbour => 1,
             Self::Parent => 2,
             Self::Chain => 3,
-        }
-    }
-
-    /// The mode's name, as `--missing-light` takes it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Black => "black",
-            Self::Neighbour => "neighbour",
-            Self::Parent => "parent",
-            Self::Chain => "chain",
         }
     }
 
@@ -72,18 +67,12 @@ pub enum ReachMode {
     Partial,
 }
 
+named_enum!(ReachMode {
+    Full => "full",
+    Partial => "partial",
+});
+
 impl ReachMode {
-    /// Both modes, in the order a key cycles them.
-    pub const ALL: [Self; 2] = [Self::Full, Self::Partial];
-
-    /// The mode's name, as `--reach` takes it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Partial => "partial",
-        }
-    }
-
     /// The mode named `s`.
     pub fn parse(s: &str) -> Result<Self, String> {
         Self::ALL
