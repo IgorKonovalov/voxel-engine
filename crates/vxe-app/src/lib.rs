@@ -4,13 +4,14 @@
 //! directly and never links this crate (ADR-0001: the engine is a library, not a framework).
 //!
 //! [`run`] opens a window and calls an [`App`] once per frame with the [`Input`] gathered
-//! since the previous one.
+//! since the previous one; [`run_headless`] runs the same calls on an offscreen target.
 
 pub mod input;
 pub mod shell;
 
 pub use input::{Axis, Input, KeyCode, MouseButton, PadButton};
 pub use shell::{
-    App, Flow, Gpu, Pacing, ShellConfig, ShellError, backend_label, pick_adapter, run,
+    App, Flow, Gpu, HeadlessConfig, Pacing, ShellConfig, ShellError, backend_label, pick_adapter,
+    run, run_headless,
 };
 pub use {wgpu, winit};

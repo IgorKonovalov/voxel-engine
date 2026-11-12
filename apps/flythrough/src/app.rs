@@ -12,9 +12,9 @@ use crate::now;
 use crate::pad::Pad;
 use crate::path::PathPlayer;
 use crate::report::Recorder;
+use crate::run::Run;
 use crate::run::hud_feed::Hud;
 use crate::run::queue::QueueRun;
-use crate::run::{Run, teardown_stage};
 use crate::setup::{castle_banner, shell_config};
 use crate::streaming::Stream;
 use std::sync::Arc;
@@ -191,6 +191,14 @@ impl App for Flythrough {
     }
 
     fn init(&mut self, gpu: &Gpu) {
+        if self.args.headless {
+            let info = gpu.adapter.get_info();
+            println!(
+                "headless on {} ({})",
+                info.name,
+                vxe_app::backend_label(info.backend)
+            );
+        }
         if let Some(run) = self.run.as_mut() {
             run.init(gpu);
         }
@@ -238,7 +246,16 @@ pub fn run(app: Flythrough) -> Result<(), String> {
     let size = app.args.render.unwrap_or([1280, 720]);
     let failure = app.failure.clone();
     if app.args.headless {
-        run_headless(app, size)
+        // On the high-performance adapter, or with `--adapter` the first whose name contains
+        // its substring, and an offscreen target in place of the surface.
+        let config = vxe_app::HeadlessConfig {
+            size,
+            adapter: app.args.adapter.clone(),
+            ..vxe_app::HeadlessConfig::default()
+        };
+        vxe_app::run_headless(app, config)
+            .map_err(|e| e.to_string())
+            .and_then(|()| session_outcome(&failure))
     } else {
         let config = shell_config(&app.args, size, app.args.pace);
         vxe_app::run(config, app)
@@ -247,137 +264,8 @@ pub fn run(app: Flythrough) -> Result<(), String> {
     }
 }
 
-/// Runs `app` without a window: a device on the high-performance adapter, or with
-/// `--adapter` the first adapter whose name contains its substring (the high-performance one
-/// when none does), and an offscreen target in place of the surface, the same frames until
-/// the app exits. Teardown follows the windowed shell's order (the app, then the queue,
-/// device and adapter), traced alike. The instance reads wgpu's environment variables
-/// (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`, ...) as the windowed shell's does.
-/// Returns the session's failure as `Err` once the teardown is done.
-pub(crate) fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
-    let failure = app.failure.clone();
-    diag(format_args!("headless start"));
-    let desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-    // DIAGNOSTIC, out with the WARP preload fix: names the flags `WGPU_VALIDATION`,
-    // `WGPU_GPU_BASED_VALIDATION` and the build left on, so CI's debug-layer runs show the
-    // request reached wgpu (whether the layer loaded is the runner's to say).
-    diag(format_args!("instance flags {:?}", desc.flags));
-    let instance = wgpu::Instance::new(desc);
-    let named = app.args.adapter.as_deref().and_then(|want| {
-        let all = pollster_block_on(instance.enumerate_adapters(wgpu::Backends::all()));
-        let found = all.into_iter().find(|a| a.get_info().name.contains(want));
-        if found.is_none() {
-            eprintln!("--adapter {want:?}: no adapter's name contains it; the default is used");
-        }
-        found
-    });
-    let adapter = match named {
-        Some(a) => a,
-        None => pollster_block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))
-        .map_err(|e| format!("no adapter: {e}"))?,
-    };
-    let info = adapter.get_info();
-    println!(
-        "headless on {} ({})",
-        info.name,
-        vxe_app::backend_label(info.backend)
-    );
-    diag(format_args!(
-        "adapter {} ({}), driver {:?} {:?}, max storage binding {} B, max buffer {} B, timestamps {}",
-        info.name,
-        vxe_app::backend_label(info.backend),
-        info.driver,
-        info.driver_info,
-        adapter.limits().max_storage_buffer_binding_size,
-        adapter.limits().max_buffer_size,
-        adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
-    ));
-    let (required_features, required_limits) = app.device_request(&adapter);
-    let (device, queue) = pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_features,
-        required_limits,
-        ..Default::default()
-    }))
-    .map_err(|e| format!("no device: {e}"))?;
-    diag(format_args!("device created"));
-    let surface_format = wgpu::TextureFormat::Rgba8Unorm;
-    let gpu = Gpu {
-        adapter,
-        device,
-        queue,
-        surface_format,
-        size,
-    };
-    app.init(&gpu);
-    let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("headless surface"),
-        size: wgpu::Extent3d {
-            width: size[0],
-            height: size[1],
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: surface_format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let input = Input::default();
-    let mut last = now();
-    let mut diag_frame = 0u32;
-    loop {
-        let t = now();
-        let dt = (t - last).as_secs_f32();
-        last = t;
-        diag(format_args!("frame {diag_frame}: start"));
-        if app.frame(&gpu, &input, dt, &view) == Flow::Exit {
-            log::info!("teardown: the app asked to exit");
-            break;
-        }
-        diag(format_args!(
-            "frame {diag_frame}: returned, waiting for the GPU"
-        ));
-        // Keep the queue from running ahead of the GPU, as presenting would.
-        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-        diag(format_args!("frame {diag_frame}: the GPU finished"));
-        diag_frame += 1;
-    }
-    drop(view);
-    drop(target);
-    teardown_stage("app", || drop(app));
-    let Gpu {
-        adapter,
-        device,
-        queue,
-        ..
-    } = gpu;
-    teardown_stage("queue", || drop(queue));
-    teardown_stage("device", || drop(device));
-    teardown_stage("adapter", || drop(adapter));
-    session_outcome(&failure)
-}
-
 /// `Err` with the session's failure, if one was recorded; the headless runner's and the
 /// windowed shell's result once their teardown is done.
 pub(crate) fn session_outcome(failure: &Failure) -> Result<(), String> {
     failure.take().map_or(Ok(()), Err)
-}
-
-/// Drives a future to completion on this thread; `wgpu`'s native futures are ready at once
-/// or after a device poll.
-pub(crate) fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
-    let waker = std::task::Waker::noop();
-    let mut cx = std::task::Context::from_waker(waker);
-    let mut f = std::pin::pin!(f);
-    loop {
-        if let std::task::Poll::Ready(v) = f.as_mut().poll(&mut cx) {
-            return v;
-        }
-        std::thread::yield_now();
-    }
 }
