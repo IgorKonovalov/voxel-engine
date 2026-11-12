@@ -59,7 +59,7 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use flythrough::cave::CaveSource;
 use flythrough::showcase::{SHOWCASE_CHUNKS, ShowcaseSource};
-use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
+use flythrough::{cave_materials, chunk_ram, mips_ram, now, stream_record_chunks, window_side};
 use vxe_render::gpu_world::{
     BIN_COUNT, MATERIAL_FLOATS, PAGE_UNITS, RECORD_BYTES, SLOT_BINS, UNIT_BYTES, bin_of,
     budget_for, class_code, payload_units, slot_units, slots_per_page,
@@ -180,10 +180,6 @@ const LABEL: usize = 19;
     clippy::disallowed_methods,
     reason = "a budget tool timing generation; the world itself reads no clock"
 )]
-fn now() -> std::time::Instant {
-    std::time::Instant::now()
-}
-
 fn main() {
     let mut chunks = [20, 20, 8];
     let mut seed = 1u64;

@@ -1791,7 +1791,7 @@ impl GpuWorld {
     /// Queues `c` under its distance to `pending_focus`, as no change: the re-keying of a
     /// focus move.
     fn enqueue_keyed(&mut self, c: ChunkCoord) {
-        let d = d2(c, self.pending_focus);
+        let d = c.distance2(self.pending_focus);
         self.pending_d2.insert(c, d);
         self.pending.insert((d, c));
     }
@@ -2931,7 +2931,7 @@ impl GpuWorld {
         self.light_syncs += 1;
         let r = i64::from(self.cfg.light_radius.max(self.light_hold));
         let f = self.focus;
-        let d2 = |c: ChunkCoord| -> i64 { (0..3).map(|k| i64::from(c.0[k] - f.0[k]).pow(2)).sum() };
+        let d2 = |c: ChunkCoord| -> i64 { c.distance2(f) };
         let far: Vec<ChunkCoord> = self
             .lights
             .iter()
@@ -3446,12 +3446,6 @@ fn material_rows(table: &MaterialTable) -> Vec<[f32; MATERIAL_FLOATS]> {
             ]
         })
         .collect()
-}
-
-fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {
-    (0..3)
-        .map(|k| (i64::from(a.0[k]) - i64::from(b.0[k])).pow(2))
-        .sum()
 }
 
 /// The chunks held (`held(c)`) that leave the window when it moves from `old` to `new`. Every

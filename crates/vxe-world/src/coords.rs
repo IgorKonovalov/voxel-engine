@@ -77,6 +77,14 @@ impl ChunkCoord {
     pub fn min_voxel(self) -> VoxelCoord {
         VoxelCoord(self.0.map(|c| c * CHUNK_EDGE))
     }
+
+    /// The squared distance to `other` in chunks, each component widened to `i64` before the
+    /// difference, so no pair of `i32` coordinates overflows it.
+    pub fn distance2(self, other: ChunkCoord) -> i64 {
+        (0..3)
+            .map(|k| (i64::from(self.0[k]) - i64::from(other.0[k])).pow(2))
+            .sum()
+    }
 }
 
 /// Slot index of the brick holding chunk-local voxel `l` (components in `0..64`).

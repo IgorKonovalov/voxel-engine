@@ -9,6 +9,9 @@ use vxe_world::*;
 
 use crate::{ClientInput, Host, Logic, TickOutput};
 
+/// The engine's SplitMix64, at this module's path for the tests that draw from it.
+pub use vxe_world::hash::SplitMix64;
+
 /// Rows 0 (air), 1..=5 (plain), with 4 flagged indestructible.
 pub fn test_table() -> MaterialTable {
     let mut t = MaterialTable::new();
@@ -29,24 +32,6 @@ pub fn solid3_world() -> World {
         &UniformSource(3),
         &test_table(),
     )
-}
-
-/// SplitMix64: a seeded, platform-independent stream for test inputs.
-pub struct SplitMix64(pub u64);
-
-impl SplitMix64 {
-    pub fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    /// Uniform in `lo..=hi`.
-    pub fn range(&mut self, lo: i64, hi: i64) -> i64 {
-        lo + (self.next_u64() % (hi - lo + 1) as u64) as i64
-    }
 }
 
 /// One metre at 10 cm voxels, in fixed point.

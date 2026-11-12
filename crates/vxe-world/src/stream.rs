@@ -507,7 +507,7 @@ impl Streamer {
     fn d2(&self, c: ChunkCoord) -> i64 {
         self.focus
             .iter()
-            .map(|f| d2(c, *f))
+            .map(|f| c.distance2(*f))
             .min()
             .unwrap_or(i64::MAX)
     }
@@ -1014,12 +1014,6 @@ pub fn chunks_in_ball(r: i32) -> u64 {
 /// Whether `d` moves each axis by at most one chunk.
 fn unit_step(d: [i32; 3]) -> bool {
     d.iter().all(|v| v.abs() <= 1)
-}
-
-fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {
-    (0..3)
-        .map(|k| (i64::from(a.0[k]) - i64::from(b.0[k])).pow(2))
-        .sum()
 }
 
 enum Work {

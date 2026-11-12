@@ -112,12 +112,6 @@ fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
     Some(Frame { march, composed })
 }
 
-/// Bytes at which `a` and `b` differ.
-fn differing_bytes(a: &[u8], b: &[u8]) -> usize {
-    assert_eq!(a.len(), b.len());
-    a.iter().zip(b).filter(|(x, y)| x != y).count()
-}
-
 #[test]
 fn hud_golden_over_the_carved_view_is_pixel_exact() {
     let Some(frame) = render(true) else {

@@ -1238,7 +1238,7 @@ fn light_table(world: &GpuWorld, eye: [f32; 3]) -> LightTableUniform {
     let mut near: Vec<(i64, ChunkCoord, u32, u32, f32)> = world
         .light_chunks()
         .map(|(c, start, len, power)| {
-            let d2: i64 = (0..3).map(|k| i64::from(c.0[k] - cam[k]).pow(2)).sum();
+            let d2 = c.distance2(ChunkCoord(cam));
             (d2, c, start, len, power)
         })
         .filter(|&(d2, ..)| d2 <= r * r)

@@ -16,7 +16,7 @@ const PARAMS: WalkableParams = WalkableParams {
 fn floor_world() -> World {
     World::generate(
         test_extent(),
-        &FnSource(|v: VoxelCoord| if v.0[2] < 0 { 1 } else { AIR }),
+        &FnSource(|v: [i32; 3]| if v[2] < 0 { 1 } else { AIR }),
         &test_table(),
     )
 }

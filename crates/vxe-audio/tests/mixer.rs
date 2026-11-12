@@ -2,9 +2,10 @@
 //! block. Everything runs through the HRTF path except the hard-right panning check, which
 //! holds the constant-power panner to its 20 dB.
 
-use std::f32::consts::{PI, SQRT_2};
+use std::f32::consts::SQRT_2;
 use std::sync::Arc;
 
+use support::{tail_rms, tone};
 use vxe_audio::*;
 
 mod support;
@@ -12,28 +13,6 @@ mod support;
 const MPV: f32 = 0.1;
 const FRAMES: usize = 24_000;
 const TAIL: usize = 4_800;
-
-fn tone(freq: f32, amplitude: f32, len: usize) -> Sound {
-    Sound::new(
-        (0..len)
-            .map(|n| amplitude * (2.0 * PI * freq * n as f32 / RATE as f32).sin())
-            .collect::<Vec<_>>(),
-    )
-}
-
-/// RMS of the left and right channels over the last `TAIL` frames of `out`.
-fn tail_rms(out: &[f32]) -> [f32; 2] {
-    let tail = &out[out.len() - 2 * TAIL..];
-    [0, 1].map(|c| {
-        let sum: f64 = tail
-            .iter()
-            .skip(c)
-            .step_by(2)
-            .map(|&s| f64::from(s) * f64::from(s))
-            .sum();
-        (sum / TAIL as f64).sqrt() as f32
-    })
-}
 
 /// `m` with both room curves flat.
 fn flat(mut m: Mixer) -> Mixer {
@@ -72,7 +51,7 @@ fn render_at(mut m: Mixer, position: [f32; 3]) -> [f32; 2] {
     ));
     let mut out = vec![0.0; 2 * FRAMES];
     m.render(&mut out, FRAMES);
-    tail_rms(&out)
+    tail_rms(&out, TAIL)
 }
 
 fn assert_within(actual: f32, expected: f32, rel: f32, what: &str) {

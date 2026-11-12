@@ -25,14 +25,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use vxe_world::{
-    Anchors, BRICK_EDGE, CellChange, CellCoord, CoarseGrid, EditError, Fixed3, Hit, InputLog,
-    LogEntry, MaterialId, Op, OpLog, OpResult, Prefab, PrefabCollision, PrefabRegistry, Region,
-    SupportParams, VoxelCoord, World, find_unsupported_with_stats,
+    BRICK_EDGE, CellCoord, CoarseGrid, EditError, Fixed3, Hit, InputLog, LogEntry, MaterialId, Op,
+    OpLog, OpResult, Prefab, PrefabCollision, PrefabRegistry, Region, SupportParams, VoxelCoord,
+    World,
 };
 
 use crate::channel::{Channel, Endpoint};
 use crate::logic::{ClientInput, Host, Logic, LogicError};
 use crate::message::{Message, encode_applied, encode_refused};
+use crate::world_host::WorldHost;
 
 /// The support parameters a server starts with: a cell is load-bearing at 64 solid voxels
 /// (an eighth of its brick), a flood gives up past 4 096 cells, and the cells on the world
@@ -147,6 +148,16 @@ impl TickHost<'_> {
     }
 }
 
+impl TickHost<'_> {
+    /// The world-backed host the queries read through: the tick's prefabs, its coarse grid
+    /// as `apply_seq` keeps it, and the server's support parameters and anchors.
+    fn view(&self) -> WorldHost<'_> {
+        WorldHost::new(self.world)
+            .with_prefabs(self.prefabs)
+            .with_support(self.coarse, &self.support.params, &self.support.anchors)
+    }
+}
+
 impl Host for TickHost<'_> {
     fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
@@ -154,59 +165,27 @@ impl Host for TickHost<'_> {
     }
 
     fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
-        self.world.material_at(v)
+        self.view().material_at(v)
     }
 
-    /// A ray the world refuses as out of range reads as no hit.
     fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
-        self.world.raycast(origin, dir.0, max).ok().flatten()
+        self.view().raycast(origin, dir, max)
     }
 
     fn raycast_with_steps(&self, origin: Fixed3, dir: Fixed3, max: i64) -> (Option<Hit>, u64) {
-        self.world
-            .raycast_with_stats(origin, dir.0, max)
-            .unwrap_or((None, 0))
+        self.view().raycast_with_steps(origin, dir, max)
     }
 
-    /// A box the world refuses as out of range reads as an empty count.
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
-        self.world.count_in_box(lo, hi).unwrap_or_default()
+        self.view().count_in_box(lo, hi)
     }
 
     fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
-        self.unsupported_with_steps(changed).0
+        self.view().unsupported(changed)
     }
 
-    /// A `changed` list longer than one in-range edit can change (see
-    /// [`max_changed_cells`]) reads as no regions, and the query does not run.
     fn unsupported_with_steps(&self, changed: &[CellCoord]) -> (Vec<Region>, u64) {
-        if changed.len() as u64 > max_changed_cells(self.world) {
-            return (Vec::new(), 0);
-        }
-        // The query reads only each change's cell; the grid holds the cells' current state.
-        let changes: Vec<CellChange> = changed
-            .iter()
-            .map(|&c| {
-                let (chunk, slot) = c.split();
-                let now = self.coarse.cell(chunk, slot).unwrap_or_default();
-                CellChange {
-                    chunk,
-                    slot: slot as u16,
-                    before: now,
-                    after: now,
-                }
-            })
-            .collect();
-        let anchors = Anchors {
-            explicit: &self.support.anchors,
-        };
-        find_unsupported_with_stats(
-            self.world,
-            self.coarse,
-            &self.support.params,
-            &anchors,
-            &changes,
-        )
+        self.view().unsupported_with_steps(changed)
     }
 }
 

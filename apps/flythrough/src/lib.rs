@@ -964,6 +964,16 @@ pub fn mips_ram(mips: &ChunkMips) -> u64 {
     (size_of::<ChunkMips>() + slots * size_of::<Brick>() + payload) as u64
 }
 
+/// The wall clock now: the fly-through's one clock read, for its printed timings (startup,
+/// edits, frames) and its examples'. The engine crates it drives read no clock.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the fly-through times startup, edits and frames for its printed readings"
+)]
+pub fn now() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
 /// The `p`-th percentile (0 to 100) of `v` by nearest rank; `NaN` when empty. Sorts `v`.
 pub fn percentile(v: &mut [f64], p: f64) -> f64 {
     if v.is_empty() {

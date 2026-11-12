@@ -14,6 +14,7 @@ use vxe_render::gpu_world::{
     payload_units,
 };
 use vxe_render::{GpuWorld, MirrorConfig, Window, readback, wgpu};
+use vxe_world::hash::SplitMix64;
 use vxe_world::*;
 
 fn level() -> (World, CaveSource) {
@@ -209,16 +210,6 @@ fn syncs_past_one_belt_chunk_build_the_same_mirror() {
     assert_eq!(got.len(), expected.len());
     for (k, (g, e)) in got.iter().zip(&expected).enumerate() {
         assert!(g == e, "buffer {k} differs");
-    }
-}
-
-/// SplitMix64: a seeded, platform-independent stream for test inputs.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        vxe_world::hash::mix64(self.0)
     }
 }
 

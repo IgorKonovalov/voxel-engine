@@ -285,6 +285,7 @@ use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB,
 use flythrough::logic::{
     DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
 };
+use flythrough::now;
 use flythrough::path::{
     CameraPath, PATH_SEED, PathMode, PathPlayer, Scene, TesterAction, TesterInput, tester_action,
 };
@@ -311,7 +312,7 @@ use vxe_render::{
     MarchTimer, MirrorConfig, NormalMode, PassTimer, Presenter, RenderScale, ShadowWalk, SyncStats,
     ViewMode, Window, wgpu,
 };
-use vxe_world::hash::mix64;
+use vxe_world::hash::SplitMix64;
 use vxe_world::{
     CellChange, ChunkCoord, ChunkExtent, CoarseGrid, EditOp, EditResult, FIXED_ONE, Fixed3,
     LogFile, MaterialId, MaterialTable, Mode, OpResult, PersistConfig, Residency, StreamConfig,
@@ -400,10 +401,6 @@ const CAVE_ACOUSTIC: [f32; 3] = [0.3, 0.5, 0.0];
     clippy::disallowed_methods,
     reason = "the fly-through times startup, edits and frames for its printed readings"
 )]
-fn now() -> Instant {
-    Instant::now()
-}
-
 fn ms_since(t: Instant) -> f64 {
     (now() - t).as_secs_f64() * 1e3
 }
@@ -1960,12 +1957,11 @@ fn pulse() -> Sound {
 
 /// The knock's samples.
 fn knock_samples() -> Vec<f32> {
-    let mut state = KNOCK_SEED;
+    let mut rng = SplitMix64(KNOCK_SEED);
     let len = (KNOCK_SECONDS * vxe_audio::RATE as f32) as usize;
     let samples: Vec<f32> = (0..len)
         .map(|n| {
-            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let noise = (mix64(state) >> 40) as f32 / (1u64 << 23) as f32 - 1.0;
+            let noise = (rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0;
             let t = n as f32 / vxe_audio::RATE as f32;
             0.8 * noise * (-t / KNOCK_DECAY_SECONDS).exp()
         })

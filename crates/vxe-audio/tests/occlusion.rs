@@ -1,10 +1,11 @@
 //! Occlusion through the voxel world: the seven-ray gain multiplier, the direct ray's cutoff,
 //! what the mixer renders with them, and the probe cadence.
 
-use std::f32::consts::PI;
-
 use vxe_audio::*;
 use vxe_world::*;
+
+mod support;
+use support::tone;
 
 const MPV: f32 = 0.1;
 const FRAMES: usize = 24_000;
@@ -12,22 +13,7 @@ const TAIL: usize = 4_800;
 /// The wall material's row: absorption 0.3 per metre, transmission 0.5.
 const W: MaterialId = 1;
 
-/// A world whose voxels come from a closure of the voxel coordinate.
-struct FnSource<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
+/// Rows carry properties, so the table is built here: `W` with the wall's acoustics.
 fn table() -> MaterialTable {
     let mut t = MaterialTable::new();
     let mut w = Material::named("wall");
@@ -63,14 +49,6 @@ fn occ(world: &World) -> Occlusion {
         centre(LISTENER),
         centre(SOURCE),
         MPV,
-    )
-}
-
-fn tone(freq: f32, amplitude: f32, len: usize) -> Sound {
-    Sound::new(
-        (0..len)
-            .map(|n| amplitude * (2.0 * PI * freq * n as f32 / RATE as f32).sin())
-            .collect::<Vec<_>>(),
     )
 }
 

@@ -7,27 +7,18 @@
 //! time; the drops by 32, 64 and 8 move whole bricks. The ops mutate the world, so each
 //! iteration builds a fresh one and only the op is timed.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use vxe_world::*;
+
+mod support;
+use support::{box_op, slab_cells, solid_world, timed};
 
 #[allow(
     clippy::disallowed_methods,
     reason = "the bench times the op alone, between untimed world builds"
 )]
-fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {
-    let t = Instant::now();
-    let out = f();
-    (out, t.elapsed())
-}
-
-/// A box op over the half-open voxel bounds `lo..hi`.
-fn box_op(lo: [i32; 3], hi: [i32; 3], mode: Mode) -> EditOp {
-    let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
-    EditOp::box_(f(lo), f(hi), mode)
-}
-
 /// Air over `extent` with each part filled with material 1, in order.
 fn build(extent: ChunkExtent, parts: &[([i32; 3], [i32; 3])]) -> World {
     let mut table = MaterialTable::new();
@@ -60,16 +51,6 @@ fn sliver_fixture() -> World {
     )
 }
 
-fn slab_cells() -> Vec<CellCoord> {
-    let mut v = Vec::new();
-    for x in 3..=5 {
-        for y in 3..=5 {
-            v.push(CellCoord([x, y, 5]));
-        }
-    }
-    v
-}
-
 /// A floor and a 16³-cell cube (128³ voxels) 64 voxels above it, in 2 x 2 x 4 chunks.
 fn cube_world() -> (World, Vec<CellCoord>) {
     let world = build(
@@ -85,16 +66,6 @@ fn cube_world() -> (World, Vec<CellCoord>) {
         }
     }
     (world, cells)
-}
-
-fn solid_world() -> World {
-    let mut table = MaterialTable::new();
-    let rock = table.push(Material::named("rock"));
-    World::generate(
-        ChunkExtent::new([-2, -2, -2], [2, 2, 2]),
-        &UniformSource(rock),
-        &table,
-    )
 }
 
 const PARAMS: SupportParams = SupportParams {

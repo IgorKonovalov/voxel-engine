@@ -22,36 +22,11 @@ pub fn body_at(foot: [i64; 3]) -> Body {
     }
 }
 
-pub fn table() -> MaterialTable {
-    let mut t = MaterialTable::new();
-    assert_eq!(t.push(Material::named("rock")), ROCK);
-    t
-}
-
-/// A source evaluated per voxel from a solidity predicate; bricks collapse when uniform.
-pub struct Solid<F>(pub F);
-
-impl<F: Fn([i32; 3]) -> bool> WorldSource for Solid<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| {
-                    let v = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]);
-                    if (self.0)(v) { ROCK } else { AIR }
-                }),
-            );
-        }
-    }
-}
-
 pub fn world(f: impl Fn([i32; 3]) -> bool + Sync) -> World {
     World::generate(
         ChunkExtent::new([-2, -2, -2], [2, 2, 2]),
-        &Solid(f),
-        &table(),
+        &FnSource(move |v| if f(v) { ROCK } else { AIR }),
+        &[Material::named("rock")].into_iter().collect(),
     )
 }
 

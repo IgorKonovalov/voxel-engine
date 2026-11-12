@@ -28,22 +28,6 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
 }
 
-/// A world whose voxel at world coordinate `v` is `f(v)`.
-struct Voxels<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for Voxels<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 /// A material of albedo 0 emitting grey `l`.
 fn emitter(name: &str, l: f32) -> Material {
     Material {
@@ -67,7 +51,7 @@ fn two_emitters(a: f32, b: f32) -> MaterialTable {
 fn walled(f: impl Fn([i32; 3]) -> MaterialId + Sync, table: &MaterialTable) -> World {
     World::generate(
         ChunkExtent::new([-1, 0, 0], [1, 1, 1]),
-        &Voxels(move |v: [i32; 3]| {
+        &FnSource(move |v: [i32; 3]| {
             let inside = (-60..60).contains(&v[0]) && v[1] >= 1 && (1..63).contains(&v[2]);
             if v[1] >= WALL_Y || !inside { f(v) } else { AIR }
         }),
@@ -307,7 +291,7 @@ fn rock_and_glow() -> MaterialTable {
 fn ceiling_box() -> World {
     World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &Voxels(|v: [i32; 3]| {
+        &FnSource(|v: [i32; 3]| {
             let inside_xy = (22..42).contains(&v[0]) && (22..42).contains(&v[1]);
             if inside_xy && (20..30).contains(&v[2]) {
                 AIR

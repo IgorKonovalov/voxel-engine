@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use flythrough::cave::{ORE, ROCK};
 use support::rigs::tone_bytes;
-use support::{SyncNow, reading_device};
+use support::{SyncNow, cave_table, reading_device};
 use vxe_render::bake::{self, BakeSettings};
 use vxe_render::gpu_world::{GpuWorld, MirrorConfig, UNIT_BYTES, Window};
 use vxe_render::marcher::LightingResolution;
@@ -53,14 +53,10 @@ fn air_world(size: [i32; 3], table: &MaterialTable) -> World {
     )
 }
 
-fn table() -> MaterialTable {
-    flythrough::with_emissive_ore(&flythrough::cave_materials())
-}
-
 /// A rock block under an ore plate over chunks `[0, 2)^3`: about 1700 faces, three of the block's
 /// sides in the camera's view, with a 64 x 36 frame looking at it.
 fn small_box() -> (World, Camera) {
-    let world = air_world([2, 2, 2], &table());
+    let world = air_world([2, 2, 2], &cave_table());
     fill(&world, [40, 40, 40], [56, 56, 56], ROCK);
     fill(&world, [42, 42, 72], [54, 54, 74], ORE);
     let camera = Camera {
@@ -566,7 +562,7 @@ fn the_store_counters_count_with_the_override_on() {
 /// frame at `size`. z is up; four chunks tall, so the eye above the floors lies inside the
 /// mirrored world.
 fn fallback_rig(size: [u32; 2]) -> Option<Rig> {
-    let world = air_world([5, 2, 4], &table());
+    let world = air_world([5, 2, 4], &cave_table());
     // Floors 4 voxels thick, their top faces at z 8 (layer 0) or 72 (layer 1), inset from the
     // chunk's sides so each floor is its own chunk's.
     let floor = |c: [i64; 3]| {
@@ -987,7 +983,7 @@ fn a_dug_hole_is_final_on_its_first_frame() {
 /// bit-identical to a fresh bake.
 #[test]
 fn a_dug_emitter_leaves_the_near_ring_at_once() {
-    let world = air_world([1, 1, 1], &table());
+    let world = air_world([1, 1, 1], &cave_table());
     fill(&world, [8, 8, 20], [40, 40, 21], ROCK);
     fill(&world, [22, 22, 30], [24, 24, 32], ORE);
     let Some(mut rig) = rig_on(world, [16, 16], None) else {
@@ -1123,7 +1119,7 @@ const LAMP_EMPTY_FRAMES: u32 = 1;
 /// opaque twin, each dig re-baking its ring as the window's frame does.
 #[test]
 fn a_glass_pane_does_not_brighten_what_it_covers() {
-    let mut t = table();
+    let mut t = cave_table();
     let rock = t.get(ROCK).expect("rock").clone();
     for translucent in [true, false] {
         let flags = if translucent {
@@ -1274,7 +1270,7 @@ fn path_in_boxes(o: [f64; 3], d: [f64; 3], s_end: f64, boxes: &[([i32; 3], [i32;
 /// same pixels reflect 0. The per-layer composite fails the first.
 #[test]
 fn a_glass_pane_filters_by_path_length() {
-    let mut t = table();
+    let mut t = cave_table();
     let rock = t.get(ROCK).expect("rock").clone();
     let albedo = [0.25, 0.35, 0.85];
     t.push(vxe_world::Material {
@@ -1612,7 +1608,7 @@ fn scene_world(scene: Scene) -> World {
                 1,
                 ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
             );
-            World::generate(source.extent, &source, &table())
+            World::generate(source.extent, &source, &cave_table())
         }
         Scene::Showcase => {
             let source = flythrough::showcase::ShowcaseSource::new(1);
@@ -1731,7 +1727,7 @@ fn reference_world(scene: Scene) -> World {
         .expect("the castle's glass")
         .clone();
     let mut table = match scene {
-        Scene::Level => table(),
+        Scene::Level => cave_table(),
         Scene::Showcase => flythrough::showcase_materials(),
     };
     table.push(glass);
@@ -1901,7 +1897,7 @@ const YAW_DOT_FRAMES: usize = 60;
 /// riser -x, and an ore plate at z 300 over it lights the treads more than the risers. The
 /// camera: [`stair_cameras`].
 fn staircase() -> World {
-    let world = air_world([5, 1, 5], &table());
+    let world = air_world([5, 1, 5], &cave_table());
     for x in 64..320i64 {
         fill(&world, [x, 0, 0], [x + 1, 64, x - 63], ROCK);
     }

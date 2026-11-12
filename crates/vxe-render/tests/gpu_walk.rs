@@ -27,32 +27,11 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
 }
 
-/// A world whose voxel at world coordinate `v` is `f(v)`.
-struct Voxels<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for Voxels<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 const ROCK: MaterialId = 1;
 
-fn table() -> MaterialTable {
-    let mut t = MaterialTable::new();
-    t.push(Material::named("rock"));
-    t
-}
-
 fn world(chunks: [i32; 3], f: impl Fn([i32; 3]) -> MaterialId + Sync) -> World {
-    World::generate(ChunkExtent::new([0, 0, 0], chunks), &Voxels(f), &table())
+    let table: MaterialTable = [Material::named("rock")].into_iter().collect();
+    World::generate(ChunkExtent::new([0, 0, 0], chunks), &FnSource(f), &table)
 }
 
 /// What the steps view reads for one ray: loop iterations, 32-bit storage loads from the

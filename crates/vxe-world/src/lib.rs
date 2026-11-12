@@ -77,7 +77,7 @@ pub use prefab::{Prefab, PrefabCollision, PrefabRegistry, Rot};
 pub use query::QueryStats;
 pub use raycast::{Face, Hit, Run};
 pub use shape::Shape;
-pub use source::{StampedSource, UniformSource, WorldSource};
+pub use source::{FnSource, StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{
     ChunkPrep, Prepared, Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer,

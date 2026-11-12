@@ -22,19 +22,11 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use vxe_world::hash::mix64;
 use vxe_world::*;
 
+mod support;
+use support::solid_world;
+
 fn extent() -> ChunkExtent {
     ChunkExtent::new([-2, -2, -2], [2, 2, 2])
-}
-
-fn table() -> (MaterialTable, MaterialId) {
-    let mut table = MaterialTable::new();
-    let rock = table.push(Material::named("rock"));
-    (table, rock)
-}
-
-fn solid_world() -> World {
-    let (table, rock) = table();
-    World::generate(extent(), &UniformSource(rock), &table)
 }
 
 /// `material = if ((x >> 4) + (y >> 4) + (z >> 4)).rem_euclid(3) != 0 { 1 } else { 0 }`. The
@@ -59,7 +51,7 @@ impl WorldSource for CubesSource {
 }
 
 fn mixed_world() -> World {
-    let (table, _) = table();
+    let table: MaterialTable = [Material::named("rock")].into_iter().collect();
     World::generate(extent(), &CubesSource, &table)
 }
 

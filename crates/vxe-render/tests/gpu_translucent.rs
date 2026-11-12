@@ -26,26 +26,12 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
 }
 
-/// A world whose voxel at world coordinate `v` is `f(v)`.
-struct Voxels<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for Voxels<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 /// Material 1: opaque grey, albedo 0.5. Material 2: translucent red, opacity 0.5.
 const GREY: MaterialId = 1;
 const RED: MaterialId = 2;
 
+/// Rows carry properties, so the table is built here: `GREY` plain, `RED` translucent red at
+/// opacity 0.5.
 fn table() -> MaterialTable {
     let mut t = MaterialTable::new();
     assert_eq!(t.push(Material::named("grey")), GREY);
@@ -66,7 +52,7 @@ fn table() -> MaterialTable {
 fn walls(red: &'static [i32]) -> World {
     World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &Voxels(move |v: [i32; 3]| {
+        &FnSource(move |v: [i32; 3]| {
             if red.contains(&v[0]) {
                 RED
             } else if v[0] == 40 {
@@ -225,7 +211,7 @@ fn a_uniform_translucent_brick_is_air_to_the_opaque_walk_and_layers_to_the_secon
     };
     let slab = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &Voxels(|v: [i32; 3]| {
+        &FnSource(|v: [i32; 3]| {
             if (16..32).contains(&v[0]) {
                 RED
             } else if v[0] == 40 {

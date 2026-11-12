@@ -646,3 +646,14 @@ pub fn field_mirror_rig(world: &World) -> Option<LookRig> {
     let (device, queue) = software_device(field_pool_bytes(world).max(64 << 20))?;
     Some(field_mirror_rig_on(device, queue, world, None))
 }
+
+/// Bytes at which `a` and `b` differ.
+pub fn differing_bytes(a: &[u8], b: &[u8]) -> usize {
+    assert_eq!(a.len(), b.len());
+    a.iter().zip(b).filter(|(x, y)| x != y).count()
+}
+
+/// The cave's materials with the ore emissive: the table the bake and queue tests light.
+pub fn cave_table() -> MaterialTable {
+    flythrough::with_emissive_ore(&flythrough::cave_materials())
+}

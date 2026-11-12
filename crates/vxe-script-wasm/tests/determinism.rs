@@ -18,42 +18,9 @@ use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic, WorkRates};
 use vxe_world::hash::mix64;
 use vxe_world::{
-    Anchors, CellChange, CellCoord, ChunkExtent, CoarseGrid, EditError, EditOp, Field, Fixed3, Hit,
-    MaterialId, Mode, Op, OpResult, PrefabRegistry, Region, UniformSource, VoxelCoord, World,
-    centre_of_voxel, find_unsupported_with_stats,
+    CellCoord, ChunkExtent, CoarseGrid, EditError, EditOp, Field, Fixed3, Hit, MaterialId, Mode,
+    Op, OpResult, PrefabRegistry, Region, UniformSource, VoxelCoord, World, centre_of_voxel,
 };
-
-/// A host straight on a world, for calling a [`WasmLogic`] without a server.
-struct WorldHost<'a>(&'a World);
-
-impl Host for WorldHost<'_> {
-    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
-        op.apply(self.0, &PrefabRegistry::new())
-    }
-
-    fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
-        self.0.material_at(v)
-    }
-
-    fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
-        self.0.raycast(origin, dir.0, max).ok().flatten()
-    }
-
-    fn raycast_with_steps(&self, origin: Fixed3, dir: Fixed3, max: i64) -> (Option<Hit>, u64) {
-        self.0
-            .raycast_with_stats(origin, dir.0, max)
-            .unwrap_or((None, 0))
-    }
-
-    fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
-        self.0.count_in_box(lo, hi).unwrap_or_default()
-    }
-
-    /// This host keeps no coarse grid; nothing here asks the support query.
-    fn unsupported(&self, _changed: &[CellCoord]) -> Vec<Region> {
-        Vec::new()
-    }
-}
 
 #[test]
 fn wasm_config_defaults() {
@@ -195,7 +162,7 @@ const SPIN_FUEL: WasmConfig = WasmConfig {
 fn spin_runs_out_of_fuel() {
     let mut logic = WasmLogic::load(&guest("spin"), &SPIN_FUEL).expect("spin loads");
     let world = solid3_world();
-    let mut host = WorldHost(&world);
+    let mut host = WorldHost::new(&world);
     logic.try_init(&mut host, 0).expect("spin's init returns");
     assert_eq!(
         logic.try_tick(&mut host, 0, &[]),
@@ -225,7 +192,7 @@ fn restart_run(
 fn after_running_out_of_fuel_the_logic_restarts_then_stops() {
     let mut logic = WasmLogic::load(&guest("spin"), &SPIN_FUEL).expect("spin loads");
     let world = solid3_world();
-    let mut host = WorldHost(&world);
+    let mut host = WorldHost::new(&world);
     logic.try_init(&mut host, 0).expect("spin's init returns");
     let restarted = |tick, after, restarts| {
         Some(LogicError::Restarted {
@@ -259,7 +226,7 @@ fn after_running_out_of_fuel_the_logic_restarts_then_stops() {
 fn with_no_restarts_a_logic_out_of_fuel_is_stopped() {
     let mut logic = WasmLogic::load(&guest("spin"), &fail_stop(SPIN_FUEL)).expect("spin loads");
     let world = solid3_world();
-    let mut host = WorldHost(&world);
+    let mut host = WorldHost::new(&world);
     logic.try_init(&mut host, 0).expect("spin's init returns");
     assert_eq!(
         restart_run(&mut logic, &mut host, 3),
@@ -351,7 +318,7 @@ fn a_failed_init_restarts_once_per_tick_until_the_cap() {
 fn hog_hits_the_memory_cap() {
     let mut logic = WasmLogic::load(&guest("hog"), &WasmConfig::default()).expect("hog loads");
     let world = solid3_world();
-    let mut host = WorldHost(&world);
+    let mut host = WorldHost::new(&world);
     logic.try_init(&mut host, 0).expect("hog's init returns");
     assert_eq!(
         logic.try_tick(&mut host, 0, &[]),
@@ -491,7 +458,7 @@ fn timers_are_always_ready_and_never_wait() {
         let mut logic =
             WasmLogic::load(&guest("timer"), &WasmConfig::default()).expect("timer loads");
         let world = solid3_world();
-        let mut host = WorldHost(&world);
+        let mut host = WorldHost::new(&world);
         logic.try_init(&mut host, 0).expect("timer's init returns");
         let broadcasts: Vec<_> = (0..3)
             .map(|tick| logic.try_tick(&mut host, tick, &[]))
@@ -514,7 +481,7 @@ fn stderr_never_fills_and_a_guest_panic_is_a_trap_with_its_message() {
     let mut logic =
         WasmLogic::load(&guest("chatty"), &fail_stop(WasmConfig::default())).expect("chatty loads");
     let world = solid3_world();
-    let mut host = WorldHost(&world);
+    let mut host = WorldHost::new(&world);
     logic.try_init(&mut host, 0).expect("chatty's init returns");
     for tick in 0..100 {
         assert_eq!(
@@ -644,7 +611,7 @@ fn greedy_tick(
     config: &WasmConfig,
     input: ClientInput,
 ) -> (Result<TickOutput, LogicError>, Option<u64>) {
-    greedy_tick_on(&mut WorldHost(world), config, input)
+    greedy_tick_on(&mut WorldHost::new(world), config, input)
 }
 
 /// [`greedy_tick`] on any host.
@@ -659,72 +626,6 @@ fn greedy_tick_on(
     (out, logic.fuel_left())
 }
 
-/// A host straight on a world with a coarse grid, answering the support query as the
-/// server's host does: `DEFAULT_SUPPORT`, no explicit anchors, a `changed` list past
-/// `max_changed_cells` read as no regions.
-struct GridHost<'a> {
-    world: WorldHost<'a>,
-    grid: CoarseGrid,
-}
-
-impl<'a> GridHost<'a> {
-    fn new(world: &'a World) -> Self {
-        Self {
-            world: WorldHost(world),
-            grid: CoarseGrid::build(world),
-        }
-    }
-}
-
-impl Host for GridHost<'_> {
-    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
-        self.world.apply(op)
-    }
-
-    fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
-        self.world.material_at(v)
-    }
-
-    fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
-        self.world.raycast(origin, dir, max)
-    }
-
-    fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
-        self.world.count_in_box(lo, hi)
-    }
-
-    fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
-        self.unsupported_with_steps(changed).0
-    }
-
-    fn unsupported_with_steps(&self, changed: &[CellCoord]) -> (Vec<Region>, u64) {
-        let world = self.world.0;
-        if changed.len() as u64 > max_changed_cells(world) {
-            return (Vec::new(), 0);
-        }
-        let changes: Vec<CellChange> = changed
-            .iter()
-            .map(|&c| {
-                let (chunk, slot) = c.split();
-                let now = self.grid.cell(chunk, slot).unwrap_or_default();
-                CellChange {
-                    chunk,
-                    slot: slot as u16,
-                    before: now,
-                    after: now,
-                }
-            })
-            .collect();
-        find_unsupported_with_stats(
-            world,
-            &self.grid,
-            &DEFAULT_SUPPORT,
-            &Anchors::default(),
-            &changes,
-        )
-    }
-}
-
 /// [`WorldHost`] counting the `count_in_box` calls that reach it.
 struct CountingHost<'a> {
     world: WorldHost<'a>,
@@ -734,7 +635,7 @@ struct CountingHost<'a> {
 impl<'a> CountingHost<'a> {
     fn new(world: &'a World) -> Self {
         Self {
-            world: WorldHost(world),
+            world: WorldHost::new(world),
             counts: std::cell::Cell::new(0),
         }
     }
@@ -809,7 +710,7 @@ fn a_greedy_count_in_box_runs_out_of_fuel() {
     // to `per_call`, as at the exact charge.
     let (out, _) = greedy_tick(&empty, &config, count_input([0; 3], [1024, 0, 0]));
     assert_eq!(out.unwrap().broadcast, 0u64.to_le_bytes());
-    let mut host = WorldHost(&empty);
+    let mut host = WorldHost::new(&empty);
     assert_eq!(charged(&mut host, &count_input([0; 3], [1024, 0, 0])), 100);
 }
 
@@ -968,7 +869,7 @@ fn charged_under(host: &mut dyn Host, config: &WasmConfig, input: &ClientInput) 
 fn apply_is_charged_by_its_op_bytes() {
     let world = solid3_world();
     assert_eq!(
-        charged(&mut WorldHost(&world), &junk_apply_input(1, 4096)),
+        charged(&mut WorldHost::new(&world), &junk_apply_input(1, 4096)),
         100 + 4096
     );
 
@@ -992,7 +893,7 @@ fn apply_is_charged_by_its_op_bytes() {
     let (out, _) = greedy_tick(&world, &WasmConfig::default(), input.clone());
     assert_eq!(out.unwrap().broadcast, [vxe_script_wasm::ANSWER_REFUSED]);
     assert_eq!(
-        charged(&mut WorldHost(&world), &input),
+        charged(&mut WorldHost::new(&world), &input),
         100 + bytes.len() as u64
     );
 }
@@ -1021,7 +922,8 @@ fn a_loop_of_large_undecodable_applies_runs_out_of_fuel() {
 #[test]
 fn unsupported_is_charged_by_its_cells_and_its_flood() {
     let world = slab_world();
-    let mut host = GridHost::new(&world);
+    let grid = CoarseGrid::build(&world);
+    let mut host = WorldHost::new(&world).with_support(&grid, &DEFAULT_SUPPORT, &[]);
     let cells = slab_cells(2, 5);
     let (regions, s) = host.unsupported_with_steps(&cells);
     assert!(regions.is_empty(), "{regions:?}");

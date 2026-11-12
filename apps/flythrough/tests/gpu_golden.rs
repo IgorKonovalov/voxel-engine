@@ -52,13 +52,6 @@ fn render_lit(
     )
 }
 
-fn carved_world() -> World {
-    let world = scene_world();
-    let r = world.apply(&scene_carve(&world)).unwrap();
-    assert!(!r.changed_from.is_empty(), "the carve removes rock");
-    world
-}
-
 #[test]
 fn primary_golden_shows_the_carve() {
     let Some(images) = render(&carved_world(), &[LightParams::at_eye()]) else {
@@ -105,12 +98,6 @@ fn headlamp_shadows_only_remove_light() {
         "shadows darken {:.2} % of pixels by more than 8/255",
         f * 100.0
     );
-}
-
-/// Bytes at which `a` and `b` differ.
-fn differing_bytes(a: &[u8], b: &[u8]) -> usize {
-    assert_eq!(a.len(), b.len());
-    a.iter().zip(b).filter(|(x, y)| x != y).count()
 }
 
 /// The walk is independent of its skips: the `primary.png`, `headlamp.png` and `lod.png`

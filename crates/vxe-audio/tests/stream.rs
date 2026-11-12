@@ -162,22 +162,6 @@ fn a_writer_that_pauses_leaves_a_gap_of_silence() {
     );
 }
 
-/// A world whose voxels come from a closure of the voxel coordinate.
-struct FnSource<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 fn world_around(solid: impl Fn([i32; 3]) -> bool + Sync) -> World {
     let mut t = MaterialTable::new();
     let mut w = Material::named("wall");

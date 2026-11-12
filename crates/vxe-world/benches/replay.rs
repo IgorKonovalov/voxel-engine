@@ -2,23 +2,20 @@
 //! inside a solid 4³-chunk world, decoded and replayed. Each iteration replays onto a fresh
 //! world; only the decode and the replay are timed.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use vxe_world::hash::mix64;
 use vxe_world::*;
+
+mod support;
+use support::{solid_world, timed};
 
 const CARVES: usize = 10_000;
 
 /// Chunks `[-2, 2)³`: voxels `[-128, 128)` on every axis.
 fn extent() -> ChunkExtent {
     ChunkExtent::new([-2, -2, -2], [2, 2, 2])
-}
-
-fn solid_world() -> World {
-    let mut table = MaterialTable::new();
-    let rock = table.push(Material::named("rock"));
-    World::generate(extent(), &UniformSource(rock), &table)
 }
 
 /// The log file: `CARVES` 1 m carves, one per tick, centres within ±117 voxels so every
@@ -50,12 +47,6 @@ fn log_file() -> LogFile {
     clippy::disallowed_methods,
     reason = "the bench times decode and replay alone, between untimed world generation"
 )]
-fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {
-    let t = Instant::now();
-    let out = f();
-    (out, t.elapsed())
-}
-
 fn replay(c: &mut Criterion) {
     let bytes = log_file().encode();
     assert_eq!(

@@ -11,19 +11,14 @@ mod support;
 use std::collections::{BTreeMap, BTreeSet};
 
 use flythrough::cave::{ORE, ROCK};
-use support::SyncNow;
+use support::{SyncNow, cave_table};
 use vxe_render::bake::{self, BakeSettings, QueueStats};
 use vxe_render::gpu_world::{GpuWorld, MirrorConfig, Window};
 use vxe_render::marcher::LightingResolution;
 use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, QueueView, readback, wgpu};
 use vxe_world::{
-    AIR, ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, UniformSource,
-    VoxelCoord, World,
+    AIR, ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, VoxelCoord, World,
 };
-
-fn table() -> MaterialTable {
-    flythrough::with_emissive_ore(&flythrough::cave_materials())
-}
 
 fn box_op(min: [i64; 3], max: [i64; 3], mode: Mode) -> EditOp {
     EditOp::box_(
@@ -43,7 +38,7 @@ fn world_of(size: [i32; 3], m: vxe_world::MaterialId) -> World {
     World::generate(
         ChunkExtent::new([0, 0, 0], size),
         &UniformSource(m),
-        &table(),
+        &cave_table(),
     )
 }
 

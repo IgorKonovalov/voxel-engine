@@ -41,15 +41,11 @@ fn sources_n(centre: [f32; 3], n: usize) -> Vec<[f32; 3]> {
 
 /// One second of noise from a seeded SplitMix64 stream: broadband, so no filter is idle.
 fn noise() -> Sound {
-    let mut s = 0x0006_0005u64;
+    let mut rng = vxe_world::hash::SplitMix64(0x0006_0005);
     Sound::new(
         (0..RATE as usize)
             .map(|_| {
-                s = s.wrapping_add(0x9e37_79b9_7f4a_7c15);
-                let mut z = s;
-                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                z ^= z >> 31;
+                let z = rng.next_u64();
                 ((z >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.2
             })
             .collect::<Vec<_>>(),

@@ -11,6 +11,10 @@ use flythrough::{LogicChoice, Mode as Replay, cave_materials, replay_file_with};
 use vxe_net::{Client, Event, Logic, MemChannel, Server};
 use vxe_world::*;
 
+#[path = "support/vectors.rs"]
+mod vectors;
+use vectors::dig_inputs;
+
 const SEED: u64 = 0x5EED_0001;
 
 fn extent() -> ChunkExtent {
@@ -40,30 +44,6 @@ fn component() -> Box<dyn Logic> {
     LogicChoice::Wasm(path)
         .load()
         .expect("the flythrough-logic component loads")
-}
-
-/// The replay fixture of `tests/replay.rs`: twenty digs from the spawn pocket's centre along
-/// ten fixed rays, each ray twice, so the second dig's raycast depends on the first's carve.
-fn dig_inputs() -> Vec<DigInput> {
-    let dirs: [[i64; 3]; 10] = [
-        [256, 0, 0],
-        [-256, 0, 0],
-        [0, 256, 0],
-        [0, -256, 0],
-        [0, 0, 256],
-        [0, 0, -256],
-        [181, 181, 0],
-        [-148, 148, 148],
-        [100, -200, 120],
-        [-30, -60, 247],
-    ];
-    (0..20)
-        .map(|i| DigInput::Dig {
-            origin: centre_of_voxel([128, 128, 128]),
-            dir: dirs[i % 10],
-            radius: (3 + (i as i64 % 3)) * FIXED_ONE,
-        })
-        .collect()
 }
 
 /// A server on a fresh cave running `logic`, fed `ticks` of inputs by one shared client;
