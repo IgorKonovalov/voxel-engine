@@ -1,8 +1,37 @@
 # 0045: The structure pass: split the mega files, share the fixtures, and gate their regrowth
 
 > **Status:** in-progress (approved 2026-10-22), amended 2026-11-10 (review pass), 2026-11-11 (order) and
-> 2026-11-12 (the architecture review's notes)
+> 2026-11-12 (the architecture review's notes; Phase 0's drift)
 > **Created:** 2026-10-22
+> **Amended 2026-11-12 (architect, Phase 0's drift; recommended taken):** the three drift rows
+> of `docs/plans/logs/0045.md` (Phase 0, Drift) and its one observation, ruled under the owner's
+> standing rule for non-blocking points, with a clear API and maintainability as the weights
+> (owner, 2026-11-11/12). **Seams confirmed at `774ca20` with this amendment:** Phase 2 may
+> start.
+> - **Row 1, `chunk_surface`:** struck from Phase 2's `slot.rs` (Plan 0054 removed it,
+>   `2bca6e4`).
+> - **Row 2, `build_world`:** it never existed. Phase 7 extracts it from the inline world build
+>   in `fn main()` (`main.rs:7136` at `c7072b7`, 253 lines) into `setup.rs`.
+> - **Row 3, the narrowing cap:** the in-repo users reach 131 `module::item` paths, 116 of them
+>   not at the root (76 + 116 = 192), so 150 cannot hold if every path is re-exported at the
+>   root. Taken: **the root is the consumer's API and is capped at 100 names. What else in-repo
+>   users reach lives in two named modules that do not count against the cap.** One is
+>   `pub mod debug`, documented, for readings. It is the module ADR-0057 names, and Plan 0071's
+>   Phase 3 extends it. The other is `#[doc(hidden)] pub mod internals`, which holds the GPU
+>   contract and the white-box items. Phase 2 below gives the rule and the number. Rejected:
+>   (a) a cap near 200, because it puts some 40 layout bits and 10 shader sources in the
+>   consumer's namespace; (b) layout tests as unit tests, because `gpu_mirror` and
+>   `gpu_level_mirror` open a device and stay `tests/gpu_*.rs` (`check-test-tiers.mjs`), and
+>   the fly-through's `src/` reaches 48 of the paths for its readings anyway; a
+>   `test-support`-gated re-export module, because the fly-through binary would need the
+>   feature on, and a `pub(crate)` item cannot be re-exported from it without copying it or
+>   allowing `unreachable_pub`; (c) keeping 150 by moving users, because the white-box tests
+>   would still need the layout items under some path. The `test-support` feature stays what
+>   Plan 0044's Phase 8 and Plan 0071's Phase 2 make it: helpers (a device, a world rig), not
+>   re-exports. The root's present 76 names stay where they are, WGSL sources included. Moving
+>   them, with deprecated re-exports, and pinning the final counts are Plan 0071 Phase 3's job.
+> - **The observation:** the Context's sentence about environment variables in production
+>   `src/` is corrected (none at `c7072b7`).
 > **Amended 2026-11-12 (architect; the review's notes taken as recommended):** from
 > `docs/reviews/2026-11-12-architecture-review.md` sections 2.1 (items 1 to 5) and 2.3, and a
 > re-read against main at `5909af8` (v0.49.0: Plans 0061 and 0067 closed and merged, Plan 0068
@@ -196,8 +225,9 @@ The wgpu test device helper is Plan 0044's (its Phase 8), which runs after this 
 reading is narrowed by 48 `VXE_STRIP_*` variables; `gpu_settle.rs` reads 13 names and
 `gpu_bake.rs` 6. Their switches are undiscoverable and untested. `VXE_STEADY` drives a
 `Steady` shim (`tests/support/settle.rs`) whose names map to the default but for `aN`, a probe
-freeze count, for a `--steady` flag the binary has refused since Plan 0057. Production `src/`
-reads environment variables in four files, none in `vxe-render` or `vxe-world`.
+freeze count, for a `--steady` flag the binary has refused since Plan 0057. No production
+`src/` file reads an environment variable (`git grep env::var` over `crates/*/src` and
+`apps/*/src` finds none at `c7072b7`), so the switches live only in tests.
 
 ## Decision
 
@@ -205,7 +235,9 @@ Split along the seams below, keeping every type's behaviour. Promote the fixture
 general and deterministic into the engine: `vxe_world::FnSource`, `vxe_world::hash::SplitMix64`
 and `ChunkCoord::distance2`. Keep the test-only helpers in per-crate `tests/support` modules
 and behind `test-support` features, following `vxe-net`'s `test-logic` precedent (Plan
-0044's render device helper follows this plan, 2026-11-11). Narrow `vxe-render`'s public surface to its curated re-exports.
+0044's render device helper follows this plan, 2026-11-11). Narrow `vxe-render`'s public surface to its curated root re-exports, plus a
+documented `debug` module of readings and a `#[doc(hidden)]` `internals` module for the GPU
+contract (amended 2026-11-12).
 Finish with two mechanical gates, because a size rule written in prose is the kind
 `CLAUDE.md` says needs a gate.
 
@@ -304,7 +336,8 @@ Existing tests move without change, and their times with them.
     `draw_candidates`, `resolve_emissive`) is defined and called.
   - **Public surface:** the bare `pub` item count of `vxe-render/src` by the header's grep,
     the root names `lib.rs` exports, and each `vxe_render::<module>::<item>` path used under
-    `crates/` and `apps/` (73 distinct at `5909af8`). At `5909af8`
+    `crates/` and `apps/` (brace-group imports expanded; 131 at `c7072b7`, where the draft's
+    single-line grep gave 73). At `5909af8`
     `readback::read_texels_u32` still has no user.
   - **The first consumer:** a grep of `~/Work/voxel-roguelite` for `vxe_render::` module
     paths and for `vxe-world`'s `#[doc(hidden)]` `*_decoded` ops. Each use is listed. (At
@@ -383,8 +416,8 @@ Existing tests move without change, and their times with them.
   - `format.rs`: the GPU contract constants, `class_code`, `payload_units`,
     `slot_units`, `bin_of`, `ShardLayout` and `budget_for`.
   - `alloc.rs`: a `PoolAlloc` owning the bins (`BinAlloc`), page state and `Fit`.
-  - `slot.rs`: `fill_slot`, `materials_of`, `upload_set` and `chunk_surface`. All pure CPU,
-    unit-tested without a device.
+  - `slot.rs`: `fill_slot`, `materials_of` and `upload_set`. All pure CPU, unit-tested
+    without a device. (`chunk_surface` is struck: Plan 0054 removed it, `2bca6e4`.)
   - `lights.rs`: a `LightMirror` owning `LightSample`, `ChunkLights` and the `light_*` fields.
   - `stage.rs`: an `Uploader` with `Band`, the `Belt` and the `flush_*` functions.
   - `window.rs`: a `WindowQueue`.
@@ -395,8 +428,30 @@ Existing tests move without change, and their times with them.
   - The `lod: bool` parameters become `Bricks::is_lod()`.
 
   `vxe-render`'s modules become private behind the existing curated `pub use` list, and
-  layout items become `pub(crate)`. An item an in-repo user reaches by a module path (Phase
-  0's list) is re-exported at the root, or its user moves to an item already there.
+  layout items become `pub(crate)`. Each item an in-repo user reaches by a module path (the
+  131 of Phase 0's list) gets exactly one public home, chosen by this rule (amended
+  2026-11-12):
+  - **The root** takes an item a consumer needs to configure or drive the renderer: a type a
+    public method of `GpuWorld`, `Frame`, `Presenter` or `BakeQueue` takes or returns, the
+    type of a public field of a settings struct, or the default value of a setting. At Phase 0
+    that covers, for example, `Budget`, `MissingLight`, `ReachMode`, `QueueOrder` and its
+    `Refine`, `Upscaler`, `Params`, `queue_settings` and the `DEFAULT_*` constants of the bake,
+    the mirror, the lights and the probes.
+  - **`pub mod debug`** (documented) takes readings: the `readback` functions and
+    `StepHistogram`, the queue step's `StepStages`, `STEP_STAGES`, `Regime` and `StepTally`,
+    and the light summaries a getter returns. ADR-0057 names this module, and Plan 0071's
+    Phase 3 moves the texture getters and timers into it.
+  - **`#[doc(hidden)] pub mod internals`** takes the rest: the GPU contract constants and
+    layout functions (`gpu_world/format.rs`'s bits, words and bins, `bin_of`,
+    `slots_per_page`, `budget_for`, the field's band units, the bake's record and view
+    constants), the WGSL sources and composers that are not already root names (`fsr2`'s
+    passes, `composite_hdr_source`), and pure white-box functions a test asserts against
+    (`face_classes`, `view_half_angle(s)`, `TestProbe`, `FONT`). Its doc line says it is not
+    API and carries no semver promise. The fly-through's readings and the layout tests reach
+    it by `vxe_render::internals::…`.
+
+  `debug` and `internals` are each a `pub use` list over the private modules: no item is
+  defined in them, so each item keeps one definition and `unreachable_pub` still bites.
   `vxe-render`'s `lib.rs` sets `#![deny(unreachable_pub)]`, so a bare `pub` that the root
   does not reach is a compile error rather than an intent. `readback::read_texels_u32` is
   deleted if Phase 0 still finds no user. `OPAQUE_WORDS` (used inside `gpu_world`) becomes
@@ -408,11 +463,15 @@ Existing tests move without change, and their times with them.
   any).
 - **Done when:**
   - `GpuWorld` has at most 15 fields, each a part or a scalar.
-  - **The narrowing is a number.** `vxe-render`'s `lib.rs` declares no `pub mod` (13 at
-    `5909af8`); the crate root exports at most 150 names (76 at `5909af8`, plus at most the 73
-    distinct module-path items in-repo users reach: 149); `cargo clippy -p vxe-render` passes
-    with `unreachable_pub` denied; and the log states the header's bare-`pub` grep count
-    before (761 at `5909af8`) and after.
+  - **The narrowing is a number and a rule (amended 2026-11-12).** `vxe-render`'s `lib.rs`
+    declares exactly two `pub mod`s, `debug` and the `#[doc(hidden)]` `internals` (13 at
+    `5909af8`), and each is a `pub use` list that defines no item. The crate root exports at
+    most 100 names: the 76 at `5909af8` plus at most 24 promoted under the root rule above
+    (`debug` and `internals` do not count). The log lists each of Phase 0's 131 module paths
+    with its new home (root, `debug` or `internals`) and the rule clause that put it there.
+    No in-repo user reaches an item through any other module path. `cargo clippy -p
+    vxe-render` passes with `unreachable_pub` denied, and the log states the header's
+    bare-`pub` grep count before (761 at `5909af8`) and after.
   - `node scripts/check-file-size.mjs crates/vxe-render/src/gpu_world` would pass: no file in
     `gpu_world/` is over the source cap. (The script lands in Phase 8; until then `wc -l`.)
   - Every mirror test passes unchanged, and slot words are byte-identical to the phase's start
@@ -599,7 +658,10 @@ Existing tests move without change, and their times with them.
     - `edits.rs`: `Net`, `BenchSum`, event routing.
     - `autopilot.rs`: `Autopilot`, `Leg`, `NearRing`, `SettleClock`.
     - `audio.rs`: `Audio`, `Mix`, `Mic`, `RoomProbe`.
-    - `setup.rs`: `build_world` and `Gfx`.
+    - `setup.rs`: `Gfx`, and a new `build_world` (amended 2026-11-12: there is no such
+      function at `c7072b7`). It is extracted from the world build written inline in
+      `fn main()` (`main.rs:7136`, 253 lines) and split so that no function is over 150 lines.
+      `main` keeps the parse, the call and the run.
     - `toggles.rs`: one table of key, name, getter and flip over `hud::Modes`, which owns no
       GPU object. It feeds the HUD rows, the banner and the printed line. Plan 0067's
       missing-light, reach and budget cycles (`next_*`) are rows of it; their `write_*_note`
