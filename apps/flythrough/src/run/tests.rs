@@ -209,7 +209,7 @@ fn pose_starts_the_level_at_the_rigs_still_camera() {
     for want in crate::START_POSES {
         let a = parse_args_from(argv(&["--level", "--pose", want.name])).expect("parses");
         assert_eq!(a.pose, Some(want));
-        assert_eq!(a.exposure, None, "the pose's exposure is not applied");
+        assert_eq!(a.light.exposure, None, "the pose's exposure is not applied");
         let c = start_camera(&a, VoxelCoord([0, 0, 0]));
         assert_eq!(c.position, Vec3::from(want.position));
         assert_eq!(c.yaw, want.yaw_deg.to_radians());
@@ -274,7 +274,7 @@ fn the_aliasing_toggles_show_in_the_banner() {
                 .any(|l| l == format!("upscaler fsr2, scale 1.5, {want}")),
             "{want}: {banner}"
         );
-        assert_eq!(run.args.sharpen.to_string(), want["sharpen ".len()..]);
+        assert_eq!(run.args.look.sharpen.to_string(), want["sharpen ".len()..]);
     }
     for (want, on) in [("pan 1.1 deg/s stopped", false), ("pan 1.1 deg/s", true)] {
         let banner = press(&mut run, KeyCode::Period);
@@ -292,9 +292,13 @@ fn the_aliasing_toggles_show_in_the_banner() {
     );
     let knobs = parse_args_from(argv(&["--jitter-phases", "8", "--dither", "on"]))
         .expect("the candidate knobs parse");
-    assert_eq!((knobs.jitter_phases, knobs.dither), (Some(8), true));
-    let banner = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5")
-        .with_fsr2_knobs(hud::fsr2_knob_words(knobs.jitter_phases, knobs.dither));
+    assert_eq!(
+        (knobs.look.jitter_phases, knobs.look.dither),
+        (Some(8), true)
+    );
+    let banner = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5").with_fsr2_knobs(
+        hud::fsr2_knob_words(knobs.look.jitter_phases, knobs.look.dither),
+    );
     assert_eq!(
         banner.line(),
         "upscaler fsr2, scale 1.5, sharpen 0.5, phases 8, dither"
@@ -306,7 +310,7 @@ fn the_aliasing_toggles_show_in_the_banner() {
         );
     }
     let p = parse_args_from(argv(&["--pan", "1.1"])).expect("--pan 1.1 parses");
-    assert_eq!(p.pan, Some(1.1));
+    assert_eq!(p.look.pan, Some(1.1));
     for bad in ["x", "0", "-0", "inf"] {
         assert_eq!(
             parse_args_from(argv(&["--pan", bad])).err().as_deref(),
@@ -326,7 +330,7 @@ fn the_default_look_is_the_windows_pick() {
     let d = parse_args_from(argv(&[])).expect("parses");
     let l = d.start_lighting();
     assert_eq!(
-        (l.store_read, l.light_weights, d.lighting),
+        (l.store_read, l.light_weights, d.light.resolution),
         (
             StoreRead::Normal,
             LightWeights::Face,
@@ -585,11 +589,12 @@ fn the_banner_names_the_withdrawal() {
         row.starts_with("in view: 0 waiting (0 coarse), withdrawn 7, step 0.00 ms; "),
         "{row}"
     );
-    let w = |v: &str| parse_args_from(argv(&["--queue-withdraw", v])).map(|a| a.queue_withdraw);
+    let w =
+        |v: &str| parse_args_from(argv(&["--queue-withdraw", v])).map(|a| a.bake.queue_withdraw);
     assert_eq!(w("on"), Ok(true));
     assert_eq!(w("off"), Ok(false));
     assert!(w("yes").is_err());
-    assert!(parse_args_from(argv(&[])).unwrap().queue_withdraw);
+    assert!(parse_args_from(argv(&[])).unwrap().bake.queue_withdraw);
 }
 
 /// `--full-first` parses `off` and 0 to 8 and refuses the rest, and follows `--near` when
@@ -665,7 +670,7 @@ fn the_banner_names_the_missing_light() {
             "{want}: {banner}"
         );
     }
-    let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.missing_light);
+    let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.bake.missing_light);
     assert_eq!(f(&[]), Ok(MissingLight::Chain));
     for m in MissingLight::ALL {
         assert_eq!(f(&["--missing-light", m.name()]), Ok(m));
@@ -706,7 +711,7 @@ fn the_banner_names_the_reach() {
             "{want}: {row}"
         );
     }
-    let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.reach);
+    let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.bake.reach);
     assert_eq!(f(&[]), Ok(ReachMode::Full));
     for m in ReachMode::ALL {
         assert_eq!(f(&["--reach", m.name()]), Ok(m));
@@ -766,7 +771,7 @@ fn the_banner_names_the_budget() {
             "{want}: {row}"
         );
     }
-    let b = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.bake_budget);
+    let b = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.bake.budget);
     assert_eq!(b(&[]), Ok(Budget::PerFrame { ms: 1.5 }));
     assert_eq!(b(&["--bake-slice", "3"]), Ok(Budget::PerFrame { ms: 3.0 }));
     assert_eq!(
@@ -816,7 +821,7 @@ fn f9_cycles_the_views_and_the_banner_names_them() {
         ["normals", "hitmask", "steps", "cracks", "albedo", "shaded"]
     );
     let a = parse_args_from(argv(&["--view", "cracks"])).expect("parses");
-    assert_eq!(a.view, ViewMode::Cracks);
+    assert_eq!(a.look.view, ViewMode::Cracks);
 }
 
 /// With the castle, `I` moves the camera to the next shot's pose and puts its name on the
@@ -961,16 +966,16 @@ fn the_banner_names_the_probe_spacing_while_the_lamp_bounce_is_on() {
 fn the_start_banner_names_the_look_and_n_cycles() {
     let a = parse_args_from(argv(&[])).unwrap();
     let banner = a.start_modes(0.0).banner(0.0).expect("the start shows it");
-    let mut bare = hud::Modes::new(a.start_lighting(), a.lighting, 0.0)
-        .with_source(a.showcase.then_some("showcase"))
-        .with_probe_spacing(a.probe_spacing);
-    bare.set_auto(a.adaptation, a.start_auto());
+    let mut bare = hud::Modes::new(a.start_lighting(), a.light.resolution, 0.0)
+        .with_source(a.mode.is_showcase().then_some("showcase"))
+        .with_probe_spacing(a.light.probe_spacing);
+    bare.set_auto(a.light.adaptation, a.start_auto());
     let lighting = bare.banner(0.0).expect("the start shows it");
     assert_eq!(banner, format!("look face, far normal 2..6\n{lighting}"));
     let knob = parse_args_from(argv(&["--far-normal", "3,10"])).unwrap();
     assert_eq!(knob.start_look().far_normal, [3.0, 10.0]);
     assert_eq!(
-        look_line(&knob.start_look(), &knob.look),
+        look_line(&knob.start_look(), &knob.look.preset),
         "look face (normals face, face mix 0, far normal 3..10), view shaded"
     );
     let banner = knob.start_modes(0.0).banner(0.0).unwrap();
@@ -984,9 +989,9 @@ fn the_start_banner_names_the_look_and_n_cycles() {
             "{bad}"
         );
     }
-    let mut seen = vec![a.look.name];
-    let mut p = a.look.next(true);
-    while p.name != a.look.name {
+    let mut seen = vec![a.look.preset.name];
+    let mut p = a.look.preset.next(true);
+    while p.name != a.look.preset.name {
         seen.push(p.name);
         p = p.next(true);
     }
@@ -999,7 +1004,7 @@ fn the_start_banner_names_the_look_and_n_cycles() {
 #[test]
 fn the_far_normal_is_named_in_face_mode_only() {
     let a = parse_args_from(argv(&[])).unwrap();
-    let (mut preset, mut look, mut modes) = (a.look, a.start_look(), a.start_modes(0.0));
+    let (mut preset, mut look, mut modes) = (a.look.preset, a.start_look(), a.start_modes(0.0));
     let mut t = 5000.0;
     for (name, far) in [
         ("trilinear8", "off"),
@@ -1023,7 +1028,7 @@ fn the_far_normal_is_named_in_face_mode_only() {
     let field = parse_args_from(argv(&["--look", "field", "--far-normal", "2,6"])).unwrap();
     assert_eq!(field.start_look().far_normal, [2.0, 6.0]);
     assert_eq!(
-        look_line(&field.start_look(), &field.look),
+        look_line(&field.start_look(), &field.look.preset),
         "look field (normals contour, face mix 0, far normal off), view shaded"
     );
     let banner = field.start_modes(0.0).banner(0.0).unwrap();

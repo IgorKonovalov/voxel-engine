@@ -118,17 +118,17 @@ impl Run {
     /// reach.
     pub(crate) fn queue_keys(&mut self, input: &Input) {
         if input.pressed(KeyCode::Digit8) {
-            self.args.reach = next_reach(self.args.reach);
-            println!("bake queue: reach {}", self.args.reach.name());
+            self.args.bake.reach = next_reach(self.args.bake.reach);
+            println!("bake queue: reach {}", self.args.bake.reach.name());
             if let Some(g) = self.gfx.as_mut() {
-                g.frame.set_bake_reach(self.args.reach);
+                g.frame.set_bake_reach(self.args.bake.reach);
             }
         }
         if input.pressed(KeyCode::Digit7) {
-            self.args.missing_light = next_missing_light(self.args.missing_light);
+            self.args.bake.missing_light = next_missing_light(self.args.bake.missing_light);
             println!(
                 "bake queue: missing light {}",
-                self.args.missing_light.name()
+                self.args.bake.missing_light.name()
             );
         }
         if input.pressed(KeyCode::Digit6) {
@@ -136,15 +136,15 @@ impl Run {
                 Some(_) => None,
                 None => Some(vxe_render::DEFAULT_NEAR),
             };
-            self.args.bake_full_first = Some(r);
+            self.args.bake.full_first = Some(r);
             println!("bake queue: full-first {}", FullFirstWords(r));
             if let Some(g) = self.gfx.as_mut() {
                 g.frame.set_bake_full_first(r);
             }
         }
         if input.pressed(KeyCode::Digit5) {
-            self.args.bake_budget = next_budget(self.args.bake_budget);
-            let budget = self.args.bake_budget;
+            self.args.bake.budget = next_budget(self.args.bake.budget);
+            let budget = self.args.bake.budget;
             println!("bake queue: budget {budget}");
             if let Some(g) = self.gfx.as_mut() {
                 g.frame.set_bake_budget(budget);
@@ -153,33 +153,34 @@ impl Run {
         let a = &mut self.args;
         let mut changed = false;
         if input.pressed(KeyCode::Digit1) {
-            (a.queue_distance, a.queue_tier) = match (a.queue_distance, a.queue_tier) {
-                (false, false) => (false, true),
-                (false, true) => (true, false),
-                (true, _) => (false, false),
-            };
+            (a.bake.queue_distance, a.bake.queue_tier) =
+                match (a.bake.queue_distance, a.bake.queue_tier) {
+                    (false, false) => (false, true),
+                    (false, true) => (true, false),
+                    (true, _) => (false, false),
+                };
             changed = true;
         }
         if input.pressed(KeyCode::Digit2) {
-            a.queue_angle *= 0.5;
+            a.bake.queue_angle *= 0.5;
             changed = true;
         }
         if input.pressed(KeyCode::Digit3) {
-            a.queue_angle = if a.queue_angle > 0.0 {
-                a.queue_angle * 2.0
+            a.bake.queue_angle = if a.bake.queue_angle > 0.0 {
+                a.bake.queue_angle * 2.0
             } else {
                 0.25
             };
             changed = true;
         }
         if input.pressed(KeyCode::Digit4) {
-            a.queue_withdraw = !a.queue_withdraw;
+            a.bake.queue_withdraw = !a.bake.queue_withdraw;
             changed = true;
         }
         if changed {
             let order = self.args.queue_order();
             println!("bake queue: {}", self.args.queue_words());
-            let withdraw = self.args.queue_withdraw;
+            let withdraw = self.args.bake.queue_withdraw;
             if let Some(q) = self.gfx.as_mut().and_then(|g| g.frame.bake_queue_mut()) {
                 q.order = order;
                 q.withdraw = withdraw;
@@ -218,9 +219,9 @@ impl Run {
             println!("{}", self.upscaler.line());
         }
         if input.pressed(KeyCode::KeyZ) {
-            self.args.sharpen = hud::next_sharpen(self.args.sharpen);
+            self.args.look.sharpen = hud::next_sharpen(self.args.look.sharpen);
             self.upscaler
-                .set_sharpen(self.args.sharpen, ms_since(self.start));
+                .set_sharpen(self.args.look.sharpen, ms_since(self.start));
             self.sharpen_changed = true;
             println!("{}", self.upscaler.line());
         }

@@ -18,6 +18,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.help {
+        print!("{}", flythrough::cli::help());
+        return;
+    }
     if args.check_args {
         println!("flythrough: arguments ok");
         return;

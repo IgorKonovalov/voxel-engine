@@ -39,6 +39,8 @@
 //! (`flythrough::report`). `--tester` leaves movement, look, the dig, `F1` (a help panel), `T`
 //! and `Esc` and turns every other key off, the stats HUD among them. `--check-args` parses the
 //! arguments, prints `flythrough: arguments ok` and exits 0, opening nothing.
+//! `--help` prints every flag the parser reads, one row each from the flag table ([`flags`]),
+//! and exits 0; the removed flags are rows too, each refused with its own message.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
 //! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
 //! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
@@ -284,84 +286,64 @@ use vxe_render::{
 };
 use vxe_world::Residency;
 
+pub mod flags;
 mod parse;
+pub mod table;
 
+pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
 pub use parse::*;
 
+/// The world a run builds; the flags that pick one (`--source`, `--level`, `--room`,
+/// `--thin-rig`, `--seam-rig`) exclude each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunMode {
+    /// The streamed cave (the default), with the castle or the vault if asked.
+    Cave,
+    /// The bounded level.
+    Level,
+    /// The bounded showcase cavern.
+    Showcase,
+    /// A closed cube of air of this edge in voxels inside 2 m of rock.
+    Room(i32),
+    /// The bounded thin-feature scene.
+    ThinRig,
+    /// The bounded seam scene.
+    SeamRig,
+}
+
+impl RunMode {
+    pub(crate) fn is_level(self) -> bool {
+        self == RunMode::Level
+    }
+
+    pub(crate) fn is_showcase(self) -> bool {
+        self == RunMode::Showcase
+    }
+
+    pub(crate) fn is_thin_rig(self) -> bool {
+        self == RunMode::ThinRig
+    }
+
+    pub(crate) fn is_seam_rig(self) -> bool {
+        self == RunMode::SeamRig
+    }
+
+    /// The room's edge in voxels, for [`RunMode::Room`].
+    pub(crate) fn room(self) -> Option<i32> {
+        match self {
+            RunMode::Room(edge) => Some(edge),
+            _ => None,
+        }
+    }
+}
+
+/// The audio's flags.
 #[derive(Clone)]
-pub struct Args {
-    pub(crate) seed: u64,
-    pub(crate) render: Option<[u32; 2]>,
-    pub(crate) frames: Option<u32>,
-    /// `--pace`: whether the window waits for the compositor's frame callback.
-    pub(crate) pace: Pacing,
-    pub(crate) bench: u32,
-    pub(crate) level: bool,
-    /// `--source showcase`: the bounded showcase cavern (`flythrough::showcase`).
-    pub(crate) showcase: bool,
-    /// `--shot NAME`: the showcase shot the camera starts at, and its exposure.
-    pub(crate) shot: Shot,
-    /// `--pose NAME`: the settle rig's still camera the bounded level starts at (its exposure
-    /// is not applied).
-    pub(crate) pose: Option<crate::Pose>,
-    pub(crate) autopilot: bool,
-    pub(crate) headless: bool,
-    /// `--adapter SUBSTRING`: the run takes the first adapter whose name contains it (in a
-    /// window, of those that present to it).
-    pub(crate) adapter: Option<String>,
-    pub(crate) walk: bool,
-    /// `--vault`: the cave generates with the vault room ahead of the spawn.
-    pub(crate) vault: bool,
-    /// `--castle`: the streamed cave generates with the castle in its hall.
-    pub(crate) castle: bool,
-    /// `--castle-out PATH`: where to write the generated `.vox`.
-    pub(crate) castle_out: Option<std::path::PathBuf>,
-    /// `--castle-shot NAME`: the castle pose the camera starts at.
-    pub(crate) castle_shot: castle::CastleShot,
-    pub(crate) sync_budget: u64,
-    /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
-    /// for no limit.
-    pub(crate) sync_time: Option<std::time::Duration>,
-    /// `--workers`: the streamer's generation workers; `None` for [`default_workers`].
-    pub(crate) workers: Option<usize>,
-    /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
-    pub(crate) mirror_budget: Option<u64>,
-    /// `--residency`: the streamed full and LOD radii in chunks, hysteresis as
-    /// [`RESIDENCY`]'s.
-    pub(crate) residency: Residency,
-    pub(crate) audio: bool,
+pub struct AudioArgs {
+    /// `--audio`: open the default output device.
+    pub(crate) on: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
-    pub(crate) audio_debug: bool,
-    /// `--look`: the starting preset with any part flag applied. `face` by default; only
-    /// `field` builds the field's band slots ([`Args::field_surface`]).
-    pub(crate) look: LookPreset,
-    pub(crate) view: ViewMode,
-    /// `--translucent-layers`: translucent voxels composited in front of the opaque hit.
-    pub(crate) translucent_layers: u32,
-    /// `--hud`: start with the stats HUD shown.
-    pub(crate) hud: bool,
-    /// `--census`: print the brick census on exit.
-    pub(crate) census: bool,
-    /// `--band-census`: print the field surface's band census (`flythrough::band_census`) over
-    /// the chunks mirrored full after the level's first fill, or at the stream's full
-    /// residency.
-    pub(crate) band_census: bool,
-    /// `--save`: where the session's log file is written on exit.
-    pub(crate) save: Option<std::path::PathBuf>,
-    /// `--replay`: the log file whose session is re-simulated before the first frame.
-    pub(crate) replay: Option<std::path::PathBuf>,
-    /// `--logic`: the server's logic, native or the hosted component.
-    pub(crate) logic: LogicChoice,
-    /// `--room`: the edge, in voxels, of the closed cube of air the fly-through runs in.
-    pub(crate) room: Option<i32>,
-    /// `--thin-rig`: the bounded thin-feature scene (`flythrough::thin_rig`) in place of the
-    /// cave.
-    pub(crate) thin_rig: bool,
-    /// `--seam-rig`: the bounded seam scene (`flythrough::thin_rig::SeamRig`) in place of the
-    /// cave.
-    pub(crate) seam_rig: bool,
-    /// `--crisp`: the rows of the table marked `MaterialFlags::CRISP` when it is built.
-    pub(crate) crisp: CrispRows,
+    pub(crate) debug: bool,
     /// `--room-line`: print the room line whenever a fan completes (implied by `--room`).
     pub(crate) room_line: bool,
     /// `--absorption`: the cave row's absorption per metre.
@@ -370,53 +352,166 @@ pub struct Args {
     pub(crate) mic: bool,
     /// `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide`, `--direct-delay`.
     pub(crate) mix: Mix,
-    /// `--cutaway`: the cutaway view's start state.
-    pub(crate) cutaway: CutawayMode,
-    /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
-    /// the autopilot.
-    pub(crate) pad: bool,
+}
+
+/// The lighting's flags. The fly-through and its examples read the shared rows
+/// ([`lighting_flags`]) into it; the rest are the fly-through's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LightingArgs {
+    /// `--lamp on|off`: the headlamp lights the frame; unset, the program's default (the
+    /// fly-through's: off on the showcase, else on).
+    pub lamp: Option<bool>,
+    /// `--lamp-bounce on|off` (alias `--indirect`): the lamp's bounce from the probe volume.
+    pub lamp_bounce: bool,
+    /// `--shadow-walk full|coarse`: the walk shadow rays take.
+    pub shadow_walk: ShadowWalk,
+    /// `--store-read face|normal`: how a cube face reads the store (ADR-0049; `Comma`).
+    pub store_read: vxe_render::StoreRead,
+    /// `--light-weights normal|face`: the normal the light's filters compare (`Semicolon`).
+    pub light_weights: vxe_render::LightWeights,
+    /// `--filter on|off`: the a-trous filter runs.
+    pub filter: bool,
+    /// `--light-radius N`: chunks around the camera whose emitters light the frame; unset,
+    /// the source's.
+    pub radius: Option<i32>,
+    /// `--history edits|gradient`: what kills the temporal history.
+    pub history: HistoryKill,
+    /// `--lighting full|half`: the lighting passes' resolution.
+    pub resolution: LightingResolution,
+    /// `--probe-spacing N`: voxels between the probe volume's probes.
+    pub probe_spacing: u32,
+    /// `--probe-rays N`: rays each updated probe traces.
+    pub probe_rays: u32,
+    /// `--probe-slices N`: the volume refreshes one probe in N a frame.
+    pub probe_slices: u32,
     /// `--emissive-ore on|off`: the ore row emits `flythrough::ORE_EMISSION` (on by default).
     pub(crate) emissive_ore: bool,
-    /// `--lamp on|off`: the headlamp lights the frame (on by default).
-    pub(crate) lamp: bool,
     /// `--lamp-toggle N`: switch the lamp every `N` frames, as `F7` does, timing the probe
     /// passes inside and outside the light-change windows the switches open.
     pub(crate) lamp_toggle: Option<u32>,
     /// `--fade-reading`: dig into the rock ahead, settle the ore light with the lamp off,
     /// then the lamp light with it on, switch it off and print how each light source at the
-    /// screen centre fades (see [`FadeSample`]).
+    /// screen centre fades (see `run::fade::FadeSample`).
     pub(crate) fade_reading: bool,
-    /// `--shadow-walk full|coarse`: the walk shadow rays take.
-    pub(crate) shadow_walk: ShadowWalk,
-    /// `--store-read face|normal`: how a cube face reads the store (ADR-0049; `Comma`).
-    pub(crate) store_read: vxe_render::StoreRead,
-    /// `--light-weights normal|face`: the normal the light's filters compare (`Semicolon`).
-    pub(crate) light_weights: vxe_render::LightWeights,
-    /// `--filter on|off`: the a-trous filter runs (on by default).
-    pub(crate) filter: bool,
-    /// `--light-radius N`: chunks around the camera whose emitters light the frame.
-    pub(crate) light_radius: i32,
-    /// `--history edits|gradient`: what kills the temporal history.
-    pub(crate) history: HistoryKill,
-    /// `--lighting full|half`: the lighting passes' resolution.
-    pub(crate) lighting: LightingResolution,
-    /// `--lamp-bounce on|off` (alias `--indirect`): the lamp's bounce from the probe volume (on
-    /// by default).
-    pub(crate) lamp_bounce: bool,
+    /// `--exposure auto|E`: a manual exposure, or `None` for auto (the default).
+    pub(crate) exposure: Option<f32>,
+    /// `--adaptation eye|symmetric|instant`: the auto exposure's preset (eye by default).
+    pub(crate) adaptation: hud::Adaptation,
+    /// `--adapt LIGHT,CONE,ROD,FLOOR`: the preset's time constants in seconds and its cone
+    /// floor, replaced.
+    pub(crate) adapt: Option<[f32; 4]>,
+    /// `--metering centre|average`: how the meter weights the frame (centre by default).
+    pub(crate) metering: vxe_render::Metering,
+}
+
+impl LightingArgs {
+    /// The flags' defaults over `base`'s switches and walks: the fly-through's start from its
+    /// own defaults, an example's from the `Lighting` it starts with.
+    pub fn from_lighting(base: &Lighting, probe_spacing: u32) -> Self {
+        LightingArgs {
+            lamp: None,
+            lamp_bounce: base.lamp_bounce,
+            shadow_walk: base.shadow_walk,
+            store_read: base.store_read,
+            light_weights: base.light_weights,
+            filter: base.filter,
+            radius: None,
+            history: base.history,
+            resolution: LightingResolution::default(),
+            probe_spacing,
+            probe_rays: base.probe_rays,
+            probe_slices: base.probe_slices,
+            emissive_ore: true,
+            lamp_toggle: None,
+            fade_reading: false,
+            exposure: None,
+            adaptation: hud::Adaptation::Eye,
+            adapt: None,
+            metering: vxe_render::Metering::default(),
+        }
+    }
+
+    /// The lamp: `--lamp`, else on.
+    pub fn lamp(&self) -> bool {
+        self.lamp.unwrap_or(true)
+    }
+
+    /// The light radius: `--light-radius`, else `vxe_render::DEFAULT_LIGHT_RADIUS`.
+    pub fn radius(&self) -> i32 {
+        self.radius.unwrap_or(vxe_render::DEFAULT_LIGHT_RADIUS)
+    }
+
+    /// `base` with the shared rows' switches, walks and probe counts applied.
+    pub fn apply(&self, base: Lighting) -> Lighting {
+        Lighting {
+            lamp: self.lamp(),
+            shadow_walk: self.shadow_walk,
+            store_read: self.store_read,
+            light_weights: self.light_weights,
+            filter: self.filter,
+            history: self.history,
+            lamp_bounce: self.lamp_bounce,
+            probe_rays: self.probe_rays,
+            probe_slices: self.probe_slices,
+            ..base
+        }
+    }
+}
+
+/// The look's and the upscaler's flags.
+#[derive(Clone)]
+pub struct LookArgs {
+    /// `--look`: the starting preset with any part flag applied. `face` by default; only
+    /// `field` builds the field's band slots ([`Args::field_surface`]).
+    pub(crate) preset: LookPreset,
+    pub(crate) view: ViewMode,
+    /// `--translucent-layers`: translucent voxels composited in front of the opaque hit.
+    pub(crate) translucent_layers: u32,
+    /// `--cutaway`: the cutaway view's start state.
+    pub(crate) cutaway: CutawayMode,
+    /// `--crisp`: the rows of the table marked `MaterialFlags::CRISP` when it is built.
+    pub(crate) crisp: CrispRows,
+    /// `--band-census`: print the field surface's band census (`flythrough::band_census`) over
+    /// the chunks mirrored full after the level's first fill, or at the stream's full
+    /// residency.
+    pub(crate) band_census: bool,
+    /// `--internal-scale 1|1.5|2`: the output size over the internal size, on each edge.
+    pub(crate) internal_scale: RenderScale,
+    /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter. Our
+    /// upscaler takes it only when given ([`LookArgs::jitter_set`]) and jitters otherwise.
+    pub(crate) jitter: bool,
+    /// `--jitter` was given.
+    pub(crate) jitter_set: bool,
+    /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
+    pub(crate) sharpen: f32,
+    /// `--pan DEG_PER_S`: a constant yaw rate, degrees a second, positive to the left.
+    pub(crate) pan: Option<f32>,
+    /// `--jitter-phases N`: FSR 2's jitter phase count (`Fsr2Settings::jitter_phases`).
+    pub(crate) jitter_phases: Option<u32>,
+    /// `--dither on|off`: FSR 2's tone pass adds its static one-level dither
+    /// (`Fsr2Settings::dither`).
+    pub(crate) dither: bool,
+    /// `--upscaler off|own|fsr2`, when given.
+    pub(crate) upscaler: Option<hud::UpscalerMode>,
+}
+
+/// The light store's and the live queue's flags.
+#[derive(Clone)]
+pub struct BakeArgs {
     /// `--bake-budget frame:MS|second:MS,CAP` (or `--bake-slice MS`, `frame:MS`): the live
     /// queue's bake budget (default `frame:` `vxe_render::DEFAULT_BAKE_SLICE_MS`); key `5`
-    /// cycles it through [`BUDGET_CYCLE`].
-    pub(crate) bake_budget: vxe_render::Budget,
+    /// cycles it through `BUDGET_CYCLE`.
+    pub(crate) budget: vxe_render::Budget,
     /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
     /// default `vxe_render::DEFAULT_COARSE_SAMPLES`).
-    pub(crate) bake_coarse: u32,
+    pub(crate) coarse: u32,
     /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
     /// before the first frame (default `vxe_render::DEFAULT_NEAR`).
-    pub(crate) bake_near: i32,
+    pub(crate) near: i32,
     /// `--full-first off|N`: the live queue's full-first radius after the pre-roll
     /// (`vxe_render::BakeQueue::full_first`); `None` follows `--near`. `6` toggles it
     /// between `off` and `2`.
-    pub(crate) bake_full_first: Option<Option<i32>>,
+    pub(crate) full_first: Option<Option<i32>>,
     /// `--missing-light black|neighbour|parent|chain`: what a cube face with no baked value
     /// reads (ADR-0053); `7` cycles it.
     pub(crate) missing_light: vxe_render::MissingLight,
@@ -441,55 +536,78 @@ pub struct Args {
     /// weights at every opening (a reading; by default once a second, for the stdout line and
     /// the HUD's queue row, and no angle weights).
     pub(crate) queue_census: bool,
+    /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
+    /// (default `vxe_render::DEFAULT_BAKE_EDIT_MS`).
+    pub(crate) edit_ms: f64,
+    /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
+    /// light radius (ring 3; on by default).
+    pub(crate) dig_reach: bool,
+    /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
+    /// each frame (blocking) for the `dig settled:` line.
+    pub(crate) read_missing: bool,
+}
+
+/// The fly-through's arguments: the run's own, the world ([`RunMode`]) and the four groups.
+#[derive(Clone)]
+pub struct Args {
+    pub(crate) seed: u64,
+    pub(crate) render: Option<[u32; 2]>,
+    pub(crate) frames: Option<u32>,
+    /// `--pace`: whether the window waits for the compositor's frame callback.
+    pub(crate) pace: Pacing,
+    pub(crate) bench: u32,
+    /// The world the run builds.
+    pub(crate) mode: RunMode,
+    /// `--shot NAME`: the showcase shot the camera starts at, and its exposure.
+    pub(crate) shot: Shot,
+    /// `--pose NAME`: the settle rig's still camera the bounded level starts at (its exposure
+    /// is not applied).
+    pub(crate) pose: Option<crate::Pose>,
+    pub(crate) autopilot: bool,
+    pub(crate) headless: bool,
+    /// `--adapter SUBSTRING`: the run takes the first adapter whose name contains it (in a
+    /// window, of those that present to it).
+    pub(crate) adapter: Option<String>,
+    pub(crate) walk: bool,
+    /// `--vault`: the cave generates with the vault room ahead of the spawn.
+    pub(crate) vault: bool,
+    /// `--castle`: the streamed cave generates with the castle in its hall.
+    pub(crate) castle: bool,
+    /// `--castle-out PATH`: where to write the generated `.vox`.
+    pub(crate) castle_out: Option<std::path::PathBuf>,
+    /// `--castle-shot NAME`: the castle pose the camera starts at.
+    pub(crate) castle_shot: castle::CastleShot,
+    pub(crate) sync_budget: u64,
+    /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
+    /// for no limit.
+    pub(crate) sync_time: Option<std::time::Duration>,
+    /// `--workers`: the streamer's generation workers; `None` for `setup::default_workers`.
+    pub(crate) workers: Option<usize>,
+    /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
+    pub(crate) mirror_budget: Option<u64>,
+    /// `--residency`: the streamed full and LOD radii in chunks, hysteresis as
+    /// `RESIDENCY`'s.
+    pub(crate) residency: Residency,
+    /// `--hud`: start with the stats HUD shown.
+    pub(crate) hud: bool,
+    /// `--census`: print the brick census on exit.
+    pub(crate) census: bool,
+    /// `--save`: where the session's log file is written on exit.
+    pub(crate) save: Option<std::path::PathBuf>,
+    /// `--replay`: the log file whose session is re-simulated before the first frame.
+    pub(crate) replay: Option<std::path::PathBuf>,
+    /// `--logic`: the server's logic, native or the hosted component.
+    pub(crate) logic: LogicChoice,
+    /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
+    /// the autopilot.
+    pub(crate) pad: bool,
     /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
     /// of these frames, for a headless reading.
     pub(crate) dig_at: Vec<u32>,
     pub(crate) bench_at: Vec<u32>,
-    /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
-    /// each frame (blocking) for the `dig settled:` line.
-    pub(crate) read_missing: bool,
-    /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
-    /// (default `vxe_render::DEFAULT_BAKE_EDIT_MS`).
-    pub(crate) bake_edit_ms: f64,
-    /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
-    /// light radius (ring 3; on by default).
-    pub(crate) dig_reach: bool,
     /// `--glide V`: the camera moves along its heading at `V` voxels a second (1/60 s a headless
     /// frame), for a flight reading.
     pub(crate) glide: Option<f32>,
-    /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
-    pub(crate) probe_spacing: u32,
-    /// `--probe-rays N`: rays each updated probe traces (default 64).
-    pub(crate) probe_rays: u32,
-    /// `--probe-slices N`: the volume refreshes one probe in N a frame (default 8).
-    pub(crate) probe_slices: u32,
-    /// `--internal-scale 1|1.5|2`: the output size over the internal size, on each edge.
-    pub(crate) internal_scale: RenderScale,
-    /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter. Our
-    /// upscaler takes it only when given ([`Args::jitter_set`]) and jitters otherwise.
-    pub(crate) jitter: bool,
-    /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
-    pub(crate) sharpen: f32,
-    /// `--pan DEG_PER_S`: a constant yaw rate, degrees a second, positive to the left.
-    pub(crate) pan: Option<f32>,
-    /// `--jitter-phases N`: FSR 2's jitter phase count (`Fsr2Settings::jitter_phases`).
-    pub(crate) jitter_phases: Option<u32>,
-    /// `--dither on|off`: FSR 2's tone pass adds its static one-level dither
-    /// (`Fsr2Settings::dither`).
-    pub(crate) dither: bool,
-    /// `--jitter` was given.
-    pub(crate) jitter_set: bool,
-    /// `--upscaler off|own|fsr2`, when given.
-    pub(crate) upscaler: Option<hud::UpscalerMode>,
-    /// `--exposure auto|E`: a manual exposure, or `None` for auto (the default).
-    pub(crate) exposure: Option<f32>,
-    /// `--adaptation eye|symmetric|instant`: the auto exposure's preset (eye by default).
-    pub(crate) adaptation: hud::Adaptation,
-    /// `--adapt LIGHT,CONE,ROD,FLOOR`: the preset's time constants in seconds and its cone
-    /// floor, replaced.
-    pub(crate) adapt: Option<[f32; 4]>,
-    /// `--metering centre|average`: how the meter weights the frame (centre by default).
-    pub(crate) metering: vxe_render::Metering,
     /// `--path NAME`: the camera path the run flies (`flythrough::path`), and `--path-mode`.
     pub(crate) path: Option<&'static CameraPath>,
     pub(crate) path_mode: PathMode,
@@ -498,9 +616,15 @@ pub struct Args {
     /// `--check-args`: parse the arguments, print `arguments ok` and exit 0 (the tester
     /// build's launcher test checks its command lines with it).
     pub check_args: bool,
+    /// `--help`: print the flag table ([`help`]) and exit 0.
+    pub help: bool,
     /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
     /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
     pub(crate) tester: bool,
+    pub(crate) audio: AudioArgs,
+    pub(crate) light: LightingArgs,
+    pub(crate) look: LookArgs,
+    pub(crate) bake: BakeArgs,
 }
 
 /// The internal scale by default (`--internal-scale`): 1.5, so the fly-through starts in our
@@ -545,20 +669,20 @@ impl Args {
 
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`.
     pub(crate) fn start_auto(&self) -> AutoExposure {
-        let mut a = self.adaptation.preset();
-        if let Some([light, cone, rod, floor]) = self.adapt {
+        let mut a = self.light.adaptation.preset();
+        if let Some([light, cone, rod, floor]) = self.light.adapt {
             a.tau_light = light;
             a.tau_cone = cone;
             a.tau_rod = rod;
             a.cone_floor = floor;
         }
-        a.metering = self.metering;
+        a.metering = self.light.metering;
         a
     }
 
     /// The live queue's full-first radius: `--full-first`, else `--near`'s.
     pub(crate) fn full_first(&self) -> Option<i32> {
-        self.bake_full_first.unwrap_or(Some(self.bake_near))
+        self.bake.full_first.unwrap_or(Some(self.bake.near))
     }
 
     /// The live queue's order and withdrawal in words: `order score, angle 4, refine 2;
@@ -567,22 +691,26 @@ impl Args {
         format!(
             "{}; withdraw {}",
             self.queue_order().words(),
-            if self.queue_withdraw { "on" } else { "off" }
+            if self.bake.queue_withdraw {
+                "on"
+            } else {
+                "off"
+            }
         )
     }
 
     /// The live queue's order from `--queue-order` and `--queue-weights` (and their keys).
     pub(crate) fn queue_order(&self) -> vxe_render::QueueOrder {
         use vxe_render::{QueueOrder, Refine};
-        if self.queue_distance {
+        if self.bake.queue_distance {
             QueueOrder::Distance
         } else {
             QueueOrder::Score {
-                angle: self.queue_angle,
-                refine: if self.queue_tier {
+                angle: self.bake.queue_angle,
+                refine: if self.bake.queue_tier {
                     Refine::Tier
                 } else {
-                    Refine::Weight(self.queue_refine)
+                    Refine::Weight(self.bake.queue_refine)
                 },
             }
         }
@@ -592,12 +720,12 @@ impl Args {
     /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
     /// and the probe spacing while the lamp's bounce is on, and the look's rows `--view`'s view.
     pub(crate) fn start_modes(&self, now_ms: f64) -> hud::Modes {
-        let mut m = hud::Modes::new(self.start_lighting(), self.lighting, now_ms)
-            .with_source(self.showcase.then_some("showcase"))
-            .with_probe_spacing(self.probe_spacing);
-        m.set_auto(self.adaptation, self.start_auto());
-        m.show_look(&self.look, self.look.far_normal, now_ms);
-        m.show_view(self.view, now_ms);
+        let mut m = hud::Modes::new(self.start_lighting(), self.light.resolution, now_ms)
+            .with_source(self.mode.is_showcase().then_some("showcase"))
+            .with_probe_spacing(self.light.probe_spacing);
+        m.set_auto(self.light.adaptation, self.start_auto());
+        m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);
+        m.show_view(self.look.view, now_ms);
         m
     }
 
@@ -605,14 +733,15 @@ impl Args {
     /// jitter off, `own` when `--jitter` is given (FSR 2 jitters by its own sequence and
     /// ignores it), else `fsr2`.
     pub(crate) fn start_upscaler(&self) -> hud::UpscalerMode {
-        self.upscaler
-            .unwrap_or(if self.internal_scale == RenderScale::One && !self.jitter {
+        self.look.upscaler.unwrap_or(
+            if self.look.internal_scale == RenderScale::One && !self.look.jitter {
                 hud::UpscalerMode::Off
-            } else if self.jitter_set {
+            } else if self.look.jitter_set {
                 hud::UpscalerMode::Own
             } else {
                 hud::UpscalerMode::Fsr2
-            })
+            },
+        )
     }
 
     /// The frame's settings in upscaler `mode`: the upscaler, the internal scale and the
@@ -625,21 +754,21 @@ impl Args {
         match mode {
             hud::UpscalerMode::Off => (UpscalerKind::Off, RenderScale::One, false),
             hud::UpscalerMode::Own => {
-                let jitter = !self.jitter_set || self.jitter;
+                let jitter = !self.look.jitter_set || self.look.jitter;
                 (
                     UpscalerKind::Own(vxe_render::Upscaler::default()),
-                    self.internal_scale,
+                    self.look.internal_scale,
                     jitter,
                 )
             }
             hud::UpscalerMode::Fsr2 => (
                 UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
-                    sharpness: self.sharpen,
-                    jitter_phases: self.jitter_phases,
-                    dither: self.dither,
+                    sharpness: self.look.sharpen,
+                    jitter_phases: self.look.jitter_phases,
+                    dither: self.look.dither,
                     ..vxe_render::Fsr2Settings::default()
                 }),
-                self.internal_scale,
+                self.look.internal_scale,
                 false,
             ),
         }
@@ -647,39 +776,30 @@ impl Args {
 
     /// The lighting the fly-through starts in, from its flags.
     pub(crate) fn start_lighting(&self) -> Lighting {
-        Lighting {
-            exposure: match self.exposure {
+        self.light.apply(Lighting {
+            exposure: match self.light.exposure {
                 Some(e) => Exposure::Manual(e),
                 None => Exposure::Auto(self.start_auto()),
             },
-            lamp: self.lamp,
-            shadow_walk: self.shadow_walk,
-            store_read: self.store_read,
-            light_weights: self.light_weights,
-            filter: self.filter,
-            history: self.history,
-            lamp_bounce: self.lamp_bounce,
-            probe_rays: self.probe_rays,
-            probe_slices: self.probe_slices,
             ..Lighting::default()
-        }
+        })
     }
 
     /// Whether the run starts in the field look, so its mirror holds the field's band slots
     /// and the field pass runs; no other run builds a band slot.
     pub(crate) fn field_surface(&self) -> bool {
-        self.look.normal_mode == NormalMode::Contour
+        self.look.preset.normal_mode == NormalMode::Contour
     }
 
     /// The look the fly-through starts in.
     pub(crate) fn start_look(&self) -> LookParams {
         LookParams {
-            normal_mode: self.look.normal_mode,
-            view: self.view,
-            translucent_layers: self.translucent_layers,
+            normal_mode: self.look.preset.normal_mode,
+            view: self.look.view,
+            translucent_layers: self.look.translucent_layers,
             cutaway: false,
-            tuning: self.look.tuning,
-            far_normal: self.look.far_normal,
+            tuning: self.look.preset.tuning,
+            far_normal: self.look.preset.far_normal,
         }
     }
 }

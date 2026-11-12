@@ -136,7 +136,7 @@ impl Run {
             if gfx.mirror.field_surface() {
                 println!("{}", field_line(&gfx.mirror));
             }
-            if self.args.band_census {
+            if self.args.look.band_census {
                 println!("{}", band_census_line(&self.world, &gfx.mirror));
             }
         }
@@ -174,7 +174,7 @@ impl Run {
                 self.bench();
             }
         }
-        if self.args.fade_reading && self.frame < FADE_DIGS {
+        if self.args.light.fade_reading && self.frame < FADE_DIGS {
             self.dig();
         }
         if self.args.dig_at.contains(&self.frame) {
@@ -384,8 +384,8 @@ impl Run {
                 || flying
                 || hud
                 || self.recorder.is_some()
-                || self.args.lamp_toggle.is_some()
-                || self.args.fade_reading
+                || self.args.light.lamp_toggle.is_some()
+                || self.args.light.fade_reading
         });
         let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
         // Under the autopilot's flight the field pass is timed: its GPU time when it has band
@@ -452,7 +452,7 @@ impl Run {
         // The timers hand over their newest finished set without waiting (a frame or two old),
         // `None` on a frame with nothing new. `--lamp-toggle` and `--fade-reading` file each set
         // under the frame that drew it, so they wait for this frame's.
-        let exact = self.args.lamp_toggle.is_some() || self.args.fade_reading;
+        let exact = self.args.light.lamp_toggle.is_some() || self.args.light.fade_reading;
         let pass_ms = timer.and_then(|t| {
             if exact {
                 Some(t.read_all_ms(&gpu.device))
@@ -479,13 +479,13 @@ impl Run {
             self.hud.march_ms = gpu_ms.map(|v| v as f32);
             self.hud.pass_ms.clone_from(&pass_ms);
         }
-        if self.args.lamp_toggle.is_some()
+        if self.args.light.lamp_toggle.is_some()
             && let Some(p) = &pass_ms
         {
             let window = usize::from(gfx.frame.probe_light_window());
             self.window_ms[window].push(probe_passes_ms(p));
         }
-        if self.args.fade_reading && self.frame >= FADE_DIGS {
+        if self.args.light.fade_reading && self.frame >= FADE_DIGS {
             self.fade
                 .push(FadeSample::read(gpu, &gfx.frame, gpu_ms.unwrap_or(0.0)));
         }
@@ -511,7 +511,7 @@ impl Run {
         }
         self.push_samples(gpu, cpu_ms, gpu_ms, pass_ms.as_deref(), hud_ms);
         self.frame += 1;
-        if self.args.fade_reading && self.frame >= FADE_END {
+        if self.args.light.fade_reading && self.frame >= FADE_END {
             for line in fade_report(&self.fade) {
                 println!("{line}");
             }
@@ -608,13 +608,13 @@ impl Run {
             );
             gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
-        if let Some(n) = self.args.lamp_toggle
+        if let Some(n) = self.args.light.lamp_toggle
             && self.frame > 0
             && self.frame.is_multiple_of(n)
         {
             self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
         }
-        if self.args.fade_reading && self.modes.lighting.lamp != fade_lamp(self.frame) {
+        if self.args.light.fade_reading && self.modes.lighting.lamp != fade_lamp(self.frame) {
             self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
         }
         Ok((enc, stream_ms, hud))
@@ -636,7 +636,7 @@ impl Run {
                 .set_sizes(&gpu.device, scale.internal(output), output);
         }
         if std::mem::take(&mut self.sharpen_changed) {
-            gfx.frame.set_sharpness(&gpu.queue, self.args.sharpen);
+            gfx.frame.set_sharpness(&gpu.queue, self.args.look.sharpen);
             if self.upscaler.mode == hud::UpscalerMode::Fsr2 {
                 let (kind, _, _) = self.args.upscaler_settings(self.upscaler.mode);
                 gfx.frame.set_upscaler_kind(&gpu.device, kind);
@@ -654,10 +654,11 @@ impl Run {
         gfx.frame.set_look(self.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's
         // store row and `--read-missing`.
-        gfx.frame.set_count_store(hud || self.args.read_missing);
-        if gfx.frame.missing_light() != self.args.missing_light {
+        gfx.frame
+            .set_count_store(hud || self.args.bake.read_missing);
+        if gfx.frame.missing_light() != self.args.bake.missing_light {
             gfx.frame
-                .set_missing_light(&gpu.queue, self.args.missing_light);
+                .set_missing_light(&gpu.queue, self.args.bake.missing_light);
         }
         let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
@@ -708,7 +709,7 @@ impl Run {
         if let Some(gfx) = &self.gfx {
             println!("mirror: {}", belt_line(&gfx.mirror));
         }
-        if let Some(n) = self.args.lamp_toggle {
+        if let Some(n) = self.args.light.lamp_toggle {
             println!("{}", window_line(n, &self.window_ms));
         }
         self.sample_world();

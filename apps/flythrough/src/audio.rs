@@ -551,11 +551,11 @@ mod tests {
         ]))
         .expect("parses");
         assert_eq!(
-            a.mix.line(),
+            a.audio.mix.line(),
             "mix: echoes +6 dB (room +6.0 dB before any room), tail -9 dB (room +0.0 dB), \
              pre-delay 30 ms, tail lines glide, direct delay on"
         );
-        let s = a.mix.settings();
+        let s = a.audio.mix.settings();
         assert!((s.echo_gain - 1.9953).abs() < 1e-4);
         assert!((s.reverb.level - 0.3548).abs() < 1e-4);
         assert_eq!(s.reverb.predelay_frames(), 1_440);
@@ -566,12 +566,12 @@ mod tests {
 
         let flat = parse_args_from(argv(&["--flat-mix", "--echo-db", "9"])).expect("parses");
         assert_eq!(
-            flat.mix.line(),
+            flat.audio.mix.line(),
             "mix: echoes +9 dB (room flat), tail +0 dB (room flat), pre-delay 0 ms, tail lines \
              handover, direct delay off"
         );
         assert_eq!(
-            flat.mix.settings(),
+            flat.audio.mix.settings(),
             MixSettings {
                 echo_gain: 10f32.powf(9.0 / 20.0),
                 ..MixSettings::flat()
@@ -603,9 +603,9 @@ mod tests {
             (bottom.echo_db, bottom.tail_db, bottom.predelay_ms),
             (-24.0, -24.0, 0.0)
         );
-        let flat_top = flat.mix.step(40.0, 40.0, 0.0);
+        let flat_top = flat.audio.mix.step(40.0, 40.0, 0.0);
         assert_eq!((flat_top.echo_db, flat_top.tail_db), (30.0, 6.0));
-        let flat_bottom = flat.mix.step(-40.0, -40.0, 0.0);
+        let flat_bottom = flat.audio.mix.step(-40.0, -40.0, 0.0);
         assert_eq!((flat_bottom.echo_db, flat_bottom.tail_db), (-12.0, -30.0));
     }
 

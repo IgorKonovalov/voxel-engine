@@ -132,7 +132,7 @@ fn walk_mode_is_refused_while_streaming() {
         Some("--walk: walk mode needs --level (the coarse grid is not wired to streaming)")
     );
     let a = parse_args_from(argv(&["--walk", "--level"])).expect("--walk --level parses");
-    assert!(a.walk && a.level);
+    assert!(a.walk && a.mode.is_level());
     assert_eq!(walk_allowed(true), Err(WALK_NEEDS_LEVEL));
     assert_eq!(walk_allowed(false), Ok(()));
 }
@@ -200,7 +200,7 @@ fn exposure_flags_parse_and_refuse_bad_values() {
     ]))
     .unwrap();
     assert_eq!(a.start_lighting().exposure, Exposure::Manual(2.5));
-    assert_eq!(a.adaptation, hud::Adaptation::Symmetric);
+    assert_eq!(a.light.adaptation, hud::Adaptation::Symmetric);
     let auto = a.start_auto();
     assert_eq!(
         [auto.tau_light, auto.tau_cone, auto.tau_rod, auto.cone_floor],
@@ -327,7 +327,7 @@ fn vault_combines_with_save_and_replay() {
     for flag in ["--save", "--replay"] {
         let a = parse_args_from(argv(&["--level", "--vault", flag, "a.log"]))
             .unwrap_or_else(|e| panic!("--level --vault {flag} parses: {e}"));
-        assert!(a.level && a.vault);
+        assert!(a.mode.is_level() && a.vault);
     }
 }
 
@@ -336,13 +336,13 @@ fn vault_combines_with_save_and_replay() {
 #[test]
 fn room_mic_and_absorption_parse() {
     let a = parse_args_from(argv(&["--room", "12"])).expect("--room 12 parses");
-    assert_eq!(a.room, Some(120));
-    assert!(a.room_line && !a.audio);
-    assert_eq!(a.absorption, CAVE_ACOUSTIC[0]);
+    assert_eq!(a.mode.room(), Some(120));
+    assert!(a.audio.room_line && !a.audio.on);
+    assert_eq!(a.audio.absorption, CAVE_ACOUSTIC[0]);
     let a =
         parse_args_from(argv(&["--mic", "--absorption", "0.5", "--room-line"])).expect("parses");
-    assert!(a.mic && a.audio && a.room_line);
-    assert_eq!(a.absorption, 0.5);
+    assert!(a.audio.mic && a.audio.on && a.audio.room_line);
+    assert_eq!(a.audio.absorption, 0.5);
     assert!(parse_args_from(argv(&["--absorption", "1.5"])).is_err());
     assert!(parse_args_from(argv(&["--room", "0.5"])).is_err());
     assert!(parse_args_from(argv(&["--room", "12", "--level"])).is_err());
@@ -367,8 +367,8 @@ fn the_emitter_cap_is_gone() {
 #[test]
 fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
     let a = parse_args_from(argv(&["--source", "showcase"])).expect("parses");
-    assert!(a.showcase && !a.level && !a.lamp);
-    assert_eq!(a.light_radius, 19);
+    assert!(a.mode.is_showcase() && !a.mode.is_level() && !a.light.lamp());
+    assert_eq!(a.light.radius(), 19);
     let a = parse_args_from(argv(&[
         "--source",
         "showcase",
@@ -378,10 +378,10 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
         "6",
     ]))
     .expect("parses");
-    assert!(a.lamp);
-    assert_eq!(a.light_radius, 6);
+    assert!(a.light.lamp());
+    assert_eq!(a.light.radius(), 6);
     let a = parse_args_from(argv(&["--source", "showcase", "--walk"])).expect("walks");
-    assert!(a.walk && a.showcase);
+    assert!(a.walk && a.mode.is_showcase());
     assert_eq!(a.shot, SHOTS[0]);
     for s in SHOTS {
         let a = parse_args_from(argv(&["--source", "showcase", "--shot", s.name])).unwrap();
@@ -399,10 +399,10 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
     );
     assert!(parse_args_from(argv(&["--level", "--shot", "hall"])).is_err());
     let level = parse_args_from(argv(&["--source", "level"])).expect("parses");
-    assert!(level.level && !level.showcase && level.lamp);
-    assert_eq!(level.light_radius, vxe_render::DEFAULT_LIGHT_RADIUS);
+    assert!(level.mode.is_level() && !level.mode.is_showcase() && level.light.lamp());
+    assert_eq!(level.light.radius(), vxe_render::DEFAULT_LIGHT_RADIUS);
     let cave = parse_args_from(argv(&["--level", "--source", "cave"])).expect("parses");
-    assert!(!cave.level && !cave.showcase && cave.lamp);
+    assert!(!cave.mode.is_level() && !cave.mode.is_showcase() && cave.light.lamp());
     assert_eq!(
         parse_args_from(argv(&["--source", "outdoor"]))
             .err()
@@ -427,7 +427,7 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
 #[test]
 fn cutaway_parses_auto_on_and_off() {
     assert_eq!(
-        parse_args_from(argv(&[])).unwrap().cutaway,
+        parse_args_from(argv(&[])).unwrap().look.cutaway,
         CutawayMode::Auto
     );
     for (name, mode) in [
@@ -436,7 +436,10 @@ fn cutaway_parses_auto_on_and_off() {
         ("off", CutawayMode::Off),
     ] {
         assert_eq!(
-            parse_args_from(argv(&["--cutaway", name])).unwrap().cutaway,
+            parse_args_from(argv(&["--cutaway", name]))
+                .unwrap()
+                .look
+                .cutaway,
             mode
         );
     }
@@ -461,7 +464,7 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
         "off",
     ])
     .unwrap();
-    assert!(!a.emissive_ore && !a.lamp && !a.filter && !a.lamp_bounce);
+    assert!(!a.light.emissive_ore && !a.light.lamp() && !a.light.filter && !a.light.lamp_bounce);
     let a = parse(&[
         "--shadow-walk",
         "coarse",
@@ -473,18 +476,24 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
         "6",
     ])
     .unwrap();
-    assert_eq!(a.shadow_walk, ShadowWalk::Coarse);
-    assert_eq!(a.history, HistoryKill::Gradient);
-    assert_eq!(a.lighting, LightingResolution::Full);
-    assert_eq!(a.light_radius, 6);
+    assert_eq!(a.light.shadow_walk, ShadowWalk::Coarse);
+    assert_eq!(a.light.history, HistoryKill::Gradient);
+    assert_eq!(a.light.resolution, LightingResolution::Full);
+    assert_eq!(a.light.radius(), 6);
     let d = parse(&[]).unwrap();
-    assert!(d.emissive_ore && d.lamp && d.filter && d.lamp_bounce);
+    assert!(d.light.emissive_ore && d.light.lamp() && d.light.filter && d.light.lamp_bounce);
     assert!(
         d.start_lighting().lamp_bounce,
         "the lamp's bounce is on by default"
     );
-    assert_eq!(d.probe_spacing, 16);
-    assert_eq!(parse(&["--probe-spacing", "8"]).unwrap().probe_spacing, 8);
+    assert_eq!(d.light.probe_spacing, 16);
+    assert_eq!(
+        parse(&["--probe-spacing", "8"])
+            .unwrap()
+            .light
+            .probe_spacing,
+        8
+    );
     let p = parse(&["--probe-rays", "32", "--probe-slices", "16"]).unwrap();
     assert_eq!(
         (p.start_lighting().rays(), p.start_lighting().slices()),
@@ -492,7 +501,12 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     );
     assert!(parse(&["--probe-slices", "12"]).is_err());
     assert_eq!(
-        (d.shadow_walk, d.history, d.lighting, d.light_radius),
+        (
+            d.light.shadow_walk,
+            d.light.history,
+            d.light.resolution,
+            d.light.radius()
+        ),
         (
             ShadowWalk::Coarse,
             HistoryKill::Edits,
@@ -551,22 +565,22 @@ fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
     let parse = |a: &[&str]| parse_args_from(argv(a));
     let d = parse(&[]).unwrap();
     assert_eq!(
-        (d.internal_scale, d.jitter, d.jitter_set),
+        (d.look.internal_scale, d.look.jitter, d.look.jitter_set),
         (RenderScale::OneHalf, false, false)
     );
-    assert_eq!(d.sharpen, 0.5);
-    assert_eq!(parse(&["--sharpen", "0"]).unwrap().sharpen, 0.0);
-    assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().sharpen, 0.8);
+    assert_eq!(d.look.sharpen, 0.5);
+    assert_eq!(parse(&["--sharpen", "0"]).unwrap().look.sharpen, 0.0);
+    assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().look.sharpen, 0.8);
     for (name, scale) in [
         ("1", RenderScale::One),
         ("1.5", RenderScale::OneHalf),
         ("2", RenderScale::Two),
     ] {
         let a = parse(&["--internal-scale", name, "--jitter", "on"]).unwrap();
-        assert_eq!((a.internal_scale, a.jitter), (scale, true));
+        assert_eq!((a.look.internal_scale, a.look.jitter), (scale, true));
     }
-    assert!(!parse(&["--jitter", "off"]).unwrap().jitter);
-    assert!(parse(&["--jitter", "on"]).unwrap().jitter);
+    assert!(!parse(&["--jitter", "off"]).unwrap().look.jitter);
+    assert!(parse(&["--jitter", "on"]).unwrap().look.jitter);
     assert_eq!(
         RenderScale::OneHalf.internal([1920, 1080]),
         [1280, 720],
@@ -676,7 +690,7 @@ fn the_start_look_and_upscaler_are_the_owners_picks() {
     assert_eq!(look.normal_mode, NormalMode::Face);
     assert_eq!(look.far_normal, [2.0, 6.0]);
     assert_eq!(
-        look_line(&look, &a.look),
+        look_line(&look, &a.look.preset),
         "look face (normals face, face mix 0, far normal 2..6), view shaded"
     );
     let (kind, scale, jitter) = a.upscaler_settings(a.start_upscaler());
@@ -697,8 +711,8 @@ fn the_start_look_and_upscaler_are_the_owners_picks() {
 #[test]
 fn the_default_look_is_face() {
     let a = parse_args_from(argv(&[])).unwrap();
-    assert_eq!(a.look, LookPreset::DEFAULT);
-    assert_eq!(a.look.normal_mode, NormalMode::Face);
+    assert_eq!(a.look.preset, LookPreset::DEFAULT);
+    assert_eq!(a.look.preset.normal_mode, NormalMode::Face);
     assert!(!a.field_surface());
     assert!(
         parse_args_from(argv(&["--look", "field"]))
@@ -715,10 +729,10 @@ fn the_default_look_is_face() {
     }
     let c = parse_args_from(argv(&["--look", "face"])).unwrap();
     assert_eq!(
-        look_line(&c.start_look(), &c.look),
+        look_line(&c.start_look(), &c.look.preset),
         "look face (normals face, face mix 0, far normal off), view shaded"
     );
-    assert_eq!(c.look, LookPreset::FACE);
+    assert_eq!(c.look.preset, LookPreset::FACE);
     assert_eq!(
         parse_args_from(argv(&["--look", "plain"])).err().as_deref(),
         Some("--look takes face, field, trilinear8, gradient27, not plain")
@@ -731,7 +745,7 @@ fn the_default_look_is_face() {
 fn look_presets_parse_by_name_with_their_parts() {
     let line = |v: &[&str]| {
         let a = parse_args_from(argv(v)).unwrap();
-        look_line(&a.start_look(), &a.look)
+        look_line(&a.start_look(), &a.look.preset)
     };
     assert_eq!(
         line(&["--look", "field"]),
@@ -739,7 +753,7 @@ fn look_presets_parse_by_name_with_their_parts() {
     );
     for p in LookPreset::ALL {
         let a = parse_args_from(argv(&["--look", p.name])).unwrap();
-        assert_eq!(a.look, p, "{}", p.name);
+        assert_eq!(a.look.preset, p, "{}", p.name);
         assert_eq!(a.start_look().normal_mode, p.normal_mode, "{}", p.name);
         assert_eq!(a.start_look().tuning, p.tuning, "{}", p.name);
     }
@@ -771,4 +785,34 @@ fn look_presets_parse_by_name_with_their_parts() {
     }
     assert!(parse_args_from(argv(&["--face-mix", "0.6"])).is_err());
     assert!(parse_args_from(argv(&["--look", "cubes-field"])).is_err());
+}
+
+/// `--help` lists every flag the parser reads, aliases included, in the table's order: each
+/// listed flag is known to the parser, and each removed flag is left out of the help and still
+/// refused, naming its plan.
+#[test]
+fn help_lists_every_flag_the_parser_accepts() {
+    let text = help();
+    let listed = table::listed_flags(&text);
+    assert_eq!(listed, flags::table().accepted());
+    assert!(listed.len() > 100, "{} flags listed", listed.len());
+    for f in &listed {
+        let e = parse_args_from(argv(&[f.as_str(), "x"]))
+            .err()
+            .unwrap_or_default();
+        assert_ne!(e, format!("unknown argument {f}"), "{f}");
+    }
+    for f in GONE_SINCE_0057
+        .iter()
+        .chain(["--light", "--preload"].iter())
+    {
+        assert!(!listed.iter().any(|l| l == f), "{f} is listed");
+        let e = parse_args_from(argv(&[f, "x"])).err().unwrap_or_default();
+        assert!(
+            e.starts_with(f) && e.contains("is gone since Plan 00"),
+            "{f}: {e}"
+        );
+    }
+    assert!(parse_args_from(argv(&["--help"])).unwrap().help);
+    assert!(parse_args_from(argv(&["-h"])).unwrap().help);
 }

@@ -113,19 +113,19 @@ pub(crate) fn shell_config(args: &Args, size: [u32; 2], pace: vxe_app::Pacing) -
 /// under `--castle`.
 pub(crate) fn materials(args: &Args) -> MaterialTable {
     let table = cave_materials();
-    let table = if args.emissive_ore {
+    let table = if args.light.emissive_ore {
         crate::with_emissive_ore(&table)
     } else {
         table
     };
     let table = if args.castle {
         crate::castle_materials(&table)
-    } else if args.thin_rig || args.seam_rig {
+    } else if args.mode.is_thin_rig() || args.mode.is_seam_rig() {
         crate::with_wood(&table)
     } else {
         table
     };
-    args.crisp.apply(&table)
+    args.look.crisp.apply(&table)
 }
 
 /// `--crisp`: which rows of the fly-through's table carry `MaterialFlags::CRISP` (a testbed
@@ -222,13 +222,13 @@ pub(crate) fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
         }
     } else if args.castle {
         castle_camera(args.castle_shot)
-    } else if args.showcase {
+    } else if args.mode.is_showcase() {
         shot_camera(&args.shot)
     } else if let Some(pose) = args.pose {
         pose.camera()
-    } else if args.thin_rig {
+    } else if args.mode.is_thin_rig() {
         crate::thin_rig_camera()
-    } else if args.seam_rig {
+    } else if args.mode.is_seam_rig() {
         crate::seam_rig_camera()
     } else {
         Camera {
@@ -328,7 +328,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
     let seed = args.seed;
     if let Some(path) = args.replay.clone() {
         replay_world(args, &path, failure)
-    } else if args.thin_rig {
+    } else if args.mode.is_thin_rig() {
         let source = crate::thin_rig::ThinRig {
             wood: crate::THIN_RIG_WOOD,
         };
@@ -341,7 +341,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let generation =
             std::thread::spawn(move || Ok(World::generate(source.extent(), &source, &table)));
         (source.spawn(), Pending::Level(generation))
-    } else if args.seam_rig {
+    } else if args.mode.is_seam_rig() {
         let source = crate::thin_rig::SeamRig {
             crisp: crate::THIN_RIG_WOOD,
         };
@@ -354,7 +354,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let generation =
             std::thread::spawn(move || Ok(World::generate(source.extent(), &source, &table)));
         (source.spawn(), Pending::Level(generation))
-    } else if let Some(edge) = args.room {
+    } else if let Some(edge) = args.mode.room() {
         let source = RoomSource::new(edge);
         let table = materials(args);
         println!(
@@ -365,7 +365,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let generation =
             std::thread::spawn(move || Ok(World::generate(source.extent, &source, &table)));
         (source.spawn(), Pending::Level(generation))
-    } else if args.showcase {
+    } else if args.mode.is_showcase() {
         let source = ShowcaseSource::new(seed);
         let table = crate::with_showcase_rows(&materials(args));
         let generation = std::thread::spawn(move || {
@@ -380,7 +380,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
             Ok(world)
         });
         (args.shot.eye, Pending::Level(generation))
-    } else if args.level {
+    } else if args.mode.is_level() {
         level_world(args)
     } else {
         streamed_world(args)
@@ -514,7 +514,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
 /// the world started ([`build_world`]), then the start camera at the spawn (or `--pose`'s,
 /// printed), the audio and the room probe as `args` ask, and the pad.
 pub fn flythrough(start: Instant, mut args: Args) -> Flythrough {
-    println!("{}", look_line(&args.start_look(), &args.look));
+    println!("{}", look_line(&args.start_look(), &args.look.preset));
     let logic = load_logic(&args.logic);
     println!("logic: {}", args.logic);
     let failure = Failure::default();
@@ -526,28 +526,29 @@ pub fn flythrough(start: Instant, mut args: Args) -> Flythrough {
             pose.position,
             pose.yaw_deg,
             pose.pitch_deg,
-            args.exposure
+            args.light
+                .exposure
                 .map_or("exposure auto".to_owned(), |e| format!(
                     "exposure manual {e}"
                 ))
         );
     }
     let camera = start_camera(&args, spawn);
-    let audio = if args.audio {
+    let audio = if args.audio.on {
         Audio::open(
-            args.audio_debug,
-            args.absorption,
-            args.mic,
-            args.room_line,
-            args.mix,
+            args.audio.debug,
+            args.audio.absorption,
+            args.audio.mic,
+            args.audio.room_line,
+            args.audio.mix,
         )
     } else {
         None
     };
-    let room_probe =
-        (audio.is_none() && args.room_line).then(|| RoomProbe::new(args.absorption, args.mix));
-    if args.audio || args.room_line {
-        println!("{}", args.mix.line());
+    let room_probe = (audio.is_none() && args.audio.room_line)
+        .then(|| RoomProbe::new(args.audio.absorption, args.audio.mix));
+    if args.audio.on || args.audio.room_line {
+        println!("{}", args.audio.mix.line());
     }
     let pad = if args.wants_pad() { Pad::open() } else { None };
     if !args.headless && !args.autopilot {

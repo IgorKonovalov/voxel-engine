@@ -119,7 +119,7 @@ pub(crate) fn bare_run(world: World) -> Run {
         net: Some(net),
         spawn: voxel_of(camera.position),
         look: args.start_look(),
-        preset: args.look,
+        preset: args.look.preset,
         args,
         fly: Fly::new(camera),
         light: LightParams::headlamp(),

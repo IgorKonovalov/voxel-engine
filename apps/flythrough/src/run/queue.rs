@@ -258,14 +258,14 @@ impl Run {
             settings,
             vxe_render::DEFAULT_BAKE_SLICE_MS,
         );
-        frame.set_bake_budget(self.args.bake_budget);
-        frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
-        frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
-        frame.set_bake_reach(self.args.reach);
+        frame.set_bake_budget(self.args.bake.budget);
+        frame.set_bake_coarse(self.args.bake.coarse, self.args.bake.near);
+        frame.set_bake_digs(self.args.bake.edit_ms, self.args.bake.dig_reach);
+        frame.set_bake_reach(self.args.bake.reach);
         if let Some(q) = frame.bake_queue_mut() {
             q.order = self.args.queue_order();
-            q.withdraw = self.args.queue_withdraw;
-            q.census_every_opening = self.args.queue_census;
+            q.withdraw = self.args.bake.queue_withdraw;
+            q.census_every_opening = self.args.bake.queue_census;
         }
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
@@ -273,7 +273,7 @@ impl Run {
         let eye = camera.position.to_array();
         let (forward, _, _) = camera.basis();
         let centre = ChunkCoord(eye.map(|v| (v / 64.0).floor() as i32));
-        let r = self.args.bake_near;
+        let r = self.args.bake.near;
         let near: Vec<ChunkCoord> = (-r..=r)
             .flat_map(|z| {
                 (-r..=r).flat_map(move |y| {
@@ -325,7 +325,7 @@ impl Run {
                 resident,
                 samples: Some(PRE_ROLL_SAMPLES),
                 interval_s: 0.0,
-                hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+                hold: stream.map(|s| s.rule.r_full + self.args.light.radius() + 1),
                 half_angle,
                 frustum: Some(frustum),
                 full_radius: stream.map(|s| s.rule.r_full),
@@ -348,7 +348,7 @@ impl Run {
                 first_pass = mirror.full_chunks().collect();
             }
             if let Some((near_ms, _, _)) = near_done {
-                if self.args.bake_coarse == 0 || frame.bake_passed(&first_pass) {
+                if self.args.bake.coarse == 0 || frame.bake_passed(&first_pass) {
                     break;
                 }
                 if ms_since(start) - near_ms > COARSE_PRE_ROLL_MS {
@@ -376,7 +376,7 @@ impl Run {
             near_ms,
             near_baked,
             near_samples as f64,
-            self.args.bake_coarse,
+            self.args.bake.coarse,
             total,
             total - near_ms,
             st.baked - near_baked,
@@ -432,7 +432,7 @@ impl Run {
             resident,
             samples: None,
             interval_s: dt.unwrap_or(0.0) * 1e-3,
-            hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
+            hold: stream.map(|s| s.rule.r_full + self.args.light.radius() + 1),
             half_angle,
             frustum: Some(frustum),
             full_radius: stream.map(|s| s.rule.r_full),
@@ -482,7 +482,7 @@ impl Run {
                         w.over_33 += u32::from(dt > 33.0);
                     }
                     w.reach_max = w.reach_max.max(st.reach);
-                    if w.rings_ms.is_none() && self.args.read_missing {
+                    if w.rings_ms.is_none() && self.args.bake.read_missing {
                         // The store's counters, read back blocking: the wait it adds to each
                         // frame is in the frames this line reads.
                         let missing = gfx.frame.read_store_stats(&gpu.device, &gpu.queue).missing;
@@ -500,7 +500,7 @@ impl Run {
                             (st.total_samples - w.from.total_samples) as f64,
                             w.longest_ms,
                             w.over_33,
-                            if self.args.read_missing {
+                            if self.args.bake.read_missing {
                                 format!("{:.4} of the pixels", w.missing_max)
                             } else {
                                 "not read (--read-missing)".to_owned()
@@ -582,7 +582,7 @@ impl Run {
                     f64::from(store_stats.still_black) / f64::from(pixels),
                     f64::from(store_stats.coarse_reads) / f64::from(pixels),
                     pixels,
-                    self.args.missing_light.name(),
+                    self.args.bake.missing_light.name(),
                     store_stats.bytes,
                     store_stats.summary_bytes,
                     store_stats.parent_bytes,
@@ -667,7 +667,7 @@ impl Run {
                     t / 1e3,
                     secs,
                     sl.iter().sum::<f64>() / secs,
-                    self.args.reach,
+                    self.args.bake.reach,
                 )
             );
             self.queue.line_view = st.view_samples;

@@ -528,27 +528,27 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
         vxe_render::internals::BRICK_CELL,
         vxe_render::QUEUE_BRICK_SAMPLES,
     );
-    if args.bake_coarse > 0 {
+    if args.bake.coarse > 0 {
         let _ = write!(
             out,
             "coarse {}/{} first, near {} at {}",
             vxe_render::internals::BRICK_CELL,
-            args.bake_coarse,
-            args.bake_near,
+            args.bake.coarse,
+            args.bake.near,
             vxe_render::QUEUE_BRICK_SAMPLES
         );
     } else {
-        let _ = write!(out, "no coarse pass, near {}", args.bake_near);
+        let _ = write!(out, "no coarse pass, near {}", args.bake.near);
     }
     let _ = write!(
         out,
         ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 5 budget, 6 full-first, 7 missing light, 8 reach)",
         FullFirstWords(args.full_first()),
-        args.bake_budget,
-        args.missing_light.name(),
-        args.reach.name(),
-        args.bake_edit_ms,
-        if args.dig_reach { "on" } else { "off" },
+        args.bake.budget,
+        args.bake.missing_light.name(),
+        args.bake.reach.name(),
+        args.bake.edit_ms,
+        if args.bake.dig_reach { "on" } else { "off" },
     );
 }
 
@@ -630,7 +630,7 @@ impl Run {
                     .live_probes
                     .filter(|_| self.modes.lighting.lamp_bounce);
                 row.store = self.hud.store;
-                row.missing_light = self.args.missing_light.name();
+                row.missing_light = self.args.bake.missing_light.name();
                 row.store_note.clear();
                 write_queue_note(&mut row.store_note, self.queue.stats);
                 row.modes.clear();
@@ -678,7 +678,7 @@ impl Run {
         let args = &self.args;
         let words = h
             .queue_words
-            .get((args.queue_order(), args.queue_withdraw), || {
+            .get((args.queue_order(), args.bake.queue_withdraw), || {
                 args.queue_words()
             });
         let queue = s.queue.get_or_insert_with(String::new);
@@ -698,12 +698,12 @@ impl Run {
         }
         write_reach_note(
             queue,
-            args.reach,
+            args.bake.reach,
             self.queue.stats.map_or(0, |st| st.partial),
         );
         write_budget_note(
             queue,
-            args.bake_budget,
+            args.bake.budget,
             self.queue.stats.map_or(0.0, |st| st.slice_ms),
         );
         let look = &self.look;
@@ -761,7 +761,7 @@ impl Run {
         let mut out = std::mem::take(&mut self.hud.banner);
         let mut words = std::mem::take(&mut self.hud.queue_words);
         let args = &self.args;
-        let w = words.get((args.queue_order(), args.queue_withdraw), || {
+        let w = words.get((args.queue_order(), args.bake.queue_withdraw), || {
             args.queue_words()
         });
         out.clear();

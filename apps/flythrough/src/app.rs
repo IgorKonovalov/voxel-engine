@@ -155,14 +155,14 @@ impl App for Flythrough {
                     },
                     0.0,
                 )
-                .with_sharpen(self.args.sharpen)
+                .with_sharpen(self.args.look.sharpen)
                 .with_fsr2_knobs(hud::fsr2_knob_words(
-                    self.args.jitter_phases,
-                    self.args.dither,
+                    self.args.look.jitter_phases,
+                    self.args.look.dither,
                 )),
                 upscaler_changed: false,
                 sharpen_changed: false,
-                pan: self.args.pan.map(|d| hud::Pan::new(d, 0.0)),
+                pan: self.args.look.pan.map(|d| hud::Pan::new(d, 0.0)),
                 scene: self
                     .args
                     .castle
@@ -173,8 +173,8 @@ impl App for Flythrough {
                     .pose
                     .map(|p| (hud::pose_banner(p.name), self.camera)),
                 look: self.args.start_look(),
-                preset: self.args.look,
-                cutaway: self.args.cutaway,
+                preset: self.args.look.preset,
+                cutaway: self.args.look.cutaway,
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
                 triggers: [false; 2],

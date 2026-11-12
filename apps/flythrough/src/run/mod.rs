@@ -174,10 +174,10 @@ impl Run {
             "frame created, {} B of targets",
             frame.frame_bytes()
         ));
-        frame.set_probe_spacing(&gpu.device, self.args.probe_spacing);
+        frame.set_probe_spacing(&gpu.device, self.args.light.probe_spacing);
         frame.set_jitter(&gpu.device, jitter);
         frame.set_upscaler_kind(&gpu.device, kind);
-        frame.set_sharpness(&gpu.queue, self.args.sharpen);
+        frame.set_sharpness(&gpu.queue, self.args.look.sharpen);
         println!("{}", self.upscaler.line());
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
@@ -237,7 +237,7 @@ impl Run {
             println!("{}", field_pass_line("initial fill", gfx.timed_field(gpu)));
             println!("{}", field_line(&gfx.mirror));
         }
-        if self.args.band_census && self.stream.is_none() {
+        if self.args.look.band_census && self.stream.is_none() {
             println!("{}", band_census_line(&self.world, &gfx.mirror));
         }
         self.gfx = Some(gfx);
@@ -268,7 +268,7 @@ impl Run {
     pub(crate) fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
         let cfg = MirrorConfig {
             budget_bytes: self.mirror_budget(),
-            light_radius: self.args.light_radius,
+            light_radius: self.args.light.radius(),
             ..cfg
         };
         let t = now();
