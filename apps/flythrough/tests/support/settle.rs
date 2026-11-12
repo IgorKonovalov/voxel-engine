@@ -39,8 +39,8 @@
 //! contributes `|log2 mean_f - log2 mean_f-1|` of its pixels' mean luma, under `meter_log2`'s
 //! floor; `K` is the mean over frames and keys of a run's frames, and its p95 ([`KeyFlicker`]).
 //!
-//! With `STILL_FILMSTRIP` set to a tag, the runs write contact sheets under the worktree's
-//! `live/filmstrip/<tag>/`.
+//! Given a filmstrip tag ([`settle_run`]'s `tag`), the runs write contact sheets under the
+//! worktree's `live/filmstrip/<tag>/`.
 
 use std::collections::HashMap;
 
@@ -116,55 +116,17 @@ pub const VEIN_FLIGHT: ([f32; 3], [f32; 3]) =
 /// eye) or the pose's pinned exposure, and the upscaler at 1.5 (the fly-through's default:
 /// FSR 2, sharpening 0.5, over `LookPreset::DEFAULT`) or the frame at scale 1 with no upscaler.
 /// `bridge` renders `LookPreset::FACE` under our upscaler at 1.5 jittered instead, the setting
-/// Plan 0049's tables were read at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Plan 0049's tables were read at. `probe_freeze` and `probe_move` override the lamp channel's
+/// freeze count and moving-lamp blend (`h_move`); `None` keeps the renderer's defaults.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Setting {
     pub lamp: bool,
     pub indirect: bool,
     pub auto: bool,
     pub upscaler: bool,
     pub bridge: bool,
-    pub steady: Steady,
-}
-
-/// The probe knob a run reads (the steady spike's A1: the freeze count, now the channel's only
-/// blend).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Steady {
-    /// A1: the probes' freeze count; `None` is the default (`DEFAULT_PROBE_FREEZE`).
-    pub a1: Option<u32>,
-}
-
-impl Steady {
-    /// The default (`off`, `b`, `a` and `a1` name it too, as the readings before ADR-0043's
-    /// lamp channel did), and `aN` with a freeze of `N`.
-    pub fn named(name: &str) -> Steady {
-        match name {
-            "off" | "b" | "a" | "a1" => Steady::default(),
-            other => {
-                let n = other
-                    .strip_prefix('a')
-                    .and_then(|n| n.parse().ok())
-                    .unwrap_or_else(|| panic!("unknown steady preset {other}"));
-                Steady { a1: Some(n) }
-            }
-        }
-    }
-
-    pub fn apply(self, lighting: Lighting) -> Lighting {
-        Lighting {
-            probe_freeze: self.a1.unwrap_or(vxe_render::DEFAULT_PROBE_FREEZE),
-            ..lighting
-        }
-    }
-
-    /// The name for a run's label, empty at the default.
-    pub fn words(self) -> String {
-        match self.a1 {
-            Some(f) => format!(" steady a1={f}"),
-            None => String::new(),
-        }
-    }
+    pub probe_freeze: Option<u32>,
+    pub probe_move: Option<f32>,
 }
 
 impl Setting {
@@ -176,8 +138,16 @@ impl Setting {
             on(self.indirect),
             if self.auto { "auto" } else { "pinned" },
             self.upscaler_name(),
-            self.steady.words()
+            self.freeze_words()
         )
+    }
+
+    /// The freeze count for a run's label, empty at the default.
+    pub fn freeze_words(&self) -> String {
+        match self.probe_freeze {
+            Some(f) => format!(" probe-freeze {f}"),
+            None => String::new(),
+        }
     }
 
     pub fn upscaler_name(&self) -> &'static str {
@@ -195,7 +165,7 @@ impl Setting {
             u8::from(self.indirect),
             if self.auto { "auto" } else { "pinned" },
             self.upscaler_name(),
-            self.steady.words().replace(' ', "-")
+            self.freeze_words().replace(' ', "-")
         )
     }
 }
@@ -247,24 +217,23 @@ pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
 }
 
 fn lighting(pose: &Pose, setting: Setting) -> Lighting {
-    setting.steady.apply(Lighting {
+    Lighting {
         // The fly-through's store read and filter weights, with its look.
         store_read: flythrough::DEFAULT_STORE_READ,
         light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
         lamp: setting.lamp,
         lamp_bounce: setting.indirect,
-        // The moving lamp's blend: `VXE_PROBE_MOVE` (h_move).
-        probe_move_blend: std::env::var("VXE_PROBE_MOVE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(vxe_render::DEFAULT_H_MOVE),
+        probe_freeze: setting
+            .probe_freeze
+            .unwrap_or(vxe_render::DEFAULT_PROBE_FREEZE),
+        probe_move_blend: setting.probe_move.unwrap_or(vxe_render::DEFAULT_H_MOVE),
         exposure: if setting.auto {
             Exposure::Auto(AutoExposure::eye())
         } else {
             Exposure::Manual(pose.exposure)
         },
         ..Lighting::default()
-    })
+    }
 }
 
 /// One frame's read-back.
@@ -2145,15 +2114,16 @@ pub fn eye_exposure(level: &VeinLevel, pose: &Pose, setting: Setting, frames: us
 }
 
 /// The eye's exposure at `pose` after 600 frames lamp on and 900 off, under `Auto`, at the
-/// default look.
-pub fn eye_after_lamp_off(level: &VeinLevel, pose: &Pose) -> f32 {
+/// default look with the lamp channel's moving-lamp blend `probe_move` (`None`: the default).
+pub fn eye_after_lamp_off(level: &VeinLevel, pose: &Pose, probe_move: Option<f32>) -> f32 {
     let on = Setting {
         lamp: true,
         indirect: true,
         auto: true,
         upscaler: true,
         bridge: false,
-        steady: Steady::default(),
+        probe_freeze: None,
+        probe_move,
     };
     let mut frame = make_frame(level, pose, on);
     render(level, &mut frame, &pose.camera(), 600);
