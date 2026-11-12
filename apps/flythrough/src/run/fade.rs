@@ -1,7 +1,7 @@
 //! The fade reading (`--fade-reading`): the screen centre's light by source while the lamp
 //! goes off and on.
 
-use crate::run::hud_feed::median;
+use crate::percentile;
 use vxe_app::Gpu;
 use vxe_render::{Frame, wgpu};
 
@@ -113,7 +113,7 @@ pub(crate) fn fade_report(samples: &[FadeSample]) -> Vec<String> {
         )];
     }
     let mut tail_ms: Vec<f64> = samples[2 * settle..].iter().map(|s| s.gpu_ms).collect();
-    let ms = median(&mut tail_ms);
+    let ms = percentile(&mut tail_ms, 50.0);
     let mut lines = vec![format!(
         "fade: the lamp off at frame {} after {} frames on; the frame's GPU time {ms:.3} ms (median of the tail)",
         FADE_DIGS + 2 * FADE_SETTLE,

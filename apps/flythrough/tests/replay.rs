@@ -195,7 +195,12 @@ fn inputs_round_trip_and_a_bench_applies_its_carves() {
     };
     let text = String::from_utf8(bytes.clone()).unwrap();
     assert_eq!(text.lines().count(), BENCH_CARVES);
-    assert!(text.lines().all(|l| l == "op bench"));
+    assert!(
+        text.lines()
+            .enumerate()
+            .all(|(i, l)| l == format!("op {i} bench")),
+        "{text}"
+    );
 }
 
 /// The level's extent, as `--level` generates it.
@@ -328,19 +333,19 @@ fn a_stamp_and_a_collapse_replay_from_the_save() {
             .map(|(_, l)| l.as_str())
             .collect()
     };
-    assert_eq!(at(0), ["op carved"]);
-    assert_eq!(at(1), ["op stamped"]);
-    assert_eq!(at(3), ["op carved", "region 8 1:1248"]);
+    assert_eq!(at(0), ["op 0 carved"]);
+    assert_eq!(at(1), ["op 0 stamped"]);
+    assert_eq!(at(3), ["op 0 carved", "region 8 1:1248"]);
     for tick in 4..12 {
-        assert_eq!(at(tick), ["op dropped"], "tick {tick}");
+        assert_eq!(at(tick), ["op 0 dropped"], "tick {tick}");
     }
     assert_eq!(
         at(12),
-        ["op dropped", "landed after 8 ticks, fell 64 voxels"]
+        ["op 0 dropped", "landed after 8 ticks, fell 64 voxels"]
     );
     assert!((13..24).all(|t| at(t).is_empty()));
     assert_eq!(at(24), ["collapse: remove unsupported regions with rubble"]);
-    assert_eq!(at(26), ["op carved", "region 12 1:1602", "op removed"]);
+    assert_eq!(at(26), ["op 0 carved", "region 12 1:1602", "op 1 removed"]);
     assert!((27..32).all(|t| at(t).is_empty()));
 
     // Every edit is in the log: five edits, the stamp, nine drops and the removal.

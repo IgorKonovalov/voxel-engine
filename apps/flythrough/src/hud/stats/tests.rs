@@ -81,7 +81,7 @@ fn a_known_sequence_reads_nearest_rank() {
     assert_eq!(s.frames_total(), 100);
     assert!((s.fps() - 19.801_98).abs() < 1e-2, "fps {}", s.fps());
     assert!((s.frame_ms_avg() - 50.5).abs() < 1e-3);
-    // Sorted 1..=100: index round(0.99 x 99) = 98 holds 99 ms.
+    // Sorted 1..=100: nearest rank ceil(0.99 x 100) = 99 holds 99 ms.
     assert!((s.frame_ms_p99() - 99.0).abs() < 1e-3);
 }
 

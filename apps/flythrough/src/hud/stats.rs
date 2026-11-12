@@ -89,22 +89,22 @@ impl FrameStats {
 
     /// Median frame time over the window, in milliseconds.
     pub fn frame_ms_p50(&self) -> f32 {
-        self.frame_ms_percentile(0.5)
+        self.frame_ms_percentile(50.0)
     }
 
     /// 99th-percentile frame time over the window, in milliseconds.
     pub fn frame_ms_p99(&self) -> f32 {
-        self.frame_ms_percentile(0.99)
+        self.frame_ms_percentile(99.0)
     }
 
     /// Longest frame time over the window, in milliseconds.
     pub fn frame_ms_max(&self) -> f32 {
-        self.frame_ms_percentile(1.0)
+        self.frame_ms_percentile(100.0)
     }
 
     /// The frame time at quantile `q`, in milliseconds, from a sorted stack-local copy of the
     /// window.
-    fn frame_ms_percentile(&self, q: f32) -> f32 {
+    fn frame_ms_percentile(&self, p: f64) -> f32 {
         if self.len == 0 {
             return 0.0;
         }
@@ -113,8 +113,7 @@ impl FrameStats {
         buf[..n].copy_from_slice(&self.ring[..n]);
         let slice = &mut buf[..n];
         slice.sort_by(f32::total_cmp);
-        let idx = ((n - 1) as f32 * q.clamp(0.0, 1.0)).round() as usize;
-        slice.get(idx).copied().unwrap_or(0.0) * 1000.0
+        crate::report::nearest_rank(slice, p) * 1000.0
     }
 
     /// Frames recorded since creation.

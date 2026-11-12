@@ -6,6 +6,7 @@ use crate::cli::Args;
 use crate::edits::{HIT_FOUND_BIT, voxel_of};
 use crate::hud::{self, Cadence, FrameStats, HudStats, WorldSample};
 use crate::now;
+use crate::report::Series;
 use crate::run::Run;
 use crate::setup::GfxSample;
 use crate::{LookPreset, percentile};
@@ -82,7 +83,7 @@ pub(crate) fn window_line(every: u32, ms: &[Vec<f64>; 2]) -> String {
         if t.is_empty() {
             "n/a".to_owned()
         } else {
-            format!("{:.3} ms", median(&mut t))
+            format!("{:.3} ms", percentile(&mut t, 50.0))
         }
     };
     format!(
@@ -92,11 +93,6 @@ pub(crate) fn window_line(every: u32, ms: &[Vec<f64>; 2]) -> String {
         tail(&ms[1]),
         ms[1].len()
     )
-}
-
-pub(crate) fn median(v: &mut [f64]) -> f64 {
-    v.sort_by(f64::total_cmp);
-    v[v.len() / 2]
 }
 
 /// The field surface's band slots in the mirror: the band bricks holding one and their units'
@@ -188,34 +184,62 @@ pub(crate) struct Samples {
 }
 
 /// Every frame's wall time since the frame before, its render-thread CPU, its `update + poll + sync` (the sync alone without
-/// streaming) and, on frames the march timer is on, the march's GPU time, over the whole run:
-/// the `frames:` line printed at exit.
-#[derive(Default)]
+/// streaming) and, on frames the march timer is on, the march's GPU time: the `frames:` line
+/// printed at exit. Each series keeps the newest [`RUN_SERIES_FRAMES`] values in a buffer
+/// allocated once (`report::Series`); the counts are of the whole run.
 pub(crate) struct RunTimes {
     /// The wall time between frame starts, from the second frame on.
-    pub(crate) wall_ms: Vec<f64>,
-    pub(crate) cpu_ms: Vec<f64>,
-    pub(crate) stream_ms: Vec<f64>,
-    pub(crate) gpu_ms: Vec<f64>,
+    pub(crate) wall_ms: Series,
+    pub(crate) cpu_ms: Series,
+    pub(crate) stream_ms: Series,
+    pub(crate) gpu_ms: Series,
+    /// Frames pushed, and of them those with a GPU time, over the whole run.
+    pub(crate) frames: u64,
+    pub(crate) gpu_frames: u64,
     /// Reads on the frame path that waited on the GPU over the run: the pass timers' and the
     /// store's counters'; `None` without the GPU's passes.
     pub(crate) blocking_reads: Option<u64>,
 }
 
+/// The frames each of [`RunTimes`]' series keeps: about 18 minutes at 60 frames a second, 512
+/// KiB a series.
+pub(crate) const RUN_SERIES_FRAMES: usize = 1 << 16;
+
+impl Default for RunTimes {
+    fn default() -> Self {
+        let series = || Series::with_capacity(RUN_SERIES_FRAMES);
+        Self {
+            wall_ms: series(),
+            cpu_ms: series(),
+            stream_ms: series(),
+            gpu_ms: series(),
+            frames: 0,
+            gpu_frames: 0,
+            blocking_reads: None,
+        }
+    }
+}
+
 impl RunTimes {
     pub(crate) fn push(&mut self, cpu_ms: f64, stream_ms: Option<f64>, gpu_ms: Option<f64>) {
+        self.frames += 1;
         self.cpu_ms.push(cpu_ms);
-        self.stream_ms.extend(stream_ms);
-        self.gpu_ms.extend(gpu_ms);
+        if let Some(s) = stream_ms {
+            self.stream_ms.push(s);
+        }
+        if let Some(g) = gpu_ms {
+            self.gpu_ms.push(g);
+            self.gpu_frames += 1;
+        }
     }
 
     /// p50, p99 and max of each series, `None` before the first frame.
     pub(crate) fn line(&self) -> Option<String> {
-        if self.cpu_ms.is_empty() {
+        if self.frames == 0 {
             return None;
         }
-        let stats = |v: &[f64]| {
-            let mut v = v.to_vec();
+        let stats = |v: &Series| {
+            let mut v = v.values().to_vec();
             format!(
                 "p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms",
                 percentile(&mut v, 50.0),
@@ -223,16 +247,16 @@ impl RunTimes {
                 percentile(&mut v, 100.0)
             )
         };
-        let gpu = if self.gpu_ms.is_empty() {
+        let gpu = if self.gpu_frames == 0 {
             "n/a (timer off)".to_owned()
         } else {
             format!(
                 "{} over {} timed frames",
                 stats(&self.gpu_ms),
-                self.gpu_ms.len()
+                self.gpu_frames
             )
         };
-        let wall = if self.wall_ms.is_empty() {
+        let wall = if self.wall_ms.values().is_empty() {
             "n/a".to_owned()
         } else {
             stats(&self.wall_ms)
@@ -242,7 +266,7 @@ impl RunTimes {
             .map_or_else(|| "n/a".to_owned(), |n| n.to_string());
         Some(format!(
             "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}; blocking reads {blocking}",
-            self.cpu_ms.len(),
+            self.frames,
             stats(&self.cpu_ms),
             stats(&self.stream_ms)
         ))
@@ -840,14 +864,18 @@ impl Run {
             let passes: Vec<String> = FRAME_PASSES
                 .iter()
                 .zip(pass_ms.iter_mut())
-                .map(|(name, ms)| format!("{name} {:.3}", median(ms)))
+                .map(|(name, ms)| format!("{name} {:.3}", percentile(ms, 50.0)))
                 .collect();
-            format!("{:.3} ms ({} ms)", median(&mut gpu_ms), passes.join(", "))
+            format!(
+                "{:.3} ms ({} ms)",
+                percentile(&mut gpu_ms, 50.0),
+                passes.join(", ")
+            )
         };
         let hud = if hud_ms.is_empty() {
             String::new()
         } else {
-            format!(", gpu hud {:.4} ms", median(&mut hud_ms))
+            format!(", gpu hud {:.4} ms", percentile(&mut hud_ms, 50.0))
         };
         // Under the field look, the smooth share of the last frame's hit pixels: hits whose
         // material is not crisp. No other look reads the hit records back.
@@ -873,7 +901,7 @@ impl Run {
             "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu_line}{hud}{share}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.modes.look, &self.modes.preset),
-            median(&mut cpu_ms),
+            percentile(&mut cpu_ms, 50.0),
             gfx.frame.frame_bytes(),
             self.world.stats().full_bricks,
             gfx.mirror.mirror_bytes(),

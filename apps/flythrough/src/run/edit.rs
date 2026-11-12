@@ -4,11 +4,12 @@
 use crate::app::ms_since;
 use crate::cave::{CaveSource, ROCK, vault};
 use crate::edits::{
-    BenchSum, FILL_RADIUS, edit_record, op_verb, removed_line, unsupported_line,
-    wedged_terminal_line,
+    BenchSum, FILL_RADIUS, edit_record, removed_line, unsupported_line, wedged_terminal_line,
 };
 use crate::hud::EditLine;
-use crate::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, REACH};
+use crate::logic::{
+    BENCH_CARVES, BENCH_VERB, DIG_VERB, DigEvent, DigInput, REACH, UnmatchedOp, pair_op,
+};
 use crate::logic::{DROP_VERB, PILE_VERB};
 use crate::now;
 use crate::run::Run;
@@ -158,16 +159,24 @@ impl Run {
         }
         let events = net.client.poll();
 
-        let mut ops = std::collections::VecDeque::new();
+        // The tick's ops in the order they arrived, each taken when the logic's event names
+        // it, and each one's tick.
+        let mut ops: Vec<Option<Event>> = Vec::new();
+        let mut ticks: Vec<u64> = Vec::new();
         let mut bench = BenchSum::default();
         let mut benches = (0, 0);
         for event in events {
-            let Event::Logic { bytes, .. } = event else {
-                ops.push_back(event);
-                continue;
+            let (tick, bytes) = match event {
+                Event::Logic { tick, bytes } => (tick, bytes),
+                Event::Applied { tick, .. } | Event::Refused { tick, .. } => {
+                    ticks.push(tick);
+                    ops.push(Some(event));
+                    continue;
+                }
+                Event::Desync { .. } => continue,
             };
             for line in String::from_utf8_lossy(&bytes).lines() {
-                let Some(verb) = line.strip_prefix("op ").and_then(op_verb) else {
+                let DigEvent::Op { index, verb } = DigEvent::decode(line) else {
                     match unsupported_line(self.world.materials(), line) {
                         Some(l) => {
                             if let Some(c) = self.coarse.as_mut() {
@@ -182,11 +191,25 @@ impl Run {
                     }
                     continue;
                 };
-                let result = match ops.pop_front() {
-                    Some(Event::Applied { result, .. }) => Ok(result),
-                    Some(Event::Refused { error, .. }) => Err(error),
-                    _ => continue,
+                let op = pair_op(&ticks, tick, index, verb)
+                    .ok()
+                    .and_then(|i| ops[i].take())
+                    .ok_or(UnmatchedOp {
+                        tick,
+                        index,
+                        verb,
+                        ops: ticks.iter().filter(|&&t| t == tick).count(),
+                    });
+                let result = match op {
+                    Ok(Event::Applied { result, .. }) => Ok(result),
+                    Ok(Event::Refused { error, .. }) => Err(error),
+                    Ok(_) => continue,
+                    Err(e) => {
+                        println!("logic: {e}");
+                        continue;
+                    }
                 };
+                let verb = verb.name();
                 if let Ok(r) = &result {
                     self.edited(&r.edit_result());
                 }
@@ -241,7 +264,7 @@ impl Run {
             }
         }
         // Applied ops no logic line named still changed the world.
-        for event in ops {
+        for event in ops.into_iter().flatten() {
             if let Event::Applied { result, .. } = event {
                 self.edited(&result.edit_result());
             }

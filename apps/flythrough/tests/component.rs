@@ -198,7 +198,7 @@ fn the_component_refuses_a_result_of_the_wrong_kind_without_trapping() {
     assert_eq!(
         component_fall_lines(&mut host),
         [
-            "op dropped",
+            "op 0 dropped",
             "drop refused: the host answered a drop with a pile result, after 0 ticks, fell 0 \
              voxels"
         ]
@@ -214,8 +214,8 @@ fn the_component_refuses_a_result_of_the_wrong_kind_without_trapping() {
     assert_eq!(
         component_fall_lines(&mut host),
         [
-            "op dropped",
-            "op piled",
+            "op 0 dropped",
+            "op 1 piled",
             "landed after 1 ticks, fell 1 voxels, crushed 5 voxels, pile refused: the host \
              answered a pile with a drop result"
         ]

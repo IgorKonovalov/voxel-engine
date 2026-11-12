@@ -5,10 +5,7 @@
 use crate::app::ms_since;
 use crate::cave::vault;
 use crate::hud::EditLine;
-use crate::logic::{BENCH_VERB, DIG_VERB, FILL_VERB};
-use crate::logic::{
-    DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
-};
+use crate::logic::{parse_region_line, parse_wedged_line};
 use crate::now;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -49,22 +46,6 @@ pub(crate) const WALKABLE: WalkableParams = WalkableParams {
     min_floor: 448,
     clearance: 2,
 };
-
-/// The verb of a `DigLogic` `op` line, as the `'static` the edit lines and the HUD hold;
-/// `None` for a line that is not one of its verbs.
-pub(crate) fn op_verb(verb: &str) -> Option<&'static str> {
-    [
-        DIG_VERB,
-        FILL_VERB,
-        BENCH_VERB,
-        STAMP_VERB,
-        DROP_VERB,
-        PILE_VERB,
-        REMOVE_VERB,
-    ]
-    .into_iter()
-    .find(|&v| v == verb)
-}
 
 /// One printed line per edit: `carved: rock 1234, ore 12 (3 chunks, 0.21 ms)`.
 pub(crate) fn edit_line(
@@ -366,7 +347,7 @@ mod tests {
         Mode, OpResult, PersistConfig, StreamConfig, Streamer, WalkableMap, World,
     };
 
-    use crate::run::hud_feed::median;
+    use crate::percentile;
 
     use crate::test_support::{applied, native_net, net_tick};
 
@@ -515,7 +496,7 @@ mod tests {
         };
         let centre = Fixed3([FIXED_ONE / 2; 3]);
         let (lines, events) = net_tick(&mut net, &[stamp(centre)]);
-        assert_eq!(lines, ["op stamped"]);
+        assert_eq!(lines, ["op 0 stamped"]);
         let [OpResult::Edit(r)] = &applied(&events)[..] else {
             panic!("{events:?}");
         };
@@ -542,7 +523,7 @@ mod tests {
         let past = Fixed3([51 * FIXED_ONE + FIXED_ONE / 2, FIXED_ONE / 2, FIXED_ONE / 2]);
         let before = world.count_in_box([-64; 3], [63; 3]).unwrap();
         let (lines, events) = net_tick(&mut net, &[stamp(past)]);
-        assert_eq!(lines, ["op stamped"]);
+        assert_eq!(lines, ["op 0 stamped"]);
         assert!(
             events.iter().any(|e| matches!(
                 e,
@@ -618,13 +599,13 @@ mod tests {
         let world = Arc::new(sliver_ledge_world(ROCK));
         let mut net = native_net(&world);
         let (lines, events) = net_tick(&mut net, &[lump_dig()]);
-        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        assert_eq!(lines, ["op 0 carved", "region 9 1:4608"]);
         let [OpResult::Edit(r)] = &applied(&events)[..] else {
             panic!("{events:?}");
         };
         assert_eq!(r.changed_from, [(ROCK, 8)]);
         let (lines, events) = net_tick(&mut net, &[]);
-        assert_eq!(lines, ["op dropped"]);
+        assert_eq!(lines, ["op 0 dropped"]);
         let [OpResult::Drop(d)] = &applied(&events)[..] else {
             panic!("{events:?}");
         };
@@ -633,8 +614,8 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "op dropped",
-                "op piled",
+                "op 0 dropped",
+                "op 1 piled",
                 "landed after 1 ticks, fell 8 voxels, crushed 32 voxels, 32 rubble"
             ]
         );
@@ -685,9 +666,9 @@ mod tests {
         let table = world.materials().clone();
         let mut net = native_net(&world);
         let (lines, _) = net_tick(&mut net, &[lump_dig()]);
-        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        assert_eq!(lines, ["op 0 carved", "region 9 1:4608"]);
         let (lines, events) = net_tick(&mut net, &[]);
-        assert_eq!(lines, ["op dropped", "wedged 9 1:4608"]);
+        assert_eq!(lines, ["op 0 dropped", "wedged 9 1:4608"]);
         assert_eq!(
             wedged_terminal_line(&table, &lines[1]).as_deref(),
             Some("wedged: 9 cells, {rock: 4608}, cannot fall")
@@ -719,7 +700,7 @@ mod tests {
             radius: 2 * FIXED_ONE,
         };
         let (lines, events) = net_tick(&mut net, &[second]);
-        assert_eq!(lines, ["op carved"]);
+        assert_eq!(lines, ["op 0 carved"]);
         let [OpResult::Edit(r)] = &applied(&events)[..] else {
             panic!("{events:?}");
         };
@@ -743,12 +724,12 @@ mod tests {
         let left = 4608 - r.changed_from[0].1;
         assert_eq!(
             lines,
-            ["op carved".to_owned(), format!("region 9 1:{left}")]
+            ["op 0 carved".to_owned(), format!("region 9 1:{left}")]
         );
         let (lines, _) = net_tick(&mut net, &[]);
         assert_eq!(
             lines,
-            ["op dropped".to_owned(), format!("wedged 9 1:{left}")]
+            ["op 0 dropped".to_owned(), format!("wedged 9 1:{left}")]
         );
     }
 
@@ -770,16 +751,16 @@ mod tests {
         }
         let mut net = native_net(&world);
         let (lines, _) = net_tick(&mut net, &[lump_dig()]);
-        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        assert_eq!(lines, ["op 0 carved", "region 9 1:4608"]);
         for tick in 1..=5 {
             let (lines, _) = net_tick(&mut net, &[]);
-            assert_eq!(lines, ["op dropped"], "tick {tick}");
+            assert_eq!(lines, ["op 0 dropped"], "tick {tick}");
         }
         let (lines, events) = net_tick(&mut net, &[]);
         assert_eq!(
             lines,
             [
-                "op dropped",
+                "op 0 dropped",
                 "drop refused: chunk [0, 0, -1] is not resident, after 5 ticks, fell 40 voxels"
             ]
         );
@@ -825,7 +806,7 @@ mod tests {
         let table = world.materials().clone();
         let mut net = native_net(&world);
         let (lines, events) = net_tick(&mut net, &[pillar_cut()]);
-        assert_eq!(lines, ["op carved", "region 10 1:5024"]);
+        assert_eq!(lines, ["op 0 carved", "region 10 1:5024"]);
         assert_eq!(
             unsupported_line(&table, &lines[1]).as_deref(),
             Some("unsupported: 10 cells, {rock: 5024}")
@@ -839,11 +820,11 @@ mod tests {
             };
             dropped.push(d.dropped);
             if tick < 3 {
-                assert_eq!(lines, ["op dropped"], "tick {tick}");
+                assert_eq!(lines, ["op 0 dropped"], "tick {tick}");
             } else {
                 assert_eq!(
                     lines,
-                    ["op dropped", "landed after 3 ticks, fell 18 voxels"]
+                    ["op 0 dropped", "landed after 3 ticks, fell 18 voxels"]
                 );
             }
         }
@@ -871,7 +852,7 @@ mod tests {
         let (lines, _) = net_tick(&mut net, &[DigInput::Crumble]);
         assert_eq!(lines, ["collapse: remove unsupported regions with rubble"]);
         let (lines, events) = net_tick(&mut net, &[pillar_cut()]);
-        assert_eq!(lines, ["op carved", "region 10 1:5024", "op removed"]);
+        assert_eq!(lines, ["op 0 carved", "region 10 1:5024", "op 1 removed"]);
         let [_, OpResult::Remove(r)] = &applied(&events)[..] else {
             panic!("{events:?}");
         };
@@ -979,7 +960,7 @@ mod tests {
             let st = streamer.stats();
             println!(
                 "world stats call: median {:.3} ms of 10 (min {:.3}, max {:.3}); {} chunks, {} full bricks; streamer {} full, {} lod",
-                median(&mut ms),
+                percentile(&mut ms, 50.0),
                 ms[0],
                 ms[9],
                 s.chunks,
