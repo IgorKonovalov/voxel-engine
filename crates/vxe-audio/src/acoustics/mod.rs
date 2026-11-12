@@ -62,6 +62,19 @@ fn fixed_ray(from: [f32; 3], unit: [f32; 3]) -> (Fixed3, [i64; 3], f32) {
     (origin, dir, length(dir.map(|c| c as f32)))
 }
 
+/// `N` directions on a Fibonacci sphere in world axes with its poles on `x`:
+/// `x_i = 1 - 2i / (N - 1)`, `r_i = sqrt(1 - x_i^2)`, `phi_i = i pi (3 - sqrt 5)`,
+/// `d_i = (x_i, r_i cos phi_i, r_i sin phi_i)`. `d_0` is `+x` and `d_(N-1)` is `-x` exactly.
+fn fibonacci_sphere<const N: usize>() -> [[f32; 3]; N] {
+    let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+    std::array::from_fn(|i| {
+        let x = 1.0 - 2.0 * i as f32 / (N - 1) as f32;
+        let r = (1.0 - x * x).max(0.0).sqrt();
+        let phi = i as f32 * golden;
+        [x, r * phi.cos(), r * phi.sin()]
+    })
+}
+
 /// Mixer blocks rendered so far, shared between the mixer and the game thread.
 #[derive(Clone, Debug, Default)]
 pub struct BlockClock(Arc<AtomicU64>);
@@ -243,5 +256,42 @@ impl Acoustics {
             self.probed += 1;
         }
         self.step_room(world, table, listener.position, metres_per_voxel, send);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Fibonacci sphere of `n` points as each direction table built its own, `n` a runtime
+    /// count instead of the const parameter.
+    fn sphere_by_count(n: usize) -> Vec<[f32; 3]> {
+        let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+        (0..n)
+            .map(|i| {
+                let x = 1.0 - 2.0 * i as f32 / (n - 1) as f32;
+                let r = (1.0 - x * x).max(0.0).sqrt();
+                let phi = i as f32 * golden;
+                [x, r * phi.cos(), r * phi.sin()]
+            })
+            .collect()
+    }
+
+    fn bits(dirs: &[[f32; 3]]) -> Vec<[u32; 3]> {
+        dirs.iter().map(|d| d.map(f32::to_bits)).collect()
+    }
+
+    #[test]
+    fn both_direction_tables_are_the_fibonacci_sphere_bit_for_bit() {
+        assert_eq!(
+            bits(&reflection_directions()),
+            bits(&sphere_by_count(REFLECTION_RAYS))
+        );
+        assert_eq!(bits(&room_directions()), bits(&sphere_by_count(ROOM_RAYS)));
+        let ends = |d: &[[f32; 3]]| (d[0], d[d.len() - 1]);
+        assert_eq!(
+            ends(&reflection_directions()),
+            ([1.0, 0.0, 0.0], [-1.0, -0.0, -0.0])
+        );
     }
 }

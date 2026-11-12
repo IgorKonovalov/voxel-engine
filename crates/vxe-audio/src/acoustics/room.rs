@@ -25,7 +25,7 @@
 use vxe_world::{AIR, FIXED_ONE, Face, MaterialTable, World};
 
 use super::reflections::{REFLECTION_RANGE_METRES, reflection_keep};
-use super::{Acoustics, fixed_ray};
+use super::{Acoustics, fibonacci_sphere, fixed_ray};
 use crate::command::RoomTargets;
 use crate::{BLOCK, Command, RATE, length, sub};
 
@@ -43,15 +43,9 @@ pub const ROOM_INTERVAL_SECONDS: f32 = 0.5;
 pub const MAX_T60_SECONDS: f32 = 8.0;
 
 /// The room fan's directions: a Fibonacci sphere in world axes with its poles on `x`, built as
-/// [`reflection_directions`] is, at [`ROOM_RAYS`] points.
+/// [`super::reflection_directions`] is, at [`ROOM_RAYS`] points.
 pub fn room_directions() -> [[f32; 3]; ROOM_RAYS] {
-    let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
-    std::array::from_fn(|i| {
-        let x = 1.0 - 2.0 * i as f32 / (ROOM_RAYS - 1) as f32;
-        let r = (1.0 - x * x).max(0.0).sqrt();
-        let phi = i as f32 * golden;
-        [x, r * phi.cos(), r * phi.sin()]
-    })
+    fibonacci_sphere::<ROOM_RAYS>()
 }
 
 /// The room the listener sees, from a complete fan.

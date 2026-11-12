@@ -27,7 +27,7 @@
 
 use vxe_world::{FIXED_ONE, MaterialTable, World};
 
-use super::fixed_ray;
+use super::{fibonacci_sphere, fixed_ray};
 use crate::voice::{MAX_DELAY_FRAMES, MAX_TAPS, Tap};
 use crate::{RATE, SPEED_OF_SOUND, length, sub};
 
@@ -52,13 +52,7 @@ pub fn reflection_keep(a: f32) -> f32 {
 /// `x_i = 1 - 2i / 15`, `r_i = sqrt(1 - x_i^2)`, `phi_i = i pi (3 - sqrt 5)`,
 /// `d_i = (x_i, r_i cos phi_i, r_i sin phi_i)`. `d_0` is `+x` and `d_15` is `-x` exactly.
 pub fn reflection_directions() -> [[f32; 3]; REFLECTION_RAYS] {
-    let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
-    std::array::from_fn(|i| {
-        let x = 1.0 - 2.0 * i as f32 / (REFLECTION_RAYS - 1) as f32;
-        let r = (1.0 - x * x).max(0.0).sqrt();
-        let phi = i as f32 * golden;
-        [x, r * phi.cos(), r * phi.sin()]
-    })
+    fibonacci_sphere::<REFLECTION_RAYS>()
 }
 
 /// A reflection ray's surface: where it entered the first solid (voxel units) and the
