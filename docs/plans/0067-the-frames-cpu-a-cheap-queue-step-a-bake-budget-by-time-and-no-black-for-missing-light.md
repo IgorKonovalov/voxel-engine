@@ -101,6 +101,51 @@
 > owns it, for the owner to rule; the frame-CPU bar becomes the queue step's own share
 > (2026-11-12 architecture review, section 1.1).
 
+> **Amended 2026-11-12 (architect, owner away; default taken), Phase 2's A-pin miss.** The
+> owner may overturn this in the morning; the rejected alternatives follow the ruling. Every
+> Phase 2 bar is met but one (`docs/plans/logs/0067.md`, "Phase 2: the amended bars"): rig (a)
+> drains in about 140 s with 0 withdrawn and a drained step p50 of 0.068 ms; the `--near 0`
+> opening bar is met on rigs (b) and (c), glide 300 marginally and inside the spread; the
+> `--coarse 0` opening p50 and p99 are better. **The miss:** under `--coarse 0` on rig (b) the
+> tip's non-opening p50 reads 0.874 against the base's 0.81 to 0.83 at glide 150, and 1.27
+> against 0.94 to 0.97 at glide 300. All of the difference is in the `filter` stage (base 0.02
+> to 0.03 ms, tip 0.17 to 0.26) and it grows with the mirror's changes a step. bdbe008's keyed
+> removal did not move it. **Ruling: attribute the cost, make one targeted fix, then apply the
+> bar as written. A bounded tolerance replaces a second stop** (Phase 2, "The non-opening
+> step's `filter`"). In short:
+> (1) Split the `filter` lap into stages of its own.
+> (2) The leading hypothesis, from a code read at bdbe008 and arithmetic, not a reading:
+> `GpuWorld::take_changes` lists every queue event, repeats included, and `drop_reach` removes
+> 1 331 keys a raw change. An enqueue or a repeat changes no input of `reach_ready`.
+> (3) Make one fix where the laps point, then re-read rig (b) after the unattended chains end.
+> (4) If the tip still misses, the bar becomes +0.1 ms over the base's at both glides. The rest
+> goes to Phase 7 as a followup, and only a reading over that tolerance stops the lane. The
+> lane's built phases (2b, 3, 4) and their unattended readings go on unchanged.
+> **Rejected:**
+> - **The tolerance now, with the attribution moved to a later phase or Plan 0070.** The cost
+>   comes from each mirror change in `bake.rs`'s step. It grows with flight speed, so it lands
+>   in the default flight the owner's window judges. Plan 0070 moves the slot packing in
+>   `gpu_world.rs`, a different stage that does not touch this one. A lap costs one commit.
+> - **Keep the bar and stop.** Phases 2b to 4 are built and their readings are running. The
+>   miss is 0.05 to 0.33 ms on a step whose opening the phase already cut by 2 to 3 ms, and no
+>   attributed fix has been tried yet. A stop overnight buys nothing a lap does not.
+>
+> The same amendment rules on the dev's notes:
+> (5) **Phase 5 stays struck only provisionally.** Its rule read 0 at `--level`, a bounded world
+> where the census counts 0 reach-bound chunks by construction. One streamed reading at rest
+> decides it (Phase 5).
+> (6) **Phase 4's summary at block word 512**, just past the directory, is inside ADR-0053,
+> which leaves the place to `dev`. "Before the first word" was a resume note, not the plan, so
+> no Outcome is owed. The place goes into `bake.rs`'s module docs, as Phase 4 asked; today it
+> is only on `SUMMARY_AT`.
+> (7) **`a_first_block_fades_from_its_fallback` lives in `gpu_queue`**, since fades exist only
+> in the live queue. Phase 4 now names it there.
+> (8) **`Frame::set_bake_full_first` in `marcher.rs`** is the Frame's pass-through, as Phase 3's
+> budget has. Phase 2b's files gain `marcher.rs`.
+> (9) **The private `Budget` struct becomes `SubmitRoom`** so Phase 3's public `Budget` can take
+> the name. It is accepted, and no public API changes beyond the plan's.
+> ADR-0048 is untouched: the cost is the step's bookkeeping, not the order or the withdrawal.
+
 ## TL;DR
 
 On the RTX the GPU is not the lag. In the owner's window at 2560 x 1440 the march reads 6.1 to
@@ -519,6 +564,37 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   as the pre-roll and the digs' rings already do) is **Phase 2b's**, not Plan 0070's: it is the
   queue's step in `bake.rs`, and it pays in regime B, which Phase 2b makes the default flight's;
   Plan 0070 moves the mirror's slot packing in `gpu_world.rs`, a different stage.
+- **The non-opening step's `filter`** (amended 2026-11-12, architect, owner away; default
+  taken, owner may overrule). Rig (b) under `--coarse 0` misses the non-opening bar. All of it
+  is in `filter` (tip 0.17 to 0.26 ms, base 0.02 to 0.03), and it grows with the glide's speed.
+  bdbe008 did not move it. The steps, in order:
+  1. **Attribute.** The `filter` lap becomes stages of its own: the window's `rewindow`, the
+     change list and `gone`, the maps' removals, `drop_reach`, and `touched`. The `dev` names
+     them, keeps them in the tree, and keeps `the_step_s_stages_sum_to_its_time` green.
+  2. **The hypothesis to test.** This is a code read at bdbe008 plus arithmetic, not a reading.
+     `take_changes` returns every queue event (enqueued, unqueued, uploaded, dropped). Each is
+     "possibly repeated", and only `gone` is deduplicated. `drop_reach` removes `(2
+     (light_radius + 1) + 1)^3` = 1 331 keys for each raw change at the default radius 4. At a
+     few thousand cached verdicts that is about as many hash operations as the scan it
+     replaced, which would explain why bdbe008 read no change. An enqueue, an unqueue or a
+     repeat changes no input of `reach_ready`.
+  3. **One targeted fix where the laps point.** If they confirm the hypothesis: drop verdicts
+     only for the deduplicated changes whose held-full state flipped. If they point elsewhere,
+     the log names the part and the fix. Either way three things stay green unchanged:
+     `a_still_step_scans_nothing`'s check that mirroring one chunk re-checks exactly the
+     candidates within `light_radius + 1`, `an_opening_without_a_mirror_event_rebuilds_nothing`,
+     and the cached verdict's debug assertion.
+  4. **The re-read.** Rig (b) under `--coarse 0` at glides 150 and 300. Phase 1's binary
+     (87bf0d2) is alternated with the fixed tip, two quiet rounds a side, queued after the
+     unattended chains' `ALL DONE 4`. The build and the `gpu_queue` gate take the exclusive
+     perf lock, so no reading runs beside them. The binary gets a new name under `live/bin/`;
+     the binaries the running chains use, and the chains themselves, are not touched.
+  5. **The bar, then its fallback.** The bar is the one written below. If it is still missed
+     after this one fix, the lane does not stop again. The bar becomes **the tip's non-opening
+     p50 at most 0.1 ms over the base's at both glides**. The base's round spread is 0.02 to
+     0.03 ms, and 0.1 ms is about a tenth of the non-opening step and under 1 % of the opening
+     step. The cost left over goes to the log and to Phase 7's close as a named followup. Only
+     a reading over 0.1 ms at either glide stops the lane for the architect.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `gpu_world.rs` (the sync's entered and
   left lists), `apps/flythrough/tests/gpu_queue.rs`.
 - **Done when:**
@@ -554,7 +630,9 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
     non-opening p50** read with Phase 1's binary 87bf0d2 (the base plus timers); if that
     split shows the tip's non-opening step slower beyond the tolerance, Phase 2 finds and
     removes the cost before it lands, and the overall p50's +7 to 12 % is accepted only
-    otherwise. **Rig (a), after the withdrawal fix**, run until drained or 300 s on both
+    otherwise. On rig (b) the non-opening bar is read after "The non-opening step's `filter`"
+    above, with that bullet's fallback (amended 2026-11-12, architect, owner away). **Rig (a),
+    after the withdrawal fix**, run until drained or 300 s on both
     sides: the tip drains (at least 30 consecutive lines of `baked +0`, `jobs 0`, depth equal
     to the reach-bound count) within 300 s (arithmetic: about 3 000 refinements at about
     1.15e6 samples over about 3e7 samples a second at rest, a guess from 1.5 ms a frame at
@@ -568,7 +646,8 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
     unpinned flights (slice 1.5 and 3), alternated in the same way, are logged per regime as
     readings, not judged. If a bar is
     missed after the named stages are gone, the lane stops for the architect (the thread
-    question of "Decision").
+    question of "Decision"). The one exception is rig (b)'s non-opening bar, which follows its
+    own fallback above.
 
 ### Phase 2b: The queue does not starve in a flight (exploration)
 - **Owner skill:** dev
@@ -603,7 +682,8 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   whether the slow adapter starves where the RTX does not. The lane then goes on to Phase 3,
   whose per-second budget removes that loop, and the architect amends the plan if the window
   asks for the setting.
-- **Files touched:** `crates/vxe-render/src/bake.rs`, `apps/flythrough/src/main.rs`, `hud.rs`,
+- **Files touched:** `crates/vxe-render/src/bake.rs`, `marcher.rs` (the Frame's
+  `set_bake_full_first`; amended 2026-11-12), `apps/flythrough/src/main.rs`, `hud.rs`,
   `apps/flythrough/tests/gpu_queue.rs`.
 - **Done when:**
   - `a_starved_queue_recovers` (`gpu_queue`, lavapipe, about 6 s, an estimate; it stays under
@@ -662,7 +742,9 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   - **A summary per block.** When the queue places a block, and on every frame of its fade, the
     CPU writes one record in the store's record format (`BRICK_WORDS`: six rgb9e5 direction
     values, then the tail), reachable from the chunk's table word with no second table read
-    (the place is `dev`'s, recorded in `bake.rs`'s module docs). A direction's value is the
+    (the place is `dev`'s, recorded in `bake.rs`'s module docs; built at word 512, past the
+    directory, `SUMMARY_AT`, accepted 2026-11-12; the module docs' block description still
+    owes the sentence). A direction's value is the
     mean of the block's cell values of that direction over the cells that have it; the tail's
     material is the emitter material the most of those cells keep, its face bits the union.
     The read multiplies by that one material's emission scale now, as a cell's does.
@@ -690,7 +772,8 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
     fallback and still-black shares. Phase 1's step breakdown gains the summaries' stage. The
     default stays `black` until Phase 6.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `crates/vxe-render/src/shaders/temporal.wgsl`,
-  `marcher.rs`, `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/gpu_bake.rs`.
+  `marcher.rs`, `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/gpu_bake.rs`,
+  `apps/flythrough/tests/gpu_queue.rs` (the fade test; amended 2026-11-12).
 - **Done when:**
   - `a_block_summary_is_its_cells_mean_by_direction` (CPU, under 1 s): a fixed block with known
     records gives a summary whose every direction decodes within one rgb9e5 step of the mean of
@@ -707,9 +790,11 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
     under `neighbour` C reads 0; under `black` B, C and D read 0. `store_missing` is the same
     in every arm, and under `chain` the fallback counter equals B's and C's lit-face pixels
     and the still-black counter D's.
-  - `a_first_block_fades_from_its_fallback` (`gpu_bake`, lavapipe, about 4 s, an estimate): in
-    the same rig, when B's block lands under `chain`, B's stored term on the fade's first frame
-    lies within one rgb9e5 step of `fallback + (block - fallback) / FADE`, not at the block's
+  - `a_first_block_fades_from_its_fallback` (`gpu_queue`, since fades exist only in the live
+    queue, amended 2026-11-12; lavapipe, about 4 s, an estimate, its time logged at the next
+    gpu run): in a live-queue rig where a neighbour is already baked, when a chunk's first
+    block lands under `chain`, its stored words on the fade's first frame lie within one
+    rgb9e5 step of `fallback + (block - fallback) / FADE`, not at the block's
     value; under `black` it is the block's value on that frame.
   - Every golden is byte-identical under `black` (the default).
   - Readings, no bar, in the log: rig (b) on both adapters, the Radeon at the window's size,
@@ -727,6 +812,22 @@ and CPU tests of data and API, not image bars; Phase 7 writes the bars against t
   an Outcome, or a new one) before Phase 7. The arm stays here (owner, 2026-11-11). Phase 4's
   chain already lights a reach-bound chunk from its baked neighbours, so Phase 6 compares
   `partial` against `chain` alone, not against black.
+- **The strike, read in a streamed world** (amended 2026-11-12, architect, owner away; default
+  taken, owner may overrule). Phase 1's rule struck the phase on `reach-bound 0 of 1121 to
+  1201` at the patch. But `--level` is a bounded world (`QueueView::full_radius` is `None`), so
+  the census counts 0 reach-bound chunks by construction. The waiting at the patch was the
+  withdrawal loop, and the drained `a-fix` runs show nothing waiting in view. The reach rule
+  bites only in a streamed world, so one reading decides the strike. It runs after Phase 2's
+  rig (b) re-read, on the RTX, headless:
+  - **The scene.** Rig (b)'s streamed cave with the camera held still at the glide's start pose
+    for 180 s. The `dev` picks the flag the tree takes for that and the log names it.
+  - **The reading.** The reach-bound count against the in-view waiting count on the last 30
+    lines.
+  - **The rule.** At a tenth or more, the phase is reinstated as written, still exploration and
+    before Phase 6. Under a tenth it stays struck. The log records the reading either way.
+  - **Rejected:** striking it on the bounded reading alone, which measured nothing; and building
+    it unconditionally, since Phase 4's chain already lights a reach-bound chunk from its baked
+    neighbours.
 - **Files touched:** `crates/vxe-render/src/bake.rs`, `apps/flythrough/src/main.rs`,
   `apps/flythrough/tests/gpu_queue.rs`.
 - **Done when:**
@@ -827,7 +928,7 @@ its start commit (Plans 0060, 0064 and 0065 merged), not the figures of "Context
 
 | `nfr.md` figure | On record (RTX window, 83e72e1, unless named) | Proposed | How the close measures it |
 |---|---|---|---|
-| §2 streaming line (1.0 ms): the queue's step, no line of its own today | 7.0 ms p50 at rest, 10.3 in flight, single steps to 56 ms; autopilot 3.3 ms p50 (Plan 0060 Phase 5); the base a8b1a2c's autopilot 1.0 ms in one session and 4.8 to 9.4 ms in the next, the swing (Plan 0060's fix pass) | an A/B against Phase 1's start commit, alternated in one session, the regime pinned on both sides (amended 2026-11-11, owner, twice): under `--coarse 0` (A) the non-opening p50 (against the base's split from Phase 1's binary), the opening p50 and the p99 no worse; at rest, after the withdrawal fix, drained within 300 s with no withdrawal and the drained lines' p50 at most a fifth of the base's looping 3.41 ms (amended 2026-11-12, architect; the base's 2.84 to 3.56 ms "drained" step of Plan 0064's window was the withdrawal loop) (proposals, Phase 2); quiet runs only, start load at most 2 (amended 2026-11-11, architect). The default flight's p50 per regime and the draft's 0.5 ms at rest, 1.0 ms in flight and no step over 4 ms are logged beside them as readings; a line of its own in §2 | rigs (a), (b) and (c), both adapters, base and tip alternated, flight runs pinned |
+| §2 streaming line (1.0 ms): the queue's step, no line of its own today | 7.0 ms p50 at rest, 10.3 in flight, single steps to 56 ms; autopilot 3.3 ms p50 (Plan 0060 Phase 5); the base a8b1a2c's autopilot 1.0 ms in one session and 4.8 to 9.4 ms in the next, the swing (Plan 0060's fix pass) | an A/B against Phase 1's start commit, alternated in one session, the regime pinned on both sides (amended 2026-11-11, owner, twice): under `--coarse 0` (A) the non-opening p50 (against the base's split from Phase 1's binary), the opening p50 and the p99 no worse; at rest, after the withdrawal fix, drained within 300 s with no withdrawal and the drained lines' p50 at most a fifth of the base's looping 3.41 ms (amended 2026-11-12, architect; the base's 2.84 to 3.56 ms "drained" step of Plan 0064's window was the withdrawal loop) (proposals, Phase 2); on rig (b) the non-opening p50, after one attributed fix of `filter`, falls back to at most +0.1 ms over the base's at both glides (amended 2026-11-12, architect, owner away); quiet runs only, start load at most 2 (amended 2026-11-11, architect). The default flight's p50 per regime and the draft's 0.5 ms at rest, 1.0 ms in flight and no step over 4 ms are logged beside them as readings; a line of its own in §2 | rigs (a), (b) and (c), both adapters, base and tip alternated, flight runs pinned |
 | The queue's opening step (no line; amended 2026-11-11, owner, twice): the main target | about 9 ms p50 on the steps that open (9.0 to 10.6), regime B's step, of it the candidates 2.2 to 2.3 ms, the sort 0.9 to 1.0, the check-and-list loop 3.5 to 3.9; the swing between about 1 and 9 ms is the regime, A or B, not the commit ("Context"). Phase 1, loaded, tip: A's 7.05 ms, `--near 0`'s 10.3 ms (candidates 3.03, list 2.89, sort 1.58) | under `--near 0` (B) at most 0.8 of the base's opening p50, p99 no worse, in the same session's A/B (re-derived 2026-11-12, architect, from what the step keeps: Phase 2); the quiet tip read 7.9 to 8.1 ms against the base's 10.0 step p50; the listing's cut is Phase 2b's reading | Phase 1's split by opening and regime, rigs (b) and (c) |
 | The queue's regime in a flight (no line; amended 2026-11-11, owner) | the base and Plan 0060's tip fall into A or B run by run, and a run in B can fall into A (fix pass, RTX autopilot, `live/p5/*.log` on Plan 0060's branch); the one return to B read came on the flight's way back (lap-base-1, at about 50 s) | under the picked full-first radius, no run of rig (c) reads A and no opening is starved; a reading judged by the owner's eye in Phase 6, not a bar | Phase 2b's readings, then the regime lines of Phase 7's runs |
 | The frame's CPU (render thread; no line) | p50 7.1 at rest, 11.5 in flight; p99 11.6 / 71.5 | the queue step's own share (amended 2026-11-12, architect, owner away, per the 2026-11-12 review's section 1.1): p50 at most 2.0 ms at rest, where the sync reads about 0.05 ms; in flight the step's own p99 at most 16.6 ms in the default flight under Phase 2b's pick (a proposal; the quiet pins read 9.0 to 9.5 in A and 19.0 to 22.5 in B). The frame CPU p99 and `update + poll + sync` p99 (44 to 97 ms in flight, quiet) are logged as readings, not bars: the sync is draft Plan 0070's; if it merges before this close, the close re-reads the frame CPU p99 against 16.6 ms | the step's and the frame's per-regime p50 and p99, rigs (a) to (c) |
