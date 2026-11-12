@@ -229,8 +229,8 @@ impl Frame {
     /// internal size differs from the output size, so turning the jitter on or off at equal
     /// sizes replaces the targets and drops the history.
     pub fn set_jitter(&mut self, device: &wgpu::Device, on: bool) {
-        if on != self.jitter {
-            self.jitter = on;
+        if on != self.up.jitter {
+            self.up.jitter = on;
             self.set_sizes(device, self.internal_size(), self.output);
         }
     }
@@ -239,36 +239,36 @@ impl Frame {
     /// upscale pass's output unchanged, 1 is RCAS at full strength (0 stops), and between them
     /// `2 (1 - s)` stops (`con = 2^-stops`). It runs with the upscaler.
     pub fn set_sharpness(&mut self, queue: &wgpu::Queue, sharpness: f32) {
-        self.sharpness = sharpness.clamp(0.0, 1.0);
-        let con = if self.sharpness > 0.0 {
-            (-2.0 * (1.0 - self.sharpness)).exp2()
+        self.up.sharpness = sharpness.clamp(0.0, 1.0);
+        let con = if self.up.sharpness > 0.0 {
+            (-2.0 * (1.0 - self.up.sharpness)).exp2()
         } else {
             0.0
         };
         queue.write_buffer(
-            &self.sharpen_params,
+            &self.up.sharpen_params,
             0,
             bytemuck::cast_slice(&[con, 0.0, 0.0, 0.0]),
         );
     }
 
     pub fn sharpness(&self) -> f32 {
-        self.sharpness
+        self.up.sharpness
     }
 
     /// Sets the upscale pass's reconstruction, history fetch and blend from the next frame on.
     pub fn set_upscaler(&mut self, upscaler: Upscaler) {
-        self.upscaler = upscaler;
+        self.up.upscaler = upscaler;
     }
 
     pub fn upscaler(&self) -> Upscaler {
-        self.upscaler
+        self.up.upscaler
     }
 
     /// Whether an upscaler runs: FSR 2, or the frame jitters or renders below its output
     /// size. Without one the composite's image is the frame's, byte for byte.
     pub fn upscaling(&self) -> bool {
-        self.fsr.is_some() || self.jitter || self.internal_size() != self.output
+        self.up.fsr.is_some() || self.up.jitter || self.internal_size() != self.output
     }
 
     /// Selects the upscaler: `Off` turns the jitter off (at equal sizes no upscaler runs),
@@ -276,53 +276,54 @@ impl Frame {
     /// it), and `Fsr2` runs FSR 2 with its own jitter sequence. A change of upscaler replaces
     /// the targets and drops the history; a change of FSR's settings alone keeps them.
     pub fn set_upscaler_kind(&mut self, device: &wgpu::Device, kind: UpscalerKind) {
-        let was_fsr = self.fsr.is_some();
+        let was_fsr = self.up.fsr.is_some();
         match kind {
-            UpscalerKind::Off => self.jitter = false,
-            UpscalerKind::Own(u) => self.upscaler = u,
+            UpscalerKind::Off => self.up.jitter = false,
+            UpscalerKind::Own(u) => self.up.upscaler = u,
             UpscalerKind::Fsr2(s) => {
-                if let Some(f) = self.fsr.as_mut() {
+                if let Some(f) = self.up.fsr.as_mut() {
                     f.set_settings(s);
                 } else {
-                    self.fsr = Some(Fsr2::new(
+                    self.up.fsr = Some(Fsr2::new(
                         device,
-                        &self.world_layout,
+                        &self.pipes.world_layout,
                         self.internal_size(),
                         self.output,
                         s,
                     ));
                 }
-                if self.composite_hdr.is_none() {
-                    self.composite_hdr = Some(composite_hdr_pass(device, &self.world_layout));
+                if self.up.composite_hdr.is_none() {
+                    self.up.composite_hdr =
+                        Some(composite_hdr_pass(device, &self.pipes.world_layout));
                 }
             }
         }
         if !kind.is_fsr2() {
-            self.fsr = None;
+            self.up.fsr = None;
         }
-        let changed = std::mem::discriminant(&kind) != std::mem::discriminant(&self.kind)
-            || was_fsr != self.fsr.is_some();
-        self.kind = kind;
+        let changed = std::mem::discriminant(&kind) != std::mem::discriminant(&self.up.kind)
+            || was_fsr != self.up.fsr.is_some();
+        self.up.kind = kind;
         if changed {
             self.set_sizes(device, self.internal_size(), self.output);
         }
     }
 
     pub fn upscaler_kind(&self) -> UpscalerKind {
-        self.kind
+        self.up.kind
     }
 
     /// FSR 2's context while the frame runs it.
     pub fn fsr2(&self) -> Option<&Fsr2> {
-        self.fsr.as_ref()
+        self.up.fsr.as_ref()
     }
 
     pub fn fsr2_mut(&mut self) -> Option<&mut Fsr2> {
-        self.fsr.as_mut()
+        self.up.fsr.as_mut()
     }
 
     pub fn jitter(&self) -> bool {
-        self.jitter
+        self.up.jitter
     }
 
     /// Drops the upscaler's history alone in the next encoded frame (the lighting's is kept),
@@ -335,6 +336,55 @@ impl Frame {
     /// the upscaled image, display-encoded rgb), or `None` without the upscaler.
     pub fn upscale_history(&self) -> Option<&wgpu::Texture> {
         self.targets.history.as_ref().map(|h| &h[self.cur])
+    }
+}
+
+/// The upscaler's state: the engine's own upscaler and its sharpen pass's uniforms, the jitter,
+/// the upscaler the frame runs and, with FSR 2, its context and the composite's variant.
+pub(super) struct UpscaleState {
+    pub(super) upscaler: Upscaler,
+    /// The upscale pass's tuning (`UpTuning` in `upscale.wgsl`).
+    pub(super) params: wgpu::Buffer,
+    /// The sharpening pass's `con` (`Sharpen` in `sharpen.wgsl`).
+    pub(super) sharpen_params: wgpu::Buffer,
+    pub(super) sharpness: f32,
+    /// The views' rays are jittered by [`jitter_at`] of the frame index.
+    pub(super) jitter: bool,
+    /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
+    /// that stores linear radiance (`HDR_TARGET` in composite.wgsl), built with it.
+    pub(super) kind: UpscalerKind,
+    pub(super) fsr: Option<Fsr2>,
+    pub(super) composite_hdr: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
+}
+
+impl UpscaleState {
+    pub(super) fn new(device: &wgpu::Device) -> Self {
+        Self {
+            sharpen_params: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("sharpen"),
+                    contents: bytemuck::cast_slice(&[0.0f32; 4]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            sharpness: 0.0,
+            params: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("upscale tuning"),
+                    contents: bytemuck::bytes_of(
+                        &Upscaler::default().uniform(1.0, Lamp::default()),
+                    ),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            upscaler: Upscaler::default(),
+            jitter: false,
+            kind: UpscalerKind::Off,
+            fsr: None,
+            composite_hdr: None,
+        }
     }
 }
 

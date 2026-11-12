@@ -55,14 +55,79 @@ pub const FRAME_PASSES: [&str; 20] = [
     "exposure",
 ];
 
+/// Whether an encode reads and advances the frame's history ([`Frame::encode`]) or draws one
+/// frame alone ([`Frame::submit`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Keep {
+    History,
+    Alone,
+}
+
+/// What an encode's uniform stage hands on: the frame's parameters as the passes read them,
+/// the edit boxes it took, and the probe channel's state this frame.
+struct Uniforms<'a> {
+    p: Params,
+    boxes: Vec<[[i32; 3]; 2]>,
+    volume: Option<&'a ProbeVolume>,
+    probe_update: bool,
+    probe_restart: bool,
+    light_window: bool,
+    lamp_moved: bool,
+}
+
+/// The encode's bind groups, and the walk the hit pass takes: the field surface, the split
+/// walk and its list.
+struct Binds<'a> {
+    world_bind: wgpu::BindGroup,
+    field: bool,
+    split: bool,
+    split_list: &'a wgpu::Buffer,
+    hit_bind: wgpu::BindGroup,
+    half: bool,
+    downsample_bind: wgpu::BindGroup,
+    light_bind: wgpu::BindGroup,
+    temporal_bind: wgpu::BindGroup,
+    filtering: bool,
+    variance_bind: wgpu::BindGroup,
+    atrous_binds: Vec<wgpu::BindGroup>,
+    out: OutputBinds<'a>,
+}
+
+/// The composite's pipeline and the output passes' bind groups.
+struct OutputBinds<'a> {
+    composite: &'a wgpu::ComputePipeline,
+    composite_bind: wgpu::BindGroup,
+    gradient_bind: wgpu::BindGroup,
+    upscale_bind: Option<wgpu::BindGroup>,
+    sharpen_bind: Option<wgpu::BindGroup>,
+}
+
+/// A frame pass's dispatch with the world's group 0 and its own group `group`.
+fn frame_pass<'a>(
+    world: &'a wgpu::BindGroup,
+    pipeline: &'a wgpu::ComputePipeline,
+    bind: &'a wgpu::BindGroup,
+    group: usize,
+    workgroups: [u32; 2],
+) -> Dispatch<'a> {
+    let mut groups = [Some(world), None, None, None];
+    groups[group] = Some(bind);
+    Dispatch {
+        pipeline,
+        groups,
+        workgroups,
+        indirect: None,
+    }
+}
+
 impl Frame {
     pub(super) fn world_bind(&self, device: &wgpu::Device, world: &GpuWorld) -> wgpu::BindGroup {
-        let noise = view(&self.blue_noise);
+        let noise = view(&self.state.blue_noise);
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("world"),
-            layout: &self.world_layout,
+            layout: &self.pipes.world_layout,
             entries: &[
-                buffer_entry(0, &self.params),
+                buffer_entry(0, &self.state.params),
                 buffer_entry(1, world.pool_shard(0)),
                 buffer_entry(7, world.pool_shard(1)),
                 buffer_entry(8, world.pool_shard(2)),
@@ -71,7 +136,7 @@ impl Frame {
                 buffer_entry(3, world.table()),
                 buffer_entry(4, world.materials()),
                 buffer_entry(10, world.light_buffer()),
-                buffer_entry(11, &self.emission_scale),
+                buffer_entry(11, &self.state.emission_scale),
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: wgpu::BindingResource::TextureView(&noise),
@@ -84,32 +149,17 @@ impl Frame {
     /// The temporal pass's pipeline: with [`Frame::set_count_store`] on, the one whose
     /// `COUNT_STORE` is true, built on its first use.
     pub(super) fn temporal_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
-        if !self.count_store {
-            return &self.temporal;
-        }
-        self.temporal_counting.get_or_init(|| {
-            compute_pipeline_with(
-                device,
-                "temporal counting",
-                format!("{MARCH_WGSL}\n{TEMPORAL_WGSL}"),
-                &[Some(&self.world_layout), None, Some(&self.temporal_layout)],
-                "temporal",
-                &[("COUNT_STORE", 1.0)],
-            )
-        })
+        let pass = if self.baked.count_store {
+            P_TEMPORAL_COUNTING
+        } else {
+            P_TEMPORAL
+        };
+        self.pipes.pipeline(device, pass)
     }
 
     /// The light pass's pipeline (`shade`), built on its first use.
     pub(super) fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
-        self.light.get_or_init(|| {
-            compute_pipeline(
-                device,
-                "light",
-                format!("{MARCH_WGSL}\n{LIGHT_WGSL}"),
-                &[Some(&self.world_layout), None, Some(&self.light_layout)],
-                "shade",
-            )
-        })
+        self.pipes.pipeline(device, P_LIGHT)
     }
 
     /// The uniform block for `camera` over `world`, lit by `light`: one view filling the
@@ -139,17 +189,18 @@ impl Frame {
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
         let fsr = self
+            .up
             .fsr
             .as_ref()
             .filter(|f| !f.bypassed())
             .map(Fsr2::settings);
-        let jitter = if let Some(f) = self.fsr.as_ref().filter(|f| !f.bypassed()) {
+        let jitter = if let Some(f) = self.up.fsr.as_ref().filter(|f| !f.bypassed()) {
             // FSR's sample of pixel p lies at p + 0.5 - offset (`fsr2::jitter_offset`).
             let [w, _] = self.internal_size();
-            let [x, y] = jitter_at(self.frame, f.settings().phases(w, self.output[0]));
+            let [x, y] = jitter_at(self.state.frame, f.settings().phases(w, self.output[0]));
             [-x, -y]
-        } else if self.jitter {
-            jitter_at(self.frame, JITTER_PHASES)
+        } else if self.up.jitter {
+            jitter_at(self.state.frame, JITTER_PHASES)
         } else {
             [0.0; 2]
         };
@@ -160,10 +211,10 @@ impl Frame {
         Params {
             views: vs,
             view_count: views.len() as u32,
-            translucent_layers: self.look.translucent_layers,
+            translucent_layers: self.state.look.translucent_layers,
             window_min: e.min.0,
-            face_mix: self.look.tuning.face_mix,
-            far_normal: self.look.far_normal,
+            face_mix: self.state.look.tuning.face_mix,
+            far_normal: self.state.look.far_normal,
             window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
                 .to_array(),
@@ -176,30 +227,31 @@ impl Frame {
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 }
                 | if light.skips { FLAG_SKIPS } else { 0 }
-                | self.look.flags(),
+                | self.state.look.flags(),
             units_per_shard: world.shard_layout().units_per_shard,
-            forced_level: self.lod.forced_level.unwrap_or(0),
-            lod1_r2: (2 * self.lod.r_full).pow(2),
-            lod2_r2: (4 * self.lod.r_full).pow(2),
-            exposure: self.lighting.manual_exposure(),
+            forced_level: self.state.lod.forced_level.unwrap_or(0),
+            lod1_r2: (2 * self.state.lod.r_full).pow(2),
+            lod2_r2: (4 * self.state.lod.r_full).pow(2),
+            exposure: self.state.lighting.manual_exposure(),
             dither: u32::from(fsr.is_some_and(|f| f.dither)),
             output_size: if self.upscaling() {
                 self.output
             } else {
                 [self.targets.width, self.targets.height]
             },
-            lighting: self.lighting.flags()
+            lighting: self.state.lighting.flags()
                 | if self
+                    .state
                     .emission_changed_at
-                    .is_some_and(|f| self.frame.wrapping_sub(f) <= EMISSION_CHANGE_FRAMES)
+                    .is_some_and(|f| self.state.frame.wrapping_sub(f) <= EMISSION_CHANGE_FRAMES)
                 {
                     LIGHTING_EMISSION_CHANGED
                 } else {
                     0
                 },
             light_table_base: world.light_table_base(),
-            candidates: self.lighting.candidates,
-            frame: self.frame,
+            candidates: self.state.lighting.candidates,
+            frame: self.state.frame,
             light_size: self.targets.light_size(),
             light_scale: self.targets.scale,
             light_offset: if self.targets.scale > 1 {
@@ -226,7 +278,7 @@ impl Frame {
         params: &Params,
         timer: Option<&PassTimer>,
     ) {
-        self.encode_with(device, queue, encoder, world, params, timer, true);
+        self.encode_with(device, queue, encoder, world, params, timer, Keep::History);
     }
 
     #[allow(
@@ -241,23 +293,39 @@ impl Frame {
         world: &GpuWorld,
         params: &Params,
         timer: Option<&PassTimer>,
-        keep_history: bool,
+        keep: Keep,
     ) {
+        let uni = self.write_uniforms(queue, world, params, keep);
+        let binds = self.bind_groups(device, encoder, world);
+        self.record(device, queue, encoder, &uni, &binds, timer);
+    }
+
+    /// The encode's uniform stage: the frame's parameters with the history's fields (with
+    /// [`Keep::History`]), the probe channel's state, and the edit boxes, the upscaler's
+    /// tuning, the light table and the blue noise written.
+    fn write_uniforms(
+        &self,
+        queue: &wgpu::Queue,
+        world: &GpuWorld,
+        params: &Params,
+        keep: Keep,
+    ) -> Uniforms<'_> {
         let mut p = *params;
         // The probe passes run in the shaded and cracks views outside the cutaway, with the
         // lamp's bounce on and the lamp on (or a preset volume, whose updates are off).
-        let presets = self.probes.get().is_some_and(|v| !v.updates());
-        let indirect = self.lighting.lamp_bounce
-            && (self.lighting.lamp || presets)
-            && self.look.view.shades()
-            && !self.look.cutaway;
+        let presets = self.probe.volume.get().is_some_and(|v| !v.updates());
+        let indirect = self.state.lighting.lamp_bounce
+            && (self.state.lighting.lamp || presets)
+            && self.state.look.view.shades()
+            && !self.state.look.cutaway;
         // The volume exists from the first encode with the channel running.
         let volume = indirect.then(|| self.probes());
         let probe_update = volume.is_some_and(ProbeVolume::updates);
         // The channel starts from zero when it was not running at the last encode or the
         // lamp's light changed: every probe's state is cleared and a window opens.
         let channel_was = self
-            .probe_channel_ran
+            .probe
+            .ran
             .swap(probe_update, std::sync::atomic::Ordering::Relaxed);
         let mut probe_restart = probe_update && !channel_was;
         let mut light_window = false;
@@ -269,8 +337,9 @@ impl Frame {
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
         let mut old_lamp = Lamp::of(params);
-        if keep_history {
+        if keep == Keep::History {
             let mut h = self
+                .state
                 .history
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -291,15 +360,16 @@ impl Frame {
             h.last_views = params.views;
             h.encoded = true;
             let key = LightKey {
-                lamp: self.lighting.lamp,
+                lamp: self.state.lighting.lamp,
                 params: LampKey::of(params),
-                shadow_walk: self.lighting.shadow_walk,
+                shadow_walk: self.state.lighting.shadow_walk,
             };
             let lamp_changed = h.light_key.is_some_and(|k| k.lamp_differs(&key));
             if lamp_changed {
                 p.lighting |= LIGHTING_LAMP_CHANGED;
             }
-            self.lamp_changed
+            self.state
+                .lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
             // The probes see the lamp alone: its switch, parameters or shadow walk restart them.
             probe_restart |= probe_update && lamp_changed;
@@ -311,7 +381,7 @@ impl Frame {
                 light_window = true;
                 h.light_window -= 1;
             }
-            let back = (self.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
+            let back = (self.up.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
             old_lamp = h
                 .lamps
                 .len()
@@ -332,12 +402,12 @@ impl Frame {
         } else {
             p.history = 0;
         }
-        queue.write_buffer(&self.edits, 0, bytemuck::bytes_of(&edits));
+        queue.write_buffer(&self.state.edits, 0, bytemuck::bytes_of(&edits));
         let scale = self.output[0] as f32 / self.targets.width as f32;
         queue.write_buffer(
-            &self.upscale_params,
+            &self.up.params,
             0,
-            bytemuck::bytes_of(&self.upscaler.uniform(scale, old_lamp)),
+            bytemuck::bytes_of(&self.up.upscaler.uniform(scale, old_lamp)),
         );
         let table = light_table(world, p.views[0].origin);
         let used = (1 + table.count as usize) * 16;
@@ -347,33 +417,53 @@ impl Frame {
             &bytemuck::bytes_of(&table)[..used],
         );
         if !self
+            .state
             .blue_noise_written
             .swap(true, std::sync::atomic::Ordering::Relaxed)
         {
             queue.write_texture(
-                self.blue_noise.as_image_copy(),
+                self.state.blue_noise.as_image_copy(),
                 BLUE_NOISE,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(128),
                     rows_per_image: Some(128),
                 },
-                self.blue_noise.size(),
+                self.state.blue_noise.size(),
             );
         }
+        Uniforms {
+            p,
+            boxes,
+            volume,
+            probe_update,
+            probe_restart,
+            light_window,
+            lamp_moved,
+        }
+    }
+
+    /// The encode's bind groups of the hit, light and temporal passes, of the filter and of
+    /// the output passes, with the walk the hit pass takes. Clears the store's counters.
+    fn bind_groups(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        world: &GpuWorld,
+    ) -> Binds<'_> {
         let t = &self.targets;
         let world_bind = self.world_bind(device, world);
         // The cutaway and a mirror without band slots walk the voxels.
-        let field = self.look.normal_mode == NormalMode::Contour
-            && !self.look.cutaway
+        let field = self.state.look.normal_mode == NormalMode::Contour
+            && !self.state.look.cutaway
             && world.field_surface();
         // The split walk pays only where a brick walks as cubes: with no crisp row every band
         // brick is a field brick. The cracks and steps views read the field walk's own leaks
         // and counters, so they walk it unsplit.
         let split = field
-            && self.field_split
+            && self.state.field_split
             && world.crisp_rows()
-            && !matches!(self.look.view, ViewMode::Cracks | ViewMode::Steps)
+            && !matches!(self.state.look.view, ViewMode::Cracks | ViewMode::Steps)
             && u64::from(t.width) * u64::from(t.height)
                 <= u64::from(SPLIT_GROUP) * u64::from(MAX_WORKGROUPS);
         // The hit pass binds the full list only in a frame that splits; the unsplit walk
@@ -386,7 +476,7 @@ impl Frame {
         let (c, q) = (self.cur, self.cur ^ 1);
         let hit_bind = bind_io(
             device,
-            &self.hit.out_layout,
+            &self.pipes.hit.out_layout,
             &[
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
@@ -394,13 +484,13 @@ impl Frame {
                 Res::Buf(split_list),
                 Res::Buf(&t.split_args),
                 Res::Tex(&t.transmit),
-                Res::Buf(self.store.pool()),
+                Res::Buf(self.baked.store.pool()),
             ],
         );
         let half = t.half_pos.is_some();
         let downsample_bind = bind_io(
             device,
-            &self.downsample_layout,
+            self.pipes.layout(P_DOWNSAMPLE),
             &[
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
@@ -409,10 +499,10 @@ impl Frame {
             ],
         );
         // The store's counters: missing, brick reads, coarse reads.
-        encoder.clear_buffer(&self.store_counters, 0, None);
+        encoder.clear_buffer(&self.baked.counters, 0, None);
         let light_bind = bind_io(
             device,
-            &self.light_layout,
+            self.pipes.layout(P_LIGHT),
             &[
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
@@ -421,7 +511,7 @@ impl Frame {
         );
         let temporal_bind = bind_io(
             device,
-            &self.temporal_layout,
+            self.pipes.layout(P_TEMPORAL),
             &[
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
@@ -432,18 +522,42 @@ impl Frame {
                 Res::Tex(&t.moments[q]),
                 Res::Tex(&t.accum[c]),
                 Res::Tex(&t.moments[c]),
-                Res::Buf(&self.edits),
+                Res::Buf(&self.state.edits),
                 Res::Tex(&t.strata),
-                Res::Buf(self.store.pool()),
-                Res::Buf(&self.store_counters),
+                Res::Buf(self.baked.store.pool()),
+                Res::Buf(&self.baked.counters),
             ],
         );
         // The filter runs in the shaded and cracks views unless switched off; the variance pass
         // writes `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
-        let filtering = self.lighting.filter && self.look.view.shades();
+        let (filtering, variance_bind, atrous_binds) = self.filter_binds(device);
+        let out = self.output_binds(device, filtering);
+        Binds {
+            world_bind,
+            field,
+            split,
+            split_list,
+            hit_bind,
+            half,
+            downsample_bind,
+            light_bind,
+            temporal_bind,
+            filtering,
+            variance_bind,
+            atrous_binds,
+            out,
+        }
+    }
+
+    /// The filter's bind groups: whether it runs, the variance pass's and each a-trous
+    /// iteration's.
+    fn filter_binds(&self, device: &wgpu::Device) -> (bool, wgpu::BindGroup, Vec<wgpu::BindGroup>) {
+        let t = &self.targets;
+        let c = self.cur;
+        let filtering = self.state.lighting.filter && self.state.look.view.shades();
         let variance_bind = bind_io(
             device,
-            &self.variance_layout,
+            self.pipes.layout(P_VARIANCE),
             &[
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
@@ -456,33 +570,48 @@ impl Frame {
             .map(|i| {
                 bind_io_at(
                     device,
-                    &self.atrous_layout,
+                    self.pipes.layout(P_ATROUS),
                     &[0, 1, 2, 5, 6, 7, 8],
                     &[
                         Res::Tex(t.lit_pos(c)),
                         Res::Tex(t.lit_info(c)),
                         Res::Tex(&t.filter[i % 2]),
                         Res::Tex(&t.filter[(i + 1) % 2]),
-                        Res::Buf(&self.steps[i]),
+                        Res::Buf(&self.state.atrous_steps[i]),
                         Res::Tex(&t.accum[c]),
                         Res::Tex(&t.moments[c]),
                     ],
                 )
             })
             .collect();
+        (filtering, variance_bind, atrous_binds)
+    }
+
+    /// The bind groups of the composite (and its pipeline, FSR 2's variant in FSR mode), the
+    /// gradient, and the engine's own upscale and sharpen passes.
+    fn output_binds(&self, device: &wgpu::Device, filtering: bool) -> OutputBinds<'_> {
+        let t = &self.targets;
+        let (c, q) = (self.cur, self.cur ^ 1);
         let lit = if filtering {
             &t.filter[ATROUS_ITERATIONS % 2]
         } else {
             &t.accum[c]
         };
         // In FSR mode the composite writes FSR's colour input at the internal size.
-        let composite_out = self.fsr.as_ref().map_or(&t.output, Fsr2::colour);
+        let composite_out = self.up.fsr.as_ref().map_or(&t.output, Fsr2::colour);
         // FSR 2's composite stores linear radiance (`composite_hdr`).
         let (composite_layout, composite) = self
+            .up
             .composite_hdr
             .as_ref()
-            .filter(|_| self.fsr.is_some())
-            .map_or((&self.composite_layout, &self.composite), |(l, p)| (l, p));
+            .filter(|_| self.up.fsr.is_some())
+            .map_or(
+                (
+                    self.pipes.layout(P_COMPOSITE),
+                    self.pipes.pipeline(device, P_COMPOSITE),
+                ),
+                |(l, p)| (l, p),
+            );
         let composite_bind = bind_io(
             device,
             composite_layout,
@@ -501,7 +630,7 @@ impl Frame {
         );
         let gradient_bind = bind_io(
             device,
-            &self.gradient_layout,
+            self.pipes.layout(P_GRADIENT),
             &[
                 Res::Tex(t.lit_pos(q)),
                 Res::Tex(t.lit_info(q)),
@@ -512,7 +641,7 @@ impl Frame {
         let upscale_bind = t.history.as_ref().map(|hist| {
             bind_io(
                 device,
-                &self.upscale_layout,
+                self.pipes.layout(P_UPSCALE),
                 &[
                     Res::Tex(&t.hit_pos[c]),
                     Res::Tex(&t.hit_info[c]),
@@ -521,222 +650,293 @@ impl Frame {
                     Res::Tex(&t.hit_info[q]),
                     Res::Tex(&hist[q]),
                     Res::Tex(&hist[c]),
-                    Res::Buf(&self.edits),
-                    Res::Buf(&self.upscale_params),
+                    Res::Buf(&self.state.edits),
+                    Res::Buf(&self.up.params),
                 ],
             )
         });
         let sharpen_bind = t.history.as_ref().map(|hist| {
             bind_io(
                 device,
-                &self.sharpen_layout,
+                self.pipes.layout(P_SHARPEN),
                 &[
                     Res::Tex(&hist[c]),
                     Res::Tex(&t.output),
-                    Res::Buf(&self.sharpen_params),
+                    Res::Buf(&self.up.sharpen_params),
                 ],
             )
         });
         // The gradient pass runs in a shaded view for the gradient mode's lambda.
-        let gradient_on = self.look.view.shades() && p.lighting & LIGHTING_GRADIENT != 0;
+        OutputBinds {
+            composite,
+            composite_bind,
+            gradient_bind,
+            upscale_bind,
+            sharpen_bind,
+        }
+    }
+
+    /// The encode's record stage: FSR 2's inputs, the dispatches of every pass, the frame's
+    /// parameters written, each pass recorded in [`FRAME_PASSES`] order, and the exposure.
+    fn record(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        uni: &Uniforms<'_>,
+        binds: &Binds<'_>,
+        timer: Option<&PassTimer>,
+    ) {
+        let t = &self.targets;
+        let c = self.cur;
+        let mut p = uni.p;
+        let world = &binds.world_bind;
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
-        let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
-        let fsr_binds = self.fsr.as_ref().map(|f| {
-            (
-                f,
-                f.prepare(
-                    device,
-                    queue,
-                    &p,
-                    &crate::fsr2::FrameInputs {
-                        hit_pos: &t.hit_pos[c],
-                        hit_info: &t.hit_info[c],
-                        layer: &t.layer,
-                        edits: &self.edits,
-                        lamp: &self.upscale_params,
-                        output: &t.output,
-                        blue_noise: &self.blue_noise,
-                        cur: c,
-                        dt: self.dt,
-                    },
-                ),
-            )
-        });
-        if let Some(f) = &self.fsr {
-            f.copy_exposure(
-                encoder,
-                self.exposure.state(),
-                matches!(self.lighting.exposure, Exposure::Auto(_)),
-                p.history & 2 == 0,
-            );
-        }
-        // A frame pass's dispatch with the world's group 0 and its own group `group`.
-        let frame_pass = |pipeline, bind, group: usize, workgroups| {
-            let mut groups = [Some(&world_bind), None, None, None];
-            groups[group] = Some(bind);
-            Dispatch {
-                pipeline,
-                groups,
-                workgroups,
-                indirect: None,
-            }
-        };
-        let hit_pipeline = if split {
+        let fsr_binds = self.fsr_frame(device, queue, encoder, &p);
+        let hit_pipeline = if binds.split {
             p.flags |= FLAG_FIELD_SPLIT;
-            &self.hit.pipeline
-        } else if field {
-            &self.hit.field
+            &self.pipes.hit.pipeline
+        } else if binds.field {
+            &self.pipes.hit.field
         } else {
-            &self.hit.pipeline
+            &self.pipes.hit.pipeline
         };
-        let resume_bind = split.then(|| {
+        let resume_bind = binds.split.then(|| {
             encoder.clear_buffer(&t.split_args, 0, None);
-            encoder.clear_buffer(split_list, 0, Some(16));
+            encoder.clear_buffer(binds.split_list, 0, Some(16));
             bind_io(
                 device,
-                &self.hit.resume_layout,
+                &self.pipes.hit.resume_layout,
                 &[
                     Res::Tex(&t.hit_pos[c]),
                     Res::Tex(&t.hit_info[c]),
                     Res::Tex(&t.layer),
-                    Res::Buf(split_list),
+                    Res::Buf(binds.split_list),
                 ],
             )
         });
-        let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(hit_pipeline, &hit_bind, 1, full)];
+        let mut hit: Vec<Dispatch<'_>> =
+            vec![frame_pass(world, hit_pipeline, &binds.hit_bind, 1, full)];
         if let Some(b) = &resume_bind {
             hit.push(Dispatch {
                 indirect: Some((&t.split_args, 0)),
-                ..frame_pass(&self.hit.resume, b, 1, [0, 0])
+                ..frame_pass(world, &self.pipes.hit.resume, b, 1, [0, 0])
             });
         }
-        if half {
-            hit.push(frame_pass(&self.downsample, &downsample_bind, 3, lw));
+        if binds.half {
+            hit.push(frame_pass(
+                world,
+                self.pipes.pipeline(device, P_DOWNSAMPLE),
+                &binds.downsample_bind,
+                3,
+                lw,
+            ));
         }
-        let mut gradient: Vec<Dispatch<'_>> = Vec::new();
-        if gradient_on {
-            gradient.push(frame_pass(&self.gradient, &gradient_bind, 3, strata));
-        }
-        let mut atrous: Vec<Dispatch<'_>> = Vec::new();
-        if filtering {
-            atrous.push(frame_pass(&self.variance, &variance_bind, 2, lw));
-            atrous.extend(
-                atrous_binds
-                    .iter()
-                    .map(|b| frame_pass(&self.atrous, b, 2, lw)),
-            );
-        }
+        let [gradient, atrous] = self.filter_dispatches(device, binds, &p);
         p.lighting &= !LIGHTING_INDIRECT;
         let mut gather: Vec<Dispatch<'_>> = Vec::new();
         let mut probes: Vec<Dispatch<'_>> = Vec::new();
-        let mut updates = 0;
-        self.traced_probe_rays
-            .store(0, std::sync::atomic::Ordering::Relaxed);
-        self.probe_light_window
-            .store(light_window, std::sync::atomic::Ordering::Relaxed);
-        let probe_bind = volume.map(|volume| {
-            p.lighting |= LIGHTING_INDIRECT;
-            if probe_update {
-                let slices = if light_window {
-                    crate::probes::WINDOW_SLICES
-                } else {
-                    self.lighting.slices()
-                };
-                let origin = volume.origin_for(p.views[0].origin);
-                let touched: Vec<[i32; 3]> = boxes
-                    .iter()
-                    .flat_map(|&[min, max]| volume.touched(origin, min, max))
-                    .collect();
-                if probe_restart {
-                    let base = u64::from(volume.state_base()) * 4;
-                    encoder.clear_buffer(volume.data(), base, Some(volume.state_bytes()));
-                    volume.forget_reach();
-                }
-                let reach = self.lighting.lamp_reach;
-                let lamp = p.light_pos;
-                let moved = lamp_moved && self.lighting.lamp;
-                let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
-                    let q = volume.probe_position(w);
-                    let d2: f32 = (0..3).map(|k| (q[k] - lamp[k]).powi(2)).sum();
-                    reach <= 0.0 || d2 <= reach * reach
-                });
-                queue.write_buffer(volume.scratch(), 0, bytemuck::cast_slice(&list));
-                updates = list.len() as u32;
-            }
-            self.traced_probe_rays.store(
-                u64::from(updates) * u64::from(self.lighting.rays()),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            self.write_probe_uniform(queue, volume, &p, updates);
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("probes"),
-                layout: &self.probe_layout,
-                entries: &[
-                    buffer_entry(0, volume.data()),
-                    buffer_entry(1, volume.scratch()),
-                    buffer_entry(2, volume.uniform()),
-                ],
-            })
-        });
-        let gather_bind = probe_bind.is_some().then(|| {
-            bind_io(
-                device,
-                &self.gather_layout,
-                &[
-                    Res::Tex(t.lit_pos(c)),
-                    Res::Tex(t.lit_info(c)),
-                    Res::Tex(&t.indirect),
-                ],
-            )
-        });
+        let (probe_bind, gather_bind, updates) =
+            self.probe_binds(device, queue, encoder, uni, &mut p);
         if let (Some(b), Some(g)) = (&probe_bind, &gather_bind) {
             gather.push(Dispatch {
-                pipeline: &self.gather,
-                groups: [Some(&world_bind), None, Some(g), Some(b)],
+                pipeline: self.pipes.pipeline(device, P_GATHER),
+                groups: [Some(world), None, Some(g), Some(b)],
                 workgroups: lw,
                 indirect: None,
             });
             if updates > 0 {
-                probes.push(frame_pass(&self.probe_trace, b, 3, [updates, 1]));
-                probes.push(frame_pass(&self.probe_blend, b, 3, [updates, 1]));
+                probes.push(frame_pass(
+                    world,
+                    self.pipes.pipeline(device, P_PROBE_TRACE),
+                    b,
+                    3,
+                    [updates, 1],
+                ));
+                probes.push(frame_pass(
+                    world,
+                    self.pipes.pipeline(device, P_PROBE_BLEND),
+                    b,
+                    3,
+                    [updates, 1],
+                ));
             }
         }
-        self.probe_dispatches.store(
+        self.probe.dispatches.store(
             (gather.len() + probes.len()) as u32,
             std::sync::atomic::Ordering::Relaxed,
         );
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
-        let mut upscale: Vec<Dispatch<'_>> = Vec::new();
-        let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
-        if let (Some(u), Some(r)) = (&upscale_bind, &sharpen_bind) {
-            let out = self.output.map(|n| n.div_ceil(WORKGROUP));
-            upscale.push(frame_pass(&self.upscale, u, 2, out));
-            sharpen.push(frame_pass(&self.sharpen, r, 3, out));
-        }
+        queue.write_buffer(&self.state.params, 0, bytemuck::bytes_of(&p));
+        let [upscale, sharpen] = self.upscale_dispatches(device, binds);
         let fsr_passes = fsr_binds
             .as_ref()
-            .map(|(f, b)| b.passes(f, &world_bind))
+            .map(|(f, b)| b.passes(f, world))
             .unwrap_or_default();
+        let out = &binds.out;
         let passes = [
             hit,
             gradient,
-            vec![frame_pass(self.light_pipeline(device), &light_bind, 2, lw)],
             vec![frame_pass(
+                world,
+                self.light_pipeline(device),
+                &binds.light_bind,
+                2,
+                lw,
+            )],
+            vec![frame_pass(
+                world,
                 self.temporal_pipeline(device),
-                &temporal_bind,
+                &binds.temporal_bind,
                 2,
                 lw,
             )],
             atrous,
             probes,
             gather,
-            vec![frame_pass(composite, &composite_bind, 2, full)],
+            vec![frame_pass(
+                world,
+                out.composite,
+                &out.composite_bind,
+                2,
+                full,
+            )],
             upscale,
             sharpen,
         ]
         .into_iter()
         .chain(fsr_passes);
+        self.record_passes(device, queue, encoder, passes, &p, timer);
+    }
+
+    /// FSR 2's bind groups for the frame `p`, its inputs prepared and its exposure copied in;
+    /// `None` outside FSR mode.
+    fn fsr_frame(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        p: &Params,
+    ) -> Option<(&Fsr2, crate::fsr2::Fsr2Binds)> {
+        let t = &self.targets;
+        let c = self.cur;
+        let fsr_binds = self.up.fsr.as_ref().map(|f| {
+            (
+                f,
+                f.prepare(
+                    device,
+                    queue,
+                    p,
+                    &crate::fsr2::FrameInputs {
+                        hit_pos: &t.hit_pos[c],
+                        hit_info: &t.hit_info[c],
+                        layer: &t.layer,
+                        edits: &self.state.edits,
+                        lamp: &self.up.params,
+                        output: &t.output,
+                        blue_noise: &self.state.blue_noise,
+                        cur: c,
+                        dt: self.dt,
+                    },
+                ),
+            )
+        });
+        if let Some(f) = &self.up.fsr {
+            f.copy_exposure(
+                encoder,
+                self.exposure.state(),
+                matches!(self.state.lighting.exposure, Exposure::Auto(_)),
+                p.history & 2 == 0,
+            );
+        }
+        fsr_binds
+    }
+
+    /// The gradient pass's dispatch (in a shaded view for the gradient mode's lambda) and the
+    /// filter's (the variance pass and the a-trous iterations), each empty when it does not run.
+    fn filter_dispatches<'a>(
+        &'a self,
+        device: &wgpu::Device,
+        binds: &'a Binds<'_>,
+        p: &Params,
+    ) -> [Vec<Dispatch<'a>>; 2] {
+        let t = &self.targets;
+        let world = &binds.world_bind;
+        let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
+        let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
+        // The gradient pass runs in a shaded view for the gradient mode's lambda.
+        let gradient_on = self.state.look.view.shades() && p.lighting & LIGHTING_GRADIENT != 0;
+        let mut gradient: Vec<Dispatch<'_>> = Vec::new();
+        if gradient_on {
+            gradient.push(frame_pass(
+                world,
+                self.pipes.pipeline(device, P_GRADIENT),
+                &binds.out.gradient_bind,
+                3,
+                strata,
+            ));
+        }
+        let mut atrous: Vec<Dispatch<'_>> = Vec::new();
+        if binds.filtering {
+            atrous.push(frame_pass(
+                world,
+                self.pipes.pipeline(device, P_VARIANCE),
+                &binds.variance_bind,
+                2,
+                lw,
+            ));
+            atrous.extend(
+                binds
+                    .atrous_binds
+                    .iter()
+                    .map(|b| frame_pass(world, self.pipes.pipeline(device, P_ATROUS), b, 2, lw)),
+            );
+        }
+        [gradient, atrous]
+    }
+
+    /// The engine's own upscale and sharpen dispatches at the output size, empty without its
+    /// history (FSR mode or no upscaling).
+    fn upscale_dispatches<'a>(
+        &'a self,
+        device: &wgpu::Device,
+        binds: &'a Binds<'_>,
+    ) -> [Vec<Dispatch<'a>>; 2] {
+        let world = &binds.world_bind;
+        let mut upscale: Vec<Dispatch<'_>> = Vec::new();
+        let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
+        if let (Some(u), Some(r)) = (&binds.out.upscale_bind, &binds.out.sharpen_bind) {
+            let out = self.output.map(|n| n.div_ceil(WORKGROUP));
+            upscale.push(frame_pass(
+                world,
+                self.pipes.pipeline(device, P_UPSCALE),
+                u,
+                2,
+                out,
+            ));
+            sharpen.push(frame_pass(
+                world,
+                self.pipes.pipeline(device, P_SHARPEN),
+                r,
+                3,
+                out,
+            ));
+        }
+        [upscale, sharpen]
+    }
+
+    /// Records each pass of `passes` in [`FRAME_PASSES`] order (an empty one only under a
+    /// timer), the composite's capture after the composite, and the exposure pass last.
+    fn record_passes<'a>(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        passes: impl Iterator<Item = Vec<Dispatch<'a>>>,
+        p: &Params,
+        timer: Option<&PassTimer>,
+    ) {
+        let t = &self.targets;
         for (i, dispatches) in passes.enumerate() {
             // An empty slot is still recorded under a timer, so every timestamp pair is written.
             if dispatches.is_empty() && timer.is_none() {
@@ -751,7 +951,7 @@ impl Frame {
             }
             drop(pass);
             if FRAME_PASSES[i] == "composite"
-                && self.fsr.is_none()
+                && self.up.fsr.is_none()
                 && let Some(capture) = &self.composite_capture
             {
                 encoder.copy_texture_to_texture(
@@ -767,23 +967,109 @@ impl Frame {
             queue,
             encoder,
             &t.tiles,
-            &self.exposure_uniform(&p),
+            &self.exposure_uniform(p),
             timer
                 .filter(|t| t.passes() > exposure_pass)
                 .map(|t| t.writes_at(exposure_pass)),
         );
     }
 
+    /// The probe passes' bind groups (the volume's, and the gather's) when the channel runs,
+    /// with the update list and the probe uniform written, and the update list's length.
+    fn probe_binds(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        uni: &Uniforms<'_>,
+        p: &mut Params,
+    ) -> (Option<wgpu::BindGroup>, Option<wgpu::BindGroup>, u32) {
+        let t = &self.targets;
+        let c = self.cur;
+        let Uniforms {
+            volume,
+            probe_update,
+            probe_restart,
+            light_window,
+            lamp_moved,
+            ref boxes,
+            ..
+        } = *uni;
+        let mut updates = 0;
+        self.probe
+            .traced_rays
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.probe
+            .light_window
+            .store(light_window, std::sync::atomic::Ordering::Relaxed);
+        let probe_bind = volume.map(|volume| {
+            p.lighting |= LIGHTING_INDIRECT;
+            if probe_update {
+                let slices = if light_window {
+                    crate::probes::WINDOW_SLICES
+                } else {
+                    self.state.lighting.slices()
+                };
+                let origin = volume.origin_for(p.views[0].origin);
+                let touched: Vec<[i32; 3]> = boxes
+                    .iter()
+                    .flat_map(|&[min, max]| volume.touched(origin, min, max))
+                    .collect();
+                if probe_restart {
+                    let base = u64::from(volume.state_base()) * 4;
+                    encoder.clear_buffer(volume.data(), base, Some(volume.state_bytes()));
+                    volume.forget_reach();
+                }
+                let reach = self.state.lighting.lamp_reach;
+                let lamp = p.light_pos;
+                let moved = lamp_moved && self.state.lighting.lamp;
+                let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
+                    let q = volume.probe_position(w);
+                    let d2: f32 = (0..3).map(|k| (q[k] - lamp[k]).powi(2)).sum();
+                    reach <= 0.0 || d2 <= reach * reach
+                });
+                queue.write_buffer(volume.scratch(), 0, bytemuck::cast_slice(&list));
+                updates = list.len() as u32;
+            }
+            self.probe.traced_rays.store(
+                u64::from(updates) * u64::from(self.state.lighting.rays()),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            self.write_probe_uniform(queue, volume, p, updates);
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("probes"),
+                layout: &self.pipes.probe_layout,
+                entries: &[
+                    buffer_entry(0, volume.data()),
+                    buffer_entry(1, volume.scratch()),
+                    buffer_entry(2, volume.uniform()),
+                ],
+            })
+        });
+        let gather_bind = probe_bind.is_some().then(|| {
+            bind_io(
+                device,
+                self.pipes.layout(P_GATHER),
+                &[
+                    Res::Tex(t.lit_pos(c)),
+                    Res::Tex(t.lit_info(c)),
+                    Res::Tex(&t.indirect),
+                ],
+            )
+        });
+        (probe_bind, gather_bind, updates)
+    }
+
     /// The exposure pass's parameters for the frame `p`.
     pub(super) fn exposure_uniform(&self, p: &Params) -> ExposureUniform {
-        let metering = match self.lighting.exposure {
+        let metering = match self.state.lighting.exposure {
             Exposure::Auto(a) => a.metering,
             Exposure::Manual(_) => self.metering,
         };
         let (strength, sigma) = metering.params();
-        let meter = self.look.view.shades();
+        let meter = self.state.look.view.shades();
         let mut mode = if meter { EX_METER } else { 0 };
-        if let Exposure::Auto(_) = self.lighting.exposure {
+        if let Exposure::Auto(_) = self.state.lighting.exposure {
             mode |= EX_AUTO;
             if meter
                 && self
@@ -802,13 +1088,13 @@ impl Frame {
             view_count: p.view_count,
             mode,
             rects,
-            manual: self.lighting.manual_exposure(),
+            manual: self.state.lighting.manual_exposure(),
             strength,
             sigma,
             dt: self.dt,
             ..ExposureUniform::default()
         };
-        if let Exposure::Auto(a) = &self.lighting.exposure {
+        if let Exposure::Auto(a) = &self.state.lighting.exposure {
             u.set_auto(a);
         }
         u
@@ -838,7 +1124,7 @@ impl Frame {
         params: &Params,
     ) {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        self.encode_with(device, queue, &mut enc, world, params, None, false);
+        self.encode_with(device, queue, &mut enc, world, params, None, Keep::Alone);
         queue.submit([enc.finish()]);
     }
 }

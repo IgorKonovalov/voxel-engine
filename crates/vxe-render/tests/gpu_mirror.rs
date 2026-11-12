@@ -1144,6 +1144,10 @@ fn the_mirror_never_reads_the_backend_or_vendor() {
         ("frame/marcher.rs", include_str!("../src/frame/marcher.rs")),
         ("frame/mod.rs", include_str!("../src/frame/mod.rs")),
         (
+            "frame/pipelines.rs",
+            include_str!("../src/frame/pipelines.rs"),
+        ),
+        (
             "frame/probe_channel.rs",
             include_str!("../src/frame/probe_channel.rs"),
         ),

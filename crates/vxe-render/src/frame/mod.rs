@@ -21,6 +21,7 @@ use vxe_world::ChunkCoord;
 mod baked;
 mod encode;
 mod marcher;
+mod pipelines;
 mod probe_channel;
 mod readback_ring;
 mod settings;
@@ -32,6 +33,8 @@ mod upscale;
 use self::baked::*;
 pub use self::encode::*;
 pub use self::marcher::*;
+pub(crate) use self::pipelines::*;
+use self::probe_channel::*;
 use self::readback_ring::*;
 pub use self::settings::*;
 pub(crate) use self::state::*;
@@ -48,103 +51,16 @@ pub use self::upscale::*;
 /// frames are encoded with `encode` and advanced; [`Frame::render`] draws one frame alone,
 /// with no history.
 pub struct Frame {
-    world_layout: wgpu::BindGroupLayout,
-    hit: Marcher,
-    light_layout: wgpu::BindGroupLayout,
-    /// The light pass alone, built on first use (`light_layout` in group 2).
-    light: std::sync::OnceLock<wgpu::ComputePipeline>,
-    temporal_layout: wgpu::BindGroupLayout,
-    /// The store (minimal until the first bake or live queue, [`Lighting::bake_pool_bytes`]) and
-    /// the bake's pipeline, built on the first bake.
-    store: crate::bake::Store,
-    bake: Option<crate::bake::BakePipeline>,
-    /// The edit boxes since the last dig re-bake ([`Frame::rebake_digs`]), every one, while the
-    /// store holds a piece.
-    dig_boxes: Vec<[[i32; 3]; 2]>,
-    /// The live queue ([`Frame::start_bake_queue`]), when the store fills a frame at a time.
-    bake_queue: Option<crate::bake::BakeQueue>,
-    /// The live queue's world group and the buffers it binds ([`Frame::queue_world_bind`]).
-    queue_world_bind: Option<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
-    /// The temporal pass, its `COUNT_STORE` off: it writes no counter.
-    temporal: wgpu::ComputePipeline,
-    /// The temporal pass with `COUNT_STORE` on, built on the first encode that counts
-    /// ([`Frame::set_count_store`]).
-    temporal_counting: std::sync::OnceLock<wgpu::ComputePipeline>,
-    /// Whether the temporal pass counts the store's reads ([`Frame::set_count_store`]).
-    count_store: bool,
-    /// The store's five read counters (`counters` in `temporal.wgsl`): missing, brick reads,
-    /// coarse reads, fallback, still black.
-    store_counters: wgpu::Buffer,
-    gradient_layout: wgpu::BindGroupLayout,
-    gradient: wgpu::ComputePipeline,
-    variance_layout: wgpu::BindGroupLayout,
-    variance: wgpu::ComputePipeline,
-    atrous_layout: wgpu::BindGroupLayout,
-    atrous: wgpu::ComputePipeline,
-    /// The a-trous iterations' strides, one uniform each.
-    steps: [wgpu::Buffer; ATROUS_ITERATIONS],
-    composite_layout: wgpu::BindGroupLayout,
-    composite: wgpu::ComputePipeline,
-    params: wgpu::Buffer,
-    edits: wgpu::Buffer,
+    device: wgpu::Device,
+    pipes: Pipelines,
+    state: FrameState,
+    up: UpscaleState,
+    baked: BakeLink,
+    probe: ProbeChannel,
     targets: Targets,
-    lod: LodParams,
-    look: LookParams,
-    /// Whether the field look takes the split walk ([`FLAG_FIELD_SPLIT`]); on by default.
-    field_split: bool,
-    lighting: Lighting,
-    /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
-    /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
-    /// rays sample.
-    emission_scale: wgpu::Buffer,
-    emission_cpu: Vec<f32>,
-    /// The blue-noise texture, uploaded by the first `encode`.
-    blue_noise: wgpu::Texture,
-    blue_noise_written: std::sync::atomic::AtomicBool,
-    /// The frame index the random numbers are seeded with.
-    frame: u32,
-    /// The frame index of the last emission-scale change.
-    emission_changed_at: Option<u32>,
-    /// Whether the last encode ran the probe update (the lamp channel).
-    probe_channel_ran: std::sync::atomic::AtomicBool,
-    /// The probe trace, blend and gather dispatches the last encode recorded.
-    probe_dispatches: std::sync::atomic::AtomicU32,
     /// The copy of the double-buffered targets the next `encode` writes.
     cur: usize,
     resolution: LightingResolution,
-    downsample_layout: wgpu::BindGroupLayout,
-    downsample: wgpu::ComputePipeline,
-    upscale_layout: wgpu::BindGroupLayout,
-    upscale: wgpu::ComputePipeline,
-    sharpen_layout: wgpu::BindGroupLayout,
-    sharpen: wgpu::ComputePipeline,
-    /// The sharpening pass's `con` (`Sharpen` in `sharpen.wgsl`).
-    sharpen_params: wgpu::Buffer,
-    sharpness: f32,
-    /// The upscale pass's tuning (`UpTuning` in `upscale.wgsl`).
-    upscale_params: wgpu::Buffer,
-    upscaler: Upscaler,
-    history: std::sync::Mutex<History>,
-    /// The probe volume, built on first use (an encode with the lamp channel running,
-    /// [`Frame::probes`] or [`Frame::probes_mut`]), at `probe_spacing`; its passes' group-3
-    /// layout; the gather's group-2 layout. The device builds the volume.
-    probes: std::sync::OnceLock<ProbeVolume>,
-    probe_spacing: u32,
-    /// The probe volume's side, if fixed ([`Frame::set_probe_axis`]).
-    probe_axis_fixed: Option<u32>,
-    device: wgpu::Device,
-    probe_layout: wgpu::BindGroupLayout,
-    gather_layout: wgpu::BindGroupLayout,
-    gather: wgpu::ComputePipeline,
-    /// The probe update's two dispatches (`probe_update.wgsl`).
-    probe_trace: wgpu::ComputePipeline,
-    probe_blend: wgpu::ComputePipeline,
-    /// Probe rays the last encode dispatched: update-list entries times rays per probe.
-    traced_probe_rays: std::sync::atomic::AtomicU64,
-    /// Whether the last encode's probe update blended inside a light-change window.
-    probe_light_window: std::sync::atomic::AtomicBool,
-    /// Whether the last encode with history set [`LIGHTING_LAMP_CHANGED`].
-    lamp_changed: std::sync::atomic::AtomicBool,
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
     output: [u32; 2],
@@ -155,17 +71,6 @@ pub struct Frame {
     dt: f32,
     /// The next encode's exposure pass jumps the adapted level to the meter.
     reset_exposure: std::sync::atomic::AtomicBool,
-    /// Blocking reads of the store's counters ([`Frame::read_store_stats`]) so far.
-    store_blocking_reads: std::sync::atomic::AtomicU64,
-    /// The store's counters, copied out by [`Frame::copy_store_stats`].
-    store_ring: ReadbackRing,
-    /// The views' rays are jittered by [`jitter_at`] of the frame index.
-    jitter: bool,
-    /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
-    /// that stores linear radiance (`HDR_TARGET` in composite.wgsl), built with it.
-    kind: UpscalerKind,
-    fsr: Option<Fsr2>,
-    composite_hdr: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
     /// A copy of the composite's image at the internal size, taken right after the composite
     /// pass ([`Frame::set_composite_capture`]); `None` unless a test or tool asked for it.
     composite_capture: Option<wgpu::Texture>,
@@ -180,394 +85,29 @@ impl Frame {
     /// A frame rendering at `internal` pixels for an image presented at `output` pixels.
     pub fn with_sizes(device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) -> Self {
         let [width, height] = internal;
-        let storage = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let world_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("world"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                storage(1),
-                storage(2),
-                storage(3),
-                storage(4),
-                storage(7),
-                storage(8),
-                storage(9),
-                storage(10),
-                storage(11),
-                sampled_texture(12, FLOAT),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let hit = Marcher::new(device, &world_layout);
-        let f16 = Io::Store(wgpu::TextureFormat::Rgba16Float);
-        let pass = |label: &str, source: &str, entry: &str, io: &[Io]| {
-            let layout = io_layout(device, label, io);
-            let pipeline = compute_pipeline(
-                device,
-                label,
-                format!("{MARCH_WGSL}\n{source}"),
-                &[Some(&world_layout), None, Some(&layout)],
-                entry,
-            );
-            (layout, pipeline)
-        };
-        // The light pass's pipeline (`shade`) is built on the first encode that runs it.
-        let light_layout = io_layout(device, "light", &[Io::Float, Io::Uint, f16]);
-        let targets = Targets::new(
-            device,
-            width,
-            height,
-            LightingResolution::default().scale(),
-            (internal != output).then_some(output),
-            true,
-        );
-        let (temporal_layout, temporal) = pass(
-            "temporal",
-            TEMPORAL_WGSL,
-            "temporal",
-            &[
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                Io::Float,
-                Io::Float,
-                f16,
-                f16,
-                Io::Uniform,
-                Io::Float,
-                Io::ReadStorage,
-                Io::Storage,
-            ],
-        );
-        let store_counters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("store counters"),
-            size: STORE_STATS_BYTES,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let gradient_layout = io_layout(device, "gradient", &[Io::Float, Io::Uint, Io::Float, f16]);
-        let gradient = compute_pipeline(
-            device,
-            "gradient",
-            format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{GRADIENT_WGSL}"),
-            &[Some(&world_layout), None, None, Some(&gradient_layout)],
-            "gradient",
-        );
-        let downsample_layout = io_layout(
-            device,
-            "downsample",
-            &[
-                Io::Float,
-                Io::Uint,
-                Io::Store(wgpu::TextureFormat::Rgba32Float),
-                Io::Store(wgpu::TextureFormat::Rgba16Uint),
-            ],
-        );
-        let downsample = compute_pipeline(
-            device,
-            "downsample",
-            format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}"),
-            &[Some(&world_layout), None, None, Some(&downsample_layout)],
-            "downsample",
-        );
-        let (variance_layout, variance) = pass(
-            "variance",
-            ATROUS_WGSL,
-            "variance",
-            &[Io::Float, Io::Uint, Io::Float, Io::Float, f16],
-        );
-        let atrous_layout = io_layout_at(
-            device,
-            "atrous",
-            &[
-                (0, Io::Float),
-                (1, Io::Uint),
-                (2, Io::Float),
-                (5, f16),
-                (6, Io::Uniform),
-                (7, Io::Float),
-                (8, Io::Float),
-            ],
-        );
-        let atrous = compute_pipeline(
-            device,
-            "atrous",
-            format!("{MARCH_WGSL}\n{ATROUS_WGSL}"),
-            &[Some(&world_layout), None, Some(&atrous_layout)],
-            "atrous",
-        );
-        let steps = [0usize, 1, 2, 3].map(|i| {
-            wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("atrous step"),
-                    contents: bytemuck::cast_slice(&[
-                        1u32 << i,
-                        u32::from(i + 1 == ATROUS_ITERATIONS),
-                        0,
-                        0,
-                    ]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            )
-        });
-        let (upscale_layout, upscale) = pass(
-            "upscale",
-            UPSCALE_WGSL,
-            "upscale",
-            &[
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                f16,
-                Io::Uniform,
-                Io::Uniform,
-            ],
-        );
-        let sharpen_layout = io_layout(
-            device,
-            "sharpen",
-            &[
-                Io::Float,
-                Io::Store(wgpu::TextureFormat::Rgba8Unorm),
-                Io::Uniform,
-            ],
-        );
-        let sharpen = compute_pipeline(
-            device,
-            "sharpen",
-            format!("{MARCH_WGSL}\n{SHARPEN_WGSL}"),
-            &[Some(&world_layout), None, None, Some(&sharpen_layout)],
-            "sharpen_main",
-        );
-        let (composite_layout, composite) = pass(
-            "composite",
-            COMPOSITE_WGSL,
-            "composite",
-            &[
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                Io::Float,
-                Io::Store(wgpu::TextureFormat::Rgba8Unorm),
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                Io::Storage,
-                Io::Uint,
-            ],
-        );
-        let probe_storage = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let probe_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("probes"),
-            entries: &[
-                probe_storage(0),
-                probe_storage(1),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let gather_layout = io_layout(device, "gather", &[Io::Float, Io::Uint, f16]);
-        let gather = compute_pipeline(
-            device,
-            "gather",
-            format!("{MARCH_WGSL}\n{PROBE_GATHER_WGSL}"),
-            &[
-                Some(&world_layout),
-                None,
-                Some(&gather_layout),
-                Some(&probe_layout),
-            ],
-            "gather",
-        );
-        let update_source =
-            format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{PROBE_GATHER_WGSL}\n{PROBE_UPDATE_WGSL}");
-        let probe_pass = |entry: &str| {
-            compute_pipeline(
-                device,
-                entry,
-                update_source.clone(),
-                &[Some(&world_layout), None, None, Some(&probe_layout)],
-                entry,
-            )
-        };
-        let probe_trace = probe_pass("probe_trace");
-        let probe_blend = probe_pass("probe_blend");
-        let params = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("frame params"),
-            size: size_of::<Params>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let edits = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("edit boxes"),
-            size: size_of::<EditsUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         Self {
-            world_layout,
-            hit,
-            light_layout,
-            light: std::sync::OnceLock::new(),
-            temporal_layout,
-            store: crate::bake::Store::new(device, crate::bake::MINIMAL_POOL_BYTES),
-            bake: None,
-            dig_boxes: Vec::new(),
-            bake_queue: None,
-            queue_world_bind: None,
-            temporal,
-            temporal_counting: std::sync::OnceLock::new(),
-            count_store: false,
-            store_counters,
-            gradient_layout,
-            gradient,
-            variance_layout,
-            variance,
-            atrous_layout,
-            atrous,
-            steps,
-            composite_layout,
-            composite,
-            params,
-            edits,
-            targets,
-            resolution: LightingResolution::default(),
-            lod: LodParams::default(),
-            look: LookParams::default(),
-            field_split: true,
-            lighting: Lighting::default(),
-            emission_scale: wgpu::util::DeviceExt::create_buffer_init(
+            pipes: Pipelines::new(device),
+            targets: Targets::new(
                 device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("emission scale"),
-                    contents: bytemuck::cast_slice(&vec![1.0f32; 2 * EMISSION_ROWS]),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                },
+                width,
+                height,
+                LightingResolution::default().scale(),
+                (internal != output).then_some(output),
+                true,
             ),
-            emission_cpu: vec![1.0; 2 * EMISSION_ROWS],
-            blue_noise: device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("blue noise"),
-                size: wgpu::Extent3d {
-                    width: 128,
-                    height: 128,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            }),
-            blue_noise_written: std::sync::atomic::AtomicBool::new(false),
-            frame: 0,
-            emission_changed_at: None,
-            probe_channel_ran: std::sync::atomic::AtomicBool::new(false),
-            probe_dispatches: std::sync::atomic::AtomicU32::new(0),
+            baked: BakeLink::new(device),
+            state: FrameState::new(device),
+            up: UpscaleState::new(device),
+            probe: ProbeChannel::new(),
             cur: 0,
-            downsample_layout,
-            downsample,
-            upscale_layout,
-            upscale,
-            sharpen_layout,
-            sharpen,
-            sharpen_params: wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("sharpen"),
-                    contents: bytemuck::cast_slice(&[0.0f32; 4]),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                },
-            ),
-            sharpness: 0.0,
-            upscale_params: wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("upscale tuning"),
-                    contents: bytemuck::bytes_of(
-                        &Upscaler::default().uniform(1.0, Lamp::default()),
-                    ),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                },
-            ),
-            upscaler: Upscaler::default(),
-            history: std::sync::Mutex::new(History::default()),
+            resolution: LightingResolution::default(),
             output,
-            jitter: false,
-            kind: UpscalerKind::Off,
-            fsr: None,
-            composite_hdr: None,
-            composite_capture: None,
-            probes: std::sync::OnceLock::new(),
-            probe_spacing: DEFAULT_PROBE_SPACING,
-            probe_axis_fixed: None,
             device: device.clone(),
-            probe_layout,
-            gather_layout,
-            gather,
-            probe_trace,
-            probe_blend,
-            traced_probe_rays: std::sync::atomic::AtomicU64::new(0),
-            probe_light_window: std::sync::atomic::AtomicBool::new(false),
-            lamp_changed: std::sync::atomic::AtomicBool::new(false),
             exposure: ExposurePass::new(device),
             metering: Metering::default(),
             dt: 1.0 / 60.0,
             reset_exposure: std::sync::atomic::AtomicBool::new(true),
-            store_blocking_reads: std::sync::atomic::AtomicU64::new(0),
-            store_ring: ReadbackRing::new(device, "store stats readback", STORE_STATS_BYTES),
+            composite_capture: None,
         }
     }
 
@@ -628,7 +168,9 @@ impl Frame {
     /// ([`LIGHTING_LAMP_CHANGED`]): the lamp's switch, its parameters or its shadow walk
     /// differ from the encode before.
     pub fn lamp_changed(&self) -> bool {
-        self.lamp_changed.load(std::sync::atomic::Ordering::Relaxed)
+        self.state
+            .lamp_changed
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The size the hit pass and the lighting passes render at.
@@ -648,15 +190,16 @@ impl Frame {
 
     /// The frame index the next `params` seeds its random numbers with.
     pub fn frame_index(&self) -> u32 {
-        self.frame
+        self.state.frame
     }
 
     pub fn set_frame_index(&mut self, frame: u32) {
-        self.frame = frame;
+        self.state.frame = frame;
     }
 
     fn history(&mut self) -> &mut History {
-        self.history
+        self.state
+            .history
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -665,7 +208,7 @@ impl Frame {
     /// the previous frame's, and the double-buffered targets swap. Call once per frame, after
     /// [`Frame::encode`].
     pub fn advance(&mut self) {
-        self.frame = self.frame.wrapping_add(1);
+        self.state.frame = self.state.frame.wrapping_add(1);
         let h = self.history();
         h.prev_views = h.last_views;
         h.prev_offset = h.last_offset;
@@ -683,10 +226,10 @@ impl Frame {
     /// A store holding a piece also keeps the box for [`Frame::rebake_digs`]; under the live
     /// queue the box goes to the queue instead, which re-bakes its rings over its slices.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
-        if self.store.piece().is_some() && self.bake_queue.is_none() {
-            self.dig_boxes.push([min, max]);
+        if self.baked.store.piece().is_some() && self.baked.queue.is_none() {
+            self.baked.dig_boxes.push([min, max]);
         }
-        if let Some(q) = self.bake_queue.as_mut() {
+        if let Some(q) = self.baked.queue.as_mut() {
             q.invalidate(min, max);
         }
         let h = self.history();
@@ -740,13 +283,13 @@ impl Frame {
     ) {
         let i = usize::from(material);
         for (row, scale) in [(i, pixels), (EMISSION_ROWS + i, probes)] {
-            if self.emission_cpu[row] != scale {
-                self.emission_cpu[row] = scale;
+            if self.state.emission_cpu[row] != scale {
+                self.state.emission_cpu[row] = scale;
                 if row == i {
-                    self.emission_changed_at = Some(self.frame);
+                    self.state.emission_changed_at = Some(self.state.frame);
                 }
                 queue.write_buffer(
-                    &self.emission_scale,
+                    &self.state.emission_scale,
                     row as u64 * 4,
                     bytemuck::bytes_of(&scale),
                 );
@@ -756,40 +299,40 @@ impl Frame {
 
     /// Material `material`'s emission scale in the pixels' light.
     pub fn emission_scale(&self, material: u16) -> f32 {
-        self.emission_cpu[usize::from(material)]
+        self.state.emission_cpu[usize::from(material)]
     }
 
     /// Material `material`'s emission scale in the probe rays' light.
     pub fn probe_emission_scale(&self, material: u16) -> f32 {
-        self.emission_cpu[EMISSION_ROWS + usize::from(material)]
+        self.state.emission_cpu[EMISSION_ROWS + usize::from(material)]
     }
 
     /// The emission-scale buffer: an `f32` per material id for the pixels' light, then one
     /// per material id for the probe rays' (see [`Frame::set_emission_scales`]).
     pub fn emission_scales(&self) -> &wgpu::Buffer {
-        &self.emission_scale
+        &self.state.emission_scale
     }
 
     /// Sets how LOD-only chunks pick their mip level.
     pub fn set_lod(&mut self, lod: LodParams) {
-        self.lod = lod;
+        self.state.lod = lod;
     }
 
     pub fn lod(&self) -> LodParams {
-        self.lod
+        self.state.lod
     }
 
     /// Sets the surface look: normal mode and view. A change of view drops the
     /// upscaler's history (not the lighting's).
     pub fn set_look(&mut self, look: LookParams) {
-        if look.view != self.look.view {
+        if look.view != self.state.look.view {
             self.history().view_changed = true;
         }
-        self.look = look;
+        self.state.look = look;
     }
 
     pub fn look(&self) -> LookParams {
-        self.look
+        self.state.look
     }
 
     /// Whether the field look walks split ([`FLAG_FIELD_SPLIT`], the default): the cube
@@ -798,19 +341,19 @@ impl Frame {
     /// gives the same hit records; the split walks only when the world's table holds a crisp
     /// row ([`GpuWorld::crisp_rows`]), outside the cracks and steps views.
     pub fn set_field_split(&mut self, on: bool) {
-        self.field_split = on;
+        self.state.field_split = on;
     }
 
     /// Sets the lighting knobs; a change of [`Lighting::bake_pool_bytes`] rebuilds an allocated
     /// store empty.
     pub fn set_lighting(&mut self, lighting: Lighting) {
-        self.lighting = lighting;
+        self.state.lighting = lighting;
         self.fit_store(false);
         self.rebuild_probes();
     }
 
     pub fn lighting(&self) -> Lighting {
-        self.lighting
+        self.state.lighting
     }
 
     /// The frame's `rgba8unorm` image: the composite's output, or with the upscaler (see
@@ -889,11 +432,11 @@ impl Frame {
     /// pool (once allocated) occupy.
     pub fn frame_bytes(&self) -> u64 {
         self.targets.bytes()
-            + self.probes.get().map_or(0, ProbeVolume::bytes)
+            + self.probe.volume.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
-            + self.fsr.as_ref().map_or(0, Fsr2::bytes)
-            + if self.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
-                self.store.pool().size()
+            + self.up.fsr.as_ref().map_or(0, Fsr2::bytes)
+            + if self.baked.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
+                self.baked.store.pool().size()
             } else {
                 0
             }
@@ -909,8 +452,8 @@ impl Frame {
     /// `output` pixels and drops the history; the pipelines are kept.
     pub fn set_sizes(&mut self, device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) {
         self.output = output;
-        let fsr = self.fsr.is_some();
-        let upscaled = (fsr || self.jitter || internal != output).then_some(output);
+        let fsr = self.up.fsr.is_some();
+        let upscaled = (fsr || self.up.jitter || internal != output).then_some(output);
         self.targets = Targets::new(
             device,
             internal[0],
@@ -919,7 +462,7 @@ impl Frame {
             upscaled,
             !fsr,
         );
-        if let Some(f) = self.fsr.as_mut() {
+        if let Some(f) = self.up.fsr.as_mut() {
             f.resize(device, internal, output);
         }
         if self.composite_capture.is_some() {

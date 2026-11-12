@@ -145,3 +145,102 @@ pub(super) const BLUE_NOISE: &[u8; 128 * 128] = include_bytes!("../../assets/blu
 
 /// Material ids the emission-scale buffer covers: every `u16`.
 pub(super) const EMISSION_ROWS: usize = 1 << 16;
+
+/// What the frame's uniforms are built from: the parameter and edit-box buffers, the a-trous
+/// strides, the LOD, the look, the lighting, the emission scales, the blue noise, the frame
+/// index and the history the next encode reads.
+pub(super) struct FrameState {
+    pub(super) params: wgpu::Buffer,
+    pub(super) edits: wgpu::Buffer,
+    /// The a-trous iterations' strides, one uniform each.
+    pub(super) atrous_steps: [wgpu::Buffer; ATROUS_ITERATIONS],
+    pub(super) lod: LodParams,
+    pub(super) look: LookParams,
+    /// Whether the field look takes the split walk ([`FLAG_FIELD_SPLIT`]); on by default.
+    pub(super) field_split: bool,
+    pub(super) lighting: Lighting,
+    /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
+    /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
+    /// rays sample.
+    pub(super) emission_scale: wgpu::Buffer,
+    pub(super) emission_cpu: Vec<f32>,
+    /// The blue-noise texture, uploaded by the first `encode`.
+    pub(super) blue_noise: wgpu::Texture,
+    pub(super) blue_noise_written: std::sync::atomic::AtomicBool,
+    /// The frame index the random numbers are seeded with.
+    pub(super) frame: u32,
+    /// The frame index of the last emission-scale change.
+    pub(super) emission_changed_at: Option<u32>,
+    pub(super) history: std::sync::Mutex<History>,
+    /// Whether the last encode with history set [`LIGHTING_LAMP_CHANGED`].
+    pub(super) lamp_changed: std::sync::atomic::AtomicBool,
+}
+
+impl FrameState {
+    pub(super) fn new(device: &wgpu::Device) -> Self {
+        let atrous_steps = [0usize, 1, 2, 3].map(|i| {
+            wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("atrous step"),
+                    contents: bytemuck::cast_slice(&[
+                        1u32 << i,
+                        u32::from(i + 1 == ATROUS_ITERATIONS),
+                        0,
+                        0,
+                    ]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                },
+            )
+        });
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame params"),
+            size: size_of::<Params>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let edits = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("edit boxes"),
+            size: size_of::<EditsUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            params,
+            edits,
+            atrous_steps,
+            lod: LodParams::default(),
+            look: LookParams::default(),
+            field_split: true,
+            lighting: Lighting::default(),
+            emission_scale: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("emission scale"),
+                    contents: bytemuck::cast_slice(&vec![1.0f32; 2 * EMISSION_ROWS]),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            emission_cpu: vec![1.0; 2 * EMISSION_ROWS],
+            blue_noise: device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("blue noise"),
+                size: wgpu::Extent3d {
+                    width: 128,
+                    height: 128,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            }),
+            blue_noise_written: std::sync::atomic::AtomicBool::new(false),
+            frame: 0,
+            emission_changed_at: None,
+            history: std::sync::Mutex::new(History::default()),
+            lamp_changed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
