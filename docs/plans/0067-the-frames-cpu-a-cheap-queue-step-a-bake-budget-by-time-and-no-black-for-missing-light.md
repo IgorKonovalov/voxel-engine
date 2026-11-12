@@ -1077,7 +1077,7 @@ one in Phase 6.
 | 2b: the queue does not starve in a flight | dev | readings in the log: every `off` run B with 0 starved openings, `2` falls into A; rig (a) under `off` coarse 0 at 135 s; listing cut 0.24 ms off `list` | 04a7e6b (`wip`) |
 | 3: the bake budget per second | dev | **done** (owner, 2026-11-12): the Radeon's frame CPU and the RTX's `frame:1.5` bars met; the cross-adapter ms a second is a reading (RTX 91 against Radeon 148 ms a wall second under `second:150,0.25`, the RTX's submits about 5.3 ms of an about 8 ms slice); its cause is Phase 7 followup F2 | c19098f (`wip`) |
 | 4: no black for missing light | dev | **done** (exploration: built behind `--missing-light` and key `7`, named in the banner; the owner's window judges it): readings in the log, the summaries stage about 0.95 ms p50 under a fallback mode on the RTX's rig (b) | edcb9e0 (`wip`) |
-| 5: far light beyond the bake radius | dev | reinstated by the streamed at-rest reading (reach-bound 3044 of 3641 in view waiting, 0.84); built before Phase 6 (owner, 2026-11-12) | |
+| 5: far light beyond the bake radius | dev | **done** (exploration: built behind `--reach full\|partial` and key `8`, named in the banner, the HUD and the step line); `a_partial_reach_chunk_bakes_and_is_rebaked_when_its_reach_arrives` passes; rig (a): in-view waiting not 0 at 60 s (421, coarse refinements; bounded, the mode cannot act), the log says what waits; readings in the log: at rest partial bakes 11 658 reach-bound chunks (none on screen from the start pose), in flight it re-queues every partial chunk, no share better than chain | 6c124ce, 2f3450f (`wip`) |
 | 6: the owner's window | human | not started | |
 | 7: the bars and the close's readings | dev | not started | |
 
