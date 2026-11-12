@@ -57,7 +57,7 @@ struct InEdits {
 
 @group(2) @binding(4) var<uniform> in_edits: InEdits;
 
-// upscale.wgsl's `UpTuning`, field for field (`UpscaleUniform` in marcher.rs).
+// upscale.wgsl's `UpTuning`, field for field (`UpscaleUniform` in frame/upscale.rs).
 struct InLamp {
     width: f32,
     alpha: f32,

@@ -7,7 +7,7 @@
 //! image atomics, core storage formats (each of AMD's 16- and 8-bit formats widened to one at
 //! least as precise), and four-tap loads for AMD's bilinear samples.
 
-use crate::marcher::{Dispatch, Params, Upscaler, WORKGROUP};
+use crate::frame::{Dispatch, Params, Upscaler, WORKGROUP};
 
 /// The parts of FSR 2 every FSR pass is compiled after; carries AMD's notice.
 pub(crate) const FSR2_COMMON_WGSL: &str = include_str!("shaders/fsr2/common.wgsl");
@@ -134,7 +134,7 @@ pub fn jitter_phases(render_width: u32, display_width: u32) -> u32 {
 /// of render pixel `p` lies at `p + 0.5 - offset` in the same y-down pixel space our rays use,
 /// so a view's [`crate::View::jitter`] is the offset negated on both axes.
 pub fn jitter_offset(index: u32, phases: u32) -> [f32; 2] {
-    crate::marcher::jitter_at(index, phases)
+    crate::frame::jitter_at(index, phases)
 }
 
 /// `cbFSR2` of AMD's passes plus the luminance pyramid's and RCAS's constants:
@@ -989,8 +989,8 @@ impl Fsr2 {
             // FsrRcasCon of `-2 sharpness + 2` stops.
             rcas_con: (-(2.0 - 2.0 * self.settings.sharpness.clamp(0.0, 1.0))).exp2(),
             debug: u32::from(self.debug),
-            tone: u32::from(params.lighting & crate::marcher::LIGHTING_IDENTITY_TONE_MAP != 0)
-                | u32::from((params.flags >> crate::marcher::VIEW_SHIFT) & 7 == 0) << 1
+            tone: u32::from(params.lighting & crate::frame::LIGHTING_IDENTITY_TONE_MAP != 0)
+                | u32::from((params.flags >> crate::frame::VIEW_SHIFT) & 7 == 0) << 1
                 | u32::from(params.dither != 0) << 2,
         };
         *prev = pre_exposure;

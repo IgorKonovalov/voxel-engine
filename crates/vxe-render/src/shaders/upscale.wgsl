@@ -16,7 +16,7 @@
 //                                        history)
 //   7  uniform           up_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
 //   8  uniform           up_tuning       the kernel width, blend weights, clip and light
-//                                        change tuning (`Upscaler` in marcher.rs)
+//                                        change tuning (`Upscaler` in frame/upscale.rs)
 //
 // Coordinates: internal pixel `i` spans `[i, i + 1)` and this frame's sample of it lies at
 // `i + 0.5 + jitter`; output pixel `o`'s centre is at internal `(o + 0.5) size / output_size`.
@@ -56,7 +56,7 @@ struct UpEdits {
 
 @group(2) @binding(7) var<uniform> up_edits: UpEdits;
 
-// `UpscaleUniform` in marcher.rs.
+// `UpscaleUniform` in frame/upscale.rs.
 struct UpTuning {
     // The kernel `exp(-2.29 (d / width)^2)`, `d` the sample's distance from the output
     // pixel's centre in output pixels.

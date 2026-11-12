@@ -86,7 +86,7 @@ pub const WARP_COS: f32 = 0.9;
 pub const DIG_RADIUS: i64 = 10;
 /// The far dig's distance from the eye, in voxels: down the passage.
 pub const DIG_FAR: u32 = 100;
-/// `marcher.rs`'s `HALF_OFFSET`: the internal pixel of each 2 x 2 the half-resolution
+/// `frame/settings.rs`'s `HALF_OFFSET`: the internal pixel of each 2 x 2 the half-resolution
 /// lighting grid samples.
 const HALF_OFFSET: [u32; 2] = [0, 1];
 

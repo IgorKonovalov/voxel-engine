@@ -35,7 +35,7 @@ struct Pass {
 
 /// Every compute pass, each source concatenated exactly as the renderer does it. The list
 /// mirrors `FieldPass::new` in `field.rs` and `Marcher::new` and `Frame::with_sizes` in
-/// `marcher.rs`; a pass added there belongs here too.
+/// `frame/`; a pass added there belongs here too.
 fn passes() -> Vec<Pass> {
     let after_march = |rest: &[&str]| {
         let mut s = MARCH_WGSL.to_owned();

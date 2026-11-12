@@ -251,7 +251,7 @@ struct SplitArgs {
 };
 @group(1) @binding(3) var<storage, read_write> split_list: SplitList;
 @group(1) @binding(4) var<storage, read_write> split_args: SplitArgs;
-// `field_resume`'s workgroup size (marcher.rs: SPLIT_GROUP).
+// `field_resume`'s workgroup size (frame/settings.rs: SPLIT_GROUP).
 const SPLIT_GROUP: u32 = 128u;
 // A `march` miss's material when the split walk hands the ray on.
 const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
@@ -2442,7 +2442,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // walks as `march` walks, every solid voxel a cube hit recorded as `field_pixel` records one
 // (its entry face's normal, the voxel's material, no translucent walk), until it enters a field
 // brick; there it is appended to `split_list` and its record is left to `field_resume`. The
-// cracks and steps views do not split (marcher.rs).
+// cracks and steps views do not split (frame/encode.rs).
 fn split_pixel(gid: vec2<u32>) {
     if (all(gid == vec2<u32>(0u))) {
         split_args.y = 1u;

@@ -60,7 +60,7 @@ pub struct BakeSettings {
     pub filter: Option<FaceFilter>,
     /// Times each submit's dispatch on the GPU into [`BakeReport::dispatch_seconds`] (a reading's
     /// cost rows).
-    pub timer: Option<Arc<crate::marcher::PassTimer>>,
+    pub timer: Option<Arc<crate::frame::PassTimer>>,
     /// The brick records' cell in voxels: 8 (the brick) or 4.
     pub cell: u32,
     /// Samples a brick direction draws, spread over its faces (at least one a face).

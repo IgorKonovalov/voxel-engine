@@ -61,7 +61,7 @@ fn crack_colour(found: bool, shaded: vec3<f32>, layer: vec4<f32>) -> vec3<f32> {
 @group(2) @binding(3) var irradiance_in: texture_2d<f32>;
 @group(2) @binding(4) var target_tex: texture_storage_2d<rgba8unorm, write>;
 // The shaded view stores linear radiance before exposure instead of `display` of it: FSR 2's
-// variant of this pass (marcher.rs) sets this true and declares `target_tex` rgba32float.
+// variant of this pass (frame/upscale.rs) sets this true and declares `target_tex` rgba32float.
 const HDR_TARGET: bool = false;
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;

@@ -51,8 +51,8 @@ use vxe_world::{
     brick_of_slot, brick_slot,
 };
 
+use crate::frame::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
 use crate::gpu_world::{CHANGES_MAX, GpuWorld};
-use crate::marcher::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
 
 mod budget;
 mod faces;

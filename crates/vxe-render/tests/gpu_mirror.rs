@@ -1139,7 +1139,27 @@ fn the_mirror_never_reads_the_backend_or_vendor() {
             "gpu_world/window.rs",
             include_str!("../src/gpu_world/window.rs"),
         ),
-        ("marcher.rs", include_str!("../src/marcher.rs")),
+        ("frame/baked.rs", include_str!("../src/frame/baked.rs")),
+        ("frame/encode.rs", include_str!("../src/frame/encode.rs")),
+        ("frame/marcher.rs", include_str!("../src/frame/marcher.rs")),
+        ("frame/mod.rs", include_str!("../src/frame/mod.rs")),
+        (
+            "frame/probe_channel.rs",
+            include_str!("../src/frame/probe_channel.rs"),
+        ),
+        (
+            "frame/readback_ring.rs",
+            include_str!("../src/frame/readback_ring.rs"),
+        ),
+        (
+            "frame/settings.rs",
+            include_str!("../src/frame/settings.rs"),
+        ),
+        ("frame/state.rs", include_str!("../src/frame/state.rs")),
+        ("frame/targets.rs", include_str!("../src/frame/targets.rs")),
+        ("frame/timer.rs", include_str!("../src/frame/timer.rs")),
+        ("frame/upscale.rs", include_str!("../src/frame/upscale.rs")),
+        ("gpu_util.rs", include_str!("../src/gpu_util.rs")),
         ("lib.rs", include_str!("../src/lib.rs")),
     ] {
         for word in ["get_info", "Backend", "backend(", "vendor", "AdapterInfo"] {

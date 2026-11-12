@@ -26,7 +26,7 @@
 @group(3) @binding(2) var grad_prev_light: texture_2d<f32>;
 @group(3) @binding(3) var strata_out: texture_storage_2d<rgba16float, write>;
 
-// Strata edge in pixels; must match `GRADIENT_STRATUM` in `marcher.rs` and temporal.wgsl.
+// Strata edge in pixels; must match `GRADIENT_STRATUM` in `frame/settings.rs` and temporal.wgsl.
 const STRATUM: u32 = 3u;
 
 @compute @workgroup_size(8, 8, 1)

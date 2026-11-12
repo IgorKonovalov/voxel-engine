@@ -12,11 +12,12 @@ mod camera;
 mod exposure;
 mod field;
 mod font8x8;
+mod frame;
 mod fsr2;
+mod gpu_util;
 mod gpu_world;
 mod hud;
 mod light;
-mod marcher;
 mod present;
 mod probes;
 mod readback;
@@ -52,6 +53,7 @@ pub mod internals {
         band_slot_units,
     };
     pub use crate::font8x8::{FONT, glyph};
+    pub use crate::frame::{JITTER_PHASES, composite_hdr_source};
     pub use crate::fsr2::{
         FSR2_ACCUMULATE_WGSL, FSR2_DEPTH_CLIP_WGSL, FSR2_INPUT_WGSL, FSR2_LOCK_WGSL,
         FSR2_LUMINANCE_PYRAMID_WGSL, FSR2_PASSES, FSR2_RCAS_WGSL, FSR2_RECONSTRUCT_WGSL,
@@ -67,7 +69,6 @@ pub mod internals {
         budget_for, class_code, exposed_emitters, layer_prefix, payload_units, slot_units,
         slots_per_page,
     };
-    pub use crate::marcher::{JITTER_PHASES, composite_hdr_source};
     pub use crate::probes::{
         MAX_AGE, ProbeUniform, RAYS_PER_PROBE, SLICES, TestProbe, WINDOW_FRAMES,
     };
@@ -83,6 +84,13 @@ pub use camera::{Camera, View};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
+pub use frame::{
+    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights, Lighting,
+    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
+    jitter_at,
+};
+pub use frame::{DEFAULT_PROBE_FREEZE, Params, Upscaler};
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP,
@@ -91,13 +99,6 @@ pub use gpu_world::{
 };
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
-pub use marcher::{
-    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights, Lighting,
-    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
-    jitter_at,
-};
-pub use marcher::{DEFAULT_PROBE_FREEZE, Params, Upscaler};
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
 pub use {glam, wgpu};
@@ -122,7 +123,7 @@ pub const PROBE_GATHER_WGSL: &str = include_str!("shaders/probe_gather.wgsl");
 pub const PROBE_UPDATE_WGSL: &str = include_str!("shaders/probe_update.wgsl");
 /// The source of the field pass (`field.rs`), for headless validation.
 pub const FIELD_WGSL: &str = include_str!("shaders/field.wgsl");
-pub use marcher::{SHARPEN_WGSL, UPSCALE_WGSL};
+pub use frame::{SHARPEN_WGSL, UPSCALE_WGSL};
 
 /// A limit the frame's shaders need past what the adapter offers.
 #[derive(Clone, Debug)]
