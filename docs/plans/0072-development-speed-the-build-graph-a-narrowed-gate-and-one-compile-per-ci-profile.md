@@ -1,6 +1,6 @@
 # 0072: Development speed: the build graph read, a dev profile that pays for what it buys, a gate narrowed to the change, the lavapipe queue measured at two, and one compile per CI profile
 
-> **Status:** approved (owner, 2026-11-12: "all draft plans can be approved"; review questions 4
+> **Status:** in-progress (approved by the owner, 2026-11-12: "all draft plans can be approved"; review questions 4
 > and 5 as recommended: the pinned cache only on Phase 1's number, the lavapipe group at two
 > kept only on a quarter's cut with no flake in three runs)
 > **Created:** 2026-11-12 (the overnight architecture review, `docs/reviews/2026-11-12-architecture-review.md`)
@@ -279,7 +279,7 @@ None. Configuration only: `Cargo.toml` profiles, `.config/nextest.toml`, `ci.yml
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the build graph and the gate, read | dev | not started | |
+| 1: the build graph and the gate, read | dev | done; readings in [`logs/0072.md`](logs/0072.md). Deviations: every reading at `CARGO_BUILD_JOBS=4` in a 6G scope (two lanes); the first (b), (c) and (d) series void (the probe loop touched other files; clippy's `items_after_test_module`) and re-read; the gate 700 to 794 s, over the 12 min line in two of three | committed with this row |
 | 2: the dev and test profiles pay for what they buy | dev | not started | |
 | 3: the phase gate narrowed to the change | dev | not started | |
 | 4: the lavapipe group at two and three | dev | not started | |

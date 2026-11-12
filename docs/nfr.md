@@ -345,6 +345,17 @@ Every reading against these budgets, with its machine and commit, is in
   of them and `cargo tree -p flythrough -e normal` list none; `flythrough --features wasm`
   brings it in. Under the 10 s budget, and unchanged at the Plan 0011 close: the default build
   still compiles no `wasmtime` or `tokio`.
+  **Reading (Plan 0072 Phase 1, 2026-11-12, 5909af8, dev reference, rustc 1.97.1,
+  `CARGO_BUILD_JOBS=4`, exclusive perf lock, quiet: 1-minute load 1.80 to 1.93 at the start):**
+  the same change, a `pub const` appended to `crates/vxe-world/src/lib.rs`, three runs:
+  default-members `cargo build` **3.3, 4.3 and 4.4 s, the 10 s budget met** (the chain
+  `vxe-world` 0.6, `vxe-render` 0.9, `flythrough` lib 0.5, its bin 1.3 s; `vxe-tester` beside
+  it). The quick tier's test build for it (`cargo nextest run --workspace --profile quick
+  --no-run`) 43.2, 41.0 and 64.5 s (the third ended at load 14.6), 167 to 251 s of units at
+  four jobs, the longest the `flythrough` and `vxe-script-wasm` test binaries (4.8 to 12.6 s
+  each). A fresh worktree's first test build is 455 to
+  479 s at four jobs, a third of its unit time `wasmtime` and `cranelift`
+  (`docs/plans/logs/0072.md`).
 - The test gate (Plan 0043; re-cut 2026-11-03 for iteration speed, owner): a dev phase runs
   `node scripts/test-changed.mjs --profile quick` (the CPU tests of the changed crates and
   their dependents, no perf lock) and adds `--profile gpu` under the lock when the change
@@ -369,6 +380,7 @@ Every reading against these budgets, with its machine and commit, is in
   **Reading (Plan 0059 close review, 2026-11-09, d1e3468 with main merged, 725 tests, all passed, 75 skipped, dev reference on lavapipe, exclusive perf lock, 16G cap, build in the same timed run, `--status-level pass`, load 1.92 at the start and 2.34 at the end):** gate **850.2 s, over the 12 min proposal** but 35 % under the 1313.4 s before the table's deletion, with the `flythrough::settle` binary back in the gate. Sum of tests 20.0 min serial. None over the 30 s line; the slowest `the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn` 25.7 s.
   **Reading (Plan 0066 Phase 2, 2026-11-10, dev reference on lavapipe, exclusive perf lock, 16G cap, built tree, `--status-level pass`, nothing else running):** before the 10 s marks, 9359b82, 725 tests, all passed, load 0.70 at the start and 1.60 at the end: gate **771 s**, 18.5 min serial, 28 tests over 10 s (7.5 min of it; the list is in the plan's readings log). With the 28 marked `#[ignore = "soak"]`, 697 tests, all passed, load 1.40 at the start and 1.56 at the end: gate **505 s, under the 12 min proposal**, 11.6 min serial; four tests read 10.9 to 12.9 s that read 5.9 to 10.0 s in the first run. The 28 alone under `--profile soak --run-ignored only`: 272 s, all passed. One phase's gpu check, `binary(=gpu_look)` (what `--binaries gpu_look` selects): 60 s wall, 11 tests. At the close (owner, 2026-11-11) `castle_vector` and `showcase_vector` went back into the gate as CPU tests (548f4b9), leaving 26 soak marks; the gate was not re-read after it.
   **Reading (Plan 0064 close review, 2026-11-11, 72ff4cb with main merged, dev reference on lavapipe, exclusive perf lock, 16G cap, `scripts/build-guests.sh` first, `-j 12`, `--status-level pass`, load 3.8 at the start and 1.2 at the end):** 757 tests, all passed, 102 skipped: nextest **553.4 s**, 597 s with the build of the merged crates; under the 12 min proposal. Over the 10 s line, none of them the plan's: `castle_vector` 17.9 and `showcase_vector` 16.0 (CPU, in the gate by the owner's call), `a_baked_view_is_final_on_its_first_frame` 12.5, `uniform_chunks_render_identically_from_their_mips` 11.5, `the_rig_reads_the_default_look` 11.3, `the_score_blends_distance_and_the_view` 10.2 s.
+  **Reading (Plan 0072 Phase 1, 2026-11-12, 5909af8, dev reference on lavapipe, exclusive perf lock, 6G cap, built tree, guests built, `--status-level pass`, three runs, load 1.74 to 1.96 at the start and 1.46 to 2.76 at the end):** 830 tests, all passed, 104 skipped: nextest **700.4, 793.6 and 785.2 s**, the second and third over the 12 min proposal. The lavapipe group (189 tests, `max-threads = 1`) sums to 700.3, 793.5 and 785.1 s serial, the wall to 0.1 s; the 641 CPU tests sum to 241 to 265 s beside it. Over the 10 s line in the first run: `castle_vector` 18.7 and `showcase_vector` 18.4 (CPU), `a_baked_view_is_final_on_its_first_frame` 17.6, `the_castle_path_flies_in_air` 15.0 (CPU), and six lavapipe tests at 10.3 to 12.8 s.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
   the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial
   test time; 41 tests over 60 s take 320 of those minutes, 603 tests under 5 s take 4. The
