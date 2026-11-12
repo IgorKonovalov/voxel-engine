@@ -1073,15 +1073,20 @@ one in Phase 6.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: where the frame's CPU goes | dev | code and tests landed; slice test read: model not confirmed (loaded); pins and rigs (a), (b) queued; lane stops for the architect | 87bf0d2 (code), readings with this row |
-| 2: a step with nothing to do costs nothing | dev | rig (a), rig (c) and the `--near 0` bars met; the filter lapped in five, fixed (dedup, cheaper clear, ChunkHasher: 0.25 to 0.07 ms); rig (b) `--coarse 0` non-opening: glide 150 met, glide 300 +0.118 ms over the base, past the +0.1 tolerance: lane stopped for the architect (log) | 5201ab6, 57484db, bdbe008, 7e263bb, c8a621d (`wip`) |
+| 2: a step with nothing to do costs nothing | dev | **passed** (owner, 2026-11-12, with the +0.1 tolerance): rig (a), rig (c) and the `--near 0` bars met; rig (b) `--coarse 0` non-opening glide 150 met as written, glide 300 +0.118 ms over the base, p99 and opening p50 better at both; the remaining `filter` cost (about 0.055 ms: `gone`, `drop_reach`, `touched`) is Phase 7 followup F1 (log) | 5201ab6, 57484db, bdbe008, 7e263bb, c8a621d (`wip`) |
 | 2b: the queue does not starve in a flight | dev | readings in the log: every `off` run B with 0 starved openings, `2` falls into A; rig (a) under `off` coarse 0 at 135 s; listing cut 0.24 ms off `list` | 04a7e6b (`wip`) |
-| 3: the bake budget per second | dev | read: the Radeon's frame CPU and the RTX's `frame:1.5` met; the cross-adapter ms a second missed (RTX 91 against Radeon 148 ms a wall second: the RTX's submits draw under the slice); held for the architect | c19098f (`wip`) |
-| 4: no black for missing light | dev | code and tests as `wip`; readings in the log (no bar): the summaries stage reads about 0.95 ms p50 under a fallback mode on the RTX's rig (b) | edcb9e0 (`wip`) |
-| 5: far light beyond the bake radius | dev | reinstated by the streamed at-rest reading (reach-bound 3044 of 3641 in view waiting, 0.84); not built, the lane stopped at Phase 2 | |
+| 3: the bake budget per second | dev | **done** (owner, 2026-11-12): the Radeon's frame CPU and the RTX's `frame:1.5` bars met; the cross-adapter ms a second is a reading (RTX 91 against Radeon 148 ms a wall second under `second:150,0.25`, the RTX's submits about 5.3 ms of an about 8 ms slice); its cause is Phase 7 followup F2 | c19098f (`wip`) |
+| 4: no black for missing light | dev | **done** (exploration: built behind `--missing-light` and key `7`, named in the banner; the owner's window judges it): readings in the log, the summaries stage about 0.95 ms p50 under a fallback mode on the RTX's rig (b) | edcb9e0 (`wip`) |
+| 5: far light beyond the bake radius | dev | reinstated by the streamed at-rest reading (reach-bound 3044 of 3641 in view waiting, 0.84); built before Phase 6 (owner, 2026-11-12) | |
 | 6: the owner's window | human | not started | |
 | 7: the bars and the close's readings | dev | not started | |
 
 ### Notes
+
+- **Phase 7 followups named by the owner's amendment of 2026-11-12:** F1, the queue step's
+  remaining `filter` cost on a non-opening step under mirror changes (about 0.055 ms at glide
+  300: `gone`, `drop_reach`, `touched`); F2, why the RTX's submits draw about 5.3 ms of an about
+  8 ms slice under `second:150,0.25` (91 to 92 against the Radeon's 148 ms a wall second).
 
 ### Close triggers
 
