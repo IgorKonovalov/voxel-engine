@@ -1109,7 +1109,31 @@ fn partial_then_empty(
 #[test]
 fn the_mirror_never_reads_the_backend_or_vendor() {
     for (name, text) in [
-        ("gpu_world.rs", include_str!("../src/gpu_world.rs")),
+        ("gpu_world/mod.rs", include_str!("../src/gpu_world/mod.rs")),
+        (
+            "gpu_world/alloc.rs",
+            include_str!("../src/gpu_world/alloc.rs"),
+        ),
+        (
+            "gpu_world/format.rs",
+            include_str!("../src/gpu_world/format.rs"),
+        ),
+        (
+            "gpu_world/lights.rs",
+            include_str!("../src/gpu_world/lights.rs"),
+        ),
+        (
+            "gpu_world/slot.rs",
+            include_str!("../src/gpu_world/slot.rs"),
+        ),
+        (
+            "gpu_world/stage.rs",
+            include_str!("../src/gpu_world/stage.rs"),
+        ),
+        (
+            "gpu_world/window.rs",
+            include_str!("../src/gpu_world/window.rs"),
+        ),
         ("marcher.rs", include_str!("../src/marcher.rs")),
         ("lib.rs", include_str!("../src/lib.rs")),
     ] {

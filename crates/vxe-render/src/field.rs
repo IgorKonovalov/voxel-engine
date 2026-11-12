@@ -13,7 +13,7 @@
 //! them from the mirror: a chunk inside the mirror window that the world holds full by its
 //! voxels, one it holds only as mips by its level-1 mip bricks (each mip voxel covering 2^3
 //! voxels), any other as air. The GPU's counts and the CPU's mask then agree once the mirror
-//! holds what the world does. The slot layout and its bookkeeping are `gpu_world.rs`'s.
+//! holds what the world does. The slot layout and its bookkeeping are `gpu_world`'s.
 
 use vxe_world::{CHUNK_EDGE_BRICKS, ChunkMips, brick_of_slot, brick_slot};
 
