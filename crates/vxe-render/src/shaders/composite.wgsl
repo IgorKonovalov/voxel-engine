@@ -93,7 +93,9 @@ fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
 // The irradiance at full-resolution pixel `px` (hit `rec`): the lighting grid's own texel at
 // full resolution; at half resolution the four lighting pixels around it, bilinear weights
 // times `max(n.n', 0)^32 exp(-plane distance)` against the full-resolution hit, or the
-// nearest hit tap when every weight vanishes.
+// nearest hit tap when every weight vanishes. The normals are `filter_normal`'s (the shading
+// normal, or with Params.lighting bit 15 a cube face's face normal); the plane distance is
+// along the shading normal.
 fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
     if (params.light_scale == 1u) {
         return irradiance_at(px);
@@ -106,6 +108,8 @@ fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
     var w_sum = 0.0;
     var nearest = vec3<f32>(0.0);
     var nearest_w = -1.0;
+    let origin = params.views[view_of(vec2<u32>(px))].origin;
+    let n = filter_normal(rec, origin);
     for (var i = 0; i < 4; i++) {
         let d = vec2<i32>(i & 1, i >> 1);
         let tap = base + d;
@@ -117,7 +121,7 @@ fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
             continue;
         }
         let bil = select(1.0 - f.x, f.x, d.x == 1) * select(1.0 - f.y, f.y, d.y == 1);
-        var cosn = max(dot(rec.n, other.n), 0.0);
+        var cosn = max(dot(n, filter_normal(other, origin)), 0.0);
         cosn *= cosn;
         cosn *= cosn;
         cosn *= cosn;
@@ -237,11 +241,6 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         if ((params.flags & FLAG_CUTAWAY) == 0u) {
             let e = emission_of(rec.material);
             c += e * ex;
-            // FSR 2's emitter cap: an emitting hit's largest channel held at the cap.
-            let top = max(c.x, max(c.y, c.z));
-            if (params.emitter_cap > 0.0 && any(e > vec3<f32>(0.0)) && top > params.emitter_cap) {
-                c *= params.emitter_cap / top;
-            }
         }
     }
     if (view == VIEW_CRACKS) {

@@ -101,23 +101,6 @@ Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value,
 emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
 Alternative F, picked up only if a reading or the owner's flight asks.
 
-### Render settings surface and named quality profiles
-
-Parked 2026-10-22. Every mechanism choice (shadow walk, lighting tier, sampler, look, upscaler,
-later sky, clouds, far field) should be a documented engine setting a consumer picks, with named
-profiles (floor, portable, performance) the roadmap promises. Today `Frame` exposes lighting,
-resolution, look and LOD at runtime; construction-time settings (mirror budget, residency) are
-separate and live-versus-restart is undocumented. What it takes: a best-practices rule that a new
-mechanism lands as a documented setting, and a plan for the settings surface and the profiles.
-The 2026-11-03 answer on M10's RADV budget leaned on this plan coming before Plan 0032.
-Plan 0035's allotment table (2026-11-10) spends all of section 2's 2.1 ms Headroom on the floor
-across Plans 0035, 0036 and 0037, leaving none for M8 fog or game work until this plan arbitrates.
-The static performance review of 2026-11-10 recommends drafting it **before Plan 0058's lane
-starts**, not after Plan 0045: summed from the plans' own guesses the cave frame fits the
-projected floor only at the low end and the outdoor frame not at all, and Plan 0058's eight
-lights land with no cap or profile. **Agreed (owner, 2026-11-10): the draft is written before
-Plan 0058's lane starts; its implementation stays where the Sequence has it.**
-
 ### Remove `own`, the engine's own upscaler
 
 Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
@@ -125,15 +108,13 @@ opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of
 and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
 its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
 ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
-Plan 0061's picks; it runs after Plan 0045 and before M10.
+Plan 0061's picks; it runs after Plan 0069 (owner, 2026-11-11) and before M10.
 Noted 2026-11-10 (static performance review): `own` is the only upscaler on record under or near
 section 2's 1.5 ms upscale line (0.93 to 1.3 ms at the owner's window against FSR 2's 2.9 ms) and
 reads 6 to 7 ms less on the Radeon. Removing it before the profile plan arbitrates removes the
 slow adapter's cheaper arm; the removal plan should say what the portable profile uses instead.
-
-### Far normal range: the owner picked `[1, 2]`
-
-Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): picked again under the store read in its window, landed in its Phase 5, ADR-0042's Outcome at its close; the emitter cap goes in Phase 5.
+Answered 2026-11-11 (owner, Plan 0069's answer 2): Portable uses FSR 2 at 720p output, and the
+removal plan goes ahead after Plan 0069.
 
 ### The lamp channel's faults
 
@@ -142,10 +123,6 @@ its `D` from the shader's output, so it does not defend the albedo: `D` wants an
 of the lamp's irradiance at the rays' hits. Inside probes are traced while the lamp moves
 (`probe_update.wgsl`'s `probe_idle` returns on `MOVED_BIT` before its inside check): cost only, unread on
 the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 0058's Phase 3 (redrafted 2026-11-10) takes the furnace's `D` and the one-probe step test; the inside-probe trace is a reading there.
-
-### Slow-pan verdict for FSR 2 (ADR-0034)
-
-Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) (draft, 2026-11-10): ADR-0034's dated Outcome is written at its close.
 
 ### Far light on a slow adapter: a bake budget per second, and no black for missing light
 
@@ -159,9 +136,23 @@ Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never
 
 Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its close (owner's amendment). In the streamed cave at `--glide 300` the near shell (Chebyshev 2, baked at the full count) takes 98 to 99 % of the slice, and about 0.70 of the in-view chunks still waiting have their reach not ready (the mirror's edge), so neither the order nor the withdrawal can light them. What it would take: a shell baked coarse first in a flight, or a smaller shell at speed; and a streamer that loads the light radius ahead of the view. Pick up with Plan 0067's bake budget by time, which reads the same flight (`docs/plans/logs/0060.md`, Phase 1).
 
-### A stale soak golden: `showcase_hall_golden_is_lit_by_its_four_ores`
+### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
-Read 2026-11-11 at Plan 0060's close review: the soak test fails with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c, so it predates Plan 0060. `showcase_hall.png` was last blessed at Plan 0057 (2de29c6, the table light), before Plan 0059 replaced the light. The weekly soak workflow should be failing on it. What it takes: re-bless it on lavapipe under the baked light after a look at the image, and re-read its luma band and hue classes. Pick up at the next plan that touches the goldens, or as a chore.
+Read 2026-11-11 at Plan 0060's close review: the soak test failed with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c. Re-blessed 2026-11-11 at Plan 0061's close (fix pass 6287e88): the new golden pins today's render, which Plan 0061's defaults do not move (the library's read and weights give the same pixels), but it is not a correct hall. Mean sRGB luma fell from 11.97 (Plan 0057's image, 2de29c6) to 2.73; the walls are black and only the ores' faces are lit; ember covers 0 pixels. The test still fails its hue assert (`[336, 0, 209, 121]`) and would fail its luma band (11..40). The owner's window at Plan 0061 saw a lit hall, so the likely cause is the headless rig (`gpu_golden.rs`'s `showcase_hall`: its bake or settle state under the baked light since Plan 0059), not the look; unverified. What it takes: bisect the rig's render between 2de29c6 and today, fix the rig, re-bless after a look, and keep the hue and luma asserts as they are. The weekly soak fails on it until then.
+
+### Automatic extremity bounds from declarative noise layers
+
+Parked 2026-11-12 (owner, from the video "500 million voxels/sec - Voxel engine optimizations", youtube.com/watch?v=ru_oz09Zo-s). Today world generation is the consumer's: `WorldSource` is a trait, and the flythrough's cave (`apps/flythrough/src/cave.rs`) already aligns its noise lattices with bricks (one corner set per brick) and proves a brick uniform from its eight corners. The idea the engine lacks: when terrain is described as data (named noise layers, each with a range, mapping, scale and upsample factor), the generator derives each column's or brick's guaranteed solid-below and air-above bounds from the layer config itself, so a new biome skips noise evaluation outside its band with no hand-written proof; layers whose range is unbounded (domain warps) switch the bound off. Same video, also not taken: noise shared by name across biomes and computed once per position. Rejected for storage: RLE columns (slow random access and edits, which collision, acoustics and runtime digging need). Pick up only if the engine ever ships a configurable terrain generator; the requirement would arrive through `project-context.md`.
+
+### Ambient occlusion driving a per-material colour ramp
+
+Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks about", youtube.com/watch?v=1gxcNUUc37Y). Instead of darkening albedo by AO, AO picks a colour along a per-material ramp: snow white to cyan to deep blue in crevices, sand yellow to red, grass bright to deep green. The video's form: per material `light`/`mid`/`dark` colours plus `t_mid`/`t_high` thresholds, `mix(mix(dark, mid, smoothstep(0, t_mid, ao)), bright, smoothstep(t_high, 1, ao))`; AO is per-corner neighbour occupancy shaped by `pow(ao, 1.5)`; fixed face weights (up 1.0, down 0.1, x 0.5, z 0.9) and side faces capped at 0.7 of the ramp; each colour hue-rotated by low simplex noise over world xz for variety.
+- **Our gap:** `vxe-render` has no AO term; ambient comes from the baked brick light (Plan 0059). `Material` carries one `albedo`.
+- **The cheap input:** at a ray hit the voxel and face are known, so the face's 8 neighbours give corner AO, interpolated at the hit point. Analytic, no noise, no history, so it keeps the image stable.
+- **Open look question:** drive the ramp by local corner AO, by the baked sky or ambient light, or both, so a cave reads tinted rather than only dark. Decide by eye in the window.
+- **What it takes:** a look spike (corner AO at the hit, an optional ramp beside `albedo`, the hue jitter) with an owner window; an ADR if the material row changes shape.
+
+Pick up after the current lighting plans close (0058 and those ahead of it).
 
 ## Performance: the static review of 2026-11-10
 
@@ -178,6 +169,11 @@ the baked light's shader waste and the queue's scan to
 - **Upscale, 1.5 ms:** FSR 2 reads 2.1 to 2.4 ms on the RTX and 15.7 to 16.1 ms on the Radeon
   at 2530 x 1378 after Plan 0065 (closed 2026-11-11); every plan "reads its delta and does not
   claim the line". Either the line moves or a profile owns it: the render-profile plan's call.
+- **Denoise, 3.0 ms, on the Radeon with the face weights:** at the vein the a-trous pass reads
+  3.19 ms with Plan 0061's default face weights against 2.70 ms without (RADV RENOIR, 1920 x
+  1080, loaded; `docs/plans/logs/0061.md`, Phase 2 done-when 6). Routed at Plan 0061's close to
+  Plan 0067 (the frame's cost) and Plan 0069 (a per-profile default for the weights is its
+  question).
 - **The bake's slice and the queue's step have no line.** 1.5 ms of GPU a frame while the queue
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
   line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
@@ -193,6 +189,8 @@ the baked light's shader waste and the queue's scan to
   its delta.
 
 Pick up: at the render-profile plan's interview, or at the next close that touches the line.
+Plan 0069 (approved 2026-11-11, its answer 4) proposes the upscale, bake-slice and split lines
+under its "Budgets", sets them at its close from the readings and rewrites the ledger then.
 
 ### The a-trous under the baked light: fewer iterations, or none
 
@@ -238,12 +236,17 @@ leave residency short, p95 2.7 to 6.9 s at 2 to 8 ms against 0.30 s without one,
 pays only once a chunk's upload is cheaper; this entry is that cheaper upload, and the
 budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
 upload-copy ADR.
+Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+and ADR-0056, awaiting the owner's go; this entry leaves when the plan is approved.
 
 ### The slow adapter's walk-speed spike
 
 Owed since Plan 0054 (ADR-0034 and ADR-0041 name it) and in no plan or backlog entry until now:
 why the Radeon's hit pass reads 7 to 8 times the RTX's when the light pass under the store reads
 about twice. Run with the shader toolchain spike, when no lane holds the GPU.
+Noted 2026-11-12 (the architecture review): the slot is Plan 0069's Phase 4, which reads both
+adapters anyway; the review's amendment note asks it to read the hit pass alone at Portable's
+internal size on the RENOIR and to run this spike before Phase 6 if the hit reads over 10 ms there.
 
 ### The dev box presents across two GPUs
 
@@ -281,6 +284,45 @@ line. Pick up as a dev chore with the next plan that touches the frame's read-ba
 
 ## Tooling and process
 
+### A pipeline cache for the renderer's shaders
+
+Parked 2026-11-12 (the architecture review, section 1.4). Every pipeline creates its own shader
+module and 13 of them prepend the 2496-line `march.wgsl`; no descriptor passes a
+`wgpu::PipelineCache` (`cache: None` everywhere). Cold creation of the eleven pipelines read
+1396 ms on the RTX, 458 ms on RADV, 299 ms on lavapipe (Plan 0046). wgpu 30's `PipelineCache`
+is Vulkan-only and keyed by the driver, so it helps a second start on the same machine, not the
+first; the driver's own disk cache already does part of that. What it takes: `pipeline_times`
+read with and without a cache file across two starts, on both adapters, after Plan 0045's
+Phase 4 has split the shaders (which changes what is compiled). Pick up at 0045's close.
+
+### Comment, manifest and index drift found by the 2026-11-12 review
+
+Parked 2026-11-12; a dev chore of one commit, no plan. `apps/flythrough/examples/world_budget.rs`
+describes ADR-0011's attribute pages and planes (26 "contour" lines; :35, :41, :656), removed in
+Plan 0054. `apps/flythrough/tests/gpu_lights.rs:610` "the emissive table's path" (deleted in
+Plan 0059), `:614` and `:687` "Reservoir reuse's bar", `crates/vxe-render/src/exposure.rs:21`
+"reservoirs", `apps/flythrough/tests/gpu_upscale.rs:635` "reservoir textures" (Plan 0057).
+`crates/vxe-world/Cargo.toml` and `crates/vxe-render/Cargo.toml` carry
+`description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`.
+`vxe-render/tests/gpu_frame.rs:86` calls `lamp_bounce` off "the default", which is the
+library's default and not the fly-through's (Plan 0069's amendment note takes the default
+itself). `CLAUDE.md:39-40` gives `vxe-render` "voxel-model entities" it does not have yet
+(Plan 0062) and omits the bake store and FSR 2: the owner's edit. Pick up with the next chore
+lane; it touches no file a plan lane edits except `gpu_lights.rs` (Plan 0058's).
+
+### Amendment notes from the 2026-11-12 review, awaiting the owner
+
+Parked 2026-11-12. The review (`docs/reviews/2026-11-12-architecture-review.md`) proposes
+amendments to approved plans that only the owner accepts; none was written into a plan. In
+brief: **Plan 0067**, do not stop at the sync stop rule, Plan 0070 takes the sync (section 1.1);
+**Plan 0044**, Phase 4 struck into 0070 (1.1); **Plan 0069**, a `Delete` class for the fields
+with no setter and no caller, `Floor` equal to the fly-through's defaults and every `Default`
+equal to `Floor`, the setter gate over the 22 existing setters, and the RENOIR hit pass read
+alone in Phase 4 (1.2, 2.2); **Plan 0045**, the reservoir code is live, `hud.rs` and
+`showcase.rs` named unconditionally, `table()` and `now()` in Phase 1, `gpu_strip.rs` out of
+`tests/`, a pub-item count as Phase 2's done-when (2.1, 2.3). Each leaves when the owner
+accepts or refuses it.
+
 ### A documentation site
 
 Parked 2026-11-11 (owner: "no plan needed yet, will address this later"). A public site in the
@@ -290,6 +332,28 @@ roadmap, budgets) plus rustdoc, with CI as a link and render guard; a getting-st
 a gallery only once the look is picked (after Plans 0067 and 0058) and Plan 0045 has moved the
 files. Starlight's npm tree falls outside `cargo deny`, and mdBook is the lighter alternative,
 so it takes an ADR. Pick up when the owner asks.
+
+### CI's cold cache after a workspace change
+
+Read 2026-11-11 (owner asked why Windows took 55 min on run 43079051216, 486a53e, against
+about 17 on 43011459965 and 42879171018). The rust-cache key changed (`...-e0aa3e4d` to
+`...-6cbf2b65`) and the job restored the old entry by its restore-key prefix only. Version bumps
+alone did not change the key (43011459965 hit fully after 0.44 to 0.45); the likely trigger is
+the new `crates/vxe-entity` manifest and the root members list (inference: the logs show the
+manifests rust-cache hashed, not the hash). Although `Cargo.lock`'s dependency set was the same,
+nearly every registry crate recompiled: Windows `cargo build` 14.8 min against about 1.3 (252
+"Compiling" lines against 48 for the whole fast job), `clippy --workspace` 6 min against 25 s,
+the gate 14.5 against 8.6; Ubuntu's build 5.7 min against 0.6. Why a prefix restore rebuilt the
+dependencies is not known. The new key's entry is saved, so the next push should hit it fully
+(unconfirmed until a run after 486a53e). Options, none taken: (1) accept one slow run per new
+workspace member, or warm the cache with a `workflow_dispatch` run; (2) one diagnostic run with
+`CARGO_LOG=cargo::core::compiler::fingerprint=info` to read why `proc-macro2` and the like are
+dirty after a prefix restore (a rust-cache quirk could be fixed by its version or the key's
+inputs); (3) cut the steady state whatever the cache does: drop `cargo build --workspace` if
+nextest builds the same targets (check bins and examples first), fold the three clippy steps,
+or lint on Ubuntu only. Pick up when a second cold run shows up or the owner wants CI faster.
+Options (2) and (3) are [Plan 0072](plans/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md)'s
+Phase 5 (drafted 2026-11-12, awaiting go); this entry leaves when it is approved.
 
 ### Shader toolchain spike
 
@@ -304,7 +368,7 @@ Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With t
 
 ### The gate tier is over its wall-time budget
 
-Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions.
+Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-12 (the architecture review, on `live/plan-0068/merge-gate.log`): 809 tests, 610 s; the 177 lavapipe tests sum to 610 s serial, the whole wall, the 632 CPU tests to 273 s beside them, so the lever is the lavapipe group's thread count or the GPU tests' pixels, not the CPU tests; [Plan 0072](plans/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) Phase 4 measures the group at 2 and 3 (drafted, awaiting go). Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions.
 
 ### `vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7
 
@@ -423,6 +487,3 @@ its own app under `apps/`. The fly-through and the native paths never change or 
 for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
 materials, a sky and a way to build interesting architecture.
 
-### Antialiasing after the look-first light
-
-Taken by [Plan 0061](plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) and [ADR-0049](adrs/0049-the-baked-light-is-read-by-the-far-shading-normal.md) (both draft, 2026-11-10). The history of the owner's words is in the plan's Context.

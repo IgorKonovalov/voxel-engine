@@ -1,11 +1,22 @@
 # 0045: The structure pass: split the mega files, share the fixtures, and gate their regrowth
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass) and 2026-11-11 (order)
 > **Created:** 2026-10-22
+> **Amended 2026-11-11 (owner, the order):** this plan moves ahead of Plan 0058 and of Plan
+> 0044's remaining phases (3, 4, 5 and 8; its side lane, Phases 0, 1, 6 and 7, merged to main
+> at `d6d2dfa`). It starts once Plans 0061, 0067 and 0068 have merged, while no lane edits a
+> file it splits. Plan 0058 then starts on the split tree, then 0044's render phases, then Plan
+> 0069. What moves with it:
+> - **The render device helper is not there yet.** It is Plan 0044's Phase 8, which now runs
+>   after this plan. Here the render tests keep their device setup as found and Phase 8's test
+>   splits move it unchanged; 0044's Phase 8 lands the helper in the split files.
+> - **Fewer plans rewrite the seams first:** Plans 0060, 0061 and 0067 have edited the files;
+>   0058 and 0044's render phases have not. Phase 0 still re-measures, and the architect
+>   still confirms the seams before Phase 2. The 2026-11-10 order below is superseded.
 > **Amended 2026-11-10 (architect, review pass; this header replaces the amendments of
 > 2026-11-03 and 2026-11-04):**
-> - **Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, then this plan, then M10.
->   This plan runs last of the five, on files the other four rewrite first.
+> - **Order (owner, 2026-11-10; superseded 2026-11-11, above):** Plans 0060, 0061, 0058, 0044,
+>   then this plan, then M10.
 > - **The seams below are provisional.** They are cut against main at `82ea836` and marked
 >   so. Phase 0 re-measures at this plan's start commit, and the architect confirms or amends
 >   the seams from that inventory before Phase 2 starts.
@@ -28,8 +39,9 @@
 > separate dev-only `vxe-testkit` crate, is recorded under Decision.
 > **Source:** the owner, 2026-10-22, the same review as Plan 0044. The owner's answers: two
 > plans, performance first; full splits, engine crates included.
-> **After:** Plans 0060, 0061, 0058 and 0044, in that order. **Before:** M10 and its
-> render-profile plan (owed, not drafted).
+> **After:** Plans 0061, 0067 and 0068 merged (amended 2026-11-11; was 0060, 0061, 0058 and
+> 0044). **Before:** Plan 0070 (owner, 2026-11-12: "70 after 45"), Plan 0058, Plan 0044's
+> Phases 3, 5 and 8, Plan 0069 (render settings) and M10.
 
 ## TL;DR
 
@@ -108,7 +120,8 @@ The sizes and copy counts are Phase 0's to read; this section names what is wron
 | bench clocks and `solid_world` | across `vxe-world/benches` |
 | squared chunk distance `d2` | `stream.rs`, `gpu_world.rs` (a function and inline forms), `marcher.rs` |
 
-The wgpu test device helper is Plan 0044's (its Phase 8); this plan builds on it.
+The wgpu test device helper is Plan 0044's (its Phase 8), which runs after this plan since
+2026-11-11; the tests keep their device setup as found here.
 
 **The testbed's protocol and CLI:**
 - The dig logic talks to the client in `"op <verb>"` text lines. They are paired with events in
@@ -123,8 +136,8 @@ The wgpu test device helper is Plan 0044's (its Phase 8); this plan builds on it
 Split along the seams below, keeping every type's behaviour. Promote the fixtures that are
 general and deterministic into the engine: `vxe_world::FnSource`, `vxe_world::hash::SplitMix64`
 and `ChunkCoord::distance2`. Keep the test-only helpers in per-crate `tests/support` modules
-and behind `test-support` features, following `vxe-net`'s `test-logic` precedent and Plan
-0044's render device helper. Narrow `vxe-render`'s public surface to its curated re-exports.
+and behind `test-support` features, following `vxe-net`'s `test-logic` precedent (Plan
+0044's render device helper follows this plan, 2026-11-11). Narrow `vxe-render`'s public surface to its curated re-exports.
 Finish with two mechanical gates, because a size rule written in prose is the kind
 `CLAUDE.md` says needs a gate.
 
@@ -294,7 +307,8 @@ Existing tests move without change, and their times with them.
 
 ### Phase 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories
 - **Owner skill:** dev
-- **What (seams as of `82ea836`; Plans 0058, 0060 and 0061 edit all three files first):**
+- **What (seams as of `82ea836`; Plans 0060, 0061 and 0067 edit these files first, Plan
+  0058 after this plan since 2026-11-11):**
   - **`marcher.rs` becomes `frame/`:**
     - `settings.rs`: `Params`, the enums and flags, `Lighting`, `LookParams`, `LodParams`.
       A `macro_rules!` generates `ALL`, `name` and `from_name`; `light.rs` and `bake/` use
@@ -560,7 +574,7 @@ own start commit, not against Plan 0044's close: other commits may land between 
 
 ## Risks & open questions
 
-- **The seams will be stale at the start.** Plans 0060, 0061, 0058 and 0044 rewrite
+- **The seams will be stale at the start.** Plans 0060, 0061, 0067 and 0068 rewrite
   `bake.rs`, `marcher.rs`, the shaders and `main.rs` before this plan starts. Phase 0 and the
   architect's confirmation exist for that; `dev` does not re-cut a seam alone.
 - **Size of the diff.** Phases 2 to 7 move thousands of lines. A move commit is kept apart from
@@ -595,6 +609,9 @@ own start commit, not against Plan 0044's close: other commits may land between 
    Plan 0044, then this plan, re-cut against the tree at its start.
 3. **`own` (owner, 2026-11-10).** Its removal is its own small plan; this plan stays a pure
    structure move.
+4. **The order, amended (owner, 2026-11-11).** This plan moves ahead of Plan 0058 and the rest
+   of Plan 0044. It starts once Plans 0061, 0067 and 0068 have merged, while no lane edits the
+   files it splits. Plan 0069 stays after it. This replaces answer 2's order.
 
 ## Implementation log
 

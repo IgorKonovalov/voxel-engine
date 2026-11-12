@@ -201,13 +201,15 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057 and 0059 closed; 0049 abandoned)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059 and 0061 closed; 0049 abandoned)
 
-Plan 0061, antialiasing, drafted 2026-11-10 with ADR-0049 (proposed): the owner's "a lot of aliasing" at the
-hall (Plan 0059 Phase 13) reads as ADR-0042's far bands back, since the baked store is read by the face's
-direction and the far normal no longer reaches the light. A reading phase confirms it first; the store read by
-the far normal goes behind a toggle to a window; the far normal's setting, the emitter cap's removal and
-ADR-0034's and ADR-0042's Outcomes land with it.
+Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
+ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed
+by the half-resolution light's filters. Where the far normal leans a face's normal, the baked store is now
+read as the mix of the cell's direction values, and the filters weigh taps by the face normal; both are
+the fly-through's defaults, at far normal `[2, 6]` and FSR 2 at 1.5. The owner's window: "no aliazing",
+"maybe even a bit too soft". FSR 2 at scale 1 is a quality setting for Plan 0069's profiles; the emitter
+cap is gone. The Radeon's a-trous with the face weights is over the denoise line (Plans 0067, 0069).
 
 Plan 0056, the aliasing spike, closed 2026-11-04 (v0.42.0, no ADR): it read the final image
 under an eye lamp that cannot move. FSR 2's frame-to-frame jumps at 1.5 sit on silhouettes and
@@ -268,7 +270,8 @@ Plan 0058 (dynamic lights, redrafted over the store; ADR-0045 withdrawn), then t
 and 0045, then M10. `docs/plans/README.md` carries the sequence. Plan 0060 closed 2026-11-11 (v0.45.0, ADR-0048
 accepted with an Outcome): the queue sorts by a view score with the class kept as the leading key and withdraws
 the jobs a flight has passed; at the window the order made no visible difference, because the slice's
-throughput, not the order, limits the far light (Plan 0067 takes it).
+throughput, not the order, limits the far light (Plan 0067 takes it). Amended 2026-11-11 (owner): Plan
+0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
@@ -705,10 +708,11 @@ stands (the verdict shrinks it to scheme A or C, or drops it), then this milesto
 owes comes with the antialiasing plan, and 0048 was dropped under
 ADR-0043 (owner, 2026-11-04). Its first plan
 is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
-the budget and comes before Plan 0032. It is owed, not drafted, and takes its number when it is.
+the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, approved the same day with every recommendation taken.
 
-**Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, 0045, then the plan that removes the `own`
-upscaler and the render-profile plan (both owed, `docs/backlog.md`), then this milestone in plan order,
+**Order (owner, 2026-11-10; amended 2026-11-11 and 2026-11-12):** Plans 0060, 0061, 0067, 0045, 0070, 0058,
+the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, then the plan that removes the `own` upscaler (owed,
+`docs/backlog.md`), then M6 (Plans 0062, 0063), then this milestone in plan order,
 0032 to 0037, each on main after the one before it closes. The six plans were rewritten on 2026-11-10
 against the baked store: no probe or store term takes sun or sky light.
 

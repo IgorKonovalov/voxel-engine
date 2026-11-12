@@ -58,9 +58,14 @@ crates/
 │                    #   depends on vxe-world only
 └── (planned, one per plan) vxe-script-lua (mlua host, client scripts)
 apps/
-└── flythrough/      # the engine's own testbed binary: fly, dig, read edit results
-    └── logic/       # flythrough-logic: the dig logic, a native rlib or (feature
-                     #   `component`) a WebAssembly component
+├── flythrough/      # the engine's own testbed binary: fly, dig, read edit results; camera
+│   │                #   paths, run.json reports and the tester mode (ADR-0054)
+│   └── logic/       # flythrough-logic: the dig logic, a native rlib or (feature
+│                    #   `component`) a WebAssembly component
+└── tester/          # vxe-tester: the tester build's launcher (menu window, runs the
+                     #   fly-through per scene as a child, system.json, the report zip)
+dist/                # what the tester archives ship beside the binaries: README-TESTER.txt,
+                     #   the notices' cargo-about config and template, DXC's licence
 docs/
 ├── roadmap.md       # milestones M0..M9 and the decisions behind them. Read this first
 ├── backlog.md       # parked ideas and owed follow-ups no plan or ADR carries yet; dated entries,
@@ -74,6 +79,8 @@ docs/
 │   ├── README.md    #   Plans index + next free number. Read this each session
 │   ├── done/        #   Closed plans move here (architect close ceremony)
 │   └── logs/        #   NNNN.md: a plan's readings, attempts and resume notes; stays put at close
+├── reviews/         # YYYY-MM-DD-<slug>.md: standalone architecture reviews (findings, owner
+│                    #   questions); the plans and backlog entries they spawn cite them
 └── references/      # annotated external sources (papers, talks, repos) a plan cites by title.
                      #   local/ (gitignored) holds saved copies of some reference material
 .claude/
@@ -95,9 +102,11 @@ scripts/
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
 ├── loc.mjs                    # lines of code, tests, comments, WGSL and docs per crate; the largest files
+├── package-tester.sh          # packs a tester archive (linux tar.gz, windows zip) from release binaries
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
 .github/workflows/ci.yml  # build, nextest (gate tier), doctests, clippy, fmt, hooks, doc gates; cargo-deny
 .github/workflows/soak.yml  # the weekly soak tier
+.github/workflows/release.yml  # the tester archives: a v* tag makes a Release, a manual run artifacts only
 ```
 
 `.claude/` is **committed** (except `settings.local.json`).

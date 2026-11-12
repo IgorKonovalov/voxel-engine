@@ -6,6 +6,8 @@
 pub mod castle;
 pub mod cave;
 pub mod hud;
+pub mod path;
+pub mod report;
 pub mod showcase;
 pub mod thin_rig;
 pub use flythrough_logic as logic;
@@ -449,7 +451,8 @@ impl LookPreset {
     pub const ALL: [Self; 4] = [Self::FACE, Self::FIELD, Self::TRILINEAR8, Self::GRADIENT27];
 
     /// The look the fly-through starts in without `--look`: honest cubes (ADR-0041) with the
-    /// far normal at `[2, 6]`, the owner's provisional pick. `--look face` is the same cubes
+    /// far normal at `[2, 6]`, the owner's pick (Plan 0061 Phase 4), read with
+    /// [`DEFAULT_STORE_READ`] and [`DEFAULT_LIGHT_WEIGHTS`]. `--look face` is the same cubes
     /// with the far normal off.
     pub const DEFAULT: Self = Self {
         far_normal: [2.0, 6.0],
@@ -500,6 +503,17 @@ impl LookPreset {
         }
     }
 }
+
+/// How the fly-through's cube faces read the baked store without `--store-read`: by the
+/// shading normal (ADR-0049), so where the far normal leans a face's normal the stored light
+/// is the mix of the cell's direction values it leans toward; near faces read their own
+/// direction, as `StoreRead::Face`, the library's default, does everywhere.
+pub const DEFAULT_STORE_READ: vxe_render::StoreRead = vxe_render::StoreRead::Normal;
+
+/// The normal the fly-through's half-resolution light filters compare without
+/// `--light-weights`: the hit's face normal (ADR-0049's weight rule), so a far riser's and
+/// tread's taps stay apart under the far normal. The library's default is `Normal`.
+pub const DEFAULT_LIGHT_WEIGHTS: vxe_render::LightWeights = vxe_render::LightWeights::Face;
 
 /// The field surface's band over a set of chunks (ADR-0040 Alternative B): a voxel is in the
 /// band when its 27-count, the solid voxels of the 3 x 3 x 3 block around it with itself, is

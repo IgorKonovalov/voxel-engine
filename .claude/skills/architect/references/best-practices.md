@@ -62,6 +62,11 @@ ignored.
 - **Timing is measured with timestamp queries**, not wall-clock around `queue.submit`.
 - **Golden images are blessed on lavapipe** with a stated floor (SSIM or max pixel delta).
   Readings from other adapters are recorded as readings, never used to bless.
+- **A new render mechanism lands as a `RenderSettings` field** with its apply class (`Live`,
+  `Settle`, `Rebuild`) and each profile's value (ADR-0055; owner, 2026-11-11). Plan 0069's
+  Phase 2 test gates it: a `pub fn set_*` that is neither a field's setter nor a listed input
+  fails. A plan that adds a mechanism carries a "Profile rows" line naming its fields, classes
+  and per-profile values; M10's plans gain theirs at the architect's re-read.
 
 ## Threading
 

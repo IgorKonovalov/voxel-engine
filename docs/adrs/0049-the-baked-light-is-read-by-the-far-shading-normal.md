@@ -1,8 +1,10 @@
 # ADR-0049: Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values
 
-> **Status:** proposed
-> **Date:** 2026-11-10
-> **Related plan(s):** [Plan 0061](../plans/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md)
+> **Status:** accepted (2026-11-11, at Plan 0061's close; see Outcome: the read and the weight rule are
+> the fly-through's defaults, off in the library)
+> **Date:** 2026-11-10, amended 2026-11-11 (proposed, edited in place: the weight rule, after
+> Plan 0061 Phase 1's readings and the owner's pick)
+> **Related plan(s):** [Plan 0061](../plans/done/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md)
 > (Phase 1 checks the source this ADR assumes and can reject it, by two stop rules: the far normal
 > must not move the far crops under the store, and direction changes must carry the largest share
 > of their distance from the reference; Phase 4's window picks or drops it). Extends
@@ -31,6 +33,15 @@ only the lamp (`light.wgsl`) and the filters' weights. So in a lamp-off scene th
 its hit-pass time (Plan 0056: RTX +1.5 ms at `[2, 6]`, RADV +6.6 ms, the showcase start) and
 changes nothing on the light. Plan 0061's Phase 1 reads whether this is what the eye sees.
 
+Phase 1 read it (RTX, the hall, 2026-11-10): with the light passes at full resolution the far
+normal moves no far-crop figure, so the store is read by face as above. At the default half
+resolution it does move them (energy about −10 % at `[2, 6]`), and the cause is the filters: the
+upsample in `lit_at` weighs a light tap by `max(n.n', 0)^32` and the a-trous `edge_weight` by
+`^128`, both on `rec.n`. Where the far normal bends a riser's and a tread's normals toward each
+other, their taps stop being orthogonal and mix two different face values, which blurs the far
+crops and doubles FSR 2's still jumps (20 739 to 43 605). The pixels at a direction change carry
+97.4 % of the far crops' distance from the reference.
+
 The store holds, per 8-voxel cell, six direction values, each the mean of that direction's faces,
 and a face reads the 2 x 2 cells around it in its plane (ADR-0046's Outcome). A riser and the tread
 beside it sit in the same cell and read two of its six values. The information to light a far
@@ -52,6 +63,15 @@ takes it. The glass's reflected share (ADR-0047) keeps the face read.
 normal leaves the face normal only there. Under the whole-frame normal looks (`gradient27`,
 `trilinear8`, opt-in) the shading normal is the look's at every distance, and the read follows it
 on near faces too, as the lamp already does. The field look does not read the store by face.
+
+**The weight rule (amended 2026-11-11, the owner's pick).** A second `Lighting` bit, off in the
+library: the half-resolution light's filters weigh two hits by their face normals (the unit
+vector on the hit's face axis, signed against the view ray) instead of the shading normal, in
+`lit_at`'s upsample and the a-trous `edge_weight`; a hit with no face axis keeps the shading
+normal, and the plane term is unchanged. A far riser's and tread's taps then stay apart in the
+filters, and the read above is what makes their values smooth. Where the shading normal is the face
+normal (every near face under `face`) the weights are today's to the bit. Full-resolution light
+(`--lighting full`, ADR-0018's other tier) stays a comparison arm in Plan 0061's window.
 
 The blend is the "ambient cube" read of Half-Life 2's shading (McTaggart, Valve, 2004) applied to
 the store's six direction means. It is not exact: a staircase's true footprint average weights each
@@ -80,6 +100,10 @@ needs no new storage, no pass and no view dependence, and it meets today's read 
   direction, which may face another room (ADR-0046's Alternative E leak). The blend spreads that
   leak to the treads' pixels far away.
 - The far normal's own hit-pass cost stays; this ADR adds to it.
+- **Face weights give up the far normal's smoothing in the filters.** Across a far step the
+  upsample and the a-trous filter keep the riser's and the tread's light apart, as with the far
+  normal off; if the read does not make the two values agree, the far light shows the light grid's
+  half-resolution blocks instead of blur.
 
 ## Alternatives considered
 
@@ -109,3 +133,45 @@ static dither read the same way, `C` up from 0.818 to 1.097).
 
 Smoother terrain makes fewer terraces. The geometry is the consumer's, and a consumer's cave will
 have the same terraces; the engine has to draw them well.
+
+### Alternative E: full-resolution light as the fix (rejected by the owner, 2026-11-11)
+
+`--lighting full` removes the filters' mixing (Plan 0061 Phase 1: FSR 2's still jumps 1 309, the
+far crops nearer the reference) at +3.41 ms GPU p50 on the RTX with the lamp off (+4.7 ms lamp on,
++3.81 ms on the Radeon), the denoise at 4.35 ms against its 3.0 ms line and the RTX's wall p99 at
+18.0 to 18.6 ms. The direction bands stay (edge ratio 2.52), since the store is still read by face.
+It stays a comparison arm; a default flip to it supersedes ADR-0018's resolution pick in a new ADR.
+
+### Alternative F: keep the filters' weights on the shading normal (the read alone)
+
+The read as first proposed. Phase 1 read the mixing it leaves under the far normal: the far crops'
+energy down 10 % and the still jumps doubled. Rejected by the owner, 2026-11-11.
+
+## Outcome
+
+**2026-11-11, Plan 0061's close (v0.48.0): built as decided, both bits the fly-through's defaults
+by the owner's window; the library keeps them off.** `Lighting::store_read` (`StoreRead::Face |
+Normal`, bit 14) and `Lighting::light_weights` (`LightWeights::Normal | Face`, bit 15);
+`flythrough::DEFAULT_STORE_READ` is `Normal` and `DEFAULT_LIGHT_WEIGHTS` is `Face`, with `--store-read`
+(`Comma`) and `--light-weights` (`Semicolon`). The read runs only where the shading normal differs
+from the face normal, and the hit face's term reuses the face's own read. The face normal for the
+weights is signed toward the eye's side of the face plane (`filter_normal`, `march.wgsl`). The
+plane term stays on the shading normal; its face-normal variant was not read.
+
+- **Held, by gate tests on lavapipe:** a far staircase reads the mix within 1 % of a CPU replica
+  over the bake's records (1417 pixels), and its frame at the defaults matches
+  `far_staircase_store_normal.png`; near faces (weight 0) read today's value to the bit (0 of
+  12 063 pixels move); with the far normal off the whole frame is bit-identical under either bit,
+  at half and full light resolution.
+- **Read (RTX 3080 Laptop, the hall, `baked`, loaded, indicative):** at FSR 2 1.5 and `[2, 6]`,
+  the pick (read `normal`, weights `face`) takes the far crops' direction-map edge ratio from 3.18
+  to 1.29 and FSR 2's still jumps from 20 759 to 786; the pan's `C` from 0.591 to 0.229. The read
+  with `rec.n` weights reads lowest by the plan's rule (edge ratio 1.09); the owner picked the face
+  weights. The far crops' detail energy falls 50 to 80 % against the face-read reference and stays
+  within 5 % of the normal-read one: the owner's "maybe even a bit too soft - but no aliazing".
+- **Cost (loaded, indicative):** the read adds 0.08 ms on the RTX and 0.21 ms on the RADV RENOIR to
+  the hall's temporal pass at `[2, 6]`, against the 0.3 and 1.5 ms guessed. The face weights
+  add 0.5 ms to the Radeon's a-trous at the vein, 3.19 ms, **over the 3.0 ms denoise line**
+  (routed to Plans 0067 and 0069). `frame_bytes` unchanged.
+- The Negative "half-resolution blocks" did not show at the window. The leak through a cell's
+  direction mean was not read separately.

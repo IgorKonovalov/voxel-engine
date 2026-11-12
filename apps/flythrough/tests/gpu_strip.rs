@@ -39,14 +39,22 @@
 //!   display-encoded luma in 0..1, written times 8 as grey.
 //! - `VXE_STRIP_LIGHT`: `hero` (the variables above), `eye` (`aliasing::eye_lamp` at
 //!   `VXE_STRIP_LAMP_POWER`, default 4000 (the hall's dome crop at a mean display luma of 30 to 120 at exposure 8), with `aliasing::eye_lighting`: the lamp on, no
-//!   indirect, no emissive candidates, the mirror's light radius 0) or `eye0` (`eye` with every emitting material's
-//!   emission scaled to 0). Given at all, the probe spacing defaults to the hero's 32.
+//!   indirect, no emissive candidates, the mirror's light radius 0), `eye0` (`eye` with every emitting material's
+//!   emission scaled to 0) or `baked` (the hero's variables over the store, ADR-0046: the chunks
+//!   within `VXE_STRIP_BAKE_RADIUS` (default 12) of the eye's chunk baked before the settle at
+//!   `BakeSettings::default()` with rounds of 512, as `gpu_bake.rs`'s `brick_bake`, the
+//!   fly-through's default probe spacing). Given as `hero`, `eye` or `eye0`, the probe spacing
+//!   defaults to the hero's 32.
 //! - `VXE_STRIP_LIGHT_RADIUS`: the mirror's `light_radius` (default: 0 under `eye`, else the
 //!   source's). `VXE_STRIP_PROBE_SPACING`: the probe volume's spacing.
 //! - `VXE_STRIP_SHARPEN`: the upscaler's sharpening (default 0.5).
+//! - `VXE_STRIP_LIGHTING`: the light passes' resolution, `full` or `half` (default: the
+//!   frame's, half).
+//! - `VXE_STRIP_STORE_READ`: `face` (default) or `normal`, `Lighting::store_read` (ADR-0049);
+//!   `VXE_STRIP_WEIGHTS`: `normal` (default) or `face`, `Lighting::light_weights`.
 //! - FSR 2's candidate knobs (`Fsr2Settings`): `VXE_STRIP_JITTER_PHASES` (the jitter's phase
-//!   count; the fold's default follows it), `VXE_STRIP_EMITTER_CAP` (a pre-exposed level) and
-//!   `VXE_STRIP_DITHER=on` (the tone pass's static one-level dither).
+//!   count; the fold's default follows it) and `VXE_STRIP_DITHER=on` (the tone pass's static
+//!   one-level dither).
 //! - `VXE_STRIP_READ=fold`: after the settle, `VXE_STRIP_FRAMES` still frames folded over
 //!   `VXE_STRIP_PHASES` (default: `fsr2::jitter_phases`, `own`'s `JITTER_PHASES`, 18 for
 //!   `off`): `T`, `L`, `J` (`support::aliasing`), the guard's energy, the jumps by class and
@@ -55,8 +63,15 @@
 //! - `VXE_STRIP_SCALE`: the upscalers' internal scale, `1`, `1.5` (default) or `2`.
 //! - `VXE_STRIP_SHRINK=K`: with `off`, renders `K` times the size on each edge and box-filters
 //!   every read frame down to the output size (`R` at `K` 2 and `VXE_STRIP_FAR=4,12`).
-//! - `VXE_STRIP_REF`: an absolute path to a PNG of the output size; a fold prints its last
-//!   frame's mean level distance from it.
+//! - `VXE_STRIP_REF`: absolute paths to PNGs of the output size, separated by `,`; a fold
+//!   prints its last frame's mean level distance from each, on the whole frame and on the far
+//!   crops, and the distance by class (split by the direction map).
+//! - A fold also reads the **far crops** (the dome and the far wall, `GUARD_CROPS` 0 and 2 at
+//!   1920 x 1080, scaled to the output size): their guard energy and `T`; the class tables split
+//!   by the direction map (`aliasing::directions`), on the frame and on the far crops; the
+//!   direction map's edge ratio by 10 m bins of `t` (`aliasing::DirEdges`), from the far normal's
+//!   band start (`VXE_STRIP_BAND_HI`, default the look's `far_normal[1]`, in internal pixels);
+//!   and writes `dirmap.png`.
 //! - `VXE_STRIP_RINGS=x,y,w,h`: a fold reads the rings on that crop of its last frame
 //!   (`aliasing::Rings`) and writes `zlevel.png`, `rings-zlevel.png` and `rings-crop.png`.
 //! - `VXE_STRIP_PAN=PX_PER_FRAME`: after the settle, `VXE_STRIP_FRAMES` frames of a pure yaw to
@@ -135,6 +150,8 @@ struct Scene {
     emits: Vec<u16>,
     /// The mirror's `light_radius`.
     light_radius: i32,
+    /// The voxels the mirror holds, for a bake.
+    world: World,
 }
 
 /// The hero's probe spacing (`examples/hero.rs`), the default under `VXE_STRIP_LIGHT`.
@@ -150,7 +167,7 @@ fn emitting(table: &MaterialTable) -> Vec<u16> {
         .collect()
 }
 
-fn sync_whole(scene: &mut Scene, world: &World) {
+fn sync_whole(scene: &mut Scene) {
     let mut last = None;
     for _ in 0..256 {
         let mut enc = scene
@@ -158,7 +175,7 @@ fn sync_whole(scene: &mut Scene, world: &World) {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         scene
             .gpu
-            .sync(world, &scene.queue, &mut enc)
+            .sync(&scene.world, &scene.queue, &mut enc)
             .expect("the mirror fits");
         scene.queue.submit([enc.finish()]);
         scene
@@ -225,8 +242,9 @@ fn scene() -> Option<Scene> {
             name: format!("level at {} on {adapter}", pose.name),
             emits: emitting(&base),
             light_radius: radius,
+            world,
         };
-        sync_whole(&mut scene, &world);
+        sync_whole(&mut scene);
         return Some(scene);
     }
     assert!(
@@ -267,8 +285,9 @@ fn scene() -> Option<Scene> {
         name: format!("showcase at {} on {adapter}", shot.name),
         emits: emitting(&table),
         light_radius: radius,
+        world,
     };
-    sync_whole(&mut scene, &world);
+    sync_whole(&mut scene);
     Some(scene)
 }
 
@@ -420,6 +439,88 @@ fn display(scene: &Scene, frame: &Frame, shrink: u32) -> Vec<u8> {
     }
 }
 
+/// `VXE_STRIP_LIGHT=baked`: the chunks within `VXE_STRIP_BAKE_RADIUS` (default 12) of the
+/// camera's chunk baked into the store at `BakeSettings::default()` with rounds of 512
+/// (`gpu_bake.rs`'s `brick_bake`), before any frame reads it.
+fn bake_view(scene: &mut Scene, frame: &mut Frame) {
+    let radius: i32 = env_or("VXE_STRIP_BAKE_RADIUS", 12);
+    let settings = vxe_render::bake::BakeSettings {
+        round: 512,
+        ..vxe_render::bake::BakeSettings::default()
+    };
+    let world = scene.world.extent();
+    let size = world.size();
+    let centre = scene
+        .camera
+        .position
+        .to_array()
+        .map(|v| (v / 64.0).floor() as i32);
+    let lo = [0, 1, 2].map(|k| (centre[k] - radius).max(world.min.0[k]));
+    let hi = [0, 1, 2].map(|k| (centre[k] + radius + 1).min(world.min.0[k] + size[k]));
+    let extent = ChunkExtent::new(lo, [0, 1, 2].map(|k| hi[k].max(lo[k])));
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a reading times its bake on the wall clock"
+    )]
+    let t = std::time::Instant::now();
+    let r = frame
+        .bake_until(
+            &scene.device,
+            &scene.queue,
+            &mut scene.gpu,
+            &scene.world,
+            extent,
+            &settings,
+            &mut |_| {},
+        )
+        .expect("the view's chunks fit the store's pool");
+    println!(
+        "strip: baked chunks {lo:?}..{hi:?} (radius {radius}) at rounds of 512: {} chunks, {} faces, {:.3e} samples in {:.0} ms",
+        r.chunks,
+        r.faces,
+        r.samples as f64,
+        elapsed_ms(t)
+    );
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a reading times its bake on the wall clock"
+)]
+fn elapsed_ms(t: std::time::Instant) -> f64 {
+    t.elapsed().as_secs_f64() * 1e3
+}
+
+/// The far crops at `w` x `h`: the dome and the far wall (`GUARD_CROPS` 0 and 2) scaled from
+/// 1920 x 1080.
+fn far_crops(w: u32, h: u32) -> [[u32; 4]; 2] {
+    [GUARD_CROPS[0], GUARD_CROPS[2]].map(|c| {
+        [
+            c[0] * w / 1920,
+            c[1] * h / 1080,
+            (c[2] * w / 1920).max(2),
+            (c[3] * h / 1080).max(2),
+        ]
+    })
+}
+
+fn in_crop(i: usize, w: u32, c: [u32; 4]) -> bool {
+    let (x, y) = (i as u32 % w, i as u32 / w);
+    x >= c[0] && x < c[0] + c[2] && y >= c[1] && y < c[1] + c[3]
+}
+
+/// `T` over consecutive `frames` on the `c` crop of images `w` wide.
+fn crop_t(frames: &[Vec<u8>], w: u32, c: [u32; 4]) -> aliasing::Change {
+    let mut hist = aliasing::Hist::default();
+    for pair in frames.windows(2) {
+        let (a, b) = (crop(&pair[0], w, c), crop(&pair[1], w, c));
+        aliasing::levels(&a, &b)
+            .into_iter()
+            .for_each(|d| hist.add(d));
+    }
+    hist.change()
+}
+
 /// `VXE_STRIP_PAN=PX_PER_FRAME`: a pure yaw to the left from the settled still, `C` read in the
 /// centre band each frame against the frame `lag` before shifted `shift` pixels.
 struct PanRead<'a> {
@@ -473,7 +574,8 @@ impl PanRead<'_> {
                 pos: &pos,
                 info: &info,
             };
-            let mask = Mask::of(&hits, [w, h], tan_sum, &is_emit);
+            let mut mask = Mask::of(&hits, [w, h], tan_sum, &is_emit);
+            mask.set_directions(&hits, camera.position.to_array());
             let d = if self.dots {
                 aliasing::dots(&rgba, w, h)
             } else {
@@ -581,6 +683,8 @@ struct FoldRead<'a> {
     shrink: u32,
     phases: u32,
     frames: u32,
+    /// The far normal's band's upper end in internal pixels: the direction read's `t` from.
+    band_hi: f32,
     tag: &'a str,
     dir: &'a std::path::Path,
 }
@@ -604,7 +708,8 @@ impl FoldRead<'_> {
                     pos: &pos,
                     info: &info,
                 };
-                let m = Mask::of(&hits, [w, h], tan_sum, &is_emit);
+                let mut m = Mask::of(&hits, [w, h], tan_sum, &is_emit);
+                m.set_directions(&hits, camera.position.to_array());
                 match &mut mask {
                     Some(a) => a.merge(&m),
                     None => mask = Some(m),
@@ -715,8 +820,24 @@ impl FoldRead<'_> {
             let (px, pw, ph) = sheet(&panels, side, side, 4);
             write_png(&self.dir.join("clusters.png"), &px, pw, ph);
         }
-        if let Some(path) = env("VXE_STRIP_REF") {
-            let (r, rw, rh) = support::read_png(&PathBuf::from(&path));
+        // The far crops: energy, T, and the class tables split by the direction map.
+        let far = far_crops(w, h);
+        let in_far = |i: usize| far.iter().any(|&c| in_crop(i, w, c));
+        for (name, c) in ["dome", "far wall"].iter().zip(far) {
+            let (eh, ev) = neighbour_energy(last, w, c);
+            println!(
+                "fold far crop {name} {c:?}: energy h {eh:.5} v {ev:.5} mean {:.5}; T {}",
+                (eh + ev) / 2.0,
+                crop_t(&frames, w, c).cell()
+            );
+        }
+        println!(
+            "fold T jumps by class, far crops:\n{}",
+            ByClass::of_where(&mask, &fold.t_jumps, &in_far).table("T jumps")
+        );
+        let refs = env("VXE_STRIP_REF").unwrap_or_default();
+        for path in refs.split(',').filter(|p| !p.is_empty()) {
+            let (r, rw, rh) = support::read_png(&PathBuf::from(path));
             assert_eq!((rw, rh), (w, h), "VXE_STRIP_REF is {rw}x{rh}");
             let d = aliasing::levels(last, &r);
             println!(
@@ -724,6 +845,80 @@ impl FoldRead<'_> {
                 d.iter().map(|&v| f64::from(v)).sum::<f64>() / d.len() as f64,
                 d.iter().filter(|&&v| v > 8).count() as f64 / d.len() as f64 * 100.0
             );
+            for (name, c) in ["dome", "far wall"].iter().zip(far) {
+                let (a, b) = (crop(last, w, c), crop(&r, w, c));
+                let dc = aliasing::levels(&a, &b);
+                let (rh_, rv_) = neighbour_energy(&r, w, c);
+                println!(
+                    "fold far crop {name} distance from R: mean {:.3} levels, over 8 {:.2} %; R's energy mean {:.5}",
+                    dc.iter().map(|&v| f64::from(v)).sum::<f64>() / dc.len() as f64,
+                    dc.iter().filter(|&&v| v > 8).count() as f64 / dc.len() as f64 * 100.0,
+                    (rh_ + rv_) / 2.0
+                );
+            }
+            let d32: Vec<u32> = d.iter().map(|&v| u32::from(v)).collect();
+            let whole = ByClass::of(&mask, &d32);
+            let far_d = ByClass::of_where(&mask, &d32, &in_far);
+            println!(
+                "fold distance from R by class:\n{}",
+                whole.table("distance")
+            );
+            println!(
+                "fold distance from R by class, far crops:\n{}",
+                far_d.table("distance")
+            );
+            let (row, share) = far_d.largest_split_row();
+            let (lit, lit_share) = far_d.largest_interior_split();
+            println!(
+                "fold far crops' largest distance row: {row} {:.1} %; with interior split alone: {lit} {:.1} %; at a direction change (any class) {:.1} %",
+                share * 100.0,
+                lit_share * 100.0,
+                far_d.at_total() as f64 / far_d.total().max(1) as f64 * 100.0
+            );
+        }
+        {
+            let (pos, info) = read_hits(scene, frame);
+            let hits = Hits {
+                size: internal,
+                pos: &pos,
+                info: &info,
+            };
+            let dirs = aliasing::directions(&hits, [w, h], camera.position.to_array());
+            let at = aliasing::changes(&dirs, [w, h]);
+            let z = aliasing::z_levels(&hits, [w, h]);
+            write_png(
+                &self.dir.join("dirmap.png"),
+                &aliasing::direction_image(&dirs),
+                w,
+                h,
+            );
+            // The band's start: a voxel `band_hi` internal pixels wide.
+            let tan_internal = 2.0 * (camera.vfov * 0.5).tan() * w as f32 / h as f32;
+            let t_from = internal[0] as f32 / (tan_internal * self.band_hi.max(1e-3));
+            print!(
+                "{}",
+                aliasing::DirEdges::read(last, &dirs, &at, &z, w, [0, 0, w, h], t_from)
+                    .lines("frame")
+            );
+            for (name, c) in ["dome", "far wall"].iter().zip(far) {
+                print!(
+                    "{}",
+                    aliasing::DirEdges::read(last, &dirs, &at, &z, w, c, t_from).lines(name)
+                );
+            }
+            let mut fc = aliasing::DirEdges::default();
+            for c in far {
+                let r = aliasing::DirEdges::read(last, &dirs, &at, &z, w, c, t_from);
+                for (k, b) in r.by_t.iter().enumerate() {
+                    if fc.by_t.len() <= k {
+                        fc.by_t.resize(k + 1, [0; 4]);
+                    }
+                    (0..4).for_each(|j| fc.by_t[k][j] += b[j]);
+                }
+                (0..4).for_each(|j| fc.beyond[j] += r.beyond[j]);
+                fc.t_from = r.t_from;
+            }
+            print!("{}", fc.lines("far crops"));
         }
         if let Some(c) = list::<4>("VXE_STRIP_RINGS").map(|c| c.map(|v| v as u32)) {
             let (pos, info) = read_hits(scene, frame);
@@ -907,6 +1102,103 @@ fn the_class_mask_names_each_class() {
     cycle.merge(&edge);
     cycle.merge(&back);
     assert_eq!(cycle.class[4], Class::Silhouette);
+}
+
+/// A two-step staircase rising along +x seen from `STAIR_EYE` (above and behind it), one internal
+/// pixel a column, every row alike: treads (+z faces) of 4 columns at z 1, 2, 3 and risers (-x
+/// faces) of one column between them. The hit of column `x` and its store direction.
+const STAIR_EYE: [f32; 3] = [-20.0, 0.5, 30.0];
+
+/// A hit's position with `t`, and its record.
+type HitCell = ([f32; 4], [u16; 4]);
+
+fn stair_hit(x: u32) -> (HitCell, u8) {
+    // Columns 0..4 tread at z 1, 4 riser at x 4, 5..9 tread at z 2, 9 riser at x 9, 10..14
+    // tread at z 3.
+    let rel = |p: [f32; 3]| {
+        [
+            p[0] - STAIR_EYE[0],
+            p[1] - STAIR_EYE[1],
+            p[2] - STAIR_EYE[2],
+        ]
+    };
+    let at = |p: [f32; 3], axis: u16| {
+        let r = rel(p);
+        let t = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
+        ([p[0], p[1], p[2], t], [0, 0, 3, 1 | (axis + 1) << 3])
+    };
+    match x {
+        4 => (at([4.0, 0.5, 1.5], 0), 0),
+        9 => (at([9.0, 0.5, 2.5], 0), 0),
+        _ => {
+            let z = 1.0 + (x / 5) as f32;
+            (at([x as f32 + 0.5, 0.5, z], 2), 5)
+        }
+    }
+}
+
+#[test]
+fn the_direction_map_names_each_face_direction() {
+    use aliasing::{DirEdges, changes, directions, z_levels};
+    let (w, h) = (14u32, 4u32);
+    let cells: Vec<(HitCell, u8)> = (0..w * h).map(|i| stair_hit(i % w)).collect();
+    let pos: Vec<[f32; 4]> = cells.iter().map(|c| c.0.0).collect();
+    let info: Vec<[u16; 4]> = cells.iter().map(|c| c.0.1).collect();
+    let hits = Hits {
+        size: [w, h],
+        pos: &pos,
+        info: &info,
+    };
+    let dirs = directions(&hits, [w, h], STAIR_EYE);
+    for (i, (d, (_, want))) in dirs.iter().zip(&cells).enumerate() {
+        assert_eq!(*d, Some(*want), "pixel {i}'s store direction");
+    }
+    // A miss and a hit with no entry face hold none.
+    let none_pos = [MISS.0, ([1.0, 1.0, 1.0, 5.0])];
+    let none_info = [MISS.1, [0, 0, 3, 1]];
+    let none = Hits {
+        size: [2, 1],
+        pos: &none_pos,
+        info: &none_info,
+    };
+    assert_eq!(directions(&none, [2, 1], STAIR_EYE), vec![None, None]);
+
+    let at = changes(&dirs, [w, h]);
+    let want_at = |x: u32| matches!(x, 3..=5 | 8..=10);
+    for (i, &a) in at.iter().enumerate() {
+        assert_eq!(a, want_at(i as u32 % w), "pixel {i} at a direction change");
+    }
+    // Luma: tread A 40, the risers 120, tread B 40, tread C 40 then 100 from column 12. The
+    // steps at columns 3|4, 4|5, 8|9, 9|10 lie at direction changes; the one at 11|12 inside
+    // tread C.
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|i| {
+            let v = match i % w {
+                4 | 9 => 120,
+                12.. => 100,
+                _ => 40,
+            };
+            [v, v, v, 255]
+        })
+        .collect();
+    let z = z_levels(&hits, [w, h]);
+    let r = DirEdges::read(&rgba, &dirs, &at, &z, w, [0, 0, w, h], 0.0);
+    // Read over columns 0..13 and rows 0..3: edges are pixels whose right neighbour differs
+    // (rows alike, so no vertical edge): columns 3, 4, 8, 9 at a change, 11 inside a face.
+    let rows = u64::from(h - 1);
+    let at_px = rows * (0..w - 1).filter(|&x| want_at(x)).count() as u64;
+    assert_eq!(
+        r.beyond,
+        [5 * rows, 4 * rows, rows * u64::from(w - 1), at_px],
+        "edges, edges at a change, pixels, pixels at a change"
+    );
+    let ratio = aliasing::edge_ratio(r.beyond);
+    let want = (4.0 / 6.0) / (1.0 / 7.0);
+    assert!(
+        (ratio - want).abs() < 1e-9,
+        "the edge ratio {ratio} against {want}"
+    );
+    assert_eq!(r.by_t.iter().map(|b| b[0]).sum::<u64>(), 5 * rows);
 }
 
 /// The first frame of the eye lamp's native run from which every frame to frame 128 is
@@ -1184,10 +1476,6 @@ mod reading {
                             v.parse()
                                 .expect("VXE_STRIP_JITTER_PHASES takes a phase count")
                         }),
-                        emitter_cap: env("VXE_STRIP_EMITTER_CAP").map(|v| {
-                            v.parse()
-                                .expect("VXE_STRIP_EMITTER_CAP takes a pre-exposed level")
-                        }),
                         dither: on_off("VXE_STRIP_DITHER", false),
                         ..Fsr2Settings::default()
                     }),
@@ -1224,6 +1512,17 @@ mod reading {
                 Some(v) => panic!("VXE_STRIP_SHADOW takes coarse or full, not {v}"),
             },
             exposure,
+            store_read: match env("VXE_STRIP_STORE_READ").as_deref() {
+                Some(v) => vxe_render::StoreRead::from_name(v).unwrap_or_else(|| {
+                    panic!("VXE_STRIP_STORE_READ takes face or normal, not {v}")
+                }),
+                None => vxe_render::StoreRead::Face,
+            },
+            light_weights: match env("VXE_STRIP_WEIGHTS").as_deref() {
+                Some(v) => vxe_render::LightWeights::from_name(v)
+                    .unwrap_or_else(|| panic!("VXE_STRIP_WEIGHTS takes normal or face, not {v}")),
+                None => vxe_render::LightWeights::Normal,
+            },
             ..Lighting::default()
         };
         let light_mode = env("VXE_STRIP_LIGHT");
@@ -1232,13 +1531,14 @@ mod reading {
         }
         let lamp_power: f32 = env_or("VXE_STRIP_LAMP_POWER", 4000.0);
         let light = match light_mode.as_deref() {
-            None | Some("hero") => LightParams::headlamp(),
+            None | Some("hero" | "baked") => LightParams::headlamp(),
             Some("eye" | "eye0") => {
                 lighting = aliasing::eye_lighting(lighting);
                 aliasing::eye_lamp(lamp_power)
             }
-            Some(v) => panic!("VXE_STRIP_LIGHT takes hero, eye or eye0, not {v}"),
+            Some(v) => panic!("VXE_STRIP_LIGHT takes hero, eye, eye0 or baked, not {v}"),
         };
+        let baked = light_mode.as_deref() == Some("baked");
         if light_mode.as_deref() == Some("eye0") {
             for &m in &scene.emits {
                 frame.set_emission_scale(queue, m, 0.0);
@@ -1246,13 +1546,18 @@ mod reading {
         }
         let spacing: u32 = env_or(
             "VXE_STRIP_PROBE_SPACING",
-            if light_mode.is_some() {
+            if light_mode.is_some() && !baked {
                 HERO_PROBE_SPACING
             } else {
                 vxe_render::probes::DEFAULT_PROBE_SPACING
             },
         );
         frame.set_probe_spacing(device, spacing);
+        if let Some(v) = env("VXE_STRIP_LIGHTING") {
+            let r = vxe_render::marcher::LightingResolution::from_name(&v)
+                .unwrap_or_else(|| panic!("VXE_STRIP_LIGHTING takes full or half, not {v}"));
+            frame.set_resolution(device, r);
+        }
         let mean_image = on_off("VXE_STRIP_MEAN", false);
         frame.set_lighting(lighting);
         frame.set_look(LookParams {
@@ -1264,6 +1569,10 @@ mod reading {
         });
         const DT: f32 = 1.0 / 60.0;
         frame.set_dt(DT);
+        if baked {
+            bake_view(&mut scene, &mut frame);
+        }
+        let (device, queue) = (&scene.device, &scene.queue);
 
         let settle: u32 = env_or("VXE_STRIP_SETTLE", 120);
         let frames: u32 = env_or("VXE_STRIP_FRAMES", 240);
@@ -1344,6 +1653,7 @@ mod reading {
                 shrink,
                 phases,
                 frames,
+                band_hi: env_or("VXE_STRIP_BAND_HI", preset.far_normal[1]),
                 tag: &tag,
                 dir: &dir,
             };

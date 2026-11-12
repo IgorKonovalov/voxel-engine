@@ -13,8 +13,18 @@
 > that goes after all plans that are active are finished". The review ran at `87e4b67`; its
 > structural findings are Plan 0045.
 >
-> **Order (owner, 2026-11-10):** Plan 0060, Plan 0061, Plan 0058, this plan, Plan 0045, then
-> M10. It replaces every earlier order, and the "set at Plan 0059's Phase 3 verdict" note,
+> **Amended (owner, 2026-11-12):** Phase 4 is struck into Plan 0070 (the review's question 2,
+> taken as recommended with the plan's approval). The order is Plans 0067, 0045, 0070, 0058,
+> then Phases 3, 5 and 8 here, then Plan 0069.
+>
+> **Order amended (owner, 2026-11-11):** Plan 0045 moves ahead of Plan 0058 and of this
+> plan's remaining phases. The order is Plans 0061, 0067, 0045, 0058, then Phases 3, 4, 5 and 8
+> here, then Plan 0069. The side lane (Phases 0, 1, 6, 7) merged at `d6d2dfa`. The remaining
+> phases name files 0045 moves: Phase 0's render rows re-inventory on the split tree, and
+> Phase 8 lands the device helper in 0045's split test files.
+>
+> **Order (owner, 2026-11-10; amended above):** Plan 0060, Plan 0061, Plan 0058, this plan,
+> Plan 0045, then M10. It replaces every earlier order, and the "set at Plan 0059's Phase 3 verdict" note,
 > which no document ever recorded.
 > - **Phases 2, 3, 4, 5 and 8 start after Plan 0058 closes.** They claim byte-identical
 >   goldens on the frame, the shaders and the render tests that Plans 0058, 0060 and 0061
@@ -538,6 +548,9 @@ claim that line.
 3. **Rapid reverb handovers (owner, 2026-11-11),** the fix pass's finding 2: option (b), the
    deferral with the bound raised to `2 x BLOCK` frames a line (8 192 samples, 32 KB a block),
    no extra memory, the walk test unchanged (readings log, Fix pass, Finding 2).
+4. **The order, amended (owner, 2026-11-11).** Plan 0045 moves ahead of Plan 0058 and of
+   this plan's Phases 3, 4, 5 and 8, which still follow 0058. This replaces answer 2's place
+   for Plan 0045.
 
 ## Implementation log
 

@@ -36,7 +36,8 @@
 //                                        black (every one of them under `black`)
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
-// (`store_brick_value`), times the dominant material's
+// (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
+// normal, the mix by the normal of `store_value_by_normal`), times the dominant material's
 // emission scale now and this frame's exposure, with no screen history, the same value at every
 // pixel of the face. With no value, the flags word's missing-light mode (ADR-0053,
 // `store_fallback`) reads a chain of summaries, nearest first: the chunk's own block's, the
@@ -279,6 +280,32 @@ fn store_fallback(head: StoreHead, v: vec3<i32>, face: u32) -> vec4<f32> {
     return vec4<f32>(0.0);
 }
 
+// The stored part by shading normal `n` (ADR-0049) at voxel `v` whose hit face `face` read
+// `c`: the cell's direction values for the directions `n` leans toward, `2a + (n_a > 0)` on
+// each axis `a` with `n_a^2` above 1e-4, mixed by `n_a^2` over those that hold a value and
+// renormalised; `c` where none does. The hit face's term is `c` itself.
+fn store_value_by_normal(head: StoreHead, v: vec3<i32>, face: u32, c: vec4<f32>, n: vec3<f32>) -> vec4<f32> {
+    var sum = vec3<f32>(0.0);
+    var weight = 0.0;
+    for (var a = 0u; a < 3u; a++) {
+        let w = n[a] * n[a];
+        if (w < 1e-4) {
+            continue;
+        }
+        let dir = 2u * a + select(0u, 1u, n[a] > 0.0);
+        var r = c;
+        if (dir != face) {
+            r = store_brick_value(head, v, dir);
+        }
+        sum += r.xyz * (w * r.w);
+        weight += w * r.w;
+    }
+    if (weight > 0.0) {
+        return vec4<f32>(sum / weight, 1.0);
+    }
+    return c;
+}
+
 // The gradient's gain: lambda = |new - old| / max(new, old) reads 0.9 where light fell to a
 // tenth, and a blend at 0.9 would keep a tenth of the old light; twice lambda, clamped, takes
 // such a pixel to its new light at once.
@@ -368,7 +395,12 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
         stored = true;
-        sample = vec4<f32>(value.xyz * exposure_now(), sample.w);
+        // The hit face's term is its brick value or, with none, the missing-light chain's.
+        var e = value;
+        if ((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u && any(rec.n != nf)) {
+            e = store_value_by_normal(head, voxel, face, value, rec.n);
+        }
+        sample = vec4<f32>(e.xyz * exposure_now(), sample.w);
         if ((params.lighting & LIGHTING_LAMP) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;

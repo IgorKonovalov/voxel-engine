@@ -27,9 +27,18 @@
 //! [--history edits|gradient] [--lighting full|half]
 //! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
-//! [--jitter-phases N] [--emitter-cap C] [--dither on|off] [--pace free|compositor]
+//! [--jitter-phases N] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
-//! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
+//! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]
+//! [--path cave|showcase|castle] [--path-mode bench|tour] [--report DIR] [--tester]`.
+//! `--path NAME` flies that scene's camera path (`flythrough::path`; the scene's own flags and
+//! seed 1 are required): `--path-mode bench` (the default) once by wall time (1/60 s a headless
+//! frame), then exits; `tour` loops it, the first move, look or dig hands the camera to the
+//! keys and `T` resumes the path from its nearest point. The banner shows the mode always
+//! (`benchmark 23 s / 37 s`). `--report DIR` writes `DIR/run.json` at exit
+//! (`flythrough::report`). `--tester` leaves movement, look, the dig, `F1` (a help panel), `T`
+//! and `Esc` and turns every other key off, the stats HUD among them. `--check-args` parses the
+//! arguments, prints `flythrough: arguments ok` and exits 0, opening nothing.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
 //! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
 //! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
@@ -49,15 +58,16 @@
 //! ADR-0024 at `--internal-scale`, `fsr2` FSR 2 (ADR-0034) at `--internal-scale` with its own
 //! jitter; without it the upscaler is `off` at scale 1 with the jitter off, `own` when
 //! `--jitter` is given (only `own` takes it), else `fsr2`, so no flag starts in `fsr2` at 1.5
-//! and `--internal-scale 1` in `off`. In a
+//! and `--internal-scale 1` in `off`. The quality setting is FSR 2 at scale 1 with the far
+//! normal scaled to the same voxels, `--upscaler fsr2 --internal-scale 1 --far-normal 3,9`
+//! (about twice the default's march). In a
 //! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner, `Z`
 //! cycles the sharpening (0.5, 0.25, 0; the upscaler keeps its history), `V` the far normal
 //! (`[2, 6]`, `[1, 2]`, off), and `--pan DEG_PER_S` turns the camera at a constant yaw rate
 //! (positive to the left, by the frame's measured interval) that `Period` stops and starts;
 //! the stats HUD names all four on one row; FSR 2's candidate knobs, off by default, are
-//! `--jitter-phases N` (its jitter's phase count), `--emitter-cap C` (an emitting hit's
-//! pre-exposed colour held at `C` into FSR 2) and `--dither on` (a static one-level dither in
-//! its tone pass), each named in the banner's fsr2 line when set;
+//! `--jitter-phases N` (its jitter's phase count) and `--dither on` (a static one-level dither
+//! in its tone pass), each named in the banner's fsr2 line when set;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
 //! stats HUD's rows; `--pace free|compositor` (default `free`) picks whether the window
 //! asks the compositor for a frame callback before each present (`vxe_app::Pacing`): with it
@@ -145,7 +155,9 @@
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
 //! default, 16 or 32). In a window
 //! `F3` toggles the shadow walk, `F5` the history killer, `F6` the lighting
-//! resolution, `F7` the lamp, `F8` the lamp's bounce and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
+//! resolution, `F7` the lamp, `F8` the lamp's bounce, `Q` the exposure, `Comma` the store read
+//! (`--store-read face|normal`, ADR-0049, default `normal`) and `Semicolon` the light's filter
+//! weights (`--light-weights normal|face`, default `face`), each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets, naming the look on the banner.
 //! `--vault` places a 16-voxel room with an indestructible
@@ -273,6 +285,10 @@ use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB,
 use flythrough::logic::{
     DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
 };
+use flythrough::path::{
+    CameraPath, PATH_SEED, PathMode, PathPlayer, Scene, TesterAction, TesterInput, tester_action,
+};
+use flythrough::report::{AdapterLine, Recorder, RunReport};
 use flythrough::showcase::{SHOTS, SHOWCASE_CHUNKS, Shot, ShowcaseSource};
 use flythrough::{
     LogicChoice, LookPreset, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials,
@@ -504,6 +520,10 @@ struct Args {
     fade_reading: bool,
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     shadow_walk: ShadowWalk,
+    /// `--store-read face|normal`: how a cube face reads the store (ADR-0049; `Comma`).
+    store_read: vxe_render::StoreRead,
+    /// `--light-weights normal|face`: the normal the light's filters compare (`Semicolon`).
+    light_weights: vxe_render::LightWeights,
     /// `--filter on|off`: the a-trous filter runs (on by default).
     filter: bool,
     /// `--light-radius N`: chunks around the camera whose emitters light the frame.
@@ -586,9 +606,6 @@ struct Args {
     pan: Option<f32>,
     /// `--jitter-phases N`: FSR 2's jitter phase count (`Fsr2Settings::jitter_phases`).
     jitter_phases: Option<u32>,
-    /// `--emitter-cap C`: FSR 2's cap on an emitting hit's pre-exposed colour
-    /// (`Fsr2Settings::emitter_cap`).
-    emitter_cap: Option<f32>,
     /// `--dither on|off`: FSR 2's tone pass adds its static one-level dither
     /// (`Fsr2Settings::dither`).
     dither: bool,
@@ -605,6 +622,17 @@ struct Args {
     adapt: Option<[f32; 4]>,
     /// `--metering centre|average`: how the meter weights the frame (centre by default).
     metering: vxe_render::Metering,
+    /// `--path NAME`: the camera path the run flies (`flythrough::path`), and `--path-mode`.
+    path: Option<&'static CameraPath>,
+    path_mode: PathMode,
+    /// `--report DIR`: where the path run writes `run.json`.
+    report: Option<std::path::PathBuf>,
+    /// `--check-args`: parse the arguments, print `arguments ok` and exit 0 (the tester
+    /// build's launcher test checks its command lines with it).
+    check_args: bool,
+    /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
+    /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
+    tester: bool,
 }
 
 /// While the exposure moves by more than 0.01 EV per half second, prints the exposure row every
@@ -779,7 +807,6 @@ impl Args {
                 UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
                     sharpness: self.sharpen,
                     jitter_phases: self.jitter_phases,
-                    emitter_cap: self.emitter_cap,
                     dither: self.dither,
                     ..vxe_render::Fsr2Settings::default()
                 }),
@@ -798,6 +825,8 @@ impl Args {
             },
             lamp: self.lamp,
             shadow_walk: self.shadow_walk,
+            store_read: self.store_read,
+            light_weights: self.light_weights,
             filter: self.filter,
             history: self.history,
             lamp_bounce: self.lamp_bounce,
@@ -914,6 +943,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
         probe_slices: vxe_render::probes::SLICES,
         shadow_walk: ShadowWalk::default(),
+        store_read: flythrough::DEFAULT_STORE_READ,
+        light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
         history: HistoryKill::default(),
@@ -923,7 +954,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         sharpen: DEFAULT_SHARPEN,
         pan: None,
         jitter_phases: None,
-        emitter_cap: None,
         dither: false,
         exposure: None,
         adaptation: hud::Adaptation::Eye,
@@ -931,12 +961,18 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         metering: vxe_render::Metering::default(),
         jitter_set: false,
         upscaler: None,
+        path: None,
+        path_mode: PathMode::Bench,
+        report: None,
+        tester: false,
+        check_args: false,
     };
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
     let mut shot_flag = false;
     let mut exposure_flag = false;
     let mut light_radius_flag = None;
+    let mut path_mode_flag = false;
     // The part flags, applied to the `--look` preset after every flag is read.
     let mut face_mix = None;
     let mut far_normal = None;
@@ -1056,6 +1092,16 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
             }
+            "--store-read" => {
+                let v = value()?;
+                args.store_read = vxe_render::StoreRead::from_name(&v)
+                    .ok_or(format!("--store-read takes face or normal, not {v}"))?;
+            }
+            "--light-weights" => {
+                let v = value()?;
+                args.light_weights = vxe_render::LightWeights::from_name(&v)
+                    .ok_or(format!("--light-weights takes normal or face, not {v}"))?;
+            }
             "--probe-rays" => {
                 let v = value()?;
                 args.probe_rays = v
@@ -1096,15 +1142,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                         .ok()
                         .filter(|n| (1..=1024).contains(n))
                         .ok_or(format!("--jitter-phases takes 1 to 1024, not {v}"))?,
-                );
-            }
-            "--emitter-cap" => {
-                let v = value()?;
-                args.emitter_cap = Some(
-                    v.parse()
-                        .ok()
-                        .filter(|c: &f32| c.is_finite() && *c > 0.0)
-                        .ok_or(format!("--emitter-cap takes a level above 0, not {v}"))?,
                 );
             }
             "--dither" => {
@@ -1393,6 +1430,22 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     format!("--castle-shot takes gate, nave, window or dungeon, not {v}")
                 })?;
             }
+            "--path" => {
+                let v = value()?;
+                args.path = Some(
+                    CameraPath::named(&v)
+                        .ok_or_else(|| format!("--path takes {}, not {v}", CameraPath::names()))?,
+                );
+            }
+            "--path-mode" => {
+                let v = value()?;
+                args.path_mode = PathMode::from_name(&v)
+                    .ok_or(format!("--path-mode takes bench or tour, not {v}"))?;
+                path_mode_flag = true;
+            }
+            "--report" => args.report = Some(value()?.into()),
+            "--tester" => args.tester = true,
+            "--check-args" => args.check_args = true,
             "--audio" => args.audio = true,
             "--audio-debug" => {
                 args.audio = true;
@@ -1501,7 +1554,55 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         return Err(flythrough::WASM_NEEDS_FEATURE.to_owned());
     }
     args.mix.check()?;
+    check_path(&args, path_mode_flag)?;
     Ok(args)
+}
+
+/// `--path`'s rules: the path's scene and seed, nothing else steering the camera; `--path-mode`
+/// and `--report` only with a path.
+fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String> {
+    let Some(path) = args.path else {
+        if path_mode_flag || args.report.is_some() || args.tester {
+            return Err(
+                "--path-mode, --report and --tester play a camera path; they need --path"
+                    .to_owned(),
+            );
+        }
+        return Ok(());
+    };
+    if args.tester && args.hud {
+        return Err("--tester keeps the stats HUD out of reach; it does not take --hud".to_owned());
+    }
+    let scene = if args.castle {
+        Some(Scene::Castle)
+    } else if args.showcase {
+        Some(Scene::Showcase)
+    } else if args.level || args.room.is_some() || args.thin_rig || args.seam_rig {
+        None
+    } else {
+        Some(Scene::Cave)
+    };
+    if scene != Some(path.scene) {
+        return Err(format!(
+            "--path {} flies the {} scene; it needs {}",
+            path.name,
+            path.scene.name(),
+            path.scene.flags().join(" ")
+        ));
+    }
+    if args.seed != PATH_SEED {
+        return Err(format!(
+            "--path {} is laid against seed {PATH_SEED}; it does not take --seed {}",
+            path.name, args.seed
+        ));
+    }
+    if args.autopilot || args.walk || args.glide.is_some() || args.pan.is_some() {
+        return Err(
+            "--path drives the camera; it does not take --autopilot, --walk, --glide or --pan"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// `R_FULL,R_LOD`: radii in chunks with `1 <= R_FULL <= R_LOD`, hysteresis as
@@ -1639,8 +1740,16 @@ fn material_name(table: &MaterialTable, m: MaterialId) -> String {
         .map_or_else(|| format!("#{m}"), |row| row.name.clone())
 }
 
+/// The process's peak resident set in bytes: on Windows `GetProcessMemoryInfo`'s
+/// `PeakWorkingSetSize`, elsewhere `VmHWM` from `/proc/self/status`; `None` where neither reads.
+#[cfg(windows)]
+fn peak_rss_bytes() -> Option<u64> {
+    hud::process_memory().map(|m| m.PeakWorkingSetSize as u64)
+}
+
 /// The process's peak resident set (`VmHWM`) in bytes, read from `/proc/self/status`; `None`
 /// where that file does not exist or does not carry the line.
+#[cfg(not(windows))]
 fn peak_rss_bytes() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
@@ -3281,6 +3390,13 @@ struct Run {
     exposure_print: Option<(f64, f32)>,
     /// The live queue's readings.
     queue: QueueRun,
+    /// `--path`'s player and the frame times its report reads.
+    player: Option<PathPlayer>,
+    recorder: Option<Recorder>,
+    /// The adapter the device was created on, for the report.
+    adapter: Option<wgpu::AdapterInfo>,
+    /// `--tester`'s help panel (`F1`) is shown.
+    help: bool,
 }
 
 /// The live queue's state in the fly-through: the workers' results before the frame exists, and
@@ -3576,7 +3692,13 @@ impl Run {
             });
         let aliasing = s.aliasing.get_or_insert_with(String::new);
         aliasing.clear();
-        hud::write_aliasing_row(aliasing, &self.upscaler, far, self.pan.as_ref());
+        hud::write_aliasing_row(
+            aliasing,
+            &self.upscaler,
+            far,
+            &self.modes,
+            self.pan.as_ref(),
+        );
     }
 
     /// The CPU half of [`Run::update_hud`]: refreshes the values (with the GPU side's `g`),
@@ -3637,6 +3759,15 @@ impl Run {
     /// Appends the banner's rows to `out`, the live queue's order and withdrawal in `words`.
     fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
+        if let Some(p) = &self.player {
+            hud::write_path_row(out, p, self.args.tester);
+            if self.args.tester {
+                if self.help {
+                    hud::write_help_panel(out, p);
+                }
+                return;
+            }
+        }
         if let Some((pose, _)) = &self.pose {
             out.push_str(pose);
         }
@@ -4080,6 +4211,7 @@ impl Run {
     }
 
     fn init(&mut self, gpu: &Gpu) {
+        self.adapter = Some(gpu.adapter.get_info());
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
@@ -5264,7 +5396,8 @@ impl Run {
 
     fn frame(&mut self, gpu: &Gpu, input: &Input, dt: f32, surface: &wgpu::TextureView) -> Flow {
         let t0 = now();
-        if input.pressed(KeyCode::Escape) {
+        // A path run ends through its player, so its report can say how.
+        if input.pressed(KeyCode::Escape) && self.player.is_none() {
             return Flow::Exit;
         }
         // The first frame's delta spans startup, not a frame.
@@ -5272,7 +5405,13 @@ impl Run {
             self.hud.frames.record(dt);
             self.hud.run.wall_ms.push(f64::from(dt) * 1e3);
         }
-        if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
+        if self.args.tester {
+            if input.pressed(KeyCode::F1)
+                && tester_action(TesterInput::Key(KeyCode::F1)) == Some(TesterAction::Help)
+            {
+                self.help = !self.help;
+            }
+        } else if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
             self.hud.visible = !self.hud.visible;
         }
         if self.frame == 0 {
@@ -5289,7 +5428,15 @@ impl Run {
         if self.args.bench_at.contains(&self.frame) {
             self.bench();
         }
-        if self.pilot.is_some() {
+        let driven = match self.path_step(input, dt) {
+            Some(Flow::Exit) => return Flow::Exit,
+            Some(Flow::Continue) => true,
+            None => false,
+        };
+        if driven {
+            self.cutaway
+                .update(&mut self.look, &self.world, self.fly.camera.position);
+        } else if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
             }
@@ -5305,7 +5452,17 @@ impl Run {
             if let Some(p) = &self.pan {
                 self.fly.camera.yaw += p.yaw(dt);
             }
-            self.handle_input(input);
+            if self.args.tester {
+                // Free flight under `--tester`: the dig is the one action past moving.
+                if input.clicked(MouseButton::Left)
+                    && tester_action(TesterInput::Click(MouseButton::Left))
+                        == Some(TesterAction::Dig)
+                {
+                    self.dig();
+                }
+            } else {
+                self.handle_input(input);
+            }
             self.cutaway
                 .update(&mut self.look, &self.world, self.fly.camera.position);
         }
@@ -5316,6 +5473,87 @@ impl Run {
             self.samples = Some(Samples::default());
         }
         self.draw(gpu, surface, t0, dt)
+    }
+
+    /// Steps `--path`'s player by the frame's interval (1/60 s a headless frame, none on the
+    /// first frame, whose interval spans the startup): `Some(Exit)` once the run ended,
+    /// `Some(Continue)` when the path placed the camera, `None` when the tester flies or there
+    /// is no path.
+    fn path_step(&mut self, input: &Input, dt: f32) -> Option<Flow> {
+        let p = self.player.as_mut()?;
+        let step = if self.frame == 0 {
+            0.0
+        } else if self.args.headless {
+            1.0 / 60.0
+        } else {
+            dt
+        };
+        let eye = self.fly.camera.position.to_array();
+        let pose = p.step(step, flythrough::path::Controls::read(input), eye);
+        if p.ended() {
+            return Some(Flow::Exit);
+        }
+        let pose = pose?;
+        let c = &mut self.fly.camera;
+        c.position = pose.eye.into();
+        c.yaw = pose.yaw_deg.to_radians();
+        c.pitch = pose.pitch_deg.to_radians();
+        Some(Flow::Continue)
+    }
+
+    /// Writes `--report`'s `run.json`: what ran, on which adapter, and the recorder's frame
+    /// times; `failed` when the session ended on an error.
+    fn write_report(&self) {
+        let (Some(dir), Some(p), Some(rec)) = (&self.args.report, &self.player, &self.recorder)
+        else {
+            return;
+        };
+        let (_, scale, _) = self.args.upscaler_settings(self.upscaler.mode);
+        let sizes = self
+            .gfx
+            .as_ref()
+            .map(|g| (g.frame.output_size(), g.frame.internal_size()));
+        let mut r = RunReport {
+            version: env!("CARGO_PKG_VERSION"),
+            commit: flythrough::report::COMMIT,
+            scene: p.path.scene.name(),
+            path: p.path.name,
+            mode: p.mode.name(),
+            output: sizes.map_or([0, 0], |s| s.0),
+            internal: sizes.map_or([0, 0], |s| s.1),
+            internal_scale: scale.name(),
+            upscaler: self.upscaler.mode.name(),
+            adapter: self.adapter.as_ref().map(|a| AdapterLine {
+                name: a.name.clone(),
+                vendor: a.vendor,
+                device: a.device,
+                device_type: format!("{:?}", a.device_type),
+                driver: a.driver.clone(),
+                driver_info: a.driver_info.clone(),
+                backend: vxe_app::backend_label(a.backend),
+            }),
+            path_s: p.path.duration_s(),
+            frames: 0,
+            warmup_frames: 0,
+            warmup_s: 0.0,
+            wall_ms: None,
+            cpu_ms: None,
+            gpu_ms: None,
+            over_33ms: 0,
+            over_100ms: 0,
+            peak_rss_bytes: peak_rss_bytes(),
+            ended: if self.failure.is_some() {
+                "failed"
+            } else {
+                p.ended_word()
+            },
+        };
+        rec.fill(&mut r);
+        let file = dir.join("run.json");
+        match std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, r.to_json())) {
+            Ok(()) => println!("report: wrote {}", file.display()),
+            Err(e) => eprintln!("flythrough: --report {}: {e}", file.display()),
+        }
     }
 
     /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
@@ -5332,6 +5570,8 @@ impl Run {
             (KeyCode::F8, hud::ModeKey::LampBounce),
             (KeyCode::KeyM, hud::ModeKey::Pulse),
             (KeyCode::KeyQ, hud::ModeKey::Exposure),
+            (KeyCode::Comma, hud::ModeKey::StoreRead),
+            (KeyCode::Semicolon, hud::ModeKey::LightWeights),
         ] {
             if input.pressed(key) {
                 self.modes.press(mode, ms_since(self.start));
@@ -5773,6 +6013,7 @@ impl Run {
             self.samples.is_some()
                 || flying
                 || hud
+                || self.recorder.is_some()
                 || self.args.lamp_toggle.is_some()
                 || self.args.fade_reading
         });
@@ -5857,6 +6098,11 @@ impl Run {
         let field_gpu_ms = field_reader.and_then(|t| t.try_read_ms(&gpu.device));
         let hud_ms = hud_timer.and_then(|t| t.try_read_ms(&gpu.device));
         self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
+        if self.frame > 0
+            && let (Some(rec), Some(p)) = (self.recorder.as_mut(), self.player.as_ref())
+        {
+            rec.push(p.clock_s, f64::from(dt) * 1e3, cpu_ms, gpu_ms);
+        }
         self.hud.cpu_ms = cpu_ms as f32;
         // The HUD keeps the last set read until a newer one finishes, and shows none once its
         // timer is off.
@@ -6073,6 +6319,7 @@ impl Drop for Run {
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
+        self.write_report();
         if self.args.census {
             println!("{}", self.world.brick_census());
             println!("packed: {:?}", self.world.packed_stats());
@@ -6235,7 +6482,6 @@ impl App for Flythrough {
                 .with_sharpen(self.args.sharpen)
                 .with_fsr2_knobs(hud::fsr2_knob_words(
                     self.args.jitter_phases,
-                    self.args.emitter_cap,
                     self.args.dither,
                 )),
                 upscaler_changed: false,
@@ -6271,6 +6517,13 @@ impl App for Flythrough {
                 room_probe: self.room_probe.take(),
                 exposure_print: None,
                 queue: QueueRun::default(),
+                player: self
+                    .args
+                    .path
+                    .map(|p| PathPlayer::new(p, self.args.path_mode)),
+                recorder: self.args.path.map(|p| Recorder::for_path(p.duration_s())),
+                adapter: None,
+                help: false,
             });
         }
         match self.run.as_mut() {
@@ -6657,7 +6910,15 @@ fn queue_view_line(
 }
 
 fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
-    if args.castle {
+    if let Some(path) = args.path {
+        let pose = path.sample(0.0);
+        Camera {
+            position: pose.eye.into(),
+            yaw: pose.yaw_deg.to_radians(),
+            pitch: pose.pitch_deg.to_radians(),
+            vfov: 70f32.to_radians(),
+        }
+    } else if args.castle {
         castle_camera(args.castle_shot)
     } else if args.showcase {
         shot_camera(&args.shot)
@@ -6888,6 +7149,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.check_args {
+        println!("flythrough: arguments ok");
+        return;
+    }
 
     let load_logic = |choice: &LogicChoice| match choice.load() {
         Ok(l) => l,
@@ -8053,6 +8318,10 @@ mod tests {
             room_probe: None,
             exposure_print: None,
             queue: QueueRun::default(),
+            player: None,
+            recorder: None,
+            adapter: None,
+            help: false,
             cutaway: CutawayMode::Auto,
         }
     }
@@ -8330,34 +8599,24 @@ mod tests {
             assert_eq!(run.pan.map(|p| p.on), Some(on));
         }
         assert_eq!(
-            hud::aliasing_row(&run.upscaler, "far normal 2..6", run.pan.as_ref()),
-            "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; pan 1.1 deg/s"
+            hud::aliasing_row(
+                &run.upscaler,
+                "far normal 2..6",
+                &run.modes,
+                run.pan.as_ref()
+            ),
+            "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; store read normal, weights face, lighting half; pan 1.1 deg/s"
         );
-        let knobs = parse_args_from(argv(&[
-            "--jitter-phases",
-            "8",
-            "--emitter-cap",
-            "1",
-            "--dither",
-            "on",
-        ]))
-        .expect("the candidate knobs parse");
-        assert_eq!(
-            (knobs.jitter_phases, knobs.emitter_cap, knobs.dither),
-            (Some(8), Some(1.0), true)
-        );
-        let banner = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5").with_fsr2_knobs(
-            hud::fsr2_knob_words(knobs.jitter_phases, knobs.emitter_cap, knobs.dither),
-        );
+        let knobs = parse_args_from(argv(&["--jitter-phases", "8", "--dither", "on"]))
+            .expect("the candidate knobs parse");
+        assert_eq!((knobs.jitter_phases, knobs.dither), (Some(8), true));
+        let banner = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5")
+            .with_fsr2_knobs(hud::fsr2_knob_words(knobs.jitter_phases, knobs.dither));
         assert_eq!(
             banner.line(),
-            "upscaler fsr2, scale 1.5, sharpen 0.5, phases 8, emitter cap 1, dither"
+            "upscaler fsr2, scale 1.5, sharpen 0.5, phases 8, dither"
         );
-        for (flag, bad) in [
-            ("--jitter-phases", "0"),
-            ("--emitter-cap", "0"),
-            ("--dither", "x"),
-        ] {
+        for (flag, bad) in [("--jitter-phases", "0"), ("--dither", "x")] {
             assert!(
                 parse_args_from(argv(&[flag, bad])).is_err(),
                 "{flag} {bad} parses"
@@ -8370,6 +8629,157 @@ mod tests {
                 parse_args_from(argv(&["--pan", bad])).err().as_deref(),
                 Some(format!("--pan takes degrees a second other than 0, not {bad}").as_str()),
                 "{bad}"
+            );
+        }
+    }
+
+    /// The fly-through starts in the owner's pick of Plan 0061 Phase 4: far normal `[2, 6]`,
+    /// the store read by the shading normal, the light's filters weighed by face, the light at
+    /// half resolution; the start banner's mode rows and the aliasing row name all four.
+    #[test]
+    fn the_default_look_is_the_windows_pick() {
+        use vxe_render::{LightWeights, StoreRead};
+        assert_eq!(LookPreset::DEFAULT.far_normal, [2.0, 6.0]);
+        let d = parse_args_from(argv(&[])).expect("parses");
+        let l = d.start_lighting();
+        assert_eq!(
+            (l.store_read, l.light_weights, d.lighting),
+            (
+                StoreRead::Normal,
+                LightWeights::Face,
+                LightingResolution::Half
+            )
+        );
+        assert_eq!(d.start_look().far_normal, [2.0, 6.0]);
+        let banner = d
+            .start_modes(0.0)
+            .banner(0.0)
+            .expect("the banner shows at the start");
+        let rows: Vec<&str> = banner.lines().collect();
+        assert_eq!(
+            rows[..3],
+            [
+                "look face, far normal 2..6",
+                "lighting half, store read normal",
+                "weights face, shadow walk coarse"
+            ]
+        );
+        let run = bare_run(carved_rock());
+        assert_eq!(
+            hud::aliasing_row(
+                &run.upscaler,
+                &LookPreset::far_normal_words(run.look.normal_mode, run.look.far_normal),
+                &run.modes,
+                None
+            ),
+            "upscaler off, scale 1; far normal 2..6; store read normal, weights face, lighting half; no pan"
+        );
+    }
+
+    /// FSR 2's emitter cap is gone (Plan 0056's verdict: a fault): `--emitter-cap` is an
+    /// unknown argument.
+    #[test]
+    fn the_emitter_cap_is_gone() {
+        assert_eq!(
+            parse_args_from(argv(&["--emitter-cap", "1"]))
+                .err()
+                .as_deref(),
+            Some("unknown argument --emitter-cap")
+        );
+    }
+
+    /// `--store-read` and `--light-weights` parse their two modes and refuse anything else;
+    /// `Comma` and `Semicolon` change the banner's text and the aliasing row's to each mode, and
+    /// the row names the light's resolution, which `F6` changes.
+    #[test]
+    fn the_store_read_toggle_shows_in_the_banner() {
+        use vxe_render::{LightWeights, StoreRead};
+        for (flag, modes) in [
+            ("--store-read", ["face", "normal"]),
+            ("--light-weights", ["normal", "face"]),
+        ] {
+            for m in modes {
+                let a = parse_args_from(argv(&[flag, m])).expect("a mode parses");
+                let l = a.start_lighting();
+                assert_eq!(
+                    if flag == "--store-read" {
+                        l.store_read.name()
+                    } else {
+                        l.light_weights.name()
+                    },
+                    m
+                );
+            }
+            let what = if flag == "--store-read" {
+                "face or normal"
+            } else {
+                "normal or face"
+            };
+            for bad in ["x", "Face", ""] {
+                assert_eq!(
+                    parse_args_from(argv(&[flag, bad])).err().as_deref(),
+                    Some(format!("{flag} takes {what}, not {bad}").as_str()),
+                    "{flag} {bad}"
+                );
+            }
+        }
+        let d = parse_args_from(argv(&[])).expect("parses");
+        assert_eq!(
+            (
+                d.start_lighting().store_read,
+                d.start_lighting().light_weights
+            ),
+            (StoreRead::Normal, LightWeights::Face)
+        );
+        let mut run = bare_run(carved_rock());
+        run.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
+        let mut input = Input::default();
+        let mut press = |run: &mut Run, key: KeyCode| {
+            input.end_frame();
+            input.key_up(key);
+            input.key_down(key);
+            run.handle_input(&input);
+            let row = hud::aliasing_row(&run.upscaler, "far normal 2..6", &run.modes, None);
+            (run.banner().expect("a press shows the banner"), row)
+        };
+        for (key, banner_word, row_words) in [
+            (
+                KeyCode::Comma,
+                "store read face",
+                "store read face, weights face, lighting half",
+            ),
+            (
+                KeyCode::Semicolon,
+                "weights normal",
+                "store read face, weights normal, lighting half",
+            ),
+            (
+                KeyCode::F6,
+                "lighting full",
+                "store read face, weights normal, lighting full",
+            ),
+            (
+                KeyCode::Comma,
+                "store read normal",
+                "store read normal, weights normal, lighting full",
+            ),
+            (
+                KeyCode::Semicolon,
+                "weights face",
+                "store read normal, weights face, lighting full",
+            ),
+        ] {
+            let (banner, row) = press(&mut run, key);
+            assert!(
+                banner.replace('\n', " ").contains(banner_word),
+                "{key:?}: {banner}"
+            );
+            assert_eq!(
+                row,
+                format!(
+                    "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; {row_words}; no pan"
+                ),
+                "{key:?}"
             );
         }
     }
@@ -9367,7 +9777,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags, and under the table.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +0.00 EV"
+            "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
