@@ -172,7 +172,10 @@ fn generation_sources_contain_no_floating_point() {
     for path in [
         "src/cave.rs",
         "src/castle.rs",
-        "src/showcase.rs",
+        "src/showcase/mod.rs",
+        "src/showcase/field.rs",
+        "src/showcase/source.rs",
+        "src/showcase/tests.rs",
         "../../crates/vxe-world/src/hash.rs",
     ] {
         let text = std::fs::read_to_string(format!("{root}/{path}")).unwrap();
