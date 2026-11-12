@@ -105,9 +105,19 @@ pub use {glam, wgpu};
 
 /// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
 /// after; for headless validation.
-pub const MARCH_WGSL: &str = include_str!("shaders/walk.wgsl");
-/// The light pass, compiled after [`MARCH_WGSL`].
-pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
+pub const MARCH_WGSL: &str = concat!(
+    include_str!("shaders/common.wgsl"),
+    include_str!("shaders/mirror.wgsl"),
+    include_str!("shaders/walk.wgsl"),
+    include_str!("shaders/hitrec.wgsl"),
+    include_str!("shaders/field_walk.wgsl"),
+    include_str!("shaders/hit.wgsl"),
+);
+/// The light pass and the emissive estimator, compiled after [`MARCH_WGSL`].
+pub const LIGHT_WGSL: &str = concat!(
+    include_str!("shaders/light.wgsl"),
+    include_str!("shaders/emissive.wgsl"),
+);
 /// The gradient pass, compiled after [`MARCH_WGSL`] and [`LIGHT_WGSL`].
 pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
 /// The temporal pass, compiled after [`MARCH_WGSL`].

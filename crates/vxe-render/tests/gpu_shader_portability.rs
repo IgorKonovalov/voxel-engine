@@ -10,10 +10,7 @@ use vxe_render::MARCH_WGSL as MARCH;
 fn shaders() -> Vec<(&'static str, String)> {
     vec![
         ("march.wgsl", MARCH.to_owned()),
-        (
-            "light.wgsl",
-            format!("{MARCH}\n{}", include_str!("../src/shaders/light.wgsl")),
-        ),
+        ("light.wgsl", format!("{MARCH}\n{}", vxe_render::LIGHT_WGSL)),
         (
             "composite.wgsl",
             format!("{MARCH}\n{}", include_str!("../src/shaders/composite.wgsl")),
@@ -30,7 +27,7 @@ fn shaders() -> Vec<(&'static str, String)> {
             "gradient.wgsl",
             format!(
                 "{MARCH}\n{}\n{}",
-                include_str!("../src/shaders/light.wgsl"),
+                vxe_render::LIGHT_WGSL,
                 include_str!("../src/shaders/gradient.wgsl")
             ),
         ),
@@ -45,7 +42,7 @@ fn shaders() -> Vec<(&'static str, String)> {
             "probe_update.wgsl",
             format!(
                 "{MARCH}\n{}\n{}\n{}",
-                include_str!("../src/shaders/light.wgsl"),
+                vxe_render::LIGHT_WGSL,
                 include_str!("../src/shaders/probe_gather.wgsl"),
                 include_str!("../src/shaders/probe_update.wgsl")
             ),
