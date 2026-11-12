@@ -884,8 +884,8 @@ own start commit, not against Plan 0044's close: other commits may land between 
 | 1: one home for each shared fixture | dev | done; bench fixtures at `benches/support/`; five same-named audio helpers stay local; deviations in the log | `1d5b932` |
 | 2: `GpuWorld` becomes a directory of owned parts | dev | done; 11 fields; root 100 names, `debug` 15, `internals` 95; 13 items past Phase 0's 131 paths housed; `opaque_table`, `is_glass` deleted; `unnameable_types` denied too; deviations in the log | `2a53aa2`, `032b3ee`, `efaeeab` |
 | 3: `marcher.rs`, `bake.rs` and `fsr2.rs` become directories | dev | done; `Frame` 15 fields, no fn over 150, 1 readback copy; gpu gate 189/189 at `d71c21b`; timing done-when waits on Phase 0's "before" set; deviations in the log | `8b51a31`..`54f7b56`, `d71c21b` |
-| 4: the shaders become modules a pass picks | dev | done; modules common, mirror, walk, hitrec, field_walk, hit, emissive, edits; a Rust-generated prelude; `shader_sources` the one list; gpu gate 189/189; pass times wait on Phase 0's "before" set; deviations in the log | `6c93fa5`..`26f7a34`, committed with this row |
-| 5: the world crate's three big modules split | dev | not started | |
+| 4: the shaders become modules a pass picks | dev | done; modules common, mirror, walk, hitrec, field_walk, hit, emissive, edits; a Rust-generated prelude; `shader_sources` the one list; gpu gate 189/189; pass times wait on Phase 0's "before" set; deviations in the log | `6c93fa5`..`26f7a34`, `ee48120` |
+| 5: the world crate's three big modules split | dev | done; `stream/`, `collapse/`, `packed/`, one `Tally`, `clip_box`, `local_of_index`, `wire::Writer`; `bench-internals` and `stream-oracle` features; benches wait on Phase 0's "before" set; deviations in the log | `deb7348`..`23fbe78`, committed with this row |
 | 6: audio, net, wasm and assets split their long functions | dev | not started | |
 | 7: the testbed's library takes the binary's contents | dev | not started | |
 | 8: the mega test files split, and two gates keep everything small | dev | not started | |
