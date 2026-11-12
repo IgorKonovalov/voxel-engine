@@ -561,21 +561,11 @@ fn the_store_counters_count_with_the_override_on() {
     assert_eq!(off, [0; 3], "the counters with the override off");
 }
 
-/// ADR-0053's read chain on the GPU. Chunks A1 (0,0,0) and A2 (0,0,1) are baked, each with its
-/// own ore emitter over a rock floor (A2's larger), inside level-1 cell (0,0,0); B (1,0,0) is
-/// face-adjacent to A1 alone and C (1,1,0) to neither, both blockless floors in the same cell; D
-/// (4,0,0) is a blockless floor in a level-2 cell with no block. Seen from above, lamp off, each
-/// floor's top face (+z) reads: under `chain` B's stored term A1's summary within one `rgb9e5`
-/// step, C's the mean of A1's and A2's (their level-1 record), D's 0; under `parent` B reads that
-/// mean; under `neighbour` C reads 0; under `black` B, C and D read 0. Every pixel with no brick
-/// value reads the CPU's chain (`LightSummaries::chain`) for its chunk and face; `store_missing`
-/// is the same in every mode, and the fallback and still-black counters split it as the chain
-/// does (under `chain` B's and C's lit faces are fallback, D's still black). The pool's summary
-/// words are the CPU's.
-#[test]
-fn a_missing_brick_reads_its_neighbour_then_its_parent() {
-    use vxe_render::bake::MissingLight;
-    // z is up. Four chunks tall, so the eye above the floors lies inside the mirrored world.
+/// ADR-0053's rig: chunks A1 (0,0,0) and A2 (0,0,1) baked, each with its own ore emitter over a
+/// rock floor (A2's larger), and the blockless floors B (1,0,0), C (1,1,0) and D (4,0,0), under a
+/// frame at `size`. z is up; four chunks tall, so the eye above the floors lies inside the
+/// mirrored world.
+fn fallback_rig(size: [u32; 2]) -> Option<Rig> {
     let world = air_world([5, 2, 4], &table());
     // Floors 4 voxels thick, their top faces at z 8 (layer 0) or 72 (layer 1), inset from the
     // chunk's sides so each floor is its own chunk's.
@@ -593,9 +583,7 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
     }
     fill(&world, [28, 28, 20], [36, 36, 22], ORE);
     fill(&world, [20, 20, 84], [44, 44, 88], ORE);
-    let Some(mut rig) = rig_on(world, [128, 72], None) else {
-        return;
-    };
+    let mut rig = rig_on(world, size, None)?;
     rig.frame
         .bake_until(
             &rig.device,
@@ -607,6 +595,36 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
             &mut |_| {},
         )
         .expect("the piece fits");
+    Some(rig)
+}
+
+/// The fallback rig's camera: above the floors, looking down.
+fn fallback_camera() -> Camera {
+    Camera {
+        position: [160.0, 64.0, 220.0].into(),
+        yaw: 0.0,
+        pitch: (-85f32).to_radians(),
+        vfov: 90f32.to_radians(),
+    }
+}
+
+/// ADR-0053's read chain on the GPU. Chunks A1 (0,0,0) and A2 (0,0,1) are baked, each with its
+/// own ore emitter over a rock floor (A2's larger), inside level-1 cell (0,0,0); B (1,0,0) is
+/// face-adjacent to A1 alone and C (1,1,0) to neither, both blockless floors in the same cell; D
+/// (4,0,0) is a blockless floor in a level-2 cell with no block. Seen from above, lamp off, each
+/// floor's top face (+z) reads: under `chain` B's stored term A1's summary within one `rgb9e5`
+/// step, C's the mean of A1's and A2's (their level-1 record), D's 0; under `parent` B reads that
+/// mean; under `neighbour` C reads 0; under `black` B, C and D read 0. Every pixel with no brick
+/// value reads the CPU's chain (`LightSummaries::chain`) for its chunk and face; `store_missing`
+/// is the same in every mode, and the fallback and still-black counters split it as the chain
+/// does (under `chain` B's and C's lit faces are fallback, D's still black). The pool's summary
+/// words are the CPU's.
+#[test]
+fn a_missing_brick_reads_its_neighbour_then_its_parent() {
+    use vxe_render::bake::MissingLight;
+    let Some(mut rig) = fallback_rig([128, 72]) else {
+        return;
+    };
     let light = rig.frame.store().light().clone();
     let (a1, a2) = (
         *light.summary([0, 0, 0]).expect("A1 is lit"),
@@ -636,12 +654,7 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
         );
     }
     let cells = rig.cells();
-    let camera = Camera {
-        position: [160.0, 64.0, 220.0].into(),
-        yaw: 0.0,
-        pitch: (-85f32).to_radians(),
-        vfov: 90f32.to_radians(),
-    };
+    let camera = fallback_camera();
     let eye = camera.position.to_array();
     rig.frame.set_count_store(true);
     let mut missing = None;
@@ -749,6 +762,24 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
             stats.missing, stats.fallback, stats.still_black
         );
     }
+}
+
+/// The missing light's golden (Plan 0067 Phase 7): the fallback rig at the golden size under the
+/// default mode, which the owner picked as `chain` (2026-11-12), lamp off, its first frame after
+/// the bake: B lit by A1's summary, C by A1's and A2's level-1 mean, D black. The default is
+/// asserted first, so the image is the shipped look.
+#[test]
+fn the_missing_light_golden() {
+    let Some(mut rig) = fallback_rig([support::WIDTH, support::HEIGHT]) else {
+        return;
+    };
+    assert_eq!(
+        rig.frame.missing_light(),
+        bake::MissingLight::Chain,
+        "the default missing light"
+    );
+    rig.step(&fallback_camera());
+    support::assert_golden("missing_light_chain.png", &rig.display());
 }
 
 /// The baked light with the filter off (`Lighting::filter`, the fly-through's `--filter off`): on
