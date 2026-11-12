@@ -135,15 +135,29 @@ impl<'m> ChunkReader<'m> {
     }
 
     /// The chunk at `coord`, or `None` when it is not resident.
+    ///
+    /// The hit (the current chunk again) is one compare and stays inline in a caller's scan
+    /// loop; the miss (a map lookup and a lock) is the out-of-line [`ChunkReader::load`].
+    /// Inlined whole into the collapse ops' gap scan, the miss path cost that loop about 2 ms
+    /// of 8 on the 4096-cell cube drop bench.
+    #[inline]
     pub(crate) fn chunk(&mut self, coord: ChunkCoord) -> Option<&Chunk> {
         if self.cur.as_ref().is_none_or(|(k, _)| *k != coord) {
-            self.cur = None;
-            #[cfg(test)]
-            READER_LOOKUPS.with(|n| n.set(n.get() + 1));
-            let lock = self.map.get(&coord)?;
-            self.cur = Some((coord, read(lock)));
+            self.load(coord);
         }
         self.cur.as_ref().map(|(_, guard)| &**guard)
+    }
+
+    /// Replaces the held chunk with the one at `coord`, or with none when it is not resident.
+    #[cold]
+    #[inline(never)]
+    fn load(&mut self, coord: ChunkCoord) {
+        self.cur = None;
+        #[cfg(test)]
+        READER_LOOKUPS.with(|n| n.set(n.get() + 1));
+        if let Some(lock) = self.map.get(&coord) {
+            self.cur = Some((coord, read(lock)));
+        }
     }
 
     /// The brick of cell `c`, or its chunk's coordinate when that is not resident.
