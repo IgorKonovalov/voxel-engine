@@ -2168,10 +2168,15 @@ impl Frame {
         self.bake_queue.as_mut()
     }
 
-    /// The live queue's slice, in milliseconds.
+    /// The live queue's slice, in milliseconds a frame ([`crate::bake::Budget::PerFrame`]).
     pub fn set_bake_slice(&mut self, ms: f64) {
+        self.set_bake_budget(crate::bake::Budget::PerFrame { ms });
+    }
+
+    /// The live queue's bake budget (ADR-0052).
+    pub fn set_bake_budget(&mut self, budget: crate::bake::Budget) {
         if let Some(q) = self.bake_queue.as_mut() {
-            q.slice_ms = ms;
+            q.budget = budget;
         }
     }
 

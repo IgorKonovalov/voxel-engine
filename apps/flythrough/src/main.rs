@@ -120,7 +120,8 @@
 //! camera's (default `--near`'s radius; `off` gives every blank chunk the coarse pass first; key
 //! `6` toggles `off` and `2`); its row in the banner, its depth on the HUD's store
 //! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
-//! 1.5); a dig re-bakes its rings in the queue, ahead of
+//! 1.5), `--bake-budget frame:MS|second:MS,CAP` the budget as a slice a frame or milliseconds a
+//! second capped at a share of the frame (ADR-0052; key `5` cycles it); a dig re-bakes its rings in the queue, ahead of
 //! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
 //! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
 //! lit bricks); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
@@ -506,9 +507,10 @@ struct Args {
     /// `--lamp-bounce on|off` (alias `--indirect`): the lamp's bounce from the probe volume (on
     /// by default).
     lamp_bounce: bool,
-    /// `--bake-slice MS`: the live queue's slice a frame (default
-    /// `vxe_render::bake::DEFAULT_BAKE_SLICE_MS`).
-    bake_slice: f64,
+    /// `--bake-budget frame:MS|second:MS,CAP` (or `--bake-slice MS`, `frame:MS`): the live
+    /// queue's bake budget (default `frame:` `vxe_render::bake::DEFAULT_BAKE_SLICE_MS`); key `5`
+    /// cycles it through [`BUDGET_CYCLE`].
+    bake_budget: vxe_render::bake::Budget,
     /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
     /// default `vxe_render::bake::DEFAULT_COARSE_SAMPLES`).
     bake_coarse: u32,
@@ -876,7 +878,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp_toggle: None,
         fade_reading: false,
         lamp_bounce: true,
-        bake_slice: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+        bake_budget: vxe_render::bake::Budget::default(),
         bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
         bake_near: vxe_render::bake::DEFAULT_NEAR,
         bake_full_first: None,
@@ -1172,11 +1174,16 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--bake-slice" => {
                 let v = value()?;
-                args.bake_slice = v
+                let ms = v
                     .parse()
                     .ok()
                     .filter(|ms: &f64| (0.1..=100.0).contains(ms))
                     .ok_or(format!("--bake-slice takes 0.1 to 100 ms, not {v}"))?;
+                args.bake_budget = vxe_render::bake::Budget::PerFrame { ms };
+            }
+            "--bake-budget" => {
+                let v = value()?;
+                args.bake_budget = vxe_render::bake::Budget::parse(&v)?;
             }
             "--coarse" => {
                 let v = value()?;
@@ -3522,6 +3529,11 @@ impl Run {
             }
             None => queue.push_str("; full-first off"),
         }
+        write_budget_note(
+            queue,
+            args.bake_budget,
+            self.queue.stats.map_or(0.0, |st| st.slice_ms),
+        );
         let look = &self.look;
         let far = h
             .far_normal_words
@@ -4122,7 +4134,13 @@ impl Run {
     /// slice a frame.
     fn queue_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
         let settings = vxe_render::bake::queue_settings();
-        frame.start_bake_queue(&gpu.queue, mirror, settings, self.args.bake_slice);
+        frame.start_bake_queue(
+            &gpu.queue,
+            mirror,
+            settings,
+            vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+        );
+        frame.set_bake_budget(self.args.bake_budget);
         frame.set_bake_coarse(self.args.bake_coarse, self.args.bake_near);
         frame.set_bake_digs(self.args.bake_edit_ms, self.args.dig_reach);
         if let Some(q) = frame.bake_queue_mut() {
@@ -4187,6 +4205,7 @@ impl Run {
                 forward: forward.to_array(),
                 resident,
                 samples: Some(PRE_ROLL_SAMPLES),
+                interval_s: 0.0,
                 hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
                 half_angle,
                 frustum: Some(frustum),
@@ -4282,18 +4301,19 @@ impl Run {
             .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
         let (half_angle, frustum) =
             queue_view_angles(self.fly.camera.vfov, gfx.frame.output_size());
+        let t_step = ms_since(self.start);
+        let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
         let view = vxe_render::QueueView {
             eye: self.fly.camera.position.to_array(),
             forward: forward.to_array(),
             resident,
             samples: None,
+            interval_s: dt.unwrap_or(0.0) * 1e-3,
             hold: stream.map(|s| s.rule.r_full + self.args.light_radius + 1),
             half_angle,
             frustum: Some(frustum),
             full_radius: stream.map(|s| s.rule.r_full),
         };
-        let t_step = ms_since(self.start);
-        let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
         let dug = gfx.frame.bake_queue().is_some_and(|q| !q.digs_settled());
         let new_box = gfx.frame.bake_queue().is_some_and(|q| q.boxes_waiting());
         // A dig after the last one's rings 1 and 2 starts its own watch; one before them joins it.
@@ -4522,8 +4542,9 @@ impl Run {
 
     /// The live queue's keys: `1` cycles the order (score, score with the class as a tier,
     /// distance), `2` halves the score's angle weight and `3` doubles it (from 0, to 0.25), `4`
-    /// toggles the withdrawal, `6` the full-first radius between `off` and `2`. A change goes to
-    /// the queue at once and prints the order and the withdrawal, or the radius.
+    /// toggles the withdrawal, `5` steps the bake budget through [`BUDGET_CYCLE`], `6` toggles
+    /// the full-first radius between `off` and `2`. A change goes to the queue at once and
+    /// prints the order and the withdrawal, the budget or the radius.
     fn queue_keys(&mut self, input: &Input) {
         if input.pressed(KeyCode::Digit6) {
             let r = match self.args.full_first() {
@@ -4534,6 +4555,14 @@ impl Run {
             println!("bake queue: full-first {}", FullFirstWords(r));
             if let Some(g) = self.gfx.as_mut() {
                 g.frame.set_bake_full_first(r);
+            }
+        }
+        if input.pressed(KeyCode::Digit5) {
+            self.args.bake_budget = next_budget(self.args.bake_budget);
+            let budget = self.args.bake_budget;
+            println!("bake queue: budget {budget}");
+            if let Some(g) = self.gfx.as_mut() {
+                g.frame.set_bake_budget(budget);
             }
         }
         let a = &mut self.args;
@@ -6619,6 +6648,37 @@ impl std::fmt::Display for FullFirstWords {
     }
 }
 
+/// The budgets key `5` steps through (Phase 6's arms): today's slice, 150 ms a second and 300
+/// ms a second, each capped at a quarter of the frame.
+const BUDGET_CYCLE: [vxe_render::bake::Budget; 3] = [
+    vxe_render::bake::Budget::PerFrame {
+        ms: vxe_render::bake::DEFAULT_BAKE_SLICE_MS,
+    },
+    vxe_render::bake::Budget::PerSecond {
+        ms_per_s: 150.0,
+        cap: 0.25,
+    },
+    vxe_render::bake::Budget::PerSecond {
+        ms_per_s: 300.0,
+        cap: 0.25,
+    },
+];
+
+/// The budget after `b` in [`BUDGET_CYCLE`]; one not in it goes to the first.
+fn next_budget(b: vxe_render::bake::Budget) -> vxe_render::bake::Budget {
+    let i = BUDGET_CYCLE.iter().position(|&x| x == b);
+    BUDGET_CYCLE[i.map_or(0, |i| (i + 1) % BUDGET_CYCLE.len())]
+}
+
+/// Appends the HUD queue row's budget part to `out`: `; budget frame:1.5`, and the last step's
+/// slice under a per-second budget, `; budget second:150,0.25 (slice 2.31 ms)`.
+fn write_budget_note(out: &mut String, budget: vxe_render::bake::Budget, slice_ms: f64) {
+    let _ = write!(out, "; budget {budget}");
+    if matches!(budget, vxe_render::bake::Budget::PerSecond { .. }) {
+        let _ = write!(out, " (slice {slice_ms:.2} ms)");
+    }
+}
+
 /// Appends the live queue's banner row to `out`: the mode, its settings and slice, then
 /// `words` (its order and withdrawal) and its keys.
 fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
@@ -6642,9 +6702,9 @@ fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
     }
     let _ = write!(
         out,
-        ", full-first {}, slice {} ms, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 6 full-first)",
+        ", full-first {}, budget {}, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 5 budget, 6 full-first)",
         FullFirstWords(args.full_first()),
-        args.bake_slice,
+        args.bake_budget,
         args.bake_edit_ms,
         if args.dig_reach { "on" } else { "off" },
     );
@@ -8255,7 +8315,7 @@ mod tests {
             assert_eq!(
                 row,
                 format!(
-                    "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on; full-first 2"
+                    "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on; full-first 2; budget frame:1.5"
                 )
             );
         };
@@ -8342,7 +8402,7 @@ mod tests {
             );
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
             assert!(
-                row.ends_with(&format!("; {want}; full-first 2")),
+                row.ends_with(&format!("; {want}; full-first 2; budget frame:1.5")),
                 "{want}: {row}"
             );
         }
@@ -8372,10 +8432,10 @@ mod tests {
         let mut input = Input::default();
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
-        assert!(banner.contains(", full-first 2, slice "), "{banner}");
+        assert!(banner.contains(", full-first 2, budget "), "{banner}");
         assert!(banner.contains("6 full-first)"), "{banner}");
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
-        assert!(row.ends_with("; full-first 2"), "{row}");
+        assert!(row.ends_with("; full-first 2; budget frame:1.5"), "{row}");
         for want in ["off", "2", "off"] {
             input.end_frame();
             input.key_up(KeyCode::Digit6);
@@ -8384,12 +8444,12 @@ mod tests {
             run.refresh_hud_stats(None);
             let banner = run.banner().expect("the queue's row is on the banner");
             assert!(
-                banner.contains(&format!(", full-first {want}, slice ")),
+                banner.contains(&format!(", full-first {want}, budget ")),
                 "{want}: {banner}"
             );
             let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
             assert!(
-                row.ends_with(&format!("; full-first {want}")),
+                row.ends_with(&format!("; full-first {want}; budget frame:1.5")),
                 "{want}: {row}"
             );
         }
@@ -8400,6 +8460,67 @@ mod tests {
         assert_eq!(f(&["--near", "0", "--full-first", "3"]), Ok(Some(3)));
         for bad in ["9", "-1", "on", "x"] {
             assert!(f(&["--full-first", bad]).is_err(), "{bad}");
+        }
+    }
+
+    /// `--bake-budget` parses `frame:MS` and `second:MS,CAP` and refuses the rest, `--bake-slice
+    /// MS` reads `frame:MS`; a plain start reads `frame:1.5`; `5` steps the budget through
+    /// `frame:1.5`, `second:150,0.25` and `second:300,0.25`, each press changing the banner and
+    /// the HUD's queue row in the same frame, the row adding the last slice under a per-second
+    /// budget.
+    #[test]
+    fn the_banner_names_the_budget() {
+        use vxe_render::bake::Budget;
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        run.refresh_hud_stats(None);
+        let banner = run.banner().expect("the queue's row is on the banner");
+        assert!(banner.contains(", budget frame:1.5, digs +"), "{banner}");
+        let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+        assert!(row.ends_with("; budget frame:1.5"), "{row}");
+        run.queue.stats = Some(vxe_render::QueueStats {
+            slice_ms: 2.3125,
+            ..Default::default()
+        });
+        for (want, slice) in [
+            ("second:150,0.25", " (slice 2.31 ms)"),
+            ("second:300,0.25", " (slice 2.31 ms)"),
+            ("frame:1.5", ""),
+            ("second:150,0.25", " (slice 2.31 ms)"),
+        ] {
+            input.end_frame();
+            input.key_up(KeyCode::Digit5);
+            input.key_down(KeyCode::Digit5);
+            run.handle_input(&input);
+            run.refresh_hud_stats(None);
+            let banner = run.banner().expect("the queue's row is on the banner");
+            assert!(
+                banner.contains(&format!(", budget {want}, digs +")),
+                "{want}: {banner}"
+            );
+            assert!(banner.contains("5 budget, 6 full-first)"), "{banner}");
+            let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
+            assert!(
+                row.ends_with(&format!("; budget {want}{slice}")),
+                "{want}: {row}"
+            );
+        }
+        let b = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.bake_budget);
+        assert_eq!(b(&[]), Ok(Budget::PerFrame { ms: 1.5 }));
+        assert_eq!(b(&["--bake-slice", "3"]), Ok(Budget::PerFrame { ms: 3.0 }));
+        assert_eq!(
+            b(&["--bake-budget", "second:150,0.25"]),
+            Ok(Budget::PerSecond {
+                ms_per_s: 150.0,
+                cap: 0.25
+            })
+        );
+        assert_eq!(
+            b(&["--bake-budget", "frame:0.75"]),
+            Ok(Budget::PerFrame { ms: 0.75 })
+        );
+        for bad in ["second:150", "second:150,2", "frame:x", "150"] {
+            assert!(b(&["--bake-budget", bad]).is_err(), "{bad}");
         }
     }
 

@@ -194,6 +194,8 @@ impl Q {
                 .is_some()
                 .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool),
             samples: self.samples,
+            // A fixed 60 Hz frame: a per-second budget sizes the slice repeatably.
+            interval_s: 1.0 / 60.0,
             hold: None,
             half_angle: {
                 let [w, h] = self.frame.output_size();

@@ -2071,7 +2071,7 @@ impl JobLoop {
         let done = &mut self.done;
         let open = &mut self.open;
         // The rounds each live face takes in this submit: first those that cannot end it.
-        let mut budget = Budget {
+        let mut budget = SubmitRoom {
             entries: 0,
             batch,
             samples: 0,
@@ -2415,14 +2415,14 @@ pub(crate) struct Withdrawn {
 pub(crate) type BlockSink<'a> = dyn FnMut(&mut Store, ChunkCoord, u64, Vec<u32>) + 'a;
 
 /// A submit's room: its entries against the batch, its samples against the cap.
-struct Budget {
+struct SubmitRoom {
     entries: usize,
     batch: usize,
     samples: u64,
     cap: u64,
 }
 
-impl Budget {
+impl SubmitRoom {
     /// Another entry fits: under the batch, and under the cap or with none taken yet.
     fn room(&self) -> bool {
         self.entries < self.batch && (self.samples < self.cap || self.entries == 0)
@@ -2553,7 +2553,7 @@ impl JobCtx<'_, '_> {
     }
 
     /// The rounds of `job`'s live faces that cannot end them, while `budget` has room.
-    fn plan(&self, job: &OpenJob, budget: &mut Budget) -> Vec<(usize, u32)> {
+    fn plan(&self, job: &OpenJob, budget: &mut SubmitRoom) -> Vec<(usize, u32)> {
         let mut p = Vec::new();
         for &i in &job.live {
             if !budget.room() {
@@ -2619,6 +2619,84 @@ pub const FADE: u32 = 16;
 pub const DIG_FADE: u32 = 4;
 /// The live queue's slice by default, in milliseconds of a frame.
 pub const DEFAULT_BAKE_SLICE_MS: f64 = 1.5;
+/// The least slice a per-second budget gives a step, in milliseconds: what a step with no
+/// interval yet (the first) or a very short one bakes.
+pub const BAKE_SLICE_FLOOR_MS: f64 = 0.25;
+
+/// The live queue's bake budget (ADR-0052): a slice a frame, or milliseconds of GPU time a
+/// second of wall time spent in slices sized by the frame's interval.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Budget {
+    /// Milliseconds of bake a frame, whatever the frame's length.
+    PerFrame { ms: f64 },
+    /// Milliseconds of bake a second: a step's slice is `ms_per_s` times the last frame's
+    /// interval in seconds, at most `cap` of that interval and at least
+    /// [`BAKE_SLICE_FLOOR_MS`].
+    PerSecond { ms_per_s: f64, cap: f64 },
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Budget::PerFrame {
+            ms: DEFAULT_BAKE_SLICE_MS,
+        }
+    }
+}
+
+impl Budget {
+    /// The step's slice in milliseconds after a frame of `interval_s` seconds.
+    pub fn slice_ms(&self, interval_s: f64) -> f64 {
+        match *self {
+            Budget::PerFrame { ms } => ms,
+            Budget::PerSecond { ms_per_s, cap } => {
+                let interval_ms = interval_s.max(0.0) * 1e3;
+                (ms_per_s * interval_s.max(0.0))
+                    .min(cap * interval_ms)
+                    .max(BAKE_SLICE_FLOOR_MS)
+            }
+        }
+    }
+
+    /// Parses `frame:MS` or `second:MS,CAP` (the form [`std::fmt::Display`] writes).
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let num = |v: &str| {
+            v.trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|x| x.is_finite() && *x >= 0.0)
+                .ok_or_else(|| format!("bake budget: {v:?} is not a non-negative number"))
+        };
+        match s.split_once(':') {
+            Some(("frame", ms)) => Ok(Budget::PerFrame { ms: num(ms)? }),
+            Some(("second", rest)) => {
+                let (ms, cap) = rest
+                    .split_once(',')
+                    .ok_or_else(|| format!("bake budget: {s:?} wants second:MS,CAP"))?;
+                let cap = num(cap)?;
+                if cap <= 0.0 || cap > 1.0 {
+                    return Err(format!("bake budget: the cap {cap} is not in (0, 1]"));
+                }
+                Ok(Budget::PerSecond {
+                    ms_per_s: num(ms)?,
+                    cap,
+                })
+            }
+            _ => Err(format!(
+                "bake budget: {s:?} is neither frame:MS nor second:MS,CAP"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for Budget {
+    /// `frame:1.5` or `second:150,0.25`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Budget::PerFrame { ms } => write!(f, "frame:{ms}"),
+            Budget::PerSecond { ms_per_s, cap } => write!(f, "second:{ms_per_s},{cap}"),
+        }
+    }
+}
 /// Samples a brick direction draws in the live queue: the owner's pick (Plan 0059 Phase 7b).
 pub const QUEUE_BRICK_SAMPLES: u32 = 4096;
 /// Candidates whose reach the queue checks at most in a frame that opens jobs.
@@ -2675,6 +2753,9 @@ pub struct QueueStats {
     /// (submit to readback where there are none).
     pub samples: u64,
     pub ms: f64,
+    /// The last sliced step's slice in milliseconds, from the budget ([`Budget::slice_ms`]),
+    /// before a dig's growth.
+    pub slice_ms: f64,
     /// Samples since the queue started.
     pub total_samples: u64,
     /// Chunks whose block is the coarse pass, waiting for their refinement.
@@ -3026,8 +3107,11 @@ pub struct QueueView<'a> {
     /// Whether a chunk is resident full (a streamed world); `None` for a bounded world, whose
     /// mirror holds every chunk it has and whose absent chunks are empty.
     pub resident: Option<&'a dyn Fn(ChunkCoord) -> bool>,
-    /// Samples this step draws at most; `None` sizes it by [`BakeQueue::slice_ms`].
+    /// Samples this step draws at most; `None` sizes it by [`BakeQueue::budget`].
     pub samples: Option<u64>,
+    /// The last frame's interval in seconds, which a per-second budget sizes the slice by
+    /// ([`Budget::slice_ms`]); 0 when unknown (the first step), which gives its floor.
+    pub interval_s: f64,
     /// Chunks from the focus the light-sample ranges are held out to; `None` the window's far
     /// corner plus the light radius.
     pub hold: Option<i32>,
@@ -3374,8 +3458,9 @@ fn angle_band(a: f32) -> usize {
 /// job's block away and re-bakes the union of its bricks.
 pub struct BakeQueue {
     pub settings: BakeSettings,
-    /// The slice, in milliseconds a frame.
-    pub slice_ms: f64,
+    /// The bake budget: the slice a frame, or milliseconds a second sized by the view's
+    /// interval ([`QueueView::interval_s`]).
+    pub budget: Budget,
     /// A brick direction's samples in the coarse pass; 0 bakes every chunk at the full count.
     pub coarse_samples: u32,
     /// Chunks (Chebyshev) around the camera's that the score's angle term and the withdrawal
@@ -3488,10 +3573,11 @@ pub struct BakeQueue {
 }
 
 impl BakeQueue {
+    /// A queue whose budget is `slice_ms` a frame ([`Budget::PerFrame`]).
     pub fn new(settings: BakeSettings, slice_ms: f64) -> Self {
         Self {
             settings,
-            slice_ms,
+            budget: Budget::PerFrame { ms: slice_ms },
             coarse_samples: DEFAULT_COARSE_SAMPLES,
             near: DEFAULT_NEAR,
             full_first: Some(DEFAULT_NEAR),
@@ -3975,7 +4061,9 @@ impl BakeQueue {
         self.laps.lap(S_BOXES);
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
-            let ms = self.slice_ms + if dig { self.edit_ms } else { 0.0 };
+            let slice = self.budget.slice_ms(view.interval_s);
+            self.stats.slice_ms = slice;
+            let ms = slice + if dig { self.edit_ms } else { 0.0 };
             ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
         });
         self.withdraw_passed(run, store, view);
@@ -5238,6 +5326,38 @@ mod tests {
     /// Seconds of 1.4e7 samples over 190 chunks, 1.5e7 over 12 and 1.5e7 over 35 read B, A and
     /// mixed; 20 tagged steps, 12 in B and 8 in A, count 12 and 8 and take each regime's p50
     /// from its own steps alone.
+    /// At 150 ms a second a 10 ms interval gives a 1.5 ms slice and a 66 ms one 9.9 ms; at 300
+    /// ms a second and a cap of 0.25 the 66 ms interval gives the cap's 16.5 ms; a 0 interval
+    /// gives the floor. A per-frame budget ignores the interval; both forms parse back from
+    /// their text.
+    #[test]
+    fn a_per_second_budget_sizes_the_slice_by_the_interval() {
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let s150 = Budget::PerSecond {
+            ms_per_s: 150.0,
+            cap: 0.25,
+        };
+        assert!(near(s150.slice_ms(0.010), 1.5), "{}", s150.slice_ms(0.010));
+        assert!(near(s150.slice_ms(0.066), 9.9), "{}", s150.slice_ms(0.066));
+        let s300 = Budget::PerSecond {
+            ms_per_s: 300.0,
+            cap: 0.25,
+        };
+        assert!(near(s300.slice_ms(0.066), 16.5), "{}", s300.slice_ms(0.066));
+        assert_eq!(s150.slice_ms(0.0), BAKE_SLICE_FLOOR_MS);
+        assert_eq!(s300.slice_ms(0.0), BAKE_SLICE_FLOOR_MS);
+        let f = Budget::PerFrame { ms: 1.5 };
+        assert_eq!(f.slice_ms(0.0), 1.5);
+        assert_eq!(f.slice_ms(0.066), 1.5);
+        assert_eq!(f.to_string(), "frame:1.5");
+        assert_eq!(s150.to_string(), "second:150,0.25");
+        assert_eq!(Budget::parse("frame:1.5"), Ok(f));
+        assert_eq!(Budget::parse("second:150,0.25"), Ok(s150));
+        assert!(Budget::parse("second:150").is_err());
+        assert!(Budget::parse("second:150,0").is_err());
+        assert!(Budget::parse("minute:3").is_err());
+    }
+
     #[test]
     fn the_regime_line_reads_fixed_seconds() {
         assert_eq!(Regime::of(14_000_000, 190), Some(Regime::KeepingUp));
