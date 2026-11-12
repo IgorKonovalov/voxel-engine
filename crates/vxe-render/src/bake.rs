@@ -4244,6 +4244,25 @@ impl BakeQueue {
             return;
         }
         let r = lr + 1;
+        // The verdicts within `r` (Chebyshev) of a changed chunk go. Removing each changed
+        // chunk's neighbourhood by key costs `(2 r + 1)^3` lookups a change; a scan of the cache
+        // costs its length times the changes. In a flight a few chunks change a step against
+        // thousands of cached verdicts, so the keys are removed directly unless the scan is
+        // smaller. Either way the same verdicts go.
+        let side = (2 * r + 1) as usize;
+        if changed.len().saturating_mul(side * side * side) < self.reach_cache.len() {
+            for n in changed {
+                for dz in -r..=r {
+                    for dy in -r..=r {
+                        for dx in -r..=r {
+                            self.reach_cache
+                                .remove(&[n.0[0] + dx, n.0[1] + dy, n.0[2] + dz]);
+                        }
+                    }
+                }
+            }
+            return;
+        }
         self.reach_cache.retain(|c, _| {
             !changed
                 .iter()
