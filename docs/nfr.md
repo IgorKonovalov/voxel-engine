@@ -52,6 +52,20 @@ reading; the default stands on the owner's eye. At Plan 0065's close (03b00ab, 2
 FSR 2's passes read 2.103 to 2.424 ms on the RTX and 15.691 to 16.058 ms on the RADV RENOIR, still
 over; the lamp-on a-trous at the full lighting tier (3.088 to 3.321 ms RTX) is over the denoise line.
 
+Two lines inside the streaming line (Plan 0067, 2026-11-12; RTX 3080 Laptop and RADV RENOIR,
+headless, quiet, against the start commit 4bc8100):
+
+- **The live bake queue's step** (render thread, every frame). At rest it drains and costs
+  0.075 ms p50 on the RTX (0.283 on the RENOIR while still refining) against 3.26 and 3.79 ms
+  of the start commit's opening loop; the frame CPU at rest reads 1.68 and 1.12 ms p50. In a
+  flight it depends on the regime: about 1.0 to 1.5 ms p50 when it is starved (A), 9 to 13 ms
+  when it keeps up (B, nearly every step opening), with p99 16.5 to 21.4 ms on the RTX against
+  a proposed 16.6. Under the default missing light (`chain`) a B step pays about 1.7 ms of
+  first-block fallback fades and summaries.
+- **The bake budget** is `frame:1.5`, a 1.5 ms slice a frame (ADR-0052's unit stays available
+  as `second:MS,CAP`): about 40 ms of bake a wall second on the RTX and 30 on the RENOIR in the
+  streamed glide.
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 
