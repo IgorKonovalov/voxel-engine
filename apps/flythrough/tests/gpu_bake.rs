@@ -986,6 +986,10 @@ fn path_in_boxes(o: [f64; 3], d: [f64; 3], s_end: f64, boxes: &[([i32; 3], [i32;
 /// within 10 %, and the pixel shows it. With the ore strip carved away (its ring re-baked), the
 /// same pixels reflect 0. The per-layer composite fails the first.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one rig read four ways (each pane, the carve, the composite) against one baked store"
+)]
 fn a_glass_pane_filters_by_path_length() {
     let mut t = cave_table();
     let rock = t.get(ROCK).expect("rock").clone();

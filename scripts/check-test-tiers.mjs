@@ -31,6 +31,11 @@
 // inside a `mod reading` block, a measurement run by hand that soak and full leave out by
 // `test(/(^|::)reading::/)`. Any other ignored test would run in the soak tier unasked.
 //
+// A file under a crate's or app's `tests/` (its `support/` included) names at most
+// ENV_CAP distinct `VXE_*` environment variables, counted as string literals outside comments,
+// so a wrapper (`env`, `env_or`, `on_off`, `list`) does not hide one. A reading with more
+// switches than that is a tool: an example whose flags print under `--help` (Plan 0045).
+//
 // The profiles are read too: the `lavapipe` override's filter must be `binary(/^gpu_/)`, the
 // `quick` and `ci-windows` profiles' default-filter `not binary(/^gpu_/)`, the `gpu` profile's
 // `binary(/^gpu_/)`, `gate` none, and `soak` and `full` `not test(/(^|::)reading::/)`.
@@ -39,6 +44,7 @@
 // Exit 0 = every device-opening test binary carries the prefix. Exit 1 = one line per finding:
 //   <file> -> opens a GPU device but its test binary `<id>` lacks the gpu_ prefix: rename it ...
 //   <file>:<line> -> an #[ignore] that is neither "soak" nor inside `mod reading`: ...
+//   <file> -> names N VXE_* environment variables, over the cap of 4: ...
 // The optional `root` scans another tree; scripts/fixtures/test-tiers is the seeded one, and
 // scripts/fixtures/README.md names its expected findings. Fixture trees are skipped by path
 // on an ordinary run.
@@ -55,6 +61,7 @@ const CONFIG = ".config/nextest.toml";
 const PREFIX = "gpu_";
 const GPU = "binary(/^gpu_/)";
 const NOT_READING = "not test(/(^|::)reading::/)";
+const ENV_CAP = 4;
 
 const ENTRY_POINTS = [
   /\bsoftware_device\b/,
@@ -302,6 +309,18 @@ for (const file of files.filter((p) => /^(crates|apps)\/.*\.rs$/.test(p)).sort()
   }
 }
 
+// Every file under a `tests/` directory: at most ENV_CAP distinct `VXE_*` names.
+let envFiles = 0;
+for (const file of files.filter((p) => /^(crates|apps)\/[^/]+\/tests\/.*\.rs$/.test(p)).sort()) {
+  const names = new Set([...code(file).matchAll(/"(VXE_[A-Z0-9_]+)"/g)].map((m) => m[1]));
+  if (names.size > 0) envFiles++;
+  if (names.size > ENV_CAP) {
+    findings.push(
+      `${file} -> names ${names.size} VXE_* environment variables, over the cap of ${ENV_CAP}: a reading with more switches is an example with flags (${[...names].sort().join(", ")})`,
+    );
+  }
+}
+
 if (findings.length) {
   for (const f of findings) console.error(f);
   console.error(`${findings.length} finding(s) across ${testFiles.length + units} test binaries`);
@@ -309,5 +328,5 @@ if (findings.length) {
 }
 const gpuCount = testFiles.filter((f) => f.split("/").pop().startsWith(PREFIX)).length;
 console.log(
-  `test tiers: ${testFiles.length} test files (${gpuCount} ${PREFIX}) and ${units} example and binary test modules, every device behind the prefix; ${ignores} #[ignore]s, each soak or a reading`,
+  `test tiers: ${testFiles.length} test files (${gpuCount} ${PREFIX}) and ${units} example and binary test modules, every device behind the prefix; ${ignores} #[ignore]s, each soak or a reading; ${envFiles} files naming VXE_* variables, each at most ${ENV_CAP}`,
 );
