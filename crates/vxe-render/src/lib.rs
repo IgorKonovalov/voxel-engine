@@ -105,7 +105,7 @@ pub use {glam, wgpu};
 
 /// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
 /// after; for headless validation.
-pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
+pub const MARCH_WGSL: &str = include_str!("shaders/walk.wgsl");
 /// The light pass, compiled after [`MARCH_WGSL`].
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 /// The gradient pass, compiled after [`MARCH_WGSL`] and [`LIGHT_WGSL`].
