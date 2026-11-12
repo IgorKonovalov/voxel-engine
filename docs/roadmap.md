@@ -711,7 +711,7 @@ is a render-profile plan, the owner's parked settings and profiles idea, which h
 the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, approved the same day with every recommendation taken.
 
 **Order (owner, 2026-11-10; amended 2026-11-11 and 2026-11-12):** Plans 0060, 0061, 0067, 0045, 0070, 0058,
-the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, then the plan that removes the `own` upscaler (owed,
+the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, Plan 0073 (the settings menu and file), then the plan that removes the `own` upscaler (owed,
 `docs/backlog.md`), then M6 (Plans 0062, 0063), then this milestone in plan order,
 0032 to 0037, each on main after the one before it closes. The six plans were rewritten on 2026-11-10
 against the baked store: no probe or store term takes sun or sky light.

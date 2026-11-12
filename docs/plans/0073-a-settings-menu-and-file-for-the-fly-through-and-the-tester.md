@@ -1,7 +1,7 @@
 # 0073: A settings menu and a settings file for the fly-through and the tester
 
-> **Status:** draft (the owner answered the design questions on 2026-11-12, all recommended;
-> "Open questions" holds what is left)
+> **Status:** approved (owner, 2026-11-12: the design questions and every open question below
+> took its recommendation, so this plan starts after Plans 0069 and 0071 have merged)
 > **Created:** 2026-11-12
 > **Milestone:** none of its own. The testbed and the tester build (M7, Plan 0068) on Plan
 > 0069's settings surface; M10's plans add rows to it.
@@ -288,6 +288,8 @@ a reading is closed by Phase 2's rule and test. No determinism risk: nothing her
 `vxe-world`, and the file's floats are render settings.
 
 ## Open questions
+
+All answered by the owner on 2026-11-12, each with its recommendation (first option).
 
 1. **Does save write the flags too?** Recommended: no (Phase 4). A flag is a run's choice; saving
    it would make it stick silently. The menu shows a flag's source, so it is visible.

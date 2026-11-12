@@ -72,7 +72,7 @@ the status.
 | [0055](0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md) | Render settings are one struct with an apply class per field, and a profile is a named value of it | proposed (Plan 0069) |
 | [0056](0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md) | The mirror's slot image is packed on the stream workers; the render thread only allocates and copies | accepted (Plan 0070) |
 | [0057](0057-the-render-api-is-three-objects-and-a-settings-struct-with-a-compiled-example-as-the-contract.md) | The render API is three objects and a settings struct, with a compiled example as the contract | accepted (Plan 0071) |
-| [0058](0058-the-apps-keep-render-settings-in-a-toml-file-layered-over-a-profile-through-an-app-side-field-table.md) | The apps keep render settings in a TOML file in the user's config directory, layered over a profile through an app-side field table | proposed |
+| [0058](0058-the-apps-keep-render-settings-in-a-toml-file-layered-over-a-profile-through-an-app-side-field-table.md) | The apps keep render settings in a TOML file in the user's config directory, layered over a profile through an app-side field table | accepted (Plan 0073) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

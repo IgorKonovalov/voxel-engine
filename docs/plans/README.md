@@ -27,7 +27,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0070](0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md) | The sync off the frame: a chunk's slot image packed on the stream workers, the render thread copies | approved | M2, ADR-0056. From the 2026-11-12 review. After 0045, before 0058 (owner, 2026-11-12); takes 0044's Phase 4. |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0072](0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) | Development speed: the build graph, a narrowed gate, the lavapipe group at two, one compile per CI profile | approved | Cross-cutting, no ADR at draft. From the 2026-11-12 review. Any slot; Phase 1 needs a quiet box. |
-| [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | draft | ADR-0058 (proposed). Apps only, over 0069's RenderSettings. After 0069 (0071 too: open question 2). |
+| [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
 <!-- roster:end -->
 
 ## Sequence
@@ -80,7 +80,7 @@ approved"): **Plan 0070** (the sync off the frame) after Plan 0045 and before Pl
 Plan 0044's Phase 4; **Plan 0072** (development speed) in any slot, its Phase 1 on a quiet box;
 **Plan 0071** (the consumer's path) after Plans 0045, 0069 and 0044's Phase 8, before M10.
 
-**Plan 0073** (a settings menu and file for the fly-through and the tester, drafted 2026-11-12; the owner answered its design the same day): after Plan 0069, and after Plan 0071 if the owner takes its open question 2.
+**Plan 0073** (a settings menu and file for the fly-through and the tester, approved 2026-11-12 with every recommendation): after Plans 0069 and 0071.
 
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5

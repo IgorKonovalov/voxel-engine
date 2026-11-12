@@ -1,6 +1,6 @@
 # ADR-0058: The apps keep render settings in a TOML file in the user's config directory, layered over a profile through an app-side field table
 
-> **Status:** proposed
+> **Status:** accepted (owner, 2026-11-12, with its plan)
 > **Date:** 2026-11-12
 > **Related plan(s):** [Plan 0073](../plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md)
 
