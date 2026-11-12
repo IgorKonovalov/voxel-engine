@@ -14,9 +14,11 @@
 //! counting temporal pass writes), the mirror window's origin (word 4) and size (word 8) in
 //! chunks, the flags ([`STORE_FLAGS`]), then from word [`STORE_TABLE`] one word per window chunk
 //! naming its block's first word (0 none), bit 31 ([`TABLE_COARSE`]) set on the live queue's
-//! coarse blocks. A block is 512 directory words, a brick's `offset from the block's start << 11`
-//! just past its record (0 no surface), then each surface brick's record ([`BRICK_WORDS`] a cell,
-//! [`record_words`]). A record's direction is the mean of the cell's faces of that direction,
+//! coarse blocks, then the two levels of the [`ParentTable`] (ADR-0053). A block is 512 directory
+//! words, a brick's `offset from the block's start << 11` just past its record (0 no surface),
+//! then at [`SUMMARY_AT`], just past the directory, the block's light summary (one record in the
+//! cell's format: each direction the mean over the cells that have it), then each surface
+//! brick's record ([`BRICK_WORDS`] a cell, [`record_words`]). A record's direction is the mean of the cell's faces of that direction,
 //! opaque and translucent, each face drawing its share of [`BakeSettings::brick_samples`].
 //!
 //! **The job** ([`Frame::bake_until`](crate::Frame::bake_until)): a chunk's faces, its own
@@ -3334,14 +3336,20 @@ struct Pushed {
 }
 
 /// The stages a queue step is timed in ([`StepStages::ms`]), in the order they run: the
-/// frame's setup before the step (the light hold, the parameters, the bind group), the mirror
-/// filter and the per-chunk sets' `retain`s, the edit boxes, the withdrawal, the digs' jobs,
-/// then the opening's candidate build, census, sort, reach and light checks and listing (each
-/// 0 on a step that does not open), the job tables, the device poll, the read-back's copy and
-/// the blocks' placement, the submit and the fades.
-pub const STEP_STAGES: [&str; 17] = [
+/// frame's setup before the step (the light hold, the parameters, the bind group); the mirror
+/// filter in five (the store following the window, the mirror's change list and the blocks of
+/// chunks it no longer holds full, the per-chunk sets' removals, the reach verdicts dropped
+/// near a change, the changes marked for the candidate pool); the edit boxes, the withdrawal,
+/// the digs' jobs, then the opening's candidate build, census, sort, reach and light checks and
+/// listing (each 0 on a step that does not open), the job tables, the device poll, the
+/// read-back's copy and the blocks' placement, the submit, the fades and the light summaries.
+pub const STEP_STAGES: [&str; 21] = [
     "setup",
-    "filter",
+    "rewindow",
+    "gone",
+    "forget",
+    "drop_reach",
+    "touched",
     "boxes",
     "withdraw",
     "digs",
@@ -3359,22 +3367,26 @@ pub const STEP_STAGES: [&str; 17] = [
     "summaries",
 ];
 const S_SETUP: usize = 0;
-const S_FILTER: usize = 1;
-const S_BOXES: usize = 2;
-const S_WITHDRAW: usize = 3;
-const S_DIGS: usize = 4;
-const S_CANDIDATES: usize = 5;
-const S_CENSUS: usize = 6;
-const S_SORT: usize = 7;
-const S_CHECKS: usize = 8;
-const S_LIST: usize = 9;
-const S_REFRESH: usize = 10;
-const S_POLL: usize = 11;
-const S_COLLECT: usize = 12;
-const S_PLACE: usize = 13;
-const S_SUBMIT: usize = 14;
-const S_FADES: usize = 15;
-const S_SUMMARIES: usize = 16;
+const S_REWINDOW: usize = 1;
+const S_GONE: usize = 2;
+const S_FORGET: usize = 3;
+const S_DROP_REACH: usize = 4;
+const S_TOUCHED: usize = 5;
+const S_BOXES: usize = 6;
+const S_WITHDRAW: usize = 7;
+const S_DIGS: usize = 8;
+const S_CANDIDATES: usize = 9;
+const S_CENSUS: usize = 10;
+const S_SORT: usize = 11;
+const S_CHECKS: usize = 12;
+const S_LIST: usize = 13;
+const S_REFRESH: usize = 14;
+const S_POLL: usize = 15;
+const S_COLLECT: usize = 16;
+const S_PLACE: usize = 17;
+const S_SUBMIT: usize = 18;
+const S_FADES: usize = 19;
+const S_SUMMARIES: usize = 20;
 
 /// One queue step's CPU time by stage.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -4505,28 +4517,30 @@ impl BakeQueue {
         let window = gpu.window();
         let dropped = store.rewindow(run.queue, window);
         self.touched.extend(dropped);
+        self.laps.lap(S_REWINDOW);
         let seen = (Some(window), gpu.mirrored_chunks());
         let moved = seen != self.mirror_seen;
         self.mirror_seen = seen;
         store.piece = Some(window);
         // The mirror's changes since the last step; untracked (the first step), everything is
         // read again.
-        let changes = gpu.take_changes();
+        // The list repeats a chunk once per event (queued, uploaded, dropped); everything below
+        // reads each changed chunk once.
+        let changes = gpu.take_changes().map(|mut ch| {
+            self.stats.scanned += ch.len() as u64;
+            ch.sort_unstable_by_key(|c| c.0);
+            ch.dedup_by_key(|c| c.0);
+            ch
+        });
         let unheld = |c: &[i32; 3]| !gpu.is_mirrored(ChunkCoord(*c)) || gpu.is_lod(ChunkCoord(*c));
         // A chunk the mirror does not hold full (evicted, or LOD-only) frees its block. Every
         // such chunk is among the mirror's changes since the step that last read them.
         let gone: Vec<[i32; 3]> = match &changes {
-            Some(ch) => {
-                self.stats.scanned += ch.len() as u64;
-                let mut g: Vec<[i32; 3]> = ch
-                    .iter()
-                    .map(|c| c.0)
-                    .filter(|c| store.blocks.contains_key(c) && unheld(c))
-                    .collect();
-                g.sort_unstable();
-                g.dedup();
-                g
-            }
+            Some(ch) => ch
+                .iter()
+                .map(|c| c.0)
+                .filter(|c| store.blocks.contains_key(c) && unheld(c))
+                .collect(),
             None => {
                 self.stats.scanned += store.blocks.len() as u64;
                 store.blocks.keys().copied().filter(unheld).collect()
@@ -4540,36 +4554,55 @@ impl BakeQueue {
         for c in gone {
             store.remove(run.queue, ChunkCoord(c));
         }
+        self.laps.lap(S_GONE);
         // What the queue knows of a chunk the mirror does not hold full goes with it, block or
         // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
         // A job in flight for it ends in the sink, which drops its block.
         let held = |c: &[i32; 3]| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c));
+        // The sets hold only held chunks, and only a changed chunk can have stopped being held,
+        // so removing the changed unheld chunks and keeping the held entries leave the same sets.
+        // A key costs two lookups and six removals, an entry two lookups: the cheaper goes. In a
+        // flight the changes a step outnumber the sets' entries.
+        let entries = self.fades.len()
+            + self.faceless.len()
+            + self.blocked.len()
+            + self.digs.len()
+            + self.reach.len()
+            + self.listed.len();
+        let by_keys = changes.as_ref().is_some_and(|ch| 4 * ch.len() < entries);
+        if !by_keys {
+            self.fades.retain(|c, _| held(c));
+            self.faceless.retain(held);
+            self.blocked.retain(|c, _| held(c));
+            self.digs.retain(|c, _| held(c));
+            self.reach.retain(held);
+            self.listed.retain(|c, _| held(c));
+        }
         match changes {
             Some(ch) => {
-                // Only a changed chunk can have stopped being held.
-                for c in ch.iter().map(|c| c.0).filter(|c| !held(c)) {
-                    self.fades.remove(&c);
-                    self.faceless.remove(&c);
-                    self.blocked.remove(&c);
-                    self.digs.remove(&c);
-                    self.reach.remove(&c);
-                    self.listed.remove(&c);
+                if by_keys {
+                    for c in ch.iter().map(|c| c.0).filter(|c| !held(c)) {
+                        self.fades.remove(&c);
+                        self.faceless.remove(&c);
+                        self.blocked.remove(&c);
+                        self.digs.remove(&c);
+                        self.reach.remove(&c);
+                        self.listed.remove(&c);
+                    }
                 }
+                self.laps.lap(S_FORGET);
                 self.drop_reach(&ch, gpu.light_radius());
+                self.laps.lap(S_DROP_REACH);
                 self.touched.extend(ch.iter().map(|c| c.0));
             }
             None => {
-                self.fades.retain(|c, _| held(c));
-                self.faceless.retain(held);
-                self.blocked.retain(|c, _| held(c));
-                self.digs.retain(|c, _| held(c));
-                self.reach.retain(held);
-                self.listed.retain(|c, _| held(c));
+                self.laps.lap(S_FORGET);
                 self.reach_cache.clear();
+                self.laps.lap(S_DROP_REACH);
                 self.pool_stale = true;
             }
         }
-        self.laps.lap(S_FILTER);
+        self.laps.lap(S_TOUCHED);
         self.take_boxes(run, store)?;
         self.laps.lap(S_BOXES);
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
@@ -4797,10 +4830,10 @@ impl BakeQueue {
         self.stats.digs = (self.digs.len() + self.dig_open.len()) as u64;
         self.stats.reach = self.reach.len() as u64;
         self.laps.lap(S_FADES);
-        // The summaries' and parents' time ran inside the placement, the fades and the filter's
-        // evictions: it moves to its own stage, from those in that order.
+        // The summaries' and parents' time ran inside the placement, the fades, the evictions
+        // and the window's move: it moves to its own stage, from those in that order.
         let mut summaries = store.take_summary_ms();
-        for stage in [S_PLACE, S_FADES, S_FILTER] {
+        for stage in [S_PLACE, S_FADES, S_GONE, S_REWINDOW] {
             let p = summaries.min(self.laps.ms[stage]);
             self.laps.ms[stage] -= p;
             self.laps.ms[S_SUMMARIES] += p;
