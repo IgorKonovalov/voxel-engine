@@ -14,11 +14,17 @@ workspace = true
 # The edit bench's stage timer (`World::apply_staged`, `EditStages`): the only clock reads in
 # this crate. Off by default; `cargo bench -p vxe-world --bench edits --features edit-stages`.
 edit-stages = []
+# The streamer's incremental-update oracle (`Streamer::set_incremental_oracle`,
+# `Streamer::oracle_checks`): every one-step queue shift and sweep recomputed the full way and
+# compared. For tests; this crate's own tests turn it on through the dev-dependency below.
+stream-oracle = []
 
 [dependencies]
 
 [dev-dependencies]
 criterion.workspace = true
+# This crate's tests and benches build it with its test features on.
+vxe-world = { workspace = true, features = ["stream-oracle"] }
 
 [[bench]]
 name = "edits"
