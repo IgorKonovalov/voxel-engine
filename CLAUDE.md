@@ -79,6 +79,8 @@ docs/
 │   ├── README.md    #   Plans index + next free number. Read this each session
 │   ├── done/        #   Closed plans move here (architect close ceremony)
 │   └── logs/        #   NNNN.md: a plan's readings, attempts and resume notes; stays put at close
+├── reviews/         # YYYY-MM-DD-<slug>.md: standalone architecture reviews (findings, owner
+│                    #   questions); the plans and backlog entries they spawn cite them
 └── references/      # annotated external sources (papers, talks, repos) a plan cites by title.
                      #   local/ (gitignored) holds saved copies of some reference material
 .claude/
