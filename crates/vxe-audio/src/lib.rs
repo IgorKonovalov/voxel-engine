@@ -45,16 +45,20 @@ pub use acoustics::{
 pub use command::{COMMAND_CAPACITY, Command, RoomTargets};
 pub use hrtf::Hrtf;
 pub use input::Input;
+#[cfg(feature = "test-hooks")]
+pub use mixer::TapSlot;
 pub use mixer::{
     MAX_VOICES, MixSettings, Mixer, Recycler, TAP_JUMP_FRAMES, TAP_SILENT,
-    TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
+    TAP_SLEW_FRAMES_PER_FRAME,
 };
 pub use output::{Output, OutputStats};
 pub use reverb::{
     REVERB_DELAY_SLEW_FRAMES_PER_FRAME, REVERB_LINES, REVERB_MAX_DELAY_FRAMES,
-    REVERB_MAX_PREDELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, ReverbClears, ReverbLine, ReverbNetwork,
-    ReverbSettings, TAIL_HANDOVER_RATIO, TailLines,
+    REVERB_MAX_PREDELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, ReverbSettings, TAIL_HANDOVER_RATIO,
+    TailLines,
 };
+#[cfg(feature = "test-hooks")]
+pub use reverb::{ReverbClears, ReverbLine, ReverbNetwork};
 pub use room_curve::{ROOM_CURVE_POINTS, RoomCurve};
 pub use stream::{STREAM_CAPACITY_FRAMES, Stream, StreamMonitor, StreamReader, StreamWriter};
 pub use voice::{

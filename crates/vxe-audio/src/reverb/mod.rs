@@ -161,7 +161,7 @@ impl Default for ReverbSettings {
 }
 
 /// One network as [`crate::Mixer::reverb_networks`] reads it.
-#[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReverbNetwork {
     pub lines: [ReverbLine; REVERB_LINES],
@@ -174,7 +174,7 @@ pub struct ReverbNetwork {
 }
 
 /// One line as [`crate::Mixer::reverb_lines`] reads it.
-#[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReverbLine {
     /// Frames, fractional while gliding.
@@ -182,8 +182,8 @@ pub struct ReverbLine {
     pub target: u32,
 }
 
-/// How the tail's clears ran, for tests ([`crate::Mixer::reverb_clears`]).
-#[doc(hidden)]
+/// How the tail's clears ran, for tests (`Mixer::reverb_clears`, behind the `test-hooks`
+/// feature).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReverbClears {
     /// Clears that swapped a network's lines with the spare.

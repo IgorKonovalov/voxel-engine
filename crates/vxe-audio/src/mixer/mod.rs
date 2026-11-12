@@ -71,10 +71,14 @@ use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use crate::acoustics::{BlockClock, reflection_directions};
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::reverb::{Reverb, ReverbClears, ReverbLine, ReverbNetwork, ReverbSettings};
+use crate::reverb::{Reverb, ReverbSettings};
+#[cfg(feature = "test-hooks")]
+use crate::reverb::{ReverbClears, ReverbLine, ReverbNetwork};
 use crate::room_curve::{ECHO_KNOTS, RoomCurve, curve_of};
+#[cfg(feature = "test-hooks")]
+use crate::voice::Tap;
 use crate::voice::{
-    MAX_DELAY_FRAMES, MAX_TAPS, PlayParams, Source, Tap, TapState, Voice, VoiceBuffers, VoiceId,
+    MAX_DELAY_FRAMES, MAX_TAPS, PlayParams, Source, TapState, Voice, VoiceBuffers, VoiceId,
 };
 use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS};
 
@@ -140,7 +144,7 @@ impl MixSettings {
 }
 
 /// One tap slot as [`Mixer::tap_slots`] reads it.
-#[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TapSlot {
     /// Frames, fractional while gliding.
@@ -342,7 +346,7 @@ impl Mixer {
 
     /// The tap slots of voice `id` as played now, for tests: each slot's delay and gain and
     /// the target it moves toward. `None` when `id` is not playing.
-    #[doc(hidden)]
+    #[cfg(feature = "test-hooks")]
     pub fn tap_slots(&self, id: VoiceId) -> Option<[TapSlot; crate::MAX_TAPS]> {
         let v = self.voices.iter().find(|v| v.id == id)?;
         Some(std::array::from_fn(|i| TapSlot {
@@ -354,34 +358,34 @@ impl Mixer {
 
     /// The smoothed state of voice `id`, for tests: its own gain, its send, its gain, its
     /// distance gain and its low-pass state, in that order. `None` when `id` is not playing.
-    #[doc(hidden)]
+    #[cfg(feature = "test-hooks")]
     pub fn voice_smoothers(&self, id: VoiceId) -> Option<[f32; 5]> {
         let v = self.voices.iter().find(|v| v.id == id)?;
         Some([v.own_gain, v.send, v.gain, v.dist_gain, v.lowpass])
     }
 
     /// The fed tail network's lines, for tests: each line's current and target length.
-    #[doc(hidden)]
+    #[cfg(feature = "test-hooks")]
     pub fn reverb_lines(&self) -> [ReverbLine; crate::REVERB_LINES] {
         self.reverb.lines()
     }
 
     /// Both tail networks, for tests: lines, whether each holds signal, which is fed and
     /// their input weights.
-    #[doc(hidden)]
+    #[cfg(feature = "test-hooks")]
     pub fn reverb_networks(&self) -> [ReverbNetwork; 2] {
         self.reverb.networks()
     }
 
     /// Moves the fed tail network's line `line` read point by `frames` at once, for tests that
     /// check a jump is caught; the line then glides back to its target.
-    #[doc(hidden)]
+    #[cfg(feature = "test-hooks")]
     pub fn jump_reverb_line(&mut self, line: usize, frames: f32) {
         self.reverb.jump(line, frames);
     }
 
     /// How the tail's clears ran so far, for tests.
-    #[doc(hidden)]
+    #[cfg(feature = "test-hooks")]
     pub fn reverb_clears(&self) -> ReverbClears {
         self.reverb.clears()
     }

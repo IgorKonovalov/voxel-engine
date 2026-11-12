@@ -312,6 +312,7 @@ impl Network {
         !self.active && self.nonzero.is_some()
     }
 
+    #[cfg(feature = "test-hooks")]
     /// Whether any line or filter state is nonzero.
     pub(super) fn holds_signal(&self) -> bool {
         self.lowpass.iter().any(|&x| x != 0.0)

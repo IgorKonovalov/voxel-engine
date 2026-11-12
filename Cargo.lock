@@ -3153,6 +3153,7 @@ dependencies = [
  "cpal",
  "criterion",
  "sofar",
+ "vxe-audio",
  "vxe-world",
 ]
 

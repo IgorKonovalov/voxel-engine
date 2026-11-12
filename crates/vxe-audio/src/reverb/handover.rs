@@ -3,9 +3,10 @@
 
 use super::network::{Network, SPARE_SETS, SpareLines};
 use super::{
-    ENERGY_BANDS, PRE_RING, REVERB_LINES, REVERB_MAX_DELAY_FRAMES, RING, ReverbClears, ReverbLine,
-    ReverbNetwork, ReverbSettings, TAIL_HANDOVER_RATIO, TailLines,
+    ENERGY_BANDS, PRE_RING, REVERB_LINES, RING, ReverbSettings, TAIL_HANDOVER_RATIO, TailLines,
 };
+#[cfg(feature = "test-hooks")]
+use super::{REVERB_MAX_DELAY_FRAMES, ReverbClears, ReverbLine, ReverbNetwork};
 use crate::command::RoomTargets;
 use crate::{BLOCK, RATE, SMOOTHING_SECONDS};
 
@@ -128,6 +129,7 @@ impl Reverb {
         (2 + SPARE_SETS) * REVERB_LINES * RING * 4
     }
 
+    #[cfg(feature = "test-hooks")]
     /// How the clears ran so far.
     pub fn clears(&self) -> ReverbClears {
         self.spare.stats
@@ -202,12 +204,14 @@ impl Reverb {
         self.xfade = 0.0;
     }
 
+    #[cfg(feature = "test-hooks")]
     /// Moves the fed network's line `i` current length by `frames` at once, within the ring.
     pub fn jump(&mut self, i: usize, frames: f32) {
         let net = &mut self.nets[self.fed];
         net.length[i] = (net.length[i] + frames).clamp(1.0, REVERB_MAX_DELAY_FRAMES as f32);
     }
 
+    #[cfg(feature = "test-hooks")]
     /// The fed network's current and target length per line.
     pub fn lines(&self) -> [ReverbLine; REVERB_LINES] {
         let net = &self.nets[self.fed];
@@ -217,6 +221,7 @@ impl Reverb {
         })
     }
 
+    #[cfg(feature = "test-hooks")]
     /// Both networks, for tests.
     pub fn networks(&self) -> [ReverbNetwork; 2] {
         let weights = self.weights(self.xfade);
