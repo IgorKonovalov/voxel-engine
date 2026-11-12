@@ -1,7 +1,7 @@
 //! Region queries over resident chunks.
 
 use crate::brick::Brick;
-use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot};
+use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, clip_box};
 use crate::edit::EditError;
 use crate::material::{AIR, MaterialId};
 use crate::packed::box_words;
@@ -60,16 +60,14 @@ impl World {
                         continue;
                     };
                     let chunk = read(&chunk);
-                    let vlo = [0, 1, 2].map(|k| (c[k] * ce).max(lo[k]));
-                    let vhi = [0, 1, 2].map(|k| (c[k] * ce + ce - 1).min(hi[k]));
+                    let (vlo, vhi) = clip_box(c, ce, lo, hi);
                     let blo = vlo.map(|v| v.div_euclid(be));
                     let bhi = vhi.map(|v| v.div_euclid(be));
                     for bz in blo[2]..=bhi[2] {
                         for by in blo[1]..=bhi[1] {
                             for bx in blo[0]..=bhi[0] {
                                 let b = [bx, by, bz];
-                                let elo = [0, 1, 2].map(|k| (b[k] * be).max(vlo[k]));
-                                let ehi = [0, 1, 2].map(|k| (b[k] * be + be - 1).min(vhi[k]));
+                                let (elo, ehi) = clip_box(b, be, vlo, vhi);
                                 let slot = brick_slot([0, 1, 2].map(|k| (b[k] - c[k] * 8) as i32));
                                 let brick = chunk.brick(slot);
                                 if !brick.is_full() {

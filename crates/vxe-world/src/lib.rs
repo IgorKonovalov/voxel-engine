@@ -43,6 +43,7 @@ mod stamp;
 mod store;
 mod stream;
 mod support;
+mod tally;
 mod walkable;
 pub mod wire;
 

@@ -11,6 +11,7 @@
 use crate::brick::{Brick, RawBrick, SpareArrays, Voxels};
 use crate::coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, brick_slot,
+    clip_at, clip_box, to_i32,
 };
 use crate::fixed::{Fixed3, centre};
 use crate::limits::Field;
@@ -19,6 +20,7 @@ use crate::packed::{KernelMode, PackedStats, RowSpans, box_words, shape_words};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape, sphere_row_spans};
 use crate::store::{World, read, write};
+use crate::tally::Tally;
 
 /// What an op does to the voxels inside its shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -246,62 +248,6 @@ impl Target for ReplaceOne {
     }
 }
 
-/// Per-op accumulation of counts and bounds. `counts` is indexed by material id and sized to
-/// the material table once per op; `seen` lists each id the first time its count leaves zero.
-struct Tally {
-    counts: Vec<u32>,
-    seen: Vec<MaterialId>,
-    lo: [i64; 3],
-    hi: [i64; 3],
-    any: bool,
-}
-
-impl Tally {
-    fn new(rows: usize) -> Self {
-        Self {
-            counts: vec![0; rows],
-            seen: Vec::with_capacity(rows.min(16)),
-            lo: [0; 3],
-            hi: [0; 3],
-            any: false,
-        }
-    }
-
-    /// Counts `n >= 1` changed voxels of old material `m`. An id beyond the table's rows (a
-    /// voxel the table does not describe) grows `counts` to reach it.
-    fn count(&mut self, m: MaterialId, n: u32) {
-        let i = usize::from(m);
-        if i >= self.counts.len() {
-            self.counts.resize(i + 1, 0);
-        }
-        if self.counts[i] == 0 {
-            self.seen.push(m);
-        }
-        self.counts[i] += n;
-    }
-
-    /// Widens the bounds of the changed voxels to hold `lo..=hi`.
-    fn bound(&mut self, lo: [i64; 3], hi: [i64; 3]) {
-        if self.any {
-            for k in 0..3 {
-                self.lo[k] = self.lo[k].min(lo[k]);
-                self.hi[k] = self.hi[k].max(hi[k]);
-            }
-        } else {
-            (self.lo, self.hi, self.any) = (lo, hi, true);
-        }
-    }
-
-    /// `changed_from`: the seen ids ascending, each with its count.
-    fn changed_from(mut self) -> Vec<(MaterialId, u32)> {
-        self.seen.sort_unstable();
-        self.seen
-            .iter()
-            .map(|&m| (m, self.counts[usize::from(m)]))
-            .collect()
-    }
-}
-
 /// Whether any voxel centre in `lo..=hi` (one chunk's part of the shape bounds) is inside,
 /// decided brick by brick so only bricks on the surface test single voxels.
 fn reaches(shape: &Shape, lo: [i64; 3], hi: [i64; 3]) -> bool {
@@ -312,8 +258,7 @@ fn reaches(shape: &Shape, lo: [i64; 3], hi: [i64; 3]) -> bool {
         for by in blo[1]..=bhi[1] {
             for bx in blo[0]..=bhi[0] {
                 let b = [bx, by, bz];
-                let elo = [0, 1, 2].map(|k| (b[k] * be).max(lo[k]));
-                let ehi = [0, 1, 2].map(|k| (b[k] * be + be - 1).min(hi[k]));
+                let (elo, ehi) = clip_box(b, be, lo, hi);
                 let (a, c) = centres(elo, ehi);
                 match shape.coverage(a, c) {
                     Coverage::Outside => {}
@@ -338,16 +283,6 @@ fn reaches(shape: &Shape, lo: [i64; 3], hi: [i64; 3]) -> bool {
 
 fn centres(lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
     (lo.map(centre), hi.map(centre))
-}
-
-/// A voxel or chunk coordinate of a checked shape as `i32`. Within the limits every such
-/// coordinate fits (`±2^30` fixed units plus a radius of as much is `±2^23` voxels), so the
-/// clamp never moves one.
-fn to_i32(v: [i64; 3]) -> [i32; 3] {
-    v.map(|c| {
-        debug_assert!(i32::try_from(c).is_ok(), "coordinate {c} beyond i32");
-        c.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
-    })
 }
 
 /// The op path's stages, in the order an op meets them. A stage's time runs from the previous
@@ -501,9 +436,7 @@ impl World {
                 for y in clo[1]..=chi[1] {
                     for z in clo[2]..=chi[2] {
                         let c = [x, y, z];
-                        let vlo = c.map(|v| v * edge);
-                        let vlo = [0, 1, 2].map(|k| vlo[k].max(lo[k]));
-                        let vhi = [0, 1, 2].map(|k| (c[k] * edge + edge - 1).min(hi[k]));
+                        let (vlo, vhi) = clip_box(c, edge, lo, hi);
                         let (a, b) = centres(vlo, vhi);
                         if op.shape.coverage(a, b) == Coverage::Outside {
                             continue;
@@ -543,8 +476,7 @@ impl World {
                     // the bricks it reaches.
                     for bx in blo[0]..=bhi[0] {
                         let bmin = [0, 1, 2].map(|k| base[k] + [bx, by, bz][k] * be);
-                        let elo = [0, 1, 2].map(|k| bmin[k].max(vlo[k]));
-                        let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(vhi[k]));
+                        let (elo, ehi) = clip_at(bmin, be, vlo, vhi);
                         let (a, c) = centres(elo, ehi);
                         let cov = op.shape.coverage(a, c);
                         covs[bx as usize] = cov;
@@ -556,8 +488,7 @@ impl World {
                         }
                         let b = [bx, by, bz];
                         let bmin = [0, 1, 2].map(|k| base[k] + b[k] * be);
-                        let elo = [0, 1, 2].map(|k| bmin[k].max(vlo[k]));
-                        let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(vhi[k]));
+                        let (elo, ehi) = clip_at(bmin, be, vlo, vhi);
                         let slot = brick_slot(b.map(|v| v as i32));
                         let brick = chunk.brick_mut(slot);
                         let edit = BrickEdit {
@@ -592,9 +523,7 @@ impl World {
         drop(map);
         *spans = op_rows.entries;
         self.add_packed_stats(&stats);
-        let aabb = tally
-            .any
-            .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi))));
+        let aabb = tally.aabb();
         let result = EditResult {
             changed_from: tally.changed_from(),
             touched,
@@ -805,7 +734,7 @@ impl PlanarWriter {
 }
 
 fn finish(tally: Tally) -> WriterResult {
-    let bounds = tally.any.then_some((tally.lo, tally.hi));
+    let bounds = tally.bounds();
     (tally.changed_from(), bounds)
 }
 

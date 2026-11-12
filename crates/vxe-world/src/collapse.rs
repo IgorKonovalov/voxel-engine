@@ -26,6 +26,7 @@ use crate::material::{AIR, MaterialId, MaterialTable};
 use crate::packed::{KernelMode, PackedStats, bounds_of};
 use crate::store::{ChunkMap, ChunkReader, World, read, write};
 use crate::support::{CellKey, CellMap};
+use crate::tally::Tally;
 
 /// What [`World::drop_region`] and [`World::drop_region_through`] did.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -51,12 +52,12 @@ impl DropResult {
     /// The result in the edit-result vocabulary, for [`crate::CoarseGrid::update`]:
     /// `changed_from` is `moved` and `crushed` merged, `touched` and `aabb` are the same.
     pub fn edit_result(&self) -> EditResult {
-        let mut changed = Counts::default();
+        let mut changed = Tally::new(0);
         for &(m, n) in self.moved.iter().chain(&self.crushed) {
-            changed.add(m, n);
+            changed.count(m, n);
         }
         EditResult {
-            changed_from: changed.sorted(),
+            changed_from: changed.changed_from(),
             touched: self.touched.clone(),
             aabb: self.aabb,
         }
@@ -158,6 +159,11 @@ fn counts_under(b: &Brick, sel: &[u64; 8], f: &mut impl FnMut(MaterialId, u32)) 
         }
         Brick::Full(p) => p.counts_under(sel, f),
     }
+}
+
+/// A voxel coordinate widened for [`Tally::bound`].
+fn wide(v: [i32; 3]) -> [i64; 3] {
+    v.map(i64::from)
 }
 
 /// The brick-local inclusive bounds of the set bits of `mask`, or `None`.
@@ -359,44 +365,6 @@ impl Snapshot {
             Some(b) => !spare(b.get(index_of(v))),
             None => reader.brick(cell).is_ok_and(|b| b.get(index_of(v)) == AIR),
         }
-    }
-}
-
-/// Per-material counts, ascending by material, from a small list.
-#[derive(Default)]
-struct Counts(Vec<(MaterialId, u32)>);
-
-impl Counts {
-    fn add(&mut self, m: MaterialId, n: u32) {
-        match self.0.iter_mut().find(|(k, _)| *k == m) {
-            Some((_, c)) => *c += n,
-            None => self.0.push((m, n)),
-        }
-    }
-
-    fn sorted(mut self) -> Vec<(MaterialId, u32)> {
-        self.0.sort_unstable();
-        self.0
-    }
-}
-
-/// Inclusive voxel bounds grown one box at a time.
-#[derive(Default)]
-struct Bounds(Option<([i32; 3], [i32; 3])>);
-
-impl Bounds {
-    fn add(&mut self, lo: [i32; 3], hi: [i32; 3]) {
-        self.0 = Some(match self.0 {
-            None => (lo, hi),
-            Some((a, b)) => (
-                [0, 1, 2].map(|k| a[k].min(lo[k])),
-                [0, 1, 2].map(|k| b[k].max(hi[k])),
-            ),
-        });
-    }
-
-    fn get(&self) -> Option<(VoxelCoord, VoxelCoord)> {
-        self.0.map(|(a, b)| (VoxelCoord(a), VoxelCoord(b)))
     }
 }
 
@@ -737,7 +705,7 @@ impl RubbleStage {
         compose: &mut Compose<B>,
         spare: &impl Fn(MaterialId) -> bool,
         touched: &mut BTreeSet<ChunkCoord>,
-        bounds: &mut Bounds,
+        bounds: &mut Tally,
     ) -> u32 {
         let mut placed: u32 = 0;
         // Each column's run, as bits of its cells' shapes: the columns are distinct and the
@@ -757,7 +725,7 @@ impl RubbleStage {
                 top = Some(z);
             }
             if let Some(top) = top {
-                bounds.add([x, y, z0], [x, y, top]);
+                bounds.bound(wide([x, y, z0]), wide([x, y, top]));
             }
         }
         for (cell, shape) in shapes {
@@ -911,9 +879,9 @@ impl World {
 
         check_landings(&snap, &mut reader, dropped).map_err(EditError::NotResident)?;
 
-        let mut moved = Counts::default();
-        let mut crushed = Counts::default();
-        let mut bounds = Bounds::default();
+        // `moved` also holds the bounds of the vacated, landed and crushed voxels.
+        let mut moved = Tally::new(self.materials.len());
+        let mut crushed = Tally::new(self.materials.len());
         let mut compose = Compose::<B>::new(&snap, &|_| false);
         let mut touched = BTreeSet::new();
         if let Some(y) = yields.as_mut().filter(|y| !y.yielded.is_empty()) {
@@ -962,8 +930,8 @@ impl World {
                             let v = [x, y_, z];
                             let m = brick.get(index_of(v));
                             if m != AIR {
-                                crushed.add(m, 1);
-                                bounds.add(v, v);
+                                crushed.count(m, 1);
+                                moved.bound(wide(v), wide(v));
                                 touched.insert(VoxelCoord(v).chunk());
                                 let (w, bit) = bit_of(v);
                                 by_cell.entry(cell).or_default()[w] |= bit;
@@ -983,9 +951,9 @@ impl World {
                 match snap.brick(c) {
                     Brick::Uniform(AIR) => {}
                     Brick::Uniform(m) => {
-                        moved.add(*m, 512);
+                        moved.count(*m, 512);
                         let hi = min.map(|v| v + BE - 1);
-                        bounds.add([min[0], min[1], min[2] - dropped], hi);
+                        moved.bound(wide([min[0], min[1], min[2] - dropped]), wide(hi));
                         touched.insert(c.split().0);
                         touched.insert(VoxelCoord([min[0], min[1], min[2] - dropped]).chunk());
                         touched.insert(VoxelCoord([min[0], min[1], hi[2] - dropped]).chunk());
@@ -1001,12 +969,12 @@ impl World {
                     }
                     full @ Brick::Full(_) => {
                         let solid = full.solid_bits();
-                        counts_under(full, &solid, &mut |m, n| moved.add(m, n));
+                        counts_under(full, &solid, &mut |m, n| moved.count(m, n));
                         if let Some((lo, hi)) = local_bounds(&solid) {
                             compose.place_dropped(&mut reader, c, full, dropped);
                             let lo = [0, 1, 2].map(|k| min[k] + lo[k]);
                             let hi = [0, 1, 2].map(|k| min[k] + hi[k]);
-                            bounds.add([lo[0], lo[1], lo[2] - dropped], hi);
+                            moved.bound(wide([lo[0], lo[1], lo[2] - dropped]), wide(hi));
                             touched.insert(c.split().0);
                             touched.insert(VoxelCoord([lo[0], lo[1], lo[2] - dropped]).chunk());
                             touched.insert(VoxelCoord([lo[0], lo[1], hi[2] - dropped]).chunk());
@@ -1018,12 +986,13 @@ impl World {
         drop(reader);
         compose.commit(self, &map);
         drop(map);
+        let aabb = moved.aabb();
         Ok(DropResult {
-            moved: moved.sorted(),
+            moved: moved.changed_from(),
             dropped,
-            crushed: crushed.sorted(),
+            crushed: crushed.changed_from(),
             touched: touched.into_iter().collect(),
-            aabb: bounds.get(),
+            aabb,
         })
     }
 
@@ -1104,8 +1073,8 @@ impl World {
         }
 
         let mut compose = Compose::<B>::new(&snap, &spare);
-        let mut removed = Counts::default();
-        let mut bounds = Bounds::default();
+        // `removed` also holds the bounds of the carved and the rubble voxels.
+        let mut removed = Tally::new(self.materials.len());
         let mut touched = BTreeSet::new();
         for (&[cx, cy], zs) in &snap.stacks {
             for &cz in zs {
@@ -1114,7 +1083,7 @@ impl World {
                 let (lo, hi) = match snap.brick(c) {
                     Brick::Uniform(m) if !carved(*m) => continue,
                     Brick::Uniform(m) => {
-                        removed.add(*m, 512);
+                        removed.count(*m, 512);
                         ([0; 3], [BE - 1; 3])
                     }
                     full @ Brick::Full(_) => {
@@ -1126,16 +1095,16 @@ impl World {
                         for (w, k) in sel.iter_mut().zip(kept) {
                             *w &= !k;
                         }
-                        counts_under(full, &sel, &mut |m, n| removed.add(m, n));
+                        counts_under(full, &sel, &mut |m, n| removed.count(m, n));
                         let Some(b) = local_bounds(&sel) else {
                             continue;
                         };
                         b
                     }
                 };
-                bounds.add(
-                    [0, 1, 2].map(|k| min[k] + lo[k]),
-                    [0, 1, 2].map(|k| min[k] + hi[k]),
+                removed.bound(
+                    wide([0, 1, 2].map(|k| min[k] + lo[k])),
+                    wide([0, 1, 2].map(|k| min[k] + hi[k])),
                 );
                 touched.insert(c.split().0);
             }
@@ -1146,16 +1115,17 @@ impl World {
             &mut compose,
             &spare,
             &mut touched,
-            &mut bounds,
+            &mut removed,
         );
         drop(reader);
         compose.commit(self, &map);
         drop(map);
+        let aabb = removed.aabb();
         Ok(RemoveResult {
-            removed: removed.sorted(),
+            removed: removed.changed_from(),
             placed,
             touched: touched.into_iter().collect(),
-            aabb: bounds.get(),
+            aabb,
         })
     }
 
@@ -1224,7 +1194,7 @@ impl World {
         }
 
         let mut compose = Compose::<B>::new(&snap, &spare);
-        let mut bounds = Bounds::default();
+        let mut bounds = Tally::new(0);
         let mut touched = BTreeSet::new();
         let placed = stage.write(
             &snap,
@@ -1240,7 +1210,7 @@ impl World {
         Ok(PileResult {
             placed,
             touched: touched.into_iter().collect(),
-            aabb: bounds.get(),
+            aabb: bounds.aabb(),
         })
     }
 }
