@@ -38,10 +38,12 @@
 use std::path::{Path, PathBuf};
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
+use flythrough::cli::table::{Flag, Section, Table};
+use flythrough::cli::{GONE_SINCE_0057, LightingArgs, gone_since_0057, lighting_flags};
 use flythrough::showcase::{SHOTS, Shot, ShowcaseSource};
 use vxe_render::{
-    AutoExposure, Camera, Exposure, Frame, GpuWorld, HistoryKill, LightParams, Lighting,
-    LightingResolution, MirrorConfig, RenderScale, ShadowWalk, readback, wgpu,
+    AutoExposure, Camera, Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig,
+    RenderScale, wgpu,
 };
 use vxe_world::*;
 
@@ -73,19 +75,24 @@ struct Args {
     out: Option<PathBuf>,
     out_dir: PathBuf,
     frames: u32,
-    resolution: LightingResolution,
-    lighting: Lighting,
-    probe_spacing: u32,
+    /// The lighting rows the fly-through shares (`flythrough::cli::lighting_flags`).
+    light: LightingArgs,
     internal_scale: RenderScale,
     /// `--jitter on|off` as given, which selects our upscaler; unset, FSR 2 above scale 1.
     jitter: Option<bool>,
     sharpen: f32,
-    light_radius: Option<i32>,
     adapter: Option<String>,
     look: flythrough::LookPreset,
+    /// `--help`: print the flag table and exit.
+    help: bool,
 }
 
 impl Args {
+    /// The still's lighting: the default `Lighting` with the shared rows applied.
+    fn lighting(&self) -> Lighting {
+        self.light.apply(Lighting::default())
+    }
+
     /// The frame's jitter: `--jitter` when given (our upscaler), else off (FSR 2 jitters by
     /// its own sequence, and scale 1 has no upscaler).
     fn jitter(&self) -> bool {
@@ -101,150 +108,259 @@ impl Args {
 /// The light radius of the showcase: its farthest pair of chunks lies 18.06 chunks apart.
 const SHOWCASE_LIGHT_RADIUS: i32 = 19;
 
-fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let mut args = Args {
-        seed: 1,
-        source: Source::Showcase,
-        shots: Shots::One(SHOTS[0]),
-        size: [1920, 1080],
-        at: None,
-        yaw: None,
-        pitch: None,
-        exposure: None,
-        carve: 0,
-        out: None,
-        out_dir: PathBuf::from("target/hero"),
-        frames: 64,
-        resolution: LightingResolution::default(),
-        lighting: Lighting {
-            lamp: false,
-            ..Lighting::default()
-        },
-        probe_spacing: HERO_PROBE_SPACING,
-        internal_scale: RenderScale::OneHalf,
-        jitter: None,
-        sharpen: 0.5,
-        light_radius: None,
-        adapter: None,
-        look: flythrough::LookPreset::DEFAULT,
-    };
-    let mut shot_given = false;
-    let on_off = |flag: &str, v: &str| match v {
-        "on" => Ok(true),
-        "off" => Ok(false),
-        _ => Err(format!("{flag} takes on or off, not {v}")),
-    };
-    let mut it = argv.into_iter();
-    while let Some(flag) = it.next() {
-        let v = it.next().ok_or(format!("{flag} needs a value"))?;
-        let bad = |e: &dyn std::fmt::Display| format!("{flag}: {e}");
-        match flag.as_str() {
-            "--seed" => args.seed = v.parse().map_err(|e| bad(&e))?,
-            "--source" => {
-                args.source = match v.as_str() {
-                    "showcase" => Source::Showcase,
-                    "level" => Source::Level,
-                    _ => return Err(format!("--source takes showcase or level, not {v}")),
-                }
-            }
-            "--shot" => {
-                shot_given = true;
-                args.shots = if v == "all" {
-                    Shots::All
-                } else {
-                    Shots::One(Shot::named(&v).ok_or_else(|| {
-                        let names: Vec<&str> = SHOTS.iter().map(|s| s.name).collect();
-                        format!("--shot takes {} or all, not {v}", names.join(", "))
-                    })?)
-                };
-            }
-            "--size" => {
-                let (w, h) = v.split_once('x').ok_or("--size takes WxH")?;
-                args.size = [
-                    w.parse().map_err(|e| bad(&e))?,
-                    h.parse().map_err(|e| bad(&e))?,
-                ];
-            }
-            "--yaw" => args.yaw = Some(v.parse().map_err(|e| bad(&e))?),
-            "--pitch" => args.pitch = Some(v.parse().map_err(|e| bad(&e))?),
-            "--exposure" => {
-                args.exposure = Some(if v == "auto" {
+/// What the rows write: the arguments, and whether `--shot` was given.
+struct Parsing {
+    args: Args,
+    shot_given: bool,
+}
+
+/// The camera's, the output's and the frame's rows.
+fn camera_flags() -> Vec<Flag<Parsing>> {
+    vec![
+        Flag::value(
+            &["--yaw"],
+            "DEG",
+            "the camera's yaw",
+            |p: &mut Parsing, v| {
+                p.args.yaw = Some(v.parse()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--pitch"],
+            "DEG",
+            "the camera's pitch",
+            |p: &mut Parsing, v| {
+                p.args.pitch = Some(v.parse()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--exposure"],
+            "auto|E",
+            "adapt like an eye, or a fixed exposure",
+            |p: &mut Parsing, v| {
+                p.args.exposure = Some(if v.text == "auto" {
                     Exposure::Auto(AutoExposure::eye())
                 } else {
-                    Exposure::Manual(v.parse().map_err(|e| bad(&e))?)
+                    Exposure::Manual(v.parse()?)
                 });
-            }
-            "--at" => {
-                let p: Vec<i32> = v
-                    .split(',')
-                    .map(str::parse)
-                    .collect::<Result<_, _>>()
-                    .map_err(|e| bad(&e))?;
-                args.at = Some(p.try_into().map_err(|_| "--at takes X,Y,Z")?);
-            }
-            "--carve" => args.carve = v.parse().map_err(|e| bad(&e))?,
-            "--out" => args.out = Some(v.into()),
-            "--out-dir" => args.out_dir = v.into(),
-            "--look" => {
-                args.look = flythrough::LookPreset::from_name(&v).ok_or(format!(
-                    "--look takes {}, not {v}",
-                    flythrough::LookPreset::names()
-                ))?
-            }
-            "--steady" | "--cache-read" | "--sampler" | "--emissive-history"
-            | "--emissive-guard" => {
-                return Err(format!(
-                    "{flag} is gone since Plan 0057: emissive light is read from the store (ADR-0046)"
-                ));
-            }
-            "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
-            "--lamp-bounce" | "--indirect" => args.lighting.lamp_bounce = on_off(&flag, &v)?,
-            "--probe-spacing" => {
-                args.probe_spacing = v
-                    .parse()
-                    .ok()
-                    .filter(|n| (4..=64).contains(n))
-                    .ok_or(format!("--probe-spacing takes 4 to 64 voxels, not {v}"))?;
-            }
-            "--internal-scale" => {
-                args.internal_scale = RenderScale::from_name(&v)
-                    .ok_or(format!("--internal-scale takes 1, 1.5 or 2, not {v}"))?;
-            }
-            "--jitter" => args.jitter = Some(on_off(&flag, &v)?),
-            "--sharpen" => {
-                args.sharpen = v
-                    .parse()
-                    .ok()
-                    .filter(|s: &f32| (0.0..=1.0).contains(s))
-                    .ok_or(format!("--sharpen takes 0 to 1, not {v}"))?;
-            }
-            "--light-radius" => {
-                args.light_radius = Some(
-                    v.parse()
-                        .ok()
-                        .filter(|r| (0..=64).contains(r))
-                        .ok_or(format!("--light-radius takes 0 to 64 chunks, not {v}"))?,
-                );
-            }
-            "--adapter" => args.adapter = Some(v),
-            "--lighting" => {
-                args.resolution = LightingResolution::from_name(&v)
-                    .ok_or(format!("--lighting takes full or half, not {v}"))?;
-            }
-            "--shadow-walk" => {
-                args.lighting.shadow_walk = ShadowWalk::from_name(&v)
-                    .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
-            }
-            "--history" => {
-                args.lighting.history = HistoryKill::from_name(&v)
-                    .ok_or(format!("--history takes edits or gradient, not {v}"))?;
-            }
-            "--lamp" => args.lighting.lamp = on_off(&flag, &v)?,
-            "--filter" => args.lighting.filter = on_off(&flag, &v)?,
-            _ => return Err(format!("unknown argument {flag}")),
-        }
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--carve"],
+            "R",
+            "dig a sphere of radius R where the view meets rock",
+            |p: &mut Parsing, v| {
+                p.args.carve = v.parse()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--out"],
+            "PATH",
+            "the still's file",
+            |p: &mut Parsing, v| {
+                p.args.out = Some(v.text.into());
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--out-dir"],
+            "DIR",
+            "where --shot all writes",
+            |p: &mut Parsing, v| {
+                p.args.out_dir = v.text.into();
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--frames"],
+            "N",
+            "frames from the pose before the still (64)",
+            |p: &mut Parsing, v| {
+                p.args.frames = v.parse()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--look"],
+            "PRESET",
+            "the look preset",
+            |p: &mut Parsing, v| {
+                p.args.look = flythrough::LookPreset::from_name(v.text)
+                    .ok_or_else(|| v.takes(&flythrough::LookPreset::names()))?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--internal-scale"],
+            "1|1.5|2",
+            "the output size over the internal size",
+            |p: &mut Parsing, v| {
+                p.args.internal_scale = v.named(RenderScale::from_name, "1, 1.5 or 2")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--jitter"],
+            "on|off",
+            "our upscaler, jittered or not",
+            |p: &mut Parsing, v| {
+                p.args.jitter = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sharpen"],
+            "S",
+            "the upscaler's sharpening, 0 to 1",
+            |p: &mut Parsing, v| {
+                p.args.sharpen = v.parse_if(|s: &f32| (0.0..=1.0).contains(s), "0 to 1")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--adapter"],
+            "SUBSTRING",
+            "the first adapter whose name contains it",
+            |p: &mut Parsing, v| {
+                p.args.adapter = Some(v.string());
+                Ok(())
+            },
+        ),
+    ]
+}
+
+/// The hero's flag table: its own rows, the fly-through's shared lighting rows and its
+/// refusals (`flythrough::cli::table`).
+fn table() -> Table<Parsing> {
+    let mut light = lighting_flags(|p: &mut Parsing| &mut p.args.light);
+    light.push(Flag::refused(GONE_SINCE_0057, gone_since_0057));
+    Table {
+        usage: "hero [FLAGS]: renders the README's still (see the example's doc comment)",
+        sections: vec![
+            Section {
+                title: "Still",
+                flags: vec![
+                    Flag::switch(
+                        &["--help", "-h"],
+                        "print this help and exit",
+                        |p: &mut Parsing| p.args.help = true,
+                    ),
+                    Flag::value(
+                        &["--seed"],
+                        "N",
+                        "the world's seed (1)",
+                        |p: &mut Parsing, v| {
+                            p.args.seed = v.parse()?;
+                            Ok(())
+                        },
+                    ),
+                    Flag::value(
+                        &["--source"],
+                        "showcase|level",
+                        "the world the still frames",
+                        |p: &mut Parsing, v| {
+                            p.args.source = v.word(
+                                &[("showcase", Source::Showcase), ("level", Source::Level)],
+                                "showcase or level",
+                            )?;
+                            Ok(())
+                        },
+                    ),
+                    Flag::value(
+                        &["--shot"],
+                        "NAME|all",
+                        "the showcase shot, or the review set",
+                        |p: &mut Parsing, v| {
+                            p.shot_given = true;
+                            p.args.shots = if v.text == "all" {
+                                Shots::All
+                            } else {
+                                Shots::One(Shot::named(v.text).ok_or_else(|| {
+                                    let names: Vec<&str> = SHOTS.iter().map(|s| s.name).collect();
+                                    v.takes(&format!("{} or all", names.join(", ")))
+                                })?)
+                            };
+                            Ok(())
+                        },
+                    ),
+                    Flag::value(
+                        &["--size"],
+                        "WxH",
+                        "the still's size (1920x1080)",
+                        |p: &mut Parsing, v| {
+                            let (w, h) = v.text.split_once('x').ok_or("--size takes WxH")?;
+                            let parse =
+                                |s: &str| s.parse::<u32>().map_err(|e| format!("--size: {e}"));
+                            p.args.size = [parse(w)?, parse(h)?];
+                            Ok(())
+                        },
+                    ),
+                    Flag::value(
+                        &["--at"],
+                        "X,Y,Z",
+                        "the eye's voxel",
+                        |p: &mut Parsing, v| {
+                            let at: Vec<i32> = v
+                                .text
+                                .split(',')
+                                .map(str::parse)
+                                .collect::<Result<_, _>>()
+                                .map_err(|e| format!("--at: {e}"))?;
+                            p.args.at = Some(at.try_into().map_err(|_| "--at takes X,Y,Z")?);
+                            Ok(())
+                        },
+                    ),
+                ]
+                .into_iter()
+                .chain(camera_flags())
+                .collect(),
+            },
+            Section {
+                title: "Lighting",
+                flags: light,
+            },
+        ],
     }
-    if args.source == Source::Level && shot_given {
+}
+
+fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let base = Lighting {
+        lamp: false,
+        ..Lighting::default()
+    };
+    let mut light = LightingArgs::from_lighting(&base, HERO_PROBE_SPACING);
+    light.lamp = Some(false);
+    let mut p = Parsing {
+        args: Args {
+            seed: 1,
+            source: Source::Showcase,
+            shots: Shots::One(SHOTS[0]),
+            size: [1920, 1080],
+            at: None,
+            yaw: None,
+            pitch: None,
+            exposure: None,
+            carve: 0,
+            out: None,
+            out_dir: PathBuf::from("target/hero"),
+            frames: 64,
+            light,
+            internal_scale: RenderScale::OneHalf,
+            jitter: None,
+            sharpen: 0.5,
+            adapter: None,
+            look: flythrough::LookPreset::DEFAULT,
+            help: false,
+        },
+        shot_given: false,
+    };
+    table().parse_into(argv, &mut p)?;
+    let args = p.args;
+    if args.source == Source::Level && p.shot_given {
         return Err("--shot frames the showcase; the level takes --at, --yaw and --pitch".into());
     }
     if args.shots == Shots::All && args.out.is_some() {
@@ -276,7 +392,7 @@ fn camera_at(eye: [i32; 3], yaw_deg: f32, pitch_deg: f32) -> Camera {
 impl Args {
     /// The stills this run writes.
     fn stills(&self, level_spawn: VoxelCoord) -> Vec<Still> {
-        let exposure = self.exposure.unwrap_or(self.lighting.exposure);
+        let exposure = self.exposure.unwrap_or(self.lighting().exposure);
         let pose = |shot: &Shot| {
             let camera = camera_at(
                 self.at.unwrap_or(shot.eye.0),
@@ -294,7 +410,7 @@ impl Args {
                 path,
                 camera,
                 exposure,
-                probe_spacing: self.probe_spacing,
+                probe_spacing: self.light.probe_spacing,
             }
         };
         match (self.source, self.shots) {
@@ -306,7 +422,7 @@ impl Args {
                     self.pitch.unwrap_or(0.0),
                 ),
                 exposure,
-                probe_spacing: self.probe_spacing,
+                probe_spacing: self.light.probe_spacing,
             }],
             (Source::Showcase, Shots::One(shot)) => vec![single(self.out_path(), &shot)],
             (Source::Showcase, Shots::All) => {
@@ -315,7 +431,7 @@ impl Args {
                     .map(|s| single(self.out_dir.join(format!("hero-{}.png", s.name)), s))
                     .collect();
                 let mut fine = single(self.out_dir.join("hero-hall-spacing16.png"), &SHOTS[0]);
-                fine.probe_spacing = vxe_render::probes::DEFAULT_PROBE_SPACING;
+                fine.probe_spacing = vxe_render::DEFAULT_PROBE_SPACING;
                 v.push(fine);
                 v
             }
@@ -359,9 +475,9 @@ fn write_png(path: &Path, rgba: &[u8], [w, h]: [u32; 2]) -> Result<(), String> {
         .map_err(|e| format!("png: {e}"))
 }
 
-fn main() -> Result<(), String> {
-    let args = parse_args_from(std::env::args().skip(1))?;
-    let (world, level_spawn, light_radius) = match args.source {
+/// The world the run renders, its spawn, and the source's light radius.
+fn build_world(args: &Args) -> (World, VoxelCoord, i32) {
+    match args.source {
         Source::Showcase => {
             let source = ShowcaseSource::new(args.seed);
             let world = World::generate(
@@ -380,18 +496,14 @@ fn main() -> Result<(), String> {
                 &source,
                 &flythrough::with_emissive_ore(&flythrough::cave_materials()),
             );
-            (
-                world,
-                source.spawn(),
-                vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
-            )
+            (world, source.spawn(), vxe_render::DEFAULT_LIGHT_RADIUS)
         }
-    };
-    let light_radius = args.light_radius.unwrap_or(light_radius);
-    let stills = args.stills(level_spawn);
+    }
+}
 
+/// With `--carve R`, carves a sphere of radius `R` voxels just past where the first still's view ray meets rock.
+fn carve(args: &Args, world: &World, camera: &Camera) -> Result<(), String> {
     if args.carve > 0 {
-        let camera = &stills[0].camera;
         let eye = VoxelCoord(camera.position.to_array().map(|v| v.floor() as i32));
         let (dir, _, _) = camera.basis();
         let dir = Fixed3([dir.x, dir.y, dir.z].map(|c| (c * FIXED_ONE as f32).round() as i64));
@@ -408,7 +520,11 @@ fn main() -> Result<(), String> {
         let removed: u64 = r.changed_from.iter().map(|&(_, n)| u64::from(n)).sum();
         println!("carved {removed} voxels");
     }
+    Ok(())
+}
 
+/// The adapter `--adapter` names (or the default), and a device sized for `world`'s pool.
+fn open_device(args: &Args, world: &World) -> Result<(wgpu::Device, wgpu::Queue, String), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let named = args.adapter.as_deref().and_then(|want| {
         let all = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
@@ -429,8 +545,7 @@ fn main() -> Result<(), String> {
     let adapter_name = adapter.get_info().name;
     println!("rendering on {adapter_name}");
     let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
-    let pool_bytes =
-        flythrough::level_pool_units(&world, field) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool_bytes = flythrough::level_pool_units(world, field) * vxe_render::internals::UNIT_BYTES;
     let (device, queue) =
         pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
@@ -440,34 +555,40 @@ fn main() -> Result<(), String> {
             }),
         )
         .map_err(|e| format!("no device: {e}"))?;
+    Ok((device, queue, adapter_name))
+}
 
+/// The mirror over the whole world, synced until its light samples stop changing.
+fn fill_mirror(
+    args: &Args,
+    world: &World,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    light_radius: i32,
+    eye: &Camera,
+) -> Result<GpuWorld, String> {
+    let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
     // The bounded path's mirror budget, with the field's band slots under the field look.
     let chunks = world.extent().len() as u64;
     let cfg = MirrorConfig {
-        budget_bytes: flythrough::level_mirror_budget(&world, chunks, field),
+        budget_bytes: flythrough::level_mirror_budget(world, chunks, field),
         light_radius,
         ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
     };
     let mut gpu = if field {
-        GpuWorld::with_field_surface(&device, cfg)
+        GpuWorld::with_field_surface(device, cfg)
     } else {
-        GpuWorld::with_config(&device, cfg)
+        GpuWorld::with_config(device, cfg)
     };
     // The light ranges around the eye take several syncs of the sample budget: sync until the
     // count stops changing.
-    let focus = VoxelCoord(
-        stills[0]
-            .camera
-            .position
-            .to_array()
-            .map(|v| v.floor() as i32),
-    );
+    let focus = VoxelCoord(eye.position.to_array().map(|v| v.floor() as i32));
     gpu.set_focus(focus);
     let mut syncs = 0;
     let mut last = None;
     while syncs < 256 {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        gpu.sync(&world, &queue, &mut enc)
+        gpu.sync(world, queue, &mut enc)
             .map_err(|e| format!("mirror: {e:?}"))?;
         gpu.update_field(&mut enc);
         queue.submit([enc.finish()]);
@@ -485,67 +606,103 @@ fn main() -> Result<(), String> {
         "mirror: {} light samples after {syncs} syncs",
         gpu.light_samples()
     );
+    Ok(gpu)
+}
 
+/// Renders `still` after a bake and `args.frames` frames, writes it and prints its line.
+fn render_still(
+    args: &Args,
+    world: &World,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &mut GpuWorld,
+    adapter_name: &str,
+    still: &Still,
+) -> Result<(), String> {
     let [w, h] = args.size;
     let frames = args.frames.max(1);
-    for still in &stills {
-        let mut frame =
-            Frame::with_sizes(&device, args.internal_scale.internal(args.size), args.size);
-        frame.set_probe_spacing(&device, still.probe_spacing);
-        if args.fsr2() {
-            frame.set_upscaler_kind(
-                &device,
-                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
-                    sharpness: args.sharpen,
-                    ..vxe_render::Fsr2Settings::default()
-                }),
-            );
-        } else {
-            frame.set_jitter(&device, args.jitter());
-            frame.set_sharpness(&queue, args.sharpen);
-        }
-        frame.set_lighting(Lighting {
-            exposure: still.exposure,
-            ..args.lighting
-        });
-        frame.set_look(vxe_render::LookParams {
-            normal_mode: args.look.normal_mode,
-            tuning: args.look.tuning,
-            far_normal: args.look.far_normal,
-            ..vxe_render::LookParams::default()
-        });
-        frame.set_resolution(&device, args.resolution);
-        let r = frame
-            .bake_until(
-                &device,
-                &queue,
-                &mut gpu,
-                &world,
-                world.extent(),
-                &vxe_render::bake::queue_settings(),
-                &mut |_| {},
-            )
-            .map_err(|e| format!("bake: {e:?}"))?;
-        println!("baked {} chunks, {} faces", r.chunks, r.faces);
-        for _ in 0..frames {
-            frame.step(
-                &device,
-                &queue,
-                &gpu,
-                &still.camera,
-                &LightParams::headlamp(),
-            );
-        }
-        let rgba = readback::read_rgba8(&device, &queue, frame.target());
-        write_png(&still.path, &rgba, [w, h])?;
-        println!(
-            "wrote {}: adapter {adapter_name}, {} light samples, {frames} frames, exposure {}, probe spacing {}, mean sRGB luma {:.1}/255",
-            still.path.display(),
-            gpu.light_samples(),
-            exposure_words(still.exposure),
-            still.probe_spacing,
-            mean_luma(&rgba)
+    let mut frame = Frame::with_sizes(device, args.internal_scale.internal(args.size), args.size);
+    frame.set_probe_spacing(device, still.probe_spacing);
+    if args.fsr2() {
+        frame.set_upscaler_kind(
+            device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness: args.sharpen,
+                ..vxe_render::Fsr2Settings::default()
+            }),
         );
+    } else {
+        frame.set_jitter(device, args.jitter());
+        frame.set_sharpness(queue, args.sharpen);
+    }
+    frame.set_lighting(Lighting {
+        exposure: still.exposure,
+        ..args.lighting()
+    });
+    frame.set_look(vxe_render::LookParams {
+        normal_mode: args.look.normal_mode,
+        tuning: args.look.tuning,
+        far_normal: args.look.far_normal,
+        ..vxe_render::LookParams::default()
+    });
+    frame.set_resolution(device, args.light.resolution);
+    let r = frame
+        .bake_until(
+            device,
+            queue,
+            gpu,
+            world,
+            world.extent(),
+            &vxe_render::queue_settings(),
+            &mut |_| {},
+        )
+        .map_err(|e| format!("bake: {e:?}"))?;
+    println!("baked {} chunks, {} faces", r.chunks, r.faces);
+    for _ in 0..frames {
+        frame.step(device, queue, gpu, &still.camera, &LightParams::headlamp());
+    }
+    let rgba = vxe_render::debug::read_rgba8(device, queue, frame.target());
+    write_png(&still.path, &rgba, [w, h])?;
+    println!(
+        "wrote {}: adapter {adapter_name}, {} light samples, {frames} frames, exposure {}, probe spacing {}, mean sRGB luma {:.1}/255",
+        still.path.display(),
+        gpu.light_samples(),
+        exposure_words(still.exposure),
+        still.probe_spacing,
+        mean_luma(&rgba)
+    );
+    Ok(())
+}
+
+fn main() -> Result<(), String> {
+    let args = parse_args_from(std::env::args().skip(1))?;
+    if args.help {
+        print!("{}", table().help());
+        return Ok(());
+    }
+    let (world, level_spawn, light_radius) = build_world(&args);
+    let light_radius = args.light.radius.unwrap_or(light_radius);
+    let stills = args.stills(level_spawn);
+    carve(&args, &world, &stills[0].camera)?;
+    let (device, queue, adapter_name) = open_device(&args, &world)?;
+    let mut gpu = fill_mirror(
+        &args,
+        &world,
+        &device,
+        &queue,
+        light_radius,
+        &stills[0].camera,
+    )?;
+    for still in &stills {
+        render_still(
+            &args,
+            &world,
+            &device,
+            &queue,
+            &mut gpu,
+            &adapter_name,
+            still,
+        )?;
     }
     Ok(())
 }
@@ -567,7 +724,7 @@ mod tests {
         assert_eq!(d.source, Source::Showcase);
         assert_eq!(d.shots, Shots::One(SHOTS[0]));
         assert_eq!(d.size, [1920, 1080]);
-        assert!(!d.lighting.lamp && !d.lighting.lamp_bounce);
+        assert!(!d.lighting().lamp && !d.lighting().lamp_bounce);
         assert!(parse(&["--light", "baked"]).is_err());
         assert_eq!(
             (d.internal_scale, d.jitter(), d.fsr2()),
@@ -593,7 +750,7 @@ mod tests {
                 .exposure,
             Exposure::Auto(AutoExposure::eye())
         );
-        assert_eq!(d.probe_spacing, 32);
+        assert_eq!(d.light.probe_spacing, 32);
         for s in SHOTS {
             assert_eq!(parse(&["--shot", s.name]).unwrap().shots, Shots::One(s));
         }

@@ -2,11 +2,14 @@
 //! a radius-10 carve at a seeded position on a solid world, and the 100 walkable-map updates
 //! from those changes. Each iteration carves a fresh world; only the updates are timed.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use vxe_world::hash::mix64;
 use vxe_world::*;
+
+mod support;
+use support::{solid_world, timed};
 
 /// Walkable cells: at most 64 solid voxels, on a floor cell of at least 448, under two open
 /// cells.
@@ -15,16 +18,6 @@ const WALKABLE: WalkableParams = WalkableParams {
     min_floor: 448,
     clearance: 2,
 };
-
-fn solid_world() -> World {
-    let mut table = MaterialTable::new();
-    let rock = table.push(Material::named("rock"));
-    World::generate(
-        ChunkExtent::new([-2, -2, -2], [2, 2, 2]),
-        &UniformSource(rock),
-        &table,
-    )
-}
 
 /// 100 distinct centres within ±100 voxels of the origin, so every sphere stays resident.
 fn centres() -> Vec<Fixed3> {
@@ -47,12 +40,6 @@ fn centres() -> Vec<Fixed3> {
     clippy::disallowed_methods,
     reason = "the bench times the grid updates alone, between untimed carves"
 )]
-fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {
-    let t = Instant::now();
-    let out = f();
-    (out, t.elapsed())
-}
-
 fn updates(c: &mut Criterion) {
     let ops: Vec<_> = centres()
         .into_iter()

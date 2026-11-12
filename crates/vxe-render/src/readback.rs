@@ -22,37 +22,7 @@ pub fn read_buffer(
 
 /// The pixels of an `rgba8unorm` texture, tightly packed, rows top to bottom.
 pub fn read_rgba8(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
-    let (w, h) = (texture.width(), texture.height());
-    let row = w * 4;
-    let padded =
-        row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback rgba8"),
-        size: u64::from(padded * h),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    enc.copy_texture_to_buffer(
-        texture.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &staging,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: Some(h),
-            },
-        },
-        texture.size(),
-    );
-    queue.submit([enc.finish()]);
-    map_and_copy(device, &staging, |bytes| {
-        bytes
-            .chunks(padded as usize)
-            .flat_map(|r| &r[..row as usize])
-            .copied()
-            .collect()
-    })
+    read_texels(device, queue, texture, 4)
 }
 
 /// The pixels of a texture of `texel` bytes per pixel, tightly packed, rows top to bottom.
@@ -107,18 +77,6 @@ pub fn read_rgba32f(
         .collect()
 }
 
-/// The pixels of an `rgba32uint` texture, rows top to bottom.
-pub fn read_texels_u32(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-) -> Vec<[u32; 4]> {
-    read_texels(device, queue, texture, 16)
-        .chunks(16)
-        .map(|p| [0, 1, 2, 3].map(|k| u32::from_le_bytes(p[4 * k..4 * k + 4].try_into().unwrap())))
-        .collect()
-}
-
 /// The pixels of an `rgba16uint` texture, rows top to bottom.
 pub fn read_rgba16u(
     device: &wgpu::Device,
@@ -137,37 +95,10 @@ pub fn read_rgba16f(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
 ) -> Vec<[f32; 4]> {
-    let (w, h) = (texture.width(), texture.height());
-    let row = w * 8;
-    let padded =
-        row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback rgba16f"),
-        size: u64::from(padded * h),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    enc.copy_texture_to_buffer(
-        texture.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &staging,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: Some(h),
-            },
-        },
-        texture.size(),
-    );
-    queue.submit([enc.finish()]);
-    map_and_copy(device, &staging, |bytes| {
-        bytes
-            .chunks(padded as usize)
-            .flat_map(|r| r[..row as usize].chunks(8))
-            .map(|p| [0, 1, 2, 3].map(|k| f16_to_f32(u16::from_le_bytes([p[2 * k], p[2 * k + 1]]))))
-            .collect()
-    })
+    read_texels(device, queue, texture, 8)
+        .chunks(8)
+        .map(|p| [0, 1, 2, 3].map(|k| f16_to_f32(u16::from_le_bytes([p[2 * k], p[2 * k + 1]]))))
+        .collect()
 }
 
 /// The pixels of an `rgba16float` or `rgba32float` texture as `f32`, rows top to bottom.
@@ -228,7 +159,7 @@ pub struct StepHistogram {
 
 /// Edge in pixels of the blocks `StepHistogram` takes the maximum over: the marcher's
 /// workgroup, the rays that run in lockstep.
-pub const STEP_BLOCK: usize = 8;
+pub(crate) const STEP_BLOCK: usize = 8;
 
 impl StepHistogram {
     /// The histograms of `pixels`, tightly packed RGBA bytes in rows of `width` pixels: red is

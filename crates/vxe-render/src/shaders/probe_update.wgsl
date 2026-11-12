@@ -1,6 +1,6 @@
 // The probe update (ADR-0023): the frame's update list of probes each traces `probe.rays` rays
 // (at most RAYS, the workgroup's size) and
-// blends what they saw into its irradiance and visibility maps. Compiled after march.wgsl,
+// blends what they saw into its irradiance and visibility maps. Compiled after the walk's modules,
 // light.wgsl and probe_gather.wgsl, whose walk, lamp term, probe bindings (group 3)
 // and probe reads it uses.
 //
@@ -38,9 +38,8 @@
 const RAYS: u32 = 64u;
 // Words of the update list at the front of the scratch buffer (`probes::MAX_UPDATES`).
 const UPDATE_LIST_WORDS: u32 = 8192u;
-const TOUCHED_BIT: u32 = 0x80000000u;
-// The update-list flag of a probe the lamp moved past since its last visit (`probes::MOVED_BIT`).
-const MOVED_BIT: u32 = 0x40000000u;
+// The update-list flags are the prelude's TOUCHED_BIT and MOVED_BIT (a probe the lamp moved
+// past since its last visit, `probes::MOVED_BIT`); the slot is the bits below them.
 const SLOT_MASK: u32 = 0x3FFFFFFFu;
 const VIS_SHARPNESS: f32 = 50.0;
 const VIS_CUTOFF: f32 = 0.83;
@@ -145,7 +144,7 @@ var<workgroup> new_visibility: array<vec2<f32>, 196>;
 // The direction of interior texel `t` (row-major) of a map of edge `n`.
 fn texel_dir(t: u32, n: u32) -> vec3<f32> {
     let c = (vec2<f32>(f32(t % n), f32(t / n)) + 0.5) / f32(n);
-    return probe_unoct(c * 2.0 - 1.0);
+    return octa_unfold(c * 2.0 - 1.0);
 }
 
 // The interior texel (row-major, 0-based) tile texel (x, y) of a map of interior edge `n`

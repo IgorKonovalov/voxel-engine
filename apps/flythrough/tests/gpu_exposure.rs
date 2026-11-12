@@ -4,10 +4,9 @@
 mod support;
 
 use support::*;
-use vxe_render::exposure::ExposureState;
+use vxe_render::ExposureState;
 use vxe_render::{
-    AutoExposure, Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig, Window, readback,
-    wgpu,
+    AutoExposure, Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig, Window, wgpu,
 };
 use vxe_world::*;
 
@@ -37,7 +36,7 @@ fn level() -> Option<Level> {
         &source,
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
     );
-    let pool = flythrough::level_pool_units(&world, false) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -89,7 +88,7 @@ fn lamp_off_states(
             frame.set_lighting(Lighting { lamp: false, ..lit });
         }
         frame.step(&level.device, &level.queue, &level.gpu, camera, &light);
-        states.push(ExposureState::from_bytes(&readback::read_buffer(
+        states.push(ExposureState::from_bytes(&vxe_render::debug::read_buffer(
             &level.device,
             &level.queue,
             frame.exposure_state(),

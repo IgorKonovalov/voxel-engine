@@ -5,10 +5,10 @@ mod support;
 
 use support::rigs::*;
 use support::*;
-use vxe_render::marcher::Upscaler;
+use vxe_render::Upscaler;
 use vxe_render::{
     Frame, GpuWorld, LightParams, LookParams, MirrorConfig, Presenter, UpscalerKind, ViewMode,
-    Window, readback, wgpu,
+    Window, wgpu,
 };
 use vxe_world::*;
 
@@ -53,7 +53,7 @@ fn averaged_mask(rig: &mut LookRig, jitter: bool) -> Vec<u8> {
             &pillar_camera(),
             &LightParams::at_eye(),
         );
-        let img = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+        let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
         for (s, p) in sum.iter_mut().zip(img.chunks(4)) {
             *s += u32::from(p[0]);
         }
@@ -130,7 +130,7 @@ fn blit(rig: &LookRig, size: [u32; 2]) -> Vec<u8> {
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     presenter.encode(&rig.device, &mut enc, rig.frame.target(), &view);
     rig.queue.submit([enc.finish()]);
-    readback::read_rgba8(&rig.device, &rig.queue, &target)
+    vxe_render::debug::read_rgba8(&rig.device, &rig.queue, &target)
 }
 
 /// The bilinear sample of the `w` x `h` image `src` at output pixel `(x, y)` of an
@@ -174,7 +174,7 @@ fn at_scale_one_and_a_half_the_hit_pass_runs_on_256_by_144_and_the_blit_fills_38
     assert_eq!([hits.width(), hits.height()], internal, "hit pass size");
     assert_eq!(rig.frame.internal_size(), internal);
     assert_eq!(rig.frame.output_size(), output);
-    let src = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let src = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     assert_eq!(
         src.len(),
         (384 * 216 * 4) as usize,
@@ -229,11 +229,11 @@ fn still_camera_reading(upscaler: Upscaler) -> Option<StillReading> {
             f.step(&device, &queue, &gpu, &camera, &light);
         }
     }
-    let reference = readback::read_rgba8(&device, &queue, native.target());
-    let upscaled = readback::read_rgba8(&device, &queue, up.target());
+    let reference = vxe_render::debug::read_rgba8(&device, &queue, native.target());
+    let upscaled = vxe_render::debug::read_rgba8(&device, &queue, up.target());
     let bilinear = blit_texture(&device, &queue, low.target(), OUTPUT);
     let truth = downsample_2x2(
-        &readback::read_rgba8(&device, &queue, ssaa.target()),
+        &vxe_render::debug::read_rgba8(&device, &queue, ssaa.target()),
         OUTPUT,
     );
     let lit = reference.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
@@ -321,7 +321,7 @@ fn a_carve_in_view_leaves_no_ghost_in_its_box() {
             f.step(&device, &queue, &gpu, &camera, &light);
         }
     }
-    let before = readback::read_rgba8(&device, &queue, up.target());
+    let before = vxe_render::debug::read_rgba8(&device, &queue, up.target());
     let o = Fixed3(
         camera
             .position
@@ -347,11 +347,11 @@ fn a_carve_in_view_leaves_no_ghost_in_its_box() {
         f.invalidate(aabb.0.0, aabb.1.0);
         f.step(&device, &queue, &gpu, &camera, &light);
     }
-    let reference = readback::read_rgba8(&device, &queue, native.target());
-    let upscaled = readback::read_rgba8(&device, &queue, up.target());
-    let pos = readback::read_rgba32f(&device, &queue, up.hit_positions());
-    let alpha = readback::read_rgba16f(&device, &queue, up.upscale_history().unwrap());
-    let j = vxe_render::jitter_at(up.frame_index(), vxe_render::marcher::JITTER_PHASES);
+    let reference = vxe_render::debug::read_rgba8(&device, &queue, native.target());
+    let upscaled = vxe_render::debug::read_rgba8(&device, &queue, up.target());
+    let pos = vxe_render::debug::read_rgba32f(&device, &queue, up.hit_positions());
+    let alpha = vxe_render::debug::read_rgba16f(&device, &queue, up.upscale_history().unwrap());
+    let j = vxe_render::jitter_at(up.frame_index(), vxe_render::internals::JITTER_PHASES);
     let (mut in_box, mut in_box_blended) = (0usize, 0usize);
     for y in 0..OUTPUT[1] {
         for x in 0..OUTPUT[0] {
@@ -453,9 +453,12 @@ fn a_sideways_step_keeps_history_and_a_material_change_rejects_it() {
     }
     let read_hits = |rig: &LookRig| {
         (
-            readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
-            readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
-            vxe_render::jitter_at(rig.frame.frame_index(), vxe_render::marcher::JITTER_PHASES),
+            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+            vxe_render::jitter_at(
+                rig.frame.frame_index(),
+                vxe_render::internals::JITTER_PHASES,
+            ),
         )
     };
     let (pos0, info0, j0) = read_hits(&rig);
@@ -474,7 +477,7 @@ fn a_sideways_step_keeps_history_and_a_material_change_rejects_it() {
         .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
     let (pos1, info1, j1) = read_hits(&rig);
     assert_ne!(j0, j1, "the jitter moved");
-    let alpha: Vec<f32> = readback::read_rgba16f(
+    let alpha: Vec<f32> = vxe_render::debug::read_rgba16f(
         &rig.device,
         &rig.queue,
         rig.frame.upscale_history().expect("the upscaler runs"),
@@ -588,8 +591,8 @@ fn temporal_age_under_the_jitter() {
         for _ in 0..16 {
             f.step(&device, &queue, &gpu, &camera, &light);
         }
-        let rec = readback::read_rgba16u(&device, &queue, f.hit_records());
-        let age = readback::read_rgba16f(&device, &queue, f.moments());
+        let rec = vxe_render::debug::read_rgba16u(&device, &queue, f.hit_records());
+        let age = vxe_render::debug::read_rgba16f(&device, &queue, f.moments());
         let hits = rec.iter().filter(|r| r[3] & 1 == 1).count();
         let young = rec
             .iter()
@@ -665,7 +668,7 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     );
     gpu.sync_now(&world, &device, &queue)
         .expect("the mirror fits");
-    frame.start_bake_queue(&queue, &gpu, vxe_render::bake::queue_settings(), 1.0);
+    frame.start_bake_queue(&queue, &gpu, vxe_render::queue_settings(), 1.0);
     let after = frame.frame_bytes();
     println!("frame_bytes with the store: {after} B");
     assert_eq!(after, base + pool);
@@ -878,7 +881,7 @@ fn the_upscaler_follows_an_exposure_step() {
         (0..30)
             .map(|_| {
                 frame.step(&device, &queue, &gpu, &camera, &light);
-                let state = vxe_render::ExposureState::from_bytes(&readback::read_buffer(
+                let state = vxe_render::ExposureState::from_bytes(&vxe_render::debug::read_buffer(
                     &device,
                     &queue,
                     frame.exposure_state(),
@@ -886,7 +889,11 @@ fn the_upscaler_follows_an_exposure_step() {
                     32,
                 ));
                 (
-                    mean_luma(&readback::read_rgba8(&device, &queue, frame.target())),
+                    mean_luma(&vxe_render::debug::read_rgba8(
+                        &device,
+                        &queue,
+                        frame.target(),
+                    )),
                     f64::from(state.current).log2(),
                 )
             })
@@ -971,15 +978,26 @@ mod reading {
                 }
                 f
             };
-            let native =
-                readback::read_rgba8(&device, &queue, render(OUTPUT, OUTPUT, false).target());
-            let up = readback::read_rgba8(&device, &queue, render(INTERNAL, OUTPUT, true).target());
+            let native = vxe_render::debug::read_rgba8(
+                &device,
+                &queue,
+                render(OUTPUT, OUTPUT, false).target(),
+            );
+            let up = vxe_render::debug::read_rgba8(
+                &device,
+                &queue,
+                render(INTERNAL, OUTPUT, true).target(),
+            );
             let low = render(INTERNAL, INTERNAL, false);
             let bilinear = blit_texture(&device, &queue, low.target(), OUTPUT);
-            let taa = readback::read_rgba8(&device, &queue, render(OUTPUT, OUTPUT, true).target());
+            let taa = vxe_render::debug::read_rgba8(
+                &device,
+                &queue,
+                render(OUTPUT, OUTPUT, true).target(),
+            );
             let big = OUTPUT.map(|n| 2 * n);
             let ssaa = downsample_2x2(
-                &readback::read_rgba8(&device, &queue, render(big, big, false).target()),
+                &vxe_render::debug::read_rgba8(&device, &queue, render(big, big, false).target()),
                 OUTPUT,
             );
             let (u, b) = (mean(mad(&up, &native)), mean(mad(&bilinear, &native)));

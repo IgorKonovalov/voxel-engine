@@ -21,7 +21,7 @@
 // the brick's header band word (HEADER_BAND_WORD of its own slot) when no voxel of the brick
 // and its one-voxel shell is a smooth solid band voxel (a solid voxel with air among its 26
 // neighbours), and clears it otherwise: no dual cell with a corner in such a brick has a
-// smooth solid band corner, so `march.wgsl`'s field walk crosses it as cubes. The brick's own
+// smooth solid band corner, so `field_walk.wgsl`'s field walk crosses it as cubes. The brick's own
 // band voxels carry the answer in their count bytes. A shell voxel's band test reads the full
 // 12^3 occupancy box; its material is known from its brick's palette when that holds only
 // smooth or only crisp solid materials, read when it holds both, and taken as smooth in a
@@ -32,13 +32,13 @@
 //   0  uniform  params         mirror window, units per shard, work-list length, the
 //                              dispatch's workgroups along x
 //   1  storage  brick_pool0    pool shard 0, read-write; 2, 3 and 4 are shards 1 to 3. Same
-//                              layout as in march.wgsl; this pass writes only band slots and
+//                              layout as in common.wgsl; this pass writes only band slots and
 //                              the header band word
-//   5  storage  chunk_records  as in march.wgsl
-//   6  storage  chunk_table    as in march.wgsl
+//   5  storage  chunk_records  as in common.wgsl
+//   6  storage  chunk_table    as in common.wgsl
 //  11  storage  field_work     [n][4 x u32]: the band slot's first unit, the brick's origin in
 //                              voxels (x, y, z as i32 bits)
-//  12  storage  materials      as in march.wgsl: [id][4 x vec4], word 7 of a row the flag bits
+//  12  storage  materials      as in common.wgsl: [id][4 x vec4], word 7 of a row the flag bits
 
 struct Params {
     window_min: vec3<i32>,
@@ -61,22 +61,8 @@ struct Params {
 @group(0) @binding(11) var<storage, read> field_work: array<vec4<u32>>;
 @group(0) @binding(12) var<storage, read> materials: array<vec4<f32>>;
 
-const ABSENT: u32 = 0xFFFFFFFFu;
-const FULL_BIT: u32 = 0x80000000u;
-const LOD_BIT: u32 = 0x40000000u;
-// Bit 29 of an entry flags a brick holding a translucent voxel; a Full entry's first unit
-// takes bits 0..26 and its class bits 26..29 (5: Wide, raw u16 ids).
-const TRANSLUCENT_BIT: u32 = 0x20000000u;
-const UNIT_MASK: u32 = 0x3FFFFFFu;
-const CLASS_SHIFT: u32 = 26u;
-const CLASS_WIDE: u32 = 5u;
-const CLASS_UNIFORM: u32 = 6u;
-const EMPTY_BIT: u32 = 0x20000000u;
-const RECORD_MASK: u32 = 0x1FFFFFFFu;
-const UNIT_WORDS: u32 = 16u;
-const RECORD_WORDS: u32 = 528u;
-const ENTRY_WORD: u32 = 16u;
-const PAYLOAD_WORD: u32 = 32u;
+// The mirror's layout constants and decode are mirror.wgsl's and the prelude's.
+
 // Bricks a workgroup and invocations a brick; `field::BRICKS_PER_GROUP` and the
 // `@workgroup_size` below must match.
 const BRICKS: u32 = 4u;
@@ -84,12 +70,6 @@ const LANES: u32 = 64u;
 // The occupancy box: the brick and a two-voxel shell, 12 to an edge, its cell c at voxel
 // c - 2 from the brick's origin.
 const OCC: u32 = 12u;
-const MATERIAL_TRANSLUCENT: u32 = 2u;
-const MATERIAL_CRISP: u32 = 4u;
-const HEADER_BAND_WORD: u32 = 15u;
-const BAND_CUBES_BIT: u32 = 0x40000000u;
-const SMOOTH_COUNT_BIT: u32 = 0x40u;
-const CRISP_COUNT_BIT: u32 = 0x80u;
 
 // Per brick of the workgroup (brick b's at b times the per-brick length): its occupancy box as
 // 144 rows of 12 bits, two a word, row y + 12 z in half (row % 2) of word row / 2, x in bit x
@@ -110,14 +90,9 @@ var<workgroup> brick_near: array<atomic<u32>, 4>;
 // `brick_surfaces` of each brick's 27 neighbours, index as `nb_kind`.
 var<workgroup> nb_surf: array<u32, 108>;
 
-// The shard and index of word `word` of the slot whose first unit is `unit`.
-fn shard_index(unit: u32, word: u32) -> vec2<u32> {
-    let shard = unit / params.units_per_shard;
-    return vec2<u32>(shard, (unit - shard * params.units_per_shard) * UNIT_WORDS + word);
-}
-
-fn pool_word(unit: u32, word: u32) -> u32 {
-    let a = shard_index(unit, word);
+// Word `word` of the slot whose first unit is `unit`.
+fn load_pool_word(unit: u32, word: u32) -> u32 {
+    let a = shard_index(unit, word, params.units_per_shard);
     switch a.x {
         case 0u: { return brick_pool0[a.y]; }
         case 1u: { return brick_pool1[a.y]; }
@@ -127,7 +102,7 @@ fn pool_word(unit: u32, word: u32) -> u32 {
 }
 
 fn store_pool_word(unit: u32, word: u32, value: u32) {
-    let a = shard_index(unit, word);
+    let a = shard_index(unit, word, params.units_per_shard);
     switch a.x {
         case 0u: { brick_pool0[a.y] = value; }
         case 1u: { brick_pool1[a.y] = value; }
@@ -136,11 +111,7 @@ fn store_pool_word(unit: u32, word: u32, value: u32) {
     }
 }
 
-fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
-    return vec3<i32>(floor(vec3<f32>(a) / f32(b)));
-}
-
-// Whether voxel `v` is solid: march.wgsl's lookup with every LOD-only chunk at level 1.
+// Whether voxel `v` is solid: walk.wgsl's lookup with every LOD-only chunk at level 1.
 fn solid(v: vec3<i32>) -> bool {
     let chunk = floor_div(v, 64);
     let rel = chunk - params.window_min;
@@ -170,7 +141,7 @@ fn solid(v: vec3<i32>) -> bool {
     let unit = entry & UNIT_MASK;
     let l = c - b * 8;
     let i = u32(l.x + 8 * (l.y + 8 * l.z));
-    if (((pool_word(unit, i / 32u) >> (i % 32u)) & 1u) != 0u) {
+    if (((load_pool_word(unit, i / 32u) >> (i % 32u)) & 1u) != 0u) {
         // An opaque voxel.
         return true;
     }
@@ -180,18 +151,11 @@ fn solid(v: vec3<i32>) -> bool {
     // Air or a translucent voxel: a Wide brick's id, else the translucent unit after the planes.
     let cls = (entry >> CLASS_SHIFT) & 7u;
     if (cls == CLASS_WIDE) {
-        let word = pool_word(unit, PAYLOAD_WORD + i / 2u);
+        let word = load_pool_word(unit, PAYLOAD_WORD + i / 2u);
         return ((word >> ((i & 1u) * 16u)) & 0xFFFFu) != 0u;
     }
-    let tw = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * payload_units(entry) + i / 32u);
+    let tw = load_pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * payload_units(entry) + i / 32u);
     return ((tw >> (i % 32u)) & 1u) != 0u;
-}
-
-// Units of a Full entry's payload: 0, 1, 2 or 4 planes for classes 1 to 4, 16 for Wide, none
-// for a uniform band brick's slot (class 6, laid out as class 1).
-fn payload_units(entry: u32) -> u32 {
-    let cls = (entry >> CLASS_SHIFT) & 7u;
-    return select(select(select(cls - 1u, 4u, cls == 4u), 16u, cls == CLASS_WIDE), 0u, cls == CLASS_UNIFORM);
 }
 
 const NB_AIR: u32 = 0u;
@@ -321,7 +285,7 @@ fn brick_surfaces(kind: u32, entry: u32) -> u32 {
     let unit = entry & UNIT_MASK;
     var out = 0u;
     for (var j = 0u; j < (1u << payload_units(entry)); j++) {
-        let m = (pool_word(unit, UNIT_WORDS + j / 2u) >> ((j & 1u) * 16u)) & 0xFFFFu;
+        let m = (load_pool_word(unit, UNIT_WORDS + j / 2u) >> ((j & 1u) * 16u)) & 0xFFFFu;
         if (m != 0u) {
             out |= select(1u, 2u, material_crisp(m));
         }
@@ -337,15 +301,15 @@ fn voxel_crisp(entry: u32, i: u32) -> bool {
     let unit = entry & UNIT_MASK;
     let cls = (entry >> CLASS_SHIFT) & 7u;
     if (cls == CLASS_WIDE) {
-        let word = pool_word(unit, PAYLOAD_WORD + i / 2u);
+        let word = load_pool_word(unit, PAYLOAD_WORD + i / 2u);
         return material_crisp((word >> ((i & 1u) * 16u)) & 0xFFFFu);
     }
     var index = 0u;
     for (var k = 0u; k < payload_units(entry); k++) {
-        let w = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * k + i / 32u);
+        let w = load_pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * k + i / 32u);
         index |= ((w >> (i % 32u)) & 1u) << k;
     }
-    let pair = pool_word(unit, UNIT_WORDS + index / 2u);
+    let pair = load_pool_word(unit, UNIT_WORDS + index / 2u);
     return material_crisp((pair >> ((index & 1u) * 16u)) & 0xFFFFu);
 }
 
@@ -368,7 +332,7 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
     if (t < 16u) {
         var m = 0u;
         if (listed) {
-            m = pool_word(unit, t);
+            m = load_pool_word(unit, t);
         }
         atomicStore(&band_words[b * 16u + t], m);
     }
@@ -396,9 +360,9 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
             if (kind == NB_MASK || kind >= NB_MIP) {
                 let e = nb_entry[b * 27u + k];
                 let u = e & UNIT_MASK;
-                m = pool_word(u, w);
+                m = load_pool_word(u, w);
                 if ((e & TRANSLUCENT_BIT) != 0u) {
-                    m |= pool_word(u, PAYLOAD_WORD + UNIT_WORDS * payload_units(e) + w);
+                    m |= load_pool_word(u, PAYLOAD_WORD + UNIT_WORDS * payload_units(e) + w);
                 }
             }
             nb_mask[b * 432u + j] = m;
@@ -513,7 +477,7 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
         let e = nb_entry[b * 27u + 13u];
         if (t == 0u && (e & FULL_BIT) != 0u) {
             let u = e & UNIT_MASK;
-            let h = pool_word(u, UNIT_WORDS + HEADER_BAND_WORD) & ~BAND_CUBES_BIT;
+            let h = load_pool_word(u, UNIT_WORDS + HEADER_BAND_WORD) & ~BAND_CUBES_BIT;
             let cubes = (atomicLoad(&brick_near[b]) & 4u) == 0u;
             store_pool_word(u, UNIT_WORDS + HEADER_BAND_WORD, h | select(0u, BAND_CUBES_BIT, cubes));
         }

@@ -255,6 +255,134 @@ pub fn backend_label(backend: wgpu::Backend) -> String {
     format!("{backend:?}, shader compiler: {compiler}")
 }
 
+/// What [`run_headless`] creates: the target's size and format, and the adapter it asks for.
+#[derive(Clone, Debug)]
+pub struct HeadlessConfig {
+    /// The offscreen target's size in pixels, handed to the app as [`Gpu::size`].
+    pub size: [u32; 2],
+    /// The offscreen target's format, handed to the app as [`Gpu::surface_format`].
+    pub format: wgpu::TextureFormat,
+    /// Which adapter to ask for when `adapter` names none.
+    pub power_preference: wgpu::PowerPreference,
+    /// A substring of the adapter's name: the first adapter whose name contains it; `None`,
+    /// or no such adapter, asks by `power_preference`.
+    pub adapter: Option<String>,
+}
+
+impl Default for HeadlessConfig {
+    /// A 1280 x 720 `Rgba8Unorm` target on the high-performance adapter.
+    fn default() -> Self {
+        Self {
+            size: [1280, 720],
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            adapter: None,
+        }
+    }
+}
+
+/// Runs `app` without a window until it returns [`Flow::Exit`]: a device on `config`'s
+/// adapter and an offscreen target in place of the surface, the same calls as in a window
+/// ([`App::device_request`], [`App::init`], then [`App::frame`] with an empty [`Input`] and
+/// the measured `dt`), the device polled to idle after each frame as presenting would wait.
+/// The instance reads `wgpu`'s environment variables (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`,
+/// ...) as [`run`]'s does.
+///
+/// Teardown follows [`run`]'s order, each stage logged at `info` alike: the app, then the
+/// queue, the device and the adapter.
+pub fn run_headless<A: App>(mut app: A, config: HeadlessConfig) -> Result<(), ShellError> {
+    let desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    // Names the flags `WGPU_VALIDATION`, `WGPU_GPU_BASED_VALIDATION` and the build left on, so
+    // a debug-layer run shows the request reached wgpu.
+    log::info!("headless: instance flags {:?}", desc.flags);
+    let instance = wgpu::Instance::new(desc);
+    let named = config.adapter.as_deref().and_then(|want| {
+        let all = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let names: Vec<String> = all.iter().map(|a| a.get_info().name).collect();
+        let found = pick_adapter(&names, want).map(|i| all[i].clone());
+        if found.is_none() {
+            log::warn!("adapter {want:?}: no adapter's name contains it; the default is used");
+        }
+        found
+    });
+    let adapter = match named {
+        Some(a) => a,
+        None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: config.power_preference,
+            ..Default::default()
+        }))
+        .map_err(|e| ShellError::Setup(format!("no adapter: {e}")))?,
+    };
+    let info = adapter.get_info();
+    log::info!(
+        "headless: adapter {} ({}), driver {:?} {:?}, max storage binding {} B, max buffer {} B, timestamps {}",
+        info.name,
+        backend_label(info.backend),
+        info.driver,
+        info.driver_info,
+        adapter.limits().max_storage_buffer_binding_size,
+        adapter.limits().max_buffer_size,
+        adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+    );
+    let (required_features, required_limits) = app.device_request(&adapter);
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features,
+        required_limits,
+        ..Default::default()
+    }))
+    .map_err(|e| ShellError::Setup(format!("no device: {e}")))?;
+    let gpu = Gpu {
+        adapter,
+        device,
+        queue,
+        surface_format: config.format,
+        size: config.size,
+    };
+    app.init(&gpu);
+    let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("headless surface"),
+        size: wgpu::Extent3d {
+            width: config.size[0],
+            height: config.size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: config.format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut input = Input::default();
+    let mut last = now();
+    loop {
+        let t = now();
+        let dt = (t - last).as_secs_f32();
+        last = t;
+        app.poll(&mut input);
+        if app.frame(&gpu, &input, dt, &view) == Flow::Exit {
+            log::info!("teardown: the app asked to exit");
+            break;
+        }
+        // Keep the queue from running ahead of the GPU, as presenting would.
+        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+    }
+    drop(view);
+    drop(target);
+    stage("app", || drop(app));
+    let Gpu {
+        adapter,
+        device,
+        queue,
+        ..
+    } = gpu;
+    stage("queue", || drop(queue));
+    stage("device", || drop(device));
+    stage("adapter", || drop(adapter));
+    Ok(())
+}
+
 /// The index of the first of `names` that contains `want`, as `--adapter` picks in a window and
 /// headless.
 pub fn pick_adapter(names: &[String], want: &str) -> Option<usize> {

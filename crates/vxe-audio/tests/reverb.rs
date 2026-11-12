@@ -25,22 +25,6 @@ fn mixer(lines: TailLines) -> Mixer {
     m
 }
 
-/// A world whose voxels come from a closure of the voxel coordinate.
-struct FnSource<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 /// A closed cube of air of `edge` voxels, `[0, edge)³`, in rock of the cave row (`A = 0.3`)
 /// filling the chunks around it.
 fn cube(edge: i32) -> World {

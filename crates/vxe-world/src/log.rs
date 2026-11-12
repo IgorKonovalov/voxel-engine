@@ -45,7 +45,7 @@ use crate::edit::{EditError, EditOp, EditResult};
 use crate::material::MaterialId;
 use crate::prefab::{Prefab, PrefabRegistry, Rot};
 use crate::store::World;
-use crate::wire::{KIND_BOUNDARY, Reader, WireError, decode_op, encode_op, put_i32x3};
+use crate::wire::{KIND_BOUNDARY, Reader, WireError, Writer, decode_op, encode_op};
 
 /// Magic at the start of a log file.
 pub const LOG_MAGIC: [u8; 4] = *b"VXEL";
@@ -222,11 +222,12 @@ impl LogEntry {
     /// Appends the entry's bytes: tick, seq, then the op (whose first byte is its kind) or the
     /// boundary kind [`KIND_BOUNDARY`] alone.
     pub fn encode(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.tick().to_le_bytes());
-        out.extend_from_slice(&self.seq().to_le_bytes());
+        let mut w = Writer::new(out);
+        w.u64(self.tick());
+        w.u32(self.seq());
         match self {
             Self::Op { op, .. } => encode_op(out, op),
-            Self::Boundary { .. } => out.push(KIND_BOUNDARY),
+            Self::Boundary { .. } => w.u8(KIND_BOUNDARY),
         }
     }
 
@@ -383,10 +384,11 @@ impl InputEntry {
     /// server's input message carries a `u16` length, so no consumed input can.
     pub fn encode(&self, out: &mut Vec<u8>) {
         let len = u16::try_from(self.bytes.len()).expect("input payloads fit u16");
-        out.extend_from_slice(&self.tick.to_le_bytes());
-        out.extend_from_slice(&self.client.to_le_bytes());
-        out.extend_from_slice(&len.to_le_bytes());
-        out.extend_from_slice(&self.bytes);
+        let mut w = Writer::new(out);
+        w.u64(self.tick);
+        w.u32(self.client);
+        w.u16(len);
+        w.bytes(&self.bytes);
     }
 
     /// Reads one entry; a short read, including a `len` past the end, reports the entry's
@@ -499,20 +501,21 @@ impl LogFile {
     /// The file's bytes: header, op entries, input entries.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.header_len());
-        out.extend_from_slice(&LOG_MAGIC);
-        out.extend_from_slice(&LOG_FORMAT.to_le_bytes());
-        out.extend_from_slice(&self.seed.to_le_bytes());
-        out.extend_from_slice(&self.source_version.to_le_bytes());
-        put_i32x3(&mut out, self.extent.min.0);
-        put_i32x3(&mut out, self.extent.max.0);
+        let mut w = Writer::new(&mut out);
+        w.bytes(&LOG_MAGIC);
+        w.u32(LOG_FORMAT);
+        w.u64(self.seed);
+        w.u32(self.source_version);
+        w.i32x3(self.extent.min.0);
+        w.i32x3(self.extent.max.0);
         // Every entry, boundaries included: the decoder reads this many.
-        out.extend_from_slice(&(self.ops.entries().len() as u64).to_le_bytes());
-        out.extend_from_slice(&(self.inputs.len() as u64).to_le_bytes());
+        w.u64(self.ops.entries().len() as u64);
+        w.u64(self.inputs.len() as u64);
         debug_assert_eq!(out.len(), LOG_HEADER_BYTES);
         let n = u32::try_from(self.prefabs.len()).expect("prefab table counts fit u32");
-        out.extend_from_slice(&n.to_le_bytes());
+        Writer::new(&mut out).u32(n);
         for (id, p) in self.prefabs.iter() {
-            out.extend_from_slice(&id.to_le_bytes());
+            Writer::new(&mut out).u64(id);
             p.encode(&mut out);
         }
         debug_assert_eq!(out.len(), self.header_len());

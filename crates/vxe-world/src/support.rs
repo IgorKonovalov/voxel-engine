@@ -18,9 +18,12 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::brick::Brick;
 use crate::coarse::{CellChange, CellCoord, CoarseCell, CoarseGrid};
-use crate::coords::{BRICK_EDGE, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord};
+use crate::coords::{
+    BRICK_EDGE, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, local_of_index,
+};
 use crate::material::{AIR, MaterialId};
 use crate::store::{World, read};
+use crate::tally::Tally;
 
 /// What holds a cell up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -319,20 +322,9 @@ fn measure(
     world: &World,
     cells: &[CellCoord],
 ) -> (Vec<(MaterialId, u32)>, (VoxelCoord, VoxelCoord)) {
-    let mut counts: Vec<(MaterialId, u32)> = Vec::new();
-    let mut add = |m: MaterialId, n: u32| match counts.iter_mut().find(|(k, _)| *k == m) {
-        Some((_, c)) => *c += n,
-        None => counts.push((m, n)),
-    };
-    let mut bounds: Option<([i32; 3], [i32; 3])> = None;
-    let mut widen = |lo: [i32; 3], hi: [i32; 3]| {
-        bounds = Some(match bounds {
-            None => (lo, hi),
-            Some((a, b)) => (
-                [0, 1, 2].map(|k| a[k].min(lo[k])),
-                [0, 1, 2].map(|k| b[k].max(hi[k])),
-            ),
-        });
+    let mut tally = Tally::new(world.materials.len());
+    let widen = |tally: &mut Tally, lo: [i32; 3], hi: [i32; 3]| {
+        tally.bound(lo.map(i64::from), hi.map(i64::from));
     };
     let be = BRICK_EDGE;
     let mut i = 0;
@@ -349,8 +341,8 @@ fn measure(
                 match chunk.brick(c.split().1) {
                     Brick::Uniform(AIR) => {}
                     Brick::Uniform(m) => {
-                        add(*m, 512);
-                        widen(min, min.map(|v| v + be - 1));
+                        tally.count(*m, 512);
+                        widen(&mut tally, min, min.map(|v| v + be - 1));
                     }
                     Brick::Full(p) => {
                         let mut v = [AIR; crate::coords::BRICK_VOXELS];
@@ -360,13 +352,14 @@ fn measure(
                             if m == AIR {
                                 continue;
                             }
-                            add(m, 1);
-                            let l = [idx % 8, idx / 8 % 8, idx / 64].map(|x| x as i32);
+                            tally.count(m, 1);
+                            let l = local_of_index(idx).map(|x| x as i32);
                             lo = [0, 1, 2].map(|k| lo[k].min(l[k]));
                             hi = [0, 1, 2].map(|k| hi[k].max(l[k]));
                         }
                         if hi[0] >= 0 {
                             widen(
+                                &mut tally,
                                 [0, 1, 2].map(|k| min[k] + lo[k]),
                                 [0, 1, 2].map(|k| min[k] + hi[k]),
                             );
@@ -377,15 +370,14 @@ fn measure(
         }
         i += run;
     }
-    counts.sort_unstable();
-    let (lo, hi) = bounds.unwrap_or_else(|| {
+    let aabb = tally.aabb().unwrap_or_else(|| {
         let lo = cells.iter().fold([i32::MAX; 3], |a, c| {
             [0, 1, 2].map(|k| a[k].min(c.0[k] * be))
         });
         let hi = cells.iter().fold([i32::MIN; 3], |a, c| {
             [0, 1, 2].map(|k| a[k].max(c.0[k] * be + be - 1))
         });
-        (lo, hi)
+        (VoxelCoord(lo), VoxelCoord(hi))
     });
-    (counts, (VoxelCoord(lo), VoxelCoord(hi)))
+    (tally.changed_from(), aabb)
 }

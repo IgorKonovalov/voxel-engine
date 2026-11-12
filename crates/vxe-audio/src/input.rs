@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::output::format_error;
 use crate::stream::{StreamMonitor, StreamWriter};
 use crate::{AudioError, RATE};
 
@@ -48,24 +49,7 @@ impl Input {
             })
             .min_by_key(|c| c.channels());
         let Some(fit) = fit else {
-            let offered = configs
-                .iter()
-                .map(|c| {
-                    format!(
-                        "{} ch {} {}..{} Hz",
-                        c.channels(),
-                        c.sample_format(),
-                        c.min_sample_rate(),
-                        c.max_sample_rate()
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(AudioError::Format(if offered.is_empty() {
-                "nothing".to_owned()
-            } else {
-                offered
-            }));
+            return Err(format_error(&configs));
         };
         let channels = usize::from(fit.channels()).max(1);
         let config = cpal::StreamConfig {

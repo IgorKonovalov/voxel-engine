@@ -5,28 +5,19 @@ use std::f32::consts::PI;
 
 use vxe_audio::*;
 
+mod support;
+use support::{db_amplitude, tail_rms, tone};
+use vxe_world::hash::SplitMix64;
+
 static PACK: &[u8] = include_bytes!("../assets/sadie2_d2_48k.hrir");
 
 const MPV: f32 = 0.1;
 const FRAMES: usize = 24_000;
 const TAIL: usize = 4_800;
 
-/// SplitMix64: a seeded stream for test inputs.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    /// Uniform in `[0, 1)`.
-    fn unit(&mut self) -> f32 {
-        (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
-    }
+/// Uniform in `[0, 1)` from the top 24 bits of `rng`'s next output.
+fn unit(rng: &mut SplitMix64) -> f32 {
+    (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32
 }
 
 #[test]
@@ -73,8 +64,8 @@ fn the_bin_table_agrees_with_a_brute_force_search() {
     let mut rng = SplitMix64(0x0006_0002);
     for _ in 0..1000 {
         // Uniform on the sphere: z uniform in [-1, 1], azimuth uniform.
-        let z = 2.0 * rng.unit() - 1.0;
-        let a = 2.0 * PI * rng.unit();
+        let z = 2.0 * unit(&mut rng) - 1.0;
+        let a = 2.0 * PI * unit(&mut rng);
         let r = (1.0 - z * z).max(0.0).sqrt();
         let d = [r * a.cos(), r * a.sin(), z];
         assert_eq!(h.nearest(d), h.nearest_brute_force(d), "direction {d:?}");
@@ -89,28 +80,6 @@ fn the_bin_table_agrees_with_a_brute_force_search() {
     ] {
         assert_eq!(h.nearest(d), h.nearest_brute_force(d), "direction {d:?}");
     }
-}
-
-fn tone(freq: f32, amplitude: f32, len: usize) -> Sound {
-    Sound::new(
-        (0..len)
-            .map(|n| amplitude * (2.0 * PI * freq * n as f32 / RATE as f32).sin())
-            .collect::<Vec<_>>(),
-    )
-}
-
-/// RMS of the left and right channels over the last `TAIL` frames of `out`.
-fn tail_rms(out: &[f32]) -> [f32; 2] {
-    let tail = &out[out.len() - 2 * TAIL..];
-    [0, 1].map(|c| {
-        let sum: f64 = tail
-            .iter()
-            .skip(c)
-            .step_by(2)
-            .map(|&s| f64::from(s) * f64::from(s))
-            .sum();
-        (sum / TAIL as f64).sqrt() as f32
-    })
 }
 
 /// Voxel position at `distance_m` and azimuth `deg` (0 in front, +90 on the listener's right)
@@ -135,24 +104,20 @@ fn render_2k(deg: f32) -> Vec<f32> {
     out
 }
 
-fn db(a: f32, b: f32) -> f32 {
-    20.0 * (a / b).log10()
-}
-
 #[test]
 fn a_tone_on_the_right_is_louder_on_the_right() {
-    let [l, r] = tail_rms(&render_2k(90.0));
-    let right = db(r, l);
+    let [l, r] = tail_rms(&render_2k(90.0), TAIL);
+    let right = db_amplitude(r, l);
     println!("2 kHz at +90 degrees, 2 m: right over left {right:.2} dB (left {l}, right {r})");
     assert!(right >= 6.0, "right over left {right} dB");
 
-    let [l, r] = tail_rms(&render_2k(0.0));
-    let front = db(r, l);
+    let [l, r] = tail_rms(&render_2k(0.0), TAIL);
+    let front = db_amplitude(r, l);
     println!("2 kHz in front, 2 m: right over left {front:.2} dB");
     assert!(front.abs() <= 1.0, "front channels differ by {front} dB");
 
-    let [l, r] = tail_rms(&render_2k(-90.0));
-    let left = db(l, r);
+    let [l, r] = tail_rms(&render_2k(-90.0), TAIL);
+    let left = db_amplitude(l, r);
     println!("2 kHz at -90 degrees, 2 m: left over right {left:.2} dB");
     assert!(
         (left - right).abs() <= 1.0,

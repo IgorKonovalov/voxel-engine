@@ -23,9 +23,7 @@
 //! nothing.
 
 use super::*;
-use vxe_render::{
-    Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig, Window, readback,
-};
+use vxe_render::{Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig, Window};
 
 /// Frames with the lamp on before it switches off.
 pub const LAMP_ON: usize = 120;
@@ -79,7 +77,7 @@ pub fn vein_level_on(
         &source,
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
     );
-    let pool = flythrough::level_pool_units(&world, false) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
     let (device, queue, adapter) = device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -320,7 +318,13 @@ fn run_inner(
         if off < WINDOW.0 || off > WINDOW.1 {
             continue;
         }
-        let b = readback::read_buffer(device, queue, frame.exposure_tiles(), 0, 8 * tiles_n as u64);
+        let b = vxe_render::debug::read_buffer(
+            device,
+            queue,
+            frame.exposure_tiles(),
+            0,
+            8 * tiles_n as u64,
+        );
         let t: Tiles = b
             .chunks_exact(8)
             .map(|c| {
@@ -334,9 +338,9 @@ fn run_inner(
         let acc = frame.accumulated();
         let grid = [acc.width(), acc.height()];
         let scale = size[0].div_ceil(grid[0]);
-        let e = readback::read_float(device, queue, acc);
+        let e = vxe_render::debug::read_float(device, queue, acc);
         emissive.push(grid_tiles(&e, grid, size, scale, pose.exposure));
-        images.push(readback::read_rgba8(device, queue, frame.target()));
+        images.push(vxe_render::debug::read_rgba8(device, queue, frame.target()));
     }
     if let Some(tag) = std::env::var("STILL_FILMSTRIP")
         .ok()

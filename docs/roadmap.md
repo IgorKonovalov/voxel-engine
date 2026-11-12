@@ -280,7 +280,10 @@ and 0045, then M10. `docs/plans/README.md` carries the sequence. Plan 0060 close
 accepted with an Outcome): the queue sorts by a view score with the class kept as the leading key and withdraws
 the jobs a flight has passed; at the window the order made no visible difference, because the slice's
 throughput, not the order, limits the far light (Plan 0067 takes it). Amended 2026-11-11 (owner): Plan
-0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged.
+0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged. Plan
+0045 closed 2026-11-13 (v0.50.0): the mega files are directories of owned parts, `vxe-render`'s
+surface is a curated root with `debug` and `internals`, and two gates cap file and function size;
+no behaviour changed.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the

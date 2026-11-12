@@ -239,34 +239,84 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Appends little-endian fields to a byte buffer: the writing side of [`Reader`], field for
+/// field.
+#[derive(Debug)]
+pub struct Writer<'a> {
+    out: &'a mut Vec<u8>,
+}
+
+impl<'a> Writer<'a> {
+    pub fn new(out: &'a mut Vec<u8>) -> Self {
+        Self { out }
+    }
+
+    /// Appends `b` as it is.
+    pub fn bytes(&mut self, b: &[u8]) {
+        self.out.extend_from_slice(b);
+    }
+
+    pub fn u8(&mut self, v: u8) {
+        self.out.push(v);
+    }
+
+    pub fn u16(&mut self, v: u16) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    pub fn u32(&mut self, v: u32) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    pub fn u64(&mut self, v: u64) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    pub fn i32(&mut self, v: i32) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    pub fn i64(&mut self, v: i64) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    /// Three `i64`.
+    pub fn fixed3(&mut self, p: Fixed3) {
+        for v in p.0 {
+            self.i64(v);
+        }
+    }
+
+    /// Three `i32`.
+    pub fn i32x3(&mut self, p: [i32; 3]) {
+        for v in p {
+            self.i32(v);
+        }
+    }
+}
+
 /// Appends the little-endian bytes of three `i64`.
 pub fn put_fixed3(out: &mut Vec<u8>, p: Fixed3) {
-    for v in p.0 {
-        out.extend_from_slice(&v.to_le_bytes());
-    }
+    Writer::new(out).fixed3(p);
 }
 
 /// Appends the little-endian bytes of three `i32`.
 pub fn put_i32x3(out: &mut Vec<u8>, p: [i32; 3]) {
-    for v in p {
-        out.extend_from_slice(&v.to_le_bytes());
-    }
+    Writer::new(out).i32x3(p);
 }
 
 /// Appends a list count as `u16`. A list longer than `u16::MAX` is an invariant violation:
 /// no edit result or payload the engine produces has one.
-fn put_count(out: &mut Vec<u8>, n: usize) {
-    let n = u16::try_from(n).expect("wire list counts fit u16");
-    out.extend_from_slice(&n.to_le_bytes());
+fn put_count(w: &mut Writer<'_>, n: usize) {
+    w.u16(u16::try_from(n).expect("wire list counts fit u16"));
 }
 
 /// Appends a cell list: its count as `u32`, then each cell as 3 × `i32`. Panics past
 /// `u32::MAX` cells.
-fn put_cells(out: &mut Vec<u8>, cells: &[CellCoord]) {
-    let n = u32::try_from(cells.len()).expect("wire cell lists fit u32");
-    out.extend_from_slice(&n.to_le_bytes());
+fn put_cells(w: &mut Writer<'_>, cells: &[CellCoord]) {
+    w.u32(u32::try_from(cells.len()).expect("wire cell lists fit u32"));
     for c in cells {
-        put_i32x3(out, c.0);
+        w.i32x3(c.0);
     }
 }
 
@@ -284,11 +334,11 @@ fn read_cells(r: &mut Reader<'_>) -> Result<Vec<CellCoord>, WireError> {
     Ok(cells)
 }
 
-fn put_counts(out: &mut Vec<u8>, counts: &[(MaterialId, u32)]) {
-    put_count(out, counts.len());
+fn put_counts(w: &mut Writer<'_>, counts: &[(MaterialId, u32)]) {
+    put_count(w, counts.len());
     for &(m, n) in counts {
-        out.extend_from_slice(&m.to_le_bytes());
-        out.extend_from_slice(&n.to_le_bytes());
+        w.u16(m);
+        w.u32(n);
     }
 }
 
@@ -303,17 +353,17 @@ fn read_counts(r: &mut Reader<'_>) -> Result<Vec<(MaterialId, u32)>, WireError> 
 
 /// Appends the touched chunks and the aabb of a result: a `u16` count of chunk coordinates,
 /// then a presence `u8` and, when 1, the aabb as 6 × `i32`.
-fn put_extent(out: &mut Vec<u8>, touched: &[ChunkCoord], aabb: Option<(VoxelCoord, VoxelCoord)>) {
-    put_count(out, touched.len());
+fn put_extent(w: &mut Writer<'_>, touched: &[ChunkCoord], aabb: Option<(VoxelCoord, VoxelCoord)>) {
+    put_count(w, touched.len());
     for c in touched {
-        put_i32x3(out, c.0);
+        w.i32x3(c.0);
     }
     match aabb {
-        None => out.push(0),
+        None => w.u8(0),
         Some((lo, hi)) => {
-            out.push(1);
-            put_i32x3(out, lo.0);
-            put_i32x3(out, hi.0);
+            w.u8(1);
+            w.i32x3(lo.0);
+            w.i32x3(hi.0);
         }
     }
 }
@@ -336,39 +386,40 @@ fn read_extent(r: &mut Reader<'_>) -> Result<Extent, WireError> {
 
 /// Appends the encoding of `op`: its kind, then the kind's payload (see the module table).
 pub fn encode_op(out: &mut Vec<u8>, op: &Op) {
+    let w = &mut Writer::new(out);
     match op {
         Op::Edit(e) => {
-            out.push(OP_EDIT);
-            encode_edit(out, e);
+            w.u8(OP_EDIT);
+            encode_edit(w, e);
         }
         Op::Stamp {
             prefab,
             origin,
             rot,
         } => {
-            out.push(OP_STAMP);
-            out.extend_from_slice(&prefab.to_le_bytes());
-            put_i32x3(out, origin.0);
-            out.push(rot.index());
+            w.u8(OP_STAMP);
+            w.u64(*prefab);
+            w.i32x3(origin.0);
+            w.u8(rot.index());
         }
         Op::Drop {
             cells,
             max_drop,
             yield_below: 0,
         } => {
-            out.push(OP_DROP);
-            out.extend_from_slice(&max_drop.to_le_bytes());
-            put_cells(out, cells);
+            w.u8(OP_DROP);
+            w.i32(*max_drop);
+            put_cells(w, cells);
         }
         Op::Drop {
             cells,
             max_drop,
             yield_below,
         } => {
-            out.push(OP_DROP_THROUGH);
-            out.extend_from_slice(&max_drop.to_le_bytes());
-            out.extend_from_slice(&yield_below.to_le_bytes());
-            put_cells(out, cells);
+            w.u8(OP_DROP_THROUGH);
+            w.i32(*max_drop);
+            w.u16(*yield_below);
+            put_cells(w, cells);
         }
         Op::Remove {
             cells,
@@ -376,12 +427,12 @@ pub fn encode_op(out: &mut Vec<u8>, op: &Op) {
             fraction,
             max_depth,
         } => {
-            out.push(OP_REMOVE);
-            out.extend_from_slice(&rubble.to_le_bytes());
-            out.extend_from_slice(&fraction.0.to_le_bytes());
-            out.extend_from_slice(&fraction.1.to_le_bytes());
-            out.extend_from_slice(&max_depth.to_le_bytes());
-            put_cells(out, cells);
+            w.u8(OP_REMOVE);
+            w.u16(*rubble);
+            w.u32(fraction.0);
+            w.u32(fraction.1);
+            w.i32(*max_depth);
+            put_cells(w, cells);
         }
         Op::Pile {
             cells,
@@ -389,45 +440,45 @@ pub fn encode_op(out: &mut Vec<u8>, op: &Op) {
             count,
             max_depth,
         } => {
-            out.push(OP_PILE);
-            out.extend_from_slice(&rubble.to_le_bytes());
-            out.extend_from_slice(&count.to_le_bytes());
-            out.extend_from_slice(&max_depth.to_le_bytes());
-            put_cells(out, cells);
+            w.u8(OP_PILE);
+            w.u16(*rubble);
+            w.u32(*count);
+            w.i32(*max_depth);
+            put_cells(w, cells);
         }
     }
 }
 
 /// An edit's mode and payload, then its shape and payload.
-fn encode_edit(out: &mut Vec<u8>, e: &EditOp) {
+fn encode_edit(w: &mut Writer<'_>, e: &EditOp) {
     match e.mode {
-        Mode::Carve => out.push(MODE_CARVE),
+        Mode::Carve => w.u8(MODE_CARVE),
         Mode::Fill(m) => {
-            out.push(MODE_FILL);
-            out.extend_from_slice(&m.to_le_bytes());
+            w.u8(MODE_FILL);
+            w.u16(m);
         }
         Mode::Replace { from, to } => {
-            out.push(MODE_REPLACE);
-            out.extend_from_slice(&from.to_le_bytes());
-            out.extend_from_slice(&to.to_le_bytes());
+            w.u8(MODE_REPLACE);
+            w.u16(from);
+            w.u16(to);
         }
     }
     match e.shape {
         Shape::Sphere { c, r } => {
-            out.push(SHAPE_SPHERE);
-            put_fixed3(out, c);
-            out.extend_from_slice(&r.to_le_bytes());
+            w.u8(SHAPE_SPHERE);
+            w.fixed3(c);
+            w.i64(r);
         }
         Shape::Box_ { min, max } => {
-            out.push(SHAPE_BOX);
-            put_fixed3(out, min);
-            put_fixed3(out, max);
+            w.u8(SHAPE_BOX);
+            w.fixed3(min);
+            w.fixed3(max);
         }
         Shape::Capsule { a, b, r } => {
-            out.push(SHAPE_CAPSULE);
-            put_fixed3(out, a);
-            put_fixed3(out, b);
-            out.extend_from_slice(&r.to_le_bytes());
+            w.u8(SHAPE_CAPSULE);
+            w.fixed3(a);
+            w.fixed3(b);
+            w.i64(r);
         }
     }
 }
@@ -527,8 +578,12 @@ fn decode_edit(r: &mut Reader<'_>) -> Result<EditOp, WireError> {
 /// Appends an edit result: a `u16` count of `(material u16, voxels u32)` pairs, a `u16` count
 /// of chunk coordinates, then a presence `u8` and, when 1, the aabb as 6 × `i32`.
 pub fn encode_result(out: &mut Vec<u8>, r: &EditResult) {
-    put_counts(out, &r.changed_from);
-    put_extent(out, &r.touched, r.aabb);
+    put_result(&mut Writer::new(out), r);
+}
+
+fn put_result(w: &mut Writer<'_>, r: &EditResult) {
+    put_counts(w, &r.changed_from);
+    put_extent(w, &r.touched, r.aabb);
 }
 
 /// Reads one edit result as [`encode_result`] writes it.
@@ -549,28 +604,29 @@ pub fn decode_result(r: &mut Reader<'_>) -> Result<EditResult, WireError> {
 /// then the touched chunks and the aabb. Counts, chunks and the aabb are encoded as in an edit
 /// result.
 pub fn encode_op_result(out: &mut Vec<u8>, r: &OpResult) {
+    let w = &mut Writer::new(out);
     match r {
         OpResult::Edit(e) => {
-            out.push(OP_EDIT);
-            encode_result(out, e);
+            w.u8(OP_EDIT);
+            put_result(w, e);
         }
         OpResult::Drop(d) => {
-            out.push(OP_DROP);
-            put_counts(out, &d.moved);
-            put_counts(out, &d.crushed);
-            out.extend_from_slice(&d.dropped.to_le_bytes());
-            put_extent(out, &d.touched, d.aabb);
+            w.u8(OP_DROP);
+            put_counts(w, &d.moved);
+            put_counts(w, &d.crushed);
+            w.i32(d.dropped);
+            put_extent(w, &d.touched, d.aabb);
         }
         OpResult::Remove(m) => {
-            out.push(OP_REMOVE);
-            put_counts(out, &m.removed);
-            out.extend_from_slice(&m.placed.to_le_bytes());
-            put_extent(out, &m.touched, m.aabb);
+            w.u8(OP_REMOVE);
+            put_counts(w, &m.removed);
+            w.u32(m.placed);
+            put_extent(w, &m.touched, m.aabb);
         }
         OpResult::Pile(p) => {
-            out.push(OP_PILE);
-            out.extend_from_slice(&p.placed.to_le_bytes());
-            put_extent(out, &p.touched, p.aabb);
+            w.u8(OP_PILE);
+            w.u32(p.placed);
+            put_extent(w, &p.touched, p.aabb);
         }
     }
 }
@@ -619,22 +675,23 @@ pub fn decode_op_result(r: &mut Reader<'_>) -> Result<OpResult, WireError> {
 /// Appends an edit error: its tag, then the chunk as 3 × `i32`, the field as `u8` or the
 /// prefab id as `u64`.
 pub fn encode_error(out: &mut Vec<u8>, e: &EditError) {
+    let w = &mut Writer::new(out);
     match e {
         EditError::NotResident(c) => {
-            out.push(ERROR_NOT_RESIDENT);
-            put_i32x3(out, c.0);
+            w.u8(ERROR_NOT_RESIDENT);
+            w.i32x3(c.0);
         }
         EditError::UnknownPrefab(id) => {
-            out.push(ERROR_UNKNOWN_PREFAB);
-            out.extend_from_slice(&id.to_le_bytes());
+            w.u8(ERROR_UNKNOWN_PREFAB);
+            w.u64(*id);
         }
         EditError::OutOfRange { what } => {
-            out.push(ERROR_OUT_OF_RANGE);
+            w.u8(ERROR_OUT_OF_RANGE);
             let i = Field::ALL
                 .iter()
                 .position(|f| f == what)
                 .expect("every field is listed");
-            out.push(i as u8 + 1);
+            w.u8(i as u8 + 1);
         }
     }
 }

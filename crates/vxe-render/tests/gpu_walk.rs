@@ -3,8 +3,7 @@
 //! every `t` of the walk is exact.
 
 use vxe_render::{
-    Camera, Frame, GpuWorld, LightParams, Lighting, LookParams, ToneMap, ViewMode, glam::Vec3,
-    readback, wgpu,
+    Camera, Frame, GpuWorld, LightParams, Lighting, LookParams, ToneMap, ViewMode, glam::Vec3, wgpu,
 };
 use vxe_world::*;
 
@@ -27,32 +26,11 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
 }
 
-/// A world whose voxel at world coordinate `v` is `f(v)`.
-struct Voxels<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for Voxels<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 const ROCK: MaterialId = 1;
 
-fn table() -> MaterialTable {
-    let mut t = MaterialTable::new();
-    t.push(Material::named("rock"));
-    t
-}
-
 fn world(chunks: [i32; 3], f: impl Fn([i32; 3]) -> MaterialId + Sync) -> World {
-    World::generate(ChunkExtent::new([0, 0, 0], chunks), &Voxels(f), &table())
+    let table: MaterialTable = [Material::named("rock")].into_iter().collect();
+    World::generate(ChunkExtent::new([0, 0, 0], chunks), &FnSource(f), &table)
 }
 
 /// What the steps view reads for one ray: loop iterations, 32-bit storage loads from the
@@ -120,7 +98,7 @@ fn pixel(
         vfov: 1.0,
     };
     frame.render(device, queue, &gpu, &camera, &light);
-    let px = readback::read_rgba8(device, queue, frame.target());
+    let px = vxe_render::debug::read_rgba8(device, queue, frame.target());
     [px[0], px[1], px[2], px[3]]
 }
 
@@ -447,7 +425,7 @@ fn the_mask_path_equals_the_lookup_path() {
                     ..LightParams::at_eye()
                 };
                 frame.render(&device, &queue, &gpu, &camera, &light);
-                readback::read_rgba16u(&device, &queue, frame.hit_records())[0]
+                vxe_render::debug::read_rgba16u(&device, &queue, frame.hit_records())[0]
             });
             assert_eq!(
                 records[0], records[1],

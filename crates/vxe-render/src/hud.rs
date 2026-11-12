@@ -10,20 +10,20 @@
 use crate::font8x8::{FONT, printable};
 
 /// The source of the overlay shader, for headless validation.
-pub const HUD_WGSL: &str = include_str!("shaders/hud.wgsl");
+pub(crate) const HUD_WGSL: &str = include_str!("shaders/hud.wgsl");
 
 /// The most columns of cells the overlay holds; the cell buffer's row stride.
-pub const GRID_COLS: u32 = 256;
+pub(crate) const GRID_COLS: u32 = 256;
 /// The most rows of cells the overlay holds.
-pub const GRID_ROWS: u32 = 128;
+pub(crate) const GRID_ROWS: u32 = 128;
 /// Bytes of the cell buffer: one `u32` per cell at the cap (128 KiB).
-pub const CELL_BYTES: u64 = (GRID_COLS * GRID_ROWS * 4) as u64;
+pub(crate) const CELL_BYTES: u64 = (GRID_COLS * GRID_ROWS * 4) as u64;
 /// The most samples the strip holds.
-pub const MAX_SAMPLES: usize = 256;
+pub(crate) const MAX_SAMPLES: usize = 256;
 /// The strip's height in glyph pixels: `64 scale` target pixels.
-pub const STRIP_PX: u32 = 64;
+pub(crate) const STRIP_PX: u32 = 64;
 /// The frame time the strip's red line marks when its ceiling is above it: one 60 Hz frame.
-pub const LINE_MS: f32 = 1000.0 / 60.0;
+pub(crate) const LINE_MS: f32 = 1000.0 / 60.0;
 /// `Params::line_px` for no line.
 const NO_LINE: u32 = u32::MAX;
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::brick::Brick;
 use crate::chunk::Chunk;
-use crate::coords::{CHUNK_BRICKS, ChunkCoord, VoxelCoord};
+use crate::coords::{BRICK_EDGE, CHUNK_BRICKS, ChunkCoord, VoxelCoord, brick_of_slot};
 use crate::material::MaterialId;
 use crate::prefab::{Prefab, Rot};
 use crate::stamp::{blit_into, chunks_of, voxel_box};
@@ -27,6 +27,33 @@ impl WorldSource for UniformSource {
     fn chunk(&self, _coord: ChunkCoord, out: &mut Chunk) {
         for slot in 0..CHUNK_BRICKS {
             out.set_brick(slot, Brick::Uniform(self.0));
+        }
+    }
+}
+
+/// A source evaluated per voxel: the voxel at world coordinate `v` is `self.0(v)`. Each brick
+/// is built by [`Brick::from_fn`], so a brick whose 512 values agree is stored `Uniform`.
+///
+/// ```
+/// use vxe_world::{AIR, ChunkExtent, FnSource, Material, MaterialTable, VoxelCoord, World};
+/// let table: MaterialTable = [Material::named("rock")].into_iter().collect();
+/// let floor = FnSource(|v: [i32; 3]| if v[2] < 4 { 1 } else { AIR });
+/// let world = World::generate(ChunkExtent::new([0, 0, 0], [1, 1, 1]), &floor, &table);
+/// assert_eq!(world.material_at(VoxelCoord([5, 5, 3])), Some(1));
+/// assert_eq!(world.material_at(VoxelCoord([5, 5, 4])), Some(AIR));
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct FnSource<F>(pub F);
+
+impl<F: Fn([i32; 3]) -> MaterialId> WorldSource for FnSource<F> {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
+            );
         }
     }
 }

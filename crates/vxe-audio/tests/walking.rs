@@ -11,42 +11,14 @@
 use vxe_audio::*;
 use vxe_world::*;
 
+mod support;
+use support::world;
+
 const MPV: f32 = 0.1;
-/// The cave row: absorption 0.3 per metre, transmission 0.5.
-const CAVE: MaterialId = 1;
 /// The hum's frequency.
 const HZ: f64 = 440.0;
 /// Frames before the measurements start: 100 ms.
 const SETTLE: usize = 4_800;
-
-/// A world whose voxels come from a closure of the voxel coordinate.
-struct FnSource<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
-/// `CAVE` wherever `solid` holds over chunks `min..max`, air elsewhere.
-fn world(min: [i32; 3], max: [i32; 3], solid: impl Fn([i32; 3]) -> bool + Sync) -> World {
-    let mut t = MaterialTable::new();
-    let mut m = Material::named("cave");
-    m.acoustic = [0.3, 0.5, 0.0];
-    assert_eq!(t.push(m), CAVE);
-    World::generate(
-        ChunkExtent::new(min, max),
-        &FnSource(move |v| if solid(v) { CAVE } else { AIR }),
-        &t,
-    )
-}
 
 /// The corridor: rock at `y >= 5 m`, `y <= -5 m` and `z <= -2 m`, open above and along `x`
 /// from -12.8 m to 19.2 m.

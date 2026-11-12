@@ -4,7 +4,8 @@
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::*;
 
-/// Rows: air, rock 1, ore 2, glass 3 (`TRANSLUCENT`), then 4..=20.
+/// Rows carry properties, so the table is built here: air, rock 1, ore 2, glass 3
+/// (`TRANSLUCENT`), then 4..=20.
 fn table() -> MaterialTable {
     let mut t = MaterialTable::new();
     assert_eq!(t.push(Material::named("rock")), 1);

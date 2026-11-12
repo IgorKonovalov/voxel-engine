@@ -5,7 +5,7 @@
 
 use super::*;
 use vxe_render::{
-    Frame, GpuWorld, LightParams, MirrorConfig, Presenter, UpscalerKind, Window, readback, wgpu,
+    Frame, GpuWorld, LightParams, MirrorConfig, Presenter, UpscalerKind, Window, wgpu,
 };
 use vxe_world::*;
 
@@ -34,7 +34,7 @@ pub fn level_rig(
     world: &World,
     camera: &vxe_render::Camera,
 ) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
-    let pool = flythrough::level_pool_units(world, true) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(world, true) * vxe_render::internals::UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -91,7 +91,7 @@ pub fn blit_texture(
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     presenter.encode(device, &mut enc, source, &view);
     queue.submit([enc.finish()]);
-    readback::read_rgba8(device, queue, &target)
+    vxe_render::debug::read_rgba8(device, queue, &target)
 }
 
 /// Mean absolute difference per channel (r, g, b) of two RGBA8 images, in 1/255.
@@ -417,7 +417,7 @@ pub fn stripe_image_at(
         }
         f.step(device, queue, &rig.gpu, &camera, &light);
     }
-    let img = readback::read_rgba8(device, queue, f.target());
+    let img = vxe_render::debug::read_rgba8(device, queue, f.target());
     let images = match image {
         Image::N => [img.clone(), img],
         Image::R => {
@@ -430,7 +430,7 @@ pub fn stripe_image_at(
         }
         Image::U1 | Image::U15 if fsr => [img.clone(), img],
         Image::U1 | Image::U15 => {
-            let hist = readback::read_rgba16f(device, queue, f.upscale_history().unwrap());
+            let hist = vxe_render::debug::read_rgba16f(device, queue, f.upscale_history().unwrap());
             let plain = hist
                 .iter()
                 .flat_map(|t| {
@@ -523,7 +523,7 @@ pub fn read_f32_texels(device: &wgpu::Device, queue: &wgpu::Queue, t: &wgpu::Tex
         t.size(),
     );
     queue.submit([enc.finish()]);
-    let bytes = readback::read_buffer(device, queue, &buffer, 0, buffer.size());
+    let bytes = vxe_render::debug::read_buffer(device, queue, &buffer, 0, buffer.size());
     bytes
         .chunks(padded as usize)
         .flat_map(|r| r[..row as usize].chunks(4))
@@ -537,7 +537,7 @@ pub fn fsr2_kind() -> UpscalerKind {
 }
 
 /// `p` projected through `v` to a fractional pixel of the target, pixel centres at integer +
-/// 0.5, the jitter ignored (`project_prev` in `march.wgsl`); `None` behind the view.
+/// 0.5, the jitter ignored (`project_prev` in `hitrec.wgsl`); `None` behind the view.
 pub fn project(v: &vxe_render::View, p: [f32; 3]) -> Option<[f64; 2]> {
     let d: Vec<f64> = (0..3).map(|k| f64::from(p[k] - v.origin[k])).collect();
     let dot = |a: [f32; 3]| (0..3).map(|k| d[k] * f64::from(a[k])).sum::<f64>();
@@ -594,7 +594,7 @@ pub fn in_dilated(p: [f32; 3], (min, max): (VoxelCoord, VoxelCoord)) -> bool {
     (0..3).all(|k| p[k] >= (min.0[k] - 1) as f32 && p[k] <= (max.0[k] + 2) as f32)
 }
 
-/// The octahedral snorm16 normal of a hit record (`octa16_decode` in `march.wgsl`).
+/// The octahedral snorm16 normal of a hit record (`octa16_decode` in `hitrec.wgsl`).
 pub fn octa16_normal(u: u16, v: u16) -> [f32; 3] {
     let p = [u as i16, v as i16].map(|q| f32::from(q) / 32767.0);
     let mut n = [p[0], p[1], 1.0 - p[0].abs() - p[1].abs()];
@@ -612,7 +612,7 @@ pub fn octa16_normal(u: u16, v: u16) -> [f32; 3] {
 
 /// The headlamp's unshadowed term of `params` at `p`, normal `n` (`up_lamp` in
 /// `upscale.wgsl`): `intensity * cone * max(n.l, 0) / dist^2`.
-pub fn lamp_term(params: &vxe_render::marcher::Params, p: [f32; 3], n: [f32; 3]) -> f32 {
+pub fn lamp_term(params: &vxe_render::Params, p: [f32; 3], n: [f32; 3]) -> f32 {
     let to: Vec<f32> = (0..3).map(|k| params.light_pos[k] - p[k]).collect();
     let dist2 = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).max(1e-4);
     let l: Vec<f32> = to.iter().map(|c| c / dist2.sqrt()).collect();
@@ -700,16 +700,16 @@ pub enum Pipe {
 
 impl Pipe {
     /// The frames of one jitter cycle of the pipeline under `kind`: FSR 2's own count at the
-    /// pipeline's sizes, else [`vxe_render::marcher::JITTER_PHASES`].
+    /// pipeline's sizes, else [`vxe_render::internals::JITTER_PHASES`].
     pub fn phases(self, kind: UpscalerKind) -> u32 {
         match (self, kind) {
             (Pipe::U1, UpscalerKind::Fsr2(_)) => {
-                vxe_render::fsr2::jitter_phases(OUTPUT[0], OUTPUT[0])
+                vxe_render::internals::jitter_phases(OUTPUT[0], OUTPUT[0])
             }
             (Pipe::U15, UpscalerKind::Fsr2(_)) => {
-                vxe_render::fsr2::jitter_phases(INTERNAL[0], OUTPUT[0])
+                vxe_render::internals::jitter_phases(INTERNAL[0], OUTPUT[0])
             }
-            _ => vxe_render::marcher::JITTER_PHASES,
+            _ => vxe_render::internals::JITTER_PHASES,
         }
     }
 
@@ -804,7 +804,7 @@ pub fn lamp_reading(
         }
         f
     };
-    let off = lumas(&readback::read_rgba8(
+    let off = lumas(&vxe_render::debug::read_rgba8(
         device,
         queue,
         settled(false, 48).target(),
@@ -816,7 +816,7 @@ pub fn lamp_reading(
         swept.turn += SWEEP_RATE;
         f.step(device, queue, gpu, camera, &swept);
         if i >= 16 {
-            let lit = lumas(&readback::read_rgba8(device, queue, f.target()));
+            let lit = lumas(&vxe_render::debug::read_rgba8(device, queue, f.target()));
             let (c, contribution) = lamp_centroid(&lit, &off);
             r.centroids.push(c);
             r.contributions.push(contribution);
@@ -827,7 +827,7 @@ pub fn lamp_reading(
     // temporal pass drops the lamp's history on the switch, so the first frame after it is
     // already near the settled image and cannot be the measure.
     let step = luma_mad(
-        &lumas(&readback::read_rgba8(device, queue, f.target())),
+        &lumas(&vxe_render::debug::read_rgba8(device, queue, f.target())),
         &off,
     );
     f.set_lighting(vxe_render::Lighting {
@@ -838,7 +838,7 @@ pub fn lamp_reading(
         .map(|_| {
             f.step(device, queue, gpu, camera, &light);
             luma_mad(
-                &lumas(&readback::read_rgba8(device, queue, f.target())),
+                &lumas(&vxe_render::debug::read_rgba8(device, queue, f.target())),
                 &off,
             )
         })
@@ -853,14 +853,14 @@ pub fn lamp_reading(
     for _ in 0..64 {
         dim.step(device, queue, gpu, camera, &light);
     }
-    let target = lumas(&readback::read_rgba8(device, queue, dim.target()));
+    let target = lumas(&vxe_render::debug::read_rgba8(device, queue, dim.target()));
     let mut f = settled(false, 64);
     f.set_emission_scale(queue, ore, 0.25);
     let series: Vec<f64> = (0..64)
         .map(|_| {
             f.step(device, queue, gpu, camera, &light);
             luma_mad(
-                &lumas(&readback::read_rgba8(device, queue, f.target())),
+                &lumas(&vxe_render::debug::read_rgba8(device, queue, f.target())),
                 &target,
             )
         })
@@ -872,7 +872,7 @@ pub fn lamp_reading(
     let (mut lo, mut hi) = (vec![f64::MAX; n], vec![f64::MIN; n]);
     for _ in 0..pipe.phases(kind) {
         f.step(device, queue, gpu, camera, &light);
-        for (i, v) in lumas(&readback::read_rgba8(device, queue, f.target()))
+        for (i, v) in lumas(&vxe_render::debug::read_rgba8(device, queue, f.target()))
             .into_iter()
             .enumerate()
         {
@@ -895,7 +895,11 @@ pub fn ideal_centroids(
     let light = LightParams::headlamp();
     let off_frame = Pipe::Reference.frame(device, UpscalerKind::Off, false);
     off_frame.render(device, queue, gpu, camera, &light);
-    let off = lumas(&readback::read_rgba8(device, queue, off_frame.target()));
+    let off = lumas(&vxe_render::debug::read_rgba8(
+        device,
+        queue,
+        off_frame.target(),
+    ));
     let on = Pipe::Reference.frame(device, UpscalerKind::Off, true);
     (16..32)
         .map(|i| {
@@ -905,7 +909,7 @@ pub fn ideal_centroids(
             };
             on.render(device, queue, gpu, camera, &swept);
             lamp_centroid(
-                &lumas(&readback::read_rgba8(device, queue, on.target())),
+                &lumas(&vxe_render::debug::read_rgba8(device, queue, on.target())),
                 &off,
             )
             .0
@@ -1032,9 +1036,13 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
     let mut hits = Vec::new();
     for _ in 0..32 {
         frame.step(&device, &queue, &gpu, &camera, &light);
-        frames.push(readback::read_rgba8(&device, &queue, frame.target()));
+        frames.push(vxe_render::debug::read_rgba8(
+            &device,
+            &queue,
+            frame.target(),
+        ));
         if hits.is_empty() {
-            let rec = readback::read_rgba16u(&device, &queue, frame.hit_records());
+            let rec = vxe_render::debug::read_rgba16u(&device, &queue, frame.hit_records());
             let j = frame.params(&gpu, &camera, &light).views[0].jitter;
             for y in 0..output[1] {
                 for x in 0..output[0] {

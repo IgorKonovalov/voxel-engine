@@ -118,8 +118,8 @@ fn an_update_reports_the_changed_cells_sorted() {
 fn ties_go_to_the_lower_id_and_air_is_not_counted() {
     // Brick [0, 8)³: 256 voxels of 5 (z < 4) then 256 of 2. Brick [8, 16) x [0, 8)²: 255
     // voxels of 5, the rest air.
-    let source = FnSource(|v: VoxelCoord| {
-        let [x, y, z] = v.0;
+    let source = FnSource(|v: [i32; 3]| {
+        let [x, y, z] = v;
         if (0..8).contains(&x) && (0..8).contains(&y) && (0..8).contains(&z) {
             if z < 4 { 5 } else { 2 }
         } else if (8..16).contains(&x) && (0..8).contains(&y) && (0..8).contains(&z) {

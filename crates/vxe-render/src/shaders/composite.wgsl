@@ -1,5 +1,5 @@
 // The composite pass: turns the hit buffer, the translucent layers and the irradiance into
-// the `rgba8unorm` target the presenter draws. Compiled after march.wgsl, whose bindings
+// the `rgba8unorm` target the presenter draws. Compiled after common.wgsl and hitrec.wgsl, whose bindings
 // (group 0: the material rows), and hit-record helpers it uses.
 //
 // Bindings, group 2:
@@ -61,7 +61,7 @@ fn crack_colour(found: bool, shaded: vec3<f32>, layer: vec4<f32>) -> vec3<f32> {
 @group(2) @binding(3) var irradiance_in: texture_2d<f32>;
 @group(2) @binding(4) var target_tex: texture_storage_2d<rgba8unorm, write>;
 // The shaded view stores linear radiance before exposure instead of `display` of it: FSR 2's
-// variant of this pass (marcher.rs) sets this true and declares `target_tex` rgba32float.
+// variant of this pass (frame/upscale.rs) sets this true and declares `target_tex` rgba32float.
 const HDR_TARGET: bool = false;
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
@@ -72,8 +72,8 @@ const HDR_TARGET: bool = false;
 // The workgroup's meter partial sums: log2 luminance, pixel count.
 var<workgroup> meter_sum: array<vec2<f32>, 64>;
 
-// `Params::lighting` bit: the probe gather ran and its irradiance adds to the direct one.
-const LIGHTING_INDIRECT: u32 = 4096u;
+// The prelude's LIGHTING_INDIRECT, a `Params::lighting` bit: the probe gather ran and its
+// irradiance adds to the direct one.
 
 // The irradiance at lighting texel `q`: the filter's rgb, or with the filter off the temporal
 // pass's accumulation, its emissive rgb plus its lamp's white a; with the indirect flag, the gathered indirect

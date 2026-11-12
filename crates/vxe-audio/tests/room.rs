@@ -4,39 +4,10 @@
 use vxe_audio::*;
 use vxe_world::*;
 
+mod support;
+use support::{CAVE, ShellCube, world};
+
 const MPV: f32 = 0.1;
-/// The cave row: absorption 0.3 per metre, transmission 0.5.
-const CAVE: MaterialId = 1;
-
-/// A world whose voxels come from a closure of the voxel coordinate.
-struct FnSource<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
-/// `CAVE` wherever `solid` holds over chunks `min..max`, air elsewhere.
-fn world(min: [i32; 3], max: [i32; 3], solid: impl Fn([i32; 3]) -> bool + Sync) -> World {
-    let mut t = MaterialTable::new();
-    let mut m = Material::named("cave");
-    m.acoustic = [0.3, 0.5, 0.0];
-    assert_eq!(t.push(m), CAVE);
-    World::generate(
-        ChunkExtent::new(min, max),
-        &FnSource(move |v| if solid(v) { CAVE } else { AIR }),
-        &t,
-    )
-}
-
 /// A closed cube of air of `edge` voxels, `[0, edge)³`, in rock filling chunks `[-1, 3)³`.
 fn cube(edge: i32) -> World {
     world([-1, -1, -1], [3, 3, 3], move |v| {
@@ -236,34 +207,6 @@ fn switching_the_tail_resends_the_room() {
         })
         .collect();
     assert_eq!(energies, [0.0, energy]);
-}
-
-/// A closed cube of air of `edge` voxels, `[0, edge)³`, inside 2 m of `CAVE`, air beyond: bricks
-/// wholly inside stay uniform air, so a 100 m cube generates quickly.
-struct ShellCube {
-    edge: i32,
-}
-
-impl WorldSource for ShellCube {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        let edge = self.edge;
-        let material = |v: [i32; 3]| {
-            let inside = v.iter().all(|&c| (0..edge).contains(&c));
-            let shell = v.iter().all(|&c| (-20..edge + 20).contains(&c));
-            if shell && !inside { CAVE } else { AIR }
-        };
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            let lo = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
-            let brick = if lo.iter().all(|&c| c >= 0 && c + BRICK_EDGE <= edge) {
-                Brick::Uniform(AIR)
-            } else {
-                Brick::from_fn(|l| material([0, 1, 2].map(|k| lo[k] + l[k])))
-            };
-            out.set_brick(slot, brick);
-        }
-    }
 }
 
 /// The 100 m cube from its centre: every room ray hits within the 100 m range (the corners are

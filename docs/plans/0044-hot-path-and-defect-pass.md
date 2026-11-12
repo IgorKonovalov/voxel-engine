@@ -2,6 +2,12 @@
 
 > **Status:** in-progress (2026-11-10, side lane: Phases 1, 6, 7); approved 2026-10-22, amended
 > 2026-11-10 (review pass)
+> **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
+> by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
+> `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
+> `hud.rs`). Read each through "Where things moved" in
+> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> phases re-cut their Files touched at their start.
 > **Created:** 2026-10-22
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
 > figures in `docs/nfr.md` that the plans so far have already shipped.

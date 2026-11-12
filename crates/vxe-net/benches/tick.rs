@@ -17,6 +17,11 @@ use support::*;
 use vxe_net::*;
 use vxe_world::CoarseGrid;
 
+#[path = "../../vxe-world/benches/support/clock.rs"]
+#[allow(dead_code, reason = "the shared clock file also holds `timed`")]
+mod clock;
+use clock::now;
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the bench times the tick path alone, between untimed world builds"
@@ -29,10 +34,6 @@ fn since(t: Instant) -> Duration {
     clippy::disallowed_methods,
     reason = "the bench times the tick path alone, between untimed world builds"
 )]
-fn now() -> Instant {
-    Instant::now()
-}
-
 fn tick(c: &mut Criterion) {
     let carves = seeded_carves(0x71C4, 100);
     let inputs: Vec<Vec<u8>> = carves.iter().map(|op| op_bytes(*op)).collect();

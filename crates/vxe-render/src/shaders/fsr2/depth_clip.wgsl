@@ -42,10 +42,6 @@ fn load_reconstructed_prev_depth(p: vec2<i32>) -> f32 {
     return bitcast<f32>(reconstructed[u32(q.y) * u32(cb.render_size.x) + u32(q.x)]);
 }
 
-fn load_input_motion_vector(p: vec2<i32>) -> vec2<f32> {
-    return load_clamped(motion_in, p).xy * cb.motion_vector_scale;
-}
-
 fn compute_depth_clip(uv_sample: vec2<f32>, current_depth_sample: f32) -> f32 {
     let current_depth_view_space = get_view_space_depth(current_depth_sample);
     let b = get_bilinear_sampling_data(uv_sample, render_size());

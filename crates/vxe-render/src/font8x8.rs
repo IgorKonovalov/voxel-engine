@@ -5,9 +5,9 @@
 //! (space) to 126 (`~`): eight row bytes top to bottom, bit 0 of each the leftmost pixel.
 
 /// The first byte [`FONT`] covers.
-pub const FIRST: u8 = 32;
+pub(crate) const FIRST: u8 = 32;
 /// The last byte [`FONT`] covers.
-pub const LAST: u8 = 126;
+pub(crate) const LAST: u8 = 126;
 
 /// Glyph `b - 32` is byte `b`'s bitmap: rows top to bottom, bit 0 the leftmost pixel.
 pub const FONT: [[u8; 8]; 95] = [
@@ -109,7 +109,7 @@ pub const FONT: [[u8; 8]; 95] = [
 ];
 
 /// The byte the overlay draws for `b`: `b` itself when [`FONT`] covers it, `?` otherwise.
-pub const fn printable(b: u8) -> u8 {
+pub(crate) const fn printable(b: u8) -> u8 {
     if b >= FIRST && b <= LAST { b } else { b'?' }
 }
 

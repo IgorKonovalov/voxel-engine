@@ -10,11 +10,21 @@ description = "Spatial audio for the voxel engine: a headless HRTF mixer on the 
 [lints]
 workspace = true
 
+[features]
+# The mixer's and the tail's state views for tests: `TapSlot`, `Mixer::tap_slots`,
+# `Mixer::voice_smoothers`, `Mixer::reverb_lines`, `Mixer::reverb_networks`,
+# `Mixer::jump_reverb_line`, `Mixer::reverb_clears` and their `ReverbLine`, `ReverbNetwork` and
+# `ReverbClears`. Off by default; this crate's own tests and benches turn it on through the
+# dev-dependency below.
+test-hooks = []
+
 [dependencies]
 cpal.workspace = true
 vxe-world.workspace = true
 
 [dev-dependencies]
+# This crate's tests and benches build it with its test hooks on.
+vxe-audio = { workspace = true, features = ["test-hooks"] }
 sofar.workspace = true
 criterion.workspace = true
 

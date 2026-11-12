@@ -43,10 +43,12 @@ mod stamp;
 mod store;
 mod stream;
 mod support;
+mod tally;
 mod walkable;
 pub mod wire;
 
 pub use brick::Brick;
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub use brick::RawBrick;
 pub use census::{BrickCensus, WorldCensus, solid_mask, surface_mask};
@@ -60,6 +62,7 @@ pub use coords::{
 #[cfg(feature = "edit-stages")]
 #[doc(hidden)]
 pub use edit::EditStages;
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub use edit::{CapturedBrickEdit, PlanarWriter, RowWriter, WriterResult};
 pub use edit::{EditError, EditOp, EditResult, Mode};
@@ -77,7 +80,7 @@ pub use prefab::{Prefab, PrefabCollision, PrefabRegistry, Rot};
 pub use query::QueryStats;
 pub use raycast::{Face, Hit, Run};
 pub use shape::Shape;
-pub use source::{StampedSource, UniformSource, WorldSource};
+pub use source::{FnSource, StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{
     ChunkPrep, Prepared, Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer,

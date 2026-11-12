@@ -317,7 +317,7 @@ fn one_brick_world(solid: &[[i32; 3]]) -> World {
     let solid = solid.to_vec();
     World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &FnSource(move |v: VoxelCoord| if solid.contains(&v.0) { 2 } else { AIR }),
+        &FnSource(move |v: [i32; 3]| if solid.contains(&v) { 2 } else { AIR }),
         &test_table(),
     )
 }
@@ -363,9 +363,9 @@ fn region_counts_by_popcount_equal_the_voxel_counts() {
     };
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &FnSource(move |v: VoxelCoord| {
-            if v.0.iter().all(|&c| c < 8) {
-                cell(v.0)
+        &FnSource(move |v: [i32; 3]| {
+            if v.iter().all(|&c| c < 8) {
+                cell(v)
             } else {
                 AIR
             }

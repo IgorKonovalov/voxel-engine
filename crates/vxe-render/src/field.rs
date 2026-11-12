@@ -13,9 +13,16 @@
 //! them from the mirror: a chunk inside the mirror window that the world holds full by its
 //! voxels, one it holds only as mips by its level-1 mip bricks (each mip voxel covering 2^3
 //! voxels), any other as air. The GPU's counts and the CPU's mask then agree once the mirror
-//! holds what the world does. The slot layout and its bookkeeping are `gpu_world.rs`'s.
+//! holds what the world does. The slot layout and its bookkeeping are `gpu_world`'s.
 
 use vxe_world::{CHUNK_EDGE_BRICKS, ChunkMips, brick_of_slot, brick_slot};
+
+use crate::gpu_util::{Io, compute_pipeline, io_layout_at};
+
+/// The field pass's composed source: the prelude, `mirror.wgsl`, then [`crate::FIELD_WGSL`].
+pub(crate) fn field_source() -> String {
+    crate::frame::compose(&[crate::frame::MIRROR_WGSL, crate::FIELD_WGSL])
+}
 
 /// Units of a band slot of `n` band voxels: its band mask and `ceil(n / 64)` units of `u8`
 /// counts.
@@ -28,7 +35,7 @@ pub const MAX_BAND_UNITS: u32 = 9;
 
 /// How the band reads a chunk around a brick: held full (its voxels), held as mips only (its
 /// level-1 mip bricks), or air (outside the window, or not held).
-pub enum Around<'a> {
+pub(crate) enum Around<'a> {
     Air,
     Lod(&'a ChunkMips),
     Full(&'a vxe_world::Chunk),
@@ -69,7 +76,7 @@ fn solid_at(around: &[Around<'_>; 27], l: [i32; 3]) -> [u64; 8] {
 /// 3 (dy + 1) + 9 (dz + 1)`), bit `i % 64` of word `i / 64` for voxel `i = x + 8 y + 64 z`: the
 /// voxels whose 3 x 3 x 3 neighbourhood holds both a solid and an air voxel. A crisp voxel
 /// (`MaterialFlags::CRISP`) is solid here as every other.
-pub fn band_mask(around: &[Around<'_>; 27], slot: usize) -> [u64; 8] {
+pub(crate) fn band_mask(around: &[Around<'_>; 27], slot: usize) -> [u64; 8] {
     let l = brick_of_slot(slot);
     let mut bricks = [[0u64; 8]; 27];
     let (mut all_solid, mut all_air) = (true, true);
@@ -121,7 +128,7 @@ pub fn band_mask(around: &[Around<'_>; 27], slot: usize) -> [u64; 8] {
 }
 
 /// The bit of a band voxel's `u8` count that marks it a solid voxel of a crisp material
-/// (`march.wgsl` hits it as its cube); the count itself is in the low five bits.
+/// (`field_walk.wgsl` hits it as its cube); the count itself is in the low five bits.
 pub const CRISP_COUNT_BIT: u8 = 0x80;
 /// The bit of a band voxel's `u8` count that marks it a solid voxel of a smooth material.
 pub const SMOOTH_COUNT_BIT: u8 = 0x40;
@@ -131,7 +138,7 @@ pub const SMOOTH_COUNT_BIT: u8 = 0x40;
 pub const BAND_CUBES_BIT: u32 = 0x4000_0000;
 
 /// Set bits of a band mask.
-pub fn band_count(m: &[u64; 8]) -> u32 {
+pub(crate) fn band_count(m: &[u64; 8]) -> u32 {
     m.iter().map(|w| w.count_ones()).sum()
 }
 
@@ -145,15 +152,15 @@ pub fn band_index(m: &[u64; 8], i: usize) -> u32 {
 /// Bricks one workgroup of the field pass fills, 64 invocations each: item `4 g + b` is brick
 /// `b` of workgroup `g`, the last workgroup partly empty when the list is not a multiple of
 /// four. Must match `field.wgsl`'s `BRICKS`.
-pub const BRICKS_PER_GROUP: u32 = 4;
+pub(crate) const BRICKS_PER_GROUP: u32 = 4;
 
 /// The buffers of the mirror the field pass binds.
-pub struct FieldBindings<'a> {
+pub(crate) struct FieldBindings<'a> {
     /// The four pool shards, placeholders included.
     pub shards: [&'a wgpu::Buffer; 4],
     pub records: &'a wgpu::Buffer,
     pub table: &'a wgpu::Buffer,
-    /// The material rows (`march.wgsl`'s `materials`), whose flags mark the crisp rows.
+    /// The material rows (`common.wgsl`'s `materials`), whose flags mark the crisp rows.
     pub materials: &'a wgpu::Buffer,
     /// The mirror window's minimum corner and size, in chunks.
     pub window: ([i32; 3], [i32; 3]),
@@ -164,7 +171,7 @@ pub struct FieldBindings<'a> {
 /// origin in voxels.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct FieldItem {
+pub(crate) struct FieldItem {
     pub unit: u32,
     pub origin: [i32; 3],
 }
@@ -182,7 +189,7 @@ struct Params {
 }
 
 /// The field pass: its pipeline and the buffers it keeps between calls.
-pub struct FieldPass {
+pub(crate) struct FieldPass {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
@@ -190,50 +197,29 @@ pub struct FieldPass {
 }
 
 impl FieldPass {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("field.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(crate::FIELD_WGSL.into()),
-        });
-        let buffer = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let rw = wgpu::BufferBindingType::Storage { read_only: false };
-        let ro = wgpu::BufferBindingType::Storage { read_only: true };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("field"),
-            entries: &[
-                buffer(0, wgpu::BufferBindingType::Uniform),
-                buffer(1, rw),
-                buffer(2, rw),
-                buffer(3, rw),
-                buffer(4, rw),
-                buffer(5, ro),
-                buffer(6, ro),
-                buffer(11, ro),
-                buffer(12, ro),
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let layout = io_layout_at(
+            device,
+            "field",
+            &[
+                (0, Io::Uniform),
+                (1, Io::Storage),
+                (2, Io::Storage),
+                (3, Io::Storage),
+                (4, Io::Storage),
+                (5, Io::ReadStorage),
+                (6, Io::ReadStorage),
+                (11, Io::ReadStorage),
+                (12, Io::ReadStorage),
             ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("field"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("field"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("field_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        );
+        let pipeline = compute_pipeline(
+            device,
+            "field",
+            field_source(),
+            &[Some(&layout)],
+            "field_main",
+        );
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("field params"),
             size: size_of::<Params>() as u64,
@@ -249,7 +235,7 @@ impl FieldPass {
     }
 
     /// Records the field pass over `items` into `encoder` (nothing for an empty list).
-    pub fn encode(
+    pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -328,7 +314,7 @@ impl FieldPass {
 }
 
 /// Brick `slot` of chunk `c` in world brick coordinates.
-pub fn world_brick(c: vxe_world::ChunkCoord, slot: usize) -> [i32; 3] {
+pub(crate) fn world_brick(c: vxe_world::ChunkCoord, slot: usize) -> [i32; 3] {
     let l = brick_of_slot(slot);
     [0, 1, 2].map(|k| c.0[k] * CHUNK_EDGE_BRICKS + l[k])
 }

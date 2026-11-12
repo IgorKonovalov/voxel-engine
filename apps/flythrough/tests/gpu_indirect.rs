@@ -5,8 +5,8 @@ mod support;
 
 use support::*;
 use vxe_render::GpuWorld;
-use vxe_render::probes::{TestProbe, WINDOW_FRAMES};
-use vxe_render::{LightParams, Lighting, ToneMap, readback};
+use vxe_render::{LightParams, Lighting, ToneMap};
+use vxe_render::{internals::TestProbe, internals::WINDOW_FRAMES};
 use vxe_world::*;
 
 /// The lighting of the probe-preset tests: no lamp, no filter, the identity tone map, the
@@ -47,7 +47,7 @@ fn render_preset(
         &LightParams::headlamp(),
         vxe_render::LookParams::default(),
     );
-    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     (rgba, info)
 }
 
@@ -263,7 +263,7 @@ impl FloorProbe {
         device: &vxe_render::wgpu::Device,
         queue: &vxe_render::wgpu::Queue,
     ) -> [f32; 3] {
-        let e = readback::read_rgba16f(device, queue, self.frame.indirect_irradiance())[0];
+        let e = vxe_render::debug::read_rgba16f(device, queue, self.frame.indirect_irradiance())[0];
         [e[0], e[1], e[2]]
     }
 }
@@ -277,7 +277,7 @@ fn lamp_furnace(device: &vxe_render::wgpu::Device) -> FloorProbe {
     f.frame.set_lighting(Lighting {
         lamp: true,
         lamp_reach: 0.0,
-        probe_freeze: vxe_render::probes::MAX_AGE,
+        probe_freeze: vxe_render::internals::MAX_AGE,
         ..f.frame.lighting()
     });
     f.camera.position = [32.5, 32.5, 32.5].into();
@@ -561,7 +561,7 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
     }
     let probes = rig.frame.probes();
     let before_origin = probes.origin_for(camera.position.to_array());
-    let before = readback::read_buffer(
+    let before = vxe_render::debug::read_buffer(
         &rig.device,
         &rig.queue,
         probes.data(),
@@ -580,7 +580,7 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
         [before_origin[0] + 20, before_origin[1], before_origin[2]]
     );
     let states = probes.read_states(&rig.device, &rig.queue);
-    let after = readback::read_buffer(
+    let after = vxe_render::debug::read_buffer(
         &rig.device,
         &rig.queue,
         probes.data(),
@@ -800,7 +800,7 @@ fn lamp_switch_run(frames: u32) -> Option<(f32, [SwitchSeries; 2])> {
         for _ in 0..frames {
             f.run(&device, &queue, &gpu, 1);
             s.indirect.push(f.indirect(&device, &queue)[0]);
-            let px = readback::read_rgba8(&device, &queue, f.frame.target());
+            let px = vxe_render::debug::read_rgba8(&device, &queue, f.frame.target());
             s.output.push(px[..3].iter().copied().max().unwrap_or(0));
             s.window.push(f.frame.probe_light_window());
             s.dispatches.push(f.frame.probe_dispatches());
@@ -866,7 +866,7 @@ fn switching_the_lamp_off_drops_the_probe_history() {
 /// same frame records all three.
 #[test]
 fn the_lamp_off_encodes_no_probe_pass() {
-    use vxe_render::marcher::FRAME_PASSES;
+    use vxe_render::FRAME_PASSES;
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
@@ -987,8 +987,8 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
         ..f.frame.lighting()
     };
     let lamp_part = |f: &FloorProbe| {
-        let acc = readback::read_float(&device, &queue, f.frame.accumulated())[0][3];
-        let raw = readback::read_rgba16f(&device, &queue, f.frame.irradiance())[0][3];
+        let acc = vxe_render::debug::read_float(&device, &queue, f.frame.accumulated())[0][3];
+        let raw = vxe_render::debug::read_rgba16f(&device, &queue, f.frame.irradiance())[0][3];
         (acc, raw)
     };
     f.frame.set_lighting(on);

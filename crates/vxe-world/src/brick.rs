@@ -6,10 +6,12 @@ use crate::material::{AIR, MaterialId};
 use crate::packed::{Packed, PackedClass};
 
 /// The 512 voxels of a brick, decoded.
+#[cfg(feature = "bench-internals")]
 pub(crate) type Voxels = [MaterialId; BRICK_VOXELS];
 
 /// A free list of boxed id arrays for [`RawBrick`]s. Each stays boxed because it moves into
 /// [`RawBrick::Full`] as the box it is, without a copy or a new allocation.
+#[cfg(feature = "bench-internals")]
 #[allow(
     clippy::vec_box,
     reason = "the boxes move into RawBrick::Full; unboxed arrays would be copied into a new box"
@@ -136,7 +138,9 @@ impl Brick {
 
 /// A brick as raw ids, for code that writes voxel by voxel before storing: a uniform value or
 /// 512 ids, not canonical until [`RawBrick::into_brick`]. The collapse ops compose in it, and
-/// the kernel bench's row writer runs on it as the reference write.
+/// the kernel bench's row writer runs on it as the reference write. Feature
+/// `bench-internals`.
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RawBrick {
@@ -144,6 +148,7 @@ pub enum RawBrick {
     Full(Box<Voxels>),
 }
 
+#[cfg(feature = "bench-internals")]
 impl RawBrick {
     pub fn of(b: &Brick) -> Self {
         match b {

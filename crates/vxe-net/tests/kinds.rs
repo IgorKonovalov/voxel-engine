@@ -22,6 +22,10 @@ fn session(vault_id: u64) -> Vec<Op> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one case per op kind, applied and replayed in one session so the replay covers them all"
+)]
 fn every_kind_applies_through_the_server_and_replays() {
     let world = Arc::new(slab_world());
     let mut server = Server::new(world.clone(), Box::new(NoLogic), 0);

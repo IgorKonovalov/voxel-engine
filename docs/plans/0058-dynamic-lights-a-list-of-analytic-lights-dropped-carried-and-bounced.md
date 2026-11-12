@@ -4,6 +4,12 @@
 > architect's re-read below, order amended 2026-11-11), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
 > phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
 > flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5)
+> **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
+> by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
+> `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
+> `hud.rs`). Read each through "Where things moved" in
+> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> phases re-cut their Files touched at their start.
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the consumer's "headlamp, flares,
 > glowing crystal"; the per-source switch on feeding the probes, parked 2026-10-22)
@@ -20,7 +26,7 @@
 > **Source:** the owner, 2026-11-04: "I want to be able to for example light cavern by dropping
 > some light source inside, and see lighting change in real time", and the answers under Owner
 > answers.
-> **Starts after:** [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md)'s
+> **Starts after:** [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md)'s
 > merge (owner, 2026-11-11: 0045 moves ahead of this plan; before that, Plans 0061, 0067 and
 > 0068 merge). The order is Plans 0061, 0067, 0045, this plan, then
 > [Plan 0044](0044-hot-path-and-defect-pass.md)'s render phases and Plan 0069. Plan 0061 edits

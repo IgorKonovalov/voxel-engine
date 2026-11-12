@@ -20,22 +20,6 @@ const HOP: usize = 1_200;
 /// The bound over the chamber's steady level.
 const BOUND_DB: f64 = 1.5;
 
-/// A world whose voxels come from a closure of the voxel coordinate.
-struct FnSource<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 /// The 12 m cube of air, voxels `[0, 120)³`, inside a 2 m shell of the cave row
 /// (`[-20, 140)³`), air beyond it; chunks outside `[-1, 4)³` are not resident and read as air.
 fn chamber() -> World {

@@ -2,6 +2,12 @@
 
 > **Status:** in-progress (owner go 2026-11-10; Phase 1 may start now, Phases 2 to 6 start after
 > Plans 0058 and 0045 close and the architect's re-read below)
+> **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
+> by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
+> `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
+> `hud.rs`). Read each through "Where things moved" in
+> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> phases re-cut their Files touched at their start.
 > **Created:** 2026-11-10
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (the render half; Plan 0008 closed the
 > `.vox` import)
@@ -17,7 +23,7 @@
 > under Owner answers.
 > **Starts after:** [Plan 0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
 > close for Phases 2 to 6 (they read its light list, its direct target and its change rule),
-> and after [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
+> and after [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
 > order in the plans index. **Phase 1 adds a crate and edits no existing source file**; it may
 > run as a side lane at any point. Before the Phase 2 lane starts the architect re-reads Phases 2 to
 > 4 against the tip (Plans 0058 and 0045 move the files they name). Bit and binding numbers

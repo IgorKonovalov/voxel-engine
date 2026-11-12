@@ -2,7 +2,7 @@
 // (with sharpening on, rcas.wgsl ends in the same arithmetic): FSR 2's output, linear radiance at the output size
 // pre-exposed by the frame's exposure (ADR-0033), tone mapped and display-encoded into the
 // frame's rgba8 image, one invocation per output pixel. The same arithmetic as composite.wgsl's
-// `display`, applied after the upscaler instead of before it. Compiled after march.wgsl, whose
+// `display`, applied after the upscaler instead of before it. Compiled after common.wgsl, whose
 // parameters (the tone-map flag, the view and `params.output_size`) it uses.
 //
 // Bindings, group 2:
@@ -11,7 +11,7 @@
 //   1  storage texture   tone_out   rgba8unorm: the frame's image
 //
 // With `params.dither` the shaded view takes a static blue-noise dither of one level
-// (march.wgsl's `blue_noise`, tiled; no frame index, so a still image holds still).
+// (common.wgsl's `blue_noise`, tiled; no frame index, so a still image holds still).
 //
 // Every view but the shaded one reaches the upscaler already in display values and is stored
 // as it comes, clamped to [0, 1].

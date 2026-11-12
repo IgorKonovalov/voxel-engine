@@ -105,8 +105,8 @@ The two trees are siblings, each its own root, so neither run reaches the other'
 node scripts/check-test-tiers.mjs scripts/fixtures/test-tiers
 ```
 
-Expect **exit 1 and exactly six findings**, then the count line `6 finding(s) across 7 test
-binaries` (five test files, the `still` example and the `app` binary). The tree is two packages (`gfx`, `app`) and a `.config/nextest.toml` whose tiers select GPU binaries by
+Expect **exit 1 and exactly seven findings**, then the count line `7 finding(s) across 9 test
+binaries` (seven test files, the `still` example and the `app` binary). The tree is two packages (`gfx`, `app`) and a `.config/nextest.toml` whose tiers select GPU binaries by
 `binary(/^gpu_/)` and keep readings out of soak and full by `test(/(^|::)reading::/)`:
 
 | Case | Seeded as | Expected |
@@ -117,15 +117,33 @@ binaries` (five test files, the `still` example and the `app` binary). The tree 
 | a binary's module whose test module opens a device | `apps/app/src/draw.rs`, declared by `src/main.rs` | `apps/app/src/draw.rs -> its tests open a GPU device inside the binary \`app::bin/app\`, which cannot carry the gpu_ prefix: ...` |
 | a profile that drifted | `[profile.ci-windows]`'s default-filter is `all()` | `.config/nextest.toml -> [profile.ci-windows] does not have default-filter 'not binary(/^gpu_/)'` |
 | an `#[ignore]` neither soak nor a reading | `apps/app/tests/cpu.rs`'s `stray`, `#[ignore = "slow"]` | `apps/app/tests/cpu.rs:12 -> an #[ignore] that is neither "soak" nor inside \`mod reading\`: ...` |
+| a file over the env-name cap | `apps/app/tests/env_five.rs` names five distinct `VXE_*` literals through a wrapper `env`, the first twice | `apps/app/tests/env_five.rs -> names 5 VXE_* environment variables, over the cap of 4: ... (VXE_FIVE, VXE_FOUR, VXE_ONE, VXE_THREE, VXE_TWO)` |
 | a soak mark, and readings | `cpu.rs`'s `slow_one` (`#[ignore = "soak"]`) and its `mod reading`, one test with a reason and one bare, braces inside a string between them; `#[ignore]` in a block comment | not reported |
 | a binary or example that opens a device outside its tests | `src/main.rs`'s and `still.rs`'s `main`, `examples/plain.rs` (no `test = true`) | not reported; only `#[cfg(test)]` items are read there |
 | `--headless` in a binary's own test module, nothing spawned | `src/main.rs`'s `parses` | not reported; there it counts only beside `Command::new` |
 | a GPU file with the prefix | `apps/app/tests/gpu_golden.rs`, `crates/gfx/tests/gpu_draw.rs` | not reported |
+| a file at the env-name cap | `apps/app/tests/env_four.rs`: four distinct names, one twice, a fifth in a comment; `env_five.rs`'s comment names a sixth | not reported; a literal is counted once and comments are stripped |
 | a CPU-only file | `apps/app/tests/cpu.rs` names every entry point in comments only, and a local `device` | not reported; comments are stripped before matching |
 
 The other profiles are green here (`quick` and `gpu` are the prefix filter and its negation,
-`gate` has none, `soak` and `full` leave out `reading::`), so the six lines above are the whole
+`gate` has none, `soak` and `full` leave out `reading::`), so the seven lines above are the whole
 output.
+
+## `file-size/`: for `check-file-size.mjs`
+
+```
+node scripts/check-file-size.mjs scripts/fixtures/file-size
+```
+
+Expect **exit 1 and exactly three findings**, then the count line `3 file(s) over their cap`. The
+tree is one crate, `crates/seeded`, whose files are a seed comment padded to the line counts named:
+
+| Case | Seeded as | Expected |
+|------|-----------|----------|
+| a source file over the source cap | `src/over.rs`, 1201 lines | `crates/seeded/src/over.rs -> 1201 lines, over the source cap of 1200` |
+| a test file over the test cap | `tests/over.rs`, 2001 lines | `crates/seeded/tests/over.rs -> 2001 lines, over the test cap of 2000` |
+| a `tests/support/` file over the test cap | `tests/support/mod.rs`, 2001 lines | `crates/seeded/tests/support/mod.rs -> 2001 lines, over the test cap of 2000` |
+| a file exactly at the cap | `src/at_cap.rs`, 1200 lines | not reported; the cap is inclusive |
 
 ## `test-times/`: for `test-times.mjs`
 

@@ -2,10 +2,10 @@
 //! closed scenes whose walls have albedo 0 and emit a grey radiance, so every pixel's luminance
 //! is its wall's emission exactly. The lamp is off, indirect light off, the ACES tone map.
 
-use vxe_render::exposure::ExposureState;
+use vxe_render::ExposureState;
 use vxe_render::{
     AutoExposure, Camera, Exposure, Frame, GpuWorld, LightParams, Lighting, LightingResolution,
-    Metering, glam::Vec3, readback, wgpu,
+    Metering, glam::Vec3, wgpu,
 };
 use vxe_world::*;
 
@@ -26,22 +26,6 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         ..Default::default()
     };
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
-}
-
-/// A world whose voxel at world coordinate `v` is `f(v)`.
-struct Voxels<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for Voxels<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
 }
 
 /// A material of albedo 0 emitting grey `l`.
@@ -67,7 +51,7 @@ fn two_emitters(a: f32, b: f32) -> MaterialTable {
 fn walled(f: impl Fn([i32; 3]) -> MaterialId + Sync, table: &MaterialTable) -> World {
     World::generate(
         ChunkExtent::new([-1, 0, 0], [1, 1, 1]),
-        &Voxels(move |v: [i32; 3]| {
+        &FnSource(move |v: [i32; 3]| {
             let inside = (-60..60).contains(&v[0]) && v[1] >= 1 && (1..63).contains(&v[2]);
             if v[1] >= WALL_Y || !inside { f(v) } else { AIR }
         }),
@@ -113,7 +97,7 @@ fn mirror(device: &wgpu::Device, queue: &wgpu::Queue, world: &World) -> GpuWorld
 
 /// A blocking read of the exposure state.
 fn state(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> ExposureState {
-    ExposureState::from_bytes(&readback::read_buffer(
+    ExposureState::from_bytes(&vxe_render::debug::read_buffer(
         device,
         queue,
         frame.exposure_state(),
@@ -125,7 +109,7 @@ fn state(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> ExposureS
 /// The meter's tiles as `(sum, count)` pairs.
 fn tiles(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<[f32; 2]> {
     let n = SIZE.map(|v| v.div_ceil(8));
-    let bytes = readback::read_buffer(
+    let bytes = vxe_render::debug::read_buffer(
         device,
         queue,
         frame.exposure_tiles(),
@@ -192,7 +176,7 @@ fn a_wall_split_in_half_meters_the_mean_of_its_halves() {
             "{metering:?} meters {}",
             s.metered_log2
         );
-        assert_eq!(s.flags & vxe_render::exposure::STATE_HELD, 0);
+        assert_eq!(s.flags & vxe_render::internals::STATE_HELD, 0);
         assert_eq!((s.current, s.previous), (1.0, 1.0));
     }
 }
@@ -307,7 +291,7 @@ fn rock_and_glow() -> MaterialTable {
 fn ceiling_box() -> World {
     World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &Voxels(|v: [i32; 3]| {
+        &FnSource(|v: [i32; 3]| {
             let inside_xy = (22..42).contains(&v[0]) && (22..42).contains(&v[1]);
             if inside_xy && (20..30).contains(&v[2]) {
                 AIR
@@ -347,7 +331,7 @@ fn ceiling_frame(device: &wgpu::Device, e: f32) -> Frame {
 
 /// The ages (moments alpha) of the last encoded frame.
 fn ages(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<f32> {
-    readback::read_rgba16f(device, queue, frame.moments())
+    vxe_render::debug::read_rgba16f(device, queue, frame.moments())
         .iter()
         .map(|m| m[2])
         .collect()
@@ -355,7 +339,7 @@ fn ages(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<f32> {
 
 /// The centre pixel's display bytes.
 fn centre(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> [u8; 3] {
-    let px = readback::read_rgba8(device, queue, frame.target());
+    let px = vxe_render::debug::read_rgba8(device, queue, frame.target());
     let i = (16 * 32 + 16) * 4;
     [px[i], px[i + 1], px[i + 2]]
 }
@@ -442,7 +426,7 @@ fn no_target_overflows_at_the_glare() {
         ("moments", frame.moments()),
         ("filtered", frame.filtered()),
     ] {
-        let texels = readback::read_float(&device, &queue, tex);
+        let texels = vxe_render::debug::read_float(&device, &queue, tex);
         let bad = texels.iter().flatten().filter(|v| !v.is_finite()).count();
         let max = texels.iter().flatten().fold(0.0f32, |m, &v| m.max(v));
         println!("{name}: largest {max}, {bad} non-finite");
@@ -510,7 +494,7 @@ impl BoxRig {
 
     /// The last frame's centre pixel, its red byte (the box is grey).
     fn pixel(&self) -> u8 {
-        let px = readback::read_rgba8(&self.device, &self.queue, self.frame.target());
+        let px = vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target());
         px[(9 * 32 + 16) * 4]
     }
 

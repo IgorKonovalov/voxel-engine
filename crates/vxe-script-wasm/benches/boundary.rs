@@ -15,7 +15,7 @@
 #[path = "../tests/support/mod.rs"]
 mod support;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use flythrough_logic::{BENCH_CARVES, DigInput, DigLogic};
@@ -23,59 +23,24 @@ use support::guest;
 use vxe_net::test_logic::*;
 use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic};
-use vxe_world::{
-    CellCoord, EditError, Fixed3, Hit, MaterialId, Op, OpResult, PrefabRegistry, Region,
-    VoxelCoord, World,
-};
+use vxe_world::World;
+
+#[path = "../../vxe-world/benches/support/clock.rs"]
+#[allow(dead_code, reason = "the shared clock file also holds `timed`")]
+mod clock;
+use clock::now;
 
 #[allow(
     clippy::disallowed_methods,
     reason = "the bench times the tick alone, between untimed world builds"
 )]
-fn now() -> Instant {
-    Instant::now()
-}
-
-/// A host straight on a world: no logs, no announcements, so both sides pay only the edit
-/// and their own path to it.
-struct WorldHost<'a>(&'a World);
-
-impl Host for WorldHost<'_> {
-    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
-        op.apply(self.0, &PrefabRegistry::new())
-    }
-
-    fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
-        self.0.material_at(v)
-    }
-
-    fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
-        self.0.raycast(origin, dir.0, max).ok().flatten()
-    }
-
-    fn raycast_with_steps(&self, origin: Fixed3, dir: Fixed3, max: i64) -> (Option<Hit>, u64) {
-        self.0
-            .raycast_with_stats(origin, dir.0, max)
-            .unwrap_or((None, 0))
-    }
-
-    fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
-        self.0.count_in_box(lo, hi).unwrap_or_default()
-    }
-
-    /// This host keeps no coarse grid; nothing here asks the support query.
-    fn unsupported(&self, _changed: &[CellCoord]) -> Vec<Region> {
-        Vec::new()
-    }
-}
-
 /// The component `name`, loaded under the default configuration and initialised.
 fn component(name: &str) -> WasmLogic {
     let mut logic =
         WasmLogic::load(&guest(name), &WasmConfig::default()).expect("the component loads");
     let world = solid3_world();
     logic
-        .try_init(&mut WorldHost(&world), 0)
+        .try_init(&mut WorldHost::new(&world), 0)
         .expect("the component's init returns");
     logic
 }
@@ -92,7 +57,7 @@ fn time_ticks(
     let mut total = Duration::ZERO;
     for _ in 0..iters {
         let world = solid3_world();
-        let mut host = WorldHost(&world);
+        let mut host = WorldHost::new(&world);
         let t = now();
         let out = logic.tick(&mut host, *tick, inputs);
         total += now() - t;

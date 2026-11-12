@@ -12,22 +12,6 @@ const W: MaterialId = 1;
 /// The amplitude the wall's face keeps: `(1 - 0.3) ^ 0.2`, one 10 cm skin in and out.
 const KEEP: f32 = 0.931_149_5;
 
-/// A world whose voxels come from a closure of the voxel coordinate.
-struct FnSource<F>(F);
-
-impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            out.set_brick(
-                slot,
-                Brick::from_fn(|l| (self.0)([0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]))),
-            );
-        }
-    }
-}
-
 /// Air over chunks `[0, 4)³` (voxels `[0, 256)³`), `W` wherever `solid` holds.
 fn world(solid: impl Fn([i32; 3]) -> bool + Sync) -> World {
     let mut t = MaterialTable::new();

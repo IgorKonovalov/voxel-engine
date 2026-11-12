@@ -309,43 +309,115 @@ fn node(r: &mut Reader<'_>) -> Result<(u32, Node, Option<String>), VoxError> {
     Ok((id, node, name))
 }
 
+/// Reads the header and `MAIN`'s header: the version, and a reader over `MAIN`'s children.
+fn main_chunk(bytes: &[u8]) -> Result<(u32, Reader<'_>), VoxError> {
+    let mut r = Reader {
+        b: bytes,
+        pos: 0,
+        end: bytes.len(),
+        chunk: *b"VOX ",
+    };
+    let magic = r.id()?;
+    if &magic != b"VOX " {
+        return Err(VoxError::Magic(magic));
+    }
+    let version = r.u32()?;
+    if version != 150 && version != 200 {
+        return Err(VoxError::Version(version));
+    }
+    r.chunk = MAIN;
+    let id = r.id()?;
+    if id != MAIN {
+        return Err(VoxError::Malformed {
+            chunk: id,
+            what: "the first chunk is not MAIN",
+        });
+    }
+    let n = r.u32()? as usize;
+    let m = r.u32()? as usize;
+    r.take(n)?;
+    // Data after MAIN's children is ignored.
+    let end = r.pos.checked_add(m).filter(|&e| e <= bytes.len());
+    let Some(end) = end else {
+        return Err(VoxError::Truncated {
+            chunk: MAIN,
+            at: bytes.len(),
+        });
+    };
+    r.end = end;
+    Ok((version, r))
+}
+
+/// The next chunk under `r`: a reader over its content, and where the chunk (content and
+/// children) ends.
+fn next_chunk<'a>(r: &mut Reader<'a>) -> Result<(Reader<'a>, usize), VoxError> {
+    r.chunk = MAIN;
+    let id = r.id()?;
+    r.chunk = id;
+    let n = r.u32()? as usize;
+    let m = r.u32()? as usize;
+    let start = r.pos;
+    let content_end = start.checked_add(n).filter(|&e| e <= r.end);
+    let chunk_end = content_end
+        .and_then(|e| e.checked_add(m))
+        .filter(|&e| e <= r.end);
+    let (Some(content_end), Some(chunk_end)) = (content_end, chunk_end) else {
+        return Err(VoxError::Truncated {
+            chunk: id,
+            at: r.end,
+        });
+    };
+    let c = Reader {
+        b: r.b,
+        pos: start,
+        end: content_end,
+        chunk: id,
+    };
+    Ok((c, chunk_end))
+}
+
+/// A `SIZE` chunk's model size.
+fn size(c: &mut Reader<'_>) -> Result<[u32; 3], VoxError> {
+    let s = [c.i32()?, c.i32()?, c.i32()?];
+    if s.iter().any(|&v| v < 0) {
+        return Err(c.malformed("negative model size"));
+    }
+    let s = s.map(|v| v as u32);
+    if s.iter().any(|&v| v > MAX_MODEL_EDGE) {
+        return Err(VoxError::TooLarge { size: s });
+    }
+    Ok(s)
+}
+
+/// An `XYZI` chunk's voxels, for a model of `size`.
+fn xyzi(c: &mut Reader<'_>, size: [u32; 3]) -> Result<VoxModel, VoxError> {
+    let count = c.count("negative voxel count")? as usize;
+    let raw = c.take(count.saturating_mul(4))?;
+    let mut voxels = Vec::with_capacity(count);
+    for v in raw.chunks_exact(4) {
+        let v = [v[0], v[1], v[2], v[3]];
+        if (0..3).any(|k| u32::from(v[k]) >= size[k]) {
+            return Err(c.malformed("voxel outside the model size"));
+        }
+        voxels.push(v);
+    }
+    Ok(VoxModel { size, voxels })
+}
+
+/// An `RGBA` chunk into `palette`.
+fn rgba(c: &mut Reader<'_>, palette: &mut [[u8; 4]; 256]) -> Result<(), VoxError> {
+    let raw = c.take(256 * 4)?;
+    // Section 7: entry k is the colour of index k + 1; the last entry has no index.
+    for (k, e) in raw.chunks_exact(4).take(255).enumerate() {
+        palette[k + 1] = [e[0], e[1], e[2], e[3]];
+    }
+    palette[0] = [0; 4];
+    Ok(())
+}
+
 impl VoxFile {
     pub fn parse(bytes: &[u8]) -> Result<Self, VoxError> {
-        let mut r = Reader {
-            b: bytes,
-            pos: 0,
-            end: bytes.len(),
-            chunk: *b"VOX ",
-        };
-        let magic = r.id()?;
-        if &magic != b"VOX " {
-            return Err(VoxError::Magic(magic));
-        }
-        let version = r.u32()?;
-        if version != 150 && version != 200 {
-            return Err(VoxError::Version(version));
-        }
-        r.chunk = MAIN;
-        let id = r.id()?;
-        if id != MAIN {
-            return Err(VoxError::Malformed {
-                chunk: id,
-                what: "the first chunk is not MAIN",
-            });
-        }
-        let n = r.u32()? as usize;
-        let m = r.u32()? as usize;
-        r.take(n)?;
-        // Data after MAIN's children is ignored.
-        let end = r.pos.checked_add(m).filter(|&e| e <= bytes.len());
-        let Some(end) = end else {
-            return Err(VoxError::Truncated {
-                chunk: MAIN,
-                at: bytes.len(),
-            });
-        };
-        r.end = end;
-
+        let (version, mut r) = main_chunk(bytes)?;
         let mut file = Self {
             version,
             models: Vec::new(),
@@ -356,83 +428,8 @@ impl VoxFile {
         };
         let mut pending: Option<[u32; 3]> = None;
         while r.pos < r.end {
-            r.chunk = MAIN;
-            let id = r.id()?;
-            r.chunk = id;
-            let n = r.u32()? as usize;
-            let m = r.u32()? as usize;
-            let start = r.pos;
-            let content_end = start.checked_add(n).filter(|&e| e <= r.end);
-            let chunk_end = content_end
-                .and_then(|e| e.checked_add(m))
-                .filter(|&e| e <= r.end);
-            let (Some(content_end), Some(chunk_end)) = (content_end, chunk_end) else {
-                return Err(VoxError::Truncated {
-                    chunk: id,
-                    at: r.end,
-                });
-            };
-            let mut c = Reader {
-                b: bytes,
-                pos: start,
-                end: content_end,
-                chunk: id,
-            };
-            match &id {
-                b"PACK" => {
-                    c.u32()?;
-                }
-                b"SIZE" => {
-                    if pending.is_some() {
-                        return Err(c.malformed("SIZE without its XYZI"));
-                    }
-                    let s = [c.i32()?, c.i32()?, c.i32()?];
-                    if s.iter().any(|&v| v < 0) {
-                        return Err(c.malformed("negative model size"));
-                    }
-                    let s = s.map(|v| v as u32);
-                    if s.iter().any(|&v| v > MAX_MODEL_EDGE) {
-                        return Err(VoxError::TooLarge { size: s });
-                    }
-                    pending = Some(s);
-                }
-                b"XYZI" => {
-                    let Some(size) = pending.take() else {
-                        return Err(c.malformed("XYZI without a SIZE"));
-                    };
-                    let count = c.count("negative voxel count")? as usize;
-                    let raw = c.take(count.saturating_mul(4))?;
-                    let mut voxels = Vec::with_capacity(count);
-                    for v in raw.chunks_exact(4) {
-                        let v = [v[0], v[1], v[2], v[3]];
-                        if (0..3).any(|k| u32::from(v[k]) >= size[k]) {
-                            return Err(c.malformed("voxel outside the model size"));
-                        }
-                        voxels.push(v);
-                    }
-                    file.models.push(VoxModel { size, voxels });
-                }
-                b"RGBA" => {
-                    let raw = c.take(256 * 4)?;
-                    // Section 7: entry k is the colour of index k + 1; the last entry has no
-                    // index.
-                    for (k, e) in raw.chunks_exact(4).take(255).enumerate() {
-                        file.palette[k + 1] = [e[0], e[1], e[2], e[3]];
-                    }
-                    file.palette[0] = [0; 4];
-                }
-                b"nTRN" | b"nGRP" | b"nSHP" => {
-                    let (nid, node, name) = node(&mut c)?;
-                    if file.nodes.insert(nid, node).is_some() {
-                        return Err(c.malformed("duplicate node id"));
-                    }
-                    if let Some(name) = name {
-                        file.names.insert(nid, name);
-                    }
-                }
-                b"IMAP" => file.imap_present = true,
-                _ => {}
-            }
+            let (mut c, chunk_end) = next_chunk(&mut r)?;
+            file.read_chunk(&mut c, &mut pending)?;
             r.pos = chunk_end;
         }
         if pending.is_some() {
@@ -443,6 +440,45 @@ impl VoxFile {
         }
         file.walk(&mut |_| {})?;
         Ok(file)
+    }
+
+    /// Reads one data chunk by its id; `pending` is the `SIZE` waiting for its `XYZI`. Other
+    /// ids are skipped.
+    fn read_chunk(
+        &mut self,
+        c: &mut Reader<'_>,
+        pending: &mut Option<[u32; 3]>,
+    ) -> Result<(), VoxError> {
+        match &c.chunk {
+            b"PACK" => {
+                c.u32()?;
+            }
+            b"SIZE" => {
+                if pending.is_some() {
+                    return Err(c.malformed("SIZE without its XYZI"));
+                }
+                *pending = Some(size(c)?);
+            }
+            b"XYZI" => {
+                let Some(size) = pending.take() else {
+                    return Err(c.malformed("XYZI without a SIZE"));
+                };
+                self.models.push(xyzi(c, size)?);
+            }
+            b"RGBA" => rgba(c, &mut self.palette)?,
+            b"nTRN" | b"nGRP" | b"nSHP" => {
+                let (nid, node, name) = node(c)?;
+                if self.nodes.insert(nid, node).is_some() {
+                    return Err(c.malformed("duplicate node id"));
+                }
+                if let Some(name) = name {
+                    self.names.insert(nid, name);
+                }
+            }
+            b"IMAP" => self.imap_present = true,
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Node 0 exists, every child and model a node names exists, no node is its own

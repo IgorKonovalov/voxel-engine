@@ -142,7 +142,7 @@ fn capsule_carve_reports_exact_counts() {
 fn split_world() -> World {
     World::generate(
         test_extent(),
-        &FnSource(|v: VoxelCoord| if v.0[0] >= 0 { 4 } else { 3 }),
+        &FnSource(|v: [i32; 3]| if v[0] >= 0 { 4 } else { 3 }),
         &test_table(),
     )
 }
@@ -267,8 +267,8 @@ fn mixed_ops() -> Vec<EditOp> {
 
 #[test]
 fn results_do_not_depend_on_generation_thread_count() {
-    let source = FnSource(|v: VoxelCoord| {
-        let [x, y, z] = v.0;
+    let source = FnSource(|v: [i32; 3]| {
+        let [x, y, z] = v;
         (x.div_euclid(5) + y.div_euclid(7) + z.div_euclid(3)).rem_euclid(6) as MaterialId
     });
     let run = |threads| {
@@ -435,7 +435,7 @@ fn run_seeded_ops_against_the_reference(world: &World) -> (usize, usize) {
 fn apply_matches_the_reference_over_seeded_ops() {
     let world = World::generate(
         test_extent(),
-        &FnSource(|v: VoxelCoord| (hash::hash3(0x0003_0001, v.0) % 6) as MaterialId),
+        &FnSource(|v: [i32; 3]| (hash::hash3(0x0003_0001, v) % 6) as MaterialId),
         &test_table(),
     );
     let (changed, failed) = run_seeded_ops_against_the_reference(&world);
@@ -482,8 +482,8 @@ fn carving_only_indestructible_bricks_writes_nothing() {
     assert_eq!(table.push(m6), 6);
     let world = World::generate(
         test_extent(),
-        &FnSource(|v: VoxelCoord| {
-            let [x, y, z] = v.0;
+        &FnSource(|v: [i32; 3]| {
+            let [x, y, z] = v;
             match (x >= 0, (x + y + z).rem_euclid(2)) {
                 (false, 0) => 4,
                 (false, _) => 6,
@@ -520,7 +520,7 @@ fn carving_only_indestructible_bricks_writes_nothing() {
 fn ids_beyond_the_table_are_counted_like_the_reference() {
     let world = World::generate(
         test_extent(),
-        &FnSource(|v: VoxelCoord| (hash::hash3(0x0003_0004, v.0) % 9) as MaterialId),
+        &FnSource(|v: [i32; 3]| (hash::hash3(0x0003_0004, v) % 9) as MaterialId),
         &test_table(),
     );
     assert_eq!(world.materials().len(), 6);
@@ -648,8 +648,8 @@ fn entries_are_inserted_renamed_and_removed() {
     // Brick 0: layers z 0..4 of material 3, the rest air.
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-        &FnSource(|v: VoxelCoord| {
-            if v.0.iter().all(|&c| c < 8) && v.0[2] < 4 {
+        &FnSource(|v: [i32; 3]| {
+            if v.iter().all(|&c| c < 8) && v[2] < 4 {
                 3
             } else {
                 AIR
@@ -948,7 +948,7 @@ fn the_crisp_flag_is_a_row_property_only() {
         crisp.push(m);
     }
     assert!(crisp.is_crisp(3));
-    let source = FnSource(|v: VoxelCoord| if v.0[2] < 3 { 3 } else { 0 });
+    let source = FnSource(|v: [i32; 3]| if v[2] < 3 { 3 } else { 0 });
     let smooth_world = World::generate(test_extent(), &source, &test_table());
     let crisp_world = World::generate(test_extent(), &source, &crisp);
     let op = sphere10(Mode::Carve);
