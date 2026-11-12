@@ -15,7 +15,7 @@ use vxe_net::{ClientInput, Host, Logic, LogicError, TickOutput};
 use vxe_world::wire::{Reader, decode_op};
 use vxe_world::{CellCoord, EditError, Face, Fixed3, MaterialId, Op, OpResult, Region, VoxelCoord};
 use wasmtime::StoreContextMut;
-use wasmtime::component::{Component, Linker, ResourceTable};
+use wasmtime::component::{Component, Linker, LinkerInstance, ResourceTable};
 use wasmtime::{Engine, ResourceLimiter, Store, Trap};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
@@ -398,6 +398,9 @@ fn settle(store: &mut StoreContextMut<'_, State>, bound: u64, cost: u64) -> wasm
     }
 }
 
+/// The `host` instance of a linker, as the import registrations below take it.
+type HostInstance<'a> = LinkerInstance<'a, State>;
+
 /// Registers the `host` imports. Each runs under [`guarded`] on the lent host; the world
 /// walks are pre-charged their bound at `rates` and settled after, the others charged after
 /// ([`WorkRates`]). The store's fuel is reachable from a `func_wrap` closure, not from a
@@ -408,6 +411,17 @@ fn add_host(
     support_max_region: u32,
 ) -> wasmtime::Result<()> {
     let mut host = linker.instance(HOST_INTERFACE)?;
+    add_apply(&mut host, rates)?;
+    add_material_at(&mut host, rates)?;
+    add_raycast(&mut host, rates)?;
+    add_count_in_box(&mut host, rates)?;
+    add_unsupported(&mut host, rates, support_max_region)?;
+    Ok(())
+}
+
+/// `apply`: the op's bytes charged first, then the op decoded and applied, charged by its
+/// result.
+fn add_apply(host: &mut HostInstance<'_>, rates: WorkRates) -> wasmtime::Result<()> {
     host.func_wrap(
         "apply",
         move |mut store: StoreContextMut<'_, State>, (op,): (Vec<u8>,)| {
@@ -425,7 +439,11 @@ fn add_host(
             charge(&mut store, cost)?;
             Ok((answer,))
         },
-    )?;
+    )
+}
+
+/// `material-at`: charged one call after.
+fn add_material_at(host: &mut HostInstance<'_>, rates: WorkRates) -> wasmtime::Result<()> {
     host.func_wrap(
         "material-at",
         move |mut store: StoreContextMut<'_, State>, (v,): (wit::Voxel,)| {
@@ -433,7 +451,11 @@ fn add_host(
             charge(&mut store, rates.per_call)?;
             Ok((m,))
         },
-    )?;
+    )
+}
+
+/// `raycast`: pre-charged the ray's bound, settled by the steps it walked.
+fn add_raycast(host: &mut HostInstance<'_>, rates: WorkRates) -> wasmtime::Result<()> {
     host.func_wrap(
         "raycast",
         move |mut store: StoreContextMut<'_, State>,
@@ -454,7 +476,11 @@ fn add_host(
                 material: h.material,
             }),))
         },
-    )?;
+    )
+}
+
+/// `count-in-box`: pre-charged the box's bound, settled by the counts it found.
+fn add_count_in_box(host: &mut HostInstance<'_>, rates: WorkRates) -> wasmtime::Result<()> {
     host.func_wrap(
         "count-in-box",
         move |mut store: StoreContextMut<'_, State>, (lo, hi): (wit::Voxel, wit::Voxel)| {
@@ -465,7 +491,16 @@ fn add_host(
             settle(&mut store, bound, rates.count_cost(&counts))?;
             Ok((counts,))
         },
-    )?;
+    )
+}
+
+/// `unsupported`: the changed cells' bytes charged first, then pre-charged the support walk's
+/// bound over regions of at most `support_max_region` cells, settled by the steps it walked.
+fn add_unsupported(
+    host: &mut HostInstance<'_>,
+    rates: WorkRates,
+    support_max_region: u32,
+) -> wasmtime::Result<()> {
     host.func_wrap(
         "unsupported",
         move |mut store: StoreContextMut<'_, State>, (changed,): (Vec<wit::Cell>,)| {
@@ -484,8 +519,7 @@ fn add_host(
             settle(&mut store, bound, rates.steps_cost(steps))?;
             Ok((regions.into_iter().map(wit_region).collect::<Vec<_>>(),))
         },
-    )?;
-    Ok(())
+    )
 }
 
 /// The `wasi:clocks/monotonic-clock` instance `add_to_linker_sync` registers. A component
