@@ -893,6 +893,14 @@ own start commit, not against Plan 0044's close: other commits may land between 
 
 ### Notes
 
+- Fix pass, the collapse bench regression (`c244e58`): bisected to `3dc2df5` (Phase 5's drop
+  split). The split let `ChunkReader::chunk`'s miss path (map lookup and lock) inline into
+  the gap scan's loop. The miss is now a cold, never-inlined `load`. At the fix the four cube
+  drops read 6.87 to 8.69 ms against before 6.87 to 8.66 and after 8.86 to 10.60; seven of
+  ten collapse bars met; slab `drop_region` 10 (+0.4 %), `remove_region` (+0.3 %) and
+  `pile_rubble` (+4.3 %) over the before max. Edits, raycast and coarse unchanged by the fix.
+  Readings in [`logs/0045.md`](logs/0045.md), "Fix pass".
+
 ### Close triggers
 
 ## Followups
