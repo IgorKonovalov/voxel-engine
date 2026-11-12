@@ -145,6 +145,22 @@
 > (9) **The private `Budget` struct becomes `SubmitRoom`** so Phase 3's public `Budget` can take
 > the name. It is accepted, and no public API changes beyond the plan's.
 > ADR-0048 is untouched: the cost is the step's bookkeeping, not the order or the withdrawal.
+>
+> **Amended 2026-11-12 (owner), after the re-read at c8a621d** (`docs/plans/logs/0067.md`; three
+> questions, each the recommended option):
+> - **Phase 2 passes.** Rig (b) `--coarse 0` non-opening p50 at glide 300 reads +0.118 ms over
+>   the base (+0.1 tolerance); glide 150 meets the bar as written, p99 and opening p50 are
+>   better at both. The remaining `filter` cost (about 0.055 ms: `gone`, `drop_reach`,
+>   `touched`) is a named Phase 7 followup. Rejected: one more cut before the window; moving it
+>   to Plan 0070.
+> - **Phase 3's cross-adapter bar is a reading.** The Radeon holds the budget (148 ms/s); the
+>   RTX draws about 91 to 92 ms/s under `second:150,0.25`, its submits using about 5.3 ms of an
+>   about 8 ms slice. The cause is a named Phase 7 followup. Rejected: finding it before the
+>   window.
+> - **Phase 5 is built before Phase 6.** The streamed reading reinstated it (reach-bound 3044
+>   of 3641 waiting in view, 0.84 against the tenth). The window compares `--reach partial`
+>   against Phase 4's `chain`. Rejected: the window now with a second one for Phase 5; striking
+>   it.
 
 ## TL;DR
 
