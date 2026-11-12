@@ -495,13 +495,13 @@ pub const FLAG_MISSING_SHIFT: u32 = 2;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MissingLight {
     /// 0, as before the summaries.
-    #[default]
     Black,
     /// The chunk's own summary, then the mean of its six face neighbours' summaries.
     Neighbour,
     /// The chunk's own summary, then the level-1 and the level-2 parent records.
     Parent,
-    /// Own, neighbours, level 1, level 2.
+    /// Own, neighbours, level 1, level 2: the default.
+    #[default]
     Chain,
 }
 
@@ -1046,6 +1046,29 @@ fn fallback_block(block: &[u32], chain: &[u32; BRICK_WORDS], record: usize) -> V
     from
 }
 
+/// A fade's block at `t` of the way from `from` to `to` (one layout): `to`'s words, each cell's
+/// direction values mixed in linear light and packed again. The fades write it each frame, and a
+/// block landing on a running fade starts its own from it.
+fn fade_mix(shown: &mut Vec<u32>, from: &[u32], to: &[u32], t: f32, record: usize) {
+    let lerp = |a: u32, b: u32| {
+        let (x, y) = (rgb9e5_unpack(a), rgb9e5_unpack(b));
+        rgb9e5_pack([0, 1, 2].map(|k| x[k] + (y[k] - x[k]) * t))
+    };
+    shown.clear();
+    shown.extend_from_slice(to);
+    for &dir in &to[..CHUNK_BRICKS] {
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            for w in cell..cell + 6 {
+                shown[w] = lerp(from[w], to[w]);
+            }
+        }
+    }
+}
+
 /// A brick record's directions it holds no value for take the mean of those it does: a brick a
 /// dig touched may have faces now where it had none.
 fn fill_directions(r: &mut [u32]) {
@@ -1441,7 +1464,7 @@ impl Store {
             touched: Some(Vec::new()),
             light: LightSummaries::default(),
             parents: None,
-            missing: MissingLight::Black,
+            missing: MissingLight::default(),
             summary_ms: 0.0,
         }
     }
@@ -4105,8 +4128,8 @@ pub struct BakeQueue {
     /// a sample count (the pre-roll) withdraws nothing.
     pub withdraw: bool,
     /// Whether a chunk whose reach is not resident full bakes from the chunks that are
-    /// ([`ReachMode`]).
-    pub reach_mode: ReachMode,
+    /// ([`ReachMode`]; [`BakeQueue::set_reach_mode`]).
+    reach_mode: ReachMode,
     /// Edit boxes since the last step.
     boxes: Vec<[[i32; 3]; 2]>,
     /// Chunks with dig bricks to re-bake, not yet in a job; and those in a job, with the bricks
@@ -4285,7 +4308,10 @@ impl BakeQueue {
         }
         let has = store.blocks.contains_key(&c);
         let coarse = has && store.is_coarse(cc);
-        let wants = !has || coarse || self.reach.contains(&c) || self.partial_due.contains(&c);
+        let wants = !has
+            || coarse
+            || self.reach.contains(&c)
+            || (!self.partial_due.is_empty() && self.partial_due.contains(&c));
         (wants
             && !self.faceless.contains(&c)
             && !in_job.contains(&c)
@@ -4366,15 +4392,31 @@ impl BakeQueue {
             // A streamer's residency can move a frame ahead of the mirror; a bounded world's
             // verdict reads the mirror alone.
             debug_assert!(
-                resident.is_some() || v == reach_of(run, coord, lr, resident),
+                resident.is_some()
+                    || v == reach_of(run, coord, lr, resident, self.reach_mode == ReachMode::Full),
                 "the cached reach of {coord:?}"
             );
             return v;
         }
         self.stats.reach_checks += 1;
-        let v = reach_of(run, coord, lr, resident);
+        let v = reach_of(run, coord, lr, resident, self.reach_mode == ReachMode::Full);
         self.reach_cache.insert(coord.0, v);
         v
+    }
+
+    /// Whether a chunk whose reach is not resident full bakes from the chunks that are.
+    pub fn reach_mode(&self) -> ReachMode {
+        self.reach_mode
+    }
+
+    /// Sets [`BakeQueue::reach_mode`]. A change drops the cached reach verdicts: under
+    /// [`ReachMode::Full`] a walk stops at the first chunk not resident full, so its
+    /// [`Reach::Partial`] does not say that nothing in the reach waits to upload.
+    pub fn set_reach_mode(&mut self, mode: ReachMode) {
+        if mode != self.reach_mode {
+            self.reach_mode = mode;
+            self.reach_cache.clear();
+        }
     }
 
     /// Whether `coord` may bake under [`BakeQueue::reach`], and whether from a partial reach:
@@ -4826,8 +4868,11 @@ impl BakeQueue {
                         self.digs.remove(&c);
                         self.reach.remove(&c);
                         self.listed.remove(&c);
-                        self.partial.remove(&c);
-                        self.partial_due.remove(&c);
+                        // Empty unless a partial reach baked (`ReachMode::Partial`).
+                        if !self.partial.is_empty() || !self.partial_due.is_empty() {
+                            self.partial.remove(&c);
+                            self.partial_due.remove(&c);
+                        }
                     }
                 }
                 self.laps.lap(S_FORGET);
@@ -4960,10 +5005,25 @@ impl BakeQueue {
                         && from[..CHUNK_BRICKS] == block[..CHUNK_BRICKS] =>
                 {
                     // The same layout: the block takes its old place, shows its old values and
-                    // fades to the new ones.
+                    // fades to the new ones. Under a running fade the old values are what that
+                    // fade shows now, not its target: a refinement landing while a first block
+                    // fades from its fallback goes on from where the pool is.
+                    let mut from = match fades.get(&coord.0) {
+                        Some(fd)
+                            if fd.first == f
+                                && fd.frame < fd.frames
+                                && fd.from.len() == from.len()
+                                && fd.from[..CHUNK_BRICKS] == from[..CHUNK_BRICKS] =>
+                        {
+                            let mut now = Vec::new();
+                            let t = fd.frame as f32 / fd.frames as f32;
+                            fade_mix(&mut now, &fd.from, &from, t, record);
+                            now
+                        }
+                        _ => from,
+                    };
                     store.release(first, block.len() as u64);
                     store.put(queue, coord, f, block);
-                    let mut from = from;
                     store.show(queue, coord, f, &mut from);
                     fades.insert(
                         coord.0,
@@ -5389,24 +5449,7 @@ impl BakeQueue {
                 continue;
             }
             let t = f.frame as f32 / f.frames as f32;
-            let lerp = |a: u32, b: u32| {
-                let (x, y) = (rgb9e5_unpack(a), rgb9e5_unpack(b));
-                rgb9e5_pack([0, 1, 2].map(|k| x[k] + (y[k] - x[k]) * t))
-            };
-            shown.clear();
-            shown.extend_from_slice(to);
-            for slot in 0..CHUNK_BRICKS {
-                let dir = to[slot];
-                if dir == 0 {
-                    continue;
-                }
-                let run = (dir >> 11) as usize;
-                for cell in (run - record..run).step_by(BRICK_WORDS) {
-                    for w in cell..cell + 6 {
-                        shown[w] = lerp(f.from[w], to[w]);
-                    }
-                }
-            }
+            fade_mix(&mut shown, &f.from, to, t, record);
             store.show(queue, ChunkCoord(*c), f.first, &mut shown);
         }
         self.fade_scratch = shown;
@@ -6083,17 +6126,20 @@ fn reach_ready(
     lr: i32,
     resident: Option<&dyn Fn(ChunkCoord) -> bool>,
 ) -> bool {
-    reach_of(run, coord, lr, resident) == Reach::Ready
+    reach_of(run, coord, lr, resident, true) == Reach::Ready
 }
 
 /// `coord`'s reach as [`reach_ready`] reads it: [`Reach::Waiting`] at the first chunk within it
 /// waiting to upload, else [`Reach::Partial`] if a chunk within it is not resident full (a
-/// streamed world only), else [`Reach::Ready`].
+/// streamed world only), else [`Reach::Ready`]. With `first`, the walk stops at the first chunk
+/// that is not ready either way and reads it as [`Reach::Partial`]: a caller that asks only
+/// whether the reach is ready ([`ReachMode::Full`], the census) walks no further than that.
 fn reach_of(
     run: &BakeRun<'_>,
     coord: ChunkCoord,
     lr: i32,
     resident: Option<&dyn Fn(ChunkCoord) -> bool>,
+    first: bool,
 ) -> Reach {
     let gpu = run.gpu;
     if resident.is_none() && gpu.pending_chunks() == 0 {
@@ -6114,6 +6160,9 @@ fn reach_of(
                 if let Some(res) = resident
                     && !(res(n) && gpu.is_mirrored(n) && !gpu.is_lod(n))
                 {
+                    if first {
+                        return Reach::Partial;
+                    }
                     partial = true;
                 }
             }

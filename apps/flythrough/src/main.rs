@@ -123,7 +123,7 @@
 //! 1.5), `--bake-budget frame:MS|second:MS,CAP` the budget as a slice a frame or milliseconds a
 //! second capped at a share of the frame (ADR-0052; key `5` cycles it);
 //! `--missing-light black|neighbour|parent|chain` what a cube face with no baked value reads
-//! (ADR-0053: its chunk's summary, its face neighbours', its parent cells'; default `black`; key
+//! (ADR-0053: its chunk's summary, its face neighbours', its parent cells'; default `chain`; key
 //! `7` cycles it; the banner's queue row and the HUD's store row name it, and the `bake queue:`
 //! line prints the no-value, fallback and still-black shares); `--reach full|partial` whether a
 //! chunk whose light reach crosses the streamer's full radius waits for it (`full`, the default)
@@ -896,7 +896,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bake_coarse: vxe_render::bake::DEFAULT_COARSE_SAMPLES,
         bake_near: vxe_render::bake::DEFAULT_NEAR,
         bake_full_first: None,
-        missing_light: vxe_render::bake::MissingLight::Black,
+        missing_light: vxe_render::bake::MissingLight::Chain,
         reach: vxe_render::bake::ReachMode::Full,
         queue_distance: false,
         queue_angle: vxe_render::bake::QUEUE_ANGLE_WEIGHT,
@@ -8562,7 +8562,7 @@ mod tests {
     }
 
     /// `--missing-light` parses the four modes and refuses the rest, a plain start reads
-    /// `black`, and `7` cycles neighbour, parent, chain and back to black, each press changing
+    /// `chain`, and `7` cycles black, neighbour, parent and back to chain, each press changing
     /// the banner's queue row in the same frame.
     #[test]
     fn the_banner_names_the_missing_light() {
@@ -8571,11 +8571,11 @@ mod tests {
         let mut input = Input::default();
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
-            banner.contains(", missing light black, reach full, digs "),
+            banner.contains(", missing light chain, reach full, digs "),
             "{banner}"
         );
         assert!(banner.contains("7 missing light, 8 reach)"), "{banner}");
-        for want in ["neighbour", "parent", "chain", "black"] {
+        for want in ["black", "neighbour", "parent", "chain"] {
             input.end_frame();
             input.key_up(KeyCode::Digit7);
             input.key_down(KeyCode::Digit7);
@@ -8587,7 +8587,7 @@ mod tests {
             );
         }
         let f = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.missing_light);
-        assert_eq!(f(&[]), Ok(MissingLight::Black));
+        assert_eq!(f(&[]), Ok(MissingLight::Chain));
         for m in MissingLight::ALL {
             assert_eq!(f(&["--missing-light", m.name()]), Ok(m));
         }
@@ -8650,7 +8650,7 @@ mod tests {
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
-            banner.contains(", budget frame:1.5, missing light black, reach full, digs +"),
+            banner.contains(", budget frame:1.5, missing light chain, reach full, digs +"),
             "{banner}"
         );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
@@ -8673,7 +8673,7 @@ mod tests {
             let banner = run.banner().expect("the queue's row is on the banner");
             assert!(
                 banner.contains(&format!(
-                    ", budget {want}, missing light black, reach full, digs +"
+                    ", budget {want}, missing light chain, reach full, digs +"
                 )),
                 "{want}: {banner}"
             );

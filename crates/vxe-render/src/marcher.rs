@@ -2203,7 +2203,7 @@ impl Frame {
     /// whose reach crosses the streamer's full radius bakes from the chunks resident full.
     pub fn set_bake_reach(&mut self, mode: crate::bake::ReachMode) {
         if let Some(q) = self.bake_queue.as_mut() {
-            q.reach_mode = mode;
+            q.set_reach_mode(mode);
         }
     }
 
@@ -2418,7 +2418,7 @@ impl Frame {
         }
     }
 
-    /// What a cube face with no brick value reads (ADR-0053); [`crate::bake::MissingLight::Black`]
+    /// What a cube face with no brick value reads (ADR-0053); [`crate::bake::MissingLight::Chain`]
     /// by default.
     pub fn set_missing_light(&mut self, queue: &wgpu::Queue, mode: crate::bake::MissingLight) {
         self.store.set_missing_light(queue, mode);
