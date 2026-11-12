@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// The sampler, compiled after [`crate::MARCH_WGSL`] and [`crate::LIGHT_WGSL`].
+/// The sampler, compiled after the walk's modules, [`crate::LIGHT_WGSL`] and `emissive.wgsl`.
 pub(crate) const BAKE_WGSL: &str = include_str!("../shaders/bake.wgsl");
 
 /// Samples a face takes between two looks at its stop.
@@ -123,17 +123,27 @@ pub(super) fn replace_once(source: &str, from: &str, to: &str) -> String {
     source.replace(from, to)
 }
 
-/// The bake's module: march.wgsl and light.wgsl, with the candidate table and the LOD walk's
-/// camera chunk read from the face's job slot (`bake_table_slot`, `bake_origin_chunk`), so one
-/// dispatch serves faces of many jobs; then bake.wgsl.
+/// The bake's module: the prelude, the walk's modules and the light pass's with the emissive
+/// estimator, with the candidate table and the LOD walk's camera chunk read from the face's job
+/// slot (`bake_table_slot` in `light.wgsl`'s table read, `bake_origin_chunk` in `walk.wgsl`'s
+/// `lod_level`), so one dispatch serves faces of many jobs; then bake.wgsl.
 pub(crate) fn bake_source() -> String {
-    let march = replace_once(
-        crate::MARCH_WGSL,
+    use crate::frame::{COMMON_WGSL, EMISSIVE_WGSL, HITREC_WGSL, MIRROR_WGSL, WALK_WGSL, compose};
+    let walk = replace_once(
+        WALK_WGSL,
         LOD_ORIGIN,
         "let d = chunk - bake_origin_chunk();",
     );
     let light = replace_once(crate::LIGHT_WGSL, TABLE_READ, "return bake_table_slot(i);");
-    format!("{march}\n{light}\n{BAKE_WGSL}")
+    compose(&[
+        COMMON_WGSL,
+        MIRROR_WGSL,
+        &walk,
+        HITREC_WGSL,
+        &light,
+        EMISSIVE_WGSL,
+        BAKE_WGSL,
+    ])
 }
 
 impl BakePipeline {

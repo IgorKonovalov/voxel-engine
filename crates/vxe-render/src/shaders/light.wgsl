@@ -1,10 +1,10 @@
 // The light pass: direct irradiance at each pixel's hit, read from the hit buffer, from the
-// headlamp and from one emissive voxel face. Compiled after march.wgsl, whose bindings
+// headlamp and from one emissive voxel face. Compiled after the walk's modules, whose bindings
 // (group 0), walk, hit-record helpers and random numbers it uses; every shadow ray is
 // `march`.
 //
-// Bindings, group 0 beyond march.wgsl's:
-//  10  storage  light_samples  the mirror's light samples (see march.wgsl)
+// Bindings, group 0 beyond common.wgsl's:
+//  10  storage  light_samples  the mirror's light samples (see common.wgsl)
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   hit_pos_in      the hit pass's rgba32float position + t
@@ -120,13 +120,12 @@ fn face_centre(v: vec3<i32>, face: u32) -> vec3<f32> {
 // The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p` with shading normal `n`,
 // zero when the shadow ray (offset along `ns`) finds rock before the lamp.
 fn lamp_lit(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
-    let to_light = params.light_pos - p;
-    let dist2 = max(dot(to_light, to_light), 1e-4);
-    let l = to_light * inverseSqrt(dist2);
-    let ndl = max(dot(n, l), 0.0);
-    let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
-    var lit = params.light_intensity * cone * ndl / dist2;
+    var lit = lamp_term(true, params.light_pos, params.light_dir, params.light_intensity,
+        params.cos_outer, params.cos_inner, p, n);
     if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
+        let to_light = params.light_pos - p;
+        let dist2 = max(dot(to_light, to_light), 1e-4);
+        let l = to_light * inverseSqrt(dist2);
         if (shadowed(shadow_origin(p, ns), l, sqrt(dist2))) {
             lit = 0.0;
         }

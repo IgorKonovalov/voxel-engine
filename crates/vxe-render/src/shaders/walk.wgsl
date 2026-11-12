@@ -52,6 +52,9 @@
 
 const MAX_STEPS: u32 = 4096u;
 
+// A `march` miss's material when the split walk hands the ray on.
+const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
+
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
 // solid voxel of `material`. A solid voxel of a full chunk's Full brick carries its brick's
 // record entry (`slot`) and its index in the brick; any other cell carries ABSENT. `through` is the edge of
@@ -150,13 +153,12 @@ fn reset_walk() {
 // Word `word` of the slot whose first unit is `unit` (a slot's words run on through its units,
 // which lie in one page, so in one shard), uncounted.
 fn slot_word(unit: u32, word: u32) -> u32 {
-    let shard = unit / params.units_per_shard;
-    let i = (unit - shard * params.units_per_shard) * UNIT_WORDS + word;
-    switch shard {
-        case 0u: { return brick_pool0[i]; }
-        case 1u: { return brick_pool1[i]; }
-        case 2u: { return brick_pool2[i]; }
-        default: { return brick_pool3[i]; }
+    let a = shard_index(unit, word, params.units_per_shard);
+    switch a.x {
+        case 0u: { return brick_pool0[a.y]; }
+        case 1u: { return brick_pool1[a.y]; }
+        case 2u: { return brick_pool2[a.y]; }
+        default: { return brick_pool3[a.y]; }
     }
 }
 
@@ -754,22 +756,6 @@ fn face_mixed(n: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
     }
     return n;
 }
-
-// The field normal `n` of a field-surface hit whose stored shading normal is `m`, the face mix
-// of `n` toward its entry face's normal `f`: `(1 - k) n = l m - k f` with `l = |mix|` the root
-// of `l^2 - 2 l k (m.f) + k^2 - (1 - k)^2 = 0`, real for `k <= 1/2`; `m` itself at 0.
-fn face_unmixed(m: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
-    let k = params.face_mix;
-    if (k <= 0.0) {
-        return m;
-    }
-    let mf = dot(m, f);
-    let l = k * mf + sqrt(max(k * k * mf * mf - k * k + (1.0 - k) * (1.0 - k), 0.0));
-    return normalize(l * m - k * f);
-}
-
-// How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
-const SHADOW_OFFSET: f32 = 0.5;
 
 // The direction the shadow ray of a voxel-walk hit `h` leaves along: its entry face's normal:
 // the offset is a robustness step out of the surface, not part of the look.

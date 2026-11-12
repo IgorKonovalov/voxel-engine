@@ -6702,7 +6702,7 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
     }
 }
 
-/// The hit record's flag bit (word 3) for a hit: `march.wgsl`'s `HIT_FOUND`.
+/// The hit record's flag bit (word 3) for a hit: `hitrec.wgsl`'s `HIT_FOUND`.
 const HIT_FOUND_BIT: u16 = 1;
 
 /// The cave's material table, the ore emissive unless `--emissive-ore off`; the castle's rows

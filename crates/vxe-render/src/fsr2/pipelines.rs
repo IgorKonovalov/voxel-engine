@@ -1,6 +1,7 @@
 //! FSR 2's pipelines and their layouts, and the bind groups and dispatches of one frame.
 
 use super::*;
+use crate::frame::{COMMON_WGSL, EDITS_WGSL, HITREC_WGSL, compose};
 
 /// One FSR pass: its group-1 layout (group 2 for ours) and pipeline.
 pub(super) struct Pass {
@@ -94,11 +95,11 @@ impl Fsr2Binds {
 }
 
 /// Which groups an FSR 2 pass binds: ours read the frame's world at group 0 and the pass's at
-/// 2, after `march.wgsl`; AMD's read the constants at 0 and the pass's at 1, after FSR 2's common
-/// parts ([`fsr2_source`]).
+/// 2, composed after the prelude and the frame's modules it names ([`compose`]); AMD's read the
+/// constants at 0 and the pass's at 1, after FSR 2's common parts ([`fsr2_source`]).
 #[derive(Clone, Copy)]
 pub(crate) enum Side {
-    Ours,
+    Ours(&'static [&'static str]),
     Amd,
 }
 
@@ -116,7 +117,11 @@ impl FsrPassSpec {
     /// The pass's composed source.
     pub(crate) fn composed(&self) -> String {
         match self.side {
-            Side::Ours => format!("{}\n{}", crate::MARCH_WGSL, self.source),
+            Side::Ours(modules) => {
+                let mut all = modules.to_vec();
+                all.push(self.source);
+                compose(&all)
+            }
             Side::Amd => fsr2_source(self.source, true),
         }
     }
@@ -135,7 +140,7 @@ pub(crate) const FSR2_PIPES: [FsrPassSpec; 9] = [
         label: "fsr2 input",
         source: FSR2_INPUT_WGSL,
         entry: "fsr2_input",
-        side: Side::Ours,
+        side: Side::Ours(&[COMMON_WGSL, HITREC_WGSL, EDITS_WGSL]),
         io: &[
             (0, Io::Float),
             (1, Io::Uint),
@@ -152,7 +157,7 @@ pub(crate) const FSR2_PIPES: [FsrPassSpec; 9] = [
         label: "fsr2 tone",
         source: FSR2_TONE_WGSL,
         entry: "tone",
-        side: Side::Ours,
+        side: Side::Ours(&[COMMON_WGSL]),
         io: &[(0, Io::Float), (1, RGBA8)],
     },
     FsrPassSpec {
@@ -265,7 +270,7 @@ impl Fsr2 {
         ] = FSR2_PIPES.each_ref().map(|spec| {
             let layout = io_layout_at(device, spec.label, spec.io);
             let groups = match spec.side {
-                Side::Ours => vec![Some(world_layout), None, Some(&layout)],
+                Side::Ours(_) => vec![Some(world_layout), None, Some(&layout)],
                 Side::Amd => vec![Some(&cb_layout), Some(&layout)],
             };
             let pipeline =

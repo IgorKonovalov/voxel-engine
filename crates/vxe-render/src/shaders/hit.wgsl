@@ -56,14 +56,8 @@ struct SplitArgs {
 };
 
 @group(1) @binding(3) var<storage, read_write> split_list: SplitList;
-
 @group(1) @binding(4) var<storage, read_write> split_args: SplitArgs;
-
-// `field_resume`'s workgroup size (frame/settings.rs: SPLIT_GROUP).
-const SPLIT_GROUP: u32 = 128u;
-
-// A `march` miss's material when the split walk hands the ray on.
-const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
+// `field_resume`'s workgroup size is the prelude's SPLIT_GROUP (frame/settings.rs).
 
 // temporal.wgsl's `store_cell` over `glass_store`: cell `c`'s value for direction `face` times its
 // material's emission scale now in rgb, 1 in a; 0 where its brick has no record or the cell no

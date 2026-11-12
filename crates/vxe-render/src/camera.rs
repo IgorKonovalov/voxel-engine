@@ -32,7 +32,7 @@ impl Camera {
 /// `fwd + right (-tan_left + u (tan_left + tan_right)) + up (tan_up - v (tan_up + tan_down))`.
 /// `aspect` changes no ray beyond rounding: the shader takes horizontal tangents in units of
 /// the mean vertical tangent times it, so views sharing it round alike (see `pixel_ray` in
-/// `march.wgsl`).
+/// `common.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct View {

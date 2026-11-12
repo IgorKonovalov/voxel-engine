@@ -68,8 +68,6 @@ struct View {
     _pad1: vec2<f32>,
 };
 
-const MAX_VIEWS: u32 = 2u;
-
 struct Params {
     views: array<View, 2>,
     view_count: u32,
@@ -165,69 +163,29 @@ struct ExposureState {
 
 const BIG: f32 = 3.0e38;
 
-// Params.flags bits.
-const FLAG_SHADOWS: u32 = 1u;
-
-const FLAG_MASKS: u32 = 2u;
-
-const NORMAL_SHIFT: u32 = 2u;
-
-const VIEW_SHIFT: u32 = 5u;
-
+// Params.flags bits: the prelude's FLAG_SHADOWS, FLAG_MASKS, FLAG_SKIPS, FLAG_CUTAWAY and
+// FLAG_FIELD_SPLIT (the field look's split walk: the hit pipeline's `main` walks to the first
+// field brick and hands the ray to `field_resume`, `split_pixel`), the normal mode at
+// NORMAL_SHIFT and the view at VIEW_SHIFT.
 const VIEW_BITS: u32 = 7u;
-
-const FLAG_SKIPS: u32 = 512u;
-
-const FLAG_CUTAWAY: u32 = 1024u;
-
-// The field look's split walk: the hit pipeline's `main` walks to the first field brick and
-// hands the ray to `field_resume` (`split_pixel`).
-const FLAG_FIELD_SPLIT: u32 = 524288u;
 
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
-
 const NORMAL_TRILINEAR8: u32 = 1u;
-
 const NORMAL_GRADIENT27: u32 = 2u;
-
 const NORMAL_CONTOUR: u32 = 3u;
-
 const VIEW_SHADED: u32 = 0u;
-
 const VIEW_NORMALS: u32 = 1u;
-
 const VIEW_HITMASK: u32 = 2u;
-
 const VIEW_STEPS: u32 = 3u;
-
 const VIEW_ALBEDO: u32 = 4u;
-
 const VIEW_CRACKS: u32 = 5u;
 
-// Params.lighting bits.
-const LIGHTING_LAMP: u32 = 1u;
-
-const LIGHTING_COARSE_SHADOW: u32 = 2u;
-
-const LIGHTING_GRADIENT: u32 = 8u;
-
-const LIGHTING_FILTER_OFF: u32 = 32u;
-
-const LIGHTING_EMISSION_CHANGED: u32 = 256u;
-
-const LIGHTING_LAMP_CHANGED: u32 = 512u;
-
-const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
-
-// The exposure is automatic: this frame's is the state's `current`, not `params.exposure`.
-const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
-
-// A cube face reads the store by its shading normal (temporal.wgsl, ADR-0049).
-const LIGHTING_STORE_BY_NORMAL: u32 = 16384u;
-
-// The half-resolution light's filters compare face normals (`filter_normal`, ADR-0049).
-const LIGHTING_FACE_WEIGHTS: u32 = 32768u;
+// Params.lighting bits are the prelude's LIGHTING_* (frame/settings.rs). Among them:
+// LIGHTING_AUTO_EXPOSURE, the exposure is automatic (this frame's is the state's `current`, not
+// `params.exposure`); LIGHTING_STORE_BY_NORMAL, a cube face reads the store by its shading
+// normal (temporal.wgsl, ADR-0049); LIGHTING_FACE_WEIGHTS, the half-resolution light's filters
+// compare face normals (`filter_normal`, ADR-0049).
 
 const PI: f32 = 3.14159265358979;
 
@@ -271,6 +229,19 @@ fn lamp(p: vec3<f32>) -> f32 {
     let l = to_light * inverseSqrt(dist2);
     let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
     return params.light_intensity * cone / dist2;
+}
+
+// The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p`, normal `n`, without the
+// shadow ray (light.wgsl's `lamp_lit` adds it); 0 when the lamp is off.
+fn lamp_term(on: bool, pos: vec3<f32>, dir: vec3<f32>, intensity: f32, cos_o: f32, cos_i: f32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (!on) {
+        return 0.0;
+    }
+    let to_light = pos - p;
+    let dist2 = max(dot(to_light, to_light), 1e-4);
+    let l = to_light * inverseSqrt(dist2);
+    let cone = smoothstep(cos_o, cos_i, dot(-l, dir));
+    return intensity * cone * max(dot(n, l), 0.0) / dist2;
 }
 
 fn normal_mode() -> u32 {

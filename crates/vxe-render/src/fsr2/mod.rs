@@ -26,10 +26,10 @@ pub(crate) const FSR2_COMMON_WGSL: &str = include_str!("../shaders/fsr2/common.w
 /// FSR 2's accumulate pass, compiled after [`FSR2_COMMON_WGSL`].
 pub const FSR2_ACCUMULATE_WGSL: &str = include_str!("../shaders/fsr2/accumulate.wgsl");
 
-/// Our input pass (depth, motion vectors, reactive mask), compiled after `march.wgsl`.
+/// Our input pass (depth, motion vectors, reactive mask), compiled after ``common.wgsl`, `hitrec.wgsl` and `edits.wgsl``.
 pub const FSR2_INPUT_WGSL: &str = include_str!("../shaders/fsr2/input.wgsl");
 
-/// Our tone pass (exposure, tone map, display encoding), compiled after `march.wgsl`.
+/// Our tone pass (exposure, tone map, display encoding), compiled after ``common.wgsl``.
 pub const FSR2_TONE_WGSL: &str = include_str!("../shaders/fsr2/tone.wgsl");
 
 /// FSR 2's luminance pyramid (two entry points), compiled after [`FSR2_COMMON_WGSL`].
@@ -37,10 +37,16 @@ pub const FSR2_LUMINANCE_PYRAMID_WGSL: &str =
     include_str!("../shaders/fsr2/luminance_pyramid.wgsl");
 
 /// FSR 2's reconstruct-previous-depth pass, compiled after [`FSR2_COMMON_WGSL`].
-pub const FSR2_RECONSTRUCT_WGSL: &str =
-    include_str!("../shaders/fsr2/reconstruct_previous_depth.wgsl");
-/// FSR 2's depth-clip pass, compiled after [`FSR2_COMMON_WGSL`].
-pub const FSR2_DEPTH_CLIP_WGSL: &str = include_str!("../shaders/fsr2/depth_clip.wgsl");
+pub const FSR2_RECONSTRUCT_WGSL: &str = concat!(
+    include_str!("../shaders/fsr2/motion.wgsl"),
+    include_str!("../shaders/fsr2/reconstruct_previous_depth.wgsl"),
+);
+/// FSR 2's depth-clip pass with the motion read it shares with the reconstruct pass, compiled
+/// after [`FSR2_COMMON_WGSL`].
+pub const FSR2_DEPTH_CLIP_WGSL: &str = concat!(
+    include_str!("../shaders/fsr2/motion.wgsl"),
+    include_str!("../shaders/fsr2/depth_clip.wgsl"),
+);
 
 /// FSR 2's lock pass, compiled after [`FSR2_COMMON_WGSL`].
 pub const FSR2_LOCK_WGSL: &str = include_str!("../shaders/fsr2/lock.wgsl");

@@ -1,5 +1,5 @@
 // The composite pass: turns the hit buffer, the translucent layers and the irradiance into
-// the `rgba8unorm` target the presenter draws. Compiled after march.wgsl, whose bindings
+// the `rgba8unorm` target the presenter draws. Compiled after common.wgsl and hitrec.wgsl, whose bindings
 // (group 0: the material rows), and hit-record helpers it uses.
 //
 // Bindings, group 2:
@@ -72,8 +72,8 @@ const HDR_TARGET: bool = false;
 // The workgroup's meter partial sums: log2 luminance, pixel count.
 var<workgroup> meter_sum: array<vec2<f32>, 64>;
 
-// `Params::lighting` bit: the probe gather ran and its irradiance adds to the direct one.
-const LIGHTING_INDIRECT: u32 = 4096u;
+// The prelude's LIGHTING_INDIRECT, a `Params::lighting` bit: the probe gather ran and its
+// irradiance adds to the direct one.
 
 // The irradiance at lighting texel `q`: the filter's rgb, or with the filter off the temporal
 // pass's accumulation, its emissive rgb plus its lamp's white a; with the indirect flag, the gathered indirect

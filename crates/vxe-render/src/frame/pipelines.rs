@@ -35,9 +35,9 @@ pub(crate) struct PassSpec {
 }
 
 impl PassSpec {
-    /// The pass's source: its modules joined by newlines.
+    /// The pass's source: the prelude and its modules ([`compose`]).
     pub(crate) fn source(&self) -> String {
-        self.modules.join("\n")
+        compose(self.modules)
     }
 }
 
@@ -60,14 +60,30 @@ pub(super) const P_PROBE_TRACE: usize = 11;
 pub(super) const P_PROBE_BLEND: usize = 12;
 
 /// The probe update's modules: its trace and blend share one source.
-const PROBE_UPDATE: &[&str] = &[MARCH_WGSL, LIGHT_WGSL, PROBE_GATHER_WGSL, PROBE_UPDATE_WGSL];
+const PROBE_UPDATE: &[&str] = &[
+    COMMON_WGSL,
+    MIRROR_WGSL,
+    WALK_WGSL,
+    HITREC_WGSL,
+    LIGHT_WGSL,
+    EMISSIVE_WGSL,
+    PROBE_GATHER_WGSL,
+    PROBE_UPDATE_WGSL,
+];
 
 /// Every frame pass but the hit pass ([`Marcher`]) and the composite's FSR 2 variant
 /// ([`composite_hdr_source`]), indexed by the `P_*` constants.
 pub(crate) const PASSES: [PassSpec; 13] = [
     PassSpec {
         label: "temporal",
-        modules: &[MARCH_WGSL, TEMPORAL_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            MIRROR_WGSL,
+            WALK_WGSL,
+            HITREC_WGSL,
+            EDITS_WGSL,
+            TEMPORAL_WGSL,
+        ],
         entry: "temporal",
         constants: &[],
         groups: &[
@@ -95,7 +111,14 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     // ([`Frame::set_count_store`]).
     PassSpec {
         label: "temporal counting",
-        modules: &[MARCH_WGSL, TEMPORAL_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            MIRROR_WGSL,
+            WALK_WGSL,
+            HITREC_WGSL,
+            EDITS_WGSL,
+            TEMPORAL_WGSL,
+        ],
         entry: "temporal",
         constants: &[("COUNT_STORE", 1.0)],
         groups: &[W, E, Group::SharedWith(P_TEMPORAL)],
@@ -104,7 +127,14 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     // The light pass (`shade`), built on the first encode that runs it.
     PassSpec {
         label: "light",
-        modules: &[MARCH_WGSL, LIGHT_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            MIRROR_WGSL,
+            WALK_WGSL,
+            HITREC_WGSL,
+            LIGHT_WGSL,
+            EMISSIVE_WGSL,
+        ],
         entry: "shade",
         constants: &[],
         groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16])],
@@ -112,7 +142,15 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "gradient",
-        modules: &[MARCH_WGSL, LIGHT_WGSL, GRADIENT_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            MIRROR_WGSL,
+            WALK_WGSL,
+            HITREC_WGSL,
+            LIGHT_WGSL,
+            EMISSIVE_WGSL,
+            GRADIENT_WGSL,
+        ],
         entry: "gradient",
         constants: &[],
         groups: &[W, E, E, Group::Own(&[Io::Float, Io::Uint, Io::Float, F16])],
@@ -120,7 +158,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "downsample",
-        modules: &[MARCH_WGSL, COMPOSITE_WGSL],
+        modules: &[COMMON_WGSL, HITREC_WGSL, COMPOSITE_WGSL],
         entry: "downsample",
         constants: &[],
         groups: &[
@@ -138,7 +176,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "variance",
-        modules: &[MARCH_WGSL, ATROUS_WGSL],
+        modules: &[COMMON_WGSL, HITREC_WGSL, ATROUS_WGSL],
         entry: "variance",
         constants: &[],
         groups: &[
@@ -150,7 +188,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "atrous",
-        modules: &[MARCH_WGSL, ATROUS_WGSL],
+        modules: &[COMMON_WGSL, HITREC_WGSL, ATROUS_WGSL],
         entry: "atrous",
         constants: &[],
         groups: &[
@@ -170,7 +208,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "upscale",
-        modules: &[MARCH_WGSL, UPSCALE_WGSL],
+        modules: &[COMMON_WGSL, HITREC_WGSL, EDITS_WGSL, UPSCALE_WGSL],
         entry: "upscale",
         constants: &[],
         groups: &[
@@ -192,7 +230,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "sharpen",
-        modules: &[MARCH_WGSL, SHARPEN_WGSL],
+        modules: &[COMMON_WGSL, SHARPEN_WGSL],
         entry: "sharpen_main",
         constants: &[],
         groups: &[
@@ -209,7 +247,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "composite",
-        modules: &[MARCH_WGSL, COMPOSITE_WGSL],
+        modules: &[COMMON_WGSL, HITREC_WGSL, COMPOSITE_WGSL],
         entry: "composite",
         constants: &[],
         groups: &[
@@ -232,7 +270,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "gather",
-        modules: &[MARCH_WGSL, PROBE_GATHER_WGSL],
+        modules: &[COMMON_WGSL, HITREC_WGSL, PROBE_GATHER_WGSL],
         entry: "gather",
         constants: &[],
         groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16]), Group::Probes],
@@ -337,7 +375,7 @@ impl Pipelines {
     }
 }
 
-/// The world's group 0, as `march.wgsl` declares it: the frame's parameters (0), the mirror's
+/// The world's group 0, as `common.wgsl` declares it: the frame's parameters (0), the mirror's
 /// pools, records, table and materials, the light samples and the emission scales, the blue
 /// noise (12) and the exposure state (13).
 fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {

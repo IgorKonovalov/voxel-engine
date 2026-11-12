@@ -377,7 +377,7 @@ pub fn occluder_camera() -> Camera {
     }
 }
 
-/// The primary ray of pixel (`col`, `row`) of a `WIDTH` x `HEIGHT` target, as `march.wgsl`
+/// The primary ray of pixel (`col`, `row`) of a `WIDTH` x `HEIGHT` target, as `common.wgsl`
 /// builds it.
 pub fn pixel_ray(camera: &Camera, col: u32, row: u32) -> Vec3 {
     let (fwd, right, up) = camera.basis();

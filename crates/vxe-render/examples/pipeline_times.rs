@@ -4,7 +4,7 @@
 //! The instance and adapter honour `WGPU_BACKEND`, `WGPU_ADAPTER_NAME` and
 //! `WGPU_DX12_COMPILER`, so one binary reads Vulkan on Linux and DX12 under FXC or DXC on
 //! Windows. Each pass is a shader module plus a compute pipeline with an automatic layout,
-//! built from the same concatenated source and entry point the renderer uses; the timed span
+//! built from the same composed source and entry point the renderer uses; the timed span
 //! runs from `create_shader_module` through `create_compute_pipeline` and a `device.poll`
 //! wait. Each pass is created three times on one fresh device: `cold` is the first creation,
 //! `min` the fastest of the three (a driver-side pipeline cache can make the later two cheap).
@@ -21,10 +21,6 @@
 use std::time::Instant;
 
 use vxe_render::wgpu::{self, naga};
-use vxe_render::{
-    ATROUS_WGSL, COMPOSITE_WGSL, FIELD_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, SHARPEN_WGSL,
-    TEMPORAL_WGSL, UPSCALE_WGSL,
-};
 
 /// One compute pipeline the renderer creates: its source as compiled and its entry point.
 struct Pass {
@@ -33,40 +29,17 @@ struct Pass {
     entry: &'static str,
 }
 
-/// Every compute pass, each source concatenated exactly as the renderer does it. The list
-/// mirrors `FieldPass::new` in `field.rs` and `Marcher::new` and `Frame::with_sizes` in
-/// `frame/`; a pass added there belongs here too.
+/// Every compute pass, each source composed exactly as the renderer composes it: the
+/// renderer's own list (`internals::shader_sources`).
 fn passes() -> Vec<Pass> {
-    let after_march = |rest: &[&str]| {
-        let mut s = MARCH_WGSL.to_owned();
-        for part in rest {
-            s.push('\n');
-            s.push_str(part);
-        }
-        s
-    };
-    let pass = |name, source, entry| Pass {
-        name,
-        source,
-        entry,
-    };
-    vec![
-        pass("field", FIELD_WGSL.to_owned(), "field_main"),
-        pass("march", MARCH_WGSL.to_owned(), "main"),
-        pass("light", after_march(&[LIGHT_WGSL]), "shade"),
-        pass("temporal", after_march(&[TEMPORAL_WGSL]), "temporal"),
-        pass(
-            "gradient",
-            after_march(&[LIGHT_WGSL, GRADIENT_WGSL]),
-            "gradient",
-        ),
-        pass("downsample", after_march(&[COMPOSITE_WGSL]), "downsample"),
-        pass("variance", after_march(&[ATROUS_WGSL]), "variance"),
-        pass("atrous", after_march(&[ATROUS_WGSL]), "atrous"),
-        pass("upscale", after_march(&[UPSCALE_WGSL]), "upscale"),
-        pass("sharpen", after_march(&[SHARPEN_WGSL]), "sharpen_main"),
-        pass("composite", after_march(&[COMPOSITE_WGSL]), "composite"),
-    ]
+    vxe_render::internals::shader_sources()
+        .into_iter()
+        .map(|s| Pass {
+            name: s.label,
+            source: s.source,
+            entry: s.entry,
+        })
+        .collect()
 }
 
 /// Creations per pass on the one device.

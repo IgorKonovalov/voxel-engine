@@ -60,7 +60,7 @@ pub(crate) struct FrameInputs<'a> {
     pub edits: &'a wgpu::Buffer,
     pub lamp: &'a wgpu::Buffer,
     pub output: &'a wgpu::Texture,
-    /// The frame's blue noise (`blue_noise` in `march.wgsl`), RCAS's dither.
+    /// The frame's blue noise (`blue_noise` in `common.wgsl`), RCAS's dither.
     pub blue_noise: &'a wgpu::Texture,
     pub cur: usize,
     /// The frame's step in seconds ([`crate::Frame::set_dt`]).

@@ -1,13 +1,13 @@
 // The FSR 2 input pass (ours, ADR-0034): FSR 2's depth, motion-vector and reactive inputs from
 // the hit buffer, at the internal size, one invocation per internal pixel. Compiled after
-// march.wgsl, whose bindings (group 0), views and reprojection it uses.
+// common.wgsl, hitrec.wgsl and edits.wgsl, whose bindings (group 0), views and reprojection it uses.
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   in_pos          this frame's hit positions (rgba32float, t in w)
 //   1  texture_2d<u32>   in_info         this frame's hit records
 //   2  texture_2d<f32>   in_layer        the hit pass's translucent layers (transmittance w)
 //   3  uniform           in_tuning       `InputUniform` in fsr2/prepare.rs
-//   4  uniform           in_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
+//   4  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //   5  uniform           in_lamp         the upscale pass's tuning (`UpTuning` in
 //                                        upscale.wgsl): the older lamp and the change thresholds
 //   6  storage texture   depth_out       r32float: inverted infinite device depth,
@@ -46,16 +46,7 @@ struct Fsr2InputTuning {
 
 @group(2) @binding(3) var<uniform> in_tuning: Fsr2InputTuning;
 
-// temporal.wgsl's `Edits`.
-struct InEdits {
-    count: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-    boxes: array<vec4<i32>, 128>,
-};
-
-@group(2) @binding(4) var<uniform> in_edits: InEdits;
+@group(2) @binding(4) var<uniform> edits: Edits;
 
 // upscale.wgsl's `UpTuning`, field for field (`UpscaleUniform` in frame/upscale.rs).
 struct InLamp {
@@ -94,31 +85,6 @@ fn same_view(a: View, b: View) -> bool {
         && a.tan_up == b.tan_up && a.tan_down == b.tan_down && all(a.rect == b.rect);
 }
 
-// Whether `p` lies inside an edit box dilated by one voxel, faces included (upscale.wgsl's
-// `up_in_edit`).
-fn in_edit_box(p: vec3<f32>) -> bool {
-    for (var i = 0u; i < in_edits.count; i++) {
-        let lo = vec3<f32>(in_edits.boxes[2u * i].xyz - 1);
-        let hi = vec3<f32>(in_edits.boxes[2u * i + 1u].xyz + 2);
-        if (all(p >= lo) && all(p <= hi)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// The headlamp's unshadowed term at `p`, normal `n` (upscale.wgsl's `up_lamp`).
-fn lamp_term(on: bool, pos: vec3<f32>, dir: vec3<f32>, intensity: f32, cos_o: f32, cos_i: f32, p: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (!on) {
-        return 0.0;
-    }
-    let to_light = pos - p;
-    let dist2 = max(dot(to_light, to_light), 1e-4);
-    let l = to_light * inverseSqrt(dist2);
-    let cone = smoothstep(cos_o, cos_i, dot(-l, dir));
-    return intensity * cone * max(dot(n, l), 0.0) / dist2;
-}
-
 // upscale.wgsl's `up_light_changed`.
 fn light_changed(rec: HitRecord) -> bool {
     if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
@@ -154,7 +120,7 @@ fn fsr2_input(@builtin(global_invocation_id) gid: vec3<u32>) {
             let q = reproject_centred(prev, v.jitter, rec.p);
             motion = select((q - (vec2<f32>(px) + 0.5)) / vec2<f32>(params.size), OFF_SCREEN, q.x < 0.0);
         }
-        if (in_edit_box(rec.p)) {
+        if (in_edit(rec.p)) {
             reactive = 1.0;
             edit = 1.0;
         }

@@ -5,7 +5,7 @@
 // part and a fallback hit's emissive part; a pixel whose emissive part is the store's (the
 // moments' w, temporal.wgsl) carries a cell's mean, whose variance is the cell's and not the
 // pixel's, so that part passes around the filter and the last iteration adds it back
-// (ADR-0043). Compiled after march.wgsl, whose bindings (group 0) and hit-record helpers it
+// (ADR-0043). Compiled after common.wgsl and hitrec.wgsl, whose bindings (group 0) and hit-record helpers it
 // uses.
 //
 // Two entry points:
@@ -17,7 +17,7 @@
 //   which lets the filter soften the shadow's edge into it.
 //   `atrous` is one iteration with the 5 x 5 B3-spline kernel at stride `step.size` (1, 2, 4,
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
-//   `max(n.n', 0)^128` (on `filter_normal`'s normals, march.wgsl) and
+//   `max(n.n', 0)^128` (on `filter_normal`'s normals, hitrec.wgsl) and
 //   `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the pixel's variance blurred by a
 //   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With the lamp off, a hit whose input is zero and whose
 //   blurred variance is zero writes its input (zero), plus the store's part on the last

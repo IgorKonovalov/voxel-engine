@@ -53,7 +53,7 @@ pub mod internals {
         band_slot_units,
     };
     pub use crate::font8x8::{FONT, glyph};
-    pub use crate::frame::{JITTER_PHASES, composite_hdr_source};
+    pub use crate::frame::{JITTER_PHASES, ShaderSource, composite_hdr_source, shader_sources};
     pub use crate::fsr2::{
         FSR2_ACCUMULATE_WGSL, FSR2_DEPTH_CLIP_WGSL, FSR2_INPUT_WGSL, FSR2_LOCK_WGSL,
         FSR2_LUMINANCE_PYRAMID_WGSL, FSR2_PASSES, FSR2_RCAS_WGSL, FSR2_RECONSTRUCT_WGSL,
@@ -103,8 +103,9 @@ pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
 pub use {glam, wgpu};
 
-/// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
-/// after; for headless validation.
+/// The hit pass's modules (`common`, `mirror`, `walk`, `hitrec`, `field_walk`, `hit`), which
+/// compile after the prelude of the constants Rust defines. [`internals::shader_sources`]
+/// lists every pass composed as its pipeline composes it.
 pub const MARCH_WGSL: &str = concat!(
     include_str!("shaders/common.wgsl"),
     include_str!("shaders/mirror.wgsl"),
@@ -113,25 +114,23 @@ pub const MARCH_WGSL: &str = concat!(
     include_str!("shaders/field_walk.wgsl"),
     include_str!("shaders/hit.wgsl"),
 );
-/// The light pass and the emissive estimator, compiled after [`MARCH_WGSL`].
-pub const LIGHT_WGSL: &str = concat!(
-    include_str!("shaders/light.wgsl"),
-    include_str!("shaders/emissive.wgsl"),
-);
-/// The gradient pass, compiled after [`MARCH_WGSL`] and [`LIGHT_WGSL`].
+/// The light pass, compiled after the walk's modules and before `emissive.wgsl`.
+pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
+/// The gradient pass, compiled after the light pass's modules.
 pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
-/// The temporal pass, compiled after [`MARCH_WGSL`].
+/// The temporal pass, compiled after the modules its pass names.
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
-/// The variance estimate and the a-trous filter, compiled after [`MARCH_WGSL`].
+/// The variance estimate and the a-trous filter, compiled after the modules its pass names.
 pub const ATROUS_WGSL: &str = include_str!("shaders/atrous.wgsl");
-/// The composite pass, compiled after [`MARCH_WGSL`].
+/// The composite pass, compiled after the modules its pass names.
 pub const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
-/// The probe volume's reads and the gather pass, compiled after [`MARCH_WGSL`].
+/// The probe volume's reads and the gather pass, compiled after the modules its pass names.
 pub const PROBE_GATHER_WGSL: &str = include_str!("shaders/probe_gather.wgsl");
-/// The probe update's trace and blend, compiled after [`MARCH_WGSL`], [`LIGHT_WGSL`] and
-/// [`PROBE_GATHER_WGSL`].
+/// The probe update's trace and blend, compiled after the modules its pass names
+/// ([`internals::shader_sources`]).
 pub const PROBE_UPDATE_WGSL: &str = include_str!("shaders/probe_update.wgsl");
-/// The source of the field pass (`field.rs`), for headless validation.
+/// The field pass (`field.rs`), compiled after the prelude and `mirror.wgsl`
+/// ([`internals::shader_sources`] lists it composed).
 pub const FIELD_WGSL: &str = include_str!("shaders/field.wgsl");
 pub use frame::{SHARPEN_WGSL, UPSCALE_WGSL};
 

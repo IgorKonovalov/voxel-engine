@@ -3,10 +3,10 @@
 
 use super::*;
 
-/// The upscale pass, compiled after [`MARCH_WGSL`].
+/// The upscale pass, compiled after the prelude, `common.wgsl`, `hitrec.wgsl` and `edits.wgsl`.
 pub const UPSCALE_WGSL: &str = include_str!("../shaders/upscale.wgsl");
 
-/// The sharpening pass (RCAS), compiled after [`MARCH_WGSL`].
+/// The sharpening pass (RCAS), compiled after the prelude and `common.wgsl`.
 pub const SHARPEN_WGSL: &str = include_str!("../shaders/sharpen.wgsl");
 
 /// Phases of the jitter sequence: frame `f` takes phase `f % JITTER_PHASES`.
@@ -191,6 +191,12 @@ pub fn composite_hdr_source() -> String {
         )
 }
 
+/// [`composite_hdr_source`] composed as the composite is: the prelude, `common.wgsl` and
+/// `hitrec.wgsl` first.
+pub(crate) fn composite_hdr_compose() -> String {
+    compose(&[COMMON_WGSL, HITREC_WGSL, &composite_hdr_source()])
+}
+
 /// The composite's FSR 2 variant: its layout (the composite's, the target rgba32float) and
 /// pipeline.
 pub(super) fn composite_hdr_pass(
@@ -216,7 +222,7 @@ pub(super) fn composite_hdr_pass(
     let pipeline = compute_pipeline(
         device,
         "composite hdr",
-        format!("{MARCH_WGSL}\n{}", composite_hdr_source()),
+        composite_hdr_compose(),
         &[Some(world_layout), None, Some(&layout)],
         "composite",
     );
@@ -390,7 +396,16 @@ impl UpscaleState {
 
 #[cfg(test)]
 mod tests {
-    use super::{JITTER_PHASES, jitter_at};
+    use super::{JITTER_PHASES, PASSES, jitter_at};
+
+    /// The composed source of the pass labelled `label` in [`PASSES`].
+    fn pass_source(label: &str) -> String {
+        PASSES
+            .iter()
+            .find(|p| p.label == label)
+            .unwrap_or_else(|| panic!("a {label} pass"))
+            .source()
+    }
 
     /// The jitter's sixteen phases are distinct points of `(-0.5, 0.5)^2` that repeat with
     /// period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).
@@ -415,7 +430,7 @@ mod tests {
     /// pass.
     #[test]
     fn upscale_wgsl_validates_through_naga() {
-        let source = format!("{}\n{}", crate::MARCH_WGSL, super::UPSCALE_WGSL);
+        let source = pass_source("upscale");
         let module = wgpu::naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|e| panic!("upscale.wgsl parses: {}", e.emit_to_string(&source)));
         wgpu::naga::valid::Validator::new(
@@ -429,7 +444,7 @@ mod tests {
     /// The sharpening pass parses and validates headless, compiled after the hit pass.
     #[test]
     fn sharpen_wgsl_validates_through_naga() {
-        let source = format!("{}\n{}", crate::MARCH_WGSL, super::SHARPEN_WGSL);
+        let source = pass_source("sharpen");
         let module = wgpu::naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|e| panic!("sharpen.wgsl parses: {}", e.emit_to_string(&source)));
         wgpu::naga::valid::Validator::new(

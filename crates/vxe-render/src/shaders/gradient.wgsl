@@ -1,5 +1,5 @@
 // The gradient pass (A-SVGF, Schied 2018): how much the lamp's light changed since last frame,
-// per 3 x 3 stratum of last frame's pixels. Compiled after march.wgsl and light.wgsl, whose
+// per 3 x 3 stratum of last frame's pixels. Compiled after the walk's modules and light.wgsl, whose
 // bindings (group 0), walk, lamp and shadow ray it uses; it runs before this frame's light pass,
 // while the irradiance texture still holds last frame's.
 //

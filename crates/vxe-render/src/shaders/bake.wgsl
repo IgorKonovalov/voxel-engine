@@ -1,7 +1,8 @@
 // The bake's sampler (ADR-0046): one round of emissive samples for each entry, a listed cube face
 // of some job's chunk, at unit emission (EMISSION_UNIT), with its own random sequence
-// (RAND_HASHED). Compiled after march.wgsl and light.wgsl, whose bindings (group 0), candidates
-// (`draw_candidates`, `face_point`) and shadow ray (`shadowed`) it uses, with two of their reads
+// (RAND_HASHED). Compiled after the walk's modules, light.wgsl and emissive.wgsl, whose
+// bindings (group 0), candidates (`draw_candidates`, `face_point`) and shadow ray (`shadowed`)
+// it uses, with two of their reads
 // replaced in the bake's module (`bake::bake_source`): the candidate table comes from the entry's
 // job slot (`bake_table_slot`, the job's `bake::job_table`) and the LOD walk's camera chunk is the
 // job's chunk (`bake_origin_chunk`). So one dispatch serves faces of many jobs. The CPU keeps the

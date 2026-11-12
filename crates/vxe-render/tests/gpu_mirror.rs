@@ -4,10 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use vxe_render::{
-    ATROUS_WGSL, COMPOSITE_WGSL, FIELD_WGSL, GRADIENT_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL,
-    MirrorConfig, ShardLayout, SyncPoint, TEMPORAL_WGSL, Window, wgpu,
-};
+use vxe_render::{GpuWorld, MirrorConfig, ShardLayout, SyncPoint, Window, wgpu};
 use vxe_render::{
     internals::ABSENT, internals::BIN_COUNT, internals::BINS, internals::BITS_WORDS,
     internals::CLASS_MASK, internals::CLASS_SHIFT, internals::CLASS_UNIFORM, internals::CLASS_WIDE,
@@ -23,42 +20,48 @@ use vxe_render::{
 use vxe_world::packed::PackedClass;
 use vxe_world::*;
 
-/// The frame's shaders parse and validate headless, without a device: the hit pass alone and
-/// each pass compiled after it.
-#[test]
-fn march_wgsl_validates() {
-    for (name, source) in [
-        ("march.wgsl", MARCH_WGSL.to_owned()),
-        ("light.wgsl", format!("{MARCH_WGSL}\n{LIGHT_WGSL}")),
-        ("composite.wgsl", format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}")),
-        ("temporal.wgsl", format!("{MARCH_WGSL}\n{TEMPORAL_WGSL}")),
-        ("atrous.wgsl", format!("{MARCH_WGSL}\n{ATROUS_WGSL}")),
-        (
-            "gradient.wgsl",
-            format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{GRADIENT_WGSL}"),
-        ),
-    ] {
-        let module = wgpu::naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("{name} parses: {}", e.emit_to_string(&source)));
-        wgpu::naga::valid::Validator::new(
-            wgpu::naga::valid::ValidationFlags::all(),
-            wgpu::naga::valid::Capabilities::default(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("{name} validates: {e:?}"));
-    }
+/// The source `label` of the renderer's list, composed as its pipeline composes it.
+fn composed(label: &str) -> String {
+    vxe_render::internals::shader_sources()
+        .into_iter()
+        .find(|s| s.label == label)
+        .unwrap_or_else(|| panic!("the renderer composes a {label} pass"))
+        .source
 }
 
-/// The field pass's shader parses and validates headless.
-#[test]
-fn field_wgsl_validates() {
-    let module = wgpu::naga::front::wgsl::parse_str(FIELD_WGSL).expect("field.wgsl parses");
+/// Parses and validates `source` with naga, panicking with its name on a failure.
+fn validate(name: &str, source: &str) {
+    let module = wgpu::naga::front::wgsl::parse_str(source)
+        .unwrap_or_else(|e| panic!("{name} parses: {}", e.emit_to_string(source)));
     wgpu::naga::valid::Validator::new(
         wgpu::naga::valid::ValidationFlags::all(),
         wgpu::naga::valid::Capabilities::default(),
     )
     .validate(&module)
-    .expect("field.wgsl validates");
+    .unwrap_or_else(|e| panic!("{name} validates: {e:?}"));
+}
+
+/// The frame's shaders parse and validate headless, without a device: the hit pass and each
+/// pass that reads the walk or the hit record, composed as the renderer composes them.
+#[test]
+fn march_wgsl_validates() {
+    for name in [
+        "hit",
+        "light",
+        "composite",
+        "temporal",
+        "atrous",
+        "gradient",
+    ] {
+        validate(name, &composed(name));
+    }
+}
+
+/// The field pass's shader parses and validates headless, after the prelude and the mirror's
+/// decode.
+#[test]
+fn field_wgsl_validates() {
+    validate("field", &composed("field"));
 }
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -1140,6 +1143,7 @@ fn the_mirror_never_reads_the_backend_or_vendor() {
             include_str!("../src/gpu_world/window.rs"),
         ),
         ("frame/baked.rs", include_str!("../src/frame/baked.rs")),
+        ("frame/compose.rs", include_str!("../src/frame/compose.rs")),
         ("frame/encode.rs", include_str!("../src/frame/encode.rs")),
         ("frame/marcher.rs", include_str!("../src/frame/marcher.rs")),
         ("frame/mod.rs", include_str!("../src/frame/mod.rs")),

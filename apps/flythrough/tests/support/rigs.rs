@@ -537,7 +537,7 @@ pub fn fsr2_kind() -> UpscalerKind {
 }
 
 /// `p` projected through `v` to a fractional pixel of the target, pixel centres at integer +
-/// 0.5, the jitter ignored (`project_prev` in `march.wgsl`); `None` behind the view.
+/// 0.5, the jitter ignored (`project_prev` in `hitrec.wgsl`); `None` behind the view.
 pub fn project(v: &vxe_render::View, p: [f32; 3]) -> Option<[f64; 2]> {
     let d: Vec<f64> = (0..3).map(|k| f64::from(p[k] - v.origin[k])).collect();
     let dot = |a: [f32; 3]| (0..3).map(|k| d[k] * f64::from(a[k])).sum::<f64>();
@@ -594,7 +594,7 @@ pub fn in_dilated(p: [f32; 3], (min, max): (VoxelCoord, VoxelCoord)) -> bool {
     (0..3).all(|k| p[k] >= (min.0[k] - 1) as f32 && p[k] <= (max.0[k] + 2) as f32)
 }
 
-/// The octahedral snorm16 normal of a hit record (`octa16_decode` in `march.wgsl`).
+/// The octahedral snorm16 normal of a hit record (`octa16_decode` in `hitrec.wgsl`).
 pub fn octa16_normal(u: u16, v: u16) -> [f32; 3] {
     let p = [u as i16, v as i16].map(|q| f32::from(q) / 32767.0);
     let mut n = [p[0], p[1], 1.0 - p[0].abs() - p[1].abs()];

@@ -1,5 +1,5 @@
 // The upscale pass (ADR-0024): a temporal upscaler from the composite's internal pixels to the
-// output size, one invocation per output pixel. Compiled after march.wgsl, whose bindings
+// output size, one invocation per output pixel. Compiled after common.wgsl, hitrec.wgsl and edits.wgsl, whose bindings
 // (group 0), views, hit-record helpers and reprojection it uses.
 //
 // Bindings, group 2 of `upscale`:
@@ -14,7 +14,7 @@
 //                                        image, display-encoded rgb, and in a the weight
 //                                        of the current colour in the blend (1 without
 //                                        history)
-//   7  uniform           up_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
+//   7  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //   8  uniform           up_tuning       the kernel width, blend weights, clip and light
 //                                        change tuning (`Upscaler` in frame/upscale.rs)
 //
@@ -45,16 +45,7 @@
 @group(2) @binding(5) var up_prev_hist_in: texture_2d<f32>;
 @group(2) @binding(6) var up_hist_out: texture_storage_2d<rgba16float, write>;
 
-// temporal.wgsl's `Edits`: up to MAX_EDITS boxes, box i from `boxes[2 i]` to `boxes[2 i + 1]`.
-struct UpEdits {
-    count: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-    boxes: array<vec4<i32>, 128>,
-};
-
-@group(2) @binding(7) var<uniform> up_edits: UpEdits;
+@group(2) @binding(7) var<uniform> edits: Edits;
 
 // `UpscaleUniform` in frame/upscale.rs.
 struct UpTuning {
@@ -92,36 +83,11 @@ const UP_HISTORY_COS: f32 = 0.8;
 const UP_HISTORY_DIST: f32 = 0.5;
 const UP_HISTORY_DIST_PER_T: f32 = 0.03;
 
-// Whether `p` lies inside an edit box dilated by one voxel, faces included.
-fn up_in_edit(p: vec3<f32>) -> bool {
-    for (var i = 0u; i < up_edits.count; i++) {
-        let lo = vec3<f32>(up_edits.boxes[2u * i].xyz - 1);
-        let hi = vec3<f32>(up_edits.boxes[2u * i + 1u].xyz + 2);
-        if (all(p >= lo) && all(p <= hi)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // The reconstruction kernel's weight of a sample `d` output pixels (a vector) from the output
 // pixel's centre, 1 at the centre.
 fn up_kernel(d: vec2<f32>) -> f32 {
     let s = up_tuning.width;
     return exp(-2.29 * dot(d, d) / (s * s));
-}
-
-// The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p`, normal `n`, without the
-// shadow ray (light.wgsl's `lamp_lit`); 0 when the lamp is off.
-fn up_lamp(on: bool, pos: vec3<f32>, dir: vec3<f32>, intensity: f32, cos_o: f32, cos_i: f32, p: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (!on) {
-        return 0.0;
-    }
-    let to_light = pos - p;
-    let dist2 = max(dot(to_light, to_light), 1e-4);
-    let l = to_light * inverseSqrt(dist2);
-    let cone = smoothstep(cos_o, cos_i, dot(-l, dir));
-    return intensity * cone * max(dot(n, l), 0.0) / dist2;
 }
 
 // The exposure's move between frames, in EV, past which every still pixel is clipped as a
@@ -139,9 +105,9 @@ fn up_light_changed(rec: HitRecord) -> bool {
     if (abs(log2(exposure_ratio())) > EXPOSURE_MOVE) {
         return true;
     }
-    let now = up_lamp((params.lighting & LIGHTING_LAMP) != 0u, params.light_pos, params.light_dir,
+    let now = lamp_term((params.lighting & LIGHTING_LAMP) != 0u, params.light_pos, params.light_dir,
         params.light_intensity, params.cos_outer, params.cos_inner, rec.p, rec.n);
-    let then = up_lamp(up_tuning.old_on != 0u, up_tuning.old_pos, up_tuning.old_dir,
+    let then = lamp_term(up_tuning.old_on != 0u, up_tuning.old_pos, up_tuning.old_dir,
         up_tuning.old_intensity, up_tuning.old_cos_outer, up_tuning.old_cos_inner, rec.p, rec.n);
     let d = abs(now - then);
     return d > up_tuning.change_abs && d > up_tuning.change_rel * max(now, then);
@@ -271,7 +237,7 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     var result = current;
     var alpha = 1.0;
-    if ((params.history & 2u) != 0u && rec.found && !up_in_edit(rec.p)) {
+    if ((params.history & 2u) != 0u && rec.found && !in_edit(rec.p)) {
         let pv = params.prev_views[vi];
         let y = project_prev(pv, rec.p);
         // As the temporal pass: the previous pixel as if both rays went through centres.

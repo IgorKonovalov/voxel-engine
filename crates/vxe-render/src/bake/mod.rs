@@ -6,7 +6,7 @@
 //! and each material's class ([`face_classes`]): each surface brick's sorted face keys, an opaque
 //! voxel's faces toward a voxel that is not opaque and a translucent voxel's faces toward air
 //! (ADR-0047: a pane's two sides), the latter listed in [`ChunkFaces::glass`] and baked as the
-//! opaque ones are: a pane's entry face reads its brick's record (`march.wgsl`'s
+//! opaque ones are: a pane's entry face reads its brick's record (`hit.wgsl`'s
 //! `glass_reflected`).
 //!
 //! **The pool** ([`Store`]), in `u32` words: words 0 to 2 unused (the frame's read counters,

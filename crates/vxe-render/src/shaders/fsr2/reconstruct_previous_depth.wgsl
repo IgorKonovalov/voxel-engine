@@ -27,10 +27,6 @@
 @group(1) @binding(6) var dilated_motion_out: texture_storage_2d<rg32float, write>;
 @group(1) @binding(7) var lock_luma_out: texture_storage_2d<r32float, write>;
 
-fn load_input_motion_vector(p: vec2<i32>) -> vec2<f32> {
-    return load_clamped(motion_in, p).xy * cb.motion_vector_scale;
-}
-
 // StoreReconstructedDepth with inverted depth: the maximum.
 fn store_reconstructed_depth(p: vec2<i32>, depth: f32) {
     atomicMax(&reconstructed[u32(p.y) * u32(cb.render_size.x) + u32(p.x)], bitcast<u32>(depth));

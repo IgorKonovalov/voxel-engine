@@ -19,6 +19,11 @@ use vxe_world::{CHUNK_EDGE_BRICKS, ChunkMips, brick_of_slot, brick_slot};
 
 use crate::gpu_util::{Io, compute_pipeline, io_layout_at};
 
+/// The field pass's composed source: the prelude, `mirror.wgsl`, then [`crate::FIELD_WGSL`].
+pub(crate) fn field_source() -> String {
+    crate::frame::compose(&[crate::frame::MIRROR_WGSL, crate::FIELD_WGSL])
+}
+
 /// Units of a band slot of `n` band voxels: its band mask and `ceil(n / 64)` units of `u8`
 /// counts.
 pub fn band_slot_units(n: u32) -> u32 {
@@ -123,7 +128,7 @@ pub(crate) fn band_mask(around: &[Around<'_>; 27], slot: usize) -> [u64; 8] {
 }
 
 /// The bit of a band voxel's `u8` count that marks it a solid voxel of a crisp material
-/// (`march.wgsl` hits it as its cube); the count itself is in the low five bits.
+/// (`field_walk.wgsl` hits it as its cube); the count itself is in the low five bits.
 pub const CRISP_COUNT_BIT: u8 = 0x80;
 /// The bit of a band voxel's `u8` count that marks it a solid voxel of a smooth material.
 pub const SMOOTH_COUNT_BIT: u8 = 0x40;
@@ -155,7 +160,7 @@ pub(crate) struct FieldBindings<'a> {
     pub shards: [&'a wgpu::Buffer; 4],
     pub records: &'a wgpu::Buffer,
     pub table: &'a wgpu::Buffer,
-    /// The material rows (`march.wgsl`'s `materials`), whose flags mark the crisp rows.
+    /// The material rows (`common.wgsl`'s `materials`), whose flags mark the crisp rows.
     pub materials: &'a wgpu::Buffer,
     /// The mirror window's minimum corner and size, in chunks.
     pub window: ([i32; 3], [i32; 3]),
@@ -211,7 +216,7 @@ impl FieldPass {
         let pipeline = compute_pipeline(
             device,
             "field",
-            crate::FIELD_WGSL.into(),
+            field_source(),
             &[Some(&layout)],
             "field_main",
         );

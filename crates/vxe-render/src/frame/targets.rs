@@ -63,7 +63,7 @@ pub(super) struct Targets {
     /// The exposure meter's tiles: two `f32` per 8 x 8 workgroup of the internal target.
     pub(super) tiles: wgpu::Buffer,
     /// The split walk's hand-off list (a count word and three of padding, then a `vec4<u32>`
-    /// per pixel; `march.wgsl`'s `SplitList`), built by the first encode that splits
+    /// per pixel; `hit.wgsl`'s `SplitList`), built by the first encode that splits
     /// ([`Targets::split_list`]); until then the hit pass binds `split_stub`, the header and
     /// one ray (the binding's minimum size), which the unsplit walk never writes. The resume
     /// dispatch's workgroup counts (`SplitArgs`).

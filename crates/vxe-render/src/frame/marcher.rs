@@ -1,8 +1,8 @@
-//! The hit pass (`march.wgsl`): its pipelines and its output layouts.
+//! The hit pass (`hit.wgsl`): its pipelines and its output layouts.
 
 use super::*;
 
-/// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
+/// The hit pass: `hit.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
 /// the contour look over a mirror with the field ([`NormalMode::Contour`]) its pipeline with
 /// `FIELD_SURFACE`, which walks the field surface, or with the split walk
 /// ([`FLAG_FIELD_SPLIT`]) the plain pipeline and then `field_resume` over the rays it handed
@@ -44,11 +44,11 @@ impl Marcher {
             ],
         );
         let layouts = [Some(world_layout), Some(&out_layout)];
-        let pipeline = compute_pipeline(device, "hit", MARCH_WGSL.into(), &layouts, "main");
+        let pipeline = compute_pipeline(device, "hit", compose(HIT_MODULES), &layouts, "main");
         let field = compute_pipeline_with(
             device,
             "hit field",
-            MARCH_WGSL.into(),
+            compose(HIT_MODULES),
             &layouts,
             "main",
             &[("FIELD_SURFACE", 1.0)],
@@ -56,7 +56,7 @@ impl Marcher {
         let resume = compute_pipeline(
             device,
             "hit field resume",
-            MARCH_WGSL.into(),
+            compose(HIT_MODULES),
             &[Some(world_layout), Some(&resume_layout)],
             "field_resume",
         );

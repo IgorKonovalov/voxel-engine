@@ -15,7 +15,7 @@
 //!
 //! **Pre-exposure.** Lighting math is in absolute units. Every value a pass stores into an
 //! `rgba16float` HDR target is multiplied by the frame's exposure (`exposure_now` in
-//! `march.wgsl`) and clamped at 60 000; a pass that reads a value an earlier frame stored
+//! `common.wgsl`) and clamped at 60 000; a pass that reads a value an earlier frame stored
 //! multiplies it by `current / previous` (`exposure_ratio`) first, a second moment by its
 //! square, and a second moment is of the luminance clamped at 255. Terms that stay absolute
 //! (emission, translucent layers, the probe atlases and their gathered irradiance, reservoirs)
@@ -28,8 +28,13 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gpu_util::{Io, compute_pipeline, io_layout};
 
-/// The exposure pass's source.
+/// The exposure pass, compiled after the prelude ([`exposure_source`]).
 pub const EXPOSURE_WGSL: &str = include_str!("shaders/exposure.wgsl");
+
+/// The exposure pass's composed source: the prelude, then [`EXPOSURE_WGSL`].
+pub(crate) fn exposure_source() -> String {
+    crate::frame::compose(&[EXPOSURE_WGSL])
+}
 
 /// Pixels on a meter tile's edge: the composite's workgroup.
 pub(crate) const METER_TILE: u32 = 8;
@@ -367,7 +372,7 @@ impl ExposurePass {
         let pipeline = compute_pipeline(
             device,
             "exposure",
-            EXPOSURE_WGSL.into(),
+            exposure_source(),
             &[Some(&layout)],
             "exposure",
         );
@@ -558,12 +563,12 @@ impl Ring {
 mod tests {
     use super::*;
 
-    /// The exposure pass parses and validates headless, standalone.
+    /// The exposure pass parses and validates headless, after the prelude.
     #[test]
     fn exposure_wgsl_validates_through_naga() {
-        let module = wgpu::naga::front::wgsl::parse_str(EXPOSURE_WGSL).unwrap_or_else(|e| {
-            panic!("exposure.wgsl parses: {}", e.emit_to_string(EXPOSURE_WGSL))
-        });
+        let source = exposure_source();
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("exposure.wgsl parses: {}", e.emit_to_string(&source)));
         wgpu::naga::valid::Validator::new(
             wgpu::naga::valid::ValidationFlags::all(),
             wgpu::naga::valid::Capabilities::default(),

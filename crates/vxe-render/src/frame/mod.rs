@@ -1,4 +1,4 @@
-//! The frame: the hit pass ([`Marcher`], `march.wgsl`), the light pass (`light.wgsl`), the
+//! The frame: the hit pass ([`Marcher`], `hit.wgsl` over the walk), the light pass (`light.wgsl`), the
 //! probe volume's passes (`probe_gather.wgsl`, ADR-0023) and the composite (`composite.wgsl`),
 //! each a compute dispatch over the internal target (ADR-0018).
 
@@ -13,12 +13,13 @@ use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
 use crate::probes::{DEFAULT_PROBE_SPACING, ProbeUniform, ProbeVolume};
 use crate::{
-    ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, PROBE_GATHER_WGSL,
-    PROBE_UPDATE_WGSL, TEMPORAL_WGSL,
+    ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, PROBE_GATHER_WGSL, PROBE_UPDATE_WGSL,
+    TEMPORAL_WGSL,
 };
 use vxe_world::ChunkCoord;
 
 mod baked;
+mod compose;
 mod encode;
 mod marcher;
 mod pipelines;
@@ -31,6 +32,7 @@ mod timer;
 mod upscale;
 
 use self::baked::*;
+pub use self::compose::*;
 pub use self::encode::*;
 pub use self::marcher::*;
 pub(crate) use self::pipelines::*;

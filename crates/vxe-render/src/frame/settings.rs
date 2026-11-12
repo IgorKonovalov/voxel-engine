@@ -31,7 +31,7 @@ pub(crate) use named_enum;
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub(crate) const WORKGROUP: u32 = 8;
 
-/// Views a frame holds at most; must match `MAX_VIEWS` in `march.wgsl`.
+/// Views a frame holds at most; the shaders' `MAX_VIEWS` (the prelude, `frame/compose.rs`).
 pub const MAX_VIEWS: usize = 2;
 
 /// The uniform block every frame shader reads, field for field.
@@ -184,7 +184,7 @@ pub(crate) const FLAG_CUTAWAY: u32 = 1 << 10;
 /// dispatch walks the field from there ([`Frame::set_field_split`]).
 pub(crate) const FLAG_FIELD_SPLIT: u32 = 1 << 19;
 
-/// `field_resume`'s workgroup size in `march.wgsl`: the split walk hands at most
+/// `field_resume`'s workgroup size in `hit.wgsl`: the split walk hands at most
 /// `SPLIT_GROUP` times the dispatch limit of rays on, and a frame of more pixels walks the
 /// field unsplit.
 pub(super) const SPLIT_GROUP: u32 = 128;

@@ -22,7 +22,7 @@
 //   0  texture_2d<f32>   rcas_in       the accumulate pass's internal upscaled colour
 //   1  texture_2d<f32>   exposure_in   rg32float 1x1
 //   2  storage texture   rcas_out      rgba8unorm: the frame's image
-//   3  texture_2d<f32>   rcas_noise    the frame's 128 x 128 blue noise (march.wgsl's
+//   3  texture_2d<f32>   rcas_noise    the frame's 128 x 128 blue noise (common.wgsl's
 //                                      `blue_noise`)
 
 @group(1) @binding(0) var rcas_in: texture_2d<f32>;

@@ -15,21 +15,12 @@ const HIT_AXIS_SHIFT: u32 = 3u;
 // directory words (a brick's offset from the block's start just past its record << 11; 0 none),
 // then each surface brick's record.
 const STORE_ORIGIN: u32 = 4u;
-
 const STORE_SIZE: u32 = 8u;
-
-// The flags word (`bake::STORE_FLAGS`): bit 1, the records' cells are 4 voxels (eight a brick),
-// else 8. A record is BRICK_WORDS a cell: six rgb9e5 direction values in face order, then
-// `material | direction mask << 16`.
-const STORE_FLAGS: u32 = 12u;
-
-const STORE_TABLE: u32 = 16u;
-
-const BRICK_WORDS: u32 = 7u;
-
-// A chunk table word's flag (`bake::TABLE_COARSE`): the block is the live queue's coarse pass. The
-// rest of the word is the block's first word.
-const TABLE_COARSE: u32 = 0x80000000u;
+// The prelude's STORE_FLAGS is the flags word (`bake::STORE_FLAGS`): bit 1, the records' cells
+// are 4 voxels (eight a brick), else 8. A record is BRICK_WORDS a cell: six rgb9e5 direction
+// values in face order, then `material | direction mask << 16`. STORE_TABLE is the first
+// window chunk's word. TABLE_COARSE is a chunk table word's flag (`bake::TABLE_COARSE`): the
+// block is the live queue's coarse pass; the rest of the word is the block's first word.
 
 // One of the 2 x 2 cells (world cells of 1 << `shift` voxels) around voxel `v`'s centre in the
 // plane of face `face` (its own cell's layer along the normal), and its bilinear weight by the
@@ -62,27 +53,53 @@ fn store_tap(v: vec3<i32>, face: u32, shift: u32, i: i32) -> StoreTap {
     return StoreTap(cell, wa * wb);
 }
 
-// Octahedral encoding of unit `n` into two snorm16 values (as u16 bits). The six axis
-// normals encode to -1, 0 and 1 exactly, so they decode exactly.
-fn octa16_encode(n: vec3<f32>) -> vec2<u32> {
-    var p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
-    if (n.z < 0.0) {
+// The octahedral coordinates in [-1, 1]^2 of unit `d`.
+fn octa_fold(d: vec3<f32>) -> vec2<f32> {
+    var p = d.xy / (abs(d.x) + abs(d.y) + abs(d.z));
+    if (d.z < 0.0) {
         let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
         p = (1.0 - abs(p.yx)) * s;
     }
+    return p;
+}
+
+// The unit direction of octahedral coordinates `p` in [-1, 1]^2.
+fn octa_unfold(p: vec2<f32>) -> vec3<f32> {
+    var d = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
+    if (d.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), d.xy >= vec2<f32>(0.0));
+        d = vec3<f32>((1.0 - abs(d.yx)) * s, d.z);
+    }
+    return normalize(d);
+}
+
+// Octahedral encoding of unit `n` into two snorm16 values (as u16 bits). The six axis
+// normals encode to -1, 0 and 1 exactly, so they decode exactly.
+fn octa16_encode(n: vec3<f32>) -> vec2<u32> {
+    let p = octa_fold(n);
     let q = vec2<i32>(round(clamp(p, vec2<f32>(-1.0), vec2<f32>(1.0)) * 32767.0));
     return bitcast<vec2<u32>>(q) & vec2<u32>(0xFFFFu);
 }
 
 fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
     let q = bitcast<vec2<i32>>(e << vec2<u32>(16u)) >> vec2<u32>(16u);
-    let p = vec2<f32>(q) / 32767.0;
-    var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
-    if (n.z < 0.0) {
-        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
-        n = vec3<f32>((1.0 - abs(n.yx)) * s, n.z);
+    return octa_unfold(vec2<f32>(q) / 32767.0);
+}
+
+// How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
+const SHADOW_OFFSET: f32 = 0.5;
+
+// The field normal `n` of a field-surface hit whose stored shading normal is `m`, the face mix
+// of `n` toward its entry face's normal `f`: `(1 - k) n = l m - k f` with `l = |mix|` the root
+// of `l^2 - 2 l k (m.f) + k^2 - (1 - k)^2 = 0`, real for `k <= 1/2`; `m` itself at 0.
+fn face_unmixed(m: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
+    let k = params.face_mix;
+    if (k <= 0.0) {
+        return m;
     }
-    return normalize(n);
+    let mf = dot(m, f);
+    let l = k * mf + sqrt(max(k * k * mf * mf - k * k + (1.0 - k) * (1.0 - k), 0.0));
+    return normalize(l * m - k * f);
 }
 
 // One pixel's hit record, decoded from the hit buffer: `n` is the shading normal,
