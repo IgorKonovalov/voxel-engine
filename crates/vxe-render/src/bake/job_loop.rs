@@ -32,10 +32,13 @@ pub(crate) const IN_FLIGHT: usize = 2;
 /// Bytes at the head of a submit's readback: its dispatch's two timestamps.
 pub(super) const STAMP_BYTES: u64 = 16;
 
+/// A submit's entries: each `(job slot, face, rounds)`.
+pub(super) type Entries = Vec<(usize, usize, u32)>;
+
 /// A submit not read back yet: its entries in dispatch order (job slot, face, rounds) and the
 /// buffer its results are copied to, mapped when `ready` reads 1.
 pub(super) struct InFlight {
-    pub(super) entries: Vec<(usize, usize, u32)>,
+    pub(super) entries: Entries,
     pub(super) count: u64,
     pub(super) staging: wgpu::Buffer,
     pub(super) ready: Arc<std::sync::atomic::AtomicU8>,
@@ -441,7 +444,7 @@ impl JobLoop {
         plan: &[Vec<(usize, u32)>],
         round: u32,
         capacity: usize,
-    ) -> (Vec<[u32; 20]>, Vec<(usize, usize, u32)>, u64) {
+    ) -> (Vec<[u32; 20]>, Entries, u64) {
         let report = &mut self.report;
         // One dispatch: each entry names its job's slot, and its face's samples from the first
         // no submit has drawn.
@@ -476,7 +479,7 @@ impl JobLoop {
         bind: &wgpu::BindGroup,
         settings: &BakeSettings,
         input: &[[u32; 20]],
-        entries: Vec<(usize, usize, u32)>,
+        entries: Entries,
         jobs_in: u64,
     ) {
         let (device, queue) = (run.device, run.queue);
