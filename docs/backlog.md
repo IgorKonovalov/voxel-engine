@@ -126,7 +126,7 @@ the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 005
 
 ### Far light on a slow adapter: a bake budget per second, and no black for missing light
 
-Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
+Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
 
 ### A dug chunk's settled light differs from a one-shot bake
 
@@ -147,6 +147,10 @@ Parked 2026-11-12 at Plan 0067's Phase 7 (followup F2; `docs/plans/logs/0067.md`
 ### The census's reach-bound estimate undercounts
 
 Parked 2026-11-12 at Plan 0067's Phase 7 (`docs/plans/logs/0067.md`, Phase 5, attempt 1). The per-second line's `reach-bound N of M in view waiting` counts an in-view waiting chunk whose distance in chunks plus the light radius exceeds the streamer's full radius. The reach's own extent is larger (a gap under the radius reaches about 5.4 chunks at a light radius of 4), so the estimate misses chunks whose reach does cross; `--reach partial` uses the exact test (a chunk within the reach past the full sphere) since 2f3450f. The estimate is kept because Phases 1 to 5's readings used it. What it takes: the exact test in the census over its sample (`VIEW_REACH_SAMPLE` chunks a line, up to 1 331 lookups each, at the line's cadence), printed beside the estimate for one release, then the estimate dropped. Pick up when a plan reads the reach-bound count again.
+
+### The first-block fallback fade's CPU under `chain`
+
+Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 7, the opening row). Under the default missing light, `chain`, every chunk's first block fades over `FADE` frames from its fallback value, and the render thread rewrites the fading block (`advance_fades`) and its summary and two parent records (`Store::show`) every frame of the fade. In regime B, where nearly every step opens, that reads `fades` 1.05 to 1.10 ms p50 and `summaries` 0.61 to 0.63 on the RTX 3080 Laptop (`--near 0`, rig (c)), against 0.002 and 0.05 under `black`, and takes the opening step from 0.75 to 0.86 to 0.88 of the start commit's (bar 0.8); the default glide's `summaries` read 0.965 ms p50, p99 2.86. The owner saw no lag at this cost in the window. Levers, unbuilt: a shorter fade for a first block (a look change, the owner's eye), the summary and parents written once at the fade's end instead of every frame (ADR-0053 has a parent fade with its children, so this one needs an Outcome there), or the blend on the GPU (the temporal read mixes the fallback with the block by a per-chunk weight). Pick up with the next frame-CPU plan, or if a profile (Plan 0069) runs regime B by default (`full_first` off).
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 

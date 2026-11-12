@@ -1,6 +1,6 @@
 # ADR-0046: Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values
 
-> **Status:** accepted (2026-11-09, Plan 0059's close), with an Outcome: the store is the brick level alone
+> **Status:** accepted (2026-11-09, Plan 0059's close), with an Outcome: the store is the brick level alone; a second Outcome at Plan 0067's close (2026-11-12): a partial reach is a setting
 > **Date:** 2026-11-05
 > **Related plan(s):** [Plan
 > 0059](../plans/done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md)
@@ -359,3 +359,18 @@ body above is kept as written; this section is what was built. The readings are 
 - **Glass** (ADR-0047): a translucent voxel's faces join their brick's records, so a pane's entry face reads its
   brick's value.
 - **Still open,** in `docs/backlog.md`: the queue's view order, and cancelling chunks that a fast flight has passed.
+
+## Outcome (2026-11-12, Plan 0067)
+
+**The reach rule holds by default; a partial reach is a setting.** Plan 0067 Phase 5 built
+`vxe_render::bake::ReachMode::Partial` (`BakeQueue::set_reach_mode`, the fly-through's `--reach partial`,
+key `8`): a chunk whose light reach crosses the streamer's full radius bakes from the chunks of its
+reach that are resident, is marked partial in the queue's maps (not in the store), and re-queues as
+a refinement when its reach arrives. The owner's window of 2026-11-12: "not much difference really
+(full kept with chain)". `ReachMode::Full`, this ADR's rule, stays the default, and under it the
+reach walk stops at the first chunk not resident full, as before. `Partial` departs from the rule
+only when a consumer picks it; it stays as a render setting by the owner's rule that a setting that
+costs nothing when off stays (`docs/plans/logs/0067.md`, Phases 5 and 6). The chunks the rule
+leaves waiting are lit meanwhile by ADR-0053's missing-light chain. The live queue's near shell
+still takes full jobs within Chebyshev 2 (`full_first`, owner "keep 2"); `off`, a coarse pass first
+everywhere, is a setting.

@@ -1,9 +1,10 @@
 # ADR-0052: The live queue's bake budget is milliseconds per second, not a slice per frame
 
 > **Status:** accepted (2026-11-11, owner: the direction is a standing rule before Plan 0067's
-> go; the values, the default `ms_per_s` and the cap, stay the pick of its window)
+> go; the values, the default `ms_per_s` and the cap, stay the pick of its window), with an Outcome at Plan 0067's close (2026-11-12): the default
+> stays `frame:1.5`
 > **Date:** 2026-11-11
-> **Related plan(s):** [Plan 0067](../plans/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)
+> **Related plan(s):** [Plan 0067](../plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md)
 
 ## Context
 
@@ -68,4 +69,21 @@ for now, not forever.
 
 ## Outcome
 
-_(Added at Plan 0067's close: the picked values, and anything its window falsified.)_
+Plan 0067 closed 2026-11-12. **The window kept the per-frame slice as the default.** The unit is
+built as the Decision says, `vxe_render::bake::Budget::PerSecond { ms_per_s, cap }` beside
+`Budget::PerFrame { ms }`, each step's slice `ms_per_s x the interval` clamped to `cap x interval`
+and to the floor, and the fly-through exposes it (`--bake-budget frame:MS|second:MS,CAP`, key `5`,
+named in the banner and the HUD). The owner's window of 2026-11-12, both adapters, cycling
+`frame:1.5`, `second:150,0.25` and a higher value: "keep frame:1.5". The default `Budget` is
+`PerFrame { ms: 1.5 }`; the per-second mode stays a render setting a profile may pick (Plan 0069),
+by the owner's rule of the same day that a setting that costs nothing when off stays a setting.
+So the Decision's direction stands as an available mode, and the default it expected to replace
+stays. The readings (`docs/plans/logs/0067.md`, Phases 3 and 7):
+
+- **The Radeon's frame under the cap** grew within the cap's share (Phase 3's bar, met).
+- **The same bake a second on both adapters** did not hold: under `second:150,0.25` on the streamed
+  glide the RADV RENOIR read 148 ms a wall second and the RTX 3080 Laptop 91 to 92, its submits
+  drawing about 5.3 ms of an about 8 ms slice. The cause is unread (`docs/backlog.md`, "The RTX's
+  submits draw less than their per-second slice").
+- **At the default `frame:1.5`** the glide reads about 40 ms of bake a wall second on the RTX and
+  30 on the RENOIR; the slow adapter's far light is what ADR-0053's missing-light chain covers.

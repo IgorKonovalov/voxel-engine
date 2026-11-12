@@ -1,16 +1,19 @@
 # 0067: The frame's CPU: a cheap queue step, a bake budget by time, and no black for missing light
 
-> **Status:** in-progress (owner go 2026-11-11, with the defaults on the open points)
+> **Status:** done (closed 2026-11-12, v0.49.0). Verdict: clean after rulings; a still queue
+> drains and its step reads 0.075 ms p50 on the RTX (the start commit's 3.26), missing light reads
+> the `chain` the owner picked, and the bake stays `frame:1.5`; the chain's first-block fades
+> cost a regime-B step about 1.7 ms, an accepted reading with a backlog entry.
 > **Created:** 2026-11-11
 > **Milestone:** M2 (the light that holds in the dark has to hold at a playable frame), and
-> cross-cutting like [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
+> cross-cutting like [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
 > It serves `docs/nfr.md` section 2's frame and streaming lines and section 1's slow adapter.
-> **Related ADRs:** [ADR-0052](../adrs/0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md)
+> **Related ADRs:** [ADR-0052](../../adrs/0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md)
 > (accepted 2026-11-11, owner): the bake budget's unit. It rests on
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
-> and [ADR-0048](../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> and [ADR-0048](../../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
 > and changes nothing they decided about the order or the withdrawal. Phase 4 builds
-> [ADR-0053](../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
+> [ADR-0053](../../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
 > (accepted 2026-11-11, owner): a summary record per block and a two-level parent table in
 > ADR-0046's store. If Phase 1's reading sends the queue's bookkeeping off the render thread, or
 > Phase 5's arm is picked, the architect writes that ADR before the phase starts.
@@ -1057,9 +1060,9 @@ one in Phase 6.
 ## What this plan does NOT do
 
 - The Radeon's GPU frame at the window's size (hit 26 ms, FSR 2 18.5 ms): the render settings
-  and profiles plan (owed, Sequence step 6) and [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s passes.
+  and profiles plan (owed, Sequence step 6) and [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s passes.
 - The window's pacing, the HUD's waits, the sync's time budget and the worker count:
-  [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
+  [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md).
 - A worker thread for the queue: only if Phase 2 misses its bar, with its own ADR.
 - Baked light on far-field cells, and the dug chunk whose settled light differs from a
   one-shot bake (`docs/backlog.md`).
@@ -1068,7 +1071,7 @@ one in Phase 6.
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to [`docs/plans/logs/0067.md`](logs/0067.md).
+> attempts and resume notes go to [`docs/plans/logs/0067.md`](../logs/0067.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -1090,10 +1093,91 @@ one in Phase 6.
 
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+_(Written at the close review, 2026-11-12, from the log; the lane left this block empty.)_
+
+- **What shipped:** the queue step's stage laps, per-regime summaries and the regime line; the
+  kept candidate pool with cached reach verdicts, the withdrawal only after the camera's chunk
+  changed (ADR-0048's Outcome), the opening's listing on scoped threads; `full_first`; the
+  per-second budget (`Budget`); block summaries, the parent table and the missing-light chain in
+  `temporal.wgsl` (ADR-0053), the first block's fade from its fallback; `ReachMode::Partial`;
+  the window's `--adapter`. Defaults by the owner's window: `chain`, `frame:1.5`, full-first 2,
+  reach `full`; every other mode a flag and a key.
+- **Public API changed:** `CHANGELOG.md`, 0.49.0.
+- **Budget readings:** `docs/plans/logs/0067.md`, Phase 7's table (before 87bf0d2 against after
+  98c10a0's code, RTX 3080 Laptop and RADV RENOIR, headless, quiet), and `docs/nfr.md` section
+  2's two lines with `docs/nfr/02-frame-budget.md`'s paragraph. Rulings on the missed rows are
+  under "Close review".
+- **Gate at the tip:** close review at 4c1e634 (main merged), `scripts/build-guests.sh` first, `cargo nextest run --workspace --profile gate --status-level pass` under the exclusive perf lock and the 16G cap, lavapipe for the gpu binaries, 1-minute load 1.30 at the start and 2.58 at the end: 830 run, 830 passed, 104 skipped, 684.0 s, inside the 12-minute line. Doctests, clippy, fmt and `cargo deny check` exit 0; doc links, comment hygiene, index rows (and `--self-test`) and plan size exit 0 after the close edits. Tests over the 10 s line (`scripts/test-times.mjs`) are all older than this plan and were over it at Plan 0061's close; none is new. Soak and full tiers not run (the owner's instruction for this close).
+- **Outstanding `human` phases:** none.
+
+## Close review (2026-11-12, fresh session)
+
+Clean after rulings; no code changed at the close. The rulings on the lane's flags:
+
+1. **`chain`'s cost on the opening step: an accepted reading.** Under `--near 0` (B) the opening
+   p50 reads 0.86 to 0.88 of the base under `chain` against the 0.8 bar (0.75 under `black`, met);
+   the extra is the first blocks' fallback fades (`fades` 1.05 to 1.10 ms p50) and their summaries
+   (0.61 to 0.63). No fix pass: the levers (a shorter first fade, the summary written once at the
+   fade's end, or the blend on the GPU) change arrival's look or ADR-0053's parent fade, which is
+   the owner's eye and an Outcome, not a close fix; the default flight under full-first 2 runs in
+   A after its first lines, where few first blocks land; the owner saw no lag in the window. The
+   tip's B step is still below the base's (12.98 against 14.72 ms p50 on rig (b)). Parked with
+   its readings and levers in `docs/backlog.md`, "The first-block fallback fade's CPU under
+   `chain`", for the next frame-CPU plan, and recorded in ADR-0053's Outcome.
+2. **`castle_gate.png` re-blessed under `chain`: kept.** A golden pins what ships; the castle rig
+   bakes only the chunks within one of the eye, so its far faces have no value and take the
+   chain, which is the feature. `black` stays defended where it differs (Phase 4's chain test
+   reads 0 in every chunk under `black`), and with the test pinned to `black` the old image read
+   0.0000 %. Pinning to `black` would test a mode that does not ship.
+3. **96e3bf1: accepted.** The fade-on-fade fix starts a fade landing on a running one from
+   `fade_mix` at the running fade's share, the same function `advance_fades` writes, and
+   `a_fade_moves_a_record_by_its_share_a_frame` is unchanged. Under `ReachMode::Full` the reach
+   walk returns at the first chunk not resident full; `Full` reads `Partial` and `Waiting` both as
+   not ready, so no verdict changes, and `set_reach_mode` drops the cache on a change.
+   `reach_mode` private behind the setter and getter is accepted (the field was this plan's).
+4. **The `temporal.wgsl` merge (7e3a97d) and bafc6ad: accepted.** The face's term is the brick
+   value or, with none, `store_fallback`'s; `store_value_by_normal` mixes over it, taking other
+   directions from bricks. Under `black` `store_fallback` returns 0 at once, so the path is
+   main's. The neighbour offset built per component gives the same six offsets; the neighbour
+   and parent reads clip to the window.
+5. **Phase 7's missed rows:**
+   - **The step's own p99 in flight on the RTX** (16.5 to 21.4 ms against a proposed 16.6): an
+     accepted reading. The proposal was a guess; the base reads 18.5 to 23.2, so the tip is no
+     worse, and the flight's frame swings with the sync (Plan 0070). `docs/nfr.md` carries it.
+   - **The summaries' CPU in flight** (0.965 ms p50 against a guessed 0.1): the same cause as
+     ruling 1, accepted with the same backlog entry; ADR-0053's Outcome records the guess falsified.
+   - **The wall-frame row:** the proposal compared the wall with the march pass alone, the
+     architect's error, so the at-rest miss is not a finding; the reading (patch 10.04 ms wall p50
+     against Plan 0064's 11.24 to 11.27) stands. The in-flight p99 (51.6 to 78.4 ms) is the
+     sync's, Plan 0070's.
+   - **The regime in flight reads A:** the owner kept full-first 2 knowing Phase 2b's `off` held B;
+     the row was the owner's eye, not a bar. `off` stays a setting for Plan 0069's profiles.
+   - **The bake a second across adapters at `frame:1.5`:** a per-frame slice does not hold it, by
+     design; the owner kept it. ADR-0052's Outcome records it.
+
+The test audit found the named tests present and their behaviour defended, with assertions
+narrower than some done-when texts; none undefends a claim, so they are followups, not a fix pass.
 
 ## Followups
+
+- **Test assertions narrower than their done-when** (close review, minor; for the next plan that
+  touches `gpu_queue.rs`, or Plan 0045's move of it):
+  - `a_flight_opens_in_the_start_commit_s_order`'s `FLIGHT_ORDER` and
+    `the_full_first_radius_leaves_the_order_alone`'s `FULL_FIRST_ORDER` say they were recorded at
+    4bc8100, but no log records the probe, and a monotone row is a weak pin of the order. The
+    latter compares first jobs and their class, not their samples as the done-when says.
+  - `a_still_camera_drains_and_withdraws_nothing`'s `N` is a hard-coded bound from an assumed 56
+    surface bricks, not computed from the rig's listed samples (`job_samples` exists).
+  - `a_starved_queue_recovers` holds the camera still after the switch until the old rule's jobs
+    end (documented in the test, not in the done-when); its "a coarse job at every opening" check
+    skips that hold, and its budget is the hard-coded `CAP`, not the queue's.
+  - `a_first_block_fades_from_its_fallback` takes its expected start from `LightSummaries::chain`,
+    the code under test (the CPU summary test covers the mean), and asserts "not the block's
+    value" on more than half the differing words.
+  - `a_missing_brick_reads_its_neighbour_then_its_parent` checks the fallback and still-black
+    counters against the CPU chain's classes of every missing pixel, not B and C against D by
+    name; a comment says +y where the code reads +z (`top = 5`).
+  - `the_stages_split_by_opening`'s count sum is a tautology; its match to the opening steps is
+    by count.
+- **The file sizes:** `apps/flythrough/src/main.rs` (10 226 lines) and `crates/vxe-render/src/bake.rs`
+  (6 776) top `scripts/loc.mjs`'s list after this plan; Plan 0045's structure pass takes both.

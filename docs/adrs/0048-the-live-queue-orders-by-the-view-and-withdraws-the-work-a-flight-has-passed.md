@@ -1,6 +1,6 @@
 # ADR-0048: The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed
 
-> **Status:** accepted 2026-11-11 (Plan 0060's close), with an Outcome
+> **Status:** accepted 2026-11-11 (Plan 0060's close), with an Outcome; a second at Plan 0067 (2026-11-12)
 > **Date:** 2026-11-10
 > **Related plan(s):** [Plan 0060](../plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md)
 > (builds it; its close accepts this ADR, and the owner's window in its Phase 4 can overturn it).
