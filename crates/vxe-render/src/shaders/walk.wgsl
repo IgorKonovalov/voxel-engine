@@ -521,6 +521,62 @@ fn advance(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, t: f32, k: i32, face: i32
     return select(v, vec3<i32>(select(face - 1, face, d[k] > 0.0)), axis_mask(k));
 }
 
+// Where the ray `o + d t` (`inv` the reciprocal of `d`, BIG where `d` is 0) enters the mirror
+// window: `found` clear when it misses it, else the first `t >= 0` inside, the voxel there
+// (clamped into the window), and the axis of the window face it entered through (-1 when the
+// ray starts inside). Entering through a face, the voxel is set from the face's plane: the
+// window's minimum plane on the way up, its maximum plane on the way down.
+struct Entry {
+    found: bool,
+    t: f32,
+    v: vec3<i32>,
+    axis: i32,
+};
+
+fn enter_window(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>) -> Entry {
+    let bmin_i = params.window_min * 64;
+    let bmax_i = (params.window_min + params.window_size) * 64;
+    let bmin = vec3<f32>(bmin_i);
+    let bmax = vec3<f32>(bmax_i);
+    let ta = (bmin - o) * inv;
+    let tb = (bmax - o) * inv;
+    let tmin = min(ta, tb);
+    let tmax = max(ta, tb);
+    let t0 = max(max(tmin.x, tmin.y), tmin.z);
+    let t1 = min(min(tmax.x, tmax.y), tmax.z);
+    if (t1 < max(t0, 0.0)) {
+        return Entry(false, 0.0, vec3<i32>(0), -1);
+    }
+    let t = max(t0, 0.0);
+    var axis = -1;
+    var v = voxel_at(o + d * t, d);
+    if (t0 > 0.0) {
+        axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
+        let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
+        v = advance(o, d, inv, t, axis, face);
+    }
+    return Entry(true, t, clamp(v, bmin_i, bmax_i - vec3<i32>(1)), axis);
+}
+
+// Where the ray leaves the aligned cell of edge `size` holding voxel `v`: through its nearest
+// face, the lower axis on a tie (the same `(t, axis)` order `advance` crosses the other axes'
+// planes in), at `t`, into voxel `v`, across `axis`.
+struct Exit {
+    t: f32,
+    v: vec3<i32>,
+    axis: i32,
+};
+
+fn exit_cell(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, size: i32) -> Exit {
+    let cell_min = floor_div(v, size) * size;
+    let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
+    let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
+    var k = 0;
+    if (tk.y < tk[k]) { k = 1; }
+    if (tk.z < tk[k]) { k = 2; }
+    return Exit(tk[k], advance(o, d, inv, tk[k], k, edge[k]), k);
+}
+
 // Layer `z`'s prefix (`z` in 0..8) in a packed prefix of two header words `lo`, `hi`
 // (`gpu_world::pack_prefix`): layers 1 to 4 in `lo` at bits 0, 7, 15 and 23 (7, 8, 8 and 9
 // bits wide), layers 5 to 7 in `hi` at bits 0, 9 and 18 (9 bits each); layer 0's is 0.
@@ -550,31 +606,16 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u);
     let bmin_i = params.window_min * 64;
     let bmax_i = (params.window_min + params.window_size) * 64;
-    let bmin = vec3<f32>(bmin_i);
-    let bmax = vec3<f32>(bmax_i);
     let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
-    let ta = (bmin - o) * inv;
-    let tb = (bmax - o) * inv;
-    let tmin = min(ta, tb);
-    let tmax = max(ta, tb);
-    let t0 = max(max(tmin.x, tmin.y), tmin.z);
-    let t1 = min(min(tmax.x, tmax.y), tmax.z);
-    if (t1 < max(t0, 0.0)) {
+    let entry = enter_window(o, d, inv);
+    if (!entry.found) {
         return miss;
     }
 
     reset_walk();
-    var t = max(t0, 0.0);
-    var axis = -1;
-    var v = voxel_at(o + d * t, d);
-    if (t0 > 0.0) {
-        // Entering the window through its face on `axis`: the window's minimum plane on the
-        // way up, its maximum plane on the way down.
-        axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
-        let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
-        v = advance(o, d, inv, t, axis, face);
-    }
-    v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
+    var t = entry.t;
+    var axis = entry.axis;
+    var v = entry.v;
     var passing = cutaway;
 
     for (var step = 0u; step < MAX_STEPS; step++) {
@@ -601,17 +642,10 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
         if (size == 0) {
             return Hit(true, v, axis, t, c.material);
         }
-        // Leave the cell through its nearest face, the lower axis on a tie: the same
-        // `(t, axis)` order `advance` crosses the other axes' planes in.
-        let cell_min = floor_div(v, size) * size;
-        let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
-        let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
-        var k = 0;
-        if (tk.y < tk[k]) { k = 1; }
-        if (tk.z < tk[k]) { k = 2; }
-        t = tk[k];
-        v = advance(o, d, inv, t, k, edge[k]);
-        axis = k;
+        let exit = exit_cell(o, d, inv, v, size);
+        t = exit.t;
+        v = exit.v;
+        axis = exit.axis;
     }
     return miss;
 }

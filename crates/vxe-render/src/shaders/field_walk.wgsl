@@ -621,30 +621,12 @@ struct FieldHit {
 
 fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
     var miss = FieldHit(FHit(false, false, false, 0.0, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0)), -1, 0u);
-    let bmin_i = params.window_min * 64;
-    let bmax_i = (params.window_min + params.window_size) * 64;
-    let bmin = vec3<f32>(bmin_i);
-    let bmax = vec3<f32>(bmax_i);
     let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
-    let ta = (bmin - o) * inv;
-    let tb = (bmax - o) * inv;
-    let tmin = min(ta, tb);
-    let tmax = max(ta, tb);
-    let t0 = max(max(tmin.x, tmin.y), tmin.z);
-    let t1 = min(min(tmax.x, tmax.y), tmax.z);
-    if (t1 < max(t0, 0.0)) {
+    let entry = enter_window(o, d, inv);
+    if (!entry.found) {
         return miss;
     }
-    var t = max(t0, 0.0);
-    var axis = -1;
-    var v = voxel_at(o + d * t, d);
-    if (t0 > 0.0) {
-        axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
-        let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
-        v = advance(o, d, inv, t, axis, face);
-    }
-    v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
-    return field_walk(o, d, t, v, axis);
+    return field_walk(o, d, entry.t, entry.v, entry.axis);
 }
 
 // The field walk from voxel `v`, entered at `t` through its face on `axis` (-1 for none):
@@ -682,15 +664,10 @@ fn field_walk(o: vec3<f32>, d: vec3<f32>, t_start: f32, v_start: vec3<i32>, axis
             }
             size = 1;
         }
-        let cell_min = floor_div(v, size) * size;
-        let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
-        let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
-        var k = 0;
-        if (tk.y < tk[k]) { k = 1; }
-        if (tk.z < tk[k]) { k = 2; }
-        t = tk[k];
-        v = advance(o, d, inv, t, k, edge[k]);
-        axis = k;
+        let exit = exit_cell(o, d, inv, v, size);
+        t = exit.t;
+        v = exit.v;
+        axis = exit.axis;
     }
     return miss;
 }

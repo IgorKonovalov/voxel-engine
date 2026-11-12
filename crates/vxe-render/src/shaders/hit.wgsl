@@ -170,28 +170,15 @@ fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> Glass
     var out = Glass(vec3<f32>(0.0), vec3<f32>(1.0));
     let bmin_i = params.window_min * 64;
     let bmax_i = (params.window_min + params.window_size) * 64;
-    let bmin = vec3<f32>(bmin_i);
-    let bmax = vec3<f32>(bmax_i);
     let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
-    let ta = (bmin - o) * inv;
-    let tb = (bmax - o) * inv;
-    let tmin = min(ta, tb);
-    let tmax = max(ta, tb);
-    let t0 = max(max(tmin.x, tmin.y), tmin.z);
-    let t1 = min(min(tmax.x, tmax.y), tmax.z);
-    if (t1 < max(t0, 0.0)) {
+    let entry = enter_window(o, d, inv);
+    if (!entry.found) {
         return out;
     }
     reset_walk();
-    var t = max(t0, 0.0);
-    var v = voxel_at(o + d * t, d);
-    var axis = -1;
-    if (t0 > 0.0) {
-        axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
-        let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
-        v = advance(o, d, inv, t, axis, face);
-    }
-    v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
+    var t = entry.t;
+    var v = entry.v;
+    var axis = entry.axis;
     let cap = f32(params.translucent_layers);
     var len = 0.0;
     var entered = false;
@@ -202,12 +189,7 @@ fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> Glass
         }
         let c = tlookup(v);
         let size = select(c.size, c.cell, c.size == 0);
-        let cell_min = floor_div(v, size) * size;
-        let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
-        let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
-        var k = 0;
-        if (tk.y < tk[k]) { k = 1; }
-        if (tk.z < tk[k]) { k = 2; }
+        let exit = exit_cell(o, d, inv, v, size);
         if (c.size == 0) {
             if (!entered) {
                 entered = true;
@@ -215,16 +197,16 @@ fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> Glass
                     out.reflected = glass_reflected(o, d, t, v, axis, lit);
                 }
             }
-            let seg = max(min(min(tk[k], t_end) - t, cap - len), 0.0);
+            let seg = max(min(min(exit.t, t_end) - t, cap - len), 0.0);
             out.transmit *= pow(glass_tint(materials[c.material * 4u].xyz), vec3<f32>(seg));
             len += seg;
             if (len >= cap) {
                 return out;
             }
         }
-        t = tk[k];
-        axis = k;
-        v = advance(o, d, inv, t, k, edge[k]);
+        t = exit.t;
+        axis = exit.axis;
+        v = exit.v;
     }
     return out;
 }
