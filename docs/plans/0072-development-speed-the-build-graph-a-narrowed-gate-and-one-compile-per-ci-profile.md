@@ -281,8 +281,8 @@ None. Configuration only: `Cargo.toml` profiles, `.config/nextest.toml`, `ci.yml
 |---|---|---|---|
 | 1: the build graph and the gate, read | dev | done; readings in [`logs/0072.md`](logs/0072.md). Deviations: every reading at `CARGO_BUILD_JOBS=4` in a 6G scope (two lanes); the first (b), (c) and (d) series void (the probe loop touched other files; clippy's `items_after_test_module`) and re-read; the gate 700 to 794 s, over the 12 min line in two of three | 17fb491 |
 | 2: the dev and test profiles pay for what they buy | dev | done; `line-tables-only` and `split-debuginfo` both kept. Deviations: `[profile.test]` not written (cargo's default already); the combined pair read after the alternated base/`lt`/`sd` rounds, not alternated with the base | 1626405 |
-| 3: the phase gate narrowed to the change | dev | done; `-p` per package for nextest and `--clippy`. Deviation: the warm quick tier reads 18.3 to 25.0 s against Phase 1's 30.0 to 35.5 s, but the `--workspace` form reads the same at Phase 2's profiles: on a warm tree the `-p` flags rebuild the same three packages, and the cut is Phase 2's | committed with this row |
-| 4: the lavapipe group at two and three | dev | not started | |
+| 3: the phase gate narrowed to the change | dev | done; `-p` per package for nextest and `--clippy`. Deviation: the warm quick tier reads 18.3 to 25.0 s against Phase 1's 30.0 to 35.5 s, but the `--workspace` form reads the same at Phase 2's profiles: on a warm tree the `-p` flags rebuild the same three packages, and the cut is Phase 2's | e34e106 |
+| 4: the lavapipe group at two and three | dev | done; N stays 1, `.config/nextest.toml` unchanged: every cell cut the wall 44 to 61 % with no failure, but in every run a `gpu_bake` test took over twice its N = 1 time. The N = 1 reference is Phase 2's single gate at the tip, not alternated | committed with this row |
 | 5: one compile per profile in CI | dev | not started | |
 | 6: a fresh lane starts warm | dev | not started | |
 
