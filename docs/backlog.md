@@ -219,6 +219,9 @@ with the lamp on it filters as before. There its input is an analytic light with
 and with the lamp off and the `face` look the whole pass could be skipped on the CPU side. Both
 change shadow softness or the rare fallback pixels, so they are the owner's eye. Pick up after
 Plan 0058, which widens the filter to rgb.
+Checked 2026-11-13 at Plan 0058's refresh: its Phase 1 moves the lamp-off skips onto "some light
+is shaded" (`LIGHTING_DIRECT`), so after it the skip holds with the lamp off and an empty list;
+the iterations stay here (Plan 0058's owner question 8).
 
 ### A beam prepass, or a distance value per brick
 
@@ -276,6 +279,10 @@ windowed `--glide 300` cave flight on the RTX, the per-second `light place` p99 
 846 ms in 19 of 30 lines at the tip (12 of 73 at the base, max 330 ms), never over 2.5 ms in the
 headless benches; not attributed. Pick up as the next sync plan, before the 16.6 ms bar is read
 again.
+Checked 2026-11-13 at Plan 0058's refresh: both are the emissive light-sample mirror's
+(`gpu_world/lights.rs`), which Plan 0058 does not touch, so neither folds into it; its window
+reads the `sync:` line beside a hitch. Whether to draft the sync plan now, beside 0058's lane, is
+its owner question 9.
 
 ### The slow adapter's walk-speed spike
 

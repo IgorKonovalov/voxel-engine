@@ -1,15 +1,17 @@
 # 0058: Dynamic lights: a list of eight analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
 
-> **Status:** approved (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
+> **Status:** approved, **amended 2026-11-13 (refresh at a312c19)** (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
 > architect's re-read below, order amended 2026-11-11), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
 > phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
-> flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5)
+> flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5).
+> The refresh's owner questions (7 to 9) are under Owner answers.
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
 > [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
-> phases re-cut their Files touched at their start.
+> phases re-cut their Files touched at their start. **Done by the refresh of 2026-11-13:** every
+> path below is the tree's at a312c19.
 > **Created:** 2026-11-04
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the consumer's "headlamp, flares,
 > glowing crystal"; the per-source switch on feeding the probes, parked 2026-10-22)
@@ -33,8 +35,53 @@
 > `temporal.wgsl` (the store read), `composite.wgsl` (the emitter cap) and `Lighting` (one bit),
 > the files Phases 1 and 2 here change, and 0045 moves `marcher.rs` and the shaders apart.
 > **Before the lane starts the architect re-reads Phases 1 and 2 against Plan 0045's tip** and
-> refreshes their paths; bit and binding numbers in this plan are
+> refreshes their paths (done 2026-11-13, below); bit and binding numbers in this plan are
 > "the next free at the start commit", which dev reads from the tree.
+
+> **Amended 2026-11-13 (refresh at a312c19).** Phases 1 to 3 re-read against main at a312c19
+> (v0.52.0), after Plans 0045 (v0.50.0), 0072 (v0.51.0) and 0070 (v0.52.0). ADR-0044's
+> mechanism, the slot rule, the analytic figures and every bar stand; ADR-0044 needs no edit.
+> What changed in the text below:
+> 1. **Paths.** The readers table and each phase's Files touched name the split tree. The WGSL
+>    `Params`, `lamp(p)` and `lamp_term` are in `common.wgsl`, the glass reflection's lamp in
+>    `hit.wgsl`; the Rust `Params` and the `LIGHTING_*` bits in `frame/settings.rs`; the lamp's
+>    change key in `frame/state.rs` (`LightKey`, `LampKey`) and its use in `frame/encode.rs`;
+>    the upscalers' older lamp in `frame/upscale.rs` (`Lamp`, `UpscaleUniform`) and
+>    `fsr2/prepare.rs` (`InLamp`'s buffer); the probe list's reach test in `frame/encode.rs`.
+>    Rust constants reach WGSL through `frame/compose.rs`'s generated prelude, which
+>    `no_constant_rust_defines_is_a_wgsl_literal` guards; each pass's modules are its `PASSES`
+>    row in `frame/pipelines.rs`. The fly-through's keys are `toggles.rs` (modes) and
+>    `run/keys.rs` (actions), its flags `cli/flags.rs`, its HUD and banner `hud/modes.rs`.
+> 2. **Keys.** Digits 1 to 8 are now the bake queue's toggles (Plans 0059 and 0060) and 9 and 0
+>    the audio mix's, so the plan's `1` to `6` collide. They move to unbound keys: **`F` drop,
+>    `Tab` carry, `Slash` fire, `Quote` colour, `Backspace` remove, `Backslash` bounce**
+>    (owner question 7). The text below uses the new keys.
+> 3. **Plan 0065's lamp-off skips.** Three shader gates read `LIGHTING_LAMP` clear as "the
+>    direct part is zero": `temporal.wgsl`'s store-only path (a cube face stores the store's
+>    value with no blend and returns), and `atrous.wgsl`'s early-out and its `dark_store`
+>    variance skip. With list lights and the lamp off that is false, and done-when 1 would read
+>    an unblended, unfiltered or dropped direct part. Phase 1 moves them onto a new bit,
+>    `LIGHTING_DIRECT` (some light is shaded), and adds done-when 13.
+> 4. **A HUD row of its own.** The lighting row is the HUD's longest line; the list's words go
+>    in a new `HudRow::Lights` (prefix `lights `), which `every_toggle_shows_its_mode_in_the_hud_grid`
+>    (`apps/flythrough/tests/toggles.rs`) covers.
+> 5. **The soak line is 10 s** on lavapipe (`docs/nfr.md` section 7), not the 30 s this text
+>    carried: Phase 1's done-whens 7 and 12 and Phase 3's done-when 3 are born
+>    `#[ignore = "soak"]` on their estimates, each with a gate variant.
+> 6. **Per-phase checks** name their `gpu_*` binaries (`test-changed.mjs --binaries`) and use
+>    `test-changed.mjs --clippy` (Plan 0072).
+> 7. **File caps.** `frame/encode.rs` is at 1130 of `check-file-size`'s 1200 lines, so the
+>    list's slots, hash and upload live in a new `frame/lights.rs`, not in `encode.rs`.
+> 8. **Plan 0070's backlog entries stay in the backlog.** `light_note` (`note_lights` in
+>    `exposed_emitters`) and the windowed `light place` spikes are the emissive light-sample
+>    mirror's (`gpu_world/lights.rs`, ADR-0025), on the sync's CPU side, which this plan does
+>    not touch: a list light is never an emitter and never reaches the mirror (ADR-0044).
+>    Folding them would put a sync plan inside a look-gated lighting plan. Phase 4 and the
+>    Budgets' runs read the sync's line beside the frame, so a hitch there is not charged to
+>    the list. The a-trous entry ("fewer iterations, or none") stays too; item 3 corrects its
+>    premise, and its look question comes after Phase 2's rgb filter (owner question 8).
+> 9. **Budgets** restated against `docs/nfr.md` section 2 as it reads at a312c19, with the
+>    machines named.
 
 > **Amended 2026-11-10 (test cost, owner).** Phases 1 to 3 are **exploration** (lane rules 2b):
 > the owner's window in Phase 4 is their gate. Each lands its CPU tests of data, determinism
@@ -52,13 +99,13 @@ The renderer shades one light that is not a voxel, the headlamp, and it is bound
 This plan makes it one entry of **a list of eight analytic lights** (point or spot, colour,
 intensity, reach, flags) that the consumer hands the frame every frame. A lit pixel shades every
 light in reach **exactly, with one shadow ray each**: no random number, no settle, no dots. The
-fly-through drops a light where you look (`1`), carries the newest one in front of the camera
-(`2`), cycles its colour (`3`), removes it (`4`), flags it for bounce (`5`) and fires one along
-the view ray (`6`), and shows the
+fly-through drops a light where you look (`F`), carries the newest one in front of the camera
+(`Tab`), cycles its colour (`Quote`), removes it (`Backspace`), flags it for bounce
+(`Backslash`) and fires one along the view ray (`Slash`), and shows the
 count and each mode in the window. The direct part of the frame widens from a white scalar to
 rgb, in a target of its own. Then **a `bounce` flag per light** feeds ADR-0043's lamp channel
 from the flagged lights, off for dropped lights by default. The first thing anyone sees: press
-`1` in the hall with the lamp off, and the floor, the pillars and the far wall are lit that
+`F` in the hall with the lamp off, and the floor, the pillars and the far wall are lit that
 frame and hold still.
 
 ## Context & problem
@@ -82,22 +129,28 @@ default) shades its probe rays with the headlamp alone, lists the probes within
 `Lighting::lamp_reach` of the lamp, and freezes a probe at `probe_freeze` visits while the lamp
 is still.
 
-**Every reader of the lamp fields, at 82ea836** (all move to the lights uniform in Phase 1):
+**Every reader of the lamp fields, at a312c19** (all move to the lights uniform in Phase 1;
+shaders under `crates/vxe-render/src/shaders/`, Rust under `crates/vxe-render/src/`):
 
 | File | What it reads |
 |---|---|
-| `light.wgsl` | `lamp_lit`, and the lamp's position for the pass's own cull |
-| `march.wgsl` | `lamp(p)`, the unshadowed lamp on a glass hit's reflection |
+| `common.wgsl` | `Params`' lamp fields (`light_pos`, `light_intensity`, `light_dir`, `cos_outer`, `cos_inner`); `lamp(p)`, the unshadowed lamp; `lamp_term`, the term the masks compare |
+| `light.wgsl` | `lamp_lit` under `LIGHTING_LAMP`, the steps view's one shadow ray toward `light_pos` |
+| `hit.wgsl` | `lamp(p)` under `LIGHTING_LAMP`, the unshadowed lamp on a glass hit's reflection |
 | `gradient.wgsl` | `lamp_lit`, re-shaded against the previous frame's `a` (the gradient mode, not the default) |
-| `upscale.wgsl` | `up_lamp` now against `up_tuning.old_*`: the change mask |
-| `fsr2/input.wgsl` | `lamp_term` now against `in_lamp.old_*`: the reactive and change mask |
+| `upscale.wgsl` | `up_light_changed`: `lamp_term` now against `up_tuning.old_*`, the change mask |
+| `fsr2/input.wgsl` | `light_changed`: `lamp_term` now against `in_lamp.old_*`, the reactive and change mask |
 | `probe_update.wgsl` | `lamp_lit` at the probe rays' hits |
-| `probe_gather.wgsl` | `probe_beyond_reach`, the lamp's position against `probe.reach` |
+| `probe_gather.wgsl` | `probe_beyond_reach`, `light_pos` against `probe.reach` |
+| `temporal.wgsl`, `atrous.wgsl` | `LIGHTING_LAMP` clear as "no direct part" (Plan 0065's skips; the refresh's item 3) |
+| `frame/settings.rs` | `Params`' lamp fields and `lamp_pose`; `LIGHTING_LAMP`, `LIGHTING_LAMP_CHANGED` |
+| `frame/encode.rs` | fills the lamp fields from `LightParams` and the camera; sets `LIGHTING_LAMP_CHANGED` from `LightKey`; lists the probes within `lamp_reach` of `light_pos` |
+| `frame/state.rs`, `frame/upscale.rs`, `fsr2/prepare.rs` | `LightKey`/`LampKey` (the change key); `Lamp` and `UpscaleUniform`'s `old_*` (the older lamp); FSR 2's `lamp` buffer (`InLamp`) |
 
 **What a lamp shadow ray costs** (`docs/nfr/02-frame-budget.md`; `docs/plans/logs/0051.md`,
 loaded, indicative): the light pass with the lamp on and every emissive face capped read 0.113 ms
 on the RTX 3080 Laptop at 720p internal on the half tier; the Plan 0041 table's light pass reads
-about eight times the RTX's on the Cezanne iGPU. So one light in reach of every lighting pixel is
+about eight times the RTX's on the Cezanne iGPU (RADV RENOIR in the readings). So one light in reach of every lighting pixel is
 about 0.1 ms on the dev reference and about 0.8 ms on the slow adapter, projections this plan's
 readings replace. Under the store the light pass draws no emissive sample on a cube face, so its
 cost at the start commit is the lamp's ray and the fallback hits'.
@@ -156,8 +209,9 @@ review between phases. The architect reviews once at the end, in a fresh session
 applies: exploratory runs on the RTX 3080 Laptop through `VXE_TEST_ADAPTER=rtx`, labelled; every
 asserted reading on lavapipe.
 
-**The gates.** Per phase: `node scripts/test-changed.mjs --profile quick`, then `--profile gpu`
-under the perf lock (every phase touches rendering), clippy and fmt. At the tip: `cargo nextest
+**The gates.** Per phase: `node scripts/test-changed.mjs --profile quick`, then `--profile gpu
+--binaries <the phase's list>` under the perf lock (every phase touches rendering; each phase
+names its binaries), `node scripts/test-changed.mjs --clippy` and fmt. At the tip: `cargo nextest
 run --workspace --profile gate` under the perf lock, doctests, clippy, fmt, deny, and the doc and
 tier gates. The soak tier (`--profile soak --run-ignored only`) and the full tier (`--profile
 full --run-ignored all`) run only when the owner asks. **Tables, sweeps and attempts go to
@@ -166,10 +220,11 @@ below keeps one row per phase.
 
 **Test files and tiers** (`.config/nextest.toml`, by marks). New GPU tests go in
 `apps/flythrough/tests/gpu_dynamic_lights.rs`; the `gpu_` prefix is the classification and
-`node scripts/check-test-tiers.mjs` checks it. A test over 30 s on lavapipe (60 s on CI) is born
-`#[ignore = "soak"]` and is named as such in its phase. A measurement written as a test goes
-`#[ignore]`d inside a `mod reading`; the readings below are fly-through runs, not tests. The
-HUD and banner tests are unit tests in `apps/flythrough/src` with no device.
+`node scripts/check-test-tiers.mjs` checks it. A test over 10 s on lavapipe (60 s on CI;
+`docs/nfr.md` section 7) is born `#[ignore = "soak"]` and is named as such in its phase. A
+measurement written as a test goes `#[ignore]`d inside a `mod reading`; the readings below are
+fly-through runs, not tests. The HUD and banner tests are unit tests in
+`apps/flythrough/src/hud/modes.rs` and `apps/flythrough/tests/toggles.rs`, with no device.
 
 **Test times are estimates**, none measured for this plan: from Plan 0051's and 0057's tests on
 lavapipe, a hand-built box renders 2 to 3 s for a few dozen frames at 192 x 108 in the gate's
@@ -188,9 +243,11 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
 - **Owner skill:** dev
 - **What:** ADR-0044's list in every reader of the lamp, white only, the slot rule, the reach
   and the per-pixel cull, the change detection, the upscalers' change mask over the list, and
-  the fly-through's `1`, `2`, `6`, HUD row and `--lights N`. No target is added: each light's term is
+  the fly-through's `F`, `Tab`, `Slash`, HUD row and `--lights N`. No target is added: each light's term is
   summed as luminance into the irradiance's `a`, where the lamp's part is today, so the
-  temporal, a-trous and composite passes are untouched.
+  temporal, a-trous and composite passes keep their layout; only their lamp-off gates move
+  (below). The list's Rust side (`Light`, the slots, the hash, the uniform's upload) is a new
+  `frame/lights.rs`, since `frame/encode.rs` is near `check-file-size`'s cap.
 - **The list:**
   - **`Light`** (`vxe_render::Light`, `#[repr(C)]`, 64 B): `pos: [f32; 3]`, `intensity`,
     `dir: [f32; 3]`, `cos_inner`, `colour: [f32; 3]`, `cos_outer`, `flags: u32` (`ON`,
@@ -208,11 +265,20 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
     zero beyond the reach, zero where the shadow ray toward the light finds rock (skipped when
     `SHADOWS` is clear). The light pass loops over the count and sums the lit lights' luminance
     into `a`.
+  - **"Some light is shaded."** A new bit, `LIGHTING_DIRECT` (the next free `LIGHTING_*` bit,
+    through the prelude), is set when the list's count is above 0, the headlamp included. It
+    replaces `LIGHTING_LAMP` in the gates that mean "the direct part is zero":
+    `temporal.wgsl`'s store-only path (a cube face with the lamp off stores the store's value,
+    no blend, and returns) and `atrous.wgsl`'s early-out and `dark_store`. With the bit clear
+    those paths are taken exactly as with the lamp off at the start commit, so Plan 0065's
+    savings hold with an empty list. `LIGHTING_LAMP` stays the headlamp's (slot 0 and the
+    `lamp` word).
   - **Reach.** `Lighting::light_floor: f32`, default 0.1 (ADR-0044); `reach(i) = sqrt(intensity /
     light_floor)`. A floor of 0 means no reach: the window is 1 and no light is culled, which is
     the lamp's arithmetic at the start commit. The `steps` view counts the shadow rays cast per
     pixel in its `a` as it counts the lamp's today, so the cull is readable.
-  - **The other readers.** `march.wgsl`'s `lamp(p)` sums the list in reach, unshadowed as today.
+  - **The other readers.** `common.wgsl`'s `lamp(p)`, called on `hit.wgsl`'s glass reflection,
+    sums the list in reach, unshadowed as today.
     `probe_update.wgsl` and `probe_gather.wgsl` read the headlamp's slot through the `lamp` word
     (the channel stays the lamp's until Phase 3). `gradient.wgsl` re-shades the summed list
     against the previous frame's `a`, so the gradient mode's lambda is 0 on a still list of any
@@ -224,24 +290,28 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
     light reaches is marked as a pixel under a stepped lamp is today; a pixel out of every
     changed light's reach is not. With the `changed` word clear for both frames the loop is
     skipped.
-- **The fly-through:** `1` adds a white point light of intensity 1200 at the looked-at hit, 2
-  voxels off the surface along its normal (a miss drops it 20 voxels ahead); `2` toggles **carry**
+- **The fly-through:** `F` adds a white point light of intensity 1200 at the looked-at hit
+  (the dig's ray, `run/edit.rs`'s `camera_ray`), 2
+  voxels off the surface along its normal (a miss drops it 20 voxels ahead); `Tab` toggles **carry**
   of the newest light: its position is the eye plus 2 m forward and 0.3 m down each frame until
-  `2` again, which leaves it where it is. `6` **fires** a white point light of intensity 1200
+  `Tab` again, which leaves it where it is. `Slash` **fires** a white point light of intensity 1200
   from the eye along the view ray at 200 voxels a second (20 m/s; 3.3 voxels a frame at 60 fps),
   its `BOUNCE` flag clear as a dropped light's: its position advances by the frame's time step
   each frame, it stops 2 voxels short of the first surface on that ray (the drop's ray, cast
   once at the key press; an edit on its path afterwards is not seen) or at 400 voxels with no
-  hit, and it stays there as a dropped light. Several may fly at once; `2` on a light in flight
-  ends the flight and carries it; `4` removes it. The light has no visible body (What this plan
-  does NOT do). `--lights N` (headless or windowed) places `N` white
+  hit, and it stays there as a dropped light. Several may fly at once; `Tab` on a light in flight
+  ends the flight and carries it; `Backspace` removes it. The light has no visible body (What this plan
+  does NOT do). `--lights N` (headless or windowed; a row in `cli/flags.rs`'s table, which
+  `help_lists_every_flag_the_parser_accepts` covers) places `N` white
   lights of intensity 600 on a ring of radius 3 m around the spawn pose at eye height, for the
-  readings. The HUD's lighting row gains `lights <n>/8 [carry] [fly <m>] over <k>`, where `m` counts the lights in flight and `n` counts the
-  headlamp while it is on; the banner names `lights <n>/8` on `1` and `carry on` or `carry off`
-  on `2` and `fire` with `lights <n>/8` on `6`. A drop or a shot into a full list (eight with the lamp off, seven list lights with it on) prints
-  a line and adds nothing. `Digit1` to `Digit6` are unbound in `apps/flythrough/src` and
-  `crates/vxe-app/src` at a8b1a2c and no active plan claims them; `C`, `V` and `Z` are bound
-  (fly down, far normal, sharpen).
+  readings. A new HUD row, `HudRow::Lights`, reads `lights <n>/8 [carry] [fly <m>] over <k>`, where `m` counts the lights in flight and `n` counts the
+  headlamp while it is on; the banner names `lights <n>/8` on `F` and `carry on` or `carry off`
+  on `Tab` and `fire` with `lights <n>/8` on `Slash`. A drop or a shot into a full list (eight with the lamp off, seven list lights with it on) prints
+  a line and adds nothing. **Keys at a312c19:** `F`, `Tab`, `Slash`, `Quote`, `Backspace` and
+  `Backslash` are unbound in `apps/flythrough/src` and `crates/vxe-app/src`; every letter but
+  `F`, `Digit0` to `Digit9`, `F1` to `F3` and `F5` to `F10`, `Comma`, `Period`, `Semicolon`,
+  `Minus`, `Equal` and the brackets are bound. Carry is a mode (a `toggles.rs` row); drop,
+  fire and remove are actions in `run/keys.rs`, as the dig is.
 - **The readings** (fly-through runs): the light pass and the frame at the level's spawn and the
   vein, lamp off at `--lights` 0, 1, 2, 4, 8 and lamp on at 0, 1, 2, 4, 7 (the slot rule), both
   adapters, three quiet rounds where the machine allows, with the pass's shadow-ray count per
@@ -250,12 +320,24 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
   a still list of 0 and 8 (the mask's loop); the hall at exposure 8 with one light at the floor's
   centre, native and FSR 2 at 1.5, 64 against 512 frames (the prediction: 0 difference at
   native).
-- **Files touched:** `crates/vxe-render/src/light.rs`, `marcher.rs`, `fsr2.rs`, `lib.rs`,
-  `crates/vxe-render/src/shaders/march.wgsl` (`Params`, the lights uniform, `lamp`),
-  `light.wgsl`, `gradient.wgsl`, `upscale.wgsl`, `fsr2/input.wgsl`, `probe_update.wgsl`,
-  `probe_gather.wgsl`, `apps/flythrough/src/main.rs`, `hud.rs`,
-  `apps/flythrough/tests/gpu_dynamic_lights.rs` (new), `gpu_fsr2.rs`, `gpu_hud_golden.rs` and
-  the lamp-lit baselines under `tests/golden/` (done-when 3), `docs/plans/logs/0058.md` (new).
+- **Files touched** (at a312c19): `crates/vxe-render/src/light.rs`, `lib.rs`,
+  `frame/lights.rs` (new), `frame/settings.rs` (`Params`, `Lighting::light_floor`, the bits),
+  `frame/state.rs` (the change key), `frame/encode.rs`, `frame/upscale.rs`, `frame/mod.rs`
+  (`set_lights`, `lights_over_cap`, `lights_changed`), `frame/pipelines.rs` (the uniform's
+  binding in each reader's `PASSES` row), `frame/compose.rs` (the prelude's constants),
+  `fsr2/prepare.rs`, `fsr2/resources.rs`; `crates/vxe-render/src/shaders/common.wgsl`
+  (`Params`, the lights uniform, `lamp`, `lamp_term`), `light.wgsl`, `hit.wgsl`,
+  `gradient.wgsl`, `temporal.wgsl` and `atrous.wgsl` (the gates), `upscale.wgsl`,
+  `fsr2/input.wgsl`, `probe_update.wgsl`, `probe_gather.wgsl`; `apps/flythrough/src/lights.rs`
+  (new: the testbed's list, drop, carry and flight), `toggles.rs`, `run/keys.rs`,
+  `run/frame.rs` (`set_lights` each frame), `cli/flags.rs`, `hud/modes.rs`,
+  `apps/flythrough/tests/toggles.rs`; `apps/flythrough/tests/gpu_dynamic_lights.rs` (new),
+  `gpu_fsr2.rs`, `gpu_upscale.rs`, and the lamp-lit baselines under `tests/golden/` with the
+  tests that bless them (done-when 3); `docs/plans/logs/0058.md` (new).
+- **GPU binaries per phase:** `gpu_dynamic_lights`, `gpu_fsr2`, `gpu_upscale`, `gpu_golden`,
+  `gpu_hud_golden`, `gpu_castle_golden`, `gpu_look`, `gpu_bake`, `gpu_lights`, `gpu_indirect`
+  and vxe-render's `gpu_frame` (every binary that compares a golden or reads the lamp's
+  history; done-when 3 needs each golden).
 - **Done when:**
   1. `a_point_light_gives_the_analytic_irradiance_on_the_floor` asserts, on a closed dark box
      (albedo 0.5, no emitter, lamp off, `--lighting full`, manual exposure 1, no jitter) with one
@@ -293,18 +375,20 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
      settled value within the frame count and tolerance that
      `fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step` allows a lamp step. The same
      mask assertion runs under `own` in `gpu_upscale.rs`. About 15 s (an estimate from the lamp
-     test's size; over 30 s it is marked `#[ignore = "soak"]` and a 16-frame mask-only variant
-     stays in the gate).
+     test's size), so it is born `#[ignore = "soak"]` and a 16-frame mask-only variant,
+     `fsr2_marks_a_dropped_list_light`, about 4 s, stays in the gate (refresh 2026-11-13: the
+     line is 10 s).
   8. `the_gradient_mode_holds_still_under_a_still_list` asserts, in the gradient mode with two
      list lights and the lamp off, that the strata's lambda reads 0 at every stratum over 16
      still frames. About 3 s (an estimate).
-  9. `the_banner_and_hud_name_the_lights` (`hud.rs`, no device, under 1 s): the lighting row
-     reads `lights 3/8 carry over 0` for three lights with carry on and the lamp off, and
-     `lights 4/8` for the same with the lamp on; the banner reads `lights 3/8` after `1` and
-     `carry on` after `2`; `--lights 3` parses; `1` on a full list is refused with a line that
+  9. `the_banner_and_hud_name_the_lights` (`hud/modes.rs`, no device, under 1 s): the `lights`
+     row reads `lights 3/8 carry over 0` for three lights with carry on and the lamp off, and
+     `lights 4/8` for the same with the lamp on; the banner reads `lights 3/8` after `F` and
+     `carry on` after `Tab`; `--lights 3` parses; `F` on a full list is refused with a line that
      names this plan's number. With two lights, one of them in flight, the row reads `lights 2/8
-     fly 1 over 0`; the banner reads `fire` and `lights 2/8` after `6`; `6` on a full list is
-     refused with the same line.
+     fly 1 over 0`; the banner reads `fire` and `lights 2/8` after `Slash`; `Slash` on a full list is
+     refused with the same line. `every_toggle_shows_its_mode_in_the_hud_grid` passes with the
+     carry row in the `lights` row.
   10. The readings are in the log, with the shadow-ray count per pixel beside each cost. The
       prediction: the light pass grows by 0.08 to 0.12 ms per light in reach on the RTX and by
       0.6 to 1.0 ms on the Cezanne; a figure outside that range is a reading, not a failure.
@@ -328,14 +412,24 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
       of the light's position are marked reactive on each frame of the flight. **The trail's
       length is a reading:** the frames from the light's last move until the start pixel is
       within the tolerance, in the log, on lavapipe and labelled on the RTX. About 15 s (an
-      estimate; over 30 s it is marked `#[ignore = "soak"]` and an 8-frame flight stays in the
-      gate).
+      estimate), so it is born `#[ignore = "soak"]` and an 8-frame flight,
+      `fsr2_marks_a_light_in_flight`, about 4 s, stays in the gate (refresh 2026-11-13).
+  13. `a_list_light_with_the_lamp_off_survives_the_lamp_off_skips` (refresh 2026-11-13) asserts,
+      on done-when 1's box with the lamp off and one list light, over 32 still frames at
+      `--lighting half`: the direct part at the floor pixel under the light reads 9.40 within
+      2 % on every frame both after the temporal pass (the store-only path did not drop it) and
+      after the filter (the early-out did not pass it around); and with the list empty and the
+      lamp off, `LIGHTING_DIRECT` is clear, and every lamp-off gate golden passes against its
+      baseline as blessed at the start commit, with no re-bless (the skips unchanged). About 4 s
+      (an estimate).
 
 ### Phase 2: Colour: the direct part in a target of its own
 - **Owner skill:** dev
 - **What:** the direct part becomes rgb through the light, temporal, gradient, a-trous and
-  composite passes; the fly-through's `3` and `4`; a golden with two coloured lights;
-  `frame_bytes`.
+  composite passes; the fly-through's `Quote` and `Backspace`; a golden with two coloured lights;
+  `frame_bytes`. Phase 1's `LIGHTING_DIRECT` gates read the direct target from here on: with
+  the irradiance's `a` unused, `atrous.wgsl`'s `dark_store` tests the direct accumulation, not
+  `acc.w`.
 - **The direct target** (the contract Plan 0032 builds on; see Data shapes for the same text):
   - **Shape.** The light pass writes a `direct` texture, `rgba16float` on the lighting grid: rgb
     the pre-exposed sum of the frame's exact, analytic direct terms (each list light's term
@@ -359,15 +453,20 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
 - **Arithmetic** at 1280 x 720 internal on the half tier (640 x 360 lighting pixels, 8 B a
   pixel): the direct target 1 843 200 B, the pair 3 686 400 B, **5 529 600 B** more in
   `frame_bytes`.
-- **The fly-through:** `3` cycles the newest light's colour through white, warm (1.0, 0.7, 0.4),
-  red, green, blue; `4` removes the newest light. The HUD row names the newest light's colour;
-  the banner names the colour on `3` and `lights <n>/8` on `4`.
-- **Files touched:** `crates/vxe-render/src/shaders/light.wgsl`, `temporal.wgsl`,
-  `gradient.wgsl`, `atrous.wgsl`, `composite.wgsl`, `march.wgsl` (the bit's name, `lamp` in
-  rgb), `crates/vxe-render/src/marcher.rs` (targets, `frame_bytes`), `apps/flythrough/src/main.rs`,
-  `hud.rs`, `apps/flythrough/tests/gpu_dynamic_lights.rs`, `gpu_golden.rs` and a new baseline
+- **The fly-through:** `Quote` cycles the newest light's colour through white, warm (1.0, 0.7, 0.4),
+  red, green, blue; `Backspace` removes the newest light. The `lights` row names the newest light's colour;
+  the banner names the colour on `Quote` and `lights <n>/8` on `Backspace`.
+- **Files touched** (at a312c19): `crates/vxe-render/src/shaders/light.wgsl`, `temporal.wgsl`,
+  `gradient.wgsl`, `atrous.wgsl`, `composite.wgsl`, `common.wgsl` and `hit.wgsl` (the bit's
+  name, `lamp` in rgb); `crates/vxe-render/src/frame/targets.rs` (the direct target and its
+  pair), `frame/mod.rs` (`frame_bytes`), `frame/encode.rs` (the passes' bind groups),
+  `frame/pipelines.rs`, `frame/settings.rs` and `frame/compose.rs` (the renamed bit);
+  `apps/flythrough/src/lights.rs`, `toggles.rs`, `run/keys.rs`, `hud/modes.rs`;
+  `apps/flythrough/tests/gpu_dynamic_lights.rs`, `gpu_golden.rs` and a new baseline
   under `tests/golden/`, `gpu_upscale.rs` and `gpu_fsr2.rs` (`frame_bytes`),
   `docs/plans/logs/0058.md`.
+- **GPU binaries per phase:** `gpu_dynamic_lights`, `gpu_golden`, `gpu_upscale`, `gpu_fsr2`,
+  `gpu_lights`, `gpu_hud_golden` and `gpu_castle_golden` (done-when 5's no-re-bless rule).
 - **Done when:**
   1. `two_coloured_lights_sum_per_channel` asserts, on Phase 1's box with a red light (1, 0, 0)
      and a blue light (0, 0, 1) of intensity 1200 each at 20 voxels above the floor and 20 voxels
@@ -383,12 +482,14 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
      than 2 % (the blend never sees a sample that differs). About 4 s (an estimate).
   4. `frame_bytes_hold_the_direct_pair` in `gpu_upscale.rs` asserts that the frame's inventory
      at 1280 x 720 internal on the half tier counts the direct target and its pair at 5 529 600 B
-     and that `frame_bytes` equals the inventory's sum; `gpu_fsr2.rs`'s inventory test gains the
+     and that `frame_bytes` equals the inventory's sum; `gpu_fsr2.rs`'s inventory test
+     (`frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`) gains the
      same three targets. Under 5 s each (an estimate).
-  5. Phase 1's done-whens 6, 7, 8, 11 and 12 hold on the direct target (the bit renamed), and no gate
+  5. Phase 1's done-whens 6, 7, 8, 11, 12 and 13 hold on the direct target (the bit renamed;
+     7's and 12's gate variants in the gate, the soak tests once by name), and no gate
      golden without a list light is re-blessed in this phase.
-  6. The HUD and banner tests cover `3` and `4` (no device, under 1 s): the banner reads the
-     colour's name after `3` and `lights 2/8` after `4` on three lights.
+  6. The HUD and banner tests cover `Quote` and `Backspace` (no device, under 1 s): the banner reads the
+     colour's name after `Quote` and `lights 2/8` after `Backspace` on three lights.
   7. The readings: the temporal and a-trous passes' cost at the spawn, lamp on, `--lights` 0 and
      4, both adapters, against Phase 1's (the prediction: the a-trous grows by under 0.1 ms on
      the RTX for three channels against one, a guess); the hall's 64 against 512 frames with two
@@ -409,14 +510,22 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
   `probe_gather.wgsl`'s `probe_beyond_reach` tests every flagged light); a probe's mean freezes
   at `probe_freeze` visits while every flagged light within its bounce reach is still, and
   blends at `Lighting::probe_move_blend` while one moves; with no flagged light on, no probe
-  pass is encoded. `Lighting::lamp_bounce` stays the channel's switch and the headlamp's flag.
+  pass is encoded (today's gate in `frame/encode.rs` needs `Lighting::lamp` on; it becomes "a
+  flagged light is on"). `Lighting::lamp_bounce` stays the channel's switch and the headlamp's flag.
   **The volume still scrolls with the camera** (`ProbeVolume::origin_for`): a flagged light farther
   from the camera than the volume's half-side plus the bounce reach lists no probe and adds no
-  bounce, and its direct light is unchanged. The fly-through's `5` toggles the newest light's
-  flag; the HUD row marks a flagged light `*`; the banner reads `bounce on` or `bounce off`.
-- **Files touched:** `crates/vxe-render/src/shaders/probe_update.wgsl`, `probe_gather.wgsl`,
-  `crates/vxe-render/src/probes.rs`, `marcher.rs`, `apps/flythrough/src/main.rs`, `hud.rs`,
-  `apps/flythrough/tests/gpu_dynamic_lights.rs`, `gpu_indirect.rs`, `docs/plans/logs/0058.md`.
+  bounce, and its direct light is unchanged. The fly-through's `Backslash` toggles the newest light's
+  flag; the `lights` row marks a flagged light `*`; the banner reads `bounce on` or `bounce off`.
+- **Files touched** (at a312c19): `crates/vxe-render/src/shaders/probe_update.wgsl`,
+  `probe_gather.wgsl`, `crates/vxe-render/src/probes.rs`, `frame/encode.rs` (the channel's gate
+  and the update list's reach test, today `lamp_reach` against `light_pos`),
+  `frame/probe_channel.rs` (the probe uniform), `frame/lights.rs`;
+  `apps/flythrough/src/lights.rs`, `toggles.rs`, `hud/modes.rs`;
+  `apps/flythrough/tests/gpu_dynamic_lights.rs`, `gpu_indirect.rs` (the lamp furnace's CPU
+  reference), `gpu_settle.rs` (`a_lamp_step_moves_the_probes_in_reach_only`, the one-probe step
+  test the backlog names), `docs/plans/logs/0058.md`.
+- **GPU binaries per phase:** `gpu_dynamic_lights`, `gpu_indirect`, `gpu_settle`, and vxe-render's
+  `gpu_frame` (its probe-volume test).
 - **Done when:**
   1. `a_flagged_light_feeds_the_channel_and_an_unflagged_one_does_not` asserts, on a closed box
      of albedo 0.5 with the lamp off and one list light at the centre: with `BOUNCE` clear every
@@ -436,13 +545,15 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
      the bounce reach are bit-identical over 64 frames, that moving the light changes every
      probe within the bounce reach of its old or new position within 8 frames and leaves the
      others bit-identical, and that they freeze again once it is still. About 16 s (an
-     estimate).
+     estimate), so it is born `#[ignore = "soak"]` (refresh 2026-11-13); its gate variant,
+     `a_moved_flagged_light_wakes_the_probes_in_reach_only`, about 5 s, asserts the move's
+     half at `probe_freeze` 4 over 24 frames.
   4. `a_light_beyond_the_bounce_reach_lists_no_probe` asserts that a flagged light of intensity
      1200 placed 80 voxels from a probe (beyond the bounce reach of 64, inside the direct reach
      of 109.5) leaves that probe at 0 and unvisited, and that a flagged light placed outside the
      volume by more than the bounce reach encodes no probe pass. About 4 s (an estimate).
-  5. The HUD and banner tests cover `5` and the `*` (no device, under 1 s): the banner reads
-     `bounce on` after `5` and `bounce off` after a second.
+  5. The HUD and banner tests cover `Backslash` and the `*` (no device, under 1 s): the banner reads
+     `bounce on` after `Backslash` and `bounce off` after a second.
   6. The readings: the probe update's cost at the spawn with the lamp on and 0, 1 and 4 flagged
      lights in reach, both adapters, against the channel's cost at the start commit (the
      prediction: the update grows with the flagged lights' shadow rays per probe ray, about
@@ -460,33 +571,41 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
   ```
   cargo build --release -p flythrough
 
-  # 1. The hall, lamp off: drop a light at the floor's centre (1), count to five, a fast turn,
-  #    a slow pan; carry it (2) down the hall and set it down; a second and third light; colours (3).
+  # 1. The hall, lamp off: drop a light at the floor's centre (F), count to five, a fast turn,
+  #    a slow pan; carry it (Tab) down the hall and set it down; a second and third light;
+  #    colours (Quote).
   target/release/flythrough --source showcase --shot hall --exposure 8 --hud --lamp off
 
   # 2. The level: drop a light in the vein's passage, dig next to it, dig a hole and drop a
   #    light into it; carry one through the passage with the lamp on and off.
   target/release/flythrough --level --seed 1 --pose vein --hud
 
-  # 3. Bounce: the same light with its flag on (5), beside it off; the lamp's bounce beside it.
+  # 3. Bounce: the same light with its flag on (Backslash), beside it off; the lamp's bounce
+  #    beside it.
   target/release/flythrough --level --seed 1 --pose vein --hud --lamp-bounce on
 
   # 4. Eight lights on the ring, lamp off, for the cost on screen.
   target/release/flythrough --level --seed 1 --lights 8 --lamp off --hud
 
-  # 5. A light in flight (6): down the hall's length with the lamp off; along the vein's passage
-  #    and across the cavern, camera still and then following it; three in a row; one with the
-  #    bounce flag set after it lands (5).
+  # 5. A light in flight (Slash): down the hall's length with the lamp off; along the vein's
+  #    passage and across the cavern, camera still and then following it; three in a row; one
+  #    with the bounce flag set after it lands (Backslash).
   target/release/flythrough --source showcase --shot hall --exposure 8 --hud --lamp off
   target/release/flythrough --level --seed 1 --pose vein --hud --lamp off
   ```
+
+  The runs keep their stdout on screen (the per-second `frames:` and `sync:` lines). A hitch
+  the owner names is read against the `sync:` line's `light place` and `note` for that
+  second before it is charged to the list: those are the emissive mirror's, which this plan
+  does not touch (`docs/backlog.md`, "The sync's `light_note` stage and the windowed glide's
+  light walks"), and they spiked to 846 ms in Plan 0070's windowed glide.
 - **Files touched:** this plan's log.
 - **Done when:** the log records the owner's words on: (a) whether anything moves with a dropped
   light and a still camera, hall and level, under FSR 2 at 1.5; (b) the carried light in motion,
   against the headlamp; (c) the frame of the drop (does the cavern light "that frame"); (d) hard
   shadows and the reach's edge at `light_floor` 0.1, the headlamp's included; (e) the bounce
   flag's look and lag, and whether dropped lights should default to it; (f) eight lights' cost on
-  screen; (g) whether the defaults are accepted; (h) the light in flight under FSR 2 at 1.5:
+  screen, with each hitch the owner names beside that second's `sync:` line; (g) whether the defaults are accepted; (h) the light in flight under FSR 2 at 1.5:
   whether the walls it passes are lit that frame, whether a trail stays behind it, and whether
   the lit walls shimmer while it flies. **Stop rule:** a "no" on (a), (b) or (h) that names
   shimmer or a trail under FSR 2 stops the close and goes to the architect with Phase 1's mask
@@ -558,19 +677,26 @@ terms are added to this plan's direct target. What that target is at this plan's
 
 ## Budgets
 
-The base for every row is a reading at this plan's start commit (Plans 0060 and 0061 land
-first), taken with the command in the table before Phase 1's first change and written to the
-log. Plan 0059's close readings are the last on record and say what to expect of that base:
-`docs/nfr/02-frame-budget.md` and `docs/nfr/03-memory.md` (the loaded-light rows), with the runs
-in `docs/plans/logs/0059.md`. `nfr.md` section 2's upscale line is already over under the FSR 2
-default; this plan's reading there is its delta.
+The base for every row is a reading at this plan's start commit (a312c19 or the lane's later
+start on main), taken with the command in the table before Phase 1's first change and written
+to the log. The machines are `docs/nfr.md` section 1's: the RTX 3080 Laptop (dev reference) and
+the Cezanne iGPU (RADV RENOIR, the slow adapter); the baseline card is not on hand, so its
+figure stays a projection between the two. **The lines as they read at a312c19 (`docs/nfr.md`
+section 2, refresh 2026-11-13):** lighting 6.0 ms; denoise 3.0 ms, which the lamp-on a-trous
+at the full lighting tier already exceeds on the RTX (3.088 to 3.321 ms at Plan 0065's close,
+2530 x 1378 output); upscale 1.5 ms, over under the FSR 2 default (2.103 to 2.424 ms RTX,
+15.691 to 16.058 ms RENOIR, the same close); the streaming line's `update + poll + sync` p99
+22.8 to 28.2 ms after Plan 0070, over, which this plan does not move and reads only so a
+spike is not charged to it. Section 3's "everything else in VRAM" is 1.5 GB. This plan's
+reading on each line over its budget is its delta, and it claims none of them.
 
 | `nfr.md` figure | Base | Expected | How the close measures it |
 |---|---|---|---|
-| §2 lighting line: light + gradient + probes + gather | the start commit's reading | light pass **a projection:** + 0.08 to 0.12 ms per light in reach on the RTX 3080 Laptop, + 0.6 to 1.0 ms on the Cezanne RADV, read lamp off at `--lights` 0, 1, 2, 4, 8; probes grow with the flagged lights (Phase 3's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD --lights N [--pose vein]`, three quiet rounds, the perf lock, the memory cap, per pass |
-| §2 denoise line: temporal + a-trous | the start commit's reading | a-trous over three channels: **a guess** of under + 0.1 ms on the RTX | the same runs |
-| §2 upscale line (over at the base) | the start commit's reading | the mask's loop over a still list: **a guess** of under + 0.05 ms on the RTX at 8 lights, skipped at 0 | the same runs, `--lights` 0 and 8 |
-| §3 `Frame::frame_bytes` | the start commit's figure at the run's resolution | **arithmetic:** + 8 B x 3 per lighting pixel (5 529 600 B at 1280 x 720 internal, half tier); the lights uniform + 1040 B | `frame_bytes` asserted in `gpu_upscale.rs` and `gpu_fsr2.rs`, printed at the close |
+| §2 lighting line (6.0 ms): light + gradient + probes + gather | the start commit's reading | light pass **a projection:** + 0.08 to 0.12 ms per light in reach on the RTX 3080 Laptop, + 0.6 to 1.0 ms on the RADV RENOIR, read lamp off at `--lights` 0, 1, 2, 4, 8; probes grow with the flagged lights (Phase 3's reading) | `flythrough --level --seed 1 --headless --render 1920x1080 --frames 2700 --adapter NVIDIA\|AMD --lights N [--pose vein]`, three quiet rounds, the perf lock, the memory cap, per pass |
+| §2 denoise line (3.0 ms): temporal + a-trous | the start commit's reading | a-trous over three channels: **a guess** of under + 0.1 ms on the RTX; with the lamp off and an empty list Plan 0065's skips hold (Phase 1 done-when 13), with any light shaded they do not | the same runs, lamp off at `--lights` 0 and 1 beside lamp on |
+| §2 upscale line (1.5 ms, over at the base) | the start commit's reading | the mask's loop over a still list: **a guess** of under + 0.05 ms on the RTX at 8 lights, skipped at 0 | the same runs, `--lights` 0 and 8 |
+| §2 streaming line (1.0 ms; the sync's p99 over at the base) | the start commit's `sync:` stages | **no change:** the list never reaches the mirror | the same runs' `sync` p99 and `light place`/`note`, read and not barred |
+| §3 `Frame::frame_bytes` (inside the 1.5 GB) | the start commit's figure at the run's resolution | **arithmetic:** + 8 B x 3 per lighting pixel (5 529 600 B at 1280 x 720 internal, half tier, which is the 1920 x 1080 runs' internal size under FSR 2 at 1.5); the lights uniform + 1040 B | `frame_bytes` asserted in `gpu_upscale.rs` and `gpu_fsr2.rs`, printed at the close |
 
 **Review note (2026-11-10, the static performance review; estimates, nothing was run).** The
 per-light projection above comes from one loaded reading of the headlamp: a spot cone at the
@@ -580,9 +706,10 @@ share of the hit pass per light than 0.1 ms: **a guess of 0.15 to 1.1 ms each in
 the RTX**. The close's readings therefore add one arm to the table's command: `--lights` 1, 4
 and 8 as **dropped point lights at the hall**, beside the vein. A reading over 0.3 ms per
 light on the RTX is not a failure; it goes to the owner with the cap the render-profile plan
-would set (`docs/backlog.md`). If
+would set (`docs/backlog.md`).
 [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
-has landed, the a-trous row's base is its early-out, which a moving light switches off.
+has landed (refresh 2026-11-13): the a-trous row's lamp-off base is its early-out, which any
+shaded light, still or moving, switches off (Phase 1's `LIGHTING_DIRECT`).
 
 Determinism is not touched: everything is in `vxe-render` and the fly-through. The list's
 shading draws no random number, so two runs of the same still frame are bit-identical in the
@@ -614,14 +741,24 @@ direct part, which the close reads on lavapipe.
   reach.
 - **Hard shadows.** A point light's shadow has no penumbra. The owner judges it in Phase 4; a
   soft shadow is stochastic and is not offered here (ADR-0044).
-- **Glass.** `march.wgsl`'s `lamp(p)` sums the list unshadowed on a glass hit's reflection, as
+- **Glass.** `common.wgsl`'s `lamp(p)`, on `hit.wgsl`'s glass path, sums the list unshadowed on a glass hit's reflection, as
   it does the lamp today; a light behind a wall therefore shows in a pane's reflection. No bar
   here; a shadowed term there is a followup if the window shows it.
-- **The lights uniform and `Params`.** Moving the lamp fields out of `Params` touches the seven
-  readers in the Context's table; the gate's goldens at floor 0 (Phase 1 done-when 3) catch a
+- **The lights uniform and `Params`.** Moving the lamp fields out of `Params` touches every
+  reader in the Context's table; the gate's goldens at floor 0 (Phase 1 done-when 3) catch a
   slip.
-- **Plan 0061's tip.** Its store read by the far normal and its removed emitter cap change
-  `temporal.wgsl` and `composite.wgsl` under Phases 1 and 2; the header's re-read is the guard.
+- **Plan 0061's tip** (resolved by the refresh of 2026-11-13): its store read by the far normal
+  and its removed emitter cap are in the tree at a312c19, and Phases 1 and 2 name the files as
+  they are.
+- **Plan 0065's skips** (refresh 2026-11-13). They save the a-trous and the temporal blend with
+  the lamp off; Phase 1 keeps them for an empty list only. A scene with one dropped light and
+  the lamp off therefore pays the filter the lamp-on scene pays today, which the denoise row
+  reads. A gate missed in the move drops or unfilters a list light with the lamp off, which
+  Phase 1 done-when 13 catches.
+- **Two lists named "lights".** `gpu_world/lights.rs` (the emissive light-sample mirror,
+  `LightSample`, `light_place`, `light_note`, `--light-radius`) is not this plan's list. The
+  list's types and files say `Light`, `MAX_LIGHTS`, `frame/lights.rs` and `--lights`; a doc
+  comment on each names the other so a reader does not take one for the other.
 
 ## What this plan does NOT do
 
@@ -639,7 +776,7 @@ direct part, which the close reads on lavapipe.
 - A channel volume that follows a light instead of the camera, or a second volume.
 - Light persistence, replication or physics: the consumer's; a light that is part of the world
   is an emissive voxel through an op, as today. The testbed flies a light on a straight line
-  at one speed (`6`); gravity, an arc, a ricochet, a light that dies on impact and collision
+  at one speed (`Slash`); gravity, an arc, a ricochet, a light that dies on impact and collision
   with anything that is not a voxel are the consumer's motion.
 - A visible body for a light. A list light lights surfaces and is itself not drawn; a glowing
   projectile is an entity with an emissive model (M6) that also writes a slot.
@@ -664,13 +801,35 @@ direct part, which the close reads on lavapipe.
 2026-11-10, after the review ("I want for example to fire a projectile and this projectile
 will be lighting up walls of cave"; "yes, amend the plan"):
 
-6. **A light in flight:** the fly-through fires a light along the view ray (`6`), and the plan
+6. **A light in flight:** the fly-through fires a light along the view ray (`6`, now `Slash`), and the plan
    reads the trail behind it. This replaces "no thrown arc" in answer 3 as far as a straight
    flight; an arc stays the consumer's.
 
 The "go" is given (owner, 2026-11-10: "move all draft plans to approved"); the lane starts
-after the architect's re-read against Plan 0045's tip (amended 2026-11-11). The keys (`1` to `6`)
-are the architect's picks from the unbound ones and dev may move them if a binding collides.
+after the architect's re-read against Plan 0045's tip (amended 2026-11-11). The keys are the
+architect's picks from the unbound ones and dev may move them if a binding collides (since
+2026-11-13 `F`, `Tab`, `Slash`, `Quote`, `Backspace`, `Backslash`; the first picks, `1` to `6`,
+were taken by the bake queue's toggles).
+
+**Owner questions from the refresh (2026-11-13, at a312c19), each with the architect's
+recommendation.** The plan reads as recommended until answered.
+
+7. **The keys.** Digits 1 to 8 are the bake queue's toggles (Plans 0059 and 0060) and 9 and 0
+   the audio mix's. (a) **Recommended:** the lights take unbound keys, `F` drop, `Tab` carry,
+   `Slash` fire, `Quote` colour, `Backspace` remove, `Backslash` bounce; nothing else moves.
+   (b) The lights take `1` to `6` back and the queue's toggles move to other keys, which
+   changes keys the owner has used since Plan 0060's window.
+8. **The a-trous backlog entry ("fewer iterations, or none").** (a) **Recommended:** it stays
+   in the backlog and is picked up after this plan; this plan only keeps Plan 0065's skips
+   correct (Phase 1's `LIGHTING_DIRECT`), and Phase 4 (d) judges hard shadows through today's
+   filter. (b) Fold an iteration-count setting (1, 2 or 4, a cheap mode that stays a setting)
+   into Phases 2 and 4, for the owner to judge list-light shadows beside it; it adds a toggle
+   and a question to a window that already asks eight.
+9. **The sync's `light_note` and `light place` (Plan 0070's backlog entry).** Not this plan's
+   (refresh item 8). (a) **Recommended:** draft the next sync plan now, so its lane can run
+   beside this one: it edits `gpu_world/` and the sync's benches, which no phase here touches,
+   and shares only the perf lock. (b) Leave it in the backlog until this plan closes, as the
+   entry says ("before the 16.6 ms bar is read again").
 
 ## Implementation log
 
