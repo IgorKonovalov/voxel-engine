@@ -445,8 +445,8 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
 | 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](logs/0070.md)) | `7493526` (code); `3926018` (readings) |
 | 2: the stage clock per chunk, and the base re-read | dev | done; the stop rule held ([log](logs/0070.md)) | `bdca60a` (code); `6c1f9f5` (readings) |
 | 3: the rescan set dense | dev | done ([log](logs/0070.md)) | `297e7a9` (code); `56538e0` (readings) |
-| 4: the light walks on change | dev | done ([log](logs/0070.md)) | `ef0b55c` (code); committed with this row (readings) |
-| 5: the readings against the base | dev | not started | |
+| 4: the light walks on change | dev | done ([log](logs/0070.md)) | `ef0b55c` (code); `439176c` (readings) |
+| 5: the readings against the base | dev | done; the 16.6 ms goal missed, the next stage named ([log](logs/0070.md)) | committed with this row |
 | 6: the owner's window | human | not started | |
 | 7: the lines and the bookkeeping | dev | not started | |
 
@@ -506,6 +506,13 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
   full walk), not the dirty set's change count alone (`ef0b55c`).
 - `drop_lights` notes a change only when the chunk held lists, a dirty mark or a wait
   (`ef0b55c`).
+
+**Phase 5 deviations and unmet done-whens:**
+
+- The autopilot runs on the RTX only.
+- The goal bar, `update + poll + sync` p99 at most 16.6 ms, is missed in both scenes on both
+  adapters; the peak RSS proposal (within 2 %) is missed in one of 12 bench pairs. The log
+  names `light_note` as the next stage.
 
 Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
