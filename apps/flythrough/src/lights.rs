@@ -1,6 +1,7 @@
 //! The fly-through's list of analytic lights (`vxe_render::Light`, ADR-0044): `1` drops one at
-//! the looked-at point, `2` carries the newest in front of the camera, `6` fires one along the
-//! view ray, `4` removes the newest; `--lights N` starts with a ring. The run hands
+//! the looked-at point, `2` carries the newest in front of the camera, `3` cycles the picked
+//! colour and recolours the newest, `6` fires one along the view ray, `4` removes the newest;
+//! drops and shots take the picked colour; `--lights N` starts with a ring. The run hands
 //! [`TestLights::list`] to the frame every frame (`Frame::set_lights`). Not the mirror's light
 //! samples (`--light-radius`, the emissive voxels' candidates).
 
@@ -38,6 +39,15 @@ pub const CARRY_DOWN: f32 = 3.0;
 pub const FULL_LINE: &str =
     "lights: the list is full (Plan 0058: 8 slots, the headlamp's among them while it is on)";
 
+/// The colours `3` cycles through, in order, with their names: white first.
+pub const COLOURS: [(&str, [f32; 3]); 5] = [
+    ("white", [1.0, 1.0, 1.0]),
+    ("warm", [1.0, 0.7, 0.4]),
+    ("red", [1.0, 0.0, 0.0]),
+    ("green", [0.0, 1.0, 0.0]),
+    ("blue", [0.0, 0.0, 1.0]),
+];
+
 /// A shot's flight: its unit direction and the voxels it has left to travel.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Flight {
@@ -52,11 +62,13 @@ pub struct TestLight {
     pub flight: Option<Flight>,
 }
 
-/// The testbed's lights, oldest first, and whether the newest is carried.
+/// The testbed's lights, oldest first, whether the newest is carried, and the picked colour
+/// (an index into [`COLOURS`]) that drops and shots take.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TestLights {
     pub lights: Vec<TestLight>,
     pub carry: bool,
+    pub colour: usize,
 }
 
 fn add(a: [f32; 3], b: [f32; 3], s: f32) -> [f32; 3] {
@@ -84,6 +96,31 @@ impl TestLights {
         Self {
             lights,
             carry: false,
+            colour: 0,
+        }
+    }
+
+    /// The picked colour's name and value.
+    pub fn picked(&self) -> (&'static str, [f32; 3]) {
+        COLOURS[self.colour % COLOURS.len()]
+    }
+
+    /// `3`: the next colour of [`COLOURS`] is picked, and the newest light (in flight or
+    /// still) takes it. Returns its name.
+    pub fn cycle_colour(&mut self) -> &'static str {
+        self.colour = (self.colour + 1) % COLOURS.len();
+        let (name, c) = self.picked();
+        if let Some(l) = self.lights.last_mut() {
+            l.light.colour = c;
+        }
+        name
+    }
+
+    /// A point light of the picked colour at `pos` of [`DROP_INTENSITY`].
+    fn coloured(&self, pos: [f32; 3]) -> Light {
+        Light {
+            colour: self.picked().1,
+            ..Light::point(pos, DROP_INTENSITY)
         }
     }
 
@@ -105,7 +142,7 @@ impl TestLights {
         Ok(())
     }
 
-    /// `1`: a white point light of [`DROP_INTENSITY`] at the looked-at hit, `hit` its distance
+    /// `1`: a point light of the picked colour and [`DROP_INTENSITY`] at the looked-at hit, `hit` its distance
     /// along `fwd` from `eye` in voxels and its surface normal, [`SURFACE_GAP`] off the
     /// surface; [`MISS_DROP`] ahead with no hit. Refused when the list is full.
     pub fn drop_at(
@@ -119,16 +156,17 @@ impl TestLights {
             Some((t, n)) => add(add(eye, fwd, t), n, SURFACE_GAP),
             None => add(eye, fwd, MISS_DROP),
         };
+        let light = self.coloured(pos);
         self.push(
             lamp,
             TestLight {
-                light: Light::point(pos, DROP_INTENSITY),
+                light,
                 flight: None,
             },
         )
     }
 
-    /// `6`: a white point light of [`DROP_INTENSITY`] leaving `eye` along `fwd` at
+    /// `6`: a point light of the picked colour and [`DROP_INTENSITY`] leaving `eye` along `fwd` at
     /// [`SHOT_SPEED`], to stop [`SURFACE_GAP`] short of the first surface, `hit_t` voxels
     /// along the ray (cast once, now), or after [`SHOT_RANGE`]. Its bounce flag is clear.
     /// Refused when the list is full.
@@ -140,10 +178,11 @@ impl TestLights {
         hit_t: Option<f32>,
     ) -> Result<(), &'static str> {
         let left = hit_t.map_or(SHOT_RANGE, |t| (t - SURFACE_GAP).max(0.0));
+        let light = self.coloured(eye);
         self.push(
             lamp,
             TestLight {
-                light: Light::point(eye, DROP_INTENSITY),
+                light,
                 flight: Some(Flight { dir: fwd, left }),
             },
         )
@@ -192,8 +231,9 @@ impl TestLights {
         self.lights.iter().map(|l| l.light).collect()
     }
 
-    /// The `lights` row: `lights <n>/8 [carry] [fly <m>] over <k>`, `n` the lights shaded
-    /// with the headlamp counted while it is on, `m` those in flight, `k` those past the cap.
+    /// The `lights` row: `lights <n>/8 [carry] [fly <m>] over <k> colour <name>`, `n` the
+    /// lights shaded with the headlamp counted while it is on, `m` those in flight, `k` those
+    /// past the cap, `name` the picked colour.
     pub fn write_row(&self, lamp: bool, out: &mut String) {
         let cap = Self::cap(lamp);
         let shaded = self.lights.len().min(cap) + usize::from(lamp);
@@ -205,7 +245,12 @@ impl TestLights {
         if fly > 0 {
             let _ = write!(out, " fly {fly}");
         }
-        let _ = write!(out, " over {}", self.lights.len().saturating_sub(cap));
+        let _ = write!(
+            out,
+            " over {} colour {}",
+            self.lights.len().saturating_sub(cap),
+            self.picked().0
+        );
     }
 
     /// The banner's count, `lights <n>/8`.
@@ -294,6 +339,31 @@ mod tests {
         assert_eq!(l.lights[0].light.pos, [1.0, 22.0, 0.0]);
         l.remove_newest();
         assert!(l.lights.is_empty());
+    }
+
+    #[test]
+    fn a_shot_takes_the_picked_colour() {
+        let mut l = TestLights::default();
+        assert_eq!(l.picked().0, "white");
+        l.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        assert_eq!(l.cycle_colour(), "warm");
+        assert_eq!(l.lights[0].light.colour, [1.0, 0.7, 0.4]);
+        assert_eq!(l.cycle_colour(), "red");
+        l.fire(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        l.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        assert_eq!(l.lights[1].light.colour, [1.0, 0.0, 0.0]);
+        assert_eq!(l.lights[2].light.colour, [1.0, 0.0, 0.0]);
+        // A light in flight takes a recolour too.
+        l.fire(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        assert_eq!(l.cycle_colour(), "green");
+        assert!(l.lights[3].flight.is_some());
+        assert_eq!(l.lights[3].light.colour, [0.0, 1.0, 0.0]);
+        assert_eq!(l.lights[2].light.colour, [1.0, 0.0, 0.0]);
+        assert_eq!(l.cycle_colour(), "blue");
+        assert_eq!(l.cycle_colour(), "white");
+        let mut row = String::new();
+        l.write_row(false, &mut row);
+        assert_eq!(row, "lights 4/8 fly 2 over 0 colour white");
     }
 
     #[test]

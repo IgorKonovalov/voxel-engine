@@ -75,6 +75,7 @@ impl FadeSample {
         let (dev, q) = (&gpu.device, &gpu.queue);
         let filtered = vxe_render::debug::read_rgba16f(dev, q, frame.filtered());
         let raw = vxe_render::debug::read_rgba16f(dev, q, frame.irradiance());
+        let lamp = vxe_render::debug::read_rgba16f(dev, q, frame.direct());
         let indirect = vxe_render::debug::read_rgba16f(dev, q, frame.indirect_irradiance());
         let out_tex = frame.target();
         let out: Vec<[f32; 4]> = vxe_render::debug::read_rgba8(dev, q, out_tex)
@@ -87,7 +88,7 @@ impl FadeSample {
         Self {
             lit: direct + indirect,
             direct,
-            lamp: mean(&raw, frame.irradiance(), FADE_BLOCK, &|p| f64::from(p[3])),
+            lamp: mean(&lamp, frame.direct(), FADE_BLOCK, &|p| f64::from(p[3])),
             emissive: mean(&raw, frame.irradiance(), FADE_BLOCK, &lum),
             indirect,
             output: mean(&out, out_tex, FADE_BLOCK * scale, &lum),

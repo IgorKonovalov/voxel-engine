@@ -13,11 +13,14 @@
 //   2  storage texture   irradiance_out  rgba16float: the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), this frame's emissive sample in rgb
-//                                        (0 on a cube face, whose light the store holds) and the
-//                                        list's summed luminance in a, pre-exposed
-//                                        (`exposure_now`, clamped at HDR_MAX); 0 on a miss. In
-//                                        the steps view the list's shadow rays' counters
-//                                        instead (see `shade`)
+//                                        (0 on a cube face, whose light the store holds), 0 in
+//                                        a, pre-exposed (`exposure_now`, clamped at HDR_MAX); 0
+//                                        on a miss. In the steps view the list's shadow rays'
+//                                        counters instead (see `shade`)
+//   3  storage texture   direct_out      rgba16float: the direct part, the list's exact terms
+//                                        each times its colour summed in rgb and their
+//                                        luminance (`colour_weight`) in a, pre-exposed and
+//                                        clamped as above; 0 on a miss and in the steps view
 //
 // Each light of the list is a point or spot light: E = PI * intensity * cone * max(n.l, 0) /
 // dist^2 times its window inside its reach and 0 beyond, so that the composite's Lambertian
@@ -38,6 +41,8 @@
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
 
 @group(2) @binding(2) var irradiance_out: texture_storage_2d<rgba16float, write>;
+
+@group(2) @binding(3) var direct_out: texture_storage_2d<rgba16float, write>;
 
 // The frame's candidate table (ADR-0025), in light_samples from `params.light_table_base`:
 // a header slot (count, total weight as f32 bits), then per entry the start and length of an
@@ -90,18 +95,20 @@ fn shade_px(gid: vec3<u32>) {
             counts = vec4<f32>(f32(steps), f32(storage), f32(pool), f32(rays));
         }
         textureStore(irradiance_out, px, counts);
+        textureStore(direct_out, px, vec4<f32>(0.0));
         return;
     }
-    var e = vec3<f32>(0.0);
+    // The direct part: rgb, and its luminance in w.
+    var e = vec4<f32>(0.0);
     var emissive = vec3<f32>(0.0);
     if (rec.found) {
         let ray = pixel_ray(full_px(gid.xy));
         let n = rec.n;
         if ((params.flags & FLAG_CUTAWAY) != 0u) {
-            e = vec3<f32>(PI * (0.3 + 0.7 * (0.5 + 0.5 * n.z)));
+            e = vec4<f32>(PI * (0.3 + 0.7 * (0.5 + 0.5 * n.z)));
         } else {
             let ns = shadow_normal_of(rec, ray.d);
-            e = vec3<f32>(PI * lights_lit(rec.p, n, ns));
+            e = PI * lights_lit_rgb(rec.p, n, ns);
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
             // ray. Any other hit draws its own.
             if (!reads_store(rec)) {
@@ -109,14 +116,11 @@ fn shade_px(gid: vec3<u32>) {
             }
         }
     }
-    // The emissive sample in rgb, the list's (luminance, or the cutaway's hemisphere) in a. Stored
-    // pre-exposed: times this frame's exposure, at most HDR_MAX (ADR-0033).
+    // The emissive sample in rgb; the list's (or the cutaway's hemisphere) in the direct
+    // target. Stored pre-exposed: times this frame's exposure, at most HDR_MAX (ADR-0033).
     let ex = exposure_now();
-    textureStore(
-        irradiance_out,
-        px,
-        min(vec4<f32>(emissive * ex, e.x * ex), vec4<f32>(HDR_MAX)),
-    );
+    textureStore(irradiance_out, px, min(vec4<f32>(emissive * ex, 0.0), vec4<f32>(HDR_MAX)));
+    textureStore(direct_out, px, min(e * ex, vec4<f32>(HDR_MAX)));
 }
 
 // A uniform point of face `face` of voxel `v`, from `rand` at pixel `px` (dimensions 0 and 1;
@@ -151,10 +155,17 @@ fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
 
 // The list's `light_lit` at `p`, each weighed by its colour's luminance.
 fn lights_lit(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
-    var sum = 0.0;
+    return lights_lit_rgb(p, n, ns).w;
+}
+
+// The list's `light_lit` at `p`, each times its colour summed in rgb, and weighed by its
+// colour's luminance summed in w (a white light adds the same value to all four).
+fn lights_lit_rgb(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> vec4<f32> {
+    var sum = vec4<f32>(0.0);
     for (var i = 0u; i < lights.count; i++) {
         let li = lights.l[i];
-        sum += light_lit(li, p, n, ns) * colour_weight(li.colour);
+        let lit = light_lit(li, p, n, ns);
+        sum += vec4<f32>(lit * li.colour, lit * colour_weight(li.colour));
     }
     return sum;
 }

@@ -78,7 +78,7 @@ pub struct Params {
     pub history: u32,
     /// The lamp's `offset_right`, `offset_down` and `turn` ([`LightParams`]): what
     /// [`Frame::encode`] compares between encodes, with the cone and intensity, to decide
-    /// [`LIGHTING_LAMP_CHANGED`] for the headlamp's slot. The shaders read these words as
+    /// [`LIGHTING_LIGHTS_CHANGED`] for the headlamp's slot. The shaders read these words as
     /// padding.
     pub lamp_pose: [f32; 3],
     /// The previous frame's views, for reprojection (set by [`Frame::encode`]).
@@ -144,7 +144,7 @@ pub(crate) const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// edit box resets a pixel (ADR-0018, ADR-0044), and keeps the emissive part's history. The
 /// light pass's estimate of each light carries no sampling noise (one point light, one shadow
 /// ray), so the reset adds none.
-pub(crate) const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
+pub(crate) const LIGHTING_LIGHTS_CHANGED: u32 = 1 << 9;
 
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub(crate) const LIGHTING_FILTER_OFF: u32 = 1 << 5;
@@ -581,10 +581,14 @@ pub struct Lighting {
     /// Emissive candidates the light pass resamples per pixel; 0 turns emissive light off.
     pub candidates: u32,
     pub shadow_walk: ShadowWalk,
-    /// The a-trous filter runs over the lamp's part (and a fallback hit's emissive part); off,
+    /// The a-trous filter runs over the direct part (and a fallback hit's emissive part); off,
     /// the composite shows the temporal pass's accumulation unfiltered (a cube face's emissive
     /// part the store's value, which the light pass's irradiance does not hold).
     pub filter: bool,
+    /// The a-trous iterations a frame runs while the filter is on, at strides 1, 2, 4, 8 in
+    /// turn, clamped to 1 ..= [`ATROUS_ITERATIONS`] (default 4); the composite reads the
+    /// target the last one wrote.
+    pub atrous_iterations: u32,
     pub history: HistoryKill,
     /// The lamp's bounce from the probe volume (ADR-0043's lamp channel over ADR-0023's
     /// volume): with the lamp on, the probes within [`Lighting::lamp_reach`] of it trace the
@@ -640,6 +644,7 @@ impl Default for Lighting {
             candidates: 8,
             shadow_walk: ShadowWalk::default(),
             filter: true,
+            atrous_iterations: ATROUS_ITERATIONS as u32,
             history: HistoryKill::default(),
             lamp_bounce: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
@@ -656,6 +661,11 @@ impl Default for Lighting {
 }
 
 impl Lighting {
+    /// [`Lighting::atrous_iterations`] clamped to 1 ..= [`ATROUS_ITERATIONS`].
+    pub fn atrous_count(&self) -> usize {
+        (self.atrous_iterations as usize).clamp(1, ATROUS_ITERATIONS)
+    }
+
     /// The word of `ProbeUniform::steady`: the freeze count.
     pub(super) fn probe_steady(&self) -> u32 {
         self.probe_freeze.clamp(1, crate::probes::MAX_AGE)
@@ -725,8 +735,9 @@ impl Lighting {
 /// [`Lighting::light_floor`] by default (ADR-0044): the headlamp's 1200 reaches 109.5 voxels.
 pub const DEFAULT_LIGHT_FLOOR: f32 = 0.1;
 
-/// A-trous iterations per frame, at strides 1, 2, 4, 8.
-pub(crate) const ATROUS_ITERATIONS: usize = 4;
+/// The most a-trous iterations a frame runs ([`Lighting::atrous_iterations`]), at strides 1,
+/// 2, 4, 8: the step buffers and bind groups are built for this many.
+pub const ATROUS_ITERATIONS: usize = 4;
 
 /// Edit boxes one frame takes; one more flushes all history.
 pub const MAX_EDITS: usize = 64;

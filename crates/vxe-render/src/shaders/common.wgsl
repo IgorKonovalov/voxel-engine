@@ -332,14 +332,14 @@ fn lights_term(old: bool, p: vec3<f32>, n: vec3<f32>) -> f32 {
     return sum;
 }
 
-// The list's unshadowed irradiance on a glass face at `p`, normal `n`: each light's `PI *
-// light_at` times `max(n.l, 0)`, weighed by its colour.
-fn lights_on_glass(p: vec3<f32>, n: vec3<f32>) -> f32 {
-    var sum = 0.0;
+// The list's unshadowed irradiance on a glass face at `p`, normal `n`, rgb: each light's `PI *
+// light_at` times `max(n.l, 0)` times its colour.
+fn lights_on_glass(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
     for (var i = 0u; i < lights.count; i++) {
         let li = lights.l[i];
         let l = normalize(li.pos - p);
-        sum += PI * light_at(li, p) * max(dot(n, l), 0.0) * colour_weight(li.colour);
+        sum += PI * light_at(li, p) * max(dot(n, l), 0.0) * li.colour;
     }
     return sum;
 }

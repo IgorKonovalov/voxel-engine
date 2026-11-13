@@ -6,7 +6,7 @@
 // Bindings, group 3:
 //   0  texture_2d<f32>   grad_prev_pos     last frame's hit positions
 //   1  texture_2d<u32>   grad_prev_info    last frame's hit records
-//   2  texture_2d<f32>   grad_prev_light   last frame's irradiance from the light pass
+//   2  texture_2d<f32>   grad_prev_light   last frame's direct part from the light pass
 //   3  storage texture   strata_out        rgba16float, one texel per stratum: the gradient
 //                                          lambda = |new - old| / max(new, old) of the lamp's
 //                                          light, then its new and old luminances, then 0
@@ -14,8 +14,8 @@
 // One pixel per stratum, picked by a hash of the stratum and the frame, is re-shaded at last
 // frame's hit with this frame's lamp at its current pose, with its shadow ray (with
 // `Params.lighting`'s gradient bit only: the temporal pass reads it in that mode alone).
-// Nothing changed, the re-shade equals last frame's lamp estimate (the light pass's irradiance
-// in a), so lambda is 0 but for f16 rounding. A pixel with no hit, or no valid history, reads 0.
+// Nothing changed, the re-shade equals last frame's lamp estimate (the light pass's direct
+// part's a), so lambda is 0 but for f16 rounding. A pixel with no hit, or no valid history, reads 0.
 //
 // Both lamp terms are compared pre-exposed (ADR-0033): the re-shade, computed in absolute
 // units, times this frame's exposure, and last frame's estimate times `exposure_ratio()`; the

@@ -197,7 +197,7 @@ pub(super) struct LightsState {
     pub(super) buffer: wgpu::Buffer,
     /// What the buffer holds, so an unchanged list is not written again.
     pub(super) written: std::sync::Mutex<Option<LightsUniform>>,
-    /// Whether the last encode with history set [`LIGHTING_LAMP_CHANGED`].
+    /// Whether the last encode with history set [`LIGHTING_LIGHTS_CHANGED`].
     pub(super) changed: std::sync::atomic::AtomicBool,
 }
 
@@ -258,7 +258,7 @@ impl Frame {
         self.state.lights.given_len.saturating_sub(cap) as u32
     }
 
-    /// Whether the last encode with history found the list changed ([`LIGHTING_LAMP_CHANGED`]):
+    /// Whether the last encode with history found the list changed ([`LIGHTING_LIGHTS_CHANGED`]):
     /// a list light added, removed or changed in any field, the lamp switched, its parameters
     /// or its shadow walk changed. The headlamp following the camera is not a change.
     pub fn lights_changed(&self) -> bool {

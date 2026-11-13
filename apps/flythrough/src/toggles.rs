@@ -175,6 +175,11 @@ pub static TOGGLES: &[Toggle] = &[
         "shadow walk {}",
         m.lighting.shadow_walk.name()
     )),
+    lighting!(F4, "filter iterations", Atrous, |m| {
+        let mut out = String::new();
+        m.write_filter_count(&mut out);
+        out
+    }),
     lighting!(F5, "history", History, |m| format!(
         "history {}",
         m.lighting.history.name()
@@ -353,6 +358,16 @@ pub static TOGGLES: &[Toggle] = &[
             m.lights.toggle_carry();
             let words = format!("carry {}", on(m.lights.carry));
             m.show_lights(words, now);
+        },
+    },
+    Toggle {
+        press: Press::Key(KeyCode::Digit3, None),
+        name: "colour",
+        row: HudRow::Lights,
+        get: lights_words,
+        flip: |m, now| {
+            let name = m.lights.cycle_colour();
+            m.show_lights(format!("colour {name}"), now);
         },
     },
     Toggle {

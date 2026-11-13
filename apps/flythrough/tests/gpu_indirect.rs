@@ -987,8 +987,9 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
         ..f.frame.lighting()
     };
     let lamp_part = |f: &FloorProbe| {
-        let acc = vxe_render::debug::read_float(&device, &queue, f.frame.accumulated())[0][3];
-        let raw = vxe_render::debug::read_rgba16f(&device, &queue, f.frame.irradiance())[0][3];
+        let acc =
+            vxe_render::debug::read_float(&device, &queue, f.frame.direct_accumulated())[0][3];
+        let raw = vxe_render::debug::read_rgba16f(&device, &queue, f.frame.direct())[0][3];
         (acc, raw)
     };
     f.frame.set_lighting(on);

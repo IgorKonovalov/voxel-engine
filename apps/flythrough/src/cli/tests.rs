@@ -517,7 +517,7 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     // The line the fly-through prints at the start with no lighting flags, and under the table.
     assert_eq!(
         d.start_modes(0.0).line(),
-        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +0.00 EV"
+        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, ore pulse off, exposure auto eye +0.00 EV"
     );
     for (flag, err) in [
         ("--emissive-ore", "--emissive-ore takes on or off, not x"),

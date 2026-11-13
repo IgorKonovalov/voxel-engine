@@ -9,8 +9,9 @@
 //                                        reflected light before exposure in rgb (ADR-0047), or
 //                                        in the steps view its walk counters, in the cracks
 //                                        view the field walk's leak
-//   3  texture_2d<f32>   irradiance_in   the irradiance at each hit, rgb: the temporal
-//                                        pass's accumulation
+//   3  texture_2d<f32>   irradiance_in   the irradiance at each hit, rgb: the filter's
+//                                        output, or with the filter off the temporal pass's
+//                                        accumulated emissive part
 //   4  storage texture   target_tex      rgba8unorm output
 //   5  texture_2d<f32>   light_pos_in    the lighting grid's hit positions (the hit buffer at
 //                                        full resolution)
@@ -25,6 +26,8 @@
 //                                        view only
 //   9  texture_2d<u32>   transmit_in     the hit pass's r32uint transmittance per channel,
 //                                        rgb9e5 (`t9e5_unpack`)
+//  10  texture_2d<f32>   direct_acc_in   the temporal pass's accumulated direct part (rgb),
+//                                        read with the filter off
 //
 // Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
 // irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance) plus its
@@ -68,6 +71,7 @@ const HDR_TARGET: bool = false;
 @group(2) @binding(7) var indirect_in: texture_2d<f32>;
 @group(2) @binding(8) var<storage, read_write> meter_tiles: array<vec2<f32>>;
 @group(2) @binding(9) var transmit_in: texture_2d<u32>;
+@group(2) @binding(10) var direct_acc_in: texture_2d<f32>;
 
 // The workgroup's meter partial sums: log2 luminance, pixel count.
 var<workgroup> meter_sum: array<vec2<f32>, 64>;
@@ -76,13 +80,13 @@ var<workgroup> meter_sum: array<vec2<f32>, 64>;
 // irradiance adds to the direct one.
 
 // The irradiance at lighting texel `q`: the filter's rgb, or with the filter off the temporal
-// pass's accumulation, its emissive rgb plus its lamp's white a; with the indirect flag, the gathered indirect
-// rgb added.
+// pass's accumulation, its emissive rgb plus the accumulated direct rgb; with the indirect
+// flag, the gathered indirect rgb added.
 fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
     let v = textureLoad(irradiance_in, q, 0);
     var e = v.xyz;
     if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
-        e += vec3<f32>(v.w);
+        e += textureLoad(direct_acc_in, q, 0).xyz;
     }
     if ((params.lighting & LIGHTING_INDIRECT) != 0u) {
         e += textureLoad(indirect_in, q, 0).xyz * exposure_now();

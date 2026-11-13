@@ -149,10 +149,11 @@ go through an in-process server, so every edit you see came back as a client eve
 | `G` | Toggle fly and walk mode (bounded level only); walking, `Space` jumps or climbs a ledge |
 | `K` | Print the coarse grid and walkable map |
 | `R` | Toggle what unsupported rock does after a dig: fall (default) or crumble into rubble |
-| `1` | Drop a white point light (intensity 1200) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/8`. Eight slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| `1` | Drop a point light of the picked colour (intensity 1200) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/8`. Eight slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
-| `4` | Remove the newest light |
-| `6` | Fire a white point light along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light. The `lights` row names the count, carry, the lights in flight and those over the cap |
+| `3` | Pick the next colour (white, warm, red, green, blue) and recolour the newest light, in flight or still; later drops and shots take it. The banner and the `lights` row name it |
+| `4` | Remove the newest light; the banner names `lights <n>/8` |
+| `6` | Fire a point light of the picked colour along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light. The `lights` row names the count, carry, the lights in flight and those over the cap |
 | `F` | Cycle the live bake queue's order: score, score with the class as a tier, distance |
 | `Tab` / `Slash` | Halve / double the queue score's angle weight |
 | `Quote` | Toggle the queue's withdrawal of jobs behind the camera |
@@ -164,7 +165,7 @@ go through an in-process server, so every edit you see came back as a client eve
 | `F1` | Sample the next frames and print frame-time readings |
 | `F2` | Toggle the stats overlay; with the lighting it shows every frame pass's GPU time (the probe update and gather among them), the light samples and, with indirect light on, the live probes |
 | `F3` | Toggle the shadow walk: coarse (default; 2^3 blocks of the masks) or full |
-| `F4` | Toggle the emissive sampler: reservoir reuse (default) or the flat candidate list |
+| `F4` | Step the a-trous filter's iterations a frame: 4 (default), 2, 1; the lighting row names `filter <n>` |
 | `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
 | `F6` | Toggle the lighting resolution: half (default) or full; applied on the next frame |
 | `F7` | Toggle the headlamp |
@@ -236,6 +237,8 @@ shown, `F1`, the autopilot's flight).
 | `--sharpen S` | The upscaler's RCAS sharpening (FSR 2's RCAS under `fsr2`), 0 to 1 (default 0.5, 0 off) |
 | `--emissive-history N` | Frames static emissive light accumulates over at least, 1 to 4096 (default 32); the headlamp's part keeps a short history |
 | `--filter on\|off` | The a-trous filter; off shows the light pass's raw irradiance (default on) |
+| `--atrous-iterations 1\|2\|4` | The a-trous iterations a frame runs while the filter is on (default 4; `F4`) |
+| `--light-floor F` | A list light reaches `sqrt(intensity / F)` voxels, its term windowed inside and cut beyond (default 0.1; 0 is no reach) |
 | `--light-radius N` | Chunks around the camera whose emitters light the frame (default 4; 19 on the showcase) |
 | `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; add `--vault` for a session saved with it (the save does not record the room placed at generation) |
 

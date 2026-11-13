@@ -156,7 +156,7 @@ pub(super) struct FrameState {
     pub(super) params: wgpu::Buffer,
     pub(super) edits: wgpu::Buffer,
     /// The a-trous iterations' strides, one uniform each.
-    pub(super) atrous_steps: [wgpu::Buffer; ATROUS_ITERATIONS],
+    pub(super) atrous_steps: [[wgpu::Buffer; 2]; ATROUS_ITERATIONS],
     pub(super) lod: LodParams,
     pub(super) look: LookParams,
     /// Whether the field look takes the split walk ([`FLAG_FIELD_SPLIT`]); on by default.
@@ -180,24 +180,24 @@ pub(super) struct FrameState {
     pub(super) lamp_changed: std::sync::atomic::AtomicBool,
     /// The list of lights ([`Frame::set_lights`]) and its uniform.
     pub(super) lights: LightsState,
+    /// The a-trous dispatches the last encode recorded ([`Frame::atrous_dispatches`]).
+    pub(super) atrous_dispatches: std::sync::atomic::AtomicU32,
 }
 
 impl FrameState {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        let atrous_steps = [0usize, 1, 2, 3].map(|i| {
-            wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("atrous step"),
-                    contents: bytemuck::cast_slice(&[
-                        1u32 << i,
-                        u32::from(i + 1 == ATROUS_ITERATIONS),
-                        0,
-                        0,
-                    ]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            )
+        // Per iteration, its stride with the last flag clear (index 0) and set (index 1).
+        let atrous_steps = std::array::from_fn(|i| {
+            [false, true].map(|last| {
+                wgpu::util::DeviceExt::create_buffer_init(
+                    device,
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("atrous step"),
+                        contents: bytemuck::cast_slice(&[1u32 << i, u32::from(last), 0, 0]),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    },
+                )
+            })
         });
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame params"),
@@ -248,6 +248,7 @@ impl FrameState {
             history: std::sync::Mutex::new(History::default()),
             lamp_changed: std::sync::atomic::AtomicBool::new(false),
             lights: LightsState::new(device),
+            atrous_dispatches: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }

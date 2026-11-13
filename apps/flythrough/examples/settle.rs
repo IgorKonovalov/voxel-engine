@@ -1173,12 +1173,12 @@ fn lamp_reach_at(level: &VeinLevel, name: &str, gpu: &vxe_render::GpuWorld, came
     }
     let params = frame.params(gpu, &camera, &light);
     let lamp = Vec3::from(params.lamp.pos);
-    let irr = vxe_render::debug::read_float(device, queue, frame.irradiance());
+    let irr = vxe_render::debug::read_float(device, queue, frame.direct());
     let (cx, cy) = (size[0] / 2, size[1] / 2);
     let mut d_sum = 0.0f64;
     for y in cy - 4..cy + 4 {
         for x in cx - 4..cx + 4 {
-            // The light pass's lamp part is its alpha (the emissive part is its rgb).
+            // The light pass's direct part's alpha: the list's luminance, the lamp's.
             d_sum += f64::from(irr[(y * size[0] + x) as usize][3]);
         }
     }

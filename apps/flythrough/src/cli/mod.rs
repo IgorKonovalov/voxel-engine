@@ -371,6 +371,10 @@ pub struct LightingArgs {
     pub light_weights: vxe_render::LightWeights,
     /// `--filter on|off`: the a-trous filter runs.
     pub filter: bool,
+    /// `--atrous-iterations 1|2|4`: the a-trous iterations a frame runs (`F4`).
+    pub atrous_iterations: u32,
+    /// `--light-floor F`: the list lights' reach floor (ADR-0044).
+    pub light_floor: f32,
     /// `--light-radius N`: chunks around the camera whose emitters light the frame; unset,
     /// the source's.
     pub radius: Option<i32>,
@@ -418,6 +422,8 @@ impl LightingArgs {
             store_read: base.store_read,
             light_weights: base.light_weights,
             filter: base.filter,
+            atrous_iterations: base.atrous_iterations,
+            light_floor: base.light_floor,
             radius: None,
             history: base.history,
             resolution: LightingResolution::default(),
@@ -453,6 +459,8 @@ impl LightingArgs {
             store_read: self.store_read,
             light_weights: self.light_weights,
             filter: self.filter,
+            atrous_iterations: self.atrous_iterations,
+            light_floor: self.light_floor,
             history: self.history,
             lamp_bounce: self.lamp_bounce,
             probe_rays: self.probe_rays,

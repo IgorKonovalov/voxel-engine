@@ -33,6 +33,8 @@
 //                                        (rgba16float)
 //   3  texture_2d<f32>   moments_in      the temporal pass's moments and age
 //   4  storage texture   filter_out      rgba16float: irradiance rgb, variance a
+//   9  texture_2d<f32>   direct_acc_in   the temporal pass's accumulated direct part (rgb, its
+//                                        luminance in a)
 // Bindings, group 2 of `atrous`:
 //   0  texture_2d<f32>   hit_pos_in
 //   1  texture_2d<u32>   hit_info_in
@@ -93,6 +95,7 @@ fn edge_weight(a: HitRecord, b: HitRecord, eye: vec3<f32>) -> f32 {
 
 @group(2) @binding(3) var moments_in: texture_2d<f32>;
 @group(2) @binding(4) var filter_out: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(9) var direct_acc_in: texture_2d<f32>;
 
 @compute @workgroup_size(8, 8, 1)
 fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -100,15 +103,16 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(gid.xy);
-    // The accumulation's lamp white a, plus its emissive rgb where that is a fallback's: the
+    // The accumulated direct rgb, plus the emissive rgb where that is a fallback's: the
     // filter's irradiance.
     let acc = textureLoad(src_in, px, 0);
+    let direct = textureLoad(direct_acc_in, px, 0);
     let mw = textureLoad(moments_in, px, 0);
-    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + vec3<f32>(acc.w);
+    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz;
     let m = mw.xyz;
     let rec = load_hit(px);
     var v = max(m.y - m.x * m.x, 0.0);
-    let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_DIRECT) == 0u && acc.w == 0.0;
+    let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_DIRECT) == 0u && direct.w == 0.0;
     if (rec.found && m.z < VARIANCE_AGE && !dark_store) {
         let eye = eye_of(px);
         var w_sum = 0.0;

@@ -17,11 +17,13 @@ pub const BANNER_COLS: usize = 40;
 /// Rows the banner wraps into at most: the look's words in three (the look and the view) and the modes' line in six.
 pub const BANNER_ROWS: usize = 9;
 
-/// A key that changes the lighting mode: `F3`, `F5` to `F8`, `M` and `Q`.
+/// A key that changes the lighting mode: `F3` to `F8`, `M` and `Q`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeKey {
     /// `F3`: full or coarse shadow walk.
     ShadowWalk,
+    /// `F4`: the a-trous iterations, 4, 2, 1 in turn.
+    Atrous,
     /// `F5`: edit boxes, or edit boxes and the gradient.
     History,
     /// `F6`: full or half lighting resolution.
@@ -447,6 +449,13 @@ impl Modes {
                     ShadowWalk::Coarse => ShadowWalk::Full,
                 }
             }
+            ModeKey::Atrous => {
+                l.atrous_iterations = match l.atrous_iterations {
+                    4 => 2,
+                    2 => 1,
+                    _ => 4,
+                }
+            }
             ModeKey::History => {
                 l.history = match l.history {
                     HistoryKill::Edits => HistoryKill::Gradient,
@@ -577,14 +586,20 @@ impl Modes {
         if l.lamp_bounce {
             let _ = write!(out, ", probes {}", self.probe_spacing);
         }
-        let _ = write!(
-            out,
-            ", filter {}, ore pulse {}, exposure ",
-            on(l.filter),
-            on(self.pulse)
-        );
+        out.push_str(", ");
+        self.write_filter_count(out);
+        let _ = write!(out, ", ore pulse {}, exposure ", on(self.pulse));
         self.write_exposure_mode(out);
         let _ = write!(out, " {:+.2} EV", self.exposure_ev());
+    }
+
+    /// The filter in words: `filter <n>` (its a-trous iterations) while it runs, `filter off`.
+    pub fn write_filter_count(&self, out: &mut String) {
+        if self.lighting.filter {
+            let _ = write!(out, "filter {}", self.lighting.atrous_count());
+        } else {
+            out.push_str("filter off");
+        }
     }
 
     /// The exposure in EV the banner names: `log2` of the manual exposure, or in auto of the
@@ -725,10 +740,78 @@ fn wrap_from(out: &mut String, from: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::toggles::Press;
 
     /// The `lights` row and the banner name the testbed's lights: the count with the headlamp
     /// counted while it is on, carry, the lights in flight and those over the cap; `1` on a
     /// full list is refused with `FULL_LINE`, which names Plan 0058.
+    /// `3` names the picked colour in the banner and the `lights` row, and the newest light
+    /// takes it; `4` removes the newest and the banner names the count.
+    #[test]
+    fn the_banner_and_hud_name_the_colour_and_the_removal() {
+        use crate::toggles::{KEY_REMOVE, TOGGLES};
+        let lamp_off = vxe_render::Lighting {
+            lamp: false,
+            ..vxe_render::Lighting::default()
+        };
+        let mut m = Modes::new(lamp_off, vxe_render::LightingResolution::Half, 0.0);
+        for _ in 0..3 {
+            m.lights
+                .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        let colour = TOGGLES.iter().find(|t| t.name == "colour").unwrap();
+        assert_eq!(colour.press, Press::Key(vxe_app::KeyCode::Digit3, None));
+        (colour.flip)(&mut m, 10.0);
+        assert!(m.banner(10.0).unwrap().lines().any(|l| l == "colour warm"));
+        (colour.flip)(&mut m, 20.0);
+        assert!(m.banner(20.0).unwrap().lines().any(|l| l == "colour red"));
+        assert!(m.row(HudRow::Lights).ends_with("colour red"));
+        assert_eq!(m.lights.lights[2].light.colour, [1.0, 0.0, 0.0]);
+        assert_eq!(m.lights.lights[1].light.colour, [1.0; 3]);
+        m.lights
+            .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        m.lights
+            .fire(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        assert_eq!(m.lights.lights[3].light.colour, [1.0, 0.0, 0.0]);
+        assert_eq!(m.lights.lights[4].light.colour, [1.0, 0.0, 0.0]);
+        // `4` on the three: `run::keys` removes the newest and shows the count.
+        assert_eq!(KEY_REMOVE, vxe_app::KeyCode::Digit4);
+        m.lights.lights.truncate(3);
+        m.lights.remove_newest();
+        m.show_lights(m.lights.count_words(false), 30.0);
+        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 2/8"));
+    }
+
+    /// `F4` steps the a-trous iterations 4, 2, 1 and back, in the lighting row's `filter <n>`
+    /// and the banner; with the filter off the row reads `filter off`.
+    #[test]
+    fn f4_steps_the_filters_iterations() {
+        use crate::toggles::TOGGLES;
+        let mut m = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::Half,
+            0.0,
+        );
+        let f4 = TOGGLES
+            .iter()
+            .find(|t| t.press == Press::Key(vxe_app::KeyCode::F4, None))
+            .unwrap();
+        assert_eq!(f4.row, HudRow::Lighting);
+        assert_eq!((f4.get)(&m), "filter 4");
+        for (i, want) in ["filter 2", "filter 1", "filter 4"].into_iter().enumerate() {
+            let now = 10.0 * (i + 1) as f64;
+            (f4.flip)(&mut m, now);
+            assert_eq!((f4.get)(&m), want);
+            assert!(m.line().contains(&format!(", {want}, ")), "{}", m.line());
+            assert!(m.banner(now).unwrap().contains(want));
+        }
+        m.lighting.filter = false;
+        assert_eq!((f4.get)(&m), "filter off");
+    }
+
     #[test]
     fn the_banner_and_hud_name_the_lights() {
         use crate::lights::{FULL_LINE, TestLights};
@@ -746,7 +829,10 @@ mod tests {
         }
         let carry = TOGGLES.iter().find(|t| t.name == "carry").unwrap();
         (carry.flip)(&mut m, 10.0);
-        assert_eq!(m.row(HudRow::Lights), "lights 3/8 carry over 0");
+        assert_eq!(
+            m.row(HudRow::Lights),
+            "lights 3/8 carry over 0 colour white"
+        );
         assert!(m.banner(10.0).unwrap().lines().any(|l| l == "carry on"));
         m.lighting.lamp = true;
         assert!(m.row(HudRow::Lights).starts_with("lights 4/8"));
@@ -764,7 +850,10 @@ mod tests {
         f.lights
             .fire(false, [0.0; 3], [1.0, 0.0, 0.0], None)
             .unwrap();
-        assert_eq!(f.row(HudRow::Lights), "lights 2/8 fly 1 over 0");
+        assert_eq!(
+            f.row(HudRow::Lights),
+            "lights 2/8 fly 1 over 0 colour white"
+        );
         f.show_lights(format!("fire, {}", f.lights.count_words(false)), 40.0);
         let b = f.banner(40.0).unwrap();
         assert!(b.contains("fire") && b.contains("lights 2/8"), "{b}");
@@ -786,7 +875,7 @@ mod tests {
         // Over the cap: eight lights with the lamp switched on.
         let mut over = Modes::new(lamp_off, half, 0.0).with_lights(full);
         over.lighting.lamp = true;
-        assert_eq!(over.row(HudRow::Lights), "lights 8/8 over 1");
+        assert_eq!(over.row(HudRow::Lights), "lights 8/8 over 1 colour white");
         // `--lights 3` parses.
         let a = crate::cli::parse_args_from(["--lights", "3"].map(String::from)).unwrap();
         assert_eq!(a.light.lights, 3);
@@ -852,7 +941,7 @@ mod tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off\nexposure manual +0.00 EV"
+            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nore pulse off, exposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

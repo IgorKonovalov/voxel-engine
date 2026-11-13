@@ -85,12 +85,15 @@ pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
 pub use frame::{
+    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, Light, MAX_LIGHTS, Params,
+    Upscaler,
+};
+pub use frame::{
     CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights, Lighting,
     LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
     NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
     jitter_at,
 };
-pub use frame::{DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, Light, MAX_LIGHTS, Params, Upscaler};
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP,

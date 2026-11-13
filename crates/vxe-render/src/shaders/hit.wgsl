@@ -152,7 +152,7 @@ fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, v: vec3<i32>, axis: i32, 
         return vec3<f32>(r);
     }
     var e = glass_store_value(v, store_face(axis, nf));
-    e += vec3<f32>(lights_on_glass(o + d * t, nf));
+    e += lights_on_glass(o + d * t, nf);
     return r * e * (1.0 / PI);
 }
 

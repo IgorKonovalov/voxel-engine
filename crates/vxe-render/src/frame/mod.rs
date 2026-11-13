@@ -170,7 +170,7 @@ impl Frame {
 
     /// Whether the last encode with history found the headlamp's light changed: the lamp's
     /// switch, its parameters or its shadow walk differ from the encode before. Such a frame
-    /// sets [`LIGHTING_LAMP_CHANGED`], as a changed list does ([`Frame::lights_changed`]).
+    /// sets [`LIGHTING_LIGHTS_CHANGED`], as a changed list does ([`Frame::lights_changed`]).
     pub fn lamp_changed(&self) -> bool {
         self.state
             .lamp_changed
@@ -400,9 +400,16 @@ impl Frame {
         &self.targets.transmit
     }
 
-    /// The light pass's irradiance (rgba16float: rgb, then the emissive part's luminance).
+    /// The light pass's irradiance (rgba16float: the emissive sample in rgb, 0 in a; in the
+    /// steps view the list's shadow rays' counters, the rays cast in a).
     pub fn irradiance(&self) -> &wgpu::Texture {
         &self.targets.irradiance
+    }
+
+    /// The light pass's direct part (rgba16float: the list of lights' terms, each times its
+    /// colour, in rgb; their luminance in a; pre-exposed).
+    pub fn direct(&self) -> &wgpu::Texture {
+        &self.targets.direct
     }
 
     /// Turns the composite capture on or off: while on, every encode copies the composite's
@@ -422,16 +429,30 @@ impl Frame {
         self.composite_capture.as_ref()
     }
 
-    /// The temporal pass's accumulated irradiance (rgba16float: the emissive part in rgb, the
-    /// lamp's in a).
+    /// The temporal pass's accumulated irradiance (rgba16float: the emissive part in rgb, 0 in
+    /// a).
     pub fn accumulated(&self) -> &wgpu::Texture {
         &self.targets.accum[self.cur]
     }
 
+    /// The a-trous iterations the last encode recorded: [`Lighting::atrous_count`] while the
+    /// filter runs, 0 while it is off or the view does not shade.
+    pub fn atrous_dispatches(&self) -> u32 {
+        self.state
+            .atrous_dispatches
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The temporal pass's accumulated direct part (rgba16float: as [`Frame::direct`]).
+    pub fn direct_accumulated(&self) -> &wgpu::Texture {
+        &self.targets.direct_accum[self.cur]
+    }
+
     /// The filter's output, the irradiance the composite shades with when the filter runs
-    /// (rgba16float: irradiance rgb, variance a).
+    /// (rgba16float: irradiance rgb, variance a): the target the last of
+    /// [`Lighting::atrous_iterations`] wrote.
     pub fn filtered(&self) -> &wgpu::Texture {
-        &self.targets.filter[ATROUS_ITERATIONS % 2]
+        &self.targets.filter[self.state.lighting.atrous_count() % 2]
     }
 
     /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float: lambda,

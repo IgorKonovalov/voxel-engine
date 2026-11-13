@@ -393,8 +393,9 @@ fn history_survives_an_exposure_step() {
 }
 
 /// In a rock box with the lamp on at the eye, `Manual(64)`, and the camera 3 voxels from a wall
-/// on the lamp's axis (irradiance `PI 1200 / 9 = 419`, pre-exposed 26 800), every texel of the
-/// irradiance, the accumulation, the moments and the filter is finite after 64 frames.
+/// on the lamp's axis (irradiance `PI 1200 / 9 = 419`, pre-exposed 26 800, in the direct
+/// part), every texel of the irradiance, the direct part, both accumulations, the moments and
+/// the filter is finite after 64 frames.
 #[test]
 fn no_target_overflows_at_the_glare() {
     let Some((device, queue)) = device() else {
@@ -422,7 +423,9 @@ fn no_target_overflows_at_the_glare() {
     let mut peak = 0.0f32;
     for (name, tex) in [
         ("irradiance", frame.irradiance()),
+        ("direct", frame.direct()),
         ("accumulated", frame.accumulated()),
+        ("accumulated direct", frame.direct_accumulated()),
         ("moments", frame.moments()),
         ("filtered", frame.filtered()),
     ] {
@@ -431,13 +434,13 @@ fn no_target_overflows_at_the_glare() {
         let max = texels.iter().flatten().fold(0.0f32, |m, &v| m.max(v));
         println!("{name}: largest {max}, {bad} non-finite");
         assert_eq!(bad, 0, "{name}: {bad} non-finite values");
-        if name == "irradiance" {
+        if name == "direct" {
             peak = max;
         }
     }
     assert!(
         peak > 20_000.0,
-        "the wall's pre-exposed irradiance reads {peak}"
+        "the wall's pre-exposed direct part reads {peak}"
     );
 }
 

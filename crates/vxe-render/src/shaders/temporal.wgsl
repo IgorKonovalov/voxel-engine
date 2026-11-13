@@ -12,9 +12,9 @@
 //   5  texture_2d<f32>   prev_accum_in   last frame's accumulated irradiance
 //   6  texture_2d<f32>   prev_moments_in last frame's moments: luminance, its square, age
 //   7  storage texture   accum_out       rgba16float: the accumulated irradiance, the
-//                                        emissive part in rgb, the lamp's (white) in a
+//                                        emissive part in rgb, 0 in a
 //   8  storage texture   moments_out     rgba16float: first and second moments of the
-//                                        filtered irradiance's luminance (the lamp's part and a
+//                                        filtered irradiance's luminance (the direct part and a
 //                                        fallback hit's emissive part), then the age: frames of
 //                                        history reused, 0 after a reset; then 1 where the
 //                                        emissive part is the store's (the a-trous passes it
@@ -22,7 +22,7 @@
 //   9  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
 //                                        the gradient mode (Params.lighting bit 3): the
-//                                        lamp's blend weight rises to twice the lambda averaged
+//                                        direct part's blend weight rises to twice the lambda averaged
 //                                        over the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
 //  11  storage, read      store           the store (ADR-0046, `bake::Store`)
@@ -34,6 +34,10 @@
 //                                        (TABLE_COARSE); of word 0's, word 3 those the
 //                                        missing-light chain gave a value, word 4 those it left
 //                                        black (every one of them under `black`)
+//  13  texture_2d<f32>   direct_in       this frame's direct part from the light pass
+//  14  texture_2d<f32>   prev_direct_in  last frame's accumulated direct part
+//  15  storage texture   direct_out      rgba16float: the accumulated direct part, the list's
+//                                        rgb and its luminance in a
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -59,11 +63,12 @@
 // nearest this hit's is taken alone; with none of those either, with no
 // history (`Params.history` bit 0 clear), or with the hit inside an edit box dilated by
 // one voxel, the pixel resets: age 0, accumulation this frame's sample. Otherwise the age is
-// the taps' age plus one, capped at AGE_MAX. The lamp's part and the moments blend the new
-// sample in at `max(ALPHA, 1 / (age + 1))`, a fallback's emissive part as above. On the frame
-// Params.lighting bit 9 says the list of lights changed, the lamp's part takes this frame's
-// sample as it is: the light pass's estimate of each light is exact up to its shadow ray, so
-// a light switched off, moved or removed leaves nothing behind.
+// the taps' age plus one, capped at AGE_MAX. The direct part (rgba, the same blend on every
+// channel) and the moments blend the new sample in at `max(ALPHA, 1 / (age + 1))`, a
+// fallback's emissive part as above. On the frame LIGHTING_LIGHTS_CHANGED says the list of
+// lights changed, the direct part takes this frame's sample as it is: the light pass's
+// estimate of each light is exact up to its shadow ray, so a light switched off, moved,
+// recoloured or removed leaves nothing behind.
 //
 // A cube face's pixel with no light of the list shaded (LIGHTING_DIRECT clear: the lamp off and
 // the list empty; no cutaway, not the steps view) skips the reprojection: its emissive part is
@@ -92,6 +97,9 @@
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
 @group(2) @binding(11) var<storage, read> store: array<u32>;
 @group(2) @binding(12) var<storage, read_write> counters: array<atomic<u32>, 5>;
+@group(2) @binding(13) var direct_in: texture_2d<f32>;
+@group(2) @binding(14) var prev_direct_in: texture_2d<f32>;
+@group(2) @binding(15) var direct_out: texture_storage_2d<rgba16float, write>;
 
 // Whether this pipeline counts the store's reads into `counters` (the HUD's and
 // `--read-missing`'s pipeline); off, `counters` is never written.
@@ -351,8 +359,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let px = vec2<i32>(gid.xy);
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
-    // The emissive irradiance in rgb, the lamp's (white) in a.
+    // The emissive irradiance in rgb; the direct part in rgb, its luminance in a.
     var sample = textureLoad(irradiance_in, px, 0);
+    let direct = textureLoad(direct_in, px, 0);
     var stored = false;
     if (reads_store(rec)) {
         let ray = pixel_ray(full_px(gid.xy));
@@ -386,7 +395,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if ((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u && any(rec.n != nf)) {
             e = store_value_by_normal(head, voxel, face, value, rec.n);
         }
-        sample = vec4<f32>(e.xyz * exposure_now(), sample.w);
+        sample = vec4<f32>(e.xyz * exposure_now(), 0.0);
         if ((params.lighting & LIGHTING_DIRECT) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;
@@ -394,13 +403,15 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 held = min(floor(textureLoad(prev_moments_in, px, 0).z + 0.5) + 1.0, AGE_MAX);
             }
             textureStore(accum_out, px, min(vec4<f32>(sample.xyz, 0.0), vec4<f32>(HDR_MAX)));
+            textureStore(direct_out, px, vec4<f32>(0.0));
             textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0));
             return;
         }
     }
-    // The filtered part's luminance: the lamp's, and a fallback's emissive part.
-    let l = min(select(luminance(sample.xyz), 0.0, stored) + sample.w, MOMENT_LUM_MAX);
+    // The filtered part's luminance: the direct part's, and a fallback's emissive part.
+    let l = min(select(luminance(sample.xyz), 0.0, stored) + direct.w, MOMENT_LUM_MAX);
     var accum = sample;
+    var acc_direct = direct;
     var moments = vec2<f32>(l, l * l);
     var age = 0.0;
     if (rec.found && (params.history & 1u) != 0u && !in_edit(rec.p)) {
@@ -411,6 +422,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         let f = q - floor(q);
         var w_sum = 0.0;
         var h = vec4<f32>(0.0);
+        var hd = vec4<f32>(0.0);
         var m = vec3<f32>(0.0);
         // The accepted tap of the largest weight and its history: a held fallback copies it
         // where it carries nearly all the weight, so a still pixel's value is not re-rounded.
@@ -434,6 +446,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             w_sum += w;
             let ht = textureLoad(prev_accum_in, tap, 0);
             h += w * ht;
+            hd += w * textureLoad(prev_direct_in, tap, 0);
             if (w > best_w) {
                 best_w = w;
                 best_h = ht.xyz;
@@ -459,6 +472,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 best = d;
                 w_sum = 1.0;
                 h = textureLoad(prev_accum_in, tap, 0);
+                hd = textureLoad(prev_direct_in, tap, 0);
                 best_w = 1.0;
                 best_h = h.xyz;
                 m = textureLoad(prev_moments_in, tap, 0).xyz;
@@ -467,6 +481,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (w_sum > 1e-3) {
             let ratio = exposure_ratio();
             h = h / w_sum * ratio;
+            hd = hd / w_sum * ratio;
             m = vec3<f32>(m.xy / w_sum * vec2<f32>(ratio, ratio * ratio), m.z / w_sum);
             age = min(floor(m.z + 0.5) + 1.0, AGE_MAX);
             // A fallback's emissive part: the running mean, held from FALLBACK_CAP samples.
@@ -483,7 +498,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 a = max(a, lambda);
                 age = floor(age * (1.0 - lambda) + 0.5);
             }
-            if ((params.lighting & LIGHTING_LAMP_CHANGED) != 0u) {
+            if ((params.lighting & LIGHTING_LIGHTS_CHANGED) != 0u) {
                 a = 1.0;
             }
             var e_fallback = mix(h.xyz, sample.xyz, a_emissive);
@@ -491,11 +506,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 e_fallback = best_h * ratio;
             }
             let e_new = select(e_fallback, sample.xyz, stored);
-            accum = vec4<f32>(e_new, mix(h.w, sample.w, a));
+            accum = vec4<f32>(e_new, 0.0);
+            acc_direct = mix(hd, direct, a);
             moments = mix(m.xy, vec2<f32>(l, l * l), a);
         }
     }
     textureStore(accum_out, px, min(accum, vec4<f32>(HDR_MAX)));
+    textureStore(direct_out, px, min(acc_direct, vec4<f32>(HDR_MAX)));
     // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them
     // past it, and the second moment's bound, 65 025, is still a finite half.
     let m_max = vec2<f32>(MOMENT_LUM_MAX, MOMENT_LUM_MAX * MOMENT_LUM_MAX);

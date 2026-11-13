@@ -366,7 +366,7 @@ impl Frame {
             let lights_changed = lamp_changed || h.listed.as_deref().is_some_and(|l| l != listed);
             h.listed = Some(listed.to_vec());
             if lights_changed {
-                p.lighting |= LIGHTING_LAMP_CHANGED;
+                p.lighting |= LIGHTING_LIGHTS_CHANGED;
             }
             self.state
                 .lamp_changed
@@ -518,6 +518,7 @@ impl Frame {
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
+                Res::Tex(&t.direct),
             ],
         );
         let temporal_bind = bind_io(
@@ -537,10 +538,13 @@ impl Frame {
                 Res::Tex(&t.strata),
                 Res::Buf(self.baked.store.pool()),
                 Res::Buf(&self.baked.counters),
+                Res::Tex(&t.direct),
+                Res::Tex(&t.direct_accum[q]),
+                Res::Tex(&t.direct_accum[c]),
             ],
         );
         // The filter runs in the shaded and cracks views unless switched off; the variance pass
-        // writes `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
+        // writes `filter[0]` and the iterations ping-pong, ending in `filter[n % 2]`.
         let (filtering, variance_bind, atrous_binds) = self.filter_binds(device);
         let out = self.output_binds(device, filtering);
         Binds {
@@ -566,18 +570,21 @@ impl Frame {
         let t = &self.targets;
         let c = self.cur;
         let filtering = self.state.lighting.filter && self.state.look.view.shades();
-        let variance_bind = bind_io(
+        let variance_bind = bind_io_at(
             device,
             self.pipes.layout(P_VARIANCE),
+            &[0, 1, 2, 3, 4, 9],
             &[
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.accum[c]),
                 Res::Tex(&t.moments[c]),
                 Res::Tex(&t.filter[0]),
+                Res::Tex(&t.direct_accum[c]),
             ],
         );
-        let atrous_binds: Vec<wgpu::BindGroup> = (0..ATROUS_ITERATIONS)
+        let n = self.state.lighting.atrous_count();
+        let atrous_binds: Vec<wgpu::BindGroup> = (0..n)
             .map(|i| {
                 bind_io_at(
                     device,
@@ -588,7 +595,7 @@ impl Frame {
                         Res::Tex(t.lit_info(c)),
                         Res::Tex(&t.filter[i % 2]),
                         Res::Tex(&t.filter[(i + 1) % 2]),
-                        Res::Buf(&self.state.atrous_steps[i]),
+                        Res::Buf(&self.state.atrous_steps[i][usize::from(i + 1 == n)]),
                         Res::Tex(&t.accum[c]),
                         Res::Tex(&t.moments[c]),
                     ],
@@ -604,7 +611,7 @@ impl Frame {
         let t = &self.targets;
         let (c, q) = (self.cur, self.cur ^ 1);
         let lit = if filtering {
-            &t.filter[ATROUS_ITERATIONS % 2]
+            &t.filter[self.state.lighting.atrous_count() % 2]
         } else {
             &t.accum[c]
         };
@@ -637,6 +644,7 @@ impl Frame {
                 Res::Tex(&t.indirect),
                 Res::Buf(&t.tiles),
                 Res::Tex(&t.transmit),
+                Res::Tex(&t.direct_accum[c]),
             ],
         );
         let gradient_bind = bind_io(
@@ -645,7 +653,7 @@ impl Frame {
             &[
                 Res::Tex(t.lit_pos(q)),
                 Res::Tex(t.lit_info(q)),
-                Res::Tex(&t.irradiance),
+                Res::Tex(&t.direct),
                 Res::Tex(&t.strata),
             ],
         );
@@ -903,6 +911,14 @@ impl Frame {
                     .map(|b| frame_pass(world, self.pipes.pipeline(device, P_ATROUS), b, 2, lw)),
             );
         }
+        let iterations = if binds.filtering {
+            binds.atrous_binds.len() as u32
+        } else {
+            0
+        };
+        self.state
+            .atrous_dispatches
+            .store(iterations, std::sync::atomic::Ordering::Relaxed);
         [gradient, atrous]
     }
 

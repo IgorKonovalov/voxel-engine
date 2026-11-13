@@ -920,8 +920,8 @@ some form of moving light with different colors, or should we do it later?"
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | 5bfae33 |
-| 2: Colour: the direct part in a target of its own | dev | not started | |
+| 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | 5bfae33, be6126e |
+| 2: Colour: the direct part in a target of its own | dev | done (exploration) | committed with this row |
 | 3: The bounce flag | dev | not started | |
 | 4: The owner's window | human | not started | |
 | 5: The picks as tests | dev | not started | |
@@ -955,6 +955,21 @@ each. Empty is fine.)_
   `gpu_dynamic_lights.rs`'s `mod reading` (exploration); dw 2 reads a wall across the box, not a
   slab over half the floor; dw 4 reads 62 and 122 voxels, not 50 and 150. dw 7, 8 and 12 and
   the fly-through cost readings of the phase are not read in Phase 1 (log).
+- Phase 1 (be6126e): dw 7 and 12 are written as gate tests and soak tests that assert the mask
+  against the CPU's threshold test; dw 12's "every floor pixel within half the reach is marked
+  on each flight frame" does not hold (27794 of 29929 over the 8-frame flight; log). dw 7 reads
+  a light of 600 (the box has no floor beyond 1200's reach), and its `own` half is not read
+  (the own upscaler's mask is no texture). dw 8 reads lambda 0.000971 at most, not 0. The box
+  rigs are `tests/support/lights.rs` (new, outside Files touched); `run/hud_feed.rs` (the queue
+  line's keys, the steps view's rays a casting pixel) is outside Files touched.
+- Phase 2: `Frame::direct`, `direct_accumulated`, `atrous_dispatches`, `gradient_strata` and
+  `ATROUS_ITERATIONS` (pub) are new; the lamp-part readers outside Files touched moved to the
+  direct target (`run/fade.rs`, `examples/settle.rs`, `gpu_lights.rs`, `gpu_indirect.rs`,
+  `crates/vxe-render/tests/gpu_exposure.rs`), as did `frame/upscale.rs`'s FSR 2 composite
+  layout and `frame/state.rs`'s step buffers (two per iteration, the last flag clear and set).
+  `--light-floor` is a new flag (for Phase 1's floor readings). `hud.png` and `mode_banner.png`
+  are re-blessed for the HUD's new words. `3` is a toggle row (`toggles.rs`), not an action.
+  dw 2's golden is not written (exploration).
 
 ### Close triggers
 
