@@ -66,6 +66,17 @@ headless, quiet, against the start commit 4bc8100):
   as `second:MS,CAP`): about 40 ms of bake a wall second on the RTX and 30 on the RENOIR in the
   streamed glide.
 
+The mirror's sync, the third part of the streaming line (Plan 0070, 2026-11-13, `ef0b55c`
+against `bdca60a`; RTX 3080 Laptop host on the `hpet` clocksource, the TSC marked unstable, so
+these figures are not compared with readings on another clocksource; release, exclusive perf
+lock, quiet starts): in the tester's cave and castle benches (RTX GPU at 2530 x 1378, RADV
+RENOIR at 1280 x 720) the sync reads p50 15 to 19 us against 180 to 184 and `update + poll +
+sync` p99 22.8 to 28.2 ms against 42.7 to 47.2, still over Plan 0067's 16.6 ms; the largest p99
+stage left is `light_note` (8.2 to 8.4 ms in the cave), then `alloc` (6.9 to 7.4 ms); `pack +
+size` is 13.5 to 14.2 % of the cave sync p99. In section 5's autopilot (RTX, 1280 x 720) the
+streaming CPU per frame reads p50 0.038 to 0.039 ms, under the 1.0 ms line for the first time
+since Plan 0002, and p99 26.4 to 27.9 ms, over it.
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 
@@ -251,6 +262,9 @@ Every reading against these budgets, with its machine and commit, is in
   488 ms over 73 381 chunks; the table: p95 302 and 296 ms, max 371 and 350 ms. RADV RENOIR at
   1280 x 720: queue p95 319 ms, max 404; table p95 321, max 394. Streaming CPU per frame p50 3.2 to
   19.8 ms (the RTX queue runs at load 12 to 15 read 10.0 and 19.8).
+- **After Plan 0070 (ef0b55c against bdca60a, 2026-11-13, `hpet` clocksource, `--seed 1` at 1280
+  x 720, RTX, three alternated rounds loaded by the flights' workers to 6.8 to 8.9):** residency
+  p95 212 to 213 ms, max 303 to 321, against 311 to 333 and 376 to 413 at the base.
 
 ## 6. Determinism and headless operation
 

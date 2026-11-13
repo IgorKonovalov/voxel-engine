@@ -210,7 +210,10 @@ brick with no baked value reads its chunk's summary, then its neighbours', then 
 (`chain`, the owner's pick), and a first block fades in from it. The owner kept the bake at `frame:1.5`,
 the near shell's full jobs at 2 and the reach rule; the other modes stay render settings for Plan 0069's
 profiles. Under `chain` a regime-B step pays about 1.7 ms of first-block fades (backlog); the sync's
-p99 in flight is Plan 0070's.
+p99 in flight is Plan 0070's. Plan 0070 (2026-11-13) cut the sync in place on the render thread (a
+dense emitter rescan set, light walks on change), to p50 15 to 19 us and `update + poll + sync` p99
+22.8 to 28.2 ms in the tester's benches, still over 16.6 ms, with `light_note` the largest stage left
+and the worker packing of ADR-0056 deferred (backlog).
 
 Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
 ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed

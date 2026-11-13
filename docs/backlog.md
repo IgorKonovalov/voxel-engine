@@ -258,8 +258,24 @@ budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, wit
 upload-copy ADR.
 Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
 and ADR-0056. Deferred 2026-11-13 by Plan 0070's Phase 1: the packing is about 1.5 ms of a cave
-sync p99 of 44 to 47 ms (RTX host). Pick up if Plan 0070's Phase 5 reads `pack + size` at half
-or more of the sync p99 that remains; the lane's drafts are untracked in its `live/`.
+sync p99 of 44 to 47 ms (RTX host). Read again at Plan 0070's Phase 5 (`ef0b55c`, the rescan set
+dense and the light walks on change, `hpet` clocksource): `pack + size` p99 is 2.8 to 3.1 ms of
+a cave sync p99 of 20.9 to 22.3 ms, 13.5 to 14.2 % on both adapters; the larger stages are
+`light_note` (8.2 to 8.4 ms, `note_lights` in `exposed_emitters`) and `alloc` (6.9 to 7.4 ms).
+Pick up when `pack + size` reads half or more of the sync p99 left after those two are cut;
+the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
+worktree and leave with it.
+
+### The sync's `light_note` stage and the windowed glide's light walks
+
+Noted 2026-11-13 at Plan 0070's close (`docs/plans/logs/0070.md`, Phases 5 and 6). After Plan
+0070 the cave sync's p99 (about 21 to 22 ms, over Plan 0067's 16.6 ms for `update + poll +
+sync`) is led by `light_note`, the `note_lights` pass over a chunk's emitter bricks
+(`exposed_emitters`), 8.2 to 8.4 ms, then `alloc` 6.9 to 7.4 ms. Separately, in the owner's
+windowed `--glide 300` cave flight on the RTX, the per-second `light place` p99 read 20 ms to
+846 ms in 19 of 30 lines at the tip (12 of 73 at the base, max 330 ms), never over 2.5 ms in the
+headless benches; not attributed. Pick up as the next sync plan, before the 16.6 ms bar is read
+again.
 
 ### The slow adapter's walk-speed spike
 
