@@ -389,6 +389,7 @@ fn run_json_carries_the_streaming_stages() {
         internal: [853, 480],
         internal_scale: "1.5",
         upscaler: "fsr2",
+        lamp: false,
         adapter: None,
         path_s: 10.0,
         frames: 0,

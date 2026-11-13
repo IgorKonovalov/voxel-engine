@@ -89,7 +89,7 @@ pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<
         Flag::value(
             &["--lamp"],
             "on|off",
-            "the headlamp lights the frame (on; off on the showcase)",
+            "the headlamp lights the frame (on; off on the showcase and a --path benchmark)",
             move |t, v| {
                 part(t).lamp = Some(v.on_off()?);
                 Ok(())
