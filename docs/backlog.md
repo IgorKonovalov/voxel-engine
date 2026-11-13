@@ -306,13 +306,12 @@ line. Pick up as a dev chore with the next plan that touches the frame's read-ba
 
 ### Plan 0072's CI readings, owed after the push
 
-Parked 2026-11-13 at Plan 0072's close (owed after the merge reaches origin). Phase 5's
-done-whens read on CI only: the Linux and Windows jobs' warm wall on the first two pushes after
-the merge (proposals under 10 and 15 min against 13 and 17), the gate's test count on CI
-unchanged, and one manual `workflow_dispatch` run with `fingerprint` set on a prefix-restored
-cache (after a manifest change) that names why `proc-macro2` and the like recompile. The walls
-go into `docs/nfr.md` section 7 as a new CI line; the fingerprint finding into
-`docs/plans/logs/0072.md`, with a fix if it is rust-cache's key. Pick up on the first push.
+Parked 2026-11-13 at Plan 0072's close. Read 2026-11-13 on the first two pushes: warm Linux
+15 min 6 s and Windows 18 min 47 s (over the under-10 and under-15 min proposals), gate count on
+CI unchanged (844 passed). The owner accepted these walls the same day ("record this time as
+accepted, let it be"); they are the CI line in `docs/nfr.md` section 7. Left open, no longer
+owed: one manual `workflow_dispatch` run with `fingerprint` set on a prefix-restored cache, to
+name why `proc-macro2` and the like recompile. Pick it up only if CI time becomes a complaint.
 
 ### The lavapipe group at two threads (owner question)
 
