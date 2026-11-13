@@ -99,3 +99,16 @@ pub const DEFAULT_STORE_READ: vxe_render::StoreRead = vxe_render::StoreRead::Nor
 /// `--light-weights`: the hit's face normal (ADR-0049's weight rule), so a far riser's and
 /// tread's taps stay apart under the far normal. The library's default is `Normal`.
 pub const DEFAULT_LIGHT_WEIGHTS: vxe_render::LightWeights = vxe_render::LightWeights::Face;
+
+/// The lighting the fly-through's flags start from: the library's `Lighting::default()` read
+/// with [`DEFAULT_STORE_READ`] and [`DEFAULT_LIGHT_WEIGHTS`]. The fly-through's flag defaults
+/// and every example that renders the fly-through's image take this one base, so the two
+/// cannot drift. The lamp, its bounce and the exposure stay the library's here; each program
+/// settles them from its own flags.
+pub fn default_lighting() -> vxe_render::Lighting {
+    vxe_render::Lighting {
+        store_read: DEFAULT_STORE_READ,
+        light_weights: DEFAULT_LIGHT_WEIGHTS,
+        ..vxe_render::Lighting::default()
+    }
+}
