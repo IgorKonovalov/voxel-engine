@@ -995,6 +995,8 @@ each. Empty is fine.)_
 - Phase 3: `--lights-bounce on|off` (`cli/flags.rs`, `cli/mod.rs`, `app.rs`) is new, for the
   probe-cost readings; `tests/toggles.rs`'s start holds one dropped light (so `5` changes the
   mode) and `README.md` gains the `5` and `--lights-bounce` rows: outside Files touched.
+- Gate at the tip: `gpu_look_field.rs`'s `DEFAULT_FRAME_BYTES` gains Phase 2's direct pair
+  (5 529 600 B), outside Files touched; it was stale since 4854340.
 
 ### Close triggers
 
