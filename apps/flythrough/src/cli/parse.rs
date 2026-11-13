@@ -16,7 +16,7 @@ use crate::showcase::SHOTS;
 use crate::streaming::SYNC_BUDGET_MIB;
 use crate::{LogicChoice, LookPreset, RESIDENCY};
 use vxe_app::Pacing;
-use vxe_render::{Lighting, LookParams, ViewMode};
+use vxe_render::{LookParams, ViewMode};
 use vxe_world::Residency;
 
 pub fn parse_args() -> Result<Args, String> {
@@ -37,11 +37,7 @@ pub(crate) fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<
 impl Args {
     /// Every flag's default.
     fn defaults() -> Self {
-        let lighting = Lighting {
-            store_read: crate::DEFAULT_STORE_READ,
-            light_weights: crate::DEFAULT_LIGHT_WEIGHTS,
-            ..Lighting::default()
-        };
+        let lighting = crate::default_lighting();
         Args {
             seed: 1,
             render: None,

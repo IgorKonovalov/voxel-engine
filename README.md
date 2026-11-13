@@ -10,8 +10,9 @@
 the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 8192 frames at
 a manual exposure of 8, the emissive light read from the baked light store, FSR 2 on at
 internal scale 1.5 (1280x720 for 1920x1080) with sharpening 0.5, the default `face` look
-(honest cubes with the far normal at `[2, 6]`) and the default lighting, on an RTX 3080 Laptop GPU at 1920x1080,
-rendered 2026-11-13 at v0.52.0.
+(honest cubes with the far normal at `[2, 6]`) and the fly-through's default lighting (the
+store read by the shading normal, the light filters weighted by the face normal), on an RTX
+3080 Laptop GPU at 1920x1080, rendered 2026-11-13 at v0.52.0.
 Regenerate with
 `cargo run --release -p flythrough --example hero -- --exposure 8 --frames 8192 --out docs/images/hero.png`
 (every other setting above is the example's default).</sub>

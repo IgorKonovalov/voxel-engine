@@ -816,3 +816,30 @@ fn help_lists_every_flag_the_parser_accepts() {
     assert!(parse_args_from(argv(&["--help"])).unwrap().help);
     assert!(parse_args_from(argv(&["-h"])).unwrap().help);
 }
+
+/// Without flags the fly-through starts in `crate::default_lighting()`, the base the examples
+/// that render its image share: every field but the exposure (auto, the eye's) and the lamp's
+/// bounce (on) is that base's, so the store is read by the shading normal and the filters
+/// weigh the face normal.
+#[test]
+fn the_start_lighting_is_the_shared_default_lighting() {
+    let d = parse_args_from(argv(&[])).unwrap();
+    let start = d.start_lighting();
+    let base = crate::default_lighting();
+    assert_eq!(
+        Lighting {
+            exposure: base.exposure,
+            lamp_bounce: base.lamp_bounce,
+            ..start
+        },
+        base
+    );
+    assert!(start.lamp && start.lamp_bounce);
+    assert_eq!(
+        (start.store_read, start.light_weights),
+        (
+            vxe_render::StoreRead::Normal,
+            vxe_render::LightWeights::Face
+        )
+    );
+}

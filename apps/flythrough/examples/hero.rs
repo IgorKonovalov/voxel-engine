@@ -88,9 +88,10 @@ struct Args {
 }
 
 impl Args {
-    /// The still's lighting: the default `Lighting` with the shared rows applied.
+    /// The still's lighting: the fly-through's (`flythrough::default_lighting`) with the
+    /// shared rows applied.
     fn lighting(&self) -> Lighting {
-        self.light.apply(Lighting::default())
+        self.light.apply(flythrough::default_lighting())
     }
 
     /// The frame's jitter: `--jitter` when given (our upscaler), else off (FSR 2 jitters by
@@ -328,9 +329,12 @@ fn table() -> Table<Parsing> {
 }
 
 fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    // The fly-through's lighting (its store read and filter weights, ADR-0049) with the lamp
+    // and its bounce off: the still is lit by the world's emitters alone.
     let base = Lighting {
         lamp: false,
-        ..Lighting::default()
+        lamp_bounce: false,
+        ..flythrough::default_lighting()
     };
     let mut light = LightingArgs::from_lighting(&base, HERO_PROBE_SPACING);
     light.lamp = Some(false);
@@ -349,9 +353,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             out_dir: PathBuf::from("target/hero"),
             frames: 64,
             light,
-            internal_scale: RenderScale::OneHalf,
+            internal_scale: flythrough::cli::DEFAULT_SCALE,
             jitter: None,
-            sharpen: 0.5,
+            sharpen: flythrough::cli::DEFAULT_SHARPEN,
             adapter: None,
             look: flythrough::LookPreset::DEFAULT,
             help: false,
@@ -713,6 +717,32 @@ mod tests {
 
     fn parse(v: &[&str]) -> Result<Args, String> {
         parse_args_from(v.iter().map(|s| s.to_string()))
+    }
+
+    /// Without flags the still renders at the fly-through's defaults: its lighting
+    /// (`flythrough::default_lighting`: the store read by the shading normal, the filters
+    /// weighted by the face normal) with only the lamp and its bounce off, its look preset, and
+    /// its upscaler (FSR 2 at 1.5, sharpness 0.5).
+    #[test]
+    fn hero_defaults_are_the_fly_throughs() {
+        let d = parse(&[]).expect("defaults");
+        let fly = flythrough::default_lighting();
+        assert_eq!(
+            d.lighting(),
+            Lighting {
+                lamp: false,
+                lamp_bounce: false,
+                ..fly
+            }
+        );
+        assert_eq!(fly.store_read, flythrough::DEFAULT_STORE_READ);
+        assert_eq!(fly.light_weights, flythrough::DEFAULT_LIGHT_WEIGHTS);
+        assert_eq!(d.lighting().store_read, vxe_render::StoreRead::Normal);
+        assert_eq!(d.lighting().light_weights, vxe_render::LightWeights::Face);
+        assert_eq!(d.look, flythrough::LookPreset::DEFAULT);
+        assert_eq!(d.internal_scale, flythrough::cli::DEFAULT_SCALE);
+        assert_eq!(d.sharpen, flythrough::cli::DEFAULT_SHARPEN);
+        assert!(d.fsr2() && !d.jitter());
     }
 
     /// The defaults are the showcase's `hall` shot at 1920 x 1080 with the lamp and its bounce

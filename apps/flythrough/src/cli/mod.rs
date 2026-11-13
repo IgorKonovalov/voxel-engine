@@ -630,14 +630,14 @@ pub struct Args {
 /// The internal scale by default (`--internal-scale`): 1.5, so the fly-through starts in our
 /// upscaler at 720p for 1080p (the owner's default after ADR-0034's comparison, Plan 0041
 /// Phase 7). `--upscaler off` or `--internal-scale 1` is Plan 0024's frame.
-pub(crate) const DEFAULT_SCALE: RenderScale = RenderScale::OneHalf;
+pub const DEFAULT_SCALE: RenderScale = RenderScale::OneHalf;
 
 /// The jitter without an upscaler by default (`--jitter`): off. Our upscaler jitters unless
 /// `--jitter off` is given.
 pub(crate) const DEFAULT_JITTER: bool = false;
 
 /// The upscaler's sharpening strength by default (`--sharpen`).
-pub(crate) const DEFAULT_SHARPEN: f32 = 0.5;
+pub const DEFAULT_SHARPEN: f32 = 0.5;
 
 /// The light radius of `--source showcase` unless `--light-radius` is given, in chunks: the
 /// farthest pair of its 14 x 12 x 7 chunks is `sqrt(13^2 + 11^2 + 6^2) = 18.06` apart.
@@ -810,7 +810,7 @@ impl Args {
                 Some(e) => Exposure::Manual(e),
                 None => Exposure::Auto(self.start_auto()),
             },
-            ..Lighting::default()
+            ..crate::default_lighting()
         })
     }
 
