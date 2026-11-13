@@ -115,12 +115,9 @@ winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", 
 lto = "thin"
 codegen-units = 1
 
-# The test profile inherits dev, and with it these settings. Unpacked, a crate's debug info
-# goes to `.dwo` files beside its objects, which the linker skips, so linking a test binary
-# no longer copies it; a panic's backtrace still reads `file:line` through them.
-[profile.dev]
-split-debuginfo = "unpacked"
-
+# The test profile inherits dev, and with it these settings. `split-debuginfo` is left at the
+# platform default: "unpacked" is rejected on x86_64-pc-windows-msvc and wasm32 targets, and a
+# profile cannot set it for Linux alone.
 [profile.dev.package."*"]
 # Dependencies optimized even in dev builds, so a debug fly-through is usable. Their debug info
 # is line tables only: backtraces keep file and line, a debugger loses their variables.

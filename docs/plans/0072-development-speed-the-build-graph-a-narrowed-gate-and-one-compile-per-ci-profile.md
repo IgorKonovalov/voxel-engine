@@ -288,7 +288,11 @@ None. Configuration only: `Cargo.toml` profiles, `.config/nextest.toml`, `ci.yml
 
 ### Notes
 
-_(empty)_
+- Phase 2's `[profile.dev] split-debuginfo = "unpacked"` (1626405) withdrawn by the fix commit
+  after cd72a66: rustc rejects it on `x86_64-pc-windows-msvc` and wasm32, and a profile cannot
+  scope it to Linux. The kept profile is dependencies at `line-tables-only` alone. The Phase 2
+  gate and the Phase 3 and 4 readings ran with both. Open: the Linux-only form, `rustflags`
+  in a `.cargo/config.toml`, is outside the plan's files.
 
 ### Close triggers
 
