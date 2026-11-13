@@ -6,6 +6,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Changed (flythrough, tester): a `--path` benchmark runs with the headlamp off unless `--lamp` is given; the tester's benchmark runs pass `--lamp off`, a tour keeps the lamp default; `run.json` gains `lamp` (`on` or `off`, additive, schema 1).** Cave and castle bench readings from before this change ran with the lamp on and are not comparable with later ones.
+
 ## [0.52.0] - 2026-11-13
 
 Plan 0070 (a minor bump: `SyncStats` gains public fields, `run.json` gains a `streaming` object). The mirror's sync is cut in place on the render thread. A stage clock read per chunk and per pass, never per brick, splits the sync into `select`, `size`, `pack`, `light` (place and note), `copy` and `alloc`. It showed that packing slot words on the stream workers (ADR-0056) would move about 1.5 ms of a 45 ms p99, so that plan is deferred by the reading, not rejected. The p99 stage was the emitter rescan set, a `BTreeSet<usize>`. It is now 512 bits a chunk, visited in the same ascending order. The p50 stage was the light walks that ran every sync, and they now run only when an input changed. Readings on the RTX 3080 Laptop host (`hpet` clocksource), tip against base in one session: sync p50 180 to 184 us down to 15 to 19, `update + poll + sync` p99 42.7 to 47.2 ms down to 22.8 to 28.2, which is still over the 16.6 ms goal. `light_note` is the next stage (backlog). The autopilot's streaming CPU p50 reads 0.038 ms, the first reading under the 1.0 ms line, and residency p95 falls from 311 to 333 ms to 212 to 213 ms. The light buffer's bytes and every golden are unchanged. The owner saw "slightly better fps, picture is same".
