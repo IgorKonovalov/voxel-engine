@@ -421,8 +421,8 @@ Readings: [`docs/plans/logs/0074.md`](logs/0074.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | code and rig (b) in a wip commit; rigs (a), (d) and the attribution left | committed with this row |
-| 2: the placement's searches by index | dev | not started | |
+| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | done; code in `071cb80` (wip); S1 taken as an orchestrator default (owner away); rig (c) not run; an uncommitted thread-CPU reading build used for the attribution (log) | committed with this row |
+| 2: the placement's searches by index | dev | struck by S1 (Phase 1's log) | - |
 | 3: exposed emitters by masks | dev | not started | |
 | 4: the readings against the base | dev | not started | |
 | 5: the owner's window | human | not started | |
