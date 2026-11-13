@@ -395,6 +395,7 @@ impl GpuWorld {
             self.lap(left);
             if self.lights.chunks.contains_key(&coord) {
                 self.lights.dirty.insert(coord);
+                self.lights.touch();
             }
         }
         let empty = self.recs.write_bits(base);

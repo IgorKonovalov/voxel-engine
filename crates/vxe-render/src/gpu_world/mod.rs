@@ -694,19 +694,6 @@ impl GpuWorld {
             .map(|(c, _)| *c)
     }
 
-    /// Whether every chunk with lights whose box lies within `r` chunks of `coord`'s box (the
-    /// bake's candidate table's reach, `bake::job_table`) holds a current range of the
-    /// light-sample buffer.
-    pub fn lights_ready_near(&self, coord: ChunkCoord, r: i32) -> bool {
-        let rr = i64::from(r).pow(2);
-        self.lights.chunks.iter().all(|(c, l)| {
-            let gap2: i64 = (0..3)
-                .map(|k| i64::from(((c.0[k] - coord.0[k]).abs() - 1).max(0)).pow(2))
-                .sum();
-            gap2 >= rr || (l.range.is_some() && !self.lights.dirty.contains(c))
-        })
-    }
-
     /// The record entry the mirror holds for brick `slot` of chunk `coord`.
     pub fn entry(&self, coord: ChunkCoord, slot: usize) -> Option<u32> {
         let r = self.recs.mirrored.get(&coord)?.record;

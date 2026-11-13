@@ -753,3 +753,139 @@ fn the_first_sync_lights_are_pinned() {
 }
 
 const FIRST_SYNC_LIGHT_HASH: u64 = 0x5f03_1da4_af1f_6c46;
+
+/// A scripted flight over two copies of a 6 x 2 x 6 chunk world of [`Mixed`] bricks whose
+/// material 2 emits, light radius 1 and a sample budget of 6000 a sync (chunks wait for it):
+/// one mirror's light walks skip when nothing changed, the other's walk at every sync
+/// ([`GpuWorld::force_light_walks`]). The flight: the first uploads, idle syncs, focus steps,
+/// a carve through a lit chunk, a held radius of 2 and back, and the focus home, with idle
+/// syncs after each change for the waiting chunks to be written. After every
+/// sync both give the same light buffer bytes, `light_chunks()`, `light_oldest_wait` and
+/// light samples, and `lights_ready_near` equals its uncached walk for every chunk of the
+/// world at reaches 1 and 2; the skipping mirror skips at least 20 of the flight's syncs.
+#[test]
+fn the_light_walks_skip_only_what_did_not_change() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let table = || {
+        let mut t = MaterialTable::new();
+        t.push(Material::named("one"));
+        let mut lamp = Material::named("two");
+        lamp.emission = [1.0, 0.8, 0.5];
+        t.push(lamp);
+        t
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [6, 2, 6]);
+    let worlds = [
+        World::generate(extent, &Mixed, &table()),
+        World::generate(extent, &Mixed, &table()),
+    ];
+    let mut mirrors = [false, true].map(|force| {
+        let mut g = GpuWorld::with_config(
+            &device,
+            MirrorConfig {
+                light_radius: 1,
+                light_sync_samples: 6000,
+                ..small(Window::Fixed(extent))
+            },
+        );
+        g.force_light_walks(force);
+        g
+    });
+    #[derive(Clone, Copy, Debug)]
+    enum Step {
+        Idle,
+        Focus([i32; 3]),
+        Carve([i32; 3]),
+        Hold(i32),
+    }
+    use Step::*;
+    let idle = |n: usize| vec![Idle; n];
+    let mut script = idle(10);
+    for (change, n) in [
+        (Focus([2, 0, 2]), 8),
+        (Focus([3, 1, 3]), 8),
+        (Carve([3, 1, 3]), 6),
+        (Hold(2), 30),
+        (Hold(0), 6),
+        (Focus([0, 0, 0]), 10),
+    ] {
+        script.push(change);
+        script.extend(idle(n));
+    }
+    let mut waited = 0;
+    for (k, step) in script.iter().enumerate() {
+        let mut stats = Vec::new();
+        for (gpu, world) in mirrors.iter_mut().zip(&worlds) {
+            match *step {
+                Idle => {}
+                Focus(c) => gpu.set_focus(VoxelCoord(c.map(|v| v * 64 + 32))),
+                Carve(c) => {
+                    let lo = c.map(|v| v * 64 + 8);
+                    world
+                        .apply(&EditOp::box_(
+                            centre_of_voxel(lo),
+                            centre_of_voxel(lo.map(|v| v + 40)),
+                            Mode::Carve,
+                        ))
+                        .unwrap();
+                }
+                Hold(r) => gpu.hold_lights(r),
+            }
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let s = gpu.sync(world, &queue, &mut enc).unwrap();
+            queue.submit([enc.finish()]);
+            stats.push(s);
+        }
+        let [a, b] = &mirrors;
+        let at = format!("step {k} ({step:?})");
+        assert_eq!(
+            stats[0].light_oldest_wait, stats[1].light_oldest_wait,
+            "{at}"
+        );
+        waited = waited.max(stats[0].light_oldest_wait);
+        assert_eq!(a.light_samples(), b.light_samples(), "{at}");
+        assert_eq!(a.light_span(), b.light_span(), "{at}");
+        let chunks = |g: &GpuWorld| {
+            let mut v: Vec<_> = g
+                .light_chunks()
+                .map(|(c, s, n, p)| (c.0, s, n, p.to_bits()))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(chunks(a), chunks(b), "{at}");
+        let span = u64::from(a.light_span()) * vxe_render::internals::LIGHT_SAMPLE_BYTES;
+        if span > 0 {
+            let read = |g: &GpuWorld| {
+                vxe_render::debug::read_buffer(&device, &queue, g.light_buffer(), 0, span)
+            };
+            assert!(read(a) == read(b), "{at}: the light buffers differ");
+        }
+        for x in 0..6 {
+            for y in 0..2 {
+                for z in 0..6 {
+                    let c = ChunkCoord([x, y, z]);
+                    for r in [1, 2] {
+                        assert_eq!(
+                            a.lights_ready_near(c, r),
+                            a.lights_ready_near_uncached(c, r),
+                            "{at}: {c:?} at {r}"
+                        );
+                        assert_eq!(a.lights_ready_near(c, r), b.lights_ready_near(c, r), "{at}");
+                    }
+                }
+            }
+        }
+    }
+    let [a, b] = &mirrors;
+    println!(
+        "walks: skipping {}, forced {}; longest wait {waited}",
+        a.light_walks(),
+        b.light_walks()
+    );
+    assert!(waited > 0, "no chunk waited for the sample budget");
+    assert_eq!(b.light_walks(), script.len() as u64);
+    assert!(a.light_walks() + 20 <= b.light_walks());
+}
