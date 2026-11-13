@@ -213,7 +213,8 @@ profiles. Under `chain` a regime-B step pays about 1.7 ms of first-block fades (
 p99 in flight is Plan 0070's. Plan 0070, closed 2026-11-13 (v0.52.0), cut the sync in place on the render thread (a
 dense emitter rescan set, light walks on change), to p50 15 to 19 us and `update + poll + sync` p99
 22.8 to 28.2 ms in the tester's benches, still over 16.6 ms, with `light_note` the largest stage left
-and the worker packing of ADR-0056 deferred (backlog).
+and the worker packing of ADR-0056 deferred (backlog). [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md)
+(drafted 2026-11-13, beside Plan 0058) takes the light stages: the windowed placement spikes, then `light_note`.
 
 Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
 ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed
