@@ -273,6 +273,8 @@ worktree and leave with it.
 
 ### The sync's `light_note` stage and the windowed glide's light walks
 
+Drafted 2026-11-13 as [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (awaits the go); the body leaves at its close.
+
 Noted 2026-11-13 at Plan 0070's close (`docs/plans/logs/0070.md`, Phases 5 and 6). After Plan
 0070 the cave sync's p99 (about 21 to 22 ms, over Plan 0067's 16.6 ms for `update + poll +
 sync`) is led by `light_note`, the `note_lights` pass over a chunk's emitter bricks
@@ -356,6 +358,14 @@ after the scene's flags (`PathMode::flags`); a tour keeps the lamp default (on i
 the castle). `run.json` names it (`"lamp": "on"|"off"`, additive, schema 1), as do the tester's
 run row and its help panel. **Bench readings of the cave and castle paths from before 4ea561f
 ran with the lamp on and are not compared with readings after it.**
+
+### A `Uniform` emitter brick gives no light samples
+
+Noted 2026-11-13 from the tree at `98e69b8` (Plan 0074's draft, its owner answer 5).
+`note_lights` scans `Full` bricks only, so a brick made entirely of one emissive material
+contributes no light samples, even on its faces toward air. Not seen on screen. Fixing it changes
+the light, which Plan 0074's byte guard forbids. Pick up after Plan 0074 as a look check: place a
+solid emissive block of 8 or more voxels a side in the cave and compare it with a hollow one.
 
 ### Five lavapipe gate tests over the 10 s line
 
