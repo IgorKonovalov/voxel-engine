@@ -257,7 +257,9 @@ pays only once a chunk's upload is cheaper; this entry is that cheaper upload, a
 budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
 upload-copy ADR.
 Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
-and ADR-0056, awaiting the owner's go; this entry leaves when the plan is approved.
+and ADR-0056. Deferred 2026-11-13 by Plan 0070's Phase 1: the packing is about 1.5 ms of a cave
+sync p99 of 44 to 47 ms (RTX host). Pick up if Plan 0070's Phase 5 reads `pack + size` at half
+or more of the sync p99 that remains; the lane's drafts are untracked in its `live/`.
 
 ### The slow adapter's walk-speed spike
 
@@ -303,6 +305,20 @@ queue line due at least once, or a CPU test on the call sites, would bring it un
 line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
 
 ## Tooling and process
+
+### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
+
+Noted 2026-11-13 (Plan 0070 Phase 1, `docs/plans/logs/0070.md`). Every boot of the RTX laptop
+since 2026-11-05 logs `clocksource: Marking clocksource tsc unstable due to frequency skew` (not
+those of 11-01 to 11-03) and falls back to `hpet`; one `CLOCK_MONOTONIC` read costs about
+1.7 us. Readings since then that read the clock inside a hot loop (per brick, per voxel, per
+sample) are inflated; Plan 0070's per-brick stage laps turned a 42 to 64 ms sync p99 into 303 ms.
+Per-frame and per-chunk readings are affected little. Readings should name the clocksource
+(`/sys/devices/system/clocksource/clocksource0/current_clocksource`). Whether to boot with
+`tsc=reliable` or `clocksource=tsc`, or find the skew's cause (firmware, a kernel change at that
+boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
+readings are compared with ones from before 2026-11-05.
+
 
 ### A pipeline cache for the renderer's shaders
 

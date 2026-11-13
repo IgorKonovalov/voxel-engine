@@ -1,9 +1,13 @@
-# 0070: The sync off the frame: a chunk's slot image packed on the stream workers, the render thread copies
+# 0070: The sync off the frame: the stage clock fixed, then the sync's measured stages cut on the render thread
 
 > **Status:** in-progress (dev lane `plan-0070`, started 2026-11-13 at `c1d1d3f`; approved by the
 > owner, 2026-11-12: "45 after 67, 70 after 45. all draft plans can be approved"). Review question 1 answered against the recommendation: this plan starts after
 > Plan 0045 merges, on the split tree. Question 2 takes the recommendation: Plan 0044's Phase 4
 > is struck into this plan.
+> **Amended 2026-11-13 (orchestrator default, owner may overturn):** Phase 1's stop rule
+> tripped. The worker packing (old Phases 2 and 3) is struck; the plan now fixes the stage
+> clock, then cuts the sync's measured stages in place on the render thread (`alloc`'s rescan
+> set, `light`'s per-sync walks). See "Amendment 2026-11-13" below and its owner questions.
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -24,6 +28,20 @@
 > below is read from 0045's split tree; the lane maps them in its Notes at its start commit.
 
 ## TL;DR
+
+**As amended 2026-11-13.** Phase 1 put the sync's stages on a clock and read the premise false:
+the packing is about 1.5 ms of a cave sync p99 of 44 to 47 ms, and `pack + size + light` 34 %
+of it, under the 50 % stop line. The p99 stage is `alloc`, the brick loop of `upload_record`
+(27 to 29 ms), whose largest self cost in the profile is the `rescan` `BTreeSet<usize>`; the p50
+stage is `light` (164 to 167 us of a 180 us sync), the per-sync walks of `lights.chunks`. The
+plan now (Phase 2) stops the clock lapping per brick, which on this machine's `hpet` clocksource
+inflated the tip's readings, and re-reads the base; (Phase 3) replaces the rescan set with a
+dense per-chunk bitset; (Phase 4) makes the light walks pay only when something changed; then
+reads both against the base, the owner's window, and the bookkeeping. The mirror's bytes do not
+move in any phase. The worker packing of ADR-0056 is deferred by reading, not rejected; Phase 5
+decides whether it returns as its own plan.
+
+The draft's TL;DR, kept for the record (its premise is the one Phase 1 refuted):
 
 On the RTX the streamed scenes are CPU-bound by 5 to 9x their GPU time: the tester's cave and
 castle paths read wall p95 36.6 and 58.1 ms with the GPU at 6.3 ms, and `update + poll + sync`
@@ -81,9 +99,93 @@ Every figure is a reading unless marked. "RTX" is the NVIDIA GeForce RTX 3080 La
   Budgets bar the frame's CPU at p99 16.6 ms in flight, which the step alone cannot reach. This
   plan is that amendment.
 
+## Amendment 2026-11-13 (orchestrator default, owner may overturn)
+
+**What Phase 1 read** (`docs/plans/logs/0070.md`, Phase 1; RTX 3080 Laptop host, Vulkan, the
+tester's benches headless at 2530 x 1378, release, exclusive perf lock; both adapters, which
+differ little because the sync is CPU work on the same laptop CPU):
+
+| reading (cave unless named) | tip `7493526` (per-brick laps) | builds without per-brick laps (A/B and pre-pass rounds) |
+|---|---|---|
+| sync p50 / p99 | 184 us / 303 ms | 180 to 192 us / 41.5 to 47.7 ms (castle 43.0 to 60.8 ms; one loaded cave run, 63.6 ms, left out of every cave range) |
+| `alloc` p99 (the brick loop) | 157 ms | 26.5 to 30.7 ms (pre-pass, packing separated: 27.2 to 29.1 ms) |
+| `pack` alone p99 | 113 ms | 1.47 to 1.57 ms (pre-pass round) |
+| `size` p99, `select` p99, `copy` p99 | 3.0, 2.1, 23.0 ms | 2.7 to 3.5, 2.1 to 2.3, 0.8 to 1.0 ms |
+| `light` p50 / p99 | 168 us / 7.0 ms | 164 to 177 us / 10.4 to 11.5 ms |
+| `pack + size + light` over sync p99 | 40.5 % | 33.6 % (RTX), 34.1 % (Radeon), pre-pass |
+| `update + poll + sync` p99 | 307 ms | 43.7 to 55.2 ms |
+
+The flat profile of the sync without per-brick laps (profile 3) puts its largest self cost in
+`BTreeMap<usize, ()>::insert` (895 samples, against `upload_record` 276, `need` 153, the filter
+over `lights.chunks` in `place_lights` 73, `fill_slot` 65); the one `BTreeSet<usize>` in
+`vxe-render` is `upload_record`'s `rescan`, the brick and its six neighbours inserted per brick
+written into a chunk with emitters (`gpu_world/slot.rs`). `PoolAlloc::release_page` reads no
+sample. `lights_ready_near`, outside the sync, reads 259 samples. The profile's unwinding stops
+at the first non-inlined frame, so the attribution is a flat ranking, not a share of the stage:
+Phase 3 confirms it by reading.
+
+**The clock.** The RTX laptop's kernel marks the TSC unstable at every boot since 2026-11-05
+and falls back to `hpet`, about 1.7 us per `Instant::now()`. The tip's stage clock reads it
+twice per brick uploaded and twice per `Full` brick staged, which is most of the gap between the
+tip's 303 ms and the 42 to 64 ms of the same benches without those laps. Every reading after
+Phase 1 is taken with a clock that reads per chunk or per pass, never per brick, and states the
+clocksource. Readings on this machine since 2026-11-05 that time hot loops are inflated
+(`docs/backlog.md`, "The RTX laptop's TSC is marked unstable").
+
+**What changes.**
+
+- **Struck:** old Phase 2 (the slot image on the workers) and old Phase 3 (the edit path
+  re-packs dirty bricks only). Moving `pack + size` off the thread would save about 5 ms of a
+  45 ms p99. The lane's untracked Phase 2 drafts (`live/p2_wire.py`, `live/p2-draft/`) stay
+  where they are, uncommitted, for a follow-up plan if Phase 5 calls one.
+- **New Phase 2:** the stage clock per chunk and per pass, `light` split into its per-sync part
+  and its per-brick part, counters for the rescan inserts; the base re-read.
+- **New Phase 3:** the rescan set as a dense 512-bit set per record, visited in ascending slot
+  order (the order the `BTreeSet` gives, so `note_lights` sees the same sequence and the bytes
+  cannot move).
+- **New Phase 4:** `place_lights`' two walks, `flush_dropped_lights` and `lights_ready_near` pay
+  only when their inputs changed (the focus chunk, the radius or hold, a chunk's lists, a
+  dropped range).
+- **Phases 5 to 7** are the old 4 to 6 re-aimed: readings against the Phase 2 base, the owner's
+  window (two binaries, no mode toggle: nothing here is a mode), the bookkeeping.
+- **ADR-0056** stays accepted and gains a dated Outcome: its mechanism is deferred by reading.
+  No new ADR: the in-place changes reject no alternative a code comment cannot carry, and the
+  worker packing is not rejected, only measured as the smaller share today.
+- **`Pack`, `MirrorConfig::pack`, `--pack`, `SlotImage`** leave the plan. The Data shapes below
+  name what replaces them.
+
+**Owner questions (each a default taken while the owner slept; overturn any in the morning):**
+
+1. **Worker packing struck from this plan** (alternative: keep it as Phases 2 and 3 after the
+   in-place fixes). Default because it moves about 5 ms of a 45 ms p99; Phase 5 re-reads the
+   share and calls a follow-up plan if `pack + size` is half or more of what remains.
+2. **ADR-0056 kept with a dated Outcome, no superseding ADR** (alternative: a new ADR that
+   rejects worker packing and supersedes 0056). Default because nothing refutes the mechanism,
+   only its share at today's costs.
+3. **The rescan set as a dense bitset per chunk** (alternative: a `Vec<usize>` sorted and
+   deduplicated once per record). Default because 512 slots fit in eight `u64` words with no
+   allocation and visit in ascending order, the order the `BTreeSet` gives today.
+4. **The instrument fixed in code, not the clocksource** (alternative: boot with
+   `tsc=reliable` or `clocksource=tsc` and keep the per-brick laps). Default because the
+   boot setting is the owner's call and the engine's readings should not depend on it; the
+   backlog carries the clock.
+5. **No `--rescan` or `--light-walks` toggle; the window compares two binaries** (alternative:
+   keep both paths behind a flag, as the owner's "cheap modes stay settings" rule does for look
+   arms). Default because these are data-structure changes with byte-identical output, not
+   modes with a picture to pick.
+6. **The goal bar stays Plan 0067's 16.6 ms for `update + poll + sync` p99**, with proposals
+   per stage below (alternative: lower the goal to what the two fixes are expected to reach).
+   Default because the bar is the frame's; a miss at Phase 5 names the next stage, it does not
+   move the bar.
+
 ## Decision
 
-Build ADR-0056: one `ChunkPrep` on the workers produces a loaded full chunk's **slot image**
+**As amended 2026-11-13:** the sync stays on the render thread for this plan; its measured
+stages are cut in place (a dense rescan set, light walks that run on change), with byte-identical
+mirror and light-buffer bytes, read against a base taken with a clock that reads per chunk. The
+worker packing below is the draft's decision, deferred (ADR-0056's Outcome).
+
+The draft's decision: build ADR-0056: one `ChunkPrep` on the workers produces a loaded full chunk's **slot image**
 (its slot words in size classes, its emissive samples, its face masks), the sync consumes the
 image where one exists (allocate, copy, write the record) and keeps the inline path for a
 chunk's dirty bricks after an edit. Both paths give the same bytes, asserted. The mode is a
@@ -94,20 +196,20 @@ copies in the frame's encoder) and GPU-side packing (the slots are the packed by
 
 ## Architecture diagram
 
+As amended 2026-11-13: the sync's stages on the render thread, and where Phases 3 and 4 cut.
+
 ```mermaid
 flowchart LR
-    subgraph world[vxe-world]
-        W[stream worker: load chunk] --> P[ChunkPrep::prepare]
-        P --> E[StreamEvents::prepared]
+    subgraph render[vxe-render: GpuWorld::sync, render thread]
+        S[select] --> Z[size: need]
+        Z --> R[upload_record]
+        R --> L[alloc: brick loop, pack, slot alloc, belt staging]
+        L --> Q[rescan set: Phase 3, dense bits]
+        Q --> N[light_note: note_lights]
+        N --> C[copy: belt runs]
+        C --> P[light_place: place_lights, flush: Phase 4, on change]
     end
-    subgraph render[vxe-render]
-        P -. implemented by .-> I[ChunkImagePrep: slot words + sizes + emissive samples + face masks]
-        E --> A[GpuWorld::apply_events: keep image per chunk]
-        A --> S[sync: select, alloc record + slots, belt copy, write record]
-        D[edit: dirty bricks] --> X[inline pack of dirty bricks only]
-        X --> S
-        S --> B[staging belt -> pool, records]
-    end
+    H[lights_ready_near, outside sync: Phase 4, cached] -.-> P
 ```
 
 ## Implementation phases
@@ -142,159 +244,193 @@ changes a shader or a layout.
     lane stops for an architect amendment before Phase 2: the premise (the packing is the cost)
     did not hold.
 
-### Phase 2: the slot image on the workers
+### Phase 2: the stage clock per chunk, and the base re-read (amended 2026-11-13)
 - **Owner skill:** dev
-- **What:** `ChunkImagePrep` in `vxe-render` implements `ChunkPrep`: for a full chunk it builds
-  the `SlotImage` (per-brick slot words and size class, the emissive samples `upload` would
-  extract, the face masks `FacePrep` makes today, which it absorbs). `GpuWorld::apply_events`
-  keeps the image per chunk; `sync`'s `upload` takes it for a chunk whose image is current
-  (no edit since), skipping `need` and the per-brick pack, and writes record and slots from it.
-  `MirrorConfig::pack: Pack::{RenderThread, Workers}` selects; the default stays
-  `RenderThread` until Phase 6. The fly-through gets `--pack workers|render` and shows the mode
-  on the HUD's streaming row (the owner's standing rule). A material flag the image depends on
-  (`emissive`, `translucent`) is read from the table the mirror was built with; `rewrite_materials`
-  drops every image.
-- **Files touched:** `crates/vxe-render/src/{gpu_world.rs,bake.rs,lib.rs}`,
-  `crates/vxe-world/src/stream.rs` (only if `Prepared` is typed; otherwise none),
-  `apps/flythrough/src/{main.rs,hud.rs}`, `apps/flythrough/tests/gpu_level_mirror.rs`,
-  `crates/vxe-render/tests/gpu_mirror.rs`.
+- **What:** the stage clock stops lapping inside per-brick code: `upload_brick` and `stage`
+  read no clock (the substance of `live/ab-no-brick-laps.patch`), so a brick's pack, slot
+  allocation, belt staging and rescan inserts land in `alloc_us`, the brick loop's stage, and
+  `pack_us` keeps only `fix_band`'s per-chunk packing. `light_us` splits into
+  `light_place_us` (per sync: `place_lights`, `flush_dropped_lights`, the per-record emissive
+  check) and `light_note_us` (per chunk: the `note_lights` pass over the rescan set); `light_us`
+  stays their sum. New counters: `rescan_inserts` (insert calls into the rescan set) and
+  `clock_reads` (stage-clock reads this sync). `run.json`'s `streaming` object and the `sync:`
+  line carry the new fields (additive). The readings state the host's clocksource
+  (`/sys/devices/system/clocksource/clocksource0/current_clocksource`) beside the load. The
+  pre-pass build stays a reading tool, uncommitted.
+- **Files touched:** `crates/vxe-render/src/gpu_world/{mod.rs,window.rs,slot.rs,stage.rs,lights.rs}`,
+  `apps/flythrough/src/report.rs`, `apps/flythrough/src/run/frame.rs`,
+  `apps/flythrough/tests/path.rs`, `crates/vxe-render/tests/gpu_mirror_budget.rs`,
+  `docs/plans/logs/0070.md`.
 - **Done when:**
-  - `the_image_and_the_inline_pack_give_the_same_mirror_bytes` (`gpu_level_mirror.rs`, lavapipe,
-    about 6 s): a seeded 6 x 6 x 3 chunk cave is loaded to full residency under both `Pack`
-    modes; the pool's and the records' bytes read back are equal, byte for byte, and equal to
-    the current golden's mirror hash.
-  - `a_prepared_chunk_packs_no_brick_on_the_render_thread` (`gpu_mirror.rs`, lavapipe, about
-    2 s): with `Pack::Workers`, after the images arrive, the first sync's `packed_bricks` is 0
-    and `size_us` is 0 for every chunk that had an image; `sized_chunks` reads 0 (Plan 0044
-    Phase 4's property, kept here).
-  - `a_slot_holds_the_packed_brick_s_own_words` and every existing mirror test pass unchanged.
-  - The fly-through's frame goldens are byte-identical under `--pack workers`
-    (`gpu_golden.rs`'s default pose, run once by name).
-  - The HUD's streaming row reads `pack workers` or `pack render`.
+  - `the_sync_stages_sum_to_its_wall` (`gpu_mirror_budget`, lavapipe, about 2 s) still holds
+    within 10 %, with `light_place_us + light_note_us == light_us`.
+  - `the_stage_clock_reads_per_chunk_not_per_brick` (`gpu_mirror_budget`, lavapipe, about 2 s):
+    two 2 x 2 x 2 chunk worlds of the same chunk count, one with every brick `Full` and one with
+    one `Full` brick a chunk, read the same `clock_reads` on their first sync.
+  - `run_json_carries_the_streaming_stages` covers the new fields.
+  - **The base:** three rounds of the tester's cave and castle benches on both adapters
+    (`--tester --path cave|castle --report DIR --headless --render 2530x1378`, release,
+    exclusive perf lock, load before and after, clocksource named) with this phase's binary,
+    kept as `live/bin/flythrough-base70` for Phases 3 to 6. The log holds the per-stage p50 and
+    p99 table per adapter and scene.
+  - **Stop:** if `alloc` is not the p99 stage of the cave bench on both adapters, or `light` is
+    not its p50 stage, the lane stops for an amendment before Phase 3.
 
-### Phase 3: the edit path re-packs dirty bricks only
+### Phase 3: the rescan set dense (amended 2026-11-13)
 - **Owner skill:** dev
-- **What:** an edit marks the chunk's image stale by brick (the chunk's dirty bits already
-  exist); the sync re-packs those bricks inline and keeps the image's other bricks; `need` runs
-  over the dirty bricks' masks, not the chunk's 512. An image whose chunk was edited while it
-  was in flight from the worker is dropped on arrival (the contract of `ChunkPrep`: "throws a
-  result away once the chunk is edited").
-- **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `crates/vxe-render/tests/gpu_mirror.rs`,
-  `crates/vxe-world/benches/` (none; the edit bench is `apps/flythrough`'s `B` line).
+- **What:** `upload_record`'s `rescan: BTreeSet<usize>` becomes a 512-bit set (`[u64; 8]`, one
+  bit per brick slot of a chunk, on the stack or reused from `self.up`), inserted with a bit
+  OR and visited in ascending slot order with `trailing_zeros`, the order the `BTreeSet`
+  gives; `note_lights` runs over it unchanged. A comment names why the order matters (the
+  chunk's light lists and the samples' order in the buffer follow it).
+- **Files touched:** `crates/vxe-render/src/gpu_world/slot.rs` (and a small helper type where
+  `slot.rs`'s neighbours live), `crates/vxe-render/tests/gpu_mirror_budget.rs` or the module's
+  unit tests, `docs/plans/logs/0070.md`.
 - **Done when:**
-  - `an_edit_repacks_its_dirty_bricks_and_no_other` (`gpu_mirror.rs`, lavapipe, about 2 s): a
-    radius-10 sphere carve (4169 voxels) at the centre of a prepared solid 3 x 3 x 3 chunk
-    world touches at most 27 bricks (a 21-voxel diameter spans at most 3 bricks an axis), the
-    next sync's `packed_bricks` is at most 27, and the mirror's bytes equal a fresh
-    `Pack::RenderThread` upload of the edited world.
-  - `an_image_that_arrives_after_an_edit_is_dropped` (`gpu_mirror.rs`, lavapipe, about 1 s): the
-    chunk is edited between `prepare` and `apply_events`; the sync packs inline, and the bytes
-    equal the reference.
-  - The fly-through's `B` line (100 carves, `docs/nfr.md` section 4) reads within the spread of
-    its three pre-plan runs on the dev box, and its upload's `packed_bricks` is at most 6400.
-  - The replay and determinism tests give equal bytes (nothing in `vxe-world` changed).
+  - `the_dense_rescan_set_visits_the_btree_order` (unit, CPU, under 1 s): for 1000 seeded
+    insert sequences over slots 0..512 (with repeats and the six-neighbour pattern), the dense
+    set's visit sequence equals a `BTreeSet<usize>`'s.
+  - The mirror's bytes did not move: the existing slot and light tests in `gpu_mirror_*` and
+    the fly-through's default golden (`gpu_golden`, by name) are byte-identical;
+    `light_samples` and `light_chunks` after a seeded 4 x 4 x 4 first sync with an emissive
+    material equal the Phase 2 binary's (a pinned hash in the test).
+  - **Reading:** one round of the cave bench on the RTX, this phase's binary and
+    `flythrough-base70` alternated in one session: `alloc` p99 falls by at least 40 % against
+    the base's. **Stop:** under 40 %, the profile's attribution did not hold; the lane stops for
+    an amendment with a fresh profile of `alloc` (per-chunk timing, never per brick).
 
-### Phase 4: the readings, both modes alternated
+### Phase 4: the light walks on change (amended 2026-11-13)
 - **Owner skill:** dev
-- **What:** the autopilot of `docs/nfr.md` section 5's protocol (`--seed 1`, headless, 1280 x
-  720) and the tester's cave and castle benches (`--tester --path cave|castle --report`, RTX at
-  the window's size, Radeon at 1280 x 720), release, exclusive perf lock, three rounds, the two
-  `Pack` modes alternated, each run's 1-minute load logged. Read: streaming CPU p50 and p99,
-  `update + poll + sync` p99, wall p50 and p95, frames over 33 ms, residency p95, the images
-  waiting (count and bytes, peak), peak RSS. With Plan 0067 merged the step's share is read
-  beside it, never pooled.
-- **Files touched:** `docs/plans/logs/0070.md`, `docs/nfr/02-frame-budget.md`,
-  `docs/nfr.md` (section 5's residency line).
-- **Done when:** the log holds the table above per adapter, scene and mode, with loads; the
-  Budgets table's proposals are each marked met or missed by the `Workers` arm against the
-  `RenderThread` arm of the same session.
+- **What:** `place_lights` keeps its result and walks `lights.chunks` only when an input
+  changed since its last walk: the focus chunk, `light_radius` or `hold`, a chunk entering or
+  leaving `lights.chunks`, a chunk marked dirty, a range released, or chunks left waiting on the
+  sample budget (`lights.wait` non-empty). The release walk runs on a focus or radius change
+  only. `flush_dropped_lights` returns at once on an empty list. `lights_ready_near` caches its
+  answer on (`light_epoch`, the dirty set's change count, `coord`, `r`). Every early return is a
+  pure skip of a walk whose result is known: the buffer's bytes, `light_chunks()`'s order and
+  `light_oldest_wait` are what the full walk gives.
+- **Files touched:** `crates/vxe-render/src/gpu_world/{lights.rs,mod.rs}`,
+  `crates/vxe-render/tests/gpu_mirror_budget.rs`, `docs/plans/logs/0070.md`.
+- **Done when:**
+  - `the_light_walks_skip_only_what_did_not_change` (`gpu_mirror_budget`, lavapipe, about 3 s):
+    a scripted flight over a seeded emissive world (focus steps, a carve that changes a lit
+    brick, a radius change, a sample budget small enough to leave chunks waiting) gives, after
+    every sync, the same light buffer bytes, `light_chunks()` and `light_oldest_wait` as the
+    same flight with the walks forced every sync (a test-only switch, `#[cfg(test)]` or a
+    `pub(crate)` field).
+  - `lights_ready_near` answers equal the uncached function's at every step of that flight.
+  - **Reading:** one round of the cave bench on the RTX, alternated with Phase 3's binary:
+    `light_place_us` p50 at most 20 us (a proposal; the base reads about 165 us for `light`).
 
-### Phase 5: the owner's window
+### Phase 5: the readings against the base (amended 2026-11-13)
+- **Owner skill:** dev
+- **What:** the tip and `flythrough-base70` alternated, three rounds, the tester's cave and
+  castle benches on both adapters (RTX at 2530 x 1378, Radeon at 1280 x 720) and the autopilot
+  of `docs/nfr.md` section 5's protocol (`--seed 1`, headless, 1280 x 720), release, exclusive
+  perf lock, each run's load and the clocksource logged. Read: sync p50 and p99 per stage,
+  `update + poll + sync` p99, streaming CPU p50 and p99, wall p50 and p95, frames over 33 ms,
+  residency p95, peak RSS, and the fly-through's `B` line (three runs each binary). With Plan
+  0067 merged the queue step's share is read beside, never pooled.
+- **Files touched:** `docs/plans/logs/0070.md`, `docs/nfr/02-frame-budget.md`.
+- **Done when:** the log holds the table per adapter, scene and binary, with loads and the
+  clocksource; each Budgets proposal is marked met or missed by the tip against the base of
+  the same session; and the log names the next stage if `update + poll + sync` p99 still reads
+  over 16.6 ms. **Route, not a stop:** if `pack + size` is half or more of the tip's cave sync
+  p99, the log says so and the close review carries ADR-0056's worker packing to the backlog's
+  head as a follow-up plan; if another stage dominates, the log names it for the same.
+
+### Phase 6: the owner's window
 - **Owner skill:** human
-- **What:** the owner flies the streamed cave fast (`--glide 300` or by hand) and the castle,
-  with `--pack workers`, then toggles to `render` by key, HUD on, stdout visible; `dev` prepares
-  the two commands and pings when ready, both adapters if the owner wants the Radeon.
-- **Done when:** the owner says whether the hitches on fast passes are gone or not, and picks the
-  default, or says the picture changed (it must not; a difference is a stop).
+- **What:** the owner flies the streamed cave fast (`--glide 300` or by hand) and the castle
+  with the tip's binary and with `flythrough-base70`, HUD on, stdout visible (the `sync:` line
+  per second); `dev` prepares the two commands per binary (`live/session70.sh`) and pings when
+  ready, both adapters if the owner wants the Radeon.
+- **Done when:** the owner says whether the hitches on fast passes are fewer or not, and says
+  the picture did not change (it must not; a difference is a stop).
 
-### Phase 6: the default, the lines and the bookkeeping
+### Phase 7: the lines and the bookkeeping
 - **Owner skill:** dev
-- **What:** the picked mode becomes `MirrorConfig`'s default and the fly-through's; the flag
-  stays as a setting (Plan 0069 lists it as a `Rebuild` field, `pack`). The readings replace
-  `docs/nfr.md` section 2's streaming-line note and section 5's residency figure; the backlog's
-  "Slot words packed on the workers" entry leaves; `docs/roadmap.md`'s M1 paragraph gets one
-  sentence on the upload-copy ADR. If the owner struck Plan 0044's Phase 4 into this plan
-  (review question 2), its row says so.
-- **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `apps/flythrough/src/main.rs`,
-  `docs/nfr.md`, `docs/nfr/02-frame-budget.md`, `docs/backlog.md`, `docs/roadmap.md`.
-- **Done when:** the default's gate is green; the fly-through started with no flag reads the
-  picked mode on the HUD; the doc gates pass.
+- **What:** the readings replace `docs/nfr.md` section 2's streaming-line note (machine,
+  clocksource, commit); the backlog's "Slot words packed on the workers" entry is rewritten
+  with Phase 5's share and its pickup condition, or leaves for a follow-up plan the owner
+  approves; `docs/roadmap.md`'s M2 line on the sync gets one sentence. If the owner struck
+  Plan 0044's Phase 4 into this plan (review question 2), its row says what became of it: the
+  property it guarded (`sized_chunks` 0 for a prepared chunk) leaves with the worker packing.
+- **Files touched:** `docs/nfr.md`, `docs/nfr/02-frame-budget.md`, `docs/backlog.md`,
+  `docs/roadmap.md`, `docs/plans/logs/0070.md`.
+- **Done when:** the gate tier is green at the tip; the doc gates pass.
 
 ## Data shapes
 
 ```rust
-// illustrative
-pub struct SlotImage {
-    pub bricks: Vec<SlotBrick>,          // one per Full brick: slot words in 64-byte units, class
-    pub emissive: Vec<LightSample>,      // what upload's scan would extract
-    pub faces: FaceMasks,                // today's FacePrep output
-    pub table_epoch: u64,                // the MaterialTable the image was built against
+// illustrative (amended 2026-11-13)
+struct RescanSet([u64; 8]);              // one bit per brick slot of a chunk (512)
+impl RescanSet {
+    fn insert(&mut self, slot: usize) { self.0[slot / 64] |= 1 << (slot % 64); }
+    fn iter(&self) -> impl Iterator<Item = usize> + '_ { /* ascending, trailing_zeros */ }
 }
-pub struct SlotBrick { pub index: u16, pub class: u8, pub words: Vec<u32> }
-pub enum Pack { RenderThread, Workers }
-// SyncStats gains: select_us, size_us, pack_us, copy_us, alloc_us, packed_bricks, images_waiting, image_bytes
+// SyncStats gains: light_place_us, light_note_us (light_us = their sum), rescan_inserts, clock_reads
 ```
 
-Arithmetic: 0.87 GB live over about 17 077 full chunks at `r_full` 16 (Plan 0028, Plan 0042's
-census) is about 51 KB a chunk on average; a worst chunk is 512 `Full` bricks at 1 KiB, 512 KB.
-A window shift that loads 300 chunks before a sync holds about 15 MB of images; the bar below
-caps the waiting bytes at 64 MiB as a proposal, above which the oldest image is dropped and its
-chunk takes the inline path (never a stall).
+Arithmetic: a cave sync at p99 writes about 13 300 bricks (`packed_bricks` p99, Phase 1), about
+26 chunks of 512; with every chunk emitting, the rescan set takes up to 7 inserts a brick, about
+93 000 a sync, each a heap-allocating B-tree insert today and one OR into 64 bytes after Phase 3.
+The stage clock after Phase 2 reads a bounded number of times a chunk: at 26 chunks and, say,
+ten reads a chunk at 1.7 us (`hpet`) it costs about 0.4 ms of a sync, against about 45 ms for
+four reads a brick at 13 300 bricks (a guess from the per-read cost, consistent with the tip's
+303 ms against 42 to 64 ms).
 
 ## Budgets
 
-| `docs/nfr.md` figure | On record | Proposed (met by the `Workers` arm, A/B in one session) | How the close measures it |
-|---|---|---|---|
-| section 2, streaming CPU per frame (1.0 ms p50, a recorded miss since Plan 0002) | p50 3.4 to 4.2 ms, p99 45.9 to 83.6 (RTX autopilot, Plan 0059's re-read) | p50 at most 1.0 ms (the line, met on the dev box); p99 at most 8 ms (a proposal: the copy of 300 chunks at about 50 KB is about 15 MB, under 4 ms at 4 GB/s into mapped memory, plus select and alloc) | the section 5 autopilot, both adapters, three rounds alternated |
-| `update + poll + sync` p99 in the tester's cave and castle benches (no line; Plan 0067 bars the frame's CPU p99 at 16.6 ms) | 39.9 and 40.7 ms (RTX window, release) | at most 16.6 ms in both scenes, so Plan 0067's bar becomes reachable | the Phase 4 benches, RTX |
-| wall p95 of the cave and castle benches (no line) | 36.6 and 58.1 ms, GPU 6.3; showcase 12.8 | at most 20 ms in both with Plan 0067 merged (1.5x the showcase's, which has no streaming; a proposal), frames over 33 ms under 1 % | the same |
-| section 5 residency p95 (500 ms; 365 to 379 ms on record) | Plan 0059's reading | no worse than the spread; the workers do more per chunk, so a rise of up to 10 % is read, not barred | the autopilot's residency line |
-| section 3, RAM (4 GB) and section 2's belt | peak RSS 1.40 GB cave, 1.70 castle (Plan 0068) | images waiting at most 64 MiB peak (the cap above); peak RSS within 5 % of the base | Phase 4's log |
-| section 4, the edit's upload "fits the streaming line" | the `B` line 0.99 to 1.00 ms | unchanged within its spread; `packed_bricks` at most the dirty bricks (at most 6400 for 100 carves) | the fly-through's `B` line, three runs |
+As amended 2026-11-13. "Base" is Phase 2's binary (`flythrough-base70`), read in the same
+session as the tip. Every figure is from the RTX 3080 Laptop host on its `hpet` clocksource
+(2026-11-13 boot) unless named; a reading on another clocksource is not compared with these.
 
-A figure without a measurement above is a proposal; Phase 4 reads it, Phase 6 writes it.
+| `docs/nfr.md` figure | On record | Proposed (the tip against the base, one session) | How the close measures it |
+|---|---|---|---|
+| `update + poll + sync` p99, tester cave and castle (no line; Plan 0067 bars the frame's CPU p99 at 16.6 ms) | 43.7 to 55.2 ms cave, 46.2 to 67.6 ms castle (Phase 1 builds without per-brick laps, both adapters) | at most 16.6 ms in both scenes (the goal); a miss names the next stage in Phase 5 | Phase 5 benches, both adapters |
+| the cave sync's `alloc` p99 (no line) | 26.5 to 30.7 ms | at least 40 % under the base's (Phase 3's stop line; a proposal, the profile ranks the rescan inserts first but gives no share) | Phase 3 and Phase 5 |
+| the cave sync's `light_place_us` p50 (no line) | `light` p50 164 to 177 us of a sync p50 of 180 to 192 us | at most 20 us; sync p50 at most 50 us (proposals) | Phase 4 and Phase 5 |
+| section 2, streaming CPU per frame (1.0 ms p50, a recorded miss since Plan 0002) | p50 3.4 to 4.2 ms, p99 45.9 to 83.6 (RTX autopilot, Plan 0059's re-read, clocksource not recorded) | read and recorded with the clocksource; p50 at most 1.0 ms if the sync's p50 cut carries through (a proposal, not a gate) | the section 5 autopilot, both binaries, three rounds alternated |
+| wall p95 and frames over 33 ms of the cave and castle benches (no line) | 36.6 and 58.1 ms, GPU 6.3 (Plan 0068, windowed) | read, not barred: the queue step (Plan 0067) shares them | Phase 5 |
+| section 5 residency p95 (500 ms; 365 to 379 ms on record) | Plan 0059's reading | no worse than the base's spread | the autopilot's residency line |
+| section 4, the edit's upload "fits the streaming line" | the `B` line 0.99 to 1.00 ms | unchanged or lower within its spread | the fly-through's `B` line, three runs each binary |
+| section 3, RAM | peak RSS 1.30 GB cave (Phase 1 tip) | within 2 % of the base (nothing here allocates more) | Phase 5's log |
+
+A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 writes it.
 
 ## Risks & open questions
 
-- **The premise.** If Phase 1 reads the packing under half of the sync's p99, the cost is
-  elsewhere (the lock wait on a chunk the workers hold, the belt's chunk replacement, `select`
-  over a large pending set) and the plan stops for an amendment. Phase 1 exists for that.
-- **Two packers that must agree.** The image path and the inline path are two implementations
-  of one format. Phase 2's byte-equality test over a seeded cave and Phase 3's over edits guard
-  it; the honest fix on divergence is one shared packing function both call, which Phase 2
-  should write from the start (the inline path calls the same `pack_brick` on a slice).
-- **Determinism:** nothing here touches `vxe-world`'s edit path or results; the mirror's bytes
+- **The attribution.** The profile's unwinding stops at the first non-inlined frame, so the
+  rescan set ranks first by self samples without a share of `alloc`. Phase 3's 40 % line is the
+  check; under it the lane stops and re-profiles `alloc` per chunk.
+- **The order of the light lists.** `note_lights` runs over the rescan set in ascending slot
+  order today; the dense set must keep it, or a chunk's samples land in another order and the
+  light buffer's bytes move. Phase 3's unit test and pinned hash guard it.
+- **A skipped walk that was needed.** Phase 4's change inputs are a list; a forgotten one (a
+  chunk whose range was evicted by `write_chunk_lights`, a `hold_lights` change) leaves a chunk
+  unlit until the next change. The forced-walk comparison over a scripted flight is the guard;
+  any input it misses is added to the list, not worked around.
+- **The clock.** The readings depend on the host's clocksource; a reboot onto `tsc` changes
+  every absolute figure. Base and tip are always read in one session.
+- **The worker packing.** Deferred, not refuted (ADR-0056's Outcome). If the in-place cuts work,
+  `pack + size` (about 5 ms) may become the larger share of what remains; Phase 5 reads it.
+- **Determinism:** nothing here touches `vxe-world`; the mirror's and the light buffer's bytes
   are asserted equal, and the goldens are byte-identical.
-- **Memory:** the waiting images are bounded by the cap; a prep that outruns the sync for
-  seconds (a 300 chunk shift at 10 m/s) holds about 15 MB.
-- **Threading:** the workers read the material table's flags; the table is immutable after
-  `generate` today. `rewrite_materials` (no caller) must drop every image; a test says so.
-- **The `Prepared` erasure.** `Prepared(Arc<dyn Any>)` carrying 50 KB values is fine; typing
-  it (`Prepared<T>`) is a `vxe-world` API change this plan may make if the downcast reads as a
-  cost in Phase 1. Not a decision; a code comment.
-- **Order.** If the owner runs this after Plan 0045, every path above moves
-  (`gpu_world/stage.rs` and friends); the mechanism does not.
 
 ## What this plan does NOT do
 
+- The worker packing (ADR-0056, the draft's Phases 2 and 3): deferred to a follow-up plan if
+  Phase 5 calls one; `Pack`, `--pack` and `SlotImage` are not built.
+- `note_lights`' own cost (`light_note_us`, the `light` p99 of about 10.5 ms in
+  `exposed_emitters`): Phase 2 reads it apart; cutting it is a follow-up unless Phase 3's set
+  alone moves it.
+- The machine's clocksource: the owner's boot setting (`docs/backlog.md`).
 - The bake queue's step, its budget by time and the missing-light fallback: Plan 0067.
 - The window's pacing, the HUD's waits and the worker count: Plan 0064 (closed).
-- Narrowing on the workers in the sense of Plan 0023's "narrowing" (the palette): gone since
-  Plan 0028; nothing to move.
 - The near shell's cost in a flight and the streaming edge (the backlog): the bake's, not the
   sync's.
 - Any shader, layout or look change; any change to `vxe-world`'s results or hashes.
-- Splitting `gpu_world.rs`: Plan 0045 Phase 2.
 
 ## Implementation log
 
@@ -307,11 +443,12 @@ A figure without a measurement above is a proposal; Phase 4 reads it, Phase 6 wr
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](logs/0070.md)) | `7493526` (code); committed with this row (readings) |
-| 2: the slot image on the workers | dev | not started | |
-| 3: the edit path re-packs dirty bricks only | dev | not started | |
-| 4: the readings, both modes alternated | dev | not started | |
-| 5: the owner's window | human | not started | |
-| 6: the default, the lines and the bookkeeping | dev | not started | |
+| 2: the stage clock per chunk, and the base re-read | dev | not started (amended 2026-11-13) | |
+| 3: the rescan set dense | dev | not started | |
+| 4: the light walks on change | dev | not started | |
+| 5: the readings against the base | dev | not started | |
+| 6: the owner's window | human | not started | |
+| 7: the lines and the bookkeeping | dev | not started | |
 
 ### Notes
 
@@ -358,5 +495,9 @@ Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
 ## Followups
 
-- A typed `Prepared<T>` if the erased hook reads as a cost (Phase 1).
+- The worker packing (ADR-0056) as its own plan, if Phase 5 reads `pack + size` at half or
+  more of the tip's cave sync p99; the lane's untracked drafts are in `live/p2_wire.py` and
+  `live/p2-draft/`. A typed `Prepared<T>` goes with it.
+- `note_lights`' cost in `exposed_emitters` (the `light` p99), if Phase 5 names it the next
+  stage.
 - Moving existing render tests that need only a world into `vxe-render` (Plan 0071's rig).
