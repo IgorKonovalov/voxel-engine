@@ -306,7 +306,7 @@ A figure without a measurement above is a proposal; Phase 4 reads it, Phase 6 wr
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the sync's stages on the clock | dev | in progress: code at the checkpoint, readings 1 of 12 ([log](logs/0070.md)) | committed with this row |
+| 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](logs/0070.md)) | `7493526` (code); committed with this row (readings) |
 | 2: the slot image on the workers | dev | not started | |
 | 3: the edit path re-packs dirty bricks only | dev | not started | |
 | 4: the readings, both modes alternated | dev | not started | |
@@ -329,6 +329,22 @@ A figure without a measurement above is a proposal; Phase 4 reads it, Phase 6 wr
 | `apps/flythrough/src/main.rs`: `--pack` and the sync's caller | `cli/flags.rs`, `cli/mod.rs`, `setup.rs` (the streamer's hook), `run/frame.rs`, `run/mod.rs` (`init_stream`), `toggles.rs` (a key) |
 | `apps/flythrough/src/hud.rs` (the streaming row) | `hud/` (`stats.rs`, `modes.rs`) and `run/hud_feed.rs` |
 | the tester's `run.json` | `apps/flythrough/src/report.rs`; written in `run/tour.rs` |
+
+**Phase 1 deviations and unmet done-whens:**
+
+- `SyncStats::lock_us` (the chunk-lock wait inside `select_us` and `alloc_us`) is not in the
+  plan (`7493526`).
+- The stage clock reads `Instant::now()` twice per brick uploaded and twice per `Full` brick
+  staged. On the RTX laptop's current `hpet` clocksource a read costs about 1.7 us, and the
+  tip's sync p99 in the cave bench reads 303 ms against 42 to 64 ms without the per-brick laps
+  (`7493526`; readings in the log).
+- The done-when's readings (three rounds of the four benches with the tip's binary) were not
+  run. One round-1 RTX cave run of the tip is in; the per-stage percentiles per adapter and
+  scene come from three rounds of a build without the per-brick laps (pack folded into
+  `alloc`) and one round of a build that times the packing in a separate pass per chunk.
+  Neither build is committed.
+- The stop rule tripped: `pack + size + light` is under half of the sync's p99 in the cave
+  bench. Phase 2 is not started.
 
 Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
