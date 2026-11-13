@@ -414,8 +414,7 @@ Plan 0059), `:614` and `:687` "Reservoir reuse's bar", `crates/vxe-render/src/ex
 `description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`.
 `vxe-render/tests/gpu_frame.rs:86` calls `lamp_bounce` off "the default", which is the
 library's default and not the fly-through's (Plan 0069's amendment note takes the default
-itself). `CLAUDE.md:39-40` gives `vxe-render` "voxel-model entities" it does not have yet
-(Plan 0062) and omits the bake store and FSR 2: the owner's edit. Pick up with the next chore
+itself). (The `CLAUDE.md` part was fixed 2026-11-13.) Pick up with the next chore
 lane; it touches no file a plan lane edits except `gpu_lights.rs` (Plan 0058's).
 
 ### A documentation site

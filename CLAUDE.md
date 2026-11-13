@@ -36,9 +36,10 @@ crates/
 │                    #   ops, op and input logs, the log file and its wire encoding.
 │                    #   HEADLESS and DETERMINISTIC: no GPU, no wall clock, no
 │                    #   unseeded RNG, integer edit math
-├── vxe-render/      # wgpu: brick upload, compute ray marching, lighting, denoise, upscale,
-│                    #   voxel-model entities, a text overlay. WGSL under src/shaders/.
-│                    #   Never branches on backend
+├── vxe-render/      # wgpu: the GPU mirror and its upload, compute ray marching, the baked
+│                    #   light store and its live queue, probes, lighting, denoise, FSR 2 and
+│                    #   our upscaler, exposure, a text overlay; voxel-model entities planned
+│                    #   (Plan 0062). WGSL under src/shaders/. Never branches on backend
 ├── vxe-app/         # winit shell: window, input, surface, frame loop. Thin and optional
 ├── vxe-sim/         # cylinder sweeps and the character controller (step, slide, climb, fall).
 │                    #   HEADLESS and DETERMINISTIC like vxe-world, which is its only dependency
