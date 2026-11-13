@@ -221,7 +221,9 @@ change shadow softness or the rare fallback pixels, so they are the owner's eye.
 Plan 0058, which widens the filter to rgb.
 Checked 2026-11-13 at Plan 0058's refresh: its Phase 1 moves the lamp-off skips onto "some light
 is shaded" (`LIGHTING_DIRECT`), so after it the skip holds with the lamp off and an empty list;
-the iterations stay here (Plan 0058's owner question 8).
+the iterations are taken by Plan 0058 (owner, 2026-11-13, its answer 8): a 1, 2 or 4 iteration
+render setting in its Phase 2, judged in its Phase 4 window. Skipping the whole pass with the
+lamp off and the `face` look stays here for after it.
 
 ### A beam prepass, or a distance value per brick
 
@@ -281,8 +283,8 @@ headless benches; not attributed. Pick up as the next sync plan, before the 16.6
 again.
 Checked 2026-11-13 at Plan 0058's refresh: both are the emissive light-sample mirror's
 (`gpu_world/lights.rs`), which Plan 0058 does not touch, so neither folds into it; its window
-reads the `sync:` line beside a hitch. Whether to draft the sync plan now, beside 0058's lane, is
-its owner question 9.
+reads the `sync:` line beside a hitch. The owner (2026-11-13, Plan 0058's answer 9): the next
+sync plan is drafted now and runs beside 0058's lane.
 
 ### The slow adapter's walk-speed spike
 
