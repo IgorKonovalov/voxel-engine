@@ -1,6 +1,7 @@
 //! The fly-through's list of analytic lights (`vxe_render::Light`, ADR-0044): `1` drops one at
 //! the looked-at point, `2` carries the newest in front of the camera, `3` cycles the picked
-//! colour and recolours the newest, `6` fires one along the view ray, `4` removes the newest;
+//! colour and recolours the newest, `6` fires one along the view ray, `4` removes the newest,
+//! `5` flips the newest's bounce flag;
 //! drops and shots take the picked colour; `--lights N` starts with a ring. The run hands
 //! [`TestLights::list`] to the frame every frame (`Frame::set_lights`). Not the mirror's light
 //! samples (`--light-radius`, the emissive voxels' candidates).
@@ -98,6 +99,16 @@ impl TestLights {
             carry: false,
             colour: 0,
         }
+    }
+
+    /// The lights with their [`Light::BOUNCE`] flag set when `bounce` (`--lights-bounce`).
+    pub fn bouncing_all(mut self, bounce: bool) -> Self {
+        if bounce {
+            for l in &mut self.lights {
+                l.light.flags |= Light::BOUNCE;
+            }
+        }
+        self
     }
 
     /// The picked colour's name and value.
@@ -199,6 +210,23 @@ impl TestLights {
         }
     }
 
+    /// `5`: flips the newest light's [`Light::BOUNCE`] flag (in flight or still), so it feeds
+    /// the probe channel while the lamp's bounce is on. Returns the flag, `None` over an
+    /// empty list.
+    pub fn toggle_bounce(&mut self) -> Option<bool> {
+        let l = self.lights.last_mut()?;
+        l.light.flags ^= Light::BOUNCE;
+        Some(l.light.flags & Light::BOUNCE != 0)
+    }
+
+    /// The lights with [`Light::BOUNCE`] set.
+    pub fn bouncing(&self) -> usize {
+        self.lights
+            .iter()
+            .filter(|l| l.light.flags & Light::BOUNCE != 0)
+            .count()
+    }
+
     /// `4`: removes the newest light; carry ends with it.
     pub fn remove_newest(&mut self) {
         self.lights.pop();
@@ -231,13 +259,18 @@ impl TestLights {
         self.lights.iter().map(|l| l.light).collect()
     }
 
-    /// The `lights` row: `lights <n>/8 [carry] [fly <m>] over <k> colour <name>`, `n` the
-    /// lights shaded with the headlamp counted while it is on, `m` those in flight, `k` those
-    /// past the cap, `name` the picked colour.
+    /// The `lights` row: `lights <n>/8 [bounce *..] [carry] [fly <m>] over <k> colour <name>`,
+    /// `n` the lights shaded with the headlamp counted while it is on, one `*` for each list
+    /// light flagged to bounce, `m` those in flight, `k` those past the cap, `name` the picked
+    /// colour.
     pub fn write_row(&self, lamp: bool, out: &mut String) {
         let cap = Self::cap(lamp);
         let shaded = self.lights.len().min(cap) + usize::from(lamp);
         let _ = write!(out, "lights {shaded}/{MAX_LIGHTS}");
+        let b = self.bouncing();
+        if b > 0 {
+            let _ = write!(out, " bounce {}", "*".repeat(b));
+        }
         if self.carry {
             out.push_str(" carry");
         }
@@ -364,6 +397,22 @@ mod tests {
         let mut row = String::new();
         l.write_row(false, &mut row);
         assert_eq!(row, "lights 4/8 fly 2 over 0 colour white");
+    }
+
+    #[test]
+    fn five_flips_the_newest_lights_bounce_flag() {
+        let mut l = TestLights::default();
+        assert_eq!(l.toggle_bounce(), None);
+        l.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        l.fire(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        assert_eq!(l.toggle_bounce(), Some(true));
+        assert_eq!(l.lights[1].light.flags & Light::BOUNCE, Light::BOUNCE);
+        assert_eq!(l.lights[0].light.flags & Light::BOUNCE, 0);
+        let mut row = String::new();
+        l.write_row(false, &mut row);
+        assert_eq!(row, "lights 2/8 bounce * fly 1 over 0 colour white");
+        assert_eq!(l.toggle_bounce(), Some(false));
+        assert_eq!(l.bouncing(), 0);
     }
 
     #[test]

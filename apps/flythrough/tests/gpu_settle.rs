@@ -310,8 +310,9 @@ fn a_still_lamp_freezes_the_channel() {
 /// A lamp step moves the probes in reach only: with the volume pinned so that the eye sits in
 /// its lowest cell (its far corner beyond `lamp_reach`), after the channel froze at
 /// `probe_freeze` 8, a lamp moved each frame for 8 frames changes a near probe's texels within
-/// them (blending at `h_move`, its age restarting at 1) and keeps a probe beyond the reach
-/// bit-identical (never listed), and the near probe freezes again once the lamp holds still.
+/// them (blending at `h_move`, its age restarting at 1), restarts the age of every live probe
+/// within the reach, and keeps every probe beyond the reach bit-identical (never listed), and
+/// the near probe freezes again once the lamp holds still.
 #[test]
 #[ignore = "soak"]
 fn a_lamp_step_moves_the_probes_in_reach_only() {
@@ -352,6 +353,7 @@ fn a_lamp_step_moves_the_probes_in_reach_only() {
     let read = |frame: &Frame, s: u32| frame.probes().read_probe(&level.device, &level.queue, s);
     let (near0, far0) = (read(&frame, near), read(&frame, far));
     assert!(near0.age() >= 8, "the near probe froze: {}", near0.age());
+    let all0 = support::lights::probe_words(&level.device, &level.queue, &frame);
     // A turn moves the lamp's position and direction together; it opens no window.
     for i in 1..=8 {
         let c = Camera {
@@ -362,6 +364,35 @@ fn a_lamp_step_moves_the_probes_in_reach_only() {
         assert!(!frame.probe_light_window());
     }
     let near1 = read(&frame, near);
+    // Every probe, not one: each live probe well inside the reach of the lamp (before and
+    // after the turn) restarted its age at 1, and each probe well beyond it kept every word.
+    let all1 = support::lights::probe_words(&level.device, &level.queue, &frame);
+    let lamp = |c: &Camera| Vec3::from(vxe_render::Light::headlamp(c, &light).pos);
+    let last = Camera {
+        yaw: camera.yaw + 0.016,
+        ..camera
+    };
+    let (mut moved, mut kept) = (0, 0);
+    let v = frame.probes();
+    for s in 0..v.count() {
+        let w = v.slot_probe(origin, s);
+        let p = Vec3::from(v.probe_position(w));
+        let d = (p - lamp(&camera)).length().max((p - lamp(&last)).length());
+        let d_min = (p - lamp(&camera)).length().min((p - lamp(&last)).length());
+        let i = s as usize;
+        if d < reach - 4.0 && v.live(all0[i].state, w) {
+            assert_eq!(v.age(all1[i].state, w), 1, "slot {s} in reach restarted");
+            moved += 1;
+        } else if d_min > reach + 8.0 {
+            assert_eq!(
+                all1[i], all0[i],
+                "slot {s} beyond the reach kept every word"
+            );
+            kept += 1;
+        }
+    }
+    println!("lamp turn: {moved} live probes in reach restarted, {kept} beyond the reach kept");
+    assert!(moved > 1 && kept > 0);
     println!(
         "near probe slot {near}: age {} -> {}; far probe slot {far}: age {}",
         near0.age(),

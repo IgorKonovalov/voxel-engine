@@ -929,7 +929,7 @@ some form of moving light with different colors, or should we do it later?"
 |---|---|---|---|
 | 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | 5bfae33, be6126e |
 | 2: Colour: the direct part in a target of its own | dev | done (exploration) | 4854340 |
-| 3: The bounce flag | dev | not started | |
+| 3: The bounce flag | dev | done (exploration) | committed with this row |
 | 4: The owner's window | human | not started | |
 | 5: The picks as tests | dev | not started | |
 
@@ -977,6 +977,24 @@ each. Empty is fine.)_
   `--light-floor` is a new flag (for Phase 1's floor readings). `hud.png` and `mode_banner.png`
   are re-blessed for the HUD's new words. `3` is a toggle row (`toggles.rs`), not an action.
   dw 2's golden is not written (exploration).
+- d9f0a61 (orchestrator amendment): Phase 1 done-when 12 asserts the reactive rule's mechanism
+  (each flight frame's marks against the CPU threshold test, none off it), which
+  `fsr2_marks_a_light_in_flight` and `fsr2_leaves_no_trail_behind_a_light_in_flight` (be6126e)
+  assert; no test changed.
+- Phase 3: `Lighting::lamp_bounce` is the channel's switch and sets the headlamp slot's
+  `BOUNCE`; a list light's flag feeds the channel only while it is on. A bouncing list light's
+  flag, presence, intensity, colour or cone changing restarts every probe (the lamp's rule);
+  a move marks the probes within the bounce reach of its old or new position moved.
+  `ProbeVolume::update_list` takes a per-probe `moved_by` in place of `lamp_moved: bool`.
+- Phase 3: done-whens 1, 3 and 4 are in `gpu_indirect.rs` (the furnace's box fixtures), not
+  `gpu_dynamic_lights.rs`, on the light box of `tests/support/lights.rs`; `probe_words` is new
+  there. dw 3's probes in the old reach only are not traced after the move (they leave the
+  reach; the gather reads them as zero); dw 3 asserts the age restart of the new reach's live
+  probes, not a changed irradiance (a probe outside the world's chunks reads 0 either way).
+  dw 3's soak test reads 3.6 s on lavapipe and stays `#[ignore = "soak"]` as named.
+- Phase 3: `--lights-bounce on|off` (`cli/flags.rs`, `cli/mod.rs`, `app.rs`) is new, for the
+  probe-cost readings; `tests/toggles.rs`'s start holds one dropped light (so `5` changes the
+  mode) and `README.md` gains the `5` and `--lights-bounce` rows: outside Files touched.
 
 ### Close triggers
 

@@ -371,6 +371,19 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
+        press: Press::Key(KeyCode::Digit5, None),
+        name: "bounce",
+        row: HudRow::Lights,
+        get: lights_words,
+        flip: |m, now| {
+            let words = match m.lights.toggle_bounce() {
+                Some(b) => format!("bounce {}", on(b)),
+                None => "bounce: no light".to_string(),
+            };
+            m.show_lights(words, now);
+        },
+    },
+    Toggle {
         press: Press::Key(KeyCode::KeyX, Some(PadButton::West)),
         name: "cutaway",
         row: HudRow::Controls,

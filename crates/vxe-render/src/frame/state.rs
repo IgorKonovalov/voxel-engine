@@ -29,6 +29,8 @@ pub(super) struct History {
     pub(super) listed: Option<Vec<Light>>,
     /// The static light of the last encode with history (`None` before the first).
     pub(super) light_key: Option<LightKey>,
+    /// The bounce channel's list lights of the last encode with history ([`bounce_key`]).
+    pub(super) bounce_key: Option<Vec<Light>>,
     /// Encoded frames with a probe update left in the open light-change window.
     pub(super) light_window: u32,
 }

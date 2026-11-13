@@ -153,6 +153,7 @@ go through an in-process server, so every edit you see came back as a client eve
 | `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
 | `3` | Pick the next colour (white, warm, red, green, blue) and recolour the newest light, in flight or still; later drops and shots take it. The banner and the `lights` row name it |
 | `4` | Remove the newest light; the banner names `lights <n>/8` |
+| `5` | Flip the newest light's bounce flag: with `--lamp-bounce on` a flagged light feeds the probe channel; the banner reads `bounce on` or `bounce off`, and the `lights` row marks each flagged light `*` |
 | `6` | Fire a point light of the picked colour along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light. The `lights` row names the count, carry, the lights in flight and those over the cap |
 | `F` | Cycle the live bake queue's order: score, score with the class as a tier, distance |
 | `Tab` / `Slash` | Halve / double the queue score's angle weight |
@@ -218,6 +219,7 @@ shown, `F1`, the autopilot's flight).
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
 | `--lamp on\|off` | The headlamp (default on; off on the showcase and in a `--path` benchmark) |
 | `--lights N` | Start with `N` white list lights (intensity 600) on a 3 m ring around the spawn's eye, for the light pass's readings; the `lights` row counts them |
+| `--lights-bounce on\|off` | The `--lights` ring's lights take the bounce flag and feed the probe channel while the lamp's bounce is on (off by default) |
 | `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
 | `--fade-reading` | Headless: dig five times along the camera ray, settle the light with the lamp off, then on, switch it off and print, for the screen centre's direct light, indirect light and their sum, the first frame under 10 % of the lamp's part |
 | `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |

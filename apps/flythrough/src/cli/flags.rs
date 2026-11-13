@@ -779,6 +779,15 @@ fn light_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::value(
+            &["--lights-bounce"],
+            "on|off",
+            "the --lights ring's lights feed the lamp's bounce channel (off)",
+            |p: &mut Parsing, v| {
+                p.args.light.lights_bounce = v.on_off()?;
+                Ok(())
+            },
+        ),
         Flag::switch(
             &["--fade-reading"],
             "dig, settle, switch the lamp off and print the fade",

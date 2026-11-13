@@ -4,15 +4,16 @@
 // light.wgsl and probe_gather.wgsl, whose walk, lamp term, probe bindings (group 3)
 // and probe reads it uses.
 //
-// The volume is the lamp's bounce channel (ADR-0043): the rays see the headlamp's light and
-// nothing else, and the passes run only with the lamp on.
+// The volume is the bounce channel of the lights flagged LIGHT_BOUNCE (ADR-0043's lamp
+// channel, ADR-0044's flag; the headlamp's slot carries the flag while the lamp's bounce is
+// on): the rays see those lights and nothing else, and the passes run only while one is on.
 //
 // `probe_trace`, one workgroup per list entry and one invocation per ray: ray i leaves the
 // probe along the i-th of `probe.rays` spherical Fibonacci directions turned by the frame's random
 // rotation, through the full walk. A ray that starts inside rock is a back face: signed
 // distance -1 and no radiance. A ray that hits a face returns its distance and the radiance
-// the face reflects toward the probe, `albedo / PI E_lamp`: E_lamp the headlamp's irradiance at
-// the hit by next-event estimation, with its shadow ray in the frame's shadow walk. No
+// the face reflects toward the probe, `albedo / PI E`: E the flagged lights' irradiance at
+// the hit by next-event estimation, each with its shadow ray in the frame's shadow walk. No
 // emissive light, no hit emission and no earlier bounce enter it. A miss returns
 // PROBE_MISS_DISTANCE spacings and no radiance. Each ray's radiance and signed distance go to
 // the scratch buffer.
@@ -124,12 +125,16 @@ fn probe_trace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
             dist = h.t;
             let p = o + d * h.t;
             let n = shadow_normal(d, h);
-            // `light_lit` is the headlamp's radiance times the cosine over d^2 (slot 0 while
-            // `lights.lamp` is 1): PI of it is the irradiance convention the light pass's
-            // direct part carries.
-            var e = 0.0;
-            if (lights.lamp != 0u) {
-                e = PI * light_lit(lights.l[0], p, n, n);
+            // `light_lit` is a light's radiance times the cosine over d^2 inside its direct
+            // reach: PI of it is the irradiance convention the light pass's direct part
+            // carries. Every light with LIGHT_BOUNCE set adds its term times its colour (a
+            // white light's term exactly, as the lamp alone did).
+            var e = vec3<f32>(0.0);
+            for (var i = 0u; i < lights.count; i++) {
+                let li = lights.l[i];
+                if ((li.flags & LIGHT_BOUNCE) != 0u) {
+                    e += PI * light_lit(li, p, n, n) * li.colour;
+                }
             }
             radiance = materials[h.material * 4u].xyz * (1.0 / PI) * e;
         }

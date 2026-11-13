@@ -156,6 +156,48 @@ impl LightList {
     pub(super) fn listed(&self, lamp: bool) -> &[Light] {
         &self.l[usize::from(lamp)..self.count as usize]
     }
+
+    /// The slots that feed the bounce channel: on, with [`Light::BOUNCE`] set.
+    pub(super) fn bouncing(&self) -> impl Iterator<Item = (usize, &Light)> {
+        self.l[..self.count as usize]
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.flags & (Light::ON | Light::BOUNCE) == Light::ON | Light::BOUNCE)
+    }
+}
+
+/// What restarts the bounce channel among the list's lights: each bouncing list light (the
+/// headlamp's slot left out; [`LightKey`] keys the lamp) with its pose cleared, so a flag
+/// switched, a bouncing light added or removed, or a bouncing light's intensity, colour or
+/// cone changed restarts every probe, and a move alone does not (a move marks the probes in
+/// its bounce reach moved).
+pub(super) fn bounce_key(list: &LightList, lamp: bool) -> Vec<Light> {
+    list.bouncing()
+        .filter(|&(i, _)| !(lamp && i == 0))
+        .map(|(_, l)| Light {
+            pos: [0.0; 3],
+            dir: [0.0; 3],
+            ..*l
+        })
+        .collect()
+}
+
+/// The bouncing lights of `now` that moved since `before` (the last encode's slots): their
+/// position before (`None` for a light new to its slot) and now. A slot's light moved when
+/// its position or its axis differs.
+pub(super) fn bounce_moves(
+    now: &LightList,
+    before: Option<&LightList>,
+) -> Vec<(Option<[f32; 3]>, [f32; 3])> {
+    now.bouncing()
+        .filter_map(|(i, l)| {
+            let old = before.filter(|b| (i as u32) < b.count).map(|b| b.l[i]);
+            match old {
+                Some(o) if o.pos == l.pos && o.dir == l.dir => None,
+                o => Some((o.map(|o| o.pos), l.pos)),
+            }
+        })
+        .collect()
 }
 
 /// `Lights` in `common.wgsl`, field for field: the list now, the list of the older frame the
@@ -217,10 +259,15 @@ impl LightsState {
         }
     }
 
-    /// The slots for the frame `p`: the headlamp's (`p.lamp`) first while `p` lights it.
-    pub(super) fn slots(&self, p: &Params) -> LightList {
+    /// The slots for the frame `p`: the headlamp's (`p.lamp`) first while `p` lights it, with
+    /// [`Light::BOUNCE`] set when `lamp_bounce` ([`Lighting::lamp_bounce`]).
+    pub(super) fn slots(&self, p: &Params, lamp_bounce: bool) -> LightList {
         let lamp = p.lighting & LIGHTING_LAMP != 0;
-        LightList::slots(lamp.then_some(p.lamp), &self.given)
+        let mut headlamp = p.lamp;
+        if lamp_bounce {
+            headlamp.flags |= Light::BOUNCE;
+        }
+        LightList::slots(lamp.then_some(headlamp), &self.given)
     }
 
     /// Writes `u` unless the buffer already holds it.

@@ -137,6 +137,36 @@ impl Frame {
         &self.targets.indirect
     }
 
+    /// Whether a light of `list` that bounces lies within the bounce reach
+    /// ([`Lighting::lamp_reach`]) of the volume's probes for a camera at `eye` (any, at a reach
+    /// of 0 or less). The volume scrolls with the camera: a bouncing light farther from it
+    /// lists no probe, and with none nearer no probe pass is encoded. Builds the volume when
+    /// a light bounces.
+    pub(super) fn bounce_reaches_the_volume(
+        &self,
+        list: &super::lights::LightList,
+        eye: [f32; 3],
+    ) -> bool {
+        let mut lights = list.bouncing().peekable();
+        if lights.peek().is_none() {
+            return false;
+        }
+        let reach = self.state.lighting.lamp_reach;
+        if reach <= 0.0 {
+            return true;
+        }
+        let v = self.probes();
+        let origin = v.origin_for(eye);
+        let last = origin.map(|o| o + v.axis() as i32 - 1);
+        let (lo, hi) = (v.probe_position(origin), v.probe_position(last));
+        lights.any(|(_, l)| {
+            let d2: f32 = (0..3)
+                .map(|k| (l.pos[k] - l.pos[k].clamp(lo[k], hi[k])).powi(2))
+                .sum();
+            d2 <= reach * reach
+        })
+    }
+
     /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
     /// view's eye, `updates` entries in the update list, the freeze count, the side, the lamp's
     /// reach (0 for a preset volume) and the moving lamp's blend.

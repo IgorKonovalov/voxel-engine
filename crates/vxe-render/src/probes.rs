@@ -441,16 +441,16 @@ impl ProbeVolume {
     /// then the probes `touched` names and the probes that entered the reach since the last
     /// list, each slot once, a restarted one flagged with [`TOUCHED_BIT`]; the restarted ones
     /// outside the slice up to [`MAX_TOUCHED`] and the list's [`MAX_UPDATES`] entries. A probe
-    /// that entered the reach and found no room is listed restarted on a later frame. With
-    /// `lamp_moved` every probe in reach is marked moved, and a listed probe marked moved since
-    /// its last listing carries [`MOVED_BIT`].
+    /// that entered the reach and found no room is listed restarted on a later frame. Every
+    /// probe in reach that `moved` accepts (a bouncing light moved within its reach) is marked
+    /// moved, and a listed probe marked moved since its last listing carries [`MOVED_BIT`].
     pub fn update_list(
         &self,
         origin: [i32; 3],
         frame: u32,
         slices: u32,
         touched: &[[i32; 3]],
-        lamp_moved: bool,
+        moved_by: impl Fn([i32; 3]) -> bool,
         in_reach: impl Fn([i32; 3]) -> bool,
     ) -> Vec<u32> {
         assert!(
@@ -485,7 +485,7 @@ impl ProbeVolume {
                 moved[i] = false;
                 continue;
             }
-            moved[i] |= lamp_moved;
+            moved[i] |= moved_by(self.slot_probe(origin, s));
             let flag = if restart[i] {
                 TOUCHED_BIT
             } else if moved[i] {

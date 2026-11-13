@@ -150,3 +150,31 @@ pub fn nearest(hits: &[(usize, [f32; 3])], x: f32, y: f32) -> (usize, [f32; 3]) 
 pub fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
     (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f32>().sqrt()
 }
+
+/// One probe's words as the volume's buffer holds them (`probes.rs` has the layout): its
+/// irradiance tile, its visibility tile and its state word.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProbeWords {
+    pub irradiance: Vec<u32>,
+    pub visibility: Vec<u32>,
+    pub state: u32,
+}
+
+/// Every slot's [`ProbeWords`] of `frame`'s probe volume, read back in one copy.
+pub fn probe_words(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<ProbeWords> {
+    let v = frame.probes();
+    let bytes = vxe_render::debug::read_buffer(device, queue, v.data(), 0, v.data().size());
+    let words: Vec<u32> = bytes
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    let (irr, vis) = (128usize, 256usize);
+    let (vb, sb) = (v.vis_base() as usize, v.state_base() as usize);
+    (0..v.count() as usize)
+        .map(|s| ProbeWords {
+            irradiance: words[irr * s..irr * (s + 1)].to_vec(),
+            visibility: words[vb + vis * s..vb + vis * (s + 1)].to_vec(),
+            state: words[sb + s],
+        })
+        .collect()
+}

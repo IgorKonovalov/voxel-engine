@@ -785,6 +785,38 @@ mod tests {
         assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 2/8"));
     }
 
+    /// `5` flips the newest light's bounce flag: the banner reads `bounce on`, then `bounce
+    /// off`, and the `lights` row marks each flagged light `*`.
+    #[test]
+    fn the_banner_and_hud_name_the_bounce_flag() {
+        use crate::toggles::TOGGLES;
+        let lamp_off = vxe_render::Lighting {
+            lamp: false,
+            ..vxe_render::Lighting::default()
+        };
+        let mut m = Modes::new(lamp_off, vxe_render::LightingResolution::Half, 0.0);
+        for _ in 0..2 {
+            m.lights
+                .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        let bounce = TOGGLES.iter().find(|t| t.name == "bounce").unwrap();
+        assert_eq!(bounce.press, Press::Key(vxe_app::KeyCode::Digit5, None));
+        (bounce.flip)(&mut m, 10.0);
+        assert!(m.banner(10.0).unwrap().lines().any(|l| l == "bounce on"));
+        assert_eq!(
+            m.row(HudRow::Lights),
+            "lights 2/8 bounce * over 0 colour white"
+        );
+        assert_eq!(
+            m.lights.lights[1].light.flags & vxe_render::Light::BOUNCE,
+            vxe_render::Light::BOUNCE
+        );
+        (bounce.flip)(&mut m, 20.0);
+        assert!(m.banner(20.0).unwrap().lines().any(|l| l == "bounce off"));
+        assert_eq!(m.row(HudRow::Lights), "lights 2/8 over 0 colour white");
+    }
+
     /// `F4` steps the a-trous iterations 4, 2, 1 and back, in the lighting row's `filter <n>`
     /// and the banner; with the filter off the row reads `filter off`.
     #[test]

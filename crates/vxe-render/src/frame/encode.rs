@@ -72,7 +72,11 @@ struct Uniforms<'a> {
     probe_update: bool,
     probe_restart: bool,
     light_window: bool,
-    lamp_moved: bool,
+    /// The bouncing lights that moved since the last encode: their position before (`None`
+    /// for one new to its slot) and now.
+    moves: Vec<(Option<[f32; 3]>, [f32; 3])>,
+    /// The bouncing lights' positions.
+    bouncing: Vec<[f32; 3]>,
 }
 
 /// The encode's bind groups, and the walk the hit pass takes: the field surface, the split
@@ -307,13 +311,18 @@ impl Frame {
         keep: Keep,
     ) -> Uniforms<'_> {
         let mut p = *params;
+        let now = self
+            .state
+            .lights
+            .slots(params, self.state.lighting.lamp_bounce);
         // The probe passes run in the shaded and cracks views outside the cutaway, with the
-        // lamp's bounce on and the lamp on (or a preset volume, whose updates are off).
+        // lamp's bounce on and a light flagged to bounce within the bounce reach of the volume
+        // (or a preset volume, whose updates are off).
         let presets = self.probe.volume.get().is_some_and(|v| !v.updates());
         let indirect = self.state.lighting.lamp_bounce
-            && (self.state.lighting.lamp || presets)
             && self.state.look.view.shades()
-            && !self.state.look.cutaway;
+            && !self.state.look.cutaway
+            && (presets || self.bounce_reaches_the_volume(&now, params.views[0].origin));
         // The volume exists from the first encode with the channel running.
         let volume = indirect.then(|| self.probes());
         let probe_update = volume.is_some_and(ProbeVolume::updates);
@@ -325,14 +334,13 @@ impl Frame {
             .swap(probe_update, std::sync::atomic::Ordering::Relaxed);
         let mut probe_restart = probe_update && !channel_was;
         let mut light_window = false;
-        let mut lamp_moved = false;
+        let mut moves = Vec::new();
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
         let mut edits = EditsUniform {
             count: 0,
             _pad: [0; 3],
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
-        let now = self.state.lights.slots(params);
         let mut old_list = now;
         if keep == Keep::History {
             let mut h = self
@@ -375,8 +383,13 @@ impl Frame {
                 .lights
                 .changed
                 .store(lights_changed, std::sync::atomic::Ordering::Relaxed);
-            // The probes see the lamp alone: its switch, parameters or shadow walk restart them.
-            probe_restart |= probe_update && lamp_changed;
+            // The probes see the bouncing lights alone: the lamp's switch, parameters or shadow
+            // walk restart them, as does a list light's flag, presence or parameters.
+            let lamp_on = params.lighting & LIGHTING_LAMP != 0;
+            let bounce = super::lights::bounce_key(&now, lamp_on);
+            let bounce_changed = h.bounce_key.as_ref().is_some_and(|k| *k != bounce);
+            h.bounce_key = Some(bounce);
+            probe_restart |= probe_update && (lamp_changed || bounce_changed);
             if probe_restart {
                 h.light_window = crate::probes::WINDOW_FRAMES;
             }
@@ -394,11 +407,10 @@ impl Frame {
                 .or(h.lists.front())
                 .copied()
                 .unwrap_or(now);
-            // The headlamp's slot: it moved when its position or axis did.
-            lamp_moved = params.lighting & LIGHTING_LAMP != 0
-                && h.lists.back().is_some_and(|l| {
-                    l.count == 0 || l.l[0].pos != now.l[0].pos || l.l[0].dir != now.l[0].dir
-                });
+            // The bouncing lights that moved: their position or axis changed in their slot.
+            if h.lists.back().is_some() {
+                moves = super::lights::bounce_moves(&now, h.lists.back());
+            }
             if h.lists.len() == LAMP_FRAMES {
                 h.lists.pop_front();
             }
@@ -450,7 +462,8 @@ impl Frame {
             probe_update,
             probe_restart,
             light_window,
-            lamp_moved,
+            moves,
+            bouncing: now.bouncing().map(|(_, l)| l.pos).collect(),
         }
     }
 
@@ -1018,7 +1031,8 @@ impl Frame {
             probe_update,
             probe_restart,
             light_window,
-            lamp_moved,
+            ref moves,
+            ref bouncing,
             ref boxes,
             ..
         } = *uni;
@@ -1048,12 +1062,21 @@ impl Frame {
                     volume.forget_reach();
                 }
                 let reach = self.state.lighting.lamp_reach;
-                let lamp = p.lamp.pos;
-                let moved = lamp_moved && self.state.lighting.lamp;
-                let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
+                let near = |w: [i32; 3], at: [f32; 3]| {
                     let q = volume.probe_position(w);
-                    let d2: f32 = (0..3).map(|k| (q[k] - lamp[k]).powi(2)).sum();
+                    let d2: f32 = (0..3).map(|k| (q[k] - at[k]).powi(2)).sum();
                     reach <= 0.0 || d2 <= reach * reach
+                };
+                // A probe is marked moved when a bouncing light that moved lies within the
+                // bounce reach of it, before or after the move; it is listed while a bouncing
+                // light lies within the reach.
+                let moved = |w: [i32; 3]| {
+                    moves
+                        .iter()
+                        .any(|&(was, at)| near(w, at) || was.is_some_and(|b| near(w, b)))
+                };
+                let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
+                    bouncing.iter().any(|&at| near(w, at))
                 });
                 queue.write_buffer(volume.scratch(), 0, bytemuck::cast_slice(&list));
                 updates = list.len() as u32;

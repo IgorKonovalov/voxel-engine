@@ -396,6 +396,9 @@ pub struct LightingArgs {
     /// `--lights N`: start with `N` white list lights on a ring around the spawn's eye
     /// (`lights::TestLights::ring`); 0 by default.
     pub(crate) lights: u32,
+    /// `--lights-bounce on|off`: the `--lights` ring's lights take the bounce flag; off by
+    /// default.
+    pub(crate) lights_bounce: bool,
     /// `--fade-reading`: dig into the rock ahead, settle the ore light with the lamp off,
     /// then the lamp light with it on, switch it off and print how each light source at the
     /// screen centre fades (see `run::fade::FadeSample`).
@@ -433,6 +436,7 @@ impl LightingArgs {
             emissive_ore: true,
             lamp_toggle: None,
             lights: 0,
+            lights_bounce: false,
             fade_reading: false,
             exposure: None,
             adaptation: hud::Adaptation::Eye,

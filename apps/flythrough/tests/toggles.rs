@@ -5,9 +5,14 @@ use flythrough::hud::{HudRow, HudStats, Modes};
 use flythrough::toggles::{TOGGLES, Toggle};
 use vxe_render::{Lighting, LightingResolution};
 
-/// The modes a run starts with, a pan running so `Period` has one to stop.
+/// The modes a run starts with, a pan running so `Period` has one to stop, and one dropped
+/// light so `5` has one to flag.
 fn start() -> Modes {
-    Modes::new(Lighting::default(), LightingResolution::Half, 0.0).with_pan(10.0, 0.0)
+    let mut m = Modes::new(Lighting::default(), LightingResolution::Half, 0.0).with_pan(10.0, 0.0);
+    m.lights
+        .drop_at(true, [0.0; 3], [1.0, 0.0, 0.0], None)
+        .unwrap();
+    m
 }
 
 /// The HUD's rows for `modes`, as `HudStats::write_rows` writes them each frame.
@@ -118,6 +123,8 @@ fn no_two_inputs_share_a_key() {
             .unwrap_or_else(|| panic!("{k:?} is a toggle"))
     };
     assert_eq!(by_key(KeyCode::Digit2).name, "carry");
+    assert_eq!(by_key(KeyCode::Digit3).name, "colour");
+    assert_eq!(by_key(KeyCode::Digit5).name, "bounce");
     let queue = [
         (KeyCode::KeyF, "queue order"),
         (KeyCode::Tab, "queue angle halved"),
