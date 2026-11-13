@@ -124,9 +124,13 @@ fn probe_trace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
             dist = h.t;
             let p = o + d * h.t;
             let n = shadow_normal(d, h);
-            // `lamp_lit` is the lamp's radiance times the cosine over d^2: PI of it is the
-            // irradiance convention the light pass's `lamp` part carries.
-            let e = PI * lamp_lit(p, n, n);
+            // `light_lit` is the headlamp's radiance times the cosine over d^2 (slot 0 while
+            // `lights.lamp` is 1): PI of it is the irradiance convention the light pass's
+            // direct part carries.
+            var e = 0.0;
+            if (lights.lamp != 0u) {
+                e = PI * light_lit(lights.l[0], p, n, n);
+            }
             radiance = materials[h.material * 4u].xyz * (1.0 / PI) * e;
         }
     }

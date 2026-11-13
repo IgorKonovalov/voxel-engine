@@ -61,13 +61,14 @@
 // one voxel, the pixel resets: age 0, accumulation this frame's sample. Otherwise the age is
 // the taps' age plus one, capped at AGE_MAX. The lamp's part and the moments blend the new
 // sample in at `max(ALPHA, 1 / (age + 1))`, a fallback's emissive part as above. On the frame
-// Params.lighting bit 9 says the lamp's light changed, the lamp's part takes this frame's
-// sample as it is: the light pass's lamp estimate is exact up to its shadow ray, so a lamp
-// switched off leaves nothing behind.
+// Params.lighting bit 9 says the list of lights changed, the lamp's part takes this frame's
+// sample as it is: the light pass's estimate of each light is exact up to its shadow ray, so
+// a light switched off, moved or removed leaves nothing behind.
 //
-// A cube face's pixel with the lamp off (Params.lighting bit 0 clear, no cutaway, not the steps
-// view) skips the reprojection: its emissive part is the store's and its lamp part, moments and
-// their history are zero (the frame the lamp switched off took its sample, zero, at once), so it
+// A cube face's pixel with no light of the list shaded (LIGHTING_DIRECT clear: the lamp off and
+// the list empty; no cutaway, not the steps view) skips the reprojection: its emissive part is
+// the store's and its direct part, moments and their history are zero (the frame the last
+// light went took its sample, zero, at once, the list having changed), so it
 // writes the store's value and zero moments. Its age is carried on the pixel: last frame's age at
 // the same pixel plus one, 0 where the pixel would reset; a still camera maps each pixel onto
 // itself, so there it is the reprojected age.
@@ -386,7 +387,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             e = store_value_by_normal(head, voxel, face, value, rec.n);
         }
         sample = vec4<f32>(e.xyz * exposure_now(), sample.w);
-        if ((params.lighting & LIGHTING_LAMP) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
+        if ((params.lighting & LIGHTING_DIRECT) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;
             if ((params.history & 1u) != 0u && !in_edit(rec.p)) {

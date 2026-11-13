@@ -1172,7 +1172,7 @@ fn lamp_reach_at(level: &VeinLevel, name: &str, gpu: &vxe_render::GpuWorld, came
         frame.step(device, queue, gpu, &camera, &light);
     }
     let params = frame.params(gpu, &camera, &light);
-    let lamp = Vec3::from(params.light_pos);
+    let lamp = Vec3::from(params.lamp.pos);
     let irr = vxe_render::debug::read_float(device, queue, frame.irradiance());
     let (cx, cy) = (size[0] / 2, size[1] / 2);
     let mut d_sum = 0.0f64;

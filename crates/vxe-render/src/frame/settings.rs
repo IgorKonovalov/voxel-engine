@@ -53,12 +53,9 @@ pub struct Params {
     pub face_mix: f32,
     pub window_size: [i32; 3],
     pub _pad3: i32,
-    pub light_pos: [f32; 3],
-    pub light_intensity: f32,
-    pub light_dir: [f32; 3],
-    pub cos_outer: f32,
     pub size: [u32; 2],
-    pub cos_inner: f32,
+    /// [`Lighting::light_floor`]: a list light reaches `sqrt(intensity / light_floor)` voxels.
+    pub light_floor: f32,
     pub flags: u32,
     /// Pool units per shard: unit `u` is unit `u % n` of shard `u / n`.
     pub units_per_shard: u32,
@@ -81,7 +78,8 @@ pub struct Params {
     pub history: u32,
     /// The lamp's `offset_right`, `offset_down` and `turn` ([`LightParams`]): what
     /// [`Frame::encode`] compares between encodes, with the cone and intensity, to decide
-    /// [`LIGHTING_LAMP_CHANGED`]. The shaders read these words as padding.
+    /// [`LIGHTING_LAMP_CHANGED`] for the headlamp's slot. The shaders read these words as
+    /// padding.
     pub lamp_pose: [f32; 3],
     /// The previous frame's views, for reprojection (set by [`Frame::encode`]).
     pub prev_views: [View; MAX_VIEWS],
@@ -103,12 +101,22 @@ pub struct Params {
     pub dither: u32,
     /// Pads the block to a multiple of 16 bytes, as the shaders' struct is.
     pub _tail: [u32; 3],
+    /// The headlamp as a list light ([`Light::headlamp`]): [`Frame::encode`] puts it in the
+    /// lights uniform's slot 0 while [`LIGHTING_LAMP`] is set. The shaders read these words as
+    /// padding; the lights uniform (`common.wgsl`'s `lights`) is what they shade.
+    pub lamp: Light,
 }
 
 const _: () = assert!(size_of::<Params>().is_multiple_of(16));
+const _: () = assert!(std::mem::offset_of!(Params, lamp).is_multiple_of(16));
 
-/// `Params::lighting` bit: the headlamp lights the frame.
+/// `Params::lighting` bit: the headlamp lights the frame (slot 0 of the lights uniform).
 pub(crate) const LIGHTING_LAMP: u32 = 1;
+
+/// `Params::lighting` bit: some light of the list is shaded (its count is above 0, the
+/// headlamp's slot included). Clear, the direct part is zero and the temporal and a-trous
+/// passes take their lamp-off skips.
+pub(crate) const LIGHTING_DIRECT: u32 = 1 << 2;
 
 /// `Params::lighting` bit: shadow rays take the coarse walk ([`ShadowWalk::Coarse`]).
 pub(crate) const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
@@ -130,11 +138,12 @@ pub(crate) const EMISSION_CHANGE_FRAMES: u32 = 11;
 /// [`EMISSION_CHANGE_FRAMES`] frames.
 pub(crate) const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 
-/// `Params::lighting` bit: the lamp's light changed since the last encode with history (its
-/// switch, a parameter, or the walk its shadow rays take): the temporal pass takes this
-/// frame's lamp part as it is, the way an edit box resets a pixel (ADR-0018), and keeps the
-/// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
-/// point light, one shadow ray), so the reset adds none.
+/// `Params::lighting` bit: the list of lights changed since the last encode with history (a
+/// list light added, removed or changed; the lamp's switch, a parameter, or the walk its
+/// shadow rays take): the temporal pass takes this frame's direct part as it is, the way an
+/// edit box resets a pixel (ADR-0018, ADR-0044), and keeps the emissive part's history. The
+/// light pass's estimate of each light carries no sampling noise (one point light, one shadow
+/// ray), so the reset adds none.
 pub(crate) const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
 
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
@@ -613,6 +622,10 @@ pub struct Lighting {
     pub bake_pool_bytes: u64,
     /// How a cube face reads the store ([`StoreRead`]; default `Face`).
     pub store_read: StoreRead,
+    /// A list light reaches `sqrt(intensity / light_floor)` voxels, its term windowed by `(1 -
+    /// (d / r)^4)^2` inside and no shadow ray cast beyond (ADR-0044; default 0.1). 0 or less is
+    /// no reach: the window is 1 and no light is culled.
+    pub light_floor: f32,
     /// The normal the half-resolution light's filters compare ([`LightWeights`]; default
     /// `Normal`).
     pub light_weights: LightWeights,
@@ -637,6 +650,7 @@ impl Default for Lighting {
             bake_pool_bytes: crate::bake::DEFAULT_BAKE_POOL_BYTES,
             store_read: StoreRead::Face,
             light_weights: LightWeights::Normal,
+            light_floor: DEFAULT_LIGHT_FLOOR,
         }
     }
 }
@@ -707,6 +721,9 @@ impl Lighting {
         }
     }
 }
+
+/// [`Lighting::light_floor`] by default (ADR-0044): the headlamp's 1200 reaches 109.5 voxels.
+pub const DEFAULT_LIGHT_FLOOR: f32 = 0.1;
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
 pub(crate) const ATROUS_ITERATIONS: usize = 4;

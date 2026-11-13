@@ -650,9 +650,25 @@ impl Run {
     /// lighting modes, the exposure's step, the resolution, the look, the store's read count,
     /// the missing light and the ore's emission pulse.
     fn configure_frame(&mut self, gpu: &Gpu, dt: f32, hud: bool) {
+        // Headless frames step the exposure and the lights by exactly 1/60 s; the window by
+        // its measured interval, at most 0.1 s, so a hitch adapts by no more than that.
+        let step = if self.args.headless {
+            1.0 / 60.0
+        } else {
+            dt.clamp(0.0, 0.1)
+        };
+        let (fwd, _, up) = self.fly.camera.basis();
+        self.modes.lights.step(
+            step,
+            self.fly.camera.position.to_array(),
+            fwd.to_array(),
+            up.to_array(),
+        );
+        let lights = self.modes.lights.list();
         let Some(gfx) = self.gfx.as_mut() else {
             return;
         };
+        gfx.frame.set_lights(&lights);
         if std::mem::take(&mut self.upscaler_changed) {
             let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
             let output = gfx.frame.output_size();
@@ -669,13 +685,7 @@ impl Run {
             }
         }
         gfx.frame.set_lighting(self.modes.lighting);
-        // Headless frames step the exposure by exactly 1/60 s; the window by its measured
-        // interval, at most 0.1 s, so a hitch adapts by no more than that.
-        gfx.frame.set_dt(if self.args.headless {
-            1.0 / 60.0
-        } else {
-            dt.clamp(0.0, 0.1)
-        });
+        gfx.frame.set_dt(step);
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's

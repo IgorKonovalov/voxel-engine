@@ -80,12 +80,9 @@ struct Params {
     face_mix: f32,
     window_size: vec3<i32>,
     _pad3: i32,
-    light_pos: vec3<f32>,
-    light_intensity: f32,
-    light_dir: vec3<f32>,
-    cos_outer: f32,
     size: vec2<u32>,
-    cos_inner: f32,
+    // A list light reaches sqrt(intensity / light_floor) voxels; 0 or less is no reach.
+    light_floor: f32,
     flags: u32,
     units_per_shard: u32,
     forced_level: u32,
@@ -124,9 +121,41 @@ struct Params {
     _tail0: u32,
     _tail1: u32,
     _tail2: u32,
+    // The headlamp as the CPU builds it (`Params::lamp`); the shaders read `lights`.
+    _lamp: array<vec4<u32>, 4>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
+
+// One analytic light (`Light` in frame/lights.rs, ADR-0044): position in voxels, radiance on
+// the axis at one voxel, the cone's axis and cosines (cos_outer -1 or less: a point light),
+// a linear colour and the LIGHT_ON, LIGHT_SHADOWS and LIGHT_BOUNCE flags.
+struct Light {
+    pos: vec3<f32>,
+    intensity: f32,
+    dir: vec3<f32>,
+    cos_inner: f32,
+    colour: vec3<f32>,
+    cos_outer: f32,
+    flags: u32,
+    _p0: u32,
+    _p1: u32,
+    _p2: u32,
+};
+
+// The frame's list (`LightsUniform`): slots 0..count this frame, slots 0..old_count of the
+// older frame the upscalers compare against, `changed` 1 when the two differ, `lamp` 1 when
+// slot 0 is the headlamp.
+struct Lights {
+    l: array<Light, MAX_LIGHTS>,
+    old: array<Light, MAX_LIGHTS>,
+    count: u32,
+    old_count: u32,
+    changed: u32,
+    lamp: u32,
+};
+
+@group(0) @binding(14) var<uniform> lights: Lights;
 
 @group(0) @binding(1) var<storage, read> brick_pool0: array<u32>;
 
@@ -221,27 +250,98 @@ fn t9e5_unpack(w: u32) -> vec3<f32> {
     return vec3<f32>(m) * exp2(f32(i32(w >> 27u) - 24));
 }
 
-// The lamp's irradiance at `p` before any surface term: intensity over squared distance inside
-// the cone, the terms `shade` applies to an opaque hit.
-fn lamp(p: vec3<f32>) -> f32 {
-    let to_light = params.light_pos - p;
-    let dist2 = max(dot(to_light, to_light), 1e-4);
-    let l = to_light * inverseSqrt(dist2);
-    let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
-    return params.light_intensity * cone / dist2;
-}
-
-// The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p`, normal `n`, without the
-// shadow ray (light.wgsl's `lamp_lit` adds it); 0 when the lamp is off.
-fn lamp_term(on: bool, pos: vec3<f32>, dir: vec3<f32>, intensity: f32, cos_o: f32, cos_i: f32, p: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (!on) {
+// ADR-0044's window `(1 - (d / r)^4)^2` for a light of `intensity` at squared distance `d2`,
+// `r^2 = intensity / light_floor`: 1 with no floor, 0 at and past the reach.
+fn light_window(intensity: f32, d2: f32) -> f32 {
+    if (params.light_floor <= 0.0) {
+        return 1.0;
+    }
+    let x = d2 * params.light_floor / max(intensity, 1e-30);
+    if (x >= 1.0) {
         return 0.0;
     }
-    let to_light = pos - p;
+    let q = 1.0 - x * x;
+    return q * q;
+}
+
+// Whether `p` lies inside light `li`'s reach (always with no floor).
+fn light_reaches(li: Light, p: vec3<f32>) -> bool {
+    let to_light = li.pos - p;
+    return params.light_floor <= 0.0 || dot(to_light, to_light) * params.light_floor < li.intensity;
+}
+
+// Light `li`'s cone at `p`, `l` the unit vector toward it: 1 for a point light.
+fn light_cone(li: Light, l: vec3<f32>) -> f32 {
+    if (li.cos_outer <= -1.0) {
+        return 1.0;
+    }
+    return smoothstep(li.cos_outer, li.cos_inner, dot(-l, li.dir));
+}
+
+// Light `li`'s `intensity * cone / dist^2` times the window at `p`, before any surface term
+// and the shadow ray; 0 when it is off or `p` is out of its reach.
+fn light_at(li: Light, p: vec3<f32>) -> f32 {
+    if ((li.flags & LIGHT_ON) == 0u) {
+        return 0.0;
+    }
+    let to_light = li.pos - p;
     let dist2 = max(dot(to_light, to_light), 1e-4);
+    let w = light_window(li.intensity, dist2);
+    if (w <= 0.0) {
+        return 0.0;
+    }
     let l = to_light * inverseSqrt(dist2);
-    let cone = smoothstep(cos_o, cos_i, dot(-l, dir));
-    return intensity * cone * max(dot(n, l), 0.0) / dist2;
+    // At no floor `w` is 1 and the product is the headlamp's arithmetic before the list.
+    return li.intensity * light_cone(li, l) / dist2 * w;
+}
+
+// Light `li`'s `intensity * cone * max(n.l, 0) / dist^2` times the window at `p`, normal `n`,
+// without the shadow ray (light.wgsl's `light_lit` adds it); 0 when it is off or `p` is out
+// of its reach.
+fn light_term(li: Light, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if ((li.flags & LIGHT_ON) == 0u) {
+        return 0.0;
+    }
+    let to_light = li.pos - p;
+    let dist2 = max(dot(to_light, to_light), 1e-4);
+    let w = light_window(li.intensity, dist2);
+    if (w <= 0.0) {
+        return 0.0;
+    }
+    let l = to_light * inverseSqrt(dist2);
+    return li.intensity * light_cone(li, l) * max(dot(n, l), 0.0) / dist2 * w;
+}
+
+// The weight a light's colour gives its term in a luminance sum: exactly 1 for white.
+fn colour_weight(c: vec3<f32>) -> f32 {
+    return select(luminance(c), 1.0, all(c == vec3<f32>(1.0)));
+}
+
+// The list's summed `light_term` at `p`, normal `n`, unshadowed: this frame's (`old` false) or
+// the older frame's the upscalers compare against. Each term weighs its colour's luminance.
+fn lights_term(old: bool, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    var sum = 0.0;
+    let count = select(lights.count, lights.old_count, old);
+    for (var i = 0u; i < count; i++) {
+        var li = lights.l[i];
+        if (old) {
+            li = lights.old[i];
+        }
+        sum += light_term(li, p, n) * colour_weight(li.colour);
+    }
+    return sum;
+}
+
+// The list's unshadowed irradiance on a glass face at `p`, normal `n`: each light's `PI *
+// light_at` times `max(n.l, 0)`, weighed by its colour.
+fn lights_on_glass(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    var sum = 0.0;
+    for (var i = 0u; i < lights.count; i++) {
+        let li = lights.l[i];
+        let l = normalize(li.pos - p);
+        sum += PI * light_at(li, p) * max(dot(n, l), 0.0) * colour_weight(li.colour);
+    }
+    return sum;
 }
 
 fn normal_mode() -> u32 {

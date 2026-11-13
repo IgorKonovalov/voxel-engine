@@ -1,5 +1,6 @@
 // The light pass: direct irradiance at each pixel's hit, read from the hit buffer, from the
-// headlamp and from one emissive voxel face. Compiled after the walk's modules, whose bindings
+// list of lights (`lights`, ADR-0044; the headlamp is slot 0 while it is on) and from one
+// emissive voxel face. Compiled after the walk's modules, whose bindings
 // (group 0), walk, hit-record helpers and random numbers it uses; every shadow ray is
 // `march`.
 //
@@ -12,15 +13,17 @@
 //   2  storage texture   irradiance_out  rgba16float: the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), this frame's emissive sample in rgb
-//                                        (0 on a cube face, whose light the store holds) and the lamp's
-//                                        (white) in a, pre-exposed (`exposure_now`, clamped at
-//                                        HDR_MAX); 0 on a miss. In the steps view the lamp
-//                                        shadow ray's counters instead (see `shade`)
+//                                        (0 on a cube face, whose light the store holds) and the
+//                                        list's summed luminance in a, pre-exposed
+//                                        (`exposure_now`, clamped at HDR_MAX); 0 on a miss. In
+//                                        the steps view the list's shadow rays' counters
+//                                        instead (see `shade`)
 //
-// The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
-// max(n.l, 0) / dist^2, so that the composite's Lambertian `albedo * E / PI` is the former
-// march's `albedo * lit`; one shadow ray per lit pixel, from SHADOW_OFFSET off the surface
-// along the shadow normal toward the lamp.
+// Each light of the list is a point or spot light: E = PI * intensity * cone * max(n.l, 0) /
+// dist^2 times its window inside its reach and 0 beyond, so that the composite's Lambertian
+// `albedo * E / PI` is the former march's `albedo * lit`; one shadow ray per lit pixel and
+// light in reach with LIGHT_SHADOWS set, from SHADOW_OFFSET off the surface along the shadow
+// normal toward the light.
 //
 // In the cutaway view a hit takes the hemisphere term `PI (0.3 + 0.7 (0.5 + 0.5 n.z))`
 // instead, with no lamp, no emission and no shadow ray. Every shadow ray takes the frame's
@@ -58,18 +61,33 @@ fn shade_px(gid: vec3<u32>) {
     let px = vec2<i32>(gid.xy);
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
     if (view == VIEW_STEPS) {
-        // The cost of each hit's shadow ray toward the lamp, lit or not, in the frame's
-        // shadow walk: its loop iterations, storage loads and pool loads (unclamped), a = 1;
-        // a = 0 where no ray is cast.
+        // The cost of each hit's shadow rays toward the lights in reach, lit or not, in the
+        // frame's shadow walk: their loop iterations, storage loads and pool loads summed
+        // (unclamped), and in a the rays cast; 0 where none is cast.
         var counts = vec4<f32>(0.0);
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
             let ray = pixel_ray(full_px(gid.xy));
-            let to_light = params.light_pos - rec.p;
-            let dist = max(length(to_light), 1e-2);
-            walk_steps = 0u;
-            loads = 0u;
-            shadowed(shadow_origin(rec.p, shadow_normal_of(rec, ray.d)), to_light / dist, dist);
-            counts = vec4<f32>(f32(walk_steps), f32(counted_loads()), f32(counted_pool_reads()), 1.0);
+            let o = shadow_origin(rec.p, shadow_normal_of(rec, ray.d));
+            var steps = 0u;
+            var storage = 0u;
+            var pool = 0u;
+            var rays = 0u;
+            for (var i = 0u; i < lights.count; i++) {
+                let li = lights.l[i];
+                if ((li.flags & LIGHT_ON) == 0u || (li.flags & LIGHT_SHADOWS) == 0u || !light_reaches(li, rec.p)) {
+                    continue;
+                }
+                let to_light = li.pos - rec.p;
+                let dist = max(length(to_light), 1e-2);
+                walk_steps = 0u;
+                loads = 0u;
+                shadowed(o, to_light / dist, dist);
+                steps += walk_steps;
+                storage += counted_loads();
+                pool += counted_pool_reads();
+                rays += 1u;
+            }
+            counts = vec4<f32>(f32(steps), f32(storage), f32(pool), f32(rays));
         }
         textureStore(irradiance_out, px, counts);
         return;
@@ -83,9 +101,7 @@ fn shade_px(gid: vec3<u32>) {
             e = vec3<f32>(PI * (0.3 + 0.7 * (0.5 + 0.5 * n.z)));
         } else {
             let ns = shadow_normal_of(rec, ray.d);
-            if ((params.lighting & LIGHTING_LAMP) != 0u) {
-                e = vec3<f32>(PI * lamp_lit(rec.p, n, ns));
-            }
+            e = vec3<f32>(PI * lights_lit(rec.p, n, ns));
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
             // ray. Any other hit draws its own.
             if (!reads_store(rec)) {
@@ -93,7 +109,7 @@ fn shade_px(gid: vec3<u32>) {
             }
         }
     }
-    // The emissive sample in rgb, the lamp's (white, or the cutaway's hemisphere) in a. Stored
+    // The emissive sample in rgb, the list's (luminance, or the cutaway's hemisphere) in a. Stored
     // pre-exposed: times this frame's exposure, at most HDR_MAX (ADR-0033).
     let ex = exposure_now();
     textureStore(
@@ -117,13 +133,13 @@ fn face_centre(v: vec3<i32>, face: u32) -> vec3<f32> {
     return vec3<f32>(v) + vec3<f32>(0.5) + 0.5 * face_dir(face);
 }
 
-// The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p` with shading normal `n`,
-// zero when the shadow ray (offset along `ns`) finds rock before the lamp.
-fn lamp_lit(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
-    var lit = lamp_term(true, params.light_pos, params.light_dir, params.light_intensity,
-        params.cos_outer, params.cos_inner, p, n);
-    if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
-        let to_light = params.light_pos - p;
+// Light `li`'s `intensity * cone * max(n.l, 0) / dist^2` times its window at `p` with shading
+// normal `n`, zero when its shadow ray (offset along `ns`) finds rock before the light. Out of
+// its reach no ray is cast.
+fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
+    var lit = light_term(li, p, n);
+    if ((li.flags & LIGHT_SHADOWS) != 0u && lit > 0.0) {
+        let to_light = li.pos - p;
         let dist2 = max(dot(to_light, to_light), 1e-4);
         let l = to_light * inverseSqrt(dist2);
         if (shadowed(shadow_origin(p, ns), l, sqrt(dist2))) {
@@ -131,6 +147,16 @@ fn lamp_lit(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
         }
     }
     return lit;
+}
+
+// The list's `light_lit` at `p`, each weighed by its colour's luminance.
+fn lights_lit(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
+    var sum = 0.0;
+    for (var i = 0u; i < lights.count; i++) {
+        let li = lights.l[i];
+        sum += light_lit(li, p, n, ns) * colour_weight(li.colour);
+    }
+    return sum;
 }
 
 // The walk a shadow ray leaves to the full walk at each end under the coarse mode, in voxels:

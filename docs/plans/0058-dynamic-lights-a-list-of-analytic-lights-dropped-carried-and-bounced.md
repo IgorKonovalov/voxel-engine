@@ -1,6 +1,6 @@
 # 0058: Dynamic lights: a list of eight analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
 
-> **Status:** approved, **amended 2026-11-13 (refresh at a312c19; owner answers 7 to 10 the same day, keys re-checked at b1465ab)** (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
+> **Status:** in-progress (dev, 2026-11-13), was approved, **amended 2026-11-13 (refresh at a312c19; owner answers 7 to 10 the same day, keys re-checked at b1465ab)** (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
 > architect's re-read below, order amended 2026-11-11), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
 > phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
 > flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5).
@@ -920,7 +920,7 @@ some form of moving light with different colors, or should we do it later?"
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The list, white, with the fly-through's drop and carry | dev | not started | |
+| 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | committed with this row |
 | 2: Colour: the direct part in a target of its own | dev | not started | |
 | 3: The bounce flag | dev | not started | |
 | 4: The owner's window | human | not started | |
@@ -931,6 +931,30 @@ some form of moving light with different colors, or should we do it later?"
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- **Keys (owner, 2026-11-13, relayed by the orchestrator): "on this laptop i cant use home, end,
+  page and delete".** The six queue toggles sit on `F` (order), `Tab` (angle halved), `Slash`
+  (angle doubled), `Quote` (withdraw), `Backspace` (bake budget) and `Backslash` (full-first),
+  not on the navigation block; `no_two_inputs_share_a_key` holds the map (Phase 1).
+- Phase 1: the lights uniform is group 0's binding 14 (`common.wgsl`'s `lights`), shared by
+  every pass, not a binding in each reader's `PASSES` row; `UpTuning` and FSR 2's `InLamp`
+  keep only the thresholds (the older list is `lights.old`).
+- Phase 1: `Params` keeps the headlamp as a CPU-side `lamp: Light` (read by the shaders as
+  padding) and `lamp_pose`; `light_floor` takes the word `cos_inner` held.
+  `Frame::set_lights(&mut self, &[Light])` takes no queue (the encode uploads the list when it
+  differs from the last). `Frame::light_hit_positions()` is new (the lighting grid's hits).
+- Phase 1: `tests/support/rigs.rs`'s `lamp_term` and `examples/settle.rs` read `Params::lamp`
+  (outside Files touched).
+- Phase 1: the per-light `SHADOWS` flag gates each shadow ray; `FLAG_SHADOWS` stays the
+  headlamp's switch and its slot's flag. Carry switched on over an empty list takes the next
+  light added.
+- Phase 1 done-when 3: the floor-0 run of the goldens was a reading with the default floor
+  set to 0 for the run, not a second pass inside each golden binary;
+  `the_identity_tone_map_reproduces_the_single_pass_carve` sets `light_floor: 0.0`.
+- Phase 1 done-whens 1, 2, 4, 6 (pixel half), 11 and 13 are readings in
+  `gpu_dynamic_lights.rs`'s `mod reading` (exploration); dw 2 reads a wall across the box, not a
+  slab over half the floor; dw 4 reads 62 and 122 voxels, not 50 and 150. dw 7, 8 and 12 and
+  the fly-through cost readings of the phase are not read in Phase 1 (log).
 
 ### Close triggers
 

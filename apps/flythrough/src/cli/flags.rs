@@ -751,6 +751,15 @@ fn light_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::value(
+            &["--lights"],
+            "N",
+            "start with N list lights on a 3 m ring around the spawn",
+            |p: &mut Parsing, v| {
+                p.args.light.lights = v.parse()?;
+                Ok(())
+            },
+        ),
         Flag::switch(
             &["--fade-reading"],
             "dig, settle, switch the lamp off and print the fade",

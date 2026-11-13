@@ -86,3 +86,53 @@ fn every_toggle_shows_its_mode_in_the_hud_grid() {
         );
     }
 }
+
+/// No two inputs share a key: every key of the toggle table and of the run's action keys
+/// (`toggles::ACTION_KEYS`) is bound once. `1` to `6` are the lights' (drop, carry, colour,
+/// remove, bounce, fire); the bake queue's six toggles sit on `F`, `Tab`, `Slash`, `Quote`,
+/// `Backspace` and `Backslash` (the owner, 2026-11-13: the laptop has no `Home`, `End`, `Page`
+/// or `Delete` keys), each changing the `queue` row's words.
+#[test]
+fn no_two_inputs_share_a_key() {
+    use flythrough::toggles::{ACTION_KEYS, KEY_DROP, KEY_FIRE, KEY_REMOVE, Press};
+    use vxe_app::KeyCode;
+    let mut keys: Vec<KeyCode> = TOGGLES
+        .iter()
+        .filter_map(|t| match t.press {
+            Press::Key(k, _) => Some(k),
+            Press::Scroll => None,
+        })
+        .collect();
+    keys.extend_from_slice(ACTION_KEYS);
+    for (i, k) in keys.iter().enumerate() {
+        assert!(!keys[i + 1..].contains(k), "{k:?} is bound twice");
+    }
+    assert_eq!(
+        [KEY_DROP, KEY_REMOVE, KEY_FIRE],
+        [KeyCode::Digit1, KeyCode::Digit4, KeyCode::Digit6]
+    );
+    let by_key = |k: KeyCode| {
+        TOGGLES
+            .iter()
+            .find(|t| t.press == Press::Key(k, None))
+            .unwrap_or_else(|| panic!("{k:?} is a toggle"))
+    };
+    assert_eq!(by_key(KeyCode::Digit2).name, "carry");
+    let queue = [
+        (KeyCode::KeyF, "queue order"),
+        (KeyCode::Tab, "queue angle halved"),
+        (KeyCode::Slash, "queue angle doubled"),
+        (KeyCode::Quote, "queue withdraw"),
+        (KeyCode::Backspace, "bake budget"),
+        (KeyCode::Backslash, "full-first"),
+    ];
+    for (k, name) in queue {
+        let t = by_key(k);
+        assert_eq!(t.name, name);
+        assert_eq!(t.row, HudRow::Queue);
+        let mut m = start();
+        let before = m.row(HudRow::Queue);
+        (t.flip)(&mut m, 1.0);
+        assert_ne!(m.row(HudRow::Queue), before, "{name} changes the queue row");
+    }
+}

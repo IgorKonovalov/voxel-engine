@@ -15,6 +15,7 @@ pub mod cli;
 pub(crate) mod edits;
 mod fly;
 pub mod hud;
+pub mod lights;
 mod look;
 mod pad;
 pub mod path;

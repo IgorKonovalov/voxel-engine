@@ -22,8 +22,11 @@ pub(super) struct History {
     /// The view mode changed since the last encode: the upscaler's history holds another
     /// view's image.
     pub(super) view_changed: bool,
-    /// The lamps of the last encodes with history, newest last, at most [`LAMP_FRAMES`].
-    pub(super) lamps: std::collections::VecDeque<Lamp>,
+    /// The light lists of the last encodes with history, newest last, at most
+    /// [`LAMP_FRAMES`]: what the upscalers compare the list now against.
+    pub(super) lists: std::collections::VecDeque<LightList>,
+    /// The consumer's lights (the headlamp's slot left out) of the last encode with history.
+    pub(super) listed: Option<Vec<Light>>,
     /// The static light of the last encode with history (`None` before the first).
     pub(super) light_key: Option<LightKey>,
     /// Encoded frames with a probe update left in the open light-change window.
@@ -57,9 +60,9 @@ impl LampKey {
     pub(super) fn of(p: &Params) -> Self {
         Self {
             pose: p.lamp_pose,
-            intensity: p.light_intensity,
-            cos_inner: p.cos_inner,
-            cos_outer: p.cos_outer,
+            intensity: p.lamp.intensity,
+            cos_inner: p.lamp.cos_inner,
+            cos_outer: p.lamp.cos_outer,
             shadows: p.flags & FLAG_SHADOWS != 0,
         }
     }
@@ -172,8 +175,11 @@ pub(super) struct FrameState {
     /// The frame index of the last emission-scale change.
     pub(super) emission_changed_at: Option<u32>,
     pub(super) history: std::sync::Mutex<History>,
-    /// Whether the last encode with history set [`LIGHTING_LAMP_CHANGED`].
+    /// Whether the last encode with history found the headlamp's light changed (its switch,
+    /// parameters or shadow walk; [`Frame::lamp_changed`]).
     pub(super) lamp_changed: std::sync::atomic::AtomicBool,
+    /// The list of lights ([`Frame::set_lights`]) and its uniform.
+    pub(super) lights: LightsState,
 }
 
 impl FrameState {
@@ -241,6 +247,7 @@ impl FrameState {
             emission_changed_at: None,
             history: std::sync::Mutex::new(History::default()),
             lamp_changed: std::sync::atomic::AtomicBool::new(false),
+            lights: LightsState::new(device),
         }
     }
 }

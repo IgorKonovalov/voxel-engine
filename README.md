@@ -149,6 +149,16 @@ go through an in-process server, so every edit you see came back as a client eve
 | `G` | Toggle fly and walk mode (bounded level only); walking, `Space` jumps or climbs a ledge |
 | `K` | Print the coarse grid and walkable map |
 | `R` | Toggle what unsupported rock does after a dig: fall (default) or crumble into rubble |
+| `1` | Drop a white point light (intensity 1200) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/8`. Eight slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
+| `4` | Remove the newest light |
+| `6` | Fire a white point light along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light. The `lights` row names the count, carry, the lights in flight and those over the cap |
+| `F` | Cycle the live bake queue's order: score, score with the class as a tier, distance |
+| `Tab` / `Slash` | Halve / double the queue score's angle weight |
+| `Quote` | Toggle the queue's withdrawal of jobs behind the camera |
+| `Backspace` | Cycle the bake budget: the default slice, 150 ms and 300 ms a second |
+| `Backslash` | Toggle the queue's full-first radius between off and 2 |
+| `7` / `8` | Cycle the missing light / toggle the reach (the `queue` row names each) |
 | `H`, `J`, `T` | With `--audio`: play a knock, a looping hum, or a looping pulse (a knock each second) at the point the last left click dug |
 | `E` | With `--audio`: toggle the early reflections |
 | `F1` | Sample the next frames and print frame-time readings |
@@ -206,6 +216,7 @@ shown, `F1`, the autopilot's flight).
 | `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
 | `--lamp on\|off` | The headlamp (default on; off on the showcase and in a `--path` benchmark) |
+| `--lights N` | Start with `N` white list lights (intensity 600) on a 3 m ring around the spawn's eye, for the light pass's readings; the `lights` row counts them |
 | `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
 | `--fade-reading` | Headless: dig five times along the camera ray, settle the light with the lamp off, then on, switch it off and print, for the screen centre's direct light, indirect light and their sum, the first frame under 10 % of the lamp's part |
 | `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |

@@ -21,6 +21,7 @@ use vxe_world::ChunkCoord;
 mod baked;
 mod compose;
 mod encode;
+mod lights;
 mod marcher;
 mod pipelines;
 mod probe_channel;
@@ -34,6 +35,7 @@ mod upscale;
 use self::baked::*;
 pub use self::compose::*;
 pub use self::encode::*;
+pub use self::lights::*;
 pub use self::marcher::*;
 pub(crate) use self::pipelines::*;
 use self::probe_channel::*;
@@ -166,9 +168,9 @@ impl Frame {
         &self.targets.tiles
     }
 
-    /// Whether the last encode with history reset the lamp's history
-    /// ([`LIGHTING_LAMP_CHANGED`]): the lamp's switch, its parameters or its shadow walk
-    /// differ from the encode before.
+    /// Whether the last encode with history found the headlamp's light changed: the lamp's
+    /// switch, its parameters or its shadow walk differ from the encode before. Such a frame
+    /// sets [`LIGHTING_LAMP_CHANGED`], as a changed list does ([`Frame::lights_changed`]).
     pub fn lamp_changed(&self) -> bool {
         self.state
             .lamp_changed
@@ -370,6 +372,13 @@ impl Frame {
     /// position in voxels, then `t`, `3e38` on a miss).
     pub fn hit_positions(&self) -> &wgpu::Texture {
         &self.targets.hit_pos[self.cur]
+    }
+
+    /// The lighting grid's hit positions the next or last encode writes: [`Frame::hit_positions`]
+    /// at the full tier, the half tier's downsampled hits otherwise; the pixels of
+    /// [`Frame::irradiance`], [`Frame::accumulated`] and [`Frame::filtered`].
+    pub fn light_hit_positions(&self) -> &wgpu::Texture {
+        self.targets.lit_pos(self.cur)
     }
 
     /// The hit buffer's record texture (rgba16uint: octahedral normal u and v as snorm16

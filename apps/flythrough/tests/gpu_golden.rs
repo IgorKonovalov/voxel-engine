@@ -728,7 +728,8 @@ fn hit_buffer_views_match_the_single_pass_march() {
 /// With exposure 1, the identity tone map and the filter off the composite is the march's
 /// former display
 /// encoding, so the carve golden matches the single-pass march's (`primary_pre_split.png`,
-/// ae58f0c's `primary.png`) within 2/255 in every pixel: the split moved no light.
+/// ae58f0c's `primary.png`) within 2/255 in every pixel: the split moved no light. The light
+/// floor is 0, the single-pass march's lamp with no reach (ADR-0044's window is 1).
 #[test]
 fn the_identity_tone_map_reproduces_the_single_pass_carve() {
     let Some(mut rig) = LookRig::new(&carved_world(), None) else {
@@ -738,6 +739,7 @@ fn the_identity_tone_map_reproduces_the_single_pass_carve() {
         exposure: vxe_render::Exposure::Manual(1.0),
         tone_map: vxe_render::ToneMap::Identity,
         filter: false,
+        light_floor: 0.0,
         ..vxe_render::Lighting::default()
     });
     let img = rig.render(

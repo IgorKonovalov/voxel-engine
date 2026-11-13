@@ -103,7 +103,7 @@ fn probe_tag(w: vec3<i32>) -> u32 {
 
 // Whether world probe `w` lies beyond the lamp's reach (never with the reach 0).
 fn probe_beyond_reach(w: vec3<i32>) -> bool {
-    let to = probe_position(w) - params.light_pos;
+    let to = probe_position(w) - lights.l[0].pos;
     return probe.reach > 0.0 && dot(to, to) > probe.reach * probe.reach;
 }
 

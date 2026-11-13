@@ -128,13 +128,18 @@ pub struct Modes {
     pub(crate) shadow_ray: bool,
     /// The dig's radius in fixed point; the scroll wheel and the D-pad step it.
     pub(crate) dig_radius: i64,
-    /// The live queue's modes, keys `1` to `8`.
+    /// The live queue's modes: the order `F`, the angle `Tab` and `Slash`, the withdrawal
+    /// `Quote`, the budget `Backspace`, full-first `Backslash`, missing light `7`, reach `8`.
     pub(crate) queue: QueueModes,
+    /// The testbed's list of lights: `1` drops, `2` carries, `4` removes, `6` fires.
+    pub lights: crate::lights::TestLights,
+    /// The banner's lights row after the last light key (`lights 3/8`, `carry on`).
+    lights_words: Option<String>,
 }
 
-/// The live queue's modes the number keys step: `1` the order, `2` and `3` the score's angle
-/// weight, `4` the withdrawal, `5` the budget, `6` the full-first radius, `7` the missing
-/// light, `8` the reach.
+/// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
+/// weight, `Quote` the withdrawal, `Backspace` the budget, `Backslash` the full-first radius,
+/// `7` the missing light, `8` the reach.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QueueModes {
     /// The class and the distance first, rather than the score.
@@ -200,15 +205,18 @@ pub enum HudRow {
     Queue,
     /// `cutaway auto, shadow ray on, dig radius 0.5 m`.
     Controls,
+    /// `lights 3/8 carry fly 1 over 0` ([`crate::lights::TestLights::write_row`]).
+    Lights,
 }
 
 impl HudRow {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Look,
         Self::Lighting,
         Self::Upscaler,
         Self::Queue,
         Self::Controls,
+        Self::Lights,
     ];
 
     /// The first word of the row, which no other HUD row starts with.
@@ -219,6 +227,7 @@ impl HudRow {
             Self::Upscaler => "upscaler ",
             Self::Queue => "queue ",
             Self::Controls => "cutaway ",
+            Self::Lights => "lights ",
         }
     }
 }
@@ -254,7 +263,21 @@ impl Modes {
             shadow_ray: true,
             dig_radius: crate::edits::DIG_RADIUS,
             queue: QueueModes::default(),
+            lights: crate::lights::TestLights::default(),
+            lights_words: None,
         }
+    }
+
+    /// These modes with the testbed's lights `lights` (`--lights N`'s ring).
+    pub fn with_lights(self, lights: crate::lights::TestLights) -> Self {
+        Self { lights, ..self }
+    }
+
+    /// Shows the banner from `now_ms` with `words` as its lights row (`lights 3/8`,
+    /// `carry on`, `fire, lights 2/8`).
+    pub fn show_lights(&mut self, words: String, now_ms: f64) {
+        self.lights_words = Some(words);
+        self.banner_at = now_ms;
     }
 
     /// These modes with `--pan`'s yaw at `deg_per_s`, started at `now_ms`.
@@ -352,6 +375,7 @@ impl Modes {
                     self.dig_radius as f64 / (10 * vxe_world::FIXED_ONE) as f64
                 );
             }
+            HudRow::Lights => self.lights.write_row(self.lighting.lamp, out),
         }
     }
 
@@ -602,6 +626,10 @@ impl Modes {
             }
             wrap_from(out, from);
         }
+        if let Some(w) = &self.lights_words {
+            start_row(out);
+            out.push_str(w);
+        }
         start_row(out);
         let from = out.len();
         self.write_line(out);
@@ -697,6 +725,72 @@ fn wrap_from(out: &mut String, from: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `lights` row and the banner name the testbed's lights: the count with the headlamp
+    /// counted while it is on, carry, the lights in flight and those over the cap; `1` on a
+    /// full list is refused with `FULL_LINE`, which names Plan 0058.
+    #[test]
+    fn the_banner_and_hud_name_the_lights() {
+        use crate::lights::{FULL_LINE, TestLights};
+        use crate::toggles::TOGGLES;
+        let lamp_off = vxe_render::Lighting {
+            lamp: false,
+            ..vxe_render::Lighting::default()
+        };
+        let half = vxe_render::LightingResolution::Half;
+        let mut m = Modes::new(lamp_off, half, 0.0);
+        for _ in 0..3 {
+            m.lights
+                .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        let carry = TOGGLES.iter().find(|t| t.name == "carry").unwrap();
+        (carry.flip)(&mut m, 10.0);
+        assert_eq!(m.row(HudRow::Lights), "lights 3/8 carry over 0");
+        assert!(m.banner(10.0).unwrap().lines().any(|l| l == "carry on"));
+        m.lighting.lamp = true;
+        assert!(m.row(HudRow::Lights).starts_with("lights 4/8"));
+        m.lighting.lamp = false;
+        (carry.flip)(&mut m, 20.0);
+        assert!(m.banner(20.0).unwrap().lines().any(|l| l == "carry off"));
+        // The drop key's banner, as `run::keys` shows it.
+        m.show_lights(m.lights.count_words(false), 30.0);
+        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 3/8"));
+        // Two lights, one in flight.
+        let mut f = Modes::new(lamp_off, half, 0.0);
+        f.lights
+            .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        f.lights
+            .fire(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        assert_eq!(f.row(HudRow::Lights), "lights 2/8 fly 1 over 0");
+        f.show_lights(format!("fire, {}", f.lights.count_words(false)), 40.0);
+        let b = f.banner(40.0).unwrap();
+        assert!(b.contains("fire") && b.contains("lights 2/8"), "{b}");
+        // A full list refuses a drop and a shot with `FULL_LINE`.
+        let mut full = TestLights::default();
+        for _ in 0..8 {
+            full.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        assert_eq!(
+            full.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None),
+            Err(FULL_LINE)
+        );
+        assert_eq!(
+            full.fire(false, [0.0; 3], [1.0, 0.0, 0.0], None),
+            Err(FULL_LINE)
+        );
+        assert!(FULL_LINE.contains("0058"));
+        // Over the cap: eight lights with the lamp switched on.
+        let mut over = Modes::new(lamp_off, half, 0.0).with_lights(full);
+        over.lighting.lamp = true;
+        assert_eq!(over.row(HudRow::Lights), "lights 8/8 over 1");
+        // `--lights 3` parses.
+        let a = crate::cli::parse_args_from(["--lights", "3"].map(String::from)).unwrap();
+        assert_eq!(a.light.lights, 3);
+    }
 
     /// `parts` joined by `, ` into rows of at most [`BANNER_COLS`] characters where they fit,
     /// row by row: the reference [`wrap_from`] is held to.

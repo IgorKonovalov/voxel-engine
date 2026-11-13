@@ -10,8 +10,8 @@
 //
 // Two entry points:
 //   `variance` writes each hit's filtered irradiance and its luminance variance: from the moments
-//   (`m2 - m1^2`) once the pixel has VARIANCE_AGE frames of history or, with the lamp off
-//   (Params.lighting bit 0 clear), is a store's pixel whose lamp part is zero (its moments are
+//   (`m2 - m1^2`) once the pixel has VARIANCE_AGE frames of history or, with no light shaded
+//   (LIGHTING_DIRECT clear: the lamp off and the list empty), is a store's pixel whose lamp part is zero (its moments are
 //   zero), else from the moments of its 7 x 7 neighbourhood under the same edge weights as the
 //   filter. With the lamp on a young store pixel in the lamp's shadow keeps the 7 x 7 estimate,
 //   which lets the filter soften the shadow's edge into it.
@@ -19,11 +19,12 @@
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
 //   `max(n.n', 0)^128` (on `filter_normal`'s normals, hitrec.wgsl) and
 //   `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the pixel's variance blurred by a
-//   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With the lamp off, a hit whose input is zero and whose
+//   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With LIGHTING_DIRECT clear, a hit whose input is zero and whose
 //   blurred variance is zero writes its input (zero), plus the store's part on the last
 //   iteration, without the 25 taps: its sigma is the epsilon, so only taps of luminance within
-//   about 1e-3 of zero weigh, and with the lamp off those are zero (a store's pixel's input is
-//   its lamp part). With the lamp on, taps lit faintly by it would weigh, so every hit filters.
+//   about 1e-3 of zero weigh, and with no light shaded those are zero (a store's pixel's input
+//   is its direct part). With a light shaded, taps lit faintly by it would weigh, so every hit
+//   filters.
 //
 // Bindings, group 2 of `variance`:
 //   0  texture_2d<f32>   hit_pos_in      this frame's hit positions
@@ -107,7 +108,7 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     let m = mw.xyz;
     let rec = load_hit(px);
     var v = max(m.y - m.x * m.x, 0.0);
-    let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_LAMP) == 0u && acc.w == 0.0;
+    let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_DIRECT) == 0u && acc.w == 0.0;
     if (rec.found && m.z < VARIANCE_AGE && !dark_store) {
         let eye = eye_of(px);
         var w_sum = 0.0;
@@ -170,7 +171,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
     }
-    if ((params.lighting & LIGHTING_LAMP) == 0u && var_sum == 0.0 && all(centre.xyz == vec3<f32>(0.0))) {
+    if ((params.lighting & LIGHTING_DIRECT) == 0u && var_sum == 0.0 && all(centre.xyz == vec3<f32>(0.0))) {
         textureStore(filter_out_atrous, px, min(vec4<f32>(centre.xyz + passed, centre.w), vec4<f32>(HDR_MAX)));
         return;
     }

@@ -139,9 +139,9 @@ fn glass_tint(albedo: vec3<f32>) -> vec3<f32> {
 
 // The reflected share of the entry face of translucent voxel `v`, entered at `o + d t` across
 // `axis`: Schlick's `R` at the view angle times `face_light = E / PI`, untinted. `E` is the face's
-// brick record (`glass_store_value`, the read an opaque face's temporal pass makes) plus, while
-// the lamp is on, the lamp's `PI * intensity * cone * n.l / dist^2` with no shadow ray (the lamp
-// sits at the eye, whose ray reached the face). Unlit (`lit` false, the albedo view)
+// brick record (`glass_store_value`, the read an opaque face's temporal pass makes) plus the
+// list of lights' `PI * intensity * cone * n.l / dist^2` in reach with no shadow ray (the
+// headlamp sits at the eye, whose ray reached the face; a list light behind a wall shows). Unlit (`lit` false, the albedo view)
 // `face_light` is 1.
 fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, v: vec3<i32>, axis: i32, lit: bool) -> vec3<f32> {
     let nf = select(vec3<f32>(0.0), vec3<f32>(-sign(d[axis])), axis_mask(axis));
@@ -152,11 +152,7 @@ fn glass_reflected(o: vec3<f32>, d: vec3<f32>, t: f32, v: vec3<i32>, axis: i32, 
         return vec3<f32>(r);
     }
     var e = glass_store_value(v, store_face(axis, nf));
-    if ((params.lighting & LIGHTING_LAMP) != 0u) {
-        let p = o + d * t;
-        let l = normalize(params.light_pos - p);
-        e += vec3<f32>(PI * lamp(p) * max(dot(nf, l), 0.0));
-    }
+    e += vec3<f32>(lights_on_glass(o + d * t, nf));
     return r * e * (1.0 / PI);
 }
 

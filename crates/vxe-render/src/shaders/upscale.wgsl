@@ -59,20 +59,12 @@ struct UpTuning {
     clip_gamma: f32,
     // The nearest sample's mean kernel weight at this scale (the blend divides by it).
     w_mean: f32,
-    // A light change under a still pixel: the lamp's unshadowed term at the
+    // A light change under a still pixel: the list of lights' summed unshadowed term at the
     // hit moved by more than `change_rel` of the larger of the two and `change_abs` since the
-    // lamp of `old_*` (an older frame's), or an emission scale changed.
+    // older frame's list (`lights.old`), or an emission scale changed.
     change_rel: f32,
     change_abs: f32,
-    old_on: u32,
-    old_pos: vec3<f32>,
-    old_intensity: f32,
-    old_dir: vec3<f32>,
-    old_cos_outer: f32,
-    old_cos_inner: f32,
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
 @group(2) @binding(8) var<uniform> up_tuning: UpTuning;
@@ -97,7 +89,8 @@ const EXPOSURE_MOVE: f32 = 1.0 / 64.0;
 // Whether the light at `rec` changed since the older frame `up_tuning` holds: an emission
 // scale changed within EMISSION_CHANGE_FRAMES, the exposure moved by more than EXPOSURE_MOVE EV
 // since the last frame (the history is display-encoded, so it cannot be rescaled: ADR-0033),
-// or the lamp's term moved past the thresholds.
+// or the list's summed term (each light inside its reach and window) moved past the
+// thresholds; with the list now equal to the older list (`lights.changed` 0) it did not.
 fn up_light_changed(rec: HitRecord) -> bool {
     if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
         return true;
@@ -105,10 +98,11 @@ fn up_light_changed(rec: HitRecord) -> bool {
     if (abs(log2(exposure_ratio())) > EXPOSURE_MOVE) {
         return true;
     }
-    let now = lamp_term((params.lighting & LIGHTING_LAMP) != 0u, params.light_pos, params.light_dir,
-        params.light_intensity, params.cos_outer, params.cos_inner, rec.p, rec.n);
-    let then = lamp_term(up_tuning.old_on != 0u, up_tuning.old_pos, up_tuning.old_dir,
-        up_tuning.old_intensity, up_tuning.old_cos_outer, up_tuning.old_cos_inner, rec.p, rec.n);
+    if (lights.changed == 0u) {
+        return false;
+    }
+    let now = lights_term(false, rec.p, rec.n);
+    let then = lights_term(true, rec.p, rec.n);
     let d = abs(now - then);
     return d > up_tuning.change_abs && d > up_tuning.change_rel * max(now, then);
 }

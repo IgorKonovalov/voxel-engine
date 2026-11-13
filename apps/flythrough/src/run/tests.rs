@@ -458,8 +458,8 @@ fn the_store_read_toggle_shows_in_the_banner() {
 }
 
 /// `--queue-order` parses `score` and `distance` and refuses the rest, `--queue-weights` `A,R`
-/// and `A,tier`; a plain start reads the score with the class as the tier; `1` cycles the
-/// order, `2` halves the angle weight and `3` doubles it, each press changing the banner and
+/// and `A,tier`; a plain start reads the score with the class as the tier; `F` cycles the
+/// order, `Tab` halves the angle weight and `Slash` doubles it, each press changing the banner and
 /// the HUD's queue row in the same frame.
 #[test]
 fn the_banner_names_the_queue_order_and_its_weights() {
@@ -501,12 +501,12 @@ fn the_banner_names_the_queue_order_and_its_weights() {
         "order distance".to_owned(),
         format!("order score, angle {A}, refine {R}"),
     ] {
-        check(shown(&mut run, Some(KeyCode::Digit1)), want);
+        check(shown(&mut run, Some(KeyCode::KeyF)), want);
     }
     for (key, angle) in [
-        (KeyCode::Digit2, A / 2.0),
-        (KeyCode::Digit3, A),
-        (KeyCode::Digit3, A * 2.0),
+        (KeyCode::Tab, A / 2.0),
+        (KeyCode::Slash, A),
+        (KeyCode::Slash, A * 2.0),
     ] {
         check(
             shown(&mut run, Some(key)),
@@ -553,7 +553,7 @@ fn the_banner_names_the_queue_order_and_its_weights() {
     }
 }
 
-/// `--queue-withdraw` parses `on` and `off` and refuses the rest; `4` toggles the
+/// `--queue-withdraw` parses `on` and `off` and refuses the rest; `Quote` toggles the
 /// withdrawal, the banner and the HUD's queue row saying so in the same frame; the row
 /// shows the withdrawn count from the queue's counters.
 #[test]
@@ -562,8 +562,8 @@ fn the_banner_names_the_withdrawal() {
     let mut input = Input::default();
     for want in ["withdraw off", "withdraw on", "withdraw off"] {
         input.end_frame();
-        input.key_up(KeyCode::Digit4);
-        input.key_down(KeyCode::Digit4);
+        input.key_up(KeyCode::Quote);
+        input.key_down(KeyCode::Quote);
         run.handle_input(&input);
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
@@ -598,7 +598,7 @@ fn the_banner_names_the_withdrawal() {
 }
 
 /// `--full-first` parses `off` and 0 to 8 and refuses the rest, and follows `--near` when
-/// absent; a plain start reads `2`; `6` toggles `off` and `2`, each press changing the
+/// absent; a plain start reads `2`; `Backslash` toggles `off` and `2`, each press changing the
 /// banner and the HUD's queue row in the same frame.
 #[test]
 fn the_banner_names_the_full_first_radius() {
@@ -618,8 +618,8 @@ fn the_banner_names_the_full_first_radius() {
     );
     for want in ["off", "2", "off"] {
         input.end_frame();
-        input.key_up(KeyCode::Digit6);
-        input.key_down(KeyCode::Digit6);
+        input.key_up(KeyCode::Backslash);
+        input.key_down(KeyCode::Backslash);
         run.handle_input(&input);
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
@@ -722,7 +722,7 @@ fn the_banner_names_the_reach() {
 }
 
 /// `--bake-budget` parses `frame:MS` and `second:MS,CAP` and refuses the rest, `--bake-slice
-/// MS` reads `frame:MS`; a plain start reads `frame:1.5`; `5` steps the budget through
+/// MS` reads `frame:MS`; a plain start reads `frame:1.5`; `Backspace` steps the budget through
 /// `frame:1.5`, `second:150,0.25` and `second:300,0.25`, each press changing the banner and
 /// the HUD's queue row in the same frame, the row adding the last slice under a per-second
 /// budget.
@@ -750,8 +750,8 @@ fn the_banner_names_the_budget() {
         ("second:150,0.25", " (slice 2.31 ms)"),
     ] {
         input.end_frame();
-        input.key_up(KeyCode::Digit5);
-        input.key_down(KeyCode::Digit5);
+        input.key_up(KeyCode::Backspace);
+        input.key_down(KeyCode::Backspace);
         run.handle_input(&input);
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");

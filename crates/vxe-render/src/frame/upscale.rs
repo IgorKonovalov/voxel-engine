@@ -44,8 +44,9 @@ pub fn jitter_at(frame: u32, phases: u32) -> [f32; 2] {
 /// around the centre), at most 1: a sample far from the output pixel's centre counts for
 /// less, and the current colour's mean share stays the alpha. A still pixel (one whose
 /// history moved less than 0.01 output pixels) keeps its history unclipped unless the light
-/// at its hit changed: the lamp's unshadowed term moved past [`Upscaler::change_rel`] and
-/// [`Upscaler::change_abs`] since the lamp of [`Upscaler::change_frames`] frames before, or
+/// at its hit changed: the list of lights' summed unshadowed term moved past
+/// [`Upscaler::change_rel`] and [`Upscaler::change_abs`] since the list of
+/// [`Upscaler::change_frames`] frames before (ADR-0044), or
 /// an emission scale changed within [`EMISSION_CHANGE_FRAMES`]; such a pixel is clipped and
 /// blended as a moving one (ADR-0024).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -68,7 +69,7 @@ pub struct Upscaler {
     pub change_frames: u32,
 }
 
-/// Frames of lamp parameters the frame keeps for [`Upscaler::change_frames`].
+/// Frames of light lists the frame keeps for [`Upscaler::change_frames`].
 pub(crate) const LAMP_FRAMES: usize = 32;
 
 impl Default for Upscaler {
@@ -99,37 +100,7 @@ pub(super) struct UpscaleUniform {
     pub(super) w_mean: f32,
     pub(super) change_rel: f32,
     pub(super) change_abs: f32,
-    pub(super) old_on: u32,
-    pub(super) old_pos: [f32; 3],
-    pub(super) old_intensity: f32,
-    pub(super) old_dir: [f32; 3],
-    pub(super) old_cos_outer: f32,
-    pub(super) old_cos_inner: f32,
-    pub(super) _pad: [f32; 3],
-}
-
-/// One frame's lamp, as `Params` carries it.
-#[derive(Clone, Copy, Debug, Default)]
-pub(super) struct Lamp {
-    pub(super) on: bool,
-    pub(super) pos: [f32; 3],
-    pub(super) intensity: f32,
-    pub(super) dir: [f32; 3],
-    pub(super) cos_outer: f32,
-    pub(super) cos_inner: f32,
-}
-
-impl Lamp {
-    pub(super) fn of(p: &Params) -> Self {
-        Self {
-            on: p.lighting & LIGHTING_LAMP != 0,
-            pos: p.light_pos,
-            intensity: p.light_intensity,
-            dir: p.light_dir,
-            cos_outer: p.cos_outer,
-            cos_inner: p.cos_inner,
-        }
-    }
+    pub(super) _pad: f32,
 }
 
 impl Upscaler {
@@ -153,7 +124,7 @@ impl Upscaler {
         sum / (N * N) as f32
     }
 
-    pub(super) fn uniform(&self, scale: f32, old: Lamp) -> UpscaleUniform {
+    pub(super) fn uniform(&self, scale: f32) -> UpscaleUniform {
         UpscaleUniform {
             width: self.width,
             alpha: self.alpha,
@@ -162,13 +133,7 @@ impl Upscaler {
             w_mean: self.mean_weight(scale),
             change_rel: self.change_rel,
             change_abs: self.change_abs,
-            old_on: u32::from(old.on),
-            old_pos: old.pos,
-            old_intensity: old.intensity,
-            old_dir: old.dir,
-            old_cos_outer: old.cos_outer,
-            old_cos_inner: old.cos_inner,
-            _pad: [0.0; 3],
+            _pad: 0.0,
         }
     }
 }
@@ -379,9 +344,7 @@ impl UpscaleState {
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("upscale tuning"),
-                    contents: bytemuck::bytes_of(
-                        &Upscaler::default().uniform(1.0, Lamp::default()),
-                    ),
+                    contents: bytemuck::bytes_of(&Upscaler::default().uniform(1.0)),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 },
             ),

@@ -90,7 +90,7 @@ pub use frame::{
     NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
     jitter_at,
 };
-pub use frame::{DEFAULT_PROBE_FREEZE, Params, Upscaler};
+pub use frame::{DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, Light, MAX_LIGHTS, Params, Upscaler};
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP,

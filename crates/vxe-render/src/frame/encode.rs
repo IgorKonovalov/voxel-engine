@@ -142,6 +142,7 @@ impl Frame {
                     resource: wgpu::BindingResource::TextureView(&noise),
                 },
                 buffer_entry(13, self.exposure.state_uniform()),
+                buffer_entry(14, &self.state.lights.buffer),
             ],
         })
     }
@@ -185,7 +186,6 @@ impl Frame {
             "{} views",
             views.len()
         );
-        let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
         let fsr = self
@@ -216,14 +216,10 @@ impl Frame {
             face_mix: self.state.look.tuning.face_mix,
             far_normal: self.state.look.far_normal,
             window_size: e.size(),
-            light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
-                .to_array(),
+            lamp: Light::headlamp(camera, light),
             lamp_pose: [light.offset_right, light.offset_down, light.turn],
-            light_intensity: light.intensity,
-            light_dir: (fwd * light.turn.cos() + right * light.turn.sin()).to_array(),
-            cos_outer: light.outer.cos(),
             size: [self.targets.width, self.targets.height],
-            cos_inner: light.inner.cos(),
+            light_floor: self.state.lighting.light_floor,
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 }
                 | if light.skips { FLAG_SKIPS } else { 0 }
@@ -336,7 +332,8 @@ impl Frame {
             _pad: [0; 3],
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
-        let mut old_lamp = Lamp::of(params);
+        let now = self.state.lights.slots(params);
+        let mut old_list = now;
         if keep == Keep::History {
             let mut h = self
                 .state
@@ -365,12 +362,19 @@ impl Frame {
                 shadow_walk: self.state.lighting.shadow_walk,
             };
             let lamp_changed = h.light_key.is_some_and(|k| k.lamp_differs(&key));
-            if lamp_changed {
+            let listed = now.listed(params.lighting & LIGHTING_LAMP != 0);
+            let lights_changed = lamp_changed || h.listed.as_deref().is_some_and(|l| l != listed);
+            h.listed = Some(listed.to_vec());
+            if lights_changed {
                 p.lighting |= LIGHTING_LAMP_CHANGED;
             }
             self.state
                 .lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
+            self.state
+                .lights
+                .changed
+                .store(lights_changed, std::sync::atomic::Ordering::Relaxed);
             // The probes see the lamp alone: its switch, parameters or shadow walk restart them.
             probe_restart |= probe_update && lamp_changed;
             if probe_restart {
@@ -382,32 +386,39 @@ impl Frame {
                 h.light_window -= 1;
             }
             let back = (self.up.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
-            old_lamp = h
-                .lamps
+            old_list = h
+                .lists
                 .len()
                 .checked_sub(back)
-                .and_then(|i| h.lamps.get(i))
-                .or(h.lamps.front())
+                .and_then(|i| h.lists.get(i))
+                .or(h.lists.front())
                 .copied()
-                .unwrap_or_else(|| Lamp::of(params));
-            let now = Lamp::of(params);
-            lamp_moved = h
-                .lamps
-                .back()
-                .is_some_and(|l| l.pos != now.pos || l.dir != now.dir);
-            if h.lamps.len() == LAMP_FRAMES {
-                h.lamps.pop_front();
+                .unwrap_or(now);
+            // The headlamp's slot: it moved when its position or axis did.
+            lamp_moved = params.lighting & LIGHTING_LAMP != 0
+                && h.lists.back().is_some_and(|l| {
+                    l.count == 0 || l.l[0].pos != now.l[0].pos || l.l[0].dir != now.l[0].dir
+                });
+            if h.lists.len() == LAMP_FRAMES {
+                h.lists.pop_front();
             }
-            h.lamps.push_back(Lamp::of(params));
+            h.lists.push_back(now);
         } else {
             p.history = 0;
         }
+        if now.count > 0 {
+            p.lighting |= LIGHTING_DIRECT;
+        }
+        self.state.lights.write(
+            queue,
+            LightsUniform::of(&now, &old_list, params.lighting & LIGHTING_LAMP != 0),
+        );
         queue.write_buffer(&self.state.edits, 0, bytemuck::bytes_of(&edits));
         let scale = self.output[0] as f32 / self.targets.width as f32;
         queue.write_buffer(
             &self.up.params,
             0,
-            bytemuck::bytes_of(&self.up.upscaler.uniform(scale, old_lamp)),
+            bytemuck::bytes_of(&self.up.upscaler.uniform(scale)),
         );
         let table = light_table(world, p.views[0].origin);
         let used = (1 + table.count as usize) * 16;
@@ -1021,7 +1032,7 @@ impl Frame {
                     volume.forget_reach();
                 }
                 let reach = self.state.lighting.lamp_reach;
-                let lamp = p.light_pos;
+                let lamp = p.lamp.pos;
                 let moved = lamp_moved && self.state.lighting.lamp;
                 let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
                     let q = volume.probe_position(w);

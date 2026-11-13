@@ -9,7 +9,8 @@
 //   3  uniform           in_tuning       `InputUniform` in fsr2/prepare.rs
 //   4  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //   5  uniform           in_lamp         the upscale pass's tuning (`UpTuning` in
-//                                        upscale.wgsl): the older lamp and the change thresholds
+//                                        upscale.wgsl): the change thresholds (the older list
+//                                        is `lights.old`, group 0)
 //   6  storage texture   depth_out       r32float: inverted infinite device depth,
 //                                        `near / z_view`, 0 on a miss
 //   7  storage texture   motion_out      rg32float: motion to the previous frame, in UV
@@ -28,8 +29,9 @@
 // `in_tuning.reactive_translucent` (capped at 1), 1 where the hit lies in an edit box dilated
 // by one voxel, and `in_tuning.reactive_light` where the light at a still hit changed (the
 // upscale pass's light-change signal, which it too applies to still pixels alone: the hit moved
-// less than CLIP_STILL output pixels, and an emission scale changed or the lamp's unshadowed
-// term moved past the thresholds since the lamp of `change_frames` frames before). A moving
+// less than CLIP_STILL output pixels, and an emission scale changed or the list of lights'
+// summed unshadowed term moved past the thresholds since the list of `change_frames` frames
+// before). A moving
 // pixel's lamp term changes with the camera that carries the lamp; FSR's rectification takes
 // that, where the mask would take its history.
 
@@ -57,15 +59,7 @@ struct InLamp {
     w_mean: f32,
     change_rel: f32,
     change_abs: f32,
-    old_on: u32,
-    old_pos: vec3<f32>,
-    old_intensity: f32,
-    old_dir: vec3<f32>,
-    old_cos_outer: f32,
-    old_cos_inner: f32,
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
 @group(2) @binding(5) var<uniform> in_lamp: InLamp;
@@ -90,10 +84,11 @@ fn light_changed(rec: HitRecord) -> bool {
     if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
         return true;
     }
-    let now = lamp_term((params.lighting & LIGHTING_LAMP) != 0u, params.light_pos, params.light_dir,
-        params.light_intensity, params.cos_outer, params.cos_inner, rec.p, rec.n);
-    let then = lamp_term(in_lamp.old_on != 0u, in_lamp.old_pos, in_lamp.old_dir,
-        in_lamp.old_intensity, in_lamp.old_cos_outer, in_lamp.old_cos_inner, rec.p, rec.n);
+    if (lights.changed == 0u) {
+        return false;
+    }
+    let now = lights_term(false, rec.p, rec.n);
+    let then = lights_term(true, rec.p, rec.n);
     let d = abs(now - then);
     return d > in_lamp.change_abs && d > in_lamp.change_rel * max(now, then);
 }
