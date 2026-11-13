@@ -9,6 +9,14 @@ name: CI
 on:
   push:
   pull_request:
+  # A manual run adds Windows' FXC pipeline times, and with `fingerprint` set logs why cargo
+  # rebuilds each unit after the cache restore (cargo's fingerprint log, into the job's log).
+  workflow_dispatch:
+    inputs:
+      fingerprint:
+        description: "Log cargo's fingerprint reasons for every rebuilt unit"
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -44,6 +52,10 @@ jobs:
         uses: ./.github/actions/lavapipe
       # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
+      - name: Cargo's fingerprint log on a manual run
+        if: inputs.fingerprint
+        shell: bash
+        run: echo "CARGO_LOG=cargo::core::compiler::fingerprint=info" >> "$GITHUB_ENV"
       - uses: taiki-e/install-action@nextest
       # The logic components (ADR-0010) are built for wasm32-wasip2 before the tests that
       # load them; the host's tests fail, not skip, when one is missing.
@@ -51,29 +63,11 @@ jobs:
       - name: Build the logic components
         shell: bash
         run: scripts/build-guests.sh
-      - run: cargo build --workspace
-      # The tester's system report (Plan 0068): on the Windows arm its readers (RtlGetVersion,
-      # the registry, GlobalMemoryStatusEx) run on a real Windows. The file is printed.
-      - name: The tester's system report
-        shell: bash
-        run: |
-          target/debug/vxe-tester --system-json target/system.json > /dev/null
-          cat target/system.json
-      # Pipeline creation per compute pass (docs/nfr.md section 7). Windows runs DX12 on WARP
-      # twice: FXC forced through WGPU_DX12_COMPILER, then the default (static DXC,
-      # ADR-0035). The fly-through's size is the debug binary the build step above produced;
-      # the static DXC library's size is what the feature adds to it at most.
-      - name: Pipeline times on DX12 under FXC and the default compiler
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          WGPU_DX12_COMPILER=fxc cargo run -p vxe-render --release --example pipeline_times
-          cargo run -p vxe-render --release --example pipeline_times
-          echo "target/debug/flythrough.exe: $(wc -c < target/debug/flythrough.exe) bytes"
-          find target/debug/build -path '*mach-dxcompiler-rs-*' -name '*.lib' -exec wc -c {} + || true
-      - name: Pipeline times on lavapipe
-        if: runner.os == 'Linux'
-        run: cargo run -p vxe-render --release --example pipeline_times
+      # One compile per profile: no `cargo build --workspace` step. The gate step's nextest
+      # build makes the same libraries and binaries (an integration-tested package's bins and
+      # every example build with its tests), so the tester's report and the fly-through's size
+      # below read nextest's target/debug after it.
+      #
       # The gate tier (.config/nextest.toml): every test but the soak-marked ones, which soak.yml runs
       # weekly. The `ci` profile runs the gate tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
@@ -107,6 +101,32 @@ jobs:
           elif [ "$status" -ne 0 ]; then
             exit "$status"
           fi
+      # The tester's system report (Plan 0068): on the Windows arm its readers (RtlGetVersion,
+      # the registry, GlobalMemoryStatusEx) run on a real Windows. The file is printed.
+      - name: The tester's system report
+        shell: bash
+        run: |
+          target/debug/vxe-tester --system-json target/system.json > /dev/null
+          cat target/system.json
+      # Pipeline creation per compute pass (docs/nfr.md section 7), once per arm: lavapipe on
+      # Linux, DX12 on WARP under the default compiler (static DXC, ADR-0035) on Windows. A
+      # manual run adds the FXC pair, forced through WGPU_DX12_COMPILER. The fly-through's size
+      # is the gate step's debug binary; the static DXC library's size is what the feature adds
+      # to it at most.
+      - name: Pipeline times on DX12 under FXC (manual runs)
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: WGPU_DX12_COMPILER=fxc cargo run -p vxe-render --release --example pipeline_times
+      - name: Pipeline times on DX12 under the default compiler
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo run -p vxe-render --release --example pipeline_times
+          echo "target/debug/flythrough.exe: $(wc -c < target/debug/flythrough.exe) bytes"
+          find target/debug/build -path '*mach-dxcompiler-rs-*' -name '*.lib' -exec wc -c {} + || true
+      - name: Pipeline times on lavapipe
+        if: runner.os == 'Linux'
+        run: cargo run -p vxe-render --release --example pipeline_times
       # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
       # component; its tests (`tests/component.rs`) need the feature and the built component.
       # Every other fly-through test ran in the workspace step, so only that binary runs here.
@@ -114,8 +134,10 @@ jobs:
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       - run: cargo test --workspace --doc
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo clippy -p flythrough --features wasm --all-targets -- -D warnings
+      # One clippy pass over every target: the fly-through's `wasm` feature on is the superset
+      # of its default set (it adds the component host and its test), so a single check build
+      # covers both; the default set is still compiled by the gate step.
+      - run: cargo clippy --workspace --all-targets --features flythrough/wasm -- -D warnings
       # The logic components build for wasm32-wasip2 only, which the workspace clippy does
       # not check: every guest crate under crates/vxe-script-wasm/guests/, and the
       # fly-through's logic as a component.
@@ -132,6 +154,8 @@ jobs:
       - run: cargo fmt --all --check
       - name: Hook bite tests
         run: node --test ".claude/hooks/*.test.mjs"
+      - name: Script tests
+        run: node --test "scripts/*.test.mjs"
       - name: Doc links
         run: node scripts/check-doc-links.mjs
       - name: Comment hygiene

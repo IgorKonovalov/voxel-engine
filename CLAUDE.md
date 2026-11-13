@@ -100,7 +100,7 @@ scripts/
 │                              #   file names at most 4 VXE_* variables (more is an example with flags)
 ├── check-file-size.mjs        # no src/ file over 1200 lines, no tests/, benches/ or examples/ file over 2000
 ├── check-plan-size.mjs        # a plan's Implementation log (0055 on) stays under 150 lines, no resume notes in it
-├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
+├── test-changed.mjs           # a nextest tier, or --clippy, over -p the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
 ├── loc.mjs                    # lines of code, tests, comments, WGSL and docs per crate; the largest files
