@@ -444,8 +444,8 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
 |---|---|---|---|
 | 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](logs/0070.md)) | `7493526` (code); `3926018` (readings) |
 | 2: the stage clock per chunk, and the base re-read | dev | done; the stop rule held ([log](logs/0070.md)) | `bdca60a` (code); `6c1f9f5` (readings) |
-| 3: the rescan set dense | dev | done ([log](logs/0070.md)) | `297e7a9` (code); committed with this row (readings) |
-| 4: the light walks on change | dev | not started | |
+| 3: the rescan set dense | dev | done ([log](logs/0070.md)) | `297e7a9` (code); `56538e0` (readings) |
+| 4: the light walks on change | dev | done ([log](logs/0070.md)) | `ef0b55c` (code); committed with this row (readings) |
 | 5: the readings against the base | dev | not started | |
 | 6: the owner's window | human | not started | |
 | 7: the lines and the bookkeeping | dev | not started | |
@@ -493,6 +493,19 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
   line takes the new fields through `report::SyncSeries::line`.
 - The base's Radeon runs are at 1280x720, as in Phase 1 and Phase 5 (`live/bench.sh`), not
   the phase's 2530x1378.
+
+**Phase 4 deviations:**
+
+- `gpu_world/slot.rs` is touched: `upload_record`'s dirty mark notes the change
+  (`LightMirror::touch`) (`ef0b55c`).
+- The test switches are `#[doc(hidden)] pub` methods (`force_light_walks`,
+  `lights_ready_near_uncached`, `light_walks`), not `#[cfg(test)]` or `pub(crate)`: the test
+  is an integration test (`ef0b55c`).
+- `lights_ready_near` moved from `mod.rs` to `lights.rs`. Its cache key is (`light_epoch`, a
+  change count bumped on every change to the chunks' membership or dirty marks and at each
+  full walk), not the dirty set's change count alone (`ef0b55c`).
+- `drop_lights` notes a change only when the chunk held lists, a dirty mark or a wait
+  (`ef0b55c`).
 
 Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
