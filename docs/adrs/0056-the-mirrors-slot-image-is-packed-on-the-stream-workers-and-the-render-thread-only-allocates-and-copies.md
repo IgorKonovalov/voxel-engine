@@ -2,7 +2,7 @@
 
 > **Status:** accepted (owner, 2026-11-12, with its plan)
 > **Date:** 2026-11-12
-> **Related plan(s):** [Plan 0070](../plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+> **Related plan(s):** [Plan 0070](../plans/done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
 
 ## Context
 

@@ -1,11 +1,14 @@
 # 0070: The sync off the frame: the stage clock fixed, then the sync's measured stages cut on the render thread
 
-> **Status:** in-progress: every phase done, main merged in at `12e398a`, the gate green at the
-> tip; awaits the fresh-session close review (dev lane `plan-0070`, started 2026-11-13 at `c1d1d3f`; approved by the
-> owner, 2026-11-12: "45 after 67, 70 after 45. all draft plans can be approved"). Review question 1 answered against the recommendation: this plan starts after
+> **Status:** done (closed 2026-11-13, v0.52.0: clean; every phase done with its deviations
+> disclosed, the gate at the tip 850 of 850 in 641.7 s; the 16.6 ms goal missed as the amended
+> plan allows, `light_note` named the next stage in the backlog). Dev lane `plan-0070`, started
+> 2026-11-13 at `c1d1d3f`. Approved by the owner, 2026-11-12: "45 after 67, 70 after 45. all
+> draft plans can be approved"; the six amendment defaults confirmed by the owner on
+> 2026-11-13. Review question 1 answered against the recommendation: this plan starts after
 > Plan 0045 merges, on the split tree. Question 2 takes the recommendation: Plan 0044's Phase 4
 > is struck into this plan.
-> **Amended 2026-11-13 (orchestrator default, owner may overturn):** Phase 1's stop rule
+> **Amended 2026-11-13 (orchestrator default, confirmed by the owner the same morning):** Phase 1's stop rule
 > tripped. The worker packing (old Phases 2 and 3) is struck; the plan now fixes the stage
 > clock, then cuts the sync's measured stages in place on the render thread (`alloc`'s rescan
 > set, `light`'s per-sync walks). See "Amendment 2026-11-13" below and its owner questions.
@@ -13,12 +16,12 @@
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-11-12 (the overnight architecture review, `docs/reviews/2026-11-12-architecture-review.md`)
 > **Milestone:** M2 (a playable frame under the light that holds), cross-cutting like Plans
 > 0064 and 0067. It serves `docs/nfr.md` section 2's streaming line and section 5's residency.
-> **Related ADRs:** [ADR-0056](../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md)
+> **Related ADRs:** [ADR-0056](../../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md)
 > (proposed): where a chunk's slot words are packed. Rests on ADR-0012 and Plan 0028 (a slot is
 > the packed brick's bytes), ADR-0017 (`ChunkPrep`, the workers' hook) and ADR-0022 (the belt).
 > **Source:** Plan 0068's bench readings (`docs/plans/logs/0068.md`, Phases 2 and 4) and Plan
@@ -443,13 +446,13 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](logs/0070.md)) | `7493526` (code); `3926018` (readings) |
-| 2: the stage clock per chunk, and the base re-read | dev | done; the stop rule held ([log](logs/0070.md)) | `bdca60a` (code); `6c1f9f5` (readings) |
-| 3: the rescan set dense | dev | done ([log](logs/0070.md)) | `297e7a9` (code); `56538e0` (readings) |
-| 4: the light walks on change | dev | done ([log](logs/0070.md)) | `ef0b55c` (code); `439176c` (readings) |
-| 5: the readings against the base | dev | done; the 16.6 ms goal missed, the next stage named ([log](logs/0070.md)) | `8b64695`; tip gate `963e972` |
-| 6: the owner's window | human | done 2026-11-13: TIP slightly better fps, picture unchanged; no stop ([log](logs/0070.md)) | `c712dbf` |
-| 7: the lines and the bookkeeping | dev | done; the gate at the merged tip is in the close block ([log](logs/0070.md)) | `523b463`; merge `12e398a`; close block committed with this row |
+| 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](../logs/0070.md)) | `7493526` (code); `3926018` (readings) |
+| 2: the stage clock per chunk, and the base re-read | dev | done; the stop rule held ([log](../logs/0070.md)) | `bdca60a` (code); `6c1f9f5` (readings) |
+| 3: the rescan set dense | dev | done ([log](../logs/0070.md)) | `297e7a9` (code); `56538e0` (readings) |
+| 4: the light walks on change | dev | done ([log](../logs/0070.md)) | `ef0b55c` (code); `439176c` (readings) |
+| 5: the readings against the base | dev | done; the 16.6 ms goal missed, the next stage named ([log](../logs/0070.md)) | `8b64695`; tip gate `963e972` |
+| 6: the owner's window | human | done 2026-11-13: TIP slightly better fps, picture unchanged; no stop ([log](../logs/0070.md)) | `c712dbf` |
+| 7: the lines and the bookkeeping | dev | done; the gate at the merged tip is in the close block ([log](../logs/0070.md)) | `523b463`; merge `12e398a`; close block committed with this row |
 
 ### Notes
 
@@ -531,7 +534,7 @@ headless benches of Phase 5 never read it over 2.5 ms. Not attributed.
   walks", beside the rewritten "Slot words packed on the workers"; `docs/nfr.md` section 5
   gains a residency bullet beside section 2's note.
 
-Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
+Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](../logs/0070.md).
 
 ### Close triggers
 

@@ -256,7 +256,7 @@ leave residency short, p95 2.7 to 6.9 s at 2 to 8 ms against 0.30 s without one,
 pays only once a chunk's upload is cheaper; this entry is that cheaper upload, and the
 budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
 upload-copy ADR.
-Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
 and ADR-0056. Deferred 2026-11-13 by Plan 0070's Phase 1: the packing is about 1.5 ms of a cave
 sync p99 of 44 to 47 ms (RTX host). Read again at Plan 0070's Phase 5 (`ef0b55c`, the rescan set
 dense and the light walks on change, `hpet` clocksource): `pack + size` p99 is 2.8 to 3.1 ms of
@@ -344,6 +344,21 @@ the headlamp at its default, on (`--lamp`; off on the showcase only). The owner 
 with the lamp off. What it would take: the path's scene flags carry `--lamp off`, the tester's
 `run.json` names the lamp's state, and readings from before the change are not compared with
 ones after it. Pick up as a dev chore with the next plan that reads the tester's benches.
+
+### Five lavapipe gate tests over the 10 s line
+
+Noted 2026-11-13 at Plan 0070's close review (the gate at `94173ac`, 641.7 s, load 1.42 at the
+start and 2.27 at the end; `node scripts/test-times.mjs`). None is Plan 0070's:
+`gpu_bake::a_baked_view_is_final_on_its_first_frame` 14.2 s,
+`gpu_golden::uniform_chunks_render_identically_from_their_mips` 11.7 s,
+`gpu_golden::fsr2_golden_matches_and_rcas_is_bypassed_at_zero` 10.7 s,
+`gpu_indirect::the_channel_holds_the_lamps_bounce_only` 10.6 s and
+`gpu_queue::the_score_blends_distance_and_the_view` 10.3 s; the first two read over the line at
+Plan 0064's close too. The CPU tests over it (`castle_vector`, `showcase_vector`,
+`the_castle_path_flies_in_air`, `random_walks_on_the_level_never_freeze_or_overlap`) stay in the
+gate by the owner's rule. What it would take: mark each `#[ignore = "soak"]` or cut its fixture,
+by a reading on a quiet box. Pick up as a dev chore with the next plan that touches those
+binaries.
 
 ### Plan 0072's CI readings, owed after the push
 
