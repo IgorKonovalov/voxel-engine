@@ -211,7 +211,7 @@ five gates per plan). The owner's figure for this review was "about 610-650 s".
 - Rust 1.97.1 (`rust-toolchain.toml`), so `lld` is already the default linker on Linux; no
   linker finding.
 
-**Fix.** [Plan 0072](../plans/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md):
+**Fix.** [Plan 0072](../plans/done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md):
 read first (`cargo build --timings` cold, incremental and fresh-lane; the gate by group), then
 the dev profile's debug-info level, a narrowed per-phase gate (`-p` packages for nextest and
 clippy, not `--workspace`), the lavapipe group at 2, one compile per profile in CI, and a

@@ -66,8 +66,10 @@ For each phase, in order:
    expansion is how plans rot.
 3. **Run the done-when checks before moving on.** The gate is `cargo build`,
    `node scripts/test-changed.mjs --profile quick`, `cargo test --doc`,
-   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`, and
-   whatever the phase names (a golden image, a budget reading, a run of `apps/flythrough`).
+   `node scripts/test-changed.mjs --clippy` (clippy `--all-targets -D warnings` over the changed
+   packages and their dependents), `cargo fmt --all --check`, and whatever the phase names (a
+   golden image, a budget reading, a run of `apps/flythrough`). The tip gate and CI keep
+   `cargo clippy --workspace --all-targets -- -D warnings`.
    - **The test tiers** live in `.config/nextest.toml`; `scripts/test-changed.mjs` runs a tier
      narrowed to the crates the working tree changed and their dependents (owner, 2026-11-03:
      test what changed, iteration speed over repetition). `quick` is the CPU-only tests, takes
