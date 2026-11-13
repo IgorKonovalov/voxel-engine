@@ -356,6 +356,12 @@ Every reading against these budgets, with its machine and commit, is in
   each). A fresh worktree's first test build is 455 to
   479 s at four jobs, a third of its unit time `wasmtime` and `cranelift`
   (`docs/plans/logs/0072.md`).
+  **Reading (Plan 0072 Phase 2, 2026-11-13, 17fb491 with dependencies at `debug =
+  "line-tables-only"` and `[profile.dev] split-debuginfo = "unpacked"`, the same machine, jobs,
+  lock and scope, load 1.56 to 1.99 at the start, each in a new target dir):** the same
+  change's `cargo build` **2.4 to 2.5 s, the 10 s budget met**; its quick-tier test build 12.2
+  to 12.5 s against the base's 33.1 to 52.1 s re-read beside it; the cold test build 397.8 to
+  400.4 s against 442.4 to 493.2 s, the target dir 7.6 GB against 17.7.
 - The test gate (Plan 0043; re-cut 2026-11-03 for iteration speed, owner): a dev phase runs
   `node scripts/test-changed.mjs --profile quick` (the CPU tests of the changed crates and
   their dependents, no perf lock) and adds `--profile gpu` under the lock when the change

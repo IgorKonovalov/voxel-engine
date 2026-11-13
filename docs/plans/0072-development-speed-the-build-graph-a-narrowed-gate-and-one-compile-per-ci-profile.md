@@ -279,8 +279,8 @@ None. Configuration only: `Cargo.toml` profiles, `.config/nextest.toml`, `ci.yml
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the build graph and the gate, read | dev | done; readings in [`logs/0072.md`](logs/0072.md). Deviations: every reading at `CARGO_BUILD_JOBS=4` in a 6G scope (two lanes); the first (b), (c) and (d) series void (the probe loop touched other files; clippy's `items_after_test_module`) and re-read; the gate 700 to 794 s, over the 12 min line in two of three | committed with this row |
-| 2: the dev and test profiles pay for what they buy | dev | not started | |
+| 1: the build graph and the gate, read | dev | done; readings in [`logs/0072.md`](logs/0072.md). Deviations: every reading at `CARGO_BUILD_JOBS=4` in a 6G scope (two lanes); the first (b), (c) and (d) series void (the probe loop touched other files; clippy's `items_after_test_module`) and re-read; the gate 700 to 794 s, over the 12 min line in two of three | 17fb491 |
+| 2: the dev and test profiles pay for what they buy | dev | done; `line-tables-only` and `split-debuginfo` both kept. Deviations: `[profile.test]` not written (cargo's default already); the combined pair read after the alternated base/`lt`/`sd` rounds, not alternated with the base | committed with this row |
 | 3: the phase gate narrowed to the change | dev | not started | |
 | 4: the lavapipe group at two and three | dev | not started | |
 | 5: one compile per profile in CI | dev | not started | |
