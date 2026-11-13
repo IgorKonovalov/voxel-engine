@@ -695,3 +695,61 @@ fn the_stage_clock_reads_per_chunk_not_per_brick() {
     assert!(all.clock_reads > 0);
     assert_eq!(all.clock_reads, one.clock_reads);
 }
+
+/// The light buffer's bytes up to its high-water mark, `light_chunks()` in coordinate order
+/// and the live sample count after the first sync of a 4 x 4 x 4 chunk world of [`Mixed`]
+/// bricks whose material 2 emits, folded into one FNV-1a hash. Every record emits, so every
+/// brick written fills the emitter rescan set; the order the set is visited in is the order
+/// of each chunk's samples in the buffer.
+fn first_sync_light_hash(device: &wgpu::Device, queue: &wgpu::Queue) -> (u64, u64, usize) {
+    let mut t = MaterialTable::new();
+    t.push(Material::named("one"));
+    let mut lamp = Material::named("two");
+    lamp.emission = [1.0, 0.8, 0.5];
+    t.push(lamp);
+    let extent = ChunkExtent::new([0, 0, 0], [4, 4, 4]);
+    let world = World::generate(extent, &Mixed, &t);
+    let mut gpu = GpuWorld::with_config(device, small(Window::Fixed(extent)));
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let s = gpu.sync(&world, queue, &mut enc).unwrap();
+    queue.submit([enc.finish()]);
+    assert_eq!(s.chunks, 64);
+    assert!(s.rescan_inserts > s.bricks, "{} inserts", s.rescan_inserts);
+    let span = u64::from(gpu.light_span()) * vxe_render::internals::LIGHT_SAMPLE_BYTES;
+    let bytes = vxe_render::debug::read_buffer(device, queue, gpu.light_buffer(), 0, span);
+    let mut chunks: Vec<_> = gpu.light_chunks().collect();
+    chunks.sort_by_key(|c| c.0.0);
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    let mut eat = |b: &[u8]| {
+        for &x in b {
+            h = (h ^ u64::from(x)).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    eat(&bytes);
+    for (c, start, len, power) in &chunks {
+        for v in c.0 {
+            eat(&v.to_le_bytes());
+        }
+        eat(&start.to_le_bytes());
+        eat(&len.to_le_bytes());
+        eat(&power.to_bits().to_le_bytes());
+    }
+    eat(&gpu.light_samples().to_le_bytes());
+    (h, gpu.light_samples(), chunks.len())
+}
+
+/// The first sync's light bytes ([`first_sync_light_hash`]) are pinned: the hash was read
+/// with the emitter rescan set as a `BTreeSet<usize>` (20 391 samples in 3 chunks on
+/// lavapipe) and holds with the dense set.
+#[test]
+fn the_first_sync_lights_are_pinned() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (h, samples, chunks) = first_sync_light_hash(&device, &queue);
+    println!("light hash {h:#018x}, {samples} samples in {chunks} chunks");
+    assert!(samples > 0 && chunks > 0);
+    assert_eq!(h, FIRST_SYNC_LIGHT_HASH, "{h:#018x}");
+}
+
+const FIRST_SYNC_LIGHT_HASH: u64 = 0x5f03_1da4_af1f_6c46;

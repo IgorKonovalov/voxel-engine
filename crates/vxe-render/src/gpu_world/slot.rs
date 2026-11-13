@@ -122,6 +122,31 @@ impl<'a> Bricks<'a> {
     }
 }
 
+/// A set of a chunk's brick slots (0..[`CHUNK_BRICKS`]), one bit a slot, visited in ascending
+/// slot order. The order matters: [`GpuWorld::note_lights`] runs over it, and a chunk's light
+/// lists, so the order of its samples in the light-sample buffer, follow it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct RescanSet([u64; CHUNK_BRICKS / 64]);
+
+impl RescanSet {
+    pub(super) fn insert(&mut self, slot: usize) {
+        self.0[slot / 64] |= 1 << (slot % 64);
+    }
+
+    /// The slots held, ascending.
+    pub(super) fn iter(self) -> impl Iterator<Item = usize> {
+        self.0.into_iter().enumerate().flat_map(|(w, mut bits)| {
+            std::iter::from_fn(move || {
+                (bits != 0).then(|| {
+                    let b = bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    w * 64 + b
+                })
+            })
+        })
+    }
+}
+
 /// Whether a material of `p` satisfies `f`: its palette entries, or a `Wide` brick's ids.
 pub(super) fn materials_of(p: &Packed, f: impl Fn(MaterialId) -> bool) -> bool {
     match p.words() {
@@ -292,7 +317,7 @@ impl GpuWorld {
                             if materials_of(p, |m| self.mats.emissive[usize::from(m)]))
                 }));
         self.lap(left);
-        let mut rescan = BTreeSet::new();
+        let mut rescan = RescanSet::default();
         if !emits && !lod {
             self.drop_lights(coord);
         }
@@ -364,7 +389,7 @@ impl GpuWorld {
             // A written brick changes its own exposed voxels and those of its neighbours'
             // faces toward it.
             let left = self.lap(Stage::LightNote);
-            for &i in &rescan {
+            for i in rescan.iter() {
                 self.note_lights(coord, i, &bricks, st);
             }
             self.lap(left);
@@ -799,5 +824,53 @@ impl GpuWorld {
                 + usize::from(glass != [0; 8] && code != CLASS_WIDE) * UNIT_WORDS
         );
         if glass != [0; 8] { TRANSLUCENT_BIT } else { 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 1000 seeded insert sequences over slots 0..512, each of 1 to 64 bricks and their face
+    /// neighbours inside the chunk (the upload's pattern), with repeats: the dense set visits
+    /// the slots a `BTreeSet<usize>` visits, in its order.
+    #[test]
+    fn the_dense_rescan_set_visits_the_btree_order() {
+        let mut z = 0x0070_0003_u64;
+        let mut next = |n: u64| {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            vxe_world::hash::mix64(z) % n
+        };
+        for case in 0..1000 {
+            let mut dense = RescanSet::default();
+            let mut tree = BTreeSet::new();
+            let bricks = 1 + next(64);
+            for _ in 0..bricks {
+                // A quarter of the bricks repeat an earlier slot's neighbourhood.
+                let i = next(CHUNK_BRICKS as u64) as usize;
+                let i = if next(4) == 0 { i % 8 } else { i };
+                dense.insert(i);
+                tree.insert(i);
+                let b = brick_of_slot(i);
+                for k in 0..3 {
+                    for dir in [-1, 1] {
+                        let mut n = b;
+                        n[k] += dir;
+                        if (0..CHUNK_EDGE_BRICKS).contains(&n[k]) {
+                            dense.insert(brick_slot(n));
+                            tree.insert(brick_slot(n));
+                        }
+                    }
+                }
+            }
+            let got: Vec<usize> = dense.iter().collect();
+            let want: Vec<usize> = tree.into_iter().collect();
+            assert_eq!(got, want, "case {case}");
+        }
+        let mut edges = RescanSet::default();
+        for i in [511, 0, 63, 64, 448, 0] {
+            edges.insert(i);
+        }
+        assert_eq!(edges.iter().collect::<Vec<_>>(), [0, 63, 64, 448, 511]);
     }
 }
