@@ -920,7 +920,7 @@ some form of moving light with different colors, or should we do it later?"
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | committed with this row |
+| 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | 5bfae33 |
 | 2: Colour: the direct part in a target of its own | dev | not started | |
 | 3: The bounce flag | dev | not started | |
 | 4: The owner's window | human | not started | |
