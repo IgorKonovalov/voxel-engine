@@ -442,8 +442,8 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](logs/0070.md)) | `7493526` (code); committed with this row (readings) |
-| 2: the stage clock per chunk, and the base re-read | dev | not started (amended 2026-11-13) | |
+| 1: the sync's stages on the clock | dev | done; the stop rule tripped, the lane waits for an amendment ([log](logs/0070.md)) | `7493526` (code); `3926018` (readings) |
+| 2: the stage clock per chunk, and the base re-read | dev | done; the stop rule held ([log](logs/0070.md)) | `bdca60a` (code); committed with this row (readings) |
 | 3: the rescan set dense | dev | not started | |
 | 4: the light walks on change | dev | not started | |
 | 5: the readings against the base | dev | not started | |
@@ -482,6 +482,17 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
   Neither build is committed.
 - The stop rule tripped: `pack + size + light` is under half of the sync's p99 in the cave
   bench. Phase 2 is not started.
+
+**Phase 2 deviations:**
+
+- `place_band` reads no clock either (it is per brick in the upload's loop), so a band slot's
+  placement in the upload lands in `alloc_us` (`bdca60a`).
+- `the_sync_stages_sum_to_its_wall` no longer asserts `pack_us > 0`: `pack_us` holds only the
+  band repair, off in that test's mirror (`bdca60a`).
+- `apps/flythrough/src/run/frame.rs` and `gpu_world/lights.rs` are not changed: the `sync:`
+  line takes the new fields through `report::SyncSeries::line`.
+- The base's Radeon runs are at 1280x720, as in Phase 1 and Phase 5 (`live/bench.sh`), not
+  the phase's 2530x1378.
 
 Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
