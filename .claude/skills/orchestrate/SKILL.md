@@ -16,6 +16,11 @@ prompt.
 - Only an approved plan gets a lane, and the owner's approval is its "go": say in the prompt
   that the go stands, so the `dev` skill doesn't wait for one.
 - One worktree per plan: `git worktree add -b plan-NNNN .claude/worktrees/plan-NNNN main`.
+  Seed its `target/` from the main checkout's before the lane's first build, with no cargo
+  running there: `cp -a --reflink=always target .claude/worktrees/plan-NNNN/target` (btrfs:
+  seconds, shared blocks; the first build then compiles only the workspace's own crates, about
+  2 min against 7 to 8 cold, Plan 0072 Phase 6). It pays only when main's `target/` was built
+  at the same `Cargo.toml` profiles.
 - **Stacked lanes (owner, 2026-10-30).** "After Plan N" orders the merges, not the starts.
   When Plan N's lane is still open, start the dependent lane from N's branch tip:
   `git worktree add -b plan-MMMM .claude/worktrees/plan-MMMM plan-N`, and say in the prompt

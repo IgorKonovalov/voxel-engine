@@ -283,8 +283,8 @@ None. Configuration only: `Cargo.toml` profiles, `.config/nextest.toml`, `ci.yml
 | 2: the dev and test profiles pay for what they buy | dev | done; `line-tables-only` and `split-debuginfo` both kept. Deviations: `[profile.test]` not written (cargo's default already); the combined pair read after the alternated base/`lt`/`sd` rounds, not alternated with the base | 1626405 |
 | 3: the phase gate narrowed to the change | dev | done; `-p` per package for nextest and `--clippy`. Deviation: the warm quick tier reads 18.3 to 25.0 s against Phase 1's 30.0 to 35.5 s, but the `--workspace` form reads the same at Phase 2's profiles: on a warm tree the `-p` flags rebuild the same three packages, and the cut is Phase 2's | e34e106 |
 | 4: the lavapipe group at two and three | dev | done; N stays 1, `.config/nextest.toml` unchanged: every cell cut the wall 44 to 61 % with no failure, but in every run a `gpu_bake` test took over twice its N = 1 time. The N = 1 reference is Phase 2's single gate at the tip, not alternated | cd72a66 |
-| 5: one compile per profile in CI | dev | done in the tree; done-whens owed after the merge: the CI wall on two pushes and the fingerprint run (not readable inside the lane). Deviation: a `Script tests` step added (Phase 3's test) | committed with this row |
-| 6: a fresh lane starts warm | dev | not started | |
+| 5: one compile per profile in CI | dev | done in the tree; done-whens owed after the merge: the CI wall on two pushes and the fingerprint run (not readable inside the lane). Deviation: a `Script tests` step added (Phase 3's test) | e6cc6e6 |
+| 6: a fresh lane starts warm | dev | done; (A) the reflink seed kept, 137 to 141 s against 455 to 479. Deviations: (B) `sccache` not read once (A) met the bar; (a) cold taken from Phase 2's `lt` rows; the seed is this worktree's `target/`, not main's | committed with this row |
 
 ### Notes
 
