@@ -239,6 +239,7 @@ impl GpuWorld {
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) {
+        let left = self.lap(Stage::Copy);
         let (start, run) = &self.up.stage[k];
         let len = (run.len() / UNIT_WORDS) as u32;
         let boundary = u.is_multiple_of(self.pool.layout.units_per_shard);
@@ -250,6 +251,7 @@ impl GpuWorld {
             *start = u;
         }
         run.extend_from_slice(words);
+        self.lap(left);
     }
 
     /// Writes bin `k`'s staged run into its pool shard, and empties it.
@@ -282,6 +284,7 @@ impl GpuWorld {
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) {
+        let left = self.lap(Stage::Copy);
         let len = (self.up.rec_stage.len() / RECORD_WORDS) as u32;
         if len > 0 && (rec != self.up.rec_start + len || len >= STAGE_RECORDS) {
             self.flush_records(enc, st);
@@ -293,6 +296,7 @@ impl GpuWorld {
         self.up
             .rec_stage
             .extend_from_slice(&self.recs.entries[base..base + RECORD_WORDS]);
+        self.lap(left);
     }
 
     pub(super) fn flush_records(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {

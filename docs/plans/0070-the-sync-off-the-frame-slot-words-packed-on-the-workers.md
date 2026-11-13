@@ -306,7 +306,7 @@ A figure without a measurement above is a proposal; Phase 4 reads it, Phase 6 wr
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the sync's stages on the clock | dev | not started | |
+| 1: the sync's stages on the clock | dev | in progress: code at the checkpoint, readings 1 of 12 ([log](logs/0070.md)) | committed with this row |
 | 2: the slot image on the workers | dev | not started | |
 | 3: the edit path re-packs dirty bricks only | dev | not started | |
 | 4: the readings, both modes alternated | dev | not started | |

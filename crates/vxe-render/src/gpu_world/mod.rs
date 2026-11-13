@@ -143,21 +143,13 @@ fn wall_clock() -> SyncClock {
     Box::new(move |_| start.elapsed())
 }
 
-/// The render thread's light-extraction timer (`SyncStats::light_us`); no simulation reads it.
+/// The render thread's stage clock's reading ([`SyncStats`]'s `*_us`); no simulation reads it.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the render thread times its light extraction for the streaming line's readings"
+    reason = "the render thread times the sync's stages for the streaming line's readings"
 )]
 fn stopwatch() -> std::time::Instant {
     std::time::Instant::now()
-}
-
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the render thread times its light extraction for the streaming line's readings"
-)]
-fn micros_since(t: std::time::Instant) -> u64 {
-    t.elapsed().as_micros() as u64
 }
 
 /// Why a sync could not complete.
@@ -188,13 +180,34 @@ impl std::fmt::Display for MirrorError {
 impl std::error::Error for MirrorError {}
 
 /// What one `sync` did.
+///
+/// The `*_us` fields split the sync's wall time on the render thread by stage, in
+/// microseconds, read on the wall clock: every moment between the sync's start and its return
+/// is in exactly one of them, so they sum to the sync's wall. `select_us`: the window's moves,
+/// the dirty set and the walk of the pending set; `size_us`: `need`, a chunk's solid masks,
+/// bands and slot sizes, at selection and again as the upload's backstop; `pack_us`: the
+/// bricks' slot words and the band slots; `light_us`: the emissive scans (which records hold
+/// an emitter, the exposed voxels of the bricks written) and the light-sample ranges' rebuild
+/// and writes; `copy_us`: the staged runs, the records' and table's runs and their staging-belt
+/// copies; `alloc_us`: the upload's chunk locks, the allocator's fit and frees, and each
+/// record's entries and table entry. `lock_us` is the part of `select_us` and `alloc_us` spent
+/// acquiring chunk locks, the one wait on other threads (a worker or the bake reading the
+/// chunk).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SyncStats {
-    /// `Full` bricks scanned for exposed emissive voxels, light samples written, and the
-    /// render thread's time in that scan and the ranges' rebuild, in microseconds.
+    pub select_us: u64,
+    pub size_us: u64,
+    pub pack_us: u64,
+    pub light_us: u64,
+    pub copy_us: u64,
+    pub alloc_us: u64,
+    pub lock_us: u64,
+    /// Slots whose words this sync packed from a brick on the render thread: a `Full` brick's
+    /// slot, a uniform band brick's, and a `Full` brick's slot re-packed for a moved band.
+    pub packed_bricks: u64,
+    /// `Full` bricks scanned for exposed emissive voxels, and light samples written.
     pub light_bricks: u64,
     pub light_samples: u64,
-    pub light_us: u64,
     /// Ranges evicted to fit a nearer chunk, chunks left without a range because nothing
     /// farther could be evicted, and the syncs the oldest chunk inside the light radius has
     /// waited for its range.
@@ -293,6 +306,7 @@ pub struct GpuWorld {
     /// The queue of the last `sync`, which writes the field pass's uniform and work list.
     queue: Option<wgpu::Queue>,
     clock: SyncTimer,
+    stages: StageClock,
     window: WindowQueue,
     pool: PoolAlloc,
     recs: Records,
@@ -347,6 +361,7 @@ impl GpuWorld {
             cfg,
             queue: None,
             clock: SyncTimer::new(),
+            stages: StageClock::new(),
             window: WindowQueue::new(window_min, window_size, focus, n),
             pool: PoolAlloc::new(layout),
             recs: Records::new(layout.reserved_records),
@@ -885,10 +900,20 @@ impl GpuWorld {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<SyncStats, MirrorError> {
+        self.stages.start();
         self.clock.start = (self.clock.read)(SyncPoint::Start);
         let result = self.sync_into(world, queue, encoder);
+        self.lap(Stage::Copy);
         self.up.belt.finish(encoder);
-        result
+        result.map(|mut st| {
+            self.stages.stop(&mut st);
+            st
+        })
+    }
+
+    /// Switches the sync's stage clock to `s`, returning the stage left ([`StageClock::lap`]).
+    fn lap(&mut self, s: Stage) -> Stage {
+        self.stages.lap(s)
     }
 
     fn sync_into(
@@ -902,7 +927,9 @@ impl GpuWorld {
             self.queue = Some(queue.clone());
         }
         self.reconcile_window(world);
+        self.lap(Stage::Light);
         self.flush_dropped_lights(enc);
+        self.lap(Stage::Select);
         for c in world.store().take_dirty() {
             self.forget_size(c);
             if self.in_window(c) {
@@ -924,8 +951,10 @@ impl GpuWorld {
             self.mats.read(world.materials());
         }
         let mut short = short;
+        self.lap(Stage::Alloc);
         let mut result = self.upload(world, &mut short, enc, &mut st);
         if result.is_ok() {
+            self.lap(Stage::Pack);
             result = self.fix_band(world, enc, &mut st);
         }
         if result.is_ok()
@@ -937,14 +966,15 @@ impl GpuWorld {
             // that writes.
             return Err(e);
         }
+        self.lap(Stage::Copy);
         if !self.mats.written {
             let table = self.mats.rows_from.take();
             self.write_materials(table.as_ref().unwrap_or(world.materials()), enc, &mut st);
             self.mats.written = true;
         }
-        let t = stopwatch();
+        self.lap(Stage::Light);
         self.place_lights(enc, &mut st);
-        st.light_us += micros_since(t);
+        self.lap(Stage::Copy);
         // Staged runs are written even after a failed allocation: their records name them.
         for k in 0..BIN_COUNT {
             self.flush_stage(k, enc, &mut st);

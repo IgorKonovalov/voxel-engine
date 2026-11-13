@@ -59,6 +59,30 @@ impl Run {
         // empty sync (nothing fit) is an error that wrote nothing. The pressure rule below
         // lowers the radius until they fit.
         let tick = stream.streamer.ticks();
+        stream.last_sync = synced.ok();
+        if let Some(s) = &stream.last_sync {
+            stream.sync_line.push(s);
+            self.hud.run.sync.push(s);
+            if let (Some(rec), Some(p)) = (self.recorder.as_mut(), self.player.as_ref()) {
+                rec.push_sync(p.clock_s, s);
+            }
+        }
+        // The `sync:` line: the syncs' stages since the last, once a second of wall time in a
+        // window or once every 60 frames headless, as the queue's lines.
+        let t_ms = ms_since(self.start);
+        let due = if self.args.headless {
+            self.frame >= stream.sync_line_frame + 60
+        } else {
+            t_ms - stream.sync_line_ms >= 1000.0
+        };
+        if due {
+            if let Some(line) = stream.sync_line.line() {
+                println!("sync: at {:.1} s, frame {}, {line}", t_ms / 1e3, self.frame);
+            }
+            stream.sync_line.clear();
+            stream.sync_line_ms = t_ms;
+            stream.sync_line_frame = self.frame;
+        }
         let (deferred, empty, error) = match synced {
             Ok(s) => {
                 self.hud.sync = (s, sync_ms);

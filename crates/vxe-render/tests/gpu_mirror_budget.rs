@@ -604,3 +604,50 @@ fn a_sync_spent_while_sizing_keeps_what_it_sized() {
     }
     assert!(read(split.records()) == read(whole.records()));
 }
+
+/// The first sync of a 4 x 4 x 4 chunk world of [`Mixed`] bricks, timed on the wall clock
+/// around the call: its six stages (`select_us` to `alloc_us`, on the mirror's stage clock)
+/// sum to within 10 % of that wall, every stage the sync ran is in one of them, and
+/// `packed_bricks` is the world's `Full` brick count (each packed once on the render thread).
+#[test]
+fn the_sync_stages_sum_to_its_wall() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [4, 4, 4]);
+    let world = World::generate(extent, &Mixed, &mixed_table());
+    let coords = world.store().coords();
+    assert_eq!(coords.len(), 64);
+    let full = full_bricks(&world, &coords);
+    assert!(full > 1000, "the world holds {full} Full bricks");
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(extent)));
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the test reads the sync's wall against its stage clock"
+    )]
+    let (s, wall_us) = {
+        let t = std::time::Instant::now();
+        let s = gpu.sync(&world, &queue, &mut enc).unwrap();
+        (s, t.elapsed().as_micros() as u64)
+    };
+    queue.submit([enc.finish()]);
+    assert_eq!(s.chunks, 64);
+    let stages = [
+        s.select_us,
+        s.size_us,
+        s.pack_us,
+        s.light_us,
+        s.copy_us,
+        s.alloc_us,
+    ];
+    let sum: u64 = stages.iter().sum();
+    println!("wall {wall_us} us, stages {stages:?}, sum {sum} us");
+    assert!(
+        sum.abs_diff(wall_us) * 10 <= wall_us,
+        "stages {stages:?} sum to {sum} us against a wall of {wall_us} us"
+    );
+    assert!(s.size_us > 0 && s.pack_us > 0 && s.copy_us > 0 && s.alloc_us > 0);
+    assert_eq!(s.packed_bricks, u64::from(full));
+    assert_eq!(s.bricks, u64::from(full));
+}

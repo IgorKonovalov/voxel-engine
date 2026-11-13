@@ -10,6 +10,7 @@ use flythrough::path::{
     CASTLE, CAVE, CameraPath, Controls, Drive, Keyframe, PATH_SEED, PATHS, PathMode, PathPlayer,
     SHOWCASE, Scene, TesterAction, TesterInput, key, tester_action,
 };
+use flythrough::report::{Recorder, RunReport, json};
 use flythrough::showcase::ShowcaseSource;
 use vxe_app::{KeyCode, MouseButton};
 use vxe_world::{AIR, Chunk, ChunkCoord, MaterialId, VoxelCoord, WorldSource};
@@ -332,4 +333,93 @@ fn the_window_input_reads_into_controls() {
     input.end_frame();
     input.key_down(KeyCode::Escape);
     assert!(Controls::read(&input).escape);
+}
+
+/// A report written from a fixed series of syncs: 3 in the warm-up with every stage at 9000
+/// us, then 100 whose `pack_us` runs 1 to 100 in a shuffled order (`(37 k mod 100) + 1`),
+/// `size_us` 2 k + 2 for the same k, the other four stages 1 us each and `packed_bricks`
+/// 10 k, `lock_us` k mod 7. `run.json`'s `streaming` holds the 100 measured syncs only: `pack_us` p50 50, p95 95,
+/// p99 99, max 100; `size_us` p50 100 (the 50th of 2..=200 step 2); `sync_us` p50 154 (the
+/// sum's 50th: 3 k + 4 of k = 50; the lock wait is inside the stages, not added);
+/// `packed_bricks` p50 500 and max 1000; `lock_us` max 6.
+#[test]
+fn run_json_carries_the_streaming_stages() {
+    let mut rec = Recorder::for_path(10.0);
+    let warm = vxe_render::SyncStats {
+        select_us: 9000,
+        size_us: 9000,
+        pack_us: 9000,
+        light_us: 9000,
+        copy_us: 9000,
+        alloc_us: 9000,
+        packed_bricks: 9000,
+        ..Default::default()
+    };
+    for i in 0..3 {
+        rec.push_sync(i as f32 * 0.5, &warm);
+    }
+    for i in 0..100u64 {
+        let k = (37 * i) % 100 + 1;
+        let s = vxe_render::SyncStats {
+            select_us: 1,
+            size_us: 2 * k,
+            pack_us: k,
+            light_us: 1,
+            copy_us: 1,
+            alloc_us: 1,
+            packed_bricks: 10 * k,
+            lock_us: k % 7,
+            ..Default::default()
+        };
+        rec.push_sync(3.0 + i as f32 * 0.01, &s);
+    }
+    let mut r = RunReport {
+        version: "0.0.0",
+        commit: "abc",
+        scene: "cave",
+        path: "cave",
+        mode: "bench",
+        output: [1280, 720],
+        internal: [853, 480],
+        internal_scale: "1.5",
+        upscaler: "fsr2",
+        adapter: None,
+        path_s: 10.0,
+        frames: 0,
+        warmup_frames: 0,
+        warmup_s: 0.0,
+        wall_ms: None,
+        cpu_ms: None,
+        gpu_ms: None,
+        over_33ms: 0,
+        over_100ms: 0,
+        peak_rss_bytes: None,
+        streaming: None,
+        ended: "completed",
+    };
+    rec.fill(&mut r);
+    let v = json::parse(&r.to_json()).expect("run.json parses");
+    let num = |path: &[&str]| -> f64 {
+        let mut x = &v;
+        for k in path {
+            x = x.get(k).unwrap_or_else(|| panic!("no {path:?}"));
+        }
+        x.as_f64()
+            .unwrap_or_else(|| panic!("{path:?} is not a number"))
+    };
+    assert_eq!(num(&["streaming", "frames"]), 100.0);
+    assert_eq!(num(&["streaming", "pack_us", "p50"]), 50.0);
+    assert_eq!(num(&["streaming", "pack_us", "p95"]), 95.0);
+    assert_eq!(num(&["streaming", "pack_us", "p99"]), 99.0);
+    assert_eq!(num(&["streaming", "pack_us", "max"]), 100.0);
+    assert_eq!(num(&["streaming", "size_us", "p50"]), 100.0);
+    assert_eq!(num(&["streaming", "select_us", "max"]), 1.0);
+    assert_eq!(num(&["streaming", "light_us", "p99"]), 1.0);
+    assert_eq!(num(&["streaming", "copy_us", "p50"]), 1.0);
+    assert_eq!(num(&["streaming", "alloc_us", "max"]), 1.0);
+    assert_eq!(num(&["streaming", "sync_us", "p50"]), 154.0);
+    assert_eq!(num(&["streaming", "sync_us", "max"]), 304.0);
+    assert_eq!(num(&["streaming", "packed_bricks", "p50"]), 500.0);
+    assert_eq!(num(&["streaming", "packed_bricks", "max"]), 1000.0);
+    assert_eq!(num(&["streaming", "lock_us", "max"]), 6.0);
 }
