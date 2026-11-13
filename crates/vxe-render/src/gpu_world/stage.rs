@@ -239,7 +239,6 @@ impl GpuWorld {
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) {
-        let left = self.lap(Stage::Copy);
         let (start, run) = &self.up.stage[k];
         let len = (run.len() / UNIT_WORDS) as u32;
         let boundary = u.is_multiple_of(self.pool.layout.units_per_shard);
@@ -251,7 +250,6 @@ impl GpuWorld {
             *start = u;
         }
         run.extend_from_slice(words);
-        self.lap(left);
     }
 
     /// Writes bin `k`'s staged run into its pool shard, and empties it.

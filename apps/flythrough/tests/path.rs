@@ -341,7 +341,9 @@ fn the_window_input_reads_into_controls() {
 /// 10 k, `lock_us` k mod 7. `run.json`'s `streaming` holds the 100 measured syncs only: `pack_us` p50 50, p95 95,
 /// p99 99, max 100; `size_us` p50 100 (the 50th of 2..=200 step 2); `sync_us` p50 154 (the
 /// sum's 50th: 3 k + 4 of k = 50; the lock wait is inside the stages, not added);
-/// `packed_bricks` p50 500 and max 1000; `lock_us` max 6.
+/// `packed_bricks` p50 500 and max 1000; `lock_us` max 6. The fields past the six stages
+/// (not in `sync_us`'s sum): `light_place_us` k mod 3 (max 2), `light_note_us` 3 k (p50 150),
+/// `rescan_inserts` 7 k (p99 693, max 700), `clock_reads` 40 + k mod 5 (p50 42, max 44).
 #[test]
 fn run_json_carries_the_streaming_stages() {
     let mut rec = Recorder::for_path(10.0);
@@ -369,6 +371,10 @@ fn run_json_carries_the_streaming_stages() {
             alloc_us: 1,
             packed_bricks: 10 * k,
             lock_us: k % 7,
+            light_place_us: k % 3,
+            light_note_us: 3 * k,
+            rescan_inserts: 7 * k,
+            clock_reads: 40 + k % 5,
             ..Default::default()
         };
         rec.push_sync(3.0 + i as f32 * 0.01, &s);
@@ -422,4 +428,10 @@ fn run_json_carries_the_streaming_stages() {
     assert_eq!(num(&["streaming", "packed_bricks", "p50"]), 500.0);
     assert_eq!(num(&["streaming", "packed_bricks", "max"]), 1000.0);
     assert_eq!(num(&["streaming", "lock_us", "max"]), 6.0);
+    assert_eq!(num(&["streaming", "light_place_us", "max"]), 2.0);
+    assert_eq!(num(&["streaming", "light_note_us", "p50"]), 150.0);
+    assert_eq!(num(&["streaming", "rescan_inserts", "p99"]), 693.0);
+    assert_eq!(num(&["streaming", "rescan_inserts", "max"]), 700.0);
+    assert_eq!(num(&["streaming", "clock_reads", "p50"]), 42.0);
+    assert_eq!(num(&["streaming", "clock_reads", "max"]), 44.0);
 }

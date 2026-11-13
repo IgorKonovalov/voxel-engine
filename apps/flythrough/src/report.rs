@@ -111,9 +111,10 @@ pub struct RunReport {
 }
 
 /// The fields of [`SyncSeries`], in order: the sync's wall on the stage clock (the six stages'
-/// sum), its six stages in microseconds ([`SyncStats`]'s `*_us`), the slots it packed, and the
-/// chunk locks' wait (a part of `select_us` and `alloc_us`).
-pub const SYNC_FIELDS: [&str; 9] = [
+/// sum), its six stages in microseconds ([`SyncStats`]'s `*_us`), the slots it packed, the
+/// chunk locks' wait (a part of `select_us` and `alloc_us`), `light_us`'s two parts, the
+/// rescan set's inserts and the stage clock's reads.
+pub const SYNC_FIELDS: [&str; SYNC_N] = [
     "sync_us",
     "select_us",
     "size_us",
@@ -123,10 +124,17 @@ pub const SYNC_FIELDS: [&str; 9] = [
     "alloc_us",
     "packed_bricks",
     "lock_us",
+    "light_place_us",
+    "light_note_us",
+    "rescan_inserts",
+    "clock_reads",
 ];
 
+/// Entries of [`SYNC_FIELDS`].
+pub const SYNC_N: usize = 13;
+
 /// One value per [`SYNC_FIELDS`] entry of a sync.
-pub fn sync_values(s: &SyncStats) -> [f64; 9] {
+pub fn sync_values(s: &SyncStats) -> [f64; SYNC_N] {
     let stages = [
         s.select_us,
         s.size_us,
@@ -135,13 +143,17 @@ pub fn sync_values(s: &SyncStats) -> [f64; 9] {
         s.copy_us,
         s.alloc_us,
     ];
-    let mut v = [0.0; 9];
+    let mut v = [0.0; SYNC_N];
     v[0] = stages.iter().sum::<u64>() as f64;
     for (k, &x) in stages.iter().enumerate() {
         v[k + 1] = x as f64;
     }
     v[7] = s.packed_bricks as f64;
     v[8] = s.lock_us as f64;
+    v[9] = s.light_place_us as f64;
+    v[10] = s.light_note_us as f64;
+    v[11] = s.rescan_inserts as f64;
+    v[12] = s.clock_reads as f64;
     v
 }
 
@@ -149,7 +161,7 @@ pub fn sync_values(s: &SyncStats) -> [f64; 9] {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SyncPercentiles {
     pub frames: u32,
-    pub fields: [Percentiles; 9],
+    pub fields: [Percentiles; SYNC_N],
 }
 
 impl SyncPercentiles {
@@ -166,7 +178,7 @@ impl SyncPercentiles {
 /// per-second `sync:` line's, the `frames:` exit line's, the autopilot's and `run.json`'s.
 #[derive(Clone, Debug, Default)]
 pub struct SyncSeries {
-    series: [Series; 9],
+    series: [Series; SYNC_N],
     frames: u32,
 }
 
@@ -196,7 +208,7 @@ impl SyncSeries {
 
     /// The percentiles of each series; `None` before the first sync.
     pub fn percentiles(&self) -> Option<SyncPercentiles> {
-        let mut fields = [Percentiles::default(); 9];
+        let mut fields = [Percentiles::default(); SYNC_N];
         for (f, s) in fields.iter_mut().zip(&self.series) {
             *f = Percentiles::of(&mut s.v.clone())?;
         }
@@ -206,8 +218,9 @@ impl SyncSeries {
         })
     }
 
-    /// `sync p50/p99 A/B us: select A/B, size A/B, ...; packed bricks A/B; lock wait A/B` over
-    /// the syncs held, `None` before the first.
+    /// `sync p50/p99 A/B us: select A/B, size A/B, ...; light place A/B, note A/B; packed
+    /// bricks A/B; lock wait A/B; rescan inserts A/B; clock reads A/B` over the syncs held,
+    /// `None` before the first.
     pub fn line(&self) -> Option<String> {
         let p = self.percentiles()?;
         let mut out = String::new();
@@ -224,8 +237,20 @@ impl SyncSeries {
         }
         let _ = write!(
             out,
-            " packed bricks {:.0}/{:.0}; lock wait {:.0}/{:.0}",
-            f[7].p50, f[7].p99, f[8].p50, f[8].p99
+            " light place {:.0}/{:.0}, note {:.0}/{:.0}; packed bricks {:.0}/{:.0}; lock wait \
+             {:.0}/{:.0}; rescan inserts {:.0}/{:.0}; clock reads {:.0}/{:.0}",
+            f[9].p50,
+            f[9].p99,
+            f[10].p50,
+            f[10].p99,
+            f[7].p50,
+            f[7].p99,
+            f[8].p50,
+            f[8].p99,
+            f[11].p50,
+            f[11].p99,
+            f[12].p50,
+            f[12].p99
         );
         Some(out)
     }

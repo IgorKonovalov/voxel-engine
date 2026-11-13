@@ -71,26 +71,36 @@ pub(super) enum Stage {
     Select,
     /// `need`: a chunk's solid masks, bands and slot sizes.
     Size,
-    /// A brick's slot words, and the band slots' words and repair.
+    /// The band repair's pass over the bricks around this sync's writes.
     Pack,
-    /// The emissive scans and the light-sample ranges.
-    Light,
-    /// The staged runs and their belt copies.
+    /// Per sync and per record: the light-sample ranges' rebuild and writes, the dropped
+    /// ranges' flush and each record's emissive check.
+    LightPlace,
+    /// Per record: the exposed emitters of the bricks a write reaches.
+    LightNote,
+    /// The records' and table's runs and the staging-belt copies.
     Copy,
-    /// Records, slots and the record's entries and table entry.
+    /// The upload's brick loop: slots packed, allocated and staged, the record's entries.
     Alloc,
 }
+
+/// Stages of [`Stage`].
+const STAGES: usize = 7;
 
 /// The sync's wall time split by [`Stage`]: each switch ([`StageClock::lap`]) adds the time
 /// since the last switch to the stage it leaves, so the stages of one sync sum to the time
 /// between its `start` and its `stop`. Read on the wall clock, never the injectable
-/// [`SyncClock`]: these are readings, not budgets.
+/// [`SyncClock`]: these are readings, not budgets. The clock is read per pass, per chunk or
+/// per record, never per brick: a read can cost microseconds (an `hpet` clocksource), which a
+/// lap per brick would add to the stage it times.
 pub(super) struct StageClock {
     at: std::time::Instant,
     cur: Stage,
-    ns: [u64; 6],
+    ns: [u64; STAGES],
     /// Time spent acquiring chunk locks, inside the stage that took them.
     lock_ns: u64,
+    /// Clock reads since `start`.
+    reads: u64,
 }
 
 impl StageClock {
@@ -98,8 +108,9 @@ impl StageClock {
         Self {
             at: stopwatch(),
             cur: Stage::Select,
-            ns: [0; 6],
+            ns: [0; STAGES],
             lock_ns: 0,
+            reads: 1,
         }
     }
 
@@ -111,6 +122,7 @@ impl StageClock {
     /// Switches to `s`, returning the stage left, for the caller to switch back to.
     pub(super) fn lap(&mut self, s: Stage) -> Stage {
         let now = stopwatch();
+        self.reads += 1;
         self.ns[self.cur as usize] += now.duration_since(self.at).as_nanos() as u64;
         self.at = now;
         std::mem::replace(&mut self.cur, s)
@@ -122,6 +134,7 @@ impl StageClock {
         let t = stopwatch();
         let g = take().unwrap_or_else(PoisonError::into_inner);
         self.lock_ns += stopwatch().duration_since(t).as_nanos() as u64;
+        self.reads += 2;
         g
     }
 
@@ -132,10 +145,13 @@ impl StageClock {
         st.select_us = us(Stage::Select);
         st.size_us = us(Stage::Size);
         st.pack_us = us(Stage::Pack);
-        st.light_us = us(Stage::Light);
+        st.light_place_us = us(Stage::LightPlace);
+        st.light_note_us = us(Stage::LightNote);
+        st.light_us = st.light_place_us + st.light_note_us;
         st.copy_us = us(Stage::Copy);
         st.alloc_us = us(Stage::Alloc);
         st.lock_us = self.lock_ns / 1000;
+        st.clock_reads = self.reads;
     }
 }
 

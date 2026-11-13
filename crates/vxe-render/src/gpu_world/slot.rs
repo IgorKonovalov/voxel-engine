@@ -283,7 +283,7 @@ impl GpuWorld {
         let every = new;
         // The record has held an emissive material while mirrored: without one no brick of it
         // has an emitter.
-        let left = self.lap(Stage::Light);
+        let left = self.lap(Stage::LightPlace);
         let emits = !lod
             && (kept_emits
                 || (0..bricks.len()).any(|i| {
@@ -346,6 +346,7 @@ impl GpuWorld {
             }
             if emits {
                 rescan.insert(i);
+                st.rescan_inserts += 1;
                 let b = brick_of_slot(i);
                 for k in 0..3 {
                     for dir in [-1, 1] {
@@ -353,6 +354,7 @@ impl GpuWorld {
                         n[k] += dir;
                         if (0..CHUNK_EDGE_BRICKS).contains(&n[k]) {
                             rescan.insert(brick_slot(n));
+                            st.rescan_inserts += 1;
                         }
                     }
                 }
@@ -361,7 +363,7 @@ impl GpuWorld {
         if !lod {
             // A written brick changes its own exposed voxels and those of its neighbours'
             // faces toward it.
-            let left = self.lap(Stage::Light);
+            let left = self.lap(Stage::LightNote);
             for &i in &rescan {
                 self.note_lights(coord, i, &bricks, st);
             }
@@ -561,7 +563,6 @@ impl GpuWorld {
         };
         let header = ptr.zip(mask.as_ref());
         let mut words = std::mem::take(&mut self.up.slot_words);
-        let left = self.lap(Stage::Pack);
         let packed = match brick {
             Brick::Full(p) => Some((self.fill_slot(p, header, &mut words), class_code(p.class()))),
             Brick::Uniform(m) if ptr.is_some() => Some((
@@ -570,7 +571,6 @@ impl GpuWorld {
             )),
             Brick::Uniform(_) => None,
         };
-        self.lap(left);
         st.packed_bricks += u64::from(packed.is_some());
         let (flag, code) = match (packed, brick) {
             (Some(p), _) => p,
@@ -620,21 +620,6 @@ impl GpuWorld {
     /// freed, its mask staged with zeroed counts and the slot listed for the field pass; without
     /// one, its slot freed. Returns the slot's first unit.
     pub(super) fn place_band(
-        &mut self,
-        coord: ChunkCoord,
-        slot: usize,
-        mask: Option<[u64; 8]>,
-        enc: &mut wgpu::CommandEncoder,
-        st: &mut SyncStats,
-    ) -> Result<Option<u32>, MirrorError> {
-        let left = self.lap(Stage::Pack);
-        let r = self.place_band_words(coord, slot, mask, enc, st);
-        self.lap(left);
-        r
-    }
-
-    /// [`GpuWorld::place_band`]'s work, on the stage clock's [`Stage::Pack`].
-    fn place_band_words(
         &mut self,
         coord: ChunkCoord,
         slot: usize,

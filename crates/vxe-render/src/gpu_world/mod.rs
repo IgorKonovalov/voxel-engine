@@ -183,25 +183,38 @@ impl std::error::Error for MirrorError {}
 ///
 /// The `*_us` fields split the sync's wall time on the render thread by stage, in
 /// microseconds, read on the wall clock: every moment between the sync's start and its return
-/// is in exactly one of them, so they sum to the sync's wall. `select_us`: the window's moves,
-/// the dirty set and the walk of the pending set; `size_us`: `need`, a chunk's solid masks,
-/// bands and slot sizes, at selection and again as the upload's backstop; `pack_us`: the
-/// bricks' slot words and the band slots; `light_us`: the emissive scans (which records hold
-/// an emitter, the exposed voxels of the bricks written) and the light-sample ranges' rebuild
-/// and writes; `copy_us`: the staged runs, the records' and table's runs and their staging-belt
-/// copies; `alloc_us`: the upload's chunk locks, the allocator's fit and frees, and each
-/// record's entries and table entry. `lock_us` is the part of `select_us` and `alloc_us` spent
-/// acquiring chunk locks, the one wait on other threads (a worker or the bake reading the
-/// chunk).
+/// is in exactly one of `select_us`, `size_us`, `pack_us`, `light_us`, `copy_us` and
+/// `alloc_us`, so they sum to the sync's wall. `select_us`: the window's moves, the dirty set
+/// and the walk of the pending set; `size_us`: `need`, a chunk's solid masks, bands and slot
+/// sizes, at selection and again as the upload's backstop; `pack_us`: the band repair's pass
+/// over the bricks around this sync's writes (no time without the field's band slots);
+/// `light_us`: `light_place_us` plus `light_note_us`; `copy_us`: the records' and table's runs
+/// and the staging-belt copies; `alloc_us`: the upload's brick loop (each brick's slot words
+/// packed, its slot and band slot allocated and staged, the emitter rescan set filled), the
+/// chunk locks, the allocator's fit and frees, and each record's entries and table entry.
+/// The clock is read per pass, chunk or record, never per brick (`clock_reads`).
+/// `lock_us` is the part of `select_us` and `alloc_us` spent acquiring chunk locks, the one
+/// wait on other threads (a worker or the bake reading the chunk).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SyncStats {
     pub select_us: u64,
     pub size_us: u64,
     pub pack_us: u64,
     pub light_us: u64,
+    /// The per-sync part of `light_us`: the light-sample ranges' release, rebuild and writes,
+    /// the dropped ranges' flush, and each record's emissive check.
+    pub light_place_us: u64,
+    /// The per-chunk part of `light_us`: the exposed emitters of the bricks in each written
+    /// record's rescan set.
+    pub light_note_us: u64,
     pub copy_us: u64,
     pub alloc_us: u64,
     pub lock_us: u64,
+    /// Bricks inserted into the written records' emitter rescan sets, repeats counted: a
+    /// written brick and each of its face neighbours inside the chunk, in a record that emits.
+    pub rescan_inserts: u64,
+    /// Reads of the stage clock in this sync.
+    pub clock_reads: u64,
     /// Slots whose words this sync packed from a brick on the render thread: a `Full` brick's
     /// slot, a uniform band brick's, and a `Full` brick's slot re-packed for a moved band.
     pub packed_bricks: u64,
@@ -927,7 +940,7 @@ impl GpuWorld {
             self.queue = Some(queue.clone());
         }
         self.reconcile_window(world);
-        self.lap(Stage::Light);
+        self.lap(Stage::LightPlace);
         self.flush_dropped_lights(enc);
         self.lap(Stage::Select);
         for c in world.store().take_dirty() {
@@ -972,7 +985,7 @@ impl GpuWorld {
             self.write_materials(table.as_ref().unwrap_or(world.materials()), enc, &mut st);
             self.mats.written = true;
         }
-        self.lap(Stage::Light);
+        self.lap(Stage::LightPlace);
         self.place_lights(enc, &mut st);
         self.lap(Stage::Copy);
         // Staged runs are written even after a failed allocation: their records name them.

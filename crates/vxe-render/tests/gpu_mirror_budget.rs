@@ -607,7 +607,8 @@ fn a_sync_spent_while_sizing_keeps_what_it_sized() {
 
 /// The first sync of a 4 x 4 x 4 chunk world of [`Mixed`] bricks, timed on the wall clock
 /// around the call: its six stages (`select_us` to `alloc_us`, on the mirror's stage clock)
-/// sum to within 10 % of that wall, every stage the sync ran is in one of them, and
+/// sum to within 10 % of that wall, every stage the sync ran is in one of them (`pack_us`
+/// holds only the band repair, off here), `light_us` is its two parts' sum, and
 /// `packed_bricks` is the world's `Full` brick count (each packed once on the render thread).
 #[test]
 fn the_sync_stages_sum_to_its_wall() {
@@ -647,7 +648,50 @@ fn the_sync_stages_sum_to_its_wall() {
         sum.abs_diff(wall_us) * 10 <= wall_us,
         "stages {stages:?} sum to {sum} us against a wall of {wall_us} us"
     );
-    assert!(s.size_us > 0 && s.pack_us > 0 && s.copy_us > 0 && s.alloc_us > 0);
+    assert!(s.size_us > 0 && s.copy_us > 0 && s.alloc_us > 0);
+    assert_eq!(s.light_place_us + s.light_note_us, s.light_us);
     assert_eq!(s.packed_bricks, u64::from(full));
     assert_eq!(s.bricks, u64::from(full));
+}
+
+/// One [`Checker`] brick at slot 0 of each chunk, air elsewhere.
+struct OneFull;
+
+impl WorldSource for OneFull {
+    fn chunk(&self, _: ChunkCoord, out: &mut Chunk) {
+        out.set_brick(0, Brick::from_fn(|l| 1 + ((l[0] + l[1] + l[2]) % 2) as u16));
+    }
+}
+
+/// The stage clock reads per chunk and per pass, never per brick: the first syncs of two
+/// 2 x 2 x 2 chunk worlds, one of 512 `Full` bricks a chunk ([`Checker`]) and one of a single
+/// `Full` brick a chunk ([`OneFull`]), read the clock the same number of times.
+#[test]
+fn the_stage_clock_reads_per_chunk_not_per_brick() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    fn first<S: WorldSource + Sync>(
+        src: &S,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> vxe_render::SyncStats {
+        let extent = ChunkExtent::new([0, 0, 0], [2, 2, 2]);
+        let world = World::generate(extent, src, &numbered_table(2));
+        let mut gpu = GpuWorld::with_config(device, small(Window::Fixed(extent)));
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let s = gpu.sync(&world, queue, &mut enc).unwrap();
+        queue.submit([enc.finish()]);
+        s
+    }
+    let all = first(&Checker, &device, &queue);
+    let one = first(&OneFull, &device, &queue);
+    println!(
+        "clock reads: every brick Full {}, one a chunk {}",
+        all.clock_reads, one.clock_reads
+    );
+    assert_eq!((all.chunks, one.chunks), (8, 8));
+    assert_eq!((all.packed_bricks, one.packed_bricks), (8 * 512, 8));
+    assert!(all.clock_reads > 0);
+    assert_eq!(all.clock_reads, one.clock_reads);
 }
