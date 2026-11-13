@@ -480,7 +480,7 @@ fn the_banner_names_the_queue_order_and_its_weights() {
     };
     let check = |(banner, row): (String, String), want: String| {
         assert!(
-            banner.contains(&format!("; {want}; withdraw on (1 order")),
+            banner.contains(&format!("; {want}; withdraw on (F order")),
             "{want}: {banner}"
         );
         assert_eq!(
@@ -568,7 +568,7 @@ fn the_banner_names_the_withdrawal() {
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
-            banner.contains(&format!("; {want} (1 order")),
+            banner.contains(&format!("; {want} (F order")),
             "{want}: {banner}"
         );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
@@ -608,7 +608,7 @@ fn the_banner_names_the_full_first_radius() {
     let banner = run.banner().expect("the queue's row is on the banner");
     assert!(banner.contains(", full-first 2, budget "), "{banner}");
     assert!(
-        banner.contains("6 full-first, 7 missing light, 8 reach)"),
+        banner.contains("Backslash full-first, 7 missing light, 8 reach)"),
         "{banner}"
     );
     let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
@@ -762,7 +762,7 @@ fn the_banner_names_the_budget() {
             "{want}: {banner}"
         );
         assert!(
-            banner.contains("5 budget, 6 full-first, 7 missing light, 8 reach)"),
+            banner.contains("Backspace budget, Backslash full-first, 7 missing light, 8 reach)"),
             "{banner}"
         );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");

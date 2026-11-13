@@ -434,6 +434,12 @@ impl Frame {
         &self.targets.filter[ATROUS_ITERATIONS % 2]
     }
 
+    /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float: lambda,
+    /// the re-shaded and the last frame's direct luminance, 0); all 0 outside the gradient mode.
+    pub fn gradient_strata(&self) -> &wgpu::Texture {
+        &self.targets.strata
+    }
+
     /// The temporal pass's moments (rgba16float: luminance, its square, the age in frames).
     pub fn moments(&self) -> &wgpu::Texture {
         &self.targets.moments[self.cur]

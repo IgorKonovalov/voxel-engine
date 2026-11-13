@@ -3,9 +3,10 @@
 
 mod support;
 
+use support::lights as lbox;
 use support::rigs::*;
 use support::*;
-use vxe_render::{Frame, GpuWorld, LightParams, LookParams, UpscalerKind, View, wgpu};
+use vxe_render::{Frame, GpuWorld, Light, LightParams, LookParams, UpscalerKind, View, wgpu};
 
 /// FSR 2 on the stripe wall at arm's length, a still camera at scale 1.5 for 32 frames,
 /// recovers what a blit cannot: its gradient energy is above the bilinear blit's
@@ -1608,6 +1609,333 @@ fn frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory() {
         "frame_bytes at 1080p output, scale 1.5: ours {ours} B, FSR 2 {fsr} B; histories {histories} B; FSR 2's inventory {inventory} B (render size {render}, output size {display}, the rest {tiny})"
     );
     assert_eq!(fsr, ours - histories + inventory);
+}
+
+// ---- The list of analytic lights under FSR 2 (ADR-0044) ----
+
+/// The light box's FSR 2 sizes: scale 1.5 to a 192 x 108 output.
+const BOX_IN: [u32; 2] = [128, 72];
+const BOX_OUT: [u32; 2] = [192, 108];
+
+/// The red channel of FSR 2's reactive mask on `frame`'s last frame, one byte per internal pixel.
+fn box_reactive(rig: &support::bake::Rig, frame: &Frame) -> Vec<u8> {
+    vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.fsr2().unwrap().reactive())
+        .chunks(4)
+        .map(|p| p[0])
+        .collect()
+}
+
+/// The mask on `frame`'s last frame against the list `now` and the older list `then`:
+/// `(floor hits within half the reach of now[0], of those marked, hits beyond every light's
+/// reach of `now` and `then`, of those marked, hits off the CPU's threshold test)`. The CPU's
+/// test marks a hit where the summed unshadowed term of `now` and `then` differ past the
+/// upscaler's `change_abs` and `change_rel` (`light_changed` in `fsr2/input.wgsl`); hits
+/// within 10 % of either threshold are left out of the last count.
+fn mask_against(
+    rig: &support::bake::Rig,
+    frame: &Frame,
+    now: &[Light],
+    then: &[Light],
+) -> [usize; 5] {
+    let up = vxe_render::Upscaler::default();
+    let floor = frame.lighting().light_floor;
+    let r = box_reactive(rig, frame);
+    let term = |ls: &[Light], p, n| {
+        ls.iter()
+            .map(|l| l.irradiance(floor, p, n) / std::f32::consts::PI)
+            .sum::<f32>()
+    };
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, frame.hit_records());
+    let mut c = [0usize; 5];
+    for (i, p, on_floor) in lbox::hits_of(rig, frame) {
+        let marked = r[i] != 0;
+        let reach = now[0].reach(floor);
+        if on_floor && lbox::dist(p, now[0].pos) < 0.5 * reach {
+            c[0] += 1;
+            c[1] += usize::from(marked);
+        }
+        let beyond = |ls: &[Light]| ls.iter().all(|l| lbox::dist(p, l.pos) > l.reach(floor));
+        if beyond(now) && beyond(then) {
+            c[2] += 1;
+            c[3] += usize::from(marked);
+        }
+        let n = octa16_normal(info[i][0], info[i][1]);
+        let (a, b) = (term(now, p, n), term(then, p, n));
+        let d = (a - b).abs();
+        let (abs, rel) = (up.change_abs, up.change_rel * a.max(b));
+        let near = |x: f32, t: f32| (x - t).abs() < 0.1 * t;
+        if near(d, abs) || near(d, rel) {
+            continue;
+        }
+        c[4] += usize::from(marked != (d > abs && d > rel));
+    }
+    c
+}
+
+/// The mean output luminance over the 5 x 5 output pixels around `at` on `frame`'s last frame.
+fn luma_around(rig: &support::bake::Rig, frame: &Frame, at: [usize; 2]) -> f64 {
+    let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
+    let w = BOX_OUT[0] as usize;
+    let mut s = 0.0;
+    for y in at[1] - 2..=at[1] + 2 {
+        for x in at[0] - 2..=at[0] + 2 {
+            let p = &img[4 * (y * w + x)..];
+            s += 0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2]);
+        }
+    }
+    s / 25.0
+}
+
+/// The output pixel whose hit is the floor point nearest `(x, y)`, from a frame at the output
+/// size.
+fn output_pixel(rig: &support::bake::Rig, native: &Frame, x: f32, y: f32) -> [usize; 2] {
+    let floor: Vec<(usize, [f32; 3])> = lbox::hits_of(rig, native)
+        .into_iter()
+        .filter(|h| h.2)
+        .map(|(i, p, _)| (i, p))
+        .collect();
+    let (i, _) = lbox::nearest(&floor, x, y);
+    let w = BOX_OUT[0] as usize;
+    [i % w, i / w]
+}
+
+/// A frame over the box: FSR 2 at 1.5, or (`native`) Plan 0024's frame at the output size.
+fn light_frame(rig: &support::bake::Rig, native: bool) -> Frame {
+    if native {
+        lbox::box_frame(&rig.device, BOX_OUT, BOX_OUT, None)
+    } else {
+        lbox::box_frame(&rig.device, BOX_IN, BOX_OUT, Some(fsr2_kind()))
+    }
+}
+
+/// `frame` settled over 48 frames from no history with `lights`.
+fn settled_with(rig: &support::bake::Rig, native: bool, lights: &[Light]) -> Frame {
+    let camera = lbox::box_long_camera();
+    let mut f = light_frame(rig, native);
+    f.set_lights(lights);
+    for _ in 0..48 {
+        lbox::step_frame(rig, &mut f, &camera);
+    }
+    f
+}
+
+/// Phase 1 done-when 7's dropped light: intensity 600 (reach 77.5) at 20 voxels above the
+/// floor at x 30, seen down the box's length (the floor beyond its reach in view).
+fn dropped() -> Light {
+    Light::point([30.0, 32.0, 22.0], 600.0)
+}
+
+/// FSR 2 at 1.5 with the lamp off: after 8 still frames a still list light leaves the reactive
+/// mask byte-for-byte as it is with no list light; on the frame a light is dropped every floor
+/// hit within half its reach is marked, every hit beyond its reach is not, and every hit
+/// follows the CPU's threshold test. Returns the frame after the drop.
+fn the_mask_marks_a_dropped_light(rig: &support::bake::Rig) -> Frame {
+    let camera = lbox::box_long_camera();
+    let light = dropped();
+    let mut bare = light_frame(rig, false);
+    let mut held = light_frame(rig, false);
+    held.set_lights(&[light]);
+    for _ in 0..8 {
+        lbox::step_frame(rig, &mut bare, &camera);
+        lbox::step_frame(rig, &mut held, &camera);
+    }
+    assert!(!held.lights_changed());
+    assert_eq!(
+        box_reactive(rig, &held),
+        box_reactive(rig, &bare),
+        "a still list light leaves the mask as it is with none"
+    );
+    bare.set_lights(&[light]);
+    lbox::step_frame(rig, &mut bare, &camera);
+    let [near, near_marked, far, far_marked, off] = mask_against(rig, &bare, &[light], &[]);
+    println!(
+        "dropped: {near} floor hits within half the reach, {near_marked} marked; {far} hits beyond it, {far_marked} marked; {off} off the threshold test"
+    );
+    assert!(near > 200 && near_marked == near, "{near_marked} of {near}");
+    assert!(far > 50 && far_marked == 0, "{far_marked} of {far}");
+    assert_eq!(off, 0);
+    bare
+}
+
+/// Phase 1 done-when 7's mask half, the gate's variant of
+/// `fsr2_marks_a_changed_list_light_and_keeps_pace`.
+#[test]
+fn fsr2_marks_a_dropped_list_light() {
+    let Some(rig) = lbox::box_rig() else {
+        return;
+    };
+    the_mask_marks_a_dropped_light(&rig);
+}
+
+/// The frames from a list light's drop until the 5 x 5 output pixels under it are within 10 %
+/// of the drop's step of their image settled with the light (`settle_frames`), over 40 frames.
+fn drop_settles(rig: &support::bake::Rig, native: bool, at: [usize; 2]) -> Option<usize> {
+    let camera = lbox::box_long_camera();
+    let off = luma_around(rig, &settled_with(rig, native, &[]), at);
+    let lit = luma_around(rig, &settled_with(rig, native, &[dropped()]), at);
+    let mut f = settled_with(rig, native, &[]);
+    f.set_lights(&[dropped()]);
+    let series: Vec<f64> = (0..40)
+        .map(|_| {
+            lbox::step_frame(rig, &mut f, &camera);
+            (luma_around(rig, &f, at) - lit).abs()
+        })
+        .collect();
+    let s = settle_frames(&series, (lit - off).abs());
+    println!(
+        "native {native}: under the drop {off:.1} to {lit:.1}/255, settles in {s:?} frames; first {:.2}",
+        series[0]
+    );
+    s
+}
+
+/// Phase 1 done-when 7: the mask of `fsr2_marks_a_dropped_list_light`, and the output under the
+/// dropped light settles within 10 % of the step in at most 2 frames more than Plan 0024's frame
+/// takes (`fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step`'s rule for a lamp step).
+#[test]
+#[ignore = "soak"]
+fn fsr2_marks_a_changed_list_light_and_keeps_pace() {
+    let Some(rig) = lbox::box_rig() else {
+        return;
+    };
+    the_mask_marks_a_dropped_light(&rig);
+    let mut native = light_frame(&rig, true);
+    lbox::step_frame(&rig, &mut native, &lbox::box_long_camera());
+    let at = output_pixel(&rig, &native, dropped().pos[0], dropped().pos[1]);
+    let reference = drop_settles(&rig, true, at);
+    let fsr = drop_settles(&rig, false, at);
+    match (fsr, reference) {
+        (Some(s), Some(r)) => assert!(s <= r + 2, "{s} against {r} + 2"),
+        other => panic!("did not settle: {other:?}"),
+    }
+}
+
+/// Phase 1 done-when 11's flight under `frame`: 16 still frames (`still`), then `flight` frames
+/// of 4 voxels a frame along +x from (40, 32, 22), intensity 1200. Each flight frame's mask is
+/// checked against the CPU's threshold test (the older list is the start's: the flight is
+/// shorter than `change_frames`) and the floor hits within half the reach of the light that
+/// frame are counted; returns the last light and, per flight frame, the luminance under the
+/// start at `at` (output pixel).
+fn fly(
+    rig: &support::bake::Rig,
+    frame: &mut Frame,
+    still: usize,
+    flight: usize,
+    at: Option<[usize; 2]>,
+) -> (Light, Vec<f64>) {
+    let camera = lbox::box_long_camera();
+    let start = Light::point([40.0, 32.0, 22.0], 1200.0);
+    let mut light = start;
+    frame.set_lights(&[light]);
+    for _ in 0..still {
+        lbox::step_frame(rig, frame, &camera);
+    }
+    let mut under = vec![at.map_or(0.0, |a| luma_around(rig, frame, a))];
+    let fsr = frame.fsr2().is_some();
+    let (mut near, mut marked) = (0, 0);
+    for k in 0..flight {
+        light.pos[0] += 4.0;
+        frame.set_lights(&[light]);
+        lbox::step_frame(rig, frame, &camera);
+        assert!(frame.lights_changed(), "flight frame {k}");
+        if fsr {
+            let c = mask_against(rig, frame, &[light], &[start]);
+            assert_eq!(c[4], 0, "flight frame {k}: hits off the threshold test");
+            near += c[0];
+            marked += c[1];
+            println!(
+                "flight frame {k}: {} of {} floor hits within half the reach marked",
+                c[1], c[0]
+            );
+        }
+        if let Some(a) = at {
+            under.push(luma_around(rig, frame, a));
+        }
+    }
+    if fsr {
+        println!("flight: {marked} of {near} floor hits within half the reach marked");
+    }
+    (light, under)
+}
+
+/// Phase 1 done-when 12's mask half over an 8-frame flight, the gate's variant of
+/// `fsr2_leaves_no_trail_behind_a_light_in_flight`: every flight frame's reactive mask
+/// follows the CPU's threshold test.
+#[test]
+fn fsr2_marks_a_light_in_flight() {
+    let Some(rig) = lbox::box_rig() else {
+        return;
+    };
+    let mut f = light_frame(&rig, false);
+    fly(&rig, &mut f, 16, 8, None);
+}
+
+/// The frames after the flight's last move until the 5 x 5 output pixels under the start are
+/// within `tol` of `end` (their image settled with the light at the end), over 40 frames, and
+/// the luminance there over the flight.
+fn trail(
+    rig: &support::bake::Rig,
+    native: bool,
+    at: [usize; 2],
+    tol: f64,
+    end: f64,
+) -> (Option<usize>, Vec<f64>) {
+    let mut f = light_frame(rig, native);
+    let (_, under) = fly(rig, &mut f, 32, 16, Some(at));
+    let camera = lbox::box_long_camera();
+    let series: Vec<f64> = (0..40)
+        .map(|_| {
+            lbox::step_frame(rig, &mut f, &camera);
+            (luma_around(rig, &f, at) - end).abs()
+        })
+        .collect();
+    let s = series.iter().position(|&d| d < tol).map(|i| i + 1);
+    (s, under)
+}
+
+/// Phase 1 done-when 12: under FSR 2 at 1.5 with the lamp off and done-when 11's flight, the
+/// output under the start never rises from one flight frame to the next by more than 10 % of
+/// its step (settled at the start against settled at the end), every flight frame's mask
+/// follows the CPU's threshold test, and after the light stops the output there is within 10 %
+/// of the step of its image settled at the end in at most 2 frames more than Plan 0024's frame
+/// takes. The trail's length is printed.
+#[test]
+#[ignore = "soak"]
+fn fsr2_leaves_no_trail_behind_a_light_in_flight() {
+    let Some(rig) = lbox::box_rig() else {
+        return;
+    };
+    let mut native = light_frame(&rig, true);
+    lbox::step_frame(&rig, &mut native, &lbox::box_long_camera());
+    let at = output_pixel(&rig, &native, 40.0, 32.0);
+    let mut frames = [None; 2];
+    for (k, native) in [true, false].into_iter().enumerate() {
+        let start = Light::point([40.0, 32.0, 22.0], 1200.0);
+        let end = Light {
+            pos: [104.0, 32.0, 22.0],
+            ..start
+        };
+        let at_start = luma_around(&rig, &settled_with(&rig, native, &[start]), at);
+        let at_end = luma_around(&rig, &settled_with(&rig, native, &[end]), at);
+        let tol = 0.1 * (at_start - at_end).abs();
+        let (s, under) = trail(&rig, native, at, tol, at_end);
+        let rise = under
+            .windows(2)
+            .map(|w| w[1] - w[0])
+            .fold(f64::MIN, f64::max);
+        println!(
+            "native {native}: under the start {at_start:.1} to {at_end:.1}/255 (tolerance {tol:.2}); flight {:.1?}; largest rise {rise:.2}; within the tolerance {s:?} frames after the last move",
+            under
+        );
+        if !native {
+            assert!(rise <= tol, "rose {rise:.2} over {tol:.2}");
+        }
+        frames[k] = s;
+    }
+    match frames {
+        [Some(r), Some(s)] => assert!(s <= r + 2, "{s} against {r} + 2"),
+        other => panic!("did not settle: {other:?}"),
+    }
 }
 
 /// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is

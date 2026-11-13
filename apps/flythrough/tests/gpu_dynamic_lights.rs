@@ -5,64 +5,10 @@
 mod support;
 
 use flythrough::cave::ROCK;
-use flythrough::cave_materials;
-use support::bake::{Rig, rig_on};
-use vxe_render::{Camera, Exposure, Light, LightParams, Lighting};
-use vxe_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, World};
-
-/// The box's floor: the top face of the voxels at z 1.
-const FLOOR_Z: f32 = 2.0;
-
-/// A closed rock box over chunks `[0, 2) x [0, 1) x [0, 1)`, hollow over `[2, 126) x [2, 62) x
-/// [2, 50)`: 124 voxels long, its floor at z 2, no emitter.
-fn light_box() -> World {
-    let world = World::generate(
-        ChunkExtent::new([0, 0, 0], [2, 1, 1]),
-        &UniformSource(ROCK),
-        &cave_materials(),
-    );
-    world
-        .apply(&EditOp::box_(
-            Fixed3([2, 2, 2].map(|v: i64| v * FIXED_ONE)),
-            Fixed3([126, 62, 50].map(|v: i64| v * FIXED_ONE)),
-            Mode::Carve,
-        ))
-        .expect("the box is resident");
-    world
-}
-
-/// The box under a 192 x 108 frame, lamp off, manual exposure 1, no jitter.
-fn box_rig() -> Option<Rig> {
-    let mut rig = rig_on(light_box(), [192, 108], None)?;
-    rig.frame.set_lighting(Lighting {
-        lamp: false,
-        lamp_bounce: false,
-        exposure: Exposure::Manual(1.0),
-        bake_pool_bytes: 16 << 20,
-        ..Lighting::default()
-    });
-    Some(rig)
-}
-
-/// Above the floor at x 64, looking down the box's length toward +x.
-fn box_camera() -> Camera {
-    Camera {
-        position: [60.0, 32.0, 45.0].into(),
-        yaw: 0.0,
-        pitch: -1.2,
-        vfov: 1.2,
-    }
-}
-
-fn step(rig: &mut Rig, camera: &Camera) {
-    rig.frame.step(
-        &rig.device,
-        &rig.queue,
-        &rig.gpu,
-        camera,
-        &LightParams::headlamp(),
-    );
-}
+use support::bake::Rig;
+use support::lights::*;
+use vxe_render::{Camera, Light, Lighting};
+use vxe_world::{EditOp, FIXED_ONE, Fixed3, Mode};
 
 #[test]
 fn the_slots_follow_the_lamp() {
@@ -134,28 +80,6 @@ fn the_change_bit_follows_the_list() {
 mod reading {
     use super::*;
 
-    /// The last frame's floor hits: (pixel, hit point) for each pixel whose hit is on the floor.
-    fn floor_hits(rig: &Rig) -> Vec<(usize, [f32; 3])> {
-        let pos =
-            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-        pos.iter()
-            .enumerate()
-            .filter(|(_, p)| p[3] > 0.0 && (p[2] - FLOOR_Z).abs() < 1e-3)
-            .map(|(i, p)| (i, [p[0], p[1], p[2]]))
-            .collect()
-    }
-
-    /// The floor pixel whose hit is nearest `(x, y)` on the floor.
-    fn nearest(hits: &[(usize, [f32; 3])], x: f32, y: f32) -> (usize, [f32; 3]) {
-        *hits
-            .iter()
-            .min_by(|a, b| {
-                let d = |p: [f32; 3]| (p[0] - x).powi(2) + (p[1] - y).powi(2);
-                d(a.1).total_cmp(&d(b.1))
-            })
-            .expect("the floor is in view")
-    }
-
     fn alpha(rig: &Rig, tex: &vxe_render::wgpu::Texture) -> Vec<f32> {
         vxe_render::debug::read_float(&rig.device, &rig.queue, tex)
             .iter()
@@ -169,8 +93,6 @@ mod reading {
             (f64::from(got) / f64::from(want).max(1e-9) - 1.0) * 100.0
         );
     }
-
-    const UP: [f32; 3] = [0.0, 0.0, 1.0];
 
     /// Phase 1 done-whens 1 and 2: one light of 1200 at 20 voxels above the floor, the direct
     /// part on the first frame under it (9.40) and 20 voxels aside (3.30); then a wall across
@@ -239,8 +161,8 @@ mod reading {
     }
 
     /// Phase 1 done-when 4: in the steps view, the shadow rays cast at a floor pixel beyond a
-    /// light of 1200's reach of 109.5 (122 voxels away, the farthest floor in view; the plan
-    /// names 150) and inside it (62; the plan names 50), at floor 0.1 and 0.025.
+    /// light of 1200's reach of 109.5 (122 voxels away, the farthest floor in view) and inside
+    /// it (62), at floor 0.1 and 0.025.
     #[test]
     #[ignore]
     fn reading_a_light_beyond_its_reach_casts_no_shadow_ray() {
@@ -392,5 +314,153 @@ mod reading {
         println!(
             "half tier, 32 frames: accumulated / analytic in [{lo:.4}, {hi:.4}], filtered in [{flo:.4}, {fhi:.4}]"
         );
+    }
+
+    /// Phase 1 done-when 8: the gradient mode with two still list lights and the lamp off; the
+    /// strata's lambda over 16 still frames after the first (which has no history): the largest
+    /// value, the strata above 0 and above 1e-3, and the strata that re-shaded a lit pixel.
+    #[test]
+    #[ignore]
+    fn reading_the_gradient_mode_holds_still_under_a_still_list() {
+        let Some(mut rig) = box_rig() else {
+            return;
+        };
+        rig.frame.set_lighting(Lighting {
+            history: vxe_render::HistoryKill::Gradient,
+            ..rig.frame.lighting()
+        });
+        let camera = box_camera();
+        rig.frame.set_lights(&[
+            Light::point([54.0, 32.0, 22.0], 1200.0),
+            Light::point([84.0, 20.0, 22.0], 1200.0),
+        ]);
+        step(&mut rig, &camera);
+        let (mut worst, mut over0, mut over3, mut lit, mut n) = (0.0f32, 0usize, 0usize, 0usize, 0);
+        for _ in 0..16 {
+            step(&mut rig, &camera);
+            assert!(!rig.frame.lights_changed());
+            let strata = vxe_render::debug::read_rgba16f(
+                &rig.device,
+                &rig.queue,
+                rig.frame.gradient_strata(),
+            );
+            for s in &strata {
+                n += 1;
+                worst = worst.max(s[0]);
+                over0 += usize::from(s[0] > 0.0);
+                over3 += usize::from(s[0] > 1e-3);
+                lit += usize::from(s[1] > 0.0);
+            }
+        }
+        println!(
+            "gradient, two still lights, 16 frames: {n} strata-frames, {lit} re-shaded a lit pixel; lambda max {worst:.6}, above 0 {over0}, above 1e-3 {over3}"
+        );
+    }
+
+    /// Phase 1's hall reading: the showcase's `hall` shot at the fly-through's defaults (FSR 2
+    /// at 1.5 with sharpening 0.5, or native: no upscaler, no jitter), the lamp off, exposure 8,
+    /// 320 x 180, with one white light of 1200 two voxels over the floor where the centre ray
+    /// meets it, and with none: the frame after 64 frames against the one after 512 (pixels
+    /// over 2/255 in any channel, the largest step). Runs on `VXE_TEST_ADAPTER`.
+    #[test]
+    #[ignore]
+    fn reading_the_hall_at_64_against_512_frames() {
+        use flythrough::showcase::{SHOTS, ShowcaseSource};
+        use vxe_render::{GpuWorld, MirrorConfig, Window};
+        let table = flythrough::showcase_materials();
+        let source = ShowcaseSource::new(1);
+        let world = vxe_world::World::generate(source.extent(), &source, &table);
+        let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+        let Some((device, queue, adapter)) = support::reading_device(pool) else {
+            return;
+        };
+        let chunks = world.extent().len() as u64;
+        let cfg = MirrorConfig {
+            budget_bytes: flythrough::level_mirror_budget(&world, chunks, false),
+            light_radius: 19,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        };
+        let mut gpu = GpuWorld::with_config(&device, cfg);
+        let shot = SHOTS[0];
+        gpu.set_focus(shot.eye);
+        for _ in 0..64 {
+            support::SyncNow::sync_now(&mut gpu, &world, &device, &queue).expect("fits");
+        }
+        let dir = shot.ray_milli.map(|c| i64::from(c) * FIXED_ONE / 1000);
+        let eye = Fixed3(shot.eye.0.map(|v| i64::from(v) * FIXED_ONE + FIXED_ONE / 2));
+        let hit = world
+            .raycast(eye, dir, 600 * FIXED_ONE)
+            .expect("in range")
+            .expect("the centre ray meets the floor");
+        let v = hit.voxel.0;
+        let light = Light::point(
+            [v[0] as f32 + 0.5, v[1] as f32 + 0.5, v[2] as f32 + 3.0],
+            1200.0,
+        );
+        let camera = Camera {
+            position: shot.eye.0.map(|v| v as f32 + 0.5).into(),
+            yaw: (shot.yaw_deg as f32).to_radians(),
+            pitch: (shot.pitch_deg as f32).to_radians(),
+            vfov: 70f32.to_radians(),
+        };
+        let output = [320u32, 180];
+        for fsr in [false, true] {
+            for lights in [&[light][..], &[]] {
+                let mut frame = if fsr {
+                    let mut f = vxe_render::Frame::with_sizes(
+                        &device,
+                        vxe_render::RenderScale::OneHalf.internal(output),
+                        output,
+                    );
+                    f.set_upscaler_kind(
+                        &device,
+                        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                            sharpness: 0.5,
+                            ..vxe_render::Fsr2Settings::default()
+                        }),
+                    );
+                    f
+                } else {
+                    let mut f = vxe_render::Frame::with_sizes(&device, output, output);
+                    f.set_jitter(&device, false);
+                    f
+                };
+                frame.set_lighting(Lighting {
+                    lamp: false,
+                    exposure: vxe_render::Exposure::Manual(8.0),
+                    store_read: flythrough::DEFAULT_STORE_READ,
+                    light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
+                    ..Lighting::default()
+                });
+                frame.set_lights(lights);
+                let mut at64 = Vec::new();
+                for f in 1..=512 {
+                    frame.step(
+                        &device,
+                        &queue,
+                        &gpu,
+                        &camera,
+                        &vxe_render::LightParams::headlamp(),
+                    );
+                    if f == 64 {
+                        at64 = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+                    }
+                }
+                let at512 = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+                let (mut over, mut worst) = (0usize, 0u8);
+                for (a, b) in at64.chunks(4).zip(at512.chunks(4)) {
+                    let d = (0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0);
+                    over += usize::from(d > 2);
+                    worst = worst.max(d);
+                }
+                println!(
+                    "hall on {adapter}, {}, {} light(s) (at {:?}): 64 against 512 frames, {:.3} % of pixels over 2/255, largest {worst}/255",
+                    if fsr { "fsr2 at 1.5" } else { "native" },
+                    lights.len(),
+                    light.pos,
+                    over as f64 * 100.0 / (output[0] * output[1]) as f64
+                );
+            }
+        }
     }
 }
