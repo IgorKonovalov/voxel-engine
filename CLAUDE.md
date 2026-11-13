@@ -98,7 +98,7 @@ scripts/
 ├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
 ├── check-test-tiers.mjs       # every test file that opens a GPU device is named tests/gpu_*.rs
 ├── check-plan-size.mjs        # a plan's Implementation log (0055 on) stays under 150 lines, no resume notes in it
-├── test-changed.mjs           # runs a nextest tier narrowed to the changed crates and their dependents
+├── test-changed.mjs           # a nextest tier, or --clippy, over -p the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line
 ├── velocity.mjs               # commits, lines, gaps and plans closed per day; read at every close review
 ├── loc.mjs                    # lines of code, tests, comments, WGSL and docs per crate; the largest files

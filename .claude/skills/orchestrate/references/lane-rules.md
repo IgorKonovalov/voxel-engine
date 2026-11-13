@@ -65,8 +65,10 @@ plan lanes run at once, each in its own worktree at
    change reaches the renderer, `--profile gpu --binaries <the gpu_* binaries the phase names>`
    (the binaries whose files the change touched join on their own; owner, 2026-11-10: the
    whole gpu tier is the tip's, not a phase's; until Plan 0066 Phase 1 adds `--binaries`, a
-   phase runs `--profile gpu` as before); `--profile gate` (everything but the soak-marked
-   tests) is the tip gate; `--profile soak --run-ignored only` and `--profile full --run-ignored all`
+   phase runs `--profile gpu` as before); a phase's clippy is `node scripts/test-changed.mjs
+   --clippy` (the same packages, `-p` each, `--all-targets -D warnings`; the script builds
+   only those packages' test targets, not the workspace's); `--profile gate` (everything but
+   the soak-marked tests) and `cargo clippy --workspace --all-targets` are the tip gate; `--profile soak --run-ignored only` and `--profile full --run-ignored all`
    run only when the orchestrator asks for a specific reading (the default profile is the gate
    tier).
 5. Every cargo build, test, bench or fly-through run goes inside a memory-capped scope, so a
