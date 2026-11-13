@@ -434,8 +434,15 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
       the start position never rises from one frame of the flight to the next by more than the
       tolerance `fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step` allows, and within
       that test's frame count after the light stops it is within that tolerance of a reference
-      settled with the light still at the end position; the floor pixels within half the reach
-      of the light's position are marked reactive on each frame of the flight. **The trail's
+      settled with the light still at the end position; on each frame of the flight a floor
+      pixel within half the reach of the light's position is marked reactive exactly when the
+      reactive rule's CPU form (its unshadowed light against the older list, over `change_rel`)
+      says it should be, with none marked off that rule, and the marked share per frame is a
+      reading. *Amended 2026-11-13 (orchestrator default, owner may overturn): the earlier
+      "every floor pixel within half the reach is marked" cannot hold, since pixels whose light
+      moved under `change_rel` against the list 24 frames back are rightly unmarked (76 % on the
+      first frame, rising to 98 %); `change_rel` and `change_frames` stay, and the trail is the
+      owner's eye in Phase 4.* **The trail's
       length is a reading:** the frames from the light's last move until the start pixel is
       within the tolerance, in the log, on lavapipe and labelled on the RTX. About 15 s (an
       estimate), so it is born `#[ignore = "soak"]` and an 8-frame flight,
