@@ -54,6 +54,7 @@ impl Run {
             internal: sizes.map_or([0, 0], |s| s.1),
             internal_scale: scale.name(),
             upscaler: self.modes.upscaler.mode.name(),
+            lamp: self.args.light.lamp(),
             adapter: self.adapter.as_ref().map(|a| AdapterLine {
                 name: a.name.clone(),
                 vendor: a.vendor,

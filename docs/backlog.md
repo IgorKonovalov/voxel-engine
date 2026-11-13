@@ -335,15 +335,18 @@ Per-frame and per-chunk readings are affected little. Readings should name the c
 boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
 readings are compared with ones from before 2026-11-05.
 
-### The tester's benchmarks with the lamp off
+### Done: the tester's benchmarks with the lamp off
 
 Noted 2026-11-13 (the owner, at Plan 0070's Phase 6 window: "also, for test benchmark lamp is
-better to be off"). The tester's cave and castle paths (`--tester --path NAME`, the scene's
-flags in `apps/flythrough/src/path.rs`) and the bench readings plans take from them run with
-the headlamp at its default, on (`--lamp`; off on the showcase only). The owner wants them run
-with the lamp off. What it would take: the path's scene flags carry `--lamp off`, the tester's
-`run.json` names the lamp's state, and readings from before the change are not compared with
-ones after it. Pick up as a dev chore with the next plan that reads the tester's benches.
+better to be off"). The tester's cave and castle paths and the bench readings plans take from
+them ran with the headlamp at its default, on (off on the showcase only).
+
+**Done 2026-11-13** (4ea561f, a chore on the owner's go). A `--path` run in bench mode starts
+the lamp off unless `--lamp` is given; the tester's benchmark command line carries `--lamp off`
+after the scene's flags (`PathMode::flags`); a tour keeps the lamp default (on in the cave and
+the castle). `run.json` names it (`"lamp": "on"|"off"`, additive, schema 1), as do the tester's
+run row and its help panel. **Bench readings of the cave and castle paths from before 4ea561f
+ran with the lamp on and are not compared with readings after it.**
 
 ### Five lavapipe gate tests over the 10 s line
 

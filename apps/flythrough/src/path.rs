@@ -406,6 +406,17 @@ impl PathMode {
             .into_iter()
             .find(|m| m.name() == name)
     }
+
+    /// The flags a run in this mode adds to its scene's [`Scene::flags`]: a benchmark runs
+    /// with the headlamp off (`--lamp off`, also the default under `--path` in this mode), so
+    /// its frame times read the world's own light in every scene; a tour adds none and keeps
+    /// the fly-through's lamp default (on in the cave and the castle), since a tester flies it.
+    pub fn flags(self) -> &'static [&'static str] {
+        match self {
+            Self::Bench => &["--lamp", "off"],
+            Self::Tour => &[],
+        }
+    }
 }
 
 /// Who drives the camera.

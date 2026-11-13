@@ -818,7 +818,7 @@ impl Run {
             hud::write_path_row(out, p, self.args.tester);
             if self.args.tester {
                 if self.help {
-                    hud::write_help_panel(out, p);
+                    hud::write_help_panel(out, p, self.modes.lighting.lamp);
                 }
                 return;
             }

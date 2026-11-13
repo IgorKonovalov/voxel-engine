@@ -205,7 +205,7 @@ shown, `F1`, the autopilot's flight).
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
 | `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
-| `--lamp on\|off` | The headlamp (default on; off on the showcase) |
+| `--lamp on\|off` | The headlamp (default on; off on the showcase and in a `--path` benchmark) |
 | `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
 | `--fade-reading` | Headless: dig five times along the camera ray, settle the light with the lamp off, then on, switch it off and print, for the screen centre's direct light, indirect light and their sum, the first frame under 10 % of the lamp's part |
 | `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |

@@ -1041,3 +1041,75 @@ fn the_far_normal_is_named_in_face_mode_only() {
         "{banner}"
     );
 }
+
+/// A benchmark path runs with the headlamp off and its `run.json` says so: the tester's
+/// arguments for each benchmark scene (the scene's flags, the mode's `--lamp off`, `--tester`,
+/// the path) start the lamp off, the help panel's first row and the plain banner name `lamp
+/// off`, and the report written at exit reads `"lamp": "off"`. A tour keeps the lamp on in the
+/// cave and the castle, and `--lamp on` turns it back on for a benchmark.
+#[test]
+fn a_benchmark_path_runs_with_the_lamp_off_and_its_report_says_so() {
+    use crate::path::{CameraPath, PathMode, Scene};
+    use crate::report::json::{self, Value};
+    let path_args = |scene: Scene, mode: PathMode, extra: &[&str]| {
+        let mut a: Vec<&str> = scene.flags().iter().chain(mode.flags()).copied().collect();
+        a.extend(["--path", scene.name(), "--path-mode", mode.name()]);
+        a.extend(extra);
+        parse_args_from(argv(&a)).unwrap_or_else(|e| panic!("{a:?}: {e}"))
+    };
+    let lamp_of = |a: &Args| a.start_modes(0.0).lighting.lamp;
+    for scene in Scene::ALL {
+        let bench = path_args(scene, PathMode::Bench, &["--tester"]);
+        assert!(!bench.light.lamp() && !lamp_of(&bench), "{scene:?} bench");
+        let tour = path_args(scene, PathMode::Tour, &["--tester"]);
+        assert_eq!(
+            tour.light.lamp(),
+            scene != Scene::Showcase,
+            "{scene:?} tour"
+        );
+        assert_eq!(lamp_of(&tour), scene != Scene::Showcase, "{scene:?} tour");
+    }
+    // The default holds without the mode's flags too, and `--lamp on` wins over it.
+    let bare = parse_args_from(argv(&["--path", "cave"])).expect("parses");
+    assert!(!bare.light.lamp());
+    let lit = parse_args_from(argv(&["--path", "cave", "--lamp", "on"])).expect("parses");
+    assert!(lit.light.lamp());
+
+    let dir = std::env::temp_dir().join(format!("vxe-bench-lamp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let report = dir.display().to_string();
+    let args = path_args(
+        Scene::Cave,
+        PathMode::Bench,
+        &["--tester", "--report", &report],
+    );
+    let path = CameraPath::named("cave").expect("the cave path");
+    let mut run = bare_run(carved_rock());
+    run.modes = args.start_modes(0.0);
+    run.modes.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Off, "1");
+    run.args = args;
+    run.player = Some(PathPlayer::new(path, PathMode::Bench));
+    run.recorder = Some(Recorder::for_path(path.duration_s()));
+    run.start = now();
+    run.help = true;
+    let banner = run.banner().expect("the banner shows");
+    let panel = banner
+        .lines()
+        .find(|l| l.starts_with("scene "))
+        .unwrap_or("");
+    assert_eq!(panel, "scene cave, benchmark, lamp off", "{banner}");
+    run.args.tester = false;
+    let banner = run.banner().expect("the banner shows");
+    assert!(
+        banner.contains("lamp off") && !banner.contains("lamp on"),
+        "{banner}"
+    );
+
+    run.write_report();
+    let text = std::fs::read_to_string(dir.join("run.json")).expect("run.json written");
+    let _ = std::fs::remove_dir_all(&dir);
+    let v = json::parse(&text).expect("run.json parses");
+    assert_eq!(v.get("lamp").and_then(Value::as_str), Some("off"), "{text}");
+    assert_eq!(v.get("scene").and_then(Value::as_str), Some("cave"));
+    assert_eq!(v.get("mode").and_then(Value::as_str), Some("bench"));
+}

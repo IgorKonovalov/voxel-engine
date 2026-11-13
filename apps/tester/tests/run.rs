@@ -20,7 +20,8 @@ fn scratch(name: &str) -> PathBuf {
     d
 }
 
-/// Each menu choice's flags, exactly. The report folder is `R`.
+/// Each menu choice's flags, exactly: a benchmark adds `--lamp off` after the scene's flags,
+/// a tour adds none. The report folder is `R`.
 #[test]
 fn each_choice_gives_its_exact_flag_list() {
     let r = Path::new("R");
@@ -35,6 +36,8 @@ fn each_choice_gives_its_exact_flag_list() {
             &[
                 "--source",
                 "cave",
+                "--lamp",
+                "off",
                 "--tester",
                 "--path",
                 "cave",
@@ -80,6 +83,8 @@ fn each_choice_gives_its_exact_flag_list() {
             },
             &[
                 "--castle",
+                "--lamp",
+                "off",
                 "--tester",
                 "--path",
                 "castle",
@@ -233,7 +238,7 @@ fn fake_child() {
     }
     eprintln!("fake warning");
     if mode != "nojson" {
-        let json = r#"{"schema": 1, "wall_ms": {"p50": 6.25, "p95": 20.5, "p99": 24.0, "max": 30.0}, "ended": "completed"}"#;
+        let json = r#"{"schema": 1, "wall_ms": {"p50": 6.25, "p95": 20.5, "p99": 24.0, "max": 30.0}, "lamp": "off", "ended": "completed"}"#;
         std::fs::write(Path::new(&dir).join("run.json"), json).expect("run.json");
     }
     match mode.as_str() {
@@ -267,10 +272,11 @@ fn a_run_reads_ok_with_its_p50_or_failed_with_its_exit_and_tail_and_the_report_s
         Outcome::Ok {
             p50: 6.25,
             p95: 20.5,
-            ended: "completed".to_owned()
+            ended: "completed".to_owned(),
+            lamp: Some(false),
         }
     );
-    assert_eq!(ok.row(), "ok: wall p50 6.2 ms, p95 20.5 ms");
+    assert_eq!(ok.row(), "ok: wall p50 6.2 ms, p95 20.5 ms, lamp off");
     let log = std::fs::read_to_string(ok_dir.join("log.txt")).expect("log.txt");
     assert!(log.contains("fake line 14\n"), "{log}");
     assert!(log.contains("stderr: fake warning\n"), "{log}");
@@ -387,7 +393,7 @@ fn the_saved_report_holds_no_absolute_path_of_its_base() {
         tester_log,
         format!(
             "system: vxe-tester --system-json system.json --displays\n\
-             run: {fly_name} --source cave --tester --path cave --path-mode bench --render 1280x720 \
+             run: {fly_name} --source cave --lamp off --tester --path cave --path-mode bench --render 1280x720 \
              --internal-scale 1.5 --report {rel_s}\n"
         )
     );
