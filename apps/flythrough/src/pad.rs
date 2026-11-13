@@ -6,7 +6,7 @@
 use gilrs::{EventType, GamepadId, Gilrs, PowerInfo};
 use vxe_app::{Axis, Input, PadButton};
 
-use flythrough::hud::{PadPower, PadRow};
+use crate::hud::{PadPower, PadRow};
 
 /// A `gilrs` source and the `Input` axis it feeds. Sticks report y positive up, which is
 /// forward on the move stick and up on the look stick, so no row flips a sign. The analog

@@ -307,13 +307,15 @@ line. Pick up as a dev chore with the next plan that touches the frame's read-ba
 ### A pipeline cache for the renderer's shaders
 
 Parked 2026-11-12 (the architecture review, section 1.4). Every pipeline creates its own shader
-module and 13 of them prepend the 2496-line `march.wgsl`; no descriptor passes a
+module and (at the entry's date) 13 of them prepended the 2496-line `march.wgsl` (since Plan
+0045 each pass composes only the modules its `PASSES` row names); no descriptor passes a
 `wgpu::PipelineCache` (`cache: None` everywhere). Cold creation of the eleven pipelines read
 1396 ms on the RTX, 458 ms on RADV, 299 ms on lavapipe (Plan 0046). wgpu 30's `PipelineCache`
 is Vulkan-only and keyed by the driver, so it helps a second start on the same machine, not the
 first; the driver's own disk cache already does part of that. What it takes: `pipeline_times`
 read with and without a cache file across two starts, on both adapters, after Plan 0045's
-Phase 4 has split the shaders (which changes what is compiled). Pick up at 0045's close.
+Phase 4 has split the shaders (which changes what is compiled). Ready since 0045's close
+(2026-11-13): `pipeline_times` reads `internals::shader_sources()`.
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 
@@ -338,10 +340,8 @@ brief: **Plan 0067**, do not stop at the sync stop rule, Plan 0070 takes the syn
 **Plan 0044**, Phase 4 struck into 0070 (1.1); **Plan 0069**, a `Delete` class for the fields
 with no setter and no caller, `Floor` equal to the fly-through's defaults and every `Default`
 equal to `Floor`, the setter gate over the 22 existing setters, and the RENOIR hit pass read
-alone in Phase 4 (1.2, 2.2); **Plan 0045**, the reservoir code is live, `hud.rs` and
-`showcase.rs` named unconditionally, `table()` and `now()` in Phase 1, `gpu_strip.rs` out of
-`tests/`, a pub-item count as Phase 2's done-when (2.1, 2.3). Each leaves when the owner
-accepts or refuses it.
+alone in Phase 4 (1.2, 2.2). Plan 0045's notes (2.1, 2.3) were taken into it on 2026-11-12.
+Each leaves when the owner accepts or refuses it.
 
 ### A documentation site
 
@@ -470,7 +470,7 @@ Read 2026-11-09 from CI run 42573270474 on e5d6646 (WARP, driver 10.0.26100.3364
 - **Reading:** GBV crashes WARP before the first stage of frame 0, including on the scratch baseline that exits 0 without it, so (a) and (b) say nothing about the hang. With the debug layer on and GBV off, the split that hung past 600 s in every earlier run completes, and the layer reports no misuse of states or barriers. The layer's own work at record and submit time clears the hang. That points at a race inside WARP across submissions on buffers `shade_preload` uses, not at a bad state that wgpu records. crates.io's newest wgpu is still 30.0.1, so a newer wgpu is not available to try.
 - **Next candidates, the owner's pick:** run the Windows GPU smoke set with `WGPU_VALIDATION=1` (the layer that cleared the hang), which also keeps validation running on Windows; take the GPU smoke set off WARP and keep Windows on CPU tests until the preload's fate in Plan 0059; or a backend-neutral change that keeps other submissions off the preload's buffers between its args pass and `shade_preload`, which the scratch sweep showed runs.
 - **Ruled 2026-11-09 (owner): no GPU tests on WARP.** The `ci-windows` profile runs the quick tier's filter, the CPU tests only, and the debug-layer step is gone from `ci.yml`. Windows still creates every pipeline on DX12 (the pipeline-times step). The env-gated switches in the code (`VXE_DIAG_PRELOAD`, `VXE_DIAG_SPLIT_FRAME0`, the `diag:` lines) stay until Plan 0059 settles the preload. If the path stays, this entry is how to put a GPU smoke set back on Windows; if it goes, they go with it and this entry closes.
-- **Plan 0059 closed 2026-11-09 on "baked":** the preload, its sweep and `shade_preload` are deleted, and with them `VXE_DIAG_PRELOAD` and `VXE_DIAG_SPLIT_FRAME0`; the `diag:` lines stay (`apps/flythrough/src/main.rs`). Next, the owner's call: one push that runs the GPU smoke set on WARP again. Clean, the `diag:` lines go and this entry closes; still hung, the hang was not the preload's.
+- **Plan 0059 closed 2026-11-09 on "baked":** the preload, its sweep and `shade_preload` are deleted, and with them `VXE_DIAG_PRELOAD` and `VXE_DIAG_SPLIT_FRAME0`; the `diag:` lines stay (`apps/flythrough/src/main.rs` then; `app.rs`'s `diag` since Plan 0045, whose headless runner dropped the start, device and per-frame ones for `headless:` lines). Next, the owner's call: one push that runs the GPU smoke set on WARP again. Clean, the `diag:` lines go and this entry closes; still hung, the hang was not the preload's.
 
 ### llvmpipe SIGSEGV on CI's Ubuntu since Plan 0057 Phase 7
 

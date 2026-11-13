@@ -1,7 +1,7 @@
 //! Draws the marcher's `rgba8` target onto a surface texture, scaled to fill it.
 
 /// The source of the blit shader, for headless validation.
-pub const PRESENT_WGSL: &str = include_str!("shaders/present.wgsl");
+pub(crate) const PRESENT_WGSL: &str = include_str!("shaders/present.wgsl");
 
 pub struct Presenter {
     pipeline: wgpu::RenderPipeline,
@@ -88,7 +88,7 @@ impl Presenter {
         source: &wgpu::Texture,
         target: &wgpu::TextureView,
     ) {
-        let view = source.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_util::view(source);
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("present"),
             layout: &self.layout,

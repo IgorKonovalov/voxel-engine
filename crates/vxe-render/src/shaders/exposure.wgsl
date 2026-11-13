@@ -1,6 +1,7 @@
 // The exposure pass (ADR-0033): one workgroup of 256 at the end of the frame. It reads the
 // composite's meter tiles, weights them, and writes the exposure state the next frame's passes
-// read. Standalone: it is not compiled after march.wgsl and binds no world.
+// read. Compiled after the prelude alone (frame/compose.rs): it joins none of the frame's
+// modules and binds no world.
 //
 // Bindings, group 0:
 //   0  uniform           ex              the pass's parameters (`ExposureUniform` in exposure.rs)
@@ -21,7 +22,7 @@
 // `dt` 0 it holds bit for bit. In manual the adapted level holds.
 //
 // `previous` becomes the exposure this frame's passes used (the state's `current` in auto,
-// else the manual value: `exposure_now` in march.wgsl) and `current` the one the next frame
+// else the manual value: `exposure_now` in common.wgsl) and `current` the one the next frame
 // uses: the manual value, or in auto `key 2^compensation / 2^adapted` clamped to the limits.
 
 struct ExUniform {
@@ -64,10 +65,6 @@ struct ExState {
 @group(0) @binding(1) var<storage, read_write> state: ExState;
 @group(0) @binding(2) var<storage, read> tiles: array<vec2<f32>>;
 
-const EX_AUTO: u32 = 1u;
-const EX_METER: u32 = 2u;
-const EX_RESET: u32 = 4u;
-const STATE_HELD: u32 = 1u;
 const TILE: f32 = 8.0;
 
 // `exp(-dt / tau)`, 0 for a constant of 0.

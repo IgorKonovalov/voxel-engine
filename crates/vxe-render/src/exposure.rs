@@ -15,7 +15,7 @@
 //!
 //! **Pre-exposure.** Lighting math is in absolute units. Every value a pass stores into an
 //! `rgba16float` HDR target is multiplied by the frame's exposure (`exposure_now` in
-//! `march.wgsl`) and clamped at 60 000; a pass that reads a value an earlier frame stored
+//! `common.wgsl`) and clamped at 60 000; a pass that reads a value an earlier frame stored
 //! multiplies it by `current / previous` (`exposure_ratio`) first, a second moment by its
 //! square, and a second moment is of the luminance clamped at 255. Terms that stay absolute
 //! (emission, translucent layers, the probe atlases and their gathered irradiance, reservoirs)
@@ -26,11 +26,18 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-/// The exposure pass's source.
+use crate::gpu_util::{Io, compute_pipeline, io_layout};
+
+/// The exposure pass, compiled after the prelude ([`exposure_source`]).
 pub const EXPOSURE_WGSL: &str = include_str!("shaders/exposure.wgsl");
 
+/// The exposure pass's composed source: the prelude, then [`EXPOSURE_WGSL`].
+pub(crate) fn exposure_source() -> String {
+    crate::frame::compose(&[EXPOSURE_WGSL])
+}
+
 /// Pixels on a meter tile's edge: the composite's workgroup.
-pub const METER_TILE: u32 = 8;
+pub(crate) const METER_TILE: u32 = 8;
 /// The log2 luminance a pixel adds to its tile is clamped to `[-METER_LOG2_LIMIT,
 /// METER_LOG2_LIMIT]`.
 pub const METER_LOG2_LIMIT: f32 = 16.0;
@@ -306,7 +313,7 @@ pub(crate) const EX_RESET: u32 = 4;
 
 impl ExposureUniform {
     /// The auto fields of `auto`.
-    pub fn set_auto(&mut self, auto: &AutoExposure) {
+    pub(crate) fn set_auto(&mut self, auto: &AutoExposure) {
         self.key = auto.key * auto.compensation_ev.exp2();
         self.min = auto.min;
         self.max = auto.max;
@@ -356,42 +363,19 @@ pub(crate) struct ExposurePass {
 }
 
 impl ExposurePass {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("exposure"),
-            entries: &[
-                entry(0, wgpu::BufferBindingType::Uniform),
-                entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
-                entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
-            ],
-        });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("exposure"),
-            source: wgpu::ShaderSource::Wgsl(EXPOSURE_WGSL.into()),
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("exposure"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("exposure"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("exposure"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let layout = io_layout(
+            device,
+            "exposure",
+            &[Io::Uniform, Io::Storage, Io::ReadStorage],
+        );
+        let pipeline = compute_pipeline(
+            device,
+            "exposure",
+            exposure_source(),
+            &[Some(&layout)],
+            "exposure",
+        );
         let init = |label, usage| {
             wgpu::util::DeviceExt::create_buffer_init(
                 device,
@@ -443,16 +427,16 @@ impl ExposurePass {
         }
     }
 
-    pub fn state(&self) -> &wgpu::Buffer {
+    pub(crate) fn state(&self) -> &wgpu::Buffer {
         &self.state
     }
 
-    pub fn state_uniform(&self) -> &wgpu::Buffer {
+    pub(crate) fn state_uniform(&self) -> &wgpu::Buffer {
         &self.state_uniform
     }
 
     /// Bytes the state, its uniform copy, the pass's parameters and the ring occupy.
-    pub fn bytes(&self) -> u64 {
+    pub(crate) fn bytes(&self) -> u64 {
         2 * size_of::<ExposureState>() as u64
             + size_of::<ExposureUniform>() as u64
             + RING as u64 * RING_BYTES
@@ -462,7 +446,7 @@ impl ExposurePass {
     /// state's copies: into the uniform the next frame reads, and into a free ring slot.
     /// Slots copied by an earlier encode are asked to map first: every encode's commands are
     /// submitted before the next encode.
-    pub fn encode(
+    pub(crate) fn encode(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -520,7 +504,7 @@ impl ExposurePass {
 
     /// The newest state a ring slot has finished mapping, after a non-blocking poll; slots
     /// copied before the last encode are asked to map first.
-    pub fn readout(&self, device: &wgpu::Device) -> Option<ExposureReadout> {
+    pub(crate) fn readout(&self, device: &wgpu::Device) -> Option<ExposureReadout> {
         let mut ring = self
             .ring
             .lock()
@@ -579,12 +563,12 @@ impl Ring {
 mod tests {
     use super::*;
 
-    /// The exposure pass parses and validates headless, standalone.
+    /// The exposure pass parses and validates headless, after the prelude.
     #[test]
     fn exposure_wgsl_validates_through_naga() {
-        let module = wgpu::naga::front::wgsl::parse_str(EXPOSURE_WGSL).unwrap_or_else(|e| {
-            panic!("exposure.wgsl parses: {}", e.emit_to_string(EXPOSURE_WGSL))
-        });
+        let source = exposure_source();
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("exposure.wgsl parses: {}", e.emit_to_string(&source)));
         wgpu::naga::valid::Validator::new(
             wgpu::naga::valid::ValidationFlags::all(),
             wgpu::naga::valid::Capabilities::default(),

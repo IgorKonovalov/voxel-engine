@@ -157,3 +157,32 @@ impl MaterialTable {
         self.flags(id).contains(MaterialFlags::CRISP)
     }
 }
+
+/// A table of the air row followed by the collected rows, numbered from 1 in iteration order,
+/// as successive [`MaterialTable::push`]es number them.
+impl FromIterator<Material> for MaterialTable {
+    fn from_iter<I: IntoIterator<Item = Material>>(rows: I) -> Self {
+        let mut t = Self::new();
+        for m in rows {
+            t.push(m);
+        }
+        t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_collected_table_numbers_its_rows_from_one() {
+        let collected: MaterialTable = ["rock", "ore"].map(Material::named).into_iter().collect();
+        let mut pushed = MaterialTable::new();
+        assert_eq!(pushed.push(Material::named("rock")), 1);
+        assert_eq!(pushed.push(Material::named("ore")), 2);
+        assert_eq!(collected.len(), 3);
+        assert_eq!(collected.get(1).map(|m| m.name.as_str()), Some("rock"));
+        assert_eq!(collected.get(2).map(|m| m.name.as_str()), Some("ore"));
+        assert_eq!(collected, pushed);
+    }
+}

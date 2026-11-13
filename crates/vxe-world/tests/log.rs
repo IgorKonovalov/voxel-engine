@@ -191,6 +191,10 @@ fn entry_bytes_are_little_endian_fields_in_order() {
 /// of each kind, a removal and a pile (one of 4 096 cells), each op result kind, and each
 /// error.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one value of every wire tag in one list, so a new tag is one more line here"
+)]
 fn every_tag_round_trips() {
     let modes = [
         Mode::Carve,

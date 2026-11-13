@@ -43,7 +43,7 @@ jobs:
           echo "release build: $(( $(date +%s) - start )) s"
       - name: Generate the third-party notices
         run: |
-          cargo install --locked "cargo-about@$CARGO_ABOUT_VERSION"
+          cargo install --locked --features cli "cargo-about@$CARGO_ABOUT_VERSION"
           cargo about generate --manifest-path apps/tester/Cargo.toml -c dist/about.toml \
             dist/about.hbs -o target/THIRD-PARTY-NOTICES.txt
       - name: Pack the archive
@@ -109,7 +109,7 @@ jobs:
       - name: Generate the third-party notices, with DXC's
         shell: bash
         run: |
-          cargo install --locked "cargo-about@$CARGO_ABOUT_VERSION"
+          cargo install --locked --features cli "cargo-about@$CARGO_ABOUT_VERSION"
           cargo about generate --manifest-path apps/tester/Cargo.toml -c dist/about.toml \
             dist/about.hbs -o target/THIRD-PARTY-NOTICES.txt
           {

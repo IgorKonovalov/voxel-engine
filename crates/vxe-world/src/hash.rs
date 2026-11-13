@@ -94,6 +94,31 @@ pub const fn mix64(mut z: u64) -> u64 {
     z ^ (z >> 31)
 }
 
+/// SplitMix64: a seeded, platform-independent stream of `u64`s. The state advances by the
+/// golden-ratio increment and each output is [`mix64`] of it.
+///
+/// ```
+/// use vxe_world::hash::SplitMix64;
+/// let mut a = SplitMix64(7);
+/// let mut b = SplitMix64(7);
+/// assert_eq!(a.next_u64(), b.next_u64());
+/// assert!((3..=9).contains(&a.range(3, 9)));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SplitMix64(pub u64);
+
+impl SplitMix64 {
+    pub fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        mix64(self.0)
+    }
+
+    /// Uniform in `lo..=hi` up to the modulo bias of `next_u64() % (hi - lo + 1)`.
+    pub fn range(&mut self, lo: i64, hi: i64) -> i64 {
+        lo + (self.next_u64() % (hi - lo + 1) as u64) as i64
+    }
+}
+
 /// A hash of a seed and an integer lattice point.
 pub const fn hash3(seed: u64, p: [i32; 3]) -> u64 {
     let mut h = mix64(seed ^ 0x9e37_79b9_7f4a_7c15);

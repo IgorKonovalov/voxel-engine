@@ -77,6 +77,14 @@ impl ChunkCoord {
     pub fn min_voxel(self) -> VoxelCoord {
         VoxelCoord(self.0.map(|c| c * CHUNK_EDGE))
     }
+
+    /// The squared distance to `other` in chunks, each component widened to `i64` before the
+    /// difference, so no pair of `i32` coordinates overflows it.
+    pub fn distance2(self, other: ChunkCoord) -> i64 {
+        (0..3)
+            .map(|k| (i64::from(self.0[k]) - i64::from(other.0[k])).pow(2))
+            .sum()
+    }
 }
 
 /// Slot index of the brick holding chunk-local voxel `l` (components in `0..64`).
@@ -92,13 +100,44 @@ pub fn brick_slot(b: [i32; 3]) -> usize {
 
 /// The brick position (components in `0..8`) of slot `slot`.
 pub fn brick_of_slot(slot: usize) -> [i32; 3] {
-    let s = slot as i32;
-    [s % 8, (s / 8) % 8, s / 64]
+    local_of_index(slot).map(|v| v as i32)
 }
 
 /// Index of brick-local voxel `l` (components in `0..8`) inside its brick.
 pub fn index_in_brick(l: [i32; 3]) -> usize {
     (l[0] + BRICK_EDGE * (l[1] + BRICK_EDGE * l[2])) as usize
+}
+
+/// The position `[x, y, z]` (components in `0..8` for `i` in `0..512`) of index `i` in the
+/// x-fastest order `x + 8 y + 64 z` that brick indices and slot indices share: the inverse of
+/// [`index_in_brick`] and [`brick_slot`].
+pub(crate) fn local_of_index(i: usize) -> [usize; 3] {
+    [i % 8, i / 8 % 8, i / 64]
+}
+
+/// The part of the cube of edge `e` at lattice position `c` (coordinates `c e ..= c e + e - 1`
+/// on each axis) inside the inclusive box `lo..=hi`; an axis the box misses comes out with
+/// its low end above its high end.
+pub(crate) fn clip_box(c: [i64; 3], e: i64, lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
+    clip_at(c.map(|v| v * e), e, lo, hi)
+}
+
+/// [`clip_box`] for the cube of edge `e` whose minimum corner is `min`.
+pub(crate) fn clip_at(min: [i64; 3], e: i64, lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
+    (
+        [0, 1, 2].map(|k| min[k].max(lo[k])),
+        [0, 1, 2].map(|k| (min[k] + e - 1).min(hi[k])),
+    )
+}
+
+/// A voxel or chunk coordinate of a checked shape or box as `i32`. Within the limits every
+/// such coordinate fits (`±2^30` fixed units plus a radius of as much is `±2^23` voxels), so
+/// the clamp never moves one.
+pub(crate) fn to_i32(v: [i64; 3]) -> [i32; 3] {
+    v.map(|c| {
+        debug_assert!(i32::try_from(c).is_ok(), "coordinate {c} beyond i32");
+        c.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    })
 }
 
 /// A half-open box of chunks, `min` inclusive and `max` exclusive on every axis.

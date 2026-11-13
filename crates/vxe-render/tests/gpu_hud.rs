@@ -1,8 +1,8 @@
 //! The HUD overlay on the software adapter (lavapipe): exact pixel counts of glyphs drawn onto
 //! a cleared offscreen target.
 
-use vxe_render::font8x8::FONT;
-use vxe_render::{HudColour, HudOverlay, readback, wgpu};
+use vxe_render::internals::FONT;
+use vxe_render::{HudColour, HudOverlay, wgpu};
 
 const CLEAR: [u8; 4] = [10, 20, 30, 255];
 const WHITE: [u8; 3] = [255, 255, 255];
@@ -88,7 +88,7 @@ fn draw(
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     hud.encode(&mut enc, &view, target.width(), target.height());
     queue.submit([enc.finish()]);
-    readback::read_rgba8(device, queue, target)
+    vxe_render::debug::read_rgba8(device, queue, target)
 }
 
 /// Whether `p` is black at alpha 0.75 over [`CLEAR`]: each channel a quarter of the clear

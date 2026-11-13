@@ -32,6 +32,9 @@ use vxe_world::hash::mix64;
 use vxe_world::packed::{Packed, PackedClass, RowSpans};
 use vxe_world::*;
 
+mod support;
+use support::now;
+
 /// Timed runs per figure, after `WARMUP` untimed ones.
 const REPS: usize = 60;
 const WARMUP: usize = 5;
@@ -45,17 +48,6 @@ const ORE: MaterialId = 2;
     clippy::disallowed_methods,
     reason = "a bench timing the kernels; the kernels read no clock"
 )]
-fn now() -> std::time::Instant {
-    std::time::Instant::now()
-}
-
-fn table() -> MaterialTable {
-    let mut t = MaterialTable::new();
-    assert_eq!(t.push(Material::named("rock")), ROCK);
-    assert_eq!(t.push(Material::named("ore")), ORE);
-    t
-}
-
 /// The edit bench's 100 distinct voxels within 100 voxels of the origin.
 fn seeded_voxels(seed: u64) -> Vec<[i32; 3]> {
     let mut out: Vec<[i32; 3]> = Vec::new();
@@ -344,7 +336,9 @@ fn main() {
     if !std::env::args().any(|a| a == "--bench") {
         return;
     }
-    let table = table();
+    let table: MaterialTable = [Material::named("rock"), Material::named("ore")]
+        .into_iter()
+        .collect();
     let captured = capture(&table);
     let carve: Vec<(Brick, RowSpans)> = captured
         .iter()

@@ -1,6 +1,12 @@
 # 0036: Weather: rain, snow, wind, wet surfaces and snow cover, lightning
 
 > **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
+> by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
+> `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
+> `hud.rs`). Read each through "Where things moved" in
+> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> phases re-cut their Files touched at their start.
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0031](../adrs/0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md)
@@ -30,7 +36,7 @@
 > closes. M10 is linear: Plans 0060, 0061, 0058, 0044, 0045, the plan that removes the `own`
 > upscaler and the render-profile plan (the last two are owed), then Plans 0032, 0033, 0034,
 > 0035, this plan, 0037. **The base commit** in every bar is main after Plan 0035's close.
-> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) splits
+> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) splits
 > `marcher.rs`, `gpu_world.rs`, `march.wgsl` and the fly-through's `main.rs` before M10, so
 > every "Files touched" below names the file as it is at main 82ea836 and `dev` re-reads the
 > paths at the base commit; the names `dev` finds in the tree win. The names of today's tree

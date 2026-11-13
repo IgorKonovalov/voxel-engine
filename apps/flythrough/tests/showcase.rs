@@ -7,7 +7,7 @@ use flythrough::showcase::{
     AMBER, AMETHYST, CHASM_HALF, CHASM_X, CRYSTAL, CRYSTAL_FLOOR_X, EMBER, EMBER_TOP_Z, ORE_TOP_Z,
     SHOTS, SHOWCASE_CHUNKS, ShowcaseSource,
 };
-use vxe_render::gpu_world::{DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_SAMPLES, exposed_emitters};
+use vxe_render::{DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_SAMPLES, internals::exposed_emitters};
 use vxe_world::*;
 
 fn generate(seed: u64) -> (ShowcaseSource, World) {

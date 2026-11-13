@@ -1,7 +1,8 @@
 # cargo-about's configuration for the tester build's THIRD-PARTY-NOTICES.txt (Plan 0068). The
 # accepted licences are deny.toml's; the targets are the two archives'. The release workflow
-# installs cargo-about pinned (`cargo install --locked cargo-about@0.9.3`) and appends DXC's
-# notice (dist/DXC-LICENSE.txt) to the Windows archive's copy (ADR-0035).
+# installs cargo-about pinned (`cargo install --locked --features cli cargo-about@0.9.3`; the
+# binary sits behind the `cli` feature) and appends DXC's notice (dist/DXC-LICENSE.txt) to the
+# Windows archive's copy (ADR-0035).
 accepted = [
     "MIT",
     "Apache-2.0",

@@ -111,7 +111,7 @@ fn the_probe_volume_is_built_on_the_first_encode_with_the_lamp_bounce() {
         ..frame.lighting()
     });
     frame.step(&device, &queue, &gpu, &camera(), &LightParams::headlamp());
-    let uniform = size_of::<vxe_render::probes::ProbeUniform>() as u64;
+    let uniform = size_of::<vxe_render::internals::ProbeUniform>() as u64;
     assert_eq!(uniform, 48);
     let grown = frame.frame_bytes() - before;
     println!(
@@ -137,7 +137,7 @@ fn a_params_built_between_encodes_does_not_move_the_lamp_the_encode_compares() {
         intensity: 2.0 * a.intensity,
         ..a
     };
-    let encode = |frame: &Frame, p: &vxe_render::marcher::Params| {
+    let encode = |frame: &Frame, p: &vxe_render::Params| {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         frame.encode(&device, &queue, &mut enc, &gpu, p, None);
         queue.submit([enc.finish()]);

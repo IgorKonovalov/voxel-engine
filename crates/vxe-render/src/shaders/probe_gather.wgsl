@@ -1,5 +1,5 @@
 // The probe volume's reads (ADR-0023) and the gather pass: the indirect irradiance at each
-// lighting pixel's hit from the eight probes around it. Compiled after march.wgsl, whose
+// lighting pixel's hit from the eight probes around it. Compiled after common.wgsl and hitrec.wgsl, whose
 // bindings (group 0), hit-record helpers and lighting grid it uses; probe_update.wgsl is
 // compiled after this file and shares its bindings and reads.
 //
@@ -117,26 +117,6 @@ fn probe_position(w: vec3<i32>) -> vec3<f32> {
     return vec3<f32>(w * i32(probe.spacing)) + 0.5;
 }
 
-// The octahedral coordinates in [-1, 1]^2 of unit `d`.
-fn probe_oct(d: vec3<f32>) -> vec2<f32> {
-    var p = d.xy / (abs(d.x) + abs(d.y) + abs(d.z));
-    if (d.z < 0.0) {
-        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
-        p = (1.0 - abs(p.yx)) * s;
-    }
-    return p;
-}
-
-// The unit direction of octahedral coordinates `p` in [-1, 1]^2.
-fn probe_unoct(p: vec2<f32>) -> vec3<f32> {
-    var d = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
-    if (d.z < 0.0) {
-        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), d.xy >= vec2<f32>(0.0));
-        d = vec3<f32>((1.0 - abs(d.yx)) * s, d.z);
-    }
-    return normalize(d);
-}
-
 // Binary16 bits `h` (low 16 bits) as f32; subnormals included, infinity for exponent 31. The
 // built-in pack2x16float family needs a shader capability not every backend validates with.
 fn half_to_f32(h: u32) -> f32 {
@@ -196,7 +176,7 @@ struct Tap {
 fn probe_tap(d: vec3<f32>, n: u32) -> Tap {
     // Interior texel i (1 ..= n) is centred at i + 0.5; uv 0 and 1 land on the border's centres'
     // inner halves, so the four taps stay inside the tile.
-    let c = (probe_oct(d) * 0.5 + 0.5) * f32(n) + 0.5;
+    let c = (octa_fold(d) * 0.5 + 0.5) * f32(n) + 0.5;
     let b = clamp(floor(c), vec2<f32>(0.0), vec2<f32>(f32(n)));
     return Tap(vec2<u32>(b), clamp(c - b, vec2<f32>(0.0), vec2<f32>(1.0)));
 }

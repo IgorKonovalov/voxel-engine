@@ -166,6 +166,8 @@ jobs:
         run: node scripts/check-index-rows.mjs --self-test
       - name: Test tiers
         run: node scripts/check-test-tiers.mjs
+      - name: File size
+        run: node scripts/check-file-size.mjs
       - name: Plan size
         run: node scripts/check-plan-size.mjs
 

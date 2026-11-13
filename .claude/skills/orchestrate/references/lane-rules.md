@@ -46,7 +46,7 @@ plan lanes run at once, each in its own worktree at
       judges the image (goldens, SSIM or pixel floors, stillness, settle and difference bars).
       The plan's last dev phase, after the window, writes them against the picks.
     - **A reading is not a committed test.** It runs from a rig under the untracked `live/`, a
-      `mod reading` (`#[ignore]`d, run by hand) or the strip tool (`tests/gpu_strip.rs`), and
+      `mod reading` (`#[ignore]`d, run by hand) or the strip tool (`examples/strip.rs`, flags under `--help`), and
       its numbers go to the readings log. No new asserting test file for a mechanism the
       window may drop: the harnesses of Plans 0057 to 0059 churned about 30k test lines, most
       of them deleted with the table.

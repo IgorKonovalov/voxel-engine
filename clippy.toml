@@ -16,3 +16,8 @@ disallowed-methods = [
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+
+# A function over 150 lines (comments and blank lines not counted) is a finding
+# (`too_many_lines`, denied in the workspace lints). A test function still over it carries
+# #[expect(clippy::too_many_lines, reason = "...")]; no src/ function does.
+too-many-lines-threshold = 150

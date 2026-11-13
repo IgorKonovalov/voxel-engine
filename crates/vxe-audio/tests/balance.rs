@@ -3,6 +3,7 @@
 //! echoes and the tail by the room's mean free path and ramp on a room change, and the table
 //! of direct, early and tail energies in closed cubes, flat and at the defaults.
 
+use support::{CAVE, ShellCube, db_power};
 use vxe_audio::*;
 use vxe_world::*;
 
@@ -10,38 +11,8 @@ mod support;
 
 const MPV: f32 = 0.1;
 const FS: f64 = RATE as f64;
-/// The cave row: absorption 0.3 per metre, transmission 0.5.
-const CAVE: MaterialId = 1;
 /// The first 80 ms after the direct sound.
 const EARLY_FRAMES: usize = 3_840;
-
-/// A closed cube of air of `edge` voxels, `[0, edge)³`, inside 2 m of `CAVE`, air beyond:
-/// bricks wholly inside stay uniform air, so a 100 m cube generates quickly.
-struct ShellCube {
-    edge: i32,
-}
-
-impl WorldSource for ShellCube {
-    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
-        let base = coord.min_voxel().0;
-        let edge = self.edge;
-        let material = |v: [i32; 3]| {
-            let inside = v.iter().all(|&c| (0..edge).contains(&c));
-            let shell = v.iter().all(|&c| (-20..edge + 20).contains(&c));
-            if shell && !inside { CAVE } else { AIR }
-        };
-        for slot in 0..CHUNK_BRICKS {
-            let b = brick_of_slot(slot);
-            let lo = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
-            let brick = if lo.iter().all(|&c| c >= 0 && c + BRICK_EDGE <= edge) {
-                Brick::Uniform(AIR)
-            } else {
-                Brick::from_fn(|l| material([0, 1, 2].map(|k| lo[k] + l[k])))
-            };
-            out.set_brick(slot, brick);
-        }
-    }
-}
 
 /// The cube of `edge` voxels in its shell.
 fn cube(edge: i32) -> World {
@@ -144,10 +115,6 @@ fn total(out: &[f32]) -> f64 {
     energy(out, 0, out.len() / 2)
 }
 
-fn db(x: f64) -> f64 {
-    10.0 * x.max(1e-30).log10()
-}
-
 /// The flat mix with the echo trim and the tail trim at `echo_db` and `tail_db`.
 fn mix(echo_db: f32, tail_db: f32) -> MixSettings {
     MixSettings {
@@ -203,7 +170,7 @@ fn a_pre_delay_holds_the_tail_back_without_changing_it() {
     let tail = impulse(&world, 120, MixSettings::flat(), TAIL, 4.0);
     let late = impulse(&world, 120, held, TAIL, 4.04);
     let first = |out: &[f32]| out.chunks_exact(2).position(|f| f[0] != 0.0 || f[1] != 0.0);
-    let d = db(total(&late) / total(&tail));
+    let d = db_power(total(&late) / total(&tail));
     println!(
         "pre-delay 40 ms: first nonzero frame {:?} (without {:?}); energy {d:+.4} dB",
         first(&late),
@@ -280,12 +247,12 @@ fn ear_energy(out: &[f32], ear: usize) -> f64 {
 fn table_row(metres: i32, direct: &[f32], echoes: &[f32], tail: &[f32]) -> String {
     format!(
         "| {metres} m | {:+.1} | {:+.1} | {:+.1} | {:+.1} | {:+.1} | {:+.1} |",
-        db(total(direct)),
-        db(total(echoes)),
-        db(total(tail)),
-        db(energy(direct, 0, EARLY_FRAMES)),
-        db(energy(echoes, 0, EARLY_FRAMES)),
-        db(energy(tail, 0, EARLY_FRAMES)),
+        db_power(total(direct)),
+        db_power(total(echoes)),
+        db_power(total(tail)),
+        db_power(energy(direct, 0, EARLY_FRAMES)),
+        db_power(energy(echoes, 0, EARLY_FRAMES)),
+        db_power(energy(tail, 0, EARLY_FRAMES)),
     )
 }
 
@@ -323,15 +290,15 @@ fn the_room_curves_reach_the_output_and_the_balance_tables() {
         flat_rows.push(table_row(metres, &direct, &echoes, &tail));
         default_rows.push(table_row(metres, &direct_d, &echoes_d, &tail_d));
         assert!(total(&direct) > 0.0 && total(&echoes) > 0.0 && total(&tail) > 0.0);
-        let (want, got) = (db(f64::from(room.energy)), db(total(&tail)));
+        let (want, got) = (db_power(f64::from(room.energy)), db_power(total(&tail)));
         let (left, right) = (ear_energy(&tail, 0), ear_energy(&tail, 1));
         tails.push(format!(
             "{metres} m: tail {got:+.2} dB against the room's {want:+.2} dB ({:+.2}); left \
              {:+.2} dB, right {:+.2} dB, left - right {:+.2} dB; lines {:?}",
             got - want,
-            db(left),
-            db(right),
-            db(left) - db(right),
+            db_power(left),
+            db_power(right),
+            db_power(left) - db_power(right),
             lines.iter().map(|l| l.target).collect::<Vec<_>>()
         ));
         assert!(
@@ -350,8 +317,8 @@ fn the_room_curves_reach_the_output_and_the_balance_tables() {
         curves.push(format!(
             "{metres} m (mfp {mfp:.3} m): echoes {:+.2} dB over flat (curve {echo_db:+.2}), tail \
              {:+.2} dB (curve {tail_db:+.2})",
-            db(e),
-            db(t)
+            db_power(e),
+            db_power(t)
         ));
         assert!(
             (e / 10f64.powf(echo_db / 10.0) - 1.0).abs() <= 0.01,

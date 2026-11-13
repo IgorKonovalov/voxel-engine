@@ -3,6 +3,9 @@
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
 pub mod aliasing;
+pub mod bake;
+pub mod look;
+pub mod queue;
 pub mod rigs;
 pub mod settle;
 pub mod stillness;
@@ -108,6 +111,17 @@ pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
 /// [`software_device`] and stay on lavapipe, CI's adapter.
 pub fn reading_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue, String)> {
     let want = std::env::var("VXE_TEST_ADAPTER").unwrap_or_default();
+    adapter_device(&want, "VXE_TEST_ADAPTER=", pool_bytes)
+}
+
+/// [`reading_device`] for the adapter `want` names (empty or `fallback`: lavapipe), as a
+/// reading example's `--adapter` flag gives it; `by` labels where the name came from in the
+/// printed and panic lines (`--adapter `).
+pub fn adapter_device(
+    want: &str,
+    by: &str,
+    pool_bytes: u64,
+) -> Option<(wgpu::Device, wgpu::Queue, String)> {
     if want.is_empty() || want.eq_ignore_ascii_case("fallback") {
         let (device, queue) = software_device(pool_bytes)?;
         return Some((device, queue, "llvmpipe (lavapipe)".to_owned()));
@@ -123,11 +137,11 @@ pub fn reading_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue, Str
         .into_iter()
         .find(|a| a.get_info().name.to_lowercase().contains(&needle))
     else {
-        panic!("VXE_TEST_ADAPTER={want} matches no adapter; the adapters are {names:?}");
+        panic!("{by}{want} matches no adapter; the adapters are {names:?}");
     };
     let info = adapter.get_info();
     println!(
-        "adapter: {} ({:?}, driver {} {}), chosen by VXE_TEST_ADAPTER={want}",
+        "adapter: {} ({:?}, driver {} {}), chosen by {by}{want}",
         info.name, info.backend, info.driver, info.driver_info
     );
     let desc = wgpu::DeviceDescriptor {
@@ -254,7 +268,7 @@ pub fn assert_golden(name: &str, rgba: &[u8]) {
 
 use flythrough::cave::ROCK;
 use vxe_render::glam::Vec3;
-use vxe_render::{Frame, GpuWorld, LightParams, LodParams, LookParams, MirrorConfig, readback};
+use vxe_render::{Frame, GpuWorld, LightParams, LodParams, LookParams, MirrorConfig};
 
 /// Rows 0 (air) and 1..=5, plain, row 3 with the cave's rock albedo: the solid material-3
 /// world of the cavity scene.
@@ -377,7 +391,7 @@ pub fn occluder_camera() -> Camera {
     }
 }
 
-/// The primary ray of pixel (`col`, `row`) of a `WIDTH` x `HEIGHT` target, as `march.wgsl`
+/// The primary ray of pixel (`col`, `row`) of a `WIDTH` x `HEIGHT` target, as `common.wgsl`
 /// builds it.
 pub fn pixel_ray(camera: &Camera, col: u32, row: u32) -> Vec3 {
     let (fwd, right, up) = camera.basis();
@@ -515,7 +529,7 @@ impl LookRig {
         self.frame.set_look(look);
         self.frame
             .render(&self.device, &self.queue, &self.gpu, camera, light);
-        readback::read_rgba8(&self.device, &self.queue, self.frame.target())
+        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 }
 
@@ -533,16 +547,16 @@ pub fn bake_around(
     centre: [i32; 3],
     radius: i32,
     samples: u32,
-) -> vxe_render::bake::BakeReport {
+) -> vxe_render::BakeReport {
     let w = world.extent();
     let size = w.size();
     let c = centre.map(|v| v.div_euclid(64));
     let lo = [0, 1, 2].map(|k| (c[k] - radius).max(w.min.0[k]));
     let hi = [0, 1, 2].map(|k| (c[k] + radius + 1).min(w.min.0[k] + size[k]).max(lo[k]));
-    let settings = vxe_render::bake::BakeSettings {
+    let settings = vxe_render::BakeSettings {
         round: 64,
         brick_samples: samples,
-        ..vxe_render::bake::BakeSettings::default()
+        ..vxe_render::BakeSettings::default()
     };
     frame
         .bake_until(
@@ -565,7 +579,7 @@ impl LookRig {
         centre: [i32; 3],
         radius: i32,
         samples: u32,
-    ) -> vxe_render::bake::BakeReport {
+    ) -> vxe_render::BakeReport {
         bake_around(
             &self.device,
             &self.queue,
@@ -598,7 +612,7 @@ pub fn centre_pixel(rgba: &[u8]) -> [u8; 3] {
 // ---- The field surface and the sharpness scenes (tests/gpu_look.rs, tests/sharpness.rs) ----
 
 use vxe_render::LightingResolution;
-use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
+use vxe_render::{internals::PAGE_UNITS, internals::UNIT_BYTES};
 
 /// Pool bytes a mirror with the field's band slots needs for `world`'s bricks, with a page of
 /// headroom for each bin's partly filled page.
@@ -645,4 +659,15 @@ pub fn field_mirror_rig_on(
 pub fn field_mirror_rig(world: &World) -> Option<LookRig> {
     let (device, queue) = software_device(field_pool_bytes(world).max(64 << 20))?;
     Some(field_mirror_rig_on(device, queue, world, None))
+}
+
+/// Bytes at which `a` and `b` differ.
+pub fn differing_bytes(a: &[u8], b: &[u8]) -> usize {
+    assert_eq!(a.len(), b.len());
+    a.iter().zip(b).filter(|(x, y)| x != y).count()
+}
+
+/// The cave's materials with the ore emissive: the table the bake and queue tests light.
+pub fn cave_table() -> MaterialTable {
+    flythrough::with_emissive_ore(&flythrough::cave_materials())
 }

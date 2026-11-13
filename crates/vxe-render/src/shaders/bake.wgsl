@@ -1,7 +1,8 @@
 // The bake's sampler (ADR-0046): one round of emissive samples for each entry, a listed cube face
 // of some job's chunk, at unit emission (EMISSION_UNIT), with its own random sequence
-// (RAND_HASHED). Compiled after march.wgsl and light.wgsl, whose bindings (group 0), candidates
-// (`draw_candidates`, `face_point`) and shadow ray (`shadowed`) it uses, with two of their reads
+// (RAND_HASHED). Compiled after the walk's modules, light.wgsl and emissive.wgsl, whose
+// bindings (group 0), candidates (`draw_candidates`, `face_point`) and shadow ray (`shadowed`)
+// it uses, with two of their reads
 // replaced in the bake's module (`bake::bake_source`): the candidate table comes from the entry's
 // job slot (`bake_table_slot`, the job's `bake::job_table`) and the LOD walk's camera chunk is the
 // job's chunk (`bake_origin_chunk`). So one dispatch serves faces of many jobs. The CPU keeps the
@@ -11,7 +12,7 @@
 // Bindings, group 3:
 //   0  uniform  job    the dispatch's job: its entries' count and first, seed, radius, clamp
 //   1  storage  faces  the submit's entries, one round of one face each (`FaceState::input` in
-//                      `bake.rs`): voxel, face, the round's first sample and its samples in;
+//                      `bake/job.rs`): voxel, face, the round's first sample and its samples in;
 //                      the round's sums out; `slot` names the entry's job slot
 //   2  storage  tables the open jobs' slots, TABLE_SLOT words each: the candidate table's
 //                      header and entries, then the job's chunk (xyz)
@@ -69,7 +70,7 @@ struct BakeFace {
 @group(3) @binding(1) var<storage, read_write> faces: array<BakeFace>;
 @group(3) @binding(2) var<storage, read> tables: array<vec4<u32>>;
 
-// A slot's words: the table's header and LIGHT_TABLE_ENTRIES entries (1024, `marcher.rs`), then
+// A slot's words: the table's header and LIGHT_TABLE_ENTRIES entries (1024, `frame/state.rs`), then
 // the job's chunk.
 const TABLE_SLOT: u32 = 1026u;
 

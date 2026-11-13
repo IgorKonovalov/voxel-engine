@@ -27,11 +27,14 @@
 //! not reported again until a dig changes its voxels. A tick runs the falls first, then its
 //! inputs in order.
 //!
-//! The broadcast is UTF-8 lines joined by `\n`. A line `op <verb>` stands for the tick's next
-//! op, applied or refused, in the order the client receives their announcements (`carved`
-//! for a dig, `filled` for a fill, `bench` for each of a bench's [`BENCH_CARVES`] carves,
-//! `stamped`, `dropped` for each tick's drop of a falling region, `piled` for the rubble pile
-//! at the end of a fall that crushed voxels, `removed`). A line `region <cells>
+//! The broadcast is UTF-8 lines joined by `\n`, each a [`DigEvent`]. A line `op <index>
+//! <verb>` ([`DigEvent::Op`]) names the tick's op number `index` (from 0, in the order the
+//! logic asked the host to apply them, which is the order the client receives their
+//! announcements), applied or refused, and its kind ([`OpVerb`]: `carved` for a dig, `filled`
+//! for a fill, `bench` for each of a bench's [`BENCH_CARVES`] carves, `stamped`, `dropped` for
+//! each tick's drop of a falling region, `piled` for the rubble pile at the end of a fall that
+//! crushed voxels, `removed`); [`pair_op`] finds the announcement it names, and an index that
+//! names none is an error. A line `region <cells>
 //! <material>:<voxels> ...` reports one unsupported region the query found after the dig
 //! before it ([`region_line`], [`parse_region_line`]); a line `wedged <cells>
 //! <material>:<voxels> ...` reports a region that cannot fall ([`wedged_line`],
@@ -71,6 +74,123 @@ pub const DROP_VERB: &str = "dropped";
 pub const REMOVE_VERB: &str = "removed";
 /// The verb of the rubble pile's `op` line at the end of a fall that crushed voxels.
 pub const PILE_VERB: &str = "piled";
+
+/// The kind of op an `op` event names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpVerb {
+    Carved,
+    Filled,
+    Bench,
+    Stamped,
+    Dropped,
+    Removed,
+    Piled,
+}
+
+impl OpVerb {
+    pub const ALL: [Self; 7] = [
+        Self::Carved,
+        Self::Filled,
+        Self::Bench,
+        Self::Stamped,
+        Self::Dropped,
+        Self::Removed,
+        Self::Piled,
+    ];
+
+    /// The verb as the event writes it: [`DIG_VERB`], [`FILL_VERB`] and the others.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Carved => DIG_VERB,
+            Self::Filled => FILL_VERB,
+            Self::Bench => BENCH_VERB,
+            Self::Stamped => STAMP_VERB,
+            Self::Dropped => DROP_VERB,
+            Self::Removed => REMOVE_VERB,
+            Self::Piled => PILE_VERB,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.name() == name)
+    }
+}
+
+/// One line of the logic's broadcast.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DigEvent {
+    /// The tick's op number `index`, from 0 in the order the logic asked the host to apply
+    /// them, applied or refused, is of kind `verb`.
+    Op { index: u32, verb: OpVerb },
+    /// Any other line: a region ([`region_line`]), a wedged region ([`wedged_line`]), a
+    /// fall's end ([`landed_line`], [`refused_line`]) or a message to print as it is.
+    Line(String),
+}
+
+impl DigEvent {
+    /// The event as its broadcast line: `op <index> <verb>`, or the line itself.
+    pub fn encode(&self) -> String {
+        match self {
+            Self::Op { index, verb } => format!("op {index} {}", verb.name()),
+            Self::Line(line) => line.clone(),
+        }
+    }
+
+    /// The event a broadcast line holds: an `op <index> <verb>` line with a known verb is an
+    /// [`DigEvent::Op`], any other line a [`DigEvent::Line`].
+    pub fn decode(line: &str) -> Self {
+        let op = line.strip_prefix("op ").and_then(|rest| {
+            let (index, verb) = rest.split_once(' ')?;
+            Some(Self::Op {
+                index: index.parse().ok()?,
+                verb: OpVerb::from_name(verb)?,
+            })
+        });
+        op.unwrap_or_else(|| Self::Line(line.to_owned()))
+    }
+}
+
+/// An `op` event whose index names none of the ops the client received for its tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnmatchedOp {
+    pub tick: u64,
+    pub index: u32,
+    pub verb: OpVerb,
+    /// The ops the client received for the tick.
+    pub ops: usize,
+}
+
+impl std::fmt::Display for UnmatchedOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the logic's event `op {} {}` of tick {} names none of its {} ops",
+            self.index,
+            self.verb.name(),
+            self.tick,
+            self.ops
+        )
+    }
+}
+
+impl std::error::Error for UnmatchedOp {}
+
+/// The position, among the ops the client received (`ticks` holds each one's tick in arrival
+/// order), of `tick`'s op number `index`, which the event `op <index> <verb>` of `tick` names;
+/// [`UnmatchedOp`] when the tick has no such op.
+pub fn pair_op(ticks: &[u64], tick: u64, index: u32, verb: OpVerb) -> Result<usize, UnmatchedOp> {
+    let mut of_tick = ticks
+        .iter()
+        .enumerate()
+        .filter(|&(_, &t)| t == tick)
+        .map(|(i, _)| i);
+    of_tick.nth(index as usize).ok_or(UnmatchedOp {
+        tick,
+        index,
+        verb,
+        ops: ticks.iter().filter(|&&t| t == tick).count(),
+    })
+}
 
 /// Voxels a falling region drops per tick: one cell, so it stays on the cell lattice.
 pub const FALL_STEP: i32 = BRICK_EDGE;
@@ -224,9 +344,6 @@ pub fn bench_ops(origin: [i64; 3], seed: u64) -> Vec<EditOp> {
     ops
 }
 
-/// `op ` then [`BENCH_VERB`].
-const BENCH_OP_LINE: &str = "op bench";
-
 /// The point `origin + dir * t / 256`.
 fn along(origin: Fixed3, dir: [i64; 3], t: i64) -> Fixed3 {
     Fixed3([0, 1, 2].map(|k| origin.0[k] + dir[k] * t / FIXED_ONE))
@@ -351,9 +468,24 @@ pub struct DigLogic {
     /// Keys ([`stuck_key`]) of the regions that were wedged or refused, oldest first, at most
     /// [`STUCK_MAX`].
     stuck: VecDeque<u64>,
+    /// The ops this tick has asked of the host so far: the next `op` event's index.
+    ops: u32,
 }
 
 impl DigLogic {
+    /// Announces the op just asked of the host: the event `op <index> <verb>`, the tick's next
+    /// index.
+    fn announce(&mut self, verb: OpVerb, lines: &mut Vec<String>) {
+        lines.push(
+            DigEvent::Op {
+                index: self.ops,
+                verb,
+            }
+            .encode(),
+        );
+        self.ops += 1;
+    }
+
     /// One tick of falling: every falling region drops by up to [`FALL_STEP`]. A drop of a
     /// whole step moves the region's cells one cell down and it falls on. A shorter drop after
     /// it has moved means it has landed; no drop at all on its first tick means it is wedged;
@@ -366,7 +498,7 @@ impl DigLogic {
                 max_drop: FALL_STEP,
                 yield_below: YIELD_BELOW,
             });
-            lines.push(format!("op {DROP_VERB}"));
+            self.announce(OpVerb::Dropped, lines);
             // A host that answers a drop with another kind of result is refused like an error:
             // the same line natively and as a component, and no panic.
             let refused = match r {
@@ -411,7 +543,7 @@ impl DigLogic {
     /// them on its cells, pushes `op piled`, and returns `line` with the crush and the pile
     /// appended; otherwise `line` as it is.
     fn end_fall(
-        &self,
+        &mut self,
         host: &mut dyn Host,
         f: &Falling,
         line: String,
@@ -426,7 +558,7 @@ impl DigLogic {
             count: f.crushed,
             max_depth: RUBBLE_DEPTH,
         });
-        lines.push(format!("op {PILE_VERB}"));
+        self.announce(OpVerb::Piled, lines);
         match r {
             Ok(OpResult::Pile(p)) => {
                 format!("{line}, crushed {} voxels, {} rubble", f.crushed, p.placed)
@@ -480,7 +612,7 @@ impl DigLogic {
                     fraction: RUBBLE_FRACTION,
                     max_depth: RUBBLE_DEPTH,
                 });
-                lines.push(format!("op {REMOVE_VERB}"));
+                self.announce(OpVerb::Removed, lines);
             } else {
                 self.falling.push(Falling {
                     cells: region.cells,
@@ -501,6 +633,7 @@ impl Logic for DigLogic {
 
     fn tick(&mut self, host: &mut dyn Host, _tick: u64, inputs: &[ClientInput]) -> TickOutput {
         let mut lines: Vec<String> = Vec::new();
+        self.ops = 0;
         self.fall(host, &mut lines);
         for input in inputs {
             match DigInput::decode(&input.bytes) {
@@ -514,7 +647,7 @@ impl Logic for DigLogic {
                         .map_or(REACH, |h| h.t);
                     let end = along(origin, dir, t);
                     let r = host.apply(Op::Edit(EditOp::capsule(origin, end, radius, Mode::Carve)));
-                    lines.push(format!("op {DIG_VERB}"));
+                    self.announce(OpVerb::Carved, &mut lines);
                     if let Ok(r) = r {
                         self.collapse(host, r.aabb(), &mut lines);
                     }
@@ -529,14 +662,14 @@ impl Logic for DigLogic {
                         let at = along(origin, dir, hit.t);
                         let _ =
                             host.apply(Op::Edit(EditOp::sphere(at, radius, Mode::Fill(material))));
-                        lines.push(format!("op {FILL_VERB}"));
+                        self.announce(OpVerb::Filled, &mut lines);
                     }
                     None => lines.push("filled: no surface within 10 m".to_owned()),
                 },
                 Ok(DigInput::Bench { origin, seed }) => {
                     for op in bench_ops(origin, seed) {
                         let _ = host.apply(Op::Edit(op));
-                        lines.push(BENCH_OP_LINE.to_owned());
+                        self.announce(OpVerb::Bench, &mut lines);
                     }
                 }
                 Ok(DigInput::Stamp {
@@ -550,7 +683,7 @@ impl Logic for DigLogic {
                             origin: hit.voxel,
                             rot: Rot::IDENTITY,
                         });
-                        lines.push(format!("op {STAMP_VERB}"));
+                        self.announce(OpVerb::Stamped, &mut lines);
                     }
                     None => lines.push("stamped: no surface within 10 m".to_owned()),
                 },
@@ -647,7 +780,7 @@ mod tests {
         assert_eq!(
             fall_lines(&mut host),
             [
-                "op dropped",
+                "op 0 dropped",
                 "drop refused: the host answered a drop with a pile result, after 0 ticks, \
                  fell 0 voxels"
             ]
@@ -668,12 +801,59 @@ mod tests {
         assert_eq!(
             fall_lines(&mut host),
             [
-                "op dropped",
-                "op piled",
+                "op 0 dropped",
+                "op 1 piled",
                 "landed after 1 ticks, fell 1 voxels, crushed 5 voxels, pile refused: the host \
                  answered a pile with a drop result"
             ]
         );
+    }
+
+    /// An `op` event names its tick's op by index: one that names an op the client received
+    /// for that tick pairs with it (whatever other ticks' ops arrived between), and one whose
+    /// index names none is an `UnmatchedOp` error, not a skipped line. The event round-trips
+    /// through its line, and any other line decodes as itself.
+    #[test]
+    fn an_event_with_no_matching_op_is_an_error() {
+        let ticks = [5, 5, 6, 5];
+        assert_eq!(pair_op(&ticks, 5, 0, OpVerb::Carved), Ok(0));
+        assert_eq!(pair_op(&ticks, 5, 2, OpVerb::Dropped), Ok(3));
+        assert_eq!(pair_op(&ticks, 6, 0, OpVerb::Piled), Ok(2));
+        let e = pair_op(&ticks, 5, 3, OpVerb::Bench);
+        assert_eq!(
+            e,
+            Err(UnmatchedOp {
+                tick: 5,
+                index: 3,
+                verb: OpVerb::Bench,
+                ops: 3
+            })
+        );
+        assert_eq!(
+            e.unwrap_err().to_string(),
+            "the logic's event `op 3 bench` of tick 5 names none of its 3 ops"
+        );
+        assert!(pair_op(&ticks, 7, 0, OpVerb::Carved).is_err());
+        for verb in OpVerb::ALL {
+            let ev = DigEvent::Op { index: 12, verb };
+            assert_eq!(DigEvent::decode(&ev.encode()), ev);
+        }
+        assert_eq!(
+            DigEvent::Op {
+                index: 1,
+                verb: OpVerb::Piled
+            }
+            .encode(),
+            "op 1 piled"
+        );
+        for line in [
+            "region 9 1:4608",
+            "op carved",
+            "op x carved",
+            "op 1 sculpted",
+        ] {
+            assert_eq!(DigEvent::decode(line), DigEvent::Line(line.to_owned()));
+        }
     }
 }
 

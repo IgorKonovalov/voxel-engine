@@ -1,120 +1,25 @@
 //! Shader constructs that validate under naga and run on Vulkan but fail to compile on one of
 //! the backends we ship, caught headless on any host.
 
-use vxe_render::fsr2::fsr2_source;
 use vxe_render::wgpu::naga::{self, Block, Expression, Statement, TypeInner};
 
-use vxe_render::MARCH_WGSL as MARCH;
-
-/// Every shader the renderer compiles, the frame's passes each after `march.wgsl`.
-fn shaders() -> Vec<(&'static str, String)> {
-    vec![
-        ("march.wgsl", MARCH.to_owned()),
-        (
-            "light.wgsl",
-            format!("{MARCH}\n{}", include_str!("../src/shaders/light.wgsl")),
-        ),
-        (
-            "composite.wgsl",
-            format!("{MARCH}\n{}", include_str!("../src/shaders/composite.wgsl")),
-        ),
-        (
-            "temporal.wgsl",
-            format!("{MARCH}\n{}", include_str!("../src/shaders/temporal.wgsl")),
-        ),
-        (
-            "atrous.wgsl",
-            format!("{MARCH}\n{}", include_str!("../src/shaders/atrous.wgsl")),
-        ),
-        (
-            "gradient.wgsl",
-            format!(
-                "{MARCH}\n{}\n{}",
-                include_str!("../src/shaders/light.wgsl"),
-                include_str!("../src/shaders/gradient.wgsl")
-            ),
-        ),
-        (
-            "probe_gather.wgsl",
-            format!(
-                "{MARCH}\n{}",
-                include_str!("../src/shaders/probe_gather.wgsl")
-            ),
-        ),
-        (
-            "probe_update.wgsl",
-            format!(
-                "{MARCH}\n{}\n{}\n{}",
-                include_str!("../src/shaders/light.wgsl"),
-                include_str!("../src/shaders/probe_gather.wgsl"),
-                include_str!("../src/shaders/probe_update.wgsl")
-            ),
-        ),
-        (
-            "field.wgsl",
-            include_str!("../src/shaders/field.wgsl").to_owned(),
-        ),
-        (
-            "exposure.wgsl",
-            include_str!("../src/shaders/exposure.wgsl").to_owned(),
-        ),
-        (
-            "present.wgsl",
-            include_str!("../src/shaders/present.wgsl").to_owned(),
-        ),
-        (
-            "hud.wgsl",
-            include_str!("../src/shaders/hud.wgsl").to_owned(),
-        ),
-        (
-            "upscale.wgsl",
-            format!("{MARCH}\n{}", include_str!("../src/shaders/upscale.wgsl")),
-        ),
-        (
-            "sharpen.wgsl",
-            format!("{MARCH}\n{}", include_str!("../src/shaders/sharpen.wgsl")),
-        ),
-        (
-            "fsr2/input.wgsl",
-            format!("{MARCH}\n{}", vxe_render::fsr2::FSR2_INPUT_WGSL),
-        ),
-        (
-            "fsr2/tone.wgsl",
-            format!("{MARCH}\n{}", vxe_render::fsr2::FSR2_TONE_WGSL),
-        ),
-        (
-            "composite.wgsl (FSR 2's HDR variant)",
-            format!("{MARCH}\n{}", vxe_render::marcher::composite_hdr_source()),
-        ),
-        (
-            "fsr2/luminance_pyramid.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_LUMINANCE_PYRAMID_WGSL, true),
-        ),
-        (
-            "fsr2/reconstruct_previous_depth.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_RECONSTRUCT_WGSL, true),
-        ),
-        (
-            "fsr2/depth_clip.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_DEPTH_CLIP_WGSL, true),
-        ),
-        (
-            "fsr2/lock.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_LOCK_WGSL, true),
-        ),
-        (
-            "fsr2/rcas.wgsl",
-            fsr2_source(vxe_render::fsr2::FSR2_RCAS_WGSL, true),
-        ),
-        (
-            "fsr2/accumulate.wgsl (LDR)",
-            fsr2_source(vxe_render::fsr2::FSR2_ACCUMULATE_WGSL, false),
-        ),
-        (
-            "fsr2/accumulate.wgsl (HDR)",
-            fsr2_source(vxe_render::fsr2::FSR2_ACCUMULATE_WGSL, true),
-        ),
-    ]
+/// Every shader the renderer compiles: the composed compute sources from the renderer's own
+/// list (`internals::shader_sources`, built from the pass tables and the bake's composer), and
+/// the HUD's and the present pass's render sources.
+fn shaders() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = vxe_render::internals::shader_sources()
+        .into_iter()
+        .map(|s| (format!("{} ({})", s.label, s.entry), s.source))
+        .collect();
+    out.push((
+        "hud.wgsl".to_owned(),
+        include_str!("../src/shaders/hud.wgsl").to_owned(),
+    ));
+    out.push((
+        "present.wgsl".to_owned(),
+        include_str!("../src/shaders/present.wgsl").to_owned(),
+    ));
+    out
 }
 
 /// FXC, the D3D12 HLSL compiler, rejects a store to a vector component chosen at run time

@@ -12,57 +12,15 @@
 
 use crate::brick::Brick;
 use crate::chunk::Chunk;
-use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, index_in_brick};
+use crate::coords::{
+    BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, clip_at, clip_box, index_in_brick,
+};
 use crate::edit::{EditError, EditResult};
 use crate::fixed::{FIXED_ONE, Fixed3};
 use crate::limits::Field;
-use crate::material::MaterialId;
 use crate::prefab::{Prefab, Rot};
 use crate::store::{World, read, write};
-
-/// Counts by old material and bounds of the changed voxels of one stamp.
-struct Tally {
-    /// Indexed by material id, grown on demand.
-    counts: Vec<u32>,
-    lo: [i32; 3],
-    hi: [i32; 3],
-    any: bool,
-}
-
-impl Tally {
-    fn new(rows: usize) -> Self {
-        Self {
-            counts: vec![0; rows],
-            lo: [0; 3],
-            hi: [0; 3],
-            any: false,
-        }
-    }
-
-    #[inline]
-    fn count(&mut self, m: MaterialId, v: [i32; 3]) {
-        let i = usize::from(m);
-        if i >= self.counts.len() {
-            self.counts.resize(i + 1, 0);
-        }
-        self.counts[i] += 1;
-        if self.any {
-            self.lo = [0, 1, 2].map(|k| self.lo[k].min(v[k]));
-            self.hi = [0, 1, 2].map(|k| self.hi[k].max(v[k]));
-        } else {
-            (self.lo, self.hi, self.any) = (v, v, true);
-        }
-    }
-
-    fn changed_from(&self) -> Vec<(MaterialId, u32)> {
-        self.counts
-            .iter()
-            .enumerate()
-            .filter(|&(_, &n)| n != 0)
-            .map(|(m, &n)| (m as MaterialId, n))
-            .collect()
-    }
-}
+use crate::tally::Tally;
 
 /// The inclusive voxel box `lo..=hi` a prefab of `size` covers with its minimum corner at
 /// `origin`, in `i64` so the far corner cannot overflow; `None` for an empty prefab.
@@ -83,14 +41,6 @@ pub(crate) fn chunks_of(lo: [i64; 3], hi: [i64; 3]) -> impl Iterator<Item = [i64
     (clo[0]..=chi[0]).flat_map(move |x| {
         (clo[1]..=chi[1]).flat_map(move |y| (clo[2]..=chi[2]).map(move |z| [x, y, z]))
     })
-}
-
-/// The part of the box `lo..=hi` inside chunk `c`, inclusive.
-fn clip_to_chunk(c: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
-    let edge = i64::from(CHUNK_EDGE);
-    let clo = [0, 1, 2].map(|k| (c[k] * edge).max(lo[k]));
-    let chi = [0, 1, 2].map(|k| (c[k] * edge + edge - 1).min(hi[k]));
-    (clo, chi)
 }
 
 /// Whether `prefab`, with its minimum corner at `origin`, writes any voxel in `lo..=hi` (a
@@ -134,8 +84,7 @@ fn blit(
             for bx in blo[0]..=bhi[0] {
                 let b = [bx, by, bz];
                 let bmin = [0, 1, 2].map(|k| base[k] + b[k] * be);
-                let elo = [0, 1, 2].map(|k| bmin[k].max(lo[k]));
-                let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(hi[k]));
+                let (elo, ehi) = clip_at(bmin, be, lo, hi);
                 let slot = brick_slot(b.map(|v| v as i32));
                 let brick = chunk.brick_mut(slot);
                 // A uniform brick expands only when a written voxel differs from it.
@@ -180,7 +129,10 @@ fn blit(
                                 *cell = new;
                                 changed = true;
                                 if let Some(t) = tally.as_deref_mut() {
-                                    t.count(old, [x as i32, y as i32, z as i32]);
+                                    // Each changed voxel bounds itself, at its `i32` coordinate.
+                                    let v = [x as i32, y as i32, z as i32].map(i64::from);
+                                    t.count(old, 1);
+                                    t.bound(v, v);
                                 }
                             }
                         }
@@ -208,7 +160,7 @@ pub(crate) fn blit_into(
     hi: [i64; 3],
 ) -> bool {
     let c = coord.0.map(i64::from);
-    let (clo, chi) = clip_to_chunk(c, lo, hi);
+    let (clo, chi) = clip_box(c, i64::from(CHUNK_EDGE), lo, hi);
     if (0..3).any(|k| clo[k] > chi[k]) {
         return false;
     }
@@ -258,7 +210,7 @@ impl World {
         let map = read(&self.store.chunks);
         let mut chunks = Vec::new();
         for c in chunks_of(lo, hi) {
-            let (clo, chi) = clip_to_chunk(c, lo, hi);
+            let (clo, chi) = clip_box(c, i64::from(CHUNK_EDGE), lo, hi);
             let coord = ChunkCoord(c.map(|v| v as i32));
             match map.get(&coord) {
                 Some(chunk) => chunks.push((coord, clo, chi, chunk)),
@@ -281,12 +233,11 @@ impl World {
             }
         }
         drop(map);
+        let aabb = tally.aabb();
         Ok(EditResult {
             changed_from: tally.changed_from(),
             touched,
-            aabb: tally
-                .any
-                .then_some((VoxelCoord(tally.lo), VoxelCoord(tally.hi))),
+            aabb,
         })
     }
 }

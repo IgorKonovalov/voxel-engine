@@ -38,8 +38,10 @@ pub struct Percentiles {
 }
 
 /// The `p`-th percentile (0 to 100] of `sorted` (ascending, not empty) by nearest rank: the
-/// value at rank `ceil(p / 100 * n)`, counted from 1.
-pub fn nearest_rank(sorted: &[f64], p: f64) -> f64 {
+/// value at rank `ceil(p / 100 * n)`, counted from 1. The fly-through's one rank statistic:
+/// the report's, the exit lines' ([`percentile`]), the `F1` line's median and the HUD's frame
+/// row read it.
+pub fn nearest_rank<T: Copy>(sorted: &[T], p: f64) -> T {
     let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
     sorted[rank.clamp(1, sorted.len()) - 1]
 }
@@ -239,26 +241,31 @@ impl RunReport {
 /// A series kept in a buffer allocated once: appended to until full, then a ring over its
 /// newest values.
 #[derive(Clone, Debug, Default)]
-struct Series {
+pub(crate) struct Series {
     v: Vec<f64>,
     next: usize,
 }
 
 impl Series {
-    fn with_capacity(n: usize) -> Self {
+    pub(crate) fn with_capacity(n: usize) -> Self {
         Self {
             v: Vec::with_capacity(n.max(1)),
             next: 0,
         }
     }
 
-    fn push(&mut self, x: f64) {
+    pub(crate) fn push(&mut self, x: f64) {
         if self.v.len() < self.v.capacity() {
             self.v.push(x);
         } else {
             self.v[self.next] = x;
             self.next = (self.next + 1) % self.v.len();
         }
+    }
+
+    /// The values kept, in no order once the ring has wrapped.
+    pub(crate) fn values(&self) -> &[f64] {
+        &self.v
     }
 }
 
@@ -528,6 +535,25 @@ pub mod json {
     }
 }
 
+/// The wall clock now: the fly-through's one clock read, for its printed timings (startup,
+/// edits, frames) and its examples'. The engine crates it drives read no clock.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the fly-through times startup, edits and frames for its printed readings"
+)]
+pub fn now() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
+/// The `p`-th percentile (0 to 100) of `v` by [`nearest_rank`]; `NaN` when empty. Sorts `v`.
+pub fn percentile(v: &mut [f64], p: f64) -> f64 {
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    v.sort_by(f64::total_cmp);
+    nearest_rank(v, p)
+}
+
 #[cfg(test)]
 mod tests {
     use super::json::{Value, parse};
@@ -669,5 +695,47 @@ mod tests {
         assert_eq!(r.over_100ms, 10);
         assert_eq!(r.wall_ms.map(|p| p.max), Some(1.0));
         assert_eq!(rec.wall.v.capacity(), cap);
+    }
+
+    /// The `F1` line's median, the exit line's p50, the report's p50 and the HUD frame row's
+    /// p50 are one statistic, the nearest rank: an even series, where the upper median (4)
+    /// and the nearest rank (3) differ, gives 3 on each.
+    #[test]
+    fn the_median_and_the_p50_agree() {
+        let ms = [4.0, 1.0, 3.0, 2.0, 6.0, 5.0];
+        assert_eq!(
+            percentile(&mut ms.to_vec(), 50.0),
+            3.0,
+            "the F1 line's median"
+        );
+        let mut times = crate::run::hud_feed::RunTimes::default();
+        for m in ms {
+            times.push(m, Some(m), Some(m));
+        }
+        let line = times.line().expect("a frame was pushed");
+        assert!(
+            line.contains("frame CPU p50 3.000 ms") && line.contains("march GPU p50 3.000 ms"),
+            "{line}"
+        );
+        assert_eq!(Percentiles::of(&mut ms.to_vec()).map(|p| p.p50), Some(3.0));
+        let mut ring = crate::hud::FrameStats::new();
+        for m in ms {
+            ring.record((m / 1000.0) as f32);
+        }
+        assert!(
+            (ring.frame_ms_p50() - 3.0).abs() < 1e-4,
+            "{}",
+            ring.frame_ms_p50()
+        );
+    }
+
+    #[test]
+    fn percentiles_by_nearest_rank() {
+        let mut v: Vec<f64> = (1..=100).rev().map(f64::from).collect();
+        assert_eq!(percentile(&mut v, 50.0), 50.0);
+        assert_eq!(percentile(&mut v, 99.0), 99.0);
+        assert_eq!(percentile(&mut v, 100.0), 100.0);
+        assert_eq!(percentile(&mut [3.0], 95.0), 3.0);
+        assert!(percentile(&mut [], 50.0).is_nan());
     }
 }

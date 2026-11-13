@@ -1,6 +1,12 @@
 # 0032: Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as a directional sample, sky light from a sky ray, an outdoor testbed source
 
 > **Status:** approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign)
+> **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
+> by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
+> `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
+> `hud.rs`). Read each through "Where things moved" in
+> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> phases re-cut their Files touched at their start.
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0026](../adrs/0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md)
@@ -29,7 +35,7 @@
 > **Starts after:** Plan 0060, Plan 0061,
 > [Plan 0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md),
 > [Plan 0044](0044-hot-path-and-defect-pass.md),
-> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md), the plan that
+> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md), the plan that
 > removes the `own` upscaler and the render-profile plan (the last two are owed and take their
 > numbers when drafted). **The base commit** in every bar is main after the last of those
 > merges. Plan 0045 splits `marcher.rs`, `gpu_world.rs`, `march.wgsl` and the fly-through's

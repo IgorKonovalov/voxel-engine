@@ -7,17 +7,13 @@
 //! cargo run --release -p flythrough --example castle_gen -- --runs 3
 //! ```
 
-use flythrough::castle;
+use flythrough::{castle, now};
 use vxe_world::{Chunk, ChunkCoord, WorldSource};
 
 #[allow(
     clippy::disallowed_methods,
     reason = "the example's purpose is a wall-clock reading of chunk generation"
 )]
-fn now() -> std::time::Instant {
-    std::time::Instant::now()
-}
-
 /// Per-chunk generation times of `src` over `chunks`, in microseconds.
 fn time(src: &impl WorldSource, chunks: &[ChunkCoord]) -> Vec<f64> {
     chunks

@@ -96,7 +96,9 @@ scripts/
 ├── check-doc-links.mjs        # every relative markdown link resolves (run at every plan close)
 ├── check-comment-hygiene.mjs  # no relative link or plan-relative narration in .rs/.wgsl comments
 ├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
-├── check-test-tiers.mjs       # every test file that opens a GPU device is named tests/gpu_*.rs
+├── check-test-tiers.mjs       # every test file that opens a GPU device is named tests/gpu_*.rs; a tests/
+│                              #   file names at most 4 VXE_* variables (more is an example with flags)
+├── check-file-size.mjs        # no src/ file over 1200 lines, no tests/, benches/ or examples/ file over 2000
 ├── check-plan-size.mjs        # a plan's Implementation log (0055 on) stays under 150 lines, no resume notes in it
 ├── test-changed.mjs           # a nextest tier, or --clippy, over -p the changed crates and their dependents
 ├── test-times.mjs             # ranks a nextest log's tests by time; names the ones over the soak line

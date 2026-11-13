@@ -1,7 +1,7 @@
 // The sharpening pass (ADR-0024): FSR 1's robust contrast-adaptive sharpening (RCAS), ported
 // to WGSL from `FsrRcasF` in AMD's `ffx_fsr1.h` (FidelityFX Super Resolution 1.0,
 // https://github.com/GPUOpen-Effects/FidelityFX-FSR), without its optional denoise. It reads
-// the upscale pass's history and writes the frame's rgba8 image. Compiled after march.wgsl,
+// the upscale pass's history and writes the frame's rgba8 image. Compiled after common.wgsl,
 // whose parameters (`params.output_size`) it uses.
 //
 // The port carries AMD's notice:

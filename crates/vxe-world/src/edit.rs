@@ -8,17 +8,23 @@
 //! coordinate order (ADR-0002). The store map's read lock is held from before the check until
 //! after the last write, so a streamer cannot evict a chunk the op has checked (ADR-0003).
 
-use crate::brick::{Brick, RawBrick, SpareArrays, Voxels};
+use crate::brick::Brick;
+#[cfg(feature = "bench-internals")]
+use crate::brick::{RawBrick, SpareArrays, Voxels};
 use crate::coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, brick_slot,
+    clip_at, clip_box, to_i32,
 };
 use crate::fixed::{Fixed3, centre};
 use crate::limits::Field;
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
-use crate::packed::{KernelMode, PackedStats, RowSpans, box_words, shape_words};
+use crate::packed::{KernelMode, PackedStats, box_words};
+#[cfg(feature = "bench-internals")]
+use crate::packed::{RowSpans, shape_words};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape, sphere_row_spans};
 use crate::store::{World, read, write};
+use crate::tally::Tally;
 
 /// What an op does to the voxels inside its shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -148,6 +154,7 @@ impl TargetTable {
     }
 
     /// [`write_rows`] under this table's target.
+    #[cfg(feature = "bench-internals")]
     fn write_rows(
         &self,
         v: &mut Voxels,
@@ -191,6 +198,7 @@ impl TargetTable {
     }
 
     /// The material a voxel of `old` becomes, or `None` when the op leaves it unchanged.
+    #[cfg(any(test, feature = "bench-internals"))]
     #[inline]
     fn target(&self, old: MaterialId) -> Option<MaterialId> {
         match *self {
@@ -203,17 +211,20 @@ impl TargetTable {
 
 /// One variant of [`TargetTable`] as its own type, so the row loop is compiled once per
 /// variant with the lookup inlined and no `match` per voxel.
+#[cfg(any(test, feature = "bench-internals"))]
 trait Target: Copy {
     /// The material a voxel of `old` becomes, or `None` when the op leaves it unchanged.
     fn target(self, old: MaterialId) -> Option<MaterialId>;
 }
 
+#[cfg(any(test, feature = "bench-internals"))]
 #[derive(Clone, Copy)]
 struct CarveBits<'a> {
     carves: &'a [u64],
     rows: usize,
 }
 
+#[cfg(any(test, feature = "bench-internals"))]
 impl Target for CarveBits<'_> {
     #[inline]
     fn target(self, old: MaterialId) -> Option<MaterialId> {
@@ -223,9 +234,11 @@ impl Target for CarveBits<'_> {
     }
 }
 
+#[cfg(any(test, feature = "bench-internals"))]
 #[derive(Clone, Copy)]
 struct FillAir(MaterialId);
 
+#[cfg(any(test, feature = "bench-internals"))]
 impl Target for FillAir {
     #[inline]
     fn target(self, old: MaterialId) -> Option<MaterialId> {
@@ -233,72 +246,18 @@ impl Target for FillAir {
     }
 }
 
+#[cfg(any(test, feature = "bench-internals"))]
 #[derive(Clone, Copy)]
 struct ReplaceOne {
     from: MaterialId,
     to: MaterialId,
 }
 
+#[cfg(any(test, feature = "bench-internals"))]
 impl Target for ReplaceOne {
     #[inline]
     fn target(self, old: MaterialId) -> Option<MaterialId> {
         (old == self.from && self.from != self.to).then_some(self.to)
-    }
-}
-
-/// Per-op accumulation of counts and bounds. `counts` is indexed by material id and sized to
-/// the material table once per op; `seen` lists each id the first time its count leaves zero.
-struct Tally {
-    counts: Vec<u32>,
-    seen: Vec<MaterialId>,
-    lo: [i64; 3],
-    hi: [i64; 3],
-    any: bool,
-}
-
-impl Tally {
-    fn new(rows: usize) -> Self {
-        Self {
-            counts: vec![0; rows],
-            seen: Vec::with_capacity(rows.min(16)),
-            lo: [0; 3],
-            hi: [0; 3],
-            any: false,
-        }
-    }
-
-    /// Counts `n >= 1` changed voxels of old material `m`. An id beyond the table's rows (a
-    /// voxel the table does not describe) grows `counts` to reach it.
-    fn count(&mut self, m: MaterialId, n: u32) {
-        let i = usize::from(m);
-        if i >= self.counts.len() {
-            self.counts.resize(i + 1, 0);
-        }
-        if self.counts[i] == 0 {
-            self.seen.push(m);
-        }
-        self.counts[i] += n;
-    }
-
-    /// Widens the bounds of the changed voxels to hold `lo..=hi`.
-    fn bound(&mut self, lo: [i64; 3], hi: [i64; 3]) {
-        if self.any {
-            for k in 0..3 {
-                self.lo[k] = self.lo[k].min(lo[k]);
-                self.hi[k] = self.hi[k].max(hi[k]);
-            }
-        } else {
-            (self.lo, self.hi, self.any) = (lo, hi, true);
-        }
-    }
-
-    /// `changed_from`: the seen ids ascending, each with its count.
-    fn changed_from(mut self) -> Vec<(MaterialId, u32)> {
-        self.seen.sort_unstable();
-        self.seen
-            .iter()
-            .map(|&m| (m, self.counts[usize::from(m)]))
-            .collect()
     }
 }
 
@@ -312,8 +271,7 @@ fn reaches(shape: &Shape, lo: [i64; 3], hi: [i64; 3]) -> bool {
         for by in blo[1]..=bhi[1] {
             for bx in blo[0]..=bhi[0] {
                 let b = [bx, by, bz];
-                let elo = [0, 1, 2].map(|k| (b[k] * be).max(lo[k]));
-                let ehi = [0, 1, 2].map(|k| (b[k] * be + be - 1).min(hi[k]));
+                let (elo, ehi) = clip_box(b, be, lo, hi);
                 let (a, c) = centres(elo, ehi);
                 match shape.coverage(a, c) {
                     Coverage::Outside => {}
@@ -338,16 +296,6 @@ fn reaches(shape: &Shape, lo: [i64; 3], hi: [i64; 3]) -> bool {
 
 fn centres(lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
     (lo.map(centre), hi.map(centre))
-}
-
-/// A voxel or chunk coordinate of a checked shape as `i32`. Within the limits every such
-/// coordinate fits (`±2^30` fixed units plus a radius of as much is `±2^23` voxels), so the
-/// clamp never moves one.
-fn to_i32(v: [i64; 3]) -> [i32; 3] {
-    v.map(|c| {
-        debug_assert!(i32::try_from(c).is_ok(), "coordinate {c} beyond i32");
-        c.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
-    })
 }
 
 /// The op path's stages, in the order an op meets them. A stage's time runs from the previous
@@ -441,16 +389,17 @@ impl World {
     /// ([`EditError::OutOfRange`]: coordinates, radius, capsule length, or voxel bounds wider
     /// than `edit_axis_max`) or the shape reaches a chunk that is not resident.
     pub fn apply(&self, op: &EditOp) -> Result<EditResult, EditError> {
-        self.apply_with(op, &mut None, &mut NoStages, &mut 0)
+        self.apply_with(op, &mut NoCapture, &mut NoStages, &mut 0)
     }
 
     /// [`World::apply`] and the row-span entries the op allocated: the rows inside its bounds
     /// of each brick row of its bounds that it reached (at most 64 per brick row), all of
-    /// the bounds' for a sphere. For the span-allocation test.
+    /// the bounds' for a sphere. For the span-allocation test; feature `bench-internals`.
+    #[cfg(feature = "bench-internals")]
     #[doc(hidden)]
     pub fn apply_counting_spans(&self, op: &EditOp) -> Result<(EditResult, usize), EditError> {
         let mut spans = 0;
-        let r = self.apply_with(op, &mut None, &mut NoStages, &mut spans)?;
+        let r = self.apply_with(op, &mut NoCapture, &mut NoStages, &mut spans)?;
         Ok((r, spans))
     }
 
@@ -462,24 +411,26 @@ impl World {
         op: &EditOp,
         stages: &mut EditStages,
     ) -> Result<EditResult, EditError> {
-        self.apply_with(op, &mut None, stages, &mut 0)
+        self.apply_with(op, &mut NoCapture, stages, &mut 0)
     }
 
     /// [`World::apply`], and every brick-edit that reaches the row write pushed onto `out` in
-    /// op order: the brick before the op and its row spans. For the kernel bench.
+    /// op order: the brick before the op and its row spans. For the kernel bench; feature
+    /// `bench-internals`.
+    #[cfg(feature = "bench-internals")]
     #[doc(hidden)]
     pub fn apply_capturing(
         &self,
         op: &EditOp,
         out: &mut Vec<CapturedBrickEdit>,
     ) -> Result<EditResult, EditError> {
-        self.apply_with(op, &mut Some(out), &mut NoStages, &mut 0)
+        self.apply_with(op, out, &mut NoStages, &mut 0)
     }
 
-    fn apply_with<S: Stamps>(
+    fn apply_with<C: Capture, S: Stamps>(
         &self,
         op: &EditOp,
-        capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
+        capture: &mut C,
         st: &mut S,
         spans: &mut usize,
     ) -> Result<EditResult, EditError> {
@@ -501,9 +452,7 @@ impl World {
                 for y in clo[1]..=chi[1] {
                     for z in clo[2]..=chi[2] {
                         let c = [x, y, z];
-                        let vlo = c.map(|v| v * edge);
-                        let vlo = [0, 1, 2].map(|k| vlo[k].max(lo[k]));
-                        let vhi = [0, 1, 2].map(|k| (c[k] * edge + edge - 1).min(hi[k]));
+                        let (vlo, vhi) = clip_box(c, edge, lo, hi);
                         let (a, b) = centres(vlo, vhi);
                         if op.shape.coverage(a, b) == Coverage::Outside {
                             continue;
@@ -543,8 +492,7 @@ impl World {
                     // the bricks it reaches.
                     for bx in blo[0]..=bhi[0] {
                         let bmin = [0, 1, 2].map(|k| base[k] + [bx, by, bz][k] * be);
-                        let elo = [0, 1, 2].map(|k| bmin[k].max(vlo[k]));
-                        let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(vhi[k]));
+                        let (elo, ehi) = clip_at(bmin, be, vlo, vhi);
                         let (a, c) = centres(elo, ehi);
                         let cov = op.shape.coverage(a, c);
                         covs[bx as usize] = cov;
@@ -556,8 +504,7 @@ impl World {
                         }
                         let b = [bx, by, bz];
                         let bmin = [0, 1, 2].map(|k| base[k] + b[k] * be);
-                        let elo = [0, 1, 2].map(|k| bmin[k].max(vlo[k]));
-                        let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(vhi[k]));
+                        let (elo, ehi) = clip_at(bmin, be, vlo, vhi);
                         let slot = brick_slot(b.map(|v| v as i32));
                         let brick = chunk.brick_mut(slot);
                         let edit = BrickEdit {
@@ -592,9 +539,7 @@ impl World {
         drop(map);
         *spans = op_rows.entries;
         self.add_packed_stats(&stats);
-        let aabb = tally
-            .any
-            .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi))));
+        let aabb = tally.aabb();
         let result = EditResult {
             changed_from: tally.changed_from(),
             touched,
@@ -606,11 +551,36 @@ impl World {
 }
 
 /// The per-op state an [`edit_brick`] call writes through.
-struct BrickCx<'a, 'c> {
+struct BrickCx<'a, C> {
     targets: &'a TargetTable,
     tally: &'a mut Tally,
     stats: &'a mut PackedStats,
-    capture: &'a mut Option<&'c mut Vec<CapturedBrickEdit>>,
+    capture: &'a mut C,
+}
+
+/// Where the op path records each brick-edit that reaches the row write: the brick before
+/// the op and its shape words. The default build passes [`NoCapture`], which records nothing
+/// and inlines away.
+trait Capture {
+    fn record(&mut self, before: &Brick, shape: &[u64; 8]);
+}
+
+/// The default build's capture: no state, no record.
+struct NoCapture;
+
+impl Capture for NoCapture {
+    #[inline]
+    fn record(&mut self, _before: &Brick, _shape: &[u64; 8]) {}
+}
+
+#[cfg(feature = "bench-internals")]
+impl Capture for Vec<CapturedBrickEdit> {
+    fn record(&mut self, before: &Brick, shape: &[u64; 8]) {
+        self.push(CapturedBrickEdit {
+            before: before.clone(),
+            spans: spans_of(shape),
+        });
+    }
 }
 
 /// Where an op meets one brick: the brick's coverage, its minimum voxel, and the voxels
@@ -627,11 +597,11 @@ struct BrickEdit {
 /// Returns whether any voxel changed. The brick is decoded, written row by row and encoded
 /// again in canonical form. Stamps `Coverage` through `Canon` on `st`; the caller stamps the
 /// tally that follows.
-fn edit_brick<S: Stamps>(
+fn edit_brick<C: Capture, S: Stamps>(
     brick: &mut Brick,
     edit: BrickEdit,
     rows: &mut OpRows<'_>,
-    cx: BrickCx<'_, '_>,
+    cx: BrickCx<'_, C>,
     st: &mut S,
 ) -> bool {
     let BrickCx {
@@ -649,7 +619,7 @@ fn edit_brick<S: Stamps>(
     } = edit;
     let whole = (0..3).all(|k| elo[k] == bmin[k] && ehi[k] == bmin[k] + i64::from(BRICK_EDGE) - 1);
     if let Brick::Uniform(m) = *brick {
-        let Some(n) = targets.target(m) else {
+        let Some(n) = targets.kernel_mode().target(m) else {
             return false;
         };
         if whole && cov == Coverage::Inside {
@@ -675,12 +645,7 @@ fn edit_brick<S: Stamps>(
     if shape.iter().all(|&w| w == 0) {
         return false;
     }
-    if let Some(out) = capture {
-        out.push(CapturedBrickEdit {
-            before: brick.clone(),
-            spans: spans_of(&shape),
-        });
-    }
+    capture.record(brick, &shape);
     st.at(Stage::Words);
     let bounds = brick.edit_planar_uncanonical(
         targets.kernel_mode(),
@@ -705,7 +670,8 @@ fn edit_brick<S: Stamps>(
 
 /// One brick-edit on the row-write path, as [`World::apply_capturing`] saw it: the brick
 /// before the op and the x span of each of its 64 rows (row `y + 8 z`, empty when
-/// `x0 > x1`).
+/// `x0 > x1`). Feature `bench-internals`.
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapturedBrickEdit {
@@ -714,13 +680,15 @@ pub struct CapturedBrickEdit {
 }
 
 /// What a writer counted: `changed_from` (ascending by material) and the brick-local bounds
-/// of the changed voxels, `None` when nothing changed.
+/// of the changed voxels, `None` when nothing changed. Feature `bench-internals`.
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub type WriterResult = (Vec<(MaterialId, u32)>, Option<([i64; 3], [i64; 3])>);
 
 /// The row write on raw ids, the reference the planar kernel is measured against:
 /// `write_rows` on a [`RawBrick`] (a `Uniform` brick expands into a pooled, touched array),
-/// then the collapse check. For the kernel bench.
+/// then the collapse check. For the kernel bench; feature `bench-internals`.
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub struct RowWriter {
     targets: TargetTable,
@@ -728,6 +696,7 @@ pub struct RowWriter {
     spare: SpareArrays,
 }
 
+#[cfg(feature = "bench-internals")]
 impl RowWriter {
     pub fn new(mode: Mode, table: &MaterialTable) -> Self {
         Self {
@@ -764,7 +733,8 @@ impl RowWriter {
 }
 
 /// The planar kernel of `packed.rs` on a [`Brick`]: the spans folded into eight shape
-/// words, then the word operations. For the kernel bench.
+/// words, then the word operations. For the kernel bench; feature `bench-internals`.
+#[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub struct PlanarWriter {
     targets: TargetTable,
@@ -772,6 +742,7 @@ pub struct PlanarWriter {
     stats: PackedStats,
 }
 
+#[cfg(feature = "bench-internals")]
 impl PlanarWriter {
     pub fn new(mode: Mode, table: &MaterialTable) -> Self {
         Self {
@@ -804,8 +775,9 @@ impl PlanarWriter {
     }
 }
 
+#[cfg(feature = "bench-internals")]
 fn finish(tally: Tally) -> WriterResult {
-    let bounds = tally.any.then_some((tally.lo, tally.hi));
+    let bounds = tally.bounds();
     (tally.changed_from(), bounds)
 }
 
@@ -883,17 +855,8 @@ impl<'a> OpRows<'a> {
 
     /// Brick row `(by, bz)`'s rows inside the bounds: `(ylo, yhi)`, `(zlo, zhi)`.
     fn clipped(&self, by: i64, bz: i64) -> ((i64, i64), (i64, i64)) {
-        let be = i64::from(BRICK_EDGE);
-        (
-            (
-                (by * be).max(self.lo[1]),
-                (by * be + be - 1).min(self.hi[1]),
-            ),
-            (
-                (bz * be).max(self.lo[2]),
-                (bz * be + be - 1).min(self.hi[2]),
-            ),
-        )
+        let (lo, hi) = clip_box([0, by, bz], i64::from(BRICK_EDGE), self.lo, self.hi);
+        ((lo[1], hi[1]), (lo[2], hi[2]))
     }
 
     /// The place in `slabs` of brick row `(by, bz)`'s slab, a brick row of the bounds,
@@ -966,6 +929,7 @@ impl<'a> OpRows<'a> {
 
 /// The row spans of eight shape words whose rows are each one contiguous run (as every
 /// shape's are): row `y + 8 z` is the run in byte `y` of word `z`, `(1, 0)` when it is empty.
+#[cfg(feature = "bench-internals")]
 fn spans_of(shape: &[u64; 8]) -> RowSpans {
     std::array::from_fn(|r| {
         let byte = (shape[r / 8] >> (8 * (r % 8))) as u8;
@@ -981,6 +945,7 @@ fn spans_of(shape: &[u64; 8]) -> RowSpans {
 /// `brick`: per voxel, read the old value, look up its target, write it, count the old value.
 /// Counts go to `tally` per run of equal old values, and the bounds once per brick, from the
 /// first and last changed voxel of each row. Returns whether any voxel changed.
+#[cfg(feature = "bench-internals")]
 fn write_rows<T: Target>(
     voxels: &mut Voxels,
     bmin: [i64; 3],

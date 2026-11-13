@@ -1,7 +1,7 @@
 // The temporal pass: accumulates each pixel's irradiance and its moments over frames by
 // reprojecting the hit through the previous frame's views (the world does not move; only the
 // views and the edits do), and kills history where the world was edited. Compiled after
-// march.wgsl, whose bindings (group 0) and hit-record helpers it uses.
+// the walk's modules, whose bindings (group 0) and hit-record helpers it uses.
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   hit_pos_in      this frame's hit positions
@@ -19,7 +19,7 @@
 //                                        history reused, 0 after a reset; then 1 where the
 //                                        emissive part is the store's (the a-trous passes it
 //                                        through), else 0
-//   9  uniform           edits           the frame's edit boxes (see `Edits`)
+//   9  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
 //                                        the gradient mode (Params.lighting bit 3): the
 //                                        lamp's blend weight rises to twice the lambda averaged
@@ -87,15 +87,6 @@
 @group(2) @binding(7) var accum_out: texture_storage_2d<rgba16float, write>;
 @group(2) @binding(8) var moments_out: texture_storage_2d<rgba16float, write>;
 
-// Up to MAX_EDITS boxes, inclusive voxel bounds: box i is `boxes[2 i]` to `boxes[2 i + 1]`.
-struct Edits {
-    count: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-    boxes: array<vec4<i32>, 128>,
-};
-
 @group(2) @binding(9) var<uniform> edits: Edits;
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
 @group(2) @binding(11) var<storage, read> store: array<u32>;
@@ -105,7 +96,7 @@ struct Edits {
 // `--read-missing`'s pipeline); off, `counters` is never written.
 override COUNT_STORE: bool = false;
 
-// The store's words and a record's layout: march.wgsl's STORE_ORIGIN to TABLE_COARSE.
+// The store's words and a record's layout: hitrec.wgsl's STORE_ORIGIN to TABLE_COARSE.
 
 // The value of an rgb9e5 word: three 9-bit mantissas over a shared exponent, biased by 15 + 9.
 fn rgb9e5_decode(w: u32) -> vec3<f32> {
@@ -175,9 +166,9 @@ fn store_cell(head: StoreHead, c: vec3<i32>, face: u32) -> vec4<f32> {
 }
 
 // Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 cells around the
-// voxel's centre in the face's plane (march.wgsl's `store_tap`), bilinear over those that have
+// voxel's centre in the face's plane (hitrec.wgsl's `store_tap`), bilinear over those that have
 // the direction; its own cell's alone where none has it with weight. 0 in a where that has none
-// either. march.wgsl's `glass_store_value` is the same read over the hit pass's binding.
+// either. hit.wgsl's `glass_store_value` is the same read over the hit pass's binding.
 fn store_brick_value(head: StoreHead, v: vec3<i32>, face: u32) -> vec4<f32> {
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
@@ -351,19 +342,6 @@ const AGE_MAX: f32 = 2047.0;
 const HISTORY_COS: f32 = 0.8;
 const HISTORY_DIST: f32 = 0.5;
 const HISTORY_DIST_PER_T: f32 = 0.03;
-
-// Whether `p` lies inside an edit box dilated by one voxel: the continuous span of voxels
-// `min - 1 ..= max + 1`, faces included.
-fn in_edit(p: vec3<f32>) -> bool {
-    for (var i = 0u; i < edits.count; i++) {
-        let lo = vec3<f32>(edits.boxes[2u * i].xyz - 1);
-        let hi = vec3<f32>(edits.boxes[2u * i + 1u].xyz + 2);
-        if (all(p >= lo) && all(p <= hi)) {
-            return true;
-        }
-    }
-    return false;
-}
 
 @compute @workgroup_size(8, 8, 1)
 fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
