@@ -156,6 +156,9 @@ impl Run {
                 v.push(ms);
             }
             p.light_ms.push(stream.light_ms);
+            if let Some(s) = &stream.last_sync {
+                p.sync.push(s);
+            }
             p.queue_ms.push(queue_ms);
             p.light_evicted += stream.light_evicted;
             p.light_refused += stream.light_refused;
@@ -223,6 +226,9 @@ impl Run {
                 percentile(v, 99.0),
                 percentile(v, 100.0)
             );
+        }
+        if let Some(line) = p.sync.line() {
+            println!("autopilot: sync stages per frame (p50/p99, us): {line}");
         }
         println!(
             "autopilot: light extraction in sync: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames; light samples peak {}, now {}; ranges evicted {}, refused {}; longest wait for a range inside the radius {:.0} ms",

@@ -568,7 +568,7 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 | 1: the audio callback frees nothing and zeroes nothing large | dev | done; deviations: `lib.rs` exports `Recycler` and `ReverbClears` (not in Files touched); the FDN clear swaps with a third spare set of lines (+1.8 MB); the paired mixer bench reads +0.2 to +0.8 % (kept: it removes the counted frees) | ab366e7 |
 | 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | not started | |
 | 3: the frame builds its bind groups once per size | dev | not started | |
-| 4: the sync sizes only what it uploads | dev | not started | |
+| 4: the sync sizes only what it uploads | dev | struck into Plan 0070 (owner, 2026-11-12). There: `place_lights` walks only when a light chunk or its focus changed (`ef0b55c`), and the emitter rescan set is a `[u64; 8]` (`297e7a9`). Not built: the deferral ahead of `need()`, the masks carried to `upload`, `upload_set` as a bitset (still a `Vec<bool>`), the scratch `Vec`s; the `sized_chunks` property for a prepared chunk left with ADR-0056's worker packing, deferred | Plan 0070 |
 | 5: the march walks without reading what it discards | dev | not started | |
 | 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | ebd54e3 |
 | 7: the controller and the server stop repeating work | dev | done; deviations: the box list is per-thread scratch with a recollect past its region, and covers the usual sweeps only; the counting test is in `vxe-sim/tests/controller.rs`; inputs are logged after the logic's tick | 2ede457 |

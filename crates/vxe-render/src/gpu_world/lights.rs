@@ -25,6 +25,28 @@ pub(super) struct LightMirror {
     pub(super) dirty: HashSet<ChunkCoord>,
     pub(super) wait: HashMap<ChunkCoord, u64>,
     pub(super) syncs: u64,
+    /// The focus chunk and held radius of `place_lights`' last full walk; `None` before it.
+    pub(super) walked: Option<(ChunkCoord, i64)>,
+    /// Whether an input of `place_lights`' walks changed since its last full walk: a chunk's
+    /// lists or dirty mark, a chunk entering or leaving `chunks`, a range released, or a chunk
+    /// the last walk refused.
+    pub(super) stale: bool,
+    /// Bumped with every change to `chunks`' membership or `dirty`; with `epoch`, the key of
+    /// [`GpuWorld::lights_ready_near`]'s answers.
+    pub(super) changes: u64,
+    pub(super) ready: std::sync::Mutex<ReadyCache>,
+    /// Every sync walks in full ([`GpuWorld::force_light_walks`]).
+    pub(super) force_walks: bool,
+    /// The write walks run so far ([`GpuWorld::light_walks`]).
+    pub(super) walks: u64,
+}
+
+/// [`GpuWorld::lights_ready_near`]'s answers by chunk and reach, valid while `epoch` and
+/// `changes` are those of `key`.
+#[derive(Default)]
+pub(super) struct ReadyCache {
+    pub(super) key: (u64, u64),
+    pub(super) answers: HashMap<(ChunkCoord, i32), bool>,
 }
 
 impl LightMirror {
@@ -46,7 +68,19 @@ impl LightMirror {
             dirty: HashSet::new(),
             wait: HashMap::new(),
             syncs: 0,
+            walked: None,
+            stale: true,
+            changes: 0,
+            ready: Default::default(),
+            force_walks: false,
+            walks: 0,
         }
+    }
+
+    /// Notes a change to an input of the walks and of `lights_ready_near`.
+    pub(super) fn touch(&mut self) {
+        self.stale = true;
+        self.changes += 1;
     }
 
     /// The start of a free run of `n` samples: the lowest free range that holds it, else the
@@ -249,6 +283,7 @@ impl GpuWorld {
                 let mut l = ChunkLights::default();
                 l.bricks.insert(slot as u16, found);
                 self.lights.chunks.insert(coord, l);
+                self.lights.touch();
             }
             None => {}
         }
@@ -259,20 +294,36 @@ impl GpuWorld {
     /// `light_radius` whose lists changed or that holds no range is written, nearest first,
     /// until the sync's sample budget is spent (each chunk at most once; the rest wait for the
     /// next sync). A chunk the buffer cannot fit evicts the farthest range beyond itself.
+    ///
+    /// The walks over `chunks` run only when their result can differ from the last full
+    /// walk's: the release walk when the focus chunk or the held radius moved, the write walk
+    /// also when an input changed since ([`LightMirror::stale`]) or a chunk waits for the
+    /// sample budget. Otherwise the last walk left every chunk inside the radius written and
+    /// nothing outside `r + 1` holding a range, and nothing since changed that.
     pub(super) fn place_lights(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         self.lights.syncs += 1;
         let r = i64::from(self.cfg.light_radius.max(self.lights.hold));
         let f = self.window.focus;
+        let moved = self.lights.walked != Some((f, r));
+        let force = self.lights.force_walks;
+        if !force && !moved && !self.lights.stale && self.lights.wait.is_empty() {
+            st.light_oldest_wait = 0;
+            return;
+        }
+        self.lights.walks += 1;
+        let refused = st.light_refused;
         let d2 = |c: ChunkCoord| -> i64 { c.distance2(f) };
-        let far: Vec<ChunkCoord> = self
-            .lights
-            .chunks
-            .iter()
-            .filter(|(c, l)| l.range.is_some() && d2(**c) > (r + 1) * (r + 1))
-            .map(|(c, _)| *c)
-            .collect();
-        for c in far {
-            self.release_lights(c, enc);
+        if moved || force {
+            let far: Vec<ChunkCoord> = self
+                .lights
+                .chunks
+                .iter()
+                .filter(|(c, l)| l.range.is_some() && d2(**c) > (r + 1) * (r + 1))
+                .map(|(c, _)| *c)
+                .collect();
+            for c in far {
+                self.release_lights(c, enc);
+            }
         }
         let mut wanted: Vec<(i64, ChunkCoord)> = self
             .lights
@@ -303,6 +354,10 @@ impl GpuWorld {
             .map(|&since| self.lights.syncs - since)
             .max()
             .unwrap_or(0);
+        self.lights.walked = Some((f, r));
+        // A refused chunk holds no range and stays wanted: the next sync walks again.
+        self.lights.stale = st.light_refused != refused;
+        self.lights.changes += 1;
     }
 
     /// Writes `coord`'s samples (thinned to the cap) into a new range, its old range zeroed and
@@ -322,6 +377,7 @@ impl GpuWorld {
         };
         if l.bricks.is_empty() {
             self.lights.chunks.remove(&coord);
+            self.lights.touch();
             return 0;
         }
         let all: Vec<LightSample> = l.bricks.values().flatten().copied().collect();
@@ -386,6 +442,7 @@ impl GpuWorld {
             .get_mut(&coord)
             .and_then(|l| l.range.take())
         {
+            self.lights.touch();
             self.lights.epoch += 1;
             self.lights.live -= u64::from(r.1);
             self.zero_light_range(r, enc);
@@ -438,9 +495,13 @@ impl GpuWorld {
 
     /// Forgets `coord`'s light samples; their range is zeroed and freed on the next sync.
     pub(super) fn drop_lights(&mut self, coord: ChunkCoord) {
-        self.lights.dirty.remove(&coord);
-        self.lights.wait.remove(&coord);
-        if let Some(l) = self.lights.chunks.remove(&coord)
+        let dirty = self.lights.dirty.remove(&coord);
+        let waited = self.lights.wait.remove(&coord).is_some();
+        let held = self.lights.chunks.remove(&coord);
+        if dirty || waited || held.is_some() {
+            self.lights.touch();
+        }
+        if let Some(l) = held
             && let Some(r) = l.range
         {
             self.lights.epoch += 1;
@@ -451,6 +512,9 @@ impl GpuWorld {
 
     /// Zeroes and frees the ranges `drop_lights` set aside.
     pub(super) fn flush_dropped_lights(&mut self, enc: &mut wgpu::CommandEncoder) {
+        if self.lights.dropped.is_empty() {
+            return;
+        }
         for r in std::mem::take(&mut self.lights.dropped) {
             self.zero_light_range(r, enc);
             self.lights.free_range(r);
@@ -486,6 +550,52 @@ impl GpuWorld {
     /// The samples from 0 to the buffer's high-water mark; freeing the top range lowers it.
     pub fn light_span(&self) -> u32 {
         self.lights.high
+    }
+
+    /// Whether every chunk with lights whose box lies within `r` chunks of `coord`'s box (the
+    /// bake's candidate table's reach, `bake::job_table`) holds a current range of the
+    /// light-sample buffer. The answer is kept by `coord` and `r` until a range, a chunk's
+    /// membership or a dirty mark changes.
+    pub fn lights_ready_near(&self, coord: ChunkCoord, r: i32) -> bool {
+        let key = (self.lights.epoch, self.lights.changes);
+        let mut cache = self
+            .lights
+            .ready
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if cache.key != key {
+            cache.key = key;
+            cache.answers.clear();
+        }
+        *cache
+            .answers
+            .entry((coord, r))
+            .or_insert_with(|| self.lights_ready_near_uncached(coord, r))
+    }
+
+    /// [`GpuWorld::lights_ready_near`] walked in full, for tests that compare the two.
+    #[doc(hidden)]
+    pub fn lights_ready_near_uncached(&self, coord: ChunkCoord, r: i32) -> bool {
+        let rr = i64::from(r).pow(2);
+        self.lights.chunks.iter().all(|(c, l)| {
+            let gap2: i64 = (0..3)
+                .map(|k| i64::from(((c.0[k] - coord.0[k]).abs() - 1).max(0)).pow(2))
+                .sum();
+            gap2 >= rr || (l.range.is_some() && !self.lights.dirty.contains(c))
+        })
+    }
+
+    /// Walks the light ranges in full at every sync, as with every input changed: a test's
+    /// reference for the walks that skip.
+    #[doc(hidden)]
+    pub fn force_light_walks(&mut self, on: bool) {
+        self.lights.force_walks = on;
+    }
+
+    /// The syncs whose `place_lights` walked the chunks' lists.
+    #[doc(hidden)]
+    pub fn light_walks(&self) -> u64 {
+        self.lights.walks
     }
 
     /// `coord`'s range of the light-sample buffer, start and length.

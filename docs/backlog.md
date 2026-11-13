@@ -256,8 +256,26 @@ leave residency short, p95 2.7 to 6.9 s at 2 to 8 ms against 0.30 s without one,
 pays only once a chunk's upload is cheaper; this entry is that cheaper upload, and the
 budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
 upload-copy ADR.
-Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
-and ADR-0056, awaiting the owner's go; this entry leaves when the plan is approved.
+Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+and ADR-0056. Deferred 2026-11-13 by Plan 0070's Phase 1: the packing is about 1.5 ms of a cave
+sync p99 of 44 to 47 ms (RTX host). Read again at Plan 0070's Phase 5 (`ef0b55c`, the rescan set
+dense and the light walks on change, `hpet` clocksource): `pack + size` p99 is 2.8 to 3.1 ms of
+a cave sync p99 of 20.9 to 22.3 ms, 13.5 to 14.2 % on both adapters; the larger stages are
+`light_note` (8.2 to 8.4 ms, `note_lights` in `exposed_emitters`) and `alloc` (6.9 to 7.4 ms).
+Pick up when `pack + size` reads half or more of the sync p99 left after those two are cut;
+the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
+worktree and leave with it.
+
+### The sync's `light_note` stage and the windowed glide's light walks
+
+Noted 2026-11-13 at Plan 0070's close (`docs/plans/logs/0070.md`, Phases 5 and 6). After Plan
+0070 the cave sync's p99 (about 21 to 22 ms, over Plan 0067's 16.6 ms for `update + poll +
+sync`) is led by `light_note`, the `note_lights` pass over a chunk's emitter bricks
+(`exposed_emitters`), 8.2 to 8.4 ms, then `alloc` 6.9 to 7.4 ms. Separately, in the owner's
+windowed `--glide 300` cave flight on the RTX, the per-second `light place` p99 read 20 ms to
+846 ms in 19 of 30 lines at the tip (12 of 73 at the base, max 330 ms), never over 2.5 ms in the
+headless benches; not attributed. Pick up as the next sync plan, before the 16.6 ms bar is read
+again.
 
 ### The slow adapter's walk-speed spike
 
@@ -303,6 +321,44 @@ queue line due at least once, or a CPU test on the call sites, would bring it un
 line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
 
 ## Tooling and process
+
+### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
+
+Noted 2026-11-13 (Plan 0070 Phase 1, `docs/plans/logs/0070.md`). Every boot of the RTX laptop
+since 2026-11-05 logs `clocksource: Marking clocksource tsc unstable due to frequency skew` (not
+those of 11-01 to 11-03) and falls back to `hpet`; one `CLOCK_MONOTONIC` read costs about
+1.7 us. Readings since then that read the clock inside a hot loop (per brick, per voxel, per
+sample) are inflated; Plan 0070's per-brick stage laps turned a 42 to 64 ms sync p99 into 303 ms.
+Per-frame and per-chunk readings are affected little. Readings should name the clocksource
+(`/sys/devices/system/clocksource/clocksource0/current_clocksource`). Whether to boot with
+`tsc=reliable` or `clocksource=tsc`, or find the skew's cause (firmware, a kernel change at that
+boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
+readings are compared with ones from before 2026-11-05.
+
+### The tester's benchmarks with the lamp off
+
+Noted 2026-11-13 (the owner, at Plan 0070's Phase 6 window: "also, for test benchmark lamp is
+better to be off"). The tester's cave and castle paths (`--tester --path NAME`, the scene's
+flags in `apps/flythrough/src/path.rs`) and the bench readings plans take from them run with
+the headlamp at its default, on (`--lamp`; off on the showcase only). The owner wants them run
+with the lamp off. What it would take: the path's scene flags carry `--lamp off`, the tester's
+`run.json` names the lamp's state, and readings from before the change are not compared with
+ones after it. Pick up as a dev chore with the next plan that reads the tester's benches.
+
+### Five lavapipe gate tests over the 10 s line
+
+Noted 2026-11-13 at Plan 0070's close review (the gate at `94173ac`, 641.7 s, load 1.42 at the
+start and 2.27 at the end; `node scripts/test-times.mjs`). None is Plan 0070's:
+`gpu_bake::a_baked_view_is_final_on_its_first_frame` 14.2 s,
+`gpu_golden::uniform_chunks_render_identically_from_their_mips` 11.7 s,
+`gpu_golden::fsr2_golden_matches_and_rcas_is_bypassed_at_zero` 10.7 s,
+`gpu_indirect::the_channel_holds_the_lamps_bounce_only` 10.6 s and
+`gpu_queue::the_score_blends_distance_and_the_view` 10.3 s; the first two read over the line at
+Plan 0064's close too. The CPU tests over it (`castle_vector`, `showcase_vector`,
+`the_castle_path_flies_in_air`, `random_walks_on_the_level_never_freeze_or_overlap`) stay in the
+gate by the owner's rule. What it would take: mark each `#[ignore = "soak"]` or cut its fixture,
+by a reading on a quiet box. Pick up as a dev chore with the next plan that touches those
+binaries.
 
 ### Plan 0072's CI readings, owed after the push
 

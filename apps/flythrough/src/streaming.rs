@@ -4,6 +4,8 @@
 use crate::hud::{self};
 use std::collections::HashMap;
 use vxe_render::GpuWorld;
+
+use crate::report::SyncSeries;
 use vxe_world::{ChunkCoord, Streamer, Tier};
 
 /// The pool size a streaming device's limits are requested for; capped at the adapter.
@@ -130,6 +132,9 @@ impl Deferrals {
     }
 }
 
+/// Syncs the per-second `sync:` line keeps: past this, its newest.
+pub(crate) const SYNC_LINE_SYNCS: usize = 4096;
+
 /// The streaming state of the default mode.
 pub(crate) struct Stream {
     pub(crate) streamer: Streamer,
@@ -155,6 +160,13 @@ pub(crate) struct Stream {
     pub(crate) light_evicted: u64,
     pub(crate) light_refused: u64,
     pub(crate) light_wait_ms: f64,
+    /// The last frame's sync, `None` when it failed.
+    pub(crate) last_sync: Option<vxe_render::SyncStats>,
+    /// The syncs since the last `sync:` line ([`SYNC_LINE_SYNCS`] kept), and that line's time in
+    /// milliseconds since start and frame.
+    pub(crate) sync_line: SyncSeries,
+    pub(crate) sync_line_ms: f64,
+    pub(crate) sync_line_frame: u32,
     pub(crate) full_residency: bool,
     pub(crate) workers: usize,
     /// The streamer's counters as `stream_step` last read them, once a frame: what the
@@ -181,6 +193,10 @@ impl Stream {
             light_evicted: 0,
             light_refused: 0,
             light_wait_ms: 0.0,
+            last_sync: None,
+            sync_line: SyncSeries::with_capacity(SYNC_LINE_SYNCS),
+            sync_line_ms: 0.0,
+            sync_line_frame: 0,
             full_residency: false,
             workers,
             stats: None,

@@ -6,7 +6,7 @@ use crate::cli::Args;
 use crate::edits::{HIT_FOUND_BIT, voxel_of};
 use crate::hud::{self, Cadence, FrameStats, HudStats, WorldSample};
 use crate::now;
-use crate::report::Series;
+use crate::report::{Series, SyncSeries};
 use crate::run::Run;
 use crate::setup::GfxSample;
 use crate::{LookPreset, percentile};
@@ -199,6 +199,8 @@ pub(crate) struct RunTimes {
     /// Reads on the frame path that waited on the GPU over the run: the pass timers' and the
     /// store's counters'; `None` without the GPU's passes.
     pub(crate) blocking_reads: Option<u64>,
+    /// The mirror sync's stages per streaming frame.
+    pub(crate) sync: SyncSeries,
 }
 
 /// The frames each of [`RunTimes`]' series keeps: about 18 minutes at 60 frames a second, 512
@@ -216,6 +218,7 @@ impl Default for RunTimes {
             frames: 0,
             gpu_frames: 0,
             blocking_reads: None,
+            sync: SyncSeries::with_capacity(RUN_SERIES_FRAMES),
         }
     }
 }
@@ -264,8 +267,12 @@ impl RunTimes {
         let blocking = self
             .blocking_reads
             .map_or_else(|| "n/a".to_owned(), |n| n.to_string());
+        let sync = self
+            .sync
+            .line()
+            .map_or_else(String::new, |l| format!("; {l}"));
         Some(format!(
-            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}; blocking reads {blocking}",
+            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}; blocking reads {blocking}{sync}",
             self.frames,
             stats(&self.cpu_ms),
             stats(&self.stream_ms)

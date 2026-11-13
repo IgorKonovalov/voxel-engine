@@ -50,6 +50,8 @@ pub(crate) struct Autopilot {
     pub(crate) cpu_ms: Vec<f64>,
     /// The streaming CPU's stages per flight frame: `update`, `poll`, `apply_events`, `sync`.
     pub(crate) stages_ms: [Vec<f64>; 4],
+    /// The mirror sync's stages per flight frame that synced.
+    pub(crate) sync: crate::report::SyncSeries,
     /// The live queue's step on the CPU per flight frame.
     pub(crate) queue_ms: Vec<f64>,
     /// The light extraction inside `sync`, per flight frame; the flight's peak of light
@@ -97,6 +99,7 @@ impl Autopilot {
             gpu_ms: Vec::new(),
             cpu_ms: Vec::new(),
             stages_ms: Default::default(),
+            sync: crate::report::SyncSeries::with_capacity(1 << 16),
             queue_ms: Vec::new(),
             light_ms: Vec::new(),
             pass_ms: Vec::new(),

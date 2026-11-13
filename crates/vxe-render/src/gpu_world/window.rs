@@ -64,6 +64,97 @@ impl SyncTimer {
     }
 }
 
+/// The sync's stages on its stage clock ([`StageClock`], [`SyncStats`]'s `*_us`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stage {
+    /// The window's moves, the dirty set and `select`'s walk of the pending set.
+    Select,
+    /// `need`: a chunk's solid masks, bands and slot sizes.
+    Size,
+    /// The band repair's pass over the bricks around this sync's writes.
+    Pack,
+    /// Per sync and per record: the light-sample ranges' rebuild and writes, the dropped
+    /// ranges' flush and each record's emissive check.
+    LightPlace,
+    /// Per record: the exposed emitters of the bricks a write reaches.
+    LightNote,
+    /// The records' and table's runs and the staging-belt copies.
+    Copy,
+    /// The upload's brick loop: slots packed, allocated and staged, the record's entries.
+    Alloc,
+}
+
+/// Stages of [`Stage`].
+const STAGES: usize = 7;
+
+/// The sync's wall time split by [`Stage`]: each switch ([`StageClock::lap`]) adds the time
+/// since the last switch to the stage it leaves, so the stages of one sync sum to the time
+/// between its `start` and its `stop`. Read on the wall clock, never the injectable
+/// [`SyncClock`]: these are readings, not budgets. The clock is read per pass, per chunk or
+/// per record, never per brick: a read can cost microseconds (an `hpet` clocksource), which a
+/// lap per brick would add to the stage it times.
+pub(super) struct StageClock {
+    at: std::time::Instant,
+    cur: Stage,
+    ns: [u64; STAGES],
+    /// Time spent acquiring chunk locks, inside the stage that took them.
+    lock_ns: u64,
+    /// Clock reads since `start`.
+    reads: u64,
+}
+
+impl StageClock {
+    pub(super) fn new() -> Self {
+        Self {
+            at: stopwatch(),
+            cur: Stage::Select,
+            ns: [0; STAGES],
+            lock_ns: 0,
+            reads: 1,
+        }
+    }
+
+    /// Starts a sync's split in [`Stage::Select`], every stage at zero.
+    pub(super) fn start(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Switches to `s`, returning the stage left, for the caller to switch back to.
+    pub(super) fn lap(&mut self, s: Stage) -> Stage {
+        let now = stopwatch();
+        self.reads += 1;
+        self.ns[self.cur as usize] += now.duration_since(self.at).as_nanos() as u64;
+        self.at = now;
+        std::mem::replace(&mut self.cur, s)
+    }
+
+    /// Takes a chunk lock with `take`, timing the wait into [`SyncStats::lock_us`]; a
+    /// poisoned lock is taken as it is, as everywhere in the mirror.
+    pub(super) fn locked<G>(&mut self, take: impl FnOnce() -> std::sync::LockResult<G>) -> G {
+        let t = stopwatch();
+        let g = take().unwrap_or_else(PoisonError::into_inner);
+        self.lock_ns += stopwatch().duration_since(t).as_nanos() as u64;
+        self.reads += 2;
+        g
+    }
+
+    /// Closes the split and writes each stage's microseconds into `st`.
+    pub(super) fn stop(&mut self, st: &mut SyncStats) {
+        self.lap(Stage::Select);
+        let us = |s: Stage| self.ns[s as usize] / 1000;
+        st.select_us = us(Stage::Select);
+        st.size_us = us(Stage::Size);
+        st.pack_us = us(Stage::Pack);
+        st.light_place_us = us(Stage::LightPlace);
+        st.light_note_us = us(Stage::LightNote);
+        st.light_us = st.light_place_us + st.light_note_us;
+        st.copy_us = us(Stage::Copy);
+        st.alloc_us = us(Stage::Alloc);
+        st.lock_us = self.lock_ns / 1000;
+        st.clock_reads = self.reads;
+    }
+}
+
 /// What a chosen chunk is uploaded from.
 pub(super) enum Src {
     Full(std::sync::Arc<std::sync::RwLock<vxe_world::Chunk>>),
@@ -354,11 +445,7 @@ impl GpuWorld {
                 .copied();
             let stale = match &src {
                 Src::Full(chunk) => {
-                    rec.is_some()
-                        && !chunk
-                            .read()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .any_dirty()
+                    rec.is_some() && !self.stages.locked(|| chunk.read()).any_dirty()
                 }
                 // Mips never change: a chunk already mirrored LOD-only needs nothing.
                 Src::Lod(_) => rec.is_some(),
@@ -378,11 +465,17 @@ impl GpuWorld {
                     }
                     let (new, need_bytes) = match &src {
                         Src::Full(chunk) => {
-                            let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
-                            self.need(world, coord, &Bricks::Chunk(&ch), rec, &mut bands)
+                            let ch = self.stages.locked(|| chunk.read());
+                            let left = self.lap(Stage::Size);
+                            let r = self.need(world, coord, &Bricks::Chunk(&ch), rec, &mut bands);
+                            self.lap(left);
+                            r
                         }
                         Src::Lod(mips) => {
-                            self.need(world, coord, &Bricks::Mips(mips), None, &mut bands)
+                            let left = self.lap(Stage::Size);
+                            let r = self.need(world, coord, &Bricks::Mips(mips), None, &mut bands);
+                            self.lap(left);
+                            r
                         }
                     };
                     let z = Sizing {
@@ -458,14 +551,18 @@ impl GpuWorld {
             // A full chunk is held under its write lock from the backstop to its upload, so
             // the need checked is the need written.
             let mut guard = match &src {
-                Src::Full(chunk) => Some(chunk.write().unwrap_or_else(PoisonError::into_inner)),
+                Src::Full(chunk) => Some(self.stages.locked(|| chunk.write())),
                 Src::Lod(_) => None,
             };
             let mut bands = std::mem::take(&mut self.field.bands);
             let need = match &guard {
                 Some(ch) => {
-                    self.need(world, coord, &Bricks::Chunk(ch), rec, &mut bands)
-                        .0
+                    self.lap(Stage::Size);
+                    let n = self
+                        .need(world, coord, &Bricks::Chunk(ch), rec, &mut bands)
+                        .0;
+                    self.lap(Stage::Alloc);
+                    n
                 }
                 None => {
                     bands.clear();

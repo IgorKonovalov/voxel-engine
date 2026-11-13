@@ -73,6 +73,7 @@ impl Run {
             over_33ms: 0,
             over_100ms: 0,
             peak_rss_bytes: peak_rss_bytes(),
+            streaming: None,
             ended: if self.failure.is_some() {
                 "failed"
             } else {

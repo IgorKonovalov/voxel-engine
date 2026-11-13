@@ -282,6 +282,7 @@ impl GpuWorld {
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) {
+        let left = self.lap(Stage::Copy);
         let len = (self.up.rec_stage.len() / RECORD_WORDS) as u32;
         if len > 0 && (rec != self.up.rec_start + len || len >= STAGE_RECORDS) {
             self.flush_records(enc, st);
@@ -293,6 +294,7 @@ impl GpuWorld {
         self.up
             .rec_stage
             .extend_from_slice(&self.recs.entries[base..base + RECORD_WORDS]);
+        self.lap(left);
     }
 
     pub(super) fn flush_records(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {

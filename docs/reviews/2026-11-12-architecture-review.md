@@ -91,7 +91,7 @@ either lagging too much, or the picture is unacceptable or both". Every frame ov
 table above is a visible hitch at the window, 5.6 % of the cave's frames and 8.0 % of the
 castle's, on the fast GPU.
 
-**Fix.** [Plan 0070](../plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+**Fix.** [Plan 0070](../plans/done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
 with [ADR-0056](../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md):
 the workers pack a loaded chunk's slot image (words, sizes, emissive samples, face masks) in one
 `ChunkPrep`, the render thread allocates records and copies bytes, and the edit path re-packs

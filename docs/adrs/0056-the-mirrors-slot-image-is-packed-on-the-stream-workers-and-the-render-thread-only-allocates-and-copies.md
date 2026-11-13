@@ -2,7 +2,7 @@
 
 > **Status:** accepted (owner, 2026-11-12, with its plan)
 > **Date:** 2026-11-12
-> **Related plan(s):** [Plan 0070](../plans/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+> **Related plan(s):** [Plan 0070](../plans/done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
 
 ## Context
 
@@ -82,4 +82,18 @@ render-thread cost is `need`'s masks and the per-brick loop, which would stay. R
 
 ## Outcome
 
-_(At acceptance.)_
+### 2026-11-13: deferred by reading (Plan 0070 Phase 1; orchestrator default, owner may overturn)
+
+Plan 0070's Phase 1 put the sync's stages on a clock and read the premise false for today's
+costs. On the RTX 3080 Laptop host (tester cave bench, headless 2530 x 1378, release, both
+adapters; `docs/plans/logs/0070.md`), with the per-brick clock reads removed, the packing alone
+reads about 1.5 ms and `pack + size + light` 34 % of a sync p99 of 44 to 47 ms. The p99 stage is
+the record's brick loop (about 28 ms), whose largest self cost in the profile is a
+`BTreeSet<usize>` of bricks to rescan for emitters; the p50 stage is the light walks run every
+sync. The "about 0.3 ms a chunk of packing" this record's Context assumes was mostly not
+packing.
+
+The decision is not superseded: nothing refutes the mechanism, only its share. Plan 0070 was
+amended to cut the measured stages in place on the render thread first; its Phase 5 re-reads
+`pack + size` against what remains and, at half or more of the sync's p99, the worker packing
+returns as its own plan under this record. Until then nothing here is built.

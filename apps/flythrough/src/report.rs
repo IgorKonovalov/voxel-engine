@@ -1,12 +1,15 @@
 //! A run's report (`--report DIR` writes `DIR/run.json`): what the run was, on which adapter,
-//! and its frame times as nearest-rank percentiles, the warm-up apart. Written with `std` only;
-//! [`json`] is the minimal reader the tester build's launcher reads it back with.
+//! and its frame times as nearest-rank percentiles, the warm-up apart; with streaming, the
+//! mirror sync's stages per frame (`streaming`). Written with `std` only (no serialization
+//! crate); [`json`] is the minimal reader the tester build's launcher reads it back with.
 //!
 //! The recorder's series are allocated once, for the path's length at 240 frames a second;
 //! past that (a tour left running) each series keeps its newest frames as a ring, so the frame
 //! path never allocates.
 
 use std::fmt::Write as _;
+
+use vxe_render::SyncStats;
 
 use crate::path::WARMUP_S;
 
@@ -28,8 +31,8 @@ pub const COMMIT: &str = match option_env!("VXE_COMMIT") {
     None => "unknown",
 };
 
-/// Nearest-rank percentiles of one series, in milliseconds.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Nearest-rank percentiles of one series, in milliseconds unless its name says otherwise.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Percentiles {
     pub p50: f64,
     pub p95: f64,
@@ -100,8 +103,157 @@ pub struct RunReport {
     pub over_33ms: u32,
     pub over_100ms: u32,
     pub peak_rss_bytes: Option<u64>,
+    /// The mirror sync's stages over the measured frames that ran one; `None` without
+    /// streaming.
+    pub streaming: Option<SyncPercentiles>,
     /// `completed` or `aborted`; `failed` when the session ended on an error.
     pub ended: &'static str,
+}
+
+/// The fields of [`SyncSeries`], in order: the sync's wall on the stage clock (the six stages'
+/// sum), its six stages in microseconds ([`SyncStats`]'s `*_us`), the slots it packed, the
+/// chunk locks' wait (a part of `select_us` and `alloc_us`), `light_us`'s two parts, the
+/// rescan set's inserts and the stage clock's reads.
+pub const SYNC_FIELDS: [&str; SYNC_N] = [
+    "sync_us",
+    "select_us",
+    "size_us",
+    "pack_us",
+    "light_us",
+    "copy_us",
+    "alloc_us",
+    "packed_bricks",
+    "lock_us",
+    "light_place_us",
+    "light_note_us",
+    "rescan_inserts",
+    "clock_reads",
+];
+
+/// Entries of [`SYNC_FIELDS`].
+pub const SYNC_N: usize = 13;
+
+/// One value per [`SYNC_FIELDS`] entry of a sync.
+pub fn sync_values(s: &SyncStats) -> [f64; SYNC_N] {
+    let stages = [
+        s.select_us,
+        s.size_us,
+        s.pack_us,
+        s.light_us,
+        s.copy_us,
+        s.alloc_us,
+    ];
+    let mut v = [0.0; SYNC_N];
+    v[0] = stages.iter().sum::<u64>() as f64;
+    for (k, &x) in stages.iter().enumerate() {
+        v[k + 1] = x as f64;
+    }
+    v[7] = s.packed_bricks as f64;
+    v[8] = s.lock_us as f64;
+    v[9] = s.light_place_us as f64;
+    v[10] = s.light_note_us as f64;
+    v[11] = s.rescan_inserts as f64;
+    v[12] = s.clock_reads as f64;
+    v
+}
+
+/// Nearest-rank percentiles of each [`SYNC_FIELDS`] series, over `frames` syncs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SyncPercentiles {
+    pub frames: u32,
+    pub fields: [Percentiles; SYNC_N],
+}
+
+impl SyncPercentiles {
+    /// The percentiles of the field named `name` in [`SYNC_FIELDS`].
+    pub fn get(&self, name: &str) -> Option<Percentiles> {
+        SYNC_FIELDS
+            .iter()
+            .position(|&n| n == name)
+            .map(|k| self.fields[k])
+    }
+}
+
+/// The sync's stages, one [`Series`] per [`SYNC_FIELDS`] entry, a value per sync: the
+/// per-second `sync:` line's, the `frames:` exit line's, the autopilot's and `run.json`'s.
+#[derive(Clone, Debug, Default)]
+pub struct SyncSeries {
+    series: [Series; SYNC_N],
+    frames: u32,
+}
+
+impl SyncSeries {
+    /// Series of at most `n` syncs each, kept as a ring past that.
+    pub fn with_capacity(n: usize) -> Self {
+        Self {
+            series: std::array::from_fn(|_| Series::with_capacity(n)),
+            frames: 0,
+        }
+    }
+
+    pub fn push(&mut self, s: &SyncStats) {
+        for (series, v) in self.series.iter_mut().zip(sync_values(s)) {
+            series.push(v);
+        }
+        self.frames = self.frames.saturating_add(1);
+    }
+
+    /// Empties every series, keeping its buffer.
+    pub fn clear(&mut self) {
+        for s in &mut self.series {
+            s.clear();
+        }
+        self.frames = 0;
+    }
+
+    /// The percentiles of each series; `None` before the first sync.
+    pub fn percentiles(&self) -> Option<SyncPercentiles> {
+        let mut fields = [Percentiles::default(); SYNC_N];
+        for (f, s) in fields.iter_mut().zip(&self.series) {
+            *f = Percentiles::of(&mut s.v.clone())?;
+        }
+        Some(SyncPercentiles {
+            frames: self.frames,
+            fields,
+        })
+    }
+
+    /// `sync p50/p99 A/B us: select A/B, size A/B, ...; light place A/B, note A/B; packed
+    /// bricks A/B; lock wait A/B; rescan inserts A/B; clock reads A/B` over the syncs held,
+    /// `None` before the first.
+    pub fn line(&self) -> Option<String> {
+        let p = self.percentiles()?;
+        let mut out = String::new();
+        let f = p.fields;
+        let _ = write!(
+            out,
+            "sync p50/p99 {:.0}/{:.0} us over {} syncs:",
+            f[0].p50, f[0].p99, p.frames
+        );
+        for k in 1..7 {
+            let name = SYNC_FIELDS[k].trim_end_matches("_us");
+            let _ = write!(out, " {name} {:.0}/{:.0}", f[k].p50, f[k].p99);
+            out.push(if k < 6 { ',' } else { ';' });
+        }
+        let _ = write!(
+            out,
+            " light place {:.0}/{:.0}, note {:.0}/{:.0}; packed bricks {:.0}/{:.0}; lock wait \
+             {:.0}/{:.0}; rescan inserts {:.0}/{:.0}; clock reads {:.0}/{:.0}",
+            f[9].p50,
+            f[9].p99,
+            f[10].p50,
+            f[10].p99,
+            f[7].p50,
+            f[7].p99,
+            f[8].p50,
+            f[8].p99,
+            f[11].p50,
+            f[11].p99,
+            f[12].p50,
+            f[12].p99
+        );
+        Some(out)
+    }
 }
 
 /// Appends `s` to `out` as a JSON string, quoted, with `"`, `\` and control characters
@@ -231,6 +383,20 @@ impl RunReport {
             }
             None => o.push_str("null"),
         }
+        field(&mut o, "streaming");
+        match &self.streaming {
+            None => o.push_str("null"),
+            Some(p) => {
+                let _ = write!(o, "{{\"frames\": {}", p.frames);
+                for (name, f) in SYNC_FIELDS.iter().zip(p.fields) {
+                    o.push_str(", ");
+                    write_json_string(&mut o, name);
+                    o.push_str(": ");
+                    write_percentiles(&mut o, Some(f));
+                }
+                o.push('}');
+            }
+        }
         field(&mut o, "ended");
         write_json_string(&mut o, self.ended);
         o.push_str("\n}\n");
@@ -267,6 +433,12 @@ impl Series {
     pub(crate) fn values(&self) -> &[f64] {
         &self.v
     }
+
+    /// Empties the series, keeping its buffer.
+    pub(crate) fn clear(&mut self) {
+        self.v.clear();
+        self.next = 0;
+    }
 }
 
 /// The frame times of a path run, the warm-up apart.
@@ -275,6 +447,7 @@ pub struct Recorder {
     wall: Series,
     cpu: Series,
     gpu: Series,
+    sync: SyncSeries,
     /// Every measured frame's count of hitches, including those the ring dropped.
     frames: u32,
     over_33: u32,
@@ -291,6 +464,7 @@ impl Recorder {
             wall: Series::with_capacity(n),
             cpu: Series::with_capacity(n),
             gpu: Series::with_capacity(n),
+            sync: SyncSeries::with_capacity(n),
             ..Self::default()
         }
     }
@@ -314,6 +488,14 @@ impl Recorder {
         self.over_100 += u32::from(wall_ms > OVER_100_MS);
     }
 
+    /// Records the mirror sync of a frame that ended `clock_s` seconds into the run, outside
+    /// the warm-up ([`Recorder::push`]'s rule).
+    pub fn push_sync(&mut self, clock_s: f32, s: &SyncStats) {
+        if clock_s >= WARMUP_S {
+            self.sync.push(s);
+        }
+    }
+
     /// Fills `r`'s frame fields from the recorded frames.
     pub fn fill(&self, r: &mut RunReport) {
         r.frames = self.frames;
@@ -324,6 +506,7 @@ impl Recorder {
         r.gpu_ms = Percentiles::of(&mut self.gpu.v.clone());
         r.over_33ms = self.over_33;
         r.over_100ms = self.over_100;
+        r.streaming = self.sync.percentiles();
     }
 }
 
@@ -589,6 +772,7 @@ mod tests {
             over_33ms: 0,
             over_100ms: 0,
             peak_rss_bytes: Some(123_456_789),
+            streaming: None,
             ended: "completed",
         }
     }
