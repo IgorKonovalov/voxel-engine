@@ -642,19 +642,20 @@ pub fn write_path_row(out: &mut String, player: &crate::path::PathPlayer, tester
     }
 }
 
-/// Appends the tester mode's help panel to `out` as banner rows: the scene and mode, then the
-/// keys the mode takes.
-pub fn write_help_panel(out: &mut String, player: &crate::path::PathPlayer) {
+/// Appends the tester mode's help panel to `out` as banner rows: the scene, the mode and the
+/// headlamp (`scene cave, benchmark, lamp off`), then the keys the mode takes.
+pub fn write_help_panel(out: &mut String, player: &crate::path::PathPlayer, lamp: bool) {
     use crate::path::PathMode;
     start_row(out);
     let _ = write!(
         out,
-        "scene {}, {}",
+        "scene {}, {}, lamp {}",
         player.path.scene.name(),
         match player.mode {
             PathMode::Bench => "benchmark",
             PathMode::Tour => "tour",
-        }
+        },
+        if lamp { "on" } else { "off" }
     );
     let rows: &[&str] = match player.mode {
         PathMode::Bench => &[

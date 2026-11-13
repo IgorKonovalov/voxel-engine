@@ -170,8 +170,10 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     args.mode = run_mode(given)?;
     let mode = args.mode;
     // The showcase is lit by its ores alone, and its light radius keeps every emitter of the
-    // hall in the buffer from any eye.
-    args.light.lamp = Some(args.light.lamp.unwrap_or(!mode.is_showcase()));
+    // hall in the buffer from any eye. A benchmark path runs with the lamp off too
+    // (`PathMode::flags`), so its frame times read the world's own light.
+    let bench = args.path.is_some() && args.path_mode == PathMode::Bench;
+    args.light.lamp = Some(args.light.lamp.unwrap_or(!mode.is_showcase() && !bench));
     args.light.radius = Some(args.light.radius.unwrap_or(if mode.is_showcase() {
         SHOWCASE_LIGHT_RADIUS
     } else {

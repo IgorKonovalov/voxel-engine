@@ -26,8 +26,9 @@ The menu
 Arrow keys move and change, Enter chooses; or press a row's number.
 
   1 scene           cave (a streamed cave), showcase (a lit hall), castle
-  2 mode            benchmark (a fixed flight, the same on every machine, then it closes)
-                    or tour (the flight loops; move or look to fly yourself)
+  2 mode            benchmark (a fixed flight, the same on every machine, then it closes;
+                    the headlamp is off) or tour (the flight loops; move or look to fly
+                    yourself; the headlamp is on in the cave and the castle)
   3 output          1280x720, 1920x1080, or your display's size
   4 internal scale  1, 1.5 or 2 (the picture is drawn smaller and upscaled)
   5 run             runs the scene in a second window
@@ -70,7 +71,8 @@ folder is not writable). The launcher's window shows both paths.
   tester.log    each command the launcher ran and how it ended
   runs/NN-<scene>-<mode>/log.txt    everything the run printed
   runs/NN-<scene>-<mode>/run.json   the run's frame times (median, 95th and 99th percentile,
-                worst), the resolution, the adapter, the peak memory, and how it ended
+                worst), the resolution, whether the headlamp was on, the adapter, the peak
+                memory, and how it ended
 
 It holds no user name, no computer name, no file paths from your home folder and no serial
 numbers. Every file is plain text: open any of them before you send them.

@@ -33,7 +33,7 @@
 //! [--path cave|showcase|castle] [--path-mode bench|tour] [--report DIR] [--tester]`.
 //! `--path NAME` flies that scene's camera path (`flythrough::path`; the scene's own flags and
 //! seed 1 are required): `--path-mode bench` (the default) once by wall time (1/60 s a headless
-//! frame), then exits; `tour` loops it, the first move, look or dig hands the camera to the
+//! frame) with the lamp off unless `--lamp on` is given, then exits; `tour` loops it, the first move, look or dig hands the camera to the
 //! keys and `T` resumes the path from its nearest point. The banner shows the mode always
 //! (`benchmark 23 s / 37 s`). `--report DIR` writes `DIR/run.json` at exit
 //! (`flythrough::report`). `--tester` leaves movement, look, the dig, `F1` (a help panel), `T`
@@ -359,7 +359,7 @@ pub struct AudioArgs {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightingArgs {
     /// `--lamp on|off`: the headlamp lights the frame; unset, the program's default (the
-    /// fly-through's: off on the showcase, else on).
+    /// fly-through's: off on the showcase and in a `--path` benchmark, else on).
     pub lamp: Option<bool>,
     /// `--lamp-bounce on|off` (alias `--indirect`): the lamp's bounce from the probe volume.
     pub lamp_bounce: bool,

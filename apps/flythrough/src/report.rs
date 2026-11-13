@@ -89,6 +89,9 @@ pub struct RunReport {
     pub internal: [u32; 2],
     pub internal_scale: &'static str,
     pub upscaler: &'static str,
+    /// The headlamp at the run's start (`--lamp`; off in a benchmark), written `on` or `off`.
+    /// A tour without `--tester` can switch it with `F7`; a benchmark cannot.
+    pub lamp: bool,
     pub adapter: Option<AdapterLine>,
     /// The path's length in seconds.
     pub path_s: f32,
@@ -335,6 +338,8 @@ impl RunReport {
         write_json_string(&mut o, self.internal_scale);
         field(&mut o, "upscaler");
         write_json_string(&mut o, self.upscaler);
+        field(&mut o, "lamp");
+        write_json_string(&mut o, if self.lamp { "on" } else { "off" });
         field(&mut o, "adapter");
         match &self.adapter {
             None => o.push_str("null"),
@@ -753,6 +758,7 @@ mod tests {
             internal: [853, 480],
             internal_scale: "1.5",
             upscaler: "fsr2",
+            lamp: false,
             adapter: Some(AdapterLine {
                 name: "Test \"GPU\" \\ v2\nline".to_owned(),
                 vendor: 0x10de,
@@ -827,6 +833,7 @@ mod tests {
         assert_eq!(num(&["adapter", "vendor"]), f64::from(0x10de_u32));
         assert_eq!(v.get("scene").and_then(Value::as_str), Some("showcase"));
         assert_eq!(v.get("ended").and_then(Value::as_str), Some("completed"));
+        assert_eq!(v.get("lamp").and_then(Value::as_str), Some("off"));
         assert_eq!(
             v.get("output")
                 .and_then(Value::as_array)

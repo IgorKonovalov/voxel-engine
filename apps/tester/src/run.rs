@@ -83,15 +83,22 @@ pub struct RunSpec {
     pub scale: Scale,
 }
 
-/// The fly-through's arguments for `spec`: the scene's flags, `--tester`, its path and mode,
-/// the resolution, the internal scale, and `--report run_dir`.
+/// The fly-through's arguments for `spec`: the scene's flags, the mode's (`--lamp off` for a
+/// benchmark, none for a tour, which keeps the fly-through's lamp default), `--tester`, its path
+/// and mode, the resolution, the internal scale, and `--report run_dir`.
 pub fn fly_args(spec: &RunSpec, display: Option<[u32; 2]>, run_dir: &Path) -> Vec<String> {
     let path = PATHS
         .iter()
         .find(|p| p.scene == spec.scene)
         .map_or(spec.scene.name(), |p| p.name);
     let [w, h] = spec.output.size(display);
-    let mut a: Vec<String> = spec.scene.flags().iter().map(|&f| f.to_owned()).collect();
+    let mut a: Vec<String> = spec
+        .scene
+        .flags()
+        .iter()
+        .chain(spec.mode.flags())
+        .map(|&f| f.to_owned())
+        .collect();
     a.extend(
         [
             "--tester",
@@ -142,21 +149,36 @@ pub fn logged_command(exe: &Path, args: &[String]) -> String {
 /// How a run ended.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
-    /// Exit 0 with a `run.json`: its wall p50 and p95 in ms and its `ended`.
-    Ok { p50: f64, p95: f64, ended: String },
+    /// Exit 0 with a `run.json`: its wall p50 and p95 in ms, its `ended`, and its `lamp`
+    /// (`None` when the file does not name it).
+    Ok {
+        p50: f64,
+        p95: f64,
+        ended: String,
+        lamp: Option<bool>,
+    },
     /// A non-zero exit, a kill, or no readable `run.json`: why, and the log's last lines.
     Failed { why: String, tail: Vec<String> },
 }
 
 impl Outcome {
-    /// The run's row in the window: `ok: wall p50 6.2 ms, p95 20.7 ms` or `failed: exit 101`.
+    /// The run's row in the window and `tester.log`: `ok: wall p50 6.2 ms, p95 20.7 ms, lamp
+    /// off` (no lamp part when `run.json` names none) or `failed: exit 101`.
     pub fn row(&self) -> String {
         match self {
-            Outcome::Ok { p50, p95, ended } if ended == "completed" => {
-                format!("ok: wall p50 {p50:.1} ms, p95 {p95:.1} ms")
-            }
-            Outcome::Ok { p50, p95, ended } => {
-                format!("{ended}: wall p50 {p50:.1} ms, p95 {p95:.1} ms")
+            Outcome::Ok {
+                p50,
+                p95,
+                ended,
+                lamp,
+            } => {
+                let word = if ended == "completed" { "ok" } else { ended };
+                let lamp = match lamp {
+                    Some(true) => ", lamp on",
+                    Some(false) => ", lamp off",
+                    None => "",
+                };
+                format!("{word}: wall p50 {p50:.1} ms, p95 {p95:.1} ms{lamp}")
             }
             Outcome::Failed { why, .. } => format!("failed: {why}"),
         }
@@ -218,7 +240,7 @@ pub fn run_child(mut cmd: Command, run_dir: &Path) -> io::Result<Outcome> {
     }
 }
 
-/// A `run.json`'s wall p50, p95 and `ended`.
+/// A `run.json`'s wall p50, p95, `ended` and `lamp`.
 fn read_run(path: &Path) -> Result<Outcome, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("no run.json ({e})"))?;
     let v = json::parse(&text).map_err(|e| format!("run.json does not parse: {e}"))?;
@@ -235,6 +257,11 @@ fn read_run(path: &Path) -> Result<Outcome, String> {
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_owned(),
+        lamp: match v.get("lamp").and_then(Value::as_str) {
+            Some("on") => Some(true),
+            Some("off") => Some(false),
+            _ => None,
+        },
     })
 }
 
