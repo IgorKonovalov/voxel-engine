@@ -72,6 +72,7 @@ docs/
 │                    #   edited by hand in the session the idea comes up
 ├── nfr.md           # the budgets: frame time, VRAM, edit cost, determinism, baseline GPU
 ├── nfr/             # the readings behind nfr.md's big sections, one file per section
+├── flythrough.md    # every key and flag of the fly-through; `flythrough --help` is the source
 ├── images/          # the README's hero and the light write-ups' stills and difference images
 ├── adrs/            # NNNN-<slug>.md: decisions + rejected alternatives. Append-only once accepted
 │   └── README.md    #   ADR index + next free number

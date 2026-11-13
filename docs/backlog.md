@@ -19,14 +19,7 @@ Rules:
 
 ### Done: test tiers by marks, not by copied lists
 
-Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev chore once Plan 0059 has merged (owner, 2026-11-09): the rename touches the test files and `.config/nextest.toml` that lane also edits. The WARP lane it first waited on is done; Windows runs the CPU tests only. `.config/nextest.toml` spells the GPU list (15 binaries) and the soak list (about 50 test names) out in every profile, six copies kept in step by `scripts/check-test-tiers.mjs`, because nextest has no filter aliases. The replacement marks the tests themselves:
-- **Soak:** `#[ignore = "soak"]` on each long series; the soak tier runs `--run-ignored only`, full runs `--run-ignored all`, and `soak.yml`, the docs and `test-changed.mjs` take the flag.
-- **GPU:** every test file that opens a device is named `tests/gpu_*.rs`, and the profiles filter on `binary(/^gpu_/)`. `check-test-tiers` shrinks to the one rule that a file which opens a device carries the prefix.
-
-The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
-
-**Done 2026-11-10** (GPU half 50b2193, soak half 4a15e60). 25 files renamed to `tests/gpu_*.rs`; the 41 long series are `#[ignore = "soak"]`; the 34 hand-run measurements that were already `#[ignore]`d moved into a `mod reading` per file (owner, 2026-11-10), and soak and full leave out `test(/(^|::)reading::/)`. `check-test-tiers` checks the prefix, that every `#[ignore]` is soak or a reading, and the profiles' forms. Tier membership unchanged in every profile.
-
+Done 2026-11-10 (50b2193, 4a15e60): GPU test files are `tests/gpu_*.rs`, long series `#[ignore = "soak"]`, kept by `scripts/check-test-tiers.mjs`.
 
 ### The live queue's order and cancellation, after Plan 0059
 
@@ -118,11 +111,7 @@ removal plan goes ahead after Plan 0069.
 
 ### The lamp channel's faults
 
-Parked 2026-11-05 at Plan 0057's close. `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` takes
-its `D` from the shader's output, so it does not defend the albedo: `D` wants an independent reading
-of the lamp's irradiance at the rays' hits. Inside probes are traced while the lamp moves
-(`probe_update.wgsl`'s `probe_idle` returns on `MOVED_BIT` before its inside check): cost only, unread on
-the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 0058's Phase 3 (redrafted 2026-11-10) takes the furnace's `D` and the one-probe step test; the inside-probe trace is a reading there.
+Parked 2026-11-05 at Plan 0057's close; taken by Plan 0058's Phase 3 (the furnace test's independent `D` and the lamp-step test over more than one probe; the inside-probe trace is a reading there).
 
 ### Far light on a slow adapter: a bake budget per second, and no black for missing light
 
@@ -273,7 +262,7 @@ worktree and leave with it.
 
 ### The sync's `light_note` stage and the windowed glide's light walks
 
-Drafted 2026-11-13 as [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (awaits the go); the body leaves at its close.
+Drafted 2026-11-13 as [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (approved 2026-11-13); the body leaves at its close.
 
 Noted 2026-11-13 at Plan 0070's close (`docs/plans/logs/0070.md`, Phases 5 and 6). After Plan
 0070 the cave sync's p99 (about 21 to 22 ms, over Plan 0067's 16.6 ms for `update + poll +
@@ -348,16 +337,7 @@ readings are compared with ones from before 2026-11-05.
 
 ### Done: the tester's benchmarks with the lamp off
 
-Noted 2026-11-13 (the owner, at Plan 0070's Phase 6 window: "also, for test benchmark lamp is
-better to be off"). The tester's cave and castle paths and the bench readings plans take from
-them ran with the headlamp at its default, on (off on the showcase only).
-
-**Done 2026-11-13** (4ea561f, a chore on the owner's go). A `--path` run in bench mode starts
-the lamp off unless `--lamp` is given; the tester's benchmark command line carries `--lamp off`
-after the scene's flags (`PathMode::flags`); a tour keeps the lamp default (on in the cave and
-the castle). `run.json` names it (`"lamp": "on"|"off"`, additive, schema 1), as do the tester's
-run row and its help panel. **Bench readings of the cave and castle paths from before 4ea561f
-ran with the lamp on and are not compared with readings after it.**
+Done 2026-11-13 (4ea561f): a `--path` benchmark starts the lamp off unless `--lamp` is given, and `run.json` names it. **Bench readings of the cave and castle paths from before 4ea561f ran with the lamp on and are not compared with readings after it.**
 
 ### A `Uniform` emitter brick gives no light samples
 
@@ -382,7 +362,7 @@ gate by the owner's rule. What it would take: mark each `#[ignore = "soak"]` or 
 by a reading on a quiet box. Pick up as a dev chore with the next plan that touches those
 binaries.
 
-### Plan 0072's CI readings, owed after the push
+### Plan 0072's CI readings: accepted, one reading left open
 
 Parked 2026-11-13 at Plan 0072's close. Read 2026-11-13 on the first two pushes: warm Linux
 15 min 6 s and Windows 18 min 47 s (over the under-10 and under-15 min proposals), gate count on
@@ -437,17 +417,6 @@ library's default and not the fly-through's (Plan 0069's amendment note takes th
 itself). `CLAUDE.md:39-40` gives `vxe-render` "voxel-model entities" it does not have yet
 (Plan 0062) and omits the bake store and FSR 2: the owner's edit. Pick up with the next chore
 lane; it touches no file a plan lane edits except `gpu_lights.rs` (Plan 0058's).
-
-### Amendment notes from the 2026-11-12 review, awaiting the owner
-
-Parked 2026-11-12. The review (`docs/reviews/2026-11-12-architecture-review.md`) proposes
-amendments to approved plans that only the owner accepts; none was written into a plan. In
-brief: **Plan 0067**, do not stop at the sync stop rule, Plan 0070 takes the sync (section 1.1);
-**Plan 0044**, Phase 4 struck into 0070 (1.1); **Plan 0069**, a `Delete` class for the fields
-with no setter and no caller, `Floor` equal to the fly-through's defaults and every `Default`
-equal to `Floor`, the setter gate over the 22 existing setters, and the RENOIR hit pass read
-alone in Phase 4 (1.2, 2.2). Plan 0045's notes (2.1, 2.3) were taken into it on 2026-11-12.
-Each leaves when the owner accepts or refuses it.
 
 ### A documentation site
 

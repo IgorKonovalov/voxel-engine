@@ -54,10 +54,15 @@ Use the smallest meaningful scope. `git log --format=%s -40` shows the live voca
 | `render` | `crates/vxe-render/` (shaders included) |
 | `app` | `crates/vxe-app/` |
 | `flythrough` | `apps/flythrough/` |
-| `sim`, `audio`, `script`, `net`, `assets` | the crate of that name, once it exists |
+| `sim`, `audio`, `script`, `net`, `assets`, `entity` | the crate of that name, once it exists |
+| `tester` | `apps/tester/`, `dist/` |
 | `deps` | dependency changes |
 | `plans` / `adr` | `docs/plans/`, `docs/adrs/` (e.g. `docs(plans): close plan 0002 + v0.2.0`) |
-| `harness` | `.claude/`, `scripts/` |
+| `nfr`, `backlog`, `roadmap` | `docs/nfr.md` and `docs/nfr/`, `docs/backlog.md`, `docs/roadmap.md` |
+| `skills` | `.claude/skills/` |
+| `scripts` | `scripts/` |
+| `harness` | `.claude/hooks/`, `.claude/settings.json`, `.config/` |
+| `ci`, `release` | `.github/workflows/` (as `ci(release)` for `release.yml`) |
 
 ## When to split
 

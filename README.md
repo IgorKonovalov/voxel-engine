@@ -8,9 +8,10 @@
 <sub>The showcase cavern (`--source showcase`), seed 1, its `hall` shot: from voxel
 (190, 384, 218), 9 m over the west floor, at yaw 0 and pitch -12 degrees, lamp off, so all of
 the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 8192 frames at
-a manual exposure of 8, indirect light on at a probe spacing of 32 voxels, FSR 2 on at
+a manual exposure of 8, the emissive light read from the baked light store, FSR 2 on at
 internal scale 1.5 (1280x720 for 1920x1080) with sharpening 0.5, the default `face` look
-(honest cubes with the far normal at `[2, 6]`) and the default lighting, on an RTX 3080 Laptop GPU at 1920x1080.
+(honest cubes with the far normal at `[2, 6]`) and the default lighting, on an RTX 3080 Laptop GPU at 1920x1080,
+rendered 2026-11-13 at v0.52.0.
 Regenerate with
 `cargo run --release -p flythrough --example hero -- --exposure 8 --frames 8192 --out docs/images/hero.png`
 (every other setting above is the example's default).</sub>
@@ -26,8 +27,8 @@ and entity model.
 
 > **Status: pre-alpha.** Milestones M1 (fly-through with digging), M3 (collision and a
 > character controller) and M5 (the simulation split and a WebAssembly logic host) have
-> shipped, with parts of M2, M6, M7 and M8. Spatial audio (M4) shipped its first slice,
-> heard and checked by the owner; its reverb slice is in flight. [`CHANGELOG.md`](CHANGELOG.md) says what has shipped,
+> shipped, with parts of M2, M6, M7 and M8. Spatial audio (M4) has shipped: HRTF playback,
+> occlusion, early reflections and a late reverb sized by the room. [`CHANGELOG.md`](CHANGELOG.md) says what has shipped,
 > [`docs/roadmap.md`](docs/roadmap.md) what comes next, and
 > [`docs/plans/README.md`](docs/plans/README.md) what is in flight.
 
@@ -59,7 +60,7 @@ and entity model.
   opt-in look, ADR-0041), a translucent material class, and a stats overlay with a frame-time strip.
 - **Spatial audio:** a headless HRTF mixer on the device callback, with occlusion,
   transmission and early reflections probed through the same voxels and the material
-  table's acoustic triple.
+  table's acoustic triple, and a late reverb sized by the room the listener sees.
 - **The fly-through** testbed: fly or walk, dig, fill and stamp, watch unsupported rock fall,
   save and replay sessions, and print what each edit changed, plus headless benchmarks and
   golden images.
@@ -79,8 +80,8 @@ The figures behind these, met and missed, are in [`docs/nfr.md`](docs/nfr.md).
   acoustics and navigation without a second representation of the world.
 - **Scripting hosts.** WASM for deterministic server-side logic (shipped), Lua for client-side
   scripts, so a game's rules can be data rather than engine code.
-- **Spatial audio.** HRTF playback with occlusion and early reflections (shipped), then a late
-  reverb sized by the room the listener sees.
+- **Spatial audio.** HRTF playback with occlusion, early reflections and a late reverb sized
+  by the room the listener sees (shipped).
 
 The budgets these claims are held to (frame time, VRAM, edit cost, baseline hardware) are in
 [`docs/nfr.md`](docs/nfr.md). A figure there without a measurement is a guess and says so.
@@ -93,13 +94,16 @@ The budgets these claims are held to (frame time, VRAM, edit cost, baseline hard
 | [`crates/vxe-render`](crates/vxe-render) | `wgpu` upload, compute ray marching, lighting, denoise, upscale. All WGSL lives here. |
 | [`crates/vxe-app`](crates/vxe-app) | Thin, optional `winit` shell: window, input, surface, frame loop. |
 | [`crates/vxe-sim`](crates/vxe-sim) | Cylinder sweeps and the character controller. Depends on `vxe-world` only. |
-| [`crates/vxe-assets`](crates/vxe-assets) | `.vox` parsing and the palette-to-material map, producing `vxe-world` prefabs. |
+| [`crates/vxe-assets`](crates/vxe-assets) | `.vox` parsing and writing and the palette-to-material map, producing `vxe-world` prefabs; `.rig` files to `vxe-entity` models and clips; voxels drawn as text (`.voxtext`). |
 | [`crates/vxe-net`](crates/vxe-net) | The byte channel, the server tick with its op and input logs, the logic trait, shared and owned clients. |
 | [`crates/vxe-script-wasm`](crates/vxe-script-wasm) | The `wasmtime` host for logic components; `guests/` holds the test components. Not in the default build. |
 | [`crates/vxe-audio`](crates/vxe-audio) | `cpal` output, the HRTF mixer on the device callback, occlusion and early reflections through the material table; the HRIR pack under `assets/`. Depends on `vxe-world` only. |
+| [`crates/vxe-entity`](crates/vxe-entity) | Voxel-model entities: rigid parts as prefabs, poses in fixed point, the entity ray query. Headless and deterministic; depends on `vxe-world` only. |
 | [`apps/flythrough`](apps/flythrough) | The engine's own testbed binary; `logic/` is its dig logic, built natively or as a component. |
-| [`scripts/`](scripts) | Repository gates (doc links, comment hygiene, index rows) and the guest build script. |
-| [`docs/`](docs) | [Roadmap](docs/roadmap.md), [budgets](docs/nfr.md), [ADRs](docs/adrs/README.md), [plans](docs/plans/README.md). |
+| [`apps/tester`](apps/tester) | `vxe-tester`, the tester build's launcher: a menu that runs the fly-through per scene and packs a report. |
+| [`dist/`](dist) | What the tester archives ship beside the binaries. |
+| [`scripts/`](scripts) | Repository gates (doc links, comment hygiene, index rows, test tiers, file and plan size), the changed-crates test runner, the guest build and the tester packaging. |
+| [`docs/`](docs) | [Roadmap](docs/roadmap.md), [budgets](docs/nfr.md), [ADRs](docs/adrs/README.md), [plans](docs/plans/README.md), [the fly-through's keys and flags](docs/flythrough.md). |
 
 Further crates (Lua scripting, the network transport) are added one plan at a time; the
 roadmap names them.
@@ -110,10 +114,10 @@ The toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup
 first use. Linux and Windows are the supported platforms.
 
 On Linux, `winit` and `wgpu` need the X11/Wayland headers and a Vulkan driver, and `cpal`
-needs the ALSA headers. On Debian or Ubuntu:
+needs the ALSA headers, and `gilrs` (the gamepad) needs libudev. On Debian or Ubuntu:
 
 ```sh
-sudo apt-get install pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev
+sudo apt-get install pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev libudev-dev
 ```
 
 Then:
@@ -137,96 +141,35 @@ cargo run --release -p flythrough --features wasm -- --level --logic wasm
 With no flags it streams an unbounded seeded cave around the camera. Digs, fills and the bench
 go through an in-process server, so every edit you see came back as a client event.
 
+```sh
+cargo run --release -p flythrough -- --level                  # the bounded level: walk, collapse, coarse grid
+cargo run --release -p flythrough -- --source showcase        # a 72 m hall lit by four ores
+cargo run --release -p flythrough -- --level --walk --hud     # start walking, the stats overlay shown
+cargo run --release -p flythrough -- --help                   # every flag
+```
+
 | Input | Does |
 |-------|------|
 | Mouse, `W` `A` `S` `D`, `Space` / `C` | Look and fly; hold `Shift` to go faster |
 | Left / right click | Dig / fill at the crosshair; the edit result prints to the terminal |
 | Scroll | Change the dig radius |
-| `L` | Toggle the shadow ray |
-| `N` | Cycle the look presets: face, field, trilinear8, gradient27 (the field only in a run started under `--look field`, the one that builds its band slots); the banner names the preset |
-| `B` | Run the carve benchmark in place |
-| `P` | Stamp a 16-voxel room with an indestructible shell at the crosshair |
-| `G` | Toggle fly and walk mode (bounded level only); walking, `Space` jumps or climbs a ledge |
-| `K` | Print the coarse grid and walkable map |
-| `R` | Toggle what unsupported rock does after a dig: fall (default) or crumble into rubble |
-| `H`, `J`, `T` | With `--audio`: play a knock, a looping hum, or a looping pulse (a knock each second) at the point the last left click dug |
-| `E` | With `--audio`: toggle the early reflections |
-| `F1` | Sample the next frames and print frame-time readings |
-| `F2` | Toggle the stats overlay; with the lighting it shows every frame pass's GPU time (the probe update and gather among them), the light samples and, with indirect light on, the live probes |
-| `F3` | Toggle the shadow walk: coarse (default; 2^3 blocks of the masks) or full |
-| `F4` | Toggle the emissive sampler: reservoir reuse (default) or the flat candidate list |
-| `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
-| `F6` | Toggle the lighting resolution: half (default) or full; applied on the next frame |
+| `G` | Toggle fly and walk mode (bounded worlds only); walking, `Space` jumps or climbs a ledge |
+| `F2` | Toggle the stats overlay |
 | `F7` | Toggle the headlamp |
-| `F8` | Toggle indirect light from the probe volume |
-| `F10` | Cycle the upscaler: off, own, fsr2; a banner names the mode and its scale for 3 s |
-| `M` | Pulse the ore's emission (a render-side scale); the probe volume's indirect light sees the ore at the pulse's average |
+| `F10` | Cycle the upscaler: off, own, fsr2 |
+| `N` | Cycle the look presets |
 | `Esc` | Quit |
 
-For 3 s after the start and after every `F3` to `F8`, `M` or applied `F6` change, a yellow
-banner names the lighting modes (shadow walk, sampler, history, resolution, lamp, indirect, filter), the
-pulse and the emissive history; under it a second row names the upscaler and its scale, for
-3 s after the start and after every `F10`. It shows with the stats overlay off, and sits under
-its rows when `F2` has it on. The same lines go to stdout.
+[`docs/flythrough.md`](docs/flythrough.md) lists every key (lighting, light queue, views,
+audio, gamepad) and every flag. Every toggle shows its mode in a banner and prints it to
+stdout. Walking, the coarse grid and collapse run on the bounded worlds (`--source level` and
+`--source showcase`) only. Every run prints a `frames:` line at exit: p50, p99 and max of the
+frame's render-thread CPU, of `update + poll + sync`, and of the march's GPU time on the
+frames it was timed.
 
-Walking, the coarse grid and collapse run on the bounded worlds (`--source level` and
-`--source showcase`) only. Every run
-prints a `frames:` line at exit: p50, p99 and max of the frame's render-thread CPU, of
-`update + poll + sync`, and of the march's GPU time on the frames it was timed (the overlay
-shown, `F1`, the autopilot's flight).
-
-| Flag | Does |
-|------|------|
-| `--source cave\|level\|showcase` | The world: the streamed noise cave (default), the bounded level, or the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off and the light radius 19 unless given, its `hall` shot's pose and manual exposure 1.5 unless `--shot` or `--exposure` says otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`). The banner's line starts `source showcase` |
-| `--level` | The same as `--source level` |
-| `--shot hall\|chasm\|crystals` | With `--source showcase`: start at the named shot's pose and exposure (default `hall`) |
-| `--walk` | With a bounded source: start in walk mode |
-| `--seed N` | World seed (default 1) |
-| `--hud` | Start with the stats overlay shown; with `--view steps` it adds a row with the last frame's mean, p99 and block-max mean steps per ray and the mean loads |
-| `--logic native\|wasm[=PATH]` | Run the dig logic natively (default) or as a component; `wasm` needs `--features wasm` |
-| `--vault` | Generate a 16-voxel room with an indestructible shell 10 m along +x from the spawn |
-| `--headless` | Run the same frames on an offscreen target, with no window |
-| `--adapter SUBSTRING` | With `--headless`, use the first GPU adapter whose name contains the substring (for example `AMD` for the dev box's iGPU), the default adapter when none does |
-| `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
-| `--bench N` | Send `N` `B` benchmark inputs on the first frame |
-| `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |
-| `--census` | Print the brick census on exit: `Full` bricks and mip-bricks by count of materials, and their payload bytes today, under the packed class ladder and under exact planes |
-| `--render WxH` | Fix the marcher's resolution; the window scales it |
-| `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
-| `--mirror-budget MiB` | VRAM the GPU mirror reserves for its pool, masks and records at startup (default 3072 streamed; on `--level`, what the level needs plus dig headroom). While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure (the fuller of its pool slots and records) over 0.9, and returns after 300 frames under 0.7, down to 6 |
-| `--residency R_FULL,R_LOD` | Streamed full and LOD radii in chunks, hysteresis 1 (default 16,24) |
-| `--look PRESET` | Start in a look preset: `face` (honest cubes; by default with the far normal at `[2, 6]`, and named here with it off), `field` (the smooth field surface, opt-in: builds its band slots and runs the field pass, at about 3x `face`'s GPU frame in the window), `trilinear8` or `gradient27` (diagnostic normal modes). The startup line prints the preset's parts |
-| `--crisp none\|rock\|all` | Mark the cave's rock row, or every row that is not translucent, `MaterialFlags::CRISP` when the table is built: the field look draws those materials as cubes (default `none`). The default look draws everything as cubes, so it changes nothing there |
-| `--thin-rig`, `--seam-rig` | Run in a bounded scene for the field look: free thin rods, a diagonal branch and sheets on a trunk, or a flush inlay and an L of crisp wood. Not with `--level`, `--source showcase`, `--castle`, `--autopilot`, `--vault`, `--room`, `--save` or `--replay` |
-| `--face-mix K` | Override the starting preset's mix of the shading normal toward the face normal (0 to 0.5) |
-| `--far-normal LO,HI` | Blend face mode's shading normal toward the 27-count gradient where a voxel spans fewer than `HI` pixels, all the way at `LO` (default `2,6`; `--look face` is off); the banner and the look line show it in face mode, `far normal off` in the others |
-| `--view VIEW` | Write `shaded` (default), `normals`, `hitmask`, `steps` (red: walk steps, green: storage loads, blue: pool loads per ray) or `albedo` (the composited albedo, unlit) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the loads' and pool loads' mean and p99 |
-| `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |
-| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
-| `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
-| `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
-| `--lamp on\|off` | The headlamp (default on; off on the showcase and in a `--path` benchmark) |
-| `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
-| `--fade-reading` | Headless: dig five times along the camera ray, settle the light with the lamp off, then on, switch it off and print, for the screen centre's direct light, indirect light and their sum, the first frame under 10 % of the lamp's part |
-| `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |
-| `--probe-spacing N` | Voxels between the probe volume's probes, 4 to 64 (default 16, 1.6 m) |
-| `--probe-rays N` | Rays each updated probe traces, 1 to 64 (default 64) |
-| `--probe-slices N` | The probe volume refreshes one probe in `N` a frame: 8 (default), 16 or 32 |
-| `--emissive-ore on\|off` | The ore glows and lights the cave (default on) |
-| `--shadow-walk full\|coarse` | The walk shadow rays take (default coarse) |
-| `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default reuse) |
-| `--history edits\|gradient` | What kills temporal history: edit boxes, or edit boxes and A-SVGF's gradient (default edits) |
-| `--lighting full\|half` | The lighting passes' resolution (default half) |
-| `--store-read face\|normal` | How a cube face reads the baked light: its own direction's value, or the mix of the cell's direction values its shading normal leans toward where the far normal is on (ADR-0049; default normal). `Comma` cycles it |
-| `--light-weights normal\|face` | The normal the half-resolution light's upsample and a-trous filter compare: the shading normal or the face normal (ADR-0049; default face). `Semicolon` cycles it |
-| `--internal-scale 1\|1.5\|2` | The output size over the internal size on each edge; above 1 the upscaler fills the output (default 1.5: FSR 2, 720p for 1080p). `--internal-scale 1` is Plan 0024's native frame with no upscaler |
-| `--jitter on\|off` | Each frame's sub-pixel ray jitter, which the upscaler accumulates (our upscaler: on unless `--jitter off`; with no upscaler: off); on, the upscaler runs at any scale |
-| `--upscaler off\|own\|fsr2` | The upscaler: none, ours (ADR-0024; it jitters unless `--jitter off`), or AMD's FSR 2.2.1 ported to WGSL (ADR-0034; it jitters by its own sequence). Without it the fly-through starts in `fsr2` at scale 1.5; `--internal-scale 1` without `--jitter on` starts in `off`, as `--upscaler off` does; `--jitter` starts in `own`. The overlay's upscale row shows FSR 2's passes as one total. The quality setting is FSR 2 at scale 1 with the far normal scaled to the same voxels: `--upscaler fsr2 --internal-scale 1 --far-normal 3,9` (about twice the default's march) |
-| `--sharpen S` | The upscaler's RCAS sharpening (FSR 2's RCAS under `fsr2`), 0 to 1 (default 0.5, 0 off) |
-| `--emissive-history N` | Frames static emissive light accumulates over at least, 1 to 4096 (default 32); the headlamp's part keeps a short history |
-| `--filter on\|off` | The a-trous filter; off shows the light pass's raw irradiance (default on) |
-| `--light-radius N` | Chunks around the camera whose emitters light the frame (default 4; 19 on the showcase) |
-| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; add `--vault` for a session saved with it (the save does not record the room placed at generation) |
+The tester build's launcher, `cargo run --release -p vxe-tester`, opens a menu that runs the
+fly-through once per scene and packs the reports into a zip
+([`dist/README-TESTER.txt`](dist/README-TESTER.txt)).
 
 The storage figures come from an example: `cargo run --release -p flythrough --example
 world_budget -- --chunks 20,20,8 --census` (the level) or `--stream 16,24 --census` (the streamed
@@ -240,26 +183,34 @@ write on raw ids over the same brick-edits.
 
 ### Checks
 
-These are the gates CI runs on every push, on both Linux and Windows:
+These are the gates CI runs on every push, on Linux and Windows (Windows runs the CPU tests
+only):
 
 ```sh
 scripts/build-guests.sh
-cargo build --workspace
-cargo nextest run --workspace
-cargo nextest run -p flythrough --features wasm
+cargo nextest run --workspace --profile ci        # the gate tier; ci-windows on Windows
+cargo nextest run -p flythrough --features wasm --profile ci -E 'binary(component)'
 cargo test --workspace --doc
-cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy -p flythrough --features wasm --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --features flythrough/wasm -- -D warnings
+cargo clippy -p flythrough-logic --features component --target wasm32-wasip2 -- -D warnings
 cargo fmt --all --check
 cargo deny check
 node --test ".claude/hooks/*.test.mjs"
+node --test "scripts/*.test.mjs"
 node scripts/check-doc-links.mjs
 node scripts/check-comment-hygiene.mjs
 node scripts/check-index-rows.mjs
 node scripts/check-index-rows.mjs --self-test
+node scripts/check-test-tiers.mjs
+node scripts/check-file-size.mjs
+node scripts/check-plan-size.mjs
 ```
 
-GPU tests run headless on a software Vulkan adapter (Mesa's lavapipe) in CI, so every feature
+The guest crates under `crates/vxe-script-wasm/guests/` get the same wasm32 clippy. Locally,
+`cargo nextest run --profile gate` is the gate tier and `node scripts/test-changed.mjs
+--profile quick` tests only the crates a change touched.
+
+GPU tests run headless on a software Vulkan adapter (Mesa's lavapipe) on CI's Linux arm, so every feature
 has a test that needs no window. [`ci.yml`](.github/workflows/ci.yml) is the full list.
 
 ## How the project is run
