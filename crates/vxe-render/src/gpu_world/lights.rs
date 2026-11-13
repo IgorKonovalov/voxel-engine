@@ -180,7 +180,7 @@ pub fn exposed_emitters<'a>(
 }
 
 /// [`exposed_emitters`], `None` when the brick is not `Full` or its palette holds no emissive
-/// material (the brick is not decoded).
+/// material. The brick is read as masks ([`emitters::scan_masks`]), not decoded.
 pub(super) fn scan_emitters<'a>(
     coord: ChunkCoord,
     slot: usize,
@@ -195,51 +195,9 @@ pub(super) fn scan_emitters<'a>(
     if !materials_of(p, |m| emissive[usize::from(m)]) {
         return None;
     }
-    let mut v = [AIR; BRICK_VOXELS];
-    p.decode(&mut v);
-    let b = brick_of_slot(slot);
-    let base = [0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS * BRICK_EDGE + b[k] * BRICK_EDGE);
-    let e = BRICK_EDGE as usize;
-    let beside = [0, 1, 2].map(|k| [neighbour(k, -1), neighbour(k, 1)]);
-    // Whether the voxel across the brick's face from local `l` on axis `k` toward `dir` lets
-    // light out: no brick there (the chunk's face) or a voxel that is not opaque.
-    let across = |l: [usize; 3], k: usize, dir: usize| match beside[k][dir] {
-        None => true,
-        Some(b) => {
-            let mut q = l;
-            q[k] = if dir == 0 { e - 1 } else { 0 };
-            !opaque[usize::from(b.get(q[0] + e * (q[1] + e * q[2])))]
-        }
-    };
-    let mut out = Vec::new();
-    for (i, &m) in v.iter().enumerate() {
-        if !emissive[usize::from(m)] || !opaque[usize::from(m)] {
-            continue;
-        }
-        let l = [i % e, i / e % e, i / (e * e)];
-        let mut faces = 0u32;
-        for k in 0..3 {
-            let stride = [1, e, e * e][k];
-            let low = if l[k] == 0 {
-                across(l, k, 0)
-            } else {
-                !opaque[usize::from(v[i - stride])]
-            };
-            let high = if l[k] == e - 1 {
-                across(l, k, 1)
-            } else {
-                !opaque[usize::from(v[i + stride])]
-            };
-            faces |= u32::from(low) << (2 * k) | u32::from(high) << (2 * k + 1);
-        }
-        if faces != 0 {
-            out.push(LightSample {
-                voxel: [0, 1, 2].map(|k| base[k] + l[k] as i32),
-                material_faces: u32::from(m) | faces << 16,
-            });
-        }
-    }
-    Some(out)
+    Some(emitters::scan_masks(
+        coord, slot, p, emissive, opaque, neighbour,
+    ))
 }
 
 /// `samples` thinned to at most `cap` by keeping every `k`-th by index, `k` the least that
@@ -265,47 +223,56 @@ pub(super) struct ChunkLights {
 }
 
 impl GpuWorld {
-    /// Replaces brick `slot` of `coord`'s light lists with its exposed emissive voxels.
+    /// Replaces the light lists of `coord`'s bricks in `rescan` with their exposed emissive
+    /// voxels, slot by slot in ascending order. The chunk's lists are looked up once for the
+    /// record, not per slot: a fresh record visits every slot, most of them with no emitter.
     pub(super) fn note_lights(
         &mut self,
         coord: ChunkCoord,
-        slot: usize,
+        rescan: RescanSet,
         bricks: &Bricks<'_>,
         st: &mut SyncStats,
     ) {
-        let brick = bricks.get(slot);
-        let found = if brick.is_full() {
-            st.light_bricks += 1;
-            let opaque: &[bool] = &self.mats.opaque;
-            let b = brick_of_slot(slot);
-            let neighbour = |k: usize, dir: i32| {
-                let mut n = b;
-                n[k] += dir;
-                (0..CHUNK_EDGE_BRICKS)
-                    .contains(&n[k])
-                    .then(|| bricks.get(brick_slot(n)))
+        let opaque: &[bool] = &self.mats.opaque;
+        let emissive: &[bool] = &self.mats.emissive;
+        let mut held = self.lights.chunks.get_mut(&coord);
+        // The lists of a chunk that held none, inserted after the walk.
+        let mut fresh: Option<ChunkLights> = None;
+        for slot in rescan.iter() {
+            let brick = bricks.get(slot);
+            let found = if brick.is_full() {
+                st.light_bricks += 1;
+                let b = brick_of_slot(slot);
+                let neighbour = |k: usize, dir: i32| {
+                    let mut n = b;
+                    n[k] += dir;
+                    (0..CHUNK_EDGE_BRICKS)
+                        .contains(&n[k])
+                        .then(|| bricks.get(brick_slot(n)))
+                };
+                let found = scan_emitters(coord, slot, brick, emissive, opaque, neighbour);
+                st.light_emitter_bricks += u64::from(found.is_some());
+                found.unwrap_or_default()
+            } else {
+                Vec::new()
             };
-            let found = scan_emitters(coord, slot, brick, &self.mats.emissive, opaque, neighbour);
-            st.light_emitter_bricks += u64::from(found.is_some());
-            found.unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        match self.lights.chunks.get_mut(&coord) {
-            Some(l) => {
-                if found.is_empty() {
-                    l.bricks.remove(&(slot as u16));
-                } else {
-                    l.bricks.insert(slot as u16, found);
+            let lists = match (&mut held, &mut fresh) {
+                (Some(l), _) => &mut l.bricks,
+                (None, Some(l)) => &mut l.bricks,
+                (None, None) if !found.is_empty() => {
+                    &mut fresh.insert(ChunkLights::default()).bricks
                 }
+                (None, None) => continue,
+            };
+            if found.is_empty() {
+                lists.remove(&(slot as u16));
+            } else {
+                lists.insert(slot as u16, found);
             }
-            None if !found.is_empty() => {
-                let mut l = ChunkLights::default();
-                l.bricks.insert(slot as u16, found);
-                self.lights.chunks.insert(coord, l);
-                self.lights.touch();
-            }
-            None => {}
+        }
+        if let Some(l) = fresh {
+            self.lights.chunks.insert(coord, l);
+            self.lights.touch();
         }
     }
 

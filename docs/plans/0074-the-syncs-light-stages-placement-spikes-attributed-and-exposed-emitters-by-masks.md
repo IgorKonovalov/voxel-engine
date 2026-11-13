@@ -421,9 +421,9 @@ Readings: [`docs/plans/logs/0074.md`](logs/0074.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | done; code in `071cb80` (wip); S1 taken as an orchestrator default (owner away); rig (c) not run; an uncommitted thread-CPU reading build used for the attribution (log) | committed with this row |
+| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | done; code in `071cb80` (wip); S1 taken as an orchestrator default (owner away); rig (c) not run; an uncommitted thread-CPU reading build used for the attribution (log) | `f0d77e5` |
 | 2: the placement's searches by index | dev | struck by S1 (Phase 1's log) | - |
-| 3: exposed emitters by masks | dev | not started | |
+| 3: exposed emitters by masks | dev | done; `light_note` p99 69.0 to 69.8 % under the base (proposal 70 %); deviations: `mod.rs` edited, `note_lights` looks the lists up per record (log) | committed with this row |
 | 4: the readings against the base | dev | not started | |
 | 5: the owner's window | human | not started | |
 | 6: the lines and the bookkeeping | dev | not started | |

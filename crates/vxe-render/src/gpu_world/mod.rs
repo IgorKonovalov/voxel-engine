@@ -97,14 +97,15 @@ use std::sync::PoisonError;
 
 use vxe_world::packed::{Packed, PackedClass};
 use vxe_world::{
-    AIR, BRICK_EDGE, BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
-    ChunkMips, MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World,
-    brick_of_slot, brick_slot,
+    AIR, BRICK_EDGE, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent, ChunkMips,
+    MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World, brick_of_slot,
+    brick_slot,
 };
 
 use crate::field::FieldBindings;
 
 mod alloc;
+mod emitters;
 mod format;
 mod lights;
 mod slot;
