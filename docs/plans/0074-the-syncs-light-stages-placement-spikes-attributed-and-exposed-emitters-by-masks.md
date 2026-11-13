@@ -1,7 +1,7 @@
 # 0074: The sync's light stages: the windowed placement spikes attributed, then bounded, and exposed emitters found by masks
 
-> **Status:** draft (awaits the owner's go; owner questions at the end of "Risks & open
-> questions")
+> **Status:** approved (owner, 2026-11-13: go as a lane beside Plan 0058; all six owner
+> questions answered as recommended, see "Owner answers")
 > **Created:** 2026-11-13 (the owner, at Plan 0058's refresh, its answer 9: "draft it now, run
 > beside 0058")
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (a playable frame under the light that
@@ -390,6 +390,11 @@ figure from the RTX 3080 Laptop host on `hpet` unless named; bench readings lamp
 6. **The goal:** 16.6 ms stays the bar, a miss names `alloc` as the next sync plan
    (*recommended*). Alternative: widen this plan to `alloc` now, which needs its own reading
    first (Phase 1 profiles it for that).
+
+**Owner answers** (2026-11-13, AskUserQuestion): 1 "Go, beside 0058"; 2 "Yes" (dev runs rig
+(c) itself, self-ending, killed by PID); 3, 4, 5 and 6 "Take all" as recommended (strike Phase 2
+under S1; mask scan in place first; the `Uniform` emitter brick to the backlog; 16.6 ms stays,
+a miss names `alloc`).
 
 ## What this plan does NOT do
 

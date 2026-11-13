@@ -24,7 +24,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | approved | M7, ADR-0054 (proposed). Approved 2026-11-11. Side lane, may start now; touches main.rs lightly. |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
-| [0074](0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: the windowed spikes attributed, placement searches bounded, exposed emitters by masks | draft | M2, no new ADR. Owner 2026-11-13: runs beside Plan 0058, disjoint files. Owner questions open. |
+| [0074](0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: the windowed spikes attributed, placement searches bounded, exposed emitters by masks | approved | M2, no new ADR. Owner 2026-11-13: go, a lane beside Plan 0058, disjoint files; answers as recommended. |
 <!-- roster:end -->
 
 ## Sequence
@@ -80,7 +80,7 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0073** (a settings menu and file for the fly-through and the tester, approved 2026-11-12 with every recommendation): after Plans 0069 and 0071.
 
-**Plan 0074** (the sync's light stages, drafted 2026-11-13, awaits the go): a lane beside Plan 0058 (owner, 2026-11-13, 0058's answer 9); it touches `gpu_world/` and the fly-through's `report.rs` only, and shares docs and the perf lock (its "Beside Plan 0058").
+**Plan 0074** (the sync's light stages, approved 2026-11-13): a lane beside Plan 0058 (owner, 2026-11-13, 0058's answer 9); it touches `gpu_world/` and the fly-through's `report.rs` only, and shares docs and the perf lock (its "Beside Plan 0058").
 
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
