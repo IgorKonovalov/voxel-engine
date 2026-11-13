@@ -353,28 +353,6 @@ a gallery only once the look is picked (after Plans 0067 and 0058) and Plan 0045
 files. Starlight's npm tree falls outside `cargo deny`, and mdBook is the lighter alternative,
 so it takes an ADR. Pick up when the owner asks.
 
-### CI's cold cache after a workspace change
-
-Read 2026-11-11 (owner asked why Windows took 55 min on run 43079051216, 486a53e, against
-about 17 on 43011459965 and 42879171018). The rust-cache key changed (`...-e0aa3e4d` to
-`...-6cbf2b65`) and the job restored the old entry by its restore-key prefix only. Version bumps
-alone did not change the key (43011459965 hit fully after 0.44 to 0.45); the likely trigger is
-the new `crates/vxe-entity` manifest and the root members list (inference: the logs show the
-manifests rust-cache hashed, not the hash). Although `Cargo.lock`'s dependency set was the same,
-nearly every registry crate recompiled: Windows `cargo build` 14.8 min against about 1.3 (252
-"Compiling" lines against 48 for the whole fast job), `clippy --workspace` 6 min against 25 s,
-the gate 14.5 against 8.6; Ubuntu's build 5.7 min against 0.6. Why a prefix restore rebuilt the
-dependencies is not known. The new key's entry is saved, so the next push should hit it fully
-(unconfirmed until a run after 486a53e). Options, none taken: (1) accept one slow run per new
-workspace member, or warm the cache with a `workflow_dispatch` run; (2) one diagnostic run with
-`CARGO_LOG=cargo::core::compiler::fingerprint=info` to read why `proc-macro2` and the like are
-dirty after a prefix restore (a rust-cache quirk could be fixed by its version or the key's
-inputs); (3) cut the steady state whatever the cache does: drop `cargo build --workspace` if
-nextest builds the same targets (check bins and examples first), fold the three clippy steps,
-or lint on Ubuntu only. Pick up when a second cold run shows up or the owner wants CI faster.
-Options (2) and (3) are [Plan 0072](plans/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md)'s
-Phase 5 (drafted 2026-11-12, awaiting go); this entry leaves when it is approved.
-
 ### Shader toolchain spike
 
 Parked 2026-10-31. Compare naga's SPIR-V against `spirv-opt -O` on the hit shader (VGPRs,
