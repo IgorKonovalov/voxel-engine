@@ -1,8 +1,10 @@
 # 0072: Development speed: the build graph read, a dev profile that pays for what it buys, a gate narrowed to the change, the lavapipe queue measured at two, and one compile per CI profile
 
-> **Status:** in-progress (approved by the owner, 2026-11-12: "all draft plans can be approved"; review questions 4
+> **Status:** done (closed 2026-11-13, v0.51.0: clean; every phase done with its deviations
+> disclosed, the gate at the tip 844 of 844 in 609.8 s; CI's readings owed after the push).
+> Approved by the owner, 2026-11-12: "all draft plans can be approved"; review questions 4
 > and 5 as recommended: the pinned cache only on Phase 1's number, the lavapipe group at two
-> kept only on a quarter's cut with no flake in three runs)
+> kept only on a quarter's cut with no flake in three runs.
 > **Created:** 2026-11-12 (the overnight architecture review, `docs/reviews/2026-11-12-architecture-review.md`)
 > **Milestone:** cross-cutting (the harness; `docs/nfr.md` section 7, "Startup and build").
 > **Related ADRs:** none at the draft. Phase 6 writes one (a compilation cache is a tool
@@ -279,7 +281,7 @@ None. Configuration only: `Cargo.toml` profiles, `.config/nextest.toml`, `ci.yml
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the build graph and the gate, read | dev | done; readings in [`logs/0072.md`](logs/0072.md). Deviations: every reading at `CARGO_BUILD_JOBS=4` in a 6G scope (two lanes); the first (b), (c) and (d) series void (the probe loop touched other files; clippy's `items_after_test_module`) and re-read; the gate 700 to 794 s, over the 12 min line in two of three | 17fb491 |
+| 1: the build graph and the gate, read | dev | done; readings in [`logs/0072.md`](../logs/0072.md). Deviations: every reading at `CARGO_BUILD_JOBS=4` in a 6G scope (two lanes); the first (b), (c) and (d) series void (the probe loop touched other files; clippy's `items_after_test_module`) and re-read; the gate 700 to 794 s, over the 12 min line in two of three | 17fb491 |
 | 2: the dev and test profiles pay for what they buy | dev | done; `line-tables-only` kept; `split-debuginfo` kept at 1626405 and withdrawn at bcb9cc8 (see Notes). Deviations: `[profile.test]` not written (cargo's default already); the combined pair read after the alternated base/`lt`/`sd` rounds, not alternated with the base | 1626405, bcb9cc8 |
 | 3: the phase gate narrowed to the change | dev | done; `-p` per package for nextest and `--clippy`. Deviation: the warm quick tier reads 18.3 to 25.0 s against Phase 1's 30.0 to 35.5 s, but the `--workspace` form reads the same at Phase 2's profiles: on a warm tree the `-p` flags rebuild the same three packages, and the cut is Phase 2's | e34e106 |
 | 4: the lavapipe group at two and three | dev | done; N stays 1, `.config/nextest.toml` unchanged: every cell cut the wall 44 to 61 % with no failure, but in every run a `gpu_bake` test took over twice its N = 1 time. The N = 1 reference is Phase 2's single gate at the tip, not alternated | cd72a66 |
@@ -336,6 +338,37 @@ None. Configuration only: `Cargo.toml` profiles, `.config/nextest.toml`, `ci.yml
   hooks 59 of 59; `check-doc-links`, `check-comment-hygiene`, `check-index-rows`,
   `check-test-tiers`, `check-plan-size`, `check-file-size` exit 0.
 - **Outstanding `human` phases:** none.
+
+## Close review (2026-11-13, fresh session)
+
+Clean, no blocker or major. The gate at 4b7f822 (main c1d1d3f merged), run by the review on
+the dev reference, -j4, 6G scope, perf lock, `scripts/build-guests.sh` first, the build
+outside the timed run, `--status-level pass`, load 1.46 at the start and 2.16 at the end (a
+second lane building beside it): **609.8 s, 844 run, 844 passed, 78 skipped**, under the 12 min
+proposal. Doctests, `cargo clippy --workspace --all-targets -- -D warnings`, CI's folded form
+with `--features flythrough/wasm`, `fmt --check`, `cargo deny check`, `node --test` (scripts 5
+of 5, hooks 59 of 59) and the six doc gates exit 0. Eight tests over the 10 s line, none this
+plan's (it changes no test): `castle_vector`, `showcase_vector` (CPU, in the gate by the
+owner's call), `the_castle_path_flies_in_air`, `a_baked_view_is_final_on_its_first_frame`,
+`uniform_chunks_render_identically_from_their_mips`, `the_rig_reads_the_default_look`,
+`random_walks_on_the_level_never_freeze_or_overlap`, `the_score_blends_distance_and_the_view`
+(10.3 to 18.0 s; standing followups of the soak line, not findings).
+
+- **Accepted deviations.** `split-debuginfo` withdrawn (rustc rejects it on windows-msvc and
+  wasm32-wasip2); Phase 3's warm cut is Phase 2's, the `-p` flags' effect on a stale tree not
+  read; Phase 4's N = 1 reference not alternated, and N stays 1 by the phase's own rule; Phase 6
+  read (A) only, as the plan allows once (A) met the bar, so no ADR.
+- **Nit, no change.** Phase 3's text says a change under `scripts/` "still selects everything
+  (today's rule)"; the tree's rule, before and after the plan, selects nothing for `scripts/`,
+  and `scripts/test-changed.test.mjs` asserts that. The plan's sentence was drift; the code kept
+  the real rule.
+- **Owner questions, the recommended option taken while the owner slept** (each in
+  `docs/backlog.md`): (1) the lavapipe group stays at 1 (N = 2 would read about 356 s against
+  656); (2) no Linux-only `split-debuginfo` through `.cargo/config.toml` (about 20 to 12 s on a
+  `vxe-world` quick rebuild).
+- **Owed after the push** (`docs/backlog.md`, "Plan 0072's CI readings"): Phase 5's CI walls on
+  the first two pushes, the gate's count on CI, and the fingerprint run on a prefix-restored
+  cache.
 
 ## Followups
 
