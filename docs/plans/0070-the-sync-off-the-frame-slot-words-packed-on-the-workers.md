@@ -446,8 +446,8 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
 | 2: the stage clock per chunk, and the base re-read | dev | done; the stop rule held ([log](logs/0070.md)) | `bdca60a` (code); `6c1f9f5` (readings) |
 | 3: the rescan set dense | dev | done ([log](logs/0070.md)) | `297e7a9` (code); `56538e0` (readings) |
 | 4: the light walks on change | dev | done ([log](logs/0070.md)) | `ef0b55c` (code); `439176c` (readings) |
-| 5: the readings against the base | dev | done; the 16.6 ms goal missed, the next stage named ([log](logs/0070.md)) | committed with this row |
-| 6: the owner's window | human | not started | |
+| 5: the readings against the base | dev | done; the 16.6 ms goal missed, the next stage named ([log](logs/0070.md)) | `8b64695`; tip gate `963e972` |
+| 6: the owner's window | human | done 2026-11-13: TIP slightly better fps, picture unchanged; no stop ([log](logs/0070.md)) | committed with this row |
 | 7: the lines and the bookkeeping | dev | not started | |
 
 ### Notes
@@ -513,6 +513,14 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
 - The goal bar, `update + poll + sync` p99 at most 16.6 ms, is missed in both scenes on both
   adapters; the peak RSS proposal (within 2 %) is missed in one of 12 bench pairs. The log
   names `light_note` as the next stage.
+
+**Phase 6 (the owner, 2026-11-13, in chat):** "done, I would say overall TIP is slightly
+better for fps, picture is same. also, for test benchmark lamp is better to be off". The lamp
+remark is a backlog entry ("The tester's benchmarks with the lamp off"), not built here. The
+castle pair on the Radeon was skipped; the tester cave pair on the Radeon has no note in the
+session log. In the windowed glide 300 on the RTX, `light place` p99 reads over 20 ms in 19
+of the tip's 30 per-second lines (max 846 ms) and 12 of the base's 73 (max 330 ms); the
+headless benches of Phase 5 never read it over 2.5 ms. Not attributed.
 
 Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
