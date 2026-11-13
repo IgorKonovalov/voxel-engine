@@ -24,7 +24,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | approved | M7, ADR-0054 (proposed). Approved 2026-11-11. Side lane, may start now; touches main.rs lightly. |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
-| [0074](0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: the windowed spikes attributed, placement searches bounded, exposed emitters by masks | approved | M2, no new ADR. Owner 2026-11-13: go, a lane beside Plan 0058, disjoint files; answers as recommended. |
+| [0074](0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: the windowed spikes attributed, placement searches bounded, exposed emitters by masks | approved | M2, no new ADR. Approved 2026-11-13; a lane beside 0058. |
 <!-- roster:end -->
 
 ## Sequence
