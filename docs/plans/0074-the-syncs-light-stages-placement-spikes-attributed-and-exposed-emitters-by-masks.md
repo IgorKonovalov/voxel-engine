@@ -1,6 +1,6 @@
 # 0074: The sync's light stages: the windowed placement spikes attributed, then bounded, and exposed emitters found by masks
 
-> **Status:** approved (owner, 2026-11-13: go as a lane beside Plan 0058; all six owner
+> **Status:** in-progress (owner, 2026-11-13: go as a lane beside Plan 0058; all six owner
 > questions answered as recommended, see "Owner answers")
 > **Created:** 2026-11-13 (the owner, at Plan 0058's refresh, its answer 9: "draft it now, run
 > beside 0058")
@@ -417,9 +417,11 @@ a miss names `alloc`).
 > resume notes go to the plan's readings log, `docs/plans/logs/0074.md`, and this section links
 > it once it exists.
 
+Readings: [`docs/plans/logs/0074.md`](logs/0074.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | not started | |
+| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | code and rig (b) in a wip commit; rigs (a), (d) and the attribution left | committed with this row |
 | 2: the placement's searches by index | dev | not started | |
 | 3: exposed emitters by masks | dev | not started | |
 | 4: the readings against the base | dev | not started | |

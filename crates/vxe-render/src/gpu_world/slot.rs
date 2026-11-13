@@ -317,6 +317,7 @@ impl GpuWorld {
                             if materials_of(p, |m| self.mats.emissive[usize::from(m)]))
                 }));
         self.lap(left);
+        st.light_fresh_records += u64::from(every && emits);
         let mut rescan = RescanSet::default();
         if !emits && !lod {
             self.drop_lights(coord);

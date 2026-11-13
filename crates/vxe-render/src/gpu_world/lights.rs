@@ -84,9 +84,14 @@ impl LightMirror {
     }
 
     /// The start of a free run of `n` samples: the lowest free range that holds it, else the
-    /// samples above the high-water mark; `None` when the buffer has no such run.
-    pub(super) fn alloc_range(&mut self, n: u32, samples: u32) -> Option<u32> {
-        if let Some((&start, &len)) = self.free.iter().find(|&(_, &len)| len >= n) {
+    /// samples above the high-water mark; `None` when the buffer has no such run. Adds the
+    /// free ranges walked to `steps`.
+    pub(super) fn alloc_range(&mut self, n: u32, samples: u32, steps: &mut u64) -> Option<u32> {
+        let fit = self.free.iter().find(|&(_, &len)| {
+            *steps += 1;
+            len >= n
+        });
+        if let Some((&start, &len)) = fit {
             self.free.remove(&start);
             if len > n {
                 self.free.insert(start + n, len - n);
@@ -171,11 +176,24 @@ pub fn exposed_emitters<'a>(
     opaque: &[bool],
     neighbour: impl Fn(usize, i32) -> Option<&'a Brick>,
 ) -> Vec<LightSample> {
+    scan_emitters(coord, slot, brick, emissive, opaque, neighbour).unwrap_or_default()
+}
+
+/// [`exposed_emitters`], `None` when the brick is not `Full` or its palette holds no emissive
+/// material (the brick is not decoded).
+pub(super) fn scan_emitters<'a>(
+    coord: ChunkCoord,
+    slot: usize,
+    brick: &Brick,
+    emissive: &[bool],
+    opaque: &[bool],
+    neighbour: impl Fn(usize, i32) -> Option<&'a Brick>,
+) -> Option<Vec<LightSample>> {
     let Brick::Full(p) = brick else {
-        return Vec::new();
+        return None;
     };
     if !materials_of(p, |m| emissive[usize::from(m)]) {
-        return Vec::new();
+        return None;
     }
     let mut v = [AIR; BRICK_VOXELS];
     p.decode(&mut v);
@@ -221,7 +239,7 @@ pub fn exposed_emitters<'a>(
             });
         }
     }
-    out
+    Some(out)
 }
 
 /// `samples` thinned to at most `cap` by keeping every `k`-th by index, `k` the least that
@@ -267,7 +285,9 @@ impl GpuWorld {
                     .contains(&n[k])
                     .then(|| bricks.get(brick_slot(n)))
             };
-            exposed_emitters(coord, slot, brick, &self.mats.emissive, opaque, neighbour)
+            let found = scan_emitters(coord, slot, brick, &self.mats.emissive, opaque, neighbour);
+            st.light_emitter_bricks += u64::from(found.is_some());
+            found.unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -388,9 +408,13 @@ impl GpuWorld {
         let samples = thin_samples(all, self.cfg.light_chunk_cap);
         let n = samples.len() as u32;
         let start = loop {
-            if let Some(start) = self.lights.alloc_range(n, self.cfg.light_samples) {
+            if let Some(start) =
+                self.lights
+                    .alloc_range(n, self.cfg.light_samples, &mut st.light_scan_steps)
+            {
                 break Some(start);
             }
+            st.light_scan_steps += self.lights.chunks.len() as u64;
             let f = self.window.focus;
             let victim = self
                 .lights
@@ -425,6 +449,7 @@ impl GpuWorld {
         st.writes += 1;
         st.bytes += u64::from(n) * LIGHT_SAMPLE_BYTES;
         st.light_samples += u64::from(n);
+        st.light_chunks_written += 1;
         self.lights.live += u64::from(n);
         if let Some(l) = self.lights.chunks.get_mut(&coord) {
             l.range = Some((start, n));
