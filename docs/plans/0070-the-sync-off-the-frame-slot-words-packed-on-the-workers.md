@@ -1,6 +1,7 @@
 # 0070: The sync off the frame: the stage clock fixed, then the sync's measured stages cut on the render thread
 
-> **Status:** in-progress (dev lane `plan-0070`, started 2026-11-13 at `c1d1d3f`; approved by the
+> **Status:** in-progress: every phase done, main merged in at `12e398a`, the gate green at the
+> tip; awaits the fresh-session close review (dev lane `plan-0070`, started 2026-11-13 at `c1d1d3f`; approved by the
 > owner, 2026-11-12: "45 after 67, 70 after 45. all draft plans can be approved"). Review question 1 answered against the recommendation: this plan starts after
 > Plan 0045 merges, on the split tree. Question 2 takes the recommendation: Plan 0044's Phase 4
 > is struck into this plan.
@@ -448,7 +449,7 @@ A figure without a measurement above is a proposal; Phase 5 reads it, Phase 7 wr
 | 4: the light walks on change | dev | done ([log](logs/0070.md)) | `ef0b55c` (code); `439176c` (readings) |
 | 5: the readings against the base | dev | done; the 16.6 ms goal missed, the next stage named ([log](logs/0070.md)) | `8b64695`; tip gate `963e972` |
 | 6: the owner's window | human | done 2026-11-13: TIP slightly better fps, picture unchanged; no stop ([log](logs/0070.md)) | `c712dbf` |
-| 7: the lines and the bookkeeping | dev | done; the gate at the merged tip is in the close block ([log](logs/0070.md)) | committed with this row |
+| 7: the lines and the bookkeeping | dev | done; the gate at the merged tip is in the close block ([log](logs/0070.md)) | `523b463`; merge `12e398a`; close block committed with this row |
 
 ### Notes
 
@@ -534,11 +535,27 @@ Readings, gate counts and attempts: [`docs/plans/logs/0070.md`](logs/0070.md).
 
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the sync's stage clock per chunk and pass (`SyncStats` stages, the
+  `sync:` line, `run.json`'s `streaming` object); the emitter rescan set as a dense 512-bit set;
+  `place_lights`, `flush_dropped_lights` and `lights_ready_near` walking only on change. No
+  shader, layout or `vxe-world` change.
+- **Public API changed:** `SyncStats` gains `select_us`, `size_us`, `pack_us`, `copy_us`,
+  `alloc_us`, `lock_us`, `light_place_us`, `light_note_us`, `packed_bricks`, `rescan_inserts`,
+  `clock_reads`; `GpuWorld` gains `#[doc(hidden)] pub` test switches `force_light_walks`,
+  `lights_ready_near_uncached`, `light_walks`.
+- **Budget readings:** Phase 5 in the log (RTX 3080 Laptop host, `hpet`, RTX GPU at 2530 x
+  1378 and RADV RENOIR at 1280 x 720, `ef0b55c` against `bdca60a`, three rounds): `update +
+  poll + sync` p99 cave 22.8 to 24.6 ms, castle 24.4 to 28.2 (bar 16.6, missed); cave `alloc`
+  p99 72 to 74 % under the base (met); `light_place` p50 2 to 3 us (met); autopilot streaming
+  CPU p50 0.038 to 0.039 ms (met), residency p95 212 to 213 ms (met); `B` line sync 2.05 to
+  2.06 ms (met); peak RSS within 2 % in 11 of 12 bench pairs. Phase 6's windowed readings in
+  the log.
+- **Gate at the tip:** at `12e398a` (main merged in): `cargo nextest run --workspace --profile
+  gate --no-fail-fast` 850 run, 850 passed, 78 skipped, 613.2 s, exit 0 (lavapipe, exclusive
+  perf lock, load 1.28 before, 2.61 after, `hpet`); `cargo test --doc --workspace` 13 result
+  lines ok; clippy `-D warnings` exit 0; fmt exit 0; `cargo deny check` ok; `node --test`
+  scripts 5 of 5, hooks 59 of 59; the six doc and tier scripts pass.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
