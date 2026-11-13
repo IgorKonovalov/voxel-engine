@@ -319,6 +319,15 @@ Per-frame and per-chunk readings are affected little. Readings should name the c
 boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
 readings are compared with ones from before 2026-11-05.
 
+### The tester's benchmarks with the lamp off
+
+Noted 2026-11-13 (the owner, at Plan 0070's Phase 6 window: "also, for test benchmark lamp is
+better to be off"). The tester's cave and castle paths (`--tester --path NAME`, the scene's
+flags in `apps/flythrough/src/path.rs`) and the bench readings plans take from them run with
+the headlamp at its default, on (`--lamp`; off on the showcase only). The owner wants them run
+with the lamp off. What it would take: the path's scene flags carry `--lamp off`, the tester's
+`run.json` names the lamp's state, and readings from before the change are not compared with
+ones after it. Pick up as a dev chore with the next plan that reads the tester's benches.
 
 ### A pipeline cache for the renderer's shaders
 
