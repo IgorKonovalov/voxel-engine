@@ -215,6 +215,8 @@ dense emitter rescan set, light walks on change), to p50 15 to 19 us and `update
 22.8 to 28.2 ms in the tester's benches, still over 16.6 ms, with `light_note` the largest stage left
 and the worker packing of ADR-0056 deferred (backlog). [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md)
 (approved 2026-11-13, a lane beside Plan 0058) takes the light stages: the windowed placement spikes, then `light_note`.
+It found exposed emitters by masks (`light_note` p99 2.5 ms against 8.3, `update + poll + sync` p99 18.0 to 23.7 ms in
+the cave), left `alloc` the largest stage and the windowed glide's eviction scan unindexed (backlog, both next).
 
 Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
 ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed

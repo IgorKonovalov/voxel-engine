@@ -66,16 +66,19 @@ headless, quiet, against the start commit 4bc8100):
   as `second:MS,CAP`): about 40 ms of bake a wall second on the RTX and 30 on the RENOIR in the
   streamed glide.
 
-The mirror's sync, the third part of the streaming line (Plan 0070, 2026-11-13, `ef0b55c`
-against `bdca60a`; RTX 3080 Laptop host on the `hpet` clocksource, the TSC marked unstable, so
-these figures are not compared with readings on another clocksource; release, exclusive perf
-lock, quiet starts): in the tester's cave and castle benches (RTX GPU at 2530 x 1378, RADV
-RENOIR at 1280 x 720) the sync reads p50 15 to 19 us against 180 to 184 and `update + poll +
-sync` p99 22.8 to 28.2 ms against 42.7 to 47.2, still over Plan 0067's 16.6 ms; the largest p99
-stage left is `light_note` (8.2 to 8.4 ms in the cave), then `alloc` (6.9 to 7.4 ms); `pack +
-size` is 13.5 to 14.2 % of the cave sync p99. In section 5's autopilot (RTX, 1280 x 720) the
-streaming CPU per frame reads p50 0.038 to 0.039 ms, under the 1.0 ms line for the first time
-since Plan 0002, and p99 26.4 to 27.9 ms, over it.
+The mirror's sync, the third part of the streaming line (Plan 0074, 2026-11-14, `d20bf31`
+against its Phase 1 binary; RTX 3080 Laptop host on the `hpet` clocksource, the TSC marked
+unstable, so these figures are not compared with readings on another clocksource; release,
+exclusive perf lock, quiet starts, the tester's lamp off, so not compared with Plan 0070's
+lamp-on figures): in the tester's cave and castle benches (RTX GPU at 2530 x 1378, RADV RENOIR
+at 1280 x 720) `update + poll + sync` p99 reads 18.0 to 23.7 ms in the cave and 20.4 to 22.7 in
+the castle against 23.5 to 26.2 and 24.5 to 25.8 at the base, still over Plan 0067's 16.6 ms;
+`light_note` p99 2.5 to 2.6 ms against 8.3 to 8.5; the largest p99 stage left is `alloc` (7.3
+to 8.8 ms in the cave); `pack + size` is 17 to 18 % of the cave sync p99. In section 5's
+autopilot (RTX, 1280 x 720) the streaming CPU per frame reads p50 0.038 to 0.039 ms, under the
+1.0 ms line, and p99 22.5 to 32.9 ms, over it. In a windowed `--glide 300` cave flight the light
+buffer fills and the light placement's eviction scan reads up to 1.2 s a sync (not seen
+headless); the backlog carries it.
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
