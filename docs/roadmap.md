@@ -201,7 +201,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059, 0060, 0061, 0067 and 0070 closed; 0049 abandoned)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059, 0060, 0061, 0067, 0070 and 0074 closed; 0049 abandoned)
 
 Plan 0067, the frame's CPU, closed 2026-11-12 (v0.49.0; Outcomes on ADR-0052, ADR-0053, ADR-0048 and
 ADR-0046): the live queue's step is split into stages and read per regime (A starved, B keeping up). At
@@ -213,8 +213,11 @@ profiles. Under `chain` a regime-B step pays about 1.7 ms of first-block fades (
 p99 in flight is Plan 0070's. Plan 0070, closed 2026-11-13 (v0.52.0), cut the sync in place on the render thread (a
 dense emitter rescan set, light walks on change), to p50 15 to 19 us and `update + poll + sync` p99
 22.8 to 28.2 ms in the tester's benches, still over 16.6 ms, with `light_note` the largest stage left
-and the worker packing of ADR-0056 deferred (backlog). [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md)
-(approved 2026-11-13, a lane beside Plan 0058) takes the light stages: the windowed placement spikes, then `light_note`.
+and the worker packing of ADR-0056 deferred (backlog). [Plan 0074](plans/done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md)
+closed 2026-11-14 (v0.53.0): it found exposed emitters by masks (`light_note` p99 2.5 ms against 8.3,
+`update + poll + sync` p99 18.0 to 23.7 ms in the cave), left `alloc` the largest stage of the benches, and its
+window put the glide's stagger in the light placement's eviction scan, unindexed; the backlog's head takes the
+eviction scan first, then `alloc`.
 
 Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
 ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed

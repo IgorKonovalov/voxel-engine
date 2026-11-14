@@ -889,3 +889,84 @@ fn the_light_walks_skip_only_what_did_not_change() {
     assert_eq!(b.light_walks(), script.len() as u64);
     assert!(a.light_walks() + 20 <= b.light_walks());
 }
+
+/// A 4 x 1 x 4 chunk world of [`Mixed`] bricks whose material 2 emits, every chunk inside a
+/// light radius of 6 and capped at 256 samples, synced with the focus at chunk (0, 0, 0) and
+/// then at (3, 0, 3), the sample budget unbounded. With a light-sample buffer of 2^16 samples
+/// (room for every chunk) neither sync evicts or refuses, all 16 fresh emitting records are
+/// counted, and every chunk is written once. With a buffer of half the samples the first
+/// read, the first sync refuses the far chunks and the second, nearer to them, evicts the
+/// ranges by the old focus: `light_evicted` above 0 and `light_scan_steps` at least
+/// `light_evicted` (each eviction walks the ranged chunks).
+#[test]
+fn the_light_counters_follow_a_full_buffer() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    t.push(Material::named("one"));
+    let mut lamp = Material::named("two");
+    lamp.emission = [1.0, 0.8, 0.5];
+    t.push(lamp);
+    let extent = ChunkExtent::new([0, 0, 0], [4, 1, 4]);
+    let world = World::generate(extent, &Mixed, &t);
+    let flight = |samples: u32| {
+        let mut gpu = GpuWorld::with_config(
+            &device,
+            MirrorConfig {
+                light_samples: samples,
+                light_chunk_cap: 256,
+                light_radius: 6,
+                light_sync_samples: u32::MAX,
+                ..small(Window::Fixed(extent))
+            },
+        );
+        let mut stats = Vec::new();
+        for c in [[0, 0, 0], [3, 0, 3]] {
+            gpu.set_focus(VoxelCoord(c.map(|v| v * 64 + 32)));
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            stats.push(gpu.sync(&world, &queue, &mut enc).unwrap());
+            queue.submit([enc.finish()]);
+        }
+        (stats, gpu.light_samples())
+    };
+    let (full, all) = flight(1 << 16);
+    for (k, s) in full.iter().enumerate() {
+        println!(
+            "full sync {k}: bricks {} emitter {} fresh {} written {} samples {} evicted {} refused {} steps {} free {}",
+            s.light_bricks,
+            s.light_emitter_bricks,
+            s.light_fresh_records,
+            s.light_chunks_written,
+            s.light_samples,
+            s.light_evicted,
+            s.light_refused,
+            s.light_scan_steps,
+            s.light_free_ranges
+        );
+        assert_eq!((s.light_evicted, s.light_refused), (0, 0), "sync {k}");
+    }
+    assert_eq!(full[0].light_fresh_records, 16);
+    assert_eq!(full[0].light_chunks_written, 16);
+    assert_eq!(full[1].light_chunks_written, 0);
+    assert!(full[0].light_emitter_bricks > 0);
+    assert!(full[0].light_emitter_bricks <= full[0].light_bricks);
+    assert_eq!(full[0].light_samples, all);
+    let (half, _) = flight((all / 2) as u32);
+    for (k, s) in half.iter().enumerate() {
+        println!(
+            "half sync {k}: written {} samples {} evicted {} refused {} steps {} free {}",
+            s.light_chunks_written,
+            s.light_samples,
+            s.light_evicted,
+            s.light_refused,
+            s.light_scan_steps,
+            s.light_free_ranges
+        );
+    }
+    assert!(half[0].light_refused > 0);
+    let evicted: u64 = half.iter().map(|s| s.light_evicted).sum();
+    let steps: u64 = half.iter().map(|s| s.light_scan_steps).sum();
+    assert!(evicted > 0, "no eviction with half the samples");
+    assert!(steps >= evicted, "{steps} steps for {evicted} evictions");
+}

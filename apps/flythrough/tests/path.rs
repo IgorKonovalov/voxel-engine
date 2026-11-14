@@ -436,3 +436,130 @@ fn run_json_carries_the_streaming_stages() {
     assert_eq!(num(&["streaming", "clock_reads", "p50"]), 42.0);
     assert_eq!(num(&["streaming", "clock_reads", "max"]), 44.0);
 }
+
+/// 60 syncs, one slow: 59 of 1050 us (select 100, size 200, light 300, copy 50, alloc 400;
+/// light place 200, note 100) with light counters by k (bricks 2 k, emitter bricks k, chunks
+/// written 1, samples 100 k, scan steps 3 k, free ranges 5), and at k = 37 one of 40 000 us
+/// (select 5000, size 8000, light 20 000, copy 1000, alloc 6000; light place 12 000, note
+/// 8000) with bricks 900, emitter bricks 640, fresh records 12, chunks written 9, samples
+/// 16 384, evicted 120, refused 3, scan steps 61 000, free ranges 88. By nearest rank over 60
+/// the counters' p50 is the 30th value (k = 29 of the quiet ones) and their p99 the 60th, the
+/// slow sync's. The `sync:` line ends with that sync's wall, stages and counters, after the
+/// percentiles; `run.json` from a recorder fed the same series has the counters' p50 and p99.
+#[test]
+fn the_sync_line_names_its_slowest_sync() {
+    use flythrough::report::SyncSeries;
+    let sync = |k: u64| {
+        if k == 37 {
+            vxe_render::SyncStats {
+                select_us: 5000,
+                size_us: 8000,
+                light_us: 20_000,
+                copy_us: 1000,
+                alloc_us: 6000,
+                light_place_us: 12_000,
+                light_note_us: 8000,
+                packed_bricks: 4,
+                lock_us: 6,
+                rescan_inserts: 3000,
+                clock_reads: 50,
+                light_bricks: 900,
+                light_emitter_bricks: 640,
+                light_fresh_records: 12,
+                light_chunks_written: 9,
+                light_samples: 16_384,
+                light_evicted: 120,
+                light_refused: 3,
+                light_scan_steps: 61_000,
+                light_free_ranges: 88,
+                ..Default::default()
+            }
+        } else {
+            vxe_render::SyncStats {
+                select_us: 100,
+                size_us: 200,
+                light_us: 300,
+                copy_us: 50,
+                alloc_us: 400,
+                light_place_us: 200,
+                light_note_us: 100,
+                rescan_inserts: 10,
+                clock_reads: 20,
+                light_bricks: 2 * k,
+                light_emitter_bricks: k,
+                light_chunks_written: 1,
+                light_samples: 100 * k,
+                light_scan_steps: 3 * k,
+                light_free_ranges: 5,
+                ..Default::default()
+            }
+        }
+    };
+    let mut series = SyncSeries::with_capacity(60);
+    let mut rec = Recorder::for_path(10.0);
+    for k in 0..60u64 {
+        series.push(&sync(k));
+        rec.push_sync(3.0 + k as f32 * 0.01, &sync(k));
+    }
+    let line = series.line().expect("a line after 60 syncs");
+    let counters = "; light counters p50/p99: bricks 58/900, emitter bricks 29/640, fresh records \
+                    0/12, chunks written 1/9, samples 2900/16384, evicted 0/120, refused 0/3, \
+                    scan steps 87/61000, free ranges 5/88";
+    let slowest = "; slowest 40000 us: select 5000, size 8000, pack 0, light 20000, copy 1000, \
+                   alloc 6000; light place 12000, note 8000; packed bricks 4; lock wait 6; \
+                   rescan inserts 3000; light bricks 900, emitter bricks 640, fresh records 12, \
+                   chunks written 9, samples 16384, evicted 120, refused 3, scan steps 61000, \
+                   free ranges 88";
+    assert!(
+        line.starts_with("sync p50/p99 1050/40000 us over 60 syncs:"),
+        "{line}"
+    );
+    assert!(line.ends_with(&format!("{counters}{slowest}")), "{line}");
+    let mut r = RunReport {
+        version: "0.0.0",
+        commit: "abc",
+        scene: "cave",
+        path: "cave",
+        mode: "bench",
+        output: [1280, 720],
+        internal: [853, 480],
+        internal_scale: "1.5",
+        upscaler: "fsr2",
+        lamp: false,
+        adapter: None,
+        path_s: 10.0,
+        frames: 0,
+        warmup_frames: 0,
+        warmup_s: 0.0,
+        wall_ms: None,
+        cpu_ms: None,
+        gpu_ms: None,
+        over_33ms: 0,
+        over_100ms: 0,
+        peak_rss_bytes: None,
+        streaming: None,
+        ended: "completed",
+    };
+    rec.fill(&mut r);
+    let v = json::parse(&r.to_json()).expect("run.json parses");
+    let num = |name: &str, p: &str| -> f64 {
+        v.get("streaming")
+            .and_then(|s| s.get(name))
+            .and_then(|f| f.get(p))
+            .and_then(|x| x.as_f64())
+            .unwrap_or_else(|| panic!("no streaming.{name}.{p}"))
+    };
+    for (name, p50, p99) in [
+        ("light_bricks", 58.0, 900.0),
+        ("light_emitter_bricks", 29.0, 640.0),
+        ("light_fresh_records", 0.0, 12.0),
+        ("light_chunks_written", 1.0, 9.0),
+        ("light_samples", 2900.0, 16384.0),
+        ("light_evicted", 0.0, 120.0),
+        ("light_refused", 0.0, 3.0),
+        ("light_scan_steps", 87.0, 61000.0),
+        ("light_free_ranges", 5.0, 88.0),
+    ] {
+        assert_eq!((num(name, "p50"), num(name, "p99")), (p50, p99), "{name}");
+    }
+}

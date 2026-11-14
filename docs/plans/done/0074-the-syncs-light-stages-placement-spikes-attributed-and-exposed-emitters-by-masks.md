@@ -1,19 +1,23 @@
 # 0074: The sync's light stages: the windowed placement spikes attributed, then bounded, and exposed emitters found by masks
 
-> **Status:** approved (owner, 2026-11-13: go as a lane beside Plan 0058; all six owner
-> questions answered as recommended, see "Owner answers")
+> **Status:** done (closed 2026-11-14, v0.53.0: clean, with minor findings; Phases 1, 3, 4, 5
+> and 6 done with their deviations disclosed, Phase 2 struck by S1; `light_note` p99 8.3 to
+> 2.5 ms; the 16.6 ms goal missed as the plan allows; the window then put the glide's stagger in
+> the eviction scan Phase 2 would have indexed, which heads the backlog; see "Close review").
+> Go from the owner, 2026-11-13, as a lane beside Plan 0058; all six owner questions answered
+> as recommended, see "Owner answers".
 > **Created:** 2026-11-13 (the owner, at Plan 0058's refresh, its answer 9: "draft it now, run
 > beside 0058")
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (a playable frame under the light that
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (a playable frame under the light that
 > holds), cross-cutting like Plans 0067 and 0070. It serves `docs/nfr.md` section 2's streaming
 > line and Plan 0067's 16.6 ms bar on `update + poll + sync` p99.
-> **Related ADRs:** [ADR-0025](../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
+> **Related ADRs:** [ADR-0025](../../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
 > (the light-sample buffer and its ranges by radius, which this plan keeps byte for byte);
-> [ADR-0056](../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md)
+> [ADR-0056](../../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md)
 > (accepted, deferred by reading): its worker-side emissive samples are this plan's route if
 > Phase 3's in-place scan falls short, not its mechanism. No new ADR (see Decision).
-> **Source:** [Plan 0070](done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)'s
-> Phases 5 and 6 ([`docs/plans/logs/0070.md`](logs/0070.md)) and the backlog entry "The sync's
+> **Source:** [Plan 0070](0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)'s
+> Phases 5 and 6 ([`docs/plans/logs/0070.md`](../logs/0070.md)) and the backlog entry "The sync's
 > `light_note` stage and the windowed glide's light walks".
 > **Starts after:** the owner's go. It runs as a lane **beside Plan 0058** (owner, 2026-11-13);
 > "Beside Plan 0058" below names the files the two lanes share and how they stay apart.
@@ -417,17 +421,81 @@ a miss names `alloc`).
 > resume notes go to the plan's readings log, `docs/plans/logs/0074.md`, and this section links
 > it once it exists.
 
+Readings: [`docs/plans/logs/0074.md`](../logs/0074.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | not started | |
-| 2: the placement's searches by index | dev | not started | |
-| 3: exposed emitters by masks | dev | not started | |
-| 4: the readings against the base | dev | not started | |
-| 5: the owner's window | human | not started | |
-| 6: the lines and the bookkeeping | dev | not started | |
+| 1: the light walks on the line, the base, the spikes reproduced and the scan profiled | dev | done; code in `071cb80` (wip); S1 taken as an orchestrator default (owner away); rig (c) not run; an uncommitted thread-CPU reading build used for the attribution (log) | `f0d77e5` |
+| 2: the placement's searches by index | dev | struck by S1 (Phase 1's log) | - |
+| 3: exposed emitters by masks | dev | done; `light_note` p99 69.0 to 69.8 % under the base (proposal 70 %); deviations: `mod.rs` edited, `note_lights` looks the lists up per record (log) | `d20bf31` |
+| 4: the readings against the base | dev | done; 16.6 ms missed (cave 18.0 to 23.7 ms), largest stage left `alloc`; `light_note` 70 % met in 5 of 12 pairs; RSS within 2 % in 11 of 15 pairs (log) | committed with this row |
+| 5: the owner's window | human | done 2026-11-14: "no difference" in the picture; tip stands ("lets use what is synthetically more performance"); the glide's 30 to 40 s stagger is `light place`'s eviction scan in both binaries (r 0.997 to 0.9996 with scan steps), which S1 read as absent headless (log) | committed with this row |
+| 6: the lines and the bookkeeping | dev | done after main merged (`bb98313`); docs in `776f48b`; gate tier 856 passed, 78 skipped; doc gates pass; the backlog's head is `alloc`, with the windowed eviction scan (Phase 2's mechanism) as its own entry (log) | committed with this row |
 
 ### Notes
 
 ### Close triggers
 
+## Close review (2026-11-14, fresh session)
+
+**Verdict: clean, closed as delivered.** The mask scan and the counters are what Phases 1 and 3
+asked for, with byte-identical light; Phase 2 was struck under S1 exactly as owner answer 3
+allowed ("strike Phase 2 and let Phase 5's window read them"), and the window then did read
+them: the glide's stagger is the eviction scan Phase 2 would have indexed. That reverses S1's
+judgement about the spikes but makes no done-when false, so the scan goes to the backlog's head
+as the next sync plan rather than reopening Phase 2 here (the orchestrator's default while the
+owner is away; the owner may overturn it).
+
+**Gate at the tip** (`a038b48`, main merged at `bb98313`; lavapipe, exclusive perf lock,
+`CARGO_BUILD_JOBS=4` beside Plan 0058's lane, load 2.81 before, 1.14 after, `hpet`):
+`cargo nextest run --workspace --profile gate --no-fail-fast` 856 run, 856 passed, 78 skipped,
+621.9 s, exit 0; no test of this plan over the 10 s line (`test-times.mjs`: seven over it, none
+this plan's). Doctests ok; clippy `-D warnings`, fmt and `cargo deny check` exit 0; hooks 59 of
+59, scripts 5 of 5; the six doc and tier gates exit 0. Soak of the changed crates: 13 run, 12
+passed, 1 failed, `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere`, a defect already on
+main (below).
+
+**Findings**
+
+- **minor: S1 was taken on rigs that could not test the hypothesis.** No headless glide evicted
+  (Phase 1 and Phase 4: first eviction "none"), so they never exercised the eviction loop the
+  plan named as the lead; the off-CPU share (`logs/0074.md`, Phase 1, the thread-CPU table)
+  describes the headless 8 to 20 ms place syncs, a different phenomenon. Rig (c) was skipped
+  because rig (b) had lines over 20 ms, while S1 was then taken because nothing matched the
+  window's size: the two readings used different bars. The plan allowed both, and the owner's
+  answer 3 routed the rest to the window, so this is a record, not a fix. Lesson for the next
+  plan: a rig that does not reach the hypothesised state (here `light_evicted > 0`) cannot
+  strike the phase that fixes it. `docs/nfr/02-frame-budget.md`'s Plan 0074 paragraph states
+  both readings.
+- **minor: `light_scan_steps` mixes two walks** (`gpu_world/lights.rs`, `alloc_range`'s free
+  ranges plus `chunks.len()` per eviction), so r 0.9996 does not say whether the first fit or
+  the victim scan dominates; the backlog entry asks the next plan to split it.
+- **minor: peak RSS +20.6 % in one RTX cave pair** (Phase 4, round 1: 1456 MB against 1207;
+  the other rounds +0.4 and +1.7 %), unexplained and not re-run; nothing in the diff holds
+  memory of that order. Re-read in the next sync plan's base.
+- **minor: no close block.** The Implementation log's Notes and Close triggers are empty; the
+  facts are in the log and in this review (shipped: the light counters, the slowest sync on the
+  `sync:` line, `gpu_world/emitters.rs`; public API: `SyncStats` gains five `light_*` fields,
+  `run.json`'s `streaming` gains nine fields, additive; budgets as Phase 4's table; no human
+  phase outstanding).
+- **minor, not this plan's:** the soak test above takes the first line starting `frames: `,
+  which is now the exit's queue tally (`run/mod.rs`, `Drop for Run`), not the frames line;
+  added to the backlog's "The frame path's GPU waits in the gate".
+- **nit:** `SyncStats::light_emitter_bricks`' doc (`gpu_world/mod.rs:231`) still says "the
+  bricks decoded and scanned voxel by voxel"; since Phase 3 they are read as masks.
+- **nit:** `light_note`'s 70 % bar met in 5 of 12 pairs (68.0 to 70.5 % in eleven, one Radeon
+  castle round at 51.1 %); a proposal, with the stop at 50 % not reached.
+
+Checked and sound: the mask scan's shifts and face planes (x within a row, y by 8, z by word),
+the palette walk's `AIR` terminator and inverted side, the `Wide` path, the visit order; the
+10 000-brick equality test covers `Mask` to `Wide` classes and `Full`, `Uniform` and absent
+neighbours; `the_first_sync_lights_are_pinned` unchanged, no golden touched; `note_lights`' per
+record lookup keeps the insert and `touch` semantics; no `vxe-world`, shader or layout change;
+nothing in Plan 0058's file set.
+
 ## Followups
+
+- The light placement's eviction scan (backlog head): index the first fit and the victims, the
+  bytes asserted equal, read in the window; Phase 2's draft is in the main checkout's
+  `live/plan-0074/drafts/fit.rs` (untracked). Then `alloc` (backlog, next).
+- The doc nit on `light_emitter_bricks` with that plan's first commit.

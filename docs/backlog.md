@@ -17,6 +17,38 @@ Rules:
 
 ## Next up
 
+### The light placement's eviction scan in a windowed glide
+
+Noted 2026-11-14 from Plan 0074 (`docs/plans/logs/0074.md`, Phases 1, 4 and 5; RTX host, `hpet`).
+**S1's evidence, headless:** no headless glide (`--glide 300` and `1000`, 13 runs in Phase 1, 6
+in Phase 4) evicted a light range; their largest per-second `light place` p99 was 38 ms against
+the window's 846 ms; the place stage's slow syncs were 65 to 71 % off-CPU and their scan steps
+did not track their time (r 0.28). Phase 2 (the first fit and the eviction victims by index) was
+struck on that, and the windowed rig (c) was not run. **The owner's window then reproduced it**
+(Phase 5, `--glide 300`, tip and base alike): from about 4 s into the flight every second's
+slowest sync is `light place`, up to 1186 ms over 3697 evictions and 99.9 M scan steps, with r
+0.997 to 0.9996 against `light_scan_steps` (about 11 to 12 ns a step) and the free ranges
+growing to about 6000; the owner's "staggers at 30 to 40 s, fps drops to 15" are those syncs.
+Open: why the window's light buffer fills and the headless glides' does not. What it takes:
+Plan 0074's Phase 2 as drafted (indexes that answer what today's walks answer, the bytes
+asserted equal), read in the window. Its draft, a first-fit index (`fit.rs`, untracked), is
+kept in the main checkout at `live/plan-0074/drafts/fit.rs`. `light_scan_steps` sums the first
+fit's free-range walks and the victim scans' chunk walks, so split them first. **The next sync
+plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
+the owner is away; the owner may overturn it).
+
+### The sync's `alloc` stage: the sync plan after the eviction scan
+
+Noted 2026-11-14 at Plan 0074's Phase 4 (`docs/plans/logs/0074.md`, the RTX host, `hpet`, lamp
+off). With `light_note` cut, the tester cave's `update + poll + sync` p99 still reads 18.3 to
+23.7 ms on the RTX and 18.0 to 18.7 on the Radeon (castle 20.4 to 22.7), over Plan 0067's
+16.6 ms. The largest stage left is `alloc`: p99 7.4 to 8.8 ms in the RTX cave and 7.3 to 7.4 on
+the Radeon, against sync p99s of 16.5 to 21.1 and 16.1 to 16.8. Phase 1's profile of it (rig
+(d), the glide): `fill_slot` 3.15 %, `BufferViewMut::drop` 3.12 %, `upload_brick` 2.52 %,
+`stage` 0.42 % of the main thread; under 1 % each in the cave bench. Pick up as the next sync
+plan after the eviction scan above; it reads its own profile first. The windowed glide's
+stagger is a different stage, the eviction scan.
+
 ### Done: test tiers by marks, not by copied lists
 
 Done 2026-11-10 (50b2193, 4a15e60): GPU test files are `tests/gpu_*.rs`, long series `#[ignore = "soak"]`, kept by `scripts/check-test-tiers.mjs`.
@@ -261,25 +293,23 @@ dense and the light walks on change, `hpet` clocksource): `pack + size` p99 is 2
 a cave sync p99 of 20.9 to 22.3 ms, 13.5 to 14.2 % on both adapters; the larger stages are
 `light_note` (8.2 to 8.4 ms, `note_lights` in `exposed_emitters`) and `alloc` (6.9 to 7.4 ms).
 Pick up when `pack + size` reads half or more of the sync p99 left after those two are cut;
+read again at Plan 0074's Phase 4 with `light_note` cut (`docs/plans/logs/0074.md`, lamp off):
+the tip cave's `size` p99 2.8 to 3.8 ms and `pack` 2 us, 17.1 to 17.9 % of the sync p99 on the
+RTX (16.5 to 21.1 ms) and 16.6 to 17.1 % on the Radeon (16.1 to 16.8), still under half;
 the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
 worktree and leave with it.
 
 ### The sync's `light_note` stage and the windowed glide's light walks
 
-Drafted 2026-11-13 as [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (approved 2026-11-13); the body leaves at its close.
+Taken 2026-11-13 by [Plan 0074](plans/done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (closed 2026-11-14): `light_note` cut by masks; the placement's spikes are "The light placement's eviction scan in a windowed glide" under Next up.
 
-Noted 2026-11-13 at Plan 0070's close (`docs/plans/logs/0070.md`, Phases 5 and 6). After Plan
-0070 the cave sync's p99 (about 21 to 22 ms, over Plan 0067's 16.6 ms for `update + poll +
-sync`) is led by `light_note`, the `note_lights` pass over a chunk's emitter bricks
-(`exposed_emitters`), 8.2 to 8.4 ms, then `alloc` 6.9 to 7.4 ms. Separately, in the owner's
-windowed `--glide 300` cave flight on the RTX, the per-second `light place` p99 read 20 ms to
-846 ms in 19 of 30 lines at the tip (12 of 73 at the base, max 330 ms), never over 2.5 ms in the
-headless benches; not attributed. Pick up as the next sync plan, before the 16.6 ms bar is read
-again.
-Checked 2026-11-13 at Plan 0058's refresh: both are the emissive light-sample mirror's
-(`gpu_world/lights.rs`), which Plan 0058 does not touch, so neither folds into it; its window
-reads the `sync:` line beside a hitch. The owner (2026-11-13, Plan 0058's answer 9): the next
-sync plan is drafted now and runs beside 0058's lane.
+### The tester cave's coarse light is slow to settle
+
+Noted 2026-11-14 in Plan 0074's window (the owner, on the tester's cave path, the tip and the
+base the same): "coarse light are slow to settle". Not Plan 0074's stages (its tip and base
+differ only in the sync's light note and read the same). A reading of the bake queue's coarse
+pass and its settle on a moving path; no run read it. Pick up with the next look or bake-queue
+plan that walks the tester's paths.
 
 ### The slow adapter's walk-speed spike
 
@@ -323,6 +353,10 @@ so the fly-through's wiring (the frame calls the ring's reads, not the waiting o
 no gate; the gate holds only the ring's own test. A variant of about 120 frames with the
 queue line due at least once, or a CPU test on the call sites, would bring it under the 10 s
 line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
+**It fails** (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
+not this plan's code): the exit's queue tally prints `frames: queue step ...` lines
+(`run/mod.rs`, `Drop for Run`) before the `frames: N frames;` line, and the test takes the
+first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 

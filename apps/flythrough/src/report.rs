@@ -116,7 +116,9 @@ pub struct RunReport {
 /// The fields of [`SyncSeries`], in order: the sync's wall on the stage clock (the six stages'
 /// sum), its six stages in microseconds ([`SyncStats`]'s `*_us`), the slots it packed, the
 /// chunk locks' wait (a part of `select_us` and `alloc_us`), `light_us`'s two parts, the
-/// rescan set's inserts and the stage clock's reads.
+/// rescan set's inserts, the stage clock's reads, and the light counters ([`SyncStats`]'s
+/// `light_*` counts: bricks scanned, those decoded, fresh emitting records, chunks and samples
+/// written, evictions, refusals, the placement's search steps and the free ranges after).
 pub const SYNC_FIELDS: [&str; SYNC_N] = [
     "sync_us",
     "select_us",
@@ -131,10 +133,33 @@ pub const SYNC_FIELDS: [&str; SYNC_N] = [
     "light_note_us",
     "rescan_inserts",
     "clock_reads",
+    "light_bricks",
+    "light_emitter_bricks",
+    "light_fresh_records",
+    "light_chunks_written",
+    "light_samples",
+    "light_evicted",
+    "light_refused",
+    "light_scan_steps",
+    "light_free_ranges",
 ];
 
 /// Entries of [`SYNC_FIELDS`].
-pub const SYNC_N: usize = 13;
+pub const SYNC_N: usize = 22;
+
+/// The first of [`SYNC_FIELDS`]' light counters, and their short names on the `sync:` line.
+const LIGHT_FIELDS: usize = 13;
+const LIGHT_NAMES: [&str; SYNC_N - LIGHT_FIELDS] = [
+    "bricks",
+    "emitter bricks",
+    "fresh records",
+    "chunks written",
+    "samples",
+    "evicted",
+    "refused",
+    "scan steps",
+    "free ranges",
+];
 
 /// One value per [`SYNC_FIELDS`] entry of a sync.
 pub fn sync_values(s: &SyncStats) -> [f64; SYNC_N] {
@@ -157,6 +182,22 @@ pub fn sync_values(s: &SyncStats) -> [f64; SYNC_N] {
     v[10] = s.light_note_us as f64;
     v[11] = s.rescan_inserts as f64;
     v[12] = s.clock_reads as f64;
+    for (k, x) in [
+        s.light_bricks,
+        s.light_emitter_bricks,
+        s.light_fresh_records,
+        s.light_chunks_written,
+        s.light_samples,
+        s.light_evicted,
+        s.light_refused,
+        s.light_scan_steps,
+        s.light_free_ranges,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        v[LIGHT_FIELDS + k] = x as f64;
+    }
     v
 }
 
@@ -179,10 +220,13 @@ impl SyncPercentiles {
 
 /// The sync's stages, one [`Series`] per [`SYNC_FIELDS`] entry, a value per sync: the
 /// per-second `sync:` line's, the `frames:` exit line's, the autopilot's and `run.json`'s.
+/// Beside them, the values of the slowest sync pushed since the last clear (by `sync_us`, the
+/// first pushed on a tie), kept past the ring.
 #[derive(Clone, Debug, Default)]
 pub struct SyncSeries {
     series: [Series; SYNC_N],
     frames: u32,
+    slowest: Option<[f64; SYNC_N]>,
 }
 
 impl SyncSeries {
@@ -191,14 +235,24 @@ impl SyncSeries {
         Self {
             series: std::array::from_fn(|_| Series::with_capacity(n)),
             frames: 0,
+            slowest: None,
         }
     }
 
     pub fn push(&mut self, s: &SyncStats) {
-        for (series, v) in self.series.iter_mut().zip(sync_values(s)) {
-            series.push(v);
+        let v = sync_values(s);
+        for (series, x) in self.series.iter_mut().zip(v) {
+            series.push(x);
+        }
+        if self.slowest.is_none_or(|w| v[0] > w[0]) {
+            self.slowest = Some(v);
         }
         self.frames = self.frames.saturating_add(1);
+    }
+
+    /// The slowest sync's values, in [`SYNC_FIELDS`] order; `None` before the first.
+    pub fn slowest(&self) -> Option<[f64; SYNC_N]> {
+        self.slowest
     }
 
     /// Empties every series, keeping its buffer.
@@ -207,6 +261,7 @@ impl SyncSeries {
             s.clear();
         }
         self.frames = 0;
+        self.slowest = None;
     }
 
     /// The percentiles of each series; `None` before the first sync.
@@ -222,8 +277,11 @@ impl SyncSeries {
     }
 
     /// `sync p50/p99 A/B us: select A/B, size A/B, ...; light place A/B, note A/B; packed
-    /// bricks A/B; lock wait A/B; rescan inserts A/B; clock reads A/B` over the syncs held,
-    /// `None` before the first.
+    /// bricks A/B; lock wait A/B; rescan inserts A/B; clock reads A/B; light counters p50/p99:
+    /// bricks A/B, ...; slowest W us: select S, ...; light place P, note N; packed bricks B;
+    /// lock wait L; rescan inserts R; light bricks C, ...` over the syncs held, `None` before
+    /// the first. The slowest sync's part names one sync: its wall, its stages and its light
+    /// counters.
     pub fn line(&self) -> Option<String> {
         let p = self.percentiles()?;
         let mut out = String::new();
@@ -255,6 +313,30 @@ impl SyncSeries {
             f[12].p50,
             f[12].p99
         );
+        out.push_str("; light counters p50/p99:");
+        for (k, name) in LIGHT_NAMES.iter().enumerate() {
+            let p = f[LIGHT_FIELDS + k];
+            let sep = if k == 0 { "" } else { "," };
+            let _ = write!(out, "{sep} {name} {:.0}/{:.0}", p.p50, p.p99);
+        }
+        if let Some(w) = self.slowest {
+            let _ = write!(out, "; slowest {:.0} us:", w[0]);
+            for k in 1..7 {
+                let name = SYNC_FIELDS[k].trim_end_matches("_us");
+                let _ = write!(out, " {name} {:.0}", w[k]);
+                out.push(if k < 6 { ',' } else { ';' });
+            }
+            let _ = write!(
+                out,
+                " light place {:.0}, note {:.0}; packed bricks {:.0}; lock wait {:.0}; rescan \
+                 inserts {:.0}; light",
+                w[9], w[10], w[7], w[8], w[11]
+            );
+            for (k, name) in LIGHT_NAMES.iter().enumerate() {
+                let sep = if k == 0 { "" } else { "," };
+                let _ = write!(out, "{sep} {name} {:.0}", w[LIGHT_FIELDS + k]);
+            }
+        }
         Some(out)
     }
 }
