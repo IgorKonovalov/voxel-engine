@@ -15,6 +15,9 @@
 > **Refreshed 2026-11-10, while proposed:** the Context and Alternatives A and D now argue
 > against the baked store, which replaced ADR-0043's per-face table (Plan 0059); the slot rule
 > carries the owner's answer of that day. The Decision's mechanism is unchanged.
+> **Refreshed 2026-11-14, while proposed** (the owner, at Plan 0058's Phase 4 window):
+> `MAX_LIGHTS` is 16, not 8, and the headlamp's slot takes a floor of 0 (no reach); the
+> slow-adapter figure is restated from Plan 0058's readings. The mechanism is unchanged.
 
 ## Context
 
@@ -58,12 +61,14 @@ light. The headlamp is slot 0 of that list while it is on.** In detail:
 - **A light** is a position, a radiant intensity (radiance on the axis at one voxel, as the
   lamp's `intensity`), a colour, a direction with inner and outer cone cosines (a point light
   has `cos_outer` -1), and flags: `on`, `shadows` (cast the shadow ray), `bounce` (feed the
-  probe channel). `MAX_LIGHTS` is 8. The list is a uniform the frame uploads when any field
-  changed; the engine keeps no light state between frames beyond that change detection.
+  probe channel). `MAX_LIGHTS` is 16 (8 until 2026-11-14). The list is a uniform the frame
+  uploads when any field changed (this frame's list and the older frame's, 2064 B at sixteen,
+  under wgpu's downlevel uniform limit of 16 KiB); the engine keeps no light state between
+  frames beyond that change detection.
   `LightParams` stays as the headlamp's description and fills slot 0 from the camera when
   `Lighting::lamp` is on, so every existing caller is unchanged; the consumer's lights then
-  take slots 1 to 7. With the lamp off the consumer's lights take all eight slots (the owner,
-  2026-11-10).
+  take slots 1 to 15. With the lamp off the consumer's lights take all sixteen slots (the
+  owner, 2026-11-10; sixteen since 2026-11-14).
 - **Shading is exact.** Per lit pixel, for each light within its reach: `E += colour *
   PI * intensity * cone * max(n . l, 0) / d^2 * window(d)`, zero where the shadow ray toward
   the light finds rock, in the frame's shadow walk (coarse or full, as today). No random number,
@@ -73,8 +78,10 @@ light. The headlamp is slot 0 of that list while it is on.** In detail:
   `Lighting` setting, default 0.1: the headlamp's 1200 reaches about 110 voxels, 11 m, a guess
   Plan 0058 reads), and its contribution is windowed by `(1 - (d / r)^4)^2` so the reach has no
   visible edge. A floor of 0 means no reach and no window, the lamp's arithmetic before this
-  ADR. A pixel beyond a light's reach casts no shadow ray toward it. So the light
-  pass's cost is the shadow rays of the lights in reach of what is on screen, not of the list.
+  ADR. **The headlamp's slot always takes a floor of 0** (the owner, 2026-11-14: at 0.1 its
+  light ended on the near rock); the floor bounds the list's lights. A pixel beyond a light's
+  reach casts no shadow ray toward it. So the light pass's cost is the shadow rays of the
+  lights in reach of what is on screen, not of the list.
 - **History as the lamp's.** The direct part blends on the screen history as the lamp's part
   does today (`ALPHA` while the camera moves, longer at rest) and takes this frame's sample as
   it is on a frame where any light in the list changed. A carried light therefore behaves as
@@ -103,27 +110,32 @@ light. The headlamp is slot 0 of that list while it is on.** In detail:
 - A still list is as still as the headlamp at rest: the same exact estimate every frame.
 - The cost is a shadow ray per light in reach per lighting pixel, bounded by the reach and read
   per light count; with no light in reach the pass costs what it costs today.
-- The headlamp becomes one of eight, so a game can turn it off, light the player another
-  way without touching the renderer, and have all eight slots for it.
+- The headlamp becomes one of sixteen, so a game can turn it off, light the player another
+  way without touching the renderer, and have all sixteen slots for it.
 - The bounce flag is the per-source switch the owner asked for on 2026-10-22, on the channel
   ADR-0043 kept for it.
 - Entities (M6) that carry a light get it by writing a slot each frame; nothing else is needed.
 
 ### Negative
-- **Eight lights.** A ninth is refused (the frame keeps the first eight slots' worth, seven
-  beside the headlamp, and counts the rest). A scene with many small dynamic lights needs a stochastic pick, a
+- **Sixteen lights.** A seventeenth is refused (the frame keeps the first sixteen slots' worth,
+  fifteen beside the headlamp, and counts the rest). A scene with many small dynamic lights needs a stochastic pick, a
   tiled cull, or emissive voxels, none of which this records.
 - **Hard shadows.** One shadow ray per light gives a point light's shadow with no penumbra. A
   soft shadow is a stochastic estimate and reintroduces noise and history; it is not offered.
 - **The slow adapter.** Eight lights in reach of every pixel project to about 7 ms of shadow
   rays on the Cezanne, over its share of the 6.0 ms lighting line; the reach, the window and the
   consumer's restraint are the only bounds. The portable profile may cap the list at a lower
-  count.
+  count. *Restated 2026-11-14:* Plan 0058 read 0.175 ms a light in reach on the RTX at the
+  spawn (0.07 at the vein), so by the Cezanne's ratio eight in reach project to about 10 ms
+  there and sixteen to about 20 ms (projections; the Cezanne is read in Plan 0058's Phase 5).
+  Sixteen moves the worst case, not the typical one: the cost is the lights in reach, and the
+  cap per profile (Plan 0069, Portable 4) is the slow adapter's bound.
 - **The direct part widens to rgb.** One more `rgba16float` target on the lighting grid (the
   arithmetic is Plan 0058's) and its accumulation pair, and the temporal, a-trous and composite
   passes change their layout once more, after Plans 0057 and 0059 changed it.
-- **The headlamp gains a reach.** At the default floor its light ends at about 110 voxels,
-  where it fell off without end; the lamp-lit goldens are re-blessed once.
+- **List lights end at their reach.** At the default floor a light of 600 ends at about 77
+  voxels. The headlamp's slot takes floor 0 and keeps its endless falloff (the owner refused
+  its edge, 2026-11-14), so it is the one light the reach does not bound.
 - **A light the consumer forgets to resend goes out.** The list is per frame by design; a
   consumer that wants persistence keeps the list itself.
 - **No light flickers in a way the renderer smooths.** A flame's intensity is the consumer's to
@@ -149,7 +161,7 @@ Thirty-two or more lights, a per-pixel pick by power over distance with one shad
 emissive candidates do. Cheap at any count. It lost because it is stochastic: the picked light
 differs frame to frame, and the direct part regains noise, history, dots in motion and the
 whole settle problem ADR-0043 and ADR-0046 removed from emissive light. It is the extension if a consumer
-ever needs more than eight, and ADR-0025's machinery is where it would start.
+ever needs more than sixteen, and ADR-0025's machinery is where it would start.
 
 ### Alternative C: Hardware ray queries for the shadow rays
 wgpu 30 exposes experimental ray queries and AABB acceleration structures, and naga's WGSL

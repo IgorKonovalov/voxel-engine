@@ -66,7 +66,7 @@ frame at 4.1 ms (vein) and 8.6 ms (hall) on the RTX 3080 Laptop, and 30.5 and 72
 Cezanne RADV, the slow adapter; FSR 2 alone is 2.1 to 2.4 ms and 15.7 to 16.1 ms, over section
 2's 1.5 ms upscale line, and the lamp-on a-trous at the full tier (3.1 to 3.3 ms, RTX) is over
 the denoise line (`docs/nfr.md` section 2). The backlog's "Budget lines over with no owner" asks
-whether each line moves or a profile owns it. Plans 0058 (eight lights), 0062 (entities) and
+whether each line moves or a profile owns it. Plans 0058 (the light list), 0062 (entities) and
 0032 to 0037 (sky, far field, liquids, clouds, weather, night sky) multiply shadow rays with no
 product cap; Plan 0035's allotment spends all of section 2's headroom on the floor.
 
@@ -273,7 +273,7 @@ impl Frame {
 | `upscaler` | FSR 2 | FSR 2 (answer 2) | FSR 2 |
 | `lighting_resolution` | half | half | half |
 | `look.translucent_layers` | 4 | 2 | 4 |
-| Plan 0058's light cap | 8 (`MAX_LIGHTS`) | 4 | 8 |
+| Plan 0058's light cap | 16 (`MAX_LIGHTS`; 8 until 2026-11-14) | 4 | 16 |
 | `lighting.lamp_bounce` | the fly-through's today (on) | off | on |
 | `build.residency` | `flythrough::RESIDENCY` (16, 24, 1) | (12, 18, 1) | (16, 24, 1) |
 | `build.mirror_budget_bytes` | sized to the residency, as the fly-through's today | sized to its residency | as Floor |
@@ -323,7 +323,8 @@ Owner, 2026-11-11 (~21:25, "go with recommended on all"): recommendation taken o
    the readings; Portable gets a 33.3 ms column.
 5. **The plan runs after Plan 0045** (which moved ahead of Plans 0058 and 0044's render phases
    the same day; this plan stays after all three).
-6. **Plan 0058 is unchanged.** It lands with `MAX_LIGHTS` 8 as the bound; this plan owns the
+6. **Plan 0058 is unchanged.** It lands with `MAX_LIGHTS` 16 as the bound (8 until the owner's pick at its
+   window, 2026-11-14); this plan owns the
    per-profile cap, a `Live` field at or under it, Portable 4 (a guess).
 7. **The rule** is in `.claude/skills/architect/references/best-practices.md` (GPU): a new
    render mechanism lands as a `RenderSettings` field with its apply class and each profile's

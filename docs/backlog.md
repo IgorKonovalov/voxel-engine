@@ -73,13 +73,13 @@ Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky r
 mouth gets no bounced sun until this entry is taken. Plan 0037's night light likewise has no
 bounce and no probe feed.
 
-### More than eight lights: a world-space light grid
+### More than sixteen lights: a world-space light grid
 
-Parked 2026-11-10 (owner asked for the idea in detail while Plans 0058 and 0062 were drafted). ADR-0044 shades eight list lights, each pixel looping over all of them. Plan 0062 allows 64 entities, and each glowing creature or projectile that lights the walls takes a slot, so the cap of eight is the first limit a real scene meets.
+Parked 2026-11-10 (owner asked for the idea in detail while Plans 0058 and 0062 were drafted). ADR-0044 shades sixteen list lights (eight until the owner's pick of 2026-11-14, at Plan 0058's window), each pixel looping over all of them. Plan 0062 allows 64 entities, and each glowing creature or projectile that lights the walls takes a slot, so the cap is still the first limit a real scene meets.
 - **The mechanism:** a grid of cells around the camera (a guess: 16-voxel cells, 64 a side) holding, per cell, a bit mask of the lights whose reach touches it. A pixel, a shadow ray's origin or a probe ray's hit reads its cell and shades only those lights, still exactly, one shadow ray each. The grid is in world space, not screen tiles, because the bounce channel and the upscalers' change mask need it at points that are not pixels.
 - **What it buys:** 64 or more lights in the world for the cost of the few that overlap at each point. **What it does not buy:** many lights overlapping one spot still cost one shadow ray each; a per-pixel cap past that is a pick, and a random pick is noise (ADR-0044 B, rejected).
-- **The cheaper first step:** keep eight slots and let the engine choose the eight that matter most to the view each frame, with hysteresis. No shader change; lights can pop when the choice changes.
-- **Pick up when:** Plan 0058's readings give the cost per light in reach, and a scene with entities wants more than eight. It needs an ADR that amends ADR-0044's cap.
+- **The cheaper first step:** keep the slots and let the engine choose the sixteen that matter most to the view each frame, with hysteresis. No shader change; lights can pop when the choice changes.
+- **Pick up when:** Plan 0058's readings give the cost per light in reach (0.175 ms on the RTX at the spawn; Phase 5 reads sixteen and the Cezanne), and a scene with entities wants more than sixteen. It needs an ADR that amends ADR-0044's cap.
 
 ### Per-face light cells as a near-camera enhancement over the brick level
 

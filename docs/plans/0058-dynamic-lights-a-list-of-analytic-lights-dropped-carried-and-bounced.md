@@ -1,6 +1,6 @@
-# 0058: Dynamic lights: a list of eight analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
+# 0058: Dynamic lights: a list of sixteen analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
 
-> **Status:** in-progress (dev, 2026-11-13), was approved, **amended 2026-11-13 (refresh at a312c19; owner answers 7 to 10 the same day, keys re-checked at b1465ab)** (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
+> **Status:** in-progress (dev, 2026-11-13), was approved, **amended 2026-11-14 (owner, at Phase 4's window: picks, a fix phase, a re-window)**, amended 2026-11-13 (refresh at a312c19; owner answers 7 to 10 the same day, keys re-checked at b1465ab)** (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
 > architect's re-read below, order amended 2026-11-11), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
 > phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
 > flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5).
@@ -37,6 +37,28 @@
 > **Before the lane starts the architect re-reads Phases 1 and 2 against Plan 0045's tip** and
 > refreshes their paths (done 2026-11-13, below); bit and binding numbers in this plan are
 > "the next free at the start commit", which dev reads from the tree.
+
+> **Amended 2026-11-14 (owner).** Phase 4's window ran 2026-11-14 (the verdict, (a) to (j), is
+> in [the log](logs/0058.md)); the stop rule did not trip: (a), (b) and (h) pass. The owner's
+> picks (Owner answers 11 to 15):
+> 1. **Dropped and fired lights take intensity 600**, not 1200 (`1`, `6`; the `--lights` ring
+>    is 600 already). The box tests' 1200 and the analytic figures stay: they are the tests'
+>    lights, not the testbed's default. At 600 a list light reaches `sqrt(600 / 0.1)` = 77.5
+>    voxels.
+> 2. **The headlamp's slot takes `light_floor` 0**: no reach and no window, the lamp's
+>    arithmetic at the start commit (the fallback under Risks). List lights keep 0.1. Phase 1's
+>    re-blessed lamp-lit goldens go back to the start commit's baselines.
+> 3. **`MAX_LIGHTS` is 16**, not 8: with the lamp on it takes slot 0 and the list slots 1 to 15;
+>    with it off the list takes 0 to 15. The uniform is `2 x 16 x 64 + 16` = 2064 B. ADR-0044 is
+>    proposed, so it is refreshed in place (2026-11-14), as it was on 2026-11-10. Where Phases 1
+>    to 3 say eight, seven, `/8` or 1040 B, read sixteen, fifteen, `/16` and 2064 B from Phase 5
+>    on; their text stays as the contract they were built to.
+> 4. **The a-trous at 4 stays the default** ((i)); every count stays a setting.
+> 5. **Bounce stays off for dropped and fired lights** ((e)).
+>
+> The window also found faults close up (coloured rings, grain near a light, no visible bounce,
+> noise under the ore pulse). **Phase 5** builds the picks and splits and fixes the faults,
+> **Phase 6** is a short owner re-window, and the old Phase 5, the picks as tests, is **Phase 7**.
 
 > **Amended 2026-11-13 (refresh at a312c19).** Phases 1 to 3 re-read against main at a312c19
 > (v0.52.0), after Plans 0045 (v0.50.0), 0072 (v0.51.0) and 0070 (v0.52.0). ADR-0044's
@@ -90,7 +112,7 @@
 > the owner's window in Phase 4 is their gate. Each lands its CPU tests of data, determinism
 > and API; every test it names that judges the image (goldens, SSIM or pixel floors, stillness,
 > settle and difference bars) runs as a reading from `live/`, a `mod reading` or the strip tool,
-> recorded in the readings log, and is written as a test in Phase 5, after the window, against
+> recorded in the readings log, and is written as a test in Phase 7 (was 5), after the window, against
 > the picks. Per phase the gpu check runs only the `gpu_*` binaries the phase names
 > (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
 > `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
@@ -99,7 +121,8 @@
 ## TL;DR
 
 The renderer shades one light that is not a voxel, the headlamp, and it is bound to the camera.
-This plan makes it one entry of **a list of eight analytic lights** (point or spot, colour,
+This plan makes it one entry of **a list of sixteen analytic lights** (eight until the owner's
+2026-11-14 pick) (point or spot, colour,
 intensity, reach, flags) that the consumer hands the frame every frame. A lit pixel shades every
 light in reach **exactly, with one shadow ray each**: no random number, no settle, no dots. The
 fly-through drops a light where you look (`1`), carries the newest one in front of the camera
@@ -178,7 +201,8 @@ because the white list exercises the whole path (upload, cull, shadow rays, hist
 mask, the window's rows) with no target added, and the layout change is then one phase on its
 own.
 
-**The slot rule** (the owner, 2026-11-10). The list has eight slots. While `Lighting::lamp` is
+**The slot rule** (the owner, 2026-11-10; sixteen slots since 2026-11-14, where this paragraph
+reads eight, seven and 1 to 7, read sixteen, fifteen and 1 to 15). The list has eight slots. While `Lighting::lamp` is
 on, the headlamp takes slot 0 and `Frame::set_lights` keeps the first seven lights it is given
 in slots 1 to 7. While the lamp is off, `set_lights` keeps the first eight in slots 0 to 7. The
 lights past the cap are counted (`Frame::lights_over_cap()`) and not shaded. Turning the lamp on
@@ -191,10 +215,10 @@ today.
 ```mermaid
 flowchart LR
     subgraph consumer
-        G[game or fly-through: lights this frame; 8 slots, slot 0 the headlamp while it is on]
+        G[game or fly-through: lights this frame; 16 slots, slot 0 the headlamp while it is on]
     end
     subgraph vxe-render
-        G --> U[(lights uniform: 8 x Light now, 8 x Light of the older frame, counts, change bit)]
+        G --> U[(lights uniform: 16 x Light now, 16 x Light of the older frame, counts, change bit)]
         U --> LP[light pass: per lit pixel, each light in reach: exact term x window, one shadow ray]
         LP --> D[(direct target rgb, lighting grid)]
         D --> TP[temporal: blend as the lamp's part; this frame's sample as it is when the list changed]
@@ -686,14 +710,152 @@ voxels above a floor, reach `sqrt(1200 / 0.1)` = 109.5 voxels: directly below, `
   and whether a colour change in flight is clean. **Stop rule:** a "no" on (a), (b) or (h) that names
   shimmer or a trail under FSR 2 stops the close and goes to the architect with Phase 1's mask
   readings and done-when 12's trail length; the narrowed reset under Risks is the first amendment. A "no" on (g) names the run
-  and goes to the architect with the tables. A pick on (i) other than 4 is Phase 5's default and
-its goldens; every count stays a setting. The plan closes with that record.
+  and goes to the architect with the tables. A pick on (i) other than 4 is Phase 7's default and
+its goldens; every count stays a setting. **Done 2026-11-14:** the verdict is in the log; the
+picks are amendment 2026-11-14's, the faults Phase 5's.
 
-### Phase 5: The picks as tests
+### Phase 5: The window's picks and its faults
+
+- **Owner skill:** dev
+- **What:** the owner's picks of 2026-11-14 (amendment items 1 to 3), and the faults the window
+  found, each split to its source by a reading before anything is fixed (a visual defect is
+  measured before a mechanism is chosen). A fault's fix carries the test named below, which
+  must fail at 297fda6 (the bite, shown in the log) and pass after it; the look bars stay
+  Phase 7's. A fix that changes a target's format or layout, the upscalers' colour handling or
+  the probe channel's design goes to the architect before code, with the readings.
+- **5a, the picks.** Drops (`1`) and shots (`6`) at intensity 600. The headlamp's slot ignores
+  `Lighting::light_floor` (no reach, window 1, never culled) in every reader of the reach: the
+  light pass, the `steps` count, the glass path, both upscalers' masks and the probe listing; a
+  per-slot floor or the `lamp` word, dev's choice, named in the log. `MAX_LIGHTS` 16 through the
+  prelude: the uniform (2064 B), the slot rule, `lights_over_cap`, the HUD's `lights <n>/16`, the
+  banner, the full-list refusal (16 with the lamp off, 15 list lights with it on) and
+  `--lights` up to 16.
+- **5b, coloured lights draw rings (i).** On the window's case (`live/4.png`, `6.png`, `7.png`):
+  fixed rings concentric with a saturated light on the near faces, a cross along the face axes,
+  speckle of another colour inside it (pink in red, magenta in blue); a white light in the same
+  place shows none, and a still camera does not move them. **The split:** reproduce it headless
+  on the light box (a wall facing the camera, a pure red and a pure blue light of 600 at
+  `SURFACE_GAP` from it, lamp off, no emitter, half tier, native and FSR 2 at 1.5, manual
+  exposure 1 and the exposure auto settles to in that box), and read each stage's value against
+  the white light's same channel at the same place: the light pass's `direct`, the temporal
+  accumulation, the a-trous output, the composite before the tone map, the upscaler's output.
+  The first stage that shows the pattern is the source. Candidates, none of them taken as
+  given: the orchestrator's hypothesis, f16 quantisation or overflow of large pre-exposed
+  values near the light amplified by a luminance ratio (at 297fda6 `light.wgsl` writes `lit *
+  colour` in rgb and `lit * colour_weight` in `a`, and no stage read here divides rgb by `a`, so
+  the ratio must show in a reading); a per-channel clamp at `HDR_MAX` (60000) or f16's 65504;
+  the a-trous's luminance edge stop and variance on a saturated colour; the upscalers' YCoCg or
+  luma clip of a saturated colour.
+  - **Done when:** `a_saturated_light_near_a_wall_draws_no_rings` (`gpu_dynamic_lights.rs`, gate,
+    about 4 s, an estimate; born `#[ignore = "soak"]` with a one-colour gate variant if over
+    10 s) on that rig with the identity tone map, red and blue, after 32 still frames: (1) the
+    coloured frame's other two channels equal the no-light frame's within 2/255 at every pixel
+    (no pink in red, no magenta in blue); (2) its own channel equals the white frame's same
+    channel within 2/255 at 99.9 % of pixels or more at native, and within 4/255 at 99.5 % or
+    more under FSR 2 at 1.5. The log shows the stage readings, the test failing at 297fda6 and
+    passing after the fix. If the rig does not show the rings at 297fda6 it is widened toward
+    the window (the level's wall, auto exposure, the fly-through's settings) until it does, and
+    the log says how.
+- **5c, blow-out and grain near a light (ii).** Re-read at 600, on the window's pillar
+  (`live/3.png`) and stepped wall (`live/5.png`) at auto exposure: the pre-exposed direct value
+  at the pixels nearest the light against `HDR_MAX` and f16's maximum, the share of clamped
+  pixels, and the composite's per-pixel spread over 64 still frames there, at `SURFACE_GAP` 2
+  and 4. And whether `5.png`'s blocky lit and unlit patches beside a white light are the steps'
+  true hard shadows at a grazing angle (the CPU's ray test of those hits agrees) or a shadow-ray
+  fault (the origin's offset, the coarse walk's 3.5-voxel margin against a light 2 voxels off).
+  - **Done when:** the readings are in the log; `SURFACE_GAP` moves only if they show a clamp
+    or a grain at 2 that 4 removes, and the log names the move; a shadow-ray fault, if read, is
+    fixed with a test that bites at 297fda6.
+- **5d, no visible bounce from a flagged list light (iii).** The cost table does not answer
+  it: at 900 frames the channel is frozen (probes 0.006 ms; 0.138 ms at 300 frames), so 0, 1
+  and 4 flagged lights read alike whatever they feed. Read on the level at the vein, lamp off,
+  `--lamp-bounce on`, one still dropped light of 600, flagged against unflagged, after the
+  channel settles: the gathered indirect's share of the composite at pixels within the bounce
+  reach, and at a pixel the light does not see. Check the chain: `5` sets `BOUNCE` in the
+  uploaded slot, the channel is encoded with the lamp off, the probes in the light's bounce
+  reach are listed and traced, the gather reads them and the composite adds them.
+  - **Done when:** `a_flagged_list_light_lights_what_it_does_not_see` (`gpu_indirect.rs`, gate,
+    about 5 s, an estimate): on the light box with a wall between a list light and a floor
+    pixel, lamp off, after 32 frames the composite at that pixel is above the unflagged frame's
+    with `BOUNCE` set and equal to it with `BOUNCE` clear. If the chain is broken it is fixed
+    and the test bites at 297fda6; if it holds, the vein's share is the log's reading and Phase
+    6 judges it.
+- **5e, the ore pulse adds noise (iv).** Read what the pulse (`M`) changes per frame: the
+  lights' change bit, the temporal age, the moments and the a-trous variance, and over which
+  pixels, with one still dropped light at the vein, camera still.
+  - **Done when:** the log names it. If the pulse reaches the direct part's history or the
+    filter beyond the ores' baked light, it is fixed so it does not, with
+    `a_pulsing_emitter_leaves_the_list_lights_history_alone` (`gpu_dynamic_lights.rs`, about 5 s,
+    an estimate): on a box with one emitter whose scale changes each frame and one still list
+    light, over 64 still frames the direct accumulation at pixels the emitter's baked light does
+    not reach is bit-identical pulse on and off; it bites at 297fda6.
+- **5f, `mirror pressure 1.000` (v).** A reading, `live/7.png` and `9.png`: what the HUD's
+  figure is and where it is computed (Plan 0017's pressure), why it reads 1.000 in the level
+  (383 608 live, 1 731 free slots of 88 285 376 B), whether a brick was refused or the radius
+  narrowed then, and whether it read the same at the start commit 98e69b8.
+  - **Done when:** the log names it. A fault outside this plan's files goes to the architect
+    for the backlog and is not fixed here.
+- **5g, readings at sixteen.** The light pass and the frame at `--lights` 16 lamp off and 15
+  lamp on, spawn and vein, the RTX 3080 Laptop and the RADV RENOIR (one round each; the Cezanne
+  is not read in Phases 1 to 3, and ADR-0044's slow-adapter figure rests on it). A reading, no
+  bar: the RTX read 0.175 ms a light in reach at the spawn (Phase 3's table), so sixteen in
+  reach project to about 2.8 ms there.
+- **Done when (5a):** `the_slots_follow_the_lamp` asserts the rule at 16 (lamp on: 16 given keep
+  15, `lights_over_cap()` 1; lamp off: 16 kept, 0 over; a seventeenth over in both); the HUD
+  tests read `lights 3/16 carry over 0` (lamp off) and `lights 4/16` (lamp on) and the refusal
+  at a full list; `lights.rs`'s unit test `a_drop_and_a_shot_take_intensity_600`; with the lamp
+  the only light every lamp-lit gate golden passes against the start commit's baseline
+  (`live/golden-before/`, restored, no new bless), except `hud.png` and `mode_banner.png`,
+  re-blessed once for their words with the share moved in the log; the `frame_bytes`
+  inventories that count the lights uniform move by 1024 B.
+- **Files touched:** `crates/vxe-render/src/frame/lights.rs`, `light.rs`, `frame/compose.rs`,
+  `frame/settings.rs`, `shaders/common.wgsl` and `light.wgsl`, and the stages 5b to 5e name;
+  `apps/flythrough/src/lights.rs`, `hud/modes.rs`, `README.md`; `gpu_dynamic_lights.rs`,
+  `gpu_indirect.rs`, `tests/support/lights.rs`, the goldens under `tests/golden/`;
+  `docs/plans/logs/0058.md`.
+- **GPU binaries per phase:** `gpu_dynamic_lights`, `gpu_indirect`, `gpu_fsr2`, `gpu_upscale`,
+  `gpu_golden`, `gpu_hud_golden`, `gpu_castle_golden`, `gpu_look`, `gpu_look_field`, `gpu_bake`,
+  `gpu_lights` and vxe-render's `gpu_frame` (the lamp's goldens back to their baselines).
+
+### Phase 6: The owner's re-window
+
+- **Owner skill:** human
+- **What:** a short sitting on Phase 5's build, release, the RTX, auto exposure (no
+  `--exposure 8`, which clipped the window's colours).
+
+  ```
+  cargo build --release -p flythrough
+
+  # 1. Colours close up: red, blue and green dropped (1, 3) on a wall and a pillar, the camera
+  #    still at about a metre, then backing off; two colours overlapping. Carry (2) off.
+  target/release/flythrough --source showcase --shot hall --hud --lamp off
+  target/release/flythrough --level --seed 1 --pose vein --hud --lamp off
+
+  # 2. Near a light at 600: the pillar of the window's 3.png, the stepped wall of 5.png.
+  # 3. Bounce: a dropped light flagged (5) against unflagged, at the spot Phase 5's reading names.
+  target/release/flythrough --level --seed 1 --pose vein --hud --lamp off --lamp-bounce on
+
+  # 4. The ore pulse (M) on and off with a dropped light, camera still.
+  # 5. The lamp's reach back (lamp on, the far rock of 9.png lit); sixteen lights, lamp off.
+  target/release/flythrough --level --seed 1 --pose vein --hud
+  target/release/flythrough --level --seed 1 --lights 16 --lamp off --hud
+  ```
+
+- **Files touched:** this plan's log.
+- **Done when:** the log records the owner's words on: (k) coloured lights close up at auto
+  exposure: rings, a cross, speckle, and how two colours mix; (l) grain and blow-out near a
+  light at 600; (m) a flagged light's bounce: seen, and worth its cost; (n) the light under the
+  ore pulse; (o) the lamp's reach at floor 0 and sixteen lights on screen; (p) whether `3`
+  recolours a light that has landed (the window's step 9), if not answered before. **Stop
+  rule:** rings or speckle on (k) stop the plan and go to the architect with 5b's stage
+  readings; Phase 7 does not start.
+
+### Phase 7: The picks as tests
 
 - **Owner skill:** dev
 - **What:** the image tests, goldens and bars Phases 1 to 3 name, written now with the
-  values the Phase 4 window settled, and the readings they replace cited from the log.
+  values the Phase 4 and 6 windows settled (intensity 600, the lamp at floor 0, sixteen slots),
+  and the readings they replace cited from the log.
 - **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 3 name,
   `crates/vxe-render/src/frame/settings.rs` if the window picks another a-trous default (and
   the goldens that default moves, re-blessed once on lavapipe), `docs/plans/logs/0058.md`.
@@ -718,25 +880,26 @@ pub struct Light {
     pub flags: u32,         // ON | SHADOWS | BOUNCE
     pub _pad: [u32; 3],
 }
-pub const MAX_LIGHTS: usize = 8;
+pub const MAX_LIGHTS: usize = 16; // 8 until the owner's 2026-11-14 pick
 impl Frame {
-    /// Lamp on: the first 7 go to slots 1..=7. Lamp off: the first 8 go to slots 0..=7.
+    /// Lamp on: the first 15 go to slots 1..=15. Lamp off: the first 16 go to slots 0..=15.
     pub fn set_lights(&mut self, queue: &wgpu::Queue, lights: &[Light]);
     pub fn lights_over_cap(&self) -> u32;
     pub fn lights_changed(&self) -> bool;
 }
 pub struct Lighting {
     /* as today, plus: */
-    pub light_floor: f32,        // 0.1; 0 is no reach
+    pub light_floor: f32,        // 0.1; 0 is no reach; the headlamp's slot takes 0 (2026-11-14)
     pub atrous_iterations: u32,  // 1, 2 or 4; 4 by default until the window (owner answer 8)
 }
 ```
 
 ```wgsl
-// illustrative: the lights uniform, 2 x 8 x 64 B + 16 B = 1040 B
+// illustrative: the lights uniform, 2 x 16 x 64 B + 16 B = 2064 B (1040 B at eight); under
+// wgpu's default uniform binding limit of 64 KiB and the downlevel 16 KiB
 struct Lights {
-    l: array<Light, 8>,     // this frame
-    old: array<Light, 8>,   // the older frame the upscalers compare against
+    l: array<Light, 16>,    // this frame
+    old: array<Light, 16>,  // the older frame the upscalers compare against
     count: u32, old_count: u32, changed: u32, lamp: u32,
 };
 ```
@@ -778,7 +941,7 @@ reading on each line over its budget is its delta, and it claims none of them.
 | §2 denoise line (3.0 ms): temporal + a-trous | the start commit's reading | a-trous over three channels: **a guess** of under + 0.1 ms on the RTX at 4 iterations, and about half and a quarter of the pass at 2 and 1 (a guess); with the lamp off and an empty list Plan 0065's skips hold (Phase 1 done-when 13), with any light shaded they do not | the same runs, lamp off at `--lights` 0 and 1 beside lamp on |
 | §2 upscale line (1.5 ms, over at the base) | the start commit's reading | the mask's loop over a still list: **a guess** of under + 0.05 ms on the RTX at 8 lights, skipped at 0 | the same runs, `--lights` 0 and 8 |
 | §2 streaming line (1.0 ms; the sync's p99 over at the base) | the start commit's `sync:` stages | **no change:** the list never reaches the mirror | the same runs' `sync` p99 and `light place`/`note`, read and not barred |
-| §3 `Frame::frame_bytes` (inside the 1.5 GB) | the start commit's figure at the run's resolution | **arithmetic:** + 8 B x 3 per lighting pixel (5 529 600 B at 1280 x 720 internal, half tier, which is the 1920 x 1080 runs' internal size under FSR 2 at 1.5); the lights uniform + 1040 B | `frame_bytes` asserted in `gpu_upscale.rs` and `gpu_fsr2.rs`, printed at the close |
+| §3 `Frame::frame_bytes` (inside the 1.5 GB) | the start commit's figure at the run's resolution | **arithmetic:** + 8 B x 3 per lighting pixel (5 529 600 B at 1280 x 720 internal, half tier, which is the 1920 x 1080 runs' internal size under FSR 2 at 1.5); the lights uniform + 1040 B (2064 B at sixteen, 2026-11-14) | `frame_bytes` asserted in `gpu_upscale.rs` and `gpu_fsr2.rs`, printed at the close |
 
 **Review note (2026-11-10, the static performance review; estimates, nothing was run).** The
 per-light projection above comes from one loaded reading of the headlamp: a spot cone at the
@@ -801,7 +964,12 @@ direct part, which the close reads on lavapipe.
 
 - **Eight lights on the slow adapter.** Eight in reach of every pixel project to about 7 ms of
   shadow rays on the Cezanne. The reach, the window and the readings at `--lights 8` bound it;
-  the portable profile may cap the count, which is a settings row, not this plan.
+  the portable profile may cap the count, which is a settings row, not this plan. *Amended
+  2026-11-14:* the RTX read 0.175 ms a light in reach at the spawn, not 0.1, so by the
+  Cezanne's ratio of seven to eight, eight lights in reach project to about 10 ms there and
+  sixteen to about 20 ms. The cap is a ceiling: the cost is the lights in reach (the vein read
+  0.07 ms a light), and Plan 0069's Portable profile caps the count (4, a guess). Phase 5g
+  reads the RENOIR.
 - **The reset on a change exposes the half tier's grid.** A carried or flickering light resets
   the direct blend on every pixel each frame, as the flying headlamp does today. If the owner
   sees shimmer in Phase 4, the reset narrows to the changed lights' reach (a per-pixel test of
@@ -820,7 +988,7 @@ direct part, which the close reads on lavapipe.
 - **The headlamp gains a reach.** At the default floor its light ends at 109.5 voxels where
   today it falls off without end; Phase 1 re-blesses the lamp-lit goldens for it and Phase 4 (d)
   judges it. If the owner refuses the edge, the lamp's slot takes floor 0 and the list keeps its
-  reach.
+  reach. *Taken 2026-11-14 (owner): the lamp's slot takes floor 0 (Phase 5a).*
 - **Hard shadows.** A point light's shadow has no penumbra. The owner judges it in Phase 4; a
   soft shadow is stochastic and is not offered here (ADR-0044).
 - **Glass.** `common.wgsl`'s `lamp(p)`, on `hit.wgsl`'s glass path, sums the list unshadowed on a glass hit's reflection, as
@@ -844,8 +1012,8 @@ direct part, which the close reads on lavapipe.
 
 ## What this plan does NOT do
 
-- More than eight lights, a stochastic pick among lights, or a tiled cull: ADR-0044 B, when a
-  consumer asks.
+- More than sixteen lights, a stochastic pick among lights, or a tiled cull: ADR-0044 B, when a
+  consumer asks (`docs/backlog.md`, "More than sixteen lights").
 - A directional light. The sun is Plan 0032's, added to the direct target, not to the list.
 - Soft shadows or area lights.
 - Hardware ray queries: ADR-0044 C, an opt-in tier with its own ADR if a reading asks for it.
@@ -917,6 +1085,18 @@ some form of moving light with different colors, or should we do it later?"
     consumer's motion, which writes the slot's position each frame; the testbed flies straight).
     Both stay later.
 
+2026-11-14, at Phase 4's window ("a bit lower intensity, more slots, other accept"; then four
+questions with recommendations):
+
+11. **Intensity: 600** for dropped and fired lights (relayed: the dropped light at 1200 too
+    bright).
+12. **The lamp's reach: "Floor 0 for the lamp"**; list lights keep 0.1. In the window's run 5
+    the lamp lit the near rock and nothing beyond: "I can see light on near rock but not far
+    away".
+13. **Slots: 16.** ADR-0044 is refreshed in place while proposed.
+14. **The a-trous: 4 stays the default** ("yes, looks right").
+15. **Bounce off for dropped lights** stays (accepted in (g)).
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -930,8 +1110,10 @@ some form of moving light with different colors, or should we do it later?"
 | 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | 5bfae33, be6126e |
 | 2: Colour: the direct part in a target of its own | dev | done (exploration) | 4854340 |
 | 3: The bounce flag | dev | done (exploration) | a616204 |
-| 4: The owner's window | human | not started | |
-| 5: The picks as tests | dev | not started | |
+| 4: The owner's window | human | done 2026-11-14 (verdict in the log; picks, faults to Phase 5) | |
+| 5: The window's picks and its faults | dev | not started | |
+| 6: The owner's re-window | human | not started | |
+| 7: The picks as tests | dev | not started | |
 
 ### Notes
 

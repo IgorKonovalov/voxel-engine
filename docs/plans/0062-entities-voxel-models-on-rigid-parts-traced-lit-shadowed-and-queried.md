@@ -67,7 +67,7 @@ position and a moving thing ghosts without them.
 - Reprojection by the hit position through the previous view: `temporal.wgsl`,
   `fsr2/input.wgsl` (FSR 2's motion vectors), `upscale.wgsl`, `gradient.wgsl`. None knows a
   hit that moved.
-- After Plan 0058: a list of eight exact lights, a `direct` target whose history takes this
+- After Plan 0058: a list of sixteen exact lights (eight until 2026-11-14), a `direct` target whose history takes this
   frame's sample when the list changed, and upscaler masks driven by the list.
 
 **What is missing:** any volume that is not on the world's grid, a pose, a second thing for a
