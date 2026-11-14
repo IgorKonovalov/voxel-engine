@@ -426,7 +426,7 @@ Readings: [`docs/plans/logs/0074.md`](logs/0074.md).
 | 3: exposed emitters by masks | dev | done; `light_note` p99 69.0 to 69.8 % under the base (proposal 70 %); deviations: `mod.rs` edited, `note_lights` looks the lists up per record (log) | `d20bf31` |
 | 4: the readings against the base | dev | done; 16.6 ms missed (cave 18.0 to 23.7 ms), largest stage left `alloc`; `light_note` 70 % met in 5 of 12 pairs; RSS within 2 % in 11 of 15 pairs (log) | committed with this row |
 | 5: the owner's window | human | done 2026-11-14: "no difference" in the picture; tip stands ("lets use what is synthetically more performance"); the glide's 30 to 40 s stagger is `light place`'s eviction scan in both binaries (r 0.997 to 0.9996 with scan steps), which S1 read as absent headless (log) | committed with this row |
-| 6: the lines and the bookkeeping | dev | not started | |
+| 6: the lines and the bookkeeping | dev | done after main merged (`bb98313`); docs in `776f48b`; gate tier 856 passed, 78 skipped; doc gates pass; the backlog's head is `alloc`, with the windowed eviction scan (Phase 2's mechanism) as its own entry (log) | committed with this row |
 
 ### Notes
 
