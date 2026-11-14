@@ -201,7 +201,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059, 0061 and 0067 closed; 0049 abandoned)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059, 0060, 0061, 0067 and 0070 closed; 0049 abandoned)
 
 Plan 0067, the frame's CPU, closed 2026-11-12 (v0.49.0; Outcomes on ADR-0052, ADR-0053, ADR-0048 and
 ADR-0046): the live queue's step is split into stages and read per regime (A starved, B keeping up). At
@@ -214,7 +214,7 @@ p99 in flight is Plan 0070's. Plan 0070, closed 2026-11-13 (v0.52.0), cut the sy
 dense emitter rescan set, light walks on change), to p50 15 to 19 us and `update + poll + sync` p99
 22.8 to 28.2 ms in the tester's benches, still over 16.6 ms, with `light_note` the largest stage left
 and the worker packing of ADR-0056 deferred (backlog). [Plan 0074](plans/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md)
-(drafted 2026-11-13, beside Plan 0058) takes the light stages: the windowed placement spikes, then `light_note`.
+(approved 2026-11-13, a lane beside Plan 0058) takes the light stages: the windowed placement spikes, then `light_note`.
 
 Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
 ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed
@@ -630,7 +630,7 @@ a cheap query.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   accepted at their plans' closes.
 
-### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half is Plans 0062 and 0063, drafted 2026-11-10, after Plan 0058)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half is Plans 0062 and 0063, in progress: 0062's Phase 1 (the `vxe-entity` crate) and 0063's Phases 1-2 (clips, the `.rig` file, voxels from text) merged; the rest after Plan 0058)
 
 - `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
@@ -638,9 +638,9 @@ a cheap query.
   shadows, emissive entities. Plan 0024's temporal pass reprojects by hit position, so a
   moving entity ghosts until this milestone's entities write motion vectors into it.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
-- **ADRs expected:** entity representation.
+- **ADRs:** ADR-0050 (entity representation) and ADR-0051 (rigs and clips), proposed with Plans 0062 and 0063.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and the benchmark lane is Plan 0068 (in progress: the tester build, Phases 1-5 merged, the Windows run owed); Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane

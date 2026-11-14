@@ -25,14 +25,14 @@ option: the level 159 089 984 B live (96 243 264 B of band slots over 418 668 ba
 band bricks), peak 967 839 468 B, against Plan 0054 owner answer 4's 106 and 530 MB.
 
 **The `face` default's frame targets (Plan 0054's review fix, `Frame::frame_bytes` printed by
-`frame_bytes_add_the_histories_and_the_output_target` in `apps/flythrough/tests/upscale.rs`,
+`frame_bytes_add_the_histories_and_the_output_target` in `apps/flythrough/tests/gpu_upscale.rs`,
 1080p output from 1280 x 720 internal, lavapipe, exclusive perf lock).** Main `28948a5` reads
 130 267 168 B; Plan 0054's tip before the fix (`3d6718d`) 145 012 800 B, the split walk's
 hand-off list (16 B of header and 16 B a pixel, 14 745 616 B) and its 16 B dispatch words
 allocated in every frame; after the fix 130 267 216 B, main's plus the 32 B placeholder list
 and the 16 B dispatch words. The full list is allocated by the first frame that runs the split
 walk (`--look field` with a crisp row); `only_a_split_frame_allocates_the_split_list` in
-`apps/flythrough/tests/look.rs` pins both.
+`apps/flythrough/tests/gpu_look.rs` pins both.
 
 **The frame's targets (Plan 0024 Phase 11, `Frame::frame_bytes` printed by `flythrough
 --autopilot --headless --seed 1 --render 1920x1080`):** 308 736 000 B with full-resolution
@@ -88,7 +88,7 @@ air with caverns on a 6.4 m lattice.
 With 8-bit palette indices (Plan 0002 Phase 4, ADR-0004) the level-size mirror reads
 207 681 088 B: pool 196 407 296 B (512 B for each of the 383 608 `Full` bricks, no wide chunk),
 masks 8 B per brick, records 2560 B per chunk (512 entries and a 256-entry `u16` palette),
-table 4 B per chunk, from `apps/flythrough/tests/level_mirror.rs` on the dev box.
+table 4 B per chunk, from `apps/flythrough/tests/gpu_level_mirror.rs` on the dev box.
 
 With the traversal hierarchy (Plan 0015 Phases 2 and 3) the same level-size mirror reads
 232 436 992 B: pool 196 407 296 B as above, masks 72 B per `Full` brick (27 619 776 B: a
@@ -187,7 +187,7 @@ face). The level: pool 56 075 200 B, records 6 758 400 B, 62 846 720 B with tabl
 
 **Size-classed slots, read (dev reference, Plan 0028 Phase 2, RTX 3080 Laptop GPU, exclusive perf
 lock, 1-minute load 5.2 to 8.8).** The level (`flythrough --level --headless --seed 1 --frames 1
---look plain`, and `apps/flythrough/tests/level_mirror.rs` on lavapipe) holds 62 846 720 B live
+--look plain`, and `apps/flythrough/tests/gpu_level_mirror.rs` on lavapipe) holds 62 846 720 B live
 (56 075 200 B of 2-, 3- and 4-unit slots, 3200 records of 2112 B, the table, the rows) under an
 88 285 376 B reservation, against 232 436 992 B live before; its first sync uploads 63 027 696 B
 in 405 writes in 342 ms against 500 ms for the pre-plan binary (1d1e67c, 232 617 968 B in 435
@@ -335,7 +335,7 @@ lighting pixel at most.
 builds its `ProbeVolume` only on the first encode with indirect light on (or on
 `probes()`, `probes_mut()` or a spacing change), so the default frame (indirect off) no longer
 holds it. The volume is 54 689 824 B: 12 615 680 + 1 056 768 words of atlases, state and scratch
-(54 689 792 B) and its 32-byte uniform. **Reading** (`crates/vxe-render/tests/frame.rs`,
+(54 689 792 B) and its 32-byte uniform. **Reading** (`crates/vxe-render/tests/gpu_frame.rs`,
 lavapipe, a 64 x 64 frame, exclusive perf lock, 1-minute load 2.2, `1fdac4d`): `frame_bytes`
 412 008 B with indirect off, before an encode and after one; 55 101 832 B after an encode with
 it on, +54 689 824 B, equal to `ProbeVolume::bytes`; the test asserts the figure. The
