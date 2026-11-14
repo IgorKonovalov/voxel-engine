@@ -6,6 +6,13 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-11-14
+
+Plan 0074 (a minor bump: `SyncStats` gains public fields, `run.json`'s `streaming` object gains fields). The sync's light stages, read first and then cut where the readings pointed. A brick's exposed emitters are now found with 512-bit masks: the emissive and opaque voxels come from the palette's flags over the packed index planes, and the six neighbours' facing layers come in as 64-bit planes. The brick is no longer decoded, and the samples and their order are byte-identical to the per-voxel scan, which stays as the test reference. On the RTX 3080 Laptop host (`hpet` clocksource, lamp off), tip against base in one session: the cave's `light_note` p99 fell from 8.3 to 8.5 ms to 2.5 to 2.6 ms, and `update + poll + sync` p99 from 23.5 to 26.2 ms to 18.0 to 23.7 ms. That is still over the 16.6 ms goal, and `alloc` is now the largest stage in the benches. The placement index (Phase 2) was struck because no headless rig reproduced the windowed spikes. The owner's window then attributed the `--glide 300` stagger, up to 1.2 s a sync on the tip and the base alike, to the light placement's eviction scan, and that scan heads the backlog. The light buffer's bytes and every golden are unchanged; the owner saw "no difference" in the picture.
+
+- **Added (render): `SyncStats::{light_emitter_bricks, light_fresh_records, light_chunks_written, light_scan_steps, light_free_ranges}`.**
+- **Added (flythrough): the `sync:` line ends with the light counters' p50/p99 and the slowest sync of its second (wall, stages, light counters); `run.json`'s `streaming` object gains the nine `light_*` counters (additive, schema 1).**
+- **Changed (render): `exposed_emitters` reads the brick as masks; its signature is unchanged.**
 - **Changed (flythrough, tester): a `--path` benchmark runs with the headlamp off unless `--lamp` is given; the tester's benchmark runs pass `--lamp off`, a tour keeps the lamp default; `run.json` gains `lamp` (`on` or `off`, additive, schema 1).** Cave and castle bench readings from before this change ran with the lamp on and are not comparable with later ones.
 
 ## [0.52.0] - 2026-11-13
