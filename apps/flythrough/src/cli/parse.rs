@@ -55,6 +55,7 @@ impl Args {
             castle: false,
             castle_out: None,
             castle_shot: castle::CastleShot::Gate,
+            entities: 0,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,

@@ -137,6 +137,8 @@ pub struct Modes {
     pub lights: crate::lights::TestLights,
     /// The banner's lights row after the last light key (`lights 3/16`, `carry on`).
     lights_words: Option<String>,
+    /// The testbed's walkers: `` ` `` places one, `4` removes the newest thing placed.
+    pub walkers: crate::walker::Walkers,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -267,12 +269,18 @@ impl Modes {
             queue: QueueModes::default(),
             lights: crate::lights::TestLights::default(),
             lights_words: None,
+            walkers: crate::walker::Walkers::default(),
         }
     }
 
     /// These modes with the testbed's lights `lights` (`--lights N`'s ring).
     pub fn with_lights(self, lights: crate::lights::TestLights) -> Self {
         Self { lights, ..self }
+    }
+
+    /// These modes with the testbed's walkers `walkers` (`--entities N`'s ring).
+    pub fn with_walkers(self, walkers: crate::walker::Walkers) -> Self {
+        Self { walkers, ..self }
     }
 
     /// Shows the banner from `now_ms` with `words` as its lights row (`lights 3/16`,
@@ -290,10 +298,15 @@ impl Modes {
         }
     }
 
-    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break.
+    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break,
+    /// then the walkers' row while one is placed.
     pub fn write_rows(&self, out: &mut String) {
         for row in HudRow::ALL {
             self.write_row(row, out);
+            out.push('\n');
+        }
+        if !self.walkers.placed.is_empty() {
+            self.walkers.write_row(out);
             out.push('\n');
         }
     }

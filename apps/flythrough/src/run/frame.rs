@@ -669,6 +669,13 @@ impl Run {
             return;
         };
         gfx.frame.set_lights(&lights);
+        crate::walker::feed(
+            &mut self.modes.walkers,
+            &self.world,
+            self.fly.camera.position.to_array(),
+            &mut gfx.frame,
+            &gpu.queue,
+        );
         if std::mem::take(&mut self.upscaler_changed) {
             let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
             let output = gfx.frame.output_size();

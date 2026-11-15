@@ -593,6 +593,8 @@ pub struct Args {
     pub(crate) castle_out: Option<std::path::PathBuf>,
     /// `--castle-shot NAME`: the castle pose the camera starts at.
     pub(crate) castle_shot: castle::CastleShot,
+    /// `--entities N`: `N` walkers on a 3 m ring around the spawn (`crate::walker`).
+    pub(crate) entities: u32,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.

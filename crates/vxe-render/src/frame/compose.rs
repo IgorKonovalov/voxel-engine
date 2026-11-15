@@ -4,7 +4,7 @@
 //! A pass's source is [`prelude`] then the modules it uses, joined by newlines: `common.wgsl`
 //! (the views, `Params`, group 0, the pixel helpers), `mirror.wgsl` (the mirror's decode),
 //! `walk.wgsl` (the voxel walk), `hitrec.wgsl` (the hit record and the store's taps),
-//! `field_walk.wgsl` and `hit.wgsl` (the hit pass alone), `emissive.wgsl` (the emissive
+//! `entity.wgsl` (the entity walk), `field_walk.wgsl` and `hit.wgsl` (the hit pass alone), `emissive.wgsl` (the emissive
 //! estimator, after `light.wgsl`) and `edits.wgsl` (the edit boxes). A module's identifiers are
 //! global to every pass that joins it, so a clash is a naga error, which
 //! [`shader_sources`]'s validation finds headless.
@@ -32,6 +32,7 @@ pub(crate) const FIELD_WALK_WGSL: &str = include_str!("../shaders/field_walk.wgs
 pub(crate) const HIT_WGSL: &str = include_str!("../shaders/hit.wgsl");
 pub(crate) const EMISSIVE_WGSL: &str = include_str!("../shaders/emissive.wgsl");
 pub(crate) const EDITS_WGSL: &str = include_str!("../shaders/edits.wgsl");
+pub(crate) const ENTITY_WGSL: &str = include_str!("../shaders/entity.wgsl");
 
 /// The hit pass's modules.
 pub(crate) const HIT_MODULES: &[&str] = &[
@@ -39,6 +40,7 @@ pub(crate) const HIT_MODULES: &[&str] = &[
     MIRROR_WGSL,
     WALK_WGSL,
     HITREC_WGSL,
+    ENTITY_WGSL,
     FIELD_WALK_WGSL,
     HIT_WGSL,
 ];
@@ -105,6 +107,19 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHT_ON", Light::ON),
     ("LIGHT_SHADOWS", Light::SHADOWS),
     ("LIGHT_BOUNCE", Light::BOUNCE),
+    // The entity mirror (`entities`).
+    ("ENTITY_HEADER_WORD", crate::entities::HEADER_WORD as u32),
+    ("ENTITY_NODE_WORDS", crate::entities::NODE_WORDS as u32),
+    ("ENTITY_LEAF_BIT", crate::entities::LEAF_BIT),
+    (
+        "ENTITY_INSTANCE_WORD",
+        crate::entities::INSTANCE_WORD as u32,
+    ),
+    (
+        "ENTITY_INSTANCE_WORDS",
+        crate::entities::INSTANCE_WORDS as u32,
+    ),
+    ("ENTITY_MOVED", crate::entities::INSTANCE_MOVED),
     // The store (`bake`).
     ("STORE_FLAGS", STORE_FLAGS as u32),
     ("STORE_TABLE", STORE_TABLE as u32),

@@ -12,7 +12,7 @@ use crate::logic::REACH;
 use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
-use crate::toggles::{KEY_DROP, KEY_FIRE, KEY_REMOVE, TOGGLES};
+use crate::toggles::{KEY_DROP, KEY_FIRE, KEY_REMOVE, KEY_WALKER, TOGGLES};
 use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
@@ -198,8 +198,9 @@ impl Run {
         Some((hit.t as f32 / FIXED_ONE as f32, normal))
     }
 
-    /// The lights' action keys: `1` drops a light at the looked-at surface, `4` removes the
-    /// newest, `6` fires one along the view ray; each shows the count in the banner. A drop or
+    /// The lights' and walkers' action keys: `1` drops a light at the looked-at surface, `` ` ``
+    /// places a walker there, `4` removes the newest of the two, `6` fires a light along the
+    /// view ray; each shows the count in the banner. A drop or
     /// a shot into a full list prints [`lights::FULL_LINE`] and adds nothing.
     pub(crate) fn light_keys(&mut self, input: &Input) {
         let lamp = self.modes.lighting.lamp;
@@ -211,18 +212,41 @@ impl Run {
         if input.pressed(KEY_DROP) {
             let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
             shown = Some(match self.modes.lights.drop_at(lamp, eye, fwd, hit) {
-                Ok(()) => self.modes.lights.count_words(lamp),
+                Ok(()) => {
+                    self.modes.walkers.newest.push(false);
+                    self.modes.lights.count_words(lamp)
+                }
                 Err(line) => line.to_owned(),
             });
         }
+        if input.pressed(KEY_WALKER) {
+            let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
+            let at = hit.map_or(lights::MISS_DROP, |(t, _)| t);
+            let feet = std::array::from_fn(|k| eye[k] + fwd[k] * at);
+            let table = self.world.materials();
+            shown = Some(if self.modes.walkers.place(table, feet, eye) {
+                self.modes.walkers.newest.push(true);
+                self.modes.walkers.count_words()
+            } else {
+                "walker: no walker rows in this world's table".to_owned()
+            });
+        }
         if input.pressed(KEY_REMOVE) {
-            self.modes.lights.remove_newest();
-            shown = Some(self.modes.lights.count_words(lamp));
+            if self.modes.walkers.newest.pop() == Some(true) {
+                self.modes.walkers.remove_newest();
+                shown = Some(self.modes.walkers.count_words());
+            } else {
+                self.modes.lights.remove_newest();
+                shown = Some(self.modes.lights.count_words(lamp));
+            }
         }
         if input.pressed(KEY_FIRE) {
             let hit = self.surface_along_view(lights::SHOT_RANGE).map(|(t, _)| t);
             shown = Some(match self.modes.lights.fire(lamp, eye, fwd, hit) {
-                Ok(()) => format!("fire, {}", self.modes.lights.count_words(lamp)),
+                Ok(()) => {
+                    self.modes.walkers.newest.push(false);
+                    format!("fire, {}", self.modes.lights.count_words(lamp))
+                }
                 Err(line) => line.to_owned(),
             });
         }

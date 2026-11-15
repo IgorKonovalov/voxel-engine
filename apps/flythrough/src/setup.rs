@@ -332,7 +332,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let source = crate::thin_rig::ThinRig {
             wood: crate::THIN_RIG_WOOD,
         };
-        let table = materials(args);
+        let table = crate::walker::with_walker(&materials(args));
         println!(
             "thin rig: a 5-voxel trunk on a floor with free one-, two- and three-voxel rods, a \
              diagonal branch and two sheets of wood, {:?} chunks",
@@ -345,7 +345,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let source = crate::thin_rig::SeamRig {
             crisp: crate::THIN_RIG_WOOD,
         };
-        let table = materials(args);
+        let table = crate::walker::with_walker(&materials(args));
         println!(
             "seam rig: a rock wall with an 8 x 8 wood inlay flush in its face and a wood L on the \
              rock floor, {:?} chunks",
@@ -356,7 +356,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (source.spawn(), Pending::Level(generation))
     } else if let Some(edge) = args.mode.room() {
         let source = RoomSource::new(edge);
-        let table = materials(args);
+        let table = crate::walker::with_walker(&materials(args));
         println!(
             "room: a closed {:.1} m cube of air in 2 m of rock, {:?} chunks",
             edge as f32 * METRES_PER_VOXEL,
@@ -367,7 +367,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (source.spawn(), Pending::Level(generation))
     } else if args.mode.is_showcase() {
         let source = ShowcaseSource::new(seed);
-        let table = crate::with_showcase_rows(&materials(args));
+        let table = crate::walker::with_walker(&crate::with_showcase_rows(&materials(args)));
         let generation = std::thread::spawn(move || {
             let t = now();
             let extent = source.extent();
@@ -400,7 +400,7 @@ fn replay_world(args: &mut Args, path: &Path, failure: &Failure) -> (VoxelCoord,
         Ok(file) => {
             // The session continues under the save's seed.
             args.seed = file.seed;
-            let table = materials(args);
+            let table = crate::walker::with_walker(&materials(args));
             let source = CaveSource::new(file.seed, file.extent);
             let with_vault = args.vault;
             if with_vault {
@@ -446,7 +446,7 @@ fn level_world(args: &Args) -> (VoxelCoord, Pending) {
             source.vault_origin().0
         );
     }
-    let table = materials(args);
+    let table = crate::walker::with_walker(&materials(args));
     let with_vault = args.vault;
     let generation = std::thread::spawn(move || {
         let t = now();
@@ -471,7 +471,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     let seed = args.seed;
     let source = CaveSource::unbounded(seed);
     let workers = args.workers.unwrap_or_else(default_workers);
-    let world = World::new(&materials(args));
+    let world = World::new(&crate::walker::with_walker(&materials(args)));
     let cfg = StreamConfig {
         residency: args.residency,
         workers,

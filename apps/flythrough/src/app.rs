@@ -146,13 +146,17 @@ impl App for Flythrough {
                 args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
-                modes: self.args.start_modes(0.0).with_lights(
-                    crate::lights::TestLights::ring(
-                        self.args.light.lights,
-                        self.camera.position.to_array(),
+                modes: self
+                    .args
+                    .start_modes(0.0)
+                    .with_lights(
+                        crate::lights::TestLights::ring(
+                            self.args.light.lights,
+                            self.camera.position.to_array(),
+                        )
+                        .bouncing_all(self.args.light.lights_bounce),
                     )
-                    .bouncing_all(self.args.light.lights_bounce),
-                ),
+                    .with_walkers(crate::walker::Walkers::with_ring(self.args.entities)),
                 upscaler_changed: false,
                 sharpen_changed: false,
                 scene: self

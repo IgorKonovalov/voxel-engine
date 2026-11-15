@@ -1,0 +1,411 @@
+//! The testbed's walker (ADR-0050): a voxel model of four rigid parts made in code, a torso, a
+//! head with two glowing eyes and two legs, all at detail 2. `` ` `` places one standing on the
+//! looked-at surface, facing the camera; `--entities N` places `N` on a ring around the
+//! spawn. The engine knows no walker: this is the fly-through's entity.
+
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+use vxe_entity::{EntityId, EntitySet, Model, Part, PartPose, Pose, Q14_ONE, Quat};
+use vxe_render::{MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
+use vxe_world::{AIR, Fixed3, Material, MaterialId, MaterialTable, Prefab};
+
+/// The walker's body row's name in the table ([`with_walker`]).
+pub const BODY_ROW: &str = "walker";
+/// The eyes' row's name: it emits.
+pub const EYE_ROW: &str = "walker eye";
+/// The eyes' emission, radiance per channel: a warm glow.
+pub const EYE_EMISSION: [f32; 3] = [3.0, 1.6, 0.5];
+/// Model voxels per world voxel.
+pub const DETAIL: u8 = 2;
+/// The torso's size in model voxels: 8 wide (x), 6 deep (y), 12 tall (z).
+pub const TORSO: [u32; 3] = [8, 6, 12];
+/// The head's size: a 6-voxel cube; its eyes are on its front face (y 0).
+pub const HEAD: [u32; 3] = [6, 6, 6];
+/// A leg's size: 3 x 3, 8 tall.
+pub const LEG: [u32; 3] = [3, 3, 8];
+/// The ring `--entities` places walkers on: 3 m around the spawn.
+pub const RING_RADIUS: f32 = 30.0;
+/// How far down from the ring's points a walker looks for the floor, in voxels.
+const FLOOR_SEARCH: i64 = 200;
+
+/// `table` with the walker's two rows appended: its body and its emissive eyes.
+pub fn with_walker(table: &MaterialTable) -> MaterialTable {
+    let mut t = table.clone();
+    t.push(Material {
+        albedo: [0.55, 0.52, 0.48],
+        ..Material::named(BODY_ROW)
+    });
+    t.push(Material {
+        albedo: [0.9, 0.7, 0.4],
+        emission: EYE_EMISSION,
+        ..Material::named(EYE_ROW)
+    });
+    t
+}
+
+/// The ids of the walker's rows in `table`, when it has them.
+pub fn rows(table: &MaterialTable) -> Option<(MaterialId, MaterialId)> {
+    let find = |name: &str| {
+        table
+            .rows()
+            .iter()
+            .position(|m| m.name == name)
+            .and_then(|i| MaterialId::try_from(i).ok())
+    };
+    Some((find(BODY_ROW)?, find(EYE_ROW)?))
+}
+
+fn solid(size: [u32; 3], m: MaterialId) -> Vec<MaterialId> {
+    vec![m; (size[0] * size[1] * size[2]) as usize]
+}
+
+/// The walker's model: torso (part 0, hung from the root), head (1) on the torso, left and
+/// right legs (2, 3) from the torso's hips, the legs sharing one prefab. Each part's pivot is
+/// where it joins its parent: the torso's and head's bottom centres, the legs' top centres.
+pub fn model(body: MaterialId, eye: MaterialId) -> Model {
+    let mut head = solid(HEAD, body);
+    for x in [1usize, 4] {
+        // Voxel (x, 0, 3): the front face, a little above the middle.
+        head[x + 6 * 6 * 3] = eye;
+    }
+    let leg = Arc::new(Prefab::new(LEG, solid(LEG, body), None));
+    let parts = vec![
+        Part {
+            volume: Arc::new(Prefab::new(TORSO, solid(TORSO, body), None)),
+            parent: None,
+            pivot: [4 * 256, 3 * 256, 0],
+            detail: DETAIL,
+        },
+        Part {
+            volume: Arc::new(Prefab::new(HEAD, head, None)),
+            parent: Some(0),
+            pivot: [3 * 256, 3 * 256, 0],
+            detail: DETAIL,
+        },
+        Part {
+            volume: leg.clone(),
+            parent: Some(0),
+            pivot: [384, 384, 8 * 256],
+            detail: DETAIL,
+        },
+        Part {
+            volume: leg,
+            parent: Some(0),
+            pivot: [384, 384, 8 * 256],
+            detail: DETAIL,
+        },
+    ];
+    Model::new(parts).expect("the walker's parts are valid")
+}
+
+/// A turn of `angle` radians about axis `axis` (0 x, 1 y, 2 z) in Q14.
+pub fn turn(axis: usize, angle: f32) -> Quat {
+    let (s, c) = (0.5 * angle).sin_cos();
+    let mut q = [(c * Q14_ONE as f32).round() as i16, 0, 0, 0];
+    q[1 + axis] = (s * Q14_ONE as f32).round() as i16;
+    Quat(q)
+}
+
+/// The walker standing with its feet's centre at `feet` (world voxels), turned `yaw` radians
+/// about z from facing -y, its legs swung `swing` radians about x, opposite ways.
+pub fn pose(feet: [f32; 3], yaw: f32, swing: f32) -> Pose {
+    let fixed = |v: f32| (v * 256.0).round() as i64;
+    // Each offset in 1/256 world voxel: a model voxel is half a world voxel.
+    let leg_top = (LEG[2] as i32) * 128;
+    Pose {
+        root: Fixed3(feet.map(fixed)),
+        root_q: turn(2, yaw),
+        parts: vec![
+            PartPose {
+                t: [0, 0, leg_top],
+                q: Quat::IDENTITY,
+            },
+            PartPose {
+                t: [0, 0, TORSO[2] as i32 * 128],
+                q: Quat::IDENTITY,
+            },
+            PartPose {
+                t: [-256, 0, 0],
+                q: turn(0, swing),
+            },
+            PartPose {
+                t: [256, 0, 0],
+                q: turn(0, -swing),
+            },
+        ],
+    }
+}
+
+/// The yaw that turns a walker at `at` to face `eye` (its front is -y at yaw 0).
+pub fn facing(at: [f32; 3], eye: [f32; 3]) -> f32 {
+    let (dx, dy) = (eye[0] - at[0], eye[1] - at[1]);
+    // -y turned by yaw about z is (sin yaw, -cos yaw).
+    dx.atan2(-dy)
+}
+
+/// One placed walker: its entity and where it stands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placed {
+    pub id: EntityId,
+    pub feet: [f32; 3],
+    pub yaw: f32,
+}
+
+/// The testbed's walkers: the set the frame draws, the walkers in the order placed, the
+/// model and its handle once uploaded, and the counts the frame drew last. Two are equal when
+/// they place the same walkers alike (the set follows from the placements).
+#[derive(Clone, Debug, Default)]
+pub struct Walkers {
+    pub set: EntitySet,
+    pub placed: Vec<Placed>,
+    model: Option<Arc<Model>>,
+    pub handle: Option<ModelHandle>,
+    /// `--entities N`'s ring, placed on the first frame that has the world.
+    pub ring: u32,
+    /// What `4` removes, newest last: `true` a walker, `false` a light.
+    pub newest: Vec<bool>,
+    pub drawn: usize,
+    pub parts: usize,
+    pub over: usize,
+}
+
+impl PartialEq for Walkers {
+    fn eq(&self, o: &Self) -> bool {
+        (self.placed == o.placed)
+            && (self.handle, self.ring, &self.newest) == (o.handle, o.ring, &o.newest)
+            && (self.drawn, self.parts, self.over) == (o.drawn, o.parts, o.over)
+    }
+}
+
+impl Walkers {
+    /// No walker yet; `ring` placed on the ring once the world is there.
+    pub fn with_ring(ring: u32) -> Self {
+        Self {
+            ring,
+            ..Self::default()
+        }
+    }
+
+    /// The model, built on first use from `table`'s walker rows; `None` without them.
+    pub fn model(&mut self, table: &MaterialTable) -> Option<Arc<Model>> {
+        if self.model.is_none() {
+            let (body, eye) = rows(table)?;
+            self.model = Some(Arc::new(model(body, eye)));
+        }
+        self.model.clone()
+    }
+
+    /// Places a walker with its feet at `feet`, facing `eye`.
+    pub fn place(&mut self, table: &MaterialTable, feet: [f32; 3], eye: [f32; 3]) -> bool {
+        let Some(model) = self.model(table) else {
+            return false;
+        };
+        let yaw = facing(feet, eye);
+        let Ok(id) = self.set.insert(model, pose(feet, yaw, 0.0)) else {
+            return false;
+        };
+        self.placed.push(Placed { id, feet, yaw });
+        true
+    }
+
+    /// Removes the newest walker.
+    pub fn remove_newest(&mut self) {
+        if let Some(p) = self.placed.pop() {
+            self.set.remove(p.id);
+        }
+    }
+
+    /// The frame's list: every placed walker under the uploaded handle.
+    pub fn list(&self) -> Vec<(EntityId, ModelHandle)> {
+        match self.handle {
+            Some(h) => self.placed.iter().map(|p| (p.id, h)).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The HUD row, `entities <n>/64 parts <m>/512 over <k>`.
+    pub fn write_row(&self, out: &mut String) {
+        let _ = write!(
+            out,
+            "entities {}/{MAX_ENTITIES} parts {}/{MAX_ENTITY_PARTS} over {}",
+            self.drawn, self.parts, self.over
+        );
+    }
+
+    /// The banner's count, `entities <n>/64`.
+    pub fn count_words(&self) -> String {
+        format!(
+            "entities {}/{MAX_ENTITIES}",
+            self.placed.len().min(MAX_ENTITIES)
+        )
+    }
+
+    /// The ring's points: `n` on a horizontal circle of [`RING_RADIUS`] around `centre`.
+    pub fn ring_points(n: u32, centre: [f32; 3]) -> Vec<[f32; 3]> {
+        (0..n)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32 / n as f32;
+                [
+                    centre[0] + RING_RADIUS * a.cos(),
+                    centre[1] + RING_RADIUS * a.sin(),
+                    centre[2],
+                ]
+            })
+            .collect()
+    }
+
+    /// Places the pending ring around `centre`, each walker on the first floor below its point
+    /// (`floor_below` gives the drop in voxels), facing the centre.
+    pub fn place_ring(
+        &mut self,
+        table: &MaterialTable,
+        centre: [f32; 3],
+        floor_below: impl Fn([f32; 3], i64) -> Option<f32>,
+    ) {
+        let n = std::mem::take(&mut self.ring);
+        for p in Self::ring_points(n, centre) {
+            let drop = floor_below(p, FLOOR_SEARCH).unwrap_or(0.0);
+            let feet = [p[0], p[1], p[2] - drop];
+            self.place(table, feet, centre);
+        }
+    }
+}
+
+/// One frame's walkers into `frame`: the pending ring placed around `eye` on `world`'s floor,
+/// the model uploaded on first need, and the frame's entities set while any walker is placed
+/// or was drawn the frame before; the drawn counts copied back for the HUD.
+pub fn feed(
+    walkers: &mut Walkers,
+    world: &vxe_world::World,
+    eye: [f32; 3],
+    frame: &mut vxe_render::Frame,
+    queue: &vxe_render::wgpu::Queue,
+) {
+    if walkers.ring > 0 {
+        let floor_below = |p: [f32; 3], search: i64| {
+            let o = Fixed3(p.map(|v| (v * 256.0).round() as i64));
+            let hit = world
+                .raycast(o, [0, 0, -256], search * 256)
+                .ok()
+                .flatten()?;
+            Some(hit.t as f32 / 256.0)
+        };
+        walkers.place_ring(world.materials(), eye, floor_below);
+    }
+    if walkers.placed.is_empty() && walkers.drawn == 0 && walkers.over == 0 {
+        return;
+    }
+    if walkers.handle.is_none()
+        && let Some(model) = walkers.model(world.materials())
+    {
+        match frame
+            .entity_mirror_mut()
+            .upload_model(queue, &model, world.materials())
+        {
+            Ok(h) => walkers.handle = Some(h),
+            Err(e) => println!("walker: {e}"),
+        }
+    }
+    frame.set_entities(queue, &walkers.set, &walkers.list());
+    let m = frame.entity_mirror();
+    (walkers.drawn, walkers.parts, walkers.over) =
+        (m.entities_drawn(), m.parts_drawn(), m.entities_over_cap());
+}
+
+/// Voxels of the walker's model that are not air, per part, for the readings.
+pub fn solid_voxels(model: &Model) -> Vec<usize> {
+    model
+        .parts()
+        .iter()
+        .map(|p| {
+            let s = p.volume.size();
+            let mut n = 0;
+            for z in 0..s[2] as i32 {
+                for y in 0..s[1] as i32 {
+                    for x in 0..s[0] as i32 {
+                        n += usize::from(p.volume.get([x, y, z]).is_some_and(|m| m != AIR));
+                    }
+                }
+            }
+            n
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_walker_has_four_parts_and_two_glowing_eyes() {
+        let table = with_walker(&MaterialTable::new());
+        let (body, eye) = rows(&table).unwrap();
+        let m = model(body, eye);
+        assert_eq!(m.parts().len(), 4);
+        let head = &m.parts()[1].volume;
+        assert_eq!(head.get([1, 0, 3]), Some(eye));
+        assert_eq!(head.get([4, 0, 3]), Some(eye));
+        assert_eq!(head.get([2, 0, 3]), Some(body));
+        assert_eq!(table.get(eye).unwrap().emission, EYE_EMISSION);
+        assert_eq!(m.parts()[2].volume.id(), m.parts()[3].volume.id());
+    }
+
+    #[test]
+    fn a_walker_faces_the_eye() {
+        // At yaw 0 the front is -y: an eye at -y gives yaw 0, one at +x a quarter turn.
+        assert!(facing([0.0; 3], [0.0, -5.0, 0.0]).abs() < 1e-6);
+        let q = facing([0.0; 3], [5.0, 0.0, 0.0]);
+        assert!((q - std::f32::consts::FRAC_PI_2).abs() < 1e-6, "{q}");
+    }
+
+    #[test]
+    fn the_hud_row_and_the_banner_count_the_walkers() {
+        let table = with_walker(&MaterialTable::new());
+        let mut w = Walkers::default();
+        assert!(w.place(&table, [0.0; 3], [0.0, -9.0, 0.0]));
+        assert!(w.place(&table, [9.0, 0.0, 0.0], [0.0, -9.0, 0.0]));
+        (w.drawn, w.parts, w.over) = (2, 8, 0);
+        let mut row = String::new();
+        w.write_row(&mut row);
+        assert_eq!(row, "entities 2/64 parts 8/512 over 0");
+        assert_eq!(w.count_words(), "entities 2/64");
+        w.remove_newest();
+        assert_eq!(w.placed.len(), 1);
+        assert_eq!(w.set.len(), 1);
+    }
+
+    /// `` ` `` shows the count in the banner (`run::keys` passes it to `show_lights`), and the HUD's
+    /// mode block gains the walkers' row once one is placed.
+    #[test]
+    fn the_banner_names_the_walkers_after_the_key() {
+        let table = with_walker(&MaterialTable::new());
+        let mut m = crate::hud::Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::Half,
+            0.0,
+        );
+        let mut rows = String::new();
+        m.write_rows(&mut rows);
+        assert!(!rows.contains("entities"), "no walker, no row");
+        assert_eq!(crate::toggles::KEY_WALKER, vxe_app::KeyCode::Backquote);
+        for x in [0.0, 9.0] {
+            assert!(m.walkers.place(&table, [x, 0.0, 0.0], [0.0, -9.0, 0.0]));
+        }
+        m.show_lights(m.walkers.count_words(), 10.0);
+        assert!(
+            m.banner(10.0)
+                .unwrap()
+                .lines()
+                .any(|l| l == "entities 2/64")
+        );
+        (m.walkers.drawn, m.walkers.parts) = (2, 8);
+        let mut rows = String::new();
+        m.write_rows(&mut rows);
+        assert!(
+            rows.lines()
+                .any(|l| l == "entities 2/64 parts 8/512 over 0"),
+            "{rows}"
+        );
+    }
+}

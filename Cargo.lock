@@ -977,6 +977,7 @@ dependencies = [
  "vxe-app",
  "vxe-assets",
  "vxe-audio",
+ "vxe-entity",
  "vxe-net",
  "vxe-render",
  "vxe-script-wasm",
@@ -3182,6 +3183,7 @@ dependencies = [
  "glam",
  "log",
  "pollster",
+ "vxe-entity",
  "vxe-world",
  "wgpu",
 ]

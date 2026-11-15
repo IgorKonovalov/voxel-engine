@@ -123,6 +123,8 @@ pub const KEY_DROP: KeyCode = KeyCode::Digit1;
 pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
 /// `6`: fire a light along the view ray.
 pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
+/// `` ` `` (Backquote): place a walker on the looked-at surface (`crate::walker`).
+pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
 
 /// Every key `run::keys` binds to an action with no mode (the toggles' keys are in
 /// [`TOGGLES`]): the bench, the stamp, walking, the coarse grid, the crumble, the castle shot,
@@ -140,6 +142,7 @@ pub const ACTION_KEYS: &[KeyCode] = &[
     KEY_DROP,
     KEY_REMOVE,
     KEY_FIRE,
+    KEY_WALKER,
     KeyCode::KeyH,
     KeyCode::KeyT,
     KeyCode::KeyE,

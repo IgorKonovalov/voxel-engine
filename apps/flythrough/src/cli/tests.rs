@@ -843,3 +843,13 @@ fn the_start_lighting_is_the_shared_default_lighting() {
         )
     );
 }
+
+/// `--entities N` sets the walkers' ring (none by default); a word that is not a count is
+/// refused.
+#[test]
+fn the_entities_flag_parses_a_count() {
+    assert_eq!(parse_args_from(argv(&[])).unwrap().entities, 0);
+    let a = parse_args_from(argv(&["--entities", "3"])).expect("--entities 3 parses");
+    assert_eq!(a.entities, 3);
+    assert!(parse_args_from(argv(&["--entities", "x"])).is_err());
+}

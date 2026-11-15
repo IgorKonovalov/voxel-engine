@@ -708,6 +708,11 @@ fn field_pixel(gid: vec2<u32>, resume: bool, t: f32, v: vec3<i32>, axis: i32) {
         pos = vec4<f32>(o + d * h.t, h.t);
         info = vec4<u32>(octa16_encode(n), fh.material, flags);
     }
+    let e = entity_march(o, d, select(BIG, h.t, h.found));
+    if (e.found) {
+        pos = entity_pos(o, d, e);
+        info = entity_info(e);
+    }
     var layer = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     let view = view_mode();
     if (view == VIEW_STEPS) {

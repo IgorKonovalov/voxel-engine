@@ -780,6 +780,15 @@ fn light_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
+            &["--entities"],
+            "N",
+            "start with N walkers (voxel-model entities) on a 3 m ring around the spawn",
+            |p: &mut Parsing, v| {
+                p.args.entities = v.parse()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--lights-bounce"],
             "on|off",
             "the --lights ring's lights feed the lamp's bounce channel (off)",

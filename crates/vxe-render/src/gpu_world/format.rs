@@ -22,8 +22,8 @@ pub const BIN_COUNT: usize = SLOT_BINS.len();
 pub(crate) const MAX_SHARDS: u32 = 4;
 /// Storage buffers the frame's passes bind besides the pool shards: records, table,
 /// materials, light samples and the emission scale, plus the face store the hit pass reads
-/// for a translucent face's reflected light (ADR-0047).
-pub(crate) const OTHER_STORAGE_BUFFERS: u32 = 6;
+/// for a translucent face's reflected light (ADR-0047), and the entity mirror (ADR-0050).
+pub(crate) const OTHER_STORAGE_BUFFERS: u32 = 7;
 /// `u32` words of a slot's opaque mask (its unit 0): one bit per voxel.
 pub(crate) const OPAQUE_WORDS: usize = 16;
 /// The header unit's words: the palette (16 `u16`), the two translucent words (one bit per

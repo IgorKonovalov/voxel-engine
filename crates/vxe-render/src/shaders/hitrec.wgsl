@@ -10,6 +10,12 @@ const HIT_TRANSLUCENT: u32 = 4u;
 
 const HIT_AXIS_SHIFT: u32 = 3u;
 
+// An entity's voxel (entity.wgsl): no cube face (axis bits 0), the instance from bit
+// HIT_INSTANCE_SHIFT.
+const HIT_ENTITY: u32 = 32u;
+
+const HIT_INSTANCE_SHIFT: u32 = 6u;
+
 // The store's words (`bake::Store`): three unused words, the window's origin and size in
 // chunks, the flags, then a word per window chunk, its block's first word or 0. A block is 512
 // directory words (a brick's offset from the block's start just past its record << 11; 0 none),
@@ -103,7 +109,8 @@ fn face_unmixed(m: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
 }
 
 // One pixel's hit record, decoded from the hit buffer: `n` is the shading normal,
-// `axis` the entry face's axis (-1: the ray started inside rock).
+// `axis` the entry face's axis (-1: the ray started inside rock, or an entity's voxel, whose
+// faces are not on the world's grid); `entity` an entity hit and `instance` its part's instance.
 struct HitRecord {
     found: bool,
     field: bool,
@@ -113,6 +120,8 @@ struct HitRecord {
     p: vec3<f32>,
     t: f32,
     n: vec3<f32>,
+    entity: bool,
+    instance: u32,
 };
 
 fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
@@ -126,12 +135,18 @@ fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
         pos.xyz,
         pos.w,
         octa16_decode(info.xy),
+        (flags & HIT_ENTITY) != 0u,
+        flags >> HIT_INSTANCE_SHIFT,
     );
 }
 
-// The shadow normal of a hit seen along `d`: a field-surface hit's field normal, unmixed
+// The shadow normal of a hit seen along `d`: an entity hit's turned face normal; a
+// field-surface hit's field normal, unmixed
 // (`face_unmixed`); else the entry face's normal, `-d` for a ray that started inside rock.
 fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
+    if (rec.entity) {
+        return rec.n;
+    }
     if (rec.axis < 0) {
         return select(-d, rec.n, rec.field);
     }

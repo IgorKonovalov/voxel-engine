@@ -78,6 +78,8 @@ pub struct Frame {
     /// A copy of the composite's image at the internal size, taken right after the composite
     /// pass ([`Frame::set_composite_capture`]); `None` unless a test or tool asked for it.
     composite_capture: Option<wgpu::Texture>,
+    /// The entities' pool, instances and tree (ADR-0050), group 0's binding 15.
+    entities: crate::entities::EntityMirror,
 }
 
 impl Frame {
@@ -112,6 +114,10 @@ impl Frame {
             dt: 1.0 / 60.0,
             reset_exposure: std::sync::atomic::AtomicBool::new(true),
             composite_capture: None,
+            entities: crate::entities::EntityMirror::new(
+                device,
+                crate::entities::DEFAULT_ENTITY_POOL_BYTES,
+            ),
         }
     }
 
@@ -464,6 +470,39 @@ impl Frame {
     /// The temporal pass's moments (rgba16float: luminance, its square, the age in frames).
     pub fn moments(&self) -> &wgpu::Texture {
         &self.targets.moments[self.cur]
+    }
+
+    /// The entity mirror the frame draws (ADR-0050): its pool takes models
+    /// ([`crate::EntityMirror::upload_model`]).
+    pub fn entity_mirror(&self) -> &crate::EntityMirror {
+        &self.entities
+    }
+
+    pub fn entity_mirror_mut(&mut self) -> &mut crate::EntityMirror {
+        &mut self.entities
+    }
+
+    /// Replaces the entity mirror (a pool of another size); the next frames draw no entity
+    /// until [`Frame::set_entities`].
+    pub fn set_entity_mirror(&mut self, mirror: crate::EntityMirror) {
+        self.entities = mirror;
+    }
+
+    /// The entities the next frames draw: one instance a part of each entity of `list` as
+    /// `set` poses it, within the caps ([`crate::EntityMirror::set_entities`]). Call once a
+    /// frame while anything moves: the transforms of the call before are the frame before's.
+    pub fn set_entities(
+        &mut self,
+        queue: &wgpu::Queue,
+        set: &vxe_entity::EntitySet,
+        list: &[(vxe_entity::EntityId, crate::ModelHandle)],
+    ) {
+        self.entities.set_entities(queue, set, list);
+    }
+
+    /// Entities the last [`Frame::set_entities`] was given and did not draw.
+    pub fn entities_over_cap(&self) -> usize {
+        self.entities.entities_over_cap()
     }
 
     /// Bytes the frame's targets, its probe volume (once built), FSR 2's resources and the store's

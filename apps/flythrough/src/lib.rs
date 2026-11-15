@@ -30,6 +30,7 @@ mod streaming;
 mod test_support;
 pub mod thin_rig;
 pub mod toggles;
+pub mod walker;
 pub use flythrough_logic as logic;
 
 pub use census::*;

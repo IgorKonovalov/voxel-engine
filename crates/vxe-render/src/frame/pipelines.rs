@@ -389,7 +389,7 @@ impl Pipelines {
 
 /// The world's group 0, as `common.wgsl` declares it: the frame's parameters (0), the mirror's
 /// pools, records, table and materials, the light samples and the emission scales, the blue
-/// noise (12), the exposure state (13) and the list of lights (14).
+/// noise (12), the exposure state (13), the list of lights (14) and the entity mirror (15).
 fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let storage = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -423,6 +423,7 @@ fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             storage(9),
             storage(10),
             storage(11),
+            storage(15),
             sampled_texture(12, FLOAT),
             wgpu::BindGroupLayoutEntry {
                 binding: 13,

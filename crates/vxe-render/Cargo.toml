@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 bytemuck.workspace = true
 glam.workspace = true
+vxe-entity.workspace = true
 vxe-world.workspace = true
 wgpu.workspace = true
 

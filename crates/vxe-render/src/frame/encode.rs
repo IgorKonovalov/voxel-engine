@@ -147,6 +147,7 @@ impl Frame {
                 },
                 buffer_entry(13, self.exposure.state_uniform()),
                 buffer_entry(14, &self.state.lights.buffer),
+                buffer_entry(15, self.entities.buffer()),
             ],
         })
     }
