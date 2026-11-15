@@ -569,7 +569,7 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 | 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | struck: run as Plan 0064's Phase 3 (moved there 2026-11-10); nothing rebuilt here | Plan 0064 (373beb9) |
 | 3: the frame builds its bind groups once per size | dev | done; deviations: groups are cached by what they bind (`BindCache`, kept 2 encodes past their last use, cleared by `set_sizes`), built on first use rather than per parity in `set_sizes`, and `Targets` holds no views; the exposure and field passes keep caches of their own; `Dispatch` moved to a new `frame/dispatch.rs`; `exposure.rs`, `frame/{mod,state,dispatch}.rs` and `gpu_util.rs` are outside Files touched (the split of `marcher.rs`); encode CPU p50 0.20 to 0.03 ms (RTX), 0.22 to 0.06 ms (RADV) | 2056310 |
 | 4: the sync sizes only what it uploads | dev | struck into Plan 0070 (owner, 2026-11-12). There: `place_lights` walks only when a light chunk or its focus changed (`ef0b55c`), and the emitter rescan set is a `[u64; 8]` (`297e7a9`). Not built: the deferral ahead of `need()`, the masks carried to `upload`, `upload_set` as a bitset (still a `Vec<bool>`), the scratch `Vec`s; the `sized_chunks` property for a prepared chunk left with ADR-0056's worker packing, deferred | Plan 0070 |
-| 5: the march walks without reading what it discards | dev | done; deviations: `Cell` carries the Full entry (its unused `slot` renamed `full`) and `cell_material` resolves it; the camera chunk is three `i32` words where `Params._tail` was (no size change), set in `encode.rs` from `views[0]`; the steps view's counting variants are lazy (hit pass: `Marcher::get`, `HitPipe`; light pass: `P_LIGHT_STEPS`); `field_walk.wgsl` (Plan 0045's split of `field.wgsl`), `common.wgsl`, `mirror.wgsl`, `walk.wgsl`, `frame/{encode,pipelines,settings,compose}.rs`, `layout_tests.rs` and `bake/pipeline.rs` are the split files of Files touched; the shift test is in `frame/compose.rs` | committed with this row |
+| 5: the march walks without reading what it discards | dev | done; deviations: `Cell` carries the Full entry (its unused `slot` renamed `full`) and `cell_material` resolves it; the camera chunk is three `i32` words where `Params._tail` was (no size change), set in `encode.rs` from `views[0]`; the steps view's counting variants are lazy (hit pass: `Marcher::get`, `HitPipe`; light pass: `P_LIGHT_STEPS`); `field_walk.wgsl` (Plan 0045's split of `field.wgsl`), `common.wgsl`, `mirror.wgsl`, `walk.wgsl`, `frame/{encode,pipelines,settings,compose}.rs`, `layout_tests.rs` and `bake/pipeline.rs` are the split files of Files touched; the shift test is in `frame/compose.rs` | 777abc0 |
 | 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | ebd54e3 |
 | 7: the controller and the server stop repeating work | dev | done; deviations: the box list is per-thread scratch with a recollect past its region, and covers the usual sweeps only; the counting test is in `vxe-sim/tests/controller.rs`; inputs are logged after the logic's tick | 2ede457 |
 | 8: the guards that were missing | dev | done, run ahead of Phases 3 and 5 (its Order line); deviations: the helpers take `(pool_bytes, features)` and an adapter-level form, `VXE_TEST_ADAPTER_FILTER` is the name filter; the layout test is `src/layout_tests.rs` (a unit test), with visibility raised to `pub(crate)` on six mirrored structs (`frame/{state,lights,upscale}.rs`, `fsr2/prepare.rs`, `field.rs`, `hud.rs`) and three constants (`bake/`) outside Files touched; it lists eight same-named literal constants it compares rather than moving them | 194a126 |
@@ -585,8 +585,30 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
   a clear that finds the spare dirty parks its network until the spare is clean; the
   per-block clearing bound is `2 x BLOCK` frames a line (owner answer 3), and the ring-out
   test's bar moved with it. Commit: c1e3665.
+- Phase 5: the committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`
+  differ in a few pixels from what this machine's lavapipe renders at both `371fa7a` and the
+  tip (base and tip byte-equal; readings log, Phase 5). The steps view's light-pass,
+  cutaway and field-look counts lose the material reads Phase 5 removes; no test pins them.
+- Phase 4's unbuilt items stay with Plan 0070's row above.
 
 ### Close triggers
+
+- Tip gate at `777abc0`'s code (dev box, `CARGO_BUILD_JOBS=12`, 16 GiB scope; readings log,
+  Phase 5): `scripts/build-guests.sh` exit 0; `cargo nextest run --workspace --profile gate
+  --no-fail-fast`, exclusive perf lock, lavapipe, load 9.77 (loaded): exit 0, 903 run, 903
+  passed, 91 skipped, 688 s; `cargo test --workspace --doc` 10 passed; `cargo clippy
+  --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo
+  deny check` ok; `check-test-tiers`, `check-file-size`, `check-comment-hygiene`,
+  `check-doc-links`, `check-index-rows`, `check-plan-size` exit 0.
+- Determinism (section 6): every pinned hash test in the gate passed unchanged.
+- Section 2 at the defaults, headless autopilot, two rounds, base `371fa7a` / tip `777abc0`,
+  p50 ms, exclusive perf lock, load at start 2.00 or less (readings log, Close): RTX 3080
+  Laptop march GPU 1.574, 2.397 / 1.478, 1.436; hit pass 0.084, 0.127 / 0.081, 0.084; light
+  pass 0.109, 0.191 / 0.089, 0.090. RADV RENOIR march GPU 9.047, 8.799 / 8.941, 8.972; hit
+  pass 0.906, 0.946 / 0.925, 0.852; light pass 0.644, 0.639 / 0.640, 0.641.
+- Encode CPU (Phase 3, loaded 3.7 to 9.5): p50 0.20 to 0.03 ms RTX, 0.22 to 0.06 ms RADV.
+- Sections 4 and 9 (Phases 1, 6, 7): the side lane's readings, readings log Phases 1, 6, 7 and
+  the fix passes.
 
 ## Followups
 
