@@ -552,8 +552,8 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 |---|---|---|---|
 | 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](logs/0062.md) | bc80246 |
 | 2: The mirror and the primary hit | dev | done; names, packing and keys in the readings log | 70bdec7 |
-| 3: Light, shadow and emission | dev | done; readings in the readings log | committed with this row |
-| 4: Motion | dev | not started | |
+| 3: Light, shadow and emission | dev | done; readings in the readings log | 31c7540 |
+| 4: Motion | dev | done; the fresh bit's place, the keys and the readings in the readings log | committed with this row |
 | 5: The costs and the caps | dev | not started | |
 | 6: The owner's window | human | not started | |
 
@@ -566,6 +566,15 @@ each. Empty is fine.)_
 - Phase 1: `EntityHit` carries `face: Option<vxe_world::Face>` in place of `axis` and
   `positive`; a part's rest offset from its parent is the child's `PartPose::t`, zero in
   `Pose::rest` (the mapping is in the readings log).
+- Phase 4: the walk is `F11` (`8` is bound); `--entities-walk on|off` added for headless
+  walking readings (`cli/`). The `fresh` bit rides in the light pass's irradiance `a` and the
+  temporal pass's accumulation `a` (both were 0), not a hit-record flags word.
+- Phase 4: `gradient.wgsl` reprojects no position; it reads 0 at last frame's entity hit while
+  any part moved. The temporal pass's 3 x 3 fallback search does not run where the nearest
+  previous pixel showed another thing (`hidden`), beyond the plan's tap rejection.
+- Phase 4: done-whens 3 and 4 are in `gpu_entities.rs`, not `gpu_fsr2.rs` (at 1975 lines, the
+  2000-line cap) and `gpu_upscale.rs`; done-when 4's gate variant moves 8 frames, the 16-frame
+  move is `#[ignore = "soak"]`.
 
 ### Close triggers
 

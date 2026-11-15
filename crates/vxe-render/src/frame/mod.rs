@@ -406,8 +406,10 @@ impl Frame {
         &self.targets.transmit
     }
 
-    /// The light pass's irradiance (rgba16float: the emissive sample in rgb, 0 in a; in the
-    /// steps view the list's shadow rays' counters, the rays cast in a).
+    /// The light pass's irradiance (rgba16float: the emissive sample in rgb; in a 1 at a fresh
+    /// pixel, one whose shadow ray entered the box of an entity with a moved part or whose hit
+    /// is a moved part's voxel, else 0; in the steps view the list's shadow rays' counters, the
+    /// rays cast in a).
     pub fn irradiance(&self) -> &wgpu::Texture {
         &self.targets.irradiance
     }
@@ -435,8 +437,8 @@ impl Frame {
         self.composite_capture.as_ref()
     }
 
-    /// The temporal pass's accumulated irradiance (rgba16float: the emissive part in rgb, 0 in
-    /// a).
+    /// The temporal pass's accumulated irradiance (rgba16float: the emissive part in rgb; in a
+    /// 1 at a fresh pixel, as [`Frame::irradiance`], else 0).
     pub fn accumulated(&self) -> &wgpu::Texture {
         &self.targets.accum[self.cur]
     }
@@ -503,6 +505,13 @@ impl Frame {
     /// Entities the last [`Frame::set_entities`] was given and did not draw.
     pub fn entities_over_cap(&self) -> usize {
         self.entities.entities_over_cap()
+    }
+
+    /// Whether any part the last [`Frame::set_entities`] drew moved since the call before: its
+    /// transform differs, so its pixels and the pixels whose shadow rays cross its entity's box
+    /// are fresh ([`Frame::irradiance`]).
+    pub fn entities_moved(&self) -> bool {
+        self.entities.entities_moved()
     }
 
     /// Bytes the frame's targets, its probe volume (once built), FSR 2's resources and the store's

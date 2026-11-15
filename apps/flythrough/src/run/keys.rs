@@ -12,7 +12,9 @@ use crate::logic::REACH;
 use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
-use crate::toggles::{KEY_DROP, KEY_EYE_LIGHTS, KEY_FIRE, KEY_REMOVE, KEY_WALKER, TOGGLES};
+use crate::toggles::{
+    KEY_DROP, KEY_EYE_LIGHTS, KEY_FIRE, KEY_REMOVE, KEY_WALK, KEY_WALKER, TOGGLES,
+};
 use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
@@ -233,6 +235,9 @@ impl Run {
         }
         if input.pressed(KEY_EYE_LIGHTS) {
             shown = Some(self.modes.walkers.toggle_eye_lights().to_owned());
+        }
+        if input.pressed(KEY_WALK) {
+            shown = Some(self.modes.walkers.toggle_walk().to_owned());
         }
         if input.pressed(KEY_REMOVE) {
             if self.modes.walkers.newest.pop() == Some(true) {

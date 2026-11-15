@@ -125,6 +125,12 @@ fn entity_part(k: u32, o: vec3<f32>, d: vec3<f32>, limit: f32) -> EntityHit {
     return miss;
 }
 
+// Set by `entity_march` when its ray enters, before `t_limit` and any hit, the box of an
+// entity with a moved part (ENTITY_LEAF_MOVED; the box holds the parts now and the frame
+// before); never cleared by it. The light pass clears it per pixel and reads it after the
+// pixel's shadow rays: a fresh pixel's direct light may have changed under a moving shadow.
+var<private> entity_fresh: bool = false;
+
 // The nearest entity voxel along `o + d t` for `0 <= t < t_limit` (`d` need not be unit; `t`
 // is in its units): the tree's boxes from the root, a fixed stack of 8, then each leaf's parts.
 // With no entity drawn it returns at once.
@@ -153,7 +159,11 @@ fn entity_march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> EntityHit {
         let b = entity_data[w + 7u];
         if ((a & ENTITY_LEAF_BIT) != 0u) {
             let first = a & ~ENTITY_LEAF_BIT;
-            for (var k = first; k < first + b; k++) {
+            if ((b & ENTITY_LEAF_MOVED) != 0u) {
+                entity_fresh = true;
+            }
+            let count = b & ~ENTITY_LEAF_MOVED;
+            for (var k = first; k < first + count; k++) {
                 let h = entity_part(k, o, d, best.t);
                 if (h.found && h.t < best.t) {
                     best = h;
@@ -177,6 +187,39 @@ fn entity_pos(o: vec3<f32>, d: vec3<f32>, e: EntityHit) -> vec4<f32> {
 fn entity_info(e: EntityHit) -> vec4<u32> {
     let flags = HIT_FOUND | HIT_ENTITY | (e.instance << HIT_INSTANCE_SHIFT);
     return vec4<u32>(octa16_encode(e.n), e.material, flags);
+}
+
+// Whether hit `rec` is an entity's voxel whose part moved since the frame before
+// (ENTITY_MOVED in its instance's flags).
+fn entity_moved(rec: HitRecord) -> bool {
+    if (!rec.entity) {
+        return false;
+    }
+    let base = ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS;
+    return (entity_data[base + 26u] & ENTITY_MOVED) != 0u;
+}
+
+// Whether any drawn part moved since the frame before (the header's fourth word).
+fn entities_any_moved() -> bool {
+    return entity_data[ENTITY_HEADER_WORD + 3u] != 0u;
+}
+
+// Where hit `rec` was in the frame before, in world voxels: for the voxel of a moved part, its
+// point in the part's space carried through the instance's part-to-world of the frame before;
+// for any other hit the point itself (a still part's two transforms are equal, and the round
+// trip through them would only add rounding).
+fn prev_world(rec: HitRecord) -> vec3<f32> {
+    if (!entity_moved(rec)) {
+        return rec.p;
+    }
+    let base = ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS;
+    return entity_xform(base + 12u, entity_xform(base, rec.p, 1.0), 1.0);
+}
+
+// Whether two hit records can share history: both world hits, or both the voxels of the same
+// instance.
+fn same_thing(a: HitRecord, b: HitRecord) -> bool {
+    return a.entity == b.entity && a.instance == b.instance;
 }
 
 // The shadow offset's scale for hit `rec`: an entity part's `1 / detail`, else 1.

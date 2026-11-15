@@ -13,7 +13,10 @@
 //
 // One pixel per stratum, picked by a hash of the stratum and the frame, is re-shaded at last
 // frame's hit with this frame's lamp at its current pose, with its shadow ray (with
-// `Params.lighting`'s gradient bit only: the temporal pass reads it in that mode alone).
+// `Params.lighting`'s gradient bit only: the temporal pass reads it in that mode alone). Last
+// frame's hit is re-shaded where it was, so a last frame's entity hit while any part moved
+// reads 0: its point may have moved, and the temporal pass takes a moved part's pixels and
+// the pixels under a moving shadow fresh (light.wgsl).
 // Nothing changed, the re-shade equals last frame's lamp estimate (the light pass's direct
 // part's a), so lambda is 0 but for f16 rounding. A pixel with no hit, or no valid history, reads 0.
 //
@@ -41,7 +44,7 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
     if ((params.history & 1u) != 0u && all(q < params.light_size)) {
         let qi = vec2<i32>(q);
         let rec = unpack_hit(textureLoad(grad_prev_pos, qi, 0), textureLoad(grad_prev_info, qi, 0));
-        if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
+        if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u && !(rec.entity && entities_any_moved())) {
             let v = params.prev_views[view_of(q * params.light_scale + unpack_offset(params.prev_light_offset))];
             let d = normalize(rec.p - v.origin);
             let n = rec.n;

@@ -664,6 +664,8 @@ impl Run {
             fwd.to_array(),
             up.to_array(),
         );
+        // The walkers walk before their eye lights are read, so a light rides with its head.
+        self.modes.walkers.step(step);
         let mut lights = self.modes.lights.list();
         // The walkers' eye lights take the list's free slots, newest walkers last.
         let free =

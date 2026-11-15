@@ -787,6 +787,652 @@ fn walker_shadow_golden() {
     assert_golden_sized("walker_shadow.png", &rig.display());
 }
 
+// ---- Phase 4: motion ----
+
+/// The motion rig's light: 1200, 20 voxels above the floor at (64, 32).
+fn motion_light() -> Light {
+    Light::point([64.0, 32.0, 22.0], 1200.0)
+}
+
+/// From over the box's +x end, looking back along -x and down: the floor from x 2 to about
+/// 116 under the light, and the part's path.
+fn motion_camera() -> Camera {
+    Camera {
+        position: [124.0, 32.0, 46.0].into(),
+        yaw: std::f32::consts::PI,
+        pitch: -0.8,
+        vfov: 1.2,
+    }
+}
+
+/// The moving part's centre on move frame `k` (0 the still start): an 8-voxel cube 6 voxels
+/// above the floor (heights 8 to 16), from x 52 along +x, 4 voxels a frame.
+fn part_centre(k: usize) -> [f32; 3] {
+    [52.0 + 4.0 * k as f32, 32.0, 12.0]
+}
+
+/// The world box of an 8-voxel cube centred at `c`, grown by `m` voxels on every side.
+fn cube_box(c: [f32; 3], m: f32) -> [[f32; 3]; 2] {
+    [c.map(|v| v - 4.0 - m), c.map(|v| v + 4.0 + m)]
+}
+
+/// Whether the segment from `a` to `b` meets box `bx` (a slab test).
+fn segment_meets(a: [f32; 3], b: [f32; 3], bx: [[f32; 3]; 2]) -> bool {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for k in 0..3 {
+        let d = b[k] - a[k];
+        if d.abs() < 1e-9 {
+            if a[k] < bx[0][k] || a[k] > bx[1][k] {
+                return false;
+            }
+            continue;
+        }
+        let (u, v) = ((bx[0][k] - a[k]) / d, (bx[1][k] - a[k]) / d);
+        t0 = t0.max(u.min(v));
+        t1 = t1.min(u.max(v));
+    }
+    t0 <= t1
+}
+
+/// Whether the floor point `p`'s shadow ray (from half a voxel above it, as the light pass
+/// starts it) to `light` meets the 8-voxel cube at `c` grown by `m`.
+fn floor_shadowed(p: [f32; 3], light: &Light, c: [f32; 3], m: f32) -> bool {
+    segment_meets([p[0], p[1], p[2] + 0.5], light.pos, cube_box(c, m))
+}
+
+fn on_floor(p: [f32; 3]) -> bool {
+    (p[2] - 2.0).abs() < 1e-3
+}
+
+/// The temporal pass's accumulated direct part's luminance (`a`) per pixel.
+fn direct_acc(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    frame: &vxe_render::Frame,
+) -> Vec<f32> {
+    vxe_render::debug::read_float(device, queue, frame.direct_accumulated())
+        .iter()
+        .map(|p| p[3])
+        .collect()
+}
+
+/// The light pass's fresh bit (its irradiance's `a`) per pixel.
+fn fresh(rig: &Rig) -> Vec<bool> {
+    vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance())
+        .iter()
+        .map(|p| p[3] > 0.5)
+        .collect()
+}
+
+/// Uploads `model` to `frame`'s mirror and returns a set holding it posed `pose`, its id
+/// and handle.
+fn place(
+    rig: &Rig,
+    frame: &mut vxe_render::Frame,
+    model: &Arc<Model>,
+    pose: Pose,
+) -> (EntitySet, EntityId, ModelHandle) {
+    let h = frame
+        .entity_mirror_mut()
+        .upload_model(&rig.queue, model, rig.world.materials())
+        .expect("the pool has room");
+    let mut set = EntitySet::new();
+    let id = set.insert(model.clone(), pose).expect("the pose fits");
+    (set, id, h)
+}
+
+/// Phase 4 done-when 1: on the lit box, an 8-voxel cube part 6 voxels above the floor, still
+/// for 32 frames, then moved 4 voxels a frame along +x for 16 frames. On every frame of the
+/// move, read from the temporal pass's accumulated direct part: (a) every floor pixel whose
+/// shadow ray met the part one frame before and misses it now (by half a voxel either way)
+/// reads its analytic term within 2 %; (b) every pixel that showed the part one frame before
+/// and shows the world now, outside the part's shadow, reads the value of a run without the
+/// entity within 2 %; (c) the pixel nearest the centre of the part's top face, followed with
+/// it (within 1.5 voxels: a pixel spans about one there), reads its analytic term at its hit
+/// within 2 %.
+#[test]
+fn a_moving_entity_leaves_no_ghost_and_no_stale_shadow() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let light = motion_light();
+    let floor = rig.frame.lighting().light_floor;
+    rig.frame.set_lights(&[light]);
+    let camera = motion_camera();
+    // The run without the entity: its direct part is still, so two frames settle it.
+    rig.step(&camera);
+    rig.step(&camera);
+    let reference = direct_acc(&rig.device, &rig.queue, &rig.frame);
+    let cube = block([8; 3], red, 1);
+    let mut frame = std::mem::replace(
+        &mut rig.frame,
+        support::bake::new_frame(&rig.device, [W, H]),
+    );
+    let (mut set, id, h) = place(
+        &rig,
+        &mut frame,
+        &cube,
+        posed(&cube, part_centre(0), Quat::IDENTITY),
+    );
+    rig.frame = frame;
+    for _ in 0..32 {
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        rig.step(&camera);
+    }
+    let mut prev_hits = hits(&rig);
+    let (mut a_count, mut b_count) = (0usize, 0usize);
+    let (mut a_worst, mut b_worst) = (0f32, 0f32);
+    for k in 1..=16 {
+        set.set_pose(id, posed(&cube, part_centre(k), Quat::IDENTITY))
+            .expect("the pose fits");
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        rig.step(&camera);
+        assert!(rig.frame.entities_moved(), "move frame {k}");
+        let now_hits = hits(&rig);
+        let e = direct_acc(&rig.device, &rig.queue, &rig.frame);
+        let (was, now) = (part_centre(k - 1), part_centre(k));
+        let mut was_entity = vec![false; (W * H) as usize];
+        for h in &prev_hits {
+            was_entity[h.0] = h.2[3] & 32 != 0;
+        }
+        for &(i, p, r) in &now_hits {
+            if !world_hit(&r) {
+                continue;
+            }
+            if on_floor(p)
+                && floor_shadowed(p, &light, was, -0.5)
+                && !floor_shadowed(p, &light, now, 0.5)
+            {
+                a_count += 1;
+                let want = analytic(&light, floor, p, [0.0, 0.0, 1.0]);
+                a_worst = a_worst.max((e[i] / want - 1.0).abs());
+                assert!(
+                    (e[i] / want - 1.0).abs() <= 0.02,
+                    "(a) move frame {k}: the floor at {p:?} reads {} against {want}",
+                    e[i]
+                );
+            }
+            if was_entity[i] && !segment_meets(p, light.pos, cube_box(now, 1.0)) {
+                b_count += 1;
+                b_worst = b_worst.max((e[i] / reference[i] - 1.0).abs());
+                assert!(
+                    (e[i] / reference[i] - 1.0).abs() <= 0.02,
+                    "(b) move frame {k}: the world at {p:?} reads {} against {} without the entity",
+                    e[i],
+                    reference[i]
+                );
+            }
+        }
+        let top = [now[0], now[1], 16.0];
+        let (i, p) = nearest(&now_hits, top, entity_hit(0));
+        let d = (0..3).map(|j| (p[j] - top[j]).powi(2)).sum::<f32>().sqrt();
+        // A pixel spans about a voxel on the top face from the camera.
+        assert!(d < 1.5, "(c) move frame {k}: the top's pixel hit {p:?}");
+        within(
+            &format!("(c) move frame {k}"),
+            e[i],
+            analytic(&light, floor, p, [0.0, 0.0, 1.0]),
+            0.02,
+        );
+        prev_hits = now_hits;
+    }
+    println!(
+        "(a) {a_count} floor pixels left by the shadow, worst {:.3} %; (b) {b_count} pixels left by the part, worst {:.3} %",
+        100.0 * a_worst,
+        100.0 * b_worst
+    );
+    assert!(a_count > 100 && b_count > 50, "({a_count}, {b_count})");
+}
+
+/// Phase 4 done-when 2: over 32 still frames (the part set every frame) `entities_moved()` is
+/// false and no pixel is fresh; on the first frame of a 4-voxel move every floor pixel inside
+/// the old or the new shadow (by half a voxel) is fresh, and no floor pixel 40 voxels or more
+/// from both shadows is.
+#[test]
+fn a_still_entity_marks_nothing_fresh() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let light = motion_light();
+    rig.frame.set_lights(&[light]);
+    let camera = motion_camera();
+    let cube = block([8; 3], red, 1);
+    let mut frame = std::mem::replace(
+        &mut rig.frame,
+        support::bake::new_frame(&rig.device, [W, H]),
+    );
+    let (mut set, id, h) = place(
+        &rig,
+        &mut frame,
+        &cube,
+        posed(&cube, part_centre(0), Quat::IDENTITY),
+    );
+    rig.frame = frame;
+    for f in 0..32 {
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        rig.step(&camera);
+        assert!(!rig.frame.entities_moved(), "still frame {f}");
+        let n = fresh(&rig).iter().filter(|&&b| b).count();
+        assert_eq!(n, 0, "still frame {f}: {n} fresh pixels");
+    }
+    set.set_pose(id, posed(&cube, part_centre(1), Quat::IDENTITY))
+        .expect("the pose fits");
+    rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+    rig.step(&camera);
+    assert!(rig.frame.entities_moved());
+    let marks = fresh(&rig);
+    let floor: Vec<(usize, [f32; 3])> = hits(&rig)
+        .into_iter()
+        .filter(|h| world_hit(&h.2) && on_floor(h.1))
+        .map(|h| (h.0, h.1))
+        .collect();
+    let shadowed: Vec<[f32; 3]> = floor
+        .iter()
+        .filter(|(_, p)| {
+            floor_shadowed(*p, &light, part_centre(0), -0.5)
+                || floor_shadowed(*p, &light, part_centre(1), -0.5)
+        })
+        .map(|h| h.1)
+        .collect();
+    let mut inside = 0;
+    for &(i, p) in &floor {
+        if floor_shadowed(p, &light, part_centre(0), -0.5)
+            || floor_shadowed(p, &light, part_centre(1), -0.5)
+        {
+            inside += 1;
+            assert!(marks[i], "the shadowed floor at {p:?} is not fresh");
+        }
+    }
+    let mut far = 0;
+    for &(i, p) in &floor {
+        let d = shadowed
+            .iter()
+            .map(|q| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt())
+            .fold(f32::MAX, f32::min);
+        if d >= 40.0 {
+            far += 1;
+            assert!(
+                !marks[i],
+                "the floor at {p:?}, {d} from the shadows, is fresh"
+            );
+        }
+    }
+    println!("{inside} floor pixels in the shadows, {far} 40 voxels or more from them");
+    assert!(inside > 100 && far > 100, "({inside}, {far})");
+}
+
+/// The FSR 2 frame of the light tests: 128 x 72 internal for a 192 x 108 output (scale 1.5).
+fn fsr2_frame(rig: &Rig) -> vxe_render::Frame {
+    support::lights::box_frame(
+        &rig.device,
+        [128, 72],
+        [W, H],
+        Some(support::rigs::fsr2_kind()),
+    )
+}
+
+/// The FSR 2 motion vectors at every hit of `frame`'s last frame in internal pixels, and the
+/// expected motion of each hit whose point was at `before(p)` the frame before: where that
+/// point projects through `view` less the jitter `j`, less the pixel's centre.
+fn motion_and_want(
+    rig: &Rig,
+    frame: &vxe_render::Frame,
+    view: &vxe_render::View,
+    j: [f32; 2],
+    before: impl Fn(usize, [f32; 3], [u16; 4]) -> Option<[f32; 3]>,
+) -> Vec<(usize, [f64; 2], [f64; 2])> {
+    let size = frame.internal_size();
+    let motion = support::rigs::read_f32_texels(
+        &rig.device,
+        &rig.queue,
+        frame.fsr2().expect("FSR 2").motion(),
+    );
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, frame.hit_positions());
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, frame.hit_records());
+    let mut out = Vec::new();
+    for i in 0..pos.len() {
+        if rec[i][3] & 1 == 0 {
+            continue;
+        }
+        let p = [pos[i][0], pos[i][1], pos[i][2]];
+        let Some(b) = before(i, p, rec[i]) else {
+            continue;
+        };
+        let Some(q) = support::rigs::project(view, b) else {
+            continue;
+        };
+        let (x, y) = (i as u32 % size[0], i as u32 / size[0]);
+        let got = [0, 1].map(|k| f64::from(motion[2 * i + k]) * f64::from(size[k]));
+        let want = [0, 1].map(|k| q[k] - f64::from(j[k]) - (f64::from([x, y][k]) + 0.5));
+        out.push((i, got, want));
+    }
+    out
+}
+
+/// Phase 4 done-when 3 (written here, beside the entity rigs, not in `gpu_fsr2.rs`): under FSR
+/// 2 at 1.5 with a still camera, an 8-voxel cube moved 4 voxels sideways in one frame: the
+/// motion vector at the pixel nearest its near face's centre equals the projected
+/// displacement within 0.1 internal pixel, and at every world pixel it is 0 exactly; a 16 x 4
+/// x 4 bar turning 10 degrees a frame about the view axis through its centre: the vector at
+/// the hit nearest its tip matches the tip's projected displacement within 0.25 pixel.
+#[test]
+fn fsr2_motion_follows_a_moving_part() {
+    let Some((rig, red)) = rig() else {
+        return;
+    };
+    let camera = level_camera(86.0, 26.0);
+    let view = vxe_render::View::of_camera(&camera, [0, 0, 128, 72]);
+    let light = vxe_render::LightParams::headlamp();
+    let jitter = |f: &mut vxe_render::Frame| f.params(&rig.gpu, &camera, &light).views[0].jitter;
+
+    let cube = block([8; 3], red, 1);
+    let mut f = fsr2_frame(&rig);
+    let (mut set, id, h) = place(
+        &rig,
+        &mut f,
+        &cube,
+        posed(&cube, [110.0, 32.0, 26.0], Quat::IDENTITY),
+    );
+    for _ in 0..3 {
+        f.set_entities(&rig.queue, &set, &[(id, h)]);
+        support::lights::step_frame(&rig, &mut f, &camera);
+    }
+    set.set_pose(id, posed(&cube, [110.0, 28.0, 26.0], Quat::IDENTITY))
+        .expect("the pose fits");
+    f.set_entities(&rig.queue, &set, &[(id, h)]);
+    support::lights::step_frame(&rig, &mut f, &camera);
+    let j = jitter(&mut f);
+    let all = motion_and_want(&rig, &f, &view, j, |_, p, r| {
+        Some(if r[3] & 32 != 0 {
+            [p[0], p[1] + 4.0, p[2]]
+        } else {
+            p
+        })
+    });
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, f.hit_records());
+    let face = [106.0, 28.0, 26.0];
+    let (centre, _) = all
+        .iter()
+        .filter(|m| rec[m.0][3] & 32 != 0)
+        .map(|m| {
+            let d = (0..3).map(|k| (pos[m.0][k] - face[k]).powi(2)).sum::<f32>();
+            (m, d)
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("the part shows");
+    let err = (0..2)
+        .map(|k| (centre.1[k] - centre.2[k]).abs())
+        .fold(0.0, f64::max);
+    println!(
+        "the cube's centre: motion {:?} against {:?} internal pixels",
+        centre.1, centre.2
+    );
+    assert!(err <= 0.1, "off by {err} internal pixels");
+    let world: Vec<_> = all.iter().filter(|m| rec[m.0][3] & 32 == 0).collect();
+    assert!(world.len() > 1000, "{} world pixels", world.len());
+    for m in &world {
+        assert_eq!(m.1, [0.0, 0.0], "a world pixel's motion at {:?}", pos[m.0]);
+    }
+
+    let bar = block([4, 16, 4], red, 1);
+    let mut f = fsr2_frame(&rig);
+    let c = [110.0f32, 32.0, 26.0];
+    let step = 10f32.to_radians();
+    let (mut set, id, h) = place(&rig, &mut f, &bar, posed(&bar, c, Quat::IDENTITY));
+    for k in 0..4 {
+        set.set_pose(id, posed(&bar, c, walker::turn(0, step * k as f32)))
+            .expect("the pose fits");
+        f.set_entities(&rig.queue, &set, &[(id, h)]);
+        support::lights::step_frame(&rig, &mut f, &camera);
+    }
+    let j = jitter(&mut f);
+    // The frame before's point: turned back 10 degrees about x through the centre.
+    let (s, co) = (-step).sin_cos();
+    let back = |p: [f32; 3]| {
+        let (y, z) = (p[1] - c[1], p[2] - c[2]);
+        [p[0], c[1] + y * co - z * s, c[2] + y * s + z * co]
+    };
+    let all = motion_and_want(&rig, &f, &view, j, |_, p, r| {
+        (r[3] & 32 != 0).then(|| back(p))
+    });
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
+    // The tip: 7.5 voxels along the bar's long axis (y turned 30 degrees about x) on its near
+    // face (x 108).
+    let a = 3.0 * step;
+    let tip = [108.0, c[1] + 7.5 * a.cos(), c[2] + 7.5 * a.sin()];
+    let (m, d) = all
+        .iter()
+        .map(|m| {
+            (
+                m,
+                (0..3)
+                    .map(|k| (pos[m.0][k] - tip[k]).powi(2))
+                    .sum::<f32>()
+                    .sqrt(),
+            )
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("the bar shows");
+    let err = (0..2).map(|k| (m.1[k] - m.2[k]).abs()).fold(0.0, f64::max);
+    println!(
+        "the bar's tip ({d:.2} voxels from it): motion {:?} against {:?} internal pixels",
+        m.1, m.2
+    );
+    assert!(d < 1.0, "the tip's nearest hit is {d} voxels off");
+    assert!(err <= 0.25, "off by {err} internal pixels");
+}
+
+/// The mean output luminance (0..255) over the 5 x 5 output pixels around `at`.
+fn luma_around(rig: &Rig, frame: &vxe_render::Frame, at: [usize; 2]) -> f64 {
+    let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
+    let mut s = 0.0;
+    for y in at[1] - 2..=at[1] + 2 {
+        for x in at[0] - 2..=at[0] + 2 {
+            let p = &img[4 * (y * W as usize + x)..];
+            s += 0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2]);
+        }
+    }
+    s / 25.0
+}
+
+/// A frame for the trail: FSR 2 or our upscaler at 1.5 (`kind`), or with none the frame at the
+/// output size.
+fn trail_frame(rig: &Rig, kind: Option<vxe_render::UpscalerKind>) -> vxe_render::Frame {
+    match kind {
+        Some(k) => support::lights::box_frame(&rig.device, [128, 72], [W, H], Some(k)),
+        None => support::lights::box_frame(&rig.device, [W, H], [W, H], None),
+    }
+}
+
+/// The trail behind done-when 1's move under `kind`, at output pixel `at` (where the part's
+/// start centre shows): the luminance there with the part held at its start (32 frames), and
+/// settled with no entity (32 frames); then the move of `moves` frames from a 32-frame still
+/// start and 16 frames after it, the distance from the no-entity luminance on each frame from
+/// the first on which the part and its shadow have left the pixel (`clear`). Returns the
+/// frames from `clear` until that distance is under a tenth of the step (the settle rule of
+/// `fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step`), and the step.
+fn trail_after_move(
+    rig: &Rig,
+    red: MaterialId,
+    kind: Option<vxe_render::UpscalerKind>,
+    at: [usize; 2],
+    moves: usize,
+    clear: usize,
+) -> (Option<usize>, f64) {
+    let camera = motion_camera();
+    let cube = block([8; 3], red, 1);
+    let run = |with: bool| {
+        let mut f = trail_frame(rig, kind);
+        f.set_lights(&[motion_light()]);
+        let placed = with.then(|| {
+            place(
+                rig,
+                &mut f,
+                &cube,
+                posed(&cube, part_centre(0), Quat::IDENTITY),
+            )
+        });
+        for _ in 0..32 {
+            if let Some((set, id, h)) = &placed {
+                f.set_entities(&rig.queue, set, &[(*id, *h)]);
+            }
+            support::lights::step_frame(rig, &mut f, &camera);
+        }
+        (f, placed)
+    };
+    let (bare, _) = run(false);
+    let reference = luma_around(rig, &bare, at);
+    let (mut f, placed) = run(true);
+    let held = luma_around(rig, &f, at);
+    let (mut set, id, h) = placed.expect("placed");
+    let mut series = Vec::new();
+    for k in 1..=moves + 16 {
+        let c = part_centre(k.min(moves));
+        set.set_pose(id, posed(&cube, c, Quat::IDENTITY))
+            .expect("the pose fits");
+        f.set_entities(&rig.queue, &set, &[(id, h)]);
+        support::lights::step_frame(rig, &mut f, &camera);
+        if k >= clear {
+            series.push((luma_around(rig, &f, at) - reference).abs());
+        }
+    }
+    let step = (held - reference).abs();
+    println!(
+        "{:?}: at {at:?} held {held:.1}, without the entity {reference:.1}/255; from move frame {clear}: {:.2?}",
+        kind.map(|k| k.name()),
+        series
+    );
+    (support::rigs::settle_frames(&series, step), step)
+}
+
+/// The output pixel where the part's start centre shows, and the first move frame on which the
+/// part and its shadow have left the floor point that pixel's ray reaches (`trail_after_move`):
+/// the ray from the camera through (52, 32, 12) meets the floor at x 30.8, which the part's
+/// shadow leaves at move frame 2 and the part itself at move frame 4.
+fn trail_pixel() -> ([usize; 2], usize) {
+    let i = pixel_of(&motion_camera(), part_centre(0));
+    ([i % W as usize, i / W as usize], 4)
+}
+
+/// Phase 4 done-when 4 (written here, beside the entity rigs, not in `gpu_fsr2.rs`): after done-
+/// when 1's move, the output at the pixel the part left reaches a tenth of the step from the
+/// run without the entity under FSR 2 at 1.5 in at most 2 frames more than the frame at the
+/// output size takes (`fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step`'s rule); the
+/// same under our upscaler at 1.5. The trails' lengths are printed. The gate's variant moves 8
+/// frames; `fsr2_leaves_no_trail_behind_a_moving_entity_over_16_frames` moves 16.
+#[test]
+fn fsr2_leaves_no_trail_behind_a_moving_entity() {
+    trail_rule(8);
+}
+
+/// Phase 4 done-when 4 with done-when 1's 16-frame move.
+#[test]
+#[ignore = "soak"]
+fn fsr2_leaves_no_trail_behind_a_moving_entity_over_16_frames() {
+    trail_rule(16);
+}
+
+fn trail_rule(moves: usize) {
+    let Some((rig, red)) = rig() else {
+        return;
+    };
+    let (at, clear) = trail_pixel();
+    let (native, _) = trail_after_move(&rig, red, None, at, moves, clear);
+    let native = native.expect("the frame at the output size settles");
+    for kind in [
+        support::rigs::fsr2_kind(),
+        vxe_render::UpscalerKind::Own(vxe_render::Upscaler::default()),
+    ] {
+        let (s, step) = trail_after_move(&rig, red, Some(kind), at, moves, clear);
+        println!(
+            "{}: the trail is {s:?} frames against {native} at the output size (step {step:.1}/255)",
+            kind.name()
+        );
+        assert!(step > 5.0, "the part changes the pixel: step {step}");
+        let s = s.unwrap_or_else(|| panic!("{} did not settle", kind.name()));
+        assert!(s <= native + 2, "{}: {s} against {native} + 2", kind.name());
+    }
+}
+
+/// Phase 4 done-when 5: two parts of the same albedo passing through each other along x, one
+/// a voxel above the other (tops at heights 12 and 13), under a light at height 12.5 off to the
+/// side: the lower top is lit, the upper top faces away. On every frame of the pass, every
+/// pixel of the upper top reads (the temporal pass's accumulated direct part) under 2 % of the
+/// lit top's mean.
+#[test]
+fn history_does_not_cross_between_instances() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let light = Light::point([64.0, 52.0, 12.5], 1200.0);
+    rig.frame.set_lights(&[light]);
+    let camera = Camera {
+        position: [64.0, 32.0, 46.0].into(),
+        yaw: 0.0,
+        pitch: -1.45,
+        vfov: 1.2,
+    };
+    let cube = block([8; 3], red, 1);
+    let mut frame = std::mem::replace(
+        &mut rig.frame,
+        support::bake::new_frame(&rig.device, [W, H]),
+    );
+    frame.set_lights(&[light]);
+    let at = |k: i32| {
+        (
+            [40.0 + 2.0 * k as f32, 32.0, 8.0],
+            [88.0 - 2.0 * k as f32, 32.0, 9.0],
+        )
+    };
+    let (lo, hi) = at(0);
+    let h = frame
+        .entity_mirror_mut()
+        .upload_model(&rig.queue, &cube, rig.world.materials())
+        .expect("room");
+    let mut set = EntitySet::new();
+    let a = set
+        .insert(cube.clone(), posed(&cube, lo, Quat::IDENTITY))
+        .expect("fits");
+    let b = set
+        .insert(cube.clone(), posed(&cube, hi, Quat::IDENTITY))
+        .expect("fits");
+    rig.frame = frame;
+    let mut frames = 0;
+    for k in 0..=24 {
+        let (lo, hi) = at(k);
+        set.set_pose(a, posed(&cube, lo, Quat::IDENTITY))
+            .expect("fits");
+        set.set_pose(b, posed(&cube, hi, Quat::IDENTITY))
+            .expect("fits");
+        rig.frame.set_entities(&rig.queue, &set, &[(a, h), (b, h)]);
+        rig.step(&camera);
+        let e = direct(&rig);
+        let acc = direct_acc(&rig.device, &rig.queue, &rig.frame);
+        let hs = hits(&rig);
+        let top = |k: u16, z: f32| {
+            hs.iter()
+                .filter(move |h| entity_hit(k)(&h.2) && (h.1[2] - z).abs() < 1e-3)
+                .map(|h| h.0)
+                .collect::<Vec<_>>()
+        };
+        let (lit, unlit) = (top(0, 12.0), top(1, 13.0));
+        if lit.is_empty() || unlit.is_empty() {
+            continue;
+        }
+        frames += 1;
+        let mean = lit.iter().map(|&i| e[i]).sum::<f32>() / lit.len() as f32;
+        assert!(mean > 0.0, "frame {k}: the lower top is lit");
+        let worst = unlit.iter().map(|&i| acc[i]).fold(0.0f32, f32::max);
+        assert!(
+            worst < 0.02 * mean,
+            "frame {k}: the upper top reads {worst} against the lit top's {mean}"
+        );
+    }
+    println!("{frames} frames with both tops in view");
+    assert!(frames >= 12, "{frames} frames");
+}
+
 /// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`), on the adapter
 /// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
 mod reading {

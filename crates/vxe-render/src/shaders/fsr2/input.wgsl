@@ -1,6 +1,7 @@
 // The FSR 2 input pass (ours, ADR-0034): FSR 2's depth, motion-vector and reactive inputs from
 // the hit buffer, at the internal size, one invocation per internal pixel. Compiled after
-// common.wgsl, hitrec.wgsl and edits.wgsl, whose bindings (group 0), views and reprojection it uses.
+// common.wgsl, hitrec.wgsl, entity.wgsl and edits.wgsl, whose bindings (group 0), views, entity
+// transforms and reprojection it uses.
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   in_pos          this frame's hit positions (rgba32float, t in w)
@@ -19,13 +20,16 @@
 //                                        in z 1 where the hit lies in an edit box dilated by
 //                                        one voxel (the depth-clip pass's edit flag)
 //   9  texture_2d<f32>   in_emissive     the temporal pass's emissive part (rgb, lighting
-//                                        grid): where an emission change lands
+//                                        grid): where an emission change lands; a: where a
+//                                        fresh pixel lies
 //
-// Motion: the hit `p` of pixel `px` reprojected through the previous view as if both frames'
-// rays went through their pixels' centres (`reproject_centred`), less the pixel's centre, over
-// the internal size; a miss reprojects its ray direction (rotation only); a point behind the
-// previous view moves off screen. When the previous view is this frame's view (jitter aside)
-// the motion is 0 exactly.
+// Motion: where the hit of pixel `px` was in the frame before (`prev_world`: a moved entity
+// part's voxel through the part's transform of the frame before, any other hit where it is)
+// reprojected through the previous view as if both frames' rays went through their pixels'
+// centres (`reproject_centred`), less the pixel's centre, over the internal size; a miss
+// reprojects its ray direction (rotation only); a point behind the previous view moves off
+// screen. When the previous view is this frame's view (jitter aside) the motion is 0 exactly
+// at every pixel but a moved part's.
 //
 // Reactive: the largest of a translucent layer's `1 - transmittance` times
 // `in_tuning.reactive_translucent` (capped at 1), 1 where the hit lies in an edit box dilated
@@ -35,7 +39,9 @@
 // summed unshadowed term moved past the thresholds since the list of `change_frames` frames
 // before). A moving
 // pixel's lamp term changes with the camera that carries the lamp; FSR's rectification takes
-// that, where the mask would take its history.
+// that, where the mask would take its history. A fresh pixel (light.wgsl: a shadow ray crossed
+// a moving entity's box, or the hit is a moved part's; `fresh_lands`) takes
+// `in_tuning.reactive_light` moving or still.
 
 @group(2) @binding(0) var in_pos: texture_2d<f32>;
 @group(2) @binding(1) var in_info: texture_2d<u32>;
@@ -114,8 +120,8 @@ fn fsr2_input(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (rec.found) {
         let z = dot(rec.p - v.origin, v.fwd);
         depth = in_tuning.near / max(z, 1e-6);
-        if (!still) {
-            let q = reproject_centred(prev, v.jitter, rec.p);
+        if (!still || entity_moved(rec)) {
+            let q = reproject_centred(prev, v.jitter, prev_world(rec));
             motion = select((q - (vec2<f32>(px) + 0.5)) / vec2<f32>(params.size), OFF_SCREEN, q.x < 0.0);
         }
         if (in_edit(rec.p)) {
@@ -123,7 +129,7 @@ fn fsr2_input(@builtin(global_invocation_id) gid: vec3<u32>) {
             edit = 1.0;
         }
         let moved = length(motion * vec2<f32>(params.output_size));
-        if (moved < STILL_PX && light_changed(px, rec)) {
+        if ((moved < STILL_PX && light_changed(px, rec)) || fresh_lands(in_emissive, px)) {
             reactive = max(reactive, in_tuning.reactive_light);
         }
     } else if (!still) {

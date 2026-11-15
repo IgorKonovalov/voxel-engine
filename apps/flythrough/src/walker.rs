@@ -1,7 +1,9 @@
 //! The testbed's walker (ADR-0050): a voxel model of four rigid parts made in code, a torso, a
 //! head with two glowing eyes and two legs, all at detail 2. `` ` `` places one standing on the
 //! looked-at surface, facing the camera; `--entities N` places `N` on a ring around the
-//! spawn. The engine knows no walker: this is the fly-through's entity.
+//! spawn; `F11` (or `--entities-walk on`) sets them walking, each a circle about the point it
+//! was placed with its legs swinging. The engine knows no walker: this is the fly-through's
+//! entity.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -35,6 +37,14 @@ pub const EYE_LIGHT_AT: [i32; 3] = [3 * 256, -256, 896];
 pub const RING_RADIUS: f32 = 30.0;
 /// How far down from the ring's points a walker looks for the floor, in voxels.
 const FLOOR_SEARCH: i64 = 200;
+/// The circle a walking walker walks about the point it was placed: 2 m.
+pub const WALK_RADIUS: f32 = 20.0;
+/// Its pace along the circle: 1 m/s, in voxels per second.
+pub const WALK_SPEED: f32 = 10.0;
+/// Its legs' swing either way: 30 degrees.
+pub const WALK_SWING: f32 = std::f32::consts::FRAC_PI_6;
+/// Its strides per second (one swing forward and back of each leg).
+pub const WALK_STRIDES: f32 = 1.0;
 
 /// `table` with the walker's two rows appended: its body and its emissive eyes.
 pub fn with_walker(table: &MaterialTable) -> MaterialTable {
@@ -177,6 +187,10 @@ pub struct Walkers {
     pub over: usize,
     /// Whether placed walkers carry their eye lights (`F12` flips it; on by default).
     pub eye_lights_off: bool,
+    /// Whether the walkers walk (`F11` flips it; off by default).
+    pub walking: bool,
+    /// Seconds walked: the walk's clock, held while the walk is off.
+    pub clock: f32,
 }
 
 impl PartialEq for Walkers {
@@ -185,6 +199,7 @@ impl PartialEq for Walkers {
             && (self.handle, self.ring, &self.newest) == (o.handle, o.ring, &o.newest)
             && (self.drawn, self.parts, self.over) == (o.drawn, o.parts, o.over)
             && self.eye_lights_off == o.eye_lights_off
+            && (self.walking, self.clock) == (o.walking, o.clock)
     }
 }
 
@@ -194,6 +209,15 @@ impl Walkers {
         Self {
             ring,
             ..Self::default()
+        }
+    }
+
+    /// No walker yet; `ring` placed on the ring once the world is there, walking from the
+    /// first frame when `walking` (`--entities-walk`).
+    pub fn with_ring_walking(ring: u32, walking: bool) -> Self {
+        Self {
+            walking,
+            ..Self::with_ring(ring)
         }
     }
 
@@ -264,13 +288,54 @@ impl Walkers {
         }
     }
 
-    /// The HUD row, `entities <n>/64 parts <m>/512 over <k>`.
+    /// `F11`: the walk on or off; the banner's words.
+    pub fn toggle_walk(&mut self) -> &'static str {
+        self.walking = !self.walking;
+        if self.walking { "walk on" } else { "walk off" }
+    }
+
+    /// Where walker `p` stands at `clock` seconds of walk, its yaw and its legs' swing: on the
+    /// circle of [`WALK_RADIUS`] about where it was placed, walking anticlockwise (seen from
+    /// above) at [`WALK_SPEED`] and facing along the circle, its legs swinging [`WALK_SWING`]
+    /// either way at [`WALK_STRIDES`]. Each walker starts at its own angle on the circle (its
+    /// yaw when placed), so a ring does not walk in step.
+    pub fn walk_pose(p: &Placed, clock: f32) -> ([f32; 3], f32, f32) {
+        let a = p.yaw + clock * WALK_SPEED / WALK_RADIUS;
+        let feet = [
+            p.feet[0] + WALK_RADIUS * a.cos(),
+            p.feet[1] + WALK_RADIUS * a.sin(),
+            p.feet[2],
+        ];
+        // Anticlockwise the motion is (-sin a, cos a); the front at yaw y is (sin y, -cos y).
+        let yaw = a + std::f32::consts::PI;
+        let swing = WALK_SWING * (std::f32::consts::TAU * WALK_STRIDES * clock).sin();
+        (feet, yaw, swing)
+    }
+
+    /// Advances the walk by `dt` seconds while it is on, posing every placed walker
+    /// ([`Walkers::walk_pose`]); while it is off the walkers hold their poses.
+    pub fn step(&mut self, dt: f32) {
+        if !self.walking {
+            return;
+        }
+        self.clock += dt;
+        for p in &self.placed {
+            let (feet, yaw, swing) = Self::walk_pose(p, self.clock);
+            // A walker's pose has its four parts, so it always fits its model.
+            let _ = self.set.set_pose(p.id, pose(feet, yaw, swing));
+        }
+    }
+
+    /// The HUD row, `entities <n>/64 parts <m>/512 over <k>`, then ` walk` while they walk.
     pub fn write_row(&self, out: &mut String) {
         let _ = write!(
             out,
             "entities {}/{MAX_ENTITIES} parts {}/{MAX_ENTITY_PARTS} over {}",
             self.drawn, self.parts, self.over
         );
+        if self.walking {
+            out.push_str(" walk");
+        }
     }
 
     /// The banner's count, `entities <n>/64`.
@@ -446,6 +511,62 @@ mod tests {
             rows.lines()
                 .any(|l| l == "entities 2/64 parts 8/512 over 0"),
             "{rows}"
+        );
+    }
+
+    /// `F11` sets the walkers walking and names the mode in the banner; the HUD row gains
+    /// `walk`. A walker walks a 2 m circle about where it was placed, facing along it, its legs
+    /// swinging 30 degrees either way; off, it holds its pose.
+    #[test]
+    fn the_walk_key_names_its_mode_and_walks_the_circle() {
+        let table = with_walker(&MaterialTable::new());
+        let mut m = crate::hud::Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::Half,
+            0.0,
+        );
+        assert_eq!(crate::toggles::KEY_WALK, vxe_app::KeyCode::F11);
+        assert!(m.walkers.place(&table, [50.0, 40.0, 2.0], [50.0, 0.0, 8.0]));
+        let words = m.walkers.toggle_walk();
+        assert_eq!(words, "walk on");
+        m.show_lights(words.to_owned(), 5.0);
+        assert!(m.banner(5.0).unwrap().lines().any(|l| l == "walk on"));
+        (m.walkers.drawn, m.walkers.parts) = (1, 4);
+        let mut rows = String::new();
+        m.write_rows(&mut rows);
+        assert!(
+            rows.lines()
+                .any(|l| l == "entities 1/64 parts 4/512 over 0 walk"),
+            "{rows}"
+        );
+        let mut swings = Vec::new();
+        for _ in 0..240 {
+            m.walkers.step(1.0 / 60.0);
+            let p = m.walkers.placed[0];
+            let (feet, yaw, swing) = Walkers::walk_pose(&p, m.walkers.clock);
+            let r = ((feet[0] - 50.0).powi(2) + (feet[1] - 40.0).powi(2)).sqrt();
+            assert!((r - WALK_RADIUS).abs() < 1e-3, "radius {r}");
+            assert_eq!(feet[2], 2.0);
+            // Facing along the circle: the front is perpendicular to the radius.
+            let front = [yaw.sin(), -yaw.cos()];
+            let along = (front[0] * (feet[0] - 50.0) + front[1] * (feet[1] - 40.0)) / r;
+            assert!(along.abs() < 1e-3, "facing {along}");
+            swings.push(swing);
+            let (_, pose_now) = m.walkers.set.get(p.id).unwrap();
+            assert_eq!(*pose_now, pose(feet, yaw, swing));
+        }
+        let most = swings.iter().fold(0f32, |a, s| a.max(s.abs()));
+        assert!((most - WALK_SWING).abs() < 0.01, "swing {most}");
+        assert!((m.walkers.clock - 4.0).abs() < 1e-4);
+        assert_eq!(m.walkers.toggle_walk(), "walk off");
+        let held = m.walkers.set.get(m.walkers.placed[0].id).unwrap().1.clone();
+        m.walkers.step(1.0 / 60.0);
+        assert_eq!(m.walkers.set.get(m.walkers.placed[0].id).unwrap().1, &held);
+        let mut rows = String::new();
+        m.write_rows(&mut rows);
+        assert!(
+            rows.lines()
+                .any(|l| l == "entities 1/64 parts 4/512 over 0")
         );
     }
 

@@ -7,8 +7,9 @@
 //! - the tree: [`ENTITY_NODES`] nodes of [`NODE_WORDS`] words, the root at node 0. A node is
 //!   its box's minimum and maximum in world voxels (six `f32`), then for an inner node its two
 //!   children's indices, for a leaf its first instance with [`LEAF_BIT`] set and its instance
-//!   count. The last node's slot is the header ([`HEADER_WORD`]): the entities drawn, the
-//!   nodes, the instances, and whether any instance moved.
+//!   count, with [`LEAF_MOVED`] set when any of the entity's parts moved. The last node's
+//!   slot is the header ([`HEADER_WORD`]): the entities drawn, the nodes, the instances, and
+//!   whether any instance moved.
 //! - the instances from [`INSTANCE_WORD`]: [`MAX_ENTITY_PARTS`] of [`INSTANCE_WORDS`] words. An
 //!   instance is its world-to-part transform (3 x 4 `f32`, row-major, model voxels from world
 //!   voxels), the part-to-world transform of the frame before (3 x 4 `f32`), the word its
@@ -41,6 +42,9 @@ pub(crate) const NODE_WORDS: usize = 8;
 pub(crate) const HEADER_WORD: usize = (ENTITY_NODES - 1) * NODE_WORDS;
 /// A leaf's first-instance word carries this bit.
 pub(crate) const LEAF_BIT: u32 = 1 << 31;
+/// A leaf's count word carries this bit when any of its entity's parts moved since the call
+/// before (a shadow ray that enters its box marks its pixel fresh, `entity.wgsl`).
+pub(crate) const LEAF_MOVED: u32 = 1 << 31;
 /// The first instance's word.
 pub(crate) const INSTANCE_WORD: usize = ENTITY_NODES * NODE_WORDS;
 /// Words of an instance (128 bytes).
@@ -364,11 +368,12 @@ impl EntityMirror {
                 continue;
             };
             let first = (inst.len() / INSTANCE_WORDS) as u32;
+            let mut entity_moved = false;
             let mut bx = [[f32::MAX; 3], [f32::MIN; 3]];
             for (k, (xf, vol)) in xfs.iter().zip(vols).enumerate() {
                 let before = self.prev.get(&(id, k)).copied().unwrap_or(xf.part_to_world);
                 let part_moved = before != xf.part_to_world;
-                moved |= part_moved;
+                entity_moved |= part_moved;
                 for b in [
                     PartXform::world_box(&xf.part_to_world, vol.size),
                     PartXform::world_box(&before, vol.size),
@@ -394,7 +399,9 @@ impl EntityMirror {
                     0,
                 ]);
             }
-            boxes.push((bx, first, n as u32));
+            moved |= entity_moved;
+            let count = n as u32 | if entity_moved { LEAF_MOVED } else { 0 };
+            boxes.push((bx, first, count));
         }
         let mut nodes: Vec<[u32; NODE_WORDS]> = Vec::new();
         if !boxes.is_empty() {

@@ -82,6 +82,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
             MIRROR_WGSL,
             WALK_WGSL,
             HITREC_WGSL,
+            ENTITY_WGSL,
             EDITS_WGSL,
             TEMPORAL_WGSL,
         ],
@@ -120,6 +121,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
             MIRROR_WGSL,
             WALK_WGSL,
             HITREC_WGSL,
+            ENTITY_WGSL,
             EDITS_WGSL,
             TEMPORAL_WGSL,
         ],
@@ -221,7 +223,13 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     },
     PassSpec {
         label: "upscale",
-        modules: &[COMMON_WGSL, HITREC_WGSL, EDITS_WGSL, UPSCALE_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            ENTITY_WGSL,
+            EDITS_WGSL,
+            UPSCALE_WGSL,
+        ],
         entry: "upscale",
         constants: &[],
         groups: &[

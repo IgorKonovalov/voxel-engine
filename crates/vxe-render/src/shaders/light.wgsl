@@ -13,10 +13,11 @@
 //   2  storage texture   irradiance_out  rgba16float: the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), this frame's emissive sample in rgb
-//                                        (0 on a cube face, whose light the store holds), 0 in
-//                                        a, pre-exposed (`exposure_now`, clamped at HDR_MAX); 0
-//                                        on a miss. In the steps view the list's shadow rays'
-//                                        counters instead (see `shade`)
+//                                        (0 on a cube face, whose light the store holds),
+//                                        pre-exposed (`exposure_now`, clamped at HDR_MAX); in a
+//                                        1 at a fresh pixel, else 0; 0 on a miss. In the steps
+//                                        view the list's shadow rays' counters instead (see
+//                                        `shade`)
 //   3  storage texture   direct_out      rgba16float: the direct part, the list's exact terms
 //                                        each times its colour summed in rgb and their
 //                                        luminance (`colour_weight`) in a, pre-exposed and
@@ -27,6 +28,11 @@
 // `albedo * E / PI` is the former march's `albedo * lit`; one shadow ray per lit pixel and
 // light in reach with LIGHT_SHADOWS set, from SHADOW_OFFSET off the surface along the shadow
 // normal toward the light.
+//
+// A pixel is fresh (ADR-0050) when one of its shadow rays entered the box of an entity with a
+// moved part (`entity_fresh`), or its hit is a moved part's voxel: its direct light may differ
+// from the frame before's at the same surface point, so the temporal pass takes this frame's
+// direct sample as it is and the upscalers mark it changed.
 //
 // In the cutaway view a hit takes the hemisphere term `PI (0.3 + 0.7 (0.5 + 0.5 n.z))`
 // instead, with no lamp, no emission and no shadow ray. Every shadow ray takes the frame's
@@ -106,6 +112,7 @@ fn shade_px(gid: vec3<u32>) {
     // The direct part: rgb, and its luminance in w.
     var e = vec4<f32>(0.0);
     var emissive = vec3<f32>(0.0);
+    entity_fresh = false;
     if (rec.found) {
         let ray = pixel_ray(full_px(gid.xy));
         let n = rec.n;
@@ -124,7 +131,8 @@ fn shade_px(gid: vec3<u32>) {
     // The emissive sample in rgb; the list's (or the cutaway's hemisphere) in the direct
     // target. Stored pre-exposed: times this frame's exposure, at most HDR_MAX (ADR-0033).
     let ex = exposure_now();
-    textureStore(irradiance_out, px, min(vec4<f32>(emissive * ex, 0.0), vec4<f32>(HDR_MAX)));
+    let fresh = rec.found && (entity_fresh || entity_moved(rec));
+    textureStore(irradiance_out, px, vec4<f32>(min(emissive * ex, vec3<f32>(HDR_MAX)), select(0.0, 1.0, fresh)));
     textureStore(direct_out, px, min(e * ex, vec4<f32>(HDR_MAX)));
 }
 

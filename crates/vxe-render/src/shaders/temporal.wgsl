@@ -1,18 +1,21 @@
 // The temporal pass: accumulates each pixel's irradiance and its moments over frames by
 // reprojecting the hit through the previous frame's views (the world does not move; only the
-// views and the edits do), and kills history where the world was edited. Compiled after
-// the walk's modules, whose bindings (group 0) and hit-record helpers it uses.
+// views, the edits and the entities do), and kills history where the world was edited.
+// Compiled after the walk's modules and entity.wgsl, whose bindings (group 0), hit-record
+// helpers and entity transforms it uses.
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   hit_pos_in      this frame's hit positions
 //   1  texture_2d<u32>   hit_info_in     this frame's hit records
 //   2  texture_2d<f32>   prev_pos_in     last frame's hit positions
 //   3  texture_2d<u32>   prev_info_in    last frame's hit records
-//   4  texture_2d<f32>   irradiance_in   this frame's irradiance from the light pass
+//   4  texture_2d<f32>   irradiance_in   this frame's irradiance from the light pass (a: 1
+//                                        at a fresh pixel)
 //   5  texture_2d<f32>   prev_accum_in   last frame's accumulated irradiance
 //   6  texture_2d<f32>   prev_moments_in last frame's moments: luminance, its square, age
 //   7  storage texture   accum_out       rgba16float: the accumulated irradiance, the
-//                                        emissive part in rgb, 0 in a
+//                                        emissive part in rgb; in a 1 at a fresh pixel, else 0
+//                                        (the upscalers' `fresh_lands`)
 //   8  storage texture   moments_out     rgba16float: first and second moments of the
 //                                        filtered irradiance's luminance (the direct part and a
 //                                        fallback hit's emissive part), then the age: frames of
@@ -53,14 +56,19 @@
 // where the pixel resets (no accepted history, no history, an edit box), and follows an
 // emission-scale change at ALPHA.
 //
-// A hit is reprojected through the previous frame's view of the same index to a fractional
-// pixel as if both frames' rays went through their pixels' centres (`reproject_centred`: a
-// still camera maps each pixel onto itself whatever the jitter); each of its four bilinear
-// taps is accepted when that pixel hit, with the same material, a normal within HISTORY_COS
-// of this one, and a position within `HISTORY_DIST + HISTORY_DIST_PER_T t` voxels of this
-// hit. The accepted taps' history, moments and age are blended by their bilinear weights;
-// with none accepted, the accepted pixel of the 3 x 3 around the nearest whose position lies
-// nearest this hit's is taken alone; with none of those either, with no
+// A hit is reprojected from where it was in the frame before (`prev_world`: a moved entity
+// part's voxel through the part's transform of the frame before, any other hit where it is)
+// through the previous frame's view of the same index to a fractional pixel as if both
+// frames' rays went through their pixels' centres (`reproject_centred`: a still camera maps
+// each pixel onto itself whatever the jitter); each of its four bilinear taps is accepted when
+// that pixel hit the same thing (both the world, or both the same entity instance:
+// `same_thing`), with the same material, a normal within HISTORY_COS of this one, and a
+// position within `HISTORY_DIST + HISTORY_DIST_PER_T t` voxels of that previous point. The
+// accepted taps' history, moments and age are blended by their bilinear weights; with none
+// accepted, the accepted pixel of the 3 x 3 around the nearest whose position lies nearest
+// this hit's is taken alone, unless the nearest previous pixel showed another thing (the
+// surface was hidden behind an entity, or an entity behind another); with none of those
+// either, with no
 // history (`Params.history` bit 0 clear), or with the hit inside an edit box dilated by
 // one voxel, the pixel resets: age 0, accumulation this frame's sample. Otherwise the age is
 // the taps' age plus one, capped at AGE_MAX. The direct part (rgba, the same blend on every
@@ -68,7 +76,9 @@
 // fallback's emissive part as above. On the frame LIGHTING_LIGHTS_CHANGED says the list of
 // lights changed, the direct part takes this frame's sample as it is: the light pass's
 // estimate of each light is exact up to its shadow ray, so a light switched off, moved,
-// recoloured or removed leaves nothing behind.
+// recoloured or removed leaves nothing behind. The same rule holds per pixel at a fresh pixel
+// (light.wgsl: a shadow ray crossed a moving entity's box, or the hit is a moved part's), so a
+// moving shadow or a moving part's lit face leaves no stale direct light.
 //
 // A cube face's pixel with no light of the list shaded (LIGHTING_DIRECT clear: the lamp off and
 // the list empty; no cutaway, not the steps view) skips the reprojection: its emissive part is
@@ -362,6 +372,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The emissive irradiance in rgb; the direct part in rgb, its luminance in a.
     var sample = textureLoad(irradiance_in, px, 0);
     let direct = textureLoad(direct_in, px, 0);
+    let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
+    sample.w = 0.0;
     var stored = false;
     if (reads_store(rec)) {
         let ray = pixel_ray(full_px(gid.xy));
@@ -416,7 +428,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var age = 0.0;
     if (rec.found && (params.history & 1u) != 0u && !in_edit(rec.p)) {
         let vi = view_of(full_px(gid.xy));
-        let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, rec.p);
+        let pp = prev_world(rec);
+        let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, pp);
         let q = select(prev_light_grid(full), full, full.x < 0.0) - 0.5;
         let base = vec2<i32>(floor(q));
         let f = q - floor(q);
@@ -436,8 +449,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
-            if (!prev.found || prev.material != rec.material || dot(prev.n, rec.n) < HISTORY_COS
-                || distance(prev.p, rec.p) > tol) {
+            if (!prev.found || !same_thing(prev, rec) || prev.material != rec.material
+                || dot(prev.n, rec.n) < HISTORY_COS || distance(prev.p, pp) > tol) {
                 continue;
             }
             let wx = select(1.0 - f.x, f.x, o.x == 1);
@@ -453,10 +466,18 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             m += w * textureLoad(prev_moments_in, tap, 0).xyz;
         }
-        if (w_sum <= 1e-3) {
+        // The previous pixel nearest the reprojection showed another thing (an entity where
+        // this is the world, the world where this is an entity, or another instance): the
+        // surface was hidden behind it, so no neighbour's history is borrowed.
+        let near = vec2<i32>(floor(q + 0.5));
+        var hidden = false;
+        if (on_light_grid(near)) {
+            let n = unpack_hit(textureLoad(prev_pos_in, near, 0), textureLoad(prev_info_in, near, 0));
+            hidden = n.found && !same_thing(n, rec);
+        }
+        if (w_sum <= 1e-3 && !hidden) {
             // No bilinear tap agrees: the best-agreeing pixel of the 3 x 3 around the nearest
             // (the nearest position), so a jittered hit beside a face's edge finds its face.
-            let near = vec2<i32>(floor(q + 0.5));
             var best = tol;
             for (var i = 0; i < 9; i++) {
                 let tap = near + vec2<i32>(i % 3 - 1, i / 3 - 1);
@@ -464,9 +485,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                     continue;
                 }
                 let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
-                let d = distance(prev.p, rec.p);
-                if (!prev.found || prev.material != rec.material || dot(prev.n, rec.n) < HISTORY_COS
-                    || d > best) {
+                let d = distance(prev.p, pp);
+                if (!prev.found || !same_thing(prev, rec) || prev.material != rec.material
+                    || dot(prev.n, rec.n) < HISTORY_COS || d > best) {
                     continue;
                 }
                 best = d;
@@ -498,7 +519,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 a = max(a, lambda);
                 age = floor(age * (1.0 - lambda) + 0.5);
             }
-            if ((params.lighting & LIGHTING_LIGHTS_CHANGED) != 0u) {
+            if ((params.lighting & LIGHTING_LIGHTS_CHANGED) != 0u || fresh) {
                 a = 1.0;
             }
             var e_fallback = mix(h.xyz, sample.xyz, a_emissive);
@@ -511,6 +532,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             moments = mix(m.xy, vec2<f32>(l, l * l), a);
         }
     }
+    accum.w = select(0.0, 1.0, fresh);
     textureStore(accum_out, px, min(accum, vec4<f32>(HDR_MAX)));
     textureStore(direct_out, px, min(acc_direct, vec4<f32>(HDR_MAX)));
     // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them

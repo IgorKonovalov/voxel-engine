@@ -127,6 +127,8 @@ pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
 /// `F12`: the walkers' eye lights on or off.
 pub const KEY_EYE_LIGHTS: KeyCode = KeyCode::F12;
+/// `F11`: the walkers walk or hold still (`crate::walker`).
+pub const KEY_WALK: KeyCode = KeyCode::F11;
 
 /// Every key `run::keys` binds to an action with no mode (the toggles' keys are in
 /// [`TOGGLES`]): the bench, the stamp, walking, the coarse grid, the crumble, the castle shot,
@@ -146,6 +148,7 @@ pub const ACTION_KEYS: &[KeyCode] = &[
     KEY_FIRE,
     KEY_WALKER,
     KEY_EYE_LIGHTS,
+    KEY_WALK,
     KeyCode::KeyH,
     KeyCode::KeyT,
     KeyCode::KeyE,

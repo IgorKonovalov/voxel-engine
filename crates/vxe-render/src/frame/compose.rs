@@ -111,6 +111,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("ENTITY_HEADER_WORD", crate::entities::HEADER_WORD as u32),
     ("ENTITY_NODE_WORDS", crate::entities::NODE_WORDS as u32),
     ("ENTITY_LEAF_BIT", crate::entities::LEAF_BIT),
+    ("ENTITY_LEAF_MOVED", crate::entities::LEAF_MOVED),
     (
         "ENTITY_INSTANCE_WORD",
         crate::entities::INSTANCE_WORD as u32,

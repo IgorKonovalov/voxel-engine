@@ -852,4 +852,8 @@ fn the_entities_flag_parses_a_count() {
     let a = parse_args_from(argv(&["--entities", "3"])).expect("--entities 3 parses");
     assert_eq!(a.entities, 3);
     assert!(parse_args_from(argv(&["--entities", "x"])).is_err());
+    assert!(!a.entities_walk);
+    let w = parse_args_from(argv(&["--entities", "3", "--entities-walk", "on"]))
+        .expect("--entities-walk on parses");
+    assert!(w.entities_walk);
 }

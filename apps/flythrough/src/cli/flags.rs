@@ -789,6 +789,15 @@ fn light_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
+            &["--entities-walk"],
+            "on|off",
+            "the walkers start walking, as F11 sets them (off)",
+            |p: &mut Parsing, v| {
+                p.args.entities_walk = v.on_off()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--lights-bounce"],
             "on|off",
             "the --lights ring's lights feed the lamp's bounce channel (off)",

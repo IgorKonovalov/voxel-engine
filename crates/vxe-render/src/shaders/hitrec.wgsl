@@ -256,3 +256,18 @@ fn emission_lands(emissive: texture_2d<f32>, px: vec2<i32>, rec: HitRecord) -> b
     }
     return false;
 }
+
+// Whether a fresh pixel (light.wgsl: a shadow ray crossed a moving entity's box, or the hit is
+// a moved part's) lies at internal pixel `px`: the temporal pass's accumulation `accum` carries
+// 1 in a at any of the lighting texels around it. The upscalers mark such a pixel changed.
+fn fresh_lands(accum: texture_2d<f32>, px: vec2<i32>) -> bool {
+    let o = vec2<f32>(unpack_offset(params.light_offset));
+    let base = vec2<i32>(floor((vec2<f32>(px) - o) / f32(params.light_scale)));
+    for (var i = 0; i < 4; i++) {
+        let q = base + vec2<i32>(i & 1, i >> 1);
+        if (on_light_grid(q) && textureLoad(accum, q, 0).w > 0.5) {
+            return true;
+        }
+    }
+    return false;
+}

@@ -595,6 +595,8 @@ pub struct Args {
     pub(crate) castle_shot: castle::CastleShot,
     /// `--entities N`: `N` walkers on a 3 m ring around the spawn (`crate::walker`).
     pub(crate) entities: u32,
+    /// `--entities-walk on|off`: the walkers start walking (`F11`'s mode; off).
+    pub(crate) entities_walk: bool,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.
