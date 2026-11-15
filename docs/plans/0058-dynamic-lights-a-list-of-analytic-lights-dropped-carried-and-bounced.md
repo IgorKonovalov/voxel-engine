@@ -1112,7 +1112,7 @@ questions with recommendations):
 | 3: The bounce flag | dev | done (exploration) | a616204 |
 | 4: The owner's window | human | done 2026-11-14 (verdict in the log; picks, faults to Phase 5) | |
 | 5: The window's picks and its faults | dev | done but one bar: native blue's (2) of 5b's soak test (log, open question) | fa4bb88, 7b8fc27, 320bce1, de3370b, 71b4478 |
-| 6: The owner's re-window | human | not started | |
+| 6: The owner's re-window | human | done 2026-11-15 (the owner's words in the log; the stop rule did not trip) | |
 | 7: The picks as tests | dev | not started | |
 
 ### Notes
