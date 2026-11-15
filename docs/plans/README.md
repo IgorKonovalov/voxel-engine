@@ -23,7 +23,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | in-progress | M7, ADR-0054 (proposed). Phases 1-5 merged 56008fa; Phase 6 Linux run done, Windows run owed (owner: later). |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
-| [0075](0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: steppable start-up, a progress signal and a default loading frame | draft | ADR-0059 (proposed). Awaits go. After 0062 merges, beside 0063 P3-4, before 0069. |
+| [0075](0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: steppable start-up, a progress signal and a default loading frame | approved | ADR-0059 (proposed). Approved 2026-11-15, voxel cube. After 0062 merges, beside 0063 P3-4, before 0069. |
 <!-- roster:end -->
 
 ## Sequence
@@ -79,9 +79,9 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0074** (the sync's light stages): closed 2026-11-14 (v0.53.0). The next sync plans are the backlog's head: the light placement's eviction scan, then `alloc`.
 
-**Plan 0075** (a loading screen, drafted 2026-11-15 from the owner's ask, awaiting go): after Plan 0062 merges, beside Plan 0063's Phases 3-4, ahead of Plan 0069 (both edit `Run::init`).
+**Plan 0075** (a loading screen, drafted and approved 2026-11-15, the animation a turning voxel cube): after Plan 0062 merges, beside Plan 0063's Phases 3-4, ahead of Plan 0069 (both edit `Run::init`).
 
-Every active plan but Plan 0075 (draft) is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
 stays after Plan 0058. Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that

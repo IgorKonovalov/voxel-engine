@@ -1,6 +1,6 @@
 # 0075: A loading screen: steppable start-up, a progress signal and a default loading frame
 
-> **Status:** draft (2026-11-15, awaiting the owner's go)
+> **Status:** approved (2026-11-15, the owner's go: after Plan 0062 merges; amended the same day, see Open questions)
 > **Created:** 2026-11-15
 > **Milestone:** none of its own. The testbed and the tester build (M7, Plan 0068); the engine
 > side serves any consumer's start-up.
@@ -83,8 +83,8 @@ fly-through's run; this plan starts after it merges, and can run beside Plan 006
 settings) rewrites the setters `Run::init` calls, so whichever lands second rebases its `init`
 edits; this plan is smaller and should land first. Plan 0071 curates `vxe-render`'s public
 surface: `PreRoll`, `LoadProgress` and `LoadingScreen` are called by the testbed and stay public.
-Plan 0073 later adds the loading flags as settings rows. Plan 0068's Phase 6 (the owner's
-Windows run, owed) can take this plan's Windows look in the same session (Phase 6 here).
+Plan 0073 later adds the loading flags as settings rows. Plan 0068's Windows run was done on
+2026-11-15, before this plan's go, so Phase 6 here takes its own Windows archive.
 
 ## Implementation phases
 
@@ -162,9 +162,11 @@ owner's window.
 - **Files touched:** `crates/vxe-render/src/loading.rs`, `crates/vxe-render/src/shaders/
   loading.wgsl` (new), `crates/vxe-render/src/lib.rs`, `crates/vxe-render/tests/gpu_loading.rs`
   (new), `apps/flythrough/src/run/{loading,frame}.rs`, `apps/flythrough/src/cli/`.
-- **Shape:** one fullscreen fragment pass for the background, a ring of eight squares turning
-  once a second with a fading trail, and a bordered bar, all analytic with a one-pixel coverage
-  ramp (no hard edge that crawls), then the owned `HudOverlay` for the rows. `encode(queue, enc,
+- **Shape:** one fullscreen fragment pass for the background, a small voxel cube (a 3 x 3 x 3
+  block of voxels with gaps between them) turning about a tilted axis, about one turn in three
+  seconds, ray-traced in the fragment shader against the boxes with flat per-face shading, and
+  a bordered bar, all analytic with a one-pixel coverage ramp at every silhouette and edge (no
+  hard edge that crawls), then the owned `HudOverlay` for the rows. `encode(queue, enc,
   target, size, &LoadingView { title, stage, detail, progress, seconds, alpha })`: time comes in
   as an argument, so the frame is a pure function of its inputs. The bar shows an eased value:
   it approaches the true fraction with a 0.15 s time constant, never exceeds it, never moves
@@ -225,7 +227,7 @@ owner's window.
   animation runs without a visible stutter, the bar only moves forward and does not sit still
   for long, the scene name is right, the end (fade or cut) looks right, and the start-up is not
   noticeably slower. On Windows, the same from a release-workflow archive (manual run,
-  artifacts only), in the same session as Plan 0068's owed Windows run if the owner takes both.
+  artifacts only).
   Each answer and pick goes to the readings log.
 
 ### Phase 7: after the window
@@ -290,21 +292,19 @@ Phase 5 reads them:
 
 ## Open questions
 
-Each has a recommended answer; the go takes the recommendations unless the owner says otherwise.
+Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 
-1. **The blank before the device.** The window shows nothing until the device exists (0.4 to
-   1.9 s cold on the RTX, `docs/nfr.md` section 7; on Wayland the window maps at the first
-   loading frame). Recommended: accept it, and read it in Phase 5. The alternative, a device
-   whose limits do not wait on the level's content, changes the mirror's shard layout and the
-   light table's sizing on every run and does not remove the device's own creation time; it
+1. **The blank before the device:** accepted, and read in Phase 5 (0.4 to 1.9 s cold on the
+   RTX, `docs/nfr.md` section 7). A device whose limits do not wait on the level's content
    would be its own plan if the readings say the generation join is long.
-2. **The end of loading.** Recommended: a 250 ms fade of the loading screen over the first world
-   frames (`--loading-fade 0` cuts). Alternative: a hard cut.
-3. **The animation.** Recommended: a ring of eight squares turning once a second, cheap and
-   analytic. Alternative: a small turning voxel cube in the loading shader, more on-brand, more
-   shader.
-4. **Windows.** Recommended: the Windows look in the same session as Plan 0068's owed Windows run,
-   from one release-workflow archive. Alternative: Linux only, Windows at the next tester build.
+2. **The end of loading:** a 250 ms fade of the loading screen over the first world frames
+   (`--loading-fade 0` cuts).
+3. **The animation:** a small turning voxel cube in the loading shader (the owner's pick over
+   the recommended ring of squares), Phase 3's Shape. Its GPU time stays inside section 7's
+   0.3 ms loading-pass budget; if Phase 3's reading on the RTX or lavapipe misses it, the cube
+   drops to fewer voxels before anything else changes.
+4. **Windows:** Plan 0068's Windows run was done 2026-11-15 without this plan, so Phase 6 takes
+   its own release-workflow archive.
 
 ## What this plan does NOT do
 
