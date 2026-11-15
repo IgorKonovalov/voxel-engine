@@ -178,3 +178,11 @@ fn entity_info(e: EntityHit) -> vec4<u32> {
     let flags = HIT_FOUND | HIT_ENTITY | (e.instance << HIT_INSTANCE_SHIFT);
     return vec4<u32>(octa16_encode(e.n), e.material, flags);
 }
+
+// The shadow offset's scale for hit `rec`: an entity part's `1 / detail`, else 1.
+fn entity_shadow_scale(rec: HitRecord) -> f32 {
+    if (!rec.entity) {
+        return 1.0;
+    }
+    return entity_f(ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS + 27u);
+}

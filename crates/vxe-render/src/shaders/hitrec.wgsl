@@ -95,6 +95,10 @@ fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
 // How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
 const SHADOW_OFFSET: f32 = 0.5;
 
+// SHADOW_OFFSET's scale for the hit being shaded: 1, or an entity part's `1 / detail`
+// (`entity_shadow_scale`), so a shadow ray leaves a small voxel by the same share of it.
+var<private> shadow_scale: f32 = 1.0;
+
 // The field normal `n` of a field-surface hit whose stored shading normal is `m`, the face mix
 // of `n` toward its entry face's normal `f`: `(1 - k) n = l m - k f` with `l = |mix|` the root
 // of `l^2 - 2 l k (m.f) + k^2 - (1 - k)^2 = 0`, real for `k <= 1/2`; `m` itself at 0.
@@ -157,12 +161,12 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
     return face;
 }
 
-// Where the shadow rays of a hit at `p` with shadow normal `ns` start: SHADOW_OFFSET along
-// `ns`. The shadow rays walk the voxels (`march`), crisp and smooth alike solid, and a
+// Where the shadow rays of a hit at `p` with shadow normal `ns` start: SHADOW_OFFSET (times
+// `shadow_scale`) along `ns`. The shadow rays walk the voxels (`march`), crisp and smooth alike solid, and a
 // field-surface hit lies up to half a voxel off its voxels' faces, so the offset is a step out
 // of the voxels' rock as much as off the surface.
 fn shadow_origin(p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
-    return p + ns * SHADOW_OFFSET;
+    return p + ns * (SHADOW_OFFSET * shadow_scale);
 }
 
 // `p` projected through previous view `v` to a fractional pixel of the target (pixel

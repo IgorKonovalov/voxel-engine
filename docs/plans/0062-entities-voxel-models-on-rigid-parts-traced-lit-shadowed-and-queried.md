@@ -551,8 +551,8 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](logs/0062.md) | bc80246 |
-| 2: The mirror and the primary hit | dev | done; names, packing and keys in the readings log | committed with this row |
-| 3: Light, shadow and emission | dev | not started | |
+| 2: The mirror and the primary hit | dev | done; names, packing and keys in the readings log | 70bdec7 |
+| 3: Light, shadow and emission | dev | done; readings in the readings log | committed with this row |
 | 4: Motion | dev | not started | |
 | 5: The costs and the caps | dev | not started | |
 | 6: The owner's window | human | not started | |

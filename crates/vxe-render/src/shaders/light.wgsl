@@ -1,8 +1,8 @@
 // The light pass: direct irradiance at each pixel's hit, read from the hit buffer, from the
 // list of lights (`lights`, ADR-0044; the headlamp is slot 0 while it is on) and from one
 // emissive voxel face. Compiled after the walk's modules, whose bindings
-// (group 0), walk, hit-record helpers and random numbers it uses; every shadow ray is
-// `march`.
+// (group 0), walk, hit-record helpers and random numbers it uses, and entity.wgsl; every
+// shadow ray is `march`, and with ENTITY_SHADOWS the entity walk after it.
 //
 // Bindings, group 0 beyond common.wgsl's:
 //  10  storage  light_samples  the mirror's light samples (see common.wgsl)
@@ -36,6 +36,10 @@
 
 @group(0) @binding(10) var<storage, read> light_samples: array<vec4<i32>>;
 
+// Whether the list's shadow rays also walk the entities (ADR-0050): on in the light and
+// gradient passes, off in the probe rays and the bake, which see no entity.
+override ENTITY_SHADOWS: bool = false;
+
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -65,6 +69,7 @@ fn shade_px(gid: vec3<u32>) {
     }
     let px = vec2<i32>(gid.xy);
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
+    shadow_scale = entity_shadow_scale(rec);
     if (view == VIEW_STEPS) {
         // The cost of each hit's shadow rays toward the lights in reach, lit or not, in the
         // frame's shadow walk: their loop iterations, storage loads and pool loads summed
@@ -142,7 +147,7 @@ fn face_centre(v: vec3<i32>, face: u32) -> vec3<f32> {
 // origin (`p` offset along `ns`) aimed at the light itself, as the emissive and baked rays do:
 // a ray along the direction from `p` would run parallel to the true one, half a voxel off the
 // surface, and clear the edge of a step that shadows a face next to a near light. Out of its
-// reach no ray is cast.
+// reach no ray is cast. With ENTITY_SHADOWS the ray then walks the entities to the light.
 fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
     var lit = light_term(li, p, n);
     if ((li.flags & LIGHT_SHADOWS) != 0u && lit > 0.0) {
@@ -150,7 +155,8 @@ fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
         let to_light = li.pos - o;
         let dist2 = max(dot(to_light, to_light), 1e-4);
         let l = to_light * inverseSqrt(dist2);
-        if (shadowed(o, l, sqrt(dist2))) {
+        let dist = sqrt(dist2);
+        if (shadowed(o, l, dist) || (ENTITY_SHADOWS && entity_march(o, l, dist).found)) {
             lit = 0.0;
         }
     }

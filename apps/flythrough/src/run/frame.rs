@@ -664,7 +664,11 @@ impl Run {
             fwd.to_array(),
             up.to_array(),
         );
-        let lights = self.modes.lights.list();
+        let mut lights = self.modes.lights.list();
+        // The walkers' eye lights take the list's free slots, newest walkers last.
+        let free =
+            crate::lights::TestLights::cap(self.modes.lighting.lamp).saturating_sub(lights.len());
+        lights.extend(self.modes.walkers.eye_lights().into_iter().take(free));
         let Some(gfx) = self.gfx.as_mut() else {
             return;
         };

@@ -46,6 +46,7 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
             let d = normalize(rec.p - v.origin);
             let n = rec.n;
             let ns = shadow_normal_of(rec, d);
+            shadow_scale = entity_shadow_scale(rec);
             if ((params.lighting & LIGHTING_GRADIENT) != 0u) {
                 let lamp = PI * lights_lit(rec.p, n, ns);
                 let prev_light = textureLoad(grad_prev_light, qi, 0);

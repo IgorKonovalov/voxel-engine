@@ -429,3 +429,504 @@ fn assert_golden_sized(name: &str, rgba: &[u8]) {
     );
     assert!(f <= 0.001, "{name}: {:.4} % of pixels differ", f * 100.0);
 }
+
+// ---- Phase 3: light, shadow and emission ----
+
+use vxe_render::{Light, LightingResolution};
+
+/// ADR-0044's term apart from the renderer: `PI * intensity * max(n . l, 0) / d^2` times the
+/// window `(1 - (d / r)^4)^2`, `r = sqrt(intensity / floor)`, at `p` with normal `n`.
+fn analytic(light: &Light, floor: f32, p: [f32; 3], n: [f32; 3]) -> f32 {
+    let l: [f32; 3] = std::array::from_fn(|k| light.pos[k] - p[k]);
+    let d2: f32 = l.iter().map(|v| v * v).sum();
+    let d = d2.sqrt();
+    let cos = ((0..3).map(|k| l[k] * n[k]).sum::<f32>() / d).max(0.0);
+    let r = (light.intensity / floor).sqrt();
+    let window = (1.0 - (d / r).powi(4)).max(0.0).powi(2);
+    std::f32::consts::PI * light.intensity * cos / d2 * window
+}
+
+/// Asserts `got` within `tol` (relative) of `want`.
+fn within(name: &str, got: f32, want: f32, tol: f32) {
+    println!(
+        "{name}: {got:.4} against {want:.4} ({:+.3} %)",
+        (got / want - 1.0) * 100.0
+    );
+    assert!(
+        (got / want - 1.0).abs() <= tol,
+        "{name}: {got} against {want}"
+    );
+}
+
+/// The last frame's hits: (pixel, point, record) for every pixel that hit.
+fn hits(rig: &Rig) -> Vec<(usize, [f32; 3], [u16; 4])> {
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    (0..pos.len())
+        .filter(|&i| rec[i][3] & 1 != 0)
+        .map(|i| (i, [pos[i][0], pos[i][1], pos[i][2]], rec[i]))
+        .collect()
+}
+
+/// The hit nearest `p` among those `keep` takes: its pixel and point.
+fn nearest(
+    hits: &[(usize, [f32; 3], [u16; 4])],
+    p: [f32; 3],
+    keep: impl Fn(&[u16; 4]) -> bool,
+) -> (usize, [f32; 3]) {
+    let d = |q: [f32; 3]| (0..3).map(|k| (q[k] - p[k]).powi(2)).sum::<f32>();
+    hits.iter()
+        .filter(|h| keep(&h.2))
+        .min_by(|a, b| d(a.1).total_cmp(&d(b.1)))
+        .map(|h| (h.0, h.1))
+        .expect("a hit near the point")
+}
+
+fn world_hit(r: &[u16; 4]) -> bool {
+    r[3] & 32 == 0
+}
+
+fn entity_hit(k: u16) -> impl Fn(&[u16; 4]) -> bool {
+    move |r| r[3] & 32 != 0 && r[3] >> 6 == k
+}
+
+/// The direct target's luminance (`a`) per pixel.
+fn direct(rig: &Rig) -> Vec<f32> {
+    vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct())
+        .iter()
+        .map(|p| p[3])
+        .collect()
+}
+
+/// A 16 x 16 x 2 slab of `m` (x, y wide, z thick), its pivot at `pivot` (model voxels), detail 1.
+fn slab(m: MaterialId, pivot: [i32; 3]) -> Arc<Model> {
+    let part = Part {
+        volume: Arc::new(Prefab::new([16, 16, 2], vec![m; 512], None)),
+        parent: None,
+        pivot: pivot.map(|v| v * 256),
+        detail: 1,
+    };
+    Arc::new(Model::new(vec![part]).expect("one part"))
+}
+
+/// From y 6, 8 voxels over the floor, looking along +y and a little down: under a slab at
+/// heights 9 to 11 the floor below it shows.
+fn under_camera() -> Camera {
+    Camera {
+        position: [64.0, 6.0, 8.0].into(),
+        yaw: std::f32::consts::FRAC_PI_2,
+        pitch: -0.25,
+        vfov: 1.2,
+    }
+}
+
+/// Phase 3 done-when 1: the lit box's light of 1200 20 voxels above the floor at (64, 32), and a
+/// 16 x 16 x 2 slab part level between heights 9 and 11 centred under it: the floor under the
+/// light and 10 voxels aside read 0 direct (the shadow's edge is at 17.8), 20 voxels aside its
+/// term within 2 %; with `SHADOWS` clear all three read their term within 2 %.
+#[test]
+fn an_entity_casts_a_hard_shadow_on_the_floor() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let floor = rig.frame.lighting().light_floor;
+    let light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    let s = slab(red, [8, 8, 1]);
+    draw(
+        &mut rig,
+        &[(s.clone(), posed(&s, [64.0, 32.0, 10.0], Quat::IDENTITY))],
+    );
+    let camera = under_camera();
+    for shadows in [true, false] {
+        let flags = if shadows {
+            Light::ON | Light::SHADOWS
+        } else {
+            Light::ON
+        };
+        rig.frame.set_lights(&[Light { flags, ..light }]);
+        rig.frame.reset_history();
+        rig.step(&camera);
+        let hits = hits(&rig);
+        let e = direct(&rig);
+        for (name, x, dark) in [
+            ("under", 64.0, true),
+            ("10 aside", 74.0, true),
+            ("20 aside", 84.0, false),
+        ] {
+            let (i, p) = nearest(&hits, [x, 32.0, 2.0], world_hit);
+            assert!(
+                (p[0] - x).abs() < 1.0 && (p[2] - 2.0).abs() < 1e-3,
+                "{name}: {p:?}"
+            );
+            let want = analytic(&light, floor, p, [0.0, 0.0, 1.0]);
+            if shadows && dark {
+                println!("{name}: {} in the shadow at {p:?}", e[i]);
+                assert_eq!(e[i], 0.0, "{name} at {p:?}");
+            } else {
+                within(&format!("{name}, shadows {shadows}"), e[i], want, 0.02);
+            }
+        }
+    }
+}
+
+/// Phase 3 done-when 2: the light 22 voxels above the floor, a 16 x 16 x 2 slab resting on it
+/// (top face 20 below the light): the top face's centre reads 9.40 within 2 %; turned 45
+/// degrees about a level axis (x) through that centre, the same point reads 6.65 within 2 %.
+#[test]
+fn an_entity_face_is_lit_by_its_own_normal() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let floor = rig.frame.lighting().light_floor;
+    let light = Light::point([64.0, 32.0, 24.0], 1200.0);
+    rig.frame.set_lights(&[light]);
+    let s = slab(red, [8, 8, 2]);
+    // The camera placed so that pixel (96, 54)'s ray passes through the top face's centre.
+    let centre = [64.0, 32.0, 4.0];
+    let mut camera = Camera {
+        position: [0.0; 3].into(),
+        yaw: 0.0,
+        pitch: -0.7,
+        vfov: 1.2,
+    };
+    let px = 54 * W as usize + 96;
+    camera.position = Vec3::from(centre) - pixel_dir(&camera, px) * 28.0;
+    let (sn, cn) = std::f32::consts::FRAC_PI_4.sin_cos();
+    for (name, q, n, want) in [
+        ("level", Quat::IDENTITY, [0.0, 0.0, 1.0], 9.40),
+        (
+            "turned 45",
+            walker::turn(0, std::f32::consts::FRAC_PI_4),
+            [0.0, -sn, cn],
+            6.65,
+        ),
+    ] {
+        draw(&mut rig, &[(s.clone(), posed(&s, [64.0, 32.0, 4.0], q))]);
+        rig.frame.reset_history();
+        rig.step(&camera);
+        let (i, p) = nearest(&hits(&rig), [64.0, 32.0, 4.0], entity_hit(0));
+        let d = (0..3)
+            .map(|k| (p[k] - [64.0, 32.0, 4.0][k]).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        assert!(d < 0.6, "{name}: the pixel's hit {p:?}");
+        let e = direct(&rig)[i];
+        within(
+            &format!("{name}, the term at the hit"),
+            e,
+            analytic(&light, floor, p, n),
+            0.02,
+        );
+        within(&format!("{name}, the plan's figure"), e, want, 0.02);
+    }
+}
+
+/// Phase 3 done-when 3: a second slab 4 voxels under the first (the light 20 above the floor,
+/// the first slab at heights 9 to 11, the second 3 to 5): the second's top centre reads 0, and so
+/// does the first's bottom face.
+#[test]
+fn an_entity_shadows_another_and_itself() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    rig.frame
+        .set_lights(&[Light::point([64.0, 32.0, 22.0], 1200.0)]);
+    let s = slab(red, [8, 8, 1]);
+    draw(
+        &mut rig,
+        &[
+            (s.clone(), posed(&s, [64.0, 32.0, 10.0], Quat::IDENTITY)),
+            (s.clone(), posed(&s, [64.0, 32.0, 4.0], Quat::IDENTITY)),
+        ],
+    );
+    let camera = Camera {
+        position: [64.0, 6.0, 7.0].into(),
+        yaw: std::f32::consts::FRAC_PI_2,
+        pitch: 0.0,
+        vfov: 1.2,
+    };
+    rig.step(&camera);
+    let hits = hits(&rig);
+    let e = direct(&rig);
+    let lower = nearest(&hits, [64.0, 30.0, 5.0], entity_hit(1));
+    let upper = nearest(&hits, [64.0, 30.0, 9.0], entity_hit(0));
+    for (name, (i, p), z) in [("lower top", lower, 5.0), ("upper bottom", upper, 9.0)] {
+        println!("{name}: {} at {p:?}", e[i]);
+        assert!(
+            (p[2] - z).abs() < 1e-3 && (p[1] - 30.0).abs() < 2.0,
+            "{name}: {p:?}"
+        );
+        assert_eq!(e[i], 0.0, "{name}");
+    }
+}
+
+/// Phase 3 done-when 4: with no light, a 4-voxel cube of an emissive row (albedo 0, so only its
+/// emission shows) as an entity and the same as world voxels at the same distance, either side
+/// of the view: the two face centres read the same output within 1/255 a channel.
+#[test]
+fn an_entity_emitter_shows_as_a_world_emitter_does() {
+    let (mut t, _) = table();
+    let glow = t.push(Material {
+        albedo: [0.0; 3],
+        emission: [0.6, 0.3, 0.1],
+        ..Material::named("glow")
+    });
+    let Some(mut rig) = rig_on(entity_box(&t), [W, H], None) else {
+        return;
+    };
+    rig.frame.set_lighting(support::lights::box_lighting());
+    support::bake::fill(&rig.world, [56, 40, 24], [60, 44, 28], glow);
+    for _ in 0..2 {
+        support::SyncNow::sync_now(&mut rig.gpu, &rig.world, &rig.device, &rig.queue)
+            .expect("fits");
+    }
+    let cube = block([4; 3], glow, 1);
+    draw(
+        &mut rig,
+        &[(
+            cube.clone(),
+            posed(&cube, [70.0, 42.0, 26.0], Quat::IDENTITY),
+        )],
+    );
+    let camera = Camera {
+        position: [64.0, 10.0, 26.0].into(),
+        yaw: std::f32::consts::FRAC_PI_2,
+        pitch: 0.0,
+        vfov: 1.2,
+    };
+    rig.step(&camera);
+    let img = rig.display();
+    let world = rgb(&img, pixel_of(&camera, [58.0, 40.0, 26.0]));
+    let entity = rgb(&img, pixel_of(&camera, [70.0, 40.0, 26.0]));
+    println!("world {world:?}, entity {entity:?}");
+    assert!(
+        world.iter().any(|&c| c > 20),
+        "the world emitter shows: {world:?}"
+    );
+    near("the entity emitter against the world's", entity, world);
+}
+
+/// Phase 3 done-when 5: with a part between a bouncing list light and a wall, every probe texel
+/// and every baked store value is bit-identical to the run without the part, over 32 frames.
+#[test]
+fn the_probes_and_the_bake_see_no_entity() {
+    let run = |with: bool| {
+        let (mut rig, red) = rig()?;
+        rig.frame.set_lighting(vxe_render::Lighting {
+            lamp_bounce: true,
+            ..support::lights::box_lighting()
+        });
+        let light = Light {
+            flags: Light::ON | Light::SHADOWS | Light::BOUNCE,
+            ..Light::point([40.0, 32.0, 20.0], 1200.0)
+        };
+        rig.frame.set_lights(&[light]);
+        if with {
+            let cube = block([8; 3], red, 1);
+            draw(
+                &mut rig,
+                &[(
+                    cube.clone(),
+                    posed(&cube, [30.0, 32.0, 20.0], Quat::IDENTITY),
+                )],
+            );
+        }
+        let camera = level_camera(60.0, 20.0);
+        let camera = Camera {
+            yaw: std::f32::consts::PI,
+            ..camera
+        };
+        for _ in 0..32 {
+            rig.step(&camera);
+        }
+        let probes = support::lights::probe_words(&rig.device, &rig.queue, &rig.frame);
+        rig.bake(&support::bake::test_counts(16));
+        Some((probes, rig.blocks()))
+    };
+    let (Some(without), Some(with)) = (run(false), run(true)) else {
+        return;
+    };
+    assert!(!without.0.is_empty(), "the probe volume runs");
+    assert!(!without.1.is_empty(), "the store holds blocks");
+    assert!(
+        without.0 == with.0,
+        "the probe texels differ with the entity"
+    );
+    assert!(
+        without.1 == with.1,
+        "the baked store differs with the entity"
+    );
+}
+
+/// Phase 3 done-when 6: the walker in mid-stride on the lit box's floor, its eyes' light off and
+/// the box's light of 1200 above and behind it, so its shadow falls on the floor before it; the
+/// half lighting tier, 192 x 108, against the golden blessed once on lavapipe.
+#[test]
+fn walker_shadow_golden() {
+    let Some((mut rig, _)) = rig() else {
+        return;
+    };
+    rig.frame
+        .set_resolution(&rig.device, LightingResolution::Half);
+    rig.frame
+        .set_lights(&[Light::point([112.0, 32.0, 22.0], 1200.0)]);
+    let camera = Camera {
+        position: [80.0, 32.0, 14.0].into(),
+        yaw: 0.0,
+        pitch: -0.35,
+        vfov: 1.2,
+    };
+    let (body, eye) = walker::rows(rig.world.materials()).expect("the walker's rows");
+    let model = Arc::new(walker::model(body, eye));
+    let feet = [100.0, 32.0, 2.0];
+    let pose = walker::pose(feet, walker::facing(feet, camera.position.to_array()), 0.5);
+    draw(&mut rig, &[(model, pose)]);
+    for _ in 0..8 {
+        rig.step(&camera);
+    }
+    assert_golden_sized("walker_shadow.png", &rig.display());
+}
+
+/// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`), on the adapter
+/// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
+mod reading {
+    use super::*;
+    use vxe_render::{FRAME_PASSES, GpuWorld, MirrorConfig, PassTimer, Window};
+
+    /// [`rig_on`]'s rig on the reading adapter, and the adapter's name.
+    fn reading_rig(world: World) -> Option<(Rig, String)> {
+        let (device, queue, name) = support::reading_device(64 << 20)?;
+        let base = MirrorConfig::new(Window::Fixed(world.extent()));
+        let cfg = MirrorConfig {
+            budget_bytes: 64 << 20,
+            ..base
+        };
+        let mut gpu = GpuWorld::with_config(&device, cfg);
+        for _ in 0..2 {
+            support::SyncNow::sync_now(&mut gpu, &world, &device, &queue).expect("fits");
+        }
+        let mut frame = support::bake::new_frame(&device, [W, H]);
+        frame.set_lighting(support::lights::box_lighting());
+        Some((
+            Rig {
+                device,
+                queue,
+                gpu,
+                world,
+                frame,
+                cfg,
+            },
+            name,
+        ))
+    }
+
+    fn walker_at(rig: &Rig, feet: [f32; 3], eye: [f32; 3]) -> (Arc<Model>, Pose) {
+        let (body, e) = walker::rows(rig.world.materials()).expect("the walker's rows");
+        let pose = walker::pose(feet, walker::facing(feet, eye), 0.0);
+        (Arc::new(walker::model(body, e)), pose)
+    }
+
+    /// Phase 3 done-when 7, the fallback: a still walker beside a world emitter (a 4 x 4 x 8
+    /// block of a warm emissive row) with no list light and the lamp off; at the walker's
+    /// torso front facing the camera, the temporal pass's accumulated emissive part (its
+    /// luminance) at frame 64 and its frame-to-frame rms over the 64 frames.
+    #[test]
+    #[ignore = "reading"]
+    fn the_fallback_on_a_still_walker() {
+        let (mut t, _) = table();
+        let glow = t.push(Material {
+            emission: [4.0, 2.5, 1.0],
+            ..Material::named("glow")
+        });
+        let world = entity_box(&t);
+        support::bake::fill(&world, [96, 25, 2], [100, 29, 10], glow);
+        let Some((mut rig, adapter)) = reading_rig(world) else {
+            return;
+        };
+        let camera = level_camera(84.0, 9.0);
+        let entity = walker_at(&rig, [104.0, 32.0, 2.0], camera.position.to_array());
+        draw(&mut rig, &[entity]);
+        let mut series = Vec::new();
+        let mut px = None;
+        for _ in 0..64 {
+            rig.step(&camera);
+            let i = *px
+                .get_or_insert_with(|| nearest(&hits(&rig), [102.0, 32.0, 7.0], entity_hit(0)).0);
+            let a =
+                vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated())[i];
+            series.push(0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]);
+        }
+        let diffs: Vec<f32> = series.windows(2).map(|w| w[1] - w[0]).collect();
+        let rms = (diffs.iter().map(|d| d * d).sum::<f32>() / diffs.len() as f32).sqrt();
+        println!(
+            "{adapter}: the fallback at the torso's front, frame 64 {:.4}, mean of the last 32 {:.4}, frame-to-frame rms {rms:.4} ({:.2} % of the value)",
+            series[63],
+            series[32..].iter().sum::<f32>() / 32.0,
+            100.0 * rms / series[63].max(1e-6)
+        );
+    }
+
+    /// Phase 3 done-when 7, the cost: the light pass's time over 64 frames on the lit box (a
+    /// light of 1200 at (64, 32, 22)) with 0 and 4 walkers standing around under the light, the
+    /// median and the p90 in ms.
+    #[test]
+    #[ignore = "reading"]
+    fn the_light_pass_cost_with_walkers() {
+        let (t, _) = table();
+        let Some((mut rig, adapter)) = reading_rig(entity_box(&t)) else {
+            return;
+        };
+        let Some(timer) =
+            PassTimer::with_passes(&rig.device, &rig.queue, FRAME_PASSES.len() as u32)
+        else {
+            println!("{adapter}: no timestamp queries");
+            return;
+        };
+        let slot = FRAME_PASSES
+            .iter()
+            .position(|&n| n == "light")
+            .expect("light");
+        rig.frame
+            .set_lights(&[Light::point([64.0, 32.0, 22.0], 1200.0)]);
+        let camera = Camera {
+            position: [40.0, 32.0, 30.0].into(),
+            yaw: 0.0,
+            pitch: -0.6,
+            vfov: 1.2,
+        };
+        for n in [0usize, 4] {
+            let entities: Vec<_> = (0..n)
+                .map(|k| {
+                    let a = std::f32::consts::TAU * k as f32 / 4.0;
+                    let feet = [64.0 + 8.0 * a.cos(), 32.0 + 8.0 * a.sin(), 2.0];
+                    walker_at(&rig, feet, camera.position.to_array())
+                })
+                .collect();
+            draw(&mut rig, &entities);
+            let mut ms = Vec::new();
+            for _ in 0..64 {
+                rig.frame.advance();
+                let params =
+                    rig.frame
+                        .params(&rig.gpu, &camera, &vxe_render::LightParams::headlamp());
+                let mut enc = rig.device.create_command_encoder(&Default::default());
+                rig.frame.encode(
+                    &rig.device,
+                    &rig.queue,
+                    &mut enc,
+                    &rig.gpu,
+                    &params,
+                    Some(&timer),
+                );
+                timer.resolve(&mut enc);
+                rig.queue.submit([enc.finish()]);
+                ms.push(timer.read_all_ms(&rig.device)[slot]);
+            }
+            ms.sort_by(f64::total_cmp);
+            println!(
+                "{adapter}: {n} walkers, light pass median {:.3} ms, p90 {:.3} ms (64 frames, {W} x {H})",
+                ms[32], ms[57]
+            );
+        }
+    }
+}

@@ -24,6 +24,13 @@ pub const TORSO: [u32; 3] = [8, 6, 12];
 pub const HEAD: [u32; 3] = [6, 6, 6];
 /// A leg's size: 3 x 3, 8 tall.
 pub const LEG: [u32; 3] = [3, 3, 8];
+/// A walker's eye light: warm, intensity 150, casting shadows, not bouncing.
+pub const EYE_LIGHT_COLOUR: [f32; 3] = [1.0, 0.7, 0.4];
+pub const EYE_LIGHT_INTENSITY: f32 = 150.0;
+/// Where the eye light sits in the head's space, in 1/256 model voxel: between the eyes'
+/// centres in x and z, one model voxel in front of the face (a light inside the head would be
+/// shadowed by it).
+pub const EYE_LIGHT_AT: [i32; 3] = [3 * 256, -256, 896];
 /// The ring `--entities` places walkers on: 3 m around the spawn.
 pub const RING_RADIUS: f32 = 30.0;
 /// How far down from the ring's points a walker looks for the floor, in voxels.
@@ -168,6 +175,8 @@ pub struct Walkers {
     pub drawn: usize,
     pub parts: usize,
     pub over: usize,
+    /// Whether placed walkers carry their eye lights (`F12` flips it; on by default).
+    pub eye_lights_off: bool,
 }
 
 impl PartialEq for Walkers {
@@ -175,6 +184,7 @@ impl PartialEq for Walkers {
         (self.placed == o.placed)
             && (self.handle, self.ring, &self.newest) == (o.handle, o.ring, &o.newest)
             && (self.drawn, self.parts, self.over) == (o.drawn, o.parts, o.over)
+            && self.eye_lights_off == o.eye_lights_off
     }
 }
 
@@ -221,6 +231,36 @@ impl Walkers {
         match self.handle {
             Some(h) => self.placed.iter().map(|p| (p.id, h)).collect(),
             None => Vec::new(),
+        }
+    }
+
+    /// Each placed walker's eye light, in placement order, while they are on: the frame takes
+    /// those that fit the list's free slots.
+    pub fn eye_lights(&self) -> Vec<vxe_render::Light> {
+        if self.eye_lights_off {
+            return Vec::new();
+        }
+        self.placed
+            .iter()
+            .filter_map(|p| {
+                let (model, pose) = self.set.get(p.id)?;
+                let at = pose.part_point(model, 1, EYE_LIGHT_AT)?;
+                let mut l =
+                    vxe_render::Light::point(at.0.map(|v| v as f32 / 256.0), EYE_LIGHT_INTENSITY);
+                l.colour = EYE_LIGHT_COLOUR;
+                l.flags = vxe_render::Light::ON | vxe_render::Light::SHADOWS;
+                Some(l)
+            })
+            .collect()
+    }
+
+    /// `F12`: flips the eye lights; the banner's words.
+    pub fn toggle_eye_lights(&mut self) -> &'static str {
+        self.eye_lights_off = !self.eye_lights_off;
+        if self.eye_lights_off {
+            "eye lights off"
+        } else {
+            "eye lights on"
         }
     }
 
@@ -407,5 +447,41 @@ mod tests {
                 .any(|l| l == "entities 2/64 parts 8/512 over 0"),
             "{rows}"
         );
+    }
+
+    /// `F12` flips the eye lights and names the mode in the banner; on, each walker carries one
+    /// warm shadowing light in front of its eyes, none bouncing.
+    #[test]
+    fn the_eye_light_key_names_its_mode() {
+        let table = with_walker(&MaterialTable::new());
+        let mut m = crate::hud::Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::Half,
+            0.0,
+        );
+        assert_eq!(crate::toggles::KEY_EYE_LIGHTS, vxe_app::KeyCode::F12);
+        // Facing -y: the eye at -y of the feet.
+        assert!(m.walkers.place(&table, [10.0, 20.0, 2.0], [10.0, 0.0, 8.0]));
+        let lights = m.walkers.eye_lights();
+        assert_eq!(lights.len(), 1);
+        let l = lights[0];
+        assert_eq!(
+            (l.colour, l.intensity),
+            (EYE_LIGHT_COLOUR, EYE_LIGHT_INTENSITY)
+        );
+        assert_eq!(l.flags, vxe_render::Light::ON | vxe_render::Light::SHADOWS);
+        // Legs 4, torso 6 and 1.75 up the head in world voxels over the feet; the face is 1.5
+        // voxels in front of the feet's centre, the light half a voxel past it.
+        assert_eq!(l.pos, [10.0, 18.0, 13.75]);
+        let words = m.walkers.toggle_eye_lights();
+        m.show_lights(words.to_owned(), 5.0);
+        assert!(
+            m.banner(5.0)
+                .unwrap()
+                .lines()
+                .any(|l| l == "eye lights off")
+        );
+        assert!(m.walkers.eye_lights().is_empty());
+        assert_eq!(m.walkers.toggle_eye_lights(), "eye lights on");
     }
 }
