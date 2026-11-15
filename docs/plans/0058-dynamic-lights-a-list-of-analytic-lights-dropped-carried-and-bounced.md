@@ -1112,8 +1112,8 @@ questions with recommendations):
 | 3: The bounce flag | dev | done (exploration) | a616204 |
 | 4: The owner's window | human | done 2026-11-14 (verdict in the log; picks, faults to Phase 5) | |
 | 5: The window's picks and its faults | dev | done but one bar: native blue's (2) of 5b's soak test (log, open question) | fa4bb88, 7b8fc27, 320bce1, de3370b, 71b4478 |
-| 6: The owner's re-window | human | done 2026-11-15 (the owner's words in the log; the stop rule did not trip) | |
-| 7: The picks as tests | dev | not started | |
+| 6: The owner's re-window | human | done 2026-11-15 (the owner's words in the log; the stop rule did not trip) | bc06797 |
+| 7: The picks as tests | dev | done but three bars: native blue's (2) of 5b's soak test, P1 dw 13's filtered 2 %, P1 dw 8's lambda 0 (log, owner questions) | committed with this row |
 
 ### Notes
 
@@ -1194,6 +1194,13 @@ each. Empty is fine.)_
   its gate variant (red, FSR 2) passes. Phase 5e's fix (the upscalers' masks, owner answer)
   replaces the plan's `a_pulsing_emitter_leaves_the_list_lights_history_alone` (the pulse
   does not reach the direct history) with `a_pulsing_emitter_marks_only_where_its_light_lands`.
+- Phase 7: P1 dw 8 and dw 13 assert what holds and print the rest: lambda (largest 0.000971,
+  not 0) and the filtered part (0.9748 to 0.9815 of the term, not within 2 %); owner questions
+  in the log. P1 dw 3 is the lamp-lit gate goldens (the lamp's slot at floor 0), no separate
+  test; dw 13's `LIGHTING_DIRECT` clear is not read directly. The tests use lights of 1200 (the
+  plan's figures). Native blue's (2) hunted: the a-trous's variance from f16 moments, not the
+  255 clamp; the fix moves goldens, so it is not applied (log). `the_change_bit_follows_the_list`
+  became `a_changed_light_takes_this_frames_sample`.
 - Merged main (v0.53.0) at 2f53150: `README.md`'s key and flag tables moved to
   `docs/flythrough.md` on main, which gains this plan's light keys (outside Files touched).
 

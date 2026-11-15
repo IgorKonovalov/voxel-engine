@@ -1,6 +1,8 @@
-//! The list of analytic lights (ADR-0044): the slot rule and the change detection against the
-//! frame's API, and, as readings run by hand, the direct part each light gives a hand-built
-//! closed box against its analytic term. Not the emissive light-sample mirror (`gpu_lights.rs`).
+//! The list of analytic lights (ADR-0044) on a hand-built closed box: the slot rule and the
+//! change detection against the frame's API, the direct part each light gives against its
+//! analytic term (a point, a shadow, the reach, a flight, colour), and the faults the owner's
+//! window found (rings, shadow rays, the ore pulse's mask). Not the emissive light-sample
+//! mirror (`gpu_lights.rs`).
 
 mod support;
 
@@ -53,21 +55,227 @@ fn the_slots_follow_the_lamp() {
     );
 }
 
-/// An unchanged list leaves the change bit clear over 32 frames; turning the lamp on sets it
-/// for one frame; a list light moved sets it for that frame.
+/// ADR-0044's term (Plan 0058), computed here apart from the renderer: `PI * intensity * max(n .
+/// l, 0) / d^2` on the floor (normal +z) times ADR-0044's window `(1 - (d / r)^4)^2`, `r =
+/// sqrt(intensity / floor)` (no window at floor 0), for a point light at manual exposure 1.
+fn analytic(light: &Light, floor: f32, p: [f32; 3]) -> f32 {
+    let d2: f32 = (0..3).map(|k| (light.pos[k] - p[k]).powi(2)).sum();
+    let d = d2.sqrt();
+    let cos = ((light.pos[2] - p[2]) / d).max(0.0);
+    let window = if floor > 0.0 {
+        let r = (light.intensity / floor).sqrt();
+        (1.0 - (d / r).powi(4)).max(0.0).powi(2)
+    } else {
+        1.0
+    };
+    std::f32::consts::PI * light.intensity * cos / d2 * window
+}
+
+/// Asserts `got` within `tol` (relative) of `want`.
+fn within(name: &str, got: f32, want: f32, tol: f32) {
+    let err = (got / want - 1.0).abs();
+    println!(
+        "{name}: {got:.4} against {want:.4} ({:+.3} %)",
+        (got / want - 1.0) * 100.0
+    );
+    assert!(err <= tol, "{name}: {got} against {want}");
+}
+
+/// The direct target's `a` (the direct luminance) per lighting texel.
+fn alpha(rig: &Rig, tex: &vxe_render::wgpu::Texture) -> Vec<f32> {
+    vxe_render::debug::read_float(&rig.device, &rig.queue, tex)
+        .iter()
+        .map(|p| p[3])
+        .collect()
+}
+
+/// The texel's rgb of `tex` at the floor pixel nearest `(x, y)` on the last frame, and that
+/// pixel's hit.
+fn rgb_at(rig: &Rig, tex: &vxe_render::wgpu::Texture, x: f32, y: f32) -> ([f32; 3], [f32; 3]) {
+    let hits = floor_hits(rig);
+    let (i, p) = nearest(&hits, x, y);
+    let v = vxe_render::debug::read_float(&rig.device, &rig.queue, tex)[i];
+    ([v[0], v[1], v[2]], p)
+}
+
+/// Plan 0058's figures for a light of 1200 at 20 voxels over the floor at floor 0.1: 9.40
+/// directly below, 3.30 at 20 voxels aside (the term above, at those points).
 #[test]
-fn the_change_bit_follows_the_list() {
+fn the_plans_figures_are_the_term() {
+    let light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    within(
+        "under",
+        analytic(&light, 0.1, [64.0, 32.0, 2.0]),
+        9.40,
+        0.005,
+    );
+    within(
+        "20 aside",
+        analytic(&light, 0.1, [84.0, 32.0, 2.0]),
+        3.30,
+        0.005,
+    );
+    within(
+        "64 aside",
+        analytic(&light, 0.1, [128.0, 32.0, 2.0]),
+        0.185,
+        0.005,
+    );
+}
+
+/// Phase 1 done-when 1: on the closed dark box (albedo 0.5, no emitter, lamp off, full tier,
+/// manual exposure 1, no jitter) one list light of 1200 at 20 voxels above the floor: on the
+/// first frame the direct part at the floor pixel under it reads the term (9.40 at the point
+/// below) within 2 %, and at the pixel 20 voxels aside the term there (3.30 at x 84) within 2 %.
+/// The term is taken at each pixel's own hit.
+#[test]
+fn a_point_light_gives_the_analytic_irradiance_on_the_floor() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    let floor = rig.frame.lighting().light_floor;
+    let light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    rig.frame.set_lights(&[light]);
+    step(&mut rig, &box_camera());
+    let hits = floor_hits(&rig);
+    let e = alpha(&rig, rig.frame.direct());
+    for (name, x) in [("under", 64.0), ("20 aside", 84.0)] {
+        let (i, p) = nearest(&hits, x, 32.0);
+        assert!((p[0] - x).abs() < 0.5, "{name}: the pixel's hit {p:?}");
+        within(name, e[i], analytic(&light, floor, p), 0.02);
+    }
+}
+
+/// Phase 1 done-when 2: a wall across the box (x 74..76, 12 voxels high) between the light of
+/// 1200 at (64, 32, 22) and the floor beyond it, seen from the box's far end: a floor pixel in
+/// its shadow (x 82) reads 0 direct, one past the shadow's edge (x 96) its term within 2 %, and
+/// with `SHADOWS` clear the shadowed pixel reads its term within 2 % too. (A wall, not a slab
+/// over half the floor: a slab hides the floor it shadows from a camera above.)
+#[test]
+fn a_slab_between_the_light_and_the_floor_casts_a_hard_shadow() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    let floor = rig.frame.lighting().light_floor;
+    let light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    rig.world
+        .apply(&EditOp::box_(
+            Fixed3([74, 2, 2].map(|v: i64| v * FIXED_ONE)),
+            Fixed3([76, 62, 14].map(|v: i64| v * FIXED_ONE)),
+            Mode::Fill(ROCK),
+        ))
+        .expect("resident");
+    for _ in 0..2 {
+        support::SyncNow::sync_now(&mut rig.gpu, &rig.world, &rig.device, &rig.queue)
+            .expect("fits");
+    }
+    let far = Camera {
+        position: [120.0, 32.0, 45.0].into(),
+        yaw: std::f32::consts::PI,
+        pitch: -0.9,
+        vfov: 1.2,
+    };
+    for shadows in [true, false] {
+        let flags = if shadows {
+            Light::ON | Light::SHADOWS
+        } else {
+            Light::ON
+        };
+        rig.frame.set_lights(&[Light { flags, ..light }]);
+        rig.frame.reset_history();
+        step(&mut rig, &far);
+        let hits = floor_hits(&rig);
+        let e = alpha(&rig, rig.frame.direct());
+        let (i, p) = nearest(&hits, 82.0, 32.0);
+        assert!((p[0] - 82.0).abs() < 0.5, "the shadowed pixel's hit {p:?}");
+        if shadows {
+            assert_eq!(e[i], 0.0, "in the wall's shadow at {p:?}");
+            let (j, q) = nearest(&hits, 96.0, 32.0);
+            assert!((q[0] - 96.0).abs() < 0.5, "the lit pixel's hit {q:?}");
+            within(
+                "past the shadow's edge",
+                e[j],
+                analytic(&light, floor, q),
+                0.02,
+            );
+        } else {
+            within(
+                "in the shadow, SHADOWS clear",
+                e[i],
+                analytic(&light, floor, p),
+                0.02,
+            );
+        }
+    }
+}
+
+/// Phase 1 done-when 4: in the `steps` view (the light pass counts the shadow rays a pixel
+/// casts in the irradiance's `a`), a light of 1200 at (10, 32, 49) (reach 109.5 at floor
+/// 0.1): the floor pixel 121.7 voxels from it casts 0 rays and the one 61.8 voxels away 1; at
+/// floor 0.025 (reach 219) both cast 1. (62 and 122 voxels are the nearest and farthest floor
+/// the box shows, in place of Plan 0058 Phase 1's 50 and 150.)
+#[test]
+fn a_light_beyond_its_reach_casts_no_shadow_ray() {
     let Some(mut rig) = box_rig() else {
         return;
     };
     let camera = box_camera();
-    let mut light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    let mut look = rig.frame.look();
+    look.view = vxe_render::ViewMode::Steps;
+    rig.frame.set_look(look);
+    let light = Light::point([10.0, 32.0, 49.0], 1200.0);
+    rig.frame.set_lights(&[light]);
+    for (floor, want) in [(0.1, [1.0, 0.0]), (0.025, [1.0, 1.0])] {
+        rig.frame.set_lighting(Lighting {
+            light_floor: floor,
+            ..rig.frame.lighting()
+        });
+        step(&mut rig, &camera);
+        let hits = floor_hits(&rig);
+        let rays = alpha(&rig, rig.frame.irradiance());
+        for (target, want) in [61.8f32, 121.7].into_iter().zip(want) {
+            let dz: f32 = 49.0 - FLOOR_Z;
+            let (i, p) = nearest(&hits, 10.0 + (target * target - dz * dz).sqrt(), 32.0);
+            let d = dist(p, light.pos);
+            println!("floor {floor}: {d:.1} voxels away, {} shadow rays", rays[i]);
+            assert!((d - target).abs() < 1.0, "the pixel's hit {p:?}");
+            assert_eq!(rays[i], want, "floor {floor}, {d:.1} voxels away");
+        }
+    }
+}
+
+/// Phase 1 done-when 6: an unchanged list leaves the change bit clear over 32 frames; after
+/// them a light moved by 10 voxels sets it and, on that frame, the accumulated direct part at
+/// the floor pixel under its new position equals the term there within 2 % (the sample taken
+/// as it is, no blend); the frame after clears it; turning the lamp on sets it for one frame.
+#[test]
+fn a_changed_light_takes_this_frames_sample() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    let camera = box_camera();
+    let floor = rig.frame.lighting().light_floor;
+    let mut light = Light::point([60.0, 32.0, 22.0], 1200.0);
     rig.frame.set_lights(&[light]);
     step(&mut rig, &camera);
     for i in 0..32 {
         step(&mut rig, &camera);
         assert!(!rig.frame.lights_changed(), "still frame {i}");
     }
+    light.pos[0] += 10.0;
+    rig.frame.set_lights(&[light]);
+    step(&mut rig, &camera);
+    assert!(rig.frame.lights_changed(), "the light moved");
+    let (got, p) = rgb_at(&rig, rig.frame.direct_accumulated(), 70.0, 32.0);
+    assert!((p[0] - 70.0).abs() < 0.5, "the pixel's hit {p:?}");
+    within(
+        "moved by 10, that frame",
+        got[0],
+        analytic(&light, floor, p),
+        0.02,
+    );
+    step(&mut rig, &camera);
+    assert!(!rig.frame.lights_changed(), "the frame after the move");
     rig.frame.set_lighting(Lighting {
         lamp: true,
         ..rig.frame.lighting()
@@ -76,12 +284,256 @@ fn the_change_bit_follows_the_list() {
     assert!(rig.frame.lights_changed(), "the lamp switched on");
     step(&mut rig, &camera);
     assert!(!rig.frame.lights_changed(), "the frame after");
-    light.pos[0] += 10.0;
+}
+
+/// Phase 1 done-when 11's flight on the box, straight down over the floor from x 42 to 121: a
+/// light of 1200 and `colour` at (50, 32, 22) held still for 32 frames, then moved 4 voxels a
+/// frame along +x for 16 frames. Each flight frame, `check` gets the frame's index, the light
+/// and the accumulated direct rgb with its hit under the start position and under the light.
+fn fly(
+    rig: &mut Rig,
+    colour: [f32; 3],
+    mut check: impl FnMut(&Rig, usize, &Light, ([f32; 3], [f32; 3]), ([f32; 3], [f32; 3])),
+) {
+    let camera = Camera {
+        position: [82.0, 32.0, 49.0].into(),
+        yaw: 0.0,
+        pitch: -1.56,
+        vfov: 1.4,
+    };
+    let mut light = Light {
+        colour,
+        ..Light::point([50.0, 32.0, 22.0], 1200.0)
+    };
+    let start = light.pos;
     rig.frame.set_lights(&[light]);
+    for _ in 0..32 {
+        step(rig, &camera);
+    }
+    for f in 0..16 {
+        light.pos[0] += 4.0;
+        rig.frame.set_lights(&[light]);
+        step(rig, &camera);
+        let at_start = rgb_at(rig, rig.frame.direct_accumulated(), start[0], 32.0);
+        let under = rgb_at(rig, rig.frame.direct_accumulated(), light.pos[0], 32.0);
+        check(rig, f, &light, at_start, under);
+    }
+    step(rig, &camera);
+    step(rig, &camera);
+    assert!(
+        !rig.frame.lights_changed(),
+        "the second frame after the flight"
+    );
+}
+
+/// Phase 1 done-when 11: on every frame of the flight ([`fly`]) the accumulated direct part at
+/// the floor pixel under the start position and under the light equals that frame's term
+/// within 2 % (no trail), `lights_changed()` is true on each flight frame and false on the
+/// second frame after it; on the last frame the start pixel reads 0.185 within 2 % (64 voxels
+/// aside), down from 9.40.
+#[test]
+fn a_light_in_flight_leaves_no_trail_in_the_direct_part() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    let floor = rig.frame.lighting().light_floor;
+    fly(&mut rig, [1.0; 3], |rig, f, light, (s, sp), (u, up)| {
+        assert!(rig.frame.lights_changed(), "flight frame {f}");
+        for (name, got, p) in [("start", s, sp), ("under", u, up)] {
+            let want = analytic(light, floor, p);
+            assert!(
+                (got[0] / want - 1.0).abs() <= 0.02,
+                "frame {f}, {name} at {p:?}: {} against {want}",
+                got[0]
+            );
+        }
+        if f == 15 {
+            assert!((sp[0] - 50.0).abs() < 0.5, "the start pixel's hit {sp:?}");
+            within("the start pixel, the last frame", s[0], 0.185, 0.02);
+        }
+    });
+}
+
+/// Phase 2 done-when 8: [`fly`] with the light red: on every frame the accumulated direct part
+/// at the pixel under the light reads `(E, 0, 0)`, `E` that frame's term within 2 % and green
+/// and blue exactly 0, and on the last frame the start pixel reads `(0.185, 0, 0)` within 2 %.
+#[test]
+fn a_coloured_light_in_flight_lights_its_channel_only() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    let floor = rig.frame.lighting().light_floor;
+    fly(&mut rig, [1.0, 0.0, 0.0], |_, f, light, (s, _), (u, up)| {
+        let want = analytic(light, floor, up);
+        assert!(
+            (u[0] / want - 1.0).abs() <= 0.02,
+            "frame {f} under the light at {up:?}: red {} against {want}",
+            u[0]
+        );
+        assert_eq!([u[1], u[2]], [0.0, 0.0], "frame {f}: green and blue");
+        if f == 15 {
+            within("the start pixel's red, the last frame", s[0], 0.185, 0.02);
+            assert_eq!([s[1], s[2]], [0.0, 0.0], "the start pixel's green and blue");
+        }
+    });
+}
+
+/// Phase 1 done-when 13: the lamp off and one list light of 1200 at (64, 32, 22), 32 still
+/// frames at the half tier: on every frame the direct part at the floor's lighting texel under
+/// the light reads its term within 2 % after the temporal pass (the lamp-off store-only path
+/// did not drop it), and after the filter it is non-zero (the early-out did not pass it
+/// around). The filtered value's ratio to the term is printed: Plan 0058 Phase 1's 2 % on it is not
+/// met (the a-trous lowers the peak under the light; Plan 0058's log, Phase 7).
+#[test]
+fn a_list_light_with_the_lamp_off_survives_the_lamp_off_skips() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    rig.frame
+        .set_resolution(&rig.device, vxe_render::LightingResolution::Half);
+    let camera = box_camera();
+    let floor = rig.frame.lighting().light_floor;
+    let light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    rig.frame.set_lights(&[light]);
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    for f in 0..32 {
+        step(&mut rig, &camera);
+        // The lighting grid is half the frame's: its hit buffer is the light pass's.
+        let pos = vxe_render::debug::read_rgba32f(
+            &rig.device,
+            &rig.queue,
+            rig.frame.light_hit_positions(),
+        );
+        let acc = alpha(&rig, rig.frame.direct_accumulated());
+        let filt = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.filtered());
+        let i = (0..pos.len())
+            .filter(|&i| pos[i][3] > 0.0 && (pos[i][2] - FLOOR_Z).abs() < 1e-3)
+            .min_by(|&a, &b| {
+                let d = |p: [f32; 4]| (p[0] - 64.0).powi(2) + (p[1] - 32.0).powi(2);
+                d(pos[a]).total_cmp(&d(pos[b]))
+            })
+            .expect("the floor is in view");
+        let want = analytic(&light, floor, [pos[i][0], pos[i][1], pos[i][2]]);
+        assert!(
+            (acc[i] / want - 1.0).abs() <= 0.02,
+            "frame {f}, accumulated: {} against {want}",
+            acc[i]
+        );
+        assert!(filt[i][0] > 0.0, "frame {f}, filtered: 0");
+        lo = lo.min(filt[i][0] / want);
+        hi = hi.max(filt[i][0] / want);
+    }
+    println!("filtered / term over 32 frames in [{lo:.4}, {hi:.4}]");
+}
+
+/// Phase 1 done-when 8: in the gradient mode with two still list lights of 1200 and the lamp
+/// off, over 16 still frames after the first (which has no history) the list is unchanged and
+/// every stratum re-shades a lit pixel; the strata's lambda is printed: Plan 0058 Phase 1's exact 0 is
+/// not met (one f16 step, about 1e-3; Plan 0058's log, Phase 7).
+#[test]
+fn the_gradient_mode_holds_still_under_a_still_list() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    rig.frame.set_lighting(Lighting {
+        history: vxe_render::HistoryKill::Gradient,
+        ..rig.frame.lighting()
+    });
+    let camera = box_camera();
+    rig.frame.set_lights(&[
+        Light::point([54.0, 32.0, 22.0], 1200.0),
+        Light::point([84.0, 20.0, 22.0], 1200.0),
+    ]);
     step(&mut rig, &camera);
-    assert!(rig.frame.lights_changed(), "the light moved");
-    step(&mut rig, &camera);
-    assert!(!rig.frame.lights_changed(), "the frame after the move");
+    let (mut worst, mut moved, mut n) = (0.0f32, 0usize, 0usize);
+    for f in 0..16 {
+        step(&mut rig, &camera);
+        assert!(!rig.frame.lights_changed());
+        let strata =
+            vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.gradient_strata());
+        let lit = strata.iter().filter(|s| s[1] > 0.0).count();
+        assert_eq!(
+            lit,
+            strata.len(),
+            "frame {f}: strata re-shading a lit pixel"
+        );
+        n += strata.len();
+        moved += strata.iter().filter(|s| s[0] != 0.0).count();
+        worst = strata.iter().map(|s| s[0]).fold(worst, f32::max);
+    }
+    println!("{n} strata-frames: lambda above 0 at {moved}, largest {worst}");
+}
+
+/// Phase 2 done-when 1: a red light (1, 0, 0) and a blue light (0, 0, 1) of 1200 each at 20
+/// voxels above the floor and 20 apart, (54, 32, 22) and (74, 32, 22): on the first frame the
+/// floor pixel under the red one reads direct `(9.40, 0, 3.30)` and the one under the blue one
+/// `(3.30, 0, 9.40)`, each light's term at the pixel's hit within 2 % per channel and green 0.
+#[test]
+fn two_coloured_lights_sum_per_channel() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    let floor = rig.frame.lighting().light_floor;
+    let red = Light {
+        colour: [1.0, 0.0, 0.0],
+        ..Light::point([54.0, 32.0, 22.0], 1200.0)
+    };
+    let blue = Light {
+        colour: [0.0, 0.0, 1.0],
+        ..Light::point([74.0, 32.0, 22.0], 1200.0)
+    };
+    rig.frame.set_lights(&[red, blue]);
+    step(&mut rig, &box_camera());
+    for (name, x) in [("under red", 54.0), ("under blue", 74.0)] {
+        let (got, p) = rgb_at(&rig, rig.frame.direct(), x, 32.0);
+        assert!((p[0] - x).abs() < 0.5, "{name}: the pixel's hit {p:?}");
+        within(
+            &format!("{name}, red"),
+            got[0],
+            analytic(&red, floor, p),
+            0.02,
+        );
+        assert_eq!(got[1], 0.0, "{name}, green");
+        within(
+            &format!("{name}, blue"),
+            got[2],
+            analytic(&blue, floor, p),
+            0.02,
+        );
+    }
+}
+
+/// Phase 2 done-when 3: one still light of 1200 at (64, 32, 22); after 8 frames the camera
+/// steps sideways 0.5 voxel a frame for 32 frames, and at the floor pixels nearest x 56, 64 and
+/// 72 the accumulated direct part never differs from the term at the pixel's hit by more than
+/// 2 % (the reprojected blend never sees a sample that differs).
+#[test]
+fn a_dropped_light_holds_still_while_the_camera_moves() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    let mut camera = box_camera();
+    let floor = rig.frame.lighting().light_floor;
+    let light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    rig.frame.set_lights(&[light]);
+    for _ in 0..8 {
+        step(&mut rig, &camera);
+    }
+    for f in 0..32 {
+        camera.position.y += 0.5;
+        step(&mut rig, &camera);
+        let hits = floor_hits(&rig);
+        let acc = alpha(&rig, rig.frame.direct_accumulated());
+        for x in [56.0, 64.0, 72.0] {
+            let (i, p) = nearest(&hits, x, 32.0);
+            let want = analytic(&light, floor, p);
+            assert!(
+                (acc[i] / want - 1.0).abs() <= 0.02,
+                "frame {f} at {p:?}: {} against {want}",
+                acc[i]
+            );
+        }
+    }
 }
 
 /// The a-trous iterations follow `Lighting::atrous_iterations`: a frame at 1, 2 and 4 records
@@ -225,6 +677,12 @@ fn a_light_beside_steps_shadows_as_the_exact_ray_does() {
 /// channels small but not zero). The final image after 32 still frames with `colour` (none:
 /// the dim light alone), native at 192 x 108 or FSR 2 at 1.5 from 128 x 72.
 fn ring_rig_image(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> Vec<u8> {
+    let f = ring_rig_frame(rig, native, colour);
+    vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target())
+}
+
+/// [`ring_rig_image`]'s frame after its 32 still frames.
+fn ring_rig_frame(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> vxe_render::Frame {
     use vxe_render::{Exposure, LightingResolution, ToneMap, UpscalerKind};
     let mut f = if native {
         box_frame(&rig.device, [192, 108], [192, 108], None)
@@ -260,7 +718,7 @@ fn ring_rig_image(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> Vec<u8> 
     for _ in 0..32 {
         step_frame(rig, &mut f, &camera);
     }
-    vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target())
+    f
 }
 
 /// Phase 5b's bars on [`ring_rig_image`] for one arm and one saturated colour (its channel
@@ -442,288 +900,11 @@ fn a_pulsing_emitter_marks_only_where_its_light_lands() {
     );
 }
 
-/// The readings: each test prints the direct part at named floor pixels against the analytic
-/// term and asserts nothing a gate runs. `cargo nextest run -p flythrough --run-ignored only
+/// The readings: each test prints figures (the hall's settle, the stages of a coloured light,
+/// clamps, shadows, the bounce and the ore pulse) and asserts nothing a gate runs. `cargo nextest run -p flythrough --run-ignored only
 /// -E 'binary(=gpu_dynamic_lights) & test(/reading::/)' --no-capture`.
 mod reading {
     use super::*;
-
-    fn alpha(rig: &Rig, tex: &vxe_render::wgpu::Texture) -> Vec<f32> {
-        vxe_render::debug::read_float(&rig.device, &rig.queue, tex)
-            .iter()
-            .map(|p| p[3])
-            .collect()
-    }
-
-    fn report(name: &str, got: f32, want: f32) {
-        println!(
-            "{name}: {got:.4} against {want:.4} ({:+.2} %)",
-            (f64::from(got) / f64::from(want).max(1e-9) - 1.0) * 100.0
-        );
-    }
-
-    /// Phase 1 done-whens 1 and 2: one light of 1200 at 20 voxels above the floor, the direct
-    /// part on the first frame under it (9.40) and 20 voxels aside (3.30); then a wall across
-    /// the box at x 74..76, 12 voxels high, seen from the far end: the floor it shadows (x 76
-    /// to 94) reads 0, a pixel past the shadow's edge its analytic value, and with SHADOWS
-    /// clear the shadowed pixel its analytic value too.
-    #[test]
-    #[ignore]
-    fn reading_a_point_light_and_its_hard_shadow() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        let camera = box_camera();
-        let light = Light::point([64.0, 32.0, 22.0], 1200.0);
-        let floor = rig.frame.lighting().light_floor;
-        rig.frame.set_lights(&[light]);
-        step(&mut rig, &camera);
-        let hits = floor_hits(&rig);
-        let e = alpha(&rig, rig.frame.direct());
-        for (name, x, want) in [("under", 64.0, 9.40), ("20 aside", 84.0, 3.30)] {
-            let (i, p) = nearest(&hits, x, 32.0);
-            report(
-                &format!("first frame, {name} at {p:?}"),
-                e[i],
-                light.irradiance(floor, p, UP),
-            );
-            report(
-                &format!("first frame, {name}, the plan's figure"),
-                e[i],
-                want,
-            );
-        }
-        // The wall: x 74..76, z 2..14, across the box.
-        rig.world
-            .apply(&EditOp::box_(
-                Fixed3([74, 2, 2].map(|v: i64| v * FIXED_ONE)),
-                Fixed3([76, 62, 14].map(|v: i64| v * FIXED_ONE)),
-                Mode::Fill(ROCK),
-            ))
-            .expect("resident");
-        for _ in 0..2 {
-            support::SyncNow::sync_now(&mut rig.gpu, &rig.world, &rig.device, &rig.queue)
-                .expect("fits");
-        }
-        let far = Camera {
-            position: [120.0, 32.0, 45.0].into(),
-            yaw: std::f32::consts::PI,
-            pitch: -0.9,
-            vfov: 1.2,
-        };
-        for flags in [Light::ON | Light::SHADOWS, Light::ON] {
-            rig.frame.set_lights(&[Light { flags, ..light }]);
-            rig.frame.reset_history();
-            step(&mut rig, &far);
-            let hits = floor_hits(&rig);
-            let e = alpha(&rig, rig.frame.direct());
-            for (name, x) in [("in the shadow", 82.0), ("past its edge", 96.0)] {
-                let (i, p) = nearest(&hits, x, 32.0);
-                report(
-                    &format!("flags {flags:#x}, {name} at {p:?}"),
-                    e[i],
-                    light.irradiance(floor, p, UP),
-                );
-            }
-        }
-    }
-
-    /// Phase 1 done-when 4: in the steps view, the shadow rays cast at a floor pixel beyond a
-    /// light of 1200's reach of 109.5 (122 voxels away, the farthest floor in view) and inside
-    /// it (62), at floor 0.1 and 0.025.
-    #[test]
-    #[ignore]
-    fn reading_a_light_beyond_its_reach_casts_no_shadow_ray() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        let camera = box_camera();
-        let mut look = rig.frame.look();
-        look.view = vxe_render::ViewMode::Steps;
-        rig.frame.set_look(look);
-        // The floor in view lies 62 and 122 voxels from it, inside and beyond the reach of 109.5.
-        let light = Light::point([10.0, 32.0, 49.0], 1200.0);
-        rig.frame.set_lights(&[light]);
-        for floor in [0.1, 0.025] {
-            rig.frame.set_lighting(Lighting {
-                light_floor: floor,
-                ..rig.frame.lighting()
-            });
-            step(&mut rig, &camera);
-            let hits = floor_hits(&rig);
-            let rays = alpha(&rig, rig.frame.irradiance());
-            for target in [61.8f32, 121.7] {
-                // The floor point `target` voxels from the light, along +x.
-                let dz: f32 = 49.0 - FLOOR_Z;
-                let dx = (target * target - dz * dz).sqrt();
-                let (i, p) = nearest(&hits, 10.0 + dx, 32.0);
-                let d =
-                    ((p[0] - 10.0).powi(2) + (p[1] - 32.0).powi(2) + (p[2] - 49.0).powi(2)).sqrt();
-                println!("floor {floor}: {d:.1} voxels away, {} shadow rays", rays[i]);
-            }
-        }
-    }
-
-    /// Phase 1 done-whens 6 and 11: after 32 still frames a light moved by 10 voxels gives the
-    /// new analytic value on the next frame; then 16 frames of 4 voxels a frame along x, the
-    /// accumulated direct part under the start and under the light each frame, and the start
-    /// pixel's last value against 0.185.
-    #[test]
-    #[ignore]
-    fn reading_a_changed_light_and_a_light_in_flight() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        // Straight down over the flight's middle: the floor from x 42 to 121 in view.
-        let camera = Camera {
-            position: [82.0, 32.0, 49.0].into(),
-            yaw: 0.0,
-            pitch: -1.56,
-            vfov: 1.4,
-        };
-        let floor = rig.frame.lighting().light_floor;
-        let mut light = Light::point([40.0, 32.0, 22.0], 1200.0);
-        rig.frame.set_lights(&[light]);
-        for _ in 0..32 {
-            step(&mut rig, &camera);
-        }
-        light.pos[0] += 10.0;
-        rig.frame.set_lights(&[light]);
-        step(&mut rig, &camera);
-        let hits = floor_hits(&rig);
-        let acc = alpha(&rig, rig.frame.direct_accumulated());
-        let (i, p) = nearest(&hits, 50.0, 32.0);
-        report(
-            "moved by 10, next frame",
-            acc[i],
-            light.irradiance(floor, p, UP),
-        );
-        for _ in 0..32 {
-            step(&mut rig, &camera);
-        }
-        let start = light.pos;
-        let mut worst = 0.0f64;
-        for f in 0..16 {
-            light.pos[0] += 4.0;
-            rig.frame.set_lights(&[light]);
-            step(&mut rig, &camera);
-            let hits = floor_hits(&rig);
-            let acc = alpha(&rig, rig.frame.direct_accumulated());
-            for (x, label) in [(start[0], "start"), (light.pos[0], "under")] {
-                let (i, p) = nearest(&hits, x, 32.0);
-                let want = light.irradiance(floor, p, UP);
-                let err = (f64::from(acc[i]) / f64::from(want).max(1e-9) - 1.0).abs();
-                worst = worst.max(err);
-                if f == 15 {
-                    report(
-                        &format!("flight's last frame, {label} at {p:?}"),
-                        acc[i],
-                        want,
-                    );
-                }
-            }
-            assert!(rig.frame.lights_changed(), "frame {f} of the flight");
-        }
-        println!(
-            "flight: the worst error over 16 frames {:.3} %",
-            worst * 100.0
-        );
-        step(&mut rig, &camera);
-        step(&mut rig, &camera);
-        println!(
-            "the second frame after: changed {}",
-            rig.frame.lights_changed()
-        );
-    }
-
-    /// Phase 1 done-when 13: the lamp off, one list light, 32 still frames at the half tier;
-    /// the accumulated and filtered direct part under the light against 9.40.
-    #[test]
-    #[ignore]
-    fn reading_a_list_light_survives_the_lamp_off_skips() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        rig.frame
-            .set_resolution(&rig.device, vxe_render::LightingResolution::Half);
-        let camera = box_camera();
-        let floor = rig.frame.lighting().light_floor;
-        let light = Light::point([64.0, 32.0, 22.0], 1200.0);
-        rig.frame.set_lights(&[light]);
-        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-        let (mut flo, mut fhi) = (f32::MAX, f32::MIN);
-        for _ in 0..32 {
-            step(&mut rig, &camera);
-            // The lighting grid is half the frame's: its hit buffer is the light pass's.
-            let pos = vxe_render::debug::read_rgba32f(
-                &rig.device,
-                &rig.queue,
-                rig.frame.light_hit_positions(),
-            );
-            let acc = alpha(&rig, rig.frame.direct_accumulated());
-            let filt: Vec<f32> =
-                vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.filtered())
-                    .iter()
-                    .map(|p| p[0])
-                    .collect();
-            let i = (0..pos.len())
-                .filter(|&i| pos[i][3] > 0.0 && (pos[i][2] - FLOOR_Z).abs() < 1e-3)
-                .min_by(|&a, &b| {
-                    let d = |p: [f32; 4]| (p[0] - 64.0).powi(2) + (p[1] - 32.0).powi(2);
-                    d(pos[a]).total_cmp(&d(pos[b]))
-                })
-                .expect("the floor is in view");
-            let want = light.irradiance(floor, [pos[i][0], pos[i][1], pos[i][2]], UP);
-            lo = lo.min(acc[i] / want);
-            hi = hi.max(acc[i] / want);
-            flo = flo.min(filt[i] / want);
-            fhi = fhi.max(filt[i] / want);
-        }
-        println!(
-            "half tier, 32 frames: accumulated / analytic in [{lo:.4}, {hi:.4}], filtered in [{flo:.4}, {fhi:.4}]"
-        );
-    }
-
-    /// Phase 1 done-when 8: the gradient mode with two still list lights and the lamp off; the
-    /// strata's lambda over 16 still frames after the first (which has no history): the largest
-    /// value, the strata above 0 and above 1e-3, and the strata that re-shaded a lit pixel.
-    #[test]
-    #[ignore]
-    fn reading_the_gradient_mode_holds_still_under_a_still_list() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        rig.frame.set_lighting(Lighting {
-            history: vxe_render::HistoryKill::Gradient,
-            ..rig.frame.lighting()
-        });
-        let camera = box_camera();
-        rig.frame.set_lights(&[
-            Light::point([54.0, 32.0, 22.0], 1200.0),
-            Light::point([84.0, 20.0, 22.0], 1200.0),
-        ]);
-        step(&mut rig, &camera);
-        let (mut worst, mut over0, mut over3, mut lit, mut n) = (0.0f32, 0usize, 0usize, 0usize, 0);
-        for _ in 0..16 {
-            step(&mut rig, &camera);
-            assert!(!rig.frame.lights_changed());
-            let strata = vxe_render::debug::read_rgba16f(
-                &rig.device,
-                &rig.queue,
-                rig.frame.gradient_strata(),
-            );
-            for s in &strata {
-                n += 1;
-                worst = worst.max(s[0]);
-                over0 += usize::from(s[0] > 0.0);
-                over3 += usize::from(s[0] > 1e-3);
-                lit += usize::from(s[1] > 0.0);
-            }
-        }
-        println!(
-            "gradient, two still lights, 16 frames: {n} strata-frames, {lit} re-shaded a lit pixel; lambda max {worst:.6}, above 0 {over0}, above 1e-3 {over3}"
-        );
-    }
 
     /// Phase 1's hall reading: the showcase's `hall` shot at the fly-through's defaults (FSR 2
     /// at 1.5 with sharpening 0.5, or native: no upscaler, no jitter), the lamp off, exposure 8,
@@ -830,127 +1011,6 @@ mod reading {
                 );
             }
         }
-    }
-
-    /// The direct part's rgb at the floor pixel nearest `(x, y)` on the last frame of `tex`,
-    /// and that pixel's hit.
-    fn rgb_at(rig: &Rig, tex: &vxe_render::wgpu::Texture, x: f32, y: f32) -> ([f32; 3], [f32; 3]) {
-        let hits = floor_hits(rig);
-        let (i, p) = nearest(&hits, x, y);
-        let v = vxe_render::debug::read_float(&rig.device, &rig.queue, tex)[i];
-        ([v[0], v[1], v[2]], p)
-    }
-
-    /// Phase 2 done-when 1: a red and a blue light of 1200 at 20 voxels above the floor and 20
-    /// apart; the direct part per channel on the first frame under each, against each light's
-    /// analytic term in its channel ((9.40, 0, 3.30) and (3.30, 0, 9.40) at 0 and 20 voxels aside).
-    #[test]
-    #[ignore]
-    fn reading_two_coloured_lights_sum_per_channel() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        let camera = box_camera();
-        let floor = rig.frame.lighting().light_floor;
-        let red = Light {
-            colour: [1.0, 0.0, 0.0],
-            ..Light::point([54.0, 32.0, 22.0], 1200.0)
-        };
-        let blue = Light {
-            colour: [0.0, 0.0, 1.0],
-            ..Light::point([74.0, 32.0, 22.0], 1200.0)
-        };
-        rig.frame.set_lights(&[red, blue]);
-        step(&mut rig, &camera);
-        for (name, x) in [("under red", 54.0), ("under blue", 74.0)] {
-            let (got, p) = rgb_at(&rig, rig.frame.direct(), x, 32.0);
-            let want = [
-                red.irradiance(floor, p, UP),
-                0.0,
-                blue.irradiance(floor, p, UP),
-            ];
-            println!("{name} at {p:?}: direct {got:.4?} against {want:.4?}");
-        }
-    }
-
-    /// Phase 2 done-when 3: one still light, the camera stepping sideways 0.5 voxel a frame
-    /// for 32 frames; the accumulated direct luminance at the floor pixel nearest (64, 32)
-    /// against the analytic term at its hit, the worst error over the frames.
-    #[test]
-    #[ignore]
-    fn reading_a_dropped_light_holds_still_while_the_camera_moves() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        let mut camera = box_camera();
-        let floor = rig.frame.lighting().light_floor;
-        let light = Light::point([64.0, 32.0, 22.0], 1200.0);
-        rig.frame.set_lights(&[light]);
-        for _ in 0..8 {
-            step(&mut rig, &camera);
-        }
-        let mut worst = 0.0f64;
-        for _ in 0..32 {
-            camera.position.y += 0.5;
-            step(&mut rig, &camera);
-            let hits = floor_hits(&rig);
-            let acc = alpha(&rig, rig.frame.direct_accumulated());
-            for x in [56.0, 64.0, 72.0] {
-                let (i, p) = nearest(&hits, x, 32.0);
-                let want = light.irradiance(floor, p, UP);
-                worst = worst.max((f64::from(acc[i]) / f64::from(want) - 1.0).abs());
-            }
-        }
-        println!(
-            "camera stepping 0.5 voxel a frame, 32 frames: worst error {:.3} % at three floor pixels",
-            worst * 100.0
-        );
-    }
-
-    /// Phase 2 done-when 8: done-when 11's flight with the light red; per frame the
-    /// accumulated direct rgb under the light against `(E, 0, 0)`, the worst red error and the
-    /// largest green or blue; the start pixel on the last frame against (0.185, 0, 0).
-    #[test]
-    #[ignore]
-    fn reading_a_coloured_light_in_flight_lights_its_channel_only() {
-        let Some(mut rig) = box_rig() else {
-            return;
-        };
-        let camera = Camera {
-            position: [82.0, 32.0, 49.0].into(),
-            yaw: 0.0,
-            pitch: -1.56,
-            vfov: 1.4,
-        };
-        let floor = rig.frame.lighting().light_floor;
-        let mut light = Light {
-            colour: [1.0, 0.0, 0.0],
-            ..Light::point([40.0, 32.0, 22.0], 1200.0)
-        };
-        rig.frame.set_lights(&[light]);
-        for _ in 0..32 {
-            step(&mut rig, &camera);
-        }
-        let start = light.pos;
-        let (mut worst, mut other) = (0.0f64, 0.0f32);
-        let mut last = ([0.0; 3], [0.0; 3]);
-        for _ in 0..16 {
-            light.pos[0] += 4.0;
-            rig.frame.set_lights(&[light]);
-            step(&mut rig, &camera);
-            let (got, p) = rgb_at(&rig, rig.frame.direct_accumulated(), light.pos[0], 32.0);
-            let want = light.irradiance(floor, p, UP);
-            worst = worst.max((f64::from(got[0]) / f64::from(want) - 1.0).abs());
-            other = other.max(got[1].abs()).max(got[2].abs());
-            last = rgb_at(&rig, rig.frame.direct_accumulated(), start[0], 32.0);
-        }
-        println!(
-            "red flight: worst red error under the light {:.3} %, largest green or blue {other}; start pixel last frame {:.4?} at {:?} against ({:.4}, 0, 0)",
-            worst * 100.0,
-            last.0,
-            last.1,
-            light.irradiance(floor, last.1, UP)
-        );
     }
 
     /// Whether the CPU's exact walk finds rock between `o` and `light` (the world's raycast),
@@ -1478,6 +1538,86 @@ mod reading {
                     a.len() / 4
                 );
             }
+        }
+    }
+
+    /// Phase 7: native blue against white on the widened ring rig, per texel: where the final
+    /// image's blue channel differs by more than 2/255, the two runs' moments, direct
+    /// luminance, filtered blue and variance; and over every texel, the filter's relative
+    /// difference split by whether the white run's first moment sits at the clamp.
+    #[test]
+    #[ignore]
+    fn reading_native_blue_against_white_on_the_ring_rig() {
+        use vxe_render::debug::{read_float, read_rgba8};
+        let Some(rig) = box_rig() else {
+            return;
+        };
+        let w = ring_rig_frame(&rig, true, Some([1.0; 3]));
+        let b = ring_rig_frame(&rig, true, Some([0.0, 0.0, 1.0]));
+        let rd = |f: &vxe_render::Frame, t: &vxe_render::wgpu::Texture| -> Vec<[f32; 4]> {
+            let _ = f;
+            read_float(&rig.device, &rig.queue, t)
+        };
+        let (wm, bm) = (rd(&w, w.moments()), rd(&b, b.moments()));
+        let (wd, bd) = (
+            rd(&w, w.direct_accumulated()),
+            rd(&b, b.direct_accumulated()),
+        );
+        let (wf, bf) = (rd(&w, w.filtered()), rd(&b, b.filtered()));
+        let (wi, bi) = (
+            read_rgba8(&rig.device, &rig.queue, w.target()),
+            read_rgba8(&rig.device, &rig.queue, b.target()),
+        );
+        let lw = (wm.len() as f64 / 54.0).round() as usize;
+        println!("lighting grid {lw} x {}", wm.len() / lw);
+        let mut off = 0;
+        for y in 0..108usize {
+            for x in 0..192usize {
+                let i = y * 192 + x;
+                let d = wi[4 * i + 2].abs_diff(bi[4 * i + 2]);
+                if d <= 2 {
+                    continue;
+                }
+                off += 1;
+                let t = (y / 2) * lw + x / 2;
+                if off <= 40 {
+                    println!(
+                        "px ({x},{y}) d {d} img w {} b {} | texel {t}: m w ({:.2},{:.1},{}) b ({:.3},{:.2},{}) | l w {:.2} b {:.3} | filt blue w {:.3} b {:.3} var w {:.3e} b {:.3e} | acc blue w {:.3} b {:.3}",
+                        wi[4 * i + 2],
+                        bi[4 * i + 2],
+                        wm[t][0],
+                        wm[t][1],
+                        wm[t][2],
+                        bm[t][0],
+                        bm[t][1],
+                        bm[t][2],
+                        wd[t][3],
+                        bd[t][3],
+                        wf[t][2],
+                        bf[t][2],
+                        wf[t][3],
+                        bf[t][3],
+                        wd[t][2],
+                        bd[t][2],
+                    );
+                }
+            }
+        }
+        println!("{off} pixels past 2/255");
+        for clamped in [true, false] {
+            let (mut n, mut big, mut worst) = (0, 0, 0.0f32);
+            for t in 0..wm.len() {
+                if (wm[t][0] >= 254.0) != clamped || wd[t][3] <= 0.0 {
+                    continue;
+                }
+                n += 1;
+                let r = (wf[t][2] - bf[t][2]).abs() / wf[t][2].abs().max(1e-3);
+                worst = worst.max(r);
+                big += usize::from(r > 1e-2);
+            }
+            println!(
+                "white m1 clamped {clamped}: {n} texels, filter blue worst rel {worst:.3e}, {big} past 1 %"
+            );
         }
     }
 
