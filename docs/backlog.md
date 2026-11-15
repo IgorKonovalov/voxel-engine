@@ -37,6 +37,10 @@ fit's free-range walks and the victim scans' chunk walks, so split them first. *
 plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
 the owner is away; the owner may overturn it).
 
+### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
+
+Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out.
+
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
 Noted 2026-11-14 at Plan 0074's Phase 4 (`docs/plans/logs/0074.md`, the RTX host, `hpet`, lamp
@@ -176,6 +180,10 @@ Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 
 ### The bake and strip examples drift from the fly-through's lighting defaults
 
 Parked 2026-11-13 (orchestrator default while the owner was away). The hero fix (5b35aa3) gave `examples/hero.rs` the shared `flythrough::default_lighting()`. Two tools still build the library's `Lighting` and so miss the Plan 0061 store-read and light-weight defaults: `apps/flythrough/examples/bake.rs` and `apps/flythrough/examples/strip.rs`. Their readings and stills differ from what the window shows. The fix is to call `default_lighting()` and re-read anything that cites their figures. Pick it up when a plan next reads a strip or a bake figure, or when the owner asks.
+
+### Overlapping coloured lights go white: a hue-keeping tone map
+
+Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan.
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
