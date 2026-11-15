@@ -20,7 +20,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | in-progress | M6, ADR-0050 (proposed). Phase 1 merged 74ae796; Phases 2-6 after 0058. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | in-progress | M6, ADR-0051 (proposed). Phases 1-2 merged 7ca423c; Phases 3-4 after 0062. |
 | [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
-| [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | in-progress | M7, ADR-0054 (proposed). Phases 1-5 merged 56008fa; Phase 6 Linux run done, Windows run owed (owner: later). |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
 <!-- roster:end -->
@@ -63,8 +62,8 @@ Each starts on main after the one before it closes, unless its line says otherwi
 7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
    because the first consumer is a cave game).
    0062's Phase 1 and 0063's Phases 1 and 2 ran as a side lane and merged (74ae796, 7ca423c).
-   - **Plan 0068**, the tester build (approved 2026-11-11): a side lane whose Phases 1-5 merged at 56008fa;
-     it adds new files and three flags to the fly-through, and its Windows run is owed.
+   - **Plan 0068**, the tester build: closed 2026-11-15 (its code shipped in v0.54.0, the first
+     tagged release; ADR-0054 accepted).
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
@@ -91,6 +90,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0068](done/0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, three scene paths, tour and free flight, a report zip; Windows image 2-3x darker (backlog) | 2026-11-15, shipped in v0.54.0, no bump |
 | [0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: sixteen exact lights, one shadow ray each, the direct part in rgb, a bounce flag; RTX 0.17 ms a light, RENOIR 1.5 | 2026-11-15, v0.54.0 |
 | [0074](done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: `light_note` p99 8.3 to 2.5 ms by masks; placement index struck, then the window put the stagger in the eviction scan (backlog) | 2026-11-14, v0.53.0 |
 | [0070](done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md) | The sync in place: rescan set dense, light walks on change; sync p50 180 to 17 us, `update + poll + sync` p99 45 to 24 ms, over 16.6; worker packing deferred | 2026-11-13, v0.52.0 |

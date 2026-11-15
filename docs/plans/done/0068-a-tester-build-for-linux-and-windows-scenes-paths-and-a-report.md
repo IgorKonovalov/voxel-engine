@@ -1,9 +1,9 @@
 # 0068: A tester build for Linux and Windows: three scenes, a camera path, free flight and a report
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-11-15: clean close review; the tester build ships as the first release, v0.54.0)
 > **Created:** 2026-11-11
 > **Milestone:** M7 in `docs/roadmap.md` (the benchmark lane)
-> **Related ADRs:** [ADR-0054](../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) (proposed)
+> **Related ADRs:** [ADR-0054](../../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) (accepted)
 
 ## TL;DR
 
@@ -330,7 +330,7 @@ for them. The release profile's build time on CI is recorded there too.
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to [`docs/plans/logs/0068.md`](logs/0068.md).
+> attempts and resume notes go to [`docs/plans/logs/0068.md`](../logs/0068.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -342,7 +342,7 @@ for them. The release profile's build time on CI is recorded there too.
 | readings | dev | Phases 1, 2, 4 windowed readings written | e0b7d91 |
 | fix pass: B1, M1 of the phase review | dev | done; quick tier, clippy, fmt, deny, doc scripts (readings log) | fdfb04b |
 | merge of main at b017d93 (Plan 0061, v0.48.0) | dev | merged 57093ee (Cargo.toml conflict); gate tier green; B1 checked on a real `--auto` report (readings log) | committed with this row |
-| 6: the owner's runs on Linux and Windows | human | not started | |
+| 6: the owner's runs on Linux and Windows | human | done: Linux release run 2026-11-12 (castle tour), Windows "run all" 2026-11-15 with numeric `peak_rss_bytes`; owner "for now its ok", "Overall all was good"; v0.54.0 tagged as the first release | d9fa47e (log) |
 
 ### Notes
 
@@ -382,6 +382,38 @@ for them. The release profile's build time on CI is recorded there too.
   launcher uses, not a parser private to the test.
 
 ### Close triggers
+
+- No `nfr.md` budget moved (the plan's Budgets). Bench readings per machine are in the readings
+  log: the dev box's Linux runs (Phases 1, 2, 4, the B1 check, the Phase 6 release run) and the
+  Windows run of 2026-11-15 (all three `completed`, `peak_rss_bytes` numeric). Release build
+  times: run 43223698355, linux 5.5 min, windows 9.2 min.
+- The first release, v0.54.0, tagged on `5efd884` 2026-11-15 (owner), Release run 43751976406.
+
+## Close review (architect, 2026-11-15)
+
+Fresh-session close at `d9fa47e` (main `a56ebcc` plus the Phase 6 log). **Verdict: clean; the
+plan closes.** No blocker, no major.
+
+- Gate tier on this tree: 897 run, 897 passed, 90 skipped, 571.1 s (under the 12 min line),
+  exclusive perf lock, 16G scope, `CARGO_BUILD_JOBS=12`, 1-minute load 13.24 at the start,
+  3.21 at the end (loaded). Doctests 10 passed, 1 ignored; clippy, fmt, `cargo deny` and the
+  doc gates 0. No soak run: the branch changes no code against main.
+- Read: every test the plan names (`apps/flythrough/tests/path.rs`, `apps/tester/tests/`), the
+  B1 fix's two tests, the lamp-off change on main (`4ea561f`), `release.yml`'s glibc line and
+  `package-tester.sh`'s `@GLIBC_FLOOR@`. The phase review's B1 and M1 hold; nothing under
+  `crates/` is the plan's.
+- Phase 6's done-when holds: both reports open with `system.json`, `tester.log` and their runs,
+  the Windows `peak_rss_bytes` is numeric, the owner passed both builds, and the tag
+  was cut. Not seen: "run all" from the Linux archive (the three-run zip was read twice from
+  local release builds of the same code) and a free flight per scene; the done-when does not
+  name free flight. Notes, in `docs/backlog.md`; not blockers.
+- The Windows image 2 to 3x darker is not this plan's defect: the plan changed no render or
+  surface code (the surface format is picked in `vxe-app`'s shell). Its backlog entry stands.
+- Minor: `flythrough::path the_castle_path_flies_in_air` read 15.5 s (loaded; 5.5 s at a quiet
+  gate before). A CPU test, so it stays in the gate (the planning rule for CPU tests over the
+  line); no mark.
+- M2 (the key filter in the loop) moved to `docs/backlog.md`. No version bump: the code
+  shipped in v0.54.0, already tagged; `CHANGELOG.md` gains the plan's entry under 0.54.0.
 
 ## Phase review (architect, 2026-11-11)
 
@@ -491,3 +523,4 @@ None.
 
 - The tester mode's key filter in the loop (M2): route the frame loop's key reads under
   `--tester` through `tester_action`, or test the loop's input handling with the filter on.
+  In `docs/backlog.md` since the close.
