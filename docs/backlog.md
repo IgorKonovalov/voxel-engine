@@ -389,6 +389,23 @@ first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
+### The tester mode's key filter is structural, not tested in the frame loop
+
+Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester` the frame loop
+(`apps/flythrough/src/run/frame.rs`) skips `handle_input` and calls
+`flythrough::path::tester_action` only for keys it already chose (`F1`, the left click), so the
+unit test of `tester_action` cannot catch a debug key read outside `handle_input`, as `F2` is.
+What it takes: route every key the frame loop reads under `--tester` through `tester_action`, or a
+test that drives the loop's input handling with the filter on. Pick up with the next change to
+the fly-through's input or with Plan 0073's settings menu.
+
+### Plan 0068's leftovers from the owner's runs
+
+Noted 2026-11-15 at Plan 0068's close. Not seen in either release run: "run all benchmarks" from
+the Linux archive (only a castle tour; the three-run zip was read twice from local release
+builds) and a free flight in each scene (the Windows report holds the three benchmarks). The next
+tester archive's own run covers both; no work unless it fails.
+
 ### The HUD paints a bounded level's full record reservation as mirror pressure
 
 Read 2026-11-15 in Plan 0058's Phase 5f (`docs/plans/logs/0058.md`, the owner's `live/7.png` and `9.png`). On the level the HUD shows `mirror pressure 1.000` in yellow. `GpuWorld::pressure` (ADR-0013) is the larger of the pool-unit term and the record term. `scene::level_mirror_budget` reserves exactly one record per chunk of a bounded level, so once every chunk is mirrored the record term is 1.000 by construction (3200 of 3200; the unit term reads 0.30). No brick was refused and no radius narrowed. It read the same at the plan's start commit. The yellow at `hud::PRESSURE_HIGH` (0.9) therefore warns about a reservation that is full by design. What it takes: the HUD (or `pressure`) leaves out the record term when the reservation covers every chunk of a bounded world, or shows the two terms apart. It is a testbed-and-HUD change with a unit test. Pick up with the next HUD or mirror-budget change.
