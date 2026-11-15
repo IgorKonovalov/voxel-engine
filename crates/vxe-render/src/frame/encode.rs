@@ -72,7 +72,11 @@ struct Uniforms<'a> {
     probe_update: bool,
     probe_restart: bool,
     light_window: bool,
-    lamp_moved: bool,
+    /// The bouncing lights that moved since the last encode: their position before (`None`
+    /// for one new to its slot) and now.
+    moves: Vec<(Option<[f32; 3]>, [f32; 3])>,
+    /// The bouncing lights' positions.
+    bouncing: Vec<[f32; 3]>,
 }
 
 /// The encode's bind groups, and the walk the hit pass takes: the field surface, the split
@@ -142,6 +146,7 @@ impl Frame {
                     resource: wgpu::BindingResource::TextureView(&noise),
                 },
                 buffer_entry(13, self.exposure.state_uniform()),
+                buffer_entry(14, &self.state.lights.buffer),
             ],
         })
     }
@@ -185,7 +190,6 @@ impl Frame {
             "{} views",
             views.len()
         );
-        let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
         let fsr = self
@@ -216,14 +220,10 @@ impl Frame {
             face_mix: self.state.look.tuning.face_mix,
             far_normal: self.state.look.far_normal,
             window_size: e.size(),
-            light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
-                .to_array(),
+            lamp: Light::headlamp(camera, light),
             lamp_pose: [light.offset_right, light.offset_down, light.turn],
-            light_intensity: light.intensity,
-            light_dir: (fwd * light.turn.cos() + right * light.turn.sin()).to_array(),
-            cos_outer: light.outer.cos(),
             size: [self.targets.width, self.targets.height],
-            cos_inner: light.inner.cos(),
+            light_floor: self.state.lighting.light_floor,
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 }
                 | if light.skips { FLAG_SKIPS } else { 0 }
@@ -311,13 +311,18 @@ impl Frame {
         keep: Keep,
     ) -> Uniforms<'_> {
         let mut p = *params;
+        let now = self
+            .state
+            .lights
+            .slots(params, self.state.lighting.lamp_bounce);
         // The probe passes run in the shaded and cracks views outside the cutaway, with the
-        // lamp's bounce on and the lamp on (or a preset volume, whose updates are off).
+        // lamp's bounce on and a light flagged to bounce within the bounce reach of the volume
+        // (or a preset volume, whose updates are off).
         let presets = self.probe.volume.get().is_some_and(|v| !v.updates());
         let indirect = self.state.lighting.lamp_bounce
-            && (self.state.lighting.lamp || presets)
             && self.state.look.view.shades()
-            && !self.state.look.cutaway;
+            && !self.state.look.cutaway
+            && (presets || self.bounce_reaches_the_volume(&now, params.views[0].origin));
         // The volume exists from the first encode with the channel running.
         let volume = indirect.then(|| self.probes());
         let probe_update = volume.is_some_and(ProbeVolume::updates);
@@ -329,14 +334,14 @@ impl Frame {
             .swap(probe_update, std::sync::atomic::Ordering::Relaxed);
         let mut probe_restart = probe_update && !channel_was;
         let mut light_window = false;
-        let mut lamp_moved = false;
+        let mut moves = Vec::new();
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
         let mut edits = EditsUniform {
             count: 0,
             _pad: [0; 3],
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
-        let mut old_lamp = Lamp::of(params);
+        let mut old_list = now;
         if keep == Keep::History {
             let mut h = self
                 .state
@@ -365,14 +370,26 @@ impl Frame {
                 shadow_walk: self.state.lighting.shadow_walk,
             };
             let lamp_changed = h.light_key.is_some_and(|k| k.lamp_differs(&key));
-            if lamp_changed {
-                p.lighting |= LIGHTING_LAMP_CHANGED;
+            let listed = now.listed(params.lighting & LIGHTING_LAMP != 0);
+            let lights_changed = lamp_changed || h.listed.as_deref().is_some_and(|l| l != listed);
+            h.listed = Some(listed.to_vec());
+            if lights_changed {
+                p.lighting |= LIGHTING_LIGHTS_CHANGED;
             }
             self.state
                 .lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
-            // The probes see the lamp alone: its switch, parameters or shadow walk restart them.
-            probe_restart |= probe_update && lamp_changed;
+            self.state
+                .lights
+                .changed
+                .store(lights_changed, std::sync::atomic::Ordering::Relaxed);
+            // The probes see the bouncing lights alone: the lamp's switch, parameters or shadow
+            // walk restart them, as does a list light's flag, presence or parameters.
+            let lamp_on = params.lighting & LIGHTING_LAMP != 0;
+            let bounce = super::lights::bounce_key(&now, lamp_on);
+            let bounce_changed = h.bounce_key.as_ref().is_some_and(|k| *k != bounce);
+            h.bounce_key = Some(bounce);
+            probe_restart |= probe_update && (lamp_changed || bounce_changed);
             if probe_restart {
                 h.light_window = crate::probes::WINDOW_FRAMES;
             }
@@ -382,32 +399,38 @@ impl Frame {
                 h.light_window -= 1;
             }
             let back = (self.up.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
-            old_lamp = h
-                .lamps
+            old_list = h
+                .lists
                 .len()
                 .checked_sub(back)
-                .and_then(|i| h.lamps.get(i))
-                .or(h.lamps.front())
+                .and_then(|i| h.lists.get(i))
+                .or(h.lists.front())
                 .copied()
-                .unwrap_or_else(|| Lamp::of(params));
-            let now = Lamp::of(params);
-            lamp_moved = h
-                .lamps
-                .back()
-                .is_some_and(|l| l.pos != now.pos || l.dir != now.dir);
-            if h.lamps.len() == LAMP_FRAMES {
-                h.lamps.pop_front();
+                .unwrap_or(now);
+            // The bouncing lights that moved: their position or axis changed in their slot.
+            if h.lists.back().is_some() {
+                moves = super::lights::bounce_moves(&now, h.lists.back());
             }
-            h.lamps.push_back(Lamp::of(params));
+            if h.lists.len() == LAMP_FRAMES {
+                h.lists.pop_front();
+            }
+            h.lists.push_back(now);
         } else {
             p.history = 0;
         }
+        if now.count > 0 {
+            p.lighting |= LIGHTING_DIRECT;
+        }
+        self.state.lights.write(
+            queue,
+            LightsUniform::of(&now, &old_list, params.lighting & LIGHTING_LAMP != 0),
+        );
         queue.write_buffer(&self.state.edits, 0, bytemuck::bytes_of(&edits));
         let scale = self.output[0] as f32 / self.targets.width as f32;
         queue.write_buffer(
             &self.up.params,
             0,
-            bytemuck::bytes_of(&self.up.upscaler.uniform(scale, old_lamp)),
+            bytemuck::bytes_of(&self.up.upscaler.uniform(scale)),
         );
         let table = light_table(world, p.views[0].origin);
         let used = (1 + table.count as usize) * 16;
@@ -439,7 +462,8 @@ impl Frame {
             probe_update,
             probe_restart,
             light_window,
-            lamp_moved,
+            moves,
+            bouncing: now.bouncing().map(|(_, l)| l.pos).collect(),
         }
     }
 
@@ -507,6 +531,7 @@ impl Frame {
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
+                Res::Tex(&t.direct),
             ],
         );
         let temporal_bind = bind_io(
@@ -526,10 +551,13 @@ impl Frame {
                 Res::Tex(&t.strata),
                 Res::Buf(self.baked.store.pool()),
                 Res::Buf(&self.baked.counters),
+                Res::Tex(&t.direct),
+                Res::Tex(&t.direct_accum[q]),
+                Res::Tex(&t.direct_accum[c]),
             ],
         );
         // The filter runs in the shaded and cracks views unless switched off; the variance pass
-        // writes `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
+        // writes `filter[0]` and the iterations ping-pong, ending in `filter[n % 2]`.
         let (filtering, variance_bind, atrous_binds) = self.filter_binds(device);
         let out = self.output_binds(device, filtering);
         Binds {
@@ -555,18 +583,21 @@ impl Frame {
         let t = &self.targets;
         let c = self.cur;
         let filtering = self.state.lighting.filter && self.state.look.view.shades();
-        let variance_bind = bind_io(
+        let variance_bind = bind_io_at(
             device,
             self.pipes.layout(P_VARIANCE),
+            &[0, 1, 2, 3, 4, 9],
             &[
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.accum[c]),
                 Res::Tex(&t.moments[c]),
                 Res::Tex(&t.filter[0]),
+                Res::Tex(&t.direct_accum[c]),
             ],
         );
-        let atrous_binds: Vec<wgpu::BindGroup> = (0..ATROUS_ITERATIONS)
+        let n = self.state.lighting.atrous_count();
+        let atrous_binds: Vec<wgpu::BindGroup> = (0..n)
             .map(|i| {
                 bind_io_at(
                     device,
@@ -577,7 +608,7 @@ impl Frame {
                         Res::Tex(t.lit_info(c)),
                         Res::Tex(&t.filter[i % 2]),
                         Res::Tex(&t.filter[(i + 1) % 2]),
-                        Res::Buf(&self.state.atrous_steps[i]),
+                        Res::Buf(&self.state.atrous_steps[i][usize::from(i + 1 == n)]),
                         Res::Tex(&t.accum[c]),
                         Res::Tex(&t.moments[c]),
                     ],
@@ -593,7 +624,7 @@ impl Frame {
         let t = &self.targets;
         let (c, q) = (self.cur, self.cur ^ 1);
         let lit = if filtering {
-            &t.filter[ATROUS_ITERATIONS % 2]
+            &t.filter[self.state.lighting.atrous_count() % 2]
         } else {
             &t.accum[c]
         };
@@ -626,6 +657,7 @@ impl Frame {
                 Res::Tex(&t.indirect),
                 Res::Buf(&t.tiles),
                 Res::Tex(&t.transmit),
+                Res::Tex(&t.direct_accum[c]),
             ],
         );
         let gradient_bind = bind_io(
@@ -634,7 +666,7 @@ impl Frame {
             &[
                 Res::Tex(t.lit_pos(q)),
                 Res::Tex(t.lit_info(q)),
-                Res::Tex(&t.irradiance),
+                Res::Tex(&t.direct),
                 Res::Tex(&t.strata),
             ],
         );
@@ -652,6 +684,7 @@ impl Frame {
                     Res::Tex(&hist[c]),
                     Res::Buf(&self.state.edits),
                     Res::Buf(&self.up.params),
+                    Res::Tex(&t.accum[c]),
                 ],
             )
         });
@@ -831,6 +864,7 @@ impl Frame {
                         hit_pos: &t.hit_pos[c],
                         hit_info: &t.hit_info[c],
                         layer: &t.layer,
+                        emissive: &t.accum[c],
                         edits: &self.state.edits,
                         lamp: &self.up.params,
                         output: &t.output,
@@ -892,6 +926,14 @@ impl Frame {
                     .map(|b| frame_pass(world, self.pipes.pipeline(device, P_ATROUS), b, 2, lw)),
             );
         }
+        let iterations = if binds.filtering {
+            binds.atrous_binds.len() as u32
+        } else {
+            0
+        };
+        self.state
+            .atrous_dispatches
+            .store(iterations, std::sync::atomic::Ordering::Relaxed);
         [gradient, atrous]
     }
 
@@ -991,7 +1033,8 @@ impl Frame {
             probe_update,
             probe_restart,
             light_window,
-            lamp_moved,
+            ref moves,
+            ref bouncing,
             ref boxes,
             ..
         } = *uni;
@@ -1021,12 +1064,21 @@ impl Frame {
                     volume.forget_reach();
                 }
                 let reach = self.state.lighting.lamp_reach;
-                let lamp = p.light_pos;
-                let moved = lamp_moved && self.state.lighting.lamp;
-                let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
+                let near = |w: [i32; 3], at: [f32; 3]| {
                     let q = volume.probe_position(w);
-                    let d2: f32 = (0..3).map(|k| (q[k] - lamp[k]).powi(2)).sum();
+                    let d2: f32 = (0..3).map(|k| (q[k] - at[k]).powi(2)).sum();
                     reach <= 0.0 || d2 <= reach * reach
+                };
+                // A probe is marked moved when a bouncing light that moved lies within the
+                // bounce reach of it, before or after the move; it is listed while a bouncing
+                // light lies within the reach.
+                let moved = |w: [i32; 3]| {
+                    moves
+                        .iter()
+                        .any(|&(was, at)| near(w, at) || was.is_some_and(|b| near(w, b)))
+                };
+                let list = volume.update_list(origin, p.frame, slices, &touched, moved, |w| {
+                    bouncing.iter().any(|&at| near(w, at))
                 });
                 queue.write_buffer(volume.scratch(), 0, bytemuck::cast_slice(&list));
                 updates = list.len() as u32;

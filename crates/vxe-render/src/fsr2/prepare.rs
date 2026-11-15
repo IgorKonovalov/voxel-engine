@@ -57,6 +57,8 @@ pub(crate) struct FrameInputs<'a> {
     pub hit_pos: &'a wgpu::Texture,
     pub hit_info: &'a wgpu::Texture,
     pub layer: &'a wgpu::Texture,
+    /// The temporal pass's emissive part this frame (the input pass's `in_emissive`).
+    pub emissive: &'a wgpu::Texture,
     pub edits: &'a wgpu::Buffer,
     pub lamp: &'a wgpu::Buffer,
     pub output: &'a wgpu::Texture,
@@ -217,6 +219,7 @@ impl Fsr2 {
                 Tex(&r.depth),
                 Tex(&r.motion),
                 Tex(&r.reactive),
+                Tex(f.emissive),
             ],
         );
         let spd_mips = bind_io(

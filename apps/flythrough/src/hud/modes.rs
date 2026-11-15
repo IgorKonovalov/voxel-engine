@@ -17,11 +17,13 @@ pub const BANNER_COLS: usize = 40;
 /// Rows the banner wraps into at most: the look's words in three (the look and the view) and the modes' line in six.
 pub const BANNER_ROWS: usize = 9;
 
-/// A key that changes the lighting mode: `F3`, `F5` to `F8`, `M` and `Q`.
+/// A key that changes the lighting mode: `F3` to `F8`, `M` and `Q`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeKey {
     /// `F3`: full or coarse shadow walk.
     ShadowWalk,
+    /// `F4`: the a-trous iterations, 4, 2, 1 in turn.
+    Atrous,
     /// `F5`: edit boxes, or edit boxes and the gradient.
     History,
     /// `F6`: full or half lighting resolution.
@@ -128,13 +130,18 @@ pub struct Modes {
     pub(crate) shadow_ray: bool,
     /// The dig's radius in fixed point; the scroll wheel and the D-pad step it.
     pub(crate) dig_radius: i64,
-    /// The live queue's modes, keys `1` to `8`.
+    /// The live queue's modes: the order `F`, the angle `Tab` and `Slash`, the withdrawal
+    /// `Quote`, the budget `Backspace`, full-first `Backslash`, missing light `7`, reach `8`.
     pub(crate) queue: QueueModes,
+    /// The testbed's list of lights: `1` drops, `2` carries, `4` removes, `6` fires.
+    pub lights: crate::lights::TestLights,
+    /// The banner's lights row after the last light key (`lights 3/16`, `carry on`).
+    lights_words: Option<String>,
 }
 
-/// The live queue's modes the number keys step: `1` the order, `2` and `3` the score's angle
-/// weight, `4` the withdrawal, `5` the budget, `6` the full-first radius, `7` the missing
-/// light, `8` the reach.
+/// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
+/// weight, `Quote` the withdrawal, `Backspace` the budget, `Backslash` the full-first radius,
+/// `7` the missing light, `8` the reach.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QueueModes {
     /// The class and the distance first, rather than the score.
@@ -200,15 +207,18 @@ pub enum HudRow {
     Queue,
     /// `cutaway auto, shadow ray on, dig radius 0.5 m`.
     Controls,
+    /// `lights 3/16 carry fly 1 over 0` ([`crate::lights::TestLights::write_row`]).
+    Lights,
 }
 
 impl HudRow {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Look,
         Self::Lighting,
         Self::Upscaler,
         Self::Queue,
         Self::Controls,
+        Self::Lights,
     ];
 
     /// The first word of the row, which no other HUD row starts with.
@@ -219,6 +229,7 @@ impl HudRow {
             Self::Upscaler => "upscaler ",
             Self::Queue => "queue ",
             Self::Controls => "cutaway ",
+            Self::Lights => "lights ",
         }
     }
 }
@@ -254,7 +265,21 @@ impl Modes {
             shadow_ray: true,
             dig_radius: crate::edits::DIG_RADIUS,
             queue: QueueModes::default(),
+            lights: crate::lights::TestLights::default(),
+            lights_words: None,
         }
+    }
+
+    /// These modes with the testbed's lights `lights` (`--lights N`'s ring).
+    pub fn with_lights(self, lights: crate::lights::TestLights) -> Self {
+        Self { lights, ..self }
+    }
+
+    /// Shows the banner from `now_ms` with `words` as its lights row (`lights 3/16`,
+    /// `carry on`, `fire, lights 2/16`).
+    pub fn show_lights(&mut self, words: String, now_ms: f64) {
+        self.lights_words = Some(words);
+        self.banner_at = now_ms;
     }
 
     /// These modes with `--pan`'s yaw at `deg_per_s`, started at `now_ms`.
@@ -352,6 +377,7 @@ impl Modes {
                     self.dig_radius as f64 / (10 * vxe_world::FIXED_ONE) as f64
                 );
             }
+            HudRow::Lights => self.lights.write_row(self.lighting.lamp, out),
         }
     }
 
@@ -421,6 +447,13 @@ impl Modes {
                 l.shadow_walk = match l.shadow_walk {
                     ShadowWalk::Full => ShadowWalk::Coarse,
                     ShadowWalk::Coarse => ShadowWalk::Full,
+                }
+            }
+            ModeKey::Atrous => {
+                l.atrous_iterations = match l.atrous_iterations {
+                    4 => 2,
+                    2 => 1,
+                    _ => 4,
                 }
             }
             ModeKey::History => {
@@ -553,14 +586,20 @@ impl Modes {
         if l.lamp_bounce {
             let _ = write!(out, ", probes {}", self.probe_spacing);
         }
-        let _ = write!(
-            out,
-            ", filter {}, ore pulse {}, exposure ",
-            on(l.filter),
-            on(self.pulse)
-        );
+        out.push_str(", ");
+        self.write_filter_count(out);
+        let _ = write!(out, ", ore pulse {}, exposure ", on(self.pulse));
         self.write_exposure_mode(out);
         let _ = write!(out, " {:+.2} EV", self.exposure_ev());
+    }
+
+    /// The filter in words: `filter <n>` (its a-trous iterations) while it runs, `filter off`.
+    pub fn write_filter_count(&self, out: &mut String) {
+        if self.lighting.filter {
+            let _ = write!(out, "filter {}", self.lighting.atrous_count());
+        } else {
+            out.push_str("filter off");
+        }
     }
 
     /// The exposure in EV the banner names: `log2` of the manual exposure, or in auto of the
@@ -601,6 +640,10 @@ impl Modes {
                 out.push_str(v);
             }
             wrap_from(out, from);
+        }
+        if let Some(w) = &self.lights_words {
+            start_row(out);
+            out.push_str(w);
         }
         start_row(out);
         let from = out.len();
@@ -697,6 +740,178 @@ fn wrap_from(out: &mut String, from: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::toggles::Press;
+
+    /// The `lights` row and the banner name the testbed's lights: the count with the headlamp
+    /// counted while it is on, carry, the lights in flight and those over the cap; `1` on a
+    /// full list is refused with `FULL_LINE`, which names Plan 0058.
+    /// `3` names the picked colour in the banner and the `lights` row, and the newest light
+    /// takes it; `4` removes the newest and the banner names the count.
+    #[test]
+    fn the_banner_and_hud_name_the_colour_and_the_removal() {
+        use crate::toggles::{KEY_REMOVE, TOGGLES};
+        let lamp_off = vxe_render::Lighting {
+            lamp: false,
+            ..vxe_render::Lighting::default()
+        };
+        let mut m = Modes::new(lamp_off, vxe_render::LightingResolution::Half, 0.0);
+        for _ in 0..3 {
+            m.lights
+                .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        let colour = TOGGLES.iter().find(|t| t.name == "colour").unwrap();
+        assert_eq!(colour.press, Press::Key(vxe_app::KeyCode::Digit3, None));
+        (colour.flip)(&mut m, 10.0);
+        assert!(m.banner(10.0).unwrap().lines().any(|l| l == "colour warm"));
+        (colour.flip)(&mut m, 20.0);
+        assert!(m.banner(20.0).unwrap().lines().any(|l| l == "colour red"));
+        assert!(m.row(HudRow::Lights).ends_with("colour red"));
+        assert_eq!(m.lights.lights[2].light.colour, [1.0, 0.0, 0.0]);
+        assert_eq!(m.lights.lights[1].light.colour, [1.0; 3]);
+        m.lights
+            .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        m.lights
+            .fire(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        assert_eq!(m.lights.lights[3].light.colour, [1.0, 0.0, 0.0]);
+        assert_eq!(m.lights.lights[4].light.colour, [1.0, 0.0, 0.0]);
+        // `4` on the three: `run::keys` removes the newest and shows the count.
+        assert_eq!(KEY_REMOVE, vxe_app::KeyCode::Digit4);
+        m.lights.lights.truncate(3);
+        m.lights.remove_newest();
+        m.show_lights(m.lights.count_words(false), 30.0);
+        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 2/16"));
+    }
+
+    /// `5` flips the newest light's bounce flag: the banner reads `bounce on`, then `bounce
+    /// off`, and the `lights` row marks each flagged light `*`.
+    #[test]
+    fn the_banner_and_hud_name_the_bounce_flag() {
+        use crate::toggles::TOGGLES;
+        let lamp_off = vxe_render::Lighting {
+            lamp: false,
+            ..vxe_render::Lighting::default()
+        };
+        let mut m = Modes::new(lamp_off, vxe_render::LightingResolution::Half, 0.0);
+        for _ in 0..2 {
+            m.lights
+                .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        let bounce = TOGGLES.iter().find(|t| t.name == "bounce").unwrap();
+        assert_eq!(bounce.press, Press::Key(vxe_app::KeyCode::Digit5, None));
+        (bounce.flip)(&mut m, 10.0);
+        assert!(m.banner(10.0).unwrap().lines().any(|l| l == "bounce on"));
+        assert_eq!(
+            m.row(HudRow::Lights),
+            "lights 2/16 bounce * over 0 colour white"
+        );
+        assert_eq!(
+            m.lights.lights[1].light.flags & vxe_render::Light::BOUNCE,
+            vxe_render::Light::BOUNCE
+        );
+        (bounce.flip)(&mut m, 20.0);
+        assert!(m.banner(20.0).unwrap().lines().any(|l| l == "bounce off"));
+        assert_eq!(m.row(HudRow::Lights), "lights 2/16 over 0 colour white");
+    }
+
+    /// `F4` steps the a-trous iterations 4, 2, 1 and back, in the lighting row's `filter <n>`
+    /// and the banner; with the filter off the row reads `filter off`.
+    #[test]
+    fn f4_steps_the_filters_iterations() {
+        use crate::toggles::TOGGLES;
+        let mut m = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::Half,
+            0.0,
+        );
+        let f4 = TOGGLES
+            .iter()
+            .find(|t| t.press == Press::Key(vxe_app::KeyCode::F4, None))
+            .unwrap();
+        assert_eq!(f4.row, HudRow::Lighting);
+        assert_eq!((f4.get)(&m), "filter 4");
+        for (i, want) in ["filter 2", "filter 1", "filter 4"].into_iter().enumerate() {
+            let now = 10.0 * (i + 1) as f64;
+            (f4.flip)(&mut m, now);
+            assert_eq!((f4.get)(&m), want);
+            assert!(m.line().contains(&format!(", {want}, ")), "{}", m.line());
+            assert!(m.banner(now).unwrap().contains(want));
+        }
+        m.lighting.filter = false;
+        assert_eq!((f4.get)(&m), "filter off");
+    }
+
+    #[test]
+    fn the_banner_and_hud_name_the_lights() {
+        use crate::lights::{FULL_LINE, TestLights};
+        use crate::toggles::TOGGLES;
+        let lamp_off = vxe_render::Lighting {
+            lamp: false,
+            ..vxe_render::Lighting::default()
+        };
+        let half = vxe_render::LightingResolution::Half;
+        let mut m = Modes::new(lamp_off, half, 0.0);
+        for _ in 0..3 {
+            m.lights
+                .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        let carry = TOGGLES.iter().find(|t| t.name == "carry").unwrap();
+        (carry.flip)(&mut m, 10.0);
+        assert_eq!(
+            m.row(HudRow::Lights),
+            "lights 3/16 carry over 0 colour white"
+        );
+        assert!(m.banner(10.0).unwrap().lines().any(|l| l == "carry on"));
+        m.lighting.lamp = true;
+        assert!(m.row(HudRow::Lights).starts_with("lights 4/16"));
+        m.lighting.lamp = false;
+        (carry.flip)(&mut m, 20.0);
+        assert!(m.banner(20.0).unwrap().lines().any(|l| l == "carry off"));
+        // The drop key's banner, as `run::keys` shows it.
+        m.show_lights(m.lights.count_words(false), 30.0);
+        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 3/16"));
+        // Two lights, one in flight.
+        let mut f = Modes::new(lamp_off, half, 0.0);
+        f.lights
+            .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        f.lights
+            .fire(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+            .unwrap();
+        assert_eq!(
+            f.row(HudRow::Lights),
+            "lights 2/16 fly 1 over 0 colour white"
+        );
+        f.show_lights(format!("fire, {}", f.lights.count_words(false)), 40.0);
+        let b = f.banner(40.0).unwrap();
+        assert!(b.contains("fire") && b.contains("lights 2/16"), "{b}");
+        // A full list refuses a drop and a shot with `FULL_LINE`.
+        let mut full = TestLights::default();
+        for _ in 0..16 {
+            full.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
+                .unwrap();
+        }
+        assert_eq!(
+            full.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None),
+            Err(FULL_LINE)
+        );
+        assert_eq!(
+            full.fire(false, [0.0; 3], [1.0, 0.0, 0.0], None),
+            Err(FULL_LINE)
+        );
+        assert!(FULL_LINE.contains("0058"));
+        // Over the cap: sixteen lights with the lamp switched on.
+        let mut over = Modes::new(lamp_off, half, 0.0).with_lights(full);
+        over.lighting.lamp = true;
+        assert_eq!(over.row(HudRow::Lights), "lights 16/16 over 1 colour white");
+        // `--lights 3` parses.
+        let a = crate::cli::parse_args_from(["--lights", "3"].map(String::from)).unwrap();
+        assert_eq!(a.light.lights, 3);
+    }
 
     /// `parts` joined by `, ` into rows of at most [`BANNER_COLS`] characters where they fit,
     /// row by row: the reference [`wrap_from`] is held to.
@@ -758,7 +973,7 @@ mod tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8\nfilter on, ore pulse off\nexposure manual +0.00 EV"
+            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nore pulse off, exposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

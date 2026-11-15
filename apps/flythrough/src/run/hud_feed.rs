@@ -457,9 +457,10 @@ pub(crate) fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String
     let mean = |k: usize| rays.iter().map(|t| f64::from(t[k])).sum::<f64>() / n;
     let mut loads: Vec<f64> = rays.iter().map(|t| f64::from(t[1])).collect();
     format!(
-        "shadow rays ({} walk, {} rays): steps mean {:.2}, loads mean {:.2}, p99 {:.0}, pool reads mean {:.2}",
+        "shadow rays ({} walk, {} pixels cast, {:.3} a casting pixel): steps mean {:.2}, loads mean {:.2}, p99 {:.0}, pool reads mean {:.2}",
         walk.name(),
         rays.len(),
+        mean(3),
         mean(0),
         mean(1),
         percentile(&mut loads, 99.0),
@@ -573,7 +574,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (1 order, 2/3 angle, 4 withdraw, 5 budget, 6 full-first, 7 missing light, 8 reach)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (F order, Tab/Slash angle, Quote withdraw, Backspace budget, Backslash full-first, 7 missing light, 8 reach)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),

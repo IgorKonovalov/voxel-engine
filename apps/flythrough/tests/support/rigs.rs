@@ -610,18 +610,11 @@ pub fn octa16_normal(u: u16, v: u16) -> [f32; 3] {
     n.map(|c| c / l)
 }
 
-/// The headlamp's unshadowed term of `params` at `p`, normal `n` (`up_lamp` in
-/// `upscale.wgsl`): `intensity * cone * max(n.l, 0) / dist^2`.
+/// The headlamp's unshadowed term of `params` at `p`, normal `n` (`light_term` in
+/// `common.wgsl` over slot 0): `intensity * cone * max(n.l, 0) / dist^2` times the window at
+/// the frame's light floor.
 pub fn lamp_term(params: &vxe_render::Params, p: [f32; 3], n: [f32; 3]) -> f32 {
-    let to: Vec<f32> = (0..3).map(|k| params.light_pos[k] - p[k]).collect();
-    let dist2 = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).max(1e-4);
-    let l: Vec<f32> = to.iter().map(|c| c / dist2.sqrt()).collect();
-    let along = -(0..3).map(|k| l[k] * params.light_dir[k]).sum::<f32>();
-    let (e0, e1) = (params.cos_outer, params.cos_inner);
-    let t = ((along - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    let cone = t * t * (3.0 - 2.0 * t);
-    let ndl = (0..3).map(|k| n[k] * l[k]).sum::<f32>().max(0.0);
-    params.light_intensity * cone * ndl / dist2
+    params.lamp.irradiance(params.light_floor, p, n) / std::f32::consts::PI
 }
 
 /// The cave's table plus a translucent red glass row (opacity 0.5), and the glass's id.

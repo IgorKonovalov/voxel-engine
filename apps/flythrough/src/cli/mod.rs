@@ -130,10 +130,10 @@
 //! refines the coarse chunks nearest first, each fading from its coarse value, and a chunk the
 //! mirror gains takes its coarse pass first, unless it lies within `--full-first off|N` of the
 //! camera's (default `--near`'s radius; `off` gives every blank chunk the coarse pass first; key
-//! `6` toggles `off` and `2`); its row in the banner, its depth on the HUD's store
+//! `Backslash` toggles `off` and `2`); its row in the banner, its depth on the HUD's store
 //! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
 //! 1.5), `--bake-budget frame:MS|second:MS,CAP` the budget as a slice a frame or milliseconds a
-//! second capped at a share of the frame (ADR-0052; key `5` cycles it);
+//! second capped at a share of the frame (ADR-0052; key `Backspace` cycles it);
 //! `--missing-light black|neighbour|parent|chain` what a cube face with no baked value reads
 //! (ADR-0053: its chunk's summary, its face neighbours', its parent cells'; default `chain`; key
 //! `7` cycles it; the banner's queue row and the HUD's store row name it, and the `bake queue:`
@@ -371,6 +371,10 @@ pub struct LightingArgs {
     pub light_weights: vxe_render::LightWeights,
     /// `--filter on|off`: the a-trous filter runs.
     pub filter: bool,
+    /// `--atrous-iterations 1|2|4`: the a-trous iterations a frame runs (`F4`).
+    pub atrous_iterations: u32,
+    /// `--light-floor F`: the list lights' reach floor (ADR-0044).
+    pub light_floor: f32,
     /// `--light-radius N`: chunks around the camera whose emitters light the frame; unset,
     /// the source's.
     pub radius: Option<i32>,
@@ -389,6 +393,12 @@ pub struct LightingArgs {
     /// `--lamp-toggle N`: switch the lamp every `N` frames, as `F7` does, timing the probe
     /// passes inside and outside the light-change windows the switches open.
     pub(crate) lamp_toggle: Option<u32>,
+    /// `--lights N`: start with `N` white list lights on a ring around the spawn's eye
+    /// (`lights::TestLights::ring`); 0 by default.
+    pub(crate) lights: u32,
+    /// `--lights-bounce on|off`: the `--lights` ring's lights take the bounce flag; off by
+    /// default.
+    pub(crate) lights_bounce: bool,
     /// `--fade-reading`: dig into the rock ahead, settle the ore light with the lamp off,
     /// then the lamp light with it on, switch it off and print how each light source at the
     /// screen centre fades (see `run::fade::FadeSample`).
@@ -415,6 +425,8 @@ impl LightingArgs {
             store_read: base.store_read,
             light_weights: base.light_weights,
             filter: base.filter,
+            atrous_iterations: base.atrous_iterations,
+            light_floor: base.light_floor,
             radius: None,
             history: base.history,
             resolution: LightingResolution::default(),
@@ -423,6 +435,8 @@ impl LightingArgs {
             probe_slices: base.probe_slices,
             emissive_ore: true,
             lamp_toggle: None,
+            lights: 0,
+            lights_bounce: false,
             fade_reading: false,
             exposure: None,
             adaptation: hud::Adaptation::Eye,
@@ -449,6 +463,8 @@ impl LightingArgs {
             store_read: self.store_read,
             light_weights: self.light_weights,
             filter: self.filter,
+            atrous_iterations: self.atrous_iterations,
+            light_floor: self.light_floor,
             history: self.history,
             lamp_bounce: self.lamp_bounce,
             probe_rays: self.probe_rays,
@@ -499,8 +515,8 @@ pub struct LookArgs {
 #[derive(Clone)]
 pub struct BakeArgs {
     /// `--bake-budget frame:MS|second:MS,CAP` (or `--bake-slice MS`, `frame:MS`): the live
-    /// queue's bake budget (default `frame:` `vxe_render::DEFAULT_BAKE_SLICE_MS`); key `5`
-    /// cycles it through `BUDGET_CYCLE`.
+    /// queue's bake budget (default `frame:` `vxe_render::DEFAULT_BAKE_SLICE_MS`); key
+    /// `Backspace` cycles it through `BUDGET_CYCLE`.
     pub(crate) budget: vxe_render::Budget,
     /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
     /// default `vxe_render::DEFAULT_COARSE_SAMPLES`).
@@ -509,7 +525,7 @@ pub struct BakeArgs {
     /// before the first frame (default `vxe_render::DEFAULT_NEAR`).
     pub(crate) near: i32,
     /// `--full-first off|N`: the live queue's full-first radius after the pre-roll
-    /// (`vxe_render::BakeQueue::full_first`); `None` follows `--near`. `6` toggles it
+    /// (`vxe_render::BakeQueue::full_first`); `None` follows `--near`. `Backslash` toggles it
     /// between `off` and `2`.
     pub(crate) full_first: Option<Option<i32>>,
     /// `--missing-light black|neighbour|parent|chain`: what a cube face with no baked value
@@ -519,18 +535,18 @@ pub struct BakeArgs {
     /// bakes from the chunks resident full (`vxe_render::ReachMode`); `8` toggles it.
     pub(crate) reach: vxe_render::ReachMode,
     /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
-    /// the class and the distance first); `1` cycles score, score with the class as a tier,
+    /// the class and the distance first); `F` cycles score, score with the class as a tier,
     /// distance.
     pub(crate) queue_distance: bool,
-    /// `--queue-weights A,R` or `A,tier`: the score's angle weight (`2` halves it, `3` doubles
-    /// it) and its refine weight, or the class as the leading key (defaults
+    /// `--queue-weights A,R` or `A,tier`: the score's angle weight (`Tab` halves it, `Slash`
+    /// doubles it) and its refine weight, or the class as the leading key (defaults
     /// `vxe_render::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
-    /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `1` cycles to).
+    /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `F` cycles to).
     pub(crate) queue_angle: f32,
     pub(crate) queue_refine: f32,
     pub(crate) queue_tier: bool,
     /// `--queue-withdraw on|off`: whether the live queue withdraws the jobs of chunks the camera
-    /// has passed (default on); `4` toggles it.
+    /// has passed (default on); `Quote` toggles it.
     pub(crate) queue_withdraw: bool,
     /// `--queue-census`: the live queue reads its view census, the in-view ages and the angle
     /// weights at every opening (a reading; by default once a second, for the stdout line and

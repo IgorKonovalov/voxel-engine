@@ -6,14 +6,17 @@ use crate::cli::walk_allowed;
 use crate::edits::scroll_dig_radius;
 use crate::fly::Walk;
 use crate::hud::{self};
+use crate::lights;
 use crate::logic::DigInput;
+use crate::logic::REACH;
 use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
-use crate::toggles::TOGGLES;
+use crate::toggles::{KEY_DROP, KEY_FIRE, KEY_REMOVE, TOGGLES};
 use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
+use vxe_world::{FIXED_ONE, Face};
 
 /// A trigger presses (`R2` digs, `L2` fills) once pulled past this, and lets go under
 /// [`TRIGGER_RELEASE`], so a trigger resting near a threshold does not repeat.
@@ -171,7 +174,62 @@ impl Run {
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
+        self.light_keys(input);
         self.audio_keys(input);
+    }
+
+    /// The camera ray's first surface within `max` voxels: its distance in voxels and the
+    /// entered face's outward normal.
+    fn surface_along_view(&self, max: f32) -> Option<(f32, [f32; 3])> {
+        let (origin, dir) = self.camera_ray();
+        let hit = self
+            .world
+            .raycast(origin, dir, (max * FIXED_ONE as f32) as i64)
+            .ok()
+            .flatten()?;
+        let normal = match hit.face? {
+            Face::NegX => [-1.0, 0.0, 0.0],
+            Face::PosX => [1.0, 0.0, 0.0],
+            Face::NegY => [0.0, -1.0, 0.0],
+            Face::PosY => [0.0, 1.0, 0.0],
+            Face::NegZ => [0.0, 0.0, -1.0],
+            Face::PosZ => [0.0, 0.0, 1.0],
+        };
+        Some((hit.t as f32 / FIXED_ONE as f32, normal))
+    }
+
+    /// The lights' action keys: `1` drops a light at the looked-at surface, `4` removes the
+    /// newest, `6` fires one along the view ray; each shows the count in the banner. A drop or
+    /// a shot into a full list prints [`lights::FULL_LINE`] and adds nothing.
+    pub(crate) fn light_keys(&mut self, input: &Input) {
+        let lamp = self.modes.lighting.lamp;
+        let c = &self.fly.camera;
+        let eye = c.position.to_array();
+        let fwd = c.basis().0.to_array();
+        let now = ms_since(self.start);
+        let mut shown = None;
+        if input.pressed(KEY_DROP) {
+            let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
+            shown = Some(match self.modes.lights.drop_at(lamp, eye, fwd, hit) {
+                Ok(()) => self.modes.lights.count_words(lamp),
+                Err(line) => line.to_owned(),
+            });
+        }
+        if input.pressed(KEY_REMOVE) {
+            self.modes.lights.remove_newest();
+            shown = Some(self.modes.lights.count_words(lamp));
+        }
+        if input.pressed(KEY_FIRE) {
+            let hit = self.surface_along_view(lights::SHOT_RANGE).map(|(t, _)| t);
+            shown = Some(match self.modes.lights.fire(lamp, eye, fwd, hit) {
+                Ok(()) => format!("fire, {}", self.modes.lights.count_words(lamp)),
+                Err(line) => line.to_owned(),
+            });
+        }
+        if let Some(words) = shown {
+            println!("{words}");
+            self.modes.show_lights(words, now);
+        }
     }
 
     /// The audio's keys, when it runs: `H` (or the pad's `East`) knocks, `T` a looping pulse,

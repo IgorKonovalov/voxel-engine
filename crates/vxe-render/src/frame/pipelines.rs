@@ -103,6 +103,9 @@ pub(crate) const PASSES: [PassSpec; 13] = [
                 Io::Float,
                 Io::ReadStorage,
                 Io::Storage,
+                Io::Float,
+                Io::Float,
+                F16,
             ]),
         ],
         lazy: false,
@@ -137,7 +140,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
         ],
         entry: "shade",
         constants: &[],
-        groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16])],
+        groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16, F16])],
         lazy: true,
     },
     PassSpec {
@@ -182,7 +185,14 @@ pub(crate) const PASSES: [PassSpec; 13] = [
         groups: &[
             W,
             E,
-            Group::Own(&[Io::Float, Io::Uint, Io::Float, Io::Float, F16]),
+            Group::OwnAt(&[
+                (0, Io::Float),
+                (1, Io::Uint),
+                (2, Io::Float),
+                (3, Io::Float),
+                (4, F16),
+                (9, Io::Float),
+            ]),
         ],
         lazy: false,
     },
@@ -224,6 +234,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
                 F16,
                 Io::Uniform,
                 Io::Uniform,
+                Io::Float,
             ]),
         ],
         lazy: false,
@@ -264,6 +275,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
                 Io::Float,
                 Io::Storage,
                 Io::Uint,
+                Io::Float,
             ]),
         ],
         lazy: false,
@@ -377,7 +389,7 @@ impl Pipelines {
 
 /// The world's group 0, as `common.wgsl` declares it: the frame's parameters (0), the mirror's
 /// pools, records, table and materials, the light samples and the emission scales, the blue
-/// noise (12) and the exposure state (13).
+/// noise (12), the exposure state (13) and the list of lights (14).
 fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let storage = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -414,6 +426,16 @@ fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             sampled_texture(12, FLOAT),
             wgpu::BindGroupLayoutEntry {
                 binding: 13,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 14,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,

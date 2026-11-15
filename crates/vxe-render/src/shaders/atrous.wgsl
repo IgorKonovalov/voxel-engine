@@ -10,8 +10,8 @@
 //
 // Two entry points:
 //   `variance` writes each hit's filtered irradiance and its luminance variance: from the moments
-//   (`m2 - m1^2`) once the pixel has VARIANCE_AGE frames of history or, with the lamp off
-//   (Params.lighting bit 0 clear), is a store's pixel whose lamp part is zero (its moments are
+//   (`m2 - m1^2`) once the pixel has VARIANCE_AGE frames of history or, with no light shaded
+//   (LIGHTING_DIRECT clear: the lamp off and the list empty), is a store's pixel whose lamp part is zero (its moments are
 //   zero), else from the moments of its 7 x 7 neighbourhood under the same edge weights as the
 //   filter. With the lamp on a young store pixel in the lamp's shadow keeps the 7 x 7 estimate,
 //   which lets the filter soften the shadow's edge into it.
@@ -19,11 +19,12 @@
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
 //   `max(n.n', 0)^128` (on `filter_normal`'s normals, hitrec.wgsl) and
 //   `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the pixel's variance blurred by a
-//   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With the lamp off, a hit whose input is zero and whose
+//   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With LIGHTING_DIRECT clear, a hit whose input is zero and whose
 //   blurred variance is zero writes its input (zero), plus the store's part on the last
 //   iteration, without the 25 taps: its sigma is the epsilon, so only taps of luminance within
-//   about 1e-3 of zero weigh, and with the lamp off those are zero (a store's pixel's input is
-//   its lamp part). With the lamp on, taps lit faintly by it would weigh, so every hit filters.
+//   about 1e-3 of zero weigh, and with no light shaded those are zero (a store's pixel's input
+//   is its direct part). With a light shaded, taps lit faintly by it would weigh, so every hit
+//   filters.
 //
 // Bindings, group 2 of `variance`:
 //   0  texture_2d<f32>   hit_pos_in      this frame's hit positions
@@ -32,6 +33,8 @@
 //                                        (rgba16float)
 //   3  texture_2d<f32>   moments_in      the temporal pass's moments and age
 //   4  storage texture   filter_out      rgba16float: irradiance rgb, variance a
+//   9  texture_2d<f32>   direct_acc_in   the temporal pass's accumulated direct part (rgb, its
+//                                        luminance in a)
 // Bindings, group 2 of `atrous`:
 //   0  texture_2d<f32>   hit_pos_in
 //   1  texture_2d<u32>   hit_info_in
@@ -58,6 +61,8 @@ struct Step {
 const VARIANCE_AGE: f32 = 4.0;
 const SIGMA_PLANE: f32 = 1.0;
 const SIGMA_LUM: f32 = 4.0;
+// The f16 moments' rounding residue as a share of the second moment: three steps of 2^-11.
+const MOMENT_ROUNDING: f32 = 0.0015;
 
 fn load_hit(q: vec2<i32>) -> HitRecord {
     return unpack_hit(textureLoad(hit_pos_in, q, 0), textureLoad(hit_info_in, q, 0));
@@ -92,6 +97,7 @@ fn edge_weight(a: HitRecord, b: HitRecord, eye: vec3<f32>) -> f32 {
 
 @group(2) @binding(3) var moments_in: texture_2d<f32>;
 @group(2) @binding(4) var filter_out: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(9) var direct_acc_in: texture_2d<f32>;
 
 @compute @workgroup_size(8, 8, 1)
 fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -99,15 +105,20 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(gid.xy);
-    // The accumulation's lamp white a, plus its emissive rgb where that is a fallback's: the
+    // The accumulated direct rgb, plus the emissive rgb where that is a fallback's: the
     // filter's irradiance.
     let acc = textureLoad(src_in, px, 0);
+    let direct = textureLoad(direct_acc_in, px, 0);
     let mw = textureLoad(moments_in, px, 0);
-    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + vec3<f32>(acc.w);
+    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz;
     let m = mw.xyz;
     let rec = load_hit(px);
-    var v = max(m.y - m.x * m.x, 0.0);
-    let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_LAMP) == 0u && acc.w == 0.0;
+    // The pixel's own variance, less the moments' rounding: each moment is an f16 (relative step
+    // 2^-11), so `m2 - m1^2` of a still, noise-free light is a residue of up to about three steps
+    // of m2, positive or negative. Without the floor that residue sets a sigma that depends on
+    // the light's magnitude (a dim blue filters where a white of the same channel does not).
+    var v = max(m.y - m.x * m.x - MOMENT_ROUNDING * m.y, 0.0);
+    let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_DIRECT) == 0u && direct.w == 0.0;
     if (rec.found && m.z < VARIANCE_AGE && !dark_store) {
         let eye = eye_of(px);
         var w_sum = 0.0;
@@ -170,7 +181,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
     }
-    if ((params.lighting & LIGHTING_LAMP) == 0u && var_sum == 0.0 && all(centre.xyz == vec3<f32>(0.0))) {
+    if ((params.lighting & LIGHTING_DIRECT) == 0u && var_sum == 0.0 && all(centre.xyz == vec3<f32>(0.0))) {
         textureStore(filter_out_atrous, px, min(vec4<f32>(centre.xyz + passed, centre.w), vec4<f32>(HDR_MAX)));
         return;
     }

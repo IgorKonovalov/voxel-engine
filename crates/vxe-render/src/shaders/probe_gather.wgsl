@@ -13,13 +13,13 @@
 //                              in updates (0: never traced), bits 8..32 the tag
 //                              floor(w / N) & 0xFF per axis of the world probe w it holds
 //   1  storage  probe_scratch  the frame's update list (MAX_UPDATES words: slot, bit 31
-//                              restarted: an edit touched it or it entered the lamp's
-//                              reach; bit 30 the lamp moved past it), then per entry and ray the radiance and
+//                              restarted: an edit touched it or it entered a flagged
+//                              light's reach; bit 30 a flagged light moved past it), then per entry and ray the radiance and
 //                              signed distance as four f16 (probe_update.wgsl)
 //   2  uniform  probe          the volume's lowest world probe, the spacing in voxels, the
 //                              update list's length, the rays per updated probe, the steady
-//                              bits, the probes per axis, the lamp's reach and the moving
-//                              lamp's blend
+//                              bits, the probes per axis, the bounce reach and the blend
+//                              under a moving light
 //
 // Bindings, group 2 of `gather`:
 //   0  texture_2d<f32>  hit_pos_in    the lighting grid's hit positions
@@ -35,8 +35,9 @@
 // direction to the probe, and by the Chebyshev bound of its visibility map toward the point
 // (the chance the point is not behind the probe's mean occluder in that direction, cubed);
 // the weights are renormalized over the live probes, 0 when none is. With `probe.reach` above
-// 0 a probe farther than it from the lamp is gathered as zero irradiance at its full weight:
-// the update lists only the probes within the reach, so what one beyond it holds is stale.
+// 0 a probe farther than it from every flagged light (LIGHT_BOUNCE) is gathered as zero
+// irradiance at its full weight: the update lists only the probes within the reach, so what
+// one beyond it holds is stale.
 
 struct ProbeParams {
     origin: vec3<i32>,
@@ -48,10 +49,10 @@ struct ProbeParams {
     steady: u32,
     // Probes per axis, a power of two.
     axis: u32,
-    // The lamp's reach in voxels: the update lists and the gather reads only the probes within
-    // it of the lamp; 0 is no cut (a preset volume).
+    // The bounce reach in voxels: the update lists and the gather reads only the probes within
+    // it of a flagged light; 0 is no cut (a preset volume).
     reach: f32,
-    // The blend of a probe in reach while the lamp moves.
+    // The blend of a probe in reach while a flagged light moves.
     h_move: f32,
     _pad0: u32,
     _pad1: u32,
@@ -101,10 +102,21 @@ fn probe_tag(w: vec3<i32>) -> u32 {
     return t.x | (t.y << 8u) | (t.z << 16u);
 }
 
-// Whether world probe `w` lies beyond the lamp's reach (never with the reach 0).
+// Whether world probe `w` lies beyond the bounce reach of every light on with LIGHT_BOUNCE
+// set (never with the reach 0).
 fn probe_beyond_reach(w: vec3<i32>) -> bool {
-    let to = probe_position(w) - params.light_pos;
-    return probe.reach > 0.0 && dot(to, to) > probe.reach * probe.reach;
+    if (probe.reach <= 0.0) {
+        return false;
+    }
+    let q = probe_position(w);
+    for (var i = 0u; i < lights.count; i++) {
+        let li = lights.l[i];
+        let to = q - li.pos;
+        if ((li.flags & (LIGHT_ON | LIGHT_BOUNCE)) == (LIGHT_ON | LIGHT_BOUNCE) && dot(to, to) <= probe.reach * probe.reach) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Whether state word `s` is world probe `w`'s, traced and not inside rock.

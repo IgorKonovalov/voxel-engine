@@ -632,10 +632,14 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
                 return;
             };
             let lamp_part = |rig: &LookRig| -> Vec<f64> {
-                vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated())
-                    .iter()
-                    .map(|e| f64::from(e[3]))
-                    .collect()
+                vxe_render::debug::read_float(
+                    &rig.device,
+                    &rig.queue,
+                    rig.frame.direct_accumulated(),
+                )
+                .iter()
+                .map(|e| f64::from(e[3]))
+                .collect()
             };
             let whole_before = accumulated_lum(&rig);
             let before = lamp_part(&rig);

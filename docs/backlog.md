@@ -96,19 +96,19 @@ owner wants bounce light only from some sources: "fire on a stick or fire in a d
 probes, the headlamp and simple lights are direct only. ADR-0043 shrinks the probe volume to a
 lamp-bounce channel and keeps its logic for exactly this later redesign; ADR-0044 gives lights a
 fixed list. The missing piece is a per-light and per-emissive-material "feeds the bounce channel"
-flag and the channel's redesign. Plan 0058's Phase 3 (redrafted 2026-11-10) builds the per-light
-flag; what remains after its close is the per-emissive-material flag and the channel's redesign.
+flag and the channel's redesign. Plan 0058 (closed 2026-11-15) built the per-light `BOUNCE` flag,
+under `Lighting::lamp_bounce`; what remains is the per-emissive-material flag and the channel's redesign.
 Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky ray, so a cave
 mouth gets no bounced sun until this entry is taken. Plan 0037's night light likewise has no
 bounce and no probe feed.
 
-### More than eight lights: a world-space light grid
+### More than sixteen lights: a world-space light grid
 
-Parked 2026-11-10 (owner asked for the idea in detail while Plans 0058 and 0062 were drafted). ADR-0044 shades eight list lights, each pixel looping over all of them. Plan 0062 allows 64 entities, and each glowing creature or projectile that lights the walls takes a slot, so the cap of eight is the first limit a real scene meets.
+Parked 2026-11-10 (owner asked for the idea in detail while Plans 0058 and 0062 were drafted). ADR-0044 shades sixteen list lights (eight until the owner's pick of 2026-11-14, at Plan 0058's window), each pixel looping over all of them. Plan 0062 allows 64 entities, and each glowing creature or projectile that lights the walls takes a slot, so the cap is still the first limit a real scene meets.
 - **The mechanism:** a grid of cells around the camera (a guess: 16-voxel cells, 64 a side) holding, per cell, a bit mask of the lights whose reach touches it. A pixel, a shadow ray's origin or a probe ray's hit reads its cell and shades only those lights, still exactly, one shadow ray each. The grid is in world space, not screen tiles, because the bounce channel and the upscalers' change mask need it at points that are not pixels.
 - **What it buys:** 64 or more lights in the world for the cost of the few that overlap at each point. **What it does not buy:** many lights overlapping one spot still cost one shadow ray each; a per-pixel cap past that is a pick, and a random pick is noise (ADR-0044 B, rejected).
-- **The cheaper first step:** keep eight slots and let the engine choose the eight that matter most to the view each frame, with hysteresis. No shader change; lights can pop when the choice changes.
-- **Pick up when:** Plan 0058's readings give the cost per light in reach, and a scene with entities wants more than eight. It needs an ADR that amends ADR-0044's cap.
+- **The cheaper first step:** keep the slots and let the engine choose the sixteen that matter most to the view each frame, with hysteresis. No shader change; lights can pop when the choice changes.
+- **Pick up when:** a scene with entities wants more than sixteen. Plan 0058 (closed 2026-11-15) read the cost per light in reach: 0.17 ms on the RTX and 1.54 ms on the RADV RENOIR at the spawn, 24.8 ms for sixteen there. It needs an ADR that amends ADR-0044's cap.
 
 ### Per-face light cells as a near-camera enhancement over the brick level
 
@@ -368,6 +368,10 @@ first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
+### The HUD paints a bounded level's full record reservation as mirror pressure
+
+Read 2026-11-15 in Plan 0058's Phase 5f (`docs/plans/logs/0058.md`, the owner's `live/7.png` and `9.png`). On the level the HUD shows `mirror pressure 1.000` in yellow. `GpuWorld::pressure` (ADR-0013) is the larger of the pool-unit term and the record term. `scene::level_mirror_budget` reserves exactly one record per chunk of a bounded level, so once every chunk is mirrored the record term is 1.000 by construction (3200 of 3200; the unit term reads 0.30). No brick was refused and no radius narrowed. It read the same at the plan's start commit. The yellow at `hud::PRESSURE_HIGH` (0.9) therefore warns about a reservation that is full by design. What it takes: the HUD (or `pressure`) leaves out the record term when the reservation covers every chunk of a bounded world, or shows the two terms apart. It is a testbed-and-HUD change with a unit test. Pick up with the next HUD or mirror-budget change.
+
 ### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
 
 Noted 2026-11-13 (Plan 0070 Phase 1, `docs/plans/logs/0070.md`). Every boot of the RTX laptop
@@ -407,6 +411,13 @@ Plan 0064's close too. The CPU tests over it (`castle_vector`, `showcase_vector`
 gate by the owner's rule. What it would take: mark each `#[ignore = "soak"]` or cut its fixture,
 by a reading on a quiet box. Pick up as a dev chore with the next plan that touches those
 binaries.
+Read again 2026-11-15 at Plan 0058's close review (the merged tip a2b3717, 897 tests, 774.4 s,
+load 3.0 at the start and 1.5 at the end, so slightly loaded): the five above again, plus three
+of Plan 0058's own: `gpu_dynamic_lights::a_pulsing_emitter_marks_only_where_its_light_lands`
+14.1 s (8.3 s in its log), `gpu_dynamic_lights::a_red_light_near_a_wall_draws_no_rings_under_fsr2`
+12.5 s (11.4 s in its log) and `gpu_fsr2::fsr2_marks_a_dropped_list_light` 10.8 s. The
+rings test renders three 32-frame images (no light, white, red); fewer still frames or the soak
+mark brings it under. Plan 0062 runs on these binaries next and can take them.
 
 ### Plan 0072's CI readings: accepted, one reading left open
 

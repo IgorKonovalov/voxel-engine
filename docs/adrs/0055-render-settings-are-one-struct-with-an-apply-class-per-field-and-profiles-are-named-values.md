@@ -17,7 +17,7 @@ than 100 flags.
 
 The roadmap (decisions table, "Floor, profiles and scene scale", 2026-10-17) promises named
 quality profiles: the floor, a portable profile at 720p and 30 to 60 fps, and a performance
-profile for fast machines. Plans 0058 (eight lights), 0032 to 0037 (sky, far field, liquids,
+profile for fast machines. Plans 0058 (the light list), 0032 to 0037 (sky, far field, liquids,
 clouds, weather, night sky) and 0062 (entities) each add cost that multiplies with the others,
 and the static performance review of 2026-11-10 found no plan where the product gets a cap. The
 slow adapter (the Cezanne iGPU) reads 30 to 73 ms a frame at the default settings (Plan 0065's

@@ -65,6 +65,7 @@ the same rows.
 | Key | Does |
 |-----|------|
 | `F3` | Toggle the shadow walk: coarse (default) or full |
+| `F4` | Step the a-trous filter's iterations: 4 (default), 2, 1; the lighting row names `filter <n>` |
 | `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
 | `F6` | Toggle the lighting resolution: half (default) or full |
 | `F7` | Toggle the headlamp |
@@ -74,15 +75,26 @@ the same rows.
 | `;` | Toggle the normal the light's filters compare: face (default) or normal |
 | `M` | Pulse the ore's emission (a render-side scale) |
 
+### Dynamic lights
+
+| Key | Does |
+|-----|------|
+| `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
+| `3` | Pick the next colour (white, warm, red, green, blue) and recolour the newest light, in flight or still; later drops and shots take it |
+| `4` | Remove the newest light |
+| `5` | Flip the newest light's bounce flag: with `--lamp-bounce on` a flagged light feeds the probe channel; the `lights` row marks each flagged light `*` |
+| `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
+
 ### The light queue
 
 | Key | Does |
 |-----|------|
-| `1` | Cycle the queue's order |
-| `2` / `3` | Halve / double the queue's angle weight |
-| `4` | Toggle withdrawing the jobs of chunks the camera passed |
-| `5` | Cycle the bake budget: the default slice a frame, 150 ms a second, 300 ms a second (each capped at a quarter of the frame) |
-| `6` | Toggle the full-first radius: off or `--near`'s |
+| `F` | Cycle the queue's order |
+| `Tab` / `Slash` | Halve / double the queue's angle weight |
+| `Quote` | Toggle withdrawing the jobs of chunks the camera passed |
+| `Backspace` | Cycle the bake budget: the default slice a frame, 150 ms a second, 300 ms a second (each capped at a quarter of the frame) |
+| `Backslash` | Toggle the full-first radius: off or `--near`'s |
 | `7` | Cycle what a face with no baked value reads: black, neighbour, parent, chain (ADR-0053) |
 | `8` | Toggle the light reach: full or partial |
 

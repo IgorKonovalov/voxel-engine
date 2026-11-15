@@ -728,7 +728,8 @@ fn hit_buffer_views_match_the_single_pass_march() {
 /// With exposure 1, the identity tone map and the filter off the composite is the march's
 /// former display
 /// encoding, so the carve golden matches the single-pass march's (`primary_pre_split.png`,
-/// ae58f0c's `primary.png`) within 2/255 in every pixel: the split moved no light.
+/// ae58f0c's `primary.png`) within 2/255 in every pixel: the split moved no light. The light
+/// floor is 0, the single-pass march's lamp with no reach (ADR-0044's window is 1).
 #[test]
 fn the_identity_tone_map_reproduces_the_single_pass_carve() {
     let Some(mut rig) = LookRig::new(&carved_world(), None) else {
@@ -738,6 +739,7 @@ fn the_identity_tone_map_reproduces_the_single_pass_carve() {
         exposure: vxe_render::Exposure::Manual(1.0),
         tone_map: vxe_render::ToneMap::Identity,
         filter: false,
+        light_floor: 0.0,
         ..vxe_render::Lighting::default()
     });
     let img = rig.render(
@@ -1733,6 +1735,53 @@ fn fsr2_golden_matches_and_rcas_is_bypassed_at_zero() {
     assert!(changed > 0, "sharpening changed nothing");
     println!(
         "reading: fsr2.png at sharpening 0.5, sharpened pixels over their unsharpened 3 x 3 maximum by more than 1/255 {over} of {changed}, largest excess {most}/255; bar: none over; owner judges, Phase 7"
+    );
+}
+
+/// The light box (`support::lights`) at 192 x 108, native, lamp off, the half tier, manual
+/// exposure 1, with a red light (1, 0, 0) and a blue light (0, 0, 1) of 1200 each at 20 voxels
+/// above the floor and 20 apart, after 16 still frames: `lights_box.png`, blessed on lavapipe,
+/// on the harness's floor (at most 0.1 % of pixels differ by more than 2/255 in any channel).
+#[test]
+fn lights_box_golden_holds_two_coloured_lights() {
+    let Some(mut rig) = support::lights::box_rig() else {
+        return;
+    };
+    rig.frame
+        .set_resolution(&rig.device, vxe_render::LightingResolution::Half);
+    rig.frame.set_lights(&[
+        vxe_render::Light {
+            colour: [1.0, 0.0, 0.0],
+            ..vxe_render::Light::point([54.0, 32.0, 22.0], 1200.0)
+        },
+        vxe_render::Light {
+            colour: [0.0, 0.0, 1.0],
+            ..vxe_render::Light::point([74.0, 32.0, 22.0], 1200.0)
+        },
+    ]);
+    let camera = support::lights::box_camera();
+    for _ in 0..16 {
+        support::lights::step(&mut rig, &camera);
+    }
+    let rgba = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let (w, h) = (192, 108);
+    let path = golden_path("lights_box.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, &rgba, w, h);
+        println!("blessed {path:?}");
+        return;
+    }
+    let (golden, gw, gh) = read_png(&path);
+    assert_eq!((gw, gh), (w, h));
+    let f = fraction_differing(&rgba, &golden, 2);
+    println!(
+        "lights_box: {:.4} % of pixels differ by more than 2/255",
+        f * 100.0
+    );
+    assert!(
+        f <= 0.001,
+        "lights_box: {:.4} % of pixels differ",
+        f * 100.0
     );
 }
 

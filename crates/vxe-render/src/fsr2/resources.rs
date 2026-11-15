@@ -26,7 +26,7 @@ pub(super) struct Resources {
     pub(super) dilated_depth: wgpu::Texture,
     pub(super) dilated_motion: [wgpu::Texture; 2],
     pub(super) lock_luma: wgpu::Texture,
-    /// The depth clip's prepared input colour (rgba16float: YCoCg, depth clip) and dilated
+    /// The depth clip's prepared input colour (rgba16float: rgb, depth clip) and dilated
     /// reactive masks (rgba8unorm).
     pub(super) prepared: wgpu::Texture,
     pub(super) dilated_reactive: wgpu::Texture,

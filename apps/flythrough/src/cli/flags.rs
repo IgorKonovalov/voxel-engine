@@ -142,6 +142,25 @@ pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<
             },
         ),
         Flag::value(
+            &["--atrous-iterations"],
+            "1|2|4",
+            "the a-trous iterations a frame runs while the filter is on (F4)",
+            move |t, v| {
+                part(t).atrous_iterations =
+                    v.parse_if(|n: &u32| [1, 2, 4].contains(n), "1, 2 or 4")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--light-floor"],
+            "F",
+            "a list light reaches sqrt(intensity / F) voxels; 0 is no reach (ADR-0044)",
+            move |t, v| {
+                part(t).light_floor = v.parse_if(|f: &f32| *f >= 0.0, "0 or more")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--light-radius"],
             "N",
             "chunks whose emitters light the frame, 0 to 64",
@@ -748,6 +767,24 @@ fn light_flags() -> Vec<Flag<Parsing>> {
             "switch the lamp every N frames",
             |p: &mut Parsing, v| {
                 p.args.light.lamp_toggle = Some(v.parse_if(|n: &u32| *n > 0, "a frame count")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--lights"],
+            "N",
+            "start with N list lights on a 3 m ring around the spawn",
+            |p: &mut Parsing, v| {
+                p.args.light.lights = v.parse()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--lights-bounce"],
+            "on|off",
+            "the --lights ring's lights feed the lamp's bounce channel (off)",
+            |p: &mut Parsing, v| {
+                p.args.light.lights_bounce = v.on_off()?;
                 Ok(())
             },
         ),

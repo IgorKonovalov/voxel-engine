@@ -40,7 +40,7 @@
 > the file as it stands at main 82ea836, and `dev` re-reads the paths at the base commit.
 > **Relies on:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s
 > section "Interface for Plans 0033 to 0037" and nothing else of that plan;
-> [Plan 0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
+> [Plan 0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
 > direct target and light list as its Data shapes state them; Plan 0033 only for what it says
 > of secondary rays through `march`. If any of the three closes with a different shape, the
 > architect re-reads Phases 2, 4 and 5 before the go.

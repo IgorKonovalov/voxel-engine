@@ -19,7 +19,8 @@
 //   8  storage buffer    reconstructed          u32 per render pixel: the reconstructed
 //                                               previous depth (f32 bits)
 //   9  storage texture   prepared_out           rgba16float: the prepared input colour,
-//                                               YCoCg, and the depth clip in a
+//                                               rgb (accumulate.wgsl converts it to YCoCg
+//                                               on load), and the depth clip in a
 //   10 storage texture   dilated_reactive_out   rgba8unorm: the dilated reactive mask (x) and
 //                                               the accumulation mask (y)
 
@@ -164,11 +165,14 @@ fn pre_process_reactive_masks(px: vec2<i32>, motion_divergence: f32) -> vec2<f32
     return reactive;
 }
 
+// The prepared colour, stored as rgb: each channel rounds to half precision on its own. AMD's
+// pass stores YCoCg, whose G = Y + Cg and B = Y - Co - Cg cancel two values of a saturated
+// colour's bright channel; their half-precision steps (an eighth near 250) left a residual in
+// the dark channels that followed the light's falloff, drawn as rings round a coloured light.
 fn compute_prepared_input_color(px: vec2<i32>) -> vec3<f32> {
     // Linear input assumed.
-    var rgb = max(vec3<f32>(0.0), load_clamped(colour_in, px).rgb);
-    rgb = prepare_rgb(rgb, exposure_of(exposure_in), cb.pre_exposure);
-    return rgb_to_ycocg(rgb);
+    let rgb = max(vec3<f32>(0.0), load_clamped(colour_in, px).rgb);
+    return prepare_rgb(rgb, exposure_of(exposure_in), cb.pre_exposure);
 }
 
 fn evaluate_surface(px: vec2<i32>) -> f32 {

@@ -4,6 +4,7 @@
 
 pub mod aliasing;
 pub mod bake;
+pub mod lights;
 pub mod look;
 pub mod queue;
 pub mod rigs;

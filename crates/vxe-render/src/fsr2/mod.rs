@@ -194,7 +194,7 @@ impl Fsr2 {
         &self.res.exposure
     }
 
-    /// The depth clip's prepared colour (rgba16float, render size: YCoCg, the depth clip in a).
+    /// The depth clip's prepared colour (rgba16float, render size: rgb, the depth clip in a).
     pub fn prepared(&self) -> &wgpu::Texture {
         &self.res.prepared
     }

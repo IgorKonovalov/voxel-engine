@@ -9,7 +9,8 @@
 //   3  uniform           in_tuning       `InputUniform` in fsr2/prepare.rs
 //   4  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //   5  uniform           in_lamp         the upscale pass's tuning (`UpTuning` in
-//                                        upscale.wgsl): the older lamp and the change thresholds
+//                                        upscale.wgsl): the change thresholds (the older list
+//                                        is `lights.old`, group 0)
 //   6  storage texture   depth_out       r32float: inverted infinite device depth,
 //                                        `near / z_view`, 0 on a miss
 //   7  storage texture   motion_out      rg32float: motion to the previous frame, in UV
@@ -17,6 +18,8 @@
 //                                        transparency-and-composition mask in y (zero), and
 //                                        in z 1 where the hit lies in an edit box dilated by
 //                                        one voxel (the depth-clip pass's edit flag)
+//   9  texture_2d<f32>   in_emissive     the temporal pass's emissive part (rgb, lighting
+//                                        grid): where an emission change lands
 //
 // Motion: the hit `p` of pixel `px` reprojected through the previous view as if both frames'
 // rays went through their pixels' centres (`reproject_centred`), less the pixel's centre, over
@@ -28,8 +31,9 @@
 // `in_tuning.reactive_translucent` (capped at 1), 1 where the hit lies in an edit box dilated
 // by one voxel, and `in_tuning.reactive_light` where the light at a still hit changed (the
 // upscale pass's light-change signal, which it too applies to still pixels alone: the hit moved
-// less than CLIP_STILL output pixels, and an emission scale changed or the lamp's unshadowed
-// term moved past the thresholds since the lamp of `change_frames` frames before). A moving
+// less than CLIP_STILL output pixels, and an emission scale changed where an emitter's light lands or the list of lights'
+// summed unshadowed term moved past the thresholds since the list of `change_frames` frames
+// before). A moving
 // pixel's lamp term changes with the camera that carries the lamp; FSR's rectification takes
 // that, where the mask would take its history.
 
@@ -57,21 +61,14 @@ struct InLamp {
     w_mean: f32,
     change_rel: f32,
     change_abs: f32,
-    old_on: u32,
-    old_pos: vec3<f32>,
-    old_intensity: f32,
-    old_dir: vec3<f32>,
-    old_cos_outer: f32,
-    old_cos_inner: f32,
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
 @group(2) @binding(5) var<uniform> in_lamp: InLamp;
 @group(2) @binding(6) var depth_out: texture_storage_2d<r32float, write>;
 @group(2) @binding(7) var motion_out: texture_storage_2d<rg32float, write>;
 @group(2) @binding(8) var reactive_out: texture_storage_2d<rgba8unorm, write>;
+@group(2) @binding(9) var in_emissive: texture_2d<f32>;
 
 // A motion that leaves the screen: FSR finds no history there.
 const OFF_SCREEN: vec2<f32> = vec2<f32>(-4.0, -4.0);
@@ -85,15 +82,16 @@ fn same_view(a: View, b: View) -> bool {
         && a.tan_up == b.tan_up && a.tan_down == b.tan_down && all(a.rect == b.rect);
 }
 
-// upscale.wgsl's `up_light_changed`.
-fn light_changed(rec: HitRecord) -> bool {
-    if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
+// upscale.wgsl's `up_light_changed` at internal pixel `px`.
+fn light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
+    if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u && emission_lands(in_emissive, px, rec)) {
         return true;
     }
-    let now = lamp_term((params.lighting & LIGHTING_LAMP) != 0u, params.light_pos, params.light_dir,
-        params.light_intensity, params.cos_outer, params.cos_inner, rec.p, rec.n);
-    let then = lamp_term(in_lamp.old_on != 0u, in_lamp.old_pos, in_lamp.old_dir,
-        in_lamp.old_intensity, in_lamp.old_cos_outer, in_lamp.old_cos_inner, rec.p, rec.n);
+    if (lights.changed == 0u) {
+        return false;
+    }
+    let now = lights_term(false, rec.p, rec.n);
+    let then = lights_term(true, rec.p, rec.n);
     let d = abs(now - then);
     return d > in_lamp.change_abs && d > in_lamp.change_rel * max(now, then);
 }
@@ -125,7 +123,7 @@ fn fsr2_input(@builtin(global_invocation_id) gid: vec3<u32>) {
             edit = 1.0;
         }
         let moved = length(motion * vec2<f32>(params.output_size));
-        if (moved < STILL_PX && light_changed(rec)) {
+        if (moved < STILL_PX && light_changed(px, rec)) {
             reactive = max(reactive, in_tuning.reactive_light);
         }
     } else if (!still) {

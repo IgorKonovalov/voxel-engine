@@ -68,7 +68,7 @@ We describe an entity in a new headless, deterministic crate, `vxe-entity`, and 
 - The renderer's hit (`f32`) and the query's hit (integer) can disagree by a fraction of a
   voxel at a silhouette. The query is the authority; the picture is not.
 - An entity's emissive voxels light nothing by themselves. A glowing eye that lights a wall
-  costs the game one of ADR-0044's eight slots.
+  costs the game one of ADR-0044's sixteen slots.
 - The fallback's emissive estimate on a moving entity is a running mean and may show grain;
   Plan 0062's window judges it.
 - Entities are invisible to the bounce channel and to the baked light: a creature casts no

@@ -42,10 +42,16 @@ pub(super) struct Targets {
     pub(super) layer: wgpu::Texture,
     /// The translucent solid's transmittance per channel, rgb9e5 in r32uint (ADR-0047).
     pub(super) transmit: wgpu::Texture,
-    /// The light pass's irradiance (rgba16float), on the lighting grid.
+    /// The light pass's irradiance (rgba16float), on the lighting grid: the emissive part in
+    /// rgb, `a` unused (the steps view's counters in rgba).
     pub(super) irradiance: wgpu::Texture,
+    /// The light pass's direct part (rgba16float), on the lighting grid: the list of lights'
+    /// exact terms in rgb, their luminance in `a` (ADR-0044).
+    pub(super) direct: wgpu::Texture,
     /// The temporal pass's accumulated irradiance and moments (rgba16float).
     pub(super) accum: [wgpu::Texture; 2],
+    /// The temporal pass's accumulated direct part (rgba16float, as `direct`).
+    pub(super) direct_accum: [wgpu::Texture; 2],
     pub(super) moments: [wgpu::Texture; 2],
     /// The filter's ping-pong pair (rgba16float: irradiance rgb, variance a).
     pub(super) filter: [wgpu::Texture; 2],
@@ -117,7 +123,9 @@ impl Targets {
             layer: tex("layer", Rgba16Float),
             transmit: tex("transmittance", R32Uint),
             irradiance: lit("irradiance", Rgba16Float),
+            direct: lit("direct", Rgba16Float),
             accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba16Float)),
+            direct_accum: [0, 1].map(|_| lit("accumulated direct", Rgba16Float)),
             moments: [0, 1].map(|_| lit("moments", Rgba16Float)),
             filter: [0, 1].map(|_| lit("filter", Rgba16Float)),
             strata: sized(
@@ -203,7 +211,7 @@ impl Targets {
         px * (2 * (16 + 8) + 8)
             + output * 4
             + history
-            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
+            + lpx * (half + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
             + strata * 8
             + self.tiles.size()
             + self.split_list.get().map_or(0, wgpu::Buffer::size)

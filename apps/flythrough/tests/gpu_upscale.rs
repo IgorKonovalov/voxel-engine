@@ -636,9 +636,11 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// 360, `Frame` alone) holds the store and no emissive history: main's 130 267 216 B before
 /// ADR-0043, less the `rgba32float` accumulation pair's excess over `rgba16float` (2 x 8 B x
 /// 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir textures
-/// (2 x 16 B x 640 x 360 = 7 372 800 B): 119 208 016 B before the store's pool is allocated. The live queue's start allocates the pool
+/// (2 x 16 B x 640 x 360 = 7 372 800 B), plus the direct target and its accumulation pair
+/// (3 x 8 B x 640 x 360 = 5 529 600 B, ADR-0044): 124 737 616 B before the store's pool is
+/// allocated. The live queue's start allocates the pool
 /// at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage binding, 128 MiB on
-/// lavapipe (134 217 728 B; the chunk table and every block lie in it): 253 425 744 B.
+/// lavapipe (134 217 728 B; the chunk table and every block lie in it): 258 955 344 B.
 #[test]
 fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -649,10 +651,10 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let mut frame = Frame::with_sizes(&device, internal, output);
     let before = frame.frame_bytes();
     let lighting = 640u64 * 360;
-    let base = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting;
+    let base = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + 3 * 8 * lighting;
     let pool = 128u64 << 20;
     println!("frame_bytes at the default: {before} B before the store, pool {pool} B");
-    assert_eq!(base, 119_208_016);
+    assert_eq!(base, 124_737_616);
     assert_eq!(before, base);
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
@@ -672,7 +674,43 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let after = frame.frame_bytes();
     println!("frame_bytes with the store: {after} B");
     assert_eq!(after, base + pool);
-    assert_eq!(after, 253_425_744);
+    assert_eq!(after, 258_955_344);
+}
+
+/// The direct target and its accumulation pair (ADR-0044) in `frame_bytes`: at 1280 x 720
+/// internal on the half tier (640 x 360 lighting pixels), three `rgba16float` targets of 8 B a
+/// lighting pixel, 5 529 600 B, the difference between the frame's count and its inventory
+/// without them.
+#[test]
+fn frame_bytes_hold_the_direct_pair() {
+    let Some((device, _queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let internal = [1280u32, 720];
+    let frame = Frame::with_sizes(&device, internal, internal);
+    let px = 1280u64 * 720;
+    let lit = 640u64 * 360;
+    // The inventory at the half tier: the hit buffers twice and the layers, transmittance; the
+    // output; the half grid's hit buffers twice; the irradiance, direct, two accumulations, two
+    // direct accumulations, two moments, two filters, the indirect; the strata; the tiles; the
+    // split walk's stub (32 B) and dispatch (16 B); and the exposure's buffers (928 B).
+    let strata = 640u64.div_ceil(3) * 360u64.div_ceil(3);
+    let tiles = 8 * u64::from(1280u32.div_ceil(8) * 720u32.div_ceil(8));
+    let without_direct = px * (2 * (16 + 8) + 8)
+        + px * 4
+        + lit * (2 * (16 + 8) + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
+        + strata * 8
+        + tiles
+        + 32
+        + 16
+        + 928;
+    let direct = 3 * 8 * lit;
+    println!(
+        "frame_bytes at 1280x720, half tier: {} B, the direct pair {direct} B",
+        frame.frame_bytes()
+    );
+    assert_eq!(direct, 5_529_600);
+    assert_eq!(frame.frame_bytes(), without_direct + direct);
 }
 
 /// Every image's sharpness on the stripe wall at both distances, still and panning at arm's

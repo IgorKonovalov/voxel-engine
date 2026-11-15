@@ -9,7 +9,9 @@
 //! grid), `R` (a crumble input), `I` (the next castle shot, a camera move), `F1` (the frame
 //! readings), `F2` (the stats HUD), `T` (resumes a path) and the audio's keys (`H`, `T`, `J`
 //! play sounds; `E`, `Y`, `O`, `U` and the trims change the mix and print its line, with no
-//! HUD row while the audio has none).
+//! HUD row while the audio has none), and the lights' `1` (drop), `4` (remove) and `6` (fire),
+//! which name the count in the banner and the `lights` row. [`ACTION_KEYS`] lists every
+//! action key, so no key is bound twice.
 
 use crate::cli::next_far_normal;
 use crate::edits::{DIG_RANGE, DIG_STEP};
@@ -78,7 +80,7 @@ pub(crate) fn next_reach(m: vxe_render::ReachMode) -> vxe_render::ReachMode {
     ReachMode::ALL[(i + 1) % ReachMode::ALL.len()]
 }
 
-/// The budgets key `5` steps through: the default slice, 150 ms a second and 300 ms a
+/// The budgets key `Backspace` steps through: the default slice, 150 ms a second and 300 ms a
 /// second, each capped at a quarter of the frame.
 pub(crate) const BUDGET_CYCLE: [vxe_render::Budget; 3] = [
     vxe_render::Budget::PerFrame {
@@ -115,12 +117,69 @@ fn order_words(m: &Modes) -> String {
     m.queue.order().words()
 }
 
+/// `1`: drop a light at the looked-at surface (`run::keys`).
+pub const KEY_DROP: KeyCode = KeyCode::Digit1;
+/// `4`: remove the newest light.
+pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
+/// `6`: fire a light along the view ray.
+pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
+
+/// Every key `run::keys` binds to an action with no mode (the toggles' keys are in
+/// [`TOGGLES`]): the bench, the stamp, walking, the coarse grid, the crumble, the castle shot,
+/// the readings, the lights' drop, removal and shot, and the audio's keys and trims; then the
+/// frame's `Esc` and `F2` (`run::frame`) and the flight's keys (`fly`). The path's `T` (resume)
+/// is the audio's pulse outside a path.
+pub const ACTION_KEYS: &[KeyCode] = &[
+    KeyCode::KeyB,
+    KeyCode::KeyP,
+    KeyCode::KeyG,
+    KeyCode::KeyK,
+    KeyCode::KeyR,
+    KeyCode::KeyI,
+    KeyCode::F1,
+    KEY_DROP,
+    KEY_REMOVE,
+    KEY_FIRE,
+    KeyCode::KeyH,
+    KeyCode::KeyT,
+    KeyCode::KeyE,
+    KeyCode::KeyY,
+    KeyCode::KeyJ,
+    KeyCode::BracketLeft,
+    KeyCode::BracketRight,
+    KeyCode::Minus,
+    KeyCode::Equal,
+    KeyCode::Digit9,
+    KeyCode::Digit0,
+    KeyCode::KeyO,
+    KeyCode::KeyU,
+    KeyCode::Escape,
+    KeyCode::F2,
+    KeyCode::KeyW,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::Space,
+    KeyCode::KeyC,
+    KeyCode::ShiftLeft,
+];
+
+/// The `lights` row in words.
+fn lights_words(m: &Modes) -> String {
+    m.row(HudRow::Lights)
+}
+
 /// The toggle table: every key of the fly-through that switches a mode.
 pub static TOGGLES: &[Toggle] = &[
     lighting!(F3, "shadow walk", ShadowWalk, |m| format!(
         "shadow walk {}",
         m.lighting.shadow_walk.name()
     )),
+    lighting!(F4, "filter iterations", Atrous, |m| {
+        let mut out = String::new();
+        m.write_filter_count(&mut out);
+        out
+    }),
     lighting!(F5, "history", History, |m| format!(
         "history {}",
         m.lighting.history.name()
@@ -217,7 +276,7 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
-        press: Press::Key(KeyCode::Digit1, None),
+        press: Press::Key(KeyCode::KeyF, None),
         name: "queue order",
         row: HudRow::Queue,
         get: order_words,
@@ -231,14 +290,14 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
-        press: Press::Key(KeyCode::Digit2, None),
+        press: Press::Key(KeyCode::Tab, None),
         name: "queue angle halved",
         row: HudRow::Queue,
         get: order_words,
         flip: |m, _| m.queue.angle *= 0.5,
     },
     Toggle {
-        press: Press::Key(KeyCode::Digit3, None),
+        press: Press::Key(KeyCode::Slash, None),
         name: "queue angle doubled",
         row: HudRow::Queue,
         get: order_words,
@@ -248,21 +307,21 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
-        press: Press::Key(KeyCode::Digit4, None),
+        press: Press::Key(KeyCode::Quote, None),
         name: "queue withdraw",
         row: HudRow::Queue,
         get: |m| format!("withdraw {}", on(m.queue.withdraw)),
         flip: |m, _| m.queue.withdraw = !m.queue.withdraw,
     },
     Toggle {
-        press: Press::Key(KeyCode::Digit5, None),
+        press: Press::Key(KeyCode::Backspace, None),
         name: "bake budget",
         row: HudRow::Queue,
         get: |m| format!("budget {}", m.queue.budget),
         flip: |m, _| m.queue.budget = next_budget(m.queue.budget),
     },
     Toggle {
-        press: Press::Key(KeyCode::Digit6, None),
+        press: Press::Key(KeyCode::Backslash, None),
         name: "full-first",
         row: HudRow::Queue,
         get: |m| match m.queue.full_first {
@@ -289,6 +348,40 @@ pub static TOGGLES: &[Toggle] = &[
         row: HudRow::Queue,
         get: |m| format!("reach {}", m.queue.reach.name()),
         flip: |m, _| m.queue.reach = next_reach(m.queue.reach),
+    },
+    Toggle {
+        press: Press::Key(KeyCode::Digit2, None),
+        name: "carry",
+        row: HudRow::Lights,
+        get: lights_words,
+        flip: |m, now| {
+            m.lights.toggle_carry();
+            let words = format!("carry {}", on(m.lights.carry));
+            m.show_lights(words, now);
+        },
+    },
+    Toggle {
+        press: Press::Key(KeyCode::Digit3, None),
+        name: "colour",
+        row: HudRow::Lights,
+        get: lights_words,
+        flip: |m, now| {
+            let name = m.lights.cycle_colour();
+            m.show_lights(format!("colour {name}"), now);
+        },
+    },
+    Toggle {
+        press: Press::Key(KeyCode::Digit5, None),
+        name: "bounce",
+        row: HudRow::Lights,
+        get: lights_words,
+        flip: |m, now| {
+            let words = match m.lights.toggle_bounce() {
+                Some(b) => format!("bounce {}", on(b)),
+                None => "bounce: no light".to_string(),
+            };
+            m.show_lights(words, now);
+        },
     },
     Toggle {
         press: Press::Key(KeyCode::KeyX, Some(PadButton::West)),

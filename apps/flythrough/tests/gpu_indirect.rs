@@ -289,13 +289,111 @@ fn lamp_furnace(device: &vxe_render::wgpu::Device) -> FloorProbe {
     f
 }
 
+/// `octa_unfold` of `hitrec.wgsl`: the unit direction at octahedral point `p` in `[-1, 1]^2`.
+fn octa_unfold(p: [f64; 2]) -> [f64; 3] {
+    let mut d = [p[0], p[1], 1.0 - p[0].abs() - p[1].abs()];
+    if d[2] < 0.0 {
+        let s = [p[0], p[1]].map(|v| if v >= 0.0 { 1.0 } else { -1.0 });
+        d = [(1.0 - d[1].abs()) * s[0], (1.0 - d[0].abs()) * s[1], d[2]];
+    }
+    let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    d.map(|v| v / l)
+}
+
+/// The furnace's `D_t` for each of the 36 interior irradiance texels (row by row), from the
+/// box's geometry alone: from the centre probe at `o`, each of `n` spherical Fibonacci
+/// directions `w` meets a wall of the box interior `[BOX_MIN, BOX_MAX]` at `p` with inward
+/// normal `m`; `E(w)` is `light`'s irradiance there (`Light::irradiance`, the CPU form of the
+/// shader's term: `PI * intensity * cone * max(m . l, 0) / d^2` times its window at `floor`).
+/// `D_t = sum(max(0, d_t . w) E(w)) / sum(max(0, d_t . w))` with `d_t` the texel's direction:
+/// the normalisation the probe blend's `PI sum(L c) / sum(c)` gives for `L = albedo / PI E`,
+/// so the texel's fixed point is `albedo D_t`. No value read back from the shader enters it.
+fn furnace_reference(light: &vxe_render::Light, floor: f32, o: [f64; 3], n: u32) -> Vec<f64> {
+    let (lo, hi) = (BOX_MIN.map(|v| v as f64), BOX_MAX.map(|v| v as f64));
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    let samples: Vec<([f64; 3], f64)> = (0..n)
+        .map(|i| {
+            let z = 1.0 - (2.0 * f64::from(i) + 1.0) / f64::from(n);
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            let phi = f64::from(i) * golden;
+            let w = [r * phi.cos(), r * phi.sin(), z];
+            let (t, axis) = (0..3)
+                .filter(|&k| w[k] != 0.0)
+                .map(|k| {
+                    let b = if w[k] > 0.0 { hi[k] } else { lo[k] };
+                    ((b - o[k]) / w[k], k)
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .expect("a wall");
+            let p: [f32; 3] = std::array::from_fn(|k| (o[k] + w[k] * t) as f32);
+            let mut m = [0.0f32; 3];
+            m[axis] = if w[axis] > 0.0 { -1.0 } else { 1.0 };
+            (w, f64::from(light.irradiance(floor, p, m)))
+        })
+        .collect();
+    (0..36)
+        .map(|t| {
+            let c = [(t % 6) as f64, (t / 6) as f64].map(|v| (v + 0.5) / 6.0 * 2.0 - 1.0);
+            let d = octa_unfold(c);
+            let (mut sum, mut wsum) = (0.0, 0.0);
+            for (w, e) in &samples {
+                let c = (d[0] * w[0] + d[1] * w[1] + d[2] * w[2]).max(0.0);
+                sum += c * e;
+                wsum += c;
+            }
+            sum / wsum
+        })
+        .collect()
+}
+
+/// A furnace's reading: after 256 frames (32 visits of the running mean at the defaults) the
+/// centre probe `(2, 2, 2)`'s interior texels (red) against `0.5 D_t` of
+/// [`furnace_reference`] over 16384 directions; returns the texel mean, `0.5` times the mean
+/// `D_t`, and the worst texel's ratio less one.
+fn furnace_reading(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    gpu: &GpuWorld,
+    f: &mut FloorProbe,
+    light: &vxe_render::Light,
+    name: &str,
+) -> (f64, f64, f64) {
+    f.run(device, queue, gpu, 256);
+    let slot = f.frame.probes().slot([2, 2, 2]);
+    let probe = f.frame.probes().read_probe(device, queue, slot);
+    assert!(!probe.inside() && probe.age() >= 30, "age {}", probe.age());
+    let m: Vec<f64> = probe
+        .interior_irradiance()
+        .iter()
+        .map(|t| f64::from(t[0]))
+        .collect();
+    let o = f.frame.probes().probe_position([2, 2, 2]).map(f64::from);
+    let floor = f.frame.lighting().light_floor;
+    let d = furnace_reference(light, floor, o, 16384);
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let (mm, dm) = (mean(&m), mean(&d));
+    let worst = m
+        .iter()
+        .zip(&d)
+        .map(|(a, b)| (a / (0.5 * b) - 1.0).abs())
+        .fold(0.0f64, f64::max);
+    println!(
+        "{name} furnace: centre probe age {} after 256 frames; texel mean {mm:.4}, 0.5 D_ref {:.4} ({:+.2} %); worst texel {:.2} %; D_t {:.3} ..= {:.3}",
+        probe.age(),
+        0.5 * dm,
+        (mm / (0.5 * dm) - 1.0) * 100.0,
+        worst * 100.0,
+        d.iter().copied().fold(f64::MAX, f64::min),
+        d.iter().copied().fold(f64::MIN, f64::max)
+    );
+    (mm, 0.5 * dm, worst)
+}
+
 /// The lamp furnace's fixed point (M2's headless proof, restated for the lamp channel): the
-/// probe rays shade a hit with `albedo / PI E_lamp` and nothing else, so a probe's irradiance
-/// texel `t` reads `0.5 D_t`, `D_t` its rays' lamp irradiance at their hits. After 256 frames
-/// (32 visits of the running mean) the centre probe's texel mean reads within 4 % of `0.5 D`
-/// and every texel within 7 % of its `0.5 D_t`, `D_t` read over the 64 visits after: before
-/// each visit the tile is zeroed, so the visit leaves `new / (age + 1)` (the running mean's
-/// weight), and `D_t = 2 x texel x age` after it.
+/// probe rays shade a hit with `albedo / PI E_lamp` and nothing else, so after 256 frames the
+/// centre probe's texel mean reads within 4 % of `0.5 D_ref` and every texel within 7 % of its
+/// `0.5 D_t`, `D_ref` the mean `D_t` of [`furnace_reference`] for the lamp's slot light (a
+/// spot whose outer cosine is -1: every direction lit).
 #[test]
 #[ignore = "soak"]
 fn the_lamp_furnace_reads_its_albedo_times_the_direct_mean() {
@@ -306,55 +404,41 @@ fn the_lamp_furnace_reads_its_albedo_times_the_direct_mean() {
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
     let mut f = lamp_furnace(&device);
-    f.run(&device, &queue, &gpu, 256);
-    let slot = f.frame.probes().slot([2, 2, 2]);
-    let probe = f.frame.probes().read_probe(&device, &queue, slot);
-    assert!(!probe.inside() && probe.age() >= 30, "age {}", probe.age());
-    let m: Vec<f64> = probe
-        .interior_irradiance()
-        .iter()
-        .map(|t| f64::from(t[0]))
-        .collect();
-    let age0 = probe.age();
-    let mut sums = vec![0.0f64; m.len()];
-    let mut visits = 0;
-    let mut age = age0;
-    while visits < 64 {
-        f.frame.probes().write_test_tile(&queue, slot, [0.0; 3]);
-        let mut p = f.frame.probes().read_probe(&device, &queue, slot);
-        while p.age() == age {
-            f.run(&device, &queue, &gpu, 1);
-            p = f.frame.probes().read_probe(&device, &queue, slot);
-        }
-        age = p.age();
-        for (s, t) in sums.iter_mut().zip(p.interior_irradiance()) {
-            *s += 2.0 * f64::from(t[0]) * f64::from(age);
-        }
-        visits += 1;
-    }
-    let d: Vec<f64> = sums.iter().map(|s| s / f64::from(visits)).collect();
-    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
-    let (mm, dm) = (mean(&m), mean(&d));
-    let worst = m
-        .iter()
-        .zip(&d)
-        .map(|(a, b)| (a / (0.5 * b) - 1.0).abs())
-        .fold(0.0f64, f64::max);
-    println!(
-        "lamp furnace: centre probe age {age0} after 256 frames; texel mean {mm:.4}, 0.5 D {:.4} ({:+.2} %), D over {visits} visits {dm:.4}; worst texel {:.2} %; D_t {:.3} ..= {:.3}",
-        0.5 * dm,
-        (mm / (0.5 * dm) - 1.0) * 100.0,
-        worst * 100.0,
-        d.iter().copied().fold(f64::MAX, f64::min),
-        d.iter().copied().fold(f64::MIN, f64::max)
-    );
-    assert!(dm > 0.0, "{dm}");
-    assert!(
-        (mm / (0.5 * dm) - 1.0).abs() <= 0.04,
-        "{mm} against {}",
-        0.5 * dm
-    );
+    let lamp = vxe_render::Light::headlamp(&f.camera, &f.light);
+    let (mm, half_d, worst) = furnace_reading(&device, &queue, &gpu, &mut f, &lamp, "lamp");
+    assert!(half_d > 0.0, "{half_d}");
+    assert!((mm / half_d - 1.0).abs() <= 0.04, "{mm} against {half_d}");
     assert!(worst <= 0.07, "worst texel {worst}");
+}
+
+/// A flagged list light's furnace: the lamp furnace's box and volume with the lamp off, one
+/// white point light of 1200 at the centre probe with `BOUNCE` set (no shadow ray: every wall
+/// point is visible from it) and `light_floor` 0; the centre probe's texel mean reads within
+/// 4 % of `0.5 D_ref`, [`furnace_reference`]'s mean for that light.
+#[test]
+#[ignore = "soak"]
+fn a_flagged_lights_furnace_reads_its_albedo_times_the_analytic_direct_mean() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let world = dull_box_world();
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut f = lamp_furnace(&device);
+    f.frame.set_lighting(Lighting {
+        lamp: false,
+        light_floor: 0.0,
+        ..f.frame.lighting()
+    });
+    let light = vxe_render::Light {
+        flags: vxe_render::Light::ON | vxe_render::Light::BOUNCE,
+        ..vxe_render::Light::point([32.5; 3], 1200.0)
+    };
+    f.frame.set_lights(&[light]);
+    let (mm, half_d, worst) = furnace_reading(&device, &queue, &gpu, &mut f, &light, "list light");
+    assert!(half_d > 0.0, "{half_d}");
+    assert!((mm / half_d - 1.0).abs() <= 0.04, "{mm} against {half_d}");
+    println!("worst texel {:.2} % (a reading)", worst * 100.0);
 }
 
 /// The channel holds the lamp's bounce and nothing else: in the furnace (its six walls emit
@@ -987,8 +1071,9 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
         ..f.frame.lighting()
     };
     let lamp_part = |f: &FloorProbe| {
-        let acc = vxe_render::debug::read_float(&device, &queue, f.frame.accumulated())[0][3];
-        let raw = vxe_render::debug::read_rgba16f(&device, &queue, f.frame.irradiance())[0][3];
+        let acc =
+            vxe_render::debug::read_float(&device, &queue, f.frame.direct_accumulated())[0][3];
+        let raw = vxe_render::debug::read_rgba16f(&device, &queue, f.frame.direct())[0][3];
         (acc, raw)
     };
     f.frame.set_lighting(on);
@@ -1007,4 +1092,388 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
     assert!(settled > 0.0, "{settled}");
     assert_eq!(off, vec![0.0; 4]);
     assert!(raw > 0.0 && back == raw, "{back} against {raw}");
+}
+
+// ---- The bounce flag: list lights in the channel (ADR-0044) ----
+
+/// The long light box of `support::lights` (124 x 60 x 48 interior voxels, no emitter) synced
+/// to a mirror on the software adapter.
+fn bounce_box() -> Option<(vxe_render::wgpu::Device, vxe_render::wgpu::Queue, GpuWorld)> {
+    let world = support::lights::light_box();
+    let (device, queue) = software_device(128 << 20)?;
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    Some((device, queue, gpu))
+}
+
+/// The bounce box's eye, near its centre, and its 1 x 1 frame looking down: lamp off, filter
+/// off, the lamp's bounce on (the channel's switch), the default bounce reach (64 voxels: an
+/// 8-probe volume at the 16-voxel spacing), freezing at `freeze` visits.
+const BOUNCE_EYE: [f32; 3] = [64.0, 32.0, 26.0];
+
+fn bounce_frame(device: &vxe_render::wgpu::Device, freeze: u32) -> FloorProbe {
+    let mut f = FloorProbe::new(device, 52);
+    f.frame.set_lighting(Lighting {
+        probe_freeze: freeze,
+        ..f.frame.lighting()
+    });
+    f.camera.position = BOUNCE_EYE.into();
+    f
+}
+
+/// A white point light of 1200 at `pos`, its bounce flag `bounce`.
+fn list_light(pos: [f32; 3], bounce: bool) -> vxe_render::Light {
+    let l = vxe_render::Light::point(pos, 1200.0);
+    vxe_render::Light {
+        flags: l.flags | if bounce { vxe_render::Light::BOUNCE } else { 0 },
+        ..l
+    }
+}
+
+/// The world probe each slot of `f`'s volume holds for its eye.
+fn slot_probes(f: &FloorProbe) -> Vec<[i32; 3]> {
+    let v = f.frame.probes();
+    let origin = v.origin_for(f.camera.position.to_array());
+    (0..v.count()).map(|s| v.slot_probe(origin, s)).collect()
+}
+
+/// An unflagged list light leaves the channel off and a flagged one feeds it: in the bounce
+/// box with the lamp off and one list light at the box's centre, with `BOUNCE` clear no probe
+/// pass is recorded on any of 64 frames and every probe word reads exactly 0; with `BOUNCE` set
+/// the probe nearest the light reads a texel mean above 0 after 16 frames.
+#[test]
+fn a_flagged_light_feeds_the_channel_and_an_unflagged_one_does_not() {
+    let Some((device, queue, gpu)) = bounce_box() else {
+        return;
+    };
+    let mut f = bounce_frame(&device, vxe_render::Lighting::default().probe_freeze);
+    let centre = [64.0, 32.0, 26.0];
+    f.frame.set_lights(&[list_light(centre, false)]);
+    for i in 0..64 {
+        f.run(&device, &queue, &gpu, 1);
+        assert_eq!(f.frame.probe_dispatches(), 0, "frame {i}: no probe pass");
+    }
+    let words = support::lights::probe_words(&device, &queue, &f.frame);
+    assert!(
+        words
+            .iter()
+            .all(|w| w.state == 0 && w.irradiance.iter().chain(&w.visibility).all(|&x| x == 0)),
+        "every probe word 0"
+    );
+    f.frame.set_lights(&[list_light(centre, true)]);
+    f.run(&device, &queue, &gpu, 16);
+    assert!(f.frame.probe_dispatches() > 0);
+    let v = f.frame.probes();
+    let w = [4, 2, 2];
+    let p = v.read_probe(&device, &queue, v.slot(w));
+    let mean = p
+        .interior_irradiance()
+        .iter()
+        .map(|t| t[0] + t[1] + t[2])
+        .sum::<f32>()
+        / 36.0;
+    println!(
+        "probe {w:?} at {:?}: age {}, texel mean {mean}",
+        v.probe_position(w),
+        p.age()
+    );
+    assert!(!p.inside() && mean > 0.0, "{mean}");
+}
+
+/// The bounce reach cuts the list: a flagged light of 1200 (direct reach 109.5) leaves a probe
+/// between 70 and 100 voxels from it (beyond the bounce reach of 64) at 0 and never visited
+/// over 64 frames, while the probes within the reach are visited; a flagged light outside the
+/// volume by more than the bounce reach records no probe pass.
+#[test]
+fn a_light_beyond_the_bounce_reach_lists_no_probe() {
+    let Some((device, queue, gpu)) = bounce_box() else {
+        return;
+    };
+    let mut f = bounce_frame(&device, vxe_render::Lighting::default().probe_freeze);
+    let at = [40.0, 32.0, 26.0];
+    f.frame.set_lights(&[list_light(at, true)]);
+    f.run(&device, &queue, &gpu, 64);
+    let v = f.frame.probes();
+    let probes = slot_probes(&f);
+    let d = |w: [i32; 3]| support::lights::dist(v.probe_position(w), at);
+    let far: Vec<usize> = (0..probes.len())
+        .filter(|&s| (70.0..100.0).contains(&d(probes[s])))
+        .collect();
+    let words = support::lights::probe_words(&device, &queue, &f.frame);
+    let near_visited = (0..probes.len())
+        .filter(|&s| d(probes[s]) <= 64.0 && words[s].state != 0)
+        .count();
+    println!(
+        "{} probes 70 to 100 voxels from the light; {near_visited} within 64 visited",
+        far.len()
+    );
+    assert!(!far.is_empty() && near_visited > 0);
+    for &s in &far {
+        assert_eq!(
+            words[s].state,
+            0,
+            "slot {s} at {:.1} never visited",
+            d(probes[s])
+        );
+        assert!(words[s].irradiance.iter().all(|&x| x == 0), "slot {s} at 0");
+    }
+    // The volume spans 8 probes of 16 voxels from the eye's cell; 70 voxels past its +x side.
+    let last = v.probe_position(probes.iter().fold([i32::MIN; 3], |m, w| {
+        std::array::from_fn(|k| m[k].max(w[k]))
+    }));
+    f.frame
+        .set_lights(&[list_light([last[0] + 70.0, 32.0, 26.0], true)]);
+    for i in 0..4 {
+        f.run(&device, &queue, &gpu, 1);
+        assert_eq!(f.frame.probe_dispatches(), 0, "frame {i}: no probe pass");
+    }
+}
+
+/// The bounce box under a flagged light at `a` until frozen at `freeze` visits, then moved to
+/// `b` for `slices` frames (every probe's slice once): the words before the move, after
+/// `slices` more still frames, and after the move.
+type MoveWords = [Vec<support::lights::ProbeWords>; 3];
+
+fn move_run(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    gpu: &GpuWorld,
+    f: &mut FloorProbe,
+    a: [f32; 3],
+    b: [f32; 3],
+) -> MoveWords {
+    let slices = f.frame.lighting().slices();
+    let freeze = f.frame.lighting().probe_freeze;
+    f.frame.set_lights(&[list_light(a, true)]);
+    // The window's 16 frames (4 visits), then a visit per `slices` frames to the freeze.
+    f.run(device, queue, gpu, WINDOW_FRAMES + slices * freeze + 1);
+    let frozen = support::lights::probe_words(device, queue, &f.frame);
+    f.run(device, queue, gpu, slices);
+    let still = support::lights::probe_words(device, queue, &f.frame);
+    f.frame.set_lights(&[list_light(b, true)]);
+    f.run(device, queue, gpu, slices);
+    let moved = support::lights::probe_words(device, queue, &f.frame);
+    [frozen, still, moved]
+}
+
+/// Checks a [`move_run`]: still, every word is bit-identical; after the move every live probe
+/// within the bounce reach of the new position was traced again (its age restarted at 1: a
+/// moved probe's fresh mean, or a probe that entered the reach) and every probe beyond the
+/// reach of both positions is bit-identical. Returns the counts (live within the new reach,
+/// live within the old reach only and how many of those changed, beyond both, of the first
+/// how many changed their irradiance, and the inside probes within the new reach and how many
+/// of them were traced, their state word rewritten).
+fn check_move(f: &FloorProbe, w: &MoveWords, a: [f32; 3], b: [f32; 3]) -> [usize; 7] {
+    let [frozen, still, moved] = w;
+    assert!(frozen == still, "frozen: every word bit-identical");
+    let v = f.frame.probes();
+    let probes = slot_probes(f);
+    let reach = f.frame.lighting().lamp_reach;
+    let mut n = [0; 7];
+    for (s, &p) in probes.iter().enumerate() {
+        let q = v.probe_position(p);
+        let (near_a, near_b) = (
+            support::lights::dist(q, a) <= reach,
+            support::lights::dist(q, b) <= reach,
+        );
+        let live = v.live(frozen[s].state, p);
+        if near_b && live {
+            n[0] += 1;
+            assert_eq!(
+                v.age(moved[s].state, p),
+                1,
+                "slot {s} in the new reach restarted its mean"
+            );
+            n[4] += usize::from(moved[s].irradiance != frozen[s].irradiance);
+        } else if near_a && live {
+            n[1] += 1;
+            n[2] += usize::from(moved[s].irradiance != frozen[s].irradiance);
+        } else if near_b && frozen[s].state & 1 != 0 {
+            // An inside probe the move listed: MOVED_BIT skips the idle return, so it is traced.
+            n[5] += 1;
+            n[6] += usize::from(moved[s].state != frozen[s].state);
+        } else if !near_a && !near_b {
+            n[3] += 1;
+            assert_eq!(moved[s], frozen[s], "slot {s} beyond both reaches stayed");
+        }
+    }
+    println!(
+        "moved {a:?} -> {b:?}: {} live probes in the new reach restarted, {} of them changed their irradiance; {} live in the old reach only, {} of them changed; {} beyond both unchanged",
+        n[0], n[4], n[1], n[2], n[3]
+    );
+    println!(
+        "inside probes in the new reach: {}, traced on the move (state rewritten): {}",
+        n[5], n[6]
+    );
+    assert!(n[0] > 0 && n[3] > 0);
+    n
+}
+
+/// The gate's half of the freeze: at `probe_freeze` 4 a flagged list light, frozen, moved 10
+/// voxels along the box wakes the probes within the bounce reach of its new position within
+/// one round of the slices and leaves the probes beyond both reaches bit-identical.
+#[test]
+fn a_moved_flagged_light_wakes_the_probes_in_reach_only() {
+    let Some((device, queue, gpu)) = bounce_box() else {
+        return;
+    };
+    let mut f = bounce_frame(&device, 4);
+    let (a, b) = ([30.0, 32.0, 26.0], [40.0, 32.0, 26.0]);
+    let w = move_run(&device, &queue, &gpu, &mut f, a, b);
+    check_move(&f, &w, a, b);
+}
+
+/// The channel freezes when every flagged light is still: at `probe_freeze` 8 the words are
+/// bit-identical once frozen, the move wakes the probes in reach only, and once the light is
+/// still again they refreeze and hold bit-identical over 64 frames.
+#[test]
+#[ignore = "soak"]
+fn the_channel_freezes_when_every_flagged_light_is_still() {
+    let Some((device, queue, gpu)) = bounce_box() else {
+        return;
+    };
+    let mut f = bounce_frame(&device, 8);
+    let (a, b) = ([30.0, 32.0, 26.0], [40.0, 32.0, 26.0]);
+    let w = move_run(&device, &queue, &gpu, &mut f, a, b);
+    check_move(&f, &w, a, b);
+    let slices = f.frame.lighting().slices();
+    f.run(&device, &queue, &gpu, slices * 8 + 1);
+    let refrozen = support::lights::probe_words(&device, &queue, &f.frame);
+    f.run(&device, &queue, &gpu, 64);
+    assert!(
+        support::lights::probe_words(&device, &queue, &f.frame) == refrozen,
+        "refrozen: bit-identical over 64 frames"
+    );
+}
+
+/// A flagged list light lights what it does not see (Plan 0058 Phase 5d): in the light box at
+/// 192 x 108, lamp off, the lamp's bounce on (the channel's switch), a wall across the box at
+/// x 74..76, 12 voxels high, and a list light of 600 at (64, 32, 22), whose direct light the
+/// wall keeps off the floor at x 82. After 32 frames the composite at that floor pixel, seen
+/// from the far end, reads the no-light frame's bytes with `BOUNCE` clear (no direct light,
+/// no channel) and more with `BOUNCE` set (the probes' gather of the lit floor and walls).
+#[test]
+fn a_flagged_list_light_lights_what_it_does_not_see() {
+    use support::lights::{box_rig, floor_hits, nearest};
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    rig.frame.set_lighting(Lighting {
+        lamp_bounce: true,
+        ..rig.frame.lighting()
+    });
+    rig.world
+        .apply(&box_op(
+            [74, 2, 2],
+            [76, 62, 14],
+            Mode::Fill(flythrough::cave::ROCK),
+        ))
+        .expect("resident");
+    for _ in 0..2 {
+        rig.gpu
+            .sync_now(&rig.world, &rig.device, &rig.queue)
+            .expect("fits");
+    }
+    let far = vxe_render::Camera {
+        position: [120.0, 32.0, 45.0].into(),
+        yaw: std::f32::consts::PI,
+        pitch: -0.9,
+        vfov: 1.2,
+    };
+    let mut pixel = None;
+    let mut run = |lights: &[vxe_render::Light]| {
+        rig.frame.set_lights(lights);
+        rig.frame.reset_history();
+        for _ in 0..32 {
+            support::lights::step(&mut rig, &far);
+        }
+        let i = *pixel.get_or_insert_with(|| {
+            let (i, p) = nearest(&floor_hits(&rig), 82.0, 32.0);
+            println!("the shadowed floor pixel {i} at {p:?}");
+            i
+        });
+        let rgba = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+        [rgba[4 * i], rgba[4 * i + 1], rgba[4 * i + 2]]
+    };
+    let light = |bounce: bool| {
+        let l = vxe_render::Light::point([64.0, 32.0, 22.0], 600.0);
+        vxe_render::Light {
+            flags: l.flags | if bounce { vxe_render::Light::BOUNCE } else { 0 },
+            ..l
+        }
+    };
+    let none = run(&[]);
+    let clear = run(&[light(false)]);
+    let set = run(&[light(true)]);
+    println!("no light {none:?}, BOUNCE clear {clear:?}, BOUNCE set {set:?}");
+    assert_eq!(
+        clear, none,
+        "an unflagged light leaves the shadowed floor as it is"
+    );
+    let sum = |c: [u8; 3]| c.iter().map(|&v| u32::from(v)).sum::<u32>();
+    assert!(
+        sum(set) > sum(clear),
+        "a flagged light lights the shadowed floor: {set:?} against {clear:?}"
+    );
+}
+
+mod reading {
+    use super::*;
+
+    /// The bounce's lag behind a light in flight (a reading, no bar): a flagged light of 1200
+    /// frozen at (30, 32, 26) in the bounce box at the default freeze and `probe_move_blend`,
+    /// then flown 4 voxels a frame along +x for 16 frames to (94, 32, 26); the frames from its
+    /// last move until the texel mean of the live probe nearest the end is within 10 % of its
+    /// value 256 frames later (frozen).
+    #[test]
+    #[ignore]
+    fn reading_the_bounce_lag_behind_a_light_in_flight() {
+        let Some((device, queue, gpu)) = bounce_box() else {
+            return;
+        };
+        let mut f = bounce_frame(&device, vxe_render::Lighting::default().probe_freeze);
+        let start = [30.0, 32.0, 26.0];
+        f.frame.set_lights(&[list_light(start, true)]);
+        f.run(&device, &queue, &gpu, 128);
+        let end = [94.0, 32.0, 26.0];
+        for i in 1..=16 {
+            let x = start[0] + 4.0 * i as f32;
+            f.frame.set_lights(&[list_light([x, 32.0, 26.0], true)]);
+            f.run(&device, &queue, &gpu, 1);
+        }
+        let v = f.frame.probes();
+        let probes = slot_probes(&f);
+        let mean = |f: &FloorProbe, s: u32| {
+            let p = f.frame.probes().read_probe(&device, &queue, s);
+            p.interior_irradiance()
+                .iter()
+                .map(|t| t[0] + t[1] + t[2])
+                .sum::<f32>()
+                / 36.0
+        };
+        let states = v.read_states(&device, &queue);
+        let slot = (0..probes.len())
+            .filter(|&s| v.live(states[s], probes[s]))
+            .min_by(|&a, &b| {
+                let d = |s: usize| support::lights::dist(v.probe_position(probes[s]), end);
+                d(a).total_cmp(&d(b))
+            })
+            .expect("a live probe") as u32;
+        let mut series = Vec::new();
+        for _ in 0..256 {
+            series.push(mean(&f, slot));
+            f.run(&device, &queue, &gpu, 1);
+        }
+        let frozen = mean(&f, slot);
+        let lag = series
+            .iter()
+            .position(|m| (m / frozen - 1.0).abs() <= 0.1)
+            .unwrap_or(series.len());
+        println!(
+            "bounce lag: probe {:?} at {:?} nearest the end; frozen mean {frozen:.4}; first frames {:?}; within 10 % after {lag} frames",
+            probes[slot as usize],
+            f.frame.probes().probe_position(probes[slot as usize]),
+            &series[..12]
+        );
+    }
 }
