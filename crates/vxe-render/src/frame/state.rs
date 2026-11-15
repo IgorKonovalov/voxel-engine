@@ -95,32 +95,67 @@ pub(crate) struct LightTableUniform {
     pub(crate) chunks: [[u32; 4]; LIGHT_TABLE_ENTRIES],
 }
 
+/// The candidate table's chunks for the camera chunk and the light ranges it was chosen
+/// from, kept between encodes: `(epoch, camera chunk, light radius, light buffer)` and the
+/// chosen chunks with their ranges and powers, in chunk-coordinate order.
+#[derive(Default)]
+pub(super) struct LightNear {
+    key: Option<(u64, [i32; 3], i32, wgpu::Buffer)>,
+    chunks: Vec<(i64, ChunkCoord, u32, u32, f32)>,
+}
+
 /// The candidate table for a camera at `eye` over `world`: the chunks holding a range within
 /// the light radius of the camera's chunk (squared chunk distance), the nearest
 /// [`LIGHT_TABLE_ENTRIES`] of them, in chunk-coordinate order, each weighing its power over
-/// `max(d^2, 64^2)`, `d` the eye's distance in voxels to the chunk's box.
-pub(super) fn light_table(world: &GpuWorld, eye: [f32; 3]) -> LightTableUniform {
+/// `max(d^2, 64^2)`, `d` the eye's distance in voxels to the chunk's box. The chosen chunks are
+/// taken again from `near` while the light ranges ([`GpuWorld::light_epoch`]), the camera
+/// chunk, the radius and the buffer are those it holds; the weights are the eye's each time.
+pub(super) fn light_table(
+    world: &GpuWorld,
+    eye: [f32; 3],
+    near: &std::sync::Mutex<LightNear>,
+) -> LightTableUniform {
     let r = i64::from(world.light_radius());
     let cam = eye.map(|v| (v / 64.0).floor() as i32);
-    let mut near: Vec<(i64, ChunkCoord, u32, u32, f32)> = world
-        .light_chunks()
-        .map(|(c, start, len, power)| {
-            let d2 = c.distance2(ChunkCoord(cam));
-            (d2, c, start, len, power)
-        })
-        .filter(|&(d2, ..)| d2 <= r * r)
-        .collect();
-    near.sort_unstable_by_key(|&(d2, c, ..)| (d2, c.0));
-    near.truncate(LIGHT_TABLE_ENTRIES);
-    near.sort_unstable_by_key(|&(_, c, ..)| c.0);
+    let mut near = near
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fresh = near.key.as_ref().is_some_and(|(epoch, c, radius, buffer)| {
+        *epoch == world.light_epoch()
+            && *c == cam
+            && *radius == world.light_radius()
+            && buffer == world.light_buffer()
+    });
+    if !fresh {
+        let list = &mut near.chunks;
+        list.clear();
+        list.extend(
+            world
+                .light_chunks()
+                .map(|(c, start, len, power)| {
+                    let d2 = c.distance2(ChunkCoord(cam));
+                    (d2, c, start, len, power)
+                })
+                .filter(|&(d2, ..)| d2 <= r * r),
+        );
+        list.sort_unstable_by_key(|&(d2, c, ..)| (d2, c.0));
+        list.truncate(LIGHT_TABLE_ENTRIES);
+        list.sort_unstable_by_key(|&(_, c, ..)| c.0);
+        near.key = Some((
+            world.light_epoch(),
+            cam,
+            world.light_radius(),
+            world.light_buffer().clone(),
+        ));
+    }
     let mut t = LightTableUniform {
-        count: near.len() as u32,
+        count: near.chunks.len() as u32,
         total: 0.0,
         _pad: [0; 2],
         chunks: [[0; 4]; LIGHT_TABLE_ENTRIES],
     };
     let mut cdf = 0.0f32;
-    for (i, &(_, c, start, len, power)) in near.iter().enumerate() {
+    for (i, &(_, c, start, len, power)) in near.chunks.iter().enumerate() {
         let d2: f32 = (0..3)
             .map(|k| {
                 let lo = c.0[k] as f32 * 64.0;
@@ -184,6 +219,8 @@ pub(super) struct FrameState {
     pub(super) lights: LightsState,
     /// The a-trous dispatches the last encode recorded ([`Frame::atrous_dispatches`]).
     pub(super) atrous_dispatches: std::sync::atomic::AtomicU32,
+    /// The light table's chunks, chosen again only when what they are chosen from changes.
+    pub(super) light_near: std::sync::Mutex<LightNear>,
 }
 
 impl FrameState {
@@ -251,6 +288,7 @@ impl FrameState {
             lamp_changed: std::sync::atomic::AtomicBool::new(false),
             lights: LightsState::new(device),
             atrous_dispatches: std::sync::atomic::AtomicU32::new(0),
+            light_near: std::sync::Mutex::default(),
         }
     }
 }

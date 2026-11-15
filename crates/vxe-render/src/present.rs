@@ -7,6 +7,8 @@ pub struct Presenter {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// The bind group of the last source, built again only for another texture.
+    bind: std::sync::Mutex<Option<(wgpu::Texture, wgpu::BindGroup)>>,
 }
 
 impl Presenter {
@@ -77,17 +79,21 @@ impl Presenter {
             pipeline,
             layout,
             sampler,
+            bind: std::sync::Mutex::new(None),
         }
     }
 
-    /// Records the blit of `source` onto `target` into `encoder`.
-    pub fn encode(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        source: &wgpu::Texture,
-        target: &wgpu::TextureView,
-    ) {
+    /// The bind group of `source`: the last one while `source` is the last source.
+    fn bind_for(&self, device: &wgpu::Device, source: &wgpu::Texture) -> wgpu::BindGroup {
+        let mut last = self
+            .bind
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((t, b)) = last.as_ref()
+            && t == source
+        {
+            return b.clone();
+        }
         let view = crate::gpu_util::view(source);
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("present"),
@@ -103,6 +109,19 @@ impl Presenter {
                 },
             ],
         });
+        *last = Some((source.clone(), bind.clone()));
+        bind
+    }
+
+    /// Records the blit of `source` onto `target` into `encoder`.
+    pub fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::Texture,
+        target: &wgpu::TextureView,
+    ) {
+        let bind = self.bind_for(device, source);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("present"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

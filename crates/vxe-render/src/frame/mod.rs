@@ -20,6 +20,7 @@ use vxe_world::ChunkCoord;
 
 mod baked;
 mod compose;
+mod dispatch;
 mod encode;
 mod lights;
 mod marcher;
@@ -34,6 +35,7 @@ mod upscale;
 
 use self::baked::*;
 pub use self::compose::*;
+pub(crate) use self::dispatch::*;
 pub use self::encode::*;
 pub use self::lights::*;
 pub use self::marcher::*;
@@ -57,6 +59,8 @@ pub use self::upscale::*;
 pub struct Frame {
     device: wgpu::Device,
     pipes: Pipelines,
+    /// The passes' bind groups, built again only when what they bind changes.
+    binds: BindCache,
     state: FrameState,
     up: UpscaleState,
     baked: BakeLink,
@@ -91,6 +95,7 @@ impl Frame {
         let [width, height] = internal;
         Self {
             pipes: Pipelines::new(device),
+            binds: BindCache::default(),
             targets: Targets::new(
                 device,
                 width,
@@ -360,6 +365,18 @@ impl Frame {
         self.state.lighting
     }
 
+    /// Bind groups the frame's passes created so far, FSR 2's and the exposure pass's
+    /// included: a pass takes its group back while what it binds is unchanged, so an encode
+    /// whose targets, buffers and passes the last two encodes also had creates none.
+    pub fn bind_groups_built(&self) -> u64 {
+        self.binds.built().0 + self.exposure.binds_built().0
+    }
+
+    /// Texture views the frame's bind groups created so far ([`Frame::bind_groups_built`]).
+    pub fn views_built(&self) -> u64 {
+        self.binds.built().1 + self.exposure.binds_built().1
+    }
+
     /// The frame's `rgba8unorm` image: the composite's output, or with the upscaler (see
     /// [`Frame::upscaling`]) the upscaled image at the output size. With the upscaler the
     /// composite writes the internal image into its top-left pixels and the upscale pass's
@@ -506,6 +523,7 @@ impl Frame {
         if self.composite_capture.is_some() {
             self.composite_capture = Some(composite_capture_texture(device, internal));
         }
+        self.binds.clear();
         self.reset_history();
     }
 

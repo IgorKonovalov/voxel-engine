@@ -217,3 +217,185 @@ fn the_frame_s_timers_and_store_counts_read_back_without_waiting() {
     assert_eq!(age, 0, "the GPU is idle: the last copy is in");
     assert_eq!(latest, blocking);
 }
+
+/// The lighting modes the bind-group tests cycle: the default, the filter off, two a-trous
+/// iterations, the gradient's history kill, the lamp's bounce (the probe passes) and the lamp
+/// off.
+fn lighting_modes(base: Lighting) -> [(&'static str, Lighting); 6] {
+    [
+        ("default", base),
+        (
+            "filter off",
+            Lighting {
+                filter: false,
+                ..base
+            },
+        ),
+        (
+            "two a-trous iterations",
+            Lighting {
+                atrous_iterations: 2,
+                ..base
+            },
+        ),
+        (
+            "gradient",
+            Lighting {
+                history: vxe_render::HistoryKill::Gradient,
+                ..base
+            },
+        ),
+        (
+            "lamp bounce",
+            Lighting {
+                lamp_bounce: true,
+                ..base
+            },
+        ),
+        (
+            "lamp off",
+            Lighting {
+                lamp: false,
+                ..base
+            },
+        ),
+    ]
+}
+
+/// The frame's counts of bind groups and views created so far.
+fn built(frame: &Frame) -> (u64, u64) {
+    (frame.bind_groups_built(), frame.views_built())
+}
+
+/// Under each upscaler (none, the engine's own, FSR 2) and in each lighting mode, the two
+/// frames after a switch may build the groups of both history parities; the two after those
+/// build no bind group and no view.
+#[test]
+fn a_frame_after_the_second_builds_no_bind_group() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = mirrored(&device, &queue);
+    let mut frame = Frame::with_sizes(&device, [48, 32], [64, 48]);
+    let base = frame.lighting();
+    let light = LightParams::headlamp();
+    for kind in [
+        vxe_render::UpscalerKind::Off,
+        vxe_render::UpscalerKind::Own(vxe_render::Upscaler::default()),
+        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+    ] {
+        frame.set_upscaler_kind(&device, kind);
+        for (mode, lighting) in lighting_modes(base) {
+            frame.set_lighting(lighting);
+            for _ in 0..2 {
+                frame.step(&device, &queue, &gpu, &camera(), &light);
+            }
+            let warm = built(&frame);
+            for _ in 0..2 {
+                frame.step(&device, &queue, &gpu, &camera(), &light);
+            }
+            let after = built(&frame);
+            println!(
+                "{} / {mode}: {} groups and {} views built so far",
+                kind.name(),
+                warm.0,
+                warm.1
+            );
+            assert_eq!(
+                after,
+                warm,
+                "{} / {mode}: frames 3 and 4 built (groups, views)",
+                kind.name()
+            );
+        }
+    }
+}
+
+/// A resize builds the groups of both parities once: the two frames after it build what a
+/// new frame's first two build, and the next two build nothing.
+#[test]
+fn a_resize_builds_both_parities_once() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = mirrored(&device, &queue);
+    let light = LightParams::headlamp();
+    let mut frame = Frame::new(&device, 32, 32);
+    let steps = |frame: &mut Frame, n: usize| {
+        let before = built(frame);
+        for _ in 0..n {
+            frame.step(&device, &queue, &gpu, &camera(), &light);
+        }
+        let after = built(frame);
+        (after.0 - before.0, after.1 - before.1)
+    };
+    let first = steps(&mut frame, 2);
+    println!("a new frame's first two encodes: {first:?} (groups, views)");
+    assert!(first.0 > 0 && first.1 > 0, "{first:?}");
+    assert_eq!(steps(&mut frame, 2), (0, 0), "frames 3 and 4");
+    frame.resize(&device, 48, 40);
+    assert_eq!(
+        steps(&mut frame, 2),
+        first,
+        "the two encodes after a resize"
+    );
+    assert_eq!(
+        steps(&mut frame, 2),
+        (0, 0),
+        "frames 3 and 4 after a resize"
+    );
+}
+
+/// Readings run by hand: `cargo nextest run -p vxe-render --run-ignored only -E
+/// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
+mod reading {
+    use super::*;
+
+    /// The CPU time of `Frame::encode` at the fly-through's default sizes (853 x 480 for a
+    /// 1280 x 720 image under FSR 2, half-resolution lighting) over the one-chunk floor, on the
+    /// high-performance adapter (`VK_DRIVER_FILES` picks another): 300 encodes after 20, each
+    /// submitted and waited on, so the CPU times the encode alone. Prints p50 and p99.
+    #[test]
+    #[ignore = "a CPU timing reading; run by hand"]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a reading of the encode's wall time on the CPU"
+    )]
+    fn encode_cpu_time_at_the_default_sizes() {
+        let Some((device, queue, adapter)) =
+            vxe_render::test_support::high_performance_device(16 << 20, wgpu::Features::empty())
+        else {
+            return;
+        };
+        let gpu = mirrored(&device, &queue);
+        let mut frame = Frame::with_sizes(&device, [853, 480], [1280, 720]);
+        frame.set_upscaler_kind(
+            &device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+        );
+        let light = LightParams::headlamp();
+        let mut ms = Vec::new();
+        for i in 0..320 {
+            frame.advance();
+            let params = frame.params(&gpu, &camera(), &light);
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let t = std::time::Instant::now();
+            frame.encode(&device, &queue, &mut enc, &gpu, &params, None);
+            let dt = t.elapsed().as_secs_f64() * 1e3;
+            queue.submit([enc.finish()]);
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("the frame finishes");
+            if i >= 20 {
+                ms.push(dt);
+            }
+        }
+        ms.sort_by(f64::total_cmp);
+        println!(
+            "reading[{adapter}]: encode CPU p50 {:.4} ms, p99 {:.4} ms over {} encodes",
+            ms[ms.len() / 2],
+            ms[ms.len() * 99 / 100],
+            ms.len()
+        );
+    }
+}

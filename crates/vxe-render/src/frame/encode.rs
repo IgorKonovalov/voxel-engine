@@ -2,32 +2,6 @@
 
 use super::*;
 
-/// One dispatch of a frame pass: its pipeline, the bind groups at indices 0 to 3, and the
-/// workgroups in x and y.
-pub(crate) struct Dispatch<'a> {
-    pub pipeline: &'a wgpu::ComputePipeline,
-    pub groups: [Option<&'a wgpu::BindGroup>; 4],
-    pub workgroups: [u32; 2],
-    /// Dispatched with the workgroup counts this buffer holds at this byte offset instead.
-    pub indirect: Option<(&'a wgpu::Buffer, u64)>,
-}
-
-impl Dispatch<'_> {
-    /// Sets the pipeline and the bind groups on `pass` and dispatches.
-    pub(super) fn record(&self, pass: &mut wgpu::ComputePass<'_>) {
-        pass.set_pipeline(self.pipeline);
-        for (g, bind) in self.groups.iter().enumerate() {
-            if let Some(b) = bind {
-                pass.set_bind_group(g as u32, *b, &[]);
-            }
-        }
-        match self.indirect {
-            Some((args, offset)) => pass.dispatch_workgroups_indirect(args, offset),
-            None => pass.dispatch_workgroups(self.workgroups[0], self.workgroups[1], 1),
-        }
-    }
-}
-
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
@@ -126,29 +100,26 @@ fn frame_pass<'a>(
 
 impl Frame {
     pub(super) fn world_bind(&self, device: &wgpu::Device, world: &GpuWorld) -> wgpu::BindGroup {
-        let noise = view(&self.state.blue_noise);
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("world"),
-            layout: &self.pipes.world_layout,
-            entries: &[
-                buffer_entry(0, &self.state.params),
-                buffer_entry(1, world.pool_shard(0)),
-                buffer_entry(7, world.pool_shard(1)),
-                buffer_entry(8, world.pool_shard(2)),
-                buffer_entry(9, world.pool_shard(3)),
-                buffer_entry(2, world.records()),
-                buffer_entry(3, world.table()),
-                buffer_entry(4, world.materials()),
-                buffer_entry(10, world.light_buffer()),
-                buffer_entry(11, &self.state.emission_scale),
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: wgpu::BindingResource::TextureView(&noise),
-                },
-                buffer_entry(13, self.exposure.state_uniform()),
-                buffer_entry(14, &self.state.lights.buffer),
+        self.binds.io_at(
+            device,
+            &self.pipes.world_layout,
+            &[0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14],
+            &[
+                Res::Buf(&self.state.params),
+                Res::Buf(world.pool_shard(0)),
+                Res::Buf(world.pool_shard(1)),
+                Res::Buf(world.pool_shard(2)),
+                Res::Buf(world.pool_shard(3)),
+                Res::Buf(world.records()),
+                Res::Buf(world.table()),
+                Res::Buf(world.materials()),
+                Res::Buf(world.light_buffer()),
+                Res::Buf(&self.state.emission_scale),
+                Res::Tex(&self.state.blue_noise),
+                Res::Buf(self.exposure.state_uniform()),
+                Res::Buf(&self.state.lights.buffer),
             ],
-        })
+        )
     }
 
     /// The temporal pass's pipeline: with [`Frame::set_count_store`] on, the one whose
@@ -295,6 +266,7 @@ impl Frame {
         timer: Option<&PassTimer>,
         keep: Keep,
     ) {
+        self.binds.tick();
         let uni = self.write_uniforms(queue, world, params, keep);
         let binds = self.bind_groups(device, encoder, world);
         self.record(device, queue, encoder, &uni, &binds, timer);
@@ -432,7 +404,7 @@ impl Frame {
             0,
             bytemuck::bytes_of(&self.up.upscaler.uniform(scale)),
         );
-        let table = light_table(world, p.views[0].origin);
+        let table = light_table(world, p.views[0].origin, &self.state.light_near);
         let used = (1 + table.count as usize) * 16;
         queue.write_buffer(
             world.light_buffer(),
@@ -498,7 +470,7 @@ impl Frame {
             &t.split_stub
         };
         let (c, q) = (self.cur, self.cur ^ 1);
-        let hit_bind = bind_io(
+        let hit_bind = self.binds.io(
             device,
             &self.pipes.hit.out_layout,
             &[
@@ -512,7 +484,7 @@ impl Frame {
             ],
         );
         let half = t.half_pos.is_some();
-        let downsample_bind = bind_io(
+        let downsample_bind = self.binds.io(
             device,
             self.pipes.layout(P_DOWNSAMPLE),
             &[
@@ -524,7 +496,7 @@ impl Frame {
         );
         // The store's counters: missing, brick reads, coarse reads.
         encoder.clear_buffer(&self.baked.counters, 0, None);
-        let light_bind = bind_io(
+        let light_bind = self.binds.io(
             device,
             self.pipes.layout(P_LIGHT),
             &[
@@ -534,7 +506,7 @@ impl Frame {
                 Res::Tex(&t.direct),
             ],
         );
-        let temporal_bind = bind_io(
+        let temporal_bind = self.binds.io(
             device,
             self.pipes.layout(P_TEMPORAL),
             &[
@@ -583,7 +555,7 @@ impl Frame {
         let t = &self.targets;
         let c = self.cur;
         let filtering = self.state.lighting.filter && self.state.look.view.shades();
-        let variance_bind = bind_io_at(
+        let variance_bind = self.binds.io_at(
             device,
             self.pipes.layout(P_VARIANCE),
             &[0, 1, 2, 3, 4, 9],
@@ -599,7 +571,7 @@ impl Frame {
         let n = self.state.lighting.atrous_count();
         let atrous_binds: Vec<wgpu::BindGroup> = (0..n)
             .map(|i| {
-                bind_io_at(
+                self.binds.io_at(
                     device,
                     self.pipes.layout(P_ATROUS),
                     &[0, 1, 2, 5, 6, 7, 8],
@@ -643,7 +615,7 @@ impl Frame {
                 ),
                 |(l, p)| (l, p),
             );
-        let composite_bind = bind_io(
+        let composite_bind = self.binds.io(
             device,
             composite_layout,
             &[
@@ -660,7 +632,7 @@ impl Frame {
                 Res::Tex(&t.direct_accum[c]),
             ],
         );
-        let gradient_bind = bind_io(
+        let gradient_bind = self.binds.io(
             device,
             self.pipes.layout(P_GRADIENT),
             &[
@@ -671,7 +643,7 @@ impl Frame {
             ],
         );
         let upscale_bind = t.history.as_ref().map(|hist| {
-            bind_io(
+            self.binds.io(
                 device,
                 self.pipes.layout(P_UPSCALE),
                 &[
@@ -689,7 +661,7 @@ impl Frame {
             )
         });
         let sharpen_bind = t.history.as_ref().map(|hist| {
-            bind_io(
+            self.binds.io(
                 device,
                 self.pipes.layout(P_SHARPEN),
                 &[
@@ -738,7 +710,7 @@ impl Frame {
         let resume_bind = binds.split.then(|| {
             encoder.clear_buffer(&t.split_args, 0, None);
             encoder.clear_buffer(binds.split_list, 0, Some(16));
-            bind_io(
+            self.binds.io(
                 device,
                 &self.pipes.hit.resume_layout,
                 &[
@@ -749,8 +721,7 @@ impl Frame {
                 ],
             )
         });
-        let mut hit: Vec<Dispatch<'_>> =
-            vec![frame_pass(world, hit_pipeline, &binds.hit_bind, 1, full)];
+        let mut hit = Dispatches::one(frame_pass(world, hit_pipeline, &binds.hit_bind, 1, full));
         if let Some(b) = &resume_bind {
             hit.push(Dispatch {
                 indirect: Some((&t.split_args, 0)),
@@ -768,8 +739,8 @@ impl Frame {
         }
         let [gradient, atrous] = self.filter_dispatches(device, binds, &p);
         p.lighting &= !LIGHTING_INDIRECT;
-        let mut gather: Vec<Dispatch<'_>> = Vec::new();
-        let mut probes: Vec<Dispatch<'_>> = Vec::new();
+        let mut gather = Dispatches::default();
+        let mut probes = Dispatches::default();
         let (probe_bind, gather_bind, updates) =
             self.probe_binds(device, queue, encoder, uni, &mut p);
         if let (Some(b), Some(g)) = (&probe_bind, &gather_bind) {
@@ -810,30 +781,30 @@ impl Frame {
         let passes = [
             hit,
             gradient,
-            vec![frame_pass(
+            Dispatches::one(frame_pass(
                 world,
                 self.light_pipeline(device),
                 &binds.light_bind,
                 2,
                 lw,
-            )],
-            vec![frame_pass(
+            )),
+            Dispatches::one(frame_pass(
                 world,
                 self.temporal_pipeline(device),
                 &binds.temporal_bind,
                 2,
                 lw,
-            )],
+            )),
             atrous,
             probes,
             gather,
-            vec![frame_pass(
+            Dispatches::one(frame_pass(
                 world,
                 out.composite,
                 &out.composite_bind,
                 2,
                 full,
-            )],
+            )),
             upscale,
             sharpen,
         ]
@@ -871,6 +842,7 @@ impl Frame {
                         blue_noise: &self.state.blue_noise,
                         cur: c,
                         dt: self.dt,
+                        binds: &self.binds,
                     },
                 ),
             )
@@ -893,14 +865,14 @@ impl Frame {
         device: &wgpu::Device,
         binds: &'a Binds<'_>,
         p: &Params,
-    ) -> [Vec<Dispatch<'a>>; 2] {
+    ) -> [Dispatches<'a>; 2] {
         let t = &self.targets;
         let world = &binds.world_bind;
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
         // The gradient pass runs in a shaded view for the gradient mode's lambda.
         let gradient_on = self.state.look.view.shades() && p.lighting & LIGHTING_GRADIENT != 0;
-        let mut gradient: Vec<Dispatch<'_>> = Vec::new();
+        let mut gradient = Dispatches::default();
         if gradient_on {
             gradient.push(frame_pass(
                 world,
@@ -910,7 +882,7 @@ impl Frame {
                 strata,
             ));
         }
-        let mut atrous: Vec<Dispatch<'_>> = Vec::new();
+        let mut atrous = Dispatches::default();
         if binds.filtering {
             atrous.push(frame_pass(
                 world,
@@ -919,12 +891,15 @@ impl Frame {
                 2,
                 lw,
             ));
-            atrous.extend(
-                binds
-                    .atrous_binds
-                    .iter()
-                    .map(|b| frame_pass(world, self.pipes.pipeline(device, P_ATROUS), b, 2, lw)),
-            );
+            for b in &binds.atrous_binds {
+                atrous.push(frame_pass(
+                    world,
+                    self.pipes.pipeline(device, P_ATROUS),
+                    b,
+                    2,
+                    lw,
+                ));
+            }
         }
         let iterations = if binds.filtering {
             binds.atrous_binds.len() as u32
@@ -943,10 +918,10 @@ impl Frame {
         &'a self,
         device: &wgpu::Device,
         binds: &'a Binds<'_>,
-    ) -> [Vec<Dispatch<'a>>; 2] {
+    ) -> [Dispatches<'a>; 2] {
         let world = &binds.world_bind;
-        let mut upscale: Vec<Dispatch<'_>> = Vec::new();
-        let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
+        let mut upscale = Dispatches::default();
+        let mut sharpen = Dispatches::default();
         if let (Some(u), Some(r)) = (&binds.out.upscale_bind, &binds.out.sharpen_bind) {
             let out = self.output.map(|n| n.div_ceil(WORKGROUP));
             upscale.push(frame_pass(
@@ -974,7 +949,7 @@ impl Frame {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        passes: impl Iterator<Item = Vec<Dispatch<'a>>>,
+        passes: impl Iterator<Item = Dispatches<'a>>,
         p: &Params,
         timer: Option<&PassTimer>,
     ) {
@@ -988,7 +963,7 @@ impl Frame {
                 label: Some(FRAME_PASSES[i]),
                 timestamp_writes: timer.map(|t| t.writes_at(i as u32)),
             });
-            for d in dispatches {
+            for d in dispatches.iter() {
                 d.record(&mut pass);
             }
             drop(pass);
@@ -1088,18 +1063,18 @@ impl Frame {
                 std::sync::atomic::Ordering::Relaxed,
             );
             self.write_probe_uniform(queue, volume, p, updates);
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("probes"),
-                layout: &self.pipes.probe_layout,
-                entries: &[
-                    buffer_entry(0, volume.data()),
-                    buffer_entry(1, volume.scratch()),
-                    buffer_entry(2, volume.uniform()),
+            self.binds.io(
+                device,
+                &self.pipes.probe_layout,
+                &[
+                    Res::Buf(volume.data()),
+                    Res::Buf(volume.scratch()),
+                    Res::Buf(volume.uniform()),
                 ],
-            })
+            )
         });
         let gather_bind = probe_bind.is_some().then(|| {
-            bind_io(
+            self.binds.io(
                 device,
                 self.pipes.layout(P_GATHER),
                 &[
