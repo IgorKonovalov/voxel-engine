@@ -797,8 +797,9 @@ fn a_red_light_near_a_wall_draws_no_rings_under_fsr2() {
 /// z 2..30), joined by a door at x 60..62, y 2..10, z 2..10, an ore slab on B's floor (baked),
 /// and one still list light of 600 in A. From A, looking away from the door, under FSR 2 at
 /// 1.5 with the ore's scale changing every frame (`0.5 + 0.5 sin`), after 32 frames the
-/// reactive mask marks no pixel where the ore's baked light does not land: the hit is not an
-/// emitter and the steady run's emissive part is zero at the lighting texels around it.
+/// reactive mask marks no pixel where the ore's baked light does not land (the hit is not an
+/// emitter and the steady run's emissive part is zero at the lighting texels around it), and at
+/// least one where it does.
 #[test]
 fn a_pulsing_emitter_marks_only_where_its_light_lands() {
     use flythrough::cave::ORE;
@@ -901,6 +902,10 @@ fn a_pulsing_emitter_marks_only_where_its_light_lands() {
     assert_eq!(
         wrong, 0,
         "{wrong} pixels marked where the ore's light does not land"
+    );
+    assert!(
+        marked - wrong > 0,
+        "the pulsing mask marks no pixel where the ore's light lands"
     );
 }
 
