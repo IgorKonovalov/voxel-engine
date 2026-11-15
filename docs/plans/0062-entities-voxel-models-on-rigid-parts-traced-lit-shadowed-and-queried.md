@@ -396,6 +396,14 @@ d^2` times the window `(1 - (d / r)^4)^2`: **9.40** at 20 voxels straight below 
   3. `--entities 0` reads within the round-to-round spread of the start commit's frame on
      both adapters. Outside it, the log names the pass that grew and the plan stops for the
      architect.
+     **Amended 2026-11-15 (orchestrator, the owner asleep; the owner may overturn it in the
+     morning):** the reading was outside it (the Cezanne +1.06 ms spawn and +1.05 ms vein, in
+     the hit and light passes; the RTX +0.08 and +0.05 ms). The bar stands. Phase 5 continues:
+     the hit and light passes skip every entity step when the set is empty (no part, no walk,
+     no extra bind or loop work that the start commit did not do), and `--entities 0` is read
+     again on both adapters, three rounds against the base's, until it is inside the spread or
+     the log names what is left and why it cannot go. The walkers' costs (3 to 10x the guesses
+     in 4) stay readings and go to the owner with the Phase 6 window.
   4. The predictions, all **guesses**: 16 walkers within 0.2 to 0.5 ms of the frame on the RTX
      3080 Laptop and 2 to 4 ms on the Cezanne; 64 walkers within 0.5 to 1.2 ms and 4 to 10 ms.
      A figure outside a range is a reading, not a failure.
