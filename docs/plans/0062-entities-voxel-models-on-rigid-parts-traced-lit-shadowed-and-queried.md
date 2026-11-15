@@ -21,7 +21,7 @@
 > **Source:** the owner, 2026-11-10: "we need a plan for voxel model entity ... with possibility
 > of emissive light (gloving eyes for example) - we place model on a level", and the answers
 > under Owner answers.
-> **Starts after:** [Plan 0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
+> **Starts after:** [Plan 0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
 > close for Phases 2 to 6 (they read its light list, its direct target and its change rule),
 > and after [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
 > order in the plans index. **Phase 1 adds a crate and edits no existing source file**; it may

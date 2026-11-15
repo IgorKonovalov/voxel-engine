@@ -12,7 +12,7 @@
 > the proposal; none of `cache_add`, the kept emitter, the fill pass or the reopen counter it
 > names exists in the tree.
 > **Date:** 2026-11-04
-> **Related plan(s):** [Plan 0058](../plans/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)
+> **Related plan(s):** [Plan 0058](../plans/done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)
 > (builds it, in its emission-scale phase, on the table
 > [Plan 0057](../plans/done/0057-steady-light-the-per-face-table-as-the-emissive-store-and-a-lamp-bounce-channel.md)
 > builds). Refines

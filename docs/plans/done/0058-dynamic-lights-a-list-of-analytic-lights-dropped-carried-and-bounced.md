@@ -1,6 +1,9 @@
 # 0058: Dynamic lights: a list of sixteen analytic lights the consumer hands the frame, shaded exactly, dropped and carried in the fly-through, and a bounce flag per source
 
-> **Status:** in-progress (dev, 2026-11-13), was approved, **amended 2026-11-14 (owner, at Phase 4's window: picks, a fix phase, a re-window)**, amended 2026-11-13 (refresh at a312c19; owner answers 7 to 10 the same day, keys re-checked at b1465ab)** (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
+> **Status:** done (closed 2026-11-15, v0.54.0; fresh-session close review: clean. Sixteen exact
+> lights with one shadow ray each, the direct part in rgb and a bounce flag per light, every
+> done-when met or moved by a recorded owner answer; ADR-0044 accepted with an Outcome),
+> was in-progress (dev, 2026-11-13), was approved, **amended 2026-11-14 (owner, at Phase 4's window: picks, a fix phase, a re-window)**, amended 2026-11-13 (refresh at a312c19; owner answers 7 to 10 the same day, keys re-checked at b1465ab)** (owner go 2026-11-10; the lane starts after Plan 0045 merges and the
 > architect's re-read below, order amended 2026-11-11), was draft (redrafted 2026-11-10 over the baked store of ADR-0046; the emission-scale
 > phase and ADR-0045 are gone, Plan 0059 built that; amended 2026-11-10 for a light fired in
 > flight, the owner's projectile: Phase 1's `6` and done-whens 11 and 12, Phase 4's run 5).
@@ -9,29 +12,29 @@
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start. **Done by the refresh of 2026-11-13:** every
 > path below is the tree's at a312c19.
 > **Created:** 2026-11-04
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the consumer's "headlamp, flares,
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the consumer's "headlamp, flares,
 > glowing crystal"; the per-source switch on feeding the probes, parked 2026-10-22)
-> **Related ADRs:** [ADR-0044](../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
-> (proposed; the list, exact shading, reach, history, the bounce flag), accepted at this plan's
-> close. Rests on [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> **Related ADRs:** [ADR-0044](../../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
+> (the list, exact shading, reach, history, the bounce flag), accepted 2026-11-15 at this
+> plan's close with an Outcome. Rests on [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (accepted: emissive light on a cube face is the baked store's, which this plan leaves alone),
-> on the lamp channel of [ADR-0043](../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
+> on the lamp channel of [ADR-0043](../../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
 > (accepted; its table is superseded by ADR-0046, its lamp channel stands) and on
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the lamp's exact estimate and its reset).
-> [ADR-0045](../adrs/0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md)
+> [ADR-0045](../../adrs/0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md)
 > is withdrawn: the store is baked at unit emission and read times the scale now since Plan 0059.
 > **Source:** the owner, 2026-11-04: "I want to be able to for example light cavern by dropping
 > some light source inside, and see lighting change in real time", and the answers under Owner
 > answers.
-> **Starts after:** [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md)'s
+> **Starts after:** [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md)'s
 > merge (owner, 2026-11-11: 0045 moves ahead of this plan; before that, Plans 0061, 0067 and
 > 0068 merge). The order is Plans 0061, 0067, 0045, this plan, then
-> [Plan 0044](0044-hot-path-and-defect-pass.md)'s render phases and Plan 0069. Plan 0061 edits
+> [Plan 0044](../0044-hot-path-and-defect-pass.md)'s render phases and Plan 0069. Plan 0061 edits
 > `temporal.wgsl` (the store read), `composite.wgsl` (the emitter cap) and `Lighting` (one bit),
 > the files Phases 1 and 2 here change, and 0045 moves `marcher.rs` and the shaders apart.
 > **Before the lane starts the architect re-reads Phases 1 and 2 against Plan 0045's tip** and
@@ -39,7 +42,7 @@
 > "the next free at the start commit", which dev reads from the tree.
 
 > **Amended 2026-11-14 (owner).** Phase 4's window ran 2026-11-14 (the verdict, (a) to (j), is
-> in [the log](logs/0058.md)); the stop rule did not trip: (a), (b) and (h) pass. The owner's
+> in [the log](../logs/0058.md)); the stop rule did not trip: (a), (b) and (h) pass. The owner's
 > picks (Owner answers 11 to 15):
 > 1. **Dropped and fired lights take intensity 600**, not 1200 (`1`, `6`; the `--lights` ring
 >    is 600 already). The box tests' 1200 and the analytic figures stay: they are the tests'
@@ -905,7 +908,7 @@ struct Lights {
 ```
 
 **The direct target, for the plans that add a term to it.**
-[Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s sun is
+[Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s sun is
 not a list entry (the list has no directional kind and ADR-0044 adds none); its sun and sky
 terms are added to this plan's direct target. What that target is at this plan's close:
 
@@ -952,7 +955,7 @@ the RTX**. The close's readings therefore add one arm to the table's command: `-
 and 8 as **dropped point lights at the hall**, beside the vein. A reading over 0.3 ms per
 light on the RTX is not a failure; it goes to the owner with the cap the render-profile plan
 would set (`docs/backlog.md`).
-[Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
+[Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)
 has landed (refresh 2026-11-13): the a-trous row's lamp-off base is its early-out, which any
 shaded light, still or moving, switches off (Phase 1's `LIGHTING_DIRECT`).
 
@@ -1107,7 +1110,7 @@ questions with recommendations):
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](logs/0058.md)) | 5bfae33, be6126e |
+| 1: The list, white, with the fly-through's drop and carry | dev | done (exploration; readings in [the log](../logs/0058.md)) | 5bfae33, be6126e |
 | 2: Colour: the direct part in a target of its own | dev | done (exploration) | 4854340 |
 | 3: The bounce flag | dev | done (exploration) | a616204 |
 | 4: The owner's window | human | done 2026-11-14 (verdict in the log; picks, faults to Phase 5) | |
@@ -1208,12 +1211,19 @@ each. Empty is fine.)_
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
+_(Left as the template by dev; filled at the close review from the readings log.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature.
+- **Public API changed:** `vxe_render::Light`, `MAX_LIGHTS`, `DEFAULT_LIGHT_FLOOR`,
+  `ATROUS_ITERATIONS` (now pub); `Frame::{set_lights, lights_over_cap, lights_changed, direct,
+  direct_accumulated, light_hit_positions, atrous_dispatches, gradient_strata}`;
+  `Lighting::{light_floor, atrous_iterations}`; `Params` loses its lamp fields for `lamp: Light`
+  and `light_floor`. Shaders: the lights uniform at group 0 binding 14, the direct target.
+  Fly-through: keys `1` to `6` and `F4`, the bake queue's toggles moved, `--lights`,
+  `--light-floor`, `--lights-bounce`, `--atrous-iterations`.
+- **Budget readings:** the log's Phase 3 cost table (a616204) and 5g (71b4478), headless,
+  1920 x 1080, FSR 2 at 1.5, one round each; `frame_bytes` + 5 529 600 B asserted.
+- **Gate at the tip:** the close review's run on the merged tree, in the close commit's notes.
+- **Outstanding `human` phases:** none.
 
 ## Followups
