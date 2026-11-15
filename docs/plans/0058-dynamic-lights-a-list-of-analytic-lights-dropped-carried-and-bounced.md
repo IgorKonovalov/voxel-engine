@@ -1111,7 +1111,7 @@ questions with recommendations):
 | 2: Colour: the direct part in a target of its own | dev | done (exploration) | 4854340 |
 | 3: The bounce flag | dev | done (exploration) | a616204 |
 | 4: The owner's window | human | done 2026-11-14 (verdict in the log; picks, faults to Phase 5) | |
-| 5: The window's picks and its faults | dev | in progress: 5a, 5c to 5f read; 5b and 5e's mask to the orchestrator (log) | |
+| 5: The window's picks and its faults | dev | done but one bar: native blue's (2) of 5b's soak test (log, open question) | fa4bb88, 7b8fc27, 320bce1, de3370b, 71b4478 |
 | 6: The owner's re-window | human | not started | |
 | 7: The picks as tests | dev | not started | |
 
@@ -1185,6 +1185,17 @@ each. Empty is fine.)_
   is read by no shader. `hud.png` and `mode_banner.png` re-blessed for their words (log).
 - Phase 5: the readings of 5b to 5e are `gpu_dynamic_lights.rs`'s `mod reading`; 5d's test is
   in `gpu_indirect.rs` and passes at the tip without a fix (the chain holds).
+- Phase 5c: the list's shadow ray aimed along the hit's direction, half a voxel off the
+  surface; fixed for every slot, the headlamp's included, so `headlamp.png` and
+  `look_contour.png` move from the start commit's baselines (re-blessed, log), against 5a's
+  "no new bless". 5b's fix moves `fsr2.png` (re-blessed, log).
+- Phase 5b: `a_saturated_light_near_a_wall_draws_no_rings` fails at the tip on native blue's
+  bar (2), 99.822 % within 2/255 against 99.9 %, the same at 297fda6 (log, open question);
+  its gate variant (red, FSR 2) passes. Phase 5e's fix (the upscalers' masks, owner answer)
+  replaces the plan's `a_pulsing_emitter_leaves_the_list_lights_history_alone` (the pulse
+  does not reach the direct history) with `a_pulsing_emitter_marks_only_where_its_light_lands`.
+- Merged main (v0.53.0) at 2f53150: `README.md`'s key and flag tables moved to
+  `docs/flythrough.md` on main, which gains this plan's light keys (outside Files touched).
 
 ### Close triggers
 
