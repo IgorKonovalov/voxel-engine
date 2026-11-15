@@ -12,8 +12,8 @@
 //                                                 colour (rgb) and temporal reactivity (a)
 //   4  texture_2d<f32>   lock_status_prev_in      rg32float: last frame's lock lifetime (x)
 //                                                 and temporal luma (y) (display size)
-//   5  texture_2d<f32>   prepared_in              rgba16float: the prepared input colour in
-//                                                 YCoCg (rgb) and the depth clip (a)
+//   5  texture_2d<f32>   prepared_in              rgba16float: the prepared input colour,
+//                                                 rgb, and the depth clip (a)
 //   6  texture_2d<f32>   luma_mip_in              r32float: the scene luminance pyramid's
 //                                                 shading-change mip (log luma)
 //   7  texture_2d<f32>   luma_history_prev_in     rgba8unorm: last frame's luma history
@@ -74,9 +74,9 @@ fn new_lock_index(p: vec2<i32>) -> u32 {
     return u32(p.y) * u32(cb.display_size.x) + u32(p.x);
 }
 
-// LoadPreparedInputColor.
+// LoadPreparedInputColor: the prepared rgb (depth_clip.wgsl) in YCoCg, converted in f32.
 fn load_prepared_input_color(p: vec2<i32>) -> vec3<f32> {
-    return load_clamped(prepared_in, p).xyz;
+    return rgb_to_ycocg(load_clamped(prepared_in, p).xyz);
 }
 
 // SampleDepthClip.

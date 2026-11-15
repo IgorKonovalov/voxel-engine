@@ -217,6 +217,231 @@ fn a_light_beside_steps_shadows_as_the_exact_ray_does() {
     );
 }
 
+/// The widened ring rig of Plan 0058 Phase 5b, toward the window where the rings showed: the
+/// light box's far wall seen square-on from (110, 32, 26), a light of 600 at (124, 32, 26)
+/// (`SURFACE_GAP` 2 off it), lamp off, the identity tone map, manual exposure 16 (auto's +4 EV
+/// limit, where the level settled), no light floor, half lighting resolution, and a dim white
+/// light of 30 at (60, 32, 26) in every frame (the level's baked light: the wall's other
+/// channels small but not zero). The final image after 32 still frames with `colour` (none:
+/// the dim light alone), native at 192 x 108 or FSR 2 at 1.5 from 128 x 72.
+fn ring_rig_image(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> Vec<u8> {
+    use vxe_render::{Exposure, LightingResolution, ToneMap, UpscalerKind};
+    let mut f = if native {
+        box_frame(&rig.device, [192, 108], [192, 108], None)
+    } else {
+        box_frame(
+            &rig.device,
+            [128, 72],
+            [192, 108],
+            Some(UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default())),
+        )
+    };
+    f.set_resolution(&rig.device, LightingResolution::Half);
+    f.set_lighting(Lighting {
+        tone_map: ToneMap::Identity,
+        exposure: Exposure::Manual(16.0),
+        light_floor: 0.0,
+        ..f.lighting()
+    });
+    let mut lights = vec![Light::point([60.0, 32.0, 26.0], 30.0)];
+    if let Some(c) = colour {
+        lights.push(Light {
+            colour: c,
+            ..Light::point([124.0, 32.0, 26.0], 600.0)
+        });
+    }
+    f.set_lights(&lights);
+    let camera = Camera {
+        position: [110.0, 32.0, 26.0].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 1.2,
+    };
+    for _ in 0..32 {
+        step_frame(rig, &mut f, &camera);
+    }
+    vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target())
+}
+
+/// Phase 5b's bars on [`ring_rig_image`] for one arm and one saturated colour (its channel
+/// `k`): (1) the other two channels equal the no-light frame's within 2/255 at every pixel (no
+/// pink in red, no magenta in blue); (2) its own channel equals the white frame's within 2/255
+/// at 99.9 % of pixels or more at native, within 4/255 at 99.5 % or more under FSR 2.
+fn no_rings(rig: &Rig, native: bool, name: &str, colour: [f32; 3], k: usize) -> Vec<String> {
+    let none = ring_rig_image(rig, native, None);
+    let white = ring_rig_image(rig, native, Some([1.0; 3]));
+    let c = ring_rig_image(rig, native, Some(colour));
+    let px = c.len() / 4;
+    let (mut other_max, mut other_n) = (0u8, 0usize);
+    let (tol, share) = if native { (2, 99.9) } else { (4, 99.5) };
+    let mut own_in = 0usize;
+    for i in 0..px {
+        for j in (0..3).filter(|&j| j != k) {
+            let d = c[4 * i + j].abs_diff(none[4 * i + j]);
+            other_max = other_max.max(d);
+            other_n += usize::from(d > 2);
+        }
+        own_in += usize::from(c[4 * i + k].abs_diff(white[4 * i + k]) <= tol);
+    }
+    let own = own_in as f64 * 100.0 / px as f64;
+    let arm = if native { "native" } else { "fsr2 1.5" };
+    println!(
+        "{arm} {name}: others against no light max {other_max}/255, {other_n} past 2; own channel within {tol}/255 of white at {own:.3} %"
+    );
+    let mut faults = Vec::new();
+    if other_n > 0 {
+        faults.push(format!(
+            "{arm} {name}: the other channels move by up to {other_max}/255"
+        ));
+    }
+    if own < share {
+        faults.push(format!(
+            "{arm} {name}: own channel within {tol}/255 of white at {own:.3} %"
+        ));
+    }
+    faults
+}
+
+/// A saturated light near a wall draws no rings (Plan 0058 Phase 5b): red and blue, native and
+/// FSR 2 at 1.5, on the widened ring rig ([`no_rings`]). The soak tier's; its gate
+/// variant is red under FSR 2.
+#[test]
+#[ignore = "soak"]
+fn a_saturated_light_near_a_wall_draws_no_rings() {
+    let Some(rig) = box_rig() else {
+        return;
+    };
+    let mut faults = Vec::new();
+    for native in [true, false] {
+        faults.extend(no_rings(&rig, native, "red", [1.0, 0.0, 0.0], 0));
+        faults.extend(no_rings(&rig, native, "blue", [0.0, 0.0, 1.0], 2));
+    }
+    assert!(faults.is_empty(), "{faults:#?}");
+}
+
+/// [`a_saturated_light_near_a_wall_draws_no_rings`]'s gate variant: red under FSR 2, where
+/// the rings showed.
+#[test]
+fn a_red_light_near_a_wall_draws_no_rings_under_fsr2() {
+    let Some(rig) = box_rig() else {
+        return;
+    };
+    let faults = no_rings(&rig, false, "red", [1.0, 0.0, 0.0], 0);
+    assert!(faults.is_empty(), "{faults:#?}");
+}
+
+/// A pulsing emitter marks only where its light lands (Plan 0058 Phase 5e): two rooms in
+/// rock with the emissive ore's table, room A over x 2..60 and room B over x 62..100 (y 2..30,
+/// z 2..30), joined by a door at x 60..62, y 2..10, z 2..10, an ore slab on B's floor (baked),
+/// and one still list light of 600 in A. From A, looking away from the door, under FSR 2 at
+/// 1.5 with the ore's scale changing every frame (`0.5 + 0.5 sin`), after 32 frames the
+/// reactive mask marks no pixel where the ore's baked light does not land: the hit is not an
+/// emitter and the steady run's emissive part is zero at the lighting texels around it.
+#[test]
+fn a_pulsing_emitter_marks_only_where_its_light_lands() {
+    use flythrough::cave::ORE;
+    use support::bake::{fill, rig_on, test_counts};
+    use vxe_render::debug::{read_float, read_rgba8};
+    let world = vxe_world::World::generate(
+        vxe_world::ChunkExtent::new([0, 0, 0], [2, 1, 1]),
+        &vxe_world::UniformSource(ROCK),
+        &support::cave_table(),
+    );
+    for (min, max) in [
+        ([2, 2, 2], [60, 62, 50]),
+        ([62, 2, 2], [100, 30, 30]),
+        ([60, 2, 2], [62, 10, 10]),
+    ] {
+        world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v: i64| v * FIXED_ONE)),
+                Fixed3(max.map(|v: i64| v * FIXED_ONE)),
+                Mode::Carve,
+            ))
+            .expect("resident");
+    }
+    fill(&world, [80, 10, 2], [90, 20, 4], ORE);
+    let Some(mut rig) = rig_on(world, [192, 108], None) else {
+        return;
+    };
+    let camera = Camera {
+        position: [50.0, 30.0, 26.0].into(),
+        yaw: std::f32::consts::PI,
+        pitch: -0.3,
+        vfov: 1.2,
+    };
+    let run = |rig: &mut Rig, pulse: bool| {
+        rig.frame = box_frame(
+            &rig.device,
+            [128, 72],
+            [192, 108],
+            Some(vxe_render::UpscalerKind::Fsr2(Default::default())),
+        );
+        rig.bake(&test_counts(256));
+        rig.frame
+            .set_lights(&[Light::point([30.0, 32.0, 22.0], 600.0)]);
+        for i in 0..32 {
+            let s = if pulse {
+                0.5 + 0.5 * (i as f32).sin()
+            } else {
+                1.0
+            };
+            rig.frame.set_emission_scale(&rig.queue, ORE, s);
+            step(rig, &camera);
+        }
+    };
+    run(&mut rig, false);
+    let emissive = read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+    let grid = [
+        rig.frame.accumulated().width() as i32,
+        rig.frame.accumulated().height() as i32,
+    ];
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    run(&mut rig, true);
+    let mask = read_rgba8(
+        &rig.device,
+        &rig.queue,
+        rig.frame.fsr2().expect("fsr 2").reactive(),
+    );
+    // Internal pixel `(x, y)` reads the lighting texels around `(x, y) / 2` (half
+    // resolution, the box frame's own is full: scale 1).
+    let scale = 128 / grid[0];
+    let (mut lands, mut marked, mut wrong, mut hits) = (0, 0, 0, 0);
+    for y in 0..72i32 {
+        for x in 0..128i32 {
+            let i = (y * 128 + x) as usize;
+            if info[i][3] & 1 == 0 {
+                continue;
+            }
+            hits += 1;
+            let ore = info[i][2] == ORE;
+            let lit = (0..4).any(|t| {
+                let q = [x / scale + (t & 1), y / scale + (t >> 1)];
+                q[0] < grid[0]
+                    && q[1] < grid[1]
+                    && emissive[(q[1] * grid[0] + q[0]) as usize][..3]
+                        .iter()
+                        .any(|&v| v > 0.0)
+            });
+            let m = mask[4 * i] > 0;
+            lands += usize::from(ore || lit);
+            marked += usize::from(m);
+            wrong += usize::from(m && !(ore || lit));
+        }
+    }
+    println!(
+        "{hits} hits, the ore's light lands at {lands}; the pulsing mask marks {marked}, {wrong} where it does not land"
+    );
+    assert!(
+        hits > 5000 && lands > 50 && hits - lands > 1000,
+        "{hits} {lands}"
+    );
+    assert_eq!(
+        wrong, 0,
+        "{wrong} pixels marked where the ore's light does not land"
+    );
+}
+
 /// The readings: each test prints the direct part at named floor pixels against the analytic
 /// term and asserts nothing a gate runs. `cargo nextest run -p flythrough --run-ignored only
 /// -E 'binary(=gpu_dynamic_lights) & test(/reading::/)' --no-capture`.
@@ -1388,20 +1613,8 @@ mod reading {
                             stage_line(t, &rd(&c, t), &rd(&white, t), k);
                         }
                         if !native {
-                            // The prepared colour is YCoCg: G = Y + Cg, B = Y - Co - Cg.
-                            let back = |v: Vec<[f32; 4]>| -> Vec<[f32; 4]> {
-                                v.iter()
-                                    .map(|p| {
-                                        [p[0] + p[1] - p[2], p[0] + p[2], p[0] - p[1] - p[2], 0.0]
-                                    })
-                                    .collect()
-                            };
-                            stage_line(
-                                "prepared (rgb)",
-                                &back(rd(&c, "prepared")),
-                                &back(rd(&white, "prepared")),
-                                k,
-                            );
+                            // The prepared colour is rgb (Plan 0058 Phase 5b).
+                            stage_line("prepared", &rd(&c, "prepared"), &rd(&white, "prepared"), k);
                         }
                         // The final image, bytes against the white frame's (own) and the
                         // no-light frame's (others).
