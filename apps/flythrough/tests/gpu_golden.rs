@@ -382,18 +382,6 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
     }
 }
 
-/// Makes every chunk of `world` for which `lod` holds LOD-only: out of the store, into the
-/// world's mips.
-fn make_lod(world: &World, lod: impl Fn(ChunkCoord) -> bool) {
-    for c in world.store().coords() {
-        if lod(c) {
-            let chunk = world.store().remove(c).unwrap();
-            let mips = ChunkMips::build(&chunk.read().unwrap());
-            world.insert_lod(c, std::sync::Arc::new(mips));
-        }
-    }
-}
-
 /// Renders `world` from `camera` under each of `lights` with `lod`, on `device`.
 fn render_with(
     device: &wgpu::Device,
@@ -499,17 +487,6 @@ impl WorldSource for UniformBelow {
             out.set_brick(slot, Brick::Uniform(m));
         }
     }
-}
-
-/// The carved golden scene with every chunk farther than squared distance 1 from the
-/// camera's chunk LOD-only.
-fn lod_scene() -> World {
-    let world = carved_world();
-    let cam = VoxelCoord(scene_source().spawn().0).chunk();
-    make_lod(&world, |c| {
-        (0..3).map(|k| (c.0[k] - cam.0[k]).pow(2)).sum::<i32>() > 1
-    });
-    world
 }
 
 /// `lod.png`: the golden scene from the spawn pose with chunks past squared distance 1 of the
@@ -1798,19 +1775,12 @@ mod reading {
     #[ignore = "a diagnostic reading on the high-performance adapter; run by hand with --ignored"]
     fn cutaway_steps_from_outside_the_level_at_1080p() {
         let world = seed_1_level();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))
-        .expect("an adapter");
         let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_limits:
-                vxe_render::limits_for(&adapter, pool_bytes).expect("the frame's limits"),
-            ..Default::default()
-        }))
-        .expect("a device");
+        let Some((device, queue, adapter)) =
+            vxe_render::test_support::high_performance_device(pool_bytes, wgpu::Features::empty())
+        else {
+            return;
+        };
         let cfg = MirrorConfig {
             budget_bytes: 256 << 20,
             ..MirrorConfig::new(Window::Fixed(world.extent()))
@@ -1839,7 +1809,7 @@ mod reading {
             let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
             println!(
                 "{} at {w}x{h}, cutaway {cutaway}: steps per ray mean {:.2} p99 {}, rays at the 255 clamp {saturated} of {}",
-                adapter.get_info().name,
+                adapter,
                 hist.mean_steps(),
                 hist.p99_steps(),
                 w * h

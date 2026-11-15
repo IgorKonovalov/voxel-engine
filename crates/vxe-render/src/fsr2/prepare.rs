@@ -42,11 +42,11 @@ pub(crate) const SHADING_CHANGE_MIP: i32 = 4;
 /// `Fsr2InputTuning` in `input.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct InputUniform {
-    pub(super) near: f32,
-    pub(super) reactive_translucent: f32,
-    pub(super) reactive_light: f32,
-    pub(super) _pad: f32,
+pub(crate) struct InputUniform {
+    pub(crate) near: f32,
+    pub(crate) reactive_translucent: f32,
+    pub(crate) reactive_light: f32,
+    pub(crate) _pad: f32,
 }
 
 /// The frame's targets FSR reads and writes: this frame's hit buffer and translucent layers,

@@ -1,7 +1,7 @@
 # 0044: The hot-path and defect pass: what the frame, the sync, the walk, the edits and the audio callback do for nothing
 
-> **Status:** in-progress (2026-11-10, side lane: Phases 1, 6, 7); approved 2026-10-22, amended
-> 2026-11-10 (review pass)
+> **Status:** in-progress (2026-11-15, Phases 2, 3, 5, 8 from `371fa7a`; side lane Phases 1, 6,
+> 7 merged at `d6d2dfa`); approved 2026-10-22, amended 2026-11-10 (review pass)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -564,15 +564,15 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the inventory at the start commit | dev | side-lane rows only (Phases 1, 6, 7); the render rows wait for Phases 2-5, 8 | e1388e1 |
+| 0: the inventory at the start commit | dev | side-lane rows (Phases 1, 6, 7) at `5274772`; the render rows (Phases 2, 3, 5, 8, the bake, probes and light inventory) at `371fa7a`, in the readings log | e1388e1, committed with this row |
 | 1: the audio callback frees nothing and zeroes nothing large | dev | done; deviations: `lib.rs` exports `Recycler` and `ReverbClears` (not in Files touched); the FDN clear swaps with a third spare set of lines (+1.8 MB); the paired mixer bench reads +0.2 to +0.8 % (kept: it removes the counted frees) | ab366e7 |
-| 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | not started | |
+| 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | struck: run as Plan 0064's Phase 3 (moved there 2026-11-10); nothing rebuilt here | Plan 0064 (373beb9) |
 | 3: the frame builds its bind groups once per size | dev | not started | |
 | 4: the sync sizes only what it uploads | dev | struck into Plan 0070 (owner, 2026-11-12). There: `place_lights` walks only when a light chunk or its focus changed (`ef0b55c`), and the emitter rescan set is a `[u64; 8]` (`297e7a9`). Not built: the deferral ahead of `need()`, the masks carried to `upload`, `upload_set` as a bitset (still a `Vec<bool>`), the scratch `Vec`s; the `sized_chunks` property for a prepared chunk left with ADR-0056's worker packing, deferred | Plan 0070 |
 | 5: the march walks without reading what it discards | dev | not started | |
 | 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | ebd54e3 |
 | 7: the controller and the server stop repeating work | dev | done; deviations: the box list is per-thread scratch with a recollect past its region, and covers the usual sweeps only; the counting test is in `vxe-sim/tests/controller.rs`; inputs are logged after the logic's tick | 2ede457 |
-| 8: the guards that were missing | dev | not started | |
+| 8: the guards that were missing | dev | done, run ahead of Phases 3 and 5 (its Order line); deviations: the helpers take `(pool_bytes, features)` and an adapter-level form, `VXE_TEST_ADAPTER_FILTER` is the name filter; the layout test is `src/layout_tests.rs` (a unit test), with visibility raised to `pub(crate)` on six mirrored structs (`frame/{state,lights,upscale}.rs`, `fsr2/prepare.rs`, `field.rs`, `hud.rs`) and three constants (`bake/`) outside Files touched; it lists eight same-named literal constants it compares rather than moving them | committed with this row |
 
 ### Notes
 

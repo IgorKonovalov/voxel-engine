@@ -64,10 +64,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("RECORD_WORDS", RECORD_WORDS as u32),
     ("ENTRY_WORD", ENTRY_WORD as u32),
     ("HEADER_WORD", UNIT_WORDS as u32),
-    (
-        "HEADER_TRANSLUCENT_WORD",
-        (UNIT_WORDS + HEADER_TRANSLUCENT_WORD) as u32,
-    ),
+    ("HEADER_TRANSLUCENT_WORD", HEADER_TRANSLUCENT_WORD as u32),
     ("PAYLOAD_WORD", 2 * UNIT_WORDS as u32),
     ("HEADER_BAND_WORD", HEADER_BAND_WORD as u32),
     ("HEADER_BAND_BIT", HEADER_BAND_BIT),
@@ -80,6 +77,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("SMOOTH_COUNT_BIT", SMOOTH_COUNT_BIT as u32),
     // `Params.flags` and `Params.lighting` (`frame/settings.rs`).
     ("MAX_VIEWS", MAX_VIEWS as u32),
+    ("MAX_EDITS", MAX_EDITS as u32),
     ("FLAG_SHADOWS", FLAG_SHADOWS),
     ("FLAG_MASKS", FLAG_MASKS),
     ("NORMAL_SHIFT", NORMAL_SHIFT),
@@ -338,7 +336,8 @@ mod tests {
     fn the_prelude_holds_the_rust_values() {
         let p = prelude();
         assert!(p.contains("const FULL_BIT: u32 = 2147483648u;"));
-        assert!(p.contains("const HEADER_TRANSLUCENT_WORD: u32 = 24u;"));
+        assert!(p.contains("const HEADER_TRANSLUCENT_WORD: u32 = 8u;"));
+        assert!(p.contains("const MAX_EDITS: u32 = 64u;"));
         assert!(p.contains("const PAYLOAD_WORD: u32 = 32u;"));
         assert!(p.contains("const FLAG_FIELD_SPLIT: u32 = 524288u;"));
         assert!(p.contains("const MATERIAL_TRANSLUCENT: u32 = 2u;"));

@@ -138,10 +138,10 @@ pub(super) fn light_table(world: &GpuWorld, eye: [f32; 3]) -> LightTableUniform 
 /// The temporal pass's edit boxes, field for field with `Edits` in `temporal.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct EditsUniform {
-    pub(super) count: u32,
-    pub(super) _pad: [u32; 3],
-    pub(super) boxes: [[i32; 4]; 2 * MAX_EDITS],
+pub(crate) struct EditsUniform {
+    pub(crate) count: u32,
+    pub(crate) _pad: [u32; 3],
+    pub(crate) boxes: [[i32; 4]; 2 * MAX_EDITS],
 }
 
 /// The 128 x 128 blue-noise ranks (`assets/blue_noise_128.r8`, made by
@@ -149,7 +149,7 @@ pub(super) struct EditsUniform {
 pub(super) const BLUE_NOISE: &[u8; 128 * 128] = include_bytes!("../../assets/blue_noise_128.r8");
 
 /// Material ids the emission-scale buffer covers: every `u16`.
-pub(super) const EMISSION_ROWS: usize = 1 << 16;
+pub(crate) const EMISSION_ROWS: usize = 1 << 16;
 
 /// What the frame's uniforms are built from: the parameter and edit-box buffers, the a-trous
 /// strides, the LOD, the look, the lighting, the emission scales, the blue noise, the frame

@@ -10,13 +10,20 @@ description = "placeholder; see docs/roadmap.md"
 [lints]
 workspace = true
 
+[features]
+# The test devices in `test_support` (one skip-or-require rule for the software adapter), for
+# this crate's tests and the tests of crates that render.
+test-support = ["dep:pollster"]
+
 [dependencies]
 bytemuck.workspace = true
 glam.workspace = true
+pollster = { workspace = true, optional = true }
 vxe-world.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
 log.workspace = true
 pollster.workspace = true
+vxe-render = { workspace = true, features = ["test-support"] }
 criterion.workspace = true

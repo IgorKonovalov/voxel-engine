@@ -463,7 +463,7 @@ fn tlookup(v: vec3<i32>) -> TCell {
     if (skips) {
         let l = dsc.l;
         let block = l.x / 2u + 4u * (l.y / 2u) + 16u * (l.z / 2u);
-        let tw = mask_word_at(unit, HEADER_TRANSLUCENT_WORD + block / 32u);
+        let tw = mask_word_at(unit, HEADER_WORD + HEADER_TRANSLUCENT_WORD + block / 32u);
         if ((tw & (1u << (block % 32u))) == 0u) {
             return TCell(2 * cell, 0u, cell);
         }

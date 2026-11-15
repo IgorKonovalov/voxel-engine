@@ -179,13 +179,13 @@ pub(crate) struct FieldItem {
 /// The field pass's uniform: `field.wgsl`'s `Params`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct Params {
-    window_min: [i32; 3],
-    units_per_shard: u32,
-    window_size: [i32; 3],
-    items: u32,
-    groups_x: u32,
-    _pad: [u32; 3],
+pub(crate) struct Params {
+    pub(crate) window_min: [i32; 3],
+    pub(crate) units_per_shard: u32,
+    pub(crate) window_size: [i32; 3],
+    pub(crate) items: u32,
+    pub(crate) groups_x: u32,
+    pub(crate) _pad: [u32; 3],
 }
 
 /// The field pass: its pipeline and the buffers it keeps between calls.

@@ -6,41 +6,12 @@ use vxe_render::{Camera, Frame, GpuWorld, LightParams, Lighting, glam::Vec3, wgp
 use vxe_world::*;
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    }))
-    .or_else(|_| pollster::block_on(instance.request_adapter(&Default::default())));
-    let Ok(adapter) = adapter else {
-        println!("skipped: no adapter");
-        return None;
-    };
-    let desc = wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits"),
-        ..Default::default()
-    };
-    Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
+    vxe_render::test_support::any_device(16 << 20, wgpu::Features::empty())
 }
 
 /// As [`device`], with `TIMESTAMP_QUERY` where the adapter has it.
 fn timed_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    }))
-    .or_else(|_| pollster::block_on(instance.request_adapter(&Default::default())));
-    let Ok(adapter) = adapter else {
-        println!("skipped: no adapter");
-        return None;
-    };
-    let desc = wgpu::DeviceDescriptor {
-        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-        required_limits: vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits"),
-        ..Default::default()
-    };
-    Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
+    vxe_render::test_support::any_device(16 << 20, wgpu::Features::TIMESTAMP_QUERY)
 }
 
 /// One chunk, rock below z = 32 and air above, mirrored.

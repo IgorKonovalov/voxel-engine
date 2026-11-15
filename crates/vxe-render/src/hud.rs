@@ -39,11 +39,11 @@ pub enum HudColour {
 /// The uniform block of `hud.wgsl`, field for field.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct Params {
-    scale: u32,
-    sample_count: u32,
-    ceiling_ms: f32,
-    line_px: u32,
+pub(crate) struct Params {
+    pub(crate) scale: u32,
+    pub(crate) sample_count: u32,
+    pub(crate) ceiling_ms: f32,
+    pub(crate) line_px: u32,
 }
 
 /// The overlay's GPU state: its pipeline, the cell grid and the strip's samples, written by
