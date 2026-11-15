@@ -514,10 +514,11 @@ impl Frame {
         self.entities.entities_moved()
     }
 
-    /// Bytes the frame's targets, its probe volume (once built), FSR 2's resources and the store's
-    /// pool (once allocated) occupy.
+    /// Bytes the frame's targets, its probe volume (once built), FSR 2's resources, the store's
+    /// pool (once allocated) and the entity mirror ([`crate::EntityMirror::bytes`]) occupy.
     pub fn frame_bytes(&self) -> u64 {
         self.targets.bytes()
+            + self.entities.bytes()
             + self.probe.volume.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
             + self.up.fsr.as_ref().map_or(0, Fsr2::bytes)

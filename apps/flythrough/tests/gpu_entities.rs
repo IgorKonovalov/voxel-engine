@@ -1433,6 +1433,28 @@ fn history_does_not_cross_between_instances() {
     assert!(frames >= 12, "{frames} frames");
 }
 
+// ---- Phase 5: the costs and the caps ----
+
+/// Phase 5 done-when 1: the entity mirror's buffer is 8 458 240 bytes at the default pool (the
+/// tree 4096, the instances 65 536, the pool 8 MiB), and the frame's inventory (`frame_bytes`)
+/// holds it: a frame whose mirror is swapped for one with no pool reads exactly the pool less.
+#[test]
+fn entity_bytes_are_in_the_inventory() {
+    let Some((device, _queue)) = support::software_device(64 << 20) else {
+        return;
+    };
+    let mut frame = vxe_render::Frame::with_sizes(&device, [W, H], [W, H]);
+    assert_eq!(frame.entity_mirror().bytes(), 8_458_240);
+    let with = frame.frame_bytes();
+    frame.set_entity_mirror(EntityMirror::new(&device, 0));
+    assert_eq!(frame.entity_mirror().bytes(), 4096 + 65_536);
+    let without = frame.frame_bytes();
+    println!(
+        "frame_bytes at {W} x {H}: {with} B with the default mirror, {without} B with no pool"
+    );
+    assert_eq!(with - without, 8 << 20);
+}
+
 /// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`), on the adapter
 /// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
 mod reading {
@@ -1574,5 +1596,87 @@ mod reading {
                 ms[32], ms[57]
             );
         }
+    }
+
+    /// Phase 5 done-when 2, the CPU: `Frame::set_entities` at 64 walkers on a ring (each frame a
+    /// new pose, so every part moves), and `EntitySet::raycast` at those walkers over 4096 seeded
+    /// rays from the ring's centre, the mean of each.
+    #[test]
+    #[ignore = "reading"]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a reading of the CPU's time, by wall clock"
+    )]
+    fn the_cpu_cost_at_64_walkers() {
+        let (t, _) = table();
+        let Some((mut rig, adapter)) = reading_rig(entity_box(&t)) else {
+            return;
+        };
+        let (body, eye) = walker::rows(rig.world.materials()).expect("the walker's rows");
+        let model = Arc::new(walker::model(body, eye));
+        let h = rig
+            .frame
+            .entity_mirror_mut()
+            .upload_model(&rig.queue, &model, rig.world.materials())
+            .expect("room");
+        let centre = [64.0f32, 32.0, 2.0];
+        let feet: Vec<[f32; 3]> = (0..64)
+            .map(|k| {
+                let a = std::f32::consts::TAU * k as f32 / 64.0;
+                [centre[0] + 24.0 * a.cos(), centre[1] + 24.0 * a.sin(), 2.0]
+            })
+            .collect();
+        let mut set = EntitySet::new();
+        let ids: Vec<EntityId> = feet
+            .iter()
+            .map(|&f| {
+                set.insert(model.clone(), walker::pose(f, 0.0, 0.0))
+                    .expect("fits")
+            })
+            .collect();
+        let list: Vec<(EntityId, ModelHandle)> = ids.iter().map(|&id| (id, h)).collect();
+        let rounds = 256;
+        let mut set_ms = Vec::new();
+        for r in 0..rounds {
+            for (k, &id) in ids.iter().enumerate() {
+                let swing = 0.5 * ((r + k) as f32 * 0.1).sin();
+                set.set_pose(id, walker::pose(feet[k], 0.01 * r as f32, swing))
+                    .expect("fits");
+            }
+            let t0 = std::time::Instant::now();
+            rig.frame.set_entities(&rig.queue, &set, &list);
+            set_ms.push(t0.elapsed().as_secs_f64() * 1e3);
+        }
+        assert_eq!(rig.frame.entity_mirror().parts_drawn(), 256);
+        set_ms.sort_by(f64::total_cmp);
+        let mean = set_ms.iter().sum::<f64>() / rounds as f64;
+        // Seeded rays from above the ring's centre, spread over the lower hemisphere.
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let origin = Fixed3([64 * 256, 32 * 256, 8 * 256]);
+        let rays: Vec<[i64; 3]> = (0..4096)
+            .map(|_| {
+                let a = std::f64::consts::TAU * next();
+                let z = -0.6 * next();
+                let r = (1.0 - z * z).sqrt();
+                [a.cos() * r, a.sin() * r, z].map(|v| (v * 256.0).round() as i64)
+            })
+            .collect();
+        let t0 = std::time::Instant::now();
+        let mut hits = 0;
+        for d in &rays {
+            hits += usize::from(set.raycast(origin, *d, 200 * 256).is_some());
+        }
+        let ray_us = t0.elapsed().as_secs_f64() * 1e6 / rays.len() as f64;
+        println!(
+            "{adapter}: set_entities at 64 walkers (256 parts), {rounds} rounds: mean {mean:.4} ms, median {:.4} ms, p90 {:.4} ms; EntitySet::raycast over 4096 rays: mean {ray_us:.2} us, {hits} hits",
+            set_ms[rounds / 2],
+            set_ms[rounds * 9 / 10]
+        );
     }
 }
