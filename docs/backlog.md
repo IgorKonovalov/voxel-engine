@@ -39,7 +39,18 @@ the owner is away; the owner may overturn it).
 
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
-Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out.
+Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart.
+
+### Windows draws the whole image two to three times darker than Linux
+
+Noted 2026-11-15 from the owner's Windows run (same laptop, v0.54.0, RTX on Vulkan, the window
+on the AMD iGPU's display): every scene, the overall brightness down by about 2 to 3x, not only
+the dark tones. A decode without its encode (`pow(x, 2.2)`: 0.5 to 0.22) would fit; by a code
+read the present pass matches the surface format, but the format picked is not logged. Also
+suspected: the panel's backlight on Windows (AMD Vari-Bright, power plan). What it takes: log
+the surface format and colour space at start (and into `system.json`/`run.json`), compare a
+Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_srgb`'s
+`pow 2.2` for the exact sRGB decode. Pick up before the next tester archive.
 
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
@@ -88,6 +99,16 @@ released over a pit lands as the same pile with the same hash on both CI arms) a
 reading against a new `nfr.md` line.
 
 Pick up when the lighting base is settled: Plans 0056, 0057 and 0058 closed.
+
+### Darker scenes, and light intensity varied by seed
+
+Noted 2026-11-15, the owner, after the darker Windows image: "it was a nice scene, we should
+make lights darker, or random in darkness as well". Two parts: the test scenes' lights
+(fly-through, consumer side) set dimmer, and a seeded per-light intensity spread so some
+lights are dim and some dark. The engine side is the scale over the table (ADR-0045) and the
+light list's per-light intensity (ADR-0044); the randomness belongs to the scene's seed, not
+the engine. Pick up after the Windows brightness entry is explained, so "darker" is judged on
+a correct image.
 
 ### Per-source indirect light
 
