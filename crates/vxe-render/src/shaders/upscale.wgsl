@@ -17,6 +17,8 @@
 //   7  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //   8  uniform           up_tuning       the kernel width, blend weights, clip and light
 //                                        change tuning (`Upscaler` in frame/upscale.rs)
+//   9  texture_2d<f32>   up_emissive_in  the temporal pass's emissive part (rgb, lighting
+//                                        grid): where an emission change lands
 //
 // Coordinates: internal pixel `i` spans `[i, i + 1)` and this frame's sample of it lies at
 // `i + 0.5 + jitter`; output pixel `o`'s centre is at internal `(o + 0.5) size / output_size`.
@@ -68,6 +70,7 @@ struct UpTuning {
 };
 
 @group(2) @binding(8) var<uniform> up_tuning: UpTuning;
+@group(2) @binding(9) var up_emissive_in: texture_2d<f32>;
 
 const CLIP_STILL: f32 = 0.01;
 // temporal.wgsl's HISTORY_COS, HISTORY_DIST and HISTORY_DIST_PER_T.
@@ -86,13 +89,33 @@ fn up_kernel(d: vec2<f32>) -> f32 {
 // moving one.
 const EXPOSURE_MOVE: f32 = 1.0 / 64.0;
 
-// Whether the light at `rec` changed since the older frame `up_tuning` holds: an emission
-// scale changed within EMISSION_CHANGE_FRAMES, the exposure moved by more than EXPOSURE_MOVE EV
+// Whether an emitter's light lands at internal pixel `px` (hit `rec`): the hit's material
+// emits, or the temporal pass's emissive part (the store's value at a cube face, a fallback's
+// sample elsewhere) is non-zero at any of the lighting texels around it. An emission scale
+// change marks these pixels alone; the rest of the image keeps its history.
+fn emission_lands(px: vec2<i32>, rec: HitRecord) -> bool {
+    if (any(materials[rec.material * 4u + 1u].xyz != vec3<f32>(0.0))) {
+        return true;
+    }
+    let o = vec2<f32>(unpack_offset(params.light_offset));
+    let base = vec2<i32>(floor((vec2<f32>(px) - o) / f32(params.light_scale)));
+    for (var i = 0; i < 4; i++) {
+        let q = base + vec2<i32>(i & 1, i >> 1);
+        if (on_light_grid(q) && any(textureLoad(up_emissive_in, q, 0).xyz > vec3<f32>(0.0))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether the light at `rec` (internal pixel `px`) changed since the older frame `up_tuning`
+// holds: an emission scale changed within EMISSION_CHANGE_FRAMES where an emitter's light
+// lands (`emission_lands`), the exposure moved by more than EXPOSURE_MOVE EV
 // since the last frame (the history is display-encoded, so it cannot be rescaled: ADR-0033),
 // or the list's summed term (each light inside its reach and window) moved past the
 // thresholds; with the list now equal to the older list (`lights.changed` 0) it did not.
-fn up_light_changed(rec: HitRecord) -> bool {
-    if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
+fn up_light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
+    if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u && emission_lands(px, rec)) {
         return true;
     }
     if (abs(log2(exposure_ratio())) > EXPOSURE_MOVE) {
@@ -250,7 +273,7 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
                     // camera without moving the history is an edit (rejected above) or light,
                     // which is clipped and blended as motion.
                     var still = length(h - (vec2<f32>(gid.xy) + 0.5)) < CLIP_STILL;
-                    if (still && up_light_changed(rec)) {
+                    if (still && up_light_changed(near, rec)) {
                         still = false;
                     }
                     let b_lo = select(max(lo, mean - up_tuning.clip_gamma * sigma), vec3<f32>(-1e9), still);

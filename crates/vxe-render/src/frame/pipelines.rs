@@ -234,6 +234,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
                 F16,
                 Io::Uniform,
                 Io::Uniform,
+                Io::Float,
             ]),
         ],
         lazy: false,

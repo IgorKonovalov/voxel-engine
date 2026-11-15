@@ -151,6 +151,7 @@ pub(crate) const FSR2_PIPES: [FsrPassSpec; 9] = [
             (6, R32F),
             (7, RG32F),
             (8, RGBA8),
+            (9, Io::Float),
         ],
     },
     FsrPassSpec {

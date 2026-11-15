@@ -684,6 +684,7 @@ impl Frame {
                     Res::Tex(&hist[c]),
                     Res::Buf(&self.state.edits),
                     Res::Buf(&self.up.params),
+                    Res::Tex(&t.accum[c]),
                 ],
             )
         });
@@ -863,6 +864,7 @@ impl Frame {
                         hit_pos: &t.hit_pos[c],
                         hit_info: &t.hit_info[c],
                         layer: &t.layer,
+                        emissive: &t.accum[c],
                         edits: &self.state.edits,
                         lamp: &self.up.params,
                         output: &t.output,
