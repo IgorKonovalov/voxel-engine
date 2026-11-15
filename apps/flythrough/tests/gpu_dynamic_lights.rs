@@ -382,8 +382,8 @@ fn a_coloured_light_in_flight_lights_its_channel_only() {
 /// frames at the half tier: on every frame the direct part at the floor's lighting texel under
 /// the light reads its term within 2 % after the temporal pass (the lamp-off store-only path
 /// did not drop it), and after the filter it is non-zero (the early-out did not pass it
-/// around). The filtered value's ratio to the term is printed: Plan 0058 Phase 1's 2 % on it is not
-/// met (the a-trous lowers the peak under the light; Plan 0058's log, Phase 7).
+/// around). The filtered value's ratio to the term is printed, not held to 2 % (owner,
+/// 2026-11-15): the a-trous lowers the smooth peak under the light by 2 to 2.5 %.
 #[test]
 fn a_list_light_with_the_lamp_off_survives_the_lamp_off_skips() {
     let Some(mut rig) = box_rig() else {
@@ -427,9 +427,9 @@ fn a_list_light_with_the_lamp_off_survives_the_lamp_off_skips() {
 }
 
 /// Phase 1 done-when 8: in the gradient mode with two still list lights of 1200 and the lamp
-/// off, over 16 still frames after the first (which has no history) the list is unchanged and
-/// every stratum re-shades a lit pixel; the strata's lambda is printed: Plan 0058 Phase 1's exact 0 is
-/// not met (one f16 step, about 1e-3; Plan 0058's log, Phase 7).
+/// off, over 16 still frames after the first (which has no history) the list is unchanged,
+/// every stratum re-shades a lit pixel, and every stratum's lambda is at most 2^-10, one f16
+/// step (owner, 2026-11-15): the re-shade and the stored estimate differ by rounding alone.
 #[test]
 fn the_gradient_mode_holds_still_under_a_still_list() {
     let Some(mut rig) = box_rig() else {
@@ -462,6 +462,10 @@ fn the_gradient_mode_holds_still_under_a_still_list() {
         worst = strata.iter().map(|s| s[0]).fold(worst, f32::max);
     }
     println!("{n} strata-frames: lambda above 0 at {moved}, largest {worst}");
+    assert!(
+        worst <= 1.0 / 1024.0,
+        "lambda {worst} over one f16 step under a still list"
+    );
 }
 
 /// Phase 2 done-when 1: a red light (1, 0, 0) and a blue light (0, 0, 1) of 1200 each at 20
@@ -901,8 +905,9 @@ fn a_pulsing_emitter_marks_only_where_its_light_lands() {
 }
 
 /// The readings: each test prints figures (the hall's settle, the stages of a coloured light,
-/// clamps, shadows, the bounce and the ore pulse) and asserts nothing a gate runs. `cargo nextest run -p flythrough --run-ignored only
-/// -E 'binary(=gpu_dynamic_lights) & test(/reading::/)' --no-capture`.
+/// clamps, shadows, the bounce and the ore pulse) and asserts nothing a gate runs. `cargo
+/// nextest run -p flythrough --run-ignored only -E 'binary(=gpu_dynamic_lights) &
+/// test(/reading::/)' --no-capture`.
 mod reading {
     use super::*;
 
