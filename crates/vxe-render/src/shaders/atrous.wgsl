@@ -61,6 +61,8 @@ struct Step {
 const VARIANCE_AGE: f32 = 4.0;
 const SIGMA_PLANE: f32 = 1.0;
 const SIGMA_LUM: f32 = 4.0;
+// The f16 moments' rounding residue as a share of the second moment: three steps of 2^-11.
+const MOMENT_ROUNDING: f32 = 0.0015;
 
 fn load_hit(q: vec2<i32>) -> HitRecord {
     return unpack_hit(textureLoad(hit_pos_in, q, 0), textureLoad(hit_info_in, q, 0));
@@ -111,7 +113,11 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz;
     let m = mw.xyz;
     let rec = load_hit(px);
-    var v = max(m.y - m.x * m.x, 0.0);
+    // The pixel's own variance, less the moments' rounding: each moment is an f16 (relative step
+    // 2^-11), so `m2 - m1^2` of a still, noise-free light is a residue of up to about three steps
+    // of m2, positive or negative. Without the floor that residue sets a sigma that depends on
+    // the light's magnitude (a dim blue filters where a white of the same channel does not).
+    var v = max(m.y - m.x * m.x - MOMENT_ROUNDING * m.y, 0.0);
     let dark_store = mw.w > 0.5 && (params.lighting & LIGHTING_DIRECT) == 0u && direct.w == 0.0;
     if (rec.found && m.z < VARIANCE_AGE && !dark_store) {
         let eye = eye_of(px);

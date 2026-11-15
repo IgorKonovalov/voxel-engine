@@ -17,7 +17,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | in-progress | Code health. Side lane (Phases 1, 6, 7 and their Phase 0 rows) merged d6d2dfa; Phases 2, 3, 5, 8 after 0058; Phase 4 went to Plan 0070. |
-| [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: sixteen analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | in-progress | M2, ADR-0044 (proposed). Phase 4 window 2026-11-14: picks taken; fix Phase 5, re-window 6, tests 7. |
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | in-progress | M6, ADR-0050 (proposed). Phase 1 merged 74ae796; Phases 2-6 after 0058. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | in-progress | M6, ADR-0051 (proposed). Phases 1-2 merged 7ca423c; Phases 3-4 after 0062. |
 | [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
@@ -54,10 +53,8 @@ Each starts on main after the one before it closes, unless its line says otherwi
    2026-11-11). It starts once Plans 0061, 0067 and 0068 have merged, while no lane edits the
    files it splits. Its Phase 0 re-measures and the architect confirms the seams before a file
    moves. Plan 0044's render device helper (its Phase 8) now follows it.
-4. **Plan 0058**, dynamic lights, on the split tree. The architect re-reads its Phases 1 and 2
-   against 0045's tip before its lane starts, since 0061 rewrote `temporal.wgsl`,
-   `composite.wgsl` and `Lighting` and 0045 moves them. Plan 0069's per-profile light cap is a
-   field at or under 0058's `MAX_LIGHTS`; 0058 changes nothing for it.
+4. **Plan 0058**, dynamic lights: closed 2026-11-15 (v0.54.0; ADR-0044 accepted). Plan 0069's
+   per-profile light cap is a field at or under its `MAX_LIGHTS` (16).
 5. **Plan 0044**, the hot-path pass, its Phases 2, 3, 5 and 8 (Phase 4 went to Plan 0070, closed 2026-11-13; the side lane, Phases 0, 1, 6
    and 7, merged at `d6d2dfa`). Phase 0's render rows re-inventory on the split tree.
 6. **Plan 0069, render settings and profiles** (approved 2026-11-11, every recommendation
@@ -94,6 +91,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: sixteen exact lights, one shadow ray each, the direct part in rgb, a bounce flag; RTX 0.17 ms a light, RENOIR 1.5 | 2026-11-15, v0.54.0 |
 | [0074](done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: `light_note` p99 8.3 to 2.5 ms by masks; placement index struck, then the window put the stagger in the eviction scan (backlog) | 2026-11-14, v0.53.0 |
 | [0070](done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md) | The sync in place: rescan set dense, light walks on change; sync p50 180 to 17 us, `update + poll + sync` p99 45 to 24 ms, over 16.6; worker packing deferred | 2026-11-13, v0.52.0 |
 | [0072](done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) | Development speed: deps at line tables (cold build 455 to 403 s), `-p` gate and `--clippy`, reflink-seeded lanes (137 s); lavapipe stays at 1; CI readings owed | 2026-11-13, v0.51.0 |

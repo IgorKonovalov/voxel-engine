@@ -51,6 +51,10 @@ the RTX 3080 Laptop, 9.967 to 9.983 ms on the RADV RENOIR. The close keeps the l
 reading; the default stands on the owner's eye. At Plan 0065's close (03b00ab, 2530 x 1378 output)
 FSR 2's passes read 2.103 to 2.424 ms on the RTX and 15.691 to 16.058 ms on the RADV RENOIR, still
 over; the lamp-on a-trous at the full lighting tier (3.088 to 3.321 ms RTX) is over the denoise line.
+Plan 0058's list of lights (2026-11-15, 71b4478, headless, 1920 x 1080, FSR 2 at 1.5) reads 0.167 to
+0.175 ms of light pass per light in reach on the RTX 3080 Laptop and 1.54 ms on the RADV RENOIR. At
+sixteen lights the RENOIR's light pass reads 24.8 ms, over the 6.0 ms lighting line. The cap per
+profile is Plan 0069's.
 
 Two lines inside the streaming line (Plan 0067, 2026-11-12; RTX 3080 Laptop and RADV RENOIR,
 headless, quiet, against the start commit 4bc8100):

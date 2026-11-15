@@ -201,7 +201,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059, 0060, 0061, 0067, 0070 and 0074 closed; 0049 abandoned)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047, 0050, 0051, 0053, 0054, 0055, 0056, 0057, 0059, 0060, 0061, 0067, 0070, 0074 and 0058 closed; 0049 abandoned)
 
 Plan 0067, the frame's CPU, closed 2026-11-12 (v0.49.0; Outcomes on ADR-0052, ADR-0053, ADR-0048 and
 ADR-0046): the live queue's step is split into stages and read per regime (A starved, B keeping up). At
@@ -218,6 +218,16 @@ closed 2026-11-14 (v0.53.0): it found exposed emitters by masks (`light_note` p9
 `update + poll + sync` p99 18.0 to 23.7 ms in the cave), left `alloc` the largest stage of the benches, and its
 window put the glide's stagger in the light placement's eviction scan, unindexed; the backlog's head takes the
 eviction scan first, then `alloc`.
+
+[Plan 0058](plans/done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md),
+dynamic lights, closed 2026-11-15 (v0.54.0; ADR-0044 accepted with an Outcome): the consumer hands the
+frame up to sixteen point or spot lights (the headlamp is slot 0 while it is on, with no reach), each
+shaded exactly with one shadow ray inside its reach. The direct part is rgb in a target of its own, and
+a light's `BOUNCE` flag feeds the lamp channel. The fly-through drops, carries, fires, recolours and
+flags lights (`1` to `6`). The owner's windows saw no trail or shimmer under FSR 2. The light pass
+reads about 0.17 ms per light in reach on the RTX and 1.5 ms on the RADV RENOIR (24.8 ms at sixteen at
+the spawn), so Plan 0069's Portable profile caps the count. This meets the consumer's "flares"; a
+glowing projectile's body is M6's.
 
 Plan 0061, antialiasing, closed 2026-11-11 (v0.48.0; ADR-0049 accepted with an Outcome, Outcomes on
 ADR-0042 and ADR-0034): the owner's "a lot of aliasing" at the hall was ADR-0042's far bands back, mixed

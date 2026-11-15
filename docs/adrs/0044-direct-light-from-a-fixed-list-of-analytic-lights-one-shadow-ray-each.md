@@ -1,8 +1,8 @@
 # ADR-0044: Direct light from dynamic sources comes from a fixed list of analytic lights the consumer hands the frame, shaded exactly with one shadow ray each
 
-> **Status:** proposed
+> **Status:** accepted 2026-11-15 at Plan 0058's close, with an Outcome (was proposed)
 > **Date:** 2026-11-04
-> **Related plan(s):** [Plan 0058](../plans/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)
+> **Related plan(s):** [Plan 0058](../plans/done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)
 > (builds it). Generalises the headlamp of
 > [ADR-0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the lamp's exact estimate and its reset on a change) and the lamp channel of
@@ -181,4 +181,46 @@ the exact light and the baked one, and a second code path for the same light.
 
 ## Outcome
 
-_(Added at acceptance, at Plan 0058's close, if implementation falsified something above.)_
+Accepted 2026-11-15 at Plan 0058's close (v0.54.0). The decision held: sixteen slots, exact
+shading with one shadow ray per light in reach, the reset on a change, the bounce flag. The
+owner's windows (2026-11-14 and 2026-11-15) saw no shimmer and no trail behind a light in
+flight under FSR 2 at 1.5, so the narrowed reset named under Consequences was not needed. The
+body above is kept as written; this section is what was built and read. The readings are in
+`docs/plans/logs/0058.md`.
+
+- **The slot's floor is a per-slot word.** The slot rule writes each slot's light floor into
+  the light's first pad word (`floor` in `common.wgsl`): 0 for the headlamp's slot,
+  `Lighting::light_floor` for a list slot. Every reader of the reach (the light pass, the
+  `steps` count, the glass path, both upscalers' masks) reads that word. Whatever a consumer
+  leaves in `_pad[0]` is overwritten.
+- **The bounce flag sits under one switch.** `Lighting::lamp_bounce` stays the channel's
+  switch and sets the headlamp slot's `BOUNCE`. A list light's flag feeds the channel only
+  while that switch is on. A bouncing light's flag, presence, intensity, colour or cone
+  changing restarts every probe; a move wakes only the probes within the bounce reach of its
+  old or new position.
+- **The shadow ray aims from its origin.** Each list light's shadow ray runs from the shadow
+  origin to the light, not along the hit's direction from half a voxel off. The parallel ray
+  leaked light over step edges when a light sat 2 voxels off a surface. The headlamp's ray
+  took the same fix.
+- **Colour needed two fixes outside the list.** FSR 2's prepared colour is stored as rgb and
+  converted to YCoCg in f32 on load, because f16 YCoCg drew rings round a saturated light.
+  The a-trous's own-moments variance takes a floor of three f16 steps of `m2`
+  (`MOMENT_ROUNDING`), so a still, noise-free light is not filtered by its rounding residue.
+- **The upscalers' emission-change mask is narrowed.** An emission scale change marks a pixel
+  only where an emitter's light lands. Before, a pulse marked the whole frame reactive under
+  FSR 2.
+- **A still list holds to one f16 step, not to zero.** In the gradient mode, lambda under a
+  still list reads at most 2^-10 (the owner's bar). The a-trous lowers a smooth peak under a
+  light by 2 to 2.5 % (owner: accepted).
+- **The cost.** Headless at 1920 x 1080, FSR 2 at 1.5, one round each:
+  - The RTX 3080 Laptop's light pass reads 0.167 to 0.175 ms per light in reach at the level's
+    spawn (2.699 ms at sixteen, lamp off) and 1.050 ms at sixteen at the vein.
+  - The RADV RENOIR reads 1.54 ms per light: 24.790 ms at sixteen at the spawn (the GPU frame
+    is 43.9 ms) and 8.974 ms at the vein.
+  - This is above the 2026-11-14 projection of about 20 ms. Plan 0069's Portable profile caps
+    the count.
+  - With any light shaded, the a-trous pays 0.55 ms on the RTX (0.164 ms with none).
+  - The direct target and its pair add 5 529 600 B to `frame_bytes` at 1280 x 720 internal on
+    the half tier.
+- **The `own` upscaler's mask was not read.** It is a branch in `upscale.wgsl`, not a texture,
+  so only FSR 2's mask is asserted.

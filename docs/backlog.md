@@ -37,6 +37,10 @@ fit's free-range walks and the victim scans' chunk walks, so split them first. *
 plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
 the owner is away; the owner may overturn it).
 
+### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
+
+Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out.
+
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
 Noted 2026-11-14 at Plan 0074's Phase 4 (`docs/plans/logs/0074.md`, the RTX host, `hpet`, lamp
@@ -92,8 +96,8 @@ owner wants bounce light only from some sources: "fire on a stick or fire in a d
 probes, the headlamp and simple lights are direct only. ADR-0043 shrinks the probe volume to a
 lamp-bounce channel and keeps its logic for exactly this later redesign; ADR-0044 gives lights a
 fixed list. The missing piece is a per-light and per-emissive-material "feeds the bounce channel"
-flag and the channel's redesign. Plan 0058's Phase 3 (redrafted 2026-11-10) builds the per-light
-flag; what remains after its close is the per-emissive-material flag and the channel's redesign.
+flag and the channel's redesign. Plan 0058 (closed 2026-11-15) built the per-light `BOUNCE` flag,
+under `Lighting::lamp_bounce`; what remains is the per-emissive-material flag and the channel's redesign.
 Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky ray, so a cave
 mouth gets no bounced sun until this entry is taken. Plan 0037's night light likewise has no
 bounce and no probe feed.
@@ -104,7 +108,7 @@ Parked 2026-11-10 (owner asked for the idea in detail while Plans 0058 and 0062 
 - **The mechanism:** a grid of cells around the camera (a guess: 16-voxel cells, 64 a side) holding, per cell, a bit mask of the lights whose reach touches it. A pixel, a shadow ray's origin or a probe ray's hit reads its cell and shades only those lights, still exactly, one shadow ray each. The grid is in world space, not screen tiles, because the bounce channel and the upscalers' change mask need it at points that are not pixels.
 - **What it buys:** 64 or more lights in the world for the cost of the few that overlap at each point. **What it does not buy:** many lights overlapping one spot still cost one shadow ray each; a per-pixel cap past that is a pick, and a random pick is noise (ADR-0044 B, rejected).
 - **The cheaper first step:** keep the slots and let the engine choose the sixteen that matter most to the view each frame, with hysteresis. No shader change; lights can pop when the choice changes.
-- **Pick up when:** Plan 0058's readings give the cost per light in reach (0.175 ms on the RTX at the spawn; Phase 5 reads sixteen and the Cezanne), and a scene with entities wants more than sixteen. It needs an ADR that amends ADR-0044's cap.
+- **Pick up when:** a scene with entities wants more than sixteen. Plan 0058 (closed 2026-11-15) read the cost per light in reach: 0.17 ms on the RTX and 1.54 ms on the RADV RENOIR at the spawn, 24.8 ms for sixteen there. It needs an ADR that amends ADR-0044's cap.
 
 ### Per-face light cells as a near-camera enhancement over the brick level
 
@@ -176,6 +180,10 @@ Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 
 ### The bake and strip examples drift from the fly-through's lighting defaults
 
 Parked 2026-11-13 (orchestrator default while the owner was away). The hero fix (5b35aa3) gave `examples/hero.rs` the shared `flythrough::default_lighting()`. Two tools still build the library's `Lighting` and so miss the Plan 0061 store-read and light-weight defaults: `apps/flythrough/examples/bake.rs` and `apps/flythrough/examples/strip.rs`. Their readings and stills differ from what the window shows. The fix is to call `default_lighting()` and re-read anything that cites their figures. Pick it up when a plan next reads a strip or a bake figure, or when the owner asks.
+
+### Overlapping coloured lights go white: a hue-keeping tone map
+
+Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan.
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
@@ -360,6 +368,10 @@ first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
+### The HUD paints a bounded level's full record reservation as mirror pressure
+
+Read 2026-11-15 in Plan 0058's Phase 5f (`docs/plans/logs/0058.md`, the owner's `live/7.png` and `9.png`). On the level the HUD shows `mirror pressure 1.000` in yellow. `GpuWorld::pressure` (ADR-0013) is the larger of the pool-unit term and the record term. `scene::level_mirror_budget` reserves exactly one record per chunk of a bounded level, so once every chunk is mirrored the record term is 1.000 by construction (3200 of 3200; the unit term reads 0.30). No brick was refused and no radius narrowed. It read the same at the plan's start commit. The yellow at `hud::PRESSURE_HIGH` (0.9) therefore warns about a reservation that is full by design. What it takes: the HUD (or `pressure`) leaves out the record term when the reservation covers every chunk of a bounded world, or shows the two terms apart. It is a testbed-and-HUD change with a unit test. Pick up with the next HUD or mirror-budget change.
+
 ### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
 
 Noted 2026-11-13 (Plan 0070 Phase 1, `docs/plans/logs/0070.md`). Every boot of the RTX laptop
@@ -399,6 +411,13 @@ Plan 0064's close too. The CPU tests over it (`castle_vector`, `showcase_vector`
 gate by the owner's rule. What it would take: mark each `#[ignore = "soak"]` or cut its fixture,
 by a reading on a quiet box. Pick up as a dev chore with the next plan that touches those
 binaries.
+Read again 2026-11-15 at Plan 0058's close review (the merged tip a2b3717, 897 tests, 774.4 s,
+load 3.0 at the start and 1.5 at the end, so slightly loaded): the five above again, plus three
+of Plan 0058's own: `gpu_dynamic_lights::a_pulsing_emitter_marks_only_where_its_light_lands`
+14.1 s (8.3 s in its log), `gpu_dynamic_lights::a_red_light_near_a_wall_draws_no_rings_under_fsr2`
+12.5 s (11.4 s in its log) and `gpu_fsr2::fsr2_marks_a_dropped_list_light` 10.8 s. The
+rings test renders three 32-frame images (no light, white, red); fewer still frames or the soak
+mark brings it under. Plan 0062 runs on these binaries next and can take them.
 
 ### Plan 0072's CI readings: accepted, one reading left open
 
