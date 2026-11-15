@@ -553,8 +553,8 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 | 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](logs/0062.md) | bc80246 |
 | 2: The mirror and the primary hit | dev | done; names, packing and keys in the readings log | 70bdec7 |
 | 3: Light, shadow and emission | dev | done; readings in the readings log | 31c7540 |
-| 4: Motion | dev | done; the fresh bit's place, the keys and the readings in the readings log | committed with this row |
-| 5: The costs and the caps | dev | not started | |
+| 4: Motion | dev | done; the fresh bit's place, the keys and the readings in the readings log | 12f1a62 |
+| 5: The costs and the caps | dev | readings in the readings log; done-when 3 outside the spread (hit and light grew at `--entities 0`), stopped for the architect | committed with this row |
 | 6: The owner's window | human | not started | |
 
 ### Notes
@@ -575,6 +575,11 @@ each. Empty is fine.)_
 - Phase 4: done-whens 3 and 4 are in `gpu_entities.rs`, not `gpu_fsr2.rs` (at 1975 lines, the
   2000-line cap) and `gpu_upscale.rs`; done-when 4's gate variant moves 8 frames, the 16-frame
   move is `#[ignore = "soak"]`.
+- Phase 5: done-when 3 not met: `--entities 0` reads above the start commit's three-round spread
+  on the Cezanne at both poses (+1.06 and +1.05 ms, hit and light) and on two of three rounds on
+  the RTX 3080 Laptop (+0.08 and +0.05 ms); the plan stops for the architect.
+- Phase 5: `Frame::frame_bytes` is in `frame/mod.rs` (the plan's `marcher.rs`); `gpu_look_field.rs`
+  (outside Files touched) adds the mirror's bytes to its pinned figure.
 
 ### Close triggers
 
