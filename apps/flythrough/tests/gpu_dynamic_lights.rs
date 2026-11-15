@@ -123,6 +123,100 @@ fn the_atrous_count_follows_the_setting() {
     assert_eq!(rig.frame.atrous_dispatches(), 0, "the filter off");
 }
 
+/// Whether the CPU's exact walk (`World::raycast`) finds rock on the segment from `o` to `end`,
+/// and whether that rock holds `o` itself.
+fn cpu_blocked(world: &vxe_world::World, o: [f32; 3], end: [f32; 3]) -> (bool, bool) {
+    let origin = Fixed3(o.map(|v| (f64::from(v) * FIXED_ONE as f64).round() as i64));
+    let dir: [i64; 3] =
+        std::array::from_fn(|k| (f64::from(end[k] - o[k]) * FIXED_ONE as f64).round() as i64);
+    let hit = world.raycast(origin, dir, 256).expect("in range");
+    (hit.is_some(), hit.is_some_and(|h| h.face.is_none()))
+}
+
+/// A staircase on the light box's far wall (step k over x 110 + 2k..126, y 40..62, z 2..6 +
+/// 4k), synced to the rig's mirror.
+fn add_steps(rig: &mut Rig) {
+    for k in 0..8i64 {
+        rig.world
+            .apply(&EditOp::box_(
+                Fixed3([110 + 2 * k, 40, 2].map(|v| v * FIXED_ONE)),
+                Fixed3([126, 62, 6 + 4 * k].map(|v| v * FIXED_ONE)),
+                Mode::Fill(ROCK),
+            ))
+            .expect("resident");
+    }
+    for _ in 0..2 {
+        support::SyncNow::sync_now(&mut rig.gpu, &rig.world, &rig.device, &rig.queue)
+            .expect("fits");
+    }
+}
+
+/// A light 2 voxels off a surface (the fly-through's `SURFACE_GAP`) shadows as the exact ray
+/// does (Plan 0058 Phase 5c): a white light of 600 two voxels off a riser of a staircase, the
+/// default (coarse) shadow walk; on the first frame every hit within 24 voxels facing the
+/// light is lit in the light pass exactly when the CPU's exact walk from its shadow origin
+/// (half a voxel off the face) to the light finds no rock. Left out: a hit whose CPU walk
+/// starts inside rock, and a grazing one (its CPU verdict flips when the light moves 0.02
+/// voxel along an axis).
+#[test]
+fn a_light_beside_steps_shadows_as_the_exact_ray_does() {
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    add_steps(&mut rig);
+    let camera = Camera {
+        position: [96.0, 46.0, 30.0].into(),
+        yaw: 0.6,
+        pitch: -0.5,
+        vfov: 1.2,
+    };
+    let at = [116.0, 51.0, 20.0];
+    rig.frame.set_lights(&[Light::point(at, 600.0)]);
+    step(&mut rig, &camera);
+    let direct = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct());
+    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let eye = camera.position.to_array();
+    let (mut checked, mut wrong) = (0, Vec::new());
+    for (i, p, _) in hits_of(&rig, &rig.frame) {
+        // The entry face's normal: the hit record's axis (flags bits 3..4, minus one) against
+        // the view ray, as `shadow_normal_of`.
+        let axis = i32::from((info[i][3] >> 3) & 3) - 1;
+        if axis < 0 || dist(p, at) > 24.0 {
+            continue;
+        }
+        let mut n = [0.0f32; 3];
+        n[axis as usize] = -(p[axis as usize] - eye[axis as usize]).signum();
+        if (0..3).map(|k| n[k] * (at[k] - p[k])).sum::<f32>() <= 0.0 {
+            continue;
+        }
+        let o: [f32; 3] = std::array::from_fn(|k| p[k] + n[k] * 0.5);
+        let (dark, inside) = cpu_blocked(&rig.world, o, at);
+        let grazing = (0..6).any(|j| {
+            let mut a = at;
+            a[j / 2] += if j % 2 == 0 { 0.02 } else { -0.02 };
+            cpu_blocked(&rig.world, o, a).0 != dark
+        });
+        if inside || grazing {
+            continue;
+        }
+        checked += 1;
+        if (direct[i][3] == 0.0) != dark {
+            wrong.push((p, dark));
+        }
+    }
+    println!(
+        "{checked} facing hits checked, {} against the CPU",
+        wrong.len()
+    );
+    assert!(checked > 10_000, "{checked} hits");
+    assert!(
+        wrong.is_empty(),
+        "{} hits disagree with the exact ray, first {:?} (CPU dark: the second)",
+        wrong.len(),
+        wrong.first()
+    );
+}
+
 /// The readings: each test prints the direct part at named floor pixels against the analytic
 /// term and asserts nothing a gate runs. `cargo nextest run -p flythrough --run-ignored only
 /// -E 'binary(=gpu_dynamic_lights) & test(/reading::/)' --no-capture`.

@@ -82,7 +82,7 @@ fn shade_px(gid: vec3<u32>) {
                 if ((li.flags & LIGHT_ON) == 0u || (li.flags & LIGHT_SHADOWS) == 0u || !light_reaches(li, rec.p)) {
                     continue;
                 }
-                let to_light = li.pos - rec.p;
+                let to_light = li.pos - o;
                 let dist = max(length(to_light), 1e-2);
                 walk_steps = 0u;
                 loads = 0u;
@@ -138,15 +138,19 @@ fn face_centre(v: vec3<i32>, face: u32) -> vec3<f32> {
 }
 
 // Light `li`'s `intensity * cone * max(n.l, 0) / dist^2` times its window at `p` with shading
-// normal `n`, zero when its shadow ray (offset along `ns`) finds rock before the light. Out of
-// its reach no ray is cast.
+// normal `n`, zero when its shadow ray finds rock before the light. The ray leaves the shadow
+// origin (`p` offset along `ns`) aimed at the light itself, as the emissive and baked rays do:
+// a ray along the direction from `p` would run parallel to the true one, half a voxel off the
+// surface, and clear the edge of a step that shadows a face next to a near light. Out of its
+// reach no ray is cast.
 fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
     var lit = light_term(li, p, n);
     if ((li.flags & LIGHT_SHADOWS) != 0u && lit > 0.0) {
-        let to_light = li.pos - p;
+        let o = shadow_origin(p, ns);
+        let to_light = li.pos - o;
         let dist2 = max(dot(to_light, to_light), 1e-4);
         let l = to_light * inverseSqrt(dist2);
-        if (shadowed(shadow_origin(p, ns), l, sqrt(dist2))) {
+        if (shadowed(o, l, sqrt(dist2))) {
             lit = 0.0;
         }
     }
