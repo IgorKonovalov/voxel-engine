@@ -97,14 +97,15 @@ use std::sync::PoisonError;
 
 use vxe_world::packed::{Packed, PackedClass};
 use vxe_world::{
-    AIR, BRICK_EDGE, BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
-    ChunkMips, MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World,
-    brick_of_slot, brick_slot,
+    AIR, BRICK_EDGE, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent, ChunkMips,
+    MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World, brick_of_slot,
+    brick_slot,
 };
 
 use crate::field::FieldBindings;
 
 mod alloc;
+mod emitters;
 mod format;
 mod lights;
 mod slot;
@@ -227,6 +228,20 @@ pub struct SyncStats {
     pub light_evicted: u64,
     pub light_refused: u64,
     pub light_oldest_wait: u64,
+    /// Of `light_bricks`, those whose palette holds an emissive material: the bricks decoded
+    /// and scanned voxel by voxel.
+    pub light_emitter_bricks: u64,
+    /// Records that emit written with every brick (a chunk new to the mirror): each of their
+    /// emitter bricks is scanned.
+    pub light_fresh_records: u64,
+    /// Chunks whose samples were written into a range of the light-sample buffer.
+    pub light_chunks_written: u64,
+    /// The placement's search steps: free ranges walked by the first fit, plus chunks walked
+    /// by the eviction's scans for the farthest range (one scan per eviction, and the last
+    /// that finds none).
+    pub light_scan_steps: u64,
+    /// Free ranges of the light-sample buffer below its high-water mark after the sync.
+    pub light_free_ranges: u64,
     /// Bytes copied into the mirror's buffers.
     pub bytes: u64,
     /// `Full` bricks written.
@@ -982,6 +997,7 @@ impl GpuWorld {
         self.flush_records(enc, &mut st);
         self.flush_table(enc, &mut st);
         st.pending_chunks = self.window.pending.len() as u64;
+        st.light_free_ranges = self.lights.free.len() as u64;
         self.up.bytes_written += st.bytes;
         result.map(|()| st)
     }

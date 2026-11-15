@@ -1,6 +1,6 @@
 # ADR-0036: Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient
 
-> **Status:** accepted (2026-10-29, Plan 0047 closed; see Outcome); superseded by ADR-0043 (proposed)
+> **Status:** accepted (2026-10-29, Plan 0047 closed; see Outcome); superseded by ADR-0043
 > **Date:** 2026-10-27
 > **Related plan(s):** [Plan 0047](../plans/done/0047-emissive-light-holds-still-long-guarded-history.md);
 > refines the temporal pass of

@@ -64,8 +64,7 @@ plan lanes run at once, each in its own worktree at
    (the changed crates' CPU tests and their dependents') plus, under the perf lock when the
    change reaches the renderer, `--profile gpu --binaries <the gpu_* binaries the phase names>`
    (the binaries whose files the change touched join on their own; owner, 2026-11-10: the
-   whole gpu tier is the tip's, not a phase's; until Plan 0066 Phase 1 adds `--binaries`, a
-   phase runs `--profile gpu` as before); a phase's clippy is `node scripts/test-changed.mjs
+   whole gpu tier is the tip's, not a phase's); a phase's clippy is `node scripts/test-changed.mjs
    --clippy` (the same packages, `-p` each, `--all-targets -D warnings`; the script builds
    only those packages' test targets, not the workspace's); `--profile gate` (everything but
    the soak-marked tests) and `cargo clippy --workspace --all-targets` are the tip gate; `--profile soak --run-ignored only` and `--profile full --run-ignored all`
@@ -120,8 +119,8 @@ plan lanes run at once, each in its own worktree at
 
 ## Context budget
 
-9a. Read your own plan in full, but not the large shared docs: `docs/nfr.md` (~40 KB) and the
-    readings files under `docs/nfr/` (~115 KB), `docs/roadmap.md` (~60 KB), `CHANGELOG.md`,
+9a. Read your own plan in full, but not the large shared docs: `docs/nfr.md` and the
+    readings files under `docs/nfr/`, `docs/roadmap.md`, `CHANGELOG.md`,
     other plans. `grep -n` for the section or the figure you need and read only that range. Of your plan's readings log (`docs/plans/logs/NNNN.md`) read
     only the `### Resume notes` and the current phase's section.
 9b. Keep tool output short. Cargo and nextest output is the main waste:

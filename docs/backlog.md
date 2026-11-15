@@ -17,16 +17,41 @@ Rules:
 
 ## Next up
 
+### The light placement's eviction scan in a windowed glide
+
+Noted 2026-11-14 from Plan 0074 (`docs/plans/logs/0074.md`, Phases 1, 4 and 5; RTX host, `hpet`).
+**S1's evidence, headless:** no headless glide (`--glide 300` and `1000`, 13 runs in Phase 1, 6
+in Phase 4) evicted a light range; their largest per-second `light place` p99 was 38 ms against
+the window's 846 ms; the place stage's slow syncs were 65 to 71 % off-CPU and their scan steps
+did not track their time (r 0.28). Phase 2 (the first fit and the eviction victims by index) was
+struck on that, and the windowed rig (c) was not run. **The owner's window then reproduced it**
+(Phase 5, `--glide 300`, tip and base alike): from about 4 s into the flight every second's
+slowest sync is `light place`, up to 1186 ms over 3697 evictions and 99.9 M scan steps, with r
+0.997 to 0.9996 against `light_scan_steps` (about 11 to 12 ns a step) and the free ranges
+growing to about 6000; the owner's "staggers at 30 to 40 s, fps drops to 15" are those syncs.
+Open: why the window's light buffer fills and the headless glides' does not. What it takes:
+Plan 0074's Phase 2 as drafted (indexes that answer what today's walks answer, the bytes
+asserted equal), read in the window. Its draft, a first-fit index (`fit.rs`, untracked), is
+kept in the main checkout at `live/plan-0074/drafts/fit.rs`. `light_scan_steps` sums the first
+fit's free-range walks and the victim scans' chunk walks, so split them first. **The next sync
+plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
+the owner is away; the owner may overturn it).
+
+### The sync's `alloc` stage: the sync plan after the eviction scan
+
+Noted 2026-11-14 at Plan 0074's Phase 4 (`docs/plans/logs/0074.md`, the RTX host, `hpet`, lamp
+off). With `light_note` cut, the tester cave's `update + poll + sync` p99 still reads 18.3 to
+23.7 ms on the RTX and 18.0 to 18.7 on the Radeon (castle 20.4 to 22.7), over Plan 0067's
+16.6 ms. The largest stage left is `alloc`: p99 7.4 to 8.8 ms in the RTX cave and 7.3 to 7.4 on
+the Radeon, against sync p99s of 16.5 to 21.1 and 16.1 to 16.8. Phase 1's profile of it (rig
+(d), the glide): `fill_slot` 3.15 %, `BufferViewMut::drop` 3.12 %, `upload_brick` 2.52 %,
+`stage` 0.42 % of the main thread; under 1 % each in the cave bench. Pick up as the next sync
+plan after the eviction scan above; it reads its own profile first. The windowed glide's
+stagger is a different stage, the eviction scan.
+
 ### Done: test tiers by marks, not by copied lists
 
-Queued 2026-11-08 (owner); top of the backlog since 2026-11-09. Starts as a dev chore once Plan 0059 has merged (owner, 2026-11-09): the rename touches the test files and `.config/nextest.toml` that lane also edits. The WARP lane it first waited on is done; Windows runs the CPU tests only. `.config/nextest.toml` spells the GPU list (15 binaries) and the soak list (about 50 test names) out in every profile, six copies kept in step by `scripts/check-test-tiers.mjs`, because nextest has no filter aliases. The replacement marks the tests themselves:
-- **Soak:** `#[ignore = "soak"]` on each long series; the soak tier runs `--run-ignored only`, full runs `--run-ignored all`, and `soak.yml`, the docs and `test-changed.mjs` take the flag.
-- **GPU:** every test file that opens a device is named `tests/gpu_*.rs`, and the profiles filter on `binary(/^gpu_/)`. `check-test-tiers` shrinks to the one rule that a file which opens a device carries the prefix.
-
-The profiles then read `not binary(/^gpu_/)` (quick), `binary(/^gpu_/)` (gpu), no filter (gate), and the quick tier's filter again for ci-windows, the CPU tests only. The rename changes the binary IDs, for example `flythrough::golden` becomes `flythrough::gpu_golden`.
-
-**Done 2026-11-10** (GPU half 50b2193, soak half 4a15e60). 25 files renamed to `tests/gpu_*.rs`; the 41 long series are `#[ignore = "soak"]`; the 34 hand-run measurements that were already `#[ignore]`d moved into a `mod reading` per file (owner, 2026-11-10), and soak and full leave out `test(/(^|::)reading::/)`. `check-test-tiers` checks the prefix, that every `#[ignore]` is soak or a reading, and the profiles' forms. Tier membership unchanged in every profile.
-
+Done 2026-11-10 (50b2193, 4a15e60): GPU test files are `tests/gpu_*.rs`, long series `#[ignore = "soak"]`, kept by `scripts/check-test-tiers.mjs`.
 
 ### The live queue's order and cancellation, after Plan 0059
 
@@ -118,11 +143,7 @@ removal plan goes ahead after Plan 0069.
 
 ### The lamp channel's faults
 
-Parked 2026-11-05 at Plan 0057's close. `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` takes
-its `D` from the shader's output, so it does not defend the albedo: `D` wants an independent reading
-of the lamp's irradiance at the rays' hits. Inside probes are traced while the lamp moves
-(`probe_update.wgsl`'s `probe_idle` returns on `MOVED_BIT` before its inside check): cost only, unread on
-the RTX. `a_lamp_step_moves_the_probes_in_reach_only` checks one probe. Plan 0058's Phase 3 (redrafted 2026-11-10) takes the furnace's `D` and the one-probe step test; the inside-probe trace is a reading there.
+Parked 2026-11-05 at Plan 0057's close; taken by Plan 0058's Phase 3 (the furnace test's independent `D` and the lamp-step test over more than one probe; the inside-probe trace is a reading there).
 
 ### Far light on a slow adapter: a bake budget per second, and no black for missing light
 
@@ -151,6 +172,10 @@ Parked 2026-11-12 at Plan 0067's Phase 7 (`docs/plans/logs/0067.md`, Phase 5, at
 ### The first-block fallback fade's CPU under `chain`
 
 Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 7, the opening row). Under the default missing light, `chain`, every chunk's first block fades over `FADE` frames from its fallback value, and the render thread rewrites the fading block (`advance_fades`) and its summary and two parent records (`Store::show`) every frame of the fade. In regime B, where nearly every step opens, that reads `fades` 1.05 to 1.10 ms p50 and `summaries` 0.61 to 0.63 on the RTX 3080 Laptop (`--near 0`, rig (c)), against 0.002 and 0.05 under `black`, and takes the opening step from 0.75 to 0.86 to 0.88 of the start commit's (bar 0.8); the default glide's `summaries` read 0.965 ms p50, p99 2.86. The owner saw no lag at this cost in the window. Levers, unbuilt: a shorter fade for a first block (a look change, the owner's eye), the summary and parents written once at the fade's end instead of every frame (ADR-0053 has a parent fade with its children, so this one needs an Outcome there), or the blend on the GPU (the temporal read mixes the fallback with the block by a per-chunk weight). Pick up with the next frame-CPU plan, or if a profile (Plan 0069) runs regime B by default (`full_first` off).
+
+### The bake and strip examples drift from the fly-through's lighting defaults
+
+Parked 2026-11-13 (orchestrator default while the owner was away). The hero fix (5b35aa3) gave `examples/hero.rs` the shared `flythrough::default_lighting()`. Two tools still build the library's `Lighting` and so miss the Plan 0061 store-read and light-weight defaults: `apps/flythrough/examples/bake.rs` and `apps/flythrough/examples/strip.rs`. Their readings and stills differ from what the window shows. The fix is to call `default_lighting()` and re-read anything that cites their figures. Pick it up when a plan next reads a strip or a bake figure, or when the owner asks.
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
@@ -268,23 +293,23 @@ dense and the light walks on change, `hpet` clocksource): `pack + size` p99 is 2
 a cave sync p99 of 20.9 to 22.3 ms, 13.5 to 14.2 % on both adapters; the larger stages are
 `light_note` (8.2 to 8.4 ms, `note_lights` in `exposed_emitters`) and `alloc` (6.9 to 7.4 ms).
 Pick up when `pack + size` reads half or more of the sync p99 left after those two are cut;
+read again at Plan 0074's Phase 4 with `light_note` cut (`docs/plans/logs/0074.md`, lamp off):
+the tip cave's `size` p99 2.8 to 3.8 ms and `pack` 2 us, 17.1 to 17.9 % of the sync p99 on the
+RTX (16.5 to 21.1 ms) and 16.6 to 17.1 % on the Radeon (16.1 to 16.8), still under half;
 the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
 worktree and leave with it.
 
 ### The sync's `light_note` stage and the windowed glide's light walks
 
-Noted 2026-11-13 at Plan 0070's close (`docs/plans/logs/0070.md`, Phases 5 and 6). After Plan
-0070 the cave sync's p99 (about 21 to 22 ms, over Plan 0067's 16.6 ms for `update + poll +
-sync`) is led by `light_note`, the `note_lights` pass over a chunk's emitter bricks
-(`exposed_emitters`), 8.2 to 8.4 ms, then `alloc` 6.9 to 7.4 ms. Separately, in the owner's
-windowed `--glide 300` cave flight on the RTX, the per-second `light place` p99 read 20 ms to
-846 ms in 19 of 30 lines at the tip (12 of 73 at the base, max 330 ms), never over 2.5 ms in the
-headless benches; not attributed. Pick up as the next sync plan, before the 16.6 ms bar is read
-again.
-Checked 2026-11-13 at Plan 0058's refresh: both are the emissive light-sample mirror's
-(`gpu_world/lights.rs`), which Plan 0058 does not touch, so neither folds into it; its window
-reads the `sync:` line beside a hitch. The owner (2026-11-13, Plan 0058's answer 9): the next
-sync plan is drafted now and runs beside 0058's lane.
+Taken 2026-11-13 by [Plan 0074](plans/done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (closed 2026-11-14): `light_note` cut by masks; the placement's spikes are "The light placement's eviction scan in a windowed glide" under Next up.
+
+### The tester cave's coarse light is slow to settle
+
+Noted 2026-11-14 in Plan 0074's window (the owner, on the tester's cave path, the tip and the
+base the same): "coarse light are slow to settle". Not Plan 0074's stages (its tip and base
+differ only in the sync's light note and read the same). A reading of the bake queue's coarse
+pass and its settle on a moving path; no run read it. Pick up with the next look or bake-queue
+plan that walks the tester's paths.
 
 ### The slow adapter's walk-speed spike
 
@@ -328,6 +353,10 @@ so the fly-through's wiring (the frame calls the ring's reads, not the waiting o
 no gate; the gate holds only the ring's own test. A variant of about 120 frames with the
 queue line due at least once, or a CPU test on the call sites, would bring it under the 10 s
 line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
+**It fails** (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
+not this plan's code): the exit's queue tally prints `frames: queue step ...` lines
+(`run/mod.rs`, `Drop for Run`) before the `frames: N frames;` line, and the test takes the
+first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
@@ -346,16 +375,15 @@ readings are compared with ones from before 2026-11-05.
 
 ### Done: the tester's benchmarks with the lamp off
 
-Noted 2026-11-13 (the owner, at Plan 0070's Phase 6 window: "also, for test benchmark lamp is
-better to be off"). The tester's cave and castle paths and the bench readings plans take from
-them ran with the headlamp at its default, on (off on the showcase only).
+Done 2026-11-13 (4ea561f): a `--path` benchmark starts the lamp off unless `--lamp` is given, and `run.json` names it. **Bench readings of the cave and castle paths from before 4ea561f ran with the lamp on and are not compared with readings after it.**
 
-**Done 2026-11-13** (4ea561f, a chore on the owner's go). A `--path` run in bench mode starts
-the lamp off unless `--lamp` is given; the tester's benchmark command line carries `--lamp off`
-after the scene's flags (`PathMode::flags`); a tour keeps the lamp default (on in the cave and
-the castle). `run.json` names it (`"lamp": "on"|"off"`, additive, schema 1), as do the tester's
-run row and its help panel. **Bench readings of the cave and castle paths from before 4ea561f
-ran with the lamp on and are not compared with readings after it.**
+### A `Uniform` emitter brick gives no light samples
+
+Noted 2026-11-13 from the tree at `98e69b8` (Plan 0074's draft, its owner answer 5).
+`note_lights` scans `Full` bricks only, so a brick made entirely of one emissive material
+contributes no light samples, even on its faces toward air. Not seen on screen. Fixing it changes
+the light, which Plan 0074's byte guard forbids. Pick up after Plan 0074 as a look check: place a
+solid emissive block of 8 or more voxels a side in the cave and compare it with a hollow one.
 
 ### Five lavapipe gate tests over the 10 s line
 
@@ -372,7 +400,7 @@ gate by the owner's rule. What it would take: mark each `#[ignore = "soak"]` or 
 by a reading on a quiet box. Pick up as a dev chore with the next plan that touches those
 binaries.
 
-### Plan 0072's CI readings, owed after the push
+### Plan 0072's CI readings: accepted, one reading left open
 
 Parked 2026-11-13 at Plan 0072's close. Read 2026-11-13 on the first two pushes: warm Linux
 15 min 6 s and Windows 18 min 47 s (over the under-10 and under-15 min proposals), gate count on
@@ -424,20 +452,8 @@ Plan 0059), `:614` and `:687` "Reservoir reuse's bar", `crates/vxe-render/src/ex
 `description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`.
 `vxe-render/tests/gpu_frame.rs:86` calls `lamp_bounce` off "the default", which is the
 library's default and not the fly-through's (Plan 0069's amendment note takes the default
-itself). `CLAUDE.md:39-40` gives `vxe-render` "voxel-model entities" it does not have yet
-(Plan 0062) and omits the bake store and FSR 2: the owner's edit. Pick up with the next chore
+itself). (The `CLAUDE.md` part was fixed 2026-11-13.) Pick up with the next chore
 lane; it touches no file a plan lane edits except `gpu_lights.rs` (Plan 0058's).
-
-### Amendment notes from the 2026-11-12 review, awaiting the owner
-
-Parked 2026-11-12. The review (`docs/reviews/2026-11-12-architecture-review.md`) proposes
-amendments to approved plans that only the owner accepts; none was written into a plan. In
-brief: **Plan 0067**, do not stop at the sync stop rule, Plan 0070 takes the sync (section 1.1);
-**Plan 0044**, Phase 4 struck into 0070 (1.1); **Plan 0069**, a `Delete` class for the fields
-with no setter and no caller, `Floor` equal to the fly-through's defaults and every `Default`
-equal to `Floor`, the setter gate over the 22 existing setters, and the RENOIR hit pass read
-alone in Phase 4 (1.2, 2.2). Plan 0045's notes (2.1, 2.3) were taken into it on 2026-11-12.
-Each leaves when the owner accepts or refuses it.
 
 ### A documentation site
 

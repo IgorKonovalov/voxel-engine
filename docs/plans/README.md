@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0074** (ADRs are a separate sequence; next free there is **0059**).
+**Next free number: 0075** (ADRs are a separate sequence; next free there is **0059**).
 
 ## Active roster
 
@@ -16,12 +16,12 @@ state from `git log`. Completed plans move to `done/`.
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Amended 2026-11-10. After Plan 0034. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
-| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | approved | Code health. Side lane (0, 1, 6, 7) merged d6d2dfa; Phases 3, 5, 8 after 0045 and 0058; Phase 4 went to Plan 0070. |
+| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | in-progress | Code health. Side lane (Phases 1, 6, 7 and their Phase 0 rows) merged d6d2dfa; Phases 2, 3, 5, 8 after 0058; Phase 4 went to Plan 0070. |
 | [0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: sixteen analytic lights, exact, dropped and carried; the direct part in rgb; a bounce flag | in-progress | M2, ADR-0044 (proposed). Phase 4 window 2026-11-14: picks taken; fix Phase 5, re-window 6, tests 7. |
-| [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | approved | M6, ADR-0050 (proposed). After 0058 and 0045; Phase 1 (new crate) may run beside anything. |
-| [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | approved | M6, ADR-0051 (proposed). After 0062; Phases 1-2 headless, after 0062's Phase 1. |
+| [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | in-progress | M6, ADR-0050 (proposed). Phase 1 merged 74ae796; Phases 2-6 after 0058. |
+| [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | in-progress | M6, ADR-0051 (proposed). Phases 1-2 merged 7ca423c; Phases 3-4 after 0062. |
 | [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
-| [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | approved | M7, ADR-0054 (proposed). Approved 2026-11-11. Side lane, may start now; touches main.rs lightly. |
+| [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | in-progress | M7, ADR-0054 (proposed). Phases 1-5 merged 56008fa; Phase 6 Linux run done, Windows run owed (owner: later). |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
 <!-- roster:end -->
@@ -58,16 +58,16 @@ Each starts on main after the one before it closes, unless its line says otherwi
    against 0045's tip before its lane starts, since 0061 rewrote `temporal.wgsl`,
    `composite.wgsl` and `Lighting` and 0045 moves them. Plan 0069's per-profile light cap is a
    field at or under 0058's `MAX_LIGHTS`; 0058 changes nothing for it.
-5. **Plan 0044**, the hot-path pass, its Phases 3, 5 and 8 (Phase 4 went to Plan 0070, closed 2026-11-13; the side lane, Phases 0, 1, 6
+5. **Plan 0044**, the hot-path pass, its Phases 2, 3, 5 and 8 (Phase 4 went to Plan 0070, closed 2026-11-13; the side lane, Phases 0, 1, 6
    and 7, merged at `d6d2dfa`). Phase 0's render rows re-inventory on the split tree.
 6. **Plan 0069, render settings and profiles** (approved 2026-11-11, every recommendation
    taken), then the owed plan removing the `own` upscaler (not drafted; owner, 2026-11-11:
    Portable takes FSR 2, so the removal goes ahead).
 7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
    because the first consumer is a cave game).
-   0062's Phase 1 and 0063's Phases 1 and 2 add files only and may run as a side lane from now.
-   - **Plan 0068**, the tester build (approved 2026-11-11): a side lane that merges before
-     Plan 0045 starts; it adds new files and three flags to the fly-through's `main.rs`.
+   0062's Phase 1 and 0063's Phases 1 and 2 ran as a side lane and merged (74ae796, 7ca423c).
+   - **Plan 0068**, the tester build (approved 2026-11-11): a side lane whose Phases 1-5 merged at 56008fa;
+     it adds new files and three flags to the fly-through, and its Windows run is owed.
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
@@ -78,6 +78,8 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 **Plan 0071** (the consumer's path) after Plans 0045, 0069 and 0044's Phase 8, before M10.
 
 **Plan 0073** (a settings menu and file for the fly-through and the tester, approved 2026-11-12 with every recommendation): after Plans 0069 and 0071.
+
+**Plan 0074** (the sync's light stages): closed 2026-11-14 (v0.53.0). The next sync plans are the backlog's head: the light placement's eviction scan, then `alloc`.
 
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
@@ -92,6 +94,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0074](done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: `light_note` p99 8.3 to 2.5 ms by masks; placement index struck, then the window put the stagger in the eviction scan (backlog) | 2026-11-14, v0.53.0 |
 | [0070](done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md) | The sync in place: rescan set dense, light walks on change; sync p50 180 to 17 us, `update + poll + sync` p99 45 to 24 ms, over 16.6; worker packing deferred | 2026-11-13, v0.52.0 |
 | [0072](done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) | Development speed: deps at line tables (cold build 455 to 403 s), `-p` gate and `--clippy`, reflink-seeded lanes (137 s); lavapipe stays at 1; CI readings owed | 2026-11-13, v0.51.0 |
 | [0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: GpuWorld 11 fields, Frame 15, main.rs 36 lines; vxe-render's root 100 names; file-size and fn-length gates; benches at the start's | 2026-11-13, v0.50.0 |

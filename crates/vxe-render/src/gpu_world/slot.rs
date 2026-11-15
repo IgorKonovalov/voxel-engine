@@ -317,6 +317,7 @@ impl GpuWorld {
                             if materials_of(p, |m| self.mats.emissive[usize::from(m)]))
                 }));
         self.lap(left);
+        st.light_fresh_records += u64::from(every && emits);
         let mut rescan = RescanSet::default();
         if !emits && !lod {
             self.drop_lights(coord);
@@ -389,9 +390,7 @@ impl GpuWorld {
             // A written brick changes its own exposed voxels and those of its neighbours'
             // faces toward it.
             let left = self.lap(Stage::LightNote);
-            for i in rescan.iter() {
-                self.note_lights(coord, i, &bricks, st);
-            }
+            self.note_lights(coord, rescan, &bricks, st);
             self.lap(left);
             if self.lights.chunks.contains_key(&coord) {
                 self.lights.dirty.insert(coord);
