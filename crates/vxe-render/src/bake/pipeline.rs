@@ -112,7 +112,7 @@ pub(super) const TABLE_READ: &str =
 
 /// The LOD walk's camera chunk, which the bake's module takes from the face's job instead.
 pub(super) const LOD_ORIGIN: &str =
-    "let d = chunk - floor_div(vec3<i32>(floor(params.views[0].origin)), 64);";
+    "let d = chunk - vec3<i32>(params.cam_chunk_x, params.cam_chunk_y, params.cam_chunk_z);";
 
 pub(super) fn replace_once(source: &str, from: &str, to: &str) -> String {
     assert_eq!(

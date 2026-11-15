@@ -332,6 +332,26 @@ mod tests {
         assert_eq!(names.len(), PRELUDE.len(), "each prelude name once");
     }
 
+    /// The walk's `floor_div` (`mirror.wgsl`) is an arithmetic shift by log2 of the divisor and
+    /// `exit_cell`'s cell corner (`walk.wgsl`) a mask; for `v` in -4096..=4096 at every cell
+    /// edge the walk uses (1 to 128) both equal `div_euclid` and the float floor division they
+    /// replace (`floor(f32(v) / f32(size))`, times `size` for the corner).
+    #[test]
+    fn the_shift_and_mask_forms_equal_the_floor_division() {
+        assert!(MIRROR_WGSL.contains("return a >> vec3<u32>(countTrailingZeros(u32(b)));"));
+        assert!(WALK_WGSL.contains("let cell_min = v & vec3<i32>(-size);"));
+        for size in [1i32, 2, 4, 8, 16, 32, 64, 128] {
+            for v in -4096i32..=4096 {
+                let shift = v >> size.trailing_zeros();
+                let mask = v & -size;
+                let float = (v as f32 / size as f32).floor() as i32;
+                assert_eq!(shift, v.div_euclid(size), "{v} / {size}");
+                assert_eq!(shift, float, "{v} / {size}");
+                assert_eq!(mask, float * size, "{v} at {size}");
+            }
+        }
+    }
+
     #[test]
     fn the_prelude_holds_the_rust_values() {
         let p = prelude();

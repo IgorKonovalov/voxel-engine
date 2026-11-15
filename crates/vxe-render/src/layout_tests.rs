@@ -183,6 +183,12 @@ fn frame_params() -> Mirror {
     });
     let far = offset_of!(Params, far_normal);
     m.fields.extend([("far_lo", far), ("far_hi", far + 4)]);
+    let cam = offset_of!(Params, cam_chunk);
+    m.fields.extend([
+        ("cam_chunk_x", cam),
+        ("cam_chunk_y", cam + 4),
+        ("cam_chunk_z", cam + 8),
+    ]);
     m
 }
 

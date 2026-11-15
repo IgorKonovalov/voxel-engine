@@ -80,6 +80,12 @@ struct OutputBinds<'a> {
     sharpen_bind: Option<wgpu::BindGroup>,
 }
 
+/// The chunk (64 voxels to an edge) holding `view`'s origin, the LOD walk's reference for
+/// its levels (`Params::cam_chunk`).
+fn cam_chunk(view: &View) -> [i32; 3] {
+    view.origin.map(|c| (c.floor() as i32).div_euclid(64))
+}
+
 /// A frame pass's dispatch with the world's group 0 and its own group `group`.
 fn frame_pass<'a>(
     world: &'a wgpu::BindGroup,
@@ -133,9 +139,27 @@ impl Frame {
         self.pipes.pipeline(device, pass)
     }
 
-    /// The light pass's pipeline (`shade`), built on its first use.
+    /// The light pass's pipeline (`shade`), built on its first use: in the steps view the one
+    /// whose `COUNT_STEPS` is true.
     pub(super) fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
-        self.pipes.pipeline(device, P_LIGHT)
+        let pass = if self.state.look.view == ViewMode::Steps {
+            P_LIGHT_STEPS
+        } else {
+            P_LIGHT
+        };
+        self.pipes.pipeline(device, pass)
+    }
+
+    /// The hit pass's pipeline `which`, in the steps view (`count`) its counting variant.
+    pub(super) fn hit_pipeline(
+        &self,
+        device: &wgpu::Device,
+        which: HitPipe,
+        count: bool,
+    ) -> &wgpu::ComputePipeline {
+        self.pipes
+            .hit
+            .get(device, &self.pipes.world_layout, which, count)
     }
 
     /// The uniform block for `camera` over `world`, lit by `light`: one view filling the
@@ -699,14 +723,16 @@ impl Frame {
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let fsr_binds = self.fsr_frame(device, queue, encoder, &p);
-        let hit_pipeline = if binds.split {
+        let counting = self.state.look.view == ViewMode::Steps;
+        let hit_pipe = if binds.split {
             p.flags |= FLAG_FIELD_SPLIT;
-            &self.pipes.hit.pipeline
+            HitPipe::Plain
         } else if binds.field {
-            &self.pipes.hit.field
+            HitPipe::Field
         } else {
-            &self.pipes.hit.pipeline
+            HitPipe::Plain
         };
+        let hit_pipeline = self.hit_pipeline(device, hit_pipe, counting);
         let resume_bind = binds.split.then(|| {
             encoder.clear_buffer(&t.split_args, 0, None);
             encoder.clear_buffer(binds.split_list, 0, Some(16));
@@ -725,7 +751,13 @@ impl Frame {
         if let Some(b) = &resume_bind {
             hit.push(Dispatch {
                 indirect: Some((&t.split_args, 0)),
-                ..frame_pass(world, &self.pipes.hit.resume, b, 1, [0, 0])
+                ..frame_pass(
+                    world,
+                    self.hit_pipeline(device, HitPipe::Resume, counting),
+                    b,
+                    1,
+                    [0, 0],
+                )
             });
         }
         if binds.half {
@@ -771,6 +803,7 @@ impl Frame {
             (gather.len() + probes.len()) as u32,
             std::sync::atomic::Ordering::Relaxed,
         );
+        p.cam_chunk = cam_chunk(&p.views[0]);
         queue.write_buffer(&self.state.params, 0, bytemuck::bytes_of(&p));
         let [upscale, sharpen] = self.upscale_dispatches(device, binds);
         let fsr_passes = fsr_binds

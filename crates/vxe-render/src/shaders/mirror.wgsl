@@ -8,8 +8,10 @@
 // MaterialFlags' TRANSLUCENT and CRISP. The walk (walk.wgsl) and the field pass (field.wgsl)
 // read the pool through their own bindings and decode through these.
 
+// `a` divided by `b`, rounded toward minus infinity, for `b` a power of two: an arithmetic
+// shift right by log2 `b`, exact for every i32.
 fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
-    return vec3<i32>(floor(vec3<f32>(a) / f32(b)));
+    return a >> vec3<u32>(countTrailingZeros(u32(b)));
 }
 
 // The shard and index of word `word` of the slot whose first unit is `unit`, over shards of

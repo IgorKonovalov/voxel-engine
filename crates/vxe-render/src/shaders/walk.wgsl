@@ -56,14 +56,16 @@ const MAX_STEPS: u32 = 4096u;
 const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
-// solid voxel of `material`. A solid voxel of a full chunk's Full brick carries its brick's
-// record entry (`slot`) and its index in the brick; any other cell carries ABSENT. `through` is the edge of
-// the aligned solid cell a cutaway ray in its passing state steps through (0 for an empty
-// cell), and `air` is set for an empty cell of a resident chunk, the cell that ends passing.
+// solid voxel. A solid voxel of a uniform brick carries its `material` and `full` ABSENT; a
+// solid voxel of a Full brick (or mip-brick) carries the brick's record entry in `full` and
+// its index in the brick, and its material is read from the pool only by `cell_material`, so
+// a walk that discards the material never reads it. `through` is the edge of the aligned
+// solid cell a cutaway ray in its passing state steps through (0 for an empty cell), and
+// `air` is set for an empty cell of a resident chunk, the cell that ends passing.
 struct Cell {
     size: i32,
     material: u32,
-    slot: u32,
+    full: u32,
     index: u32,
     through: i32,
     air: bool,
@@ -123,6 +125,14 @@ var<private> split_entered: bool;
 // blocks the ray starts and ends in do not shadow it.
 var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 
+// Whether `march` resolves its hit's material. The shadow rays (`shadowed`), which read only
+// `found`, clear it around their `march` and restore it.
+var<private> march_material: bool = true;
+
+// True only in the steps view's pipelines: the walk counts its steps and loads (below).
+// Every other pipeline compiles the counters out.
+override COUNT_STEPS: bool = false;
+
 // The walk's cost counters since the last reset: loop iterations of `march`, 32-bit storage
 // loads from the mirror (table, record bits and entries, mask lines, the header's translucent
 // words, the rest of the slots), and the pool loads among them: every slot word but a mask
@@ -164,28 +174,34 @@ fn slot_word(unit: u32, word: u32) -> u32 {
 
 // `slot_word`, counted as a pool load.
 fn pool_word(unit: u32, word: u32) -> u32 {
-    loads += 0x10001u;
+    if (COUNT_STEPS) {
+        loads += 0x10001u;
+    }
     return slot_word(unit, word);
 }
 
 // `slot_word` of a mask line or a translucent word, counted as a load only.
 fn mask_word_at(unit: u32, word: u32) -> u32 {
-    loads += 1u;
+    if (COUNT_STEPS) {
+        loads += 1u;
+    }
     return slot_word(unit, word);
 }
 
 fn record_word(w: u32) -> u32 {
-    loads += 1u;
+    if (COUNT_STEPS) {
+        loads += 1u;
+    }
     return chunk_records[w];
 }
 
 // The mip level a LOD-only chunk is walked at: forced, or by its squared chunk distance to the
-// camera's chunk.
+// camera's chunk (`Params.cam_chunk_*`, the chunk of view 0's origin).
 fn lod_level(chunk: vec3<i32>) -> u32 {
     if (params.forced_level != 0u) {
         return params.forced_level;
     }
-    let d = chunk - floor_div(vec3<i32>(floor(params.views[0].origin)), 64);
+    let d = chunk - vec3<i32>(params.cam_chunk_x, params.cam_chunk_y, params.cam_chunk_z);
     let d2 = dot(d, d);
     if (d2 <= params.lod1_r2) {
         return 1u;
@@ -317,7 +333,9 @@ fn descend(v: vec3<i32>) -> Descent {
         // Wrapped addressing: the table is indexed by the chunk coordinate modulo the window
         // size, and the range check above keeps every lookup inside the current window.
         let wr = ((chunk % w) + w) % w;
-        loads += 1u;
+        if (COUNT_STEPS) {
+            loads += 1u;
+        }
         let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
         walk.entry = t;
         // A full chunk is level 0: voxels in 8^3 bricks, 8 bricks to an edge. A LOD record
@@ -390,17 +408,38 @@ fn is_translucent(m: u32) -> bool {
     return (bitcast<u32>(materials[m * 4u + 1u].w) & MATERIAL_TRANSLUCENT) != 0u;
 }
 
-// The cell the opaque walk finds at voxel `v`. A translucent voxel is air to it: a uniform
-// translucent brick is one empty 8^3 cell, a translucent voxel of a Full brick has no bit in
-// the opaque mask, and with the mask tests off its material is read and found translucent.
-fn lookup(v: vec3<i32>) -> Cell {
-    return lookup_walk(v, false);
+// The material of solid cell `c`: a uniform brick's from its entry, a Full brick's voxel's
+// read from the pool.
+fn cell_material(c: Cell) -> u32 {
+    if (c.full != ABSENT) {
+        return voxel_material(c.full, c.index);
+    }
+    return c.material;
 }
 
-// `lookup`, or with `coarse` the coarse shadow walk's cell: a Full brick's voxel in a 2^3
-// block with a set opaque bit is solid without a pool read (the block's other voxels too),
-// so the walk reads chunk bits, brick bits and one mask line per brick and never a voxel.
-// Without the masks flag the coarse walk is the full one.
+// The cell the opaque walk finds at voxel `v`, its material resolved. A translucent voxel is
+// air to it: a uniform translucent brick is one empty 8^3 cell, and a translucent voxel of a
+// Full brick has no bit in the opaque mask (with the mask tests off its opaque bit is read
+// alone).
+fn lookup(v: vec3<i32>) -> Cell {
+    var c = lookup_walk(v, false);
+    if (c.size == 0) {
+        c.material = cell_material(c);
+        c.full = ABSENT;
+    }
+    return c;
+}
+
+// Whether voxel `v` is solid to the opaque walk: `lookup(v).size == 0` without the material.
+fn solid_at(v: vec3<i32>) -> bool {
+    return lookup_walk(v, false).size == 0;
+}
+
+// The opaque walk's cell at `v`, a Full brick's solid voxel's material unread (see `Cell`),
+// or with `coarse` the coarse shadow walk's cell: a Full brick's voxel in a 2^3 block with a
+// set opaque bit is solid without a pool read (the block's other voxels too), so the walk
+// reads chunk bits, brick bits and one mask line per brick and never a voxel. Without the
+// masks flag the coarse walk is the full one.
 fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
     let dsc = descend(v);
     if (dsc.size != 0) {
@@ -431,8 +470,7 @@ fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
         // translucent voxel, both air to this walk.
         return Cell(cell, 0u, ABSENT, 0u, 0, true);
     }
-    let m = voxel_material(entry, dsc.i);
-    return Cell(0, m, select(ABSENT, entry, dsc.level == 0u), dsc.i, cell, false);
+    return Cell(0, 0u, entry, dsc.i, cell, false);
 }
 
 // What the translucent walk finds at voxel `v`: `size` > 0 is a cell holding no translucent
@@ -568,7 +606,8 @@ struct Exit {
 };
 
 fn exit_cell(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, size: i32) -> Exit {
-    let cell_min = floor_div(v, size) * size;
+    // `size` is a power of two: clearing the low bits rounds toward minus infinity.
+    let cell_min = v & vec3<i32>(-size);
     let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
     let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
     var k = 0;
@@ -599,9 +638,9 @@ fn cube_exit(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>) -> f32 {
     return min(min(tk.x, tk.y), tk.z);
 }
 
-// The first solid voxel along `o + d t` for `0 <= t <= t_limit`. With `cutaway` set the walk
-// starts passing: solid cells are stepped through until the first empty cell of a resident
-// chunk.
+// The first solid voxel along `o + d t` for `0 <= t <= t_limit`, its material read once, at
+// the hit, unless `march_material` is clear (then 0). With `cutaway` set the walk starts
+// passing: solid cells are stepped through until the first empty cell of a resident chunk.
 fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u);
     let bmin_i = params.window_min * 64;
@@ -619,7 +658,9 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     var passing = cutaway;
 
     for (var step = 0u; step < MAX_STEPS; step++) {
-        walk_steps += 1u;
+        if (COUNT_STEPS) {
+            walk_steps += 1u;
+        }
         if (any(v < bmin_i) || any(v >= bmax_i)) {
             return miss;
         }
@@ -640,7 +681,11 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             }
         }
         if (size == 0) {
-            return Hit(true, v, axis, t, c.material);
+            var m = 0u;
+            if (march_material) {
+                m = cell_material(c);
+            }
+            return Hit(true, v, axis, t, m);
         }
         let exit = exit_cell(o, d, inv, v, size);
         t = exit.t;
@@ -660,10 +705,10 @@ fn face_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
     return n;
 }
 
-// 1 for a solid voxel, 0 for air, read through `lookup` (a LOD-only chunk answers with its
+// 1 for a solid voxel, 0 for air, read through `solid_at` (a LOD-only chunk answers with its
 // mip cell).
 fn occupancy(v: vec3<i32>) -> f32 {
-    return select(0.0, 1.0, lookup(v).size == 0);
+    return select(0.0, 1.0, solid_at(v));
 }
 
 // `-normalize(g)`, or `fallback` when the gradient `g` vanishes.
@@ -679,7 +724,7 @@ fn normal_from_gradient(g: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
 // sums the nine voxels on its positive face minus the nine on its negative face. For a hit voxel
 // at local 1 to 6 on every axis of a full-detail Full brick (with the walk's skips and masks on)
 // the 27 voxels lie in that brick, and their occupancy is their bits in its opaque mask: a voxel's
-// mask bit is `lookup(v).size == 0` (the mask holds the opaque voxels; a translucent voxel is air
+// mask bit is `solid_at(v)` (the mask holds the opaque voxels; a translucent voxel is air
 // to both), so the six mask words of the three layers replace 26 lookups. The sums are of small
 // integers, exact in any order, so both paths give the same normal bit for bit.
 fn gradient27_normal(h: Hit, fallback: vec3<f32>) -> vec3<f32> {
