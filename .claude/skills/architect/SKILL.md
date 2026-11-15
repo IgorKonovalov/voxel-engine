@@ -100,6 +100,8 @@ specific. Vague plans get ignored.
 - **Every phase carries exactly one `**Owner skill:**` line: `dev` or `human`.** A `human` phase
   is one only the user can do: acquire the baseline GPU, create the GitHub repo, make a product
   call. A missing or malformed tag is a review blocker.
+  A `human` window check runs on Linux; Windows is checked once in a while, not per plan
+  (owner, 2026-11-15), so a plan names no Windows run unless the owner asks for one.
 - **Each phase has `Files touched` and a behavioral `Done when`.** Phrase tests as the claim they
   defend ("a radius-10 sphere carve in solid material 3 returns `{3: 4169}`"), not "tests pass".
 - **Do the arithmetic on every numeric done-when before the plan ships.** Lattice-point counts,

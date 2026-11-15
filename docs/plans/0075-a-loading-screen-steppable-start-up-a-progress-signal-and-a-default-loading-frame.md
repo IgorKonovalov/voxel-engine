@@ -83,8 +83,8 @@ fly-through's run; this plan starts after it merges, and can run beside Plan 006
 settings) rewrites the setters `Run::init` calls, so whichever lands second rebases its `init`
 edits; this plan is smaller and should land first. Plan 0071 curates `vxe-render`'s public
 surface: `PreRoll`, `LoadProgress` and `LoadingScreen` are called by the testbed and stay public.
-Plan 0073 later adds the loading flags as settings rows. Plan 0068's Windows run was done on
-2026-11-15, before this plan's go, so Phase 6 here takes its own Windows archive.
+Plan 0073 later adds the loading flags as settings rows. Phase 6 is Linux only; Windows is
+seen at the owner's periodic Windows run, not per plan (owner, 2026-11-15).
 
 ## Implementation phases
 
@@ -221,13 +221,12 @@ owner's window.
 
 ### Phase 6: the owner's window
 - **Owner skill:** human
-- **What:** the owner watches the loading screen on Linux, and on Windows from a tester archive.
+- **What:** the owner watches the loading screen on Linux.
 - **Done when:** the owner has started `flythrough --castle`, `--source cave` and
   `--source showcase` in a window, and the tester's "run all benchmarks", and answered: the
   animation runs without a visible stutter, the bar only moves forward and does not sit still
   for long, the scene name is right, the end (fade or cut) looks right, and the start-up is not
-  noticeably slower. On Windows, the same from a release-workflow archive (manual run,
-  artifacts only).
+  noticeably slower.
   Each answer and pick goes to the readings log.
 
 ### Phase 7: after the window
@@ -303,8 +302,8 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
    the recommended ring of squares), Phase 3's Shape. Its GPU time stays inside section 7's
    0.3 ms loading-pass budget; if Phase 3's reading on the RTX or lavapipe misses it, the cube
    drops to fewer voxels before anything else changes.
-4. **Windows:** Plan 0068's Windows run was done 2026-11-15 without this plan, so Phase 6 takes
-   its own release-workflow archive.
+4. **Windows:** not in this plan. The owner checks Windows once in a while, not per plan
+   (owner, 2026-11-15); the next periodic Windows run looks at the loading screen.
 
 ## What this plan does NOT do
 
