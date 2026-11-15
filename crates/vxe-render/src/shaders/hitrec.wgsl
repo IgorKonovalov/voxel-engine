@@ -218,3 +218,22 @@ fn filter_normal(rec: HitRecord, origin: vec3<f32>) -> vec3<f32> {
     let s = select(1.0, -1.0, rec.p[rec.axis] > origin[rec.axis]);
     return select(vec3<f32>(0.0), vec3<f32>(s), axis_mask(rec.axis));
 }
+
+// Whether an emitter's light lands at internal pixel `px` (hit `rec`): the hit's material
+// emits, or the temporal pass's emissive part in `emissive` (the store's value at a cube face,
+// a fallback's sample elsewhere) is non-zero at any of the lighting texels around it. The
+// upscalers mark an emission scale change at these pixels alone; the rest keeps its history.
+fn emission_lands(emissive: texture_2d<f32>, px: vec2<i32>, rec: HitRecord) -> bool {
+    if (any(materials[rec.material * 4u + 1u].xyz != vec3<f32>(0.0))) {
+        return true;
+    }
+    let o = vec2<f32>(unpack_offset(params.light_offset));
+    let base = vec2<i32>(floor((vec2<f32>(px) - o) / f32(params.light_scale)));
+    for (var i = 0; i < 4; i++) {
+        let q = base + vec2<i32>(i & 1, i >> 1);
+        if (on_light_grid(q) && any(textureLoad(emissive, q, 0).xyz > vec3<f32>(0.0))) {
+            return true;
+        }
+    }
+    return false;
+}

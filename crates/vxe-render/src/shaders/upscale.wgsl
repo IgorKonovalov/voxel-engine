@@ -89,25 +89,6 @@ fn up_kernel(d: vec2<f32>) -> f32 {
 // moving one.
 const EXPOSURE_MOVE: f32 = 1.0 / 64.0;
 
-// Whether an emitter's light lands at internal pixel `px` (hit `rec`): the hit's material
-// emits, or the temporal pass's emissive part (the store's value at a cube face, a fallback's
-// sample elsewhere) is non-zero at any of the lighting texels around it. An emission scale
-// change marks these pixels alone; the rest of the image keeps its history.
-fn emission_lands(px: vec2<i32>, rec: HitRecord) -> bool {
-    if (any(materials[rec.material * 4u + 1u].xyz != vec3<f32>(0.0))) {
-        return true;
-    }
-    let o = vec2<f32>(unpack_offset(params.light_offset));
-    let base = vec2<i32>(floor((vec2<f32>(px) - o) / f32(params.light_scale)));
-    for (var i = 0; i < 4; i++) {
-        let q = base + vec2<i32>(i & 1, i >> 1);
-        if (on_light_grid(q) && any(textureLoad(up_emissive_in, q, 0).xyz > vec3<f32>(0.0))) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Whether the light at `rec` (internal pixel `px`) changed since the older frame `up_tuning`
 // holds: an emission scale changed within EMISSION_CHANGE_FRAMES where an emitter's light
 // lands (`emission_lands`), the exposure moved by more than EXPOSURE_MOVE EV
@@ -115,7 +96,7 @@ fn emission_lands(px: vec2<i32>, rec: HitRecord) -> bool {
 // or the list's summed term (each light inside its reach and window) moved past the
 // thresholds; with the list now equal to the older list (`lights.changed` 0) it did not.
 fn up_light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
-    if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u && emission_lands(px, rec)) {
+    if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u && emission_lands(up_emissive_in, px, rec)) {
         return true;
     }
     if (abs(log2(exposure_ratio())) > EXPOSURE_MOVE) {
