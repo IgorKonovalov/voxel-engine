@@ -149,12 +149,12 @@ go through an in-process server, so every edit you see came back as a client eve
 | `G` | Toggle fly and walk mode (bounded level only); walking, `Space` jumps or climbs a ledge |
 | `K` | Print the coarse grid and walkable map |
 | `R` | Toggle what unsupported rock does after a dig: fall (default) or crumble into rubble |
-| `1` | Drop a point light of the picked colour (intensity 1200) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/8`. Eight slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
 | `3` | Pick the next colour (white, warm, red, green, blue) and recolour the newest light, in flight or still; later drops and shots take it. The banner and the `lights` row name it |
-| `4` | Remove the newest light; the banner names `lights <n>/8` |
+| `4` | Remove the newest light; the banner names `lights <n>/16` |
 | `5` | Flip the newest light's bounce flag: with `--lamp-bounce on` a flagged light feeds the probe channel; the banner reads `bounce on` or `bounce off`, and the `lights` row marks each flagged light `*` |
-| `6` | Fire a point light of the picked colour along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light. The `lights` row names the count, carry, the lights in flight and those over the cap |
+| `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light. The `lights` row names the count, carry, the lights in flight and those over the cap |
 | `F` | Cycle the live bake queue's order: score, score with the class as a tier, distance |
 | `Tab` / `Slash` | Halve / double the queue score's angle weight |
 | `Quote` | Toggle the queue's withdrawal of jobs behind the camera |

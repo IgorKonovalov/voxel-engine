@@ -54,7 +54,8 @@ pub struct Params {
     pub window_size: [i32; 3],
     pub _pad3: i32,
     pub size: [u32; 2],
-    /// [`Lighting::light_floor`]: a list light reaches `sqrt(intensity / light_floor)` voxels.
+    /// [`Lighting::light_floor`]: a list light reaches `sqrt(intensity / light_floor)` voxels;
+    /// the slot rule copies it into each list light's slot (the headlamp's slot takes 0).
     pub light_floor: f32,
     pub flags: u32,
     /// Pool units per shard: unit `u` is unit `u % n` of shard `u / n`.
@@ -628,7 +629,8 @@ pub struct Lighting {
     pub store_read: StoreRead,
     /// A list light reaches `sqrt(intensity / light_floor)` voxels, its term windowed by `(1 -
     /// (d / r)^4)^2` inside and no shadow ray cast beyond (ADR-0044; default 0.1). 0 or less is
-    /// no reach: the window is 1 and no light is culled.
+    /// no reach: the window is 1 and no light is culled. The headlamp's slot ignores it: the
+    /// lamp has no reach.
     pub light_floor: f32,
     /// The normal the half-resolution light's filters compare ([`LightWeights`]; default
     /// `Normal`).
@@ -732,7 +734,7 @@ impl Lighting {
     }
 }
 
-/// [`Lighting::light_floor`] by default (ADR-0044): the headlamp's 1200 reaches 109.5 voxels.
+/// [`Lighting::light_floor`] by default (ADR-0044): a list light of 600 reaches 77.5 voxels.
 pub const DEFAULT_LIGHT_FLOOR: f32 = 0.1;
 
 /// The most a-trous iterations a frame runs ([`Lighting::atrous_iterations`]), at strides 1,

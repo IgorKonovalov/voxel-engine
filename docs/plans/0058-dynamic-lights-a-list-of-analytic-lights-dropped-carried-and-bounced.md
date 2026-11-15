@@ -1111,7 +1111,7 @@ questions with recommendations):
 | 2: Colour: the direct part in a target of its own | dev | done (exploration) | 4854340 |
 | 3: The bounce flag | dev | done (exploration) | a616204 |
 | 4: The owner's window | human | done 2026-11-14 (verdict in the log; picks, faults to Phase 5) | |
-| 5: The window's picks and its faults | dev | not started | |
+| 5: The window's picks and its faults | dev | in progress: 5a, 5c to 5f read; 5b and 5e's mask to the orchestrator (log) | |
 | 6: The owner's re-window | human | not started | |
 | 7: The picks as tests | dev | not started | |
 
@@ -1179,6 +1179,12 @@ each. Empty is fine.)_
   mode) and `README.md` gains the `5` and `--lights-bounce` rows: outside Files touched.
 - Gate at the tip: `gpu_look_field.rs`'s `DEFAULT_FRAME_BYTES` gains Phase 2's direct pair
   (5 529 600 B), outside Files touched; it was stale since 4854340.
+
+- Phase 5a: the headlamp's floor 0 is a per-slot floor in each slot's first pad word
+  (`Light._pad[0]`, `floor` in `common.wgsl`), written by the slot rule; `params.light_floor`
+  is read by no shader. `hud.png` and `mode_banner.png` re-blessed for their words (log).
+- Phase 5: the readings of 5b to 5e are `gpu_dynamic_lights.rs`'s `mod reading`; 5d's test is
+  in `gpu_indirect.rs` and passes at the tip without a fix (the chain holds).
 
 ### Close triggers
 

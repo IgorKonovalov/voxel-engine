@@ -9,9 +9,9 @@
 use std::fmt::Write as _;
 use vxe_render::{Light, MAX_LIGHTS};
 
-/// A dropped or fired light's intensity: the headlamp's, reaching 109.5 voxels at the default
-/// light floor.
-pub const DROP_INTENSITY: f32 = 1200.0;
+/// A dropped or fired light's intensity (owner, 2026-11-14: half the headlamp's 1200), reaching
+/// 77.5 voxels at the default light floor.
+pub const DROP_INTENSITY: f32 = 600.0;
 
 /// `--lights N`'s ring lights' intensity.
 pub const RING_INTENSITY: f32 = 600.0;
@@ -38,7 +38,7 @@ pub const CARRY_DOWN: f32 = 3.0;
 
 /// The line a drop or a shot into a full list prints.
 pub const FULL_LINE: &str =
-    "lights: the list is full (Plan 0058: 8 slots, the headlamp's among them while it is on)";
+    "lights: the list is full (Plan 0058: 16 slots, the headlamp's among them while it is on)";
 
 /// The colours `3` cycles through, in order, with their names: white first.
 pub const COLOURS: [(&str, [f32; 3]); 5] = [
@@ -135,7 +135,8 @@ impl TestLights {
         }
     }
 
-    /// The lights the frame shades beside the headlamp: seven while it is on, eight while off.
+    /// The lights the frame shades beside the headlamp: fifteen while it is on, sixteen while
+    /// off.
     pub fn cap(lamp: bool) -> usize {
         MAX_LIGHTS - usize::from(lamp)
     }
@@ -259,7 +260,7 @@ impl TestLights {
         self.lights.iter().map(|l| l.light).collect()
     }
 
-    /// The `lights` row: `lights <n>/8 [bounce *..] [carry] [fly <m>] over <k> colour <name>`,
+    /// The `lights` row: `lights <n>/16 [bounce *..] [carry] [fly <m>] over <k> colour <name>`,
     /// `n` the lights shaded with the headlamp counted while it is on, one `*` for each list
     /// light flagged to bounce, `m` those in flight, `k` those past the cap, `name` the picked
     /// colour.
@@ -286,7 +287,7 @@ impl TestLights {
         );
     }
 
-    /// The banner's count, `lights <n>/8`.
+    /// The banner's count, `lights <n>/16`.
     pub fn count_words(&self, lamp: bool) -> String {
         let shaded = self.lights.len().min(Self::cap(lamp)) + usize::from(lamp);
         format!("lights {shaded}/{MAX_LIGHTS}")
@@ -314,10 +315,20 @@ mod tests {
         assert_eq!(l.lights[1].light.flags & Light::BOUNCE, 0);
     }
 
+    /// Owner, 2026-11-14: drops and shots at 600, the ring's intensity.
+    #[test]
+    fn a_drop_and_a_shot_take_intensity_600() {
+        let mut l = TestLights::default();
+        l.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        l.fire(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
+        assert_eq!(l.lights[0].light.intensity, 600.0);
+        assert_eq!(l.lights[1].light.intensity, 600.0);
+    }
+
     #[test]
     fn a_full_list_refuses_a_drop_and_a_shot() {
         let mut l = TestLights::default();
-        for _ in 0..7 {
+        for _ in 0..15 {
             l.drop_at(true, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
         }
         assert_eq!(
@@ -329,9 +340,13 @@ mod tests {
             Err(FULL_LINE)
         );
         assert!(FULL_LINE.contains("0058"));
-        // With the lamp off an eighth fits.
+        // With the lamp off a sixteenth fits, and a seventeenth is refused.
         l.fire(false, [0.0; 3], [1.0, 0.0, 0.0], None).unwrap();
-        assert_eq!(l.lights.len(), 8);
+        assert_eq!(l.lights.len(), 16);
+        assert_eq!(
+            l.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None),
+            Err(FULL_LINE)
+        );
     }
 
     #[test]
@@ -396,7 +411,7 @@ mod tests {
         assert_eq!(l.cycle_colour(), "white");
         let mut row = String::new();
         l.write_row(false, &mut row);
-        assert_eq!(row, "lights 4/8 fly 2 over 0 colour white");
+        assert_eq!(row, "lights 4/16 fly 2 over 0 colour white");
     }
 
     #[test]
@@ -410,7 +425,7 @@ mod tests {
         assert_eq!(l.lights[0].light.flags & Light::BOUNCE, 0);
         let mut row = String::new();
         l.write_row(false, &mut row);
-        assert_eq!(row, "lights 2/8 bounce * fly 1 over 0 colour white");
+        assert_eq!(row, "lights 2/16 bounce * fly 1 over 0 colour white");
         assert_eq!(l.toggle_bounce(), Some(false));
         assert_eq!(l.bouncing(), 0);
     }

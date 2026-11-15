@@ -135,7 +135,7 @@ pub struct Modes {
     pub(crate) queue: QueueModes,
     /// The testbed's list of lights: `1` drops, `2` carries, `4` removes, `6` fires.
     pub lights: crate::lights::TestLights,
-    /// The banner's lights row after the last light key (`lights 3/8`, `carry on`).
+    /// The banner's lights row after the last light key (`lights 3/16`, `carry on`).
     lights_words: Option<String>,
 }
 
@@ -207,7 +207,7 @@ pub enum HudRow {
     Queue,
     /// `cutaway auto, shadow ray on, dig radius 0.5 m`.
     Controls,
-    /// `lights 3/8 carry fly 1 over 0` ([`crate::lights::TestLights::write_row`]).
+    /// `lights 3/16 carry fly 1 over 0` ([`crate::lights::TestLights::write_row`]).
     Lights,
 }
 
@@ -275,8 +275,8 @@ impl Modes {
         Self { lights, ..self }
     }
 
-    /// Shows the banner from `now_ms` with `words` as its lights row (`lights 3/8`,
-    /// `carry on`, `fire, lights 2/8`).
+    /// Shows the banner from `now_ms` with `words` as its lights row (`lights 3/16`,
+    /// `carry on`, `fire, lights 2/16`).
     pub fn show_lights(&mut self, words: String, now_ms: f64) {
         self.lights_words = Some(words);
         self.banner_at = now_ms;
@@ -782,7 +782,7 @@ mod tests {
         m.lights.lights.truncate(3);
         m.lights.remove_newest();
         m.show_lights(m.lights.count_words(false), 30.0);
-        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 2/8"));
+        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 2/16"));
     }
 
     /// `5` flips the newest light's bounce flag: the banner reads `bounce on`, then `bounce
@@ -806,7 +806,7 @@ mod tests {
         assert!(m.banner(10.0).unwrap().lines().any(|l| l == "bounce on"));
         assert_eq!(
             m.row(HudRow::Lights),
-            "lights 2/8 bounce * over 0 colour white"
+            "lights 2/16 bounce * over 0 colour white"
         );
         assert_eq!(
             m.lights.lights[1].light.flags & vxe_render::Light::BOUNCE,
@@ -814,7 +814,7 @@ mod tests {
         );
         (bounce.flip)(&mut m, 20.0);
         assert!(m.banner(20.0).unwrap().lines().any(|l| l == "bounce off"));
-        assert_eq!(m.row(HudRow::Lights), "lights 2/8 over 0 colour white");
+        assert_eq!(m.row(HudRow::Lights), "lights 2/16 over 0 colour white");
     }
 
     /// `F4` steps the a-trous iterations 4, 2, 1 and back, in the lighting row's `filter <n>`
@@ -863,17 +863,17 @@ mod tests {
         (carry.flip)(&mut m, 10.0);
         assert_eq!(
             m.row(HudRow::Lights),
-            "lights 3/8 carry over 0 colour white"
+            "lights 3/16 carry over 0 colour white"
         );
         assert!(m.banner(10.0).unwrap().lines().any(|l| l == "carry on"));
         m.lighting.lamp = true;
-        assert!(m.row(HudRow::Lights).starts_with("lights 4/8"));
+        assert!(m.row(HudRow::Lights).starts_with("lights 4/16"));
         m.lighting.lamp = false;
         (carry.flip)(&mut m, 20.0);
         assert!(m.banner(20.0).unwrap().lines().any(|l| l == "carry off"));
         // The drop key's banner, as `run::keys` shows it.
         m.show_lights(m.lights.count_words(false), 30.0);
-        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 3/8"));
+        assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 3/16"));
         // Two lights, one in flight.
         let mut f = Modes::new(lamp_off, half, 0.0);
         f.lights
@@ -884,14 +884,14 @@ mod tests {
             .unwrap();
         assert_eq!(
             f.row(HudRow::Lights),
-            "lights 2/8 fly 1 over 0 colour white"
+            "lights 2/16 fly 1 over 0 colour white"
         );
         f.show_lights(format!("fire, {}", f.lights.count_words(false)), 40.0);
         let b = f.banner(40.0).unwrap();
-        assert!(b.contains("fire") && b.contains("lights 2/8"), "{b}");
+        assert!(b.contains("fire") && b.contains("lights 2/16"), "{b}");
         // A full list refuses a drop and a shot with `FULL_LINE`.
         let mut full = TestLights::default();
-        for _ in 0..8 {
+        for _ in 0..16 {
             full.drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
                 .unwrap();
         }
@@ -904,10 +904,10 @@ mod tests {
             Err(FULL_LINE)
         );
         assert!(FULL_LINE.contains("0058"));
-        // Over the cap: eight lights with the lamp switched on.
+        // Over the cap: sixteen lights with the lamp switched on.
         let mut over = Modes::new(lamp_off, half, 0.0).with_lights(full);
         over.lighting.lamp = true;
-        assert_eq!(over.row(HudRow::Lights), "lights 8/8 over 1 colour white");
+        assert_eq!(over.row(HudRow::Lights), "lights 16/16 over 1 colour white");
         // `--lights 3` parses.
         let a = crate::cli::parse_args_from(["--lights", "3"].map(String::from)).unwrap();
         assert_eq!(a.light.lights, 3);

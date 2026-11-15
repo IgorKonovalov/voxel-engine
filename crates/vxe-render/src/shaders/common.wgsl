@@ -81,7 +81,7 @@ struct Params {
     window_size: vec3<i32>,
     _pad3: i32,
     size: vec2<u32>,
-    // A list light reaches sqrt(intensity / light_floor) voxels; 0 or less is no reach.
+    // Lighting::light_floor; the passes read each slot's own (`Light.floor`).
     light_floor: f32,
     flags: u32,
     units_per_shard: u32,
@@ -138,7 +138,9 @@ struct Light {
     colour: vec3<f32>,
     cos_outer: f32,
     flags: u32,
-    _p0: u32,
+    // The slot's light floor (`Lighting::light_floor`; 0 for the headlamp's slot): it reaches
+    // sqrt(intensity / floor) voxels, everywhere at 0 or less.
+    floor: f32,
     _p1: u32,
     _p2: u32,
 };
@@ -250,13 +252,13 @@ fn t9e5_unpack(w: u32) -> vec3<f32> {
     return vec3<f32>(m) * exp2(f32(i32(w >> 27u) - 24));
 }
 
-// ADR-0044's window `(1 - (d / r)^4)^2` for a light of `intensity` at squared distance `d2`,
-// `r^2 = intensity / light_floor`: 1 with no floor, 0 at and past the reach.
-fn light_window(intensity: f32, d2: f32) -> f32 {
-    if (params.light_floor <= 0.0) {
+// ADR-0044's window `(1 - (d / r)^4)^2` for light `li` at squared distance `d2`, `r^2 =
+// intensity / floor` at its slot's floor: 1 with no floor, 0 at and past the reach.
+fn light_window(li: Light, d2: f32) -> f32 {
+    if (li.floor <= 0.0) {
         return 1.0;
     }
-    let x = d2 * params.light_floor / max(intensity, 1e-30);
+    let x = d2 * li.floor / max(li.intensity, 1e-30);
     if (x >= 1.0) {
         return 0.0;
     }
@@ -267,7 +269,7 @@ fn light_window(intensity: f32, d2: f32) -> f32 {
 // Whether `p` lies inside light `li`'s reach (always with no floor).
 fn light_reaches(li: Light, p: vec3<f32>) -> bool {
     let to_light = li.pos - p;
-    return params.light_floor <= 0.0 || dot(to_light, to_light) * params.light_floor < li.intensity;
+    return li.floor <= 0.0 || dot(to_light, to_light) * li.floor < li.intensity;
 }
 
 // Light `li`'s cone at `p`, `l` the unit vector toward it: 1 for a point light.
@@ -286,7 +288,7 @@ fn light_at(li: Light, p: vec3<f32>) -> f32 {
     }
     let to_light = li.pos - p;
     let dist2 = max(dot(to_light, to_light), 1e-4);
-    let w = light_window(li.intensity, dist2);
+    let w = light_window(li, dist2);
     if (w <= 0.0) {
         return 0.0;
     }
@@ -304,7 +306,7 @@ fn light_term(li: Light, p: vec3<f32>, n: vec3<f32>) -> f32 {
     }
     let to_light = li.pos - p;
     let dist2 = max(dot(to_light, to_light), 1e-4);
-    let w = light_window(li.intensity, dist2);
+    let w = light_window(li, dist2);
     if (w <= 0.0) {
         return 0.0;
     }

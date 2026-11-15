@@ -1346,6 +1346,77 @@ fn the_channel_freezes_when_every_flagged_light_is_still() {
     );
 }
 
+/// A flagged list light lights what it does not see (Plan 0058 Phase 5d): in the light box at
+/// 192 x 108, lamp off, the lamp's bounce on (the channel's switch), a wall across the box at
+/// x 74..76, 12 voxels high, and a list light of 600 at (64, 32, 22), whose direct light the
+/// wall keeps off the floor at x 82. After 32 frames the composite at that floor pixel, seen
+/// from the far end, reads the no-light frame's bytes with `BOUNCE` clear (no direct light,
+/// no channel) and more with `BOUNCE` set (the probes' gather of the lit floor and walls).
+#[test]
+fn a_flagged_list_light_lights_what_it_does_not_see() {
+    use support::lights::{box_rig, floor_hits, nearest};
+    let Some(mut rig) = box_rig() else {
+        return;
+    };
+    rig.frame.set_lighting(Lighting {
+        lamp_bounce: true,
+        ..rig.frame.lighting()
+    });
+    rig.world
+        .apply(&box_op(
+            [74, 2, 2],
+            [76, 62, 14],
+            Mode::Fill(flythrough::cave::ROCK),
+        ))
+        .expect("resident");
+    for _ in 0..2 {
+        rig.gpu
+            .sync_now(&rig.world, &rig.device, &rig.queue)
+            .expect("fits");
+    }
+    let far = vxe_render::Camera {
+        position: [120.0, 32.0, 45.0].into(),
+        yaw: std::f32::consts::PI,
+        pitch: -0.9,
+        vfov: 1.2,
+    };
+    let mut pixel = None;
+    let mut run = |lights: &[vxe_render::Light]| {
+        rig.frame.set_lights(lights);
+        rig.frame.reset_history();
+        for _ in 0..32 {
+            support::lights::step(&mut rig, &far);
+        }
+        let i = *pixel.get_or_insert_with(|| {
+            let (i, p) = nearest(&floor_hits(&rig), 82.0, 32.0);
+            println!("the shadowed floor pixel {i} at {p:?}");
+            i
+        });
+        let rgba = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+        [rgba[4 * i], rgba[4 * i + 1], rgba[4 * i + 2]]
+    };
+    let light = |bounce: bool| {
+        let l = vxe_render::Light::point([64.0, 32.0, 22.0], 600.0);
+        vxe_render::Light {
+            flags: l.flags | if bounce { vxe_render::Light::BOUNCE } else { 0 },
+            ..l
+        }
+    };
+    let none = run(&[]);
+    let clear = run(&[light(false)]);
+    let set = run(&[light(true)]);
+    println!("no light {none:?}, BOUNCE clear {clear:?}, BOUNCE set {set:?}");
+    assert_eq!(
+        clear, none,
+        "an unflagged light leaves the shadowed floor as it is"
+    );
+    let sum = |c: [u8; 3]| c.iter().map(|&v| u32::from(v)).sum::<u32>();
+    assert!(
+        sum(set) > sum(clear),
+        "a flagged light lights the shadowed floor: {set:?} against {clear:?}"
+    );
+}
+
 mod reading {
     use super::*;
 
