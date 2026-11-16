@@ -122,8 +122,8 @@ fn shade_px(gid: vec3<u32>) {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
-            // ray. Any other hit draws its own.
-            if (!reads_store(rec)) {
+            // ray; so is an entity hit's under LIGHTING_ENTITY_WORLD. Any other hit draws its own.
+            if (!reads_store(rec) && !entity_reads_store(rec)) {
                 emissive = resolve_emissive(draw_candidates(gid.xy, rec.p, n), rec.p, ns);
             }
         }

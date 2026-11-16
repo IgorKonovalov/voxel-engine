@@ -517,7 +517,7 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     // The line the fly-through prints at the start with no lighting flags, and under the table.
     assert_eq!(
         d.start_modes(0.0).line(),
-        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, young luma, ore pulse off, exposure auto eye +0.00 EV"
+        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, young luma, entity light own, ore pulse off, exposure auto eye +0.00 EV"
     );
     // `--young-filter` reaches the frame's lighting; luma by default.
     assert_eq!(
@@ -530,6 +530,17 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
             .start_lighting()
             .young_filter,
         vxe_render::YoungFilter::Edges
+    );
+    assert_eq!(
+        parse(&["--entity-light", "world"])
+            .unwrap()
+            .start_lighting()
+            .entity_light,
+        vxe_render::EntityLight::World
+    );
+    assert_eq!(
+        d.start_lighting().entity_light,
+        vxe_render::EntityLight::Own
     );
     for (flag, err) in [
         ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -550,6 +561,7 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
             "--young-filter",
             "--young-filter takes luma or edges, not x",
         ),
+        ("--entity-light", "--entity-light takes own or world, not x"),
         (
             "--light-radius",
             "--light-radius takes 0 to 64 chunks, not x",

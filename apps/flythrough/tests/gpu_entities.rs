@@ -1749,14 +1749,14 @@ mod reading {
     }
 
     /// The grain reading's run: a fresh frame (at 128 x 72 under an upscaler, jittered) with
-    /// `young` as its young-pixel filter, its frame counter `offset` on, 128 frames of the
-    /// eight walkers, frames 64 to 127 measured.
+    /// `light` as its entities' emissive light and the box baked at `test_counts(256)`, its
+    /// frame counter `offset` on, 128 frames of the eight walkers, frames 64 to 127 measured.
     fn grain_run(
         rig: &mut Rig,
         model: &Arc<Model>,
         (offset, walking): (u32, bool),
         kind: Option<vxe_render::UpscalerKind>,
-        young: vxe_render::YoungFilter,
+        light: vxe_render::EntityLight,
     ) -> Vec<Shot> {
         let camera = Camera {
             position: [78.0, 32.0, 16.0].into(),
@@ -1768,13 +1768,14 @@ mod reading {
         let mut frame = support::lights::box_frame(&rig.device, internal, [W, H], kind);
         frame.set_jitter(&rig.device, kind.is_some());
         frame.set_lighting(vxe_render::Lighting {
-            young_filter: young,
+            entity_light: light,
             ..support::lights::box_lighting()
         });
         for _ in 0..offset {
             frame.advance();
         }
         rig.frame = frame;
+        rig.bake(&support::bake::test_counts(256));
         let h = rig
             .frame
             .entity_mirror_mut()
@@ -1835,8 +1836,10 @@ mod reading {
     /// the walkers' pixels of frames 64 to 127, relative to their mean. The stages: the light
     /// pass's sample, the temporal pass's accumulation, the filter's output (split at age 8)
     /// and the display's luma; with the walkers' mean age, the share younger than 8 frames and
-    /// the share fresh, and the world pixels' display noise. Each case under both young-pixel
-    /// filters (`YoungFilter`).
+    /// the share fresh, and the world pixels' display noise. Each case under both entity lights
+    /// (`EntityLight`), the box baked; at the output size, still, the shading `world` loses: the
+    /// rms over the walkers' pixels of the difference of the two lights' filtered means over
+    /// frames 64 to 127, relative to `own`'s mean, and the ratio of the means.
     #[test]
     #[ignore = "reading"]
     fn the_grain_on_walking_walkers() {
@@ -1859,15 +1862,26 @@ mod reading {
                 vxe_render::Upscaler::default(),
             )),
         ];
-        let youngs = [
-            vxe_render::YoungFilter::Luma,
-            vxe_render::YoungFilter::Edges,
-        ];
-        for (kind, filter) in kinds.into_iter().flat_map(|k| youngs.map(|y| (k, y))) {
+        let lights = [vxe_render::EntityLight::Own, vxe_render::EntityLight::World];
+        // The still output-size runs' filtered means per walker pixel, `own` then `world`.
+        let mut still: Vec<Vec<Option<f64>>> = Vec::new();
+        for (kind, filter) in kinds.into_iter().flat_map(|k| lights.map(|y| (k, y))) {
             let name = kind.map_or("output size", |k| k.name());
             for walking in [false, true] {
                 let a = grain_run(&mut rig, &model, (0, walking), kind, filter);
                 let b = grain_run(&mut rig, &model, (1008, walking), kind, filter);
+                if kind.is_none() && !walking {
+                    still.push(
+                        (0..a[0].ent.len())
+                            .map(|i| {
+                                a.iter().all(|s| s.ent[i]).then(|| {
+                                    a.iter().map(|s| f64::from(s.stages[2][i])).sum::<f64>()
+                                        / a.len() as f64
+                                })
+                            })
+                            .collect(),
+                    );
+                }
                 let mut stage = [Diff::default(); 3];
                 // The filtered stage split by age: younger than 8, then 8 and older.
                 let mut by_age = [Diff::default(); 2];
@@ -1893,7 +1907,7 @@ mod reading {
                     }
                 }
                 println!(
-                    "{adapter}, {name}, young {}, {} walkers: {n} pixel-frames; noise: sample {}, accum {}, filtered {} (age < 8: {:.0} px, {}; older: {}), display {} /255; age mean {:.1}, younger than 8 {:.1} %, fresh {:.1} %; world display {} /255",
+                    "{adapter}, {name}, entity light {}, {} walkers: {n} pixel-frames; noise: sample {}, accum {}, filtered {} (age < 8: {:.0} px, {}; older: {}), display {} /255; age mean {:.1}, younger than 8 {:.1} %, fresh {:.1} %; world display {} /255",
                     filter.name(),
                     if walking { "walking" } else { "still" },
                     stage[0].rel(),
@@ -1910,5 +1924,22 @@ mod reading {
                 );
             }
         }
+        let (own, world) = (&still[0], &still[1]);
+        let (mut sq, mut so, mut sw, mut n) = (0.0f64, 0.0f64, 0.0f64, 0usize);
+        for (o, w) in own.iter().zip(world) {
+            if let (Some(o), Some(w)) = (o, w) {
+                sq += (w - o).powi(2);
+                so += o;
+                sw += w;
+                n += 1;
+            }
+        }
+        println!(
+            "{adapter}, output size, still walkers: world against own over {n} pixels: rms of the difference {:.1} % of own's mean {:.4}; world's mean {:.4} ({:.1} % of own's)",
+            100.0 * (sq / n as f64).sqrt() / (so / n as f64),
+            so / n as f64,
+            sw / n as f64,
+            100.0 * sw / so,
+        );
     }
 }

@@ -225,6 +225,10 @@ pub static TOGGLES: &[Toggle] = &[
         "young {}",
         m.lighting.young_filter.name()
     )),
+    lighting!(Insert, "entity light", EntityLight, |m| format!(
+        "entity light {}",
+        m.lighting.entity_light.name()
+    )),
     Toggle {
         press: Press::Key(KeyCode::KeyN, None),
         name: "look",

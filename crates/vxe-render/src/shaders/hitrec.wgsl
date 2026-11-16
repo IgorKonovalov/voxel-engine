@@ -215,6 +215,13 @@ fn reads_store(rec: HitRecord) -> bool {
     return rec.found && rec.axis >= 0 && !rec.field;
 }
 
+// Whether an entity hit's emissive part is the store's (Params.lighting LIGHTING_ENTITY_WORLD,
+// `EntityLight::World`): the light pass draws no emissive sample for it, and the temporal pass
+// reads the store at the world faces around it (temporal.wgsl).
+fn entity_reads_store(rec: HitRecord) -> bool {
+    return rec.found && rec.entity && (params.lighting & LIGHTING_ENTITY_WORLD) != 0u;
+}
+
 // The voxel behind hit point `p` with face normal `nf`.
 fn store_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
     return vec3<i32>(floor(p - 0.5 * nf));

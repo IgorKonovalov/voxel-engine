@@ -50,6 +50,13 @@
 // `store_fallback`) reads a chain of summaries, nearest first: the chunk's own block's, the
 // mean of its six face neighbours', the level-1 then level-2 parent record; 0 where none holds
 // the direction, and 0 at once under `black`.
+// An entity hit under LIGHTING_ENTITY_WORLD (`entity_reads_store`) reads the store the same
+// way, as if it were a face of the shading normal's dominant axis `a`, pointing the normal's
+// way: the voxel half a voxel behind the hit along that axis (in the entity, so in the world's
+// air beside the faces around it), the brick value of its cell's faces of that direction, else
+// of the first of ENTITY_STORE_CELLS cells behind it against that direction that holds one (the
+// nearest world face facing the same way), else the missing-light chain's at the first voxel, then mixed by the shading normal (`store_value_by_normal`) whatever
+// bit 14 says, and it counts in no store counter.
 // Any other hit (no face: the field look, a translucent hit, a ray from inside rock) is a
 // fallback: its own emissive samples' running mean over the pixel's age, `1 / (age + 1)`, until
 // the age reaches FALLBACK_CAP, then held, so a still fallback pixel holds still; it restarts
@@ -93,6 +100,9 @@
 // `exposure_ratio()` (the second moment by its square) before it blends, the accumulation's
 // store is clamped at HDR_MAX, and the moments are of the luminance clamped at MOMENT_LUM_MAX
 // and stored at most MOMENT_LUM_MAX and its square.
+
+// Cells an entity hit's store read steps back for a face of its direction.
+const ENTITY_STORE_CELLS: u32 = 4u;
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -376,18 +386,39 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
-    if (reads_store(rec)) {
+    let on_entity = entity_reads_store(rec);
+    if (reads_store(rec) || on_entity) {
         let ray = pixel_ray(full_px(gid.xy));
-        let nf = shadow_normal_of(rec, ray.d);
-        let voxel = store_voxel(rec.p, nf);
-        let face = store_face(rec.axis, nf);
+        var nf = vec3<f32>(0.0);
+        var axis = rec.axis;
+        if (on_entity) {
+            let an = abs(rec.n);
+            axis = select(select(2, 1, an.y >= an.z), 0, an.x >= an.y && an.x >= an.z);
+            nf = select(vec3<f32>(0.0), sign(rec.n), axis_mask(axis));
+        } else {
+            nf = shadow_normal_of(rec, ray.d);
+        }
+        var voxel = store_voxel(rec.p, nf);
+        let face = store_face(axis, nf);
         let head = store_head();
-        let c = store_brick_value(head, voxel, face);
+        var c = store_brick_value(head, voxel, face);
+        // An entity hit whose cell holds no face of its direction looks for the nearest that
+        // does behind it, a cell at a time against that direction, before the chain.
+        if (on_entity) {
+            let step = vec3<i32>(nf) * (1 << head.shift);
+            for (var k = 0u; k < ENTITY_STORE_CELLS && c.w == 0.0; k++) {
+                voxel -= step;
+                c = store_brick_value(head, voxel, face);
+            }
+            if (c.w == 0.0) {
+                voxel = store_voxel(rec.p, nf);
+            }
+        }
         var value = c;
         if (c.w == 0.0) {
             value = store_fallback(head, voxel, face);
         }
-        if (COUNT_STORE) {
+        if (COUNT_STORE && !on_entity) {
             if (c.w > 0.0) {
                 atomicAdd(&counters[1], 1u);
             }
@@ -405,7 +436,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         stored = true;
         // The hit face's term is its brick value or, with none, the missing-light chain's.
         var e = value;
-        if ((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u && any(rec.n != nf)) {
+        if (((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u || on_entity) && any(rec.n != nf)) {
             e = store_value_by_normal(head, voxel, face, value, rec.n);
         }
         sample = vec4<f32>(e.xyz * exposure_now(), 0.0);
@@ -415,7 +446,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             if ((params.history & 1u) != 0u && !in_edit(rec.p)) {
                 held = min(floor(textureLoad(prev_moments_in, px, 0).z + 0.5) + 1.0, AGE_MAX);
             }
-            textureStore(accum_out, px, min(vec4<f32>(sample.xyz, 0.0), vec4<f32>(HDR_MAX)));
+            // A face's pixel is never fresh here (no light, no shadow ray); a moved part's is.
+            let fresh_w = select(0.0, 1.0, fresh);
+            textureStore(accum_out, px, min(vec4<f32>(sample.xyz, fresh_w), vec4<f32>(HDR_MAX)));
             textureStore(direct_out, px, vec4<f32>(0.0));
             textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0));
             return;

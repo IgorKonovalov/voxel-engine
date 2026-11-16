@@ -174,6 +174,10 @@ pub(crate) const LIGHTING_FACE_WEIGHTS: u32 = 1 << 15;
 /// than the variance pass's age line ([`YoungFilter::Edges`]).
 pub(crate) const LIGHTING_YOUNG_EDGES: u32 = 1 << 4;
 
+/// `Params::lighting` bit: an entity hit's emissive part is the store's at the world faces
+/// around it ([`EntityLight::World`]).
+pub(crate) const LIGHTING_ENTITY_WORLD: u32 = 1 << 7;
+
 /// `Params::flags` bit: trace the shadow ray.
 pub(crate) const FLAG_SHADOWS: u32 = 1;
 
@@ -513,6 +517,25 @@ named_enum!(YoungFilter {
     Edges => "edges",
 });
 
+/// Where an entity hit's emissive light (its fallback: the light no list light gives it) comes
+/// from (ADR-0050).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EntityLight {
+    /// Its own per-frame sample of the emitter candidates, a running mean over the pixel's
+    /// history. The default.
+    #[default]
+    Own,
+    /// The baked store, read as a cube face reads it, at the cell of the voxel just behind the
+    /// hit along its shading normal's dominant axis, mixed by that normal: the light the world
+    /// faces around it facing the same way hold. No sample and no random stream.
+    World,
+}
+
+named_enum!(EntityLight {
+    Own => "own",
+    World => "world",
+});
+
 /// What kills the temporal pass's history.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HistoryKill {
@@ -660,6 +683,8 @@ pub struct Lighting {
     pub light_weights: LightWeights,
     /// The a-trous weights at a young pixel ([`YoungFilter`]; default `Luma`).
     pub young_filter: YoungFilter,
+    /// Where an entity hit's emissive light comes from ([`EntityLight`]; default `Own`).
+    pub entity_light: EntityLight,
 }
 
 impl Default for Lighting {
@@ -683,6 +708,7 @@ impl Default for Lighting {
             store_read: StoreRead::Face,
             light_weights: LightWeights::Normal,
             young_filter: YoungFilter::Luma,
+            entity_light: EntityLight::Own,
             light_floor: DEFAULT_LIGHT_FLOOR,
         }
     }
@@ -751,6 +777,11 @@ impl Lighting {
             }
             | if self.young_filter == YoungFilter::Edges {
                 LIGHTING_YOUNG_EDGES
+            } else {
+                0
+            }
+            | if self.entity_light == EntityLight::World {
+                LIGHTING_ENTITY_WORLD
             } else {
                 0
             }
