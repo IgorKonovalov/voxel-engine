@@ -1,21 +1,21 @@
 # 0078: The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, and a reset
 
-> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions")
+> **Status:** done (closed 2026-11-16, v0.59.0: the pool frees by handle into a coalescing free list, entities keep stable instance slots with a generation, a removal takes its shadow; one review finding, the last walker's ghost leaf, fixed in d313dbbe). Approved 2026-11-16, the owner: every recommended answer under "Owner questions".
 > **Created:** 2026-11-16
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the engine side (`vxe-render`,
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md), the engine side (`vxe-render`,
 > `vxe-entity`), with the fly-through's reload as its first consumer.
-> **Related ADRs:** [ADR-0060](../adrs/0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md)
+> **Related ADRs:** [ADR-0060](../../adrs/0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md)
 > (proposed; the free list and the ownership rule), accepted at this plan's close. Rests on
-> [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (the pool, the instances, the tree) and
-> [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id, the
+> [ADR-0014](../../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id, the
 > volume's key).
 > **Source:** the owner, 2026-11-16: "proper reset should be drafted as a plan", on
-> [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)'s
+> [Plan 0077](../0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)'s
 > owner question 6 (answered "not now" there, with a backlog entry promised; none exists on main
 > at b4e72e35, so this plan is that entry).
-> **Starts after:** [Plan 0062](done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
-> and [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Starts after:** [Plan 0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
+> and [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > have merged into main (both edit `crates/vxe-render/src/entities.rs`, `entity.wgsl`,
 > `apps/flythrough/src/viewer.rs` and `walker.rs`). **Before Plan 0077's lane** (owner question
 > 5): 0077's Phase 2 reloads and uploads per library entry, and is amended at its re-read to call
@@ -486,7 +486,7 @@ tests assert.
 > notes go to the plan's readings log, `docs/plans/logs/0078.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings, gate counts and the plan-to-tree names: [`logs/0078.md`](logs/0078.md).
+Readings, gate counts and the plan-to-tree names: [`logs/0078.md`](../logs/0078.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -494,7 +494,7 @@ Readings, gate counts and the plan-to-tree names: [`logs/0078.md`](logs/0078.md)
 | 2: the fly-through frees on reload, and the pool on the HUD | dev | done | 0084a06d |
 | 3: stable instance slots, generations, ghost leaves, no scratch | dev | done; deviations: the hit record carries the slot and the generation's low bit (10 instance bits in `rgba16uint`), word 25 the 17-bit generation; `frame/encode.rs` changed outside the phase's files (the light pass walks entities while a ghost is listed) | e8fcda3d (code in ea9796d8, `wip`) |
 | 4: the waste reading, the docs and the tip | dev | done; `docs/flythrough.md` unchanged (its row landed in Phase 2) | 17de95b9 |
-| review fix pass: the last walker's ghost leaf leaves the tree | dev | done | committed with this row |
+| review fix pass: the last walker's ghost leaf leaves the tree | dev | done | d313dbbe |
 
 ### Notes
 
