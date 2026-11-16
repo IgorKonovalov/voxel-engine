@@ -20,4 +20,5 @@ wgpu.workspace = true
 [dev-dependencies]
 log.workspace = true
 pollster.workspace = true
+png.workspace = true
 criterion.workspace = true

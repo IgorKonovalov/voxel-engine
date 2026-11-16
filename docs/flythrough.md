@@ -279,6 +279,11 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--loading-screen on\|off` | Step the start-up (the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; off runs it all before the first frame [on in a window, off headless] |
 | `--loading-fade MS` | Fade the loading frame out over the first world frames; 0 cuts [250] |
 
+With the screen on, the window's first frame is a still loading frame (the background, the
+scene and an empty bar), drawn as soon as the device exists and before the frame and the
+mirror are created; the turning loading frames follow. The castle's prefabs build beside the
+window and the device, not before them.
+
 `Esc` or the window's close during loading ends the run through the ordinary teardown; a
 benchmark so ended reports `ended: "aborted"` with 0 frames. Under `--tester` the loading
 frame's title is the path's scene and mode (`castle - benchmark`). `run.json` is schema 2:

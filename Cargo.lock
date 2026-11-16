@@ -3182,6 +3182,7 @@ dependencies = [
  "criterion",
  "glam",
  "log",
+ "png",
  "pollster",
  "vxe-entity",
  "vxe-world",

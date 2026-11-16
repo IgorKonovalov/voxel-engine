@@ -1,5 +1,6 @@
 //! The engine's loading frame on the software adapter (lavapipe): the bar fills to its
-//! fraction, and a second frame with new rows allocates nothing.
+//! fraction, a second frame with new rows allocates nothing, and the frame matches its golden
+//! (`tests/golden/loading_screen.png`; `VXE_BLESS=1` rewrites it).
 
 use vxe_render::{LoadingScreen, LoadingView, loading_bar_inner, loading_bar_rect, wgpu};
 
@@ -150,6 +151,53 @@ fn the_loading_frame_allocates_nothing_after_the_first() {
         &view(0.4, "lighting the coarse pass"),
     );
     assert_eq!(screen.allocations(), first, "the second frame allocated");
+}
+
+/// `tests/golden/loading_screen.png`: at 1280 x 720, progress 0.37, `seconds` 0.4 (the cube
+/// part-way through its turn), alpha 1, titled `castle - benchmark`, the stage and its count
+/// below; byte for byte. Blessed on lavapipe with `VXE_BLESS=1`.
+#[test]
+fn loading_screen_golden() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let size = [1280, 720];
+    let tex = target(&device, size);
+    let mut screen = LoadingScreen::new(&device, wgpu::TextureFormat::Rgba8Unorm, 2);
+    let img = draw(
+        &device,
+        &queue,
+        &mut screen,
+        &tex,
+        &view(0.37, "lighting the near chunks"),
+    );
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden")
+        .join("loading_screen.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        std::fs::create_dir_all(path.parent().expect("a golden folder")).expect("golden folder");
+        let file = std::fs::File::create(&path).expect("create golden");
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), size[0], size[1]);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header()
+            .expect("png header")
+            .write_image_data(&img)
+            .expect("png data");
+        println!("blessed {path:?}");
+        return;
+    }
+    let file = std::fs::File::open(&path).unwrap_or_else(|e| panic!("open {path:?}: {e}"));
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info()
+        .expect("png info");
+    let mut golden = vec![0; reader.output_buffer_size().expect("png size")];
+    let info = reader.next_frame(&mut golden).expect("png frame");
+    assert_eq!(info.color_type, png::ColorType::Rgba);
+    assert_eq!([info.width, info.height], size, "the golden's size");
+    golden.truncate(info.buffer_size());
+    let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
+    assert_eq!(differing, 0, "loading_screen.png: {differing} bytes differ");
 }
 
 /// Readings, run by hand: `--run-ignored only -E 'test(=reading::loading_pass_gpu_time)'`.
