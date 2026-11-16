@@ -318,7 +318,10 @@ the dev's cut) rather than approach the 1200-line cap. CPU tests of `vxe-render`
   - `a_reload_keeps_the_picture_steady` (`gpu_entity_pool`, about 3 s): a still walker, no
     jitter; `replace` with a model of the same voxels: every pixel of frame N+1 equals frame N
     within 1/255; `replace` with the torso's material changed: the torso's pixels change and
-    the legs' do not.
+    the legs' do not. The test runs with `Lighting::filter = false` (Amended 2026-11-16 (owner)):
+    the a-trous filter widens a young pixel's luminance weight from its neighbourhood, so with
+    it on, about 12 shadowed leg pixels next to the reset torso pick up about 14/255 at any
+    material edge; the claim is history and instance identity, which the filter has no part in.
   - Plan 0062's goldens (`walker_albedo_golden`, `walker_shadow_golden`) and every other gate
     golden pass with no re-bless; `the_caps_count_what_they_drop` holds (compaction never draws
     more than 512 parts or 64 entities).
