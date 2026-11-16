@@ -177,6 +177,9 @@ impl Run {
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
+        if input.pressed(crate::toggles::KEY_PROFILE) {
+            self.cycle_profile();
+        }
         self.light_keys(input);
         self.audio_keys(input);
     }

@@ -233,18 +233,74 @@ pub struct RenderSettings {
 }
 
 impl Default for RenderSettings {
-    /// What a new [`crate::Frame`] reports from [`crate::Frame::settings`].
+    /// [`Profile::Floor`]'s settings.
     fn default() -> Self {
-        Self {
-            lighting: Lighting::default(),
-            look: LookParams::default(),
+        Self::profile(Profile::Floor)
+    }
+}
+
+/// A named quality profile (ADR-0055): a starting value of [`RenderSettings`] the consumer
+/// picks and may edit. The engine never picks one by itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Profile {
+    /// The floor class at 1080p output (`docs/nfr.md` section 1): the fly-through's look.
+    #[default]
+    Floor,
+    /// The portable class at 720p output: fewer translucent layers and lights, no lamp
+    /// bounce, a smaller residency and a halved bake slice.
+    Portable,
+    /// A fast machine past 60 fps: the floor at internal scale 2.
+    Performance,
+}
+
+crate::frame::named_enum!(Profile {
+    Floor => "floor",
+    Portable => "portable",
+    Performance => "performance",
+});
+
+/// Bytes the fly-through's streamed mirror reserves for the floor's residency of 16 chunks
+/// full ([`crate::DEFAULT_BUDGET_BYTES`]).
+const FLOOR_MIRROR_BYTES: u64 = crate::gpu_world::DEFAULT_BUDGET_BYTES;
+
+impl RenderSettings {
+    /// `p`'s settings. Every profile keeps the floor's image-stability choices (the far
+    /// normal, the shadow walk, the filter, the temporal and FSR 2's settings).
+    ///
+    /// | field | Floor | Portable | Performance |
+    /// |---|---|---|---|
+    /// | `output_hint` | 1920 x 1080 | 1280 x 720 | none |
+    /// | `scale` | 1.5 | 1.5 | 2 |
+    /// | `look.translucent_layers` | 4 | 2 | 4 |
+    /// | `light_cap` | 16 | 4 | 16 |
+    /// | `lighting.lamp_bounce` | on | off | on |
+    /// | `build.residency` | 16, 24, 1 | 12, 18, 1 | 16, 24, 1 |
+    /// | `lod.r_full` | 16 | 12 | 16 |
+    /// | `build.mirror_budget_bytes` | 3 GiB | 3 GiB x (12 / 16)^3 | 3 GiB |
+    /// | `bake.budget` | 1.5 ms a frame | 0.75 ms a frame | 1.5 ms a frame |
+    pub fn profile(p: Profile) -> Self {
+        let floor = Self {
+            lighting: Lighting {
+                exposure: crate::exposure::Exposure::Auto(crate::AutoExposure::default()),
+                lamp_bounce: true,
+                store_read: crate::frame::StoreRead::Normal,
+                light_weights: crate::frame::LightWeights::Face,
+                ..Lighting::default()
+            },
+            look: LookParams {
+                far_normal: [2.0, 6.0],
+                ..LookParams::default()
+            },
             lod: LodParams::default(),
-            lighting_resolution: LightingResolution::default(),
-            scale: RenderScale::One,
-            upscaler: UpscalerChoice::Off,
+            lighting_resolution: LightingResolution::Half,
+            scale: RenderScale::OneHalf,
+            upscaler: UpscalerChoice::Fsr2,
             jitter: false,
-            sharpness: 0.0,
-            fsr2: Fsr2Settings::default(),
+            sharpness: 0.5,
+            fsr2: Fsr2Settings {
+                sharpness: 0.5,
+                ..Fsr2Settings::default()
+            },
             own: Upscaler::default(),
             light_cap: MAX_LIGHTS as u32,
             metering: Metering::default(),
@@ -253,8 +309,39 @@ impl Default for RenderSettings {
             probe_axis: None,
             missing_light: MissingLight::default(),
             bake: BakeKnobs::default(),
-            build: BuildSettings::default(),
-            output_hint: None,
+            build: BuildSettings {
+                mirror_budget_bytes: FLOOR_MIRROR_BYTES,
+                sync_budget_bytes: 2 << 20,
+                ..BuildSettings::default()
+            },
+            output_hint: Some([1920, 1080]),
+        };
+        match p {
+            Profile::Floor => floor,
+            Profile::Portable => {
+                let residency = vxe_world::Residency {
+                    r_full: 12,
+                    r_lod: 18,
+                    hysteresis: 1,
+                };
+                let mut s = floor;
+                s.output_hint = Some([1280, 720]);
+                s.look.translucent_layers = 2;
+                s.light_cap = 4;
+                s.lighting.lamp_bounce = false;
+                s.build.residency = residency;
+                s.lod.r_full = residency.r_full;
+                s.build.mirror_budget_bytes = FLOOR_MIRROR_BYTES / 64 * 27;
+                s.bake.budget = crate::bake::Budget::PerFrame {
+                    ms: crate::bake::DEFAULT_BAKE_SLICE_MS / 2.0,
+                };
+                s
+            }
+            Profile::Performance => Self {
+                scale: RenderScale::Two,
+                output_hint: None,
+                ..floor
+            },
         }
     }
 }
@@ -810,6 +897,34 @@ mod tests {
         }
     }
 
+    /// The default settings are the floor's, and the other profiles differ from it in the
+    /// rows of `RenderSettings::profile`'s table alone.
+    #[test]
+    fn the_default_is_the_floor_and_the_profiles_differ_in_their_rows() {
+        let floor = RenderSettings::profile(Profile::Floor);
+        assert_eq!(RenderSettings::default(), floor);
+        assert_eq!(
+            floor.changed_fields(&RenderSettings::profile(Profile::Portable)),
+            [
+                "lighting.lamp_bounce",
+                "look.translucent_layers",
+                "lod.r_full",
+                "light_cap",
+                "bake.budget",
+                "build.mirror_budget_bytes",
+                "build.residency",
+                "output_hint",
+            ]
+        );
+        assert_eq!(
+            floor.changed_fields(&RenderSettings::profile(Profile::Performance)),
+            ["scale", "output_hint"]
+        );
+        for p in Profile::ALL {
+            assert_eq!(Profile::from_name(p.name()), Some(p));
+        }
+    }
+
     /// Each field's test value changes that field alone.
     #[test]
     fn each_test_value_changes_its_field_alone() {
@@ -922,6 +1037,6 @@ mod tests {
             row(&b, "bake.budget"),
             "PerSecond { ms_per_s: 2.0, cap: 1.0 }"
         );
-        assert_eq!(row(&a, "output_hint"), "None");
+        assert_eq!(row(&a, "output_hint"), "Some([1920, 1080])");
     }
 }

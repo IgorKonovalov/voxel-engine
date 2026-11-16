@@ -54,22 +54,22 @@ impl Output {
     }
 }
 
-/// The internal scale a run renders at (`--internal-scale`).
+/// The render profile a run takes (`--profile`, `vxe_render::Profile`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scale {
-    One,
-    OneHalf,
-    Two,
+pub enum Profile {
+    Floor,
+    Portable,
+    Performance,
 }
 
-impl Scale {
-    pub const ALL: [Self; 3] = [Self::One, Self::OneHalf, Self::Two];
+impl Profile {
+    pub const ALL: [Self; 3] = [Self::Floor, Self::Portable, Self::Performance];
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::One => "1",
-            Self::OneHalf => "1.5",
-            Self::Two => "2",
+            Self::Floor => "floor",
+            Self::Portable => "portable",
+            Self::Performance => "performance",
         }
     }
 }
@@ -80,12 +80,12 @@ pub struct RunSpec {
     pub scene: Scene,
     pub mode: PathMode,
     pub output: Output,
-    pub scale: Scale,
+    pub profile: Profile,
 }
 
 /// The fly-through's arguments for `spec`: the scene's flags, the mode's (`--lamp off` for a
 /// benchmark, none for a tour, which keeps the fly-through's lamp default), `--tester`, its path
-/// and mode, the resolution, the internal scale, and `--report run_dir`.
+/// and mode, the resolution, the profile, and `--report run_dir`.
 pub fn fly_args(spec: &RunSpec, display: Option<[u32; 2]>, run_dir: &Path) -> Vec<String> {
     let path = PATHS
         .iter()
@@ -108,8 +108,8 @@ pub fn fly_args(spec: &RunSpec, display: Option<[u32; 2]>, run_dir: &Path) -> Ve
             spec.mode.name(),
             "--render",
             &format!("{w}x{h}"),
-            "--internal-scale",
-            spec.scale.name(),
+            "--profile",
+            spec.profile.name(),
             "--report",
         ]
         .map(str::to_owned),

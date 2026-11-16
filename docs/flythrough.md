@@ -95,6 +95,7 @@ the same rows.
 | `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
 | `F11` | Toggle whether the walkers walk or hold still |
 | `F12` | Toggle the walkers' eye lights |
+| `PageDown` | The next render profile: floor, portable, performance (`--profile`) |
 | `Left`, `Right` | With `--model`: the clip before and after |
 | `Down` | With `--model`: pause or play the clip |
 
@@ -313,6 +314,14 @@ stage's step time).
 | Flag | Does |
 |------|------|
 | `--settings` | Print every render setting the flags give (`vxe_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
+| `--profile floor\|portable\|performance` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order; its output hint sizes a headless run with no `--render`. The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
+| `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
+
+`PageDown` cycles the profiles in the window: the next one's translucent layers, lamp bounce,
+light cap, internal scale and bake budget apply from the next frame, and the profile row names
+the fields that wait for a restart with `--profile` (`restart for: lod.r_full,
+build.mirror_budget_bytes, build.residency`). `F4` takes the cycle once the menu frees it
+(ADR-0061).
 
 ### Diagnostics
 

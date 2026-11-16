@@ -125,6 +125,10 @@ pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
 pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
 /// `` ` `` (Backquote): place a walker on the looked-at surface (`crate::walker`).
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
+/// `PageDown`: the next render profile (`run::profile`). `F4` takes it once the menu frees
+/// that key (ADR-0061).
+pub const KEY_PROFILE: KeyCode = KeyCode::PageDown;
+
 /// `F12`: the walkers' eye lights on or off.
 pub const KEY_EYE_LIGHTS: KeyCode = KeyCode::F12;
 /// `F11`: the walkers walk or hold still (`crate::walker`).
@@ -141,6 +145,7 @@ pub const KEY_CLIP_PAUSE: KeyCode = KeyCode::ArrowDown;
 /// keys and trims; then the frame's `Esc` and `F2` (`run::frame`) and the flight's keys
 /// (`fly`). The path's `T` (resume) is the audio's pulse outside a path.
 pub const ACTION_KEYS: &[KeyCode] = &[
+    KEY_PROFILE,
     KeyCode::KeyB,
     KeyCode::KeyP,
     KeyCode::KeyG,

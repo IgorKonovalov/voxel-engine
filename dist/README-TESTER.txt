@@ -30,7 +30,8 @@ Arrow keys move and change, Enter chooses; or press a row's number.
                     the headlamp is off) or tour (the flight loops; move or look to fly
                     yourself; the headlamp is on in the cave and the castle)
   3 output          1280x720, 1920x1080, or your display's size
-  4 internal scale  1, 1.5 or 2 (the picture is drawn smaller and upscaled)
+  4 profile         floor, portable (720p class: fewer lights and layers) or
+                    performance (drawn at half size and upscaled)
   5 run             runs the scene in a second window
   6 run all benchmarks   the three scenes one after the other (about 3 minutes)
   7 save report     packs everything into one zip and shows where it is

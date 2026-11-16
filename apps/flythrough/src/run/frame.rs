@@ -680,6 +680,7 @@ impl Run {
             return;
         };
         gfx.frame.set_lights(&lights);
+        gfx.frame.set_light_cap(self.args.light_cap);
         crate::walker::feed(
             &mut self.modes.walkers,
             &self.world,

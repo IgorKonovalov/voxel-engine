@@ -9,7 +9,7 @@ use flythrough::path::{PathMode, Scene};
 use vxe_app::KeyCode;
 use vxe_tester::menu::{Command as MenuCommand, Menu};
 use vxe_tester::run::{
-    Outcome, Output, ReportDir, RunSpec, Scale, TAIL_LINES, child_command, fly_args,
+    Outcome, Output, Profile, ReportDir, RunSpec, TAIL_LINES, child_command, fly_args,
     flythrough_beside, logged_command, read_run, report_name, run_child, utc_stamp,
 };
 
@@ -31,7 +31,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 scene: Scene::Cave,
                 mode: PathMode::Bench,
                 output: Output::Hd720,
-                scale: Scale::OneHalf,
+                profile: Profile::Floor,
             },
             &[
                 "--source",
@@ -45,8 +45,8 @@ fn each_choice_gives_its_exact_flag_list() {
                 "bench",
                 "--render",
                 "1280x720",
-                "--internal-scale",
-                "1.5",
+                "--profile",
+                "floor",
                 "--report",
                 "R",
             ],
@@ -56,7 +56,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 scene: Scene::Showcase,
                 mode: PathMode::Tour,
                 output: Output::Hd1080,
-                scale: Scale::One,
+                profile: Profile::Portable,
             },
             &[
                 "--source",
@@ -68,8 +68,8 @@ fn each_choice_gives_its_exact_flag_list() {
                 "tour",
                 "--render",
                 "1920x1080",
-                "--internal-scale",
-                "1",
+                "--profile",
+                "portable",
                 "--report",
                 "R",
             ],
@@ -79,7 +79,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 scene: Scene::Castle,
                 mode: PathMode::Bench,
                 output: Output::Display,
-                scale: Scale::Two,
+                profile: Profile::Performance,
             },
             &[
                 "--castle",
@@ -92,8 +92,8 @@ fn each_choice_gives_its_exact_flag_list() {
                 "bench",
                 "--render",
                 "2560x1440",
-                "--internal-scale",
-                "2",
+                "--profile",
+                "performance",
                 "--report",
                 "R",
             ],
@@ -103,7 +103,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 scene: Scene::Castle,
                 mode: PathMode::Tour,
                 output: Output::Hd720,
-                scale: Scale::OneHalf,
+                profile: Profile::Floor,
             },
             &[
                 "--castle",
@@ -114,8 +114,8 @@ fn each_choice_gives_its_exact_flag_list() {
                 "tour",
                 "--render",
                 "1280x720",
-                "--internal-scale",
-                "1.5",
+                "--profile",
+                "floor",
                 "--report",
                 "R",
             ],
@@ -149,12 +149,12 @@ fn the_menu_keys_make_the_run() {
             scene: Scene::Castle,
             mode: PathMode::Tour,
             output: Output::Hd720,
-            scale: Scale::OneHalf,
+            profile: Profile::Floor,
         }))
     );
     assert_eq!(
         m.key(KeyCode::Digit6),
-        Some(MenuCommand::RunAll(Output::Hd720, Scale::OneHalf))
+        Some(MenuCommand::RunAll(Output::Hd720, Profile::Floor))
     );
     assert_eq!(m.key(KeyCode::Digit7), Some(MenuCommand::SaveReport));
     assert_eq!(m.key(KeyCode::Digit9), Some(MenuCommand::Quit));
@@ -185,12 +185,12 @@ fn the_flythrough_accepts_every_choice() {
     for scene in Scene::ALL {
         for mode in [PathMode::Bench, PathMode::Tour] {
             for output in Output::ALL {
-                for scale in Scale::ALL {
+                for profile in Profile::ALL {
                     let spec = RunSpec {
                         scene,
                         mode,
                         output,
-                        scale,
+                        profile,
                     };
                     let args = fly_args(&spec, Some([2560, 1440]), Path::new("unused"));
                     let out = Command::new(&fly)
@@ -374,7 +374,7 @@ fn the_saved_report_holds_no_absolute_path_of_its_base() {
         scene: Scene::Cave,
         mode: PathMode::Bench,
         output: Output::Hd720,
-        scale: Scale::OneHalf,
+        profile: Profile::Floor,
     };
     let dir = report.next_run(spec.scene, spec.mode);
     let rel = report.relative(&dir);
@@ -409,7 +409,7 @@ fn the_saved_report_holds_no_absolute_path_of_its_base() {
         format!(
             "system: vxe-tester --system-json system.json --displays\n\
              run: {fly_name} --source cave --lamp off --tester --path cave --path-mode bench --render 1280x720 \
-             --internal-scale 1.5 --report {rel_s}\n"
+             --profile floor --report {rel_s}\n"
         )
     );
     // The child ran in the report root and was handed the relative folder; its own print of

@@ -1,7 +1,7 @@
 //! `vxe-tester`: the tester build's launcher (ADR-0054).
 //!
 //! With no arguments it opens a small window with the menu (`vxe_tester::menu`): the scene,
-//! benchmark or tour, the output and the internal scale; run, run all benchmarks, save report,
+//! benchmark or tour, the output and the render profile; run, run all benchmarks, save report,
 //! open report folder, quit. Each run starts the fly-through found next to this executable as a
 //! child process in the report folder, with paths relative to it (`vxe_tester::run`), and the
 //! window shows its state, then its wall p50 and p95,
@@ -27,7 +27,7 @@ use vxe_app::{App, Flow, Gpu, Input, KeyCode, Pacing, ShellConfig, wgpu};
 use vxe_render::{HudColour, HudOverlay};
 use vxe_tester::menu::{Command, Menu};
 use vxe_tester::run::{
-    Outcome, Output, ReportDir, RunSpec, Scale, child_command, fly_args, flythrough_beside,
+    Outcome, Output, Profile, ReportDir, RunSpec, child_command, fly_args, flythrough_beside,
     logged_command, report_name, run_child, utc_stamp,
 };
 use vxe_tester::system::{SystemInfo, adapters, displays};
@@ -68,7 +68,7 @@ fn system_json(path: &str, with_displays: bool) {
 /// What the window asks the worker to do.
 enum Job {
     Run(RunSpec),
-    RunAll(Output, Scale),
+    RunAll(Output, Profile),
     Save,
 }
 
@@ -125,13 +125,13 @@ impl Worker {
         for job in jobs {
             match job {
                 Job::Run(spec) => self.run(spec),
-                Job::RunAll(output, scale) => {
+                Job::RunAll(output, profile) => {
                     for scene in Scene::ALL {
                         self.run(RunSpec {
                             scene,
                             mode: PathMode::Bench,
                             output,
-                            scale,
+                            profile,
                         });
                     }
                 }
@@ -323,7 +323,7 @@ impl Launcher {
                 return Flow::Continue;
             }
             Command::Run(spec) => Job::Run(spec),
-            Command::RunAll(output, scale) => Job::RunAll(output, scale),
+            Command::RunAll(output, profile) => Job::RunAll(output, profile),
             Command::SaveReport => Job::Save,
         };
         lock(&self.status).busy = Some("starting".to_owned());
@@ -386,7 +386,7 @@ impl App for Launcher {
         lock(&self.status).window_adapter = Some(adapter);
         self.hud = Some(HudOverlay::new(&gpu.device, gpu.surface_format, TEXT_SCALE));
         if self.auto.is_some() {
-            let _ = self.jobs.send(Job::RunAll(Output::Hd720, Scale::OneHalf));
+            let _ = self.jobs.send(Job::RunAll(Output::Hd720, Profile::Floor));
             let _ = self.jobs.send(Job::Save);
             lock(&self.status).busy = Some("starting".to_owned());
         }

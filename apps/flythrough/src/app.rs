@@ -334,7 +334,11 @@ pub fn start_clock() -> Instant {
 /// Runs `app` in a window, or on an offscreen target with no window under `--headless`, at
 /// `--render`'s size (1280 x 720 by default), and gives the session's outcome.
 pub fn run(app: Flythrough) -> Result<(), String> {
-    let size = app.args.render.unwrap_or([1280, 720]);
+    let size = app
+        .args
+        .render
+        .or(app.args.output_hint)
+        .unwrap_or([1280, 720]);
     let failure = app.failure.clone();
     if app.args.headless {
         // On the high-performance adapter, or with `--adapter` the first whose name contains

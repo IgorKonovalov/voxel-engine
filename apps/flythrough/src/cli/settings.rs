@@ -4,7 +4,7 @@
 use super::Args;
 use super::flags::Parsing;
 use super::table::{Flag, Section};
-use vxe_render::{BakeKnobs, BuildSettings, RenderSettings, UpscalerChoice, UpscalerKind};
+use vxe_render::{BakeKnobs, BuildSettings, Profile, RenderSettings, UpscalerChoice, UpscalerKind};
 
 /// The sections `--help` lists after the audio's: the loading screen's, then the settings'.
 pub(super) fn late_sections() -> Vec<Section<Parsing>> {
@@ -17,18 +17,114 @@ pub(super) fn late_sections() -> Vec<Section<Parsing>> {
 fn sections() -> Vec<Section<Parsing>> {
     vec![Section {
         title: "Render settings",
-        flags: vec![Flag::switch(
-            &["--settings"],
-            "print every render setting the flags give, one line per field (name, apply class, \
-             value), and exit",
-            |p: &mut Parsing| p.args.settings = true,
-        )],
+        flags: vec![
+            Flag::switch(
+                &["--settings"],
+                "print every render setting the flags give, one line per field (name, apply \
+                 class, value), and exit",
+                |p: &mut Parsing| p.args.settings = true,
+            ),
+            Flag::value(
+                &["--profile"],
+                "floor|portable|performance",
+                "the render profile (vxe_render::Profile) every other flag edits; PageDown \
+                 cycles it, applying its live and settle fields [floor]",
+                |p: &mut Parsing, v| {
+                    p.args.profile = v.named(Profile::from_name, PROFILE_NAMES)?;
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--light-cap"],
+                "N",
+                "slots of the list of lights shaded, the headlamp's included, 1 to 16 [the \
+                 profile's]",
+                |p: &mut Parsing, v| {
+                    p.args.light_cap = v.parse_if(
+                        |n: &u32| (1..=vxe_render::MAX_LIGHTS as u32).contains(n),
+                        "1 to 16",
+                    )?;
+                    Ok(())
+                },
+            ),
+        ],
     }]
 }
 
+/// The names `--profile` takes.
+const PROFILE_NAMES: &str = "floor, portable or performance";
+
+/// The profile `argv` names with `--profile NAME`, the last one given; `None` without one.
+/// The parser seeds the other flags' defaults from it before it reads them.
+pub(super) fn profile_in(argv: &[String]) -> Result<Option<Profile>, String> {
+    let mut found = None;
+    for (i, a) in argv.iter().enumerate() {
+        if a == "--profile" {
+            let name = argv.get(i + 1).map_or("", String::as_str);
+            found = Some(
+                Profile::from_name(name)
+                    .ok_or_else(|| format!("--profile takes {PROFILE_NAMES}, not {name}"))?,
+            );
+        }
+    }
+    Ok(found)
+}
+
 impl Args {
+    /// Sets every flag's default that `p` gives a value of its own: the translucent layers,
+    /// the lamp's bounce, the internal scale, the residency, the bake budget, the light cap
+    /// and the output hint. The mirror budget of a streamed run follows the profile too
+    /// (`Args::stream_mirror_budget`).
+    pub(crate) fn seed_profile(&mut self, p: Profile) {
+        let s = RenderSettings::profile(p);
+        self.profile = p;
+        self.look.translucent_layers = s.look.translucent_layers;
+        self.light.lamp_bounce = s.lighting.lamp_bounce;
+        self.look.internal_scale = s.scale;
+        self.residency = s.build.residency;
+        self.bake.budget = s.bake.budget;
+        self.light_cap = s.light_cap;
+        self.output_hint = s.output_hint;
+    }
+
+    /// The streamed mirror's budget unless `--mirror-budget` is given: the profile's.
+    pub(crate) fn stream_mirror_budget(&self) -> u64 {
+        RenderSettings::profile(self.profile)
+            .build
+            .mirror_budget_bytes
+    }
+
+    /// The fields the flags edited on top of the profile: those whose value differs from the
+    /// profile's as the fly-through reads it (`--profile NAME` and no other flag).
+    pub(crate) fn profile_edits(&self, now: &RenderSettings) -> Vec<&'static str> {
+        let mut base = super::Args::defaults();
+        base.seed_profile(self.profile);
+        base.render_settings().changed_fields(now)
+    }
+
+    /// The HUD's profile row: `profile: portable`, or `profile: portable +2` with two fields
+    /// edited, and `, restart for: build.residency` while the fields `pending` wait for a
+    /// restart (they are not counted as edits).
+    pub(crate) fn profile_row(&self, now: &RenderSettings, pending: &[&str]) -> String {
+        let mut row = format!("profile: {}", self.profile.name());
+        let n = self
+            .profile_edits(now)
+            .iter()
+            .filter(|f| !pending.contains(f))
+            .count();
+        if n > 0 {
+            row.push_str(&format!(" +{n}"));
+        }
+        if !pending.is_empty() {
+            row.push_str(&format!(", restart for: {}", pending.join(", ")));
+        }
+        row
+    }
+
     /// The render settings the flags give, the scene's own values aside: a level's mirror
-    /// budget follows its content, and its LOD rule and records its extent.
+    /// budget follows its content, and its LOD rule and records its extent. With no flag they
+    /// are the floor's but for the fly-through's own `build.record_chunks` (sized to the
+    /// residency) and `output_hint` (none: a window's size, or 1280 x 720 headless).
     pub fn render_settings(&self) -> RenderSettings {
         let (kind, scale, jitter) = self.upscaler_settings(self.start_upscaler());
         let fsr2 = match self.upscaler_settings(crate::hud::UpscalerMode::Fsr2).0 {
@@ -50,7 +146,7 @@ impl Args {
             sharpness: self.look.sharpen,
             fsr2,
             own: vxe_render::Upscaler::default(),
-            light_cap: vxe_render::MAX_LIGHTS as u32,
+            light_cap: self.light_cap,
             metering: self.light.metering,
             field_split: true,
             probe_spacing: self.light.probe_spacing,
@@ -66,7 +162,9 @@ impl Args {
                 dig_reach: b.dig_reach,
             },
             build: BuildSettings {
-                mirror_budget_bytes: self.mirror_budget.unwrap_or(crate::STREAM_MIRROR_BUDGET),
+                mirror_budget_bytes: self
+                    .mirror_budget
+                    .unwrap_or_else(|| self.stream_mirror_budget()),
                 record_chunks: Some(crate::stream_record_chunks(self.residency)),
                 light_radius: self.light.radius(),
                 sync_budget_bytes: self.sync_budget,
@@ -76,7 +174,7 @@ impl Args {
                 workers: self.workers,
                 ..BuildSettings::default()
             },
-            output_hint: self.render,
+            output_hint: self.render.or(self.output_hint),
         }
     }
 }
@@ -115,5 +213,62 @@ mod tests {
             assert_eq!((words[0], words[1]), (*name, class.name()), "{line}");
             assert!(words.len() > 2, "{line} has no value");
         }
+    }
+
+    /// The fly-through's own values over a profile's: the records sized to the residency,
+    /// and no output hint without `--profile`.
+    fn fly_through(p: Profile, hint: bool) -> RenderSettings {
+        let mut s = RenderSettings::profile(p);
+        s.build.record_chunks = Some(crate::stream_record_chunks(s.build.residency));
+        if !hint {
+            s.output_hint = None;
+        }
+        s
+    }
+
+    /// With no flag the fly-through runs the floor (the library's default) but for its own
+    /// records and output hint; `--profile floor` takes the floor's hint too.
+    #[test]
+    fn no_flags_give_the_floor() {
+        assert_eq!(
+            RenderSettings::default(),
+            RenderSettings::profile(Profile::Floor)
+        );
+        let none = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(none.render_settings(), fly_through(Profile::Floor, false));
+        assert_eq!(
+            none.profile_row(&none.render_settings(), &[]),
+            "profile: floor"
+        );
+        let floor = parse_args_from(argv(&["--profile", "floor"])).expect("--profile parses");
+        assert_eq!(floor.render_settings(), fly_through(Profile::Floor, true));
+    }
+
+    /// `--profile portable --translucent-layers 4` is the portable profile with 4 layers, one
+    /// field edited; the flags after a profile edit it whatever their order.
+    #[test]
+    fn a_flag_edits_the_profile_on_top() {
+        for argv_ in [
+            &["--profile", "portable", "--translucent-layers", "4"][..],
+            &["--translucent-layers", "4", "--profile", "portable"][..],
+        ] {
+            let a = parse_args_from(argv(argv_)).expect("parses");
+            let mut want = fly_through(Profile::Portable, true);
+            want.look.translucent_layers = 4;
+            assert_eq!(a.render_settings(), want);
+            assert_eq!(
+                a.profile_row(&a.render_settings(), &[]),
+                "profile: portable +1"
+            );
+        }
+        let perf = parse_args_from(argv(&["--profile", "performance"])).expect("parses");
+        assert_eq!(
+            perf.render_settings(),
+            fly_through(Profile::Performance, true)
+        );
+        let Err(e) = parse_args_from(argv(&["--profile", "fast"])) else {
+            panic!("--profile fast parsed");
+        };
+        assert!(e.contains("floor, portable or performance"), "{e}");
     }
 }

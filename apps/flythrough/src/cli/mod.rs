@@ -659,6 +659,14 @@ pub struct Args {
     pub check_args: bool,
     /// `--help`: print the flag table ([`help`]) and exit 0.
     pub help: bool,
+    /// `--profile NAME`: the render profile the other flags edit (`floor` by default).
+    pub(crate) profile: vxe_render::Profile,
+    /// `--light-cap N`: slots of the list of lights shaded, the headlamp's included
+    /// (`vxe_render::Frame::set_light_cap`); the profile's by default.
+    pub(crate) light_cap: u32,
+    /// The output size of a headless run with no `--render`: the `--profile`'s hint when one
+    /// is given, else none (1280 x 720).
+    pub(crate) output_hint: Option<[u32; 2]>,
     /// `--settings`: print the render settings the flags give ([`settings_lines`]) and exit 0.
     pub settings: bool,
     /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
@@ -767,6 +775,7 @@ impl Args {
         let mut m = hud::Modes::new(self.start_lighting(), self.light.resolution, now_ms)
             .with_source(self.mode.is_showcase().then_some("showcase"))
             .with_probe_spacing(self.light.probe_spacing);
+        m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);
         m.show_view(self.look.view, now_ms);
