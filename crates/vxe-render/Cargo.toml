@@ -26,5 +26,6 @@ wgpu.workspace = true
 [dev-dependencies]
 log.workspace = true
 pollster.workspace = true
+png.workspace = true
 vxe-render = { workspace = true, features = ["test-support"] }
 criterion.workspace = true

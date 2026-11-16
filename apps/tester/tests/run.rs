@@ -10,7 +10,7 @@ use vxe_app::KeyCode;
 use vxe_tester::menu::{Command as MenuCommand, Menu};
 use vxe_tester::run::{
     Outcome, Output, ReportDir, RunSpec, Scale, TAIL_LINES, child_command, fly_args,
-    flythrough_beside, logged_command, report_name, run_child, utc_stamp,
+    flythrough_beside, logged_command, read_run, report_name, run_child, utc_stamp,
 };
 
 fn scratch(name: &str) -> PathBuf {
@@ -274,6 +274,7 @@ fn a_run_reads_ok_with_its_p50_or_failed_with_its_exit_and_tail_and_the_report_s
             p95: 20.5,
             ended: "completed".to_owned(),
             lamp: Some(false),
+            load_ms: None,
             surface: Some("Bgra8Unorm".to_owned()),
         }
     );
@@ -287,6 +288,7 @@ fn a_run_reads_ok_with_its_p50_or_failed_with_its_exit_and_tail_and_the_report_s
         p95: 20.5,
         ended: "completed".to_owned(),
         lamp: Some(false),
+        load_ms: None,
         surface: None,
     };
     assert_eq!(older.row(), "ok: wall p50 6.2 ms, p95 20.5 ms, lamp off");
@@ -461,4 +463,36 @@ fn an_unwritable_base_falls_back_to_the_next() {
     let r = ReportDir::create(&[file.join("reports"), base.join("tmp")], "r").expect("fallback");
     assert_eq!(r.root, base.join("tmp").join("r"));
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// `read_run` reads a schema 1 `run.json` with no load time and a schema 2 one with its
+/// `load_ms`; the row shows `load 7.4 s` for the second and no load part for the first.
+#[test]
+fn a_schema_1_and_a_schema_2_run_read_and_only_2_shows_its_load() {
+    let dir = scratch("schemas");
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let one = dir.join("one.json");
+    std::fs::write(
+        &one,
+        r#"{"schema": 1, "wall_ms": {"p50": 6.25, "p95": 20.5}, "lamp": "off", "ended": "completed"}"#,
+    )
+    .expect("schema 1");
+    let two = dir.join("two.json");
+    std::fs::write(
+        &two,
+        r#"{"schema": 2, "wall_ms": {"p50": 6.25, "p95": 20.5}, "lamp": "off", "load_ms": 7412.0, "load_stages": [{"name": "pre-roll", "ms": 6120.0}], "ended": "completed"}"#,
+    )
+    .expect("schema 2");
+    let one = read_run(&one).expect("schema 1 reads");
+    assert!(matches!(one, Outcome::Ok { load_ms: None, .. }), "{one:?}");
+    assert_eq!(one.row(), "ok: wall p50 6.2 ms, p95 20.5 ms, lamp off");
+    let two = read_run(&two).expect("schema 2 reads");
+    assert!(
+        matches!(two, Outcome::Ok { load_ms: Some(ms), .. } if ms == 7412.0),
+        "{two:?}"
+    );
+    assert_eq!(
+        two.row(),
+        "ok: wall p50 6.2 ms, p95 20.5 ms, lamp off, load 7.4 s"
+    );
 }
