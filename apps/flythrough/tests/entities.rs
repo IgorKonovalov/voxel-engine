@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use flythrough::viewer::{Viewer, material};
 use flythrough::{RUBBLE, cave, showcase, showcase_materials, walker};
-use vxe_assets::{Rig, VoxText, encode};
+use vxe_assets::{Rig, RigBody, VoxFile, VoxText, encode};
 use vxe_world::MaterialTable;
 
 fn library() -> PathBuf {
@@ -130,4 +130,44 @@ fn the_spider_has_its_rows_parts_and_clips() {
         .build_pending(&walker::with_walker(&flythrough::cave_materials()))
         .expect("the cave's table has no crystal row");
     assert!(e.contains("unknown material `crystal`"), "{e}");
+}
+
+/// The library's rigs built against the showcase's table carry their bodies and strides in
+/// world units (detail 2: two model voxels to a world voxel): the walker a ground body, the
+/// spider a surface body, each a non-zero `walk` stride.
+#[test]
+fn the_committed_library_builds() {
+    let t = showcase_table();
+    let build = |name: &str| {
+        let dir = library().join(name);
+        let rig =
+            Rig::parse(&std::fs::read_to_string(dir.join(format!("{name}.rig"))).unwrap()).unwrap();
+        let vox = VoxFile::parse(&std::fs::read(dir.join(&rig.vox)).unwrap()).unwrap();
+        rig.build(&vox, &|n| material(&t, n)).unwrap()
+    };
+    let walk_stride = |m: &vxe_assets::RigModel| {
+        m.clips
+            .iter()
+            .find(|(n, _)| n == "walk")
+            .map(|(_, c)| c.stride())
+    };
+    let walker = build("walker");
+    assert_eq!(
+        walker.body,
+        Some(RigBody::Ground {
+            radius: 512,
+            height: 3328,
+            step: 512
+        })
+    );
+    assert_eq!(walk_stride(&walker), Some(2048));
+    let spider = build("spider");
+    assert_eq!(
+        spider.body,
+        Some(RigBody::Surface {
+            radius: 1536,
+            reach: 384
+        })
+    );
+    assert_eq!(walk_stride(&spider), Some(3072));
 }
