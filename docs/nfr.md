@@ -523,6 +523,9 @@ the Windows arm confirms it on the first `main` CI run after Plan 0004's merge.
 |---|---|---|
 | Controller tick, one body | 20 µs | `cargo bench -p vxe-sim --bench controller` |
 | Sweep, one body, one contact | 26.3 µs (the Plan 0004 close reading, accepted by the owner 2026-10-17; the proposal was 5 µs); a sweep profile is scheduled only when a scene sweeps more than about 100 bodies a tick | same bench, `1000 sweeps of the F2 wall case` |
+| Surface mover tick, one body, attached on a flat face (ADR-0062) | **proposal: 20 µs** (Plan 0079; unread) | `cargo bench -p vxe-sim --bench surface`, `one surface tick attached on the F1 floor` |
+| `World::solid_gradient` at `half` 6 (13³ voxels, at most 27 bricks) | **proposal: 5 µs** (Plan 0079; unread) | the `vxe-world` gradient bench case |
+| Locomotion of 64 entities a tick in the fly-through (movers, probes, poses) | **guess: 1.5 ms a tick** (Plan 0079; unread) | the HUD's `tick <us>`, `--entities 64 --entities-walk on --headless` |
 | Coarse grid update after a radius-1 m carve | 50 µs | `cargo bench -p vxe-world --bench coarse` |
 | Walkable update after that change | 20 µs | same bench |
 | Coarse grid RAM | 4 B per brick, 2048 B per chunk | `world_budget --chunks` |

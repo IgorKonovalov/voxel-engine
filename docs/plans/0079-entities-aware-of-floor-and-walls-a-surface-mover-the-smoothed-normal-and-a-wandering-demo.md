@@ -1,6 +1,6 @@
 # 0079: Entities aware of the floor and the walls: a surface mover in `vxe-sim`, the smoothed normal, a body in the `.rig`, and a wandering demo
 
-> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
+> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions")
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (entities), over M3's collision
 > (`vxe-sim`, ADR-0005)
@@ -656,7 +656,7 @@ unchanged (ADR-0050).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the surface mover in `vxe-sim` | dev | not started | |
+| 1: the surface mover in `vxe-sim` | dev | wip, stopped at done-when 4 (owner question); readings in [`logs/0079.md`](logs/0079.md) | committed with this row |
 | 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | not started | |
 | 3: the body and the stride in the `.rig` | dev | not started | |
 | 4: the fly-through's demo | dev | not started | |

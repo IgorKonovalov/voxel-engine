@@ -19,3 +19,7 @@ criterion.workspace = true
 [[bench]]
 name = "controller"
 harness = false
+
+[[bench]]
+name = "surface"
+harness = false

@@ -1,8 +1,9 @@
-//! Distance, overlap and the conservative-advancement sweep (ADR-0005).
+//! Distance, overlap and the conservative-advancement sweep (ADR-0005), shared by the
+//! cylinder and the sphere (ADR-0062).
 
 use vxe_world::{FIXED_ONE, Fixed3, QueryStats, World};
 
-use crate::body::{Body, Contact, Key, SolidBox, collect, isqrt};
+use crate::body::{Body, Contact, Key, Shape, SolidBox, Sphere, collect, isqrt};
 
 /// The sweep stops after this many advances, whatever is left of the delta.
 pub const MAX_SWEEP_ITERATIONS: u32 = 64;
@@ -21,26 +22,26 @@ pub struct Sweep {
     pub iterations: u32,
 }
 
-/// The half-open box the body occupies at `foot` and at `foot + delta`, and everything between:
-/// the body's bounding box extended along the delta. A box touching the body from a side the
-/// delta does not move toward lies outside it.
-fn swept_region(b: &Body, delta: [i64; 3]) -> ([i64; 3], [i64; 3]) {
-    let f = b.foot.0;
-    let lo0 = [f[0] - b.radius, f[1] - b.radius, f[2]];
-    let hi0 = [f[0] + b.radius, f[1] + b.radius, f[2] + b.height];
-    let lo = [0, 1, 2].map(|k| lo0[k].min(lo0[k] + delta[k]));
-    let hi = [0, 1, 2].map(|k| hi0[k].max(hi0[k] + delta[k]));
-    (lo, hi)
+/// The half-open box the body occupies at its position and at the position plus `delta`, and
+/// everything between: the body's bounding box extended along the delta. A box touching the
+/// body from a side the delta does not move toward lies outside it.
+fn swept_region<S: Shape>(b: &S, delta: [i64; 3]) -> ([i64; 3], [i64; 3]) {
+    b.region(delta)
 }
 
 /// The nearest of `boxes` meeting `[lo, hi)`, by [`Key`].
-fn nearest(boxes: &[SolidBox], b: &Body, lo: [i64; 3], hi: [i64; 3]) -> Option<(Key, Contact)> {
+fn nearest<S: Shape>(
+    boxes: &[SolidBox],
+    b: &S,
+    lo: [i64; 3],
+    hi: [i64; 3],
+) -> Option<(Key, Contact)> {
     let (key, bx) = boxes
         .iter()
         .filter(|x| x.intersects(lo, hi))
-        .map(|x| (x.key(b), x))
+        .map(|x| (b.key(x), x))
         .min_by_key(|(k, _)| *k)?;
-    Some((key, bx.contact(b, key.voxel)))
+    Some((key, b.contact(bx, key.voxel)))
 }
 
 /// The nearest of `boxes` meeting `[lo, hi)` that a move by `delta` closes on
@@ -49,9 +50,9 @@ fn nearest(boxes: &[SolidBox], b: &Body, lo: [i64; 3], hi: [i64; 3]) -> Option<(
 /// the floored gap of zero, or within the gap at which every advance rounds to zero, stops
 /// every move from there, including one straight away from it, and the body never moves
 /// again.
-fn nearest_blocking(
+fn nearest_blocking<S: Shape>(
     boxes: &[SolidBox],
-    b: &Body,
+    b: &S,
     lo: [i64; 3],
     hi: [i64; 3],
     delta: [i64; 3],
@@ -61,13 +62,13 @@ fn nearest_blocking(
         .iter()
         .filter(|x| x.intersects(lo, hi))
         .filter(|x| {
-            let c = x.closes_on(b, delta);
+            let c = b.closes_on(x, delta);
             left_out |= !c;
             c
         })
-        .map(|x| (x.key(b), x))
+        .map(|x| (b.key(x), x))
         .min_by_key(|(k, _)| *k);
-    (n.map(|(key, bx)| (key, bx.contact(b, key.voxel))), left_out)
+    (n.map(|(key, bx)| (key, b.contact(bx, key.voxel))), left_out)
 }
 
 fn to_i64(v: i128) -> i64 {
@@ -98,12 +99,26 @@ pub fn overlaps(world: &World, body: &Body) -> bool {
 }
 
 /// [`overlaps`] over `boxes`, which hold at least the boxes of the body's region.
-pub(crate) fn overlaps_in(boxes: &[SolidBox], body: &Body) -> bool {
-    boxes.iter().any(|x| x.overlaps(body))
+pub(crate) fn overlaps_in<S: Shape>(boxes: &[SolidBox], body: &S) -> bool {
+    boxes.iter().any(|x| body.overlaps(x))
+}
+
+/// Whether `sphere` strictly overlaps a solid voxel. Touching is not overlapping.
+pub fn sphere_overlaps(world: &World, sphere: &Sphere) -> bool {
+    let (lo, hi) = swept_region(sphere, [0; 3]);
+    overlaps_in(&collect(world, lo, hi, &mut QueryStats::default()), sphere)
+}
+
+/// [`sweep`] for a sphere: the same conservative advancement with the sphere's gap
+/// `max(0, d - r)` and its closing rule ([`Sphere`]).
+pub fn sweep_sphere(world: &World, sphere: &Sphere, delta: Fixed3) -> Sweep {
+    let (lo, hi) = swept_region(sphere, delta.0);
+    let boxes = collect(world, lo, hi, &mut QueryStats::default());
+    sweep_in(&boxes, sphere, delta)
 }
 
 /// The region [`sweep`] collects its boxes over.
-pub(crate) fn sweep_region(body: &Body, delta: Fixed3) -> ([i64; 3], [i64; 3]) {
+pub(crate) fn sweep_region<S: Shape>(body: &S, delta: Fixed3) -> ([i64; 3], [i64; 3]) {
     swept_region(body, delta.0)
 }
 
@@ -134,8 +149,8 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
 /// [`sweep`] over `boxes`, which hold at least the boxes of [`sweep_region`] in
 /// [`collect`]'s order (see [`crate::body::Boxes`]): every query below takes only the boxes
 /// meeting its own region, or the first in order of those it looks for.
-pub(crate) fn sweep_in(boxes: &[SolidBox], body: &Body, delta: Fixed3) -> Sweep {
-    let start = body.foot.0;
+pub(crate) fn sweep_in<S: Shape>(boxes: &[SolidBox], body: &S, delta: Fixed3) -> Sweep {
+    let start = body.pos();
     let (lo, hi) = swept_region(body, delta.0);
     // Every later region is inside this one: it starts at the body's current box, which lies
     // on the segment, and extends along what is left of the same delta.
@@ -145,7 +160,7 @@ pub(crate) fn sweep_in(boxes: &[SolidBox], body: &Body, delta: Fixed3) -> Sweep 
         started_overlapping: false,
         iterations: 0,
     };
-    if boxes.iter().any(|x| x.overlaps(body)) {
+    if boxes.iter().any(|x| body.overlaps(x)) {
         out.started_overlapping = true;
         out.contact = nearest(boxes, body, lo, hi).map(|(_, c)| c);
         return out;
@@ -154,7 +169,7 @@ pub(crate) fn sweep_in(boxes: &[SolidBox], body: &Body, delta: Fixed3) -> Sweep 
     let mut rem = delta.0;
     while out.iterations < MAX_SWEEP_ITERATIONS && rem != [0; 3] {
         out.iterations += 1;
-        let b = body.at(pos);
+        let b = body.moved_to(pos);
         let (rlo, rhi) = swept_region(&b, rem);
         let (nearest, left_out) = nearest_blocking(boxes, &b, rlo, rhi, rem);
         let Some((key, contact)) = nearest else {
@@ -191,9 +206,9 @@ pub(crate) fn sweep_in(boxes: &[SolidBox], body: &Body, delta: Fixed3) -> Sweep 
         // horizontal distance, can reach into it. Stop short of that. With no box left out,
         // `g` bounds the gap to every box the region holds and the check is not needed.
         if left_out {
-            let nb = body.at(next);
-            if let Some(x) = boxes.iter().find(|x| x.overlaps(&nb)) {
-                out.contact = Some(x.contact(&b, x.key(&b).voxel));
+            let nb = body.moved_to(next);
+            if let Some(x) = boxes.iter().find(|x| nb.overlaps(x)) {
+                out.contact = Some(b.contact(x, b.key(x).voxel));
                 break;
             }
         }
@@ -201,7 +216,7 @@ pub(crate) fn sweep_in(boxes: &[SolidBox], body: &Body, delta: Fixed3) -> Sweep 
         rem = [0, 1, 2].map(|k| rem[k] - adv[k]);
     }
     if rem != [0; 3] && out.contact.is_none() {
-        let b = body.at(pos);
+        let b = body.moved_to(pos);
         let (rlo, rhi) = swept_region(&b, rem);
         out.contact = nearest_blocking(boxes, &b, rlo, rhi, rem).0.map(|(_, c)| c);
     }

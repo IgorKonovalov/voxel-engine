@@ -1,4 +1,5 @@
-//! The body, its distance to an axis-aligned box, and the contact a box makes with it.
+//! The bodies (the cylinder and the sphere), their distance to an axis-aligned box, and the
+//! contact a box makes with them.
 //!
 //! Units are fixed point, 1/256 voxel; voxel `v` spans `[256 v, 256 v + 256)`. Squares are
 //! taken in `i128`, so no product overflows for any position a `vxe-world` coordinate can name.
@@ -221,6 +222,172 @@ impl SolidBox {
             normal,
         }
     }
+}
+
+/// A sphere: the points within distance `radius` of `centre`, in fixed units. The surface
+/// mover's body (ADR-0062).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Sphere {
+    pub centre: Fixed3,
+    pub radius: i64,
+}
+
+impl Sphere {
+    /// The same sphere centred at `centre`.
+    pub fn at(&self, centre: [i64; 3]) -> Self {
+        Self {
+            centre: Fixed3(centre),
+            ..*self
+        }
+    }
+}
+
+impl SolidBox {
+    /// `c - p`, with `p` the point of the closed box `[min, max]` nearest the sphere's centre
+    /// `c`: axis-aligned on a face, diagonal on an edge or a corner, zero inside.
+    fn sphere_delta(&self, s: &Sphere) -> [i64; 3] {
+        let c = s.centre.0;
+        [0, 1, 2].map(|k| c[k] - c[k].clamp(self.min[k], self.max[k]))
+    }
+
+    /// `max(0, d - r)²` with `d` the floor of the root of the summed per-axis squared gaps:
+    /// a lower bound on the squared Euclidean gap between the sphere and the box.
+    pub fn sphere_distance2(&self, s: &Sphere) -> i128 {
+        let g = self.sphere_delta(s).map(i128::from);
+        let d = isqrt((g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) as u128) as i128;
+        let t = (d - i128::from(s.radius)).max(0);
+        t * t
+    }
+
+    /// Strict interior overlap: the box's nearest point closer than the radius. Touching is
+    /// not overlapping.
+    pub fn sphere_overlaps(&self, s: &Sphere) -> bool {
+        let g = self.sphere_delta(s).map(i128::from);
+        let r = i128::from(s.radius);
+        g[0] * g[0] + g[1] * g[1] + g[2] * g[2] < r * r
+    }
+
+    /// Whether a move along `delta` starts to close the gap to this box. The distance from a
+    /// point to a convex set is convex along a line, and its derivative at a point outside
+    /// the box is `g . delta / |g|` with `g` the vector from the box's nearest point to the
+    /// centre: the move closes on the box iff `g . delta < 0`. An overlapping box is always
+    /// closed on.
+    pub fn sphere_closes_on(&self, s: &Sphere, delta: [i64; 3]) -> bool {
+        if self.sphere_overlaps(s) {
+            return true;
+        }
+        let g = self.sphere_delta(s).map(i128::from);
+        let d = delta.map(i128::from);
+        g[0] * d[0] + g[1] * d[1] + g[2] * d[2] < 0
+    }
+
+    /// The ordering key of the box for a sphere, as [`SolidBox::key`] is for a cylinder: the
+    /// squared gap, the squared distance from the centre to the box's nearest lattice point,
+    /// then the voxel holding that point.
+    pub fn sphere_key(&self, s: &Sphere) -> Key {
+        let c = s.centre.0;
+        let p = [0, 1, 2].map(|k| c[k].clamp(self.min[k], self.max[k] - 1));
+        let tie = (0..3)
+            .map(|k| {
+                let d = i128::from(p[k] - c[k]);
+                d * d
+            })
+            .sum();
+        Key {
+            d2: self.sphere_distance2(s),
+            tie,
+            voxel: VoxelCoord(p.map(|v| v.div_euclid(FIXED_ONE) as i32)),
+        }
+    }
+
+    /// The contact the box makes with a sphere: the normal is the integer vector from the
+    /// box's nearest point to the centre (not normalised); `(0, 0, radius)` when the centre is
+    /// inside the box.
+    pub fn sphere_contact(&self, s: &Sphere, voxel: VoxelCoord) -> Contact {
+        let g = self.sphere_delta(s);
+        Contact {
+            voxel,
+            material: self.material,
+            normal: if g == [0; 3] { [0, 0, s.radius] } else { g },
+        }
+    }
+}
+
+/// A body the sweep moves: the cylinder or the sphere. Each method is the body's own rule
+/// against one box; the sweep's loop is shared, monomorphised per body.
+pub(crate) trait Shape: Copy {
+    /// The reference point: the cylinder's foot, the sphere's centre.
+    fn pos(&self) -> [i64; 3];
+    fn moved_to(&self, p: [i64; 3]) -> Self;
+    /// The half-open box the body occupies, extended along `delta`.
+    fn region(&self, delta: [i64; 3]) -> ([i64; 3], [i64; 3]);
+    fn overlaps(&self, b: &SolidBox) -> bool;
+    fn closes_on(&self, b: &SolidBox, delta: [i64; 3]) -> bool;
+    fn key(&self, b: &SolidBox) -> Key;
+    fn contact(&self, b: &SolidBox, voxel: VoxelCoord) -> Contact;
+}
+
+impl Shape for Body {
+    fn pos(&self) -> [i64; 3] {
+        self.foot.0
+    }
+    fn moved_to(&self, p: [i64; 3]) -> Self {
+        self.at(p)
+    }
+    fn region(&self, delta: [i64; 3]) -> ([i64; 3], [i64; 3]) {
+        let f = self.foot.0;
+        let lo0 = [f[0] - self.radius, f[1] - self.radius, f[2]];
+        let hi0 = [f[0] + self.radius, f[1] + self.radius, f[2] + self.height];
+        extend(lo0, hi0, delta)
+    }
+    fn overlaps(&self, b: &SolidBox) -> bool {
+        b.overlaps(self)
+    }
+    fn closes_on(&self, b: &SolidBox, delta: [i64; 3]) -> bool {
+        b.closes_on(self, delta)
+    }
+    fn key(&self, b: &SolidBox) -> Key {
+        b.key(self)
+    }
+    fn contact(&self, b: &SolidBox, voxel: VoxelCoord) -> Contact {
+        b.contact(self, voxel)
+    }
+}
+
+impl Shape for Sphere {
+    fn pos(&self) -> [i64; 3] {
+        self.centre.0
+    }
+    fn moved_to(&self, p: [i64; 3]) -> Self {
+        self.at(p)
+    }
+    fn region(&self, delta: [i64; 3]) -> ([i64; 3], [i64; 3]) {
+        let c = self.centre.0;
+        extend(
+            c.map(|v| v - self.radius),
+            c.map(|v| v + self.radius),
+            delta,
+        )
+    }
+    fn overlaps(&self, b: &SolidBox) -> bool {
+        b.sphere_overlaps(self)
+    }
+    fn closes_on(&self, b: &SolidBox, delta: [i64; 3]) -> bool {
+        b.sphere_closes_on(self, delta)
+    }
+    fn key(&self, b: &SolidBox) -> Key {
+        b.sphere_key(self)
+    }
+    fn contact(&self, b: &SolidBox, voxel: VoxelCoord) -> Contact {
+        b.sphere_contact(self, voxel)
+    }
+}
+
+/// `[lo, hi)` and its copy moved by `delta`, and everything between.
+fn extend(lo0: [i64; 3], hi0: [i64; 3], delta: [i64; 3]) -> ([i64; 3], [i64; 3]) {
+    let lo = [0, 1, 2].map(|k| lo0[k].min(lo0[k] + delta[k]));
+    let hi = [0, 1, 2].map(|k| hi0[k].max(hi0[k] + delta[k]));
+    (lo, hi)
 }
 
 fn read<T>(l: &RwLock<T>) -> RwLockReadGuard<'_, T> {

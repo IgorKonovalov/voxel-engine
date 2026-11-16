@@ -1,5 +1,6 @@
 //! Character collision against a `vxe-world` brick map: a vertical cylinder swept by integer
-//! conservative advancement (ADR-0005).
+//! conservative advancement and driven by a character controller (ADR-0005), and a sphere
+//! attached to the surface it touches, driven by the surface mover (ADR-0062).
 //!
 //! Like `vxe-world`, this crate is headless and deterministic: every position, distance and
 //! velocity is an integer in fixed-point voxel units (1/256 voxel), nothing reads a clock, and
@@ -20,14 +21,22 @@
 //! assert!(s.contact.unwrap().is_floor());
 //! ```
 
+mod arc;
 mod body;
 mod controller;
+mod surface;
 mod sweep;
 
-pub use body::{Body, Contact, isqrt};
+pub use arc::{DIR_ONE, normalise, rotate, shortest_arc};
+pub use body::{Body, Contact, Sphere, isqrt};
 pub use controller::{
     CharacterController, CharacterState, ControllerParams, MAX_CONTACTS, MoveInput, MoveResult,
 };
+pub use surface::{
+    Ahead, SurfaceEvent, SurfaceInput, SurfaceMover, SurfaceParams, SurfaceResult, SurfaceState,
+    probe_ahead,
+};
 pub use sweep::{
-    MAX_SWEEP_ITERATIONS, Sweep, distance2, distance2_with_stats, overlaps, sweep, sweep_with_stats,
+    MAX_SWEEP_ITERATIONS, Sweep, distance2, distance2_with_stats, overlaps, sphere_overlaps, sweep,
+    sweep_sphere, sweep_with_stats,
 };
