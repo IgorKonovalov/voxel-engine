@@ -172,7 +172,13 @@ pub(crate) const PASSES: [PassSpec; 15] = [
     },
     PassSpec {
         label: "downsample",
-        modules: &[COMMON_WGSL, HITREC_WGSL, COMPOSITE_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
+            COMPOSITE_WGSL,
+        ],
         entry: "downsample",
         constants: &[],
         groups: &[
@@ -275,7 +281,13 @@ pub(crate) const PASSES: [PassSpec; 15] = [
     },
     PassSpec {
         label: "composite",
-        modules: &[COMMON_WGSL, HITREC_WGSL, COMPOSITE_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
+            COMPOSITE_WGSL,
+        ],
         entry: "composite",
         constants: &[],
         groups: &[
@@ -433,9 +445,40 @@ impl Pipelines {
     }
 }
 
+impl Frame {
+    /// Group 0 of the frame's shaders over `world`.
+    pub(super) fn world_bind(&self, device: &wgpu::Device, world: &GpuWorld) -> wgpu::BindGroup {
+        self.binds.io_at(
+            device,
+            &self.pipes.world_layout,
+            &[0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+            &[
+                Res::Buf(&self.state.params),
+                Res::Buf(world.pool_shard(0)),
+                Res::Buf(world.pool_shard(1)),
+                Res::Buf(world.pool_shard(2)),
+                Res::Buf(world.pool_shard(3)),
+                Res::Buf(world.records()),
+                Res::Buf(world.table()),
+                Res::Buf(world.materials()),
+                Res::Buf(world.light_buffer()),
+                Res::Buf(&self.state.emission_scale),
+                Res::Tex(&self.state.blue_noise),
+                Res::Buf(self.exposure.state_uniform()),
+                Res::Buf(&self.state.lights.buffer),
+                Res::Buf(self.entities.buffer()),
+                Res::Buf(&self.sky.uniform),
+                Res::Tex(self.sky.bound()[0]),
+                Res::Tex(self.sky.bound()[1]),
+            ],
+        )
+    }
+}
+
 /// The world's group 0, as `common.wgsl` declares it: the frame's parameters (0), the mirror's
 /// pools, records, table and materials, the light samples and the emission scales, the blue
-/// noise (12), the exposure state (13), the list of lights (14) and the entity mirror (15).
+/// noise (12), the exposure state (13), the list of lights (14), the entity mirror (15), and the
+/// sky's uniform (16) and LUTs (17, 18) as `sky.wgsl` declares them.
 fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let storage = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -471,6 +514,18 @@ fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             storage(11),
             storage(15),
             sampled_texture(12, FLOAT),
+            sampled_texture(17, FLOAT),
+            sampled_texture(18, FLOAT),
+            wgpu::BindGroupLayoutEntry {
+                binding: 16,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
             wgpu::BindGroupLayoutEntry {
                 binding: 13,
                 visibility: wgpu::ShaderStages::COMPUTE,

@@ -1,6 +1,6 @@
 # 0032: Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as a directional sample, sky light from a sky ray, an outdoor testbed source
 
-> **Status:** approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign)
+> **Status:** in-progress (lane plan-0032 from 2026-11-16, stacked on plan-0069); approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -1080,9 +1080,11 @@ apply: the guard and the long emissive history are gone, and Plan 0048 was dropp
 > resume notes go to the plan's readings log, `docs/plans/logs/0032.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings and gate counts: [`logs/0032.md`](logs/0032.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | not started | |
+| 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | done; golden `sky_empty_noon` waits for Phase 10 | committed with this row |
 | 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | not started | |
 | 3: The outdoor source, the source switch and the time of day in the fly-through | dev | not started | |
 | 4: The outdoor exposure | dev | not started | |
@@ -1095,9 +1097,22 @@ apply: the guard and the long emissive history are gone, and Plan 0048 was dropp
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Paths (plan to tree): `marcher.rs`'s `Frame` and `FRAME_PASSES` are `frame/mod.rs` and
+  `frame/encode.rs`; group 0's layout and bind are in `frame/pipelines.rs`; the sky's GPU side
+  is a new `frame/sky.rs`; the shader sources' list is `frame/compose.rs`.
+- Phase 1: a new module `sky_atmosphere.wgsl` (the uniform struct, the media, the LUT
+  mappings) is shared by the LUT passes and `sky.wgsl`.
+- Phase 1: no filtering sampler in group 0; `sky.wgsl` taps the LUTs bilinear with
+  `textureLoad` (`lut_tap`). Group 0 holds the sky uniform (16), the transmittance LUT (17)
+  and the sky-view LUT (18).
+- Phase 1: `Frame::world_bind` moved from `frame/encode.rs` to `frame/pipelines.rs` (encode.rs
+  was at the 1200-line cap).
+- Phase 1: the sky-view LUT stores radiance times a view scale (one over the brighter body's
+  largest channel); `sky_radiance` divides it out. With the sun alone this is the plan's
+  "LUT radiance times the sun's illuminance".
+- Phase 1: with no sky ever set the LUTs are 1 x 1 placeholders and no LUT pipeline is built,
+  so `frame_bytes` holds the base value; the first `set_sky` allocates them.
+- Phase 1 bar 4 (`sky_empty_noon_golden`) moves to Phase 10 (exploration amendment).
 
 ### Close triggers
 

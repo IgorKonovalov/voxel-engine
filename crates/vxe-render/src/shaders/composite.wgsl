@@ -1,6 +1,7 @@
 // The composite pass: turns the hit buffer, the translucent layers and the irradiance into
-// the `rgba8unorm` target the presenter draws. Compiled after common.wgsl and hitrec.wgsl, whose bindings
-// (group 0: the material rows), and hit-record helpers it uses.
+// the `rgba8unorm` target the presenter draws. Compiled after common.wgsl, hitrec.wgsl,
+// sky_atmosphere.wgsl and sky.wgsl, whose bindings (group 0: the material rows, the sky),
+// hit-record helpers and sky lookups it uses.
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   hit_pos_in      the hit pass's rgba32float position + t
@@ -33,7 +34,7 @@
 // irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance) plus its
 // material's
 // emission under the frame's scale (none in the cutaway view; the cutaway's flat
-// sky on a miss in that view, else black), filtered by the translucent solid in front of it,
+// sky on a miss in that view, else `sky_radiance` of the pixel's ray with a sky set, else black), filtered by the translucent solid in front of it,
 // `reflected * exposure + T * c` (ADR-0047), all
 // pre-exposed (ADR-0033: the irradiance arrives pre-exposed, and the absolute terms, emission,
 // the layers, the sky and the probes' indirect irradiance, are multiplied by `exposure_now()`
@@ -234,6 +235,8 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
     var c = vec3<f32>(0.0);
     if (!rec.found && (params.flags & FLAG_CUTAWAY) != 0u) {
         c = CUTAWAY_SKY * ex;
+    } else if (!rec.found && sky_on()) {
+        c = sky_radiance(pixel_ray(vec2<u32>(px)).d) * ex;
     }
     if (rec.found) {
         if (view == VIEW_NORMALS) {

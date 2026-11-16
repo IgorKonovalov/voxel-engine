@@ -26,6 +26,7 @@ mod present;
 mod probes;
 mod readback;
 mod settings;
+pub mod sky;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 

@@ -1,0 +1,234 @@
+//! The sky's GPU side (ADR-0026): its uniform, its LUTs and the passes that build them, and
+//! [`Frame::set_sky`]. With no sky ever set the LUTs are 1 x 1 placeholders, no LUT pipeline
+//! is built and no LUT pass runs.
+
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use super::*;
+use crate::sky::{Sky, SkyUniform};
+
+pub(crate) const SKY_ATMOSPHERE_WGSL: &str = include_str!("../shaders/sky_atmosphere.wgsl");
+pub(crate) const SKY_WGSL: &str = include_str!("../shaders/sky.wgsl");
+const SKY_TRANSMITTANCE_WGSL: &str = include_str!("../shaders/sky_transmittance.wgsl");
+const SKY_VIEW_WGSL: &str = include_str!("../shaders/sky_view.wgsl");
+
+/// The LUTs' sizes, as `sky_atmosphere.wgsl` declares them.
+pub(crate) const TRANSMITTANCE_SIZE: [u32; 2] = [256, 64];
+pub(crate) const SKY_VIEW_SIZE: [u32; 2] = [192, 108];
+
+const F16: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The LUT passes: label, modules after the prelude, entry point.
+pub(crate) const SKY_PASSES: [(&str, &[&str], &str); 2] = [
+    (
+        "sky transmittance",
+        &[SKY_ATMOSPHERE_WGSL, SKY_TRANSMITTANCE_WGSL],
+        "sky_transmittance",
+    ),
+    (
+        "sky view",
+        &[SKY_ATMOSPHERE_WGSL, SKY_VIEW_WGSL],
+        "sky_view",
+    ),
+];
+
+fn lut(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: F16,
+        usage: wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// The LUTs at their sizes, allocated at the first [`Frame::set_sky`] with a sky.
+pub(super) struct SkyLuts {
+    pub(super) transmittance: wgpu::Texture,
+    pub(super) view: wgpu::Texture,
+}
+
+impl SkyLuts {
+    fn bytes(&self) -> u64 {
+        [&self.transmittance, &self.view]
+            .iter()
+            .map(|t| 8 * u64::from(t.width()) * u64::from(t.height()))
+            .sum()
+    }
+}
+
+/// The LUT passes' layouts and pipelines.
+struct SkyPipes {
+    layouts: Vec<wgpu::BindGroupLayout>,
+    pipes: Vec<wgpu::ComputePipeline>,
+}
+
+/// The frame's sky: what was set, the uniform, the LUTs and their passes.
+pub(super) struct SkyState {
+    pub(super) sky: Option<Sky>,
+    pub(super) uniform: wgpu::Buffer,
+    pub(super) luts: Option<SkyLuts>,
+    placeholder: wgpu::Texture,
+    /// The atmosphere changed since the transmittance LUT was built.
+    dirty: AtomicBool,
+    pipes: OnceLock<SkyPipes>,
+}
+
+impl SkyState {
+    pub(super) fn new(device: &wgpu::Device) -> Self {
+        Self {
+            sky: None,
+            uniform: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("sky uniform"),
+                size: size_of::<SkyUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            luts: None,
+            placeholder: lut(device, "sky lut placeholder", [1, 1]),
+            dirty: AtomicBool::new(false),
+            pipes: OnceLock::new(),
+        }
+    }
+
+    /// The bytes of the LUTs and the uniform, 0 while no sky was ever set.
+    pub(super) fn bytes(&self) -> u64 {
+        self.luts
+            .as_ref()
+            .map_or(0, |l| l.bytes() + size_of::<SkyUniform>() as u64)
+    }
+
+    /// The textures group 0 binds at 17 and 18: the LUTs, or the placeholder.
+    pub(super) fn bound(&self) -> [&wgpu::Texture; 2] {
+        match &self.luts {
+            Some(l) => [&l.transmittance, &l.view],
+            None => [&self.placeholder, &self.placeholder],
+        }
+    }
+
+    fn pipes(&self, device: &wgpu::Device) -> &SkyPipes {
+        self.pipes.get_or_init(|| {
+            let ios: [&[Io]; 2] = [
+                &[Io::Uniform, Io::Store(F16)],
+                &[Io::Uniform, Io::Float, Io::Store(F16)],
+            ];
+            let layouts: Vec<_> = SKY_PASSES
+                .iter()
+                .zip(ios)
+                .map(|((label, ..), io)| io_layout(device, label, io))
+                .collect();
+            let pipes = SKY_PASSES
+                .iter()
+                .zip(&layouts)
+                .map(|((label, modules, entry), layout)| {
+                    compute_pipeline(device, label, compose(modules), &[Some(layout)], entry)
+                })
+                .collect();
+            SkyPipes { layouts, pipes }
+        })
+    }
+
+    /// Writes the uniform for a camera at world z `camera_z` and returns the LUT passes' bind
+    /// groups, `None` with no sky.
+    pub(super) fn prepare(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        binds: &BindCache,
+        camera_z: f32,
+    ) -> Option<[wgpu::BindGroup; 2]> {
+        let u = SkyUniform::of(self.sky.as_ref(), camera_z, false);
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        let (_, luts) = (self.sky.as_ref()?, self.luts.as_ref()?);
+        let p = self.pipes(device);
+        Some([
+            binds.io(
+                device,
+                &p.layouts[0],
+                &[Res::Buf(&self.uniform), Res::Tex(&luts.transmittance)],
+            ),
+            binds.io(
+                device,
+                &p.layouts[1],
+                &[
+                    Res::Buf(&self.uniform),
+                    Res::Tex(&luts.transmittance),
+                    Res::Tex(&luts.view),
+                ],
+            ),
+        ])
+    }
+
+    /// The LUT passes' dispatches over `groups` ([`SkyState::prepare`]): the transmittance
+    /// LUT's when the atmosphere changed (the flag then cleared), the sky view's every frame;
+    /// empty with no sky.
+    pub(super) fn dispatches<'a>(
+        &'a self,
+        device: &wgpu::Device,
+        groups: Option<&'a [wgpu::BindGroup; 2]>,
+    ) -> [Dispatches<'a>; 2] {
+        let mut out = [Dispatches::default(), Dispatches::default()];
+        let Some(groups) = groups else {
+            return out;
+        };
+        let p = self.pipes(device);
+        let sizes = [TRANSMITTANCE_SIZE, SKY_VIEW_SIZE];
+        for (i, slot) in out.iter_mut().enumerate() {
+            if i == 0 && !self.dirty.swap(false, Ordering::Relaxed) {
+                continue;
+            }
+            slot.push(Dispatch {
+                pipeline: &p.pipes[i],
+                groups: [Some(&groups[i]), None, None, None],
+                workgroups: sizes[i].map(|n| n.div_ceil(WORKGROUP)),
+                indirect: None,
+            });
+        }
+        out
+    }
+}
+
+impl Frame {
+    /// Sets the sky the frame draws on a miss and lights with (ADR-0026), or none. With `None`
+    /// (the default) the frame renders exactly as without a sky. The first sky allocates the
+    /// LUTs; an atmosphere that differs from the last rebuilds the transmittance LUT on the
+    /// next encode.
+    pub fn set_sky(&mut self, sky: Option<Sky>) {
+        let s = &mut self.sky;
+        if let Some(new) = &sky {
+            if s.luts.is_none() {
+                s.luts = Some(SkyLuts {
+                    transmittance: lut(&self.device, "sky transmittance", TRANSMITTANCE_SIZE),
+                    view: lut(&self.device, "sky view", SKY_VIEW_SIZE),
+                });
+                s.dirty.store(true, Ordering::Relaxed);
+            }
+            if s.sky.is_none_or(|old| old.atmosphere != new.atmosphere) {
+                s.dirty.store(true, Ordering::Relaxed);
+            }
+        }
+        s.sky = sky;
+    }
+
+    /// The sky [`Frame::set_sky`] last set.
+    pub fn sky(&self) -> Option<&Sky> {
+        self.sky.sky.as_ref()
+    }
+
+    /// The transmittance LUT (rgba16float, 256 x 64, by `transmittance_uv` in
+    /// `sky_atmosphere.wgsl`) and the sky-view LUT (rgba16float, 192 x 108, radiance times
+    /// the sky's view scale), `None` before the first sky.
+    pub fn sky_luts(&self) -> Option<[&wgpu::Texture; 2]> {
+        self.sky.luts.as_ref().map(|l| [&l.transmittance, &l.view])
+    }
+}

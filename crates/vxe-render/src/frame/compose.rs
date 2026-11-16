@@ -22,6 +22,7 @@ use crate::gpu_world::{
     MATERIAL_MASK, RECORD_MASK, RECORD_WORDS, TRANSLUCENT_BIT, UNIT_MASK, UNIT_WORDS,
 };
 use crate::probes::{MOVED_BIT, TOUCHED_BIT};
+use crate::sky::{SKY_MULTISCATTER, SKY_ON, SKY_UNIFORM};
 use vxe_world::MaterialFlags;
 
 pub(crate) const COMMON_WGSL: &str = include_str!("../shaders/common.wgsl");
@@ -137,6 +138,14 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("EX_METER", EX_METER),
     ("EX_RESET", EX_RESET),
     ("STATE_HELD", STATE_HELD),
+    // The sky (`sky.rs`, `frame/sky.rs`): the uniform's flags and the LUTs' sizes.
+    ("SKY_ON", SKY_ON),
+    ("SKY_UNIFORM", SKY_UNIFORM),
+    ("SKY_MULTISCATTER", SKY_MULTISCATTER),
+    ("SKY_TRANSMITTANCE_W", super::sky::TRANSMITTANCE_SIZE[0]),
+    ("SKY_TRANSMITTANCE_H", super::sky::TRANSMITTANCE_SIZE[1]),
+    ("SKY_VIEW_W", super::sky::SKY_VIEW_SIZE[0]),
+    ("SKY_VIEW_H", super::sky::SKY_VIEW_SIZE[1]),
 ];
 
 /// [`PRELUDE`] as WGSL, one `const` a line.
@@ -185,6 +194,11 @@ pub fn shader_sources() -> Vec<ShaderSource> {
     ];
     out.extend(PASSES.iter().map(|p| s(p.label, p.source(), p.entry)));
     out.push(s("composite hdr", composite_hdr_compose(), "composite"));
+    out.extend(
+        SKY_PASSES
+            .iter()
+            .map(|(label, modules, entry)| s(label, compose(modules), entry)),
+    );
     out.extend(
         crate::fsr2::FSR2_PIPES
             .iter()

@@ -29,6 +29,7 @@ mod pipelines;
 mod probe_channel;
 mod readback_ring;
 mod settings;
+mod sky;
 mod state;
 mod targets;
 mod timer;
@@ -44,6 +45,8 @@ pub(crate) use self::pipelines::*;
 use self::probe_channel::*;
 use self::readback_ring::*;
 pub use self::settings::*;
+use self::sky::SkyState;
+pub(crate) use self::sky::{SKY_ATMOSPHERE_WGSL, SKY_PASSES, SKY_WGSL};
 pub(crate) use self::state::*;
 use self::targets::*;
 pub use self::timer::*;
@@ -93,6 +96,8 @@ pub struct Frame {
     output_hint: Option<[u32; 2]>,
     /// [`Frame::history_restarts`].
     restarts: u64,
+    /// The sky, its uniform and LUTs ([`Frame::set_sky`]).
+    sky: SkyState,
 }
 
 impl Frame {
@@ -136,6 +141,7 @@ impl Frame {
             build: crate::settings::BuildSettings::default(),
             output_hint: None,
             restarts: 0,
+            sky: SkyState::new(device),
         }
     }
 
@@ -586,6 +592,7 @@ impl Frame {
             + self.entities.bytes()
             + self.probe.volume.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
+            + self.sky.bytes()
             + self.up.fsr.as_ref().map_or(0, Fsr2::bytes)
             + if self.baked.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
                 self.baked.store.pool().size()

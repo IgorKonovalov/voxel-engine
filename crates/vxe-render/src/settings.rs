@@ -458,6 +458,10 @@ impl RenderSettings {
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
         (
+            "set_sky",
+            "a per-frame input: the game's sky, its bodies moved by the game's clock",
+        ),
+        (
             "set_frame_index",
             "a per-frame input: the frame index the noise seeds with",
         ),
