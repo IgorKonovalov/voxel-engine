@@ -360,8 +360,9 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 | 2: every stage steps; PreRoll and LoadProgress | dev | done; the streamed stage test is born soak (22 s on lavapipe); the sync's time budget covers the first stage only (an attempt with it through the pre-roll starved the coarse pass); the GPU cap is a `device.poll(wait)` at each loading frame's start; `GpuWorld` gained `set_sync_budget_time` | 3a291c9a |
 | 3: the engine's loading frame | dev | done; the text rows are not drawn while the screen fades (alpha below 1); the loading pass reads 1.70 ms on lavapipe at 1080p against the 0.3 ms budget (1.06 ms without the cube; see Notes); the Phase 1 text bar and clear pass are gone | a6fc3c87 |
 | 4: the fly-through and the tester around it | dev | done; "the title" read as the loading frame's title row (the window's title is unchanged); the warm-up test is a lavapipe run in `gpu_loading.rs`, not CPU in `path.rs`; outside `Files touched`: `run/mod.rs` (the recorder's device-ready time), `run/tour.rs` and `tests/path.rs` (the new `RunReport` fields); `menu.rs` unchanged (the row is `Outcome::row`) | 559b48a4 |
-| 5: the budget readings | dev | done; headless, not windowed (lane rule 10; the windowed readings are the Phase 6 runner's); the cost misses 3 % on the streamed worlds (+9.6 % cave, +8.1 % castle on the RTX) and the interval p95 misses 50 ms there (96 to 104 ms); the slice picks 15 / 25 / 40 read on the castle go to the owner's window; tip gate green | committed with this row |
-| 6: the owner's window | human | not started | |
+| 5: the budget readings | dev | done; headless, not windowed (lane rule 10; the windowed readings are the Phase 6 runner's); the cost misses 3 % on the streamed worlds (+9.6 % cave, +8.1 % castle on the RTX) and the interval p95 misses 50 ms there (96 to 104 ms); the slice picks 15 / 25 / 40 read on the castle go to the owner's window; tip gate green | 9c3371dc |
+| 6: the owner's window | human | done 2026-11-16 06:49 to 07:05, Linux, the RTX; the fade and the 25 ms slice picked; the cost and interval misses of Phase 5 accepted at the window; the streamed worlds' stutter to Followups; the owner asked for a frame right after start (Phase 6b) | committed with this row |
+| 6b: a frame before the device | dev | not started | |
 | 7: after the window | dev | not started | |
 
 ### Notes
@@ -392,3 +393,7 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 ### Close triggers
 
 ## Followups
+
+- The loading frames stutter on the streamed worlds (castle, cave): about 24 fps p50, p95
+  near 100 ms, the owner saw it at the Phase 6 window ("like fps in 30-40"); the bake step
+  runs longer than the slice and each frame waits for the previous slice's GPU work.
