@@ -25,6 +25,11 @@ The rows `crystal`, `amethyst` and `ember` are the showcase's, so the spider bui
 showcase's table (`--source showcase`) and not the streamed cave's. The `walker` rows are in
 every table the fly-through builds.
 
+The two GIFs are regenerated with `scripts/record-clip.sh --width 800 --out
+docs/images/spider-walk -- --clip walk` and `scripts/record-clip.sh --width 480 --out
+docs/images/walker-walk -- --rig apps/flythrough/assets/entities/walker/walker.rig --clip walk
+--ahead 70 --orbit 24,3,-10 --aim 9`.
+
 ## How they work
 
 ### A model is rigid parts on a `.vox`

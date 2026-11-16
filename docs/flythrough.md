@@ -310,7 +310,7 @@ tick `n * rate / fps`, so a recording is the same on every run.
 scripts/record-clip.sh                                    # the spider's first clip, a GIF
 scripts/record-clip.sh --format both --width 800 -- --clip rear
 scripts/record-clip.sh -- --rig apps/flythrough/assets/entities/walker/walker.rig \
-  --clip walk --ahead 70 --orbit 20,2,-10 --aim 7          # the walker, close up
+  --clip walk --ahead 70 --orbit 24,3,-10 --aim 9          # the walker, close up
 scripts/record-clip.sh --input target/clip/frames/spider-walk --crop 960:540:160:90
 ```
 
