@@ -483,6 +483,29 @@ setting, off (it costs nothing when off, owner 2026-11-12).
   (16 and 64 walking, eye lights off, both upscalers) and the vein walker, with the owner's
   words and pick in the log.
 
+### Phase 6d: the entity pipelines compiled off the render thread
+Amended 2026-11-16 (owner, the recommended option under the standing rule): in Plan 0063's
+window the first walker placed froze the app for about 12 s ("Application Not Responding"); the
+same single long frame is in this plan's own Phase 6 log (`live/session62.log`, frame 210 to 211,
+7.9 s). Phase 5's zero-entity fix builds the entity variants of the hit set (`Marcher::get`'s
+`OnceLock`, three pipelines) and the light pass (`P_LIGHT`, lazy) on the first frame that draws a
+part; the NVIDIA Vulkan driver compiles the four in 6 to 12 s (RADV 2.5 s cold, 45 ms cached),
+naga only 8 to 14 ms each (the diagnosis, 2026-11-16). Rejected: building them eagerly with the
+frame (startup +6 to 12 s on NVIDIA), dropping the specialisation (Phase 5's zero-entity cost
+back), a disk pipeline cache alone (helps only a second start of the same build; backlog).
+- **Owner skill:** dev
+- **What:** at frame creation a background thread compiles the entity set into the same
+  `OnceLock` slots (`wgpu::Device` is shareable); until it is ready the frame keeps the
+  no-entity pipelines and draws no entity part, and a frame flag says so (the HUD's entities row
+  shows `compiling`). Headless runs and tests get a blocking wait so goldens stay deterministic.
+- **Files touched:** `crates/vxe-render/src/frame/marcher.rs`, `frame/pipelines.rs`,
+  `frame/encode.rs`, the flythrough HUD row, a test, this plan's log.
+- **Done when:** a headless test places an entity on frame 1 of a fresh frame and reads it drawn
+  once the compile reports ready (lavapipe, under 10 s); the window reading on the RTX: the
+  longest frame within 2 s of the first placement under 100 ms (`--source showcase --shot hall`,
+  place with `` ` `` at about 20 s), with the time from frame creation to entities ready logged;
+  the zero-entity hit and light times unchanged from Phase 5 within noise.
+
 ## Data shapes
 
 ```rust
