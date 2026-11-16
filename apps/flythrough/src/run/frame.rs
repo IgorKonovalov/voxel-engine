@@ -20,7 +20,7 @@ use std::time::Instant;
 use vxe_app::{Flow, Gpu, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::Command;
 use vxe_render::debug::StepHistogram;
-use vxe_render::{HudColour, LodParams, MarchTimer, PassTimer, ViewMode, wgpu};
+use vxe_render::{LodParams, MarchTimer, PassTimer, ViewMode, wgpu};
 
 impl Run {
     /// One frame of streaming: update, poll, apply events and sync into the frame's `enc`,
@@ -627,11 +627,10 @@ impl Run {
         if hud {
             self.update_hud(gpu);
         } else if let Some(gfx) = self.gfx.as_mut() {
-            gfx.hud.set_lines(
-                &gpu.queue,
-                &self.hud.banner,
-                &[HudColour::Yellow; hud::BANNER_ROWS + 1],
-            );
+            // The stats' colours are free with the HUD off: the banner's go there.
+            crate::run::hud_feed::banner_colours(&self.hud.banner, &mut self.hud.colours);
+            gfx.hud
+                .set_lines(&gpu.queue, &self.hud.banner, &self.hud.colours);
             gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
         if let Some(n) = self.args.light.lamp_toggle
@@ -664,16 +663,7 @@ impl Run {
             fwd.to_array(),
             up.to_array(),
         );
-        // The viewer's first build, and its reload once a second.
-        let now = ms_since(self.start);
-        if let Some(words) = self
-            .modes
-            .walkers
-            .poll_viewer(now / 1000.0, self.world.materials())
-        {
-            println!("{words}");
-            self.modes.show_lights(words, now);
-        }
+        self.poll_viewer(ms_since(self.start));
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
         let mut lights = self.modes.lights.list();
