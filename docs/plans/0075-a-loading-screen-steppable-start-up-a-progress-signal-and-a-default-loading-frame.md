@@ -229,6 +229,38 @@ owner's window.
   noticeably slower.
   Each answer and pick goes to the readings log.
 
+### Phase 6b: a frame before the device
+Amended 2026-11-16 (owner): after the Phase 6 window the owner asked to "try and show at least
+some loading screen right after start, even static is ok". This overturns open question 1's
+"accepted" for the blank; the window readings (`docs/plans/logs/0075.md`, Phase 6) put it at
+0.4 s (showcase) to 3.0 s (castle) on the RTX from process start to `device ready`.
+- **Owner skill:** dev
+- **What:** first, the blank broken down: process start, window created, instance, adapter (and
+  any adapter enumeration), the generation join, `device_request`, the device, the first loading
+  frame, each a `diag` line, on the RTX and the Radeon iGPU, the castle, cave and showcase, cold
+  and warm. Then the cheapest change that puts a visible frame (a plain static loading frame is
+  enough: the background and the scene name, or the background alone) on screen as early as
+  that breakdown allows, in this order of preference:
+  1. Nothing waits that need not: the instance on the primary backends only when no adapter is
+     named, no adapter enumeration on the default path, and the generation join moved after
+     the device (the device's limits sized from what the level needs at most, not from its
+     content, if that is how the join can move; `level_pool_units` read at its use instead).
+  2. The first loading frame drawn and presented right after the device, before anything else
+     the shell or `Run` does at start-up.
+  3. If the readings after 1 and 2 still leave more than about 500 ms from the window's
+     creation to its first frame on the RTX: a frame shown before the device by another route
+     (a CPU-filled buffer on the window's surface, a second lightweight device, or another the
+     readings suggest) goes to the owner as a pick with its cost (a new dependency is an ADR),
+     not built in this phase.
+- **Files touched:** `crates/vxe-app/src/shell.rs`, `apps/flythrough/src/app.rs`,
+  `apps/flythrough/src/scene.rs`, the run files the order touches, `docs/plans/logs/0075.md`.
+- **Done when:** the breakdown before and after is in the readings log, three runs per scene on
+  each adapter with the 1-minute load; the time from process start to the first visible frame
+  is no longer on the RTX for any scene and shorter on the castle (where the generation join
+  sits in it today); the device's limits still admit every level the gate tier loads (the gate
+  tier passes at the phase's tip); headless runs are unchanged (no frame drawn without a
+  window). The owner sees the result at the next window, folded into Phase 7's.
+
 ### Phase 7: after the window
 - **Owner skill:** dev
 - **What:** the owner's picks applied, the golden written, the docs brought up to date.
@@ -293,7 +325,8 @@ Phase 5 reads them:
 
 Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 
-1. **The blank before the device:** accepted, and read in Phase 5 (0.4 to 1.9 s cold on the
+1. **The blank before the device:** accepted at the go, overturned at the Phase 6 window
+   (Amended 2026-11-16 (owner), Phase 6b); first read in Phase 5 (0.4 to 1.9 s cold on the
    RTX, `docs/nfr.md` section 7). A device whose limits do not wait on the level's content
    would be its own plan if the readings say the generation join is long.
 2. **The end of loading:** a 250 ms fade of the loading screen over the first world frames
@@ -307,8 +340,8 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 
 ## What this plan does NOT do
 
-- Show anything before the device exists: the device's limits still wait on the level's
-  generation (open question 1).
+- Build a second route to the screen before the device exists without the owner's pick (Phase 6b,
+  item 3).
 - Load on a thread, or make generation itself report progress (the level generates on its own
   threads; its stage shows the animation without a count).
 - Rebuild the world live behind the loading screen (Plan 0069's `Rebuild` class, a later idea for
