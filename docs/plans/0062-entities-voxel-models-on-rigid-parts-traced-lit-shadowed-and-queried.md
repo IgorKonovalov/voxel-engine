@@ -496,15 +496,24 @@ a background compile (a first stretch with entities not drawn, a shared-slot han
 orchestrator's first amendment 88799532, overturned), dropping the specialisation (Phase 5's
 zero-entity frame cost back; both sets are built, the no-entity set is still used when no part is
 drawn), a disk pipeline cache alone (helps only a second start of the same build; backlog).
+Amended 2026-11-16 (owner), after aa48c105: building them in `Frame::new` doubled frame
+creation on lavapipe (1.7 s to 3.3 s), paid by every GPU test that makes a frame and by every
+consumer with no entities. Taken: an explicit call on the frame that builds the entity set
+ahead of time; the fly-through makes it right after creating its frame, and a frame that never
+gets the call builds the set lazily as before. Rejected: always at creation (the test and
+consumer cost above); eager by default with a test-only switch off (a consumer with no entities
+still pays the start).
 - **Owner skill:** dev
-- **What:** the entity hit set and the entity light pipeline are built at frame creation with the
-  rest, so no frame builds a pipeline; the frame still picks the no-entity set while no part is
-  drawn. When Plan 0075 lands on this code, the build is one of its start-up stages (its lane's
-  merge of main does that, not this phase).
+- **What:** one call on the frame builds the entity hit set and the entity light pipeline; the
+  fly-through makes it right after creating its frame, so no frame of the fly-through builds a
+  pipeline; a frame without the call keeps Phase 5's lazy build. `Frame::new` builds only what it
+  built before this phase. The frame still picks the no-entity set while no part is drawn. When
+  Plan 0075 lands on this code, the call is one of its start-up stages (its lane's merge of main
+  does that, not this phase).
 - **Files touched:** `crates/vxe-render/src/frame/marcher.rs`, `frame/pipelines.rs`, a test,
   this plan's log.
-- **Done when:** a test asserts no pipeline is created after frame creation when the first entity
-  is drawn (a creation counter, lavapipe, under 10 s); the window reading on the RTX: the longest
+- **Done when:** a test asserts no pipeline is created after the call when the first entity
+  is drawn, and `Frame::new`'s lavapipe time is back at Phase 5's (a creation counter, lavapipe, under 10 s); the window reading on the RTX: the longest
   frame within 2 s of the first placement under 100 ms (`--source showcase --shot hall`, place with
   `` ` `` at about 20 s), and frame creation's time with and without the eager set logged (the
   startup cost, expected +6 to 12 s on NVIDIA); the zero-entity hit and light times unchanged from
