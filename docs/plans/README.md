@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0078** (ADRs are a separate sequence; next free there is **0060**).
+**Next free number: 0080** (ADRs are a separate sequence; next free there is **0061**).
 
 ## Active roster
 
@@ -24,6 +24,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0075](0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: steppable start-up, a progress signal and a default loading frame | approved | ADR-0059 (proposed). Approved 2026-11-15, voxel cube. After 0062 merges, beside 0063 P3-4, before 0069. |
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | approved | Apps only, no ADR. Approved 2026-11-16. After 0062 and 0075 merge (both edit toggles.rs). |
 | [0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: `` ` `` lists the entities library, a live preview at the crosshair, a clip per placed entity | approved | Apps only, no ADR. Approved 2026-11-16. After 0063, the clip-recorder chore and 0076. |
+| [0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, a reset | draft | M6, ADR-0060 (proposed). Drafted 2026-11-16. After 0062 and 0063 merge, before 0077. |
 <!-- roster:end -->
 
 ## Sequence
@@ -84,6 +85,8 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 **Plan 0076** (a key help overlay, drafted and approved 2026-11-16 from the owner's request after the Plan 0062 window; `F1` becomes help, the readings move to `Enter`): after Plans 0062 and 0075 merge, since both edit `toggles.rs`.
 
 **Plan 0077** (an entity picker over the entities library, drafted and approved 2026-11-16, every recommendation taken): after Plan 0063 closes, the clip-recorder chore and Plan 0076 merge; its `ListMenu` is what Plan 0073's menu builds on.
+
+**Plan 0078** (the entity pool frees models, drafted 2026-11-16 from the owner's "proper reset" on Plan 0077's question 6; ADR-0060): after Plans 0062 and 0063 merge, before Plan 0077's lane, which is re-read against it.
 
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
