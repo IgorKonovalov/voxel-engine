@@ -7,13 +7,15 @@
 //! - the tree: [`ENTITY_NODES`] nodes of [`NODE_WORDS`] words, the root at node 0. A node is
 //!   its box's minimum and maximum in world voxels (six `f32`), then for an inner node its two
 //!   children's indices, for a leaf its first instance with [`LEAF_BIT`] set and its instance
-//!   count, with [`LEAF_MOVED`] set when any of the entity's parts moved. The last node's
-//!   slot is the header ([`TREE_HEADER_WORD`]): the entities drawn, the nodes, the instances, and
-//!   whether any instance moved.
+//!   count, with [`LEAF_MOVED`] set when any of the entity's parts moved (a ghost leaf, over
+//!   the box of an entity that left at this write, has no instance and the bit set). The last
+//!   node's slot is the header ([`TREE_HEADER_WORD`]): the leaves (the entities drawn and the
+//!   ghosts), the nodes, the instances drawn, and whether any instance moved.
 //! - the instances from [`INSTANCE_WORD`]: [`MAX_ENTITY_PARTS`] of [`INSTANCE_WORDS`] words. An
 //!   instance is its world-to-part transform (3 x 4 `f32`, row-major, model voxels from world
 //!   voxels), the part-to-world transform of the frame before (3 x 4 `f32`), the word its
-//!   volume starts at, the entity's index in the drawn order, its flags ([`INSTANCE_MOVED`]),
+//!   volume starts at, its slot and its slot's generation (`slot | generation << 9`, the
+//!   instances module's docs), its flags ([`INSTANCE_MOVED`]),
 //!   `1 / detail` as `f32`, and the volume's size in model voxels.
 //! - the pool from [`POOL_WORD`]: each volume once, keyed by its prefab's id. A volume is a
 //!   header of [`VOLUME_HEADER_WORDS`] words (its size, then the word offsets of its
@@ -272,6 +274,19 @@ impl EntityMirror {
         }
     }
 
+    /// The instance slots and the tree of the last [`EntityMirror::set_entities`]: each
+    /// entity's run of slots and their generations.
+    pub fn instances(&self) -> &EntityInstances {
+        &self.instances
+    }
+
+    /// Whether the last [`EntityMirror::set_entities`] left a tree to walk: an entity drawn, or
+    /// the ghost of one that left (a shadow ray crossing it marks its pixel fresh), so the
+    /// light pass walks entities.
+    pub fn walks_entities(&self) -> bool {
+        self.instances.walks()
+    }
+
     /// Entities the last [`EntityMirror::set_entities`] drew.
     pub fn entities_drawn(&self) -> usize {
         self.instances.entities_drawn()
@@ -306,6 +321,22 @@ mod tests {
             POOL_WORD * 4 + DEFAULT_ENTITY_POOL_BYTES as usize,
             8_458_240
         );
+    }
+
+    /// `entity.wgsl` masks the slot and the hit record's instance field to the bits the
+    /// instances module packs.
+    #[test]
+    fn the_shader_reads_the_slot_bits_the_mirror_packs() {
+        let wgsl = include_str!("../shaders/entity.wgsl");
+        let slot_mask = (1u32 << instances::INSTANCE_SLOT_BITS) - 1;
+        assert!(wgsl.contains(&format!("const ENTITY_SLOT_MASK: u32 = {slot_mask}u;")));
+        assert!(wgsl.contains(&format!(
+            "const ENTITY_RECORD_BITS: u32 = {}u;",
+            instances::INSTANCE_RECORD_BITS
+        )));
+        // The record's instance field is the hit record flags' bits 6..15.
+        assert_eq!(6 + instances::INSTANCE_RECORD_BITS, 16);
+        assert_eq!(1 << instances::INSTANCE_SLOT_BITS, MAX_ENTITY_PARTS);
     }
 
     #[test]

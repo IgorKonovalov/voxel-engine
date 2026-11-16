@@ -291,8 +291,8 @@ impl Walkers {
     }
 
     /// The viewer's reload once a second (`now` in seconds; [`crate::viewer::Viewer::poll`])
-    /// and its first build: on a new model every placed instance of the old is placed again
-    /// with it. The banner's words when anything was tried.
+    /// and its first build: on a new model every placed instance of the old takes it under its
+    /// own id ([`vxe_entity::EntitySet::replace`]). The banner's words when anything was tried.
     pub fn poll_viewer(&mut self, now: f64, table: &MaterialTable) -> Option<String> {
         let v = self.viewer.as_mut()?;
         let built = v.build_pending(table);
@@ -304,12 +304,11 @@ impl Walkers {
         if had.is_some_and(|m| Arc::ptr_eq(&m, &l.model)) {
             return words;
         }
-        for p in self.placed.iter_mut().filter(|p| p.rig) {
-            self.set.remove(p.id);
+        for p in self.placed.iter().filter(|p| p.rig) {
             let pose = crate::viewer::placed(&now_pose, p.feet, p.yaw);
-            if let Ok(id) = self.set.insert(l.model.clone(), pose) {
-                p.id = id;
-            }
+            // The pose is the new model's, so it fits; the entity keeps its id, and with it
+            // the mirror's slots and the pixels' history.
+            let _ = self.set.replace(p.id, l.model.clone(), pose);
         }
         words
     }
@@ -810,6 +809,42 @@ mod tests {
         w.remove_newest();
         assert_eq!(w.placed.len(), 1);
         assert_eq!(w.set.len(), 1);
+    }
+
+    /// Plan 0078 Phase 3 done-when 4: the instance table's write over 64 walking walkers
+    /// allocates nothing after the first of 101 writes (the walkers' display poses refreshed in
+    /// place between them; the mirror's `set_entity_displays` is this write and two
+    /// `write_buffer` calls).
+    #[test]
+    fn write_allocates_nothing_after_warm_up() {
+        use crate::test_support::counting;
+        use vxe_render::internals::{EntityInstances, VolumePool};
+
+        let table = with_walker(&crate::cave_materials());
+        let mut w = Walkers::default();
+        for i in 0..64 {
+            let feet = [(i % 8) as f32 * 20.0, (i / 8) as f32 * 20.0, 2.0];
+            assert!(w.place(&table, feet, [0.0, -9.0, 2.0]));
+        }
+        let mut pool = VolumePool::new(vxe_render::DEFAULT_ENTITY_POOL_BYTES);
+        assert_eq!(sync_models(&mut w, &mut pool, &table), None);
+        w.toggle_walk();
+        let mut inst = EntityInstances::new();
+        let mut bytes = Vec::with_capacity(101);
+        for _ in 0..101 {
+            w.step(1.0 / 60.0);
+            w.refresh_displays();
+            let before = counting::bytes();
+            inst.write(
+                &pool,
+                w.displays().iter().map(|(id, h, d)| (*id, *h, Some(d))),
+            );
+            bytes.push(counting::bytes() - before);
+        }
+        assert!(bytes[0] > 0, "the first write grows the scratch");
+        assert_eq!(bytes[1..], [0; 100]);
+        assert_eq!((inst.entities_drawn(), inst.parts_drawn()), (64, 256));
+        assert!(inst.entities_moved());
     }
 
     /// Plan 0078 Phase 2 done-when 2: with the walker uploaded the row reads `pool 5/8192 KB`

@@ -298,3 +298,392 @@ fn a_fragmented_pool_resets_and_the_walkers_stay() {
     assert_eq!((m.entities_drawn(), m.entities_over_cap()), (2, 0));
     assert_eq!((w.drawn, w.over), (2, 0));
 }
+
+// ---- Phase 3: stable instance slots, generations and ghost leaves ----
+
+use vxe_entity::{EntityId, EntitySet};
+use vxe_render::{Light, ModelHandle};
+
+/// `model` posed with its root at `at` voxels, unturned.
+fn posed(model: &Model, at: [f32; 3]) -> Pose {
+    let mut pose = Pose::rest(model);
+    pose.root = Fixed3(at.map(|v| (v * 256.0).round() as i64));
+    pose
+}
+
+/// Uploads `model` to the rig's mirror and places it at `pose` in `set`.
+fn place(
+    rig: &mut Rig,
+    set: &mut EntitySet,
+    model: &Arc<Model>,
+    pose: Pose,
+) -> (EntityId, ModelHandle) {
+    let h = rig
+        .frame
+        .entity_mirror_mut()
+        .upload_model(&rig.queue, model, rig.world.materials())
+        .expect("the pool has room");
+    (set.insert(model.clone(), pose).expect("fits"), h)
+}
+
+/// A buffer the target's rgba8 rows are copied into, row pitch 256-byte aligned.
+fn readback_buffer(rig: &Rig) -> vxe_render::wgpu::Buffer {
+    rig.device
+        .create_buffer(&vxe_render::wgpu::BufferDescriptor {
+            label: Some("target readback"),
+            size: u64::from(W * 4 * H),
+            usage: vxe_render::wgpu::BufferUsages::COPY_DST
+                | vxe_render::wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        })
+}
+
+/// Submits a copy of the frame's target into `buf`, without waiting.
+fn copy_target(rig: &Rig, buf: &vxe_render::wgpu::Buffer) {
+    use vxe_render::wgpu;
+    let mut enc = rig
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    enc.copy_texture_to_buffer(
+        rig.frame.target().as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                // 192 * 4 = 768 bytes, a multiple of 256.
+                bytes_per_row: Some(W * 4),
+                rows_per_image: Some(H),
+            },
+        },
+        rig.frame.target().size(),
+    );
+    rig.queue.submit([enc.finish()]);
+}
+
+/// Maps `buf` and returns its bytes, waiting for the device.
+fn read_buffer(rig: &Rig, buf: &vxe_render::wgpu::Buffer) -> Vec<u8> {
+    let slice = buf.slice(..);
+    slice.map_async(vxe_render::wgpu::MapMode::Read, |r| r.expect("maps"));
+    rig.device
+        .poll(vxe_render::wgpu::PollType::wait_indefinitely())
+        .expect("the device finishes");
+    let bytes = slice.get_mapped_range().expect("mapped").to_vec();
+    buf.unmap();
+    bytes
+}
+
+/// Plan 0078 Phase 3 done-when 6: a red 8-voxel cube 20 voxels before the camera on the box,
+/// frame 1 submitted and its target's copy submitted; with no wait, the model freed and a
+/// green cube of the same size uploaded into the same pool word and frame 2 submitted: frame
+/// 1's centre pixel reads red and frame 2's green, each within 1/255 a channel. The queue
+/// orders the green cube's write after frame 1 and its copy.
+#[test]
+fn a_reused_pool_slot_shows_the_new_model_and_the_old_frame_the_old() {
+    let (mut t, red) = table();
+    let green_rgb = [0.2, 0.8, 0.2];
+    let green = t.push(Material {
+        albedo: green_rgb,
+        ..Material::named("green")
+    });
+    let Some(mut rig) = rig_on(entity_box(&t), [W, H], None) else {
+        return;
+    };
+    rig.frame.set_lighting(support::lights::box_lighting());
+    albedo_view(&mut rig);
+    let camera = level_camera(86.0, 26.0);
+    let (rcube, gcube) = (block([8; 3], red, 1), block([8; 3], green, 1));
+    let mut set = EntitySet::new();
+    let (id, h) = place(
+        &mut rig,
+        &mut set,
+        &rcube,
+        posed(&rcube, [110.0, 32.0, 26.0]),
+    );
+    let word = rig
+        .frame
+        .entity_mirror()
+        .pool()
+        .part_words(h)
+        .expect("live");
+    rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+    rig.step(&camera);
+    rig.step(&camera);
+    let (one, two) = (readback_buffer(&rig), readback_buffer(&rig));
+    copy_target(&rig, &one);
+    rig.frame.entity_mirror_mut().free_model(h).expect("live");
+    let g = rig
+        .frame
+        .entity_mirror_mut()
+        .upload_model(&rig.queue, &gcube, &t)
+        .expect("room");
+    assert_eq!(
+        rig.frame.entity_mirror().pool().part_words(g),
+        Some(word.clone()),
+        "the same pool word"
+    );
+    set.replace(id, gcube.clone(), posed(&gcube, [110.0, 32.0, 26.0]))
+        .expect("fits");
+    rig.frame.set_entities(&rig.queue, &set, &[(id, g)]);
+    rig.step(&camera);
+    copy_target(&rig, &two);
+    let centre = pixel_of(&camera, [106.0, 32.0, 26.0]);
+    near("frame 1", rgb(&read_buffer(&rig, &one), centre), unorm(RED));
+    near(
+        "frame 2",
+        rgb(&read_buffer(&rig, &two), centre),
+        unorm(green_rgb),
+    );
+}
+
+/// The hit records' instance field (flags bits 6..15) at pixel `i`, when it is an entity hit.
+fn instance_field(rig: &Rig, i: usize) -> Option<u16> {
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let f = rec[i][3];
+    (f & 1 != 0 && f & 32 != 0).then_some(f >> 6)
+}
+
+/// The temporal pass's accumulated direct part's luminance at pixel `i`.
+fn direct_acc_at(rig: &Rig, i: usize) -> f32 {
+    vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct_accumulated())[i][3]
+}
+
+/// A 16 x 16 x 2 slab of `m`, its pivot at its top centre, detail 1.
+fn slab_part(m: MaterialId) -> Part {
+    Part {
+        volume: Arc::new(Prefab::new([16, 16, 2], vec![m; 512], None)),
+        parent: None,
+        pivot: [8 * 256, 8 * 256, 2 * 256],
+        detail: 1,
+    }
+}
+
+/// The camera whose pixel (96, 54) looks at `p` from 28 voxels, pitched down 0.7.
+fn looking_at(p: [f32; 3]) -> (Camera, usize) {
+    let mut camera = Camera {
+        position: [0.0; 3].into(),
+        yaw: 0.0,
+        pitch: -0.7,
+        vfov: 1.2,
+    };
+    let px = 54 * W as usize + 96;
+    let (f, r, u) = camera.basis();
+    let t = (camera.vfov * 0.5).tan();
+    let a = W as f32 / H as f32;
+    let nx = (96.5 / W as f32) * 2.0 - 1.0;
+    let ny = (54.5 / H as f32) * 2.0 - 1.0;
+    let d = (f + r * (nx * t * a) - u * (ny * t)).normalize();
+    camera.position = Vec3::from(p) - d * 28.0;
+    (camera, px)
+}
+
+/// Plan 0078 Phase 3 done-when 7: on the lit box (a light of 1200 at height 24), entity A, a
+/// slab whose top face (height 4) reads 9.40, is removed and entity B placed the same frame:
+/// B's first part is the same slab of the same material in the same place, taking A's slot,
+/// and its second a slab at heights 14 to 16 that shadows the first's top. On that frame the
+/// pixel looking at the top's centre reads under 2 % of 9.40 in the accumulated direct part,
+/// and its hit record's instance field holds the same slot as the frame before's under the
+/// other generation bit.
+#[test]
+fn history_does_not_cross_a_reused_instance_slot() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    rig.frame
+        .set_lights(&[Light::point([64.0, 32.0, 24.0], 1200.0)]);
+    let top = [64.0, 32.0, 4.0];
+    let (camera, px) = looking_at(top);
+    let a = Arc::new(Model::new(vec![slab_part(red)]).expect("one part"));
+    let b = Arc::new(Model::new(vec![slab_part(red), slab_part(red)]).expect("two parts"));
+    let mut set = EntitySet::new();
+    let (ia, ha) = place(&mut rig, &mut set, &a, posed(&a, top));
+    for _ in 0..8 {
+        rig.frame.set_entities(&rig.queue, &set, &[(ia, ha)]);
+        rig.step(&camera);
+    }
+    let lit = direct_acc_at(&rig, px);
+    println!("A's top: {lit}");
+    assert!((lit / 9.40 - 1.0).abs() <= 0.02, "A's top reads {lit}");
+    let before = instance_field(&rig, px).expect("A at the pixel");
+    set.remove(ia);
+    let mut pose = posed(&b, top);
+    pose.parts[1].t = [0, 0, 12 * 256];
+    let (ib, hb) = place(&mut rig, &mut set, &b, pose);
+    rig.frame.set_entities(&rig.queue, &set, &[(ib, hb)]);
+    rig.step(&camera);
+    let dark = direct_acc_at(&rig, px);
+    let after = instance_field(&rig, px).expect("B at the pixel");
+    println!("B's top: {dark}; the instance field {before:#x} then {after:#x}");
+    assert!(dark < 0.02 * 9.40, "B's top reads {dark}");
+    assert_eq!(before & 511, after & 511, "the same slot");
+    assert_ne!(before >> 9, after >> 9, "the other generation bit");
+    assert_eq!(
+        rig.frame.entity_mirror().instances().run_of(ib),
+        Some((0, 2))
+    );
+}
+
+/// Plan 0078 Phase 3 done-when 8: Plan 0062 Phase 3's shadow rig (a light of 1200 at height
+/// 22, a 16 x 16 x 2 slab at heights 9 to 11 under it, the floor under it reading 0). On the
+/// first frame after the slab is removed, the floor pixel under it reads its term within 2 %
+/// in the accumulated direct part (the ghost leaf marked it fresh); the write after holds no
+/// ghost.
+#[test]
+fn a_removed_entity_takes_its_shadow_with_it() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let light = Light::point([64.0, 32.0, 22.0], 1200.0);
+    rig.frame.set_lights(&[light]);
+    let camera = Camera {
+        position: [64.0, 6.0, 8.0].into(),
+        yaw: std::f32::consts::FRAC_PI_2,
+        pitch: -0.25,
+        vfov: 1.2,
+    };
+    let s = Arc::new(Model::new(vec![slab_part(red)]).expect("one part"));
+    let mut set = EntitySet::new();
+    let (id, h) = place(&mut rig, &mut set, &s, posed(&s, [64.0, 32.0, 11.0]));
+    for _ in 0..8 {
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        rig.step(&camera);
+    }
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let under = (0..pos.len())
+        .filter(|&i| (pos[i][2] - 2.0).abs() < 1e-3)
+        .min_by(|&i, &j| {
+            let d = |k: usize| (pos[k][0] - 64.0).powi(2) + (pos[k][1] - 32.0).powi(2);
+            d(i).total_cmp(&d(j))
+        })
+        .expect("the floor shows under the slab");
+    let p = [pos[under][0], pos[under][1], pos[under][2]];
+    assert!(
+        (p[0] - 64.0).abs() < 1.0 && (p[1] - 32.0).abs() < 1.0,
+        "{p:?}"
+    );
+    let shadowed = direct_acc_at(&rig, under);
+    println!("under the slab at {p:?}: {shadowed}");
+    assert_eq!(shadowed, 0.0);
+    rig.frame.set_entities(&rig.queue, &set, &[]);
+    rig.step(&camera);
+    let m = rig.frame.entity_mirror();
+    assert_eq!(m.parts_drawn(), 0);
+    assert_eq!(m.instances().leaves().count(), 1, "the slab's ghost");
+    let lit = direct_acc_at(&rig, under);
+    let l: [f32; 3] = std::array::from_fn(|k| light.pos[k] - p[k]);
+    let d2: f32 = l.iter().map(|v| v * v).sum();
+    let r2 = light.intensity / rig.frame.lighting().light_floor;
+    let window = (1.0 - (d2 / r2).powi(2)).max(0.0).powi(2);
+    let want = std::f32::consts::PI * light.intensity * (l[2] / d2.sqrt()) / d2 * window;
+    println!("the first frame without it: {lit} against {want}");
+    assert!((lit / want - 1.0).abs() <= 0.02, "{lit} against {want}");
+    rig.frame.set_entities(&rig.queue, &set, &[]);
+    rig.step(&camera);
+    assert_eq!(rig.frame.entity_mirror().instances().leaves().count(), 0);
+}
+
+/// The display's pixels where the two images differ by more than `tol` in a channel.
+fn differing(a: &[u8], b: &[u8], tol: u8) -> Vec<usize> {
+    (0..a.len() / 4)
+        .filter(|&i| (0..3).any(|k| a[4 * i + k].abs_diff(b[4 * i + k]) > tol))
+        .collect()
+}
+
+/// Plan 0078 Phase 3 done-when 9: a still walker on the lit box, no jitter, settled. `replace`
+/// with a model of the same voxels (new prefabs of equal content share the volumes; a new
+/// handle): every pixel of the next frame equals the frame before within 1/255. `replace`
+/// with the torso's material changed: pixels of the torso (slot 0) change and none of the
+/// legs' (slots 2 and 3) do.
+#[test]
+fn a_reload_keeps_the_picture_steady() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let t = rig.world.materials().clone();
+    let (body, eye) = walker::rows(&t).expect("the walker's rows");
+    rig.frame
+        .set_lights(&[Light::point([100.0, 32.0, 30.0], 1200.0)]);
+    let walker_model = Arc::new(walker::model(body, eye));
+    let camera = level_camera(86.0, 9.0);
+    let feet = [106.0, 32.0, 2.0];
+    let pose = walker::pose(feet, walker::facing(feet, camera.position.to_array()), 0.0);
+    let mut set = EntitySet::new();
+    let (id, h) = place(&mut rig, &mut set, &walker_model, pose.clone());
+    for _ in 0..24 {
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        rig.step(&camera);
+    }
+    let settled = rig.display();
+    rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+    rig.step(&camera);
+    let n = rig.display();
+    let still = differing(&settled, &n, 1).len();
+    println!("frame to frame with nothing replaced: {still} pixels differ by more than 1/255");
+
+    let same = Arc::new(walker::model(body, eye));
+    let h2 = rig
+        .frame
+        .entity_mirror_mut()
+        .upload_model(&rig.queue, &same, &t)
+        .expect("room");
+    assert_ne!(h2, h);
+    set.replace(id, same.clone(), pose.clone()).expect("fits");
+    rig.frame.set_entities(&rig.queue, &set, &[(id, h2)]);
+    rig.step(&camera);
+    let n1 = rig.display();
+    let moved = differing(&n, &n1, 1);
+    println!(
+        "after a replace of the same voxels: {} pixels differ",
+        moved.len()
+    );
+    assert!(moved.is_empty(), "{} pixels differ", moved.len());
+
+    let mut parts = same.parts().to_vec();
+    parts[0].volume = Arc::new(Prefab::new(
+        walker::TORSO,
+        vec![red; (walker::TORSO[0] * walker::TORSO[1] * walker::TORSO[2]) as usize],
+        None,
+    ));
+    let red_torso = Arc::new(Model::new(parts).expect("the walker's parts"));
+    let h3 = rig
+        .frame
+        .entity_mirror_mut()
+        .upload_model(&rig.queue, &red_torso, &t)
+        .expect("room");
+    set.replace(id, red_torso, pose).expect("fits");
+    rig.frame.set_entities(&rig.queue, &set, &[(id, h3)]);
+    rig.step(&camera);
+    let n2 = rig.display();
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let slot = |i: usize| {
+        let f = rec[i][3];
+        (f & 1 != 0 && f & 32 != 0).then_some((f >> 6) & 511)
+    };
+    let changed = differing(&n1, &n2, 1);
+    let torso = changed.iter().filter(|&&i| slot(i) == Some(0)).count();
+    let legs: Vec<_> = changed
+        .iter()
+        .filter(|&&i| matches!(slot(i), Some(2 | 3)))
+        .collect();
+    println!(
+        "the red torso: {} pixels differ, {torso} of them the torso's, {} the legs'",
+        changed.len(),
+        legs.len()
+    );
+    for &&i in &legs {
+        let (x, y) = ((i % W as usize) as i64, (i / W as usize) as i64);
+        let mut near_torso = i64::MAX;
+        for j in 0..(W * H) as usize {
+            if slot(j) == Some(0) {
+                let (u, v) = ((j % W as usize) as i64, (j / W as usize) as i64);
+                near_torso = near_torso.min((u - x).abs().max((v - y).abs()));
+            }
+        }
+        println!(
+            "leg pixel ({x}, {y}): {:?} then {:?}, the nearest torso pixel {near_torso} away",
+            &n1[4 * i..4 * i + 3],
+            &n2[4 * i..4 * i + 3]
+        );
+    }
+    assert!(torso > 0, "the torso's pixels change");
+    assert!(legs.is_empty(), "{} leg pixels change", legs.len());
+}

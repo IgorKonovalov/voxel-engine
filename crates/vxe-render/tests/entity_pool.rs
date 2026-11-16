@@ -284,3 +284,77 @@ fn clear_frees_everything_and_every_handle() {
         assert_eq!(pool.part_words(h), None);
     }
 }
+
+/// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`).
+mod reading {
+    use super::*;
+
+    /// Plan 0078 Phase 4's waste reading: the default pool's allocator under a seeded sequence
+    /// of 10 000 calls, each an upload of a one-volume model (a quarter of them the largest
+    /// volume, the rest one of the other five sizes) or, one call in three while anything is
+    /// live, the free of a live one, so the pool fills and stays near full. A model's volumes
+    /// take one range, so an upload of one volume is one `alloc`. Reports, at the step where
+    /// the live bytes peak and as the largest over the steps with the pool at least half live,
+    /// `used + free - largest` over the live bytes and `free - largest` over the live bytes;
+    /// and the refusals a `clear` would have answered (`largest < needed <= free`) against
+    /// those of a pool simply full.
+    #[test]
+    #[ignore]
+    fn the_waste_of_a_seeded_sequence() {
+        let total = (DEFAULT_ENTITY_POOL_BYTES / 4) as u32;
+        let mut a = RangeAlloc::new(total);
+        let mut r = Mix(0x0078_0004);
+        let mut live: Vec<(u32, u32)> = Vec::new();
+        let mut used = 0u32;
+        let ratios = |a: &RangeAlloc, used: u32| {
+            (
+                f64::from(total - a.largest()) / f64::from(used),
+                f64::from(a.free_total() - a.largest()) / f64::from(used),
+            )
+        };
+        let (mut peak_used, mut at_peak) = (0u32, (0f64, 0f64));
+        let mut worst_half = (0f64, 0f64);
+        let (mut fragmented, mut full, mut uploads) = (0, 0, 0);
+        for _ in 0..10_000 {
+            if !live.is_empty() && r.next().is_multiple_of(3) {
+                let (s, l) = live.swap_remove((r.next() % live.len() as u64) as usize);
+                a.free(s, l);
+                used -= l;
+            } else {
+                uploads += 1;
+                let len = if r.next().is_multiple_of(4) {
+                    SIZES[5]
+                } else {
+                    SIZES[(r.next() % 5) as usize]
+                };
+                match a.alloc(len) {
+                    Some(s) => {
+                        live.push((s, len));
+                        used += len;
+                    }
+                    None if a.largest() < len && len <= a.free_total() => fragmented += 1,
+                    None => full += 1,
+                }
+            }
+            if used > peak_used {
+                (peak_used, at_peak) = (used, ratios(&a, used));
+            }
+            if used >= total / 2 {
+                let (s, h) = ratios(&a, used);
+                worst_half = (worst_half.0.max(s), worst_half.1.max(h));
+            }
+        }
+        println!(
+            "10 000 calls, {uploads} uploads; at the live peak ({} B of {} B): \
+             (used + free - largest) / live {:.4}, (free - largest) / live {:.4}; worst with the \
+             pool at least half live: {:.4} and {:.4}; refusals a clear answers {fragmented}, \
+             refusals of a full pool {full}",
+            u64::from(peak_used) * 4,
+            u64::from(total) * 4,
+            at_peak.0,
+            at_peak.1,
+            worst_half.0,
+            worst_half.1
+        );
+    }
+}
