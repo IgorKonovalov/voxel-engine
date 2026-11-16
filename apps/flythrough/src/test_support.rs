@@ -150,6 +150,7 @@ pub(crate) fn bare_run(world: World) -> Run {
         adapter: None,
         surface: None,
         help: false,
+        materials: None,
     }
 }
 

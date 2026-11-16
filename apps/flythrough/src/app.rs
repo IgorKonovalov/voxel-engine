@@ -209,6 +209,7 @@ impl App for Flythrough {
                 adapter: None,
                 surface: None,
                 help: false,
+                materials: crate::materials::watch(&self.args),
             });
         }
         match self.run.as_mut() {

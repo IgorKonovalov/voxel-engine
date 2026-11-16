@@ -249,6 +249,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--entities-walk on\|off` | The walkers start walking, as `F11` sets them [off] |
 | `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): `` ` `` and `--entities N` place it in place of the walker; a saved change to either file reloads |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
+| `--materials PATH` | The material table file [`apps/flythrough/assets/materials.txt`; the built-in copy when that is missing]. Each scene takes its rows by name; while the window is open a saved change of colour, roughness, opacity or emission shows within a second (`materials reloaded`, the emissive chunks re-baked), a row added, removed or renamed or a class changed (`flags`, emitting or not) waits for a restart (`materials: shape changed, restart`), and an error names its line. A `--model` whose `.rig` has no `material` line for a palette entry takes the entry's colour and MagicaVoxel material as a row (`vox #rrggbb ...`, the HUD's `rows +N`) |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |

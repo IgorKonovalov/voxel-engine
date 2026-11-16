@@ -1,4 +1,5 @@
-//! The model viewer's flags (`crate::viewer`): `--model` and `--clip`.
+//! The model viewer's and the assets' flags: `--model` and `--clip` (`crate::viewer`), and
+//! `--materials` (`crate::materials`).
 
 use super::flags::Parsing;
 use super::table::Flag;
@@ -23,6 +24,17 @@ pub(super) fn model_flags() -> Vec<Flag<Parsing>> {
             "the --model clip to play first (the rig's first)",
             |p: &mut Parsing, v| {
                 p.args.clip = Some(v.string());
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--materials"],
+            "PATH",
+            "the material table file (assets/materials.txt): each scene takes its rows by \
+             name; a saved change of colour, roughness, opacity or emission shows within a \
+             second, a row added or a class changed waits for a restart",
+            |p: &mut Parsing, v| {
+                p.args.materials = Some(v.text.into());
                 Ok(())
             },
         ),

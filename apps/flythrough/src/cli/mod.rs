@@ -614,6 +614,9 @@ pub struct Args {
     /// clip.
     pub model: Option<std::path::PathBuf>,
     pub clip: Option<String>,
+    /// `--materials PATH`: the material file (`crate::materials`); `None` for
+    /// `assets/materials.txt`.
+    pub materials: Option<std::path::PathBuf>,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.

@@ -501,8 +501,8 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: palette rows and `MATL` | dev | done | committed with this row |
-| 2: the material file, hot-reloaded | dev | not started | |
+| 1: palette rows and `MATL` | dev | done | d853afc3 |
+| 2: the material file, hot-reloaded | dev | done | committed with this row |
 | 3: prefabs as bricks | dev | not started | |
 | 4: the scene: layers, mirrors, scale, `--vox` | dev | not started | |
 | 5: placements past residency | dev | not started | |
@@ -522,6 +522,19 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 - Phase 1: `DEFAULT_EMISSION_FACTOR` is 0.3 (a guess for Phase 7). The palette rows of `--model`'s
   `.vox` are added in `setup.rs` (`world_table`) and `app.rs` sets the viewer's `rows +N`.
 - Phase 1 done-when 4's window half (the walker in its colours on screen) waits for Phase 7.
+- Phase 2: each scene takes the file's rows by name in its own order (`materials::Selection`):
+  the castle's, the showcase's and the rigs' rows all follow the cave's at id 5, so one table
+  of the whole file would move ids. `materials.txt` holds the showcase's table as its first seven
+  rows (done-when 1 compares those), then the castle's and `rig wood`.
+- Phase 2: the composition, the reload step and the watch are a new
+  `apps/flythrough/src/materials.rs`; the run's poll is in `run/frame.rs`; `--materials` is in
+  `cli/model.rs` (`flags.rs` is at its 1200-line cap); the banner is the lights' banner row, not
+  `hud.rs`. The Rust table functions in `scene.rs` stay (tests use them) and a unit test asserts
+  the file reproduces each. A missing default file falls back to a built-in copy, not watched.
+- Phase 2: a row's class for the reload is its flags and whether it emits; a `crisp` change
+  also waits for a restart.
+- Phase 2 done-when 4 (the window, and the reading of the re-bake after an emission change)
+  waits for Phase 7.
 
 ### Close triggers
 

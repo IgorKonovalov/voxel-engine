@@ -416,6 +416,62 @@ mod tests {
         assert!((PRESSURE_LOW - 0.7).abs() < f32::EPSILON);
     }
 
+    /// The material file reproduces every table the scenes were written with in Rust, row for
+    /// row: the cave's (its ore plain and emissive), the castle's, the showcase's and the rigs'
+    /// wood, each through the selection its scene takes; and each scene's id constants name
+    /// the file's rows.
+    #[test]
+    fn the_material_file_reproduces_the_rust_tables() {
+        use crate::materials::{CASTLE_ROWS, RIG_ROWS, SHOWCASE_ROWS, Selection, load};
+        use crate::setup::CrispRows;
+        let (file, _) = load(None).expect("the material file loads");
+        let compose = |extra: &[&'static str], after: &[&'static str], ore: bool| {
+            Selection::cave_and(extra, after, ore, CrispRows::None)
+                .compose(&file)
+                .expect("composes")
+        };
+        assert_eq!(compose(&[], &[], false), cave_materials());
+        assert_eq!(
+            compose(&[], &[], true),
+            with_emissive_ore(&cave_materials())
+        );
+        assert_eq!(
+            compose(&CASTLE_ROWS, &[], true),
+            castle_materials(&with_emissive_ore(&cave_materials()))
+        );
+        assert_eq!(compose(&[], &SHOWCASE_ROWS, true), showcase_materials());
+        assert_eq!(
+            compose(&RIG_ROWS, &[], true),
+            with_wood(&with_emissive_ore(&cave_materials()))
+        );
+        // The ids the scenes write voxels with name the file's rows.
+        let id = |n: &str| file.row(n).map(|(id, _)| id);
+        assert_eq!(id("rock"), Some(cave::ROCK));
+        assert_eq!(id("ore"), Some(cave::ORE));
+        assert_eq!(id("shell"), Some(cave::SHELL));
+        assert_eq!(id("rubble"), Some(RUBBLE));
+        assert_eq!(id("crystal"), Some(showcase::CRYSTAL));
+        assert_eq!(id("amethyst"), Some(showcase::AMETHYST));
+        assert_eq!(id("ember"), Some(showcase::EMBER));
+        let castle = compose(&CASTLE_ROWS, &[], true);
+        for (i, n) in (castle::STONE..=castle::TORCH).zip(CASTLE_ROWS) {
+            assert_eq!(
+                castle.get(castle::material(i)).map(|m| m.name.as_str()),
+                Some(n)
+            );
+        }
+        let rig = compose(&RIG_ROWS, &[], true);
+        assert_eq!(
+            rig.get(THIN_RIG_WOOD).map(|m| m.name.as_str()),
+            Some("rig wood")
+        );
+        // The built-in copy is the file.
+        assert_eq!(
+            vxe_assets::MaterialFile::parse(crate::materials::BUILT_IN).unwrap(),
+            file
+        );
+    }
+
     #[test]
     fn the_default_window_holds_the_default_residency() {
         assert_eq!(window_side(RESIDENCY), 51);

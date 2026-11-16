@@ -664,6 +664,7 @@ impl Run {
             up.to_array(),
         );
         self.poll_viewer(ms_since(self.start));
+        self.poll_materials(gpu);
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
         let mut lights = self.modes.lights.list();
@@ -808,4 +809,40 @@ fn wait_first_frame(gpu: &Gpu, start: Instant) {
     let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
     diag(format_args!("frame 0: the GPU finished"));
     println!("first frame after {:.0} ms", ms_since(start));
+}
+
+impl Run {
+    /// The material file's reload once a second (`crate::materials`): a rewrite goes to the
+    /// mirror's rows, and every resident chunk holding a row whose emission moved is re-baked
+    /// (its box handed to the frame as an edit's is). The words are printed and shown in the
+    /// banner.
+    pub(crate) fn poll_materials(&mut self, gpu: &Gpu) {
+        let now_ms = ms_since(self.start);
+        let Some(w) = self.materials.as_mut() else {
+            return;
+        };
+        let Some(r) = w.poll(now_ms / 1000.0, self.world.materials()) else {
+            return;
+        };
+        let mut words = r.words();
+        if let (
+            crate::materials::Reload::Rewrite {
+                table, emission, ..
+            },
+            Some(gfx),
+        ) = (&r, self.gfx.as_mut())
+        {
+            gfx.mirror.rewrite_materials(table, &gpu.queue);
+            if !emission.is_empty() {
+                let chunks = crate::materials::chunks_holding(&self.world, emission);
+                for c in &chunks {
+                    let min = c.min_voxel().0;
+                    gfx.frame.invalidate(min, min.map(|v| v + 63));
+                }
+                words = format!("{words}, {} chunks re-baking", chunks.len());
+            }
+        }
+        println!("{words}");
+        self.modes.show_lights(words, now_ms);
+    }
 }

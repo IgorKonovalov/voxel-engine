@@ -104,6 +104,9 @@ pub(crate) struct Run {
     pub(crate) surface: Option<(wgpu::TextureFormat, Option<wgpu::SurfaceColorSpace>)>,
     /// `--tester`'s help panel (`F1`) is shown.
     pub(crate) help: bool,
+    /// The material file, read again once a second (`crate::materials`); `None` for the
+    /// built-in copy.
+    pub(crate) materials: Option<crate::materials::Watch>,
 }
 
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit

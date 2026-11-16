@@ -1,6 +1,7 @@
 //! What the fly-through builds before its first frame: the material table, the start
 //! camera, the shell's configuration and the GPU objects of a run ([`Gfx`]).
 
+use crate::LogicChoice;
 use crate::app::{Flythrough, Pending, ms_since};
 use crate::audio::{Audio, METRES_PER_VOXEL, RoomProbe};
 use crate::castle;
@@ -12,7 +13,6 @@ use crate::now;
 use crate::pad::Pad;
 use crate::run::hud_feed::look_line;
 use crate::showcase::{SHOWCASE_CHUNKS, Shot, ShowcaseSource};
-use crate::{LogicChoice, cave_materials};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -109,23 +109,20 @@ pub(crate) fn shell_config(args: &Args, size: [u32; 2], pace: vxe_app::Pacing) -
     }
 }
 
-/// The cave's material table, the ore emissive unless `--emissive-ore off`; the castle's rows
-/// under `--castle`.
+/// The scene's material table from the material file (`--materials`, or
+/// `assets/materials.txt`; `crate::materials`): the cave's rows with the ore emissive unless
+/// `--emissive-ore off`, the castle's under `--castle`, the rigs' wood under the thin and seam
+/// rigs, the showcase's under the showcase. A file that does not read or parse, or lacks a row,
+/// ends the process with status 1.
 pub(crate) fn materials(args: &Args) -> MaterialTable {
-    let table = cave_materials();
-    let table = if args.light.emissive_ore {
-        crate::with_emissive_ore(&table)
-    } else {
-        table
+    let fail = |e: String| -> ! {
+        eprintln!("flythrough: {e}");
+        std::process::exit(1)
     };
-    let table = if args.castle {
-        crate::castle_materials(&table)
-    } else if args.mode.is_thin_rig() || args.mode.is_seam_rig() {
-        crate::with_wood(&table)
-    } else {
-        table
-    };
-    args.look.crisp.apply(&table)
+    let (file, _) = crate::materials::load(args.materials.as_deref()).unwrap_or_else(|e| fail(e));
+    crate::materials::selection(args)
+        .compose(&file)
+        .unwrap_or_else(|e| fail(e))
 }
 
 /// `table` with the walker's rows, then a row for each palette entry of `--model`'s `.vox`
@@ -150,7 +147,7 @@ pub(crate) fn model_rows_added(args: &Args) -> usize {
 /// switch for the field surface's cost lever): none added, the cave's rock row, or every row
 /// that is not translucent. Rows the table marks crisp itself (the thin rig's wood) stay crisp.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum CrispRows {
+pub enum CrispRows {
     #[default]
     None,
     Rock,
@@ -383,7 +380,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (source.spawn(), Pending::Level(generation))
     } else if args.mode.is_showcase() {
         let source = ShowcaseSource::new(seed);
-        let table = world_table(args, &crate::with_showcase_rows(&materials(args)));
+        let table = world_table(args, &materials(args));
         let generation = std::thread::spawn(move || {
             let t = now();
             let extent = source.extent();

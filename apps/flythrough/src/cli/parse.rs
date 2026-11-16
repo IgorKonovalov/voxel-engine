@@ -59,6 +59,7 @@ impl Args {
             entities_walk: false,
             model: None,
             clip: None,
+            materials: None,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,

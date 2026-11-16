@@ -17,6 +17,7 @@ mod fly;
 pub mod hud;
 pub mod lights;
 mod look;
+pub mod materials;
 mod pad;
 pub mod path;
 mod replay;
