@@ -94,10 +94,9 @@ fn every_toggle_shows_its_mode_in_the_hud_grid() {
 
 /// No two inputs share a key: every key and pad button of the toggle table, of the actions
 /// (`toggles::ACTIONS`) and of the fixed set (`hud::menu::FIXED_KEYS`) is bound once. `1` to
-/// `6` are the lights' (drop, carry, colour, remove, bounce, fire); the bake queue's five
-/// keyed toggles sit on `F`, `Slash`, `Quote`, `Backspace` and `Backslash` (the owner,
-/// 2026-11-13: the laptop has no `Home`, `End`, `Page` or `Delete` keys), each changing the
-/// `queue` row's words; the angle's halving is the menu's (`Tab` opens the menu).
+/// `1`, `4` and `6` are the lights' drop, removal and shot; the lights' carry, colour and
+/// bounce and the bake queue's six toggles are the menu's only (no key), each changing its
+/// row's words.
 #[test]
 fn no_two_inputs_share_a_key() {
     use flythrough::hud::menu::FIXED_KEYS;
@@ -114,7 +113,6 @@ fn no_two_inputs_share_a_key() {
         .collect();
     keys.extend(ACTIONS.iter().flat_map(|a| a.binds.iter().copied()));
     keys.extend(FIXED_KEYS.iter().map(|&k| Bind::Key(k)));
-    assert!(keys.len() > TOGGLES.len() + ACTIONS.len(), "{keys:?}");
     for (i, k) in keys.iter().enumerate() {
         assert!(!keys[i + 1..].contains(k), "{k:?} is bound twice");
     }
@@ -122,42 +120,30 @@ fn no_two_inputs_share_a_key() {
         [KEY_DROP, KEY_REMOVE, KEY_FIRE],
         [KeyCode::Digit1, KeyCode::Digit4, KeyCode::Digit6]
     );
-    let by_key = |k: KeyCode| {
+    let named = |name: &str| {
         TOGGLES
             .iter()
-            .find(|t| t.press == Press::Key(k, None))
-            .unwrap_or_else(|| panic!("{k:?} is a toggle"))
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} is a toggle"))
     };
-    assert_eq!(by_key(KeyCode::Digit2).name, "carry");
-    assert_eq!(by_key(KeyCode::Digit3).name, "colour");
-    assert_eq!(by_key(KeyCode::Digit5).name, "bounce");
-    let queue = [
-        (KeyCode::KeyF, "queue order"),
-        (KeyCode::Slash, "queue angle doubled"),
-        (KeyCode::Quote, "queue withdraw"),
-        (KeyCode::Backspace, "bake budget"),
-        (KeyCode::Backslash, "full-first"),
-    ];
-    for (k, name) in queue {
-        let t = by_key(k);
-        assert_eq!(t.name, name);
+    for name in ["carry", "colour", "bounce"] {
+        assert_eq!(named(name).press, Press::Menu, "{name}");
+        assert_eq!(named(name).row, HudRow::Lights, "{name}");
+    }
+    for name in [
+        "queue order",
+        "queue angle halved",
+        "queue angle doubled",
+        "queue withdraw",
+        "bake budget",
+        "full-first",
+    ] {
+        let t = named(name);
+        assert_eq!(t.press, Press::Menu, "{name}");
         assert_eq!(t.row, HudRow::Queue);
         let mut m = start();
         let before = m.row(HudRow::Queue);
         (t.flip)(&mut m, 1.0);
         assert_ne!(m.row(HudRow::Queue), before, "{name} changes the queue row");
     }
-    let halved = TOGGLES
-        .iter()
-        .find(|t| t.name == "queue angle halved")
-        .expect("the halving is a toggle");
-    assert_eq!(halved.press, Press::Menu);
-    let mut m = start();
-    let before = m.row(HudRow::Queue);
-    (halved.flip)(&mut m, 1.0);
-    assert_ne!(
-        m.row(HudRow::Queue),
-        before,
-        "the halving changes the queue row"
-    );
 }

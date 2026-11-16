@@ -172,7 +172,7 @@ fn entry_row(words: &str, keys: &str) -> String {
 /// With the lamp off and the filter at 2 iterations, `Tab` draws the root page: the title, a
 /// row per group with the first selected (yellow), a blank row and the footer. `Down` four
 /// times and `Enter` open `lighting`: its twelve toggles' words and binds, `lamp off` and
-/// `filter 2` among them with `F7` and `F4` in the key column.
+/// `filter 2` among them, `F7` in the lamp's key column and the menu-only rows with none.
 #[test]
 fn the_root_and_a_group_draw_their_rows() {
     let mut m = modes(false);
@@ -195,18 +195,18 @@ fn the_root_and_a_group_draw_their_rows() {
     assert_eq!(menu.page(), Some(PageId::Group(Group::Lighting)));
     let (text, colours) = drawn(&menu, &m);
     let rows = [
-        ("shadow walk coarse", "F3"),
-        ("filter iterations: filter 2", "F4"),
-        ("history edits", "F5"),
-        ("lighting resolution: lighting half", "F6"),
+        ("shadow walk coarse", ""),
+        ("filter iterations: filter 2", ""),
+        ("history edits", ""),
+        ("lighting resolution: lighting half", ""),
         ("lamp off", "F7"),
-        ("lamp bounce on", "F8"),
-        ("ore pulse off", "M"),
-        ("exposure manual", "Q"),
-        ("store read face", ","),
-        ("light weights: weights normal", ";"),
-        ("young filter: young luma", "Delete"),
-        ("entity light world", "Insert"),
+        ("lamp bounce on", ""),
+        ("ore pulse off", ""),
+        ("exposure manual", ""),
+        ("store read face", ""),
+        ("light weights: weights normal", ""),
+        ("young filter: young luma", ""),
+        ("entity light world", ""),
     ];
     let mut want = vec!["menu  >  lighting".to_owned()];
     want.extend(rows.iter().map(|(w, k)| entry_row(w, k)));
@@ -398,8 +398,10 @@ fn the_route_is_one_function() {
     assert_eq!(pass.axis(Axis::TriggerR), 0.0, "no trigger dig while open");
     assert_eq!(pass.mouse_delta(), [3.0, -2.0]);
     assert_eq!(pass.axis(Axis::MoveY), 0.5);
-    // `W`'s press types as well as its hold moving.
-    assert_eq!(menu.filter(), "lw");
+    // `W`'s press types as well as its hold moving; a frame's letters come in no order.
+    let mut typed: Vec<char> = menu.filter().chars().collect();
+    typed.sort_unstable();
+    assert_eq!(typed, ['l', 'w']);
     let mut closed = Menu::default();
     let routed = step(&mut closed, &input, &m, &RunView::default());
     let pass = routed.pass.input();
@@ -449,4 +451,121 @@ fn f1_opens_the_keys_page() {
     key(&mut menu, &m, KeyCode::F1);
     key(&mut menu, &m, KeyCode::Tab);
     assert_eq!(menu.page(), Some(PageId::Root));
+}
+
+/// The shortcut rows of ADR-0061's key table as the owner answered it (Plan 0080's "The
+/// keys"): each entry that keeps a bind and its binds as the menu shows them.
+const SHORTCUTS: [(&str, &str); 15] = [
+    ("dig radius", "wheel / pad D-pad up down"),
+    ("walk", "G / pad North"),
+    ("resume the tour", "T"),
+    ("upscaler", "F10"),
+    ("lamp", "F7"),
+    ("drop a light", "1"),
+    ("remove the newest", "4"),
+    ("fire a light", "6"),
+    ("place a walker", "`"),
+    ("clip before", "Left"),
+    ("clip after", "Right"),
+    ("clip pause", "Down"),
+    ("knock", "pad East"),
+    ("frame readings", "Enter"),
+    ("view", "F9"),
+];
+
+/// `FIXED_KEYS` is the table's Fixed rows (movement, look's keys, `Tab`, `F1`, `F2`, `Esc`) and
+/// no toggle or action binds one of them.
+#[test]
+fn the_fixed_set_is_the_table() {
+    use flythrough::hud::menu::{FIXED_KEYS, bound_keys};
+    assert_eq!(
+        FIXED_KEYS,
+        [
+            KeyCode::KeyW,
+            KeyCode::KeyA,
+            KeyCode::KeyS,
+            KeyCode::KeyD,
+            KeyCode::Space,
+            KeyCode::KeyC,
+            KeyCode::ShiftLeft,
+            KeyCode::Tab,
+            KeyCode::F1,
+            KeyCode::F2,
+            KeyCode::Escape,
+        ]
+    );
+    let bound = bound_keys();
+    for k in FIXED_KEYS {
+        assert_eq!(bound.iter().filter(|b| *b == k).count(), 1, "{k:?}");
+    }
+}
+
+/// The entries that keep a bind are exactly the table's shortcut rows (with `X / pad West` on
+/// the cutaway), each with its binds, and `--keys` prints each in its key column; every other
+/// entry has none and prints `menu`.
+#[test]
+fn the_shortcuts_are_the_table() {
+    let mut want: Vec<(&str, &str)> = SHORTCUTS.to_vec();
+    want.push(("cutaway", "X / pad West"));
+    let mut have: Vec<(&str, String)> = entries()
+        .map(|e| (e.label, e.keys()))
+        .filter(|(_, k)| !k.is_empty())
+        .collect();
+    have.sort();
+    want.sort();
+    let have: Vec<(&str, &str)> = have.iter().map(|(l, k)| (*l, k.as_str())).collect();
+    assert_eq!(have, want);
+    let tree = keys_text(&parse_args_from(argv(&["--keys"])).unwrap());
+    for e in entries() {
+        let row = tree_row(&tree, e.group.name(), e.label);
+        let keys = e.keys();
+        let keys = if keys.is_empty() {
+            "menu".to_owned()
+        } else {
+            keys
+        };
+        assert!(row.trim_end().ends_with(&format!(" {keys}")), "{row}");
+    }
+}
+
+/// Every menu-only entry is reached from a closed menu by `Tab`, its label typed and `Down`
+/// to it among the matches, and `Enter` hands the run that entry's own flip or action, the
+/// change its former key made.
+#[test]
+fn every_menu_only_entry_is_reached_by_its_words() {
+    use flythrough::hud::menu::{EntryKind, Row, typed};
+    let m = modes(true);
+    let v = RunView::default();
+    let keys: Vec<KeyCode> = flythrough::hud::menu::all_keys();
+    for e in entries().filter(|e| e.keys().is_empty()) {
+        let mut menu = Menu::default();
+        key(&mut menu, &m, KeyCode::Tab);
+        for c in e.label.chars() {
+            let k = *keys
+                .iter()
+                .find(|&&k| typed(k) == Some(c))
+                .unwrap_or_else(|| panic!("{}: {c:?} types", e.label));
+            key(&mut menu, &m, k);
+        }
+        assert_eq!(menu.filter(), e.label);
+        let at = menu
+            .rows(&m, &v)
+            .iter()
+            .filter(|r| r.selectable())
+            .position(|r| matches!(r, Row::Entry(x) if x.label == e.label && x.group == e.group))
+            .unwrap_or_else(|| panic!("{} matches its label", e.label));
+        for _ in 0..at {
+            key(&mut menu, &m, KeyCode::ArrowDown);
+        }
+        let acts = key(&mut menu, &m, KeyCode::Enter);
+        match (e.kind, &acts[..]) {
+            (EntryKind::Toggle(t), [Activated::Toggle(got)]) => {
+                assert!(std::ptr::eq(t, *got), "{}", e.label);
+                let (mut a, mut b) = (modes(true), modes(true));
+                assert_eq!(press(got, &mut a, 1.0), press(t, &mut b, 1.0));
+            }
+            (EntryKind::Action(a), [Activated::Action(got)]) => assert_eq!(a.act, *got),
+            _ => panic!("{}: {acts:?}", e.label),
+        }
+    }
 }

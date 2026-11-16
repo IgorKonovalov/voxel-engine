@@ -93,9 +93,9 @@ pub const FIXED_ROWS: &[(&str, &str)] = &[
     ("mouse", "look"),
     ("left click / R2", "dig"),
     ("right click / L2", "fill"),
-    ("Tab", "the menu; type on any page to search"),
+    ("Tab / pad Start", "the menu; type on any page to search"),
     ("F1", "this page, the keys"),
-    ("F2 / pad Start", "the stats overlay"),
+    ("F2 / pad Select", "the stats overlay"),
     ("Esc", "back, close; with the menu closed, quit"),
 ];
 

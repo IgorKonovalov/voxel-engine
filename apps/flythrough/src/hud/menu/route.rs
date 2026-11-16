@@ -1,5 +1,6 @@
 //! The one capture rule (ADR-0061): what the menu takes from a frame's input and what passes
-//! on to the run. Closed, everything passes and only the menu's keys (`Tab`, `F1`) open it.
+//! on to the run. Closed, everything passes and only the menu's keys (`Tab`, `F1`, the pad's
+//! `Start`) open it.
 //! Open, the arrows, `Enter`, `Backspace`, `Esc`, the typed keys, the wheel, both clicks, the
 //! D-pad, `South`, `East` and `Start` are the menu's; the movement keys, the look, the
 //! function keys and the other pad buttons pass, so a function-key shortcut acts in place and
@@ -157,8 +158,8 @@ pub fn taken(i: RouteInput, open: bool) -> Taken {
     }
 }
 
-/// The menu's inputs in `input`, with the menu `open` or closed: closed, `Tab` and `F1`
-/// alone; open, every input [`taken`] gives the menu, in a fixed order.
+/// The menu's inputs in `input`, with the menu `open` or closed: closed, `Tab`, `F1` and the
+/// pad's `Start` alone; open, every input [`taken`] gives the menu, in a fixed order.
 pub fn menu_inputs(input: &Input, open: bool) -> Vec<MenuInput> {
     let mut out = Vec::new();
     if input.pressed(KeyCode::Tab) {
@@ -168,6 +169,9 @@ pub fn menu_inputs(input: &Input, open: bool) -> Vec<MenuInput> {
         out.push(MenuInput::Keys);
     }
     if !open {
+        if input.pad_pressed(PadButton::Start) {
+            out.push(MenuInput::Menu);
+        }
         return out;
     }
     // keys:typed-begin

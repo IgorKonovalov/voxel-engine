@@ -42,7 +42,7 @@ pub struct Percentiles {
 
 /// The `p`-th percentile (0 to 100] of `sorted` (ascending, not empty) by nearest rank: the
 /// value at rank `ceil(p / 100 * n)`, counted from 1. The fly-through's one rank statistic:
-/// the report's, the exit lines' ([`percentile`]), the `F1` line's median and the HUD's frame
+/// the report's, the exit lines' ([`percentile`]), the readings line's (`Enter`) median and the HUD's frame
 /// row read it.
 pub fn nearest_rank<T: Copy>(sorted: &[T], p: f64) -> T {
     let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
@@ -1096,8 +1096,8 @@ mod tests {
         assert_eq!(rec.wall.v.capacity(), cap);
     }
 
-    /// The `F1` line's median, the exit line's p50, the report's p50 and the HUD frame row's
-    /// p50 are one statistic, the nearest rank: an even series, where the upper median (4)
+    /// The readings line's (`Enter`) median, the exit line's p50, the report's p50 and the
+    /// HUD frame row's p50 are one statistic, the nearest rank: an even series, where the upper median (4)
     /// and the nearest rank (3) differ, gives 3 on each.
     #[test]
     fn the_median_and_the_p50_agree() {
@@ -1105,7 +1105,7 @@ mod tests {
         assert_eq!(
             percentile(&mut ms.to_vec(), 50.0),
             3.0,
-            "the F1 line's median"
+            "the readings line's median"
         );
         let mut times = crate::run::hud_feed::RunTimes::default();
         for m in ms {

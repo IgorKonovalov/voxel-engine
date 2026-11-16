@@ -328,6 +328,10 @@ pub(crate) struct Hud {
     pub(crate) run: RunTimes,
 }
 
+/// The start banner's row naming the menu's keys, shown for `hud::BANNER_MS` outside
+/// `--tester`.
+pub(crate) const KEYS_BANNER: &str = "Tab menu, F1 keys";
+
 /// What the overlay draws this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Overlay {
@@ -613,7 +617,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (F order, Tab/Slash angle, Quote withdraw, Backspace budget, Backslash full-first, 7 missing light, 8 reach)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (Tab: the light queue page)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),
@@ -902,6 +906,10 @@ impl Run {
         write_pace_banner(self.args.pace, now, out);
         hud::start_row(out);
         write_queue_banner_row(out, &self.args, words);
+        if now < hud::BANNER_MS {
+            hud::start_row(out);
+            out.push_str(KEYS_BANNER);
+        }
         if let Some((scene, _)) = self
             .scene
             .as_ref()

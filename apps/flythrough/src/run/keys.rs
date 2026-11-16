@@ -15,7 +15,7 @@ use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
 use crate::toggles::{ACTIONS, Act, TOGGLES, press};
-use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
+use vxe_app::{Axis, Input, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
 use vxe_world::{FIXED_ONE, Face};
@@ -173,11 +173,6 @@ impl Run {
         }
         for a in ACTIONS.iter().filter(|a| a.pressed(input)) {
             self.act(a.act);
-        }
-        // `T` resumes a tour in a path run and plays the pulse outside one; the pulse's entry
-        // names no bind.
-        if input.pressed(KeyCode::KeyT) {
-            self.act(Act::Pulse);
         }
     }
 

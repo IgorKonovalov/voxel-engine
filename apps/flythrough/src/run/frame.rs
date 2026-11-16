@@ -233,7 +233,7 @@ impl Run {
     /// The frame's input step, before anything else reads the input: under `--tester` the
     /// tester's filter (`F1` its help panel), else the menu's step (`menu::step`, its
     /// activations run here); then `Esc` ends a run with no path player and `F2` (or the pad's
-    /// `Start`) shows or hides the stats overlay. Gives what passes on to the rest of the
+    /// `Select`) shows or hides the stats overlay. Gives what passes on to the rest of the
     /// frame, and `Flow::Exit` when `Esc` ended the run.
     pub(crate) fn key_step<'a>(&mut self, input: &'a Input) -> (Passed<'a>, Option<Flow>) {
         let pass = if self.args.tester {
@@ -256,7 +256,7 @@ impl Run {
         if i.pressed(KeyCode::Escape) && self.player.is_none() {
             return (pass, Some(Flow::Exit));
         }
-        if !self.args.tester && (i.pressed(KeyCode::F2) || i.pad_pressed(PadButton::Start)) {
+        if !self.args.tester && (i.pressed(KeyCode::F2) || i.pad_pressed(PadButton::Select)) {
             self.hud.visible = !self.hud.visible;
         }
         (pass, None)

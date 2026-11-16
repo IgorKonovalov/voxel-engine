@@ -475,8 +475,8 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the table and the tree, printed by `--keys` | dev | done | f432c14a |
-| 2: the component, the palette and the Keys page | dev | done | committed with this row |
-| 3: the minimal key set and the pad | dev | not started | |
+| 2: the component, the palette and the Keys page | dev | done | 47b0bd28 |
+| 3: the minimal key set and the pad | dev | done, one done-when clause unmet (Notes) | committed with this row |
 | 4: the owner's window | human | not started | |
 | 5: the owner's picks, and the tip | dev | not started | |
 
@@ -503,6 +503,22 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
   crate-private and `run/tests.rs` is near the 1200-line cap). Outside the list also:
   `app.rs` and `test_support.rs` (`Run::menu`), `tests/toggles.rs` (the halving's key), and a
   `mod reading` in `tests/gpu_hud_golden.rs`.
+- Phase 3, **unmet as written:** `a_shortcut_still_acts_and_shows` asks the arrows (the
+  clip keys) to act with the menu open, while `the_route_is_one_function` and "The keys" ("outside
+  the menu") make the arrows the menu's while open. The arrows act closed only; the test asserts
+  the function keys open and closed and the letters and digits closed only. Owner question 1.
+- Phase 3: the freed keys: `F3` `F4` `F5` `F6` `F8` `F11` `F12`, `M` `Q` `N` `V` `Z` `L` `I` `B`
+  `P` `R` `K` `F` `H` `J` `E` `Y` `O` `U`, `2` `3` `5` `7` `8` `9` `0`, `,` `;` `.` `/` `'` `\`
+  `[` `]` `-` `=`, `Backspace`, `Delete`, `Insert`. `F4` is free for Plan 0069's profile cycle.
+  The audio's knock keeps the pad's `East` only.
+- Phase 3: the banner's queue row names `(Tab: the light queue page)` in place of its key list.
+- Phase 3: comments outside the phase's files still name freed keys (`hud/modes.rs`,
+  `audio.rs`, `edits.rs`, `cli/parse.rs`); `cli/mod.rs`' module docs, `toggles.rs`,
+  `cli/flags.rs`' rows and `docs/flythrough.md` name the menu's entries. Touched beyond the
+  list: `walker.rs` and `hud/modes.rs` tests (the removed `KEY_WALK`, `KEY_EYE_LIGHTS` and the
+  menu-only presses), `run/menu_tests.rs`, `cli/flags.rs`.
+- Phase 3: "no line printed" for a former key is not asserted (stdout is not captured); the
+  state it would change is.
 - Phase 2: `path::TesterInput` gained `Pad`; under `--tester` the triggers and the wheel are
   dropped by the filter (`R2` no longer frees a tour).
 

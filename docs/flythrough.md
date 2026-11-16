@@ -2,8 +2,8 @@
 
 The fly-through (`apps/flythrough`) is the engine's testbed. This page lists every key it binds
 and every flag it reads. The sources of truth are the code: `flythrough --help` prints one row
-per flag from the same table the parser reads (`apps/flythrough/src/cli/table.rs`), the toggle
-keys are one table in `apps/flythrough/src/toggles.rs`, and the long-form notes are the
+per flag from the same table the parser reads (`apps/flythrough/src/cli/table.rs`), the keys
+are two tables in `apps/flythrough/src/toggles.rs` (`flythrough --keys` prints them), and the long-form notes are the
 `flythrough::cli` module docs. When this page and `--help` disagree, `--help` is right and this
 page is stale.
 
@@ -15,12 +15,20 @@ cargo run --release -p flythrough -- --help             # every flag
 ```
 
 Every toggle prints its mode to stdout and shows it in the window: the lighting, look,
-upscaler and queue toggles raise a banner for 3 s, and the stats overlay (`F2`) carries
-the same rows.
+upscaler and queue toggles raise a banner for 3 s, the menu's row shows it, and the stats
+overlay (`F2`) carries the same rows.
 
 ## Keys
 
-### Moving and editing
+The keys are few (ADR-0061): a fixed set, a shortcut on a handful of entries, and everything
+else in the menu. `Tab` opens the menu: a page per group, each entry with its live value and
+its key where it keeps one; `Enter` flips or runs the selected entry, `Esc` goes back and
+closes. Typing on any page searches the whole tree (`lam` finds the lamp, its bounce and the
+missing light). `F1` opens the Keys page: every entry with its binds. `flythrough --keys`
+prints the same tree with every entry's start value and key, from the tables in
+`apps/flythrough/src/toggles.rs`; this section is that output's fixed and shortcut rows.
+
+### Fixed
 
 | Key | Does |
 |-----|------|
@@ -30,73 +38,41 @@ the same rows.
 | `Shift` | Faster |
 | Left click | Dig at the crosshair; the edit result prints to the terminal |
 | Right click | Fill at the crosshair |
-| Scroll | Change the dig radius |
-| `G` | Toggle fly and walk mode (bounded worlds only) |
-| `B` | Run the carve benchmark in place |
-| `P` | Stamp a 16-voxel room with an indestructible shell at the crosshair |
-| `R` | Toggle what unsupported rock does after a dig: fall (default) or crumble into rubble (bounded worlds only) |
-| `K` | Print the coarse grid and walkable map (bounded worlds only) |
-| `I` | With `--castle`: move the camera to the next castle shot |
-| `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
-| `Esc` | Quit (on a path run, end it so its report says how) |
-
-### Readings and views
-
-| Key | Does |
-|-----|------|
-| `F1` | Sample the next frames and print frame-time readings (with `--tester`: the help panel) |
+| `Tab` | The menu; type on any page to search |
+| `F1` | The Keys page (with `--tester`: the help panel) |
 | `F2` | Toggle the stats overlay |
-| `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
-| `X` | Cycle the cutaway: auto, on, off |
-| `L` | Toggle the shadow ray |
+| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, quit (on a path run, end it so its report says how) |
 
-### Look and upscaler
+While the menu is open the arrows, `Enter`, `Backspace`, `Esc`, the letters, digits and
+punctuation, the wheel and the clicks are the menu's: the dig, the fill and the dig radius
+pause, and a letter or digit shortcut types instead of acting. The movement keys still move
+(their press also types), the mouse still looks, and the function keys still act, the open
+row showing the new value.
 
-| Key | Does |
-|-----|------|
-| `N` | Cycle the look presets: face, field, trilinear8, gradient27 (the field only in a run started under `--look field`) |
-| `V` | Cycle face mode's far normal: `[2, 6]`, `[1, 2]`, off |
-| `F10` | Cycle the upscaler: off, own, fsr2 |
-| `Z` | Cycle the sharpening: 0.5, 0.25, 0 |
-| `.` | Stop and start the `--pan` turn |
+### Shortcuts, by the menu's groups
 
-### Lighting
+| Group | Key | Does |
+|-------|-----|------|
+| moving | Scroll | Change the dig radius |
+| moving | `G` | Toggle fly and walk mode (bounded worlds only) |
+| camera and paths | `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
+| upscaler | `F10` | Cycle the upscaler: off, own, fsr2 |
+| lighting | `F7` | Toggle the headlamp |
+| lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| lights | `4` | Remove the newest light or walker, whichever was added last |
+| lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
+| entities | `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
+| entities | `Left`, `Right` | With `--model`: the clip before and after (menu closed) |
+| entities | `Down` | With `--model`: pause or play the clip (menu closed) |
+| readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
+| debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
+| debug | `X` | Cycle the cutaway: auto, on, off |
 
-| Key | Does |
-|-----|------|
-| `F3` | Toggle the shadow walk: coarse (default) or full |
-| `F4` | Step the a-trous filter's iterations: 4 (default), 2, 1; the lighting row names `filter <n>` |
-| `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
-| `F6` | Toggle the lighting resolution: half (default) or full |
-| `F7` | Toggle the headlamp |
-| `F8` | Toggle the lamp's bounce from the probe volume (ADR-0043) |
-| `Q` | Cycle the exposure: auto (the preset), auto symmetric, manual (holds the exposure of the moment) |
-| `,` | Toggle how a cube face reads the light store: normal (default) or face (ADR-0049) |
-| `;` | Toggle the normal the light's filters compare: face (default) or normal |
-| `Delete` | Toggle the a-trous weights at a pixel younger than 4 frames: luma (all weights, default) or edges (plane and normal only); the lighting row names `young <mode>` |
-| `Insert` | Toggle where an entity's emissive light comes from: own (its own sample) or world (the baked light of the world faces around it, default); the lighting row names `entity light <mode>` |
-| `M` | Pulse the ore's emission (a render-side scale) |
-
-### Dynamic lights
-
-| Key | Does |
-|-----|------|
-| `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
-| `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
-| `3` | Pick the next colour (white, warm, red, green, blue) and recolour the newest light, in flight or still; later drops and shots take it |
-| `4` | Remove the newest light or walker, whichever was added last |
-| `5` | Flip the newest light's bounce flag: with `--lamp-bounce on` a flagged light feeds the probe channel; the `lights` row marks each flagged light `*` |
-| `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
-
-### Walkers
-
-| Key | Does |
-|-----|------|
-| `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
-| `F11` | Toggle whether the walkers walk or hold still |
-| `F12` | Toggle the walkers' eye lights |
-| `Left`, `Right` | With `--model`: the clip before and after |
-| `Down` | With `--model`: pause or play the clip |
+Everything else is an entry of the menu (`Tab`) with no key: the look presets and far normal,
+the sharpening and pan, the lighting modes but the lamp, the lights' carry, colour and bounce
+flag, the light queue's order, weights, withdrawal, budget, full-first, missing light and
+reach, the walkers' walking and eye lights, the audio's sounds and mix, the bench, the stamp,
+the crumble, the coarse print, the castle shot and the shadow ray.
 
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
 (`walk` after it while they walk): the entity pool's bytes in use, rounded up to whole KB,
@@ -106,33 +82,6 @@ would hold it (no hole is large enough), the pool is cleared and every placed mo
 again, and the banner reads `entity pool reset`; a `--model` model refused after that keeps
 its error on screen in red until a reload builds.
 
-### The light queue
-
-| Key | Does |
-|-----|------|
-| `F` | Cycle the queue's order |
-| `Tab` / `Slash` | Halve / double the queue's angle weight |
-| `Quote` | Toggle withdrawing the jobs of chunks the camera passed |
-| `Backspace` | Cycle the bake budget: the default slice a frame, 150 ms a second, 300 ms a second (each capped at a quarter of the frame) |
-| `Backslash` | Toggle the full-first radius: off or `--near`'s |
-| `7` | Cycle what a face with no baked value reads: black, neighbour, parent, chain (ADR-0053) |
-| `8` | Toggle the light reach: full or partial |
-
-### Audio (with `--audio`)
-
-| Key | Does |
-|-----|------|
-| `H` | Play a knock at the point the last left click dug |
-| `J` | Play a looping hum there |
-| `T` | Play a looping pulse there (a knock each second) |
-| `E` | Toggle the early reflections |
-| `Y` | Toggle the late reverb tail |
-| `[` / `]` | Trim the echoes down / up 3 dB |
-| `-` / `=` | Trim the tail down / up 3 dB |
-| `9` / `0` | Shorten / lengthen the tail's pre-delay by 10 ms |
-| `O` | Toggle the tail's glide |
-| `U` | Toggle the direct path's propagation delay |
-
 ### Gamepad (`--pad on`, the default in a window)
 
 | Input | Does |
@@ -141,13 +90,14 @@ its error on screen in red until a reload builds.
 | Right stick | Look |
 | `L1` / `R1` | Sink / rise |
 | `R3` | Latch boost |
-| `South` | Walking: jump |
+| `South` | Walking: jump; in the menu: `Enter` |
 | `R2` / `L2` | Dig / fill |
-| D-pad up / down | Step the dig radius |
+| D-pad up / down | Step the dig radius; in the menu: move the selection |
 | `North` | Toggle walk mode |
 | `West` | Cycle the cutaway |
-| `East` | Knock (with `--audio`) |
-| `Start` | Toggle the stats overlay |
+| `East` | Knock (with `--audio`); in the menu: back |
+| `Start` | Open or close the menu |
+| `Select` | Toggle the stats overlay |
 
 ### Tester mode (`--tester`)
 
@@ -163,12 +113,13 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | Flag | Does |
 |------|------|
 | `--help`, `-h` | Print every flag and exit |
+| `--keys` | Print the keys and the menu's tree at the start modes, and exit |
 | `--check-args` | Parse the arguments, print `arguments ok` and exit, opening nothing |
 | `--seed N` | The world's seed [1] |
 | `--render WxH` | Fix the frame's output resolution; the window scales it |
-| `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
+| `--frames N` | Exit after `N` frames, printing the readings (`Enter`) over the last ones |
 | `--pace free\|compositor` | Wait for the compositor's frame callback before each present or not [free] |
-| `--bench N` | Send `N` `B` benchmark inputs on the first frame |
+| `--bench N` | Send `N` bench inputs on the first frame |
 | `--dig-at F,..` | Dig at each of these frames |
 | `--bench-at F,..` | A bench input at each of these frames |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
@@ -254,7 +205,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--emissive-ore on\|off` | The ore glows and lights the cave [on] |
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
 | `--entities N` | Start with `N` walkers (voxel-model entities) on a 3 m ring around the spawn [0] |
-| `--entities-walk on\|off` | The walkers start walking, as `F11` sets them [off] |
+| `--entities-walk on\|off` | The walkers start walking, as the menu's `walkers walk` sets them [off] |
 | `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): `` ` `` and `--entities N` place it in place of the walker; a saved change to either file reloads |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
