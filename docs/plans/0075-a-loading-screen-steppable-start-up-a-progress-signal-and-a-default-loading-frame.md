@@ -261,6 +261,33 @@ some loading screen right after start, even static is ok". This overturns open q
   tier passes at the phase's tip); headless runs are unchanged (no frame drawn without a
   window). The owner sees the result at the next window, folded into Phase 7's.
 
+### Phase 7b: nothing blocks the window, and one centred picture
+Amended 2026-11-16 (owner), at the `live/session75b.sh` window (RTX, NVIDIA shader cache just
+cleared, castle): the frame's creation ended at 7.1 s and the entity pipeline stage (Plan 0062
+Phase 6d's `Frame::prepare_entities`) blocked from 7.8 to 14.3 s; the owner: "I see the error
+'device not responding' and nothing moves" (the compositor's not-responding notice: the event loop
+was not pumped), and "image is in the left top corner, and not centered, it should match the
+loader". Taken: pipeline creation (the frame's own and the entity set) runs on a worker thread
+(the device is shared across threads) while the event loop keeps pumping and drawing the loading
+frame. Rejected: one blocking stage (the owner's verdict above); building the entity set after the
+first world frame (Plan 0062 Phase 6d's first amendment, overturned).
+- **Owner skill:** dev
+- **What:** start-up's long GPU steps (the frame's creation and `prepare_entities`, and any other
+  step the readings show over 50 ms) move to a worker; the loading screen polls them, keeps the
+  cube turning, and advances the bar by the stage's share (by pipelines built if the worker reports
+  a count). The loading picture is one picture at every point of start-up: the first frame after
+  the device and every stage frame draw the same layout, centred in the window at its current size
+  (the fly-through's loader is the reference), with no jump between them.
+- **Files touched:** `crates/vxe-render/src/loading.rs`, the frame's creation and `prepare_entities`
+  call sites, `apps/flythrough/src/app.rs` and the run files the stepping touches, `gpu_loading`,
+  `docs/plans/logs/0075.md`.
+- **Done when:** on the RTX with the driver cache cleared, the castle: the loading screen's
+  frame-to-frame gaps logged, none over 100 ms from the first loading frame to the first world
+  frame, and no not-responding notice in the owner's window; the cube turns throughout; a test
+  that the loading picture's layout is centred at two window sizes and the same for the first and
+  a stage frame; headless runs unchanged; the stage times read as before (the work is the same,
+  only off the event loop).
+
 ### Phase 7: after the window
 - **Owner skill:** dev
 - **What:** the owner's picks applied, the golden written, the docs brought up to date.
