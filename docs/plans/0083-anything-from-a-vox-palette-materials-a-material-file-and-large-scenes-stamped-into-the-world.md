@@ -1,6 +1,6 @@
 # 0083: Anything from a `.vox`: palette materials, a material file, and large scenes stamped into the world
 
-> **Status:** approved (2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel)
+> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel)
 > **Created:** 2026-11-16
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (stamping at authored-building
 > scale), with M6's `.vox` import; the engine side in `vxe-assets` and `vxe-world`, the testbed
@@ -497,9 +497,11 @@ integer up-scale of a world structure; neither reads the other's code.
 > resume notes go to the plan's readings log, `docs/plans/logs/0083.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: palette rows and `MATL` | dev | not started | |
+| 1: palette rows and `MATL` | dev | done | committed with this row |
 | 2: the material file, hot-reloaded | dev | not started | |
 | 3: prefabs as bricks | dev | not started | |
 | 4: the scene: layers, mirrors, scale, `--vox` | dev | not started | |
@@ -510,9 +512,16 @@ integer up-scale of a world structure; neither reads the other's code.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `Rig::build` takes `&mut PaletteRows`; `Rig::build_mapped` (a palette closure) and
+  `Rig::explicit_map` are added beside it, and the viewer's reload resolves against the fixed
+  table through `resolve_existing` (by row name).
+- Phase 1: a glass row's name carries its roughness too (`vox #rrggbb glass 0.5 0.1`), a metal
+  row's its roughness (`metal 0.2`); `_media`/`_cloud` rows are `media <trans>`.
+- Phase 1: `VoxFile` drops `Eq` (its `materials` hold `f32`) and gains `Default`; `encode` writes
+  `MATL` (`write.rs`, outside the phase's list) so the round trip holds.
+- Phase 1: `DEFAULT_EMISSION_FACTOR` is 0.3 (a guess for Phase 7). The palette rows of `--model`'s
+  `.vox` are added in `setup.rs` (`world_table`) and `app.rs` sets the viewer's `rows +N`.
+- Phase 1 done-when 4's window half (the walker in its colours on screen) waits for Phase 7.
 
 ### Close triggers
 

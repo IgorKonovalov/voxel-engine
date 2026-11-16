@@ -166,6 +166,10 @@ impl App for Flythrough {
                                 crate::viewer::Viewer::open(path, self.args.clip.clone())
                                     .inspect_err(|e| println!("{e}"))
                                     .ok()
+                                    .map(|mut v| {
+                                        v.rows_added = crate::setup::model_rows_added(&self.args);
+                                        v
+                                    })
                             },
                         )),
                     ),

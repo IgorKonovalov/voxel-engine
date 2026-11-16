@@ -16,6 +16,9 @@
 //! key 40 leg_l rot x 30
 //! ```
 //!
+//! - **`material <index> <name>`** maps a palette index to the table's row of that name;
+//!   `auto` leaves the index to its palette row (as no line does), `air` writes air and `skip`
+//!   leaves the world alone. Every index no line decides takes its palette row (ADR-0065).
 //! - **`part <name>`** takes, in any order: `node <name>` (the `.vox` transform node of that
 //!   name, whose shape gives the voxels) or `model <index>`; `pivot x y z` (required, in the
 //!   part's model voxels); `parent <part>` and `at x y z` (the pivot's rest place from the
@@ -40,6 +43,7 @@ use vxe_entity::{Clip, Key, Model, Part, Pose, Quat, Track};
 use vxe_world::MaterialId;
 
 use crate::map::{Slot, VoxMap};
+use crate::rows::PaletteRows;
 use crate::sines::sin_cos_half_degrees;
 use crate::vox::{Node, VoxFile};
 
@@ -693,23 +697,54 @@ impl Rig {
         out
     }
 
-    /// Builds the rig against its `.vox` file: each part's voxels through the palette map,
-    /// each material name through `materials`. An unknown material name, a missing or
-    /// ambiguous node name, a model index past the file's end, a palette index a part uses with
-    /// no `material` line, or a part the model refuses is an error that names it.
+    /// Builds the rig against its `.vox` file, every palette entry no `material` line decides
+    /// resolved through `rows` (a row added to the table the first time it is seen). See
+    /// [`Rig::build_mapped`] for the rest.
     pub fn build(
         &self,
         vox: &VoxFile,
         materials: &dyn Fn(&str) -> Option<MaterialId>,
+        rows: &mut PaletteRows<'_>,
+    ) -> Result<RigModel, RigError> {
+        self.build_mapped(vox, materials, &mut |f, m| rows.resolve(f, m))
+    }
+
+    /// The palette map the `material` lines decide: a name through `materials`, `air`, `skip`;
+    /// `auto` and every index with no line [`Slot::Unset`]. An unknown name is an error that
+    /// names its line.
+    pub fn explicit_map(
+        &self,
+        materials: &dyn Fn(&str) -> Option<MaterialId>,
+    ) -> Result<VoxMap, RigError> {
+        let mut map = VoxMap::new();
+        for m in &self.materials {
+            let slot = match m.name.as_str() {
+                "auto" => Slot::Unset,
+                "air" => Slot::Air,
+                "skip" => Slot::Skip,
+                n => Slot::Material(
+                    materials(n).ok_or_else(|| err(m.line.0, format!("unknown material `{n}`")))?,
+                ),
+            };
+            map.set(m.index, slot);
+        }
+        Ok(map)
+    }
+
+    /// Builds the rig against its `.vox` file: each part's voxels through the palette map
+    /// `palette` makes of the `.vox` and [`Rig::explicit_map`]. An unknown material name, a
+    /// missing or ambiguous node name, a model index past the file's end, a palette index a
+    /// part uses that the map leaves undecided, or a part the model refuses is an error that
+    /// names it.
+    pub fn build_mapped(
+        &self,
+        vox: &VoxFile,
+        materials: &dyn Fn(&str) -> Option<MaterialId>,
+        palette: &mut dyn FnMut(&VoxFile, &VoxMap) -> VoxMap,
     ) -> Result<RigModel, RigError> {
         // A rig built by hand skipped `parse`'s checks.
         self.check_names()?;
-        let mut map = VoxMap::new();
-        for m in &self.materials {
-            let id = materials(&m.name)
-                .ok_or_else(|| err(m.line.0, format!("unknown material `{}`", m.name)))?;
-            map.set(m.index, Slot::Material(id));
-        }
+        let map = palette(vox, &self.explicit_map(materials)?);
         // Parents before children, file order otherwise.
         let mut order: Vec<usize> = Vec::with_capacity(self.parts.len());
         while order.len() < self.parts.len() {
@@ -734,7 +769,8 @@ impl Rig {
                 err(
                     line,
                     format!(
-                        "part `{}` uses palette indices {:?} with no `material` line",
+                        "part `{}` uses palette indices {:?} with no material row (a colour \
+                         new since the table was built takes a restart)",
                         p.name, u.0
                     ),
                 )

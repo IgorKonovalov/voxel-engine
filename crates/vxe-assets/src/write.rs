@@ -3,12 +3,13 @@
 //! [`encode`] writes `"VOX "`, the file's version and one `MAIN` chunk holding, in order:
 //! `PACK` when there is more than one model, each model's `SIZE` and `XYZI` pair in model
 //! order with its voxels in their listed order, every scene-graph node in ascending id order
-//! (`nTRN` with one frame, `nGRP`, `nSHP`), then `RGBA`. The output is a pure function of the
-//! file, so the same file always encodes to the same bytes.
+//! (`nTRN` with one frame, `nGRP`, `nSHP`), then `RGBA`, then a `MATL` per palette index whose
+//! material is not [`crate::VoxMaterialKind::Diffuse`], ascending. The output is a pure
+//! function of the file, so the same file always encodes to the same bytes.
 
 use vxe_world::Rot;
 
-use crate::vox::{Node, VoxFile};
+use crate::vox::{Node, VoxFile, VoxMaterialKind};
 
 /// A rotation as a transform frame's `_r` byte, the inverse of
 /// [`crate::decode_rotation`]: bits 0 to 1 hold the index of row 1's non-zero entry, bits 2
@@ -136,6 +137,32 @@ pub fn encode(file: &VoxFile) -> Vec<u8> {
     let mut rgba = [[0u8; 4]; 256];
     rgba[..255].copy_from_slice(&file.palette[1..]);
     chunk(&mut body, b"RGBA", rgba.as_flattened());
+    for (index, m) in file.materials.iter().enumerate().skip(1) {
+        // Floats as Rust's shortest form that parses back to the same value.
+        let props: Vec<(&str, String)> = match m.kind {
+            VoxMaterialKind::Diffuse => continue,
+            VoxMaterialKind::Metal { rough } => {
+                vec![("_type", "_metal".into()), ("_rough", format!("{rough:?}"))]
+            }
+            VoxMaterialKind::Glass { trans, rough } => vec![
+                ("_type", "_glass".into()),
+                ("_trans", format!("{trans:?}")),
+                ("_rough", format!("{rough:?}")),
+            ],
+            VoxMaterialKind::Emit { emit, flux } => vec![
+                ("_type", "_emit".into()),
+                ("_emit", format!("{emit:?}")),
+                ("_flux", flux.to_string()),
+            ],
+            VoxMaterialKind::Media { trans } => {
+                vec![("_type", "_media".into()), ("_trans", format!("{trans:?}"))]
+            }
+        };
+        c.clear();
+        int(&mut c, index as i32);
+        dict(&mut c, &props);
+        chunk(&mut body, b"MATL", &c);
+    }
 
     let mut out = Vec::with_capacity(20 + body.len());
     out.extend_from_slice(b"VOX ");

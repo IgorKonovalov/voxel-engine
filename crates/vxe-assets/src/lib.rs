@@ -25,6 +25,7 @@
 mod map;
 mod palette;
 mod rig;
+mod rows;
 mod sines;
 mod vox;
 mod voxtext;
@@ -36,9 +37,12 @@ pub use rig::{
     Axis, DEFAULT_RATE, Line, MAX_DEGREES, Rig, RigClip, RigError, RigKey, RigMaterial, RigModel,
     RigPart, VoxSource, axis_rotation, key_rotation,
 };
+pub use rows::{
+    DEFAULT_EMISSION_FACTOR, PaletteRows, palette_row, resolve_existing, srgb_to_linear,
+};
 pub use vox::{
-    MAX_MODEL_EDGE, MAX_PLACEMENTS, MAX_TRANSLATION, Node, Placement, VoxError, VoxFile, VoxModel,
-    decode_rotation,
+    DEFAULT_ROUGH, MAX_MODEL_EDGE, MAX_PLACEMENTS, MAX_TRANSLATION, Node, Placement, VoxError,
+    VoxFile, VoxMaterial, VoxMaterialKind, VoxModel, decode_rotation,
 };
 pub use voxtext::{TextColor, TextModel, VoxText, VoxTextError};
 pub use write::{encode, encode_rotation};

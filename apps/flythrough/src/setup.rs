@@ -128,6 +128,24 @@ pub(crate) fn materials(args: &Args) -> MaterialTable {
     args.look.crisp.apply(&table)
 }
 
+/// `table` with the walker's rows, then a row for each palette entry of `--model`'s `.vox`
+/// (ADR-0065): the world's table, fixed once the world is generated.
+pub(crate) fn world_table(args: &Args, table: &MaterialTable) -> MaterialTable {
+    let mut t = crate::walker::with_walker(table);
+    if let Some(path) = &args.model {
+        crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR);
+    }
+    t
+}
+
+/// The palette rows [`world_table`] adds for `--model`'s `.vox`: the viewer's `rows +N`.
+pub(crate) fn model_rows_added(args: &Args) -> usize {
+    args.model.as_ref().map_or(0, |path| {
+        let mut t = crate::walker::with_walker(&materials(args));
+        crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR)
+    })
+}
+
 /// `--crisp`: which rows of the fly-through's table carry `MaterialFlags::CRISP` (a testbed
 /// switch for the field surface's cost lever): none added, the cave's rock row, or every row
 /// that is not translucent. Rows the table marks crisp itself (the thin rig's wood) stay crisp.
@@ -330,7 +348,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let source = crate::thin_rig::ThinRig {
             wood: crate::THIN_RIG_WOOD,
         };
-        let table = crate::walker::with_walker(&materials(args));
+        let table = world_table(args, &materials(args));
         println!(
             "thin rig: a 5-voxel trunk on a floor with free one-, two- and three-voxel rods, a \
              diagonal branch and two sheets of wood, {:?} chunks",
@@ -343,7 +361,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let source = crate::thin_rig::SeamRig {
             crisp: crate::THIN_RIG_WOOD,
         };
-        let table = crate::walker::with_walker(&materials(args));
+        let table = world_table(args, &materials(args));
         println!(
             "seam rig: a rock wall with an 8 x 8 wood inlay flush in its face and a wood L on the \
              rock floor, {:?} chunks",
@@ -354,7 +372,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (source.spawn(), Pending::Level(generation))
     } else if let Some(edge) = args.mode.room() {
         let source = RoomSource::new(edge);
-        let table = crate::walker::with_walker(&materials(args));
+        let table = world_table(args, &materials(args));
         println!(
             "room: a closed {:.1} m cube of air in 2 m of rock, {:?} chunks",
             edge as f32 * METRES_PER_VOXEL,
@@ -365,7 +383,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (source.spawn(), Pending::Level(generation))
     } else if args.mode.is_showcase() {
         let source = ShowcaseSource::new(seed);
-        let table = crate::walker::with_walker(&crate::with_showcase_rows(&materials(args)));
+        let table = world_table(args, &crate::with_showcase_rows(&materials(args)));
         let generation = std::thread::spawn(move || {
             let t = now();
             let extent = source.extent();
@@ -398,7 +416,7 @@ fn replay_world(args: &mut Args, path: &Path, failure: &Failure) -> (VoxelCoord,
         Ok(file) => {
             // The session continues under the save's seed.
             args.seed = file.seed;
-            let table = crate::walker::with_walker(&materials(args));
+            let table = world_table(args, &materials(args));
             let source = CaveSource::new(file.seed, file.extent);
             let with_vault = args.vault;
             if with_vault {
@@ -444,7 +462,7 @@ fn level_world(args: &Args) -> (VoxelCoord, Pending) {
             source.vault_origin().0
         );
     }
-    let table = crate::walker::with_walker(&materials(args));
+    let table = world_table(args, &materials(args));
     let with_vault = args.vault;
     let generation = std::thread::spawn(move || {
         let t = now();
@@ -469,7 +487,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     let seed = args.seed;
     let source = CaveSource::unbounded(seed);
     let workers = args.workers.unwrap_or_else(default_workers);
-    let world = World::new(&crate::walker::with_walker(&materials(args)));
+    let world = World::new(&world_table(args, &materials(args)));
     let cfg = StreamConfig {
         residency: args.residency,
         workers,

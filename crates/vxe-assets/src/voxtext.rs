@@ -313,7 +313,7 @@ impl VoxText {
             palette,
             nodes,
             names,
-            imap_present: false,
+            ..VoxFile::default()
         }
     }
 

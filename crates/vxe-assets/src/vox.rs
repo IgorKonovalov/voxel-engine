@@ -3,9 +3,10 @@
 //! A file is `"VOX "`, a little-endian `u32` version (150 or 200), then one `MAIN` chunk
 //! whose children are the data chunks. Every chunk is a four-byte id, the byte counts of its
 //! content (`N`) and of its children (`M`), then `N + M` bytes ("MagicaVoxel .vox File
-//! Format", section 2). This parser reads `PACK`, `SIZE` and `XYZI` pairs, `RGBA`, and the
-//! scene graph (`nTRN`, `nGRP`, `nSHP`, from the format's extension document), and skips
-//! every other chunk by its declared sizes. Every multi-byte integer is little-endian.
+//! Format", section 2). This parser reads `PACK`, `SIZE` and `XYZI` pairs, `RGBA`, `MATL`
+//! (a palette entry's material) and the scene graph (`nTRN`, `nGRP`, `nSHP`, from the format's
+//! extension document), and skips every other chunk by its declared sizes. Every multi-byte
+//! integer is little-endian.
 
 use std::collections::BTreeMap;
 
@@ -112,8 +113,31 @@ impl Placement {
     }
 }
 
+/// What a palette entry's `MATL` chunk makes it, as MagicaVoxel's renderer reads it. The
+/// values are the chunk's own, unscaled.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum VoxMaterialKind {
+    /// `_diffuse`, a `_blend` or an unknown `_type`, and every entry with no `MATL`.
+    #[default]
+    Diffuse,
+    /// `_metal`: `_rough`.
+    Metal { rough: f32 },
+    /// `_glass`: `_trans` (or the older `_alpha`), the share of light let through, and `_rough`.
+    Glass { trans: f32, rough: f32 },
+    /// `_emit`: `_emit` (or the older `_weight`) and `_flux`, MagicaVoxel's power step 0 to 4.
+    Emit { emit: f32, flux: u8 },
+    /// `_media` and `_cloud`: `_trans` (or `_alpha`).
+    Media { trans: f32 },
+}
+
+/// One palette entry's material.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VoxMaterial {
+    pub kind: VoxMaterialKind,
+}
+
 /// A parsed `.vox` file.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VoxFile {
     pub version: u32,
     /// Models in file order; a model's id is its index here.
@@ -122,6 +146,9 @@ pub struct VoxFile {
     /// `[0, 0, 0, 0]`. `RGBA` entry `k` is index `k + 1`. MagicaVoxel's default palette when
     /// the file has no `RGBA`.
     pub palette: [[u8; 4]; 256],
+    /// The material of each palette index, from the file's `MATL` chunks (a chunk's id is the
+    /// palette index it describes); [`VoxMaterialKind::Diffuse`] where there is none.
+    pub materials: [VoxMaterial; 256],
     /// Scene-graph nodes by id; empty when the file has no scene graph.
     pub nodes: BTreeMap<u32, Node>,
     /// Scene-graph node names by node id, from each node's `_name` attribute; a node without
@@ -131,6 +158,22 @@ pub struct VoxFile {
     /// ignores it, so a map written against the editor's displayed order may be wrong; a
     /// caller can refuse such files.
     pub imap_present: bool,
+}
+
+impl Default for VoxFile {
+    /// A version-200 file with no models, MagicaVoxel's default palette, no materials and no
+    /// scene graph.
+    fn default() -> Self {
+        Self {
+            version: 200,
+            models: Vec::new(),
+            palette: DEFAULT_PALETTE,
+            materials: [VoxMaterial::default(); 256],
+            nodes: BTreeMap::new(),
+            names: BTreeMap::new(),
+            imap_present: false,
+        }
+    }
 }
 
 const MAIN: [u8; 4] = *b"MAIN";
@@ -415,16 +458,69 @@ fn rgba(c: &mut Reader<'_>, palette: &mut [[u8; 4]; 256]) -> Result<(), VoxError
     Ok(())
 }
 
+/// A `MATL` chunk: its id (the palette index) and the material its properties describe. An
+/// id past 255 is returned as is and ignored by the caller; a property that is not a number
+/// is [`VoxError::Malformed`].
+fn matl(c: &mut Reader<'_>) -> Result<(usize, VoxMaterial), VoxError> {
+    let id = c.count("negative material id")? as usize;
+    let attrs = c.dict()?;
+    let mut ty: &[u8] = b"_diffuse";
+    let mut num: BTreeMap<&[u8], f32> = BTreeMap::new();
+    for &(k, v) in &attrs {
+        if k == b"_type" {
+            ty = v;
+        } else {
+            let parsed = std::str::from_utf8(v)
+                .ok()
+                .and_then(|s| s.trim().parse::<f32>().ok());
+            match parsed {
+                Some(f) if f.is_finite() => {
+                    num.insert(k, f);
+                }
+                // MagicaVoxel writes only numbers past `_type`; a key the mapping reads must
+                // be one, any other is skipped.
+                _ if matches!(
+                    k,
+                    b"_rough" | b"_trans" | b"_alpha" | b"_emit" | b"_weight" | b"_flux"
+                ) =>
+                {
+                    return Err(c.malformed("a material property is not a number"));
+                }
+                _ => {}
+            }
+        }
+    }
+    let get = |k: &[u8]| num.get(k).copied();
+    let trans = get(b"_trans").or_else(|| get(b"_alpha"));
+    let kind = match ty {
+        b"_metal" => VoxMaterialKind::Metal {
+            rough: get(b"_rough").unwrap_or(DEFAULT_ROUGH),
+        },
+        b"_glass" => VoxMaterialKind::Glass {
+            trans: trans.unwrap_or(0.0),
+            rough: get(b"_rough").unwrap_or(DEFAULT_ROUGH),
+        },
+        b"_emit" => VoxMaterialKind::Emit {
+            emit: get(b"_emit").or_else(|| get(b"_weight")).unwrap_or(0.0),
+            flux: get(b"_flux").map_or(0, |f| f.round().clamp(0.0, 255.0) as u8),
+        },
+        b"_media" | b"_cloud" => VoxMaterialKind::Media {
+            trans: trans.unwrap_or(0.0),
+        },
+        _ => VoxMaterialKind::Diffuse,
+    };
+    Ok((id, VoxMaterial { kind }))
+}
+
+/// `_rough` when a `_metal` or `_glass` entry leaves it out: MagicaVoxel's slider default.
+pub const DEFAULT_ROUGH: f32 = 0.1;
+
 impl VoxFile {
     pub fn parse(bytes: &[u8]) -> Result<Self, VoxError> {
         let (version, mut r) = main_chunk(bytes)?;
         let mut file = Self {
             version,
-            models: Vec::new(),
-            palette: DEFAULT_PALETTE,
-            nodes: BTreeMap::new(),
-            names: BTreeMap::new(),
-            imap_present: false,
+            ..Self::default()
         };
         let mut pending: Option<[u32; 3]> = None;
         while r.pos < r.end {
@@ -476,6 +572,12 @@ impl VoxFile {
                 }
             }
             b"IMAP" => self.imap_present = true,
+            b"MATL" => {
+                let (index, m) = matl(c)?;
+                if let Some(slot) = self.materials.get_mut(index) {
+                    *slot = m;
+                }
+            }
             _ => {}
         }
         Ok(())
