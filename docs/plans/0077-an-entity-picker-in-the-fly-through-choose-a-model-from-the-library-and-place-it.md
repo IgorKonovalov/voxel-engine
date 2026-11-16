@@ -1,6 +1,6 @@
 # 0077: An entity picker in the fly-through: choose a model from the entities library, see it at the crosshair, place it
 
-> **Status:** draft (2026-11-16; awaits the owner's answers under "Owner questions" and a go)
+> **Status:** approved (2026-11-16, the owner: all eight recommended answers under "Owner questions")
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the testbed side. Apps only
 > (`apps/flythrough`); nothing under `crates/` changes.
@@ -363,6 +363,8 @@ No `docs/nfr.md` figure moves; every figure below is a **guess** until its phase
   aligns them.
 
 ### Owner questions (each with a recommendation)
+
+Answered 2026-11-16 (owner): every recommended option, 1 to 8.
 
 1. **Discovery and display of the library.** Recommended: every subdirectory of
    `apps/flythrough/assets/entities/` holding `<name>.rig` is an entry named `<name>`, in name
