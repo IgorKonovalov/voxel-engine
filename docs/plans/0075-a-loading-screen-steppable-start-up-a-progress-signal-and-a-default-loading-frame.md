@@ -319,11 +319,11 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to `docs/plans/logs/0075.md`.
+> attempts and resume notes go to [`docs/plans/logs/0075.md`](logs/0075.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the pre-roll stepped behind a plain loading frame | dev | not started | |
+| 1: the pre-roll stepped behind a plain loading frame | dev | done; readings headless, not windowed (lane rule 10); the test runs `--room 12`; `test_support.rs` gained the `Run` field; the loading flags in a new `cli/loading.rs` with a Loading and a Diagnostics section | committed with this row |
 | 2: every stage steps; PreRoll and LoadProgress | dev | not started | |
 | 3: the engine's loading frame | dev | not started | |
 | 4: the fly-through and the tester around it | dev | not started | |

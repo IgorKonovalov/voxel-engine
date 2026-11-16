@@ -101,6 +101,7 @@ pub struct Flythrough {
 
 impl App for Flythrough {
     fn device_request(&mut self, adapter: &wgpu::Adapter) -> (wgpu::Features, wgpu::Limits) {
+        diag(format_args!("window and adapter ready"));
         if let Some(p) = self.pending.take() {
             let (world, stream) = match p {
                 Pending::Level(g) => {
@@ -121,7 +122,9 @@ impl App for Flythrough {
             let pilot = self.args.autopilot.then(|| {
                 Autopilot::new(self.start, self.camera.position, self.args.residency.r_full)
             });
+            diag(format_args!("generation joined"));
             let coarse = stream.is_none().then(|| Coarse::build(&world));
+            diag(format_args!("coarse grid built"));
             let world = Arc::new(world);
             let logic = self
                 .logic
@@ -195,10 +198,15 @@ impl App for Flythrough {
                 recorder: self.args.path.map(|p| Recorder::for_path(p.duration_s())),
                 adapter: None,
                 help: false,
+                loading: None,
             });
         }
         match self.run.as_mut() {
-            Some(run) => run.device_request(adapter),
+            Some(run) => {
+                let request = run.device_request(adapter);
+                diag(format_args!("device limits sized"));
+                request
+            }
             None => (wgpu::Features::empty(), wgpu::Limits::default()),
         }
     }

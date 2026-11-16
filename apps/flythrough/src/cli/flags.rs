@@ -1151,6 +1151,14 @@ pub(crate) fn table() -> Table<Parsing> {
                 flags: audio_flags(),
             },
             Section {
+                title: "Loading",
+                flags: super::loading::loading_flags(),
+            },
+            Section {
+                title: "Diagnostics",
+                flags: super::loading::diagnostic_flags(),
+            },
+            Section {
                 title: "Removed",
                 flags: removed_flags(),
             },

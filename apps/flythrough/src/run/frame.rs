@@ -174,6 +174,9 @@ impl Run {
         dt: f32,
         surface: &wgpu::TextureView,
     ) -> Flow {
+        if self.loading.is_some() {
+            return self.loading_frame(gpu, surface);
+        }
         let t0 = now();
         // A path run ends through its player, so its report can say how.
         if input.pressed(KeyCode::Escape) && self.player.is_none() {

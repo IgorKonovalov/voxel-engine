@@ -287,10 +287,12 @@ use vxe_render::{
 use vxe_world::Residency;
 
 pub mod flags;
+mod loading;
 mod parse;
 pub mod table;
 
 pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
+pub(crate) use loading::LoadingArgs;
 pub use parse::*;
 
 /// The world a run builds; the flags that pick one (`--source`, `--level`, `--room`,
@@ -645,6 +647,7 @@ pub struct Args {
     pub(crate) light: LightingArgs,
     pub(crate) look: LookArgs,
     pub(crate) bake: BakeArgs,
+    pub(crate) loading: LoadingArgs,
 }
 
 /// The internal scale by default (`--internal-scale`): 1.5, so the fly-through starts in our

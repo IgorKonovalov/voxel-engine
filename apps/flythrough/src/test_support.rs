@@ -149,6 +149,7 @@ pub(crate) fn bare_run(world: World) -> Run {
         recorder: None,
         adapter: None,
         help: false,
+        loading: None,
     }
 }
 

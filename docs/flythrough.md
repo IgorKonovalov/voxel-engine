@@ -272,6 +272,18 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--flat-mix` | Both room curves flat at 0 dB |
 | `--direct-delay` | The direct path's propagation delay |
 
+### Loading
+
+| Flag | Does |
+|------|------|
+| `--loading-screen on\|off` | Step the start-up (the light pre-roll) from the frame loop behind loading frames, which name the scene and the stage and show a bar; off runs it all before the first frame [on in a window, off headless] |
+
+### Diagnostics
+
+| Flag | Does |
+|------|------|
+| `--load-slice MS` | The start-up step time a loading frame spends before it draws [25] |
+
 ### Removed flags
 
 Flags from earlier plans (`--steady`, `--sampler`, `--emissive-history` and others from Plan

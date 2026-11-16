@@ -12,9 +12,7 @@ use crate::now;
 use crate::path::PathPlayer;
 use crate::report::Recorder;
 use crate::run::fade::FadeSample;
-use crate::run::hud_feed::{
-    HUD_SCALE, Hud, Samples, band_census_line, field_line, field_pass_line,
-};
+use crate::run::hud_feed::{HUD_SCALE, Hud, Samples};
 use crate::run::queue::QueueRun;
 use crate::setup::{CrispRows, Gfx};
 use crate::streaming::{NEAR_D2, STREAM_POOL_BYTES, Stream};
@@ -35,6 +33,7 @@ pub(crate) mod fade;
 pub(crate) mod frame;
 pub(crate) mod hud_feed;
 pub(crate) mod keys;
+pub(crate) mod loading;
 pub(crate) mod pilot;
 pub(crate) mod queue;
 pub(crate) mod tour;
@@ -102,6 +101,9 @@ pub(crate) struct Run {
     pub(crate) adapter: Option<wgpu::AdapterInfo>,
     /// `--tester`'s help panel (`F1`) is shown.
     pub(crate) help: bool,
+    /// Start-up still stepping behind loading frames; `None` once the first world frame may
+    /// draw.
+    pub(crate) loading: Option<loading::Loading>,
 }
 
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit
@@ -213,9 +215,8 @@ impl Run {
             }
             mirror
         };
-        let mut mirror = mirror;
-        self.queue_pre_roll(gpu, &mut frame, &mut mirror);
-        let mut gfx = Gfx {
+        diag(format_args!("first sync or near residency done"));
+        let gfx = Gfx {
             mirror,
             frame,
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
@@ -224,15 +225,18 @@ impl Run {
             hud: HudOverlay::new(&gpu.device, gpu.surface_format, HUD_SCALE),
             hud_timer: PassTimer::new(&gpu.device, &gpu.queue),
         };
-        if gfx.mirror.field_surface() {
-            println!("{}", field_pass_line("initial fill", gfx.timed_field(gpu)));
-            println!("{}", field_line(&gfx.mirror));
-        }
-        if self.args.look.band_census && self.stream.is_none() {
-            println!("{}", band_census_line(&self.world, &gfx.mirror));
-        }
         self.gfx = Some(gfx);
-        diag(format_args!("init done"));
+        if self.args.loading.screen_on(self.args.headless) {
+            // The pre-roll and the rest step from the frame loop behind loading frames.
+            self.begin_loading(gpu);
+            return;
+        }
+        if let Some(mut gfx) = self.gfx.take() {
+            self.queue_pre_roll(gpu, &mut gfx.frame, &mut gfx.mirror);
+            self.gfx = Some(gfx);
+        }
+        diag(format_args!("pre-roll done"));
+        self.finish_load(gpu);
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -269,6 +273,7 @@ impl Run {
             GpuWorld::with_config(&gpu.device, cfg)
         };
         let ms = ms_since(t);
+        diag(format_args!("mirror reserved"));
         let l = mirror.shard_layout();
         println!(
             "mirror: reserved {} B of a {} B budget ({} units over {} shards, {} records) in {ms:.1} ms",
