@@ -171,6 +171,7 @@ fn generation_sources_contain_no_floating_point() {
     let root = env!("CARGO_MANIFEST_DIR");
     for path in [
         "src/cave.rs",
+        "src/outdoor.rs",
         "src/castle.rs",
         "src/showcase/mod.rs",
         "src/showcase/field.rs",
@@ -291,6 +292,48 @@ fn showcase_vector() {
     });
 }
 
+/// The outdoor source of seed 1 over the 4 x 4 x 4 chunks around its mouth: its hash is
+/// pinned, and every chunk generated alone on threads in reverse order is byte-identical.
+#[test]
+fn outdoor_vector() {
+    use flythrough::outdoor::{MOUTH, OutdoorSource};
+    let source = OutdoorSource::new(1);
+    let top = source.height(MOUTH[0], MOUTH[1]).div_euclid(CHUNK_EDGE);
+    let (cx, cy) = (
+        MOUTH[0].div_euclid(CHUNK_EDGE),
+        MOUTH[1].div_euclid(CHUNK_EDGE),
+    );
+    let extent = ChunkExtent::new([cx - 2, cy - 2, top - 2], [cx + 2, cy + 2, top + 2]);
+    let coords = extent.coords();
+    assert_eq!(coords.len(), 64);
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    let hash = flythrough::chunks_hash(&world, &coords).expect("every chunk is resident");
+    println!("outdoor vector: 0x{hash:016x}");
+    assert_eq!(hash, OUTDOOR_HASH);
+    let reversed: Vec<ChunkCoord> = coords.iter().rev().copied().collect();
+    std::thread::scope(|s| {
+        for run in reversed.chunks(reversed.len().div_ceil(8)) {
+            let (source, world) = (&source, &world);
+            s.spawn(move || {
+                for &c in run {
+                    let mut one = Chunk::default();
+                    source.chunk(c, &mut one);
+                    let resident = world.store().get(c).expect("resident");
+                    let resident = resident
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    assert!(
+                        one.bricks() == resident.bricks(),
+                        "chunk {:?} differs generated alone",
+                        c.0
+                    );
+                }
+            });
+        }
+    });
+}
+
+const OUTDOOR_HASH: u64 = 0x0cfd_7df8_3d1c_2955;
 const SHOWCASE_HASH: u64 = 0xb2ed_b827_7dc9_3e82;
 const CASTLE_VOX_HASH: u64 = 0x35a8_89ee_81c4_17e9;
 const CASTLE_VOXEL_HASH: u64 = 0xa2f6_f292_88e1_04e3;

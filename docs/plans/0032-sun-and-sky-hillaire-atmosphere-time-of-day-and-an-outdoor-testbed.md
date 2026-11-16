@@ -1085,8 +1085,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | done; golden `sky_empty_noon` waits for Phase 10 | b6c7d986 |
-| 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering (Notes); goldens wait for Phase 10 | committed with this row |
-| 3: The outdoor source, the source switch and the time of day in the fly-through | dev | not started | |
+| 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering (Notes); goldens wait for Phase 10 | 96c2c991 |
+| 3: The outdoor source, the source switch and the time of day in the fly-through | dev | in progress: the source and its CPU bars (wip) | |
 | 4: The outdoor exposure | dev | not started | |
 | 5: The sun and the moon as the light pass's directional sample | dev | not started | |
 | 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | not started | |
