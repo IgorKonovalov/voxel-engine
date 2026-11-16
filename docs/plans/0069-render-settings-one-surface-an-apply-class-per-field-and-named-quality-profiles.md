@@ -363,8 +363,8 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the struct, read back and applied | dev | done; gpu_settings owed under the perf lock | 3a3a3e4b |
-| 2: the classes, proved, and the setter gate | dev | wip 0335bc30: gate and gpu_settings owed; `cargo doc` warnings pre-exist (Notes) | |
+| 1: the struct, read back and applied | dev | done; gpu_settings 2/2 at e73cf935 (readings log, Phase 2) | 3a3a3e4b |
+| 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when open pending the owner (Notes) | code 0335bc30; row committed with this row |
 | 3: the profiles, in the fly-through and the tester | dev | wip: code committed, gate owed (readings log, resume notes) | |
 | 4: readings of each profile on both adapters | dev | not started | |
 | 5: the owner's window | human | not started | |
@@ -388,8 +388,9 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 - Phase 2: `RenderSettings::SETTERS` maps each setting's setter to its fields beside
   `NOT_SETTINGS`; the test values are `RenderSettings::with_test_value` (doc-hidden). The class
   test is split in two by the upscaler (readings log). Done-when not met as written: `cargo doc
-  -p vxe-render` prints 65 `private_intra_doc_links` warnings, all in files the plan did not
-  write and present at the base; the new docs add none.
+  -p vxe-render` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line
+  this branch wrote; the new docs add none. Open, pending the owner: whether the done-when
+  reads "no new warnings" or the 64 are fixed (outside the plan's Files touched).
 
 ### Close triggers
 
