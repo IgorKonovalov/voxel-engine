@@ -51,8 +51,8 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/lavapipe
       # llvmpipe compiles every shader for the host CPU, and the runners vary (an EPYC 7763
-      # has no AVX-512, newer hosts do), so a render result can depend on the host. The
-      # model and its vector extensions are printed before any GPU test runs.
+      # has no AVX-512, newer hosts do); the lavapipe action masks AVX-512 off on every host.
+      # The model and its vector extensions are printed before any GPU test runs.
       - name: The runner's CPU
         if: runner.os == 'Linux'
         shell: bash
