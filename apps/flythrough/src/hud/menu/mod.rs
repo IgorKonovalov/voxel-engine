@@ -4,8 +4,16 @@
 //! and are not entries. `flythrough --keys` prints the tree ([`write_tree`]).
 
 mod entries;
+mod filter;
+mod page;
+mod route;
+mod write;
 
 pub use entries::*;
+pub use filter::*;
+pub use page::*;
+pub use route::*;
+pub use write::*;
 
 use vxe_app::{KeyCode, PadButton};
 
@@ -59,8 +67,9 @@ impl Group {
     }
 }
 
-/// The keys that stay bound and are no entry: movement and look's keys, the stats overlay and
-/// the quit. The fly-through reads them by hand (`fly`, `run::frame`).
+/// The keys that stay bound and are no entry: movement and look's keys, the menu, the Keys
+/// page, the stats overlay and the quit. The fly-through reads them by hand (`fly`,
+/// `run::frame`, [`route`]).
 pub const FIXED_KEYS: &[KeyCode] = &[
     KeyCode::KeyW,
     KeyCode::KeyA,
@@ -69,6 +78,8 @@ pub const FIXED_KEYS: &[KeyCode] = &[
     KeyCode::Space,
     KeyCode::KeyC,
     KeyCode::ShiftLeft,
+    KeyCode::Tab,
+    KeyCode::F1,
     KeyCode::F2,
     KeyCode::Escape,
 ];
@@ -82,8 +93,10 @@ pub const FIXED_ROWS: &[(&str, &str)] = &[
     ("mouse", "look"),
     ("left click / R2", "dig"),
     ("right click / L2", "fill"),
+    ("Tab", "the menu; type on any page to search"),
+    ("F1", "this page, the keys"),
     ("F2 / pad Start", "the stats overlay"),
-    ("Esc", "quit"),
+    ("Esc", "back, close; with the menu closed, quit"),
 ];
 
 /// The few run flags an action's mode reads, beside the modes: whether the body walks, and

@@ -459,8 +459,8 @@ fn the_store_read_toggle_shows_in_the_banner() {
 
 /// `--queue-order` parses `score` and `distance` and refuses the rest, `--queue-weights` `A,R`
 /// and `A,tier`; a plain start reads the score with the class as the tier; `F` cycles the
-/// order, `Tab` halves the angle weight and `Slash` doubles it, each press changing the banner and
-/// the HUD's queue row in the same frame.
+/// order, the menu's halving halves the angle weight and `Slash` doubles it, each changing the
+/// banner and the HUD's queue row in the same frame.
 #[test]
 fn the_banner_names_the_queue_order_and_its_weights() {
     use vxe_render::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
@@ -503,13 +503,18 @@ fn the_banner_names_the_queue_order_and_its_weights() {
     ] {
         check(shown(&mut run, Some(KeyCode::KeyF)), want);
     }
-    for (key, angle) in [
-        (KeyCode::Tab, A / 2.0),
-        (KeyCode::Slash, A),
-        (KeyCode::Slash, A * 2.0),
-    ] {
+    let halved = TOGGLES
+        .iter()
+        .find(|t| t.name == "queue angle halved")
+        .expect("the halving is a toggle");
+    run.menu_act(crate::hud::menu::Activated::Toggle(halved));
+    check(
+        shown(&mut run, None),
+        format!("order score, angle {}, refine {R}", A / 2.0),
+    );
+    for angle in [A, A * 2.0] {
         check(
-            shown(&mut run, Some(key)),
+            shown(&mut run, Some(KeyCode::Slash)),
             format!("order score, angle {angle}, refine {R}"),
         );
     }

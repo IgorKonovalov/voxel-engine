@@ -233,3 +233,58 @@ fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
     println!("{line}: {changed} pixels drawn");
     assert!(changed > 0);
 }
+
+/// Readings run by hand (`--run-ignored only -E 'test(=reading::<name>)'`).
+mod reading {
+    use super::*;
+    use flythrough::hud::menu::{Menu, PageId, RunView};
+
+    /// The open menu's rows through the overlay over 61 frames, on the root page and on the
+    /// palette with one letter typed: the overlay's allocation count after the first frame
+    /// and after the last, and each page's formatting time (`Menu::write`, as the HUD's
+    /// `format_us` times it) as the median of the 60 later frames, in microseconds.
+    #[test]
+    #[ignore = "reading: the menu's overlay allocations and format time"]
+    fn menu_allocations_and_format_time() {
+        let Some((device, queue, adapter)) = reading_device(1 << 20) else {
+            return;
+        };
+        let mut overlay = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 2);
+        let m = flythrough::hud::Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::Half,
+            0.0,
+        );
+        let v = RunView::default();
+        let (mut text, mut colours) = (String::new(), Vec::new());
+        for (name, filter) in [("root", ""), ("palette l", "l")] {
+            let mut menu = Menu::default();
+            menu.open_at(PageId::Root);
+            for c in filter.chars() {
+                menu.input(flythrough::hud::menu::MenuInput::Type(c), &m, &v);
+            }
+            let mut us = Vec::with_capacity(60);
+            let mut first = 0;
+            for frame in 0..61 {
+                let t = flythrough::now();
+                menu.write(&m, &v, &mut text, &mut colours);
+                let took = (flythrough::now() - t).as_secs_f64() * 1e6;
+                overlay.set_lines(&queue, &text, &colours);
+                if frame == 0 {
+                    first = overlay.allocations();
+                } else {
+                    us.push(took);
+                }
+            }
+            us.sort_by(f64::total_cmp);
+            println!(
+                "menu {name} on {adapter}: overlay allocations {first} after the first frame, \
+                 {} after 61; format median {:.1} us, max {:.1} us, {} rows",
+                overlay.allocations(),
+                us[us.len() / 2],
+                us[us.len() - 1],
+                text.lines().count()
+            );
+        }
+    }
+}

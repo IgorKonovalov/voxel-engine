@@ -94,10 +94,10 @@ fn every_toggle_shows_its_mode_in_the_hud_grid() {
 
 /// No two inputs share a key: every key and pad button of the toggle table, of the actions
 /// (`toggles::ACTIONS`) and of the fixed set (`hud::menu::FIXED_KEYS`) is bound once. `1` to
-/// `6` are the lights' (drop, carry, colour, remove, bounce, fire); the bake queue's six
-/// toggles sit on `F`, `Tab`, `Slash`, `Quote`, `Backspace` and `Backslash` (the owner,
+/// `6` are the lights' (drop, carry, colour, remove, bounce, fire); the bake queue's five
+/// keyed toggles sit on `F`, `Slash`, `Quote`, `Backspace` and `Backslash` (the owner,
 /// 2026-11-13: the laptop has no `Home`, `End`, `Page` or `Delete` keys), each changing the
-/// `queue` row's words.
+/// `queue` row's words; the angle's halving is the menu's (`Tab` opens the menu).
 #[test]
 fn no_two_inputs_share_a_key() {
     use flythrough::hud::menu::FIXED_KEYS;
@@ -109,7 +109,7 @@ fn no_two_inputs_share_a_key() {
             Press::Key(k, pad) => std::iter::once(Bind::Key(k))
                 .chain(pad.map(Bind::Pad))
                 .collect(),
-            Press::Scroll => Vec::new(),
+            Press::Scroll | Press::Menu => Vec::new(),
         })
         .collect();
     keys.extend(ACTIONS.iter().flat_map(|a| a.binds.iter().copied()));
@@ -133,7 +133,6 @@ fn no_two_inputs_share_a_key() {
     assert_eq!(by_key(KeyCode::Digit5).name, "bounce");
     let queue = [
         (KeyCode::KeyF, "queue order"),
-        (KeyCode::Tab, "queue angle halved"),
         (KeyCode::Slash, "queue angle doubled"),
         (KeyCode::Quote, "queue withdraw"),
         (KeyCode::Backspace, "bake budget"),
@@ -148,4 +147,17 @@ fn no_two_inputs_share_a_key() {
         (t.flip)(&mut m, 1.0);
         assert_ne!(m.row(HudRow::Queue), before, "{name} changes the queue row");
     }
+    let halved = TOGGLES
+        .iter()
+        .find(|t| t.name == "queue angle halved")
+        .expect("the halving is a toggle");
+    assert_eq!(halved.press, Press::Menu);
+    let mut m = start();
+    let before = m.row(HudRow::Queue);
+    (halved.flip)(&mut m, 1.0);
+    assert_ne!(
+        m.row(HudRow::Queue),
+        before,
+        "the halving changes the queue row"
+    );
 }

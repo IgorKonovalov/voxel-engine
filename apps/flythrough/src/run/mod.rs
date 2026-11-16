@@ -105,6 +105,8 @@ pub(crate) struct Run {
     pub(crate) surface: Option<(wgpu::TextureFormat, Option<wgpu::SurfaceColorSpace>)>,
     /// `--tester`'s help panel (`F1`) is shown.
     pub(crate) help: bool,
+    /// The menu (`Tab`, `F1`); never opened under `--tester`.
+    pub(crate) menu: crate::hud::menu::Menu,
     /// Start-up still stepping behind loading frames; `None` once the first world frame may
     /// draw.
     pub(crate) loading: Option<loading::Loading>,
@@ -436,5 +438,7 @@ impl Drop for Run {
     }
 }
 
+#[cfg(test)]
+mod menu_tests;
 #[cfg(test)]
 mod tests;

@@ -23,6 +23,8 @@ pub enum Press {
     /// A scroll line up (or the pad's D-pad up); down steps back. The run banks fractional
     /// lines (`edits::scroll_dig_radius`); [`Toggle::flip`] is one whole line up.
     Scroll,
+    /// No key: the toggle is the menu's only.
+    Menu,
 }
 
 /// One toggle: what presses it, its name, the HUD row that shows its mode, the mode in words
@@ -43,9 +45,16 @@ impl Toggle {
     pub fn pressed(&self, input: &Input) -> bool {
         match self.press {
             Press::Key(key, pad) => input.pressed(key) || pad.is_some_and(|b| input.pad_pressed(b)),
-            Press::Scroll => false,
+            Press::Scroll | Press::Menu => false,
         }
     }
+}
+
+/// Flips `t` on `m` at `now` and gives the line a press prints: the toggle's HUD row with the
+/// new mode. Its key's press and the menu's `Enter` both come here.
+pub fn press(t: &Toggle, m: &mut Modes, now: f64) -> String {
+    (t.flip)(m, now);
+    m.row(t.row)
 }
 
 fn on(b: bool) -> &'static str {
@@ -409,7 +418,7 @@ pub static ACTIONS: &[Action] = &[
         "frame readings",
         Readings,
         Act::Readings,
-        [Bind::Key(KeyCode::F1)]
+        [Bind::Key(KeyCode::Enter)]
     ),
     action!("bench", Debug, Act::Bench, [Bind::Key(KeyCode::KeyB)]),
     action!("stamp", Debug, Act::Stamp, [Bind::Key(KeyCode::KeyP)]),
@@ -563,7 +572,7 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
-        press: Press::Key(KeyCode::Tab, None),
+        press: Press::Menu,
         name: "queue angle halved",
         group: Group::Queue,
         row: HudRow::Queue,

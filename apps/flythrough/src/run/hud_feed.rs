@@ -18,7 +18,7 @@ use vxe_render::{
     SyncStats,
 };
 
-/// Frames `F1` averages over.
+/// Frames the readings (`Enter`) average over.
 pub(crate) const SAMPLES: usize = 30;
 
 /// The stats HUD's glyph scale: an 8 x 8 glyph covers 16 x 16 pixels.
@@ -326,6 +326,30 @@ pub(crate) struct Hud {
     pub(crate) queue_words: Cached<(vxe_render::QueueOrder, bool)>,
     /// The whole run's frame times, shown or not.
     pub(crate) run: RunTimes,
+}
+
+/// What the overlay draws this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Overlay {
+    /// The stats HUD's rows and strip.
+    Stats,
+    /// The menu's page alone.
+    Menu,
+    /// The banner alone (under `--tester`, the path's row and its help panel).
+    Banner,
+}
+
+impl Overlay {
+    /// The overlay for a run under `--tester` or not, with the menu open or closed and the
+    /// stats HUD shown or hidden: the menu over everything outside `--tester` (which has
+    /// none), else the stats or the banner.
+    pub(crate) fn of(tester: bool, menu_open: bool, stats: bool) -> Self {
+        match (tester, menu_open, stats) {
+            (false, true, _) => Self::Menu,
+            (_, _, true) => Self::Stats,
+            _ => Self::Banner,
+        }
+    }
 }
 
 /// A string kept with the key it was made from, remade only when the key changes: a row's
@@ -812,6 +836,16 @@ impl Run {
         {
             self.pose = None;
         }
+    }
+
+    /// The open menu's rows into the HUD's reused text and colour buffers, the formatting
+    /// timed into `format_us`.
+    pub(crate) fn write_menu(&mut self) {
+        let t = now();
+        let v = self.run_view();
+        self.menu
+            .write(&self.modes, &v, &mut self.hud.text, &mut self.hud.colours);
+        self.hud.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
     }
 
     /// The banner at the frame loop's clock: `--pose`'s row until the camera first moves, the

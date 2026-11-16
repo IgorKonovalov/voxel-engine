@@ -5,6 +5,7 @@ use super::{FIXED_KEYS, FIXED_ROWS, Group, RunView, key_name, pad_name};
 use crate::hud::Modes;
 use crate::toggles::{ACTIONS, Action, Bind, Press, TOGGLES, Toggle};
 use std::fmt::Write as _;
+use vxe_app::KeyCode;
 
 /// What an entry is: a toggle's row or an action's.
 #[derive(Clone, Copy)]
@@ -56,6 +57,7 @@ impl Entry {
                     .chain(pad.map(pad_name))
                     .collect(),
                 Press::Scroll => vec!["wheel".to_owned(), "pad D-pad up down".to_owned()],
+                Press::Menu => Vec::new(),
             },
             EntryKind::Action(a) => a
                 .binds
@@ -139,11 +141,11 @@ pub fn keys_text(args: &crate::cli::Args) -> String {
     out
 }
 
-/// The `Debug` names of every key the tables and the fixed set bind.
-pub fn bound_key_names() -> Vec<String> {
+/// Every key the tables and the fixed set bind.
+pub fn bound_keys() -> Vec<KeyCode> {
     let toggles = TOGGLES.iter().filter_map(|t| match t.press {
         Press::Key(k, _) => Some(k),
-        Press::Scroll => None,
+        Press::Scroll | Press::Menu => None,
     });
     let actions = ACTIONS
         .iter()
@@ -155,12 +157,17 @@ pub fn bound_key_names() -> Vec<String> {
     toggles
         .chain(actions)
         .chain(FIXED_KEYS.iter().copied())
-        .map(|k| format!("{k:?}"))
         .collect()
 }
 
-/// The marker lines around a stretch of source whose `KeyCode`s are text, not binds (the
-/// palette's typed keys); [`unlisted_keys`] skips the lines between them.
+/// The `Debug` names of [`bound_keys`].
+pub fn bound_key_names() -> Vec<String> {
+    bound_keys().into_iter().map(|k| format!("{k:?}")).collect()
+}
+
+/// The marker lines around a stretch of source whose `KeyCode`s are the open menu's text and
+/// navigation, not binds (the palette's typed keys, the arrows); [`unlisted_keys`] skips the
+/// lines between them.
 pub const TYPED_BEGIN: &str = "keys:typed-begin";
 pub const TYPED_END: &str = "keys:typed-end";
 

@@ -3,8 +3,15 @@
 //! prints. CPU only, no device.
 
 use flythrough::cli::parse_args_from;
+use flythrough::hud::menu::{
+    Activated, MENU_COLS, MENU_ROWS, Menu, PageId, RouteInput, RunView, matches, step, taken,
+};
 use flythrough::hud::menu::{Group, entries, keys_text, unlisted_keys};
+use flythrough::hud::{HudRow, Modes};
 use flythrough::toggles::{ACTIONS, TOGGLES};
+use flythrough::toggles::{Press, Toggle, press};
+use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
+use vxe_render::{HudColour, Lighting, LightingResolution};
 
 fn argv(args: &[&str]) -> Vec<String> {
     args.iter().map(|s| (*s).to_owned()).collect()
@@ -111,4 +118,335 @@ fn keys_is_an_early_exit_beside_help() {
     let keys_at = main.find("if args.keys").expect("main reads --keys");
     let device_at = main.find("setup::flythrough").expect("main starts the app");
     assert!(keys_at < device_at, "--keys exits before the app starts");
+}
+
+/// The modes over the default lighting with the lamp as given and its bounce on, as a run
+/// starts it.
+fn modes(lamp: bool) -> Modes {
+    Modes::new(
+        Lighting {
+            lamp,
+            lamp_bounce: true,
+            ..Lighting::default()
+        },
+        LightingResolution::Half,
+        0.0,
+    )
+}
+
+fn toggle(name: &str) -> &'static Toggle {
+    TOGGLES
+        .iter()
+        .find(|t| t.name == name)
+        .unwrap_or_else(|| panic!("{name} is a toggle"))
+}
+
+/// One frame with `key` pressed through the menu's step at `m`; the activations it gives.
+fn key(menu: &mut Menu, m: &Modes, k: KeyCode) -> Vec<Activated> {
+    let mut input = Input::default();
+    input.key_down(k);
+    step(menu, &input, m, &RunView::default()).acts
+}
+
+/// The menu's text and colours at `m`.
+fn drawn(menu: &Menu, m: &Modes) -> (String, Vec<HudColour>) {
+    let (mut text, mut colours) = (String::new(), Vec::new());
+    menu.write(m, &RunView::default(), &mut text, &mut colours);
+    assert_eq!(
+        text.lines().count(),
+        colours.len(),
+        "a colour per row:\n{text}"
+    );
+    assert!(text.lines().count() <= MENU_ROWS, "{text}");
+    for l in text.lines() {
+        assert!(l.len() <= MENU_COLS, "{l}");
+    }
+    (text, colours)
+}
+
+/// An entry's row on a group page: its words from column 2, its binds from column 60.
+fn entry_row(words: &str, keys: &str) -> String {
+    format!("  {words:<58}{keys}").trim_end().to_owned()
+}
+
+/// With the lamp off and the filter at 2 iterations, `Tab` draws the root page: the title, a
+/// row per group with the first selected (yellow), a blank row and the footer. `Down` four
+/// times and `Enter` open `lighting`: its twelve toggles' words and binds, `lamp off` and
+/// `filter 2` among them with `F7` and `F4` in the key column.
+#[test]
+fn the_root_and_a_group_draw_their_rows() {
+    let mut m = modes(false);
+    press(toggle("filter iterations"), &mut m, 0.0);
+    let mut menu = Menu::default();
+    key(&mut menu, &m, KeyCode::Tab);
+    assert_eq!(menu.page(), Some(PageId::Root));
+    let (text, colours) = drawn(&menu, &m);
+    let want = "menu\n> moving\n  camera and paths\n  look\n  upscaler\n  lighting\n  lights\n  \
+                light queue\n  entities\n  audio\n  readings\n  debug\n\nEnter opens  Esc closes  \
+                Tab closes  type to search";
+    assert_eq!(text, want);
+    let mut want_colours = vec![HudColour::White; 14];
+    want_colours[1] = HudColour::Yellow;
+    assert_eq!(colours, want_colours);
+    for _ in 0..4 {
+        key(&mut menu, &m, KeyCode::ArrowDown);
+    }
+    assert!(key(&mut menu, &m, KeyCode::Enter).is_empty());
+    assert_eq!(menu.page(), Some(PageId::Group(Group::Lighting)));
+    let (text, colours) = drawn(&menu, &m);
+    let rows = [
+        ("shadow walk coarse", "F3"),
+        ("filter iterations: filter 2", "F4"),
+        ("history edits", "F5"),
+        ("lighting resolution: lighting half", "F6"),
+        ("lamp off", "F7"),
+        ("lamp bounce on", "F8"),
+        ("ore pulse off", "M"),
+        ("exposure manual", "Q"),
+        ("store read face", ","),
+        ("light weights: weights normal", ";"),
+        ("young filter: young luma", "Delete"),
+        ("entity light world", "Insert"),
+    ];
+    let mut want = vec!["menu  >  lighting".to_owned()];
+    want.extend(rows.iter().map(|(w, k)| entry_row(w, k)));
+    want[1].replace_range(0..1, ">");
+    want.push(String::new());
+    want.push("Enter acts  Esc back  Tab closes  type to search".to_owned());
+    assert_eq!(text, want.join("\n"));
+    let mut want_colours = vec![HudColour::White; 15];
+    want_colours[1] = HudColour::Yellow;
+    assert_eq!(colours, want_colours);
+}
+
+/// Typing `l`, `a`, `m` on the root page gives exactly the entries whose label, value or group
+/// contains `lam`, in the tree's order, each after its group; `Backspace` three times gives the
+/// root page back; `Esc` with a filter clears it and leaves the menu open, a second closes it.
+#[test]
+fn typing_filters_the_whole_tree() {
+    let m = modes(true);
+    let v = RunView::default();
+    let mut menu = Menu::default();
+    key(&mut menu, &m, KeyCode::Tab);
+    let (root, _) = drawn(&menu, &m);
+    for k in [KeyCode::KeyL, KeyCode::KeyA, KeyCode::KeyM] {
+        key(&mut menu, &m, k);
+    }
+    assert_eq!(menu.filter(), "lam");
+    let want: Vec<String> = entries()
+        .filter(|e| {
+            let value = e.value(&m, &v).unwrap_or_default();
+            e.label.contains("lam") || value.contains("lam") || e.group.name().contains("lam")
+        })
+        .map(|e| format!("{}  {}", e.group.name(), e.words(&m, &v)))
+        .collect();
+    assert!(want.len() >= 2, "{want:?}");
+    let (text, _) = drawn(&menu, &m);
+    let rows: Vec<&str> = text.lines().skip(1).take(want.len()).collect();
+    assert_eq!(text.lines().next(), Some("menu  search: lam"));
+    for (row, w) in rows.iter().zip(&want) {
+        assert!(row[2..].starts_with(w.as_str()), "{row} is {w}");
+    }
+    assert_eq!(text.lines().nth(want.len() + 1), Some(""), "{text}");
+    let lamp = rows
+        .iter()
+        .find(|r| r[2..].starts_with("lighting  lamp on"))
+        .expect("the lamp matches");
+    assert_eq!(
+        lamp[2..].split_whitespace().collect::<Vec<_>>(),
+        ["lighting", "lamp", "on", "F7"]
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r[2..].starts_with("lighting  lamp bounce on")),
+        "{text}"
+    );
+    assert!(!text.contains("look face"), "{text}");
+    assert!(!matches(
+        &entries().find(|e| e.label == "look").unwrap(),
+        "lam",
+        &m,
+        &v
+    ));
+    for _ in 0..3 {
+        key(&mut menu, &m, KeyCode::Backspace);
+    }
+    assert_eq!(drawn(&menu, &m).0, root);
+    key(&mut menu, &m, KeyCode::KeyL);
+    key(&mut menu, &m, KeyCode::Escape);
+    assert!(menu.is_open() && menu.filter().is_empty());
+    assert_eq!(drawn(&menu, &m).0, root);
+    key(&mut menu, &m, KeyCode::Escape);
+    assert!(!menu.is_open());
+}
+
+/// `Tab`, `l`, `a`, `Enter` from the start modes flips the lamp: the lamp is off, the entry's
+/// row reads `lamp off`, and the lighting HUD row and the printed line are what an `F7` press
+/// gives.
+#[test]
+fn enter_acts_and_the_row_follows() {
+    let mut m = modes(true);
+    let mut menu = Menu::default();
+    for k in [KeyCode::Tab, KeyCode::KeyL, KeyCode::KeyA] {
+        assert!(key(&mut menu, &m, k).is_empty());
+    }
+    let acts = key(&mut menu, &m, KeyCode::Enter);
+    let [Activated::Toggle(t)] = acts[..] else {
+        panic!("{acts:?}")
+    };
+    let line = press(t, &mut m, 1.0);
+    assert!(!m.lighting.lamp);
+    let (text, _) = drawn(&menu, &m);
+    let row = text.lines().nth(1).expect("the first match");
+    assert!(row.starts_with("> lighting  lamp off"), "{text}");
+    let mut by_key = modes(true);
+    let f7 = TOGGLES
+        .iter()
+        .find(|t| t.press == Press::Key(KeyCode::F7, None))
+        .expect("F7 is a toggle");
+    assert_eq!(press(f7, &mut by_key, 1.0), line);
+    assert_eq!(by_key.row(HudRow::Lighting), m.row(HudRow::Lighting));
+}
+
+/// The capture rule over every key the tables and the fixed set bind, the menu's keys, the
+/// wheel, both clicks and every pad button: closed, everything passes; open, the arrows,
+/// `Enter`, `Backspace`, `Esc`, the typed and punctuation keys, the wheel, both clicks, the
+/// D-pad, `South`, `East` and `Start` are the menu's and nothing else is; the movement keys
+/// pass as well (their press types, their hold moves); `F7` and the sticks pass. Through the
+/// step, an open menu passes on no click and no wheel (no dig, no dig radius), and passes `W`
+/// held, the mouse's motion, `F7` and the move stick.
+#[test]
+fn the_route_is_one_function() {
+    use flythrough::hud::menu::{MENU_KEYS, all_keys, key_name, typed};
+    let menu_pad = [
+        PadButton::DpadUp,
+        PadButton::DpadDown,
+        PadButton::DpadLeft,
+        PadButton::DpadRight,
+        PadButton::South,
+        PadButton::East,
+        PadButton::Start,
+    ];
+    let moves = [
+        KeyCode::KeyW,
+        KeyCode::KeyA,
+        KeyCode::KeyS,
+        KeyCode::KeyD,
+        KeyCode::Space,
+        KeyCode::KeyC,
+        KeyCode::ShiftLeft,
+    ];
+    let mut inputs: Vec<RouteInput> = all_keys().into_iter().map(RouteInput::Key).collect();
+    inputs.extend(PadButton::ALL.map(RouteInput::Pad));
+    inputs.extend([
+        RouteInput::Wheel,
+        RouteInput::Click(MouseButton::Left),
+        RouteInput::Click(MouseButton::Right),
+        RouteInput::MouseLook,
+        RouteInput::Stick,
+    ]);
+    for &i in &inputs {
+        let closed = taken(i, false);
+        assert!(closed.pass && !closed.menu, "{i:?} closed: {closed:?}");
+        let open = taken(i, true);
+        let menus = match i {
+            RouteInput::Key(k) => {
+                let name = key_name(k);
+                MENU_KEYS.contains(&k)
+                    || typed(k).is_some()
+                    || (name.len() == 1 && name.chars().all(|c| c.is_ascii_punctuation()))
+            }
+            RouteInput::Pad(b) => menu_pad.contains(&b),
+            RouteInput::Wheel | RouteInput::Click(_) => true,
+            _ => false,
+        };
+        assert_eq!(open.menu, menus, "{i:?} open: {open:?}");
+        let passes = match i {
+            RouteInput::Key(k) => moves.contains(&k) || !menus,
+            _ => !menus,
+        };
+        assert_eq!(open.pass, passes, "{i:?} open: {open:?}");
+    }
+    for k in [KeyCode::KeyW, KeyCode::F7, KeyCode::F1, KeyCode::Tab] {
+        assert!(taken(RouteInput::Key(k), true).pass, "{k:?}");
+    }
+    assert_eq!(
+        taken(RouteInput::Key(KeyCode::KeyL), true),
+        flythrough::hud::menu::Taken {
+            menu: true,
+            pass: false
+        }
+    );
+    let m = modes(true);
+    let mut menu = Menu::default();
+    menu.open_at(PageId::Root);
+    let mut input = Input::default();
+    input.key_down(KeyCode::KeyW);
+    input.key_down(KeyCode::F7);
+    input.key_down(KeyCode::KeyL);
+    input.button_down(MouseButton::Left);
+    input.add_scroll(1.0);
+    input.add_mouse_delta(3.0, -2.0);
+    input.set_axis(Axis::MoveY, 0.5);
+    input.set_axis(Axis::TriggerR, 1.0);
+    let routed = step(&mut menu, &input, &m, &RunView::default());
+    let pass = routed.pass.input();
+    assert!(pass.held(KeyCode::KeyW) && pass.pressed(KeyCode::F7));
+    assert!(!pass.pressed(KeyCode::KeyL));
+    assert!(!pass.clicked(MouseButton::Left), "no dig while open");
+    assert_eq!(pass.scroll(), 0.0, "no dig radius while open");
+    assert_eq!(pass.axis(Axis::TriggerR), 0.0, "no trigger dig while open");
+    assert_eq!(pass.mouse_delta(), [3.0, -2.0]);
+    assert_eq!(pass.axis(Axis::MoveY), 0.5);
+    // `W`'s press types as well as its hold moving.
+    assert_eq!(menu.filter(), "lw");
+    let mut closed = Menu::default();
+    let routed = step(&mut closed, &input, &m, &RunView::default());
+    let pass = routed.pass.input();
+    assert!(pass.clicked(MouseButton::Left) && pass.scroll() == 1.0 && pass.pressed(KeyCode::KeyL));
+    assert!(!closed.is_open());
+}
+
+/// `F1` opens a flat page of every entry of every group with its binds under the fixed keys'
+/// block; `F1` again closes it; `Tab` from the Keys page shows the root.
+#[test]
+fn f1_opens_the_keys_page() {
+    use flythrough::hud::menu::{FIXED_ROWS, Row};
+    let m = modes(true);
+    let v = RunView::default();
+    let mut menu = Menu::default();
+    key(&mut menu, &m, KeyCode::F1);
+    assert_eq!(menu.page(), Some(PageId::Keys));
+    let rows = menu.rows(&m, &v);
+    let fixed: Vec<(&str, &str)> = rows
+        .iter()
+        .take_while(|r| matches!(r, Row::Fixed(..)))
+        .map(|r| match r {
+            Row::Fixed(k, d) => (*k, *d),
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(fixed, FIXED_ROWS);
+    let listed: Vec<(&str, Group)> = rows
+        .iter()
+        .filter_map(|r| match r {
+            Row::Entry(e) => Some((e.label, e.group)),
+            _ => None,
+        })
+        .collect();
+    let all: Vec<(&str, Group)> = entries().map(|e| (e.label, e.group)).collect();
+    assert_eq!(listed, all);
+    let (text, _) = drawn(&menu, &m);
+    assert!(text.starts_with("menu  >  keys"), "{text}");
+    assert!(text.contains("W A S D"), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.split_whitespace().collect::<Vec<_>>() == ["F7", "lamp", "on"]),
+        "{text}"
+    );
+    key(&mut menu, &m, KeyCode::F1);
+    assert!(!menu.is_open());
+    key(&mut menu, &m, KeyCode::F1);
+    key(&mut menu, &m, KeyCode::Tab);
+    assert_eq!(menu.page(), Some(PageId::Root));
 }

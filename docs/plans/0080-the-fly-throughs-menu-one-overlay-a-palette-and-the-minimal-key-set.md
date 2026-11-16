@@ -474,8 +474,8 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the table and the tree, printed by `--keys` | dev | done | committed with this row |
-| 2: the component, the palette and the Keys page | dev | not started | |
+| 1: the table and the tree, printed by `--keys` | dev | done | f432c14a |
+| 2: the component, the palette and the Keys page | dev | done | committed with this row |
 | 3: the minimal key set and the pad | dev | not started | |
 | 4: the owner's window | human | not started | |
 | 5: the owner's picks, and the tip | dev | not started | |
@@ -490,6 +490,21 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 - Phase 1: `T` is both the tour's resume and, outside a path, the audio's pulse; the pulse
   entry names no bind, the resume entry names `T`.
 - Phase 1: `parse_args_from` is `pub` (was `pub(crate)`) for `tests/menu.rs`.
+- Phase 2: `Tab` and `F1` became the menu's keys here, so the queue angle's halving lost `Tab`
+  (`Press::Menu`, menu-only) and the readings moved from `F1` to `Enter` in this phase.
+- Phase 2: the action binds dispatch from `ACTIONS` through one `Run::act(Act)` match that
+  holds each action's code (the menu calls the same); `T`'s pulse stays a hand-read line.
+- Phase 2: the movement letters and `Space` do both while the menu is open: their press types
+  into the filter, their hold moves (the done-whens name `W` passing and `a` typing).
+- Phase 2: the source scan skips stretches marked `keys:typed-begin`/`-end` in
+  `hud/menu/route.rs`: the typed keys and the open menu's navigation keys (`ArrowUp` is no bind).
+- Phase 2: the tests that drive a `Run` (`esc_closed_ends_the_run_and_open_never_does`, the
+  tester loop, the overlay's choice) are in `src/run/menu_tests.rs` (new; `Run` is
+  crate-private and `run/tests.rs` is near the 1200-line cap). Outside the list also:
+  `app.rs` and `test_support.rs` (`Run::menu`), `tests/toggles.rs` (the halving's key), and a
+  `mod reading` in `tests/gpu_hud_golden.rs`.
+- Phase 2: `path::TesterInput` gained `Pad`; under `--tester` the triggers and the wheel are
+  dropped by the filter (`R2` no longer frees a tour).
 
 ### Close triggers
 
