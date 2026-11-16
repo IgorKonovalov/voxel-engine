@@ -23,8 +23,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use vxe_app::{Flow, Gpu};
 use vxe_render::{
-    Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, LodParams, MarchTimer,
-    MirrorConfig, PassTimer, Presenter, Window, wgpu,
+    Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, LoadingScreen, LodParams,
+    MarchTimer, MirrorConfig, PassTimer, Presenter, Window, wgpu,
 };
 use vxe_world::{MaterialTable, VoxelCoord, World};
 
@@ -106,6 +106,21 @@ pub(crate) struct Run {
     pub(crate) loading: Option<loading::Loading>,
 }
 
+/// The features and limits the fly-through asks of `adapter` for a brick pool of
+/// `pool_bytes`: the timestamp queries where offered, and [`vxe_render::limits_for`]'s limits.
+pub(crate) fn device_request_for(
+    adapter: &wgpu::Adapter,
+    pool_bytes: u64,
+) -> (wgpu::Features, wgpu::Limits) {
+    // An adapter below the shaders' floor: name the limit, then request the floor, which the
+    // device request refuses on the same limit and the shell reports as a setup error.
+    let limits = vxe_render::limits_for(adapter, pool_bytes).unwrap_or_else(|e| {
+        eprintln!("flythrough: {e}");
+        *e.requested
+    });
+    (adapter.features() & wgpu::Features::TIMESTAMP_QUERY, limits)
+}
+
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit
 /// names its stage.
 pub(crate) fn teardown_stage(what: &str, f: impl FnOnce()) {
@@ -146,16 +161,13 @@ impl Run {
             level_pool_units(&self.world, self.args.field_surface())
                 * vxe_render::internals::UNIT_BYTES
         };
-        // An adapter below the shaders' floor: name the limit, then request the floor, which
-        // the device request refuses on the same limit and the shell reports as a setup error.
-        let limits = vxe_render::limits_for(adapter, pool).unwrap_or_else(|e| {
-            eprintln!("flythrough: {e}");
-            *e.requested
-        });
-        (adapter.features() & wgpu::Features::TIMESTAMP_QUERY, limits)
+        device_request_for(adapter, pool)
     }
 
-    pub(crate) fn init(&mut self, gpu: &Gpu) {
+    /// Creates the frame and the mirror, then starts loading: behind loading frames drawn
+    /// with `splash` (the screen the first frame was drawn with, else a new one) when the
+    /// loading screen is on, else the whole load here.
+    pub(crate) fn init(&mut self, gpu: &Gpu, splash: Option<LoadingScreen>) {
         self.adapter = Some(gpu.adapter.get_info());
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
@@ -206,7 +218,7 @@ impl Run {
         };
         self.gfx = Some(gfx);
         let screen = self.args.loading.screen_on(self.args.headless);
-        let loading = self.start_loading(gpu, screen);
+        let loading = self.start_loading(gpu, screen.then_some(splash).flatten(), screen);
         if screen {
             // The rest steps from the frame loop behind loading frames.
             self.loading = Some(loading);

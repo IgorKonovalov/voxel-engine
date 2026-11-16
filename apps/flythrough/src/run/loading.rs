@@ -7,13 +7,13 @@
 //! weighted by their share of the loading time read on the RTX 3080 Laptop.
 
 use crate::app::{diag, ms_since};
-use crate::cli::RunMode;
+use crate::cli::{Args, RunMode};
 use crate::edits::{ball, voxel_of};
 use crate::now;
 use crate::run::Run;
 use crate::run::hud_feed::{HUD_SCALE, band_census_line, field_line, field_pass_line};
 use crate::run::queue::{COARSE_PRE_ROLL_MS, PRE_ROLL_SAMPLES, queue_view_angles};
-use crate::setup::{Gfx, start_camera};
+use crate::setup::{Gfx, castle_banner, start_camera};
 use crate::streaming::NEAR_D2;
 use std::time::{Duration, Instant};
 use vxe_app::{Flow, Gpu, Input, KeyCode};
@@ -161,23 +161,23 @@ impl Loading {
 
 /// The scene a loading frame names: under `--tester` the path's scene and mode
 /// (`castle - benchmark`), else the castle's or the pose's banner, else the source.
-pub(crate) fn scene_title(run: &Run) -> String {
-    if run.args.tester
-        && let Some(p) = &run.player
+pub(crate) fn scene_title(args: &Args) -> String {
+    if args.tester
+        && let Some(path) = args.path
     {
-        let mode = match p.mode {
+        let mode = match args.path_mode {
             crate::path::PathMode::Bench => "benchmark",
             crate::path::PathMode::Tour => "tour",
         };
-        return format!("{} - {mode}", p.path.scene.name());
+        return format!("{} - {mode}", path.scene.name());
     }
-    if let Some((row, _)) = &run.scene {
-        return row.clone();
+    if args.castle {
+        return castle_banner(args.castle_shot);
     }
-    if let Some((row, _)) = &run.pose {
-        return row.clone();
+    if let Some(p) = args.pose {
+        return crate::hud::pose_banner(p.name);
     }
-    match run.args.mode {
+    match args.mode {
         RunMode::Cave => "cave".to_owned(),
         RunMode::Level => "level".to_owned(),
         RunMode::Showcase => "showcase".to_owned(),
@@ -208,7 +208,12 @@ impl Run {
     /// Under the screen the first stage's syncs take a time budget of the slice, so no step
     /// holds a loading frame for a whole upload; the run's own budget is restored when the
     /// pre-roll starts.
-    pub(crate) fn start_loading(&mut self, gpu: &Gpu, screen: bool) -> Loading {
+    pub(crate) fn start_loading(
+        &mut self,
+        gpu: &Gpu,
+        drawn: Option<LoadingScreen>,
+        screen: bool,
+    ) -> Loading {
         let slice_ms = self.args.loading.slice_ms;
         let streamed = self.stream.is_some();
         if let Some(gfx) = self.gfx.as_mut() {
@@ -243,13 +248,17 @@ impl Run {
         Loading {
             stage,
             progress: LoadProgress::new(&load_stages(streamed, field)),
-            screen: screen.then(|| LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE)),
+            screen: screen.then(|| {
+                drawn.unwrap_or_else(|| {
+                    LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE)
+                })
+            }),
             bar: EasedBar::default(),
             fade_ms: self.args.loading.fade_ms,
             ended: None,
             slice_ms,
             began: now(),
-            title: scene_title(self),
+            title: scene_title(&self.args),
             frames: 0,
             last: None,
             intervals: Vec::new(),

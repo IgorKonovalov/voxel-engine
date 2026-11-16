@@ -39,6 +39,15 @@ pub trait App {
         (wgpu::Features::empty(), wgpu::Limits::default())
     }
 
+    /// Called once the device exists and the surface is configured, before [`init`](Self::init):
+    /// draws the window's first frame into `surface` and submits it, so the window shows
+    /// something while `init` and the rest of start-up run. Returns whether it drew; the shell
+    /// presents the frame only then. The default draws nothing. Not called without a window.
+    fn splash(&mut self, gpu: &Gpu, surface: &wgpu::TextureView) -> bool {
+        let _ = (gpu, surface);
+        false
+    }
+
     /// Called once the device exists, before the first frame.
     fn init(&mut self, gpu: &Gpu);
 
@@ -81,6 +90,10 @@ pub struct ShellConfig {
     /// When the next frame starts; the default, [`Pacing::Unthrottled`], asks the compositor
     /// for no frame callback.
     pub pacing: Pacing,
+    /// The instant the shell's `start-up:` lines (window, instance, surface, adapter, device,
+    /// the first present) are timed from: the process's start when the app passes it, else
+    /// [`run`]'s entry.
+    pub start: Option<Instant>,
 }
 
 impl Default for ShellConfig {
@@ -96,6 +109,7 @@ impl Default for ShellConfig {
             adapter: None,
             prefer_srgb: false,
             pacing: Pacing::Unthrottled,
+            start: None,
         }
     }
 }
@@ -217,7 +231,10 @@ pub fn run<A: App>(config: ShellConfig, app: A) -> Result<(), ShellError> {
         // `about_to_wait` sets the deadline once a frame has started.
         Pacing::Cap { .. } => ControlFlow::Wait,
     });
+    let started = config.start.unwrap_or_else(now);
     let mut shell = Shell {
+        started,
+        presented: false,
         config,
         app,
         state: None,
@@ -409,6 +426,10 @@ struct State {
 }
 
 struct Shell<A> {
+    /// What the `start-up:` lines are timed from ([`ShellConfig::start`]).
+    started: Instant,
+    /// Whether a frame was presented yet: the first present logs its time.
+    presented: bool,
     config: ShellConfig,
     app: A,
     state: Option<State>,
@@ -426,6 +447,14 @@ fn now() -> Instant {
 }
 
 impl<A: App> Shell<A> {
+    /// Logs `start-up: <what> at <ms> ms` at info, timed from [`ShellConfig::start`].
+    fn mark(&self, what: &str) {
+        log::info!(
+            "start-up: {what} at {:.0} ms",
+            (now() - self.started).as_secs_f64() * 1e3
+        );
+    }
+
     /// Drops the app, then the window state in the order [`run`] documents; returns the
     /// setup error, if any.
     fn teardown(self) -> Option<ShellError> {
@@ -463,13 +492,16 @@ impl<A: App> Shell<A> {
                 self.config.size[1],
             ));
         let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
+        self.mark("window created");
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
                 Box::new(event_loop.owned_display_handle()),
             ));
+        self.mark("instance created");
         let surface = instance
             .create_surface(window.clone())
             .map_err(|e| e.to_string())?;
+        self.mark("surface created");
         let named = self.config.adapter.as_deref().and_then(|want| {
             let all: Vec<wgpu::Adapter> =
                 pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
@@ -494,13 +526,16 @@ impl<A: App> Shell<A> {
             }))
             .map_err(|e| e.to_string())?,
         };
+        self.mark("adapter ready");
         let (required_features, required_limits) = self.app.device_request(&adapter);
+        self.mark("device requested");
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,
             required_limits,
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;
+        self.mark("device created");
 
         let size = window.inner_size();
         let mut config = surface
@@ -517,6 +552,7 @@ impl<A: App> Shell<A> {
         }
         config.present_mode = self.config.present_mode;
         surface.configure(&device, &config);
+        self.mark("surface configured");
         log::info!(
             "present mode: requested {:?}, granted {}, offered {:?}",
             self.config.present_mode,
@@ -552,6 +588,28 @@ impl<A: App> Shell<A> {
         })
     }
 
+    /// The app's [`App::splash`] frame, presented when the app drew one; skipped when the
+    /// surface gives no texture.
+    fn splash(&mut self, state: &State) {
+        let texture = match state.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            _ => return,
+        };
+        let view = texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        if !self.app.splash(&state.gpu, &view) {
+            return;
+        }
+        if self.config.pacing.frame_callback() {
+            state.window.pre_present_notify();
+        }
+        state.gpu.queue.present(texture);
+        self.presented = true;
+        self.mark("first frame presented (the splash)");
+    }
+
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         let Some(state) = self.state.as_mut() else {
             return;
@@ -578,6 +636,10 @@ impl<A: App> Shell<A> {
             state.window.pre_present_notify();
         }
         state.gpu.queue.present(texture);
+        if !self.presented {
+            self.presented = true;
+            self.mark("first frame presented");
+        }
         if flow == Flow::Exit {
             log::info!("teardown: the app asked to exit");
             event_loop.exit();
@@ -592,7 +654,9 @@ impl<A: App> ApplicationHandler for Shell<A> {
         }
         match self.create(event_loop) {
             Ok(state) => {
+                self.splash(&state);
                 self.app.init(&state.gpu);
+                self.mark("app initialised");
                 state.window.request_redraw();
                 self.state = Some(state);
             }

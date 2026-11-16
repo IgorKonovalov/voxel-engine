@@ -470,6 +470,7 @@ fn level_world(args: &Args) -> (VoxelCoord, Pending) {
 fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     let seed = args.seed;
     let source = CaveSource::unbounded(seed);
+    let spawn = source.spawn();
     let workers = args.workers.unwrap_or_else(default_workers);
     let world = World::new(&crate::walker::with_walker(&materials(args)));
     let cfg = StreamConfig {
@@ -477,12 +478,24 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
         workers,
         persist: PersistConfig::default(),
     };
-    let mut streamer = if args.castle {
-        Streamer::new(
-            Arc::new(castle_source(seed, args.castle_out.as_deref())),
-            cfg,
-        )
-    } else if args.vault {
+    println!(
+        "streaming seed {seed}: r_full {}, r_lod {}, h {}, {workers} workers, window {}",
+        args.residency.r_full,
+        args.residency.r_lod,
+        args.residency.hysteresis,
+        crate::window_side(args.residency)
+    );
+    if args.castle {
+        // The castle's prefabs build on a thread of their own, so the window, the device and
+        // the first loading frame do not wait for them; the run joins it after the device.
+        let out = args.castle_out.clone();
+        let build = std::thread::spawn(move || {
+            let streamer = Streamer::new(Arc::new(castle_source(seed, out.as_deref())), cfg);
+            Box::new(start_streaming(world, streamer, workers, spawn))
+        });
+        return (spawn, Pending::StreamBuilding(build));
+    }
+    let streamer = if args.vault {
         println!(
             "vault: {VAULT_EDGE}^3 shell room at {:?}",
             source.vault_origin().0
@@ -491,23 +504,25 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     } else {
         Streamer::new(Arc::new(source), cfg)
     };
-    // The live queue's listing runs on the workers (ADR-0017), from the first chunk on.
+    (
+        spawn,
+        Pending::Stream(Box::new(start_streaming(world, streamer, workers, spawn))),
+    )
+}
+
+/// `streamer` with the live queue's listing on its workers (ADR-0017), from the first chunk
+/// on, and the workers started on the `spawn`'s chunks.
+fn start_streaming(
+    world: World,
+    mut streamer: Streamer,
+    workers: usize,
+    spawn: VoxelCoord,
+) -> (World, Streamer, usize) {
     streamer.set_prep(Some(Arc::new(vxe_render::internals::FacePrep {
         classes: Arc::new(vxe_render::internals::face_classes(world.materials())),
     })));
-    // Workers start on the spawn's chunks while the shell opens the window.
-    streamer.update(&world, &[source.spawn()]);
-    println!(
-        "streaming seed {seed}: r_full {}, r_lod {}, h {}, {workers} workers, window {}",
-        args.residency.r_full,
-        args.residency.r_lod,
-        args.residency.hysteresis,
-        crate::window_side(args.residency)
-    );
-    (
-        source.spawn(),
-        Pending::Stream(Box::new((world, streamer, workers))),
-    )
+    streamer.update(&world, &[spawn]);
+    (world, streamer, workers)
 }
 
 /// The app `args` ask for, from the session's `start`: the look line printed, the logic loaded,
@@ -569,5 +584,6 @@ pub fn flythrough(start: Instant, mut args: Args) -> Flythrough {
         room_probe,
         pad,
         failure,
+        splash: None,
     }
 }
