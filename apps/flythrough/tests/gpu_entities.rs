@@ -1679,4 +1679,225 @@ mod reading {
             set_ms[rounds * 9 / 10]
         );
     }
+
+    /// The grain reading's walker `k` of eight at `frame`: walking, a 6-voxel circle at 1 m/s
+    /// about its centre in a 2 x 4 grid, legs swinging; still, its pose at frame 0.
+    fn grain_pose(k: usize, frame: usize, walking: bool) -> Pose {
+        let c = [104.0 + 12.0 * (k / 4) as f32, 14.0 + 12.0 * (k % 4) as f32];
+        let time = if walking { frame as f32 / 60.0 } else { 0.0 };
+        let a = 0.7 * k as f32 + time * walker::WALK_SPEED / 6.0;
+        let feet = [c[0] + 6.0 * a.cos(), c[1] + 6.0 * a.sin(), 2.0];
+        let swing = walker::WALK_SWING * (std::f32::consts::TAU * (time + 0.13 * k as f32)).sin();
+        walker::pose(feet, a, if walking { swing } else { 0.0 })
+    }
+
+    /// One measured frame of the grain reading. At the internal size: the walkers' pixels, the
+    /// stages' luma (the light pass's sample, the accumulation, the filter's output), the age
+    /// and the fresh flag; at the output size the walkers' and the world's pixels (those whose
+    /// internal pixel is) and the display's luma.
+    struct Shot {
+        ent: Vec<bool>,
+        age: Vec<f32>,
+        fresh: Vec<bool>,
+        stages: [Vec<f32>; 3],
+        out_ent: Vec<bool>,
+        out_world: Vec<bool>,
+        display: Vec<f32>,
+    }
+
+    fn grain_shot(rig: &Rig, internal: [u32; 2]) -> Shot {
+        let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+        let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let ent: Vec<bool> = rec
+            .iter()
+            .map(|r| r[3] & 1 != 0 && r[3] & 32 != 0)
+            .collect();
+        let wor: Vec<bool> = rec
+            .iter()
+            .map(|r| r[3] & 1 != 0 && r[3] & 32 == 0)
+            .collect();
+        let rd = |t: &vxe_render::wgpu::Texture| {
+            vxe_render::debug::read_float(&rig.device, &rig.queue, t)
+        };
+        let irr = rd(rig.frame.irradiance());
+        let acc = rd(rig.frame.accumulated());
+        let fil = rd(rig.frame.filtered());
+        let mom = rd(rig.frame.moments());
+        let img = rig.display();
+        let display: Vec<f32> = img
+            .chunks_exact(4)
+            .map(|p| 0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]))
+            .collect();
+        let inner = |i: usize| {
+            let (x, y) = (i % W as usize, i / W as usize);
+            (y * internal[1] as usize / H as usize) * internal[0] as usize
+                + x * internal[0] as usize / W as usize
+        };
+        Shot {
+            age: mom.iter().map(|m| m[2]).collect(),
+            fresh: irr.iter().map(|p| p[3] > 0.5).collect(),
+            stages: [
+                irr.iter().map(lum).collect(),
+                acc.iter().map(lum).collect(),
+                fil.iter().map(lum).collect(),
+            ],
+            out_ent: (0..display.len()).map(|i| ent[inner(i)]).collect(),
+            out_world: (0..display.len()).map(|i| wor[inner(i)]).collect(),
+            ent,
+            display,
+        }
+    }
+
+    /// The grain reading's run: a fresh frame (at 128 x 72 under an upscaler, jittered), its
+    /// frame counter `offset` on, 128 frames of the eight walkers, frames 64 to 127 measured.
+    fn grain_run(
+        rig: &mut Rig,
+        model: &Arc<Model>,
+        offset: u32,
+        walking: bool,
+        kind: Option<vxe_render::UpscalerKind>,
+    ) -> Vec<Shot> {
+        let camera = Camera {
+            position: [78.0, 32.0, 16.0].into(),
+            yaw: 0.0,
+            pitch: -0.3,
+            vfov: 1.2,
+        };
+        let internal = if kind.is_some() { [128, 72] } else { [W, H] };
+        let mut frame = support::lights::box_frame(&rig.device, internal, [W, H], kind);
+        frame.set_jitter(&rig.device, kind.is_some());
+        for _ in 0..offset {
+            frame.advance();
+        }
+        rig.frame = frame;
+        let h = rig
+            .frame
+            .entity_mirror_mut()
+            .upload_model(&rig.queue, model, rig.world.materials())
+            .expect("room");
+        let mut set = EntitySet::new();
+        let ids: Vec<EntityId> = (0..8)
+            .map(|k| {
+                set.insert(model.clone(), grain_pose(k, 0, walking))
+                    .expect("fits")
+            })
+            .collect();
+        let list: Vec<(EntityId, ModelHandle)> = ids.iter().map(|&id| (id, h)).collect();
+        let mut shots = Vec::new();
+        for f in 0..128 {
+            for (k, &id) in ids.iter().enumerate() {
+                set.set_pose(id, grain_pose(k, f, walking)).expect("fits");
+            }
+            rig.frame.set_entities(&rig.queue, &set, &list);
+            rig.step(&camera);
+            if f >= 64 {
+                shots.push(grain_shot(rig, internal));
+            }
+        }
+        shots
+    }
+
+    /// Sums of the squared difference, the mean and the count, for a relative rms.
+    #[derive(Default, Clone, Copy)]
+    struct Diff([f64; 3]);
+
+    impl Diff {
+        fn add(&mut self, x: f32, y: f32) {
+            let (x, y) = (f64::from(x), f64::from(y));
+            self.0[0] += (x - y).powi(2);
+            self.0[1] += 0.5 * (x + y);
+            self.0[2] += 1.0;
+        }
+
+        /// The rms of the difference over `sqrt 2` (one run's noise), of the mean.
+        fn rel(self) -> String {
+            let rms = (self.0[0] / self.0[2] / 2.0).sqrt();
+            let mean = self.0[1] / self.0[2];
+            format!(
+                "{rms:.4} of {mean:.4} ({:.1} %)",
+                100.0 * rms / mean.max(1e-9)
+            )
+        }
+    }
+
+    /// Plan 0062 Phase 6 (e), the grain on walking walkers: eight walkers in a crowd beside a
+    /// world emitter (the fallback rig), lamp off and no list light, still or walking (each a
+    /// 6-voxel circle at 1 m/s, legs swinging), at the output size with no jitter, and under
+    /// FSR 2 and our upscaler at 1.5 with it. Each case runs twice from a fresh frame, the
+    /// second with its frame counter 1008 on (the jitter repeats every 16 frames, ours, and
+    /// 18, FSR 2's at 1.5), so the poses and the jitter match and only the random stream
+    /// differs; the noise of a stage is the rms of the two runs' difference over `sqrt 2`, over
+    /// the walkers' pixels of frames 64 to 127, relative to their mean. The stages: the light
+    /// pass's sample, the temporal pass's accumulation, the filter's output (split at age 8)
+    /// and the display's luma; with the walkers' mean age, the share younger than 8 frames and
+    /// the share fresh, and the world pixels' display noise.
+    #[test]
+    #[ignore = "reading"]
+    fn the_grain_on_walking_walkers() {
+        let (mut t, _) = table();
+        let glow = t.push(Material {
+            emission: [4.0, 2.5, 1.0],
+            ..Material::named("glow")
+        });
+        let world = entity_box(&t);
+        support::bake::fill(&world, [96, 25, 2], [100, 29, 10], glow);
+        let Some((mut rig, adapter)) = reading_rig(world) else {
+            return;
+        };
+        let (body, eye) = walker::rows(rig.world.materials()).expect("the walker's rows");
+        let model = Arc::new(walker::model(body, eye));
+        let kinds = [
+            None,
+            Some(support::rigs::fsr2_kind()),
+            Some(vxe_render::UpscalerKind::Own(
+                vxe_render::Upscaler::default(),
+            )),
+        ];
+        for kind in kinds {
+            let name = kind.map_or("output size", |k| k.name());
+            for walking in [false, true] {
+                let a = grain_run(&mut rig, &model, 0, walking, kind);
+                let b = grain_run(&mut rig, &model, 1008, walking, kind);
+                let mut stage = [Diff::default(); 3];
+                // The filtered stage split by age: younger than 8, then 8 and older.
+                let mut by_age = [Diff::default(); 2];
+                let (mut display, mut world) = (Diff::default(), Diff::default());
+                let (mut ages, mut young, mut fresh, mut n) = (0.0f64, 0usize, 0usize, 0usize);
+                for (sa, sb) in a.iter().zip(&b) {
+                    for i in (0..sa.ent.len()).filter(|&i| sa.ent[i] && sb.ent[i]) {
+                        for (d, (x, y)) in stage.iter_mut().zip(sa.stages.iter().zip(&sb.stages)) {
+                            d.add(x[i], y[i]);
+                        }
+                        by_age[usize::from(sa.age[i] >= 8.0)].add(sa.stages[2][i], sb.stages[2][i]);
+                        ages += f64::from(sa.age[i]);
+                        young += usize::from(sa.age[i] < 8.0);
+                        fresh += usize::from(sa.fresh[i]);
+                        n += 1;
+                    }
+                    for i in 0..sa.display.len() {
+                        if sa.out_ent[i] && sb.out_ent[i] {
+                            display.add(sa.display[i], sb.display[i]);
+                        } else if sa.out_world[i] && sb.out_world[i] {
+                            world.add(sa.display[i], sb.display[i]);
+                        }
+                    }
+                }
+                println!(
+                    "{adapter}, {name}, {} walkers: {n} pixel-frames; noise: sample {}, accum {}, filtered {} (age < 8: {:.0} px, {}; older: {}), display {} /255; age mean {:.1}, younger than 8 {:.1} %, fresh {:.1} %; world display {} /255",
+                    if walking { "walking" } else { "still" },
+                    stage[0].rel(),
+                    stage[1].rel(),
+                    stage[2].rel(),
+                    by_age[0].0[2],
+                    by_age[0].rel(),
+                    by_age[1].rel(),
+                    display.rel(),
+                    ages / n as f64,
+                    100.0 * young as f64 / n as f64,
+                    100.0 * fresh as f64 / n as f64,
+                    world.rel(),
+                );
+            }
+        }
+    }
 }

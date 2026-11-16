@@ -66,9 +66,8 @@
 // position within `HISTORY_DIST + HISTORY_DIST_PER_T t` voxels of that previous point. The
 // accepted taps' history, moments and age are blended by their bilinear weights; with none
 // accepted, the accepted pixel of the 3 x 3 around the nearest whose position lies nearest
-// this hit's is taken alone, unless the nearest previous pixel showed another thing (the
-// surface was hidden behind an entity, or an entity behind another); with none of those
-// either, with no
+// this hit's is taken alone, unless the hit is the world's and the nearest previous pixel
+// showed an entity (the surface was hidden behind it); with none of those either, with no
 // history (`Params.history` bit 0 clear), or with the hit inside an edit box dilated by
 // one voxel, the pixel resets: age 0, accumulation this frame's sample. Otherwise the age is
 // the taps' age plus one, capped at AGE_MAX. The direct part (rgba, the same blend on every
@@ -76,9 +75,11 @@
 // fallback's emissive part as above. On the frame LIGHTING_LIGHTS_CHANGED says the list of
 // lights changed, the direct part takes this frame's sample as it is: the light pass's
 // estimate of each light is exact up to its shadow ray, so a light switched off, moved,
-// recoloured or removed leaves nothing behind. The same rule holds per pixel at a fresh pixel
-// (light.wgsl: a shadow ray crossed a moving entity's box, or the hit is a moved part's), so a
-// moving shadow or a moving part's lit face leaves no stale direct light.
+// recoloured or removed leaves nothing behind (and the moments take this frame's). The same
+// rule holds for the direct part per pixel at a fresh pixel (light.wgsl: a shadow ray crossed
+// a moving entity's box, or the hit is a moved part's), so a moving shadow or a moving part's
+// lit face leaves no stale direct light; its moments blend as anywhere else, so the filter
+// keeps a variance there.
 //
 // A cube face's pixel with no light of the list shaded (LIGHTING_DIRECT clear: the lamp off and
 // the list empty; no cutaway, not the steps view) skips the reprojection: its emissive part is
@@ -466,12 +467,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             m += w * textureLoad(prev_moments_in, tap, 0).xyz;
         }
-        // The previous pixel nearest the reprojection showed another thing (an entity where
-        // this is the world, the world where this is an entity, or another instance): the
-        // surface was hidden behind it, so no neighbour's history is borrowed.
+        // A world hit whose previous pixel nearest the reprojection showed an entity: the
+        // surface was hidden behind it, so no neighbour's history is borrowed (a floor point
+        // a part uncovers would take a neighbour's, lit or shadowed apart from it). An entity
+        // hit searches its own instance's pixels: under the jitter its silhouette's pixels
+        // fall on the world or another thing every other frame.
         let near = vec2<i32>(floor(q + 0.5));
         var hidden = false;
-        if (on_light_grid(near)) {
+        if (on_light_grid(near) && !rec.entity) {
             let n = unpack_hit(textureLoad(prev_pos_in, near, 0), textureLoad(prev_info_in, near, 0));
             hidden = n.found && !same_thing(n, rec);
         }
@@ -519,6 +522,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 a = max(a, lambda);
                 age = floor(age * (1.0 - lambda) + 0.5);
             }
+            // The moments blend at `a` but at a fresh pixel: a moving part's every pixel is
+            // fresh while it moves, and moments taken as they are hold no variance, which shuts
+            // the filter's luminance weight on its fallback's emissive part.
+            var a_moments = a;
+            if ((params.lighting & LIGHTING_LIGHTS_CHANGED) != 0u) {
+                a_moments = 1.0;
+            }
             if ((params.lighting & LIGHTING_LIGHTS_CHANGED) != 0u || fresh) {
                 a = 1.0;
             }
@@ -529,7 +539,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             let e_new = select(e_fallback, sample.xyz, stored);
             accum = vec4<f32>(e_new, 0.0);
             acc_direct = mix(hd, direct, a);
-            moments = mix(m.xy, vec2<f32>(l, l * l), a);
+            moments = mix(m.xy, vec2<f32>(l, l * l), a_moments);
         }
     }
     accum.w = select(0.0, 1.0, fresh);

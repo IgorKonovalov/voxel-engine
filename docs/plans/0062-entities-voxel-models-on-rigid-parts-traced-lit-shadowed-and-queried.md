@@ -590,6 +590,9 @@ each. Empty is fine.)_
 - Owner answers 2026-11-16: the walker costs (3 to 10x the plan's guesses, mostly the light
   pass) accepted as measured, judged in the Phase 6 window; the zero-entity amendment stands;
   the three local goldens left as they are.
+- Phase 6 fix pass: the walk starts where a walker stands (254a3311); at a fresh pixel the
+  moments blend as anywhere, and the `hidden` rule holds for world hits only (`temporal.wgsl`,
+  outside Files touched); the walking crowd's grain halves, the rest is uncovered pixels.
 - Merge of main (plan 0044, the surface-format chore): the steps view's `COUNT_STEPS` hit and
   light pipelines keep `ENTITIES` at its default; the `ENTITIES`-false variants serve the
   other views while no part is drawn.
