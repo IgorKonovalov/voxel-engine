@@ -29,10 +29,12 @@
 //! | 8     | op log entry count `u64`, boundaries in |
 //! | 8     | input entry count `u64`                 |
 //! | 4     | prefab count `u32` (format 2)           |
-//! | ...   | per prefab: id `u64`, then its bytes as [`Prefab::encode`] writes them (format 2) |
+//! | ...   | per prefab: id `u64`, then its bytes as [`Prefab::encode`] writes them |
 //!
 //! The table holds the prefabs the log's stamps name (ADR-0014); decoding re-hashes each one
-//! and refuses a file whose content does not hash to its id. A format-1 file has no table.
+//! and refuses a file whose content does not hash to its id. A format-1 file has no table. A
+//! format-2 file holds each prefab dense (size, voxels, mask; [`Prefab::decode_dense`]), a
+//! format-3 file as bricks ([`Prefab::encode`], ADR-0066); the ids are the same.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -49,8 +51,9 @@ use crate::wire::{KIND_BOUNDARY, Reader, WireError, Writer, decode_op, encode_op
 
 /// Magic at the start of a log file.
 pub const LOG_MAGIC: [u8; 4] = *b"VXEL";
-/// The log file format this build writes. It also reads format 1, which has no prefab table.
-pub const LOG_FORMAT: u32 = 2;
+/// The log file format this build writes. It also reads format 1, which has no prefab table,
+/// and format 2, whose prefabs are dense.
+pub const LOG_FORMAT: u32 = 3;
 /// Bytes in a log file header's fixed part; from format 2 the prefab table follows it.
 pub const LOG_HEADER_BYTES: usize = 60;
 
@@ -528,7 +531,7 @@ impl LogFile {
         out
     }
 
-    /// Reads a whole file's bytes, of format 1 or [`LOG_FORMAT`]. Bytes after the last
+    /// Reads a whole file's bytes, of format 1, 2 or [`LOG_FORMAT`]. Bytes after the last
     /// counted entry are an error; a table entry whose content does not hash to its id is
     /// [`WireError::PrefabMismatch`].
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
@@ -537,7 +540,7 @@ impl LogFile {
             return Err(WireError::BadMagic);
         }
         let format = r.u32()?;
-        if format != 1 && format != LOG_FORMAT {
+        if !(1..=LOG_FORMAT).contains(&format) {
             return Err(WireError::UnsupportedFormat(format));
         }
         let seed = r.u64()?;
@@ -549,7 +552,11 @@ impl LogFile {
         if format >= 2 {
             for _ in 0..r.u32()? {
                 let id = r.u64()?;
-                let p = Prefab::decode(&mut r)?;
+                let p = if format == 2 {
+                    Prefab::decode_dense(&mut r)?
+                } else {
+                    Prefab::decode(&mut r)?
+                };
                 if p.id() != id {
                     return Err(WireError::PrefabMismatch { id });
                 }

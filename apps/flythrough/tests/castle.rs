@@ -127,17 +127,19 @@ fn the_whole_castle_holds_its_parts() {
     let lens: Vec<usize> = placements.iter().map(|(p, _, _)| p.len()).collect();
     assert_eq!(lens, sizes);
     let bytes = castle::prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
+    let dense = castle::dense_prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
     let want: u64 = sizes
         .iter()
         .map(|&n| 2 * n as u64 + 8 * (n as u64).div_ceil(64))
         .sum();
-    assert_eq!(bytes, want);
+    assert_eq!(dense, want);
+    assert!(bytes < dense, "{bytes} B in bricks against {dense} dense");
     println!(
-        "castle: {} of 27 tiles kept, {bytes} prefab bytes",
+        "castle: {} of 27 tiles kept, {bytes} prefab bytes ({dense} dense)",
         file.models.len()
     );
     if file.models.len() == 27 {
-        assert_eq!(bytes, 382_500_000);
+        assert_eq!(dense, 382_500_000);
     }
     let src = castle::castle_source(1, placements);
     let m = castle::material;

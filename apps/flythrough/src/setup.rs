@@ -310,8 +310,9 @@ pub(crate) fn castle_source(
     });
     drop(file);
     let bytes = castle::prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
+    let dense = castle::dense_prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
     println!(
-        "castle: mapped {} prefabs, {bytes} bytes, in {:.0} ms",
+        "castle: mapped {} prefabs, {bytes} bytes ({dense} dense), in {:.0} ms",
         placements.len(),
         ms_since(t)
     );

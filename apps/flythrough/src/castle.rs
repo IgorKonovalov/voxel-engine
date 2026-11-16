@@ -926,9 +926,15 @@ pub fn castle_source(
     StampedSource::new(HallSource::new(seed), placements)
 }
 
-/// The bytes the kept prefabs hold: per prefab of `n` voxels, `2 n` of material and
-/// `8 * ceil(n / 64)` of mask.
+/// The bytes the kept prefabs hold in RAM ([`Prefab::bytes`]: a word per brick and 1088 per
+/// brick that is not uniform).
 pub fn prefab_bytes<'a>(prefabs: impl IntoIterator<Item = &'a Prefab>) -> u64 {
+    prefabs.into_iter().map(|p| p.bytes() as u64).sum()
+}
+
+/// The bytes the kept prefabs would hold dense: per prefab of `n` voxels, `2 n` of material
+/// and `8 * ceil(n / 64)` of mask.
+pub fn dense_prefab_bytes<'a>(prefabs: impl IntoIterator<Item = &'a Prefab>) -> u64 {
     prefabs
         .into_iter()
         .map(|p| {

@@ -534,3 +534,136 @@ fn a_rotated_stamp_equals_the_identity_stamp_of_the_rotated_prefab() {
         assert_eq!(a.voxel_hash(), b.voxel_hash(), "{r:?}");
     }
 }
+
+/// A 64³ prefab of three bands: z under 16 all rock and written, z 16 to 31 unwritten, above
+/// a mix of air and materials 1 to 3 by position with a mask by position.
+fn mixed64_banded() -> Prefab {
+    Prefab::from_fn([64; 3], |[x, y, z]| {
+        if z < 16 {
+            Some(1)
+        } else if z < 32 {
+            None
+        } else {
+            ((x + 2 * y + 3 * z) % 7 != 0).then_some(((x * 3 + y * 5 + z * 7) % 4) as MaterialId)
+        }
+    })
+}
+
+/// Plan 0083 Phase 3 done-when 1: the 16³ vault's id and a 64³ mixed prefab's id equal their
+/// values pinned from the dense form before the brick storage (the dense `Prefab::new` of the
+/// same voxels and mask), so content ids, the save's table and the stamp vector are unchanged.
+#[test]
+fn ids_do_not_change_with_the_storage() {
+    assert_eq!(Prefab::vault(16, 4).id(), 0x9fd1_757b_6f4c_eb45);
+    let p = mixed64_banded();
+    assert_eq!(p.id(), 0x674a_239a_2135_492f);
+    // The dense constructor of the same content builds the same value.
+    let n = 64 * 64 * 64;
+    let mut voxels = vec![AIR; n];
+    let mut mask = vec![0u64; n / 64];
+    for z in 0..64 {
+        for y in 0..64 {
+            for x in 0..64 {
+                if let Some(m) = p.get([x, y, z]) {
+                    let i = (x + 64 * (y + 64 * z)) as usize;
+                    voxels[i] = m;
+                    mask[i / 64] |= 1 << (i % 64);
+                }
+            }
+        }
+    }
+    let dense = Prefab::new([64; 3], voxels, Some(mask));
+    assert_eq!(dense, p);
+    assert_eq!(dense.id(), p.id());
+    // Sizes that leave partial bricks: ids of single voxels and odd boxes still hash the
+    // dense bytes (a 1-voxel prefab: size, one u16, one mask word).
+    let one = Prefab::new([1, 1, 1], vec![7], None);
+    let mut bytes = Vec::new();
+    for s in [1u32, 1, 1] {
+        bytes.extend_from_slice(&s.to_le_bytes());
+    }
+    bytes.extend_from_slice(&7u16.to_le_bytes());
+    bytes.extend_from_slice(&1u64.to_le_bytes());
+    assert_eq!(one.id(), fnv(&bytes));
+}
+
+fn fnv(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Plan 0083 Phase 3 done-when 2: a 64³ all-rock prefab is 512 one-word bricks, under 4 KB;
+/// with one odd voxel per brick it is 512 stored bricks, about 512 x 1088 B; `get` agrees with
+/// the dense form on 10 000 seeded coordinates of a seeded 24³ prefab under every `Rot`.
+#[test]
+fn a_uniform_brick_is_one_word() {
+    let rock = Prefab::new([64; 3], vec![1; 64 * 64 * 64], None);
+    assert_eq!(rock.brick_counts(), (512, 0));
+    assert!(rock.bytes() < 4096, "{} B", rock.bytes());
+    let odd = Prefab::from_fn([64; 3], |l| {
+        Some(if l.iter().all(|v| v % 8 == 3) { 2 } else { 1 })
+    });
+    assert_eq!(odd.brick_counts(), (0, 512));
+    let b = odd.bytes();
+    assert!(
+        (512 * 1088..512 * 1088 + 4096).contains(&b),
+        "{b} B against 512 x 1088 = 557 056"
+    );
+
+    // A seeded 24³ prefab, dense, against its brick form turned by every rotation.
+    let size = [24u32, 24, 24];
+    let mut seed = 0x0083_0003u64;
+    let mut next = || {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) as u32
+    };
+    let n = 24 * 24 * 24;
+    let mut voxels = vec![AIR; n];
+    let mut mask = vec![0u64; n.div_ceil(64)];
+    for i in 0..n {
+        let r = next();
+        // A third of the box uniform rock, the rest seeded.
+        let z = i / (24 * 24);
+        let (m, w) = if z < 8 {
+            (1, true)
+        } else {
+            ((r % 5) as MaterialId, r % 3 != 0)
+        };
+        if w {
+            voxels[i] = m;
+            mask[i / 64] |= 1 << (i % 64);
+        }
+    }
+    let p = Prefab::new(size, voxels.clone(), Some(mask.clone()));
+    for rot in Rot::all() {
+        let r = p.rotated(rot);
+        assert_eq!(r.size(), rot.apply_size(size));
+        // The dense rotation: destination voxel d reads the source voxel `rot` maps onto it.
+        let rs = r.size().map(|v| v as i32);
+        for _ in 0..10_000 {
+            let d = [
+                next() % rs[0] as u32,
+                next() % rs[1] as u32,
+                next() % rs[2] as u32,
+            ]
+            .map(|v| v as i32);
+            // Source voxel: invert the turn about the box.
+            let mut s = [0i32; 3];
+            for (k, &dk) in d.iter().enumerate() {
+                let (a, neg) = rot.row(k);
+                s[usize::from(a)] = if neg { 23 - dk } else { dk };
+            }
+            let i = (s[0] + 24 * (s[1] + 24 * s[2])) as usize;
+            let want = (mask[i / 64] >> (i % 64) & 1 != 0).then_some(voxels[i]);
+            assert_eq!(r.get(d), want, "{rot:?} at {d:?}");
+        }
+        assert_eq!(r.written_count(), p.written_count());
+        assert_eq!(r.rotated(rot.inverse()), p, "{rot:?} then back");
+    }
+}

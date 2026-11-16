@@ -502,8 +502,8 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: palette rows and `MATL` | dev | done | d853afc3 |
-| 2: the material file, hot-reloaded | dev | done | committed with this row |
-| 3: prefabs as bricks | dev | not started | |
+| 2: the material file, hot-reloaded | dev | done | 26a76ef7 |
+| 3: prefabs as bricks | dev | done | committed with this row |
 | 4: the scene: layers, mirrors, scale, `--vox` | dev | not started | |
 | 5: placements past residency | dev | not started | |
 | 6: the Structures page | dev | not started | |
@@ -535,6 +535,13 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
   also waits for a restart.
 - Phase 2 done-when 4 (the window, and the reading of the re-bake after an emission change)
   waits for Phase 7.
+- Phase 3: a brick is a `u32` word (a material and a written bit, or the index of a stored
+  1088-byte brick) rather than the plan's `PrefabBrick` enum, so a uniform brick is 4 B; the id
+  is computed once and kept. `Prefab::from_fn`, `grid`, `brick_counts`, `bytes` and
+  `decode_dense` (format 2) are new. `wire.rs` is unchanged (the wire names prefabs by id).
+- Phase 3: `castle::prefab_bytes` reads `Prefab::bytes`; `dense_prefab_bytes` keeps the old sum
+  for the soak test and the start-up line. `prefab256_castle_tile` is a castle-shaped 256³
+  tile built in the bench (vxe-world cannot reach the fly-through's generator).
 
 ### Close triggers
 

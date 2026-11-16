@@ -18,7 +18,8 @@ use crate::coords::{
 use crate::edit::{EditError, EditResult};
 use crate::fixed::{FIXED_ONE, Fixed3};
 use crate::limits::Field;
-use crate::prefab::{Prefab, Rot};
+use crate::material::MaterialId;
+use crate::prefab::{BrickRef, PREFAB_BRICK_EDGE, Prefab, Rot};
 use crate::store::{World, read, write};
 use crate::tally::Tally;
 
@@ -43,16 +44,72 @@ pub(crate) fn chunks_of(lo: [i64; 3], hi: [i64; 3]) -> impl Iterator<Item = [i64
     })
 }
 
+/// The prefab bricks the voxel box `lo..=hi` (inside the prefab's box, minimum corner at
+/// `origin`) meets, as an inclusive range of brick coordinates, with the box in local voxels.
+fn prefab_span(
+    origin: [i64; 3],
+    lo: [i64; 3],
+    hi: [i64; 3],
+) -> ([u32; 3], [u32; 3], [u32; 3], [u32; 3]) {
+    let e = PREFAB_BRICK_EDGE;
+    let plo = [0, 1, 2].map(|k| (lo[k] - origin[k]) as u32);
+    let phi = [0, 1, 2].map(|k| (hi[k] - origin[k]) as u32);
+    (plo.map(|v| v / e), phi.map(|v| v / e), plo, phi)
+}
+
+/// The one `(material, written)` every voxel of `prefab` in the voxel box `lo..=hi` holds,
+/// when the prefab bricks the box meets are all uniform alike.
+fn uniform_over(
+    prefab: &Prefab,
+    origin: [i64; 3],
+    lo: [i64; 3],
+    hi: [i64; 3],
+) -> Option<(MaterialId, bool)> {
+    let (blo, bhi, _, _) = prefab_span(origin, lo, hi);
+    let mut seen = None;
+    for z in blo[2]..=bhi[2] {
+        for y in blo[1]..=bhi[1] {
+            for x in blo[0]..=bhi[0] {
+                match prefab.brick([x, y, z]) {
+                    BrickRef::Uniform(m, w) if seen.is_none_or(|s| s == (m, w)) => {
+                        seen = Some((m, w));
+                    }
+                    _ => return None,
+                }
+            }
+        }
+    }
+    seen
+}
+
 /// Whether `prefab`, with its minimum corner at `origin`, writes any voxel in `lo..=hi` (a
-/// sub-box of its own box).
+/// sub-box of its own box). A brick that writes nothing is passed over whole.
 fn writes_any(prefab: &Prefab, origin: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> bool {
-    let s = prefab.size().map(|v| v as usize);
-    for z in lo[2]..=hi[2] {
-        for y in lo[1]..=hi[1] {
-            let row = ((z - origin[2]) as usize * s[1] + (y - origin[1]) as usize) * s[0];
-            for x in lo[0]..=hi[0] {
-                if prefab.written(row + (x - origin[0]) as usize) {
-                    return true;
+    let (blo, bhi, plo, phi) = prefab_span(origin, lo, hi);
+    let e = PREFAB_BRICK_EDGE;
+    for bz in blo[2]..=bhi[2] {
+        for by in blo[1]..=bhi[1] {
+            for bx in blo[0]..=bhi[0] {
+                match prefab.brick([bx, by, bz]) {
+                    BrickRef::Uniform(_, w) => {
+                        if w {
+                            return true;
+                        }
+                    }
+                    BrickRef::Full(_) => {
+                        let b = [bx, by, bz];
+                        let clo = [0, 1, 2].map(|k| plo[k].max(b[k] * e));
+                        let chi = [0, 1, 2].map(|k| phi[k].min(b[k] * e + e - 1));
+                        for z in clo[2]..=chi[2] {
+                            for y in clo[1]..=chi[1] {
+                                for x in clo[0]..=chi[0] {
+                                    if prefab.cell([x, y, z]).1 {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -63,7 +120,10 @@ fn writes_any(prefab: &Prefab, origin: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> 
 /// Writes the masked voxels of `prefab` (already rotated, minimum corner at `origin`) that
 /// fall inside `lo..=hi`, a box within chunk `coord` and within the prefab's box. Marks
 /// changed slots dirty; a brick is written through `Brick::modify`, so one that became
-/// uniform is stored `Uniform`. Returns whether any voxel changed.
+/// uniform is stored `Uniform`. Per world brick, the prefab bricks it meets decide the path:
+/// all writing nothing, the brick is passed over; all writing one material, a uniform world
+/// brick of it is passed over and a whole world brick is replaced by one word; otherwise each
+/// voxel is read. Returns whether any voxel changed.
 fn blit(
     chunk: &mut Chunk,
     coord: ChunkCoord,
@@ -75,7 +135,6 @@ fn blit(
 ) -> bool {
     let be = i64::from(BRICK_EDGE);
     let base = coord.min_voxel().0.map(i64::from);
-    let s = prefab.size().map(|v| v as usize);
     let blo = [0, 1, 2].map(|k| (lo[k] - base[k]) / be);
     let bhi = [0, 1, 2].map(|k| (hi[k] - base[k]) / be);
     let mut changed_any = false;
@@ -86,17 +145,38 @@ fn blit(
                 let bmin = [0, 1, 2].map(|k| base[k] + b[k] * be);
                 let (elo, ehi) = clip_at(bmin, be, lo, hi);
                 let slot = brick_slot(b.map(|v| v as i32));
-                let brick = chunk.brick_mut(slot);
+                let one = uniform_over(prefab, origin, elo, ehi);
+                if matches!(one, Some((_, false))) {
+                    continue;
+                }
+                let whole = (0..3).all(|k| elo[k] == bmin[k] && ehi[k] == bmin[k] + be - 1);
+                let uniform = match chunk.brick(slot) {
+                    Brick::Uniform(m) => Some(*m),
+                    Brick::Full(_) => None,
+                };
+                if let (Some((m, true)), Some(old)) = (one, uniform) {
+                    if old == m {
+                        continue;
+                    }
+                    if whole {
+                        if let Some(t) = tally.as_deref_mut() {
+                            t.count(old, BRICK_EDGE.pow(3) as u32);
+                            t.bound(elo, ehi);
+                        }
+                        chunk.set_brick(slot, Brick::Uniform(m));
+                        changed_any = true;
+                        continue;
+                    }
+                }
                 // A uniform brick expands only when a written voxel differs from it.
-                if let Brick::Uniform(m) = *brick {
+                if let (None, Some(m)) = (one, uniform) {
                     let mut differs = false;
                     'scan: for z in elo[2]..=ehi[2] {
                         for y in elo[1]..=ehi[1] {
-                            let row =
-                                ((z - origin[2]) as usize * s[1] + (y - origin[1]) as usize) * s[0];
                             for x in elo[0]..=ehi[0] {
-                                let i = row + (x - origin[0]) as usize;
-                                if prefab.written(i) && prefab.raw(i) != m {
+                                let l = [x - origin[0], y - origin[1], z - origin[2]];
+                                let (p, w) = prefab.cell(l.map(|v| v as u32));
+                                if w && p != m {
                                     differs = true;
                                     break 'scan;
                                 }
@@ -107,20 +187,23 @@ fn blit(
                         continue;
                     }
                 }
-                let changed = brick.modify(|voxels| {
+                let changed = chunk.brick_mut(slot).modify(|voxels| {
                     let mut changed = false;
                     for z in elo[2]..=ehi[2] {
                         for y in elo[1]..=ehi[1] {
-                            let row =
-                                ((z - origin[2]) as usize * s[1] + (y - origin[1]) as usize) * s[0];
                             let local = [0, (y - bmin[1]) as i32, (z - bmin[2]) as i32];
                             let brow = index_in_brick(local);
                             for x in elo[0]..=ehi[0] {
-                                let i = row + (x - origin[0]) as usize;
-                                if !prefab.written(i) {
-                                    continue;
-                                }
-                                let new = prefab.raw(i);
+                                let new = match one {
+                                    Some((m, _)) => m,
+                                    None => {
+                                        let l = [x - origin[0], y - origin[1], z - origin[2]];
+                                        match prefab.cell(l.map(|v| v as u32)) {
+                                            (m, true) => m,
+                                            (_, false) => continue,
+                                        }
+                                    }
+                                };
                                 let cell = &mut voxels[brow + (x - bmin[0]) as usize];
                                 let old = *cell;
                                 if old == new {
