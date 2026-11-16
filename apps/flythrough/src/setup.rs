@@ -140,6 +140,28 @@ pub(crate) fn world_table(args: &Args, table: &MaterialTable) -> MaterialTable {
     t
 }
 
+/// `--vox-op`'s ops for the world whose table is `table` (`crate::structures::ops`), placed
+/// as `--vox` places them through the source; `None` without `--vox-op`. A file that does not
+/// read or load ends the process with status 1.
+pub(crate) fn vox_ops(args: &Args, table: &MaterialTable) -> Option<crate::structures::VoxOps> {
+    use crate::structures as st;
+    let v = args.vox.as_ref().filter(|_| args.vox_op)?;
+    let scene = st::read(&v.path)
+        .and_then(|f| st::scene(&f, table, v.scale))
+        .unwrap_or_else(|e| {
+            eprintln!("flythrough: --vox {e}");
+            std::process::exit(1)
+        });
+    let spawn = CaveSource::unbounded(args.seed).spawn();
+    let ops = st::ops(&scene, st::offset(&scene, spawn, v.at), args.vox_clear);
+    println!(
+        "vox op: {} ops over {} chunks, submitted once they are resident",
+        ops.ops.len(),
+        ops.chunks.len()
+    );
+    Some(ops)
+}
+
 /// `--vox`'s scene over `base` (`crate::structures`), its rows in `table`: the source and its
 /// printed line. A file that does not read or load ends the process with status 1.
 fn vox_source<S: vxe_world::WorldSource>(
@@ -540,7 +562,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
             Arc::new(castle_source(seed, args.castle_out.as_deref())),
             cfg,
         )
-    } else if args.vox.is_some() {
+    } else if args.vox.is_some() && !args.vox_op {
         let spawn = source.spawn();
         Streamer::new(Arc::new(vox_source(args, &table, spawn, source)), cfg)
     } else if args.vault {

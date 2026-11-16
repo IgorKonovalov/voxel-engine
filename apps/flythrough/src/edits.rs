@@ -472,7 +472,8 @@ mod tests {
 
     /// `P` headless: from inside a carved 16-voxel box in solid rock, the ray along +x enters
     /// rock at x = 8 and the vault lands there, stamped by the logic through the server; aimed
-    /// so the vault crosses the extent's edge it is refused; aimed out of the world it misses.
+    /// so the vault crosses the extent's edge its resident part is written and the rest kept
+    /// pending; aimed out of the world it misses.
     #[test]
     fn p_stamps_the_vault_at_the_aim_point() {
         let table = cave_materials();
@@ -519,20 +520,18 @@ mod tests {
         );
 
         // From inside rock at x = 51 the ray hits that voxel, and a vault there would reach
-        // x = 66, past the resident x <= 63: refused, nothing written.
+        // x = 66, past the resident x <= 63: the resident part is written now and the rest
+        // kept as a placement for chunk [1, 0, 0] (ADR-0066).
         let past = Fixed3([51 * FIXED_ONE + FIXED_ONE / 2, FIXED_ONE / 2, FIXED_ONE / 2]);
         let before = world.count_in_box([-64; 3], [63; 3]).unwrap();
         let (lines, events) = net_tick(&mut net, &[stamp(past)]);
         assert_eq!(lines, ["op 0 stamped"]);
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Refused { error, .. }
-                    if error.to_string() == "chunk [1, 0, 0] is not resident"
-            )),
-            "{events:?}"
-        );
-        assert_eq!(world.count_in_box([-64; 3], [63; 3]).unwrap(), before);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(r.touched, vec![ChunkCoord([0, 0, 0])]);
+        assert_eq!(world.store().pending_placements(), 1);
+        assert_ne!(world.count_in_box([-64; 3], [63; 3]).unwrap(), before);
 
         let outside = Fixed3([200 * FIXED_ONE, 0, 0]);
         let (lines, _) = net_tick(&mut net, &[stamp(outside)]);

@@ -62,6 +62,7 @@ impl Args {
             materials: None,
             vox: None,
             vox_clear: true,
+            vox_op: false,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,

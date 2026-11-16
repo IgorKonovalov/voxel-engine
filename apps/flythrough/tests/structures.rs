@@ -119,3 +119,101 @@ fn the_chapel_stands_at_the_spawn() {
     assert_eq!(world.material_at(VoxelCoord(mid)), Some(vxe_world::AIR));
     assert_eq!(world.voxel_hash(), 0x62cc_2a8f_36d6_eaaf, "pinned on Linux");
 }
+
+/// `--vox-op`'s path against `--vox`'s: the chapel as ops (the box carve, then a stamp per
+/// placement) on the plain cave equals the chapel through the cave's source, voxel for voxel.
+#[test]
+fn the_chapel_as_ops_equals_the_chapel_from_the_source() {
+    let file = structures::read(&chapel_dir().join("chapel.vox")).expect("reads");
+    let mut table = with_emissive_ore(&cave_materials());
+    structures::add_rows(&file, &mut table);
+    let scene = structures::scene(&file, &table, 1).expect("loads");
+    let cave = CaveSource::unbounded(1);
+    let offset = structures::offset(&scene, cave.spawn(), None);
+    let (lo, hi) = structures::clear_box(&scene, offset).expect("a box");
+    let extent = ChunkExtent::new(
+        lo.map(|v| v.div_euclid(64)),
+        hi.map(|v| v.div_euclid(64) + 1),
+    );
+    let sourced = World::generate(
+        extent,
+        &structures::source(cave, &scene, offset, true),
+        &table,
+    );
+    let opped = World::generate(extent, &cave, &table);
+    let v = structures::ops(&scene, offset, true);
+    assert_eq!(v.ops.len(), 1 + scene.placements.len());
+    let mut registry = vxe_world::PrefabRegistry::new();
+    for p in &v.prefabs {
+        registry.register(p.clone()).expect("registers");
+    }
+    for op in &v.ops {
+        op.apply(&opped, &registry).expect("applies");
+    }
+    assert_eq!(opped.store().pending_placements(), 0);
+    assert_eq!(opped.voxel_hash(), sourced.voxel_hash());
+}
+
+mod reading {
+    use std::sync::Arc;
+
+    use flythrough::castle;
+    use flythrough::cave::{HallSource, UNBOUNDED_SPAWN};
+    use vxe_world::{PersistConfig, Residency, StreamConfig, Streamer, World};
+
+    /// Plan 0083 Phase 5's reading: the castle's prefabs stamped at runtime, through the op
+    /// path, into the hall streamed around the spawn at `r_full` (the fly-through's 16, then 6
+    /// so more of the castle lies past residency): the wall time of the stamps, the chunks
+    /// written now and the placements left pending. Run by hand under the perf lock:
+    /// `cargo nextest run -p flythrough --test structures --run-ignored only --no-capture
+    /// -E 'test(=reading::castle_stamped_at_runtime)'`.
+    #[test]
+    #[ignore = "reading: the runtime castle's stamp time, by hand under the perf lock"]
+    fn castle_stamped_at_runtime() {
+        let file = castle::castle_vox();
+        let placements = castle::castle_prefabs(&file).expect("mapped");
+        let table = flythrough::castle_materials(&flythrough::cave_materials());
+        for r_full in [16, 6] {
+            let world = World::new(&table);
+            let mut s = Streamer::new(
+                Arc::new(HallSource::new(1)),
+                StreamConfig {
+                    residency: Residency {
+                        r_full,
+                        r_lod: r_full,
+                        hysteresis: 1,
+                    },
+                    workers: 4,
+                    persist: PersistConfig::default(),
+                },
+            );
+            let t = flythrough::now();
+            s.update(&world, &[UNBOUNDED_SPAWN]);
+            s.wait_idle(&world);
+            let t1 = flythrough::now();
+            let gen_ms = t1.duration_since(t).as_secs_f64() * 1e3;
+            let t = flythrough::now();
+            let mut touched = std::collections::BTreeSet::new();
+            let mut changed = 0u64;
+            for (p, o, r) in &placements {
+                let res = world.stamp(p, *o, *r).expect("a stamp applies");
+                touched.extend(res.touched);
+                changed += res
+                    .changed_from
+                    .iter()
+                    .map(|&(_, n)| u64::from(n))
+                    .sum::<u64>();
+            }
+            let ms = flythrough::now().duration_since(t).as_secs_f64() * 1e3;
+            println!(
+                "reading: castle at r_full {r_full}: {} resident chunks (generated in {gen_ms:.0} \
+                 ms), {} stamps in {ms:.1} ms, {} chunks written now, {changed} voxels changed, \
+                 {} placements pending",
+                world.store().len(),
+                placements.len(),
+                touched.len(),
+                world.store().pending_placements()
+            );
+        }
+    }
+}

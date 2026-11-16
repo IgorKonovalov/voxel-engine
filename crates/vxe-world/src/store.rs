@@ -44,6 +44,10 @@ pub(crate) fn write<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
 pub struct ChunkStore {
     pub(crate) chunks: RwLock<ChunkMap>,
     dirty: Mutex<HashSet<ChunkCoord>>,
+    /// The stamps' parts not yet written (ADR-0066): taken after the map's lock, by a stamp
+    /// under its read lock and by an insert under its write lock, so no chunk can be inserted
+    /// between a stamp finding it missing and the stamp keeping its placement.
+    pub(crate) pending: Mutex<crate::stamp::Pending>,
 }
 
 impl ChunkStore {
@@ -111,6 +115,19 @@ impl ChunkStore {
         v.sort_unstable();
         v
     }
+
+    /// Stamps whose box meets a chunk not yet written (ADR-0066): each is applied to such a
+    /// chunk when the streamer inserts it, and dropped once every chunk it meets has been
+    /// written.
+    pub fn pending_placements(&self) -> usize {
+        lock(&self.pending).list.len()
+    }
+
+    /// Chunks a pending placement has been written into as the streamer inserted them, over the
+    /// store's life: one per placement and chunk.
+    pub fn placement_writes(&self) -> u64 {
+        lock(&self.pending).writes
+    }
 }
 
 /// The store's map from coordinate to chunk.
@@ -167,7 +184,7 @@ impl<'m> ChunkReader<'m> {
     }
 }
 
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 

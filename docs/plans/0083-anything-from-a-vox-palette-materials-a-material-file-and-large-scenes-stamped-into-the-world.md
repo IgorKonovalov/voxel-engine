@@ -504,8 +504,8 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 1: palette rows and `MATL` | dev | done | d853afc3 |
 | 2: the material file, hot-reloaded | dev | done | 26a76ef7 |
 | 3: prefabs as bricks | dev | done | a8a53e7a |
-| 4: the scene: layers, mirrors, scale, `--vox` | dev | done | committed with this row |
-| 5: placements past residency | dev | not started | |
+| 4: the scene: layers, mirrors, scale, `--vox` | dev | done | a221e764 |
+| 5: placements past residency | dev | done | committed with this row |
 | 6: the Structures page | dev | not started | |
 | 7: the owner's window | human | not started | |
 | 8: picks, goldens, readings, tip | dev | not started | |
@@ -558,6 +558,25 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 - Phase 4: `chapel.vox` is `chapel.voxtext` (models only) plus `structures::chapel_vox` (`MATL`,
   layers, the reflected transept); `the_chapel_assets_are_in_step` keeps the two equal.
 - Phase 4 done-when 5 (the chapel in the window) waits for Phase 7.
+- Phase 5: a placement keeps the set of chunks it still has to write, not a `seq`; an inserted
+  chunk takes every pending placement that lists it, in stamp order, under the store's write
+  lock (the stamp keeps its placement under the map's read lock). The spill format is unchanged
+  (no `seq` word): a placement lists a spilled chunk until it is reloaded and written once.
+  `persist.rs`, `source.rs` and `StampedSource` are unchanged.
+- Phase 5: a chunk a placement writes into is marked edited, so it is persisted, not
+  regenerated, when it leaves; a LOD-only load builds its mips without the placement (the far
+  ring shows the structure once the chunk is full). `EditResult::aabb` stays the bounds of the
+  voxels changed now, not the whole box. The worker's `Prepared` result of a chunk a placement
+  changed is dropped from the poll's events.
+- Phase 5: `ChunkStore::pending_placements` and `placement_writes` are new. A bounded world's
+  stamp past its extent now writes the resident part and keeps the rest pending; the vxe-world
+  test `stamp_outside_the_extent_...` and the fly-through's `p_stamps_the_vault_at_the_aim_point`
+  (`edits.rs`, outside the phase's list) assert that now.
+- Phase 5: `--vox-op` submits the box carve and the stamps on the first tick every chunk of the
+  carved box is resident (the carve is an edit, which a missing chunk refuses);
+  `the_chapel_as_ops_equals_the_chapel_from_the_source` (`tests/structures.rs`) checks the
+  chapel's two paths, and the vxe-world `the_source_path_and_the_op_path_agree` a synthetic
+  scene (vxe-world's tests cannot read the fly-through's assets).
 
 ### Close triggers
 

@@ -225,18 +225,23 @@ fn rotated_tripod_stamp_writes_only_the_masked_voxels() {
     );
 }
 
+/// A stamp that reaches chunks outside the generated extent writes the resident ones now and
+/// keeps one pending placement for the others (ADR-0066).
 #[test]
-fn stamp_outside_the_extent_fails_with_the_first_missing_chunk_and_changes_nothing() {
+fn stamp_outside_the_extent_writes_the_resident_part_and_keeps_the_rest() {
     let world = solid3_world();
-    let before = world.voxel_hash();
     // x 120..=135 and y -8..=7 meet chunks [1, -1, 0], [1, 0, 0] (resident) and
-    // [2, -1, 0], [2, 0, 0] (outside test_extent); the first missing one ascending is
-    // [2, -1, 0].
-    let e = world
+    // [2, -1, 0], [2, 0, 0] (outside test_extent).
+    let r = world
         .stamp(&Prefab::vault(16, 4), [120, -8, 0], Rot::IDENTITY)
-        .unwrap_err();
-    assert_eq!(e, EditError::NotResident(ChunkCoord([2, -1, 0])));
-    assert_eq!(world.voxel_hash(), before);
+        .unwrap();
+    assert_eq!(r.touched, [ChunkCoord([1, -1, 0]), ChunkCoord([1, 0, 0])]);
+    // The resident half, x 120..=127: its shell (material 4) replaces rock and its inside
+    // (air) replaces rock: all 8 x 16 x 16 voxels change.
+    assert_eq!(r.changed_from, [(3, 8 * 16 * 16)]);
+    assert_eq!(world.store().pending_placements(), 1);
+    assert_eq!(world.material_at([120, -8, 0]), Some(4));
+    assert_eq!(world.material_at([121, -7, 1]), Some(AIR));
 }
 
 /// A stamp takes the world's limits like the other op kinds: an origin (or the far corner)
@@ -666,4 +671,43 @@ fn a_uniform_brick_is_one_word() {
         assert_eq!(r.written_count(), p.written_count());
         assert_eq!(r.rotated(rot.inverse()), p, "{rot:?} then back");
     }
+}
+
+/// Plan 0083 Phase 5 done-when 3: the chapel-sized scene placed through `StampedSource` and
+/// stamped as ops on a resident world hash equal once both are fully resident (Plan 0008's
+/// vault test at scene scale): three prefabs, one placed twice turned, one reaching across
+/// chunk corners, over a cave-like base.
+#[test]
+fn the_source_path_and_the_op_path_agree() {
+    let nave = Arc::new(Prefab::from_fn([40, 16, 24], |[x, y, z]| {
+        let wall = !(2..38).contains(&x) || !(2..14).contains(&y) || z == 0 || z >= 22;
+        if wall {
+            Some(if (x + z) % 9 == 0 { 2 } else { 1 })
+        } else {
+            Some(AIR)
+        }
+    }));
+    let wing = Arc::new(Prefab::from_fn([10, 8, 18], |[x, y, z]| {
+        ((x + 2 * y + 3 * z) % 4 != 0).then_some(5)
+    }));
+    let tower = Arc::new(Prefab::vault(8, 4));
+    let placements = vec![
+        (nave.clone(), VoxelCoord([44, 50, 40]), Rot::IDENTITY),
+        (wing.clone(), VoxelCoord([59, 66, 40]), Rot::IDENTITY),
+        (
+            wing.clone(),
+            VoxelCoord([59, 42, 40]),
+            Rot::from_index(9).unwrap(),
+        ),
+        (tower.clone(), VoxelCoord([36, 54, 40]), Rot::Z90),
+    ];
+    let extent = ChunkExtent::new([0, 0, 0], [2, 2, 2]);
+    let source = StampedSource::new(cave_like_source(), placements.clone());
+    let generated = World::generate(extent, &source, &test_table());
+    let stamped = World::generate(extent, &cave_like_source(), &test_table());
+    for (p, o, r) in &placements {
+        stamped.stamp(p, *o, *r).unwrap();
+    }
+    assert_eq!(stamped.store().pending_placements(), 0);
+    assert_eq!(generated.voxel_hash(), stamped.voxel_hash());
 }

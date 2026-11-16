@@ -127,7 +127,13 @@ impl App for Flythrough {
                 .logic
                 .take()
                 .expect("the logic is loaded once, in main");
-            let net = Net::new(&world, logic, self.args.seed);
+            let mut net = Net::new(&world, logic, self.args.seed);
+            let vox_ops = crate::setup::vox_ops(&self.args, world.materials());
+            for p in vox_ops.iter().flat_map(|v| &v.prefabs) {
+                // A scene's prefab named twice registers once; a collision is a 64-bit accident.
+                let _ = net.server.register_prefab(p.clone());
+                let _ = net.client.register_prefab(p.clone());
+            }
             let walk = if self.args.walk {
                 let w = Walk::at_camera(&world, &self.camera);
                 if w.is_none() {
@@ -210,6 +216,7 @@ impl App for Flythrough {
                 surface: None,
                 help: false,
                 materials: crate::materials::watch(&self.args),
+                vox_ops,
             });
         }
         match self.run.as_mut() {

@@ -97,6 +97,14 @@ vxe-world --bench stamp`, exclusive perf lock, box under outside load of about 2
 commits 83ab811 and 39d3700):** `vault16` 22.6 to 22.8 µs; `prefab64_mixed` 2.02 to 2.07 ms;
 `prefab64_uniform` 1.455 ms. Both under their proposals; the proposals stand as budgets.
 
+**Stamps past residency (Plan 0083 Phase 5, ADR-0066).** A stamp writes the resident chunks its
+box meets and keeps one pending placement for the chunks it writes into that are not resident;
+the streamer writes the placement into each such chunk as it inserts it, generated or restored
+from persistence, and drops it once every chunk is written. The call's cost is the resident
+part; a placement costs its rotated prefab's bytes until it is dropped, and a box test per
+pending placement on every streamed insert while any is pending. The runtime castle's call time
+and pending count are read in `docs/plans/logs/0083.md` (Phase 5).
+
 ## Replay throughput
 
 **Reading (dev reference, AMD Ryzen 9 5900HS, Plan

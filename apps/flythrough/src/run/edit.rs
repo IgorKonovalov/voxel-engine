@@ -149,6 +149,16 @@ impl Run {
         let Some(net) = self.net.as_mut() else {
             return (0, 0, 0.0);
         };
+        // `--vox-op`'s ops go in on the first tick their box is resident.
+        if let Some(v) = &self.vox_ops
+            && v.chunks.iter().all(|&c| self.world.store().contains(c))
+        {
+            for op in &v.ops {
+                net.server.submit(op.clone());
+            }
+            println!("vox op: {} ops submitted", v.ops.len());
+            self.vox_ops = None;
+        }
         let t = now();
         let report = net.server.tick();
         let ms = ms_since(t);

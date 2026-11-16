@@ -107,6 +107,8 @@ pub(crate) struct Run {
     /// The material file, read again once a second (`crate::materials`); `None` for the
     /// built-in copy.
     pub(crate) materials: Option<crate::materials::Watch>,
+    /// `--vox-op`'s ops, until they are submitted.
+    pub(crate) vox_ops: Option<crate::structures::VoxOps>,
 }
 
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit

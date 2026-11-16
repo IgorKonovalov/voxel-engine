@@ -5,10 +5,15 @@
 //! either side: it is an authoring operation, so an indestructible shell can replace
 //! anything and anything can replace it. It reports what it changed exactly as an edit does
 //! (see `edit.rs`): counts by old material for voxels whose material changed, the touched
-//! chunks ascending, and the inclusive bounds of the changed voxels. Residency is checked for
-//! every chunk holding a masked voxel before anything is written, and chunks are written one
+//! chunks ascending, and the inclusive bounds of the changed voxels. Chunks are written one
 //! write lock at a time in ascending order under the store map's read lock (ADR-0002,
-//! ADR-0003).
+//! ADR-0003). A chunk the box meets that is not resident, and that the prefab writes into, is
+//! left to a placement the store keeps: the streamer writes it into the chunk when it inserts
+//! it, generated or restored from persistence, and drops the placement once every such chunk
+//! has been written (ADR-0066).
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use crate::brick::Brick;
 use crate::chunk::Chunk;
@@ -250,11 +255,52 @@ pub(crate) fn blit_into(
     blit(chunk, coord, prefab, lo, clo, chi, None)
 }
 
+/// A stamp's part the world has not written: the rotated prefab, its inclusive voxel box
+/// (minimum corner first), and the chunks it still has to write.
+#[derive(Debug)]
+pub(crate) struct Placement {
+    prefab: Arc<Prefab>,
+    lo: [i64; 3],
+    hi: [i64; 3],
+    remaining: BTreeSet<ChunkCoord>,
+}
+
+/// The store's pending placements in stamp order (a later one wins where two overlap, as at
+/// the stamp), and the chunk writes made from them.
+#[derive(Debug, Default)]
+pub(crate) struct Pending {
+    pub(crate) list: Vec<Placement>,
+    pub(crate) writes: u64,
+}
+
+impl Pending {
+    /// Writes every pending placement that still has to write `coord` into `chunk`, in stamp
+    /// order, and forgets `coord` for each; drops the placements left with nothing to write.
+    /// Marks the chunk edited when a voxel changed, so it is persisted, not regenerated, when it
+    /// leaves residency. Returns whether a voxel changed.
+    pub(crate) fn apply(&mut self, coord: ChunkCoord, chunk: &mut Chunk) -> bool {
+        let mut changed = false;
+        for p in self.list.iter_mut() {
+            if !p.remaining.remove(&coord) {
+                continue;
+            }
+            changed |= blit_into(chunk, coord, &p.prefab, p.lo, p.hi);
+            self.writes += 1;
+        }
+        self.list.retain(|p| !p.remaining.is_empty());
+        if changed {
+            chunk.mark_edited();
+        }
+        changed
+    }
+}
+
 impl World {
     /// Writes `prefab` turned by `rot`, with the rotated volume's minimum corner at `origin`,
     /// and reports what changed. Every masked voxel is written whatever the material flags.
-    /// Fails, changing nothing, with the first chunk (ascending) that holds a masked voxel
-    /// and is not resident.
+    /// The resident chunks the box meets are written now and reported; the rest the prefab
+    /// writes into are kept as one pending placement, written when the streamer inserts each
+    /// (ADR-0066), and not reported.
     ///
     /// Refused with `OutOfRange`, changing nothing, under the world's limits like the other op
     /// kinds: `EditExtent` when the prefab spans more than `edit_axis_max` voxels on an axis
@@ -288,17 +334,19 @@ impl World {
         }
         let o = origin.0.map(i64::from);
 
-        // Residency first, ascending; the map guard lives to the end so no checked chunk can
-        // be evicted before its write.
+        // Resident chunks and the missing ones the prefab writes into, ascending; the map guard
+        // lives to the end so no chunk can be inserted or evicted before its write or before the
+        // placement that will write it is kept.
         let map = read(&self.store.chunks);
         let mut chunks = Vec::new();
+        let mut missing = BTreeSet::new();
         for c in chunks_of(lo, hi) {
             let (clo, chi) = clip_box(c, i64::from(CHUNK_EDGE), lo, hi);
             let coord = ChunkCoord(c.map(|v| v as i32));
             match map.get(&coord) {
                 Some(chunk) => chunks.push((coord, clo, chi, chunk)),
                 None if writes_any(prefab, o, clo, chi) => {
-                    return Err(EditError::NotResident(coord));
+                    missing.insert(coord);
                 }
                 None => {}
             }
@@ -314,6 +362,16 @@ impl World {
                 self.store.mark_dirty(coord);
                 touched.push(coord);
             }
+        }
+        if !missing.is_empty() {
+            crate::store::lock(&self.store.pending)
+                .list
+                .push(Placement {
+                    prefab: Arc::new(prefab.clone()),
+                    lo,
+                    hi,
+                    remaining: missing,
+                });
         }
         drop(map);
         let aabb = tally.aabb();

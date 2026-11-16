@@ -622,6 +622,9 @@ pub struct Args {
     pub vox: Option<crate::structures::VoxArg>,
     /// `--vox-clear on|off`: carve the structure's box to air first (on).
     pub vox_clear: bool,
+    /// `--vox-op`: place `--vox` as ops on the first tick its box is resident, not through the
+    /// source.
+    pub vox_op: bool,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.

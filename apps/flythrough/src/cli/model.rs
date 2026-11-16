@@ -60,5 +60,11 @@ pub(super) fn model_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::switch(
+            &["--vox-op"],
+            "place --vox as logged ops (a box carve, then a stamp per placement) on the first \
+             tick its box is resident, instead of through the cave's source",
+            |p: &mut Parsing| p.args.vox_op = true,
+        ),
     ]
 }
