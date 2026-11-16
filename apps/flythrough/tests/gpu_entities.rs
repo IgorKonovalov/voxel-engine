@@ -202,6 +202,44 @@ fn an_entity_hides_the_wall_behind_it() {
     );
 }
 
+/// Plan 0062 Phase 6d: the frame builds every pipeline a frame that draws an entity uses when
+/// it is created, so the first frame that draws a part creates none. The rig's frame, then a
+/// frame with no entity (the frame the no-entity hit and light pipelines serve), then the
+/// 8-voxel cube of `an_entity_hides_the_wall_behind_it` drawn from the next frame on: the
+/// process's compute-pipeline count (`debug::compute_pipelines_created`, which every compute
+/// pipeline of `vxe-render` passes) is the same after two frames with the part as when the
+/// frame was made, and the part shows (one part drawn; the centre pixel's hit is the entity's).
+#[test]
+fn the_first_frame_with_an_entity_builds_no_pipeline() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let made = vxe_render::debug::compute_pipelines_created();
+    let camera = level_camera(86.0, 26.0);
+    rig.step(&camera);
+    let cube = block([8; 3], red, 1);
+    draw(
+        &mut rig,
+        &[(
+            cube.clone(),
+            posed(&cube, [110.0, 32.0, 26.0], Quat::IDENTITY),
+        )],
+    );
+    rig.step(&camera);
+    rig.step(&camera);
+    let after = vxe_render::debug::compute_pipelines_created();
+    println!("compute pipelines: {made} at the frame's creation, {after} after the part's frames");
+    assert_eq!(after, made, "pipelines built after the frame was made");
+    assert_eq!(rig.frame.entity_mirror().parts_drawn(), 1);
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let centre = pixel_of(&camera, [106.0, 32.0, 26.0]);
+    assert!(
+        entity_hit(0)(&rec[centre]),
+        "the centre pixel's record {:?}",
+        rec[centre]
+    );
+}
+
 /// Phase 2 done-when 2: a world slab between the camera and the part (x 96..98) gives the
 /// slab's albedo at the centre pixel.
 #[test]
@@ -1604,7 +1642,5 @@ fn entity_bytes_are_in_the_inventory() {
     assert_eq!(with - without, 8 << 20);
 }
 
-/// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`), on the adapter
-/// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
-#[path = "gpu_entities/reading.rs"]
-mod reading;
+// The readings' module, `reading`, kept in its own file for the file-size cap.
+include!("gpu_entities/reading.rs");

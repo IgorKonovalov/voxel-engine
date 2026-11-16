@@ -34,6 +34,7 @@ pub mod debug {
     pub use crate::bake::{
         LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally,
     };
+    pub use crate::gpu_util::compute_pipelines_created;
     pub use crate::probes::ProbeRead;
     pub use crate::readback::{
         StepHistogram, f16_to_f32, read_buffer, read_float, read_rgba8, read_rgba16f, read_rgba16u,

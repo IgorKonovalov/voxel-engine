@@ -143,14 +143,15 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         groups: &[W, E, Group::SharedWith(P_TEMPORAL)],
         lazy: true,
     },
-    // The light pass (`shade`), built on the first encode that runs it.
+    // The light pass (`shade`) that walks the entities, built with the frame so the first
+    // frame that draws a part builds nothing.
     PassSpec {
         label: "light",
         modules: LIGHT_MODULES,
         entry: "shade",
         constants: &[("ENTITY_SHADOWS", 1.0)],
         groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16, F16])],
-        lazy: true,
+        lazy: false,
     },
     PassSpec {
         label: "gradient",
@@ -322,14 +323,15 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         lazy: false,
     },
     // The light pass with `ENTITIES` false (`entity.wgsl`): the frame's light pass while no
-    // entity part is drawn ([`Frame::light_pipeline`]).
+    // entity part is drawn ([`Frame::light_pipeline`]),
+    // built with the frame.
     PassSpec {
         label: "light (no entities)",
         modules: LIGHT_MODULES,
         entry: "shade",
         constants: &[("ENTITIES", 0.0)],
         groups: &[W, E, Group::SharedWith(P_LIGHT)],
-        lazy: true,
+        lazy: false,
     },
     // The light pass with `COUNT_STEPS` on, for the steps view, built on its first use.
     PassSpec {
