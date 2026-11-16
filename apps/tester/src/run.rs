@@ -149,13 +149,14 @@ pub fn logged_command(exe: &Path, args: &[String]) -> String {
 /// How a run ended.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
-    /// Exit 0 with a `run.json`: its wall p50 and p95 in ms, its `ended`, and its `lamp`
-    /// (`None` when the file does not name it).
+    /// Exit 0 with a `run.json`: its wall p50 and p95 in ms, its `ended`, its `lamp` and its
+    /// surface's format (each `None` when the file does not name it).
     Ok {
         p50: f64,
         p95: f64,
         ended: String,
         lamp: Option<bool>,
+        surface: Option<String>,
     },
     /// A non-zero exit, a kill, or no readable `run.json`: why, and the log's last lines.
     Failed { why: String, tail: Vec<String> },
@@ -163,7 +164,8 @@ pub enum Outcome {
 
 impl Outcome {
     /// The run's row in the window and `tester.log`: `ok: wall p50 6.2 ms, p95 20.7 ms, lamp
-    /// off` (no lamp part when `run.json` names none) or `failed: exit 101`.
+    /// off, surface Bgra8Unorm` (no lamp or surface part when `run.json` names none) or
+    /// `failed: exit 101`.
     pub fn row(&self) -> String {
         match self {
             Outcome::Ok {
@@ -171,6 +173,7 @@ impl Outcome {
                 p95,
                 ended,
                 lamp,
+                surface,
             } => {
                 let word = if ended == "completed" { "ok" } else { ended };
                 let lamp = match lamp {
@@ -178,7 +181,10 @@ impl Outcome {
                     Some(false) => ", lamp off",
                     None => "",
                 };
-                format!("{word}: wall p50 {p50:.1} ms, p95 {p95:.1} ms{lamp}")
+                let surface = surface
+                    .as_deref()
+                    .map_or_else(String::new, |s| format!(", surface {s}"));
+                format!("{word}: wall p50 {p50:.1} ms, p95 {p95:.1} ms{lamp}{surface}")
             }
             Outcome::Failed { why, .. } => format!("failed: {why}"),
         }
@@ -240,7 +246,7 @@ pub fn run_child(mut cmd: Command, run_dir: &Path) -> io::Result<Outcome> {
     }
 }
 
-/// A `run.json`'s wall p50, p95, `ended` and `lamp`.
+/// A `run.json`'s wall p50, p95, `ended`, `lamp` and `surface.format`.
 fn read_run(path: &Path) -> Result<Outcome, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("no run.json ({e})"))?;
     let v = json::parse(&text).map_err(|e| format!("run.json does not parse: {e}"))?;
@@ -262,6 +268,11 @@ fn read_run(path: &Path) -> Result<Outcome, String> {
             Some("off") => Some(false),
             _ => None,
         },
+        surface: v
+            .get("surface")
+            .and_then(|s| s.get("format"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 

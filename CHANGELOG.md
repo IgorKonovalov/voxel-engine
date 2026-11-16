@@ -7,6 +7,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 ## [Unreleased]
 
 - **Fixed (render): the present pass decodes for an sRGB surface with the exact sRGB curve, not `pow(c, 2.2)`, so every 8-bit value of the marcher's target reaches an sRGB surface as the same byte (`pow 2.2` moved 216 of 256, dark ones by up to 9 steps: 16 to 7).**
+- **Added (app): `pick_surface_format` (8-bit `Bgra8Unorm`/`Rgba8Unorm` of the preferred encoding first, a float format last) and `surface_color_space` (`Srgb` when offered); `Gpu::surface_color_space`; a `surface:` startup line naming the format, colour space, alpha mode and every offered format with its colour spaces.**
+- **Added (flythrough, tester): `run.json`'s `surface` (`format`, `color_space`; schema stays 1, a reader without it reads `null`); the tester's run row and window line name the surface.**
 
 ## [0.55.0] - 2026-11-16
 

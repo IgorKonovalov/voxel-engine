@@ -238,7 +238,7 @@ fn fake_child() {
     }
     eprintln!("fake warning");
     if mode != "nojson" {
-        let json = r#"{"schema": 1, "wall_ms": {"p50": 6.25, "p95": 20.5, "p99": 24.0, "max": 30.0}, "lamp": "off", "ended": "completed"}"#;
+        let json = r#"{"schema": 1, "wall_ms": {"p50": 6.25, "p95": 20.5, "p99": 24.0, "max": 30.0}, "lamp": "off", "surface": {"format": "Bgra8Unorm", "color_space": "Srgb"}, "ended": "completed"}"#;
         std::fs::write(Path::new(&dir).join("run.json"), json).expect("run.json");
     }
     match mode.as_str() {
@@ -274,9 +274,22 @@ fn a_run_reads_ok_with_its_p50_or_failed_with_its_exit_and_tail_and_the_report_s
             p95: 20.5,
             ended: "completed".to_owned(),
             lamp: Some(false),
+            surface: Some("Bgra8Unorm".to_owned()),
         }
     );
-    assert_eq!(ok.row(), "ok: wall p50 6.2 ms, p95 20.5 ms, lamp off");
+    assert_eq!(
+        ok.row(),
+        "ok: wall p50 6.2 ms, p95 20.5 ms, lamp off, surface Bgra8Unorm"
+    );
+    // A `run.json` from before the surface field: no surface part.
+    let older = Outcome::Ok {
+        p50: 6.25,
+        p95: 20.5,
+        ended: "completed".to_owned(),
+        lamp: Some(false),
+        surface: None,
+    };
+    assert_eq!(older.row(), "ok: wall p50 6.2 ms, p95 20.5 ms, lamp off");
     let log = std::fs::read_to_string(ok_dir.join("log.txt")).expect("log.txt");
     assert!(log.contains("fake line 14\n"), "{log}");
     assert!(log.contains("stderr: fake warning\n"), "{log}");
