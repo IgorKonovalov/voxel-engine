@@ -183,3 +183,46 @@ fn the_probe_reads_the_wall_and_the_drop() {
         }
     );
 }
+
+/// The committed vector of direction pairs `vxe-entity`'s `Quat::shortest_arc` shares: 56
+/// seeded pairs and eight special ones (equal, antiparallel, axis, zero).
+fn arc_pairs() -> Vec<([i64; 3], [i64; 3])> {
+    let mut s = 0x0079_A5C0u64;
+    let mut next = || {
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((s >> 33) % 513) as i64 - 256
+    };
+    let mut out: Vec<_> = (0..56)
+        .map(|_| ([next(), next(), next()], [next(), next(), next()]))
+        .collect();
+    out.extend([
+        ([0, 0, 256], [0, 0, 256]),
+        ([0, 0, 256], [0, 0, -256]),
+        ([181, 0, 181], [-181, 0, -181]),
+        ([0, 0, 256], [256, 0, 0]),
+        ([-256, 0, 0], [0, 256, 0]),
+        ([3, -7, 11], [-3, 7, -11]),
+        ([0, 0, 0], [0, 0, 256]),
+        ([1 << 30, 5, 0], [0, 1 << 28, 3]),
+    ]);
+    out
+}
+
+#[test]
+fn the_sim_and_entity_arcs_agree() {
+    let mut h = vxe_world::hash::Fnv1a::default();
+    for (a, b) in arc_pairs() {
+        for c in shortest_arc(a, b) {
+            h.write(&c.to_le_bytes());
+        }
+    }
+    // The same constant is pinned in `vxe-entity`'s `tests/quat.rs`.
+    assert_eq!(
+        h.finish(),
+        0x08ab_b932_e90a_e5ce,
+        "arc hash {:#018x}",
+        h.finish()
+    );
+}

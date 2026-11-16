@@ -61,6 +61,146 @@ impl Quat {
     }
 }
 
+impl Quat {
+    /// `v` rotated by this quaternion, through its Q14 matrix ([`Quat::matrix`]'s rounding).
+    pub fn rotate_vector(self, v: [i64; 3]) -> [i64; 3] {
+        rotate(&self.matrix(), v)
+    }
+
+    /// The rotation taking the model's rest frame (facing `-y`, `+z` up) to the frame whose up
+    /// is `up` and whose forward is `forward` made orthogonal to `up`. Built from the rotation
+    /// matrix whose columns are the images of `+x` (`up x forward`), `+y` (`-forward`) and
+    /// `+z` (`up`), each scaled to Q14 with the integer square root, and converted with the
+    /// branch on the largest of the trace and the diagonal; `w >= 0`. `None` when either
+    /// vector is zero or they are parallel. Components are first reduced below `2^24`.
+    pub fn from_frame(forward: [i64; 3], up: [i64; 3]) -> Option<Quat> {
+        let (f, u) = (reduce(forward), reduce(up));
+        if dot(f, f) == 0 || dot(u, u) == 0 || cross(f, u) == [0; 3] {
+            return None;
+        }
+        let one = i64::from(Q14_ONE);
+        let u = unit(u, one);
+        let f = unit(project(f, u), one);
+        let x = unit(cross(u, f), one);
+        if f == [0; 3] || x == [0; 3] {
+            return None;
+        }
+        // Columns: the images of +x, +y and +z.
+        let cols = [x, f.map(|c| -c), u];
+        let m = |r: usize, c: usize| i128::from(cols[c][r]);
+        let s = i128::from(one);
+        let trace = m(0, 0) + m(1, 1) + m(2, 2);
+        let q = if trace >= m(0, 0) && trace >= m(1, 1) && trace >= m(2, 2) {
+            [
+                s + trace,
+                m(2, 1) - m(1, 2),
+                m(0, 2) - m(2, 0),
+                m(1, 0) - m(0, 1),
+            ]
+        } else if m(0, 0) >= m(1, 1) && m(0, 0) >= m(2, 2) {
+            [
+                m(2, 1) - m(1, 2),
+                s + m(0, 0) - m(1, 1) - m(2, 2),
+                m(0, 1) + m(1, 0),
+                m(0, 2) + m(2, 0),
+            ]
+        } else if m(1, 1) >= m(2, 2) {
+            [
+                m(0, 2) - m(2, 0),
+                m(0, 1) + m(1, 0),
+                s - m(0, 0) + m(1, 1) - m(2, 2),
+                m(1, 2) + m(2, 1),
+            ]
+        } else {
+            [
+                m(1, 0) - m(0, 1),
+                m(0, 2) + m(2, 0),
+                m(1, 2) + m(2, 1),
+                s - m(0, 0) - m(1, 1) + m(2, 2),
+            ]
+        };
+        let q = if q[0] < 0 { q.map(|c| -c) } else { q };
+        Some(normalise(q))
+    }
+
+    /// The rotation taking direction `a` to direction `b`: `w = |a||b| + a . b`,
+    /// `(x, y, z) = a x b`, normalised to Q14 with each component rounded half away from zero.
+    /// For `a == -b` a half turn about `e_k - a (a_k) / |a|²`, with `e_k` the axis direction of
+    /// lowest index not parallel to `a` (the axis itself when `a` is perpendicular to it). The
+    /// identity when either is zero. Components are first reduced below `2^24`.
+    ///
+    /// `vxe_sim`'s surface mover carries a copy of this rule (its only dependency is
+    /// `vxe-world`); a committed vector of direction pairs hashes to one constant in a test of
+    /// each crate, so the two cannot drift.
+    pub fn shortest_arc(a: [i64; 3], b: [i64; 3]) -> Quat {
+        let (a, b) = (reduce(a), reduce(b));
+        let (la, lb) = (dot(a, a), dot(b, b));
+        if la == 0 || lb == 0 {
+            return Self::IDENTITY;
+        }
+        let ab = isqrt((la * lb).cast_unsigned()).cast_signed();
+        let w = ab + dot(a, b);
+        let xyz = cross128(a.map(i128::from), b.map(i128::from));
+        let q = if w <= 0 || xyz == [0; 3] && dot(a, b) < 0 {
+            let k = (0..3)
+                .find(|&k| {
+                    let mut e = [0i64; 3];
+                    e[k] = 1;
+                    cross(a, e) != [0; 3]
+                })
+                .unwrap_or(0);
+            let axis = [0, 1, 2].map(|j| {
+                let e = if j == k { la } else { 0 };
+                e - i128::from(a[j]) * i128::from(a[k])
+            });
+            [0, axis[0], axis[1], axis[2]]
+        } else {
+            [w, xyz[0], xyz[1], xyz[2]]
+        };
+        normalise(q)
+    }
+}
+
+fn dot(a: [i64; 3], b: [i64; 3]) -> i128 {
+    (0..3).map(|k| i128::from(a[k]) * i128::from(b[k])).sum()
+}
+
+fn cross128(a: [i128; 3], b: [i128; 3]) -> [i128; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn cross(a: [i64; 3], b: [i64; 3]) -> [i64; 3] {
+    cross128(a.map(i128::from), b.map(i128::from)).map(|c| c as i64)
+}
+
+/// Shifts `v` right until every component is under `2^24` in magnitude.
+fn reduce(mut v: [i64; 3]) -> [i64; 3] {
+    while v.iter().any(|c| c.unsigned_abs() >= 1 << 24) {
+        v = v.map(|c| c >> 1);
+    }
+    v
+}
+
+/// `v` scaled to length `len`, rounded half away from zero; zero for zero.
+fn unit(v: [i64; 3], len: i64) -> [i64; 3] {
+    let n = isqrt(dot(v, v).cast_unsigned()).cast_signed();
+    if n == 0 {
+        return [0; 3];
+    }
+    v.map(|c| div_round(i128::from(c) * i128::from(len), n) as i64)
+}
+
+/// `v` without its component along the unit-scaled `n`, rounded half away from zero.
+fn project(v: [i64; 3], n: [i64; 3]) -> [i64; 3] {
+    let nn = dot(n, n);
+    let d = dot(v, n);
+    [0, 1, 2].map(|k| (i128::from(v[k]) - div_round(i128::from(n[k]) * d, nn)) as i64)
+}
+
 impl std::ops::Mul for Quat {
     type Output = Self;
 
@@ -100,6 +240,11 @@ pub(crate) fn nlerp(a: Quat, b: Quat, num: i64, den: i64) -> Quat {
 
 /// Scales a quaternion given at any fixed-point scale to unit length in Q14.
 fn normalise(q: [i128; 4]) -> Quat {
+    // Bring the components under 2^60 so their squares sum inside `i128`.
+    let mut q = q;
+    while q.iter().any(|c| c.unsigned_abs() >= 1 << 60) {
+        q = q.map(|c| c >> 1);
+    }
     let n2: i128 = q.iter().map(|c| c * c).sum();
     if n2 == 0 {
         return Quat::IDENTITY;

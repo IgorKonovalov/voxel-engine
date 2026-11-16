@@ -136,6 +136,7 @@ pub fn surface_params() -> SurfaceParams {
         speed_max: 1024,
         gravity: -16,
         max_fall: 1024,
+        smooth: false,
     }
 }
 

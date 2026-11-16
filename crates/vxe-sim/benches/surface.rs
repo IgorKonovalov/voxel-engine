@@ -1,4 +1,5 @@
-//! The surface mover's budget (`nfr.md`, collision and coarse grids): one tick attached on
+//! The surface mover's budget (`nfr.md`, collision and coarse grids), the smoothed normal
+//! on: one tick attached on
 //! the F1 floor, one tick rounding the cube's top edge, and one `probe_ahead` on F2. The
 //! fixtures are the integration tests'.
 
@@ -7,7 +8,7 @@ mod support;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use support::*;
-use vxe_sim::{SurfaceInput, SurfaceMover, SurfaceState, probe_ahead};
+use vxe_sim::{SurfaceInput, SurfaceMover, SurfaceParams, SurfaceState, probe_ahead};
 use vxe_world::Fixed3;
 
 const CRAWL: SurfaceInput = SurfaceInput {
@@ -16,7 +17,10 @@ const CRAWL: SurfaceInput = SurfaceInput {
 };
 
 fn tick_on(c: &mut Criterion, name: &str, world: &vxe_world::World, start: SurfaceState) {
-    let m = SurfaceMover::new(surface_params());
+    let m = SurfaceMover::new(SurfaceParams {
+        smooth: true,
+        ..surface_params()
+    });
     c.bench_function(name, |b| {
         b.iter_batched(
             || start,

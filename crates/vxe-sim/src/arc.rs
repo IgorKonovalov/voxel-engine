@@ -48,14 +48,16 @@ pub(crate) fn length(v: [i64; 3]) -> i64 {
 }
 
 /// `v` scaled to length [`DIR_ONE`], each component rounded to nearest: exact for an axis
-/// direction. Zero for zero.
+/// direction. The length is taken at 256 times the scale (the floor of the root of
+/// `|v|² 2^16`), so a short vector such as a small gradient normalises to within a unit.
+/// Zero for zero.
 pub fn normalise(v: [i64; 3]) -> [i64; 3] {
     let v = reduce(v);
-    let len = i128::from(length(v));
+    let len = isqrt((dot(v, v) << 16) as u128) as i128;
     if len == 0 {
         return [0; 3];
     }
-    v.map(|c| rdiv(i128::from(c) * i128::from(DIR_ONE), len) as i64)
+    v.map(|c| rdiv(i128::from(c) * i128::from(DIR_ONE) * 256, len) as i64)
 }
 
 /// `v` without its component along `n`: `v - n (v . n) / |n|²`, rounded to nearest. Zero

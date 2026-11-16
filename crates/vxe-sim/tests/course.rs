@@ -96,7 +96,14 @@ fn the_course_hashes_to_the_pinned_constant() {
 }
 
 fn feed_surface(h: &mut Fnv1a, s: &SurfaceState, r: &SurfaceResult) {
-    for v in s.centre.0.iter().chain(&s.normal).chain(&s.forward) {
+    for v in s
+        .centre
+        .0
+        .iter()
+        .chain(&s.normal)
+        .chain(&s.smooth_normal)
+        .chain(&s.forward)
+    {
         h.write(&v.to_le_bytes());
     }
     h.write(&s.vz.to_le_bytes());
@@ -127,10 +134,10 @@ fn feed_surface(h: &mut Fnv1a, s: &SurfaceState, r: &SurfaceResult) {
 /// A fixture's name, world and the crawler's start centre.
 type SurfaceStart = (&'static str, fn() -> vxe_world::World, [i64; 3]);
 
-/// The surface course: a crawler on each of F1 to F6, 600 ticks each, at a quarter voxel a tick
-/// zigzagging along +x (turning left and right in 30-tick halves); at tick 300 a sphere of 3 voxels is carved under
-/// it. Every tick's state and result is hashed with FNV-1a 64; the constant is blessed on
-/// Linux and asserted on every CI arm.
+/// The surface course: a crawler on each of F1 to F6, 600 ticks each, at a quarter voxel a
+/// tick, turning left and right in 30-tick halves; at tick 300 a sphere of 3 voxels is carved
+/// under it; the smoothed normal is on. Every tick's state and result is hashed with FNV-1a
+/// 64; the constant is blessed on Linux and asserted on every CI arm.
 #[test]
 fn the_surface_course_hashes_to_the_pinned_constant() {
     let starts: [SurfaceStart; 6] = [
@@ -141,7 +148,10 @@ fn the_surface_course_hashes_to_the_pinned_constant() {
         ("F5", f5, [13952, 13952, -1792]),
         ("F6", f6, [12928, 2688, 256]),
     ];
-    let m = SurfaceMover::new(surface_params());
+    let m = SurfaceMover::new(SurfaceParams {
+        smooth: true,
+        ..surface_params()
+    });
     let mut h = Fnv1a::default();
     let mut per_fixture = Vec::new();
     for (name, make, start) in starts {
@@ -171,7 +181,7 @@ fn the_surface_course_hashes_to_the_pinned_constant() {
     }
     assert_eq!(
         h.finish(),
-        0xb844_f4ee_18dc_3b04,
+        0x0a07_c86c_51f9_8d3c,
         "surface course hash {:#018x}",
         h.finish()
     );

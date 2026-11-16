@@ -18,11 +18,13 @@
 //!    fastest fall, and a sweep along it; a contact attaches the body with the contact's
 //!    normal and reports the landing speed.
 //!
+//! An attached tick ends by reading the smoothed normal ([`SurfaceState::smooth_normal`]).
+//!
 //! A body that starts a tick overlapping solid (an edit filled into it) is first moved to the
 //! first free offset of the controller's candidate order, or left where it is and reported
 //! embedded. Gravity is the world's `-z`. Every quantity is an integer.
 
-use vxe_world::{Fixed3, World};
+use vxe_world::{FIXED_ONE, Fixed3, VoxelCoord, World};
 
 use crate::arc::{DIR_ONE, cross, length, normalise, project, rdiv, rotate, shortest_arc};
 use crate::body::{Contact, Sphere};
@@ -41,6 +43,9 @@ pub struct SurfaceParams {
     pub gravity: i64,
     /// The fastest fall, as a positive speed.
     pub max_fall: i64,
+    /// Read the smoothed normal each attached tick ([`SurfaceState::smooth_normal`]); off,
+    /// it is the contact normal.
+    pub smooth: bool,
 }
 
 /// A surface body's motion state between ticks.
@@ -49,6 +54,13 @@ pub struct SurfaceState {
     pub centre: Fixed3,
     /// The contact normal, solid toward air, length [`DIR_ONE`] (exact on an axis).
     pub normal: [i64; 3],
+    /// The surface's normal smoothed at the body's scale, length [`DIR_ONE`]: the
+    /// solid-count gradient ([`World::solid_gradient`]) at the air voxel holding the contact
+    /// point pushed half a voxel along the normal, over a cube of half-width `radius / 256`
+    /// (at least 1). The contact normal where the gradient is zero, the query is refused or
+    /// [`SurfaceParams::smooth`] is off; kept while detached. For aligning a body's pose; the
+    /// motion follows the contact normal.
+    pub smooth_normal: [i64; 3],
     /// The direction of motion in the tangent plane, length [`DIR_ONE`].
     pub forward: [i64; 3],
     pub attached: bool,
@@ -64,6 +76,7 @@ impl SurfaceState {
         Self {
             centre,
             normal,
+            smooth_normal: normal,
             forward: tangent(forward, normal),
             attached: true,
             vz: 0,
@@ -215,6 +228,24 @@ impl SurfaceMover {
         true
     }
 
+    /// The smoothed normal at `state`'s contact ([`SurfaceState::smooth_normal`]).
+    fn smooth_normal(&self, world: &World, state: &SurfaceState) -> [i64; 3] {
+        if !self.params.smooth {
+            return state.normal;
+        }
+        let r = self.params.radius;
+        let p = add(
+            state.centre.0,
+            along(state.normal.map(|v| -v), r - FIXED_ONE / 2),
+        );
+        let voxel = VoxelCoord(p.map(|v| v.div_euclid(FIXED_ONE) as i32));
+        let half = (r / FIXED_ONE).max(1) as u32;
+        match world.solid_gradient(voxel, half) {
+            Ok(g) if g != [0; 3] => normalise(g),
+            _ => state.normal,
+        }
+    }
+
     /// Advances `state` by one tick of `input` and reports what happened (the module's order).
     pub fn tick(
         &self,
@@ -295,6 +326,9 @@ impl SurfaceMover {
             }
         }
         state.centre = Fixed3(c);
+        if state.attached {
+            state.smooth_normal = self.smooth_normal(world, state);
+        }
         r.moved = Fixed3([0, 1, 2].map(|k| c[k] - start[k]));
         r
     }
