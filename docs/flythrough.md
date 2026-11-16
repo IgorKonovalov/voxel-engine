@@ -95,6 +95,8 @@ the same rows.
 | `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
 | `F11` | Toggle whether the walkers walk or hold still |
 | `F12` | Toggle the walkers' eye lights |
+| `Left`, `Right` | With `--model`: the clip before and after |
+| `Down` | With `--model`: pause or play the clip |
 
 ### The light queue
 
@@ -245,6 +247,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
 | `--entities N` | Start with `N` walkers (voxel-model entities) on a 3 m ring around the spawn [0] |
 | `--entities-walk on\|off` | The walkers start walking, as `F11` sets them [off] |
+| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): `` ` `` and `--entities N` place it in place of the walker; a saved change to either file reloads |
+| `--clip NAME` | The `--model` clip to play first [the rig's first] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |
@@ -343,10 +347,13 @@ A loop is seamless when its ticks fill whole frames (`ticks * fps / rate` whole)
 says so when they do not. The lighting is the hero's: lamp and bounce off, probes at 32.
 
 `scripts/record-screen.sh` is the fallback for a scene that needs hands on the controls: start
-the fly-through in a window yourself, then run it. It counts down in a desktop notification,
-dismisses the notifications (`makoctl`, when installed), records a monitor with
-`gpu-screen-recorder` for `--seconds` (10), stops it with SIGINT and hands the video to
-`record-clip.sh --input`. It never closes, moves or focuses a window. `--monitor NAME` picks
-the monitor (the first `gpu-screen-recorder --list-capture-options` names by default), `--countdown N` the
-countdown (5), `--keep-raw` keeps the recording, and `--format`, `--width`, `--fps`, `--crop`,
-`--colors` and `--crf` go to the encode.
+the fly-through in a window yourself, then run it. It counts down in desktop notifications that
+expire after 1.5 s, the last at `--quiet` seconds (3) before the recording starts so that none
+is on screen at its first frame, dismisses any others (`makoctl`, when installed), records a
+monitor with `gpu-screen-recorder` for `--seconds` (10), stops it with SIGINT and hands the
+video to `record-clip.sh --input`. It never closes, moves or focuses a window. `--monitor NAME`
+picks the monitor (the first `gpu-screen-recorder --list-capture-options` names by default),
+`--countdown N` the countdown with the quiet gap in it (6), `--keep-raw` keeps the recording,
+`--dry-run` prints the schedule and the commands and records nothing, and `--format`,
+`--width`, `--fps`, `--crop` (in screen pixels, `W:H:X:Y`), `--colors` and `--crf` go to the
+encode.
