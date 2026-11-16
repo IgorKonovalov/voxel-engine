@@ -256,9 +256,10 @@ between two ticks the done-when says so and the log states which.
      unchanged.
   4. `a_walker_falls_into_the_hole_dug_under_it` (`tests/controller.rs`): on F1, the fixtures'
      body standing at foot `(10, 10, 0)` voxels, grounded after one tick; a `Carve` of
-     `Shape::Sphere` of radius 768 centred at the centre of voxel `(10, 10, -1)` (`(2688, 2688,
-     -128)`: the voxel centres within 3 voxels go to air, a crater four voxels deep under the
-     body and one voxel wide at its bottom) is followed by ticks: the next tick's result reads
+     `Shape::Sphere` of radius 1024 centred at the centre of voxel `(10, 10, -1)` (`(2688, 2688,
+     -128)`: the voxel centres within 4 voxels go to air, a crater wider than the body; radius
+     768, the body's own, leaves a rim the flat-bottomed cylinder rests on. Amended 2026-11-16
+     (owner)) is followed by ticks: the next tick's result reads
      `grounded == false`; within 30 ticks `landed` is `Some`, the foot's `z` is at most -256
      (inside the crater; how deep depends on the fixtures' body radius against the crater's
      taper, so the depth is read, not asserted) and the body overlaps nothing (the fixtures'
