@@ -185,10 +185,6 @@ impl Run {
             "frame created, {} B of targets",
             frame.frame_bytes()
         ));
-        // A walker may be placed on any frame, so the entity pipelines are built now, inside
-        // the start-up, and the frame that draws the first part builds none.
-        frame.prepare_entities(&gpu.device);
-        diag(format_args!("entity pipelines built"));
         frame.set_probe_spacing(&gpu.device, self.args.light.probe_spacing);
         frame.set_jitter(&gpu.device, jitter);
         frame.set_upscaler_kind(&gpu.device, kind);

@@ -1,5 +1,7 @@
-//! Start-up as stages of steps (ADR-0059): the level's first upload or the streamed world's
-//! near residency, the light pre-roll ([`vxe_render::PreRoll`]) and the field's initial fill.
+//! Start-up as stages of steps (ADR-0059): the entity pipelines built ahead of the first
+//! frame that draws a part ([`vxe_render::Frame::prepare_entities`], one blocking step), the
+//! level's first upload or the streamed world's near residency, the light pre-roll
+//! ([`vxe_render::PreRoll`]) and the field's initial fill.
 //! Under `--loading-screen off` [`Run::load_all`] steps them to the end inside `init`; under
 //! `on` each frame spends `--load-slice` of wall time on steps, then draws a loading frame and
 //! returns without touching any per-frame world path (the frame counter, the path player, the
@@ -27,6 +29,7 @@ use vxe_world::ChunkCoord;
 pub(crate) const PRE_ROLL_CAP_MS: f64 = 120_000.0;
 
 /// The stages' names, as the loading frame and the `loading frame` diag lines show them.
+pub(crate) const PIPELINES: &str = "building the entity pipelines";
 pub(crate) const UPLOAD: &str = "uploading the level";
 pub(crate) const RESIDENCY: &str = "streaming the near chunks";
 pub(crate) const NEAR: &str = "lighting the near chunks";
@@ -37,7 +40,11 @@ pub(crate) const FIELD: &str = "filling the field";
 /// 1280 x 720: the streamed cave's and the castle's near residency about 5 % and the
 /// showcase's upload 2 %, the near chunks' light 23 to 30 % (63 % on the showcase), the coarse
 /// pass 66 to 72 % (boxed at 5 s; 28 % on the showcase), the field's fill under 1 % in the
-/// default look.
+/// default look. Ahead of them the entity pipelines: 5.7 to 9.8 s when the driver compiles
+/// them (about 45 % of the castle's and the cave's loading, 75 % of the showcase's), 70 to
+/// 110 ms from a warm shader cache; the weight is the compiled case's, so the bar's jump at
+/// the stage's end matches the wait it follows (the weights below sum to about 1).
+pub(crate) const PIPELINES_WEIGHT: f32 = 0.8;
 pub(crate) const UPLOAD_WEIGHT: f32 = 0.03;
 pub(crate) const RESIDENCY_WEIGHT: f32 = 0.05;
 pub(crate) const NEAR_WEIGHT: f32 = 0.30;
@@ -78,6 +85,9 @@ pub(crate) struct PreRollRun {
 
 /// The stage being stepped.
 pub(crate) enum Stage {
+    /// The entity pipelines' build, one step that blocks for its whole time (pipeline
+    /// creation is synchronous on the device), then the stage it holds.
+    Pipelines(Box<Stage>),
     Upload(Upload),
     Residency(Residency),
     PreRoll(Box<PreRollRun>),
@@ -122,6 +132,7 @@ impl Loading {
     /// The current stage's name.
     fn stage_name(&self) -> &'static str {
         match &self.stage {
+            Stage::Pipelines(_) => PIPELINES,
             Stage::Upload(_) => UPLOAD,
             Stage::Residency(_) => RESIDENCY,
             Stage::PreRoll(p) => match p.pre.state() {
@@ -143,7 +154,7 @@ impl Loading {
                 PreRollState::Coarse { passed, of } => format!("{passed} / {of} chunks"),
                 PreRollState::Done(s) => format!("{} chunks", s.baked),
             },
-            Stage::Field | Stage::Done => String::new(),
+            Stage::Pipelines(_) | Stage::Field | Stage::Done => String::new(),
         }
     }
 
@@ -187,14 +198,15 @@ pub(crate) fn scene_title(args: &Args) -> String {
     }
 }
 
-/// The stages a run loads through, with their weights: the level's upload or the streamed
-/// near residency, the pre-roll's two, and the field's fill when the run starts in the field.
+/// The stages a run loads through, with their weights: the entity pipelines, the level's
+/// upload or the streamed near residency, the pre-roll's two, and the field's fill when the run starts in the field.
 pub(crate) fn load_stages(streamed: bool, field: bool) -> Vec<(&'static str, f32)> {
-    let mut v = vec![if streamed {
+    let mut v = vec![(PIPELINES, PIPELINES_WEIGHT)];
+    v.push(if streamed {
         (RESIDENCY, RESIDENCY_WEIGHT)
     } else {
         (UPLOAD, UPLOAD_WEIGHT)
-    }];
+    });
     v.push((NEAR, NEAR_WEIGHT));
     v.push((COARSE, COARSE_WEIGHT));
     if field {
@@ -204,7 +216,8 @@ pub(crate) fn load_stages(streamed: bool, field: bool) -> Vec<(&'static str, f32
 }
 
 impl Run {
-    /// Loading's start: the first stage, the level's upload or the streamed near residency.
+    /// Loading's start: the entity pipelines, then the level's upload or the streamed near
+    /// residency.
     /// Under the screen the first stage's syncs take a time budget of the slice, so no step
     /// holds a loading frame for a whole upload; the run's own budget is restored when the
     /// pre-roll starts.
@@ -246,7 +259,7 @@ impl Run {
             Stage::Upload(Upload::default())
         };
         Loading {
-            stage,
+            stage: Stage::Pipelines(Box::new(stage)),
             progress: LoadProgress::new(&load_stages(streamed, field)),
             screen: screen.then(|| {
                 drawn.unwrap_or_else(|| {
@@ -286,6 +299,15 @@ impl Run {
         };
         let stage = std::mem::replace(&mut loading.stage, Stage::Done);
         loading.stage = match stage {
+            Stage::Pipelines(next) => {
+                // A walker may be placed on any frame, so the entity pipelines are built
+                // before the first world frame, and the frame that draws the first part
+                // builds none.
+                gfx.frame.prepare_entities(&gpu.device);
+                diag(format_args!("entity pipelines built"));
+                loading.progress.next();
+                *next
+            }
             Stage::Upload(u) => self.upload_step(gpu, &mut gfx, u, loading),
             Stage::Residency(r) => self.residency_step(gpu, &mut gfx, r, loading),
             Stage::PreRoll(p) => self.pre_roll_stage(gpu, &mut gfx, p, loading),
@@ -696,7 +718,10 @@ impl Run {
             loading.intervals.push(ms);
             ms * 1e-3
         });
-        while !loading.done() && ms_since(t0) < loading.slice_ms {
+        // The pipelines' one blocking step waits for a loading frame that names it, so the
+        // screen shows what the start-up is waiting on.
+        let named = loading.frames > 0 || !matches!(loading.stage, Stage::Pipelines(_));
+        while named && !loading.done() && ms_since(t0) < loading.slice_ms {
             self.load_step(gpu, &mut loading);
         }
         if self.failure.is_some() {
@@ -801,17 +826,21 @@ fn draw_loading(gpu: &Gpu, surface: &wgpu::TextureView, loading: &mut Loading, a
 
 #[cfg(test)]
 mod tests {
-    use super::{COARSE, FIELD, NEAR, RESIDENCY, UPLOAD, load_stages};
+    use super::{COARSE, FIELD, NEAR, PIPELINES, RESIDENCY, UPLOAD, load_stages};
 
-    /// A level loads through its upload, a streamed world through its near residency, then
+    /// A run first builds the entity pipelines; then a level loads through its upload, a
+    /// streamed world through its near residency, then
     /// the pre-roll's two stages, then the field's fill when the run starts in the field.
     #[test]
     fn the_stages_follow_the_world_and_the_look() {
         let names = |s: Vec<(&'static str, f32)>| s.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-        assert_eq!(names(load_stages(false, false)), [UPLOAD, NEAR, COARSE]);
+        assert_eq!(
+            names(load_stages(false, false)),
+            [PIPELINES, UPLOAD, NEAR, COARSE]
+        );
         assert_eq!(
             names(load_stages(true, true)),
-            [RESIDENCY, NEAR, COARSE, FIELD]
+            [PIPELINES, RESIDENCY, NEAR, COARSE, FIELD]
         );
     }
 }

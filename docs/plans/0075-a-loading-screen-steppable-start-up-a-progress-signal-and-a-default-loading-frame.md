@@ -389,6 +389,9 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
   screen on or off (the camera's chunk never settles); seen while sizing the streamed test,
   not acted on.
 - The window's title stays `flythrough`; the `--tester` title is the loading frame's row.
+- After the merge of main (Plan 0062), `Frame::prepare_entities` is the first loading stage,
+  one blocking step (`docs/plans/logs/0075.md`, the merge's section); the loading frame does
+  not turn during it (5.7 to 9.8 s on the RTX when the driver compiles, 70 to 110 ms cached).
 
 ### Close triggers
 
