@@ -100,6 +100,10 @@ reading against a new `nfr.md` line.
 
 Pick up when the lighting base is settled: Plans 0056, 0057 and 0058 closed.
 
+### Hundreds or thousands of entities
+
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. Pick up when a consumer needs more than 64 on screen.
+
 ### Darker scenes, and light intensity varied by seed
 
 Noted 2026-11-15, the owner, after the darker Windows image: "it was a nice scene, we should

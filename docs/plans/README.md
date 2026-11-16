@@ -71,12 +71,15 @@ Each starts on main after the one before it closes, unless its line says otherwi
      tagged release; ADR-0054 accepted).
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
+   **Reordered 2026-11-16 (owner):** Plan 0069 starts once Plans 0062 and 0063 have merged, and
+   Plan 0032 follows it directly, both beside Plans 0080, 0078, 0077 and 0079. Plan 0071, Plan
+   0073 and the `own` removal no longer hold M10; they follow 0069 in their own order.
 
 **Plans from the architecture review of 2026-11-12** (`../reviews/2026-11-12-architecture-review.md`),
 approved by the owner on 2026-11-12 ("45 after 67, 70 after 45. all draft plans can be
 approved"): **Plan 0070** (the sync off the frame), closed 2026-11-13 (v0.52.0), taking
 Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51.0);
-**Plan 0071** (the consumer's path) after Plans 0045, 0069 and 0044's Phase 8, before M10.
+**Plan 0071** (the consumer's path) after Plans 0045, 0069 and 0044's Phase 8 (no longer before M10: owner, 2026-11-16).
 
 **Plan 0073** (a settings menu and file for the fly-through and the tester, approved 2026-11-12 with every recommendation): after Plans 0069 and 0071, and after Plan 0080, whose menu its settings pages live in (amended 2026-11-16, the owner's go).
 
