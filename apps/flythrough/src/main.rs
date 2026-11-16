@@ -26,6 +26,12 @@ fn main() {
         println!("flythrough: arguments ok");
         return;
     }
+    if let Some(path) = &args.model
+        && let Err(e) = flythrough::viewer::Viewer::open(path, args.clip.clone())
+    {
+        eprintln!("flythrough: {e}");
+        std::process::exit(2);
+    }
     let app = flythrough::setup::flythrough(start, args);
     let result = flythrough::app::run(app);
     log::info!("teardown: done, exiting the process");

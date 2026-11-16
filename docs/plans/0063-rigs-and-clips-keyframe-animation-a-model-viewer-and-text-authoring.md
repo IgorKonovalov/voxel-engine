@@ -1,7 +1,7 @@
 # 0063: Rigs and clips: keyframe animation sampled by tick, a rig text file beside the `.vox`, a model viewer in the fly-through, and voxels from text
 
-> **Status:** in-progress (Phases 1 and 2, stacked on `plan-0062` at bc80246; Phases 3 and 4
-> after Plan 0062 closes)
+> **Status:** in-progress (Phases 1 to 3 done; Phase 3 stacked on `plan-0062` at 0fe6a257;
+> Phase 4, the owner's window, next)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -368,8 +368,8 @@ Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Clips in `vxe-entity` | dev | done | 7aed6b7 |
-| 2: The `.rig` file and voxels from text | dev | done | committed with this row |
-| 3: The viewer, display interpolation and a sample model | dev | not started | |
+| 2: The `.rig` file and voxels from text | dev | done | 5c87d16 |
+| 3: The viewer, display interpolation and a sample model | dev | done | committed with this row |
 | 4: The owner's window | human | not started | |
 
 ### Notes
@@ -388,6 +388,17 @@ each. Empty is fine.)_
   `names: Default::default()` each, outside the phase's files). The `.rig` grammar adds
   `move x y z` on a key, `at` measured in the parent's model voxels, and parents declared
   later in the file; `.voxtext` is `color` / `model <name> [at x y z]` / `layer` / rows.
+- Phase 3: names and files per the readings log. The clip keys are `ArrowLeft`/`ArrowRight`/
+  `ArrowDown` (the plan's `[`, `]` and `\` are bound in the tree) and placing is `` ` `` (the
+  tree's walker key, not `7`). The display variant is `Frame::set_entity_displays`; `between`
+  returns `Option`. A rig material name also matches a row with `_` read as a space. The golden
+  went into `gpu_entities.rs`; the CPU reading into `tests/viewer.rs`'s `mod reading`.
+  `crates/vxe-assets/src/rig.rs`'s doc example redrawn z-up (the Phases 1-2 review's owed item;
+  outside the phase's files).
+- Phase 3, done-when 6: `DisplayPose::between` for 64 sixteen-part entities reads 15.1 ms on
+  the dev box against the plan's guess of 0.05 ms; `sample` reads 0.15 ms. The cost is Plan
+  0062's `PartXform::of`, which composes the whole pose once per `part_point` call (four per
+  part). Not acted on: the fix reaches `vxe-entity` (a one-pass composition).
 
 ### Close triggers
 

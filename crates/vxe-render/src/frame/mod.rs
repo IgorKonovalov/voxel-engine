@@ -519,6 +519,21 @@ impl Frame {
         self.entities.set_entities(queue, set, list);
     }
 
+    /// [`Frame::set_entities`] with each entity's parts placed by a [`crate::DisplayPose`]
+    /// (between two ticks, say) in place of a pose in a set
+    /// ([`crate::EntityMirror::set_entity_displays`]).
+    pub fn set_entity_displays(
+        &mut self,
+        queue: &wgpu::Queue,
+        list: &[(
+            vxe_entity::EntityId,
+            crate::ModelHandle,
+            &crate::DisplayPose,
+        )],
+    ) {
+        self.entities.set_entity_displays(queue, list);
+    }
+
     /// Entities the last [`Frame::set_entities`] was given and did not draw.
     pub fn entities_over_cap(&self) -> usize {
         self.entities.entities_over_cap()
