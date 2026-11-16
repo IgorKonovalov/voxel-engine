@@ -6,9 +6,9 @@ use vxe_render::wgpu::naga::{self, Block, Expression, Statement, TypeInner};
 /// Every shader the renderer compiles: the composed compute sources from the renderer's own
 /// list (`internals::shader_sources`, built from the pass tables and the bake's composer), and
 /// every `.wgsl` file under `src/shaders/` (subdirectories included) whose text no composed
-/// source holds, read alone (the HUD's and the present pass's render sources). A new module
-/// that no pass composes is read alone too, and fails to parse without its prelude, so no
-/// shader file is missed.
+/// source holds, read alone (the HUD's, the loading frame's and the present pass's render
+/// sources). A new module that no pass composes is read alone too, and fails to parse without
+/// its prelude, so no shader file is missed.
 fn shaders() -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = vxe_render::internals::shader_sources()
         .into_iter()
@@ -50,7 +50,7 @@ fn shader_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// The files read alone are exactly the two render sources that join no module: every other
+/// The files read alone are exactly the three render sources that join no module: every other
 /// shader file is held by a composed source.
 #[test]
 fn every_shader_file_is_composed_or_read_alone() {
@@ -66,7 +66,7 @@ fn every_shader_file_is_composed_or_read_alone() {
                 .into_owned()
         })
         .collect();
-    assert_eq!(alone, ["hud.wgsl", "present.wgsl"]);
+    assert_eq!(alone, ["hud.wgsl", "loading.wgsl", "present.wgsl"]);
 }
 
 /// FXC, the D3D12 HLSL compiler, rejects a store to a vector component chosen at run time

@@ -2,7 +2,7 @@
 //! diagnostics that read it.
 
 use super::flags::Parsing;
-use super::table::Flag;
+use super::table::{Flag, Section};
 
 /// The wall time a loading frame spends on start-up steps before it draws, in ms.
 pub(crate) const LOAD_SLICE_MS: f64 = 25.0;
@@ -39,6 +39,20 @@ impl LoadingArgs {
     pub(crate) fn screen_on(&self, headless: bool) -> bool {
         self.screen.unwrap_or(!headless)
     }
+}
+
+/// The help's Loading and Diagnostics sections.
+pub(crate) fn sections() -> [Section<Parsing>; 2] {
+    [
+        Section {
+            title: "Loading",
+            flags: loading_flags(),
+        },
+        Section {
+            title: "Diagnostics",
+            flags: diagnostic_flags(),
+        },
+    ]
 }
 
 /// The loading screen's rows.
