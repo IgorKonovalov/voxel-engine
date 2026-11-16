@@ -53,3 +53,8 @@ harness = false
 [[example]]
 name = "hero"
 test = true
+
+# The clip recorder's frame arithmetic and argument tests run with the rest of the testbed's.
+[[example]]
+name = "clip"
+test = true

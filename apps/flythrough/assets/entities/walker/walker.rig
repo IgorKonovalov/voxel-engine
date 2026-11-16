@@ -1,5 +1,5 @@
 # The fly-through's sample walker (Plan 0063): six parts on walker.vox, z up, facing -y.
-#   flythrough --model apps/flythrough/assets/walker.rig --clip walk
+#   flythrough --model apps/flythrough/assets/entities/walker/walker.rig --clip walk
 # Lengths are in model voxels (two to a world voxel at detail 2); `at` is a pivot's rest place
 # from its parent's pivot, in the parent's model voxels. A material name matches a row of the
 # fly-through's table, `_` standing for a space.
@@ -7,11 +7,12 @@ vox walker.vox
 rate 30
 material 1 walker
 material 2 walker_eye
+material 185 walker_eye
 
-part torso node torso at 0 0 8 pivot 4 3 0 detail 2
+part torso node torso at 0 0 12 pivot 4 3 0 detail 2
 part head  node head  parent torso at 0 0 12  pivot 3 3 0 detail 2
-part leg_l node leg   parent torso at -2 0 0  pivot 1.5 1.5 8 detail 2
-part leg_r node leg   parent torso at 2 0 0   pivot 1.5 1.5 8 detail 2
+part leg_l node leg   parent torso at -2 0 0  pivot 1.5 1.5 12 detail 2
+part leg_r node leg   parent torso at 2 0 0   pivot 1.5 1.5 12 detail 2
 part arm_l node arm   parent torso at -5 0 12 pivot 1 1 7 detail 2
 part arm_r node arm   parent torso at 5 0 12  pivot 1 1 7 detail 2
 
@@ -27,17 +28,25 @@ key 60 head  rot x 0
 key 60 arm_l rot y 0
 key 60 arm_r rot y 0
 
-# A stride in place: each leg swings 30 degrees either way, each arm 20 against its leg.
+# A stride in place: each leg swings 45 degrees either way, each arm 20 against its leg.
 clip walk ticks 30 loop
-key 0  leg_l rot x 30
-key 0  leg_r rot x -30
+key 0  leg_l rot x 45
+key 0  leg_r rot x -45
 key 0  arm_l rot x -20
 key 0  arm_r rot x 20
-key 15 leg_l rot x -30
-key 15 leg_r rot x 30
+key 15 leg_l rot x -45
+key 15 leg_r rot x 45
 key 15 arm_l rot x 20
 key 15 arm_r rot x -20
-key 30 leg_l rot x 30
-key 30 leg_r rot x -30
+key 30 leg_l rot x 45
+key 30 leg_r rot x -45
 key 30 arm_l rot x -20
 key 30 arm_r rot x 20
+
+# Looking around: the head turns 60 degrees left, back, 60 right and back, about the z axis.
+clip turn ticks 60 loop
+key 0  head rot z 0
+key 15 head rot z 60
+key 30 head rot z 0
+key 45 head rot z -60
+key 60 head rot z 0

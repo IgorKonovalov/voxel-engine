@@ -1,0 +1,509 @@
+# The fly-through's second sample model, a large spider: fourteen parts on spider.vox, z up,
+# facing -y; each leg its own part on its own phase. Clips: walk, idle, rear.
+#   flythrough --source showcase --model apps/flythrough/assets/entities/spider/spider.rig --clip walk
+# Lengths are in model voxels (two to a world voxel at detail 2); `at` is a pivot's rest place
+# from its parent's pivot, in the parent's model voxels. The materials are rows of the
+# showcase's table with the walker's rows, `_` standing for a space.
+vox spider.vox
+rate 30
+material 1 shell
+material 2 rubble
+material 3 rock
+material 4 ore
+material 5 crystal
+material 6 amethyst
+material 7 ember
+material 8 walker
+material 9 walker_eye
+
+part body node body at 0 0 25 pivot 11.5 15 3 detail 2
+part abdomen node abdomen parent body at 0 13 2 pivot 16.5 1 12 detail 2
+part leg_l1 node leg_l1 parent body at -9 -8 0 pivot 60 3 26 detail 2
+part leg_r1 node leg_r1 parent body at 9 -8 0 pivot 1 3 26 detail 2
+part leg_l2 node leg_l2 parent body at -9 -3 0 pivot 52 3 26 detail 2
+part leg_r2 node leg_r2 parent body at 9 -3 0 pivot 1 3 26 detail 2
+part leg_l3 node leg_l3 parent body at -9 2 0 pivot 48 3 26 detail 2
+part leg_r3 node leg_r3 parent body at 9 2 0 pivot 1 3 26 detail 2
+part leg_l4 node leg_l4 parent body at -9 7 0 pivot 58 3 26 detail 2
+part leg_r4 node leg_r4 parent body at 9 7 0 pivot 1 3 26 detail 2
+part palp_l node palp_l parent body at -4 -14 0 pivot 2 10 7 detail 2
+part palp_r node palp_r parent body at 4 -14 0 pivot 2 10 7 detail 2
+part fang_l node fang_l parent body at -2 -13 -2 pivot 2 4 8 detail 2
+part fang_r node fang_r parent body at 2 -13 -2 pivot 2 4 8 detail 2
+
+# A wave gait: each leg on its own phase, swinging 18 degrees, lifting on the forward swing.
+clip walk ticks 48 loop
+key 0 leg_l1 rot z 50 rot y 14
+key 4 leg_l1 rot z 59 rot y 12
+key 8 leg_l1 rot z 66 rot y 7
+key 12 leg_l1 rot z 68 rot y 0
+key 16 leg_l1 rot z 66 rot y 0
+key 20 leg_l1 rot z 59 rot y 0
+key 24 leg_l1 rot z 50 rot y 0
+key 28 leg_l1 rot z 41 rot y 0
+key 32 leg_l1 rot z 34 rot y 0
+key 36 leg_l1 rot z 32 rot y 0
+key 40 leg_l1 rot z 34 rot y 7
+key 44 leg_l1 rot z 41 rot y 12
+key 48 leg_l1 rot z 50 rot y 14
+key 0 leg_r1 rot z -50 rot y 0
+key 4 leg_r1 rot z -41 rot y 0
+key 8 leg_r1 rot z -34 rot y 0
+key 12 leg_r1 rot z -32 rot y 0
+key 16 leg_r1 rot z -34 rot y -7
+key 20 leg_r1 rot z -41 rot y -12
+key 24 leg_r1 rot z -50 rot y -14
+key 28 leg_r1 rot z -59 rot y -12
+key 32 leg_r1 rot z -66 rot y -7
+key 36 leg_r1 rot z -68 rot y 0
+key 40 leg_r1 rot z -66 rot y 0
+key 44 leg_r1 rot z -59 rot y 0
+key 48 leg_r1 rot z -50 rot y 0
+key 0 leg_l2 rot z 11 rot y 0
+key 4 leg_l2 rot z 4 rot y 0
+key 8 leg_l2 rot z 0 rot y 0
+key 12 leg_l2 rot z 1 rot y 5
+key 16 leg_l2 rot z 7 rot y 11
+key 20 leg_l2 rot z 15 rot y 14
+key 24 leg_l2 rot z 25 rot y 13
+key 28 leg_l2 rot z 32 rot y 9
+key 32 leg_l2 rot z 36 rot y 2
+key 36 leg_l2 rot z 35 rot y 0
+key 40 leg_l2 rot z 29 rot y 0
+key 44 leg_l2 rot z 21 rot y 0
+key 48 leg_l2 rot z 11 rot y 0
+key 0 leg_r2 rot z -25 rot y -13
+key 4 leg_r2 rot z -32 rot y -9
+key 8 leg_r2 rot z -36 rot y -2
+key 12 leg_r2 rot z -35 rot y 0
+key 16 leg_r2 rot z -29 rot y 0
+key 20 leg_r2 rot z -21 rot y 0
+key 24 leg_r2 rot z -11 rot y 0
+key 28 leg_r2 rot z -4 rot y 0
+key 32 leg_r2 rot z 0 rot y 0
+key 36 leg_r2 rot z -1 rot y -5
+key 40 leg_r2 rot z -7 rot y -11
+key 44 leg_r2 rot z -15 rot y -14
+key 48 leg_r2 rot z -25 rot y -13
+key 0 leg_l3 rot z -4 rot y 10
+key 4 leg_l3 rot z 1 rot y 4
+key 8 leg_l3 rot z 2 rot y 0
+key 12 leg_l3 rot z -3 rot y 0
+key 16 leg_l3 rot z -11 rot y 0
+key 20 leg_l3 rot z -20 rot y 0
+key 24 leg_l3 rot z -28 rot y 0
+key 28 leg_l3 rot z -33 rot y 0
+key 32 leg_l3 rot z -34 rot y 3
+key 36 leg_l3 rot z -29 rot y 10
+key 40 leg_l3 rot z -21 rot y 13
+key 44 leg_l3 rot z -12 rot y 14
+key 48 leg_l3 rot z -4 rot y 10
+key 0 leg_r3 rot z 28 rot y 0
+key 4 leg_r3 rot z 33 rot y 0
+key 8 leg_r3 rot z 34 rot y -3
+key 12 leg_r3 rot z 29 rot y -10
+key 16 leg_r3 rot z 21 rot y -13
+key 20 leg_r3 rot z 12 rot y -14
+key 24 leg_r3 rot z 4 rot y -10
+key 28 leg_r3 rot z -1 rot y -4
+key 32 leg_r3 rot z -2 rot y 0
+key 36 leg_r3 rot z 3 rot y 0
+key 40 leg_r3 rot z 11 rot y 0
+key 44 leg_r3 rot z 20 rot y 0
+key 48 leg_r3 rot z 28 rot y 0
+key 0 leg_l4 rot z -64 rot y 0
+key 4 leg_l4 rot z -66 rot y 1
+key 8 leg_l4 rot z -63 rot y 8
+key 12 leg_l4 rot z -56 rot y 13
+key 16 leg_l4 rot z -46 rot y 14
+key 20 leg_l4 rot z -38 rot y 11
+key 24 leg_l4 rot z -32 rot y 6
+key 28 leg_l4 rot z -30 rot y 0
+key 32 leg_l4 rot z -33 rot y 0
+key 36 leg_l4 rot z -40 rot y 0
+key 40 leg_l4 rot z -50 rot y 0
+key 44 leg_l4 rot z -58 rot y 0
+key 48 leg_l4 rot z -64 rot y 0
+key 0 leg_r4 rot z 32 rot y -6
+key 4 leg_r4 rot z 30 rot y 0
+key 8 leg_r4 rot z 33 rot y 0
+key 12 leg_r4 rot z 40 rot y 0
+key 16 leg_r4 rot z 50 rot y 0
+key 20 leg_r4 rot z 58 rot y 0
+key 24 leg_r4 rot z 64 rot y 0
+key 28 leg_r4 rot z 66 rot y -1
+key 32 leg_r4 rot z 63 rot y -8
+key 36 leg_r4 rot z 56 rot y -13
+key 40 leg_r4 rot z 46 rot y -14
+key 44 leg_r4 rot z 38 rot y -11
+key 48 leg_r4 rot z 32 rot y -6
+key 0 body move 0 0 0.0
+key 0 abdomen rot z 0 rot x 0
+key 0 palp_l rot x 0
+key 0 palp_r rot x 0
+key 0 fang_l rot y 0
+key 0 fang_r rot y 0
+key 4 body move 0 0 0.75
+key 4 abdomen rot z 2 rot x 3
+key 4 palp_l rot x 5
+key 4 palp_r rot x -5
+key 4 fang_l rot y 5
+key 4 fang_r rot y -5
+key 8 body move 0 0 0.75
+key 8 abdomen rot z 4 rot x 3
+key 8 palp_l rot x 9
+key 8 palp_r rot x -9
+key 8 fang_l rot y 5
+key 8 fang_r rot y -5
+key 12 body move 0 0 0.0
+key 12 abdomen rot z 5 rot x 0
+key 12 palp_l rot x 10
+key 12 palp_r rot x -10
+key 12 fang_l rot y 0
+key 12 fang_r rot y 0
+key 16 body move 0 0 -0.75
+key 16 abdomen rot z 4 rot x -3
+key 16 palp_l rot x 9
+key 16 palp_r rot x -9
+key 16 fang_l rot y -5
+key 16 fang_r rot y 5
+key 20 body move 0 0 -0.75
+key 20 abdomen rot z 2 rot x -3
+key 20 palp_l rot x 5
+key 20 palp_r rot x -5
+key 20 fang_l rot y -5
+key 20 fang_r rot y 5
+key 24 body move 0 0 0.0
+key 24 abdomen rot z 0 rot x 0
+key 24 palp_l rot x 0
+key 24 palp_r rot x 0
+key 24 fang_l rot y 0
+key 24 fang_r rot y 0
+key 28 body move 0 0 0.75
+key 28 abdomen rot z -2 rot x 3
+key 28 palp_l rot x -5
+key 28 palp_r rot x 5
+key 28 fang_l rot y 5
+key 28 fang_r rot y -5
+key 32 body move 0 0 0.75
+key 32 abdomen rot z -4 rot x 3
+key 32 palp_l rot x -9
+key 32 palp_r rot x 9
+key 32 fang_l rot y 5
+key 32 fang_r rot y -5
+key 36 body move 0 0 0.0
+key 36 abdomen rot z -5 rot x 0
+key 36 palp_l rot x -10
+key 36 palp_r rot x 10
+key 36 fang_l rot y 0
+key 36 fang_r rot y 0
+key 40 body move 0 0 -0.75
+key 40 abdomen rot z -4 rot x -3
+key 40 palp_l rot x -9
+key 40 palp_r rot x 9
+key 40 fang_l rot y -5
+key 40 fang_r rot y 5
+key 44 body move 0 0 -0.75
+key 44 abdomen rot z -3 rot x -3
+key 44 palp_l rot x -5
+key 44 palp_r rot x 5
+key 44 fang_l rot y -5
+key 44 fang_r rot y 5
+key 48 body move 0 0 0.0
+key 48 abdomen rot z 0 rot x 0
+key 48 palp_l rot x 0
+key 48 palp_r rot x 0
+key 48 fang_l rot y 0
+key 48 fang_r rot y 0
+
+# Waiting: legs shift a little each on its own clock, the abdomen breathes, palps tap.
+clip idle ticks 120 loop
+key 0 leg_l1 rot z 50 rot y 0
+key 10 leg_l1 rot z 52 rot y 3
+key 20 leg_l1 rot z 53 rot y 3
+key 30 leg_l1 rot z 54 rot y 0
+key 40 leg_l1 rot z 53 rot y 0
+key 50 leg_l1 rot z 52 rot y 0
+key 60 leg_l1 rot z 50 rot y 0
+key 70 leg_l1 rot z 48 rot y 3
+key 80 leg_l1 rot z 47 rot y 3
+key 90 leg_l1 rot z 46 rot y 0
+key 100 leg_l1 rot z 47 rot y 0
+key 110 leg_l1 rot z 48 rot y 0
+key 120 leg_l1 rot z 50 rot y 0
+key 0 leg_r1 rot z -50 rot y 0
+key 10 leg_r1 rot z -54 rot y 0
+key 20 leg_r1 rot z -50 rot y 0
+key 30 leg_r1 rot z -46 rot y 0
+key 40 leg_r1 rot z -50 rot y 0
+key 50 leg_r1 rot z -54 rot y 0
+key 60 leg_r1 rot z -50 rot y 0
+key 70 leg_r1 rot z -46 rot y 0
+key 80 leg_r1 rot z -50 rot y 0
+key 90 leg_r1 rot z -54 rot y 0
+key 100 leg_r1 rot z -50 rot y 0
+key 110 leg_r1 rot z -46 rot y 0
+key 120 leg_r1 rot z -50 rot y 0
+key 0 leg_l2 rot z 21 rot y 3
+key 10 leg_l2 rot z 22 rot y 0
+key 20 leg_l2 rot z 18 rot y 0
+key 30 leg_l2 rot z 15 rot y 3
+key 40 leg_l2 rot z 14 rot y 0
+key 50 leg_l2 rot z 18 rot y 0
+key 60 leg_l2 rot z 21 rot y 3
+key 70 leg_l2 rot z 22 rot y 0
+key 80 leg_l2 rot z 18 rot y 0
+key 90 leg_l2 rot z 15 rot y 3
+key 100 leg_l2 rot z 14 rot y 0
+key 110 leg_l2 rot z 18 rot y 0
+key 120 leg_l2 rot z 21 rot y 3
+key 0 leg_r2 rot z -21 rot y -3
+key 10 leg_r2 rot z -22 rot y 0
+key 20 leg_r2 rot z -22 rot y 0
+key 30 leg_r2 rot z -20 rot y 0
+key 40 leg_r2 rot z -18 rot y 0
+key 50 leg_r2 rot z -16 rot y -2
+key 60 leg_r2 rot z -15 rot y -3
+key 70 leg_r2 rot z -14 rot y 0
+key 80 leg_r2 rot z -14 rot y 0
+key 90 leg_r2 rot z -16 rot y 0
+key 100 leg_r2 rot z -18 rot y 0
+key 110 leg_r2 rot z -20 rot y -2
+key 120 leg_r2 rot z -21 rot y -3
+key 0 leg_l3 rot z -12 rot y 0
+key 10 leg_l3 rot z -18 rot y 2
+key 20 leg_l3 rot z -20 rot y 0
+key 30 leg_l3 rot z -14 rot y 2
+key 40 leg_l3 rot z -12 rot y 0
+key 50 leg_l3 rot z -18 rot y 2
+key 60 leg_l3 rot z -20 rot y 0
+key 70 leg_l3 rot z -14 rot y 2
+key 80 leg_l3 rot z -12 rot y 0
+key 90 leg_l3 rot z -18 rot y 2
+key 100 leg_l3 rot z -20 rot y 0
+key 110 leg_l3 rot z -14 rot y 2
+key 120 leg_l3 rot z -12 rot y 0
+key 0 leg_r3 rot z 12 rot y 0
+key 10 leg_r3 rot z 16 rot y 0
+key 20 leg_r3 rot z 19 rot y -3
+key 30 leg_r3 rot z 20 rot y 0
+key 40 leg_r3 rot z 16 rot y 0
+key 50 leg_r3 rot z 13 rot y -3
+key 60 leg_r3 rot z 12 rot y 0
+key 70 leg_r3 rot z 16 rot y 0
+key 80 leg_r3 rot z 19 rot y -3
+key 90 leg_r3 rot z 20 rot y 0
+key 100 leg_r3 rot z 16 rot y 0
+key 110 leg_r3 rot z 13 rot y -3
+key 120 leg_r3 rot z 12 rot y 0
+key 0 leg_l4 rot z -47 rot y 0
+key 10 leg_l4 rot z -49 rot y 2
+key 20 leg_l4 rot z -51 rot y 3
+key 30 leg_l4 rot z -52 rot y 1
+key 40 leg_l4 rot z -52 rot y 0
+key 50 leg_l4 rot z -50 rot y 0
+key 60 leg_l4 rot z -49 rot y 0
+key 70 leg_l4 rot z -47 rot y 2
+key 80 leg_l4 rot z -45 rot y 3
+key 90 leg_l4 rot z -44 rot y 1
+key 100 leg_l4 rot z -44 rot y 0
+key 110 leg_l4 rot z -46 rot y 0
+key 120 leg_l4 rot z -47 rot y 0
+key 0 leg_r4 rot z 47 rot y 0
+key 10 leg_r4 rot z 52 rot y -1
+key 20 leg_r4 rot z 49 rot y 0
+key 30 leg_r4 rot z 44 rot y -1
+key 40 leg_r4 rot z 47 rot y 0
+key 50 leg_r4 rot z 52 rot y -1
+key 60 leg_r4 rot z 49 rot y 0
+key 70 leg_r4 rot z 44 rot y -1
+key 80 leg_r4 rot z 47 rot y 0
+key 90 leg_r4 rot z 52 rot y -1
+key 100 leg_r4 rot z 49 rot y 0
+key 110 leg_r4 rot z 44 rot y -1
+key 120 leg_r4 rot z 47 rot y 0
+key 0 abdomen rot x 0
+key 0 palp_l rot x 0
+key 0 palp_r rot x 25
+key 10 abdomen rot x 2
+key 10 palp_l rot x 22
+key 10 palp_r rot x 0
+key 20 abdomen rot x 3
+key 20 palp_l rot x 0
+key 20 palp_r rot x 0
+key 30 abdomen rot x 4
+key 30 palp_l rot x 0
+key 30 palp_r rot x 25
+key 40 abdomen rot x 3
+key 40 palp_l rot x 22
+key 40 palp_r rot x 0
+key 50 abdomen rot x 2
+key 50 palp_l rot x 0
+key 50 palp_r rot x 0
+key 60 abdomen rot x 0
+key 60 palp_l rot x 0
+key 60 palp_r rot x 25
+key 70 abdomen rot x -2
+key 70 palp_l rot x 22
+key 70 palp_r rot x 0
+key 80 abdomen rot x -3
+key 80 palp_l rot x 0
+key 80 palp_r rot x 0
+key 90 abdomen rot x -4
+key 90 palp_l rot x 0
+key 90 palp_r rot x 25
+key 100 abdomen rot x -3
+key 100 palp_l rot x 22
+key 100 palp_r rot x 0
+key 110 abdomen rot x -2
+key 110 palp_l rot x 0
+key 110 palp_r rot x 0
+key 120 abdomen rot x 0
+key 120 palp_l rot x 0
+key 120 palp_r rot x 25
+
+# The threat: the front legs rise and wave, the fangs open.
+clip rear ticks 60 loop
+key 0 leg_l1 rot z 50 rot y 55
+key 6 leg_l1 rot z 56 rot y 65
+key 12 leg_l1 rot z 60 rot y 61
+key 18 leg_l1 rot z 60 rot y 49
+key 24 leg_l1 rot z 56 rot y 45
+key 30 leg_l1 rot z 50 rot y 55
+key 36 leg_l1 rot z 44 rot y 65
+key 42 leg_l1 rot z 40 rot y 61
+key 48 leg_l1 rot z 40 rot y 49
+key 54 leg_l1 rot z 44 rot y 45
+key 60 leg_l1 rot z 50 rot y 55
+key 0 leg_r1 rot z -50 rot y -63
+key 6 leg_r1 rot z -56 rot y -63
+key 12 leg_r1 rot z -60 rot y -51
+key 18 leg_r1 rot z -60 rot y -45
+key 24 leg_r1 rot z -56 rot y -52
+key 30 leg_r1 rot z -50 rot y -63
+key 36 leg_r1 rot z -44 rot y -63
+key 42 leg_r1 rot z -40 rot y -51
+key 48 leg_r1 rot z -40 rot y -45
+key 54 leg_r1 rot z -44 rot y -52
+key 60 leg_r1 rot z -50 rot y -63
+key 0 leg_l2 rot z 18 rot y 20
+key 6 leg_l2 rot z 20 rot y 20
+key 12 leg_l2 rot z 22 rot y 20
+key 18 leg_l2 rot z 22 rot y 20
+key 24 leg_l2 rot z 20 rot y 20
+key 30 leg_l2 rot z 18 rot y 20
+key 36 leg_l2 rot z 16 rot y 20
+key 42 leg_l2 rot z 14 rot y 20
+key 48 leg_l2 rot z 14 rot y 20
+key 54 leg_l2 rot z 16 rot y 20
+key 60 leg_l2 rot z 18 rot y 20
+key 0 leg_r2 rot z -18 rot y -20
+key 6 leg_r2 rot z -20 rot y -20
+key 12 leg_r2 rot z -22 rot y -20
+key 18 leg_r2 rot z -22 rot y -20
+key 24 leg_r2 rot z -20 rot y -20
+key 30 leg_r2 rot z -18 rot y -20
+key 36 leg_r2 rot z -16 rot y -20
+key 42 leg_r2 rot z -14 rot y -20
+key 48 leg_r2 rot z -14 rot y -20
+key 54 leg_r2 rot z -16 rot y -20
+key 60 leg_r2 rot z -18 rot y -20
+key 0 leg_l3 rot z -16 rot y 0
+key 6 leg_l3 rot z -16 rot y 0
+key 12 leg_l3 rot z -16 rot y 0
+key 18 leg_l3 rot z -16 rot y 0
+key 24 leg_l3 rot z -16 rot y 0
+key 30 leg_l3 rot z -16 rot y 0
+key 36 leg_l3 rot z -16 rot y 0
+key 42 leg_l3 rot z -16 rot y 0
+key 48 leg_l3 rot z -16 rot y 0
+key 54 leg_l3 rot z -16 rot y 0
+key 60 leg_l3 rot z -16 rot y 0
+key 0 leg_r3 rot z 16 rot y 0
+key 6 leg_r3 rot z 16 rot y 0
+key 12 leg_r3 rot z 16 rot y 0
+key 18 leg_r3 rot z 16 rot y 0
+key 24 leg_r3 rot z 16 rot y 0
+key 30 leg_r3 rot z 16 rot y 0
+key 36 leg_r3 rot z 16 rot y 0
+key 42 leg_r3 rot z 16 rot y 0
+key 48 leg_r3 rot z 16 rot y 0
+key 54 leg_r3 rot z 16 rot y 0
+key 60 leg_r3 rot z 16 rot y 0
+key 0 leg_l4 rot z -48 rot y 0
+key 6 leg_l4 rot z -48 rot y 0
+key 12 leg_l4 rot z -48 rot y 0
+key 18 leg_l4 rot z -48 rot y 0
+key 24 leg_l4 rot z -48 rot y 0
+key 30 leg_l4 rot z -48 rot y 0
+key 36 leg_l4 rot z -48 rot y 0
+key 42 leg_l4 rot z -48 rot y 0
+key 48 leg_l4 rot z -48 rot y 0
+key 54 leg_l4 rot z -48 rot y 0
+key 60 leg_l4 rot z -48 rot y 0
+key 0 leg_r4 rot z 48 rot y 0
+key 6 leg_r4 rot z 48 rot y 0
+key 12 leg_r4 rot z 48 rot y 0
+key 18 leg_r4 rot z 48 rot y 0
+key 24 leg_r4 rot z 48 rot y 0
+key 30 leg_r4 rot z 48 rot y 0
+key 36 leg_r4 rot z 48 rot y 0
+key 42 leg_r4 rot z 48 rot y 0
+key 48 leg_r4 rot z 48 rot y 0
+key 54 leg_r4 rot z 48 rot y 0
+key 60 leg_r4 rot z 48 rot y 0
+key 0 body rot x -12
+key 0 fang_l rot y 18
+key 0 fang_r rot y -18
+key 0 palp_l rot x 30
+key 0 palp_r rot x 30
+key 6 body rot x -14
+key 6 fang_l rot y 26
+key 6 fang_r rot y -26
+key 6 palp_l rot x 44
+key 6 palp_r rot x 16
+key 12 body rot x -15
+key 12 fang_l rot y 13
+key 12 fang_r rot y -13
+key 12 palp_l rot x 21
+key 12 palp_r rot x 39
+key 18 body rot x -15
+key 18 fang_l rot y 13
+key 18 fang_r rot y -13
+key 18 palp_l rot x 21
+key 18 palp_r rot x 39
+key 24 body rot x -14
+key 24 fang_l rot y 26
+key 24 fang_r rot y -26
+key 24 palp_l rot x 44
+key 24 palp_r rot x 16
+key 30 body rot x -12
+key 30 fang_l rot y 18
+key 30 fang_r rot y -18
+key 30 palp_l rot x 30
+key 30 palp_r rot x 30
+key 36 body rot x -10
+key 36 fang_l rot y 10
+key 36 fang_r rot y -10
+key 36 palp_l rot x 16
+key 36 palp_r rot x 44
+key 42 body rot x -9
+key 42 fang_l rot y 23
+key 42 fang_r rot y -23
+key 42 palp_l rot x 39
+key 42 palp_r rot x 21
+key 48 body rot x -9
+key 48 fang_l rot y 23
+key 48 fang_r rot y -23
+key 48 palp_l rot x 39
+key 48 palp_r rot x 21
+key 54 body rot x -10
+key 54 fang_l rot y 10
+key 54 fang_r rot y -10
+key 54 palp_l rot x 16
+key 54 palp_r rot x 44
+key 60 body rot x -12
+key 60 fang_l rot y 18
+key 60 fang_r rot y -18
+key 60 palp_l rot x 30
+key 60 palp_r rot x 30
