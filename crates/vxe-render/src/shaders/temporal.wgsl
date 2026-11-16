@@ -80,7 +80,9 @@
 // the taps' age plus one, capped at AGE_MAX. The direct part (rgba, the same blend on every
 // channel) and the moments blend the new sample in at `max(ALPHA, 1 / (age + 1))`, a
 // fallback's emissive part as above. On the frame LIGHTING_LIGHTS_CHANGED says the list of
-// lights changed, the direct part takes this frame's sample as it is: the light pass's
+// lights changed, or LIGHTING_SKY_CHANGED that the sky jumped (its key light turned by more
+// than its radius, switched body or changed illuminance, or the sky was set or cleared; a
+// drift sets neither), the direct part takes this frame's sample as it is: the light pass's
 // estimate of each light is exact up to its shadow ray, so a light switched off, moved,
 // recoloured or removed leaves nothing behind (and the moments take this frame's). The same
 // rule holds for the direct part per pixel at a fresh pixel (light.wgsl: a shadow ray crossed
@@ -559,10 +561,11 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             // fresh while it moves, and moments taken as they are hold no variance, which shuts
             // the filter's luminance weight on its fallback's emissive part.
             var a_moments = a;
-            if ((params.lighting & LIGHTING_LIGHTS_CHANGED) != 0u) {
+            let reset = (params.lighting & (LIGHTING_LIGHTS_CHANGED | LIGHTING_SKY_CHANGED)) != 0u;
+            if (reset) {
                 a_moments = 1.0;
             }
-            if ((params.lighting & LIGHTING_LIGHTS_CHANGED) != 0u || fresh) {
+            if (reset || fresh) {
                 a = 1.0;
             }
             var e_fallback = mix(h.xyz, sample.xyz, a_emissive);

@@ -361,6 +361,9 @@ impl Frame {
             if lights_changed {
                 p.lighting |= LIGHTING_LIGHTS_CHANGED;
             }
+            if self.sky.step() {
+                p.lighting |= LIGHTING_SKY_CHANGED;
+            }
             self.state
                 .lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
@@ -403,7 +406,7 @@ impl Frame {
         } else {
             p.history = 0;
         }
-        if now.count > 0 {
+        if now.count > 0 || self.sky.lights_direct() {
             p.lighting |= LIGHTING_DIRECT;
         }
         self.state.lights.write(
@@ -800,9 +803,13 @@ impl Frame {
             .map(|(f, b)| b.passes(f, world))
             .unwrap_or_default();
         let out = &binds.out;
-        let sky_groups = self
-            .sky
-            .prepare(device, queue, &self.binds, p.views[0].origin[2]);
+        let sky_groups = self.sky.prepare(
+            device,
+            queue,
+            &self.binds,
+            p.views[0].origin[2],
+            self.state.lod.ball_r2(),
+        );
         let [sky_t, sky_m, sky_v] = self.sky.dispatches(device, sky_groups.as_ref());
         let passes = [
             sky_t,

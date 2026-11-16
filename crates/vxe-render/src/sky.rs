@@ -142,6 +142,31 @@ impl Sky {
         }
     }
 
+    /// The body that lights the frame as its directional sample (ADR-0027): the sun while it
+    /// is above the horizon, else the moon while it is, else none; none under the uniform
+    /// test sky, which has no directional light.
+    pub fn key_light(&self) -> Option<(KeyBody, Body)> {
+        if self.uniform.is_some() {
+            return None;
+        }
+        if self.sun.direction[2] > 0.0 {
+            Some((KeyBody::Sun, self.sun))
+        } else if self.moon.direction[2] > 0.0 {
+            Some((KeyBody::Moon, self.moon))
+        } else {
+            None
+        }
+    }
+
+    /// The sky's scale: the uniform test sky's largest channel, else the brighter body's
+    /// largest channel of illuminance.
+    pub(crate) fn scale(&self) -> f32 {
+        match self.uniform {
+            Some(l) => l.iter().fold(0.0f32, |a, &b| a.max(b)),
+            None => 1.0 / self.view_scale(),
+        }
+    }
+
     /// The scale the sky-view LUT stores radiance at: one over the larger body's largest
     /// channel, so the table holds values near 1 by day and by night.
     pub(crate) fn view_scale(&self) -> f32 {
@@ -153,6 +178,65 @@ impl Sky {
             .fold(0.0f32, |a, &b| a.max(b));
         if m > 0.0 { 1.0 / m } else { 1.0 }
     }
+}
+
+/// Which body is the key light ([`Sky::key_light`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyBody {
+    Sun,
+    Moon,
+}
+
+/// What the change rule compares between frames: whether a sky is set, its key light and its
+/// scale.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SkyKey {
+    pub(crate) set: bool,
+    pub(crate) key: Option<(KeyBody, Body)>,
+    pub(crate) scale: f32,
+}
+
+impl SkyKey {
+    pub(crate) fn of(sky: Option<&Sky>) -> Self {
+        Self {
+            set: sky.is_some(),
+            key: sky.and_then(Sky::key_light),
+            scale: sky.map_or(0.0, Sky::scale),
+        }
+    }
+
+    /// Whether the sky jumped from `old` to `self` (Plan 0032's change rule): it was set or
+    /// cleared, its scale changed, the key light appeared, went or switched body, its
+    /// illuminance or radius changed, or it turned by more than its angular radius. A slower
+    /// turn is a drift, which the direct part's blend follows alone.
+    pub(crate) fn jumped_from(&self, old: &SkyKey) -> bool {
+        if self.set != old.set || self.scale != old.scale {
+            return true;
+        }
+        match (self.key, old.key) {
+            (None, None) => false,
+            (Some((a, x)), Some((b, y))) => {
+                a != b
+                    || x.illuminance != y.illuminance
+                    || x.angular_radius != y.angular_radius
+                    || turn(x.direction, y.direction) > f64::from(x.angular_radius)
+            }
+            _ => true,
+        }
+    }
+}
+
+/// The angle between unit directions `a` and `b`, in radians, from `atan2(|a x b|, a.b)` in
+/// f64, which keeps its digits at a fraction of a body's radius.
+fn turn(a: [f32; 3], b: [f32; 3]) -> f64 {
+    let [a, b] = [a, b].map(|v| v.map(f64::from));
+    let c = [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ];
+    let s = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+    s.atan2(a[0] * b[0] + a[1] * b[1] + a[2] * b[2])
 }
 
 /// The unit direction toward a body at `hour_angle` (radians, 0 at its culmination, positive
@@ -177,6 +261,10 @@ pub(crate) const SKY_ON: u32 = 1;
 pub(crate) const SKY_UNIFORM: u32 = 2;
 /// The sky-view pass adds the multiple-scattering LUT.
 pub(crate) const SKY_MULTISCATTER: u32 = 4;
+/// A key light lights this frame (`key_*`).
+pub(crate) const SKY_KEY: u32 = 8;
+/// A key light lit the frame before (`prev_key_*`).
+pub(crate) const SKY_PREV_KEY: u32 = 16;
 
 /// The sky's uniform as `sky.wgsl` declares it: the atmosphere per kilometre, the bodies, the
 /// view scale, the altitude mapping and the camera's altitude.
@@ -209,6 +297,20 @@ pub(crate) struct SkyUniform {
     /// LUT is built for.
     pub camera_alt_km: f32,
     pub _pad: f32,
+    /// The key light ([`Sky::key_light`]): its direction, angular radius and illuminance,
+    /// zero with none ([`SKY_KEY`] clear).
+    pub key_dir: [f32; 3],
+    pub key_radius: f32,
+    pub key_e: [f32; 3],
+    /// The lighting rays' residency ball: its squared radius in chunks around the camera's
+    /// chunk, inside which an absent chunk is solid to them; -1 for no ball.
+    pub ball_r2: i32,
+    /// The key light of the frame before ([`SKY_PREV_KEY`]), and the sky's scale this frame
+    /// and the frame before ([`Sky::scale`]).
+    pub prev_key_dir: [f32; 3],
+    pub sky_scale: f32,
+    pub prev_key_e: [f32; 3],
+    pub prev_sky_scale: f32,
 }
 
 impl SkyUniform {
@@ -253,7 +355,32 @@ impl SkyUniform {
                 + s.base_altitude_m)
                 / 1000.0,
             _pad: 0.0,
+            ..Self::default()
         }
+    }
+
+    /// Adds the key light of this frame (`now`) and of the frame before (`prev`, `None`
+    /// before the first frame with history: then the frame's own) and the residency ball.
+    pub(crate) fn with_keys(mut self, now: &SkyKey, prev: Option<&SkyKey>, ball_r2: i32) -> Self {
+        if self.flags & SKY_ON == 0 {
+            return self;
+        }
+        let prev = prev.unwrap_or(now);
+        if let Some((_, b)) = now.key {
+            self.flags |= SKY_KEY;
+            self.key_dir = b.direction;
+            self.key_radius = b.angular_radius;
+            self.key_e = b.illuminance;
+        }
+        if let Some((_, b)) = prev.key {
+            self.flags |= SKY_PREV_KEY;
+            self.prev_key_dir = b.direction;
+            self.prev_key_e = b.illuminance;
+        }
+        self.ball_r2 = ball_r2;
+        self.sky_scale = now.scale;
+        self.prev_sky_scale = prev.scale;
+        self
     }
 }
 
@@ -316,5 +443,91 @@ mod tests {
             SkyUniform::of(Some(&Sky::uniform(0.5)), 0.0, false).flags,
             SKY_ON | SKY_UNIFORM
         );
+    }
+
+    fn at_elevation(deg_el: f32) -> [f32; 3] {
+        let e = deg(deg_el);
+        [0.0, -e.cos(), e.sin()]
+    }
+
+    #[test]
+    fn the_key_light_is_the_sun_above_the_horizon_else_the_moon_else_none() {
+        let sky =
+            |s: f32, m: f32| Sky::new(Body::sun(at_elevation(s)), Body::moon(at_elevation(m)));
+        assert_eq!(sky(10.0, 45.0).key_light().map(|k| k.0), Some(KeyBody::Sun));
+        assert_eq!(
+            sky(-30.0, 90.0).key_light().map(|k| k.0),
+            Some(KeyBody::Moon)
+        );
+        assert_eq!(sky(-30.0, -10.0).key_light(), None);
+        assert_eq!(Sky::uniform(1.0).key_light(), None);
+    }
+
+    #[test]
+    fn a_jump_raises_the_change_and_a_drift_does_not() {
+        let sun = |el: f32| {
+            let s = Sky::new(Body::sun(at_elevation(el)), Body::moon(at_elevation(-el)));
+            SkyKey::of(Some(&s))
+        };
+        let r = SUN_ANGULAR_RADIUS.to_degrees();
+        // A drift of 0.15 radius a frame, 64 frames on.
+        let mut old = sun(30.0);
+        for i in 1..=64 {
+            let now = sun(30.0 + 0.15 * r * i as f32);
+            assert!(!now.jumped_from(&old), "frame {i}");
+            old = now;
+        }
+        assert!(sun(40.0).jumped_from(&sun(30.0)), "a 10-degree turn");
+        assert!(
+            sun(30.0 + 1.2 * r).jumped_from(&sun(30.0)),
+            "past the radius"
+        );
+        assert!(sun(-1.0).jumped_from(&sun(1.0)), "sun to moon");
+        let none = SkyKey::of(None);
+        assert!(
+            sun(30.0).jumped_from(&none) && none.jumped_from(&sun(30.0)),
+            "set, cleared"
+        );
+        assert!(!none.jumped_from(&none));
+        let mut bright = Sky::new(
+            Body::sun(at_elevation(30.0)),
+            Body::moon(at_elevation(-30.0)),
+        );
+        bright.sun.illuminance = [2.0 * SUN_ILLUMINANCE; 3];
+        assert!(
+            SkyKey::of(Some(&bright)).jumped_from(&sun(30.0)),
+            "illuminance"
+        );
+        let u = |l: f32| SkyKey::of(Some(&Sky::uniform(l)));
+        assert!(
+            !u(1.0).jumped_from(&u(1.0)) && u(2.0).jumped_from(&u(1.0)),
+            "uniform scale"
+        );
+    }
+
+    #[test]
+    fn the_uniform_carries_the_key_lights_and_the_ball() {
+        let s = Sky::new(
+            Body::sun(at_elevation(30.0)),
+            Body::moon(at_elevation(-30.0)),
+        );
+        let night = Sky::new(
+            Body::sun(at_elevation(-30.0)),
+            Body::moon(at_elevation(30.0)),
+        );
+        let (now, then) = (SkyKey::of(Some(&s)), SkyKey::of(Some(&night)));
+        let u = SkyUniform::of(Some(&s), 0.0, true).with_keys(&now, Some(&then), 49);
+        assert_eq!(u.flags & (SKY_KEY | SKY_PREV_KEY), SKY_KEY | SKY_PREV_KEY);
+        assert_eq!(
+            (u.key_dir, u.key_e, u.key_radius),
+            (s.sun.direction, s.sun.illuminance, s.sun.angular_radius)
+        );
+        assert_eq!(
+            (u.prev_key_dir, u.prev_key_e),
+            (night.moon.direction, night.moon.illuminance)
+        );
+        assert_eq!(u.ball_r2, 49);
+        let off = SkyUniform::of(None, 0.0, true).with_keys(&SkyKey::of(None), None, 49);
+        assert_eq!(off, SkyUniform::default(), "no sky stays the zero uniform");
     }
 }

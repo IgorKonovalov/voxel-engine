@@ -465,6 +465,18 @@ fn the_outdoor_source_and_its_flags_parse() {
         Some("--time takes HH:MM from 00:00 to 23:59, not 25:00")
     );
     assert!(parse_args_from(argv(&["--spawn", "roof"])).is_err());
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sun-radius", "3"])).unwrap();
+    assert_eq!(r.outdoor.clock.sun_radius, 3f32.to_radians());
+    assert_eq!(
+        crate::daylight::Clock::default().sun_radius,
+        vxe_render::sky::SUN_ANGULAR_RADIUS
+    );
+    for bad in ["0", "11", "x"] {
+        assert!(
+            parse_args_from(argv(&["--sun-radius", bad])).is_err(),
+            "{bad}"
+        );
+    }
     assert!(parse_args_from(argv(&["--day-length", "0"])).is_err());
     assert!(parse_args_from(argv(&["--sky", "maybe"])).is_err());
     // The outdoor start exposure, unless `--exposure` or `--adaptation` is given.

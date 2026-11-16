@@ -2,11 +2,11 @@
 //! [`Frame::set_sky`]. With no sky ever set the LUTs are 1 x 1 placeholders, no LUT pipeline
 //! is built and no LUT pass runs.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use super::*;
-use crate::sky::{Sky, SkyUniform};
+use crate::sky::{Sky, SkyKey, SkyUniform};
 
 pub(crate) const SKY_ATMOSPHERE_WGSL: &str = include_str!("../shaders/sky_atmosphere.wgsl");
 pub(crate) const SKY_WGSL: &str = include_str!("../shaders/sky.wgsl");
@@ -109,6 +109,11 @@ pub(super) struct SkyState {
     /// The sky-view pass adds the multiple-scattering term ([`Frame::set_sky_multiscatter`]).
     multiscatter: bool,
     pipes: OnceLock<SkyPipes>,
+    /// The change rule's keys: the last encode with history's, and the one before it, which
+    /// the uniform's `prev_key_*` and `prev_sky_scale` hold.
+    keys: Mutex<(Option<SkyKey>, Option<SkyKey>)>,
+    /// The last encode with history raised [`LIGHTING_SKY_CHANGED`].
+    changed: AtomicBool,
 }
 
 impl SkyState {
@@ -126,6 +131,8 @@ impl SkyState {
             dirty: AtomicBool::new(false),
             multiscatter: true,
             pipes: OnceLock::new(),
+            keys: Mutex::new((None, None)),
+            changed: AtomicBool::new(false),
         }
     }
 
@@ -167,16 +174,47 @@ impl SkyState {
         })
     }
 
-    /// Writes the uniform for a camera at world z `camera_z` and returns the LUT passes' bind
-    /// groups, `None` with no sky.
+    /// The change rule at an encode with history: whether the sky jumped since the last one
+    /// (`SkyKey::jumped_from`), the keys moved on a frame.
+    pub(super) fn step(&self) -> bool {
+        let now = SkyKey::of(self.sky.as_ref());
+        let mut k = self
+            .keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let jumped = k.0.is_some_and(|old| now.jumped_from(&old));
+        *k = (Some(now), k.0);
+        self.changed.store(jumped, Ordering::Relaxed);
+        jumped
+    }
+
+    /// Whether the sky adds to the direct part: a key light lights the frame.
+    pub(super) fn lights_direct(&self) -> bool {
+        self.sky.as_ref().is_some_and(|s| s.key_light().is_some())
+    }
+
+    /// Writes the uniform for a camera at world z `camera_z`, the lighting rays' ball of
+    /// squared chunk radius `ball_r2` (-1 none), and returns the LUT passes' bind groups,
+    /// `None` with no sky.
     pub(super) fn prepare(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         binds: &BindCache,
         camera_z: f32,
+        ball_r2: i32,
     ) -> Option<[wgpu::BindGroup; 3]> {
-        let u = SkyUniform::of(self.sky.as_ref(), camera_z, self.multiscatter);
+        let prev = self
+            .keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .1;
+        let now = SkyKey::of(self.sky.as_ref());
+        let u = SkyUniform::of(self.sky.as_ref(), camera_z, self.multiscatter).with_keys(
+            &now,
+            prev.as_ref(),
+            ball_r2,
+        );
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let (_, luts) = (self.sky.as_ref()?, self.luts.as_ref()?);
         let p = self.pipes(device);
@@ -265,6 +303,13 @@ impl Frame {
     /// hook that reads single scattering alone.
     pub fn set_sky_multiscatter(&mut self, on: bool) {
         self.sky.multiscatter = on;
+    }
+
+    /// Whether the last encode with history raised the sky-change bit: the sky jumped (its
+    /// key light turned by more than its angular radius, switched body or changed
+    /// illuminance, its scale changed, or it was set or cleared). A drift raises nothing.
+    pub fn sky_changed(&self) -> bool {
+        self.sky.changed.load(Ordering::Relaxed)
     }
 
     /// The sky [`Frame::set_sky`] last set.

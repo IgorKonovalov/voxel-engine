@@ -349,6 +349,7 @@ impl Run {
             lod: streamed.then_some(LodParams {
                 r_full: self.args.residency.r_full,
                 forced_level: None,
+                r_lod: Some(self.args.residency.r_lod),
             }),
             mirror: self.mirror_config(mirror),
             field: self.args.field_surface(),

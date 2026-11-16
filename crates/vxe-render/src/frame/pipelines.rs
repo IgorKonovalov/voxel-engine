@@ -74,7 +74,8 @@ const PROBE_UPDATE: &[&str] = &[
     PROBE_UPDATE_WGSL,
 ];
 
-/// The light pass's modules, in each of its variants.
+/// The light pass's modules, in each of its variants: the sky's join it alone of the passes
+/// that compile `light.wgsl`, so the bake, the probe and the gradient passes take no sky term.
 const LIGHT_MODULES: &[&str] = &[
     COMMON_WGSL,
     MIRROR_WGSL,
@@ -83,6 +84,10 @@ const LIGHT_MODULES: &[&str] = &[
     ENTITY_WGSL,
     LIGHT_WGSL,
     EMISSIVE_WGSL,
+    SKY_ATMOSPHERE_WGSL,
+    SKY_WGSL,
+    SKY_LIGHT_WGSL,
+    SHADE_WGSL,
 ];
 
 /// Every frame pass but the hit pass ([`Marcher`]) and the composite's FSR 2 variant
@@ -240,6 +245,8 @@ pub(crate) const PASSES: [PassSpec; 15] = [
             HITREC_WGSL,
             ENTITY_WGSL,
             EDITS_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
             UPSCALE_WGSL,
         ],
         entry: "upscale",

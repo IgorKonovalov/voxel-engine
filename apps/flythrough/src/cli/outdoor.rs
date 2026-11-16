@@ -97,6 +97,17 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 },
             ),
             Flag::value(
+                &["--sun-radius"],
+                "DEG",
+                "the sun's angular radius in degrees, 0.05 to 10: a wider disc softens every \
+                 sun shadow [0.2665, the real sun's]",
+                |p: &mut Parsing, v| {
+                    let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
+                    p.args.outdoor.clock.sun_radius = deg.to_radians();
+                    Ok(())
+                },
+            ),
+            Flag::value(
                 &["--sky"],
                 "on|off",
                 "a sky over the world (vxe_render::Sky) [on for --source outdoor, else off]",

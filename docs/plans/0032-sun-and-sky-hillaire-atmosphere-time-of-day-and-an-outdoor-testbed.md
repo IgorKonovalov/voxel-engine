@@ -1087,8 +1087,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | done; golden `sky_empty_noon` waits for Phase 10 | b6c7d986 |
 | 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering (Notes); goldens wait for Phase 10 | 96c2c991 |
 | 3: The outdoor source, the source switch and the time of day in the fly-through | dev | done; bar 6 soak only (Notes); keys differ (Notes) | ce2a8fa9 |
-| 4: The outdoor exposure | dev | done but bar 2, which lands with Phase 5; the preset's code in ce2a8fa9 | committed with this row |
-| 5: The sun and the moon as the light pass's directional sample | dev | not started | |
+| 4: The outdoor exposure | dev | done; bar 2 landed with Phase 5; the preset's code in ce2a8fa9 | 33fb5abd |
+| 5: The sun and the moon as the light pass's directional sample | dev | done; bars 3, 6's settle and 7 are readings (exploration); tests in `gpu_sun.rs` (Notes) | committed with this row |
 | 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | not started | |
 | 7: The four goldens, the HUD rows and the readings | dev | not started | |
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | not started | |
@@ -1154,6 +1154,33 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   the cave too; readings log).
 - Phase 4's start exposure (`OutdoorArgs::auto`, `OUTDOOR_MIN`, `OUTDOOR_MAX`, its parse
   assertions) landed in Phase 3's commit, with the outdoor start settings.
+
+- Phase 5 files beyond the phase's list: new `shade.wgsl` (the light pass's entry and its
+  group-2 bindings, moved from `light.wgsl`, which the bake, probe and gradient passes keep
+  compiling) and `sky_light.wgsl` (the key light's sample); `frame/compose.rs`,
+  `frame/pipelines.rs` (the light pass's and the upscale pass's modules), `fsr2/pipelines.rs`
+  (the input pass's), `frame/sky.rs`, `frame/encode.rs`, `frame/settings.rs`,
+  `sky_atmosphere.wgsl`, `layout_tests.rs`, `settings.rs` (the `lod.r_lod` row),
+  `upscale.wgsl`; in the fly-through `cli/outdoor.rs`, `daylight.rs`, `cli/settings.rs`,
+  `cli/tests.rs`, `run/mod.rs`, `run/frame.rs`, `docs/flythrough.md`, and `LodParams` literals
+  in `tests/support/mod.rs` and `tests/gpu_golden.rs`.
+- Phase 5: the absent-chunk rule is a private variable of the walk, `absent_ball_r2`, that the
+  sky's lighting rays set around their `march` (as `coarse_span` is set), not a parameter of
+  `march`; the ball's squared radius rides in the sky uniform (`ball_r2`), centred on
+  `Params.cam_chunk`. `LodParams::r_lod` is `Option<i32>`, `None` on a mirror that is not
+  streamed.
+- Phase 5: the sky-change bit is `Params.lighting` bit 10, `LIGHTING_SKY_CHANGED`
+  (`Frame::sky_changed`). The jump rule also counts a change of the body's angular radius and
+  of the sky's scale (`Sky::scale`: the uniform sky's radiance, else the brighter body's
+  illuminance). The upscalers' comparison is the key light's luminance over pi (the list's
+  `lights_term` units) one frame older, plus the sky's scale, on `change_abs` and `change_rel`.
+  `LIGHTING_DIRECT` is set while a key light lights the frame. The key light's shadow ray also
+  walks the entities under `ENTITY_SHADOWS`, as the list's do.
+- Phase 5 tests: bars 1, 2, 4, 5, bar 6's flags and Phase 4 bar 2 are in a new
+  `crates/vxe-render/tests/gpu_sun.rs`, not `gpu_lights.rs` and `gpu_mirror.rs`; bar 5 reads
+  two mirrors (the upper chunk absent, then synced all-air) instead of one chunk arriving.
+  Bar 3, bar 6's settle and bar 7 are readings in its `mod reading` (exploration), bar 7 not in
+  `gpu_fsr2.rs`. `--sun-radius` takes 0.05 to 10 degrees (a range the plan does not give).
 
 ### Close triggers
 

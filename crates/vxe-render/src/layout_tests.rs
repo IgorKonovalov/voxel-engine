@@ -146,7 +146,15 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             altitude_zero_z,
             metres_per_voxel,
             base_altitude_m,
-            camera_alt = camera_alt_km
+            camera_alt = camera_alt_km,
+            key_dir,
+            key_radius,
+            key_e,
+            ball_r2,
+            prev_key_dir,
+            sky_scale,
+            prev_key_e,
+            prev_sky_scale
         }),
         (_, "Edits") => mirror!(EditsUniform { count, boxes }),
         (_, "UpTuning" | "InLamp") => mirror!(UpscaleUniform {

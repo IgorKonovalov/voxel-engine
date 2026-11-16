@@ -39,6 +39,8 @@ pub struct Clock {
     pub running: bool,
     /// Seconds for a whole day while it runs.
     pub day_length_s: f32,
+    /// The sun's angular radius in radians (`--sun-radius`).
+    pub sun_radius: f32,
 }
 
 impl Default for Clock {
@@ -47,6 +49,7 @@ impl Default for Clock {
             minutes: DEFAULT_TIME_MIN,
             running: false,
             day_length_s: DEFAULT_DAY_LENGTH_S,
+            sun_radius: vxe_render::sky::SUN_ANGULAR_RADIUS,
         }
     }
 }
@@ -62,7 +65,10 @@ impl Clock {
     pub fn sky(&self, altitude_zero_z: f32) -> Sky {
         let lat = LATITUDE_DEG.to_radians();
         let h = self.hour_angle();
-        let sun = Body::sun(body_direction(h, DECLINATION, lat));
+        let sun = Body {
+            angular_radius: self.sun_radius,
+            ..Body::sun(body_direction(h, DECLINATION, lat))
+        };
         let moon = Body::moon(body_direction(h + std::f32::consts::PI, -DECLINATION, lat));
         Sky {
             altitude_zero_z,

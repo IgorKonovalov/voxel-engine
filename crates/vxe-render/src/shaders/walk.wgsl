@@ -125,6 +125,13 @@ var<private> split_entered: bool;
 // blocks the ray starts and ends in do not shadow it.
 var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 
+// The lighting rays' residency ball (Plan 0032): while at least 0, `march` treats a chunk of
+// the window that is absent from the table (not yet arrived) and lies within this squared
+// chunk distance of the camera's chunk (`Params.cam_chunk_*`) as solid, so an unknown chunk is
+// not sky. The sky's lighting rays set it around their `march` and restore -1; primary rays,
+// the list's shadow rays and the bake never set it. A chunk outside the window stays air.
+var<private> absent_ball_r2: i32 = -1;
+
 // Whether `march` resolves its hit's material. The shadow rays (`shadowed`), which read only
 // `found`, clear it around their `march` and restore it.
 var<private> march_material: bool = true;
@@ -668,6 +675,13 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return miss;
         }
         let c = lookup_walk(v, t >= coarse_span.x && t <= coarse_span.y);
+        if (absent_ball_r2 >= 0 && c.size != 0 && walk.entry == ABSENT) {
+            // In the window, so `descend` read this chunk's entry.
+            let dc = walk.chunk - vec3<i32>(params.cam_chunk_x, params.cam_chunk_y, params.cam_chunk_z);
+            if (dot(dc, dc) <= absent_ball_r2) {
+                return Hit(true, v, axis, t, 0u);
+            }
+        }
         if (split_entered) {
             // The split walk's hand-off: the ray enters a field brick at `v`.
             return Hit(false, v, axis, t, SPLIT_HANDOFF);

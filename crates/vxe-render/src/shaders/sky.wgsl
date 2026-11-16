@@ -79,3 +79,39 @@ fn disc_of(d: vec3<f32>, l: vec3<f32>, e: vec3<f32>, radius: f32, alt_m: f32, pi
     let omega = 4.0 * SKY_PI * h * h;
     return cover * e * transmittance(alt_m, l.z) / max(omega, 1e-12);
 }
+
+// The key light's unshadowed irradiance at a hit at `p` with normal `n` (ADR-0027): `E T(alt,
+// l.z) max(n.l, 0)`, E its illuminance, T the transmittance from the hit's altitude toward its
+// centre `l`; this frame's (`old` false) or the frame before's; 0 with no key light.
+fn key_light_of(old: bool, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let bit = select(SKY_KEY, SKY_PREV_KEY, old);
+    if ((sky.flags & bit) == 0u) {
+        return vec3<f32>(0.0);
+    }
+    let l = select(sky.key_dir, sky.prev_key_dir, old);
+    let e = select(sky.key_e, sky.prev_key_e, old);
+    return e * transmittance(sky_altitude(p), l.z) * max(dot(n, l), 0.0);
+}
+
+fn key_light_at(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    return key_light_of(false, p, n);
+}
+
+// Whether the sky's light at a hit at `p`, normal `n`, changed past the upscalers' thresholds
+// `change_abs` and `change_rel` between the frame before and this one: the key light's
+// unshadowed luminance over pi (the list's `lights_term` units: irradiance over pi), or the
+// sky's scale. A drift moves neither past them; a jump moves the key light's at every lit
+// hit.
+fn sky_light_changed(p: vec3<f32>, n: vec3<f32>, change_abs: f32, change_rel: f32) -> bool {
+    if (!sky_on()) {
+        return false;
+    }
+    let ds = abs(sky.sky_scale - sky.prev_sky_scale);
+    if (ds > change_rel * max(sky.sky_scale, sky.prev_sky_scale)) {
+        return true;
+    }
+    let now = luminance(key_light_of(false, p, n)) / PI;
+    let then = luminance(key_light_of(true, p, n)) / PI;
+    let d = abs(now - then);
+    return d > change_abs && d > change_rel * max(now, then);
+}

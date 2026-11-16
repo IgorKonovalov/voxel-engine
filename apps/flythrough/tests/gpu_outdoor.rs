@@ -94,7 +94,7 @@ fn switch_leaves_nothing_behind(at: u32, frames: u32) {
     assert_eq!(hash, last_line(&fresh, "spawn hash"));
 }
 
-/// The plan's run: the switch at frame 200 of 600.
+/// Plan 0032 Phase 3 bar 6: the switch at frame 200 of 600.
 #[test]
 #[ignore = "soak"]
 fn a_source_switch_leaves_nothing_behind() {

@@ -380,6 +380,7 @@ impl RenderSettings {
         ("look.far_normal", Live),
         ("lod.r_full", Live),
         ("lod.forced_level", Live),
+        ("lod.r_lod", Live),
         ("lighting_resolution", Settle),
         ("scale", Settle),
         ("upscaler", Settle),
@@ -565,6 +566,7 @@ impl RenderSettings {
             "look.tuning.face_mix" => s.look.tuning.face_mix = 0.5 - s.look.tuning.face_mix,
             "look.far_normal" => s.look.far_normal = s.look.far_normal.map(|v| v + 1.0),
             "lod.r_full" => s.lod.r_full += 1,
+            "lod.r_lod" => s.lod.r_lod = Some(s.lod.r_lod.map_or(24, |r| r + 1)),
             "lod.forced_level" => {
                 s.lod.forced_level = if s.lod.forced_level.is_some() {
                     None
