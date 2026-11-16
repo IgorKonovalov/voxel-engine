@@ -170,6 +170,10 @@ pub(crate) const LIGHTING_STORE_BY_NORMAL: u32 = 1 << 14;
 /// the taps' face normals ([`LightWeights::Face`], ADR-0049).
 pub(crate) const LIGHTING_FACE_WEIGHTS: u32 = 1 << 15;
 
+/// `Params::lighting` bit: the a-trous filter drops its luminance weight at a pixel younger
+/// than the variance pass's age line ([`YoungFilter::Edges`]).
+pub(crate) const LIGHTING_YOUNG_EDGES: u32 = 1 << 4;
+
 /// `Params::flags` bit: trace the shadow ray.
 pub(crate) const FLAG_SHADOWS: u32 = 1;
 
@@ -491,6 +495,24 @@ named_enum!(LightWeights {
     Face => "face",
 });
 
+/// How the a-trous filter weighs a pixel's taps while its history is short: younger than the
+/// variance pass's age line (4 frames), where the temporal pass found no history for it (a
+/// disocclusion, an edit box, a fresh frame).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum YoungFilter {
+    /// The same weights as an old pixel: plane, normal and luminance. The default.
+    #[default]
+    Luma,
+    /// The plane and normal weights only: the luminance weight is 1 at a young pixel, so its
+    /// few samples average over the surface around it, a shadow's edge included.
+    Edges,
+}
+
+named_enum!(YoungFilter {
+    Luma => "luma",
+    Edges => "edges",
+});
+
 /// What kills the temporal pass's history.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HistoryKill {
@@ -636,6 +658,8 @@ pub struct Lighting {
     /// The normal the half-resolution light's filters compare ([`LightWeights`]; default
     /// `Normal`).
     pub light_weights: LightWeights,
+    /// The a-trous weights at a young pixel ([`YoungFilter`]; default `Luma`).
+    pub young_filter: YoungFilter,
 }
 
 impl Default for Lighting {
@@ -658,6 +682,7 @@ impl Default for Lighting {
             bake_pool_bytes: crate::bake::DEFAULT_BAKE_POOL_BYTES,
             store_read: StoreRead::Face,
             light_weights: LightWeights::Normal,
+            young_filter: YoungFilter::Luma,
             light_floor: DEFAULT_LIGHT_FLOOR,
         }
     }
@@ -721,6 +746,11 @@ impl Lighting {
             }
             | if self.light_weights == LightWeights::Face {
                 LIGHTING_FACE_WEIGHTS
+            } else {
+                0
+            }
+            | if self.young_filter == YoungFilter::Edges {
+                LIGHTING_YOUNG_EDGES
             } else {
                 0
             }

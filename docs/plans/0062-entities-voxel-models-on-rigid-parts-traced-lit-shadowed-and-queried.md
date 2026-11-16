@@ -585,6 +585,7 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 | 4: Motion | dev | done; the fresh bit's place, the keys and the readings in the readings log | 12f1a62 |
 | 5: The costs and the caps | dev | done; readings in the readings log, the zero-entity variants and their re-read after the amendment | c872cb1, then committed with this row |
 | 6: The owner's window | human | done 2026-11-16; (a)-(d), (f)-(h) yes; (e) grain in a crowd, a walk-start jump; words in the readings log | |
+| 6b: young pixels filtered harder (dev half) | dev | done; `YoungFilter` behind `Delete` and `--young-filter`, off by default; readings in the readings log; the owner's window (`live/session62b.sh`) owed | committed with this row |
 
 ### Notes
 
@@ -618,6 +619,7 @@ each. Empty is fine.)_
 - Merge of main (plan 0044, the surface-format chore): the steps view's `COUNT_STEPS` hit and
   light pipelines keep `ENTITIES` at its default; the `ENTITIES`-false variants serve the
   other views while no part is drawn.
+- Phase 6b: the age line is `VARIANCE_AGE` (4); a young pixel under `edges` skips the a-trous zero-input early-out; the shadow-edge reading is in `gpu_dynamic_lights.rs` (outside Files touched); `cli/tests.rs`, `hud/modes.rs` and `docs/flythrough.md` carry the key and flag. The filter's GPU time was read from the fly-through's `F1` line, not a `PassTimer` reading.
 - Phase 5: `Frame::frame_bytes` is in `frame/mod.rs` (the plan's `marcher.rs`); `gpu_look_field.rs`
   (outside Files touched) adds the mirror's bytes to its pinned figure.
 

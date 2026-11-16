@@ -73,6 +73,7 @@ the same rows.
 | `Q` | Cycle the exposure: auto (the preset), auto symmetric, manual (holds the exposure of the moment) |
 | `,` | Toggle how a cube face reads the light store: normal (default) or face (ADR-0049) |
 | `;` | Toggle the normal the light's filters compare: face (default) or normal |
+| `Delete` | Toggle the a-trous weights at a pixel younger than 4 frames: luma (all weights, default) or edges (plane and normal only); the lighting row names `young <mode>` |
 | `M` | Pulse the ore's emission (a render-side scale) |
 
 ### Dynamic lights
@@ -222,6 +223,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--shadow-walk full\|coarse` | The walk shadow rays take [coarse] |
 | `--store-read face\|normal` | How a cube face reads the store, ADR-0049 [normal] |
 | `--light-weights normal\|face` | The normal the light's filters compare [face] |
+| `--young-filter luma\|edges` | The a-trous weights at a pixel younger than 4 frames: all, or plane and normal only (`Delete`) [luma] |
 | `--filter on\|off` | The a-trous filter runs [on] |
 | `--light-radius N` | Chunks whose emitters light the frame, 0 to 64 [4; 19 on the showcase] |
 | `--history edits\|gradient` | What kills the temporal history [edits] |

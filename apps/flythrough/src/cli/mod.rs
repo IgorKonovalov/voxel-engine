@@ -159,7 +159,9 @@
 //! `F3` toggles the shadow walk, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp, `F8` the lamp's bounce, `Q` the exposure, `Comma` the store read
 //! (`--store-read face|normal`, ADR-0049, default `normal`) and `Semicolon` the light's filter
-//! weights (`--light-weights normal|face`, default `face`), each printing the lighting modes; with the stats HUD shown,
+//! weights (`--light-weights normal|face`, default `face`), `Delete` the filter's weights at a
+//! young pixel (`--young-filter luma|edges`, default `luma`), each printing the lighting modes;
+//! with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets, naming the look on the banner.
 //! `--vault` places a 16-voxel room with an indestructible
@@ -369,6 +371,8 @@ pub struct LightingArgs {
     pub store_read: vxe_render::StoreRead,
     /// `--light-weights normal|face`: the normal the light's filters compare (`Semicolon`).
     pub light_weights: vxe_render::LightWeights,
+    /// `--young-filter luma|edges`: the a-trous weights at a young pixel (`Delete`).
+    pub young_filter: vxe_render::YoungFilter,
     /// `--filter on|off`: the a-trous filter runs.
     pub filter: bool,
     /// `--atrous-iterations 1|2|4`: the a-trous iterations a frame runs (`F4`).
@@ -424,6 +428,7 @@ impl LightingArgs {
             shadow_walk: base.shadow_walk,
             store_read: base.store_read,
             light_weights: base.light_weights,
+            young_filter: base.young_filter,
             filter: base.filter,
             atrous_iterations: base.atrous_iterations,
             light_floor: base.light_floor,
@@ -462,6 +467,7 @@ impl LightingArgs {
             shadow_walk: self.shadow_walk,
             store_read: self.store_read,
             light_weights: self.light_weights,
+            young_filter: self.young_filter,
             filter: self.filter,
             atrous_iterations: self.atrous_iterations,
             light_floor: self.light_floor,

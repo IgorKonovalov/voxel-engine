@@ -133,6 +133,16 @@ pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<
             },
         ),
         Flag::value(
+            &["--young-filter"],
+            "luma|edges",
+            "the a-trous weights at a pixel younger than 4 frames: all, or plane and normal only (Delete)",
+            move |t, v| {
+                part(t).young_filter =
+                    v.named(vxe_render::YoungFilter::from_name, "luma or edges")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--filter"],
             "on|off",
             "the a-trous filter runs",

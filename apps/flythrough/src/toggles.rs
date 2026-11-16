@@ -221,6 +221,10 @@ pub static TOGGLES: &[Toggle] = &[
         "weights {}",
         m.lighting.light_weights.name()
     )),
+    lighting!(Delete, "young filter", YoungFilter, |m| format!(
+        "young {}",
+        m.lighting.young_filter.name()
+    )),
     Toggle {
         press: Press::Key(KeyCode::KeyN, None),
         name: "look",

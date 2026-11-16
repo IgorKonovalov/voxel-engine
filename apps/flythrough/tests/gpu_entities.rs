@@ -1748,14 +1748,15 @@ mod reading {
         }
     }
 
-    /// The grain reading's run: a fresh frame (at 128 x 72 under an upscaler, jittered), its
-    /// frame counter `offset` on, 128 frames of the eight walkers, frames 64 to 127 measured.
+    /// The grain reading's run: a fresh frame (at 128 x 72 under an upscaler, jittered) with
+    /// `young` as its young-pixel filter, its frame counter `offset` on, 128 frames of the
+    /// eight walkers, frames 64 to 127 measured.
     fn grain_run(
         rig: &mut Rig,
         model: &Arc<Model>,
-        offset: u32,
-        walking: bool,
+        (offset, walking): (u32, bool),
         kind: Option<vxe_render::UpscalerKind>,
+        young: vxe_render::YoungFilter,
     ) -> Vec<Shot> {
         let camera = Camera {
             position: [78.0, 32.0, 16.0].into(),
@@ -1766,6 +1767,10 @@ mod reading {
         let internal = if kind.is_some() { [128, 72] } else { [W, H] };
         let mut frame = support::lights::box_frame(&rig.device, internal, [W, H], kind);
         frame.set_jitter(&rig.device, kind.is_some());
+        frame.set_lighting(vxe_render::Lighting {
+            young_filter: young,
+            ..support::lights::box_lighting()
+        });
         for _ in 0..offset {
             frame.advance();
         }
@@ -1830,7 +1835,8 @@ mod reading {
     /// the walkers' pixels of frames 64 to 127, relative to their mean. The stages: the light
     /// pass's sample, the temporal pass's accumulation, the filter's output (split at age 8)
     /// and the display's luma; with the walkers' mean age, the share younger than 8 frames and
-    /// the share fresh, and the world pixels' display noise.
+    /// the share fresh, and the world pixels' display noise. Each case under both young-pixel
+    /// filters (`YoungFilter`).
     #[test]
     #[ignore = "reading"]
     fn the_grain_on_walking_walkers() {
@@ -1853,11 +1859,15 @@ mod reading {
                 vxe_render::Upscaler::default(),
             )),
         ];
-        for kind in kinds {
+        let youngs = [
+            vxe_render::YoungFilter::Luma,
+            vxe_render::YoungFilter::Edges,
+        ];
+        for (kind, filter) in kinds.into_iter().flat_map(|k| youngs.map(|y| (k, y))) {
             let name = kind.map_or("output size", |k| k.name());
             for walking in [false, true] {
-                let a = grain_run(&mut rig, &model, 0, walking, kind);
-                let b = grain_run(&mut rig, &model, 1008, walking, kind);
+                let a = grain_run(&mut rig, &model, (0, walking), kind, filter);
+                let b = grain_run(&mut rig, &model, (1008, walking), kind, filter);
                 let mut stage = [Diff::default(); 3];
                 // The filtered stage split by age: younger than 8, then 8 and older.
                 let mut by_age = [Diff::default(); 2];
@@ -1883,7 +1893,8 @@ mod reading {
                     }
                 }
                 println!(
-                    "{adapter}, {name}, {} walkers: {n} pixel-frames; noise: sample {}, accum {}, filtered {} (age < 8: {:.0} px, {}; older: {}), display {} /255; age mean {:.1}, younger than 8 {:.1} %, fresh {:.1} %; world display {} /255",
+                    "{adapter}, {name}, young {}, {} walkers: {n} pixel-frames; noise: sample {}, accum {}, filtered {} (age < 8: {:.0} px, {}; older: {}), display {} /255; age mean {:.1}, younger than 8 {:.1} %, fresh {:.1} %; world display {} /255",
+                    filter.name(),
                     if walking { "walking" } else { "still" },
                     stage[0].rel(),
                     stage[1].rel(),

@@ -17,7 +17,8 @@ pub const BANNER_COLS: usize = 40;
 /// Rows the banner wraps into at most: the look's words in three (the look and the view) and the modes' line in six.
 pub const BANNER_ROWS: usize = 9;
 
-/// A key that changes the lighting mode: `F3` to `F8`, `M` and `Q`.
+/// A key that changes the lighting mode: `F3` to `F8`, `M`, `Q`, `Comma`, `Semicolon` and
+/// `Delete`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeKey {
     /// `F3`: full or coarse shadow walk.
@@ -40,6 +41,8 @@ pub enum ModeKey {
     StoreRead,
     /// `Semicolon`: the light's filters weigh by the shading normal or the face normal.
     LightWeights,
+    /// `Delete`: the a-trous filter's weights at a young pixel, with or without luminance.
+    YoungFilter,
 }
 
 /// The auto exposure's preset, as `--adaptation` names it.
@@ -493,6 +496,12 @@ impl Modes {
                     vxe_render::LightWeights::Face => vxe_render::LightWeights::Normal,
                 }
             }
+            ModeKey::YoungFilter => {
+                l.young_filter = match l.young_filter {
+                    vxe_render::YoungFilter::Luma => vxe_render::YoungFilter::Edges,
+                    vxe_render::YoungFilter::Edges => vxe_render::YoungFilter::Luma,
+                }
+            }
             ModeKey::Lamp => l.lamp = !l.lamp,
             ModeKey::LampBounce => l.lamp_bounce = !l.lamp_bounce,
             ModeKey::Pulse => self.pulse = !self.pulse,
@@ -601,7 +610,12 @@ impl Modes {
         }
         out.push_str(", ");
         self.write_filter_count(out);
-        let _ = write!(out, ", ore pulse {}, exposure ", on(self.pulse));
+        let _ = write!(
+            out,
+            ", young {}, ore pulse {}, exposure ",
+            l.young_filter.name(),
+            on(self.pulse)
+        );
         self.write_exposure_mode(out);
         let _ = write!(out, " {:+.2} EV", self.exposure_ev());
     }
@@ -974,7 +988,7 @@ mod tests {
         }
     }
 
-    /// Each of `F3`, `F5` to `F8`, `M`, `Comma` and `Semicolon` changes the banner's text to the new mode; the banner is
+    /// Each of `F3`, `F5` to `F8`, `M`, `Comma`, `Semicolon` and `Delete` changes the banner's text to the new mode; the banner is
     /// empty 3 s after the last change and shows again on the next one.
     #[test]
     fn the_banner_names_each_change_and_fades_after_three_seconds() {
@@ -986,7 +1000,7 @@ mod tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nore pulse off, exposure manual +0.00 EV"
+            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nyoung luma, ore pulse off\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -1002,6 +1016,8 @@ mod tests {
             (ModeKey::LightWeights, "weights face"),
             (ModeKey::StoreRead, "store read face"),
             (ModeKey::LightWeights, "weights normal"),
+            (ModeKey::YoungFilter, "young edges"),
+            (ModeKey::YoungFilter, "young luma"),
         ] {
             m.press(key, t);
             let now = m.banner(t).expect("a change shows the banner");

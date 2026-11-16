@@ -100,6 +100,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHTING_AUTO_EXPOSURE", LIGHTING_AUTO_EXPOSURE),
     ("LIGHTING_STORE_BY_NORMAL", LIGHTING_STORE_BY_NORMAL),
     ("LIGHTING_FACE_WEIGHTS", LIGHTING_FACE_WEIGHTS),
+    ("LIGHTING_YOUNG_EDGES", LIGHTING_YOUNG_EDGES),
     // The list of lights (`frame/lights.rs`).
     ("MAX_LIGHTS", MAX_LIGHTS as u32),
     ("LIGHT_ON", Light::ON),

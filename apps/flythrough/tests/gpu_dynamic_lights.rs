@@ -1790,4 +1790,140 @@ mod reading {
             }
         }
     }
+
+    /// Plan 0062 Phase 6b, a shadow's edge after a disocclusion, world only: the box with a
+    /// wall (x 74..76, to z 14) between a light of 1200 at (64, 32, 22) and the floor, whose
+    /// shadow's far edge lies at x 94, seen from the box's far end with a pillar (x 104..108,
+    /// y 26..38, to z 30) hiding the edge. After 64 frames the pillar is carved (its box
+    /// invalidated); the pixels it uncovered on the floor within 3 voxels of x 94 are the band.
+    /// Per run frame after the carve, the display's rms against the frame 256 after it, over the
+    /// band, relative to the band's mean (output 192 x 108, no upscaler, FSR 2 and ours at 1.5
+    /// from 128 x 72), under each `YoungFilter`. Runs on `VXE_TEST_ADAPTER`.
+    #[test]
+    #[ignore]
+    fn reading_a_shadow_edge_after_a_disocclusion() {
+        use vxe_render::{GpuWorld, MirrorConfig, UpscalerKind, Window, YoungFilter};
+        let pillar = ([104i64, 26, 2], [108i64, 38, 30]);
+        let world = light_box();
+        support::bake::fill(&world, [74, 2, 2], [76, 62, 14], ROCK);
+        let Some((device, queue, adapter)) = support::reading_device(64 << 20) else {
+            return;
+        };
+        let cfg = MirrorConfig {
+            budget_bytes: 64 << 20,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        };
+        let gpu = GpuWorld::with_config(&device, cfg);
+        let frame = box_frame(&device, [192, 108], [192, 108], None);
+        let mut rig = Rig {
+            device,
+            queue,
+            gpu,
+            world,
+            frame,
+            cfg,
+        };
+        let far = Camera {
+            position: [120.0, 32.0, 45.0].into(),
+            yaw: std::f32::consts::PI,
+            pitch: -0.9,
+            vfov: 1.2,
+        };
+        let sync = |rig: &mut Rig| {
+            for _ in 0..2 {
+                support::SyncNow::sync_now(&mut rig.gpu, &rig.world, &rig.device, &rig.queue)
+                    .expect("fits");
+            }
+        };
+        let kinds = [
+            None,
+            Some(support::rigs::fsr2_kind()),
+            Some(UpscalerKind::Own(vxe_render::Upscaler::default())),
+        ];
+        let youngs = [YoungFilter::Luma, YoungFilter::Edges];
+        for (kind, young) in kinds.into_iter().flat_map(|k| youngs.map(|y| (k, y))) {
+            support::bake::fill(&rig.world, pillar.0, pillar.1, ROCK);
+            sync(&mut rig);
+            let internal = if kind.is_some() {
+                [128, 72]
+            } else {
+                [192, 108]
+            };
+            rig.frame = box_frame(&rig.device, internal, [192, 108], kind);
+            rig.frame.set_jitter(&rig.device, kind.is_some());
+            rig.frame.set_lighting(Lighting {
+                young_filter: young,
+                ..box_lighting()
+            });
+            rig.frame
+                .set_lights(&[Light::point([64.0, 32.0, 22.0], 1200.0)]);
+            for _ in 0..64 {
+                step(&mut rig, &far);
+            }
+            let before = hits_of(&rig, &rig.frame);
+            rig.world
+                .apply(&EditOp::box_(
+                    Fixed3(pillar.0.map(|v| v * FIXED_ONE)),
+                    Fixed3(pillar.1.map(|v| v * FIXED_ONE)),
+                    Mode::Carve,
+                ))
+                .expect("resident");
+            rig.frame.invalidate([104, 26, 2], [107, 37, 29]);
+            sync(&mut rig);
+            let mut shots = Vec::new();
+            let mut after = Vec::new();
+            for k in 0..256 {
+                step(&mut rig, &far);
+                if k == 0 {
+                    after = hits_of(&rig, &rig.frame);
+                }
+                if k < 16 || k == 255 {
+                    shots.push(rig.display());
+                }
+            }
+            // The band at the internal size: floor after the carve, not before, near the edge.
+            let mut band = vec![false; (internal[0] * internal[1]) as usize];
+            let floor_before: std::collections::HashSet<usize> =
+                before.iter().filter(|h| h.2).map(|h| h.0).collect();
+            for &(i, p, on_floor) in &after {
+                band[i] = on_floor && !floor_before.contains(&i) && (p[0] - 94.0).abs() <= 3.0;
+            }
+            let inner = |i: usize| {
+                let (x, y) = (i % 192, i / 192);
+                (y * internal[1] as usize / 108) * internal[0] as usize
+                    + x * internal[0] as usize / 192
+            };
+            let luma = |img: &[u8], i: usize| {
+                0.2126 * f64::from(img[4 * i])
+                    + 0.7152 * f64::from(img[4 * i + 1])
+                    + 0.0722 * f64::from(img[4 * i + 2])
+            };
+            let reference = shots.last().expect("the settled frame");
+            let px: Vec<usize> = (0..192 * 108).filter(|&i| band[inner(i)]).collect();
+            let mean = px.iter().map(|&i| luma(reference, i)).sum::<f64>() / px.len().max(1) as f64;
+            let rms: Vec<f64> = shots[..16]
+                .iter()
+                .map(|img| {
+                    let sq: f64 = px
+                        .iter()
+                        .map(|&i| (luma(img, i) - luma(reference, i)).powi(2))
+                        .sum();
+                    100.0 * (sq / px.len().max(1) as f64).sqrt() / mean.max(1e-9)
+                })
+                .collect();
+            let avg = |r: &[f64]| r.iter().sum::<f64>() / r.len() as f64;
+            println!(
+                "{adapter}, {}, young {}: band {} px, mean {mean:.1} /255; rms against frame 256, % of the mean: frames 1-4 {:.1} {:.1} {:.1} {:.1}, 5-8 {:.1}, 9-16 {:.1}",
+                kind.map_or("output size", |k| k.name()),
+                young.name(),
+                px.len(),
+                rms[0],
+                rms[1],
+                rms[2],
+                rms[3],
+                avg(&rms[4..8]),
+                avg(&rms[8..16]),
+            );
+        }
+    }
 }
