@@ -20,7 +20,7 @@
 > answer agreed: **one entity with modes**, the engine knowing no gameplay: it offers clips that
 > hold, variants declared in the `.rig` (hide, swap, remap), a model swap, and an entity that
 > becomes world voxels; the game names the modes and combines the mechanisms.
-> **Starts after:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Starts after:** [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (the clips, `Pose::compose`, the viewer), the clip-recorder chore (the entities library under
 > `apps/flythrough/assets/entities/`, `docs/entities.md`) and
 > [Plan 0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)

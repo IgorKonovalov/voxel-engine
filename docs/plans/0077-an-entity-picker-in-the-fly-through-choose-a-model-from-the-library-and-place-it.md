@@ -15,7 +15,7 @@
 > orchestrator: the walker and the spider go into an **entities library**, a directory of
 > predefined models under `apps/flythrough/assets/` documented in a new `docs/entities.md`, and
 > the picker's catalogue is that directory, every entry in it.
-> **Starts after:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Starts after:** [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > has closed (the viewer, `--model`, the clip keys), the clip-recorder chore stacked on it has
 > merged (the library's layout, the spider, `docs/entities.md`), and
 > [Plan 0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) has merged

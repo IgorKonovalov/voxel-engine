@@ -1176,6 +1176,10 @@ pub(crate) fn table() -> Table<Parsing> {
                 flags: bake_flags(),
             },
             Section {
+                title: "Model viewer",
+                flags: super::model::model_flags(),
+            },
+            Section {
                 title: "Audio",
                 flags: audio_flags(),
             },

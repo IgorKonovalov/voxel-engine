@@ -41,7 +41,7 @@ struct Entry {
 
 impl Entry {
     fn new(model: Arc<Model>, pose: Pose) -> Self {
-        let frames = pose.compose(&model);
+        let frames = pose.frames(&model);
         let mut lo = [i64::MAX; 3];
         let mut hi = [i64::MIN; 3];
         for (i, f) in frames.iter().enumerate() {

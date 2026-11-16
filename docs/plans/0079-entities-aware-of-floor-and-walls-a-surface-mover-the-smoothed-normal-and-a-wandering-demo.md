@@ -17,7 +17,7 @@
 > **Source:** the owner, 2026-11-16: "entities should be aware of where the floor and walls are,
 > so for example we can have walkers walking and spiders crawling".
 > **Starts after:** Phases 1 to 3 touch `crates/` and the library's two rig files only; they may
-> start as a side lane once [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> start as a side lane once [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > has merged (`Pose::compose`, Phase 3b) and the clip-recorder chore has merged (the spider's rig,
 > `apps/flythrough/assets/entities/`). Phase 4 edits the fly-through's entities module and starts
 > after [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)

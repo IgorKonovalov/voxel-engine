@@ -1,8 +1,8 @@
 # ADR-0051: Rigs and clips are small text files, and a clip is sampled in fixed point by tick
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-16, at Plan 0063's close)
 > **Date:** 2026-11-10
-> **Related plan(s):** [Plan 0063](../plans/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Related plan(s):** [Plan 0063](../plans/done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 
 ## Context
 
@@ -60,3 +60,12 @@ whole volumes, which multiplies pool memory by the frame count.
 ### Alternative C: clips in code only
 The game builds `Clip` values itself, which Plan 0062's API already allows. It lost as the only
 route because every tweak is then a rebuild, and the owner's flow is edit, reload, look.
+
+## Outcome (2026-11-16, Plan 0063's close)
+
+Built as decided, with one addition the decision left open: `sample` and `Playback::pose` start
+from a rest `Pose` that `Rig::build` returns (each part's `at`), a key's translation is an offset
+added to the rest place and its rotation replaces the rest rotation (Plan 0063's amendment of
+2026-11-11). In the owner's window typed keys were enough for a walk and a head turn ("ok for
+now, but keep it open"), so Alternative A was not re-read; a crossfade between clips and a
+timeline stay open in `docs/backlog.md`.

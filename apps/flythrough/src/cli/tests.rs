@@ -885,3 +885,19 @@ fn the_entities_flag_parses_a_count() {
         .expect("--entities-walk on parses");
     assert!(w.entities_walk);
 }
+
+/// `--model PATH` and `--clip NAME` parse (none by default); `--clip` without `--model` is
+/// refused. A missing file is the startup's error (`viewer::Viewer::open`).
+#[test]
+fn the_model_flags_parse() {
+    let none = parse_args_from(argv(&[])).expect("no flags parse");
+    assert_eq!((none.model, none.clip), (None, None));
+    let a = parse_args_from(argv(&["--model", "a/walker.rig", "--clip", "walk"]))
+        .expect("--model and --clip parse");
+    assert_eq!(a.model, Some(std::path::PathBuf::from("a/walker.rig")));
+    assert_eq!(a.clip.as_deref(), Some("walk"));
+    let Err(e) = parse_args_from(argv(&["--clip", "walk"])) else {
+        panic!("--clip alone parsed");
+    };
+    assert!(e.contains("--clip") && e.contains("--model"), "{e}");
+}

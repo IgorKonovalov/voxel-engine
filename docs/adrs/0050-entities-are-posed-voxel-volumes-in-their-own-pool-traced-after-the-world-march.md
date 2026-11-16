@@ -4,7 +4,7 @@
 > and the costs differ from the decision as written)
 > **Date:** 2026-11-10
 > **Related plan(s):** [Plan 0062](../plans/done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
-> (builds it), [Plan 0063](../plans/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> (builds it), [Plan 0063](../plans/done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (clips over it)
 
 ## Context
