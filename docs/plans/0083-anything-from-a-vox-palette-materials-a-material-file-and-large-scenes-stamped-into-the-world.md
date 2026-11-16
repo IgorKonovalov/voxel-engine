@@ -578,6 +578,10 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
   chapel's two paths, and the vxe-world `the_source_path_and_the_op_path_agree` a synthetic
   scene (vxe-world's tests cannot read the fly-through's assets).
 
+- Fix dbb59413: `prefab64_mixed` read 15 % over the dense-form base (quiet A/B at 764f0d18); the
+  stamp now reads a prefab brick once per sub-box instead of `Prefab::cell` per voxel (+1.4 %
+  in the quiet A/B at dbb59413).
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
