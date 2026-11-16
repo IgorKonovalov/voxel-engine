@@ -99,13 +99,13 @@ pub fn group_entries(group: Group) -> impl Iterator<Item = Entry> {
     toggles.chain(actions)
 }
 
-/// The tree `--keys` prints at `m` and `v`: the fixed keys, then a header per group and a
-/// row per entry, its label, its mode in words (`-` for none) and its binds (`menu` for
+/// The tree `--keys` prints at `m` and `v`: the fixed keys (what they do, then the keys in
+/// the key column), then a header per group and a row per entry, its label, its mode in words (`-` for none) and its binds (`menu` for
 /// none).
 pub fn write_tree(m: &Modes, v: &RunView, out: &mut String) {
     let _ = writeln!(out, "fixed");
     for (keys, does) in FIXED_ROWS {
-        let _ = writeln!(out, "  {does:<22} {:<44} {keys}", "-");
+        let _ = writeln!(out, "  {does:<67} {keys}");
     }
     for g in Group::ALL {
         let _ = writeln!(out, "{}", g.name());
