@@ -1,10 +1,11 @@
 //! Clips sampled on computed keys: the translation, the rotation blend and its shorter arc, the
-//! loop and the hold, the blend of two poses, `Clip::new`'s refusals and the playback tick.
+//! loop and the hold, the blend of two poses, `Clip::new`'s refusals, the playback tick and
+//! the player's fade from one clip into the next.
 
 use std::sync::Arc;
 
 use vxe_entity::{
-    Clip, ClipError, Key, Model, Part, PartPose, Playback, Pose, Quat, Track, blend, sample,
+    Clip, ClipError, Key, Model, Part, PartPose, Playback, Player, Pose, Quat, Track, blend, sample,
 };
 use vxe_world::Prefab;
 
@@ -229,4 +230,110 @@ fn playback_ticks_are_integer() {
     assert_eq!(p.tick_at(102), 3);
     assert_eq!(p.tick_at(110), 15);
     assert_eq!(p.pose(&m, &Pose::rest(&m), 110).parts.len(), 2);
+}
+
+/// Two clips for the fade tests: `a` slides part 1 ten voxels along x over 40 ticks; `b` holds
+/// it a quarter turn about z, four voxels along y, sliding one voxel along z over 40 ticks.
+fn two_clips(m: &Model) -> (Arc<Clip>, Arc<Clip>) {
+    let a = clip(
+        m,
+        40,
+        false,
+        vec![
+            key(0, [0; 3], Quat::IDENTITY),
+            key(40, [2560, 0, 0], Quat::IDENTITY),
+        ],
+    );
+    let z90 = Quat([11585, 0, 0, 11585]);
+    let b = clip(
+        m,
+        40,
+        false,
+        vec![key(0, [0, 1024, 0], z90), key(40, [0, 1024, 256], z90)],
+    );
+    (Arc::new(a), Arc::new(b))
+}
+
+/// A switch at tick 20 with an 8-tick fade: at the switch the pose is the old clip's there;
+/// from tick 28 it is the new clip's from its tick 0 (tick 8 and 20 of it); in between it is
+/// `blend` of the held pose and the new clip's at `(now - 20) * 256 / 8`.
+#[test]
+fn a_switch_fades_from_the_old_pose_into_the_new_clip() {
+    let m = model();
+    let rest = Pose::rest(&m);
+    let (a, b) = two_clips(&m);
+    let mut p = Player::new(Playback {
+        clip: a.clone(),
+        start_tick: 0,
+        rate: 256,
+    });
+    let old = p.pose(&m, &rest, 20);
+    assert_eq!(old, sample(&m, &rest, &a, 20));
+    assert_eq!(old.parts[1].t, [1280, 0, 0]);
+    p.switch(&m, &rest, 20, b.clone(), 8);
+    assert_eq!(p.pose(&m, &rest, 20), old, "no jump at the switch");
+    let fade = p.fade.as_ref().expect("fading");
+    assert_eq!(
+        [20, 21, 22, 24, 27, 28, 99].map(|t| fade.weight(t)),
+        [0, 32, 64, 128, 224, 256, 256]
+    );
+    for now in 21..28 {
+        let want = blend(&old, &sample(&m, &rest, &b, now - 20), fade.weight(now));
+        assert_eq!(p.pose(&m, &rest, now), want, "tick {now}");
+    }
+    let mid = p.pose(&m, &rest, 24);
+    // Half of 1280 along x, half of 1024 along y and half of 4 ticks' 6.4 along z.
+    assert_eq!(mid.parts[1].t, [640, 512, 12]);
+    assert_eq!(p.pose(&m, &rest, 28), sample(&m, &rest, &b, 8));
+    assert_eq!(p.pose(&m, &rest, 40), sample(&m, &rest, &b, 20));
+    assert_eq!(p.playback.rate, 256, "the rate is kept");
+}
+
+/// A switch at tick 24, half way through a fade begun at 20, fades from the blend shown at 24
+/// (not from either clip), into the new clip from its tick 0: no jump at the switch, and the
+/// steps after it are the blend's.
+#[test]
+fn a_switch_during_a_fade_starts_from_the_blend_shown() {
+    let m = model();
+    let rest = Pose::rest(&m);
+    let (a, b) = two_clips(&m);
+    let mut p = Player::new(Playback {
+        clip: a.clone(),
+        start_tick: 0,
+        rate: 256,
+    });
+    p.switch(&m, &rest, 20, b.clone(), 8);
+    let shown = p.pose(&m, &rest, 24);
+    assert_ne!(shown, sample(&m, &rest, &a, 24));
+    assert_ne!(shown, sample(&m, &rest, &b, 4));
+    p.switch(&m, &rest, 24, a.clone(), 8);
+    assert_eq!(p.pose(&m, &rest, 24), shown, "no jump at the second switch");
+    assert_eq!(
+        p.pose(&m, &rest, 25),
+        blend(&shown, &sample(&m, &rest, &a, 1), 32)
+    );
+    // One tick on, part 1 moves an eighth of the way from the blend ([640, 512, 12]) to
+    // `a`'s tick 1 ([64, 0, 0]): 640 - 72 along x, 512 - 64 along y, 12 * 7 / 8 = 10.5
+    // rounded toward zero along z.
+    assert_eq!(p.pose(&m, &rest, 25).parts[1].t, [568, 448, 10]);
+    assert_eq!(p.pose(&m, &rest, 32), sample(&m, &rest, &a, 8));
+}
+
+/// A fade of 0 ticks switches at once; `switch_from` fades from the pose it is given.
+#[test]
+fn a_zero_tick_fade_switches_at_once() {
+    let m = model();
+    let rest = Pose::rest(&m);
+    let (a, b) = two_clips(&m);
+    let mut p = Player::new(Playback {
+        clip: a,
+        start_tick: 0,
+        rate: 256,
+    });
+    p.switch(&m, &rest, 10, b.clone(), 0);
+    assert_eq!(p.fade, None);
+    assert_eq!(p.pose(&m, &rest, 10), sample(&m, &rest, &b, 0));
+    p.switch_from(rest.clone(), 12, b.clone(), 4);
+    assert_eq!(p.pose(&m, &rest, 12), rest);
+    assert_eq!(p.pose(&m, &rest, 16), sample(&m, &rest, &b, 4));
 }

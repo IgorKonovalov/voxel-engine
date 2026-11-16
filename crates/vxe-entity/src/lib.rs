@@ -8,7 +8,8 @@
 //! parent. An [`EntitySet`] holds placed models and answers [`EntitySet::raycast`].
 //!
 //! A [`Clip`] holds keys per part; [`sample`] gives its pose at an integer tick and [`blend`]
-//! mixes two poses, both in fixed point, so a server and its clients pose alike.
+//! mixes two poses, both in fixed point, so a server and its clients pose alike; a [`Player`]
+//! fades from one clip into the next by [`blend`] over a number of ticks.
 //!
 //! The world and the entities are queried separately, and the consumer orders the two: the
 //! world first, then the entities with the world's distance as their limit.
@@ -47,8 +48,8 @@ mod quat;
 mod raycast;
 mod set;
 
-pub use clip::{Clip, ClipError, Key, Playback, Track, blend, sample};
+pub use clip::{Clip, ClipError, Fade, Key, Playback, Player, Track, blend, sample};
 pub use model::{MAX_EDGE, MAX_PARTS, Model, ModelError, Part};
-pub use pose::{ComposedPose, PartPose, Pose, PoseError};
+pub use pose::{ComposeScratch, ComposedPose, PartPose, Pose, PoseError};
 pub use quat::{Q14_ONE, Quat};
 pub use set::{EntityHit, EntityId, EntitySet};
