@@ -611,7 +611,9 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 | 6: The owner's window | human | done 2026-11-16; (a)-(d), (f)-(h) yes; (e) grain in a crowd, a walk-start jump; words in the readings log | |
 | 6b: young pixels filtered harder (dev half) | dev | done; `YoungFilter` behind `Delete` and `--young-filter`, off by default; readings in the readings log | 80d7def5 |
 | 6b: the second window | human | skipped by the owner on the readings (2026-11-16); option B picked (Phase 6c); `--young-filter` stays an off setting | |
-| 6c: the baked face read for the walkers' fallback (dev half) | dev | done; `EntityLight` behind `Insert` and `--entity-light`, `own` by default; readings in the readings log; the owner's window (`live/session62c.sh`) owed | committed with this row |
+| 6c: the baked face read for the walkers' fallback (dev half) | dev | done; `EntityLight` behind `Insert` and `--entity-light`, `own` by default; readings in the readings log; the owner's window (`live/session62c.sh`) owed | 0fe6a257 |
+| 6c: the owner's window | human | done 2026-11-16; 16 and 64 walkers and the vein walker read fine under `world`; pick: `world` the default, `own` stays a setting; words in the readings log | |
+| 6c: the default follows the pick | dev | done; `EntityLight::World` the default of the setting and of `--entity-light`; no golden changed | committed with this row |
 
 ### Notes
 

@@ -161,7 +161,7 @@
 //! (`--store-read face|normal`, ADR-0049, default `normal`) and `Semicolon` the light's filter
 //! weights (`--light-weights normal|face`, default `face`), `Delete` the filter's weights at a
 //! young pixel (`--young-filter luma|edges`, default `luma`), `Insert` where an entity's
-//! emissive light comes from (`--entity-light own|world`, default `own`), each printing the
+//! emissive light comes from (`--entity-light own|world`, default `world`), each printing the
 //! lighting modes;
 //! with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
