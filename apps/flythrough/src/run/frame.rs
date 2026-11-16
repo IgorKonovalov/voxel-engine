@@ -14,6 +14,7 @@ use crate::run::hud_feed::{
     print_moving_exposure, probe_passes_ms, shadow_steps_line, steps_line, window_line,
 };
 use crate::run::keys::{ORE_PULSE_MEAN, ore_pulse};
+use crate::run::loading::fade_loading;
 use crate::setup::GfxSample;
 use crate::streaming::pressure_terms;
 use std::time::Instant;
@@ -174,7 +175,7 @@ impl Run {
         dt: f32,
         surface: &wgpu::TextureView,
     ) -> Flow {
-        if self.loading.is_some() {
+        if self.is_loading() {
             return self.loading_frame(gpu, surface);
         }
         let t0 = now();
@@ -462,6 +463,7 @@ impl Run {
             }
         }
         gpu.queue.submit([enc.finish()]);
+        fade_loading(&mut self.loading, gpu, surface);
         if self.args.headless {
             diag(format_args!("frame {}: submitted", self.frame));
         }

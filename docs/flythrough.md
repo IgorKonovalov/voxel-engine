@@ -276,7 +276,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 
 | Flag | Does |
 |------|------|
-| `--loading-screen on\|off` | Step the start-up (the light pre-roll) from the frame loop behind loading frames, which name the scene and the stage and show a bar; off runs it all before the first frame [on in a window, off headless] |
+| `--loading-screen on\|off` | Step the start-up (the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; off runs it all before the first frame [on in a window, off headless] |
+| `--loading-fade MS` | Fade the loading frame out over the first world frames; 0 cuts [250] |
 
 ### Diagnostics
 

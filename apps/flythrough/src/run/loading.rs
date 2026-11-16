@@ -11,22 +11,20 @@ use crate::cli::RunMode;
 use crate::edits::{ball, voxel_of};
 use crate::now;
 use crate::run::Run;
-use crate::run::hud_feed::{band_census_line, field_line, field_pass_line};
+use crate::run::hud_feed::{HUD_SCALE, band_census_line, field_line, field_pass_line};
 use crate::run::queue::{COARSE_PRE_ROLL_MS, PRE_ROLL_SAMPLES, queue_view_angles};
 use crate::setup::{Gfx, start_camera};
 use crate::streaming::NEAR_D2;
 use std::time::{Duration, Instant};
 use vxe_app::{Flow, Gpu};
 use vxe_render::{
-    Camera, HudColour, LoadProgress, PreRoll, PreRollConfig, PreRollState, SyncStats, wgpu,
+    Camera, EasedBar, LoadProgress, LoadingScreen, LoadingView, PreRoll, PreRollConfig,
+    PreRollState, SyncStats, wgpu,
 };
 use vxe_world::ChunkCoord;
 
 /// The pre-roll's cap on its step time, in ms.
 pub(crate) const PRE_ROLL_CAP_MS: f64 = 120_000.0;
-
-/// Cells of the loading frame's text bar.
-const BAR_CELLS: usize = 40;
 
 /// The stages' names, as the loading frame and the `loading frame` diag lines show them.
 pub(crate) const UPLOAD: &str = "uploading the level";
@@ -91,8 +89,14 @@ pub(crate) enum Stage {
 pub(crate) struct Loading {
     pub(crate) stage: Stage,
     pub(crate) progress: LoadProgress,
-    /// Whether loading frames are drawn (`--loading-screen on`).
-    screen: bool,
+    /// The loading frame, under `--loading-screen on`.
+    screen: Option<LoadingScreen>,
+    /// The bar's shown value.
+    bar: EasedBar,
+    /// `--loading-fade`, in ms.
+    fade_ms: f64,
+    /// When the last loading frame was drawn: the fade runs from there.
+    ended: Option<Instant>,
     /// Wall time a frame spends on steps, in ms.
     slice_ms: f64,
     /// When loading began (device ready).
@@ -167,12 +171,6 @@ pub(crate) fn scene_title(run: &Run) -> String {
     }
 }
 
-/// A `cells`-wide text bar filled to `fraction`.
-pub(crate) fn text_bar(fraction: f32, cells: usize) -> String {
-    let filled = ((fraction.clamp(0.0, 1.0) * cells as f32).floor() as usize).min(cells);
-    format!("[{}{}]", "#".repeat(filled), ".".repeat(cells - filled))
-}
-
 /// The stages a run loads through, with their weights: the level's upload or the streamed
 /// near residency, the pre-roll's two, and the field's fill when the run starts in the field.
 pub(crate) fn load_stages(streamed: bool, field: bool) -> Vec<(&'static str, f32)> {
@@ -194,7 +192,7 @@ impl Run {
     /// Under the screen the first stage's syncs take a time budget of the slice, so no step
     /// holds a loading frame for a whole upload; the run's own budget is restored when the
     /// pre-roll starts.
-    pub(crate) fn start_loading(&mut self, screen: bool) -> Loading {
+    pub(crate) fn start_loading(&mut self, gpu: &Gpu, screen: bool) -> Loading {
         let slice_ms = self.args.loading.slice_ms;
         let streamed = self.stream.is_some();
         if let Some(gfx) = self.gfx.as_mut() {
@@ -229,7 +227,10 @@ impl Run {
         Loading {
             stage,
             progress: LoadProgress::new(&load_stages(streamed, field)),
-            screen,
+            screen: screen.then(|| LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE)),
+            bar: EasedBar::default(),
+            fade_ms: self.args.loading.fade_ms,
+            ended: None,
             slice_ms,
             began: now(),
             title: scene_title(self),
@@ -626,7 +627,7 @@ impl Run {
             .collect::<Vec<_>>()
             .join(", ");
         println!("loading: the longest step of each stage (ms): {longest}");
-        if loading.screen {
+        if loading.screen.is_some() {
             let worst = loading.intervals.iter().copied().fold(0.0, f64::max);
             println!(
                 "loading: {} loading frames, longest frame {:.1} ms, {}; {:.0} ms from device ready to the last loading frame",
@@ -641,26 +642,31 @@ impl Run {
 
     /// One loading frame: waits for the previous slice's GPU work (so a present never queues
     /// behind more than one slice of bake work), steps until the slice is spent or loading
-    /// ends, then draws the loading rows over a cleared surface. The frame after the last
-    /// loading frame is the first world frame.
+    /// ends, then draws the loading frame with the eased bar. The frame after the last loading
+    /// frame is the first world frame, over which [`Run::fade_loading`] fades the screen out.
     pub(crate) fn loading_frame(&mut self, gpu: &Gpu, surface: &wgpu::TextureView) -> Flow {
         let Some(mut loading) = self.loading.take() else {
             return Flow::Exit;
         };
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
         let t0 = now();
-        if let Some(last) = loading.last.replace(t0) {
-            loading.intervals.push((t0 - last).as_secs_f64() * 1e3);
-        }
+        let dt = loading.last.replace(t0).map_or(0.0, |last| {
+            let ms = (t0 - last).as_secs_f64() * 1e3;
+            loading.intervals.push(ms);
+            ms * 1e-3
+        });
         while !loading.done() && ms_since(t0) < loading.slice_ms {
             self.load_step(gpu, &mut loading);
         }
         if self.failure.is_some() {
             return Flow::Exit;
         }
-        if let Some(gfx) = self.gfx.as_mut() {
-            draw_loading(gpu, gfx, surface, &loading);
+        if loading.done() {
+            loading.bar.snap();
+        } else {
+            loading.bar.update(loading.progress.fraction(), dt as f32);
         }
+        draw_loading(gpu, surface, &mut loading, 1.0);
         diag(format_args!(
             "loading frame {}: {} {:.6}",
             loading.frames,
@@ -670,11 +676,38 @@ impl Run {
         loading.frames += 1;
         if loading.done() {
             self.end_loading(&loading);
+            if loading.fade_ms > 0.0 {
+                loading.ended = Some(now());
+                self.loading = Some(loading);
+            }
         } else {
             self.loading = Some(loading);
         }
         Flow::Continue
     }
+
+    /// Whether start-up is still stepping; `false` once the first world frame may draw, the
+    /// fade included.
+    pub(crate) fn is_loading(&self) -> bool {
+        self.loading.as_ref().is_some_and(|l| !l.done())
+    }
+}
+
+/// Over the first world frames after loading, the loading frame drawn over `surface` at an
+/// alpha falling from 1 to 0 over `--loading-fade`; dropped once it reaches 0.
+pub(crate) fn fade_loading(slot: &mut Option<Loading>, gpu: &Gpu, surface: &wgpu::TextureView) {
+    let Some(loading) = slot.as_mut() else {
+        return;
+    };
+    let Some(ended) = loading.ended else {
+        return;
+    };
+    let alpha = 1.0 - (now() - ended).as_secs_f64() * 1e3 / loading.fade_ms;
+    if alpha <= 0.0 {
+        *slot = None;
+        return;
+    }
+    draw_loading(gpu, surface, loading, alpha as f32);
 }
 
 /// The loading frames' intervals as `interval p50 .. p95 .. max .. ms over n`.
@@ -694,70 +727,40 @@ fn interval_line(intervals: &[f64]) -> String {
     )
 }
 
-/// Clears `surface` and draws the loading rows: the scene, the stage and its count, the text
-/// bar and the seconds since loading began.
-fn draw_loading(gpu: &Gpu, gfx: &mut Gfx, surface: &wgpu::TextureView, loading: &Loading) {
-    let fraction = loading.progress.fraction();
+/// Draws the loading frame over `surface` at `alpha`: the scene, the stage and its count,
+/// the eased bar and the seconds since loading began.
+fn draw_loading(gpu: &Gpu, surface: &wgpu::TextureView, loading: &mut Loading, alpha: f32) {
     let detail = loading.detail();
-    let rows = [
-        format!("loading {}", loading.title),
-        format!("{}: {detail}", loading.stage_name()),
-        format!(
-            "{} {:3.0} %",
-            text_bar(fraction, BAR_CELLS),
-            fraction * 100.0
-        ),
-        format!("{:.1} s", ms_since(loading.began) / 1e3),
-    ];
-    let rows: [(&[u8], HudColour); 4] = [
-        (rows[0].as_bytes(), HudColour::Yellow),
-        (rows[1].as_bytes(), HudColour::White),
-        (rows[2].as_bytes(), HudColour::White),
-        (rows[3].as_bytes(), HudColour::White),
-    ];
-    gfx.hud.set_rows(&gpu.queue, &rows);
+    let stage = loading.stage_name();
+    let seconds = ms_since(loading.began) as f32 * 1e-3;
+    let progress = loading.bar.value();
+    let title = format!("loading {}", loading.title);
+    let Some(screen) = loading.screen.as_mut() else {
+        return;
+    };
     let mut enc = gpu
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    {
-        let _clear = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("loading clear"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.02,
-                        g: 0.02,
-                        b: 0.03,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-    }
-    let [w, h] = gpu.size;
-    gfx.hud.encode(&mut enc, surface, w, h);
+    screen.encode(
+        &gpu.queue,
+        &mut enc,
+        surface,
+        gpu.size,
+        &LoadingView {
+            title: &title,
+            stage,
+            detail: &detail,
+            progress,
+            seconds,
+            alpha,
+        },
+    );
     gpu.queue.submit([enc.finish()]);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{COARSE, FIELD, NEAR, RESIDENCY, UPLOAD, load_stages, text_bar};
-
-    /// The text bar fills `floor(fraction * cells)` cells and clamps outside 0 to 1.
-    #[test]
-    fn the_text_bar_fills_its_fraction() {
-        assert_eq!(text_bar(0.0, 4), "[....]");
-        assert_eq!(text_bar(0.5, 4), "[##..]");
-        assert_eq!(text_bar(0.99, 4), "[###.]");
-        assert_eq!(text_bar(1.0, 4), "[####]");
-        assert_eq!(text_bar(1.5, 4), "[####]");
-        assert_eq!(text_bar(-1.0, 4), "[....]");
-    }
+    use super::{COARSE, FIELD, NEAR, RESIDENCY, UPLOAD, load_stages};
 
     /// A level loads through its upload, a streamed world through its near residency, then
     /// the pre-roll's two stages, then the field's fill when the run starts in the field.

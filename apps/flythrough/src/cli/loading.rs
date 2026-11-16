@@ -7,6 +7,9 @@ use super::table::Flag;
 /// The wall time a loading frame spends on start-up steps before it draws, in ms.
 pub(crate) const LOAD_SLICE_MS: f64 = 25.0;
 
+/// The loading frame's fade over the first world frames, in ms.
+pub(crate) const LOADING_FADE_MS: f64 = 250.0;
+
 /// `--loading-screen` and its diagnostics.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LoadingArgs {
@@ -14,6 +17,8 @@ pub(crate) struct LoadingArgs {
     pub(crate) screen: Option<bool>,
     /// `--load-slice MS`: the wall time a loading frame spends on steps.
     pub(crate) slice_ms: f64,
+    /// `--loading-fade MS`: the loading frame fades out over the first world frames; 0 cuts.
+    pub(crate) fade_ms: f64,
 }
 
 impl Default for LoadingArgs {
@@ -21,6 +26,7 @@ impl Default for LoadingArgs {
         Self {
             screen: None,
             slice_ms: LOAD_SLICE_MS,
+            fade_ms: LOADING_FADE_MS,
         }
     }
 }
@@ -34,15 +40,29 @@ impl LoadingArgs {
 
 /// The loading screen's rows.
 pub(crate) fn loading_flags() -> Vec<Flag<Parsing>> {
-    vec![Flag::value(
-        &["--loading-screen"],
-        "on|off",
-        "step the start-up behind loading frames [on in a window, off headless]",
-        |p: &mut Parsing, v| {
-            p.args.loading.screen = Some(v.on_off()?);
-            Ok(())
-        },
-    )]
+    vec![
+        Flag::value(
+            &["--loading-screen"],
+            "on|off",
+            "step the start-up behind loading frames [on in a window, off headless]",
+            |p: &mut Parsing, v| {
+                p.args.loading.screen = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--loading-fade"],
+            "MS",
+            "fade the loading frame out over the first world frames; 0 cuts [250]",
+            |p: &mut Parsing, v| {
+                p.args.loading.fade_ms = v.parse_if(
+                    |ms: &f64| *ms >= 0.0 && ms.is_finite(),
+                    "a time of 0 ms or more",
+                )?;
+                Ok(())
+            },
+        ),
+    ]
 }
 
 /// The diagnostics' rows: flags for tests and readings.
@@ -76,6 +96,16 @@ mod tests {
         let a = parse_args_from(argv(&["--loading-screen", "off"])).expect("off parses");
         assert!(!a.loading.screen_on(false));
         assert!(parse_args_from(argv(&["--loading-screen", "maybe"])).is_err());
+    }
+
+    /// `--loading-fade` takes 0 ms or more; the default is 250.
+    #[test]
+    fn the_loading_fade_takes_zero_or_more() {
+        let a = parse_args_from(argv(&[])).expect("no flags parse");
+        assert_eq!(a.loading.fade_ms, 250.0);
+        let a = parse_args_from(argv(&["--loading-fade", "0"])).expect("0 parses");
+        assert_eq!(a.loading.fade_ms, 0.0);
+        assert!(parse_args_from(argv(&["--loading-fade", "-1"])).is_err());
     }
 
     /// `--load-slice` takes a time above 0 ms; the default is 25.

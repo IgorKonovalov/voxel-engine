@@ -203,7 +203,7 @@ impl Run {
         };
         self.gfx = Some(gfx);
         let screen = self.args.loading.screen_on(self.args.headless);
-        let loading = self.start_loading(screen);
+        let loading = self.start_loading(gpu, screen);
         if screen {
             // The rest steps from the frame loop behind loading frames.
             self.loading = Some(loading);
