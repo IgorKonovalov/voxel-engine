@@ -1,23 +1,24 @@
 # 0063: Rigs and clips: keyframe animation sampled by tick, a rig text file beside the `.vox`, a model viewer in the fly-through, and voxels from text
 
-> **Status:** in-progress (Phases 1 to 3 done; Phase 3 stacked on `plan-0062` at 0fe6a257;
-> Phase 4, the owner's window, next)
+> **Status:** done (closed 2026-11-16, v0.57.0, fresh-session review on 8a6e8434: every phase
+> built and its named tests assert the done-whens; three minors routed to `docs/backlog.md` (the
+> viewer's error kept on screen, a clip crossfade, the display pose's per-frame allocation))
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-11-10
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
-> (proposed; the file and the sampling), accepted at this plan's close. Rests on
-> [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0051](../../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
+> (the file and the sampling), accepted at this plan's close. Rests on
+> [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (models and poses).
 > **Source:** the owner, 2026-11-10: "flow is I create a model, or you help me create it, with
 > possibility of emissive light (gloving eyes for example) - we place model on a level", and
 > the answer "Engine plays keyframe clips".
-> **Starts after:** [Plan 0062](done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md).
+> **Starts after:** [Plan 0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md).
 > Phases 1 and 2 are headless and need only its Phase 1 (`vxe-entity`); they may run as a
 > side lane once that has merged. Phases 3 and 4 need Plan 0062 closed.
 
@@ -43,7 +44,7 @@
 > clip plays, and `blend` from rest, still need the laid-out pose). The phases below carry the
 > rule, Phase 1 done-when 8 and Phase 2 done-when 7 defend it, and the tree's names replace
 > the draft's (Notes under Implementation log; mapping in
-> [`logs/0063.md`](logs/0063.md)). This is owner point 5 below. Phases 1 and 2 were built to
+> [`logs/0063.md`](../logs/0063.md)). This is owner point 5 below. Phases 1 and 2 were built to
 > this rule on this branch (7aed6b7, 5c87d16) before the amendment was written; it records the
 > contract, it does not change their code. Other names from Plan 0062 Phase 1's tree: a
 > "Q14 quaternion" is `Quat([i16; 4])`; a pose's root is `root: Fixed3` and `root_q: Quat`;
@@ -382,7 +383,7 @@ questions under Risks.
 > Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
 > resume notes go to `docs/plans/logs/0063.md`.
 
-Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
+Readings and the name mapping: [`logs/0063.md`](../logs/0063.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -445,3 +446,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:** which, or none
 
 ## Followups
+
+Routed at the close review (2026-11-16) to `docs/backlog.md`: the viewer's refused reload kept
+on screen until fixed (the window's (d)), a crossfade between clips with the timeline kept open
+(the window's (c) and (b)), and `DisplayPose`'s per-frame allocation.

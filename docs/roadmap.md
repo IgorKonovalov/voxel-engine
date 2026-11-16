@@ -645,7 +645,7 @@ a cheap query.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   accepted at their plans' closes.
 
-### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; Plan 0062 closed the render half's entities, v0.56.0: posed voxel models traced with the world, lit and shadowed by the list lights, a headless ray query; Plan 0063, rigs and clips, in progress: its Phases 1-2 merged, Phases 3-4 next)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; Plan 0062 closed the render half's entities, v0.56.0: posed voxel models traced with the world, lit and shadowed by the list lights, a headless ray query; Plan 0063 closed rigs and clips, v0.57.0: keyframe clips sampled by tick in fixed point, a `.rig` text file beside the `.vox`, the fly-through as a model viewer that reloads on save, voxels drawn as text)
 
 - `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
@@ -656,7 +656,7 @@ a cheap query.
 - Squash and stretch: a scale per axis per part in the pose and the clips, so a slime reads
   soft without a soft body (Plan 0082, drafted 2026-11-16, awaits go; ADR-0064). See-through
   jelly and true soft bodies stay out (`docs/backlog.md`).
-- **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips, proposed with Plan 0063); ADR-0064 (a part's scale and its children) with Plan 0082.
+- **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips; accepted at Plan 0063's close, with an Outcome); ADR-0064 (a part's scale and its children) with Plan 0082.
 
 ### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
 
