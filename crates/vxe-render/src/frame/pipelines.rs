@@ -58,6 +58,7 @@ pub(super) const P_COMPOSITE: usize = 9;
 pub(super) const P_GATHER: usize = 10;
 pub(super) const P_PROBE_TRACE: usize = 11;
 pub(super) const P_PROBE_BLEND: usize = 12;
+pub(super) const P_LIGHT_BARE: usize = 13;
 
 /// The probe update's modules: its trace and blend share one source.
 const PROBE_UPDATE: &[&str] = &[
@@ -72,9 +73,20 @@ const PROBE_UPDATE: &[&str] = &[
     PROBE_UPDATE_WGSL,
 ];
 
+/// The light pass's modules, in both its variants.
+const LIGHT_MODULES: &[&str] = &[
+    COMMON_WGSL,
+    MIRROR_WGSL,
+    WALK_WGSL,
+    HITREC_WGSL,
+    ENTITY_WGSL,
+    LIGHT_WGSL,
+    EMISSIVE_WGSL,
+];
+
 /// Every frame pass but the hit pass ([`Marcher`]) and the composite's FSR 2 variant
 /// ([`composite_hdr_source`]), indexed by the `P_*` constants.
-pub(crate) const PASSES: [PassSpec; 13] = [
+pub(crate) const PASSES: [PassSpec; 14] = [
     PassSpec {
         label: "temporal",
         modules: &[
@@ -133,15 +145,7 @@ pub(crate) const PASSES: [PassSpec; 13] = [
     // The light pass (`shade`), built on the first encode that runs it.
     PassSpec {
         label: "light",
-        modules: &[
-            COMMON_WGSL,
-            MIRROR_WGSL,
-            WALK_WGSL,
-            HITREC_WGSL,
-            ENTITY_WGSL,
-            LIGHT_WGSL,
-            EMISSIVE_WGSL,
-        ],
+        modules: LIGHT_MODULES,
         entry: "shade",
         constants: &[("ENTITY_SHADOWS", 1.0)],
         groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16, F16])],
@@ -315,6 +319,16 @@ pub(crate) const PASSES: [PassSpec; 13] = [
         constants: &[],
         groups: &[W, E, E, Group::Probes],
         lazy: false,
+    },
+    // The light pass with `ENTITIES` false (`entity.wgsl`): the frame's light pass while no
+    // entity part is drawn ([`Frame::light_pipeline`]).
+    PassSpec {
+        label: "light (no entities)",
+        modules: LIGHT_MODULES,
+        entry: "shade",
+        constants: &[("ENTITIES", 0.0)],
+        groups: &[W, E, Group::SharedWith(P_LIGHT)],
+        lazy: true,
     },
 ];
 

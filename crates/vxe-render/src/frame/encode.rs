@@ -163,9 +163,15 @@ impl Frame {
         self.pipes.pipeline(device, pass)
     }
 
-    /// The light pass's pipeline (`shade`), built on its first use.
+    /// The light pass's pipeline (`shade`), built on its first use: while no entity part is
+    /// drawn the one whose `ENTITIES` is false, which walks no entity.
     pub(super) fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
-        self.pipes.pipeline(device, P_LIGHT)
+        let pass = if self.entities.parts_drawn() > 0 {
+            P_LIGHT
+        } else {
+            P_LIGHT_BARE
+        };
+        self.pipes.pipeline(device, pass)
     }
 
     /// The uniform block for `camera` over `world`, lit by `light`: one view filling the
@@ -728,13 +734,18 @@ impl Frame {
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let fsr_binds = self.fsr_frame(device, queue, encoder, &p);
+        let hit_pipes = self.pipes.hit.pipes(
+            device,
+            &self.pipes.world_layout,
+            self.entities.parts_drawn() > 0,
+        );
         let hit_pipeline = if binds.split {
             p.flags |= FLAG_FIELD_SPLIT;
-            &self.pipes.hit.pipeline
+            &hit_pipes.pipeline
         } else if binds.field {
-            &self.pipes.hit.field
+            &hit_pipes.field
         } else {
-            &self.pipes.hit.pipeline
+            &hit_pipes.pipeline
         };
         let resume_bind = binds.split.then(|| {
             encoder.clear_buffer(&t.split_args, 0, None);
@@ -755,7 +766,7 @@ impl Frame {
         if let Some(b) = &resume_bind {
             hit.push(Dispatch {
                 indirect: Some((&t.split_args, 0)),
-                ..frame_pass(world, &self.pipes.hit.resume, b, 1, [0, 0])
+                ..frame_pass(world, &hit_pipes.resume, b, 1, [0, 0])
             });
         }
         if binds.half {

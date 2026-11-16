@@ -7,6 +7,11 @@
 
 @group(0) @binding(15) var<storage, read> entity_data: array<u32>;
 
+// Whether this pipeline draws entities at all. The hit and light passes have a variant with it
+// false, which the frame dispatches while no part is drawn: the entity walk, its header read
+// and its per-hit lookups fold away, and the pass does the work it did before entities.
+override ENTITIES: bool = true;
+
 // An entity hit: the instance, the ray parameter, the face normal in world space and the
 // material. `found` false on a miss.
 struct EntityHit {
@@ -133,9 +138,12 @@ var<private> entity_fresh: bool = false;
 
 // The nearest entity voxel along `o + d t` for `0 <= t < t_limit` (`d` need not be unit; `t`
 // is in its units): the tree's boxes from the root, a fixed stack of 8, then each leaf's parts.
-// With no entity drawn it returns at once.
+// With ENTITIES false or no entity drawn it returns at once.
 fn entity_march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> EntityHit {
     var best = EntityHit(false, t_limit, 0u, vec3<f32>(0.0), 0u);
+    if (!ENTITIES) {
+        return best;
+    }
     if (entity_data[ENTITY_HEADER_WORD] == 0u) {
         return best;
     }
@@ -192,7 +200,7 @@ fn entity_info(e: EntityHit) -> vec4<u32> {
 // Whether hit `rec` is an entity's voxel whose part moved since the frame before
 // (ENTITY_MOVED in its instance's flags).
 fn entity_moved(rec: HitRecord) -> bool {
-    if (!rec.entity) {
+    if (!ENTITIES || !rec.entity) {
         return false;
     }
     let base = ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS;
@@ -224,7 +232,7 @@ fn same_thing(a: HitRecord, b: HitRecord) -> bool {
 
 // The shadow offset's scale for hit `rec`: an entity part's `1 / detail`, else 1.
 fn entity_shadow_scale(rec: HitRecord) -> f32 {
-    if (!rec.entity) {
+    if (!ENTITIES || !rec.entity) {
         return 1.0;
     }
     return entity_f(ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS + 27u);
