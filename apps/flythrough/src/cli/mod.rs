@@ -294,11 +294,13 @@ pub mod flags;
 mod loading;
 mod model;
 mod parse;
+mod settings;
 pub mod table;
 
 pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
 pub(crate) use loading::LoadingArgs;
 pub use parse::*;
+pub use settings::settings_lines;
 
 /// The world a run builds; the flags that pick one (`--source`, `--level`, `--room`,
 /// `--thin-rig`, `--seam-rig`) exclude each other.
@@ -657,6 +659,8 @@ pub struct Args {
     pub check_args: bool,
     /// `--help`: print the flag table ([`help`]) and exit 0.
     pub help: bool,
+    /// `--settings`: print the render settings the flags give ([`settings_lines`]) and exit 0.
+    pub settings: bool,
     /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
     /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
     pub(crate) tester: bool,

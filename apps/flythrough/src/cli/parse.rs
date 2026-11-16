@@ -79,6 +79,7 @@ impl Args {
             tester: false,
             check_args: false,
             help: false,
+            settings: false,
             audio: AudioArgs {
                 on: false,
                 debug: false,

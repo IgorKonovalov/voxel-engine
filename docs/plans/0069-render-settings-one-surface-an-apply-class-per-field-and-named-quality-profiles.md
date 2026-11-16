@@ -1,7 +1,7 @@
 # 0069: Render settings: one surface, an apply class per field, and named quality profiles
 
-> **Status:** approved (owner, 2026-11-11: "go with recommended on all"; every open question
-> took its recommendation, recorded under "Owner answers")
+> **Status:** in-progress (approved by the owner 2026-11-11: "go with recommended on all"; every
+> open question took its recommendation, recorded under "Owner answers")
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -359,11 +359,11 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 ## Implementation log
 
 > Written by `dev`: one row per phase, then the close block. Readings, sweeps and resume notes
-> go to `docs/plans/logs/0069.md`.
+> go to [`docs/plans/logs/0069.md`](logs/0069.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the struct, read back and applied | dev | not started | |
+| 1: the struct, read back and applied | dev | done; gpu_settings owed under the perf lock | committed with this row |
 | 2: the classes, proved, and the setter gate | dev | not started | |
 | 3: the profiles, in the fly-through and the tester | dev | not started | |
 | 4: readings of each profile on both adapters | dev | not started | |
@@ -372,6 +372,19 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 | 7: image tests against the picks, and the tip's readings | dev | not started | |
 
 ### Notes
+
+- Plan-to-tree mapping (main d9628897): `impl Frame` lives in `crates/vxe-render/src/frame/`
+  (split by Plan 0045); `settings()`, `apply_settings()` and `built_with()` are in the new
+  `frame/apply.rs`; the fly-through's flags are in `apps/flythrough/src/cli/` (`flags.rs` is at
+  the 1200-line cap), and `--settings` is in the new `cli/settings.rs`; `main.rs` prints it.
+- Phase 1 deviations: `lighting.bake_pool_bytes` stays in `Lighting` as a `Rebuild` row
+  (applied by `Frame::built_with`) rather than moving to `build`; `FIELDS` names an enum, an
+  `Option` or an array as one leaf, and a struct-like enum variant's fields (`bake.budget`) or a
+  `vxe_world` struct (`build.residency`) lie under their row; the upscaler is
+  `upscaler: UpscalerChoice` with `jitter`, `sharpness`, `fsr2` and `own` beside it; the light
+  cap is a new setter, `Frame::set_light_cap`; the queue knobs are `bake: BakeKnobs`, kept by
+  the frame and handed to the next `start_bake_queue`; `Frame::set_bake_slice`, and the fields
+  `Upscaler::{width, clip_gamma}`, removed as the `Delete` class (readings log, Phase 1).
 
 ### Close triggers
 

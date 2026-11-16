@@ -25,6 +25,7 @@ mod loading;
 mod present;
 mod probes;
 mod readback;
+mod settings;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
@@ -120,6 +121,9 @@ pub use loading::{
 };
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
+pub use settings::{
+    ApplyClass, BakeKnobs, BuildSettings, RenderSettings, SettingsChange, UpscalerChoice,
+};
 pub use {glam, wgpu};
 
 /// The hit pass's modules (`common`, `mirror`, `walk`, `hitrec`, `field_walk`, `hit`), which

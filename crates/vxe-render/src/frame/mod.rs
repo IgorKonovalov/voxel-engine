@@ -18,6 +18,7 @@ use crate::{
 };
 use vxe_world::ChunkCoord;
 
+mod apply;
 mod baked;
 mod compose;
 mod dispatch;
@@ -84,6 +85,12 @@ pub struct Frame {
     composite_capture: Option<wgpu::Texture>,
     /// The entities' pool, instances and tree (ADR-0050), group 0's binding 15.
     entities: crate::entities::EntityMirror,
+    /// The scale [`Frame::apply_settings`] last applied; [`Frame::settings`] reads it while
+    /// the sizes still match it.
+    scale: RenderScale,
+    /// The `Rebuild` values the caller last built with ([`Frame::built_with`]).
+    build: crate::settings::BuildSettings,
+    output_hint: Option<[u32; 2]>,
 }
 
 impl Frame {
@@ -123,6 +130,9 @@ impl Frame {
                 device,
                 crate::entities::DEFAULT_ENTITY_POOL_BYTES,
             ),
+            scale: RenderScale::One,
+            build: crate::settings::BuildSettings::default(),
+            output_hint: None,
         }
     }
 

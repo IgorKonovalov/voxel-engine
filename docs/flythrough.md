@@ -308,6 +308,12 @@ frame's title is the path's scene and mode (`castle - benchmark`). `run.json` is
 `load_ms` (device ready to the first world frame) and `load_stages` (`[{name, ms}]`, each
 stage's step time).
 
+### Render settings
+
+| Flag | Does |
+|------|------|
+| `--settings` | Print every render setting the flags give (`vxe_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
+
 ### Diagnostics
 
 | Flag | Does |

@@ -59,6 +59,8 @@ pub(super) struct BakeLink {
     pub(super) queue: Option<crate::bake::BakeQueue>,
     /// The live queue's world group and the buffers it binds ([`Frame::queue_world_bind`]).
     pub(super) world_bind: Option<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
+    /// The live queue's knobs, kept while no queue runs and handed to the next one.
+    pub(super) knobs: crate::settings::BakeKnobs,
     /// Whether the temporal pass counts the store's reads ([`Frame::set_count_store`]).
     pub(super) count_store: bool,
     /// The store's five read counters (`counters` in `temporal.wgsl`): missing, brick reads,
@@ -78,6 +80,7 @@ impl BakeLink {
             dig_boxes: Vec::new(),
             queue: None,
             world_bind: None,
+            knobs: crate::settings::BakeKnobs::default(),
             count_store: false,
             counters: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("store counters"),
@@ -171,7 +174,8 @@ impl Frame {
 
     /// Starts the live queue (ADR-0046's scheduler): the store emptied for `gpu`'s window, every
     /// block with brick records of `settings`' cell, filled by [`Frame::bake_queue_step`] a slice
-    /// of `slice_ms` a frame; the first allocates the pool ([`Lighting::bake_pool_bytes`]).
+    /// of `slice_ms` a frame (the knobs' budget from then on), with the frame's other queue
+    /// knobs ([`Frame::bake_knobs`]); the first allocates the pool ([`Lighting::bake_pool_bytes`]).
     pub fn start_bake_queue(
         &mut self,
         queue: &wgpu::Queue,
@@ -184,7 +188,13 @@ impl Frame {
             .store
             .start_queue(queue, gpu.window(), settings.cell);
         self.baked.dig_boxes.clear();
-        self.baked.queue = Some(crate::bake::BakeQueue::new(settings, slice_ms));
+        let mut q = crate::bake::BakeQueue::new(settings, slice_ms);
+        let k = &mut self.baked.knobs;
+        k.budget = q.budget;
+        (q.coarse_samples, q.near, q.full_first) = (k.coarse_samples, k.near, k.full_first);
+        (q.edit_ms, q.reach_ring) = (k.edit_ms, k.dig_reach);
+        q.set_reach_mode(k.reach);
+        self.baked.queue = Some(q);
     }
 
     /// Builds the light bake's pipeline unless it is built, so the first bake step (the
@@ -216,21 +226,20 @@ impl Frame {
         self.baked.queue.as_mut()
     }
 
-    /// The live queue's slice, in milliseconds a frame ([`crate::bake::Budget::PerFrame`]).
-    pub fn set_bake_slice(&mut self, ms: f64) {
-        self.set_bake_budget(crate::bake::Budget::PerFrame { ms });
-    }
-
     /// The live queue's bake budget (ADR-0052).
     pub fn set_bake_budget(&mut self, budget: crate::bake::Budget) {
+        self.baked.knobs.budget = budget;
         if let Some(q) = self.baked.queue.as_mut() {
             q.budget = budget;
         }
     }
 
     /// The live queue's coarse pass: `samples` a brick direction (0 none) for a chunk's first
-    /// block beyond `near` chunks (Chebyshev) of the camera's.
+    /// block beyond `near` chunks (Chebyshev) of the camera's; the full-first radius follows
+    /// `near`.
     pub fn set_bake_coarse(&mut self, samples: u32, near: i32) {
+        let k = &mut self.baked.knobs;
+        (k.coarse_samples, k.near, k.full_first) = (samples, near, Some(near));
         if let Some(q) = self.baked.queue.as_mut() {
             q.coarse_samples = samples;
             q.near = near;
@@ -242,6 +251,7 @@ impl Frame {
     /// (Chebyshev) around the camera's within which a chunk with no block takes the full count
     /// directly; `None` gives every such chunk the coarse pass first.
     pub fn set_bake_full_first(&mut self, radius: Option<i32>) {
+        self.baked.knobs.full_first = radius;
         if let Some(q) = self.baked.queue.as_mut() {
             q.full_first = radius;
         }
@@ -250,6 +260,7 @@ impl Frame {
     /// The live queue's reach mode ([`crate::bake::BakeQueue::reach_mode`]): whether a chunk
     /// whose reach crosses the streamer's full radius bakes from the chunks resident full.
     pub fn set_bake_reach(&mut self, mode: crate::bake::ReachMode) {
+        self.baked.knobs.reach = mode;
         if let Some(q) = self.baked.queue.as_mut() {
             q.set_reach_mode(mode);
         }
@@ -258,10 +269,17 @@ impl Frame {
     /// The live queue's digs: the slice's growth while a dig's bricks wait, and whether a dig
     /// that touched lit bricks re-bakes the chunks within the light radius (ring 3).
     pub fn set_bake_digs(&mut self, edit_ms: f64, reach_ring: bool) {
+        (self.baked.knobs.edit_ms, self.baked.knobs.dig_reach) = (edit_ms, reach_ring);
         if let Some(q) = self.baked.queue.as_mut() {
             q.edit_ms = edit_ms;
             q.reach_ring = reach_ring;
         }
+    }
+
+    /// The live queue's knobs: the queue's while it runs, else the ones the next queue starts
+    /// with.
+    pub fn bake_knobs(&self) -> crate::settings::BakeKnobs {
+        self.baked.knobs
     }
 
     /// Whether each of `chunks` has had the live queue's first pass
