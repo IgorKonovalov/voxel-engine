@@ -493,7 +493,8 @@ Readings, gate counts and the plan-to-tree names: [`logs/0078.md`](logs/0078.md)
 | 1: the range allocator and the pool's free | dev | done | e985fd16 (e7e6b467 the file move alone) |
 | 2: the fly-through frees on reload, and the pool on the HUD | dev | done | 0084a06d |
 | 3: stable instance slots, generations, ghost leaves, no scratch | dev | done; deviations: the hit record carries the slot and the generation's low bit (10 instance bits in `rgba16uint`), word 25 the 17-bit generation; `frame/encode.rs` changed outside the phase's files (the light pass walks entities while a ghost is listed) | e8fcda3d (code in ea9796d8, `wip`) |
-| 4: the waste reading, the docs and the tip | dev | done; `docs/flythrough.md` unchanged (its row landed in Phase 2) | committed with this row |
+| 4: the waste reading, the docs and the tip | dev | done; `docs/flythrough.md` unchanged (its row landed in Phase 2) | 17de95b9 |
+| review fix pass: the last walker's ghost leaf leaves the tree | dev | done | committed with this row |
 
 ### Notes
 

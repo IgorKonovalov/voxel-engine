@@ -231,7 +231,10 @@ impl EntityMirror {
 
     /// Writes one instance a part of the entities in `list` (in its order) as `set` poses
     /// them, and the tree over their boxes ([`EntityInstances::write`] names what is counted
-    /// and not drawn).
+    /// and not drawn). At most one call a frame: the hit record holds one bit of a slot's
+    /// generation. An entity left out of `list` leaves a ghost leaf (its last box, marking the
+    /// pixels its shadow left fresh) until the next call, so a caller makes one more call
+    /// after the list last changed; [`EntityMirror::walks_entities`] is true until then.
     pub fn set_entities(
         &mut self,
         queue: &wgpu::Queue,
@@ -245,7 +248,8 @@ impl EntityMirror {
     /// [`EntityMirror::set_entities`] with each entity's parts placed by a [`DisplayPose`]
     /// (between two ticks, say) in place of a pose in a set. An entry whose display pose has
     /// not its model's part count is counted and not drawn. `list` is any iterator, so a
-    /// caller keeping its display poses across frames passes them with no list to build.
+    /// caller keeping its display poses across frames passes them with no list to build. The
+    /// call rules of [`EntityMirror::set_entities`] hold.
     pub fn set_entity_displays<'a>(
         &mut self,
         queue: &wgpu::Queue,

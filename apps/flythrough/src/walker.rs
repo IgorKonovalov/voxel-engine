@@ -707,7 +707,7 @@ pub fn sync_models(
 
 /// One frame's walkers into `frame`: the pending ring placed around `eye` on `world`'s floor,
 /// the models synced ([`sync_models`]), and the frame's entities set while any walker is
-/// placed or was drawn the frame before; the drawn counts copied back for the HUD. The
+/// placed, was drawn the frame before, or the mirror still walks a ghost leaf; the drawn counts copied back for the HUD. The
 /// banner's words from the sync, when there are any.
 pub fn feed(
     walkers: &mut Walkers,
@@ -727,7 +727,13 @@ pub fn feed(
         };
         walkers.place_ring(world.materials(), eye, floor_below);
     }
-    if walkers.placed.is_empty() && walkers.drawn == 0 && walkers.over == 0 {
+    // A removal leaves a ghost leaf until the next write, so the frames keep writing while the
+    // mirror still walks one.
+    if walkers.placed.is_empty()
+        && walkers.drawn == 0
+        && walkers.over == 0
+        && !frame.entity_mirror().walks_entities()
+    {
         return None;
     }
     let words = sync_models(

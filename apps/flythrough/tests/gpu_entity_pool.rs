@@ -678,3 +678,36 @@ fn a_reload_keeps_the_picture_steady() {
     assert!(torso > 0, "the torso's pixels change");
     assert!(legs.is_empty(), "{} leg pixels change", legs.len());
 }
+
+/// Plan 0078 review fix: the last walker removed, the next feed writes the empty list and the
+/// tree holds its ghost leaf (the light pass walks entities); the feed after that writes again,
+/// so the ghost is gone and the light pass walks none; a third feed leaves it so.
+#[test]
+fn the_last_walkers_ghost_leaves_the_tree() {
+    let Some((mut rig, _)) = rig() else {
+        return;
+    };
+    let t = rig.world.materials().clone();
+    let camera = level_camera(86.0, 11.0);
+    let eye_at = camera.position.to_array();
+    let mut w = walker::Walkers::default();
+    assert!(w.place(&t, [106.0, 32.0, 2.0], eye_at));
+    for _ in 0..2 {
+        walker::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
+        rig.step(&camera);
+    }
+    assert_eq!(w.drawn, 1);
+    w.remove_newest();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        walker::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
+        rig.step(&camera);
+        let m = rig.frame.entity_mirror();
+        seen.push((m.walks_entities(), m.instances().leaves().count()));
+    }
+    assert_eq!(
+        seen,
+        vec![(true, 1), (false, 0), (false, 0)],
+        "(walks entities, leaves) over the three feeds after the removal"
+    );
+}
