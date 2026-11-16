@@ -72,7 +72,7 @@ fn the_sample_assets_are_in_step() {
     }
     assert_eq!(placed_parts, names.len(), "every sample part has an `at`");
     // The named places, 1/256 world voxel: two model voxels to a world voxel.
-    assert_eq!(l.rest.parts[index("torso")].t, [0, 0, 1024]);
+    assert_eq!(l.rest.parts[index("torso")].t, [0, 0, 1536]);
     assert_eq!(l.rest.parts[index("head")].t, [0, 0, 1536]);
     assert_eq!(l.rest.parts[index("leg_l")].t, [-256, 0, 0]);
     assert_eq!(l.rest.parts[index("arm_r")].t, [640, 0, 1536]);
@@ -118,10 +118,10 @@ fn a_changed_rig_reloads_and_a_broken_one_keeps_the_old() {
     let vox = std::fs::read(assets().join("walker.vox")).expect("vox reads");
     let mut v = built();
     let old = v.loaded.clone().expect("built");
-    let wider = rig.replace("leg_l rot x 30", "leg_l rot x 45");
-    assert_ne!(wider, rig);
-    v.reload(&wider, &vox, &table())
-        .expect("a wider swing builds");
+    let narrower = rig.replace("leg_l rot x 45", "leg_l rot x 30");
+    assert_ne!(narrower, rig);
+    v.reload(&narrower, &vox, &table())
+        .expect("a narrower swing builds");
     let new = v.loaded.clone().expect("built");
     assert!(!Arc::ptr_eq(&old.model, &new.model), "the model is swapped");
     assert_ne!(old.clips[1].1, new.clips[1].1, "walk's keys changed");
@@ -167,7 +167,7 @@ fn a_saved_rig_reloads_the_placed_instances() {
     assert!(w.place(&t, [0.0, 0.0, 2.0], [5.0, 0.0, 2.0]));
     let first = w.set.get(w.placed[0].id).expect("placed").0.clone();
 
-    save(&rig.replace("leg_l rot x 30", "leg_l rot x 45"), 10);
+    save(&rig.replace("leg_l rot x 45", "leg_l rot x 30"), 10);
     assert_eq!(w.poll_viewer(0.5, &t), None, "polled at most once a second");
     assert_eq!(w.poll_viewer(1.0, &t).as_deref(), Some("reloaded"));
     let v = w.viewer.as_ref().expect("viewer");
@@ -213,8 +213,9 @@ fn the_viewer_row_shows_the_clip_and_the_pause() {
     v.advance(1.0);
     assert_eq!(row(&v), "model walker clip walk 7/30 paused");
     assert_eq!(v.toggle_pause(), "playing");
+    assert_eq!(v.cycle(1), "clip turn");
     assert_eq!(v.cycle(1), "clip idle", "the cycle wraps");
-    assert_eq!(v.cycle(-1), "clip walk");
+    assert_eq!(v.cycle(-1), "clip turn", "and back");
     let (a, b, alpha) = v.poses().expect("built");
     assert_eq!((a.parts.len(), b.parts.len(), alpha), (6, 6, 0.0));
 }

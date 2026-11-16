@@ -18,7 +18,7 @@ entry in it.
 
 | Entry | Parts | Clips | Materials (table rows) | |
 |-------|-------|-------|------------------------|-|
-| `walker` | torso, head, legs, arms | `idle`, `walk` | `walker`, `walker_eye` | ![The walker striding in place in the showcase hall, cyan crystals behind it](images/walker-walk.gif) |
+| `walker` | torso, head, legs, arms | `idle`, `walk`, `turn` | `walker`, `walker_eye` | ![The walker striding in place in the showcase hall, cyan crystals behind it](images/walker-walk.gif) |
 | `spider` | body, abdomen, eight legs on their own phases, palps, fangs | `walk`, `idle`, `rear` | `shell`, `rubble`, `rock`, `ore`, `crystal`, `amethyst`, `ember`, `walker`, `walker_eye` | ![The spider walking in place in the showcase hall](images/spider-walk.gif) |
 
 The rows `crystal`, `amethyst` and `ember` are the showcase's, so the spider builds against the

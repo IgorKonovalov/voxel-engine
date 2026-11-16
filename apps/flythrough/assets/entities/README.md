@@ -10,7 +10,7 @@ The fly-through's predefined voxel-model entities, one directory per entry:
 
 | Entry | What it is |
 |-------|------------|
-| `walker` | A small biped: torso, head, two legs, two arms; clips `idle` and `walk` |
+| `walker` | A small biped: torso, head, two legs, two arms; clips `idle`, `walk` and `turn` (the head looks left and right) |
 | `spider` | A large spider: body, abdomen, eight legs each on its own phase, palps and fangs; clips `walk`, `idle` and `rear`; drawn in the showcase's glowing rows |
 
 View one with `flythrough --source showcase --model apps/flythrough/assets/entities/<name>/<name>.rig --clip <clip>`,
