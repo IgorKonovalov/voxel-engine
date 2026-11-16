@@ -379,7 +379,8 @@ mod tests {
         use std::time::{Duration, SystemTime};
         use vxe_render::HudColour;
 
-        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let assets =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker");
         let dir = std::env::temp_dir().join(format!("vxe-viewer-error-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         let rig = std::fs::read_to_string(assets.join("walker.rig")).expect("rig reads");

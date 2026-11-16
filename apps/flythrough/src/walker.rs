@@ -884,7 +884,8 @@ mod tests {
             assert_eq!(Some(d), DisplayPose::of(model, pose).as_ref());
         }
 
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/walker.rig");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/entities/walker/walker.rig");
         let mut viewer = crate::viewer::Viewer::open(&path, Some("walk".into())).expect("opens");
         assert_eq!(viewer.build_pending(&table), None);
         viewer.handle = Some(ModelHandle(1));
