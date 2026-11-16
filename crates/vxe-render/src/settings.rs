@@ -572,8 +572,10 @@ impl RenderSettings {
             "scale" => other(&mut s.scale, RenderScale::OneHalf, RenderScale::Two),
             "upscaler" => other(&mut s.upscaler, UpscalerChoice::Own, UpscalerChoice::Off),
             "jitter" => flip(&mut s.jitter),
-            "sharpness" => s.sharpness = 1.0 - s.sharpness,
-            "fsr2.sharpness" => s.fsr2.sharpness = 1.0 - s.fsr2.sharpness,
+            "sharpness" => s.sharpness = if s.sharpness == 0.25 { 0.5 } else { 0.25 },
+            "fsr2.sharpness" => {
+                s.fsr2.sharpness = if s.fsr2.sharpness == 0.25 { 0.5 } else { 0.25 }
+            }
             "fsr2.reactive_translucent" => s.fsr2.reactive_translucent /= 2.0,
             "fsr2.reactive_light" => s.fsr2.reactive_light /= 2.0,
             "fsr2.metres_per_voxel" => s.fsr2.metres_per_voxel *= 2.0,

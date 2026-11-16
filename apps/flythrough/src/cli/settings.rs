@@ -99,6 +99,8 @@ impl Args {
     pub(crate) fn profile_edits(&self, now: &RenderSettings) -> Vec<&'static str> {
         let mut base = super::Args::defaults();
         base.seed_profile(self.profile);
+        // The hint is the profile's only under an explicit `--profile`; not an edit.
+        base.output_hint = self.output_hint;
         base.render_settings().changed_fields(now)
     }
 

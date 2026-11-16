@@ -363,9 +363,9 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the struct, read back and applied | dev | done; gpu_settings owed under the perf lock | committed with this row |
-| 2: the classes, proved, and the setter gate | dev | not started | |
-| 3: the profiles, in the fly-through and the tester | dev | not started | |
+| 1: the struct, read back and applied | dev | done; gpu_settings owed under the perf lock | 3a3a3e4b |
+| 2: the classes, proved, and the setter gate | dev | wip 0335bc30: gate and gpu_settings owed; `cargo doc` warnings pre-exist (Notes) | |
+| 3: the profiles, in the fly-through and the tester | dev | wip: code committed, gate owed (readings log, resume notes) | |
 | 4: readings of each profile on both adapters | dev | not started | |
 | 5: the owner's window | human | not started | |
 | 6: the picks into the profiles | dev | not started | |
@@ -385,6 +385,11 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   cap is a new setter, `Frame::set_light_cap`; the queue knobs are `bake: BakeKnobs`, kept by
   the frame and handed to the next `start_bake_queue`; `Frame::set_bake_slice`, and the fields
   `Upscaler::{width, clip_gamma}`, removed as the `Delete` class (readings log, Phase 1).
+- Phase 2: `RenderSettings::SETTERS` maps each setting's setter to its fields beside
+  `NOT_SETTINGS`; the test values are `RenderSettings::with_test_value` (doc-hidden). The class
+  test is split in two by the upscaler (readings log). Done-when not met as written: `cargo doc
+  -p vxe-render` prints 65 `private_intra_doc_links` warnings, all in files the plan did not
+  write and present at the base; the new docs add none.
 
 ### Close triggers
 
