@@ -928,10 +928,7 @@ mod tests {
             let source = CaveSource::unbounded(1);
             let spawn = source.spawn();
             let world = World::new(&cave_materials());
-            let workers = std::thread::available_parallelism()
-                .map_or(1, usize::from)
-                .saturating_sub(1)
-                .max(1);
+            let workers = crate::setup::default_workers();
             let mut streamer = Streamer::new(
                 Arc::new(source),
                 StreamConfig {

@@ -501,6 +501,15 @@ impl Frame {
         &mut self.entities
     }
 
+    /// Builds every pipeline a frame that draws entities uses (the hit pass's and the light
+    /// pass's entity variants, and the no-entity light pass), so the first frame that draws
+    /// a part builds none: a driver may take seconds over the entity walk. Call it once,
+    /// during start-up, after creating the frame; without it each is built on the first frame
+    /// that uses it.
+    pub fn prepare_entities(&self, device: &wgpu::Device) {
+        self.pipes.prepare_entities(device);
+    }
+
     /// Replaces the entity mirror (a pool of another size); the next frames draw no entity
     /// until [`Frame::set_entities`].
     pub fn set_entity_mirror(&mut self, mirror: crate::EntityMirror) {

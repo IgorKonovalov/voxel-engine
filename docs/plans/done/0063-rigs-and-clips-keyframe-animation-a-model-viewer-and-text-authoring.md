@@ -1,18 +1,19 @@
 # 0063: Rigs and clips: keyframe animation sampled by tick, a rig text file beside the `.vox`, a model viewer in the fly-through, and voxels from text
 
-> **Status:** in-progress (Phases 1 to 3 done; Phase 3 stacked on `plan-0062` at 0fe6a257;
-> Phase 4, the owner's window, next)
+> **Status:** done (closed 2026-11-16, v0.57.0, fresh-session review on 8a6e8434: every phase
+> built and its named tests assert the done-whens; three minors routed to `docs/backlog.md` (the
+> viewer's error kept on screen, a clip crossfade, the display pose's per-frame allocation))
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-11-10
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
-> (proposed; the file and the sampling), accepted at this plan's close. Rests on
-> [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0051](../../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
+> (the file and the sampling), accepted at this plan's close. Rests on
+> [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (models and poses).
 > **Source:** the owner, 2026-11-10: "flow is I create a model, or you help me create it, with
 > possibility of emissive light (gloving eyes for example) - we place model on a level", and
@@ -43,7 +44,7 @@
 > clip plays, and `blend` from rest, still need the laid-out pose). The phases below carry the
 > rule, Phase 1 done-when 8 and Phase 2 done-when 7 defend it, and the tree's names replace
 > the draft's (Notes under Implementation log; mapping in
-> [`logs/0063.md`](logs/0063.md)). This is owner point 5 below. Phases 1 and 2 were built to
+> [`logs/0063.md`](../logs/0063.md)). This is owner point 5 below. Phases 1 and 2 were built to
 > this rule on this branch (7aed6b7, 5c87d16) before the amendment was written; it records the
 > contract, it does not change their code. Other names from Plan 0062 Phase 1's tree: a
 > "Q14 quaternion" is `Quat([i16; 4])`; a pose's root is `root: Fixed3` and `root_q: Quat`;
@@ -382,14 +383,15 @@ questions under Risks.
 > Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
 > resume notes go to `docs/plans/logs/0063.md`.
 
-Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
+Readings and the name mapping: [`logs/0063.md`](../logs/0063.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Clips in `vxe-entity` | dev | done | 7aed6b7 |
 | 2: The `.rig` file and voxels from text | dev | done | 5c87d16 |
-| 3: The viewer, display interpolation and a sample model | dev | done | committed with this row |
-| 4: The owner's window | human | not started | |
+| 3: The viewer, display interpolation and a sample model | dev | done | aa097bf3 |
+| 3b: The pose composed once, not once per part point | dev | done | c5c655ad |
+| 4: The owner's window | human | done 2026-11-16; (a) yes, (b) typed keys enough for now, keep a timeline open, (c) smooth, no blend between clips, (d) no banner seen, (e) yes after the palette-185 mapping; words in the readings log | committed with this row |
 
 ### Notes
 
@@ -418,6 +420,20 @@ each. Empty is fine.)_
   the dev box against the plan's guess of 0.05 ms; `sample` reads 0.15 ms. The cost is Plan
   0062's `PartXform::of`, which composes the whole pose once per `part_point` call (four per
   part). Not acted on: the fix reaches `vxe-entity` (a one-pass composition).
+- Phase 3b: the one pass is a public `Pose::compose(&Model) -> Option<ComposedPose<'_>>`
+  with `ComposedPose::part_point(part, local)` and `model()`; the crate-private composition
+  formerly named `compose` is `frames`; `Pose::part_point` now goes through `compose`.
+  `DisplayPose::between` reads 0.50 ms for 64 sixteen-part entities (from 15.12 ms), still
+  above Phase 3's guessed 0.05 ms; readings in the log.
+- Phase 4 (owner's window, 2026-11-16, at c5c655ad): (b) is not a "no"; the stop rule did not
+  fire. Followup noticed, not built: a crossfade between clips (the owner, (c): a switch from
+  walk to the head turn jumps). (d): the owner saw no banner when the `.vox` reload was refused;
+  stdout printed "rig line 12: part `head` uses palette indices [185] with no `material` line"
+  twice, through the same `poll_viewer` words path as the rig error "rig line 9: expected a
+  material name after `2`"; not diagnosed. The first placement froze about 12 s (frames 1545 to
+  1578, 34.8 s to 47.8 s); Plan 0062's Phase 6d (`Frame::prepare_entities`) arrives with the
+  main merge. The owner's window assets (longer legs, 45-degree walk, a `turn` clip; a spider
+  rig) are in the untracked `live/*.window-edits` and `live/*.window-final`, not committed.
 
 ### Close triggers
 
@@ -430,3 +446,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:** which, or none
 
 ## Followups
+
+Routed at the close review (2026-11-16) to `docs/backlog.md`: the viewer's refused reload kept
+on screen until fixed (the window's (d)), a crossfade between clips with the timeline kept open
+(the window's (c) and (b)), and `DisplayPose`'s per-frame allocation.

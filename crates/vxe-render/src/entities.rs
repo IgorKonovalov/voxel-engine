@@ -101,11 +101,12 @@ pub(crate) struct PartXform {
 }
 
 impl PartXform {
-    /// The part's placement from `pose`, through `Pose::part_point` (exact in fixed point): its
-    /// pivot's world point and the world points 256 model voxels along each axis from it.
-    fn of(model: &Model, pose: &vxe_entity::Pose, part: usize) -> Option<Self> {
-        let p = &model.parts()[part];
-        let fx = |l: [i32; 3]| pose.part_point(model, part, l).map(|f| f.0);
+    /// The part's placement from a composed pose, through `ComposedPose::part_point` (exact in
+    /// fixed point): its pivot's world point and the world points 256 model voxels along each
+    /// axis from it.
+    fn of(pose: &vxe_entity::ComposedPose<'_>, part: usize) -> Option<Self> {
+        let p = &pose.model().parts()[part];
+        let fx = |l: [i32; 3]| pose.part_point(part, l).map(|f| f.0);
         let base = fx(p.pivot)?;
         const REACH: i32 = 1 << 16;
         let mut m = [[0f32; 3]; 3];
@@ -178,8 +179,9 @@ pub struct DisplayPose {
 impl DisplayPose {
     /// `model`'s parts as `pose` places them; `None` when the pose does not fit the model.
     pub fn of(model: &Model, pose: &vxe_entity::Pose) -> Option<Self> {
+        let c = pose.compose(model)?;
         let parts = (0..model.parts().len())
-            .map(|k| Some((PartXform::of(model, pose, k)?, model.parts()[k].detail)))
+            .map(|k| Some((PartXform::of(&c, k)?, model.parts()[k].detail)))
             .collect::<Option<Vec<_>>>()?;
         Some(Self { parts })
     }
@@ -196,9 +198,10 @@ impl DisplayPose {
         alpha: f32,
     ) -> Option<Self> {
         let alpha = f64::from(alpha);
+        let (ca, cb) = (a.compose(model)?, b.compose(model)?);
         let mut parts = Vec::with_capacity(model.parts().len());
         for (k, p) in model.parts().iter().enumerate() {
-            let (xa, xb) = (PartXform::of(model, a, k)?, PartXform::of(model, b, k)?);
+            let (xa, xb) = (PartXform::of(&ca, k)?, PartXform::of(&cb, k)?);
             let d = f64::from(p.detail);
             let pivot_m = p.pivot.map(|v| v as f32 / 256.0);
             let qa = quat_of(&xa.part_to_world, d);
@@ -381,10 +384,27 @@ pub struct EntityMirror {
     models: Vec<Vec<Volume>>,
     /// Each drawn part's part-to-world of the last [`EntityMirror::set_entities`].
     prev: HashMap<(EntityId, usize), [[f32; 4]; 3]>,
+    /// [`EntityMirror::set_entities`]'s buffers, cleared and refilled each call so the frame
+    /// path allocates only when a list outgrows every list before it.
+    scratch: Scratch,
     drawn: usize,
     parts: usize,
     over: usize,
     moved: bool,
+}
+
+/// The working buffers of one [`EntityMirror::set_entities`] or
+/// [`EntityMirror::set_entity_displays`] call. `prev` fills with this
+/// call's transforms and is swapped with the mirror's map at the end, so the two maps trade
+/// places each frame instead of one being built fresh.
+#[derive(Default)]
+struct Scratch {
+    inst: Vec<u32>,
+    boxes: Vec<([[f32; 3]; 2], u32, u32)>,
+    prev: HashMap<(EntityId, usize), [[f32; 4]; 3]>,
+    nodes: Vec<[u32; NODE_WORDS]>,
+    order: Vec<usize>,
+    tree: Vec<u32>,
 }
 
 impl EntityMirror {
@@ -404,6 +424,7 @@ impl EntityMirror {
             volumes: HashMap::new(),
             models: Vec::new(),
             prev: HashMap::new(),
+            scratch: Scratch::default(),
             drawn: 0,
             parts: 0,
             over: 0,
@@ -520,9 +541,21 @@ impl EntityMirror {
         queue: &wgpu::Queue,
         list: impl Iterator<Item = (EntityId, ModelHandle, Option<&'a DisplayPose>)>,
     ) {
-        let mut inst: Vec<u32> = Vec::new();
-        let mut boxes: Vec<([[f32; 3]; 2], u32, u32)> = Vec::new();
-        let mut prev = HashMap::new();
+        // Taken out of `self` for the call so `self.models` and `self.prev` stay readable;
+        // `mem::take` of the empty default allocates nothing, and the buffers go back below.
+        let mut s = std::mem::take(&mut self.scratch);
+        let Scratch {
+            inst,
+            boxes,
+            prev,
+            nodes,
+            order,
+            tree,
+        } = &mut s;
+        inst.clear();
+        boxes.clear();
+        prev.clear();
+        nodes.clear();
         let mut over = 0;
         let mut moved = false;
         for (id, handle, shown) in list {
@@ -574,12 +607,13 @@ impl EntityMirror {
             let count = n as u32 | if entity_moved { LEAF_MOVED } else { 0 };
             boxes.push((bx, first, count));
         }
-        let mut nodes: Vec<[u32; NODE_WORDS]> = Vec::new();
         if !boxes.is_empty() {
-            let mut order: Vec<usize> = (0..boxes.len()).collect();
-            build(&boxes, &mut order, &mut nodes);
+            order.clear();
+            order.extend(0..boxes.len());
+            build(boxes, order, nodes);
         }
-        let mut tree = vec![0u32; INSTANCE_WORD];
+        tree.clear();
+        tree.resize(INSTANCE_WORD, 0);
         for (i, n) in nodes.iter().enumerate() {
             tree[i * NODE_WORDS..(i + 1) * NODE_WORDS].copy_from_slice(n);
         }
@@ -590,19 +624,20 @@ impl EntityMirror {
             parts as u32,
             u32::from(moved),
         ]);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&tree));
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(tree));
         if !inst.is_empty() {
             queue.write_buffer(
                 &self.buffer,
                 (INSTANCE_WORD * 4) as u64,
-                bytemuck::cast_slice(&inst),
+                bytemuck::cast_slice(inst),
             );
         }
-        self.prev = prev;
+        std::mem::swap(&mut self.prev, prev);
         self.drawn = boxes.len();
         self.parts = parts;
         self.over = over;
         self.moved = moved;
+        self.scratch = s;
     }
 
     /// Entities the last [`EntityMirror::set_entities`] drew.

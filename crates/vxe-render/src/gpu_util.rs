@@ -281,6 +281,16 @@ pub(crate) fn compute_pipeline(
     compute_pipeline_with(device, label, source, layouts, entry, &[])
 }
 
+/// Compute pipelines [`compute_pipeline_with`] has created in this process (every compute
+/// pipeline of the crate goes through it).
+static COMPUTE_PIPELINES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The count of compute pipelines this process has created, for a reading or a test that a
+/// stretch of frames builds none.
+pub fn compute_pipelines_created() -> u64 {
+    COMPUTE_PIPELINES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// [`compute_pipeline`] with the pipeline-overridable constants `constants`.
 pub(crate) fn compute_pipeline_with(
     device: &wgpu::Device,
@@ -290,6 +300,7 @@ pub(crate) fn compute_pipeline_with(
     entry: &str,
     constants: &[(&str, f64)],
 ) -> wgpu::ComputePipeline {
+    COMPUTE_PIPELINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),

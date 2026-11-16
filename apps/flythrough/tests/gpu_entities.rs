@@ -202,6 +202,56 @@ fn an_entity_hides_the_wall_behind_it() {
     );
 }
 
+/// Plan 0062 Phase 6d: [`vxe_render::Frame::prepare_entities`] builds every pipeline a frame
+/// that draws an entity uses, so the first frame that draws a part creates none, and
+/// `Frame::new` builds none of them itself. The process's compute-pipeline count
+/// (`debug::compute_pipelines_created`, which every compute pipeline of `vxe-render` passes):
+/// the call adds exactly the five it owns (the hit pass's three `ENTITIES`-true pipelines, the
+/// entity light pass and the no-entity light pass), none of which the frame's creation built.
+/// Then a frame with no entity, and the 8-voxel cube of `an_entity_hides_the_wall_behind_it`
+/// drawn on the next two: the count is the same as after the call, and the part shows (one
+/// part drawn; the centre pixel's hit is the entity's).
+#[test]
+fn the_first_frame_with_an_entity_builds_no_pipeline() {
+    let Some((mut rig, red)) = rig() else {
+        return;
+    };
+    let made = vxe_render::debug::compute_pipelines_created();
+    rig.frame.prepare_entities(&rig.device);
+    let prepared = vxe_render::debug::compute_pipelines_created();
+    assert_eq!(
+        prepared - made,
+        5,
+        "the call builds the entity set and both light pipelines, none built by the frame"
+    );
+    let camera = level_camera(86.0, 26.0);
+    rig.step(&camera);
+    let cube = block([8; 3], red, 1);
+    draw(
+        &mut rig,
+        &[(
+            cube.clone(),
+            posed(&cube, [110.0, 32.0, 26.0], Quat::IDENTITY),
+        )],
+    );
+    rig.step(&camera);
+    rig.step(&camera);
+    let after = vxe_render::debug::compute_pipelines_created();
+    println!(
+        "compute pipelines: {made} at the frame's creation, {prepared} after the call, \
+         {after} after the part's frames"
+    );
+    assert_eq!(after, prepared, "pipelines built after the call");
+    assert_eq!(rig.frame.entity_mirror().parts_drawn(), 1);
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let centre = pixel_of(&camera, [106.0, 32.0, 26.0]);
+    assert!(
+        entity_hit(0)(&rec[centre]),
+        "the centre pixel's record {:?}",
+        rec[centre]
+    );
+}
+
 /// Phase 2 done-when 2: a world slab between the camera and the part (x 96..98) gives the
 /// slab's albedo at the centre pixel.
 #[test]
@@ -821,6 +871,141 @@ fn walker_walk_golden() {
     assert_golden_sized("walker_walk.png", &rig.display());
 }
 
+/// Plan 0062's default (`Lighting::default().entity_light` is `EntityLight::World`): an
+/// entity's emissive part is the baked light of the nearest world face behind it of its
+/// direction. The box with its ceiling lowered to height 24 and a glowing plate (emission 4)
+/// set into it over `[48, 80) x [16, 48)` at heights 24 to 26, so the plate's only face in the
+/// air is its -z face at height 24; baked at 64 samples a brick direction; lamp off and no
+/// list light, so the temporal pass writes the store's value with no history. An 8-voxel red
+/// cube (identity turn) centred at (64, 32, 12), seen from (56, 32, 23) 41 degrees down.
+///
+/// The expected face, from the geometry: the cube's top is the plane z 16, its normal +z (face
+/// 5 of the store). The rule reads the voxel half a voxel behind the hit, z 15, in brick z 1
+/// (voxels 8 to 15); the box holds no +z face between the floor and the ceiling, so that
+/// brick's cells hold no value of face 5 and the rule steps one cell (8 voxels) against the
+/// normal, to z 7 in brick z 0, whose cells hold the floor's +z faces (rock at z 1 under the
+/// air from z 2). So at a top-face pixel whose hit is (x, y, 16) the expected value is
+/// [`support::bake::brick_value`] of voxel (floor x, floor y, 7), face 5, from the store's
+/// records read back after the bake (the 2 x 2 bilinear in the face's plane that
+/// `store_brick_value` takes), times exposure 1. The cube's top is axis-aligned, so the shading
+/// normal is the face's and no normal mix applies.
+///
+/// Asserts, at every top-face pixel (at least 100: the 8 x 8 top, 10.6 voxels from the eye,
+/// spans about 68 x 44 pixels at 108 rows over 1.2 rad): (a) the accumulated rgb equals the
+/// expected value within one half-precision step (`max(want / 1024, 1 / 16384)`, as
+/// `a_baked_view_is_final_on_its_first_frame` holds a face's read), and the value is lit (each
+/// channel over 0); (b) frames 2 to 8 of the still view are bit-identical to frame 1 (no random
+/// stream reaches the pixel); (c) the light pass's emissive sample (the irradiance target's rgb)
+/// is 0 at every one of them; under `EntityLight::Own` its mean over them is over 0 in each
+/// channel and fewer than half of them read 0 (a pixel's draw is random and may find no
+/// candidate: 87 of 2718 on lavapipe at the commit; under `World` all of them read 0, so a
+/// half separates the two modes with room either side).
+#[test]
+fn an_entity_reads_the_baked_light_of_the_world_face_behind_it() {
+    assert_eq!(
+        vxe_render::Lighting::default().entity_light,
+        vxe_render::EntityLight::World
+    );
+    let (mut t, red) = table();
+    let glow = t.push(Material {
+        albedo: [0.0; 3],
+        emission: [4.0, 4.0, 4.0],
+        ..Material::named("glow")
+    });
+    let world = entity_box(&t);
+    // A fill writes air only: the plate first, then the rock around and above it.
+    support::bake::fill(&world, [48, 16, 24], [80, 48, 26], glow);
+    support::bake::fill(&world, [2, 2, 24], [126, 62, 50], ROCK);
+    assert_eq!(world.material_at([60, 30, 25]), Some(glow));
+    let Some(mut rig) = rig_on(world, [W, H], None) else {
+        return;
+    };
+    rig.frame.set_lighting(support::lights::box_lighting());
+    assert_eq!(
+        rig.frame.lighting().entity_light,
+        vxe_render::EntityLight::World
+    );
+    rig.bake(&support::bake::test_counts(64));
+    let cells = rig.cells();
+    let cube = block([8; 3], red, 1);
+    draw(
+        &mut rig,
+        &[(
+            cube.clone(),
+            posed(&cube, [64.0, 32.0, 12.0], Quat::IDENTITY),
+        )],
+    );
+    let camera = Camera {
+        position: [56.0, 32.0, 23.0].into(),
+        yaw: 0.0,
+        pitch: -0.72,
+        vfov: 1.2,
+    };
+    rig.step(&camera);
+    let top: Vec<(usize, [f32; 3])> = hits(&rig)
+        .into_iter()
+        .filter(|h| entity_hit(0)(&h.2) && (h.1[2] - 16.0).abs() < 1e-3)
+        .map(|h| (h.0, h.1))
+        .collect();
+    assert!(top.len() >= 100, "{} top-face pixels", top.len());
+    let first = rig.accum();
+    let irradiance = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
+    let (mut lo, mut hi) = (f32::MAX, 0f32);
+    for &(i, p) in &top {
+        let v = [p[0].floor() as i32, p[1].floor() as i32, 7];
+        let want = support::bake::brick_value(&cells, v, 5).expect("the floor's brick holds +z");
+        for k in 0..3 {
+            assert!(want[k] > 0.0, "the floor under the plate is lit: {want:?}");
+            let step = (want[k] / 1024.0).max(1.0 / 16384.0);
+            assert!(
+                (first[i][k] - want[k]).abs() <= step,
+                "pixel {i} at {p:?} channel {k}: {} against {}",
+                first[i][k],
+                want[k]
+            );
+        }
+        assert_eq!(
+            [irradiance[i][0], irradiance[i][1], irradiance[i][2]],
+            [0.0; 3],
+            "the light pass's emissive sample at pixel {i}"
+        );
+        lo = lo.min(want[1]);
+        hi = hi.max(want[1]);
+    }
+    println!(
+        "{} top-face pixels read the floor's value, green {lo:.5} to {hi:.5}",
+        top.len()
+    );
+    for n in 2..=8 {
+        rig.step(&camera);
+        assert!(rig.accum() == first, "frame {n} against frame 1");
+    }
+
+    rig.frame.set_lighting(vxe_render::Lighting {
+        entity_light: vxe_render::EntityLight::Own,
+        ..rig.frame.lighting()
+    });
+    rig.step(&camera);
+    let own = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
+    let dark = top
+        .iter()
+        .filter(|&&(i, _)| own[i][..3].iter().any(|&c| c <= 0.0))
+        .count();
+    let mean: [f32; 3] = std::array::from_fn(|k| {
+        top.iter().map(|&(i, _)| own[i][k]).sum::<f32>() / top.len() as f32
+    });
+    println!(
+        "under own: {dark} of {} top-face pixels drew no light, mean {mean:?}",
+        top.len()
+    );
+    assert!(mean.iter().all(|&c| c > 0.0), "under own: mean {mean:?}");
+    assert!(
+        2 * dark < top.len(),
+        "under own {dark} of {} top-face pixels drew no light",
+        top.len()
+    );
+}
+
 // ---- Phase 4: motion ----
 
 /// The motion rig's light: 1200, 20 voxels above the floor at (64, 32).
@@ -1095,16 +1280,6 @@ fn a_still_entity_marks_nothing_fresh() {
     assert!(inside > 100 && far > 100, "({inside}, {far})");
 }
 
-/// The FSR 2 frame of the light tests: 128 x 72 internal for a 192 x 108 output (scale 1.5).
-fn fsr2_frame(rig: &Rig) -> vxe_render::Frame {
-    support::lights::box_frame(
-        &rig.device,
-        [128, 72],
-        [W, H],
-        Some(support::rigs::fsr2_kind()),
-    )
-}
-
 /// The FSR 2 motion vectors at every hit of `frame`'s last frame in internal pixels, and the
 /// expected motion of each hit whose point was at `before(p)` the frame before: where that
 /// point projects through `view` less the jitter `j`, less the pixel's centre.
@@ -1151,40 +1326,41 @@ fn motion_and_want(
 /// the hit nearest its tip matches the tip's projected displacement within 0.25 pixel.
 #[test]
 fn fsr2_motion_follows_a_moving_part() {
-    let Some((rig, red)) = rig() else {
+    let Some((mut rig, red)) = rig() else {
         return;
     };
     let camera = level_camera(86.0, 26.0);
     let view = vxe_render::View::of_camera(&camera, [0, 0, 128, 72]);
     let light = vxe_render::LightParams::headlamp();
-    let jitter = |f: &mut vxe_render::Frame| f.params(&rig.gpu, &camera, &light).views[0].jitter;
+    let jitter = |rig: &mut Rig| rig.frame.params(&rig.gpu, &camera, &light).views[0].jitter;
 
     let cube = block([8; 3], red, 1);
-    let mut f = fsr2_frame(&rig);
-    let (mut set, id, h) = place(
-        &rig,
-        &mut f,
+    // Both parts run on the rig's frame, set up afresh for each: a new frame's pipelines cost
+    // more than the runs.
+    reset_frame(&mut rig, [128, 72], Some(support::rigs::fsr2_kind()));
+    let (mut set, id, h) = place_on(
+        &mut rig,
         &cube,
         posed(&cube, [110.0, 32.0, 26.0], Quat::IDENTITY),
     );
     for _ in 0..3 {
-        f.set_entities(&rig.queue, &set, &[(id, h)]);
-        support::lights::step_frame(&rig, &mut f, &camera);
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        support::lights::step(&mut rig, &camera);
     }
     set.set_pose(id, posed(&cube, [110.0, 28.0, 26.0], Quat::IDENTITY))
         .expect("the pose fits");
-    f.set_entities(&rig.queue, &set, &[(id, h)]);
-    support::lights::step_frame(&rig, &mut f, &camera);
-    let j = jitter(&mut f);
-    let all = motion_and_want(&rig, &f, &view, j, |_, p, r| {
+    rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+    support::lights::step(&mut rig, &camera);
+    let j = jitter(&mut rig);
+    let all = motion_and_want(&rig, &rig.frame, &view, j, |_, p, r| {
         Some(if r[3] & 32 != 0 {
             [p[0], p[1] + 4.0, p[2]]
         } else {
             p
         })
     });
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, f.hit_records());
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let face = [106.0, 28.0, 26.0];
     let (centre, _) = all
         .iter()
@@ -1210,27 +1386,27 @@ fn fsr2_motion_follows_a_moving_part() {
     }
 
     let bar = block([4, 16, 4], red, 1);
-    let mut f = fsr2_frame(&rig);
+    reset_frame(&mut rig, [128, 72], Some(support::rigs::fsr2_kind()));
     let c = [110.0f32, 32.0, 26.0];
     let step = 10f32.to_radians();
-    let (mut set, id, h) = place(&rig, &mut f, &bar, posed(&bar, c, Quat::IDENTITY));
+    let (mut set, id, h) = place_on(&mut rig, &bar, posed(&bar, c, Quat::IDENTITY));
     for k in 0..4 {
         set.set_pose(id, posed(&bar, c, walker::turn(0, step * k as f32)))
             .expect("the pose fits");
-        f.set_entities(&rig.queue, &set, &[(id, h)]);
-        support::lights::step_frame(&rig, &mut f, &camera);
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        support::lights::step(&mut rig, &camera);
     }
-    let j = jitter(&mut f);
+    let j = jitter(&mut rig);
     // The frame before's point: turned back 10 degrees about x through the centre.
     let (s, co) = (-step).sin_cos();
     let back = |p: [f32; 3]| {
         let (y, z) = (p[1] - c[1], p[2] - c[2]);
         [p[0], c[1] + y * co - z * s, c[2] + y * s + z * co]
     };
-    let all = motion_and_want(&rig, &f, &view, j, |_, p, r| {
+    let all = motion_and_want(&rig, &rig.frame, &view, j, |_, p, r| {
         (r[3] & 32 != 0).then(|| back(p))
     });
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
+    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     // The tip: 7.5 voxels along the bar's long axis (y turned 30 degrees about x) on its near
     // face (x 108).
     let a = 3.0 * step;
@@ -1270,13 +1446,42 @@ fn luma_around(rig: &Rig, frame: &vxe_render::Frame, at: [usize; 2]) -> f64 {
     s / 25.0
 }
 
-/// A frame for the trail: FSR 2 or our upscaler at 1.5 (`kind`), or with none the frame at the
-/// output size.
-fn trail_frame(rig: &Rig, kind: Option<vxe_render::UpscalerKind>) -> vxe_render::Frame {
-    match kind {
-        Some(k) => support::lights::box_frame(&rig.device, [128, 72], [W, H], Some(k)),
-        None => support::lights::box_frame(&rig.device, [W, H], [W, H], None),
-    }
+/// Sets `f` up as `support::lights::box_frame` makes a frame (no jitter, full tier, the box's
+/// lighting) under `kind`, `internal` pixels for a 192 x 108 output, with no entity drawn and
+/// no list light. `set_sizes` replaces every target and drops the history, so the frame starts
+/// afresh as a new one does; only its pipelines (and FSR 2's, once made) are kept, which is
+/// what a new frame costs on lavapipe (a few seconds each). The tests that reset run on the
+/// rig's own frame, so they make no frame beyond it.
+fn reset_frame(rig: &mut Rig, internal: [u32; 2], kind: Option<vxe_render::UpscalerKind>) {
+    let (device, f) = (&rig.device, &mut rig.frame);
+    f.set_entities(&rig.queue, &EntitySet::new(), &[]);
+    f.set_lights(&[]);
+    f.set_jitter(device, false);
+    f.set_upscaler_kind(device, kind.unwrap_or(vxe_render::UpscalerKind::Off));
+    f.set_resolution(device, LightingResolution::Full);
+    f.set_sizes(device, internal, [W, H]);
+    f.set_lighting(support::lights::box_lighting());
+    f.set_dt(1.0 / 60.0);
+    f.reset_exposure();
+}
+
+/// The rig's frame set up for the trail ([`reset_frame`]): FSR 2 or our upscaler at 1.5
+/// (`kind`), or with none the frame at the output size.
+fn trail_frame(rig: &mut Rig, kind: Option<vxe_render::UpscalerKind>) {
+    let internal = if kind.is_some() { [128, 72] } else { [W, H] };
+    reset_frame(rig, internal, kind);
+}
+
+/// [`place`] on the rig's own frame.
+fn place_on(rig: &mut Rig, model: &Arc<Model>, pose: Pose) -> (EntitySet, EntityId, ModelHandle) {
+    let h = rig
+        .frame
+        .entity_mirror_mut()
+        .upload_model(&rig.queue, model, rig.world.materials())
+        .expect("the pool has room");
+    let mut set = EntitySet::new();
+    let id = set.insert(model.clone(), pose).expect("the pose fits");
+    (set, id, h)
 }
 
 /// The trail behind done-when 1's move under `kind`, at output pixel `at` (where the part's
@@ -1285,9 +1490,10 @@ fn trail_frame(rig: &Rig, kind: Option<vxe_render::UpscalerKind>) -> vxe_render:
 /// start and 16 frames after it, the distance from the no-entity luminance on each frame from
 /// the first on which the part and its shadow have left the pixel (`clear`). Returns the
 /// frames from `clear` until that distance is under a tenth of the step (the settle rule of
-/// `fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step`), and the step.
+/// `fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step`), and the step. Both runs use
+/// the rig's frame, set up afresh for each ([`trail_frame`]).
 fn trail_after_move(
-    rig: &Rig,
+    rig: &mut Rig,
     red: MaterialId,
     kind: Option<vxe_render::UpscalerKind>,
     at: [usize; 2],
@@ -1296,39 +1502,31 @@ fn trail_after_move(
 ) -> (Option<usize>, f64) {
     let camera = motion_camera();
     let cube = block([8; 3], red, 1);
-    let run = |with: bool| {
-        let mut f = trail_frame(rig, kind);
-        f.set_lights(&[motion_light()]);
-        let placed = with.then(|| {
-            place(
-                rig,
-                &mut f,
-                &cube,
-                posed(&cube, part_centre(0), Quat::IDENTITY),
-            )
-        });
+    let mut run = |with: bool| {
+        trail_frame(rig, kind);
+        rig.frame.set_lights(&[motion_light()]);
+        let placed =
+            with.then(|| place_on(rig, &cube, posed(&cube, part_centre(0), Quat::IDENTITY)));
         for _ in 0..32 {
             if let Some((set, id, h)) = &placed {
-                f.set_entities(&rig.queue, set, &[(*id, *h)]);
+                rig.frame.set_entities(&rig.queue, set, &[(*id, *h)]);
             }
-            support::lights::step_frame(rig, &mut f, &camera);
+            support::lights::step(rig, &camera);
         }
-        (f, placed)
+        (luma_around(rig, &rig.frame, at), placed)
     };
-    let (bare, _) = run(false);
-    let reference = luma_around(rig, &bare, at);
-    let (mut f, placed) = run(true);
-    let held = luma_around(rig, &f, at);
+    let (reference, _) = run(false);
+    let (held, placed) = run(true);
     let (mut set, id, h) = placed.expect("placed");
     let mut series = Vec::new();
     for k in 1..=moves + 16 {
         let c = part_centre(k.min(moves));
         set.set_pose(id, posed(&cube, c, Quat::IDENTITY))
             .expect("the pose fits");
-        f.set_entities(&rig.queue, &set, &[(id, h)]);
-        support::lights::step_frame(rig, &mut f, &camera);
+        rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
+        support::lights::step(rig, &camera);
         if k >= clear {
-            series.push((luma_around(rig, &f, at) - reference).abs());
+            series.push((luma_around(rig, &rig.frame, at) - reference).abs());
         }
     }
     let step = (held - reference).abs();
@@ -1368,17 +1566,18 @@ fn fsr2_leaves_no_trail_behind_a_moving_entity_over_16_frames() {
 }
 
 fn trail_rule(moves: usize) {
-    let Some((rig, red)) = rig() else {
+    let Some((mut rig, red)) = rig() else {
         return;
     };
     let (at, clear) = trail_pixel();
-    let (native, _) = trail_after_move(&rig, red, None, at, moves, clear);
+    // Every run on the rig's frame: a new frame's pipelines cost more than a run's frames.
+    let (native, _) = trail_after_move(&mut rig, red, None, at, moves, clear);
     let native = native.expect("the frame at the output size settles");
     for kind in [
         support::rigs::fsr2_kind(),
         vxe_render::UpscalerKind::Own(vxe_render::Upscaler::default()),
     ] {
-        let (s, step) = trail_after_move(&rig, red, Some(kind), at, moves, clear);
+        let (s, step) = trail_after_move(&mut rig, red, Some(kind), at, moves, clear);
         println!(
             "{}: the trail is {s:?} frames against {native} at the output size (step {step:.1}/255)",
             kind.name()
@@ -1489,491 +1688,5 @@ fn entity_bytes_are_in_the_inventory() {
     assert_eq!(with - without, 8 << 20);
 }
 
-/// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`), on the adapter
-/// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
-mod reading {
-    use super::*;
-    use vxe_render::{FRAME_PASSES, GpuWorld, MirrorConfig, PassTimer, Window};
-
-    /// [`rig_on`]'s rig on the reading adapter, and the adapter's name.
-    fn reading_rig(world: World) -> Option<(Rig, String)> {
-        let (device, queue, name) = support::reading_device(64 << 20)?;
-        let base = MirrorConfig::new(Window::Fixed(world.extent()));
-        let cfg = MirrorConfig {
-            budget_bytes: 64 << 20,
-            ..base
-        };
-        let mut gpu = GpuWorld::with_config(&device, cfg);
-        for _ in 0..2 {
-            support::SyncNow::sync_now(&mut gpu, &world, &device, &queue).expect("fits");
-        }
-        let mut frame = support::bake::new_frame(&device, [W, H]);
-        frame.set_lighting(support::lights::box_lighting());
-        Some((
-            Rig {
-                device,
-                queue,
-                gpu,
-                world,
-                frame,
-                cfg,
-            },
-            name,
-        ))
-    }
-
-    fn walker_at(rig: &Rig, feet: [f32; 3], eye: [f32; 3]) -> (Arc<Model>, Pose) {
-        let (body, e) = walker::rows(rig.world.materials()).expect("the walker's rows");
-        let pose = walker::pose(feet, walker::facing(feet, eye), 0.0);
-        (Arc::new(walker::model(body, e)), pose)
-    }
-
-    /// Phase 3 done-when 7, the fallback: a still walker beside a world emitter (a 4 x 4 x 8
-    /// block of a warm emissive row) with no list light and the lamp off; at the walker's
-    /// torso front facing the camera, the temporal pass's accumulated emissive part (its
-    /// luminance) at frame 64 and its frame-to-frame rms over the 64 frames.
-    #[test]
-    #[ignore = "reading"]
-    fn the_fallback_on_a_still_walker() {
-        let (mut t, _) = table();
-        let glow = t.push(Material {
-            emission: [4.0, 2.5, 1.0],
-            ..Material::named("glow")
-        });
-        let world = entity_box(&t);
-        support::bake::fill(&world, [96, 25, 2], [100, 29, 10], glow);
-        let Some((mut rig, adapter)) = reading_rig(world) else {
-            return;
-        };
-        let camera = level_camera(84.0, 9.0);
-        let entity = walker_at(&rig, [104.0, 32.0, 2.0], camera.position.to_array());
-        draw(&mut rig, &[entity]);
-        let mut series = Vec::new();
-        let mut px = None;
-        for _ in 0..64 {
-            rig.step(&camera);
-            let i = *px
-                .get_or_insert_with(|| nearest(&hits(&rig), [102.0, 32.0, 7.0], entity_hit(0)).0);
-            let a =
-                vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated())[i];
-            series.push(0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]);
-        }
-        let diffs: Vec<f32> = series.windows(2).map(|w| w[1] - w[0]).collect();
-        let rms = (diffs.iter().map(|d| d * d).sum::<f32>() / diffs.len() as f32).sqrt();
-        println!(
-            "{adapter}: the fallback at the torso's front, frame 64 {:.4}, mean of the last 32 {:.4}, frame-to-frame rms {rms:.4} ({:.2} % of the value)",
-            series[63],
-            series[32..].iter().sum::<f32>() / 32.0,
-            100.0 * rms / series[63].max(1e-6)
-        );
-    }
-
-    /// Phase 3 done-when 7, the cost: the light pass's time over 64 frames on the lit box (a
-    /// light of 1200 at (64, 32, 22)) with 0 and 4 walkers standing around under the light, the
-    /// median and the p90 in ms.
-    #[test]
-    #[ignore = "reading"]
-    fn the_light_pass_cost_with_walkers() {
-        let (t, _) = table();
-        let Some((mut rig, adapter)) = reading_rig(entity_box(&t)) else {
-            return;
-        };
-        let Some(timer) =
-            PassTimer::with_passes(&rig.device, &rig.queue, FRAME_PASSES.len() as u32)
-        else {
-            println!("{adapter}: no timestamp queries");
-            return;
-        };
-        let slot = FRAME_PASSES
-            .iter()
-            .position(|&n| n == "light")
-            .expect("light");
-        rig.frame
-            .set_lights(&[Light::point([64.0, 32.0, 22.0], 1200.0)]);
-        let camera = Camera {
-            position: [40.0, 32.0, 30.0].into(),
-            yaw: 0.0,
-            pitch: -0.6,
-            vfov: 1.2,
-        };
-        for n in [0usize, 4] {
-            let entities: Vec<_> = (0..n)
-                .map(|k| {
-                    let a = std::f32::consts::TAU * k as f32 / 4.0;
-                    let feet = [64.0 + 8.0 * a.cos(), 32.0 + 8.0 * a.sin(), 2.0];
-                    walker_at(&rig, feet, camera.position.to_array())
-                })
-                .collect();
-            draw(&mut rig, &entities);
-            let mut ms = Vec::new();
-            for _ in 0..64 {
-                rig.frame.advance();
-                let params =
-                    rig.frame
-                        .params(&rig.gpu, &camera, &vxe_render::LightParams::headlamp());
-                let mut enc = rig.device.create_command_encoder(&Default::default());
-                rig.frame.encode(
-                    &rig.device,
-                    &rig.queue,
-                    &mut enc,
-                    &rig.gpu,
-                    &params,
-                    Some(&timer),
-                );
-                timer.resolve(&mut enc);
-                rig.queue.submit([enc.finish()]);
-                ms.push(timer.read_all_ms(&rig.device)[slot]);
-            }
-            ms.sort_by(f64::total_cmp);
-            println!(
-                "{adapter}: {n} walkers, light pass median {:.3} ms, p90 {:.3} ms (64 frames, {W} x {H})",
-                ms[32], ms[57]
-            );
-        }
-    }
-
-    /// Phase 5 done-when 2, the CPU: `Frame::set_entities` at 64 walkers on a ring (each frame a
-    /// new pose, so every part moves), and `EntitySet::raycast` at those walkers over 4096 seeded
-    /// rays from the ring's centre, the mean of each.
-    #[test]
-    #[ignore = "reading"]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "a reading of the CPU's time, by wall clock"
-    )]
-    fn the_cpu_cost_at_64_walkers() {
-        let (t, _) = table();
-        let Some((mut rig, adapter)) = reading_rig(entity_box(&t)) else {
-            return;
-        };
-        let (body, eye) = walker::rows(rig.world.materials()).expect("the walker's rows");
-        let model = Arc::new(walker::model(body, eye));
-        let h = rig
-            .frame
-            .entity_mirror_mut()
-            .upload_model(&rig.queue, &model, rig.world.materials())
-            .expect("room");
-        let centre = [64.0f32, 32.0, 2.0];
-        let feet: Vec<[f32; 3]> = (0..64)
-            .map(|k| {
-                let a = std::f32::consts::TAU * k as f32 / 64.0;
-                [centre[0] + 24.0 * a.cos(), centre[1] + 24.0 * a.sin(), 2.0]
-            })
-            .collect();
-        let mut set = EntitySet::new();
-        let ids: Vec<EntityId> = feet
-            .iter()
-            .map(|&f| {
-                set.insert(model.clone(), walker::pose(f, 0.0, 0.0))
-                    .expect("fits")
-            })
-            .collect();
-        let list: Vec<(EntityId, ModelHandle)> = ids.iter().map(|&id| (id, h)).collect();
-        let rounds = 256;
-        let mut set_ms = Vec::new();
-        for r in 0..rounds {
-            for (k, &id) in ids.iter().enumerate() {
-                let swing = 0.5 * ((r + k) as f32 * 0.1).sin();
-                set.set_pose(id, walker::pose(feet[k], 0.01 * r as f32, swing))
-                    .expect("fits");
-            }
-            let t0 = std::time::Instant::now();
-            rig.frame.set_entities(&rig.queue, &set, &list);
-            set_ms.push(t0.elapsed().as_secs_f64() * 1e3);
-        }
-        assert_eq!(rig.frame.entity_mirror().parts_drawn(), 256);
-        set_ms.sort_by(f64::total_cmp);
-        let mean = set_ms.iter().sum::<f64>() / rounds as f64;
-        // Seeded rays from above the ring's centre, spread over the lower hemisphere.
-        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
-        let mut next = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 11) as f64 / (1u64 << 53) as f64
-        };
-        let origin = Fixed3([64 * 256, 32 * 256, 8 * 256]);
-        let rays: Vec<[i64; 3]> = (0..4096)
-            .map(|_| {
-                let a = std::f64::consts::TAU * next();
-                let z = -0.6 * next();
-                let r = (1.0 - z * z).sqrt();
-                [a.cos() * r, a.sin() * r, z].map(|v| (v * 256.0).round() as i64)
-            })
-            .collect();
-        let t0 = std::time::Instant::now();
-        let mut hits = 0;
-        for d in &rays {
-            hits += usize::from(set.raycast(origin, *d, 200 * 256).is_some());
-        }
-        let ray_us = t0.elapsed().as_secs_f64() * 1e6 / rays.len() as f64;
-        println!(
-            "{adapter}: set_entities at 64 walkers (256 parts), {rounds} rounds: mean {mean:.4} ms, median {:.4} ms, p90 {:.4} ms; EntitySet::raycast over 4096 rays: mean {ray_us:.2} us, {hits} hits",
-            set_ms[rounds / 2],
-            set_ms[rounds * 9 / 10]
-        );
-    }
-
-    /// The grain reading's walker `k` of eight at `frame`: walking, a 6-voxel circle at 1 m/s
-    /// about its centre in a 2 x 4 grid, legs swinging; still, its pose at frame 0.
-    fn grain_pose(k: usize, frame: usize, walking: bool) -> Pose {
-        let c = [104.0 + 12.0 * (k / 4) as f32, 14.0 + 12.0 * (k % 4) as f32];
-        let time = if walking { frame as f32 / 60.0 } else { 0.0 };
-        let a = 0.7 * k as f32 + time * walker::WALK_SPEED / 6.0;
-        let feet = [c[0] + 6.0 * a.cos(), c[1] + 6.0 * a.sin(), 2.0];
-        let swing = walker::WALK_SWING * (std::f32::consts::TAU * (time + 0.13 * k as f32)).sin();
-        walker::pose(feet, a, if walking { swing } else { 0.0 })
-    }
-
-    /// One measured frame of the grain reading. At the internal size: the walkers' pixels, the
-    /// stages' luma (the light pass's sample, the accumulation, the filter's output), the age
-    /// and the fresh flag; at the output size the walkers' and the world's pixels (those whose
-    /// internal pixel is) and the display's luma.
-    struct Shot {
-        ent: Vec<bool>,
-        age: Vec<f32>,
-        fresh: Vec<bool>,
-        stages: [Vec<f32>; 3],
-        out_ent: Vec<bool>,
-        out_world: Vec<bool>,
-        display: Vec<f32>,
-    }
-
-    fn grain_shot(rig: &Rig, internal: [u32; 2]) -> Shot {
-        let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
-        let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-        let ent: Vec<bool> = rec
-            .iter()
-            .map(|r| r[3] & 1 != 0 && r[3] & 32 != 0)
-            .collect();
-        let wor: Vec<bool> = rec
-            .iter()
-            .map(|r| r[3] & 1 != 0 && r[3] & 32 == 0)
-            .collect();
-        let rd = |t: &vxe_render::wgpu::Texture| {
-            vxe_render::debug::read_float(&rig.device, &rig.queue, t)
-        };
-        let irr = rd(rig.frame.irradiance());
-        let acc = rd(rig.frame.accumulated());
-        let fil = rd(rig.frame.filtered());
-        let mom = rd(rig.frame.moments());
-        let img = rig.display();
-        let display: Vec<f32> = img
-            .chunks_exact(4)
-            .map(|p| 0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]))
-            .collect();
-        let inner = |i: usize| {
-            let (x, y) = (i % W as usize, i / W as usize);
-            (y * internal[1] as usize / H as usize) * internal[0] as usize
-                + x * internal[0] as usize / W as usize
-        };
-        Shot {
-            age: mom.iter().map(|m| m[2]).collect(),
-            fresh: irr.iter().map(|p| p[3] > 0.5).collect(),
-            stages: [
-                irr.iter().map(lum).collect(),
-                acc.iter().map(lum).collect(),
-                fil.iter().map(lum).collect(),
-            ],
-            out_ent: (0..display.len()).map(|i| ent[inner(i)]).collect(),
-            out_world: (0..display.len()).map(|i| wor[inner(i)]).collect(),
-            ent,
-            display,
-        }
-    }
-
-    /// The grain reading's run: a fresh frame (at 128 x 72 under an upscaler, jittered) with
-    /// `light` as its entities' emissive light and the box baked at `test_counts(256)`, its
-    /// frame counter `offset` on, 128 frames of the eight walkers, frames 64 to 127 measured.
-    fn grain_run(
-        rig: &mut Rig,
-        model: &Arc<Model>,
-        (offset, walking): (u32, bool),
-        kind: Option<vxe_render::UpscalerKind>,
-        light: vxe_render::EntityLight,
-    ) -> Vec<Shot> {
-        let camera = Camera {
-            position: [78.0, 32.0, 16.0].into(),
-            yaw: 0.0,
-            pitch: -0.3,
-            vfov: 1.2,
-        };
-        let internal = if kind.is_some() { [128, 72] } else { [W, H] };
-        let mut frame = support::lights::box_frame(&rig.device, internal, [W, H], kind);
-        frame.set_jitter(&rig.device, kind.is_some());
-        frame.set_lighting(vxe_render::Lighting {
-            entity_light: light,
-            ..support::lights::box_lighting()
-        });
-        for _ in 0..offset {
-            frame.advance();
-        }
-        rig.frame = frame;
-        rig.bake(&support::bake::test_counts(256));
-        let h = rig
-            .frame
-            .entity_mirror_mut()
-            .upload_model(&rig.queue, model, rig.world.materials())
-            .expect("room");
-        let mut set = EntitySet::new();
-        let ids: Vec<EntityId> = (0..8)
-            .map(|k| {
-                set.insert(model.clone(), grain_pose(k, 0, walking))
-                    .expect("fits")
-            })
-            .collect();
-        let list: Vec<(EntityId, ModelHandle)> = ids.iter().map(|&id| (id, h)).collect();
-        let mut shots = Vec::new();
-        for f in 0..128 {
-            for (k, &id) in ids.iter().enumerate() {
-                set.set_pose(id, grain_pose(k, f, walking)).expect("fits");
-            }
-            rig.frame.set_entities(&rig.queue, &set, &list);
-            rig.step(&camera);
-            if f >= 64 {
-                shots.push(grain_shot(rig, internal));
-            }
-        }
-        shots
-    }
-
-    /// Sums of the squared difference, the mean and the count, for a relative rms.
-    #[derive(Default, Clone, Copy)]
-    struct Diff([f64; 3]);
-
-    impl Diff {
-        fn add(&mut self, x: f32, y: f32) {
-            let (x, y) = (f64::from(x), f64::from(y));
-            self.0[0] += (x - y).powi(2);
-            self.0[1] += 0.5 * (x + y);
-            self.0[2] += 1.0;
-        }
-
-        /// The rms of the difference over `sqrt 2` (one run's noise), of the mean.
-        fn rel(self) -> String {
-            let rms = (self.0[0] / self.0[2] / 2.0).sqrt();
-            let mean = self.0[1] / self.0[2];
-            format!(
-                "{rms:.4} of {mean:.4} ({:.1} %)",
-                100.0 * rms / mean.max(1e-9)
-            )
-        }
-    }
-
-    /// Plan 0062 Phase 6 (e), the grain on walking walkers: eight walkers in a crowd beside a
-    /// world emitter (the fallback rig), lamp off and no list light, still or walking (each a
-    /// 6-voxel circle at 1 m/s, legs swinging), at the output size with no jitter, and under
-    /// FSR 2 and our upscaler at 1.5 with it. Each case runs twice from a fresh frame, the
-    /// second with its frame counter 1008 on (the jitter repeats every 16 frames, ours, and
-    /// 18, FSR 2's at 1.5), so the poses and the jitter match and only the random stream
-    /// differs; the noise of a stage is the rms of the two runs' difference over `sqrt 2`, over
-    /// the walkers' pixels of frames 64 to 127, relative to their mean. The stages: the light
-    /// pass's sample, the temporal pass's accumulation, the filter's output (split at age 8)
-    /// and the display's luma; with the walkers' mean age, the share younger than 8 frames and
-    /// the share fresh, and the world pixels' display noise. Each case under both entity lights
-    /// (`EntityLight`), the box baked; at the output size, still, the shading `world` loses: the
-    /// rms over the walkers' pixels of the difference of the two lights' filtered means over
-    /// frames 64 to 127, relative to `own`'s mean, and the ratio of the means.
-    #[test]
-    #[ignore = "reading"]
-    fn the_grain_on_walking_walkers() {
-        let (mut t, _) = table();
-        let glow = t.push(Material {
-            emission: [4.0, 2.5, 1.0],
-            ..Material::named("glow")
-        });
-        let world = entity_box(&t);
-        support::bake::fill(&world, [96, 25, 2], [100, 29, 10], glow);
-        let Some((mut rig, adapter)) = reading_rig(world) else {
-            return;
-        };
-        let (body, eye) = walker::rows(rig.world.materials()).expect("the walker's rows");
-        let model = Arc::new(walker::model(body, eye));
-        let kinds = [
-            None,
-            Some(support::rigs::fsr2_kind()),
-            Some(vxe_render::UpscalerKind::Own(
-                vxe_render::Upscaler::default(),
-            )),
-        ];
-        let lights = [vxe_render::EntityLight::Own, vxe_render::EntityLight::World];
-        // The still output-size runs' filtered means per walker pixel, `own` then `world`.
-        let mut still: Vec<Vec<Option<f64>>> = Vec::new();
-        for (kind, filter) in kinds.into_iter().flat_map(|k| lights.map(|y| (k, y))) {
-            let name = kind.map_or("output size", |k| k.name());
-            for walking in [false, true] {
-                let a = grain_run(&mut rig, &model, (0, walking), kind, filter);
-                let b = grain_run(&mut rig, &model, (1008, walking), kind, filter);
-                if kind.is_none() && !walking {
-                    still.push(
-                        (0..a[0].ent.len())
-                            .map(|i| {
-                                a.iter().all(|s| s.ent[i]).then(|| {
-                                    a.iter().map(|s| f64::from(s.stages[2][i])).sum::<f64>()
-                                        / a.len() as f64
-                                })
-                            })
-                            .collect(),
-                    );
-                }
-                let mut stage = [Diff::default(); 3];
-                // The filtered stage split by age: younger than 8, then 8 and older.
-                let mut by_age = [Diff::default(); 2];
-                let (mut display, mut world) = (Diff::default(), Diff::default());
-                let (mut ages, mut young, mut fresh, mut n) = (0.0f64, 0usize, 0usize, 0usize);
-                for (sa, sb) in a.iter().zip(&b) {
-                    for i in (0..sa.ent.len()).filter(|&i| sa.ent[i] && sb.ent[i]) {
-                        for (d, (x, y)) in stage.iter_mut().zip(sa.stages.iter().zip(&sb.stages)) {
-                            d.add(x[i], y[i]);
-                        }
-                        by_age[usize::from(sa.age[i] >= 8.0)].add(sa.stages[2][i], sb.stages[2][i]);
-                        ages += f64::from(sa.age[i]);
-                        young += usize::from(sa.age[i] < 8.0);
-                        fresh += usize::from(sa.fresh[i]);
-                        n += 1;
-                    }
-                    for i in 0..sa.display.len() {
-                        if sa.out_ent[i] && sb.out_ent[i] {
-                            display.add(sa.display[i], sb.display[i]);
-                        } else if sa.out_world[i] && sb.out_world[i] {
-                            world.add(sa.display[i], sb.display[i]);
-                        }
-                    }
-                }
-                println!(
-                    "{adapter}, {name}, entity light {}, {} walkers: {n} pixel-frames; noise: sample {}, accum {}, filtered {} (age < 8: {:.0} px, {}; older: {}), display {} /255; age mean {:.1}, younger than 8 {:.1} %, fresh {:.1} %; world display {} /255",
-                    filter.name(),
-                    if walking { "walking" } else { "still" },
-                    stage[0].rel(),
-                    stage[1].rel(),
-                    stage[2].rel(),
-                    by_age[0].0[2],
-                    by_age[0].rel(),
-                    by_age[1].rel(),
-                    display.rel(),
-                    ages / n as f64,
-                    100.0 * young as f64 / n as f64,
-                    100.0 * fresh as f64 / n as f64,
-                    world.rel(),
-                );
-            }
-        }
-        let (own, world) = (&still[0], &still[1]);
-        let (mut sq, mut so, mut sw, mut n) = (0.0f64, 0.0f64, 0.0f64, 0usize);
-        for (o, w) in own.iter().zip(world) {
-            if let (Some(o), Some(w)) = (o, w) {
-                sq += (w - o).powi(2);
-                so += o;
-                sw += w;
-                n += 1;
-            }
-        }
-        println!(
-            "{adapter}, output size, still walkers: world against own over {n} pixels: rms of the difference {:.1} % of own's mean {:.4}; world's mean {:.4} ({:.1} % of own's)",
-            100.0 * (sq / n as f64).sqrt() / (so / n as f64),
-            so / n as f64,
-            sw / n as f64,
-            100.0 * sw / so,
-        );
-    }
-}
+// The readings' module, `reading`, kept in its own file for the file-size cap.
+include!("gpu_entities/reading.rs");
