@@ -57,6 +57,8 @@ impl Args {
             castle_shot: castle::CastleShot::Gate,
             entities: 0,
             entities_walk: false,
+            model: None,
+            clip: None,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,
@@ -227,6 +229,9 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     }
     if matches!(args.logic, LogicChoice::Wasm(_)) && !cfg!(feature = "wasm") {
         return Err(crate::WASM_NEEDS_FEATURE.to_owned());
+    }
+    if args.clip.is_some() && args.model.is_none() {
+        return Err("--clip picks a --model clip; it needs --model".to_owned());
     }
     args.audio.mix.check()?;
     check_path(args, given.path_mode)?;

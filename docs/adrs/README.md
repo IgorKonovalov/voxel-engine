@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0065.**
+**Next free number: 0070.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -65,7 +65,7 @@ the status.
 | [0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md) | The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed | accepted 2026-11-11, Outcomes (Plans 0060, 0067); amends ADR-0046's queue clause |
 | [0049](0049-the-baked-light-is-read-by-the-far-shading-normal.md) | Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values | accepted, Outcome (Plan 0061): the fly-through's default |
 | [0050](0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md) | An entity is a set of posed voxel volumes in a pool of its own, traced after the world march, poses in fixed point | accepted, Outcome (Plan 0062) |
-| [0051](0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md) | Rigs and clips are small text files, and a clip is sampled in fixed point by tick | proposed (Plan 0063) |
+| [0051](0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md) | Rigs and clips are small text files, and a clip is sampled in fixed point by tick | accepted (Plan 0063, 2026-11-16) |
 | [0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md) | The live queue's bake budget is milliseconds of GPU time per second of wall time, capped per frame, not a slice per frame | accepted 2026-11-11; Outcome (Plan 0067): default stays frame:1.5 |
 | [0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md) | A light summary per block and a two-level parent table light a brick with no baked value | accepted 2026-11-11 (Plan 0067); Outcome 2026-11-12: `chain` default |
 | [0054](0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) | The tester build is a launcher that runs the fly-through once per scene as a child process | accepted (Plan 0068, 2026-11-15) |
@@ -79,6 +79,11 @@ the status.
 | [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
 | [0063](0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md) | Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only | proposed (Plan 0081) |
 | [0064](0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md) | A part's scale is per axis in its own frame, about its pivot; it moves its children's pivots and never changes their shapes | proposed (Plan 0082) |
+| [0065](0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md) | Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row | proposed (Plan 0083) |
+| [0066](0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md) | A large prefab is stored as bricks, and its stamp is a placement the world finishes as chunks arrive | proposed (Plan 0083) |
+| [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
+| [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
+| [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

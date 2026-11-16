@@ -1,6 +1,6 @@
 # 0082: Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce
 
-> **Status:** draft (2026-11-16, awaits the owner's go)
+> **Status:** approved (2026-11-16, the owner's go with every recommended answer)
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0064](../adrs/0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md)
@@ -13,7 +13,7 @@
 > slimes etc - will it be possible?" The answer agreed: today a slime is up to sixteen rigid
 > parts in a clip, which reads stiff; the next step is a scale per part in the pose and the
 > clips. See-through glowing jelly and true soft bodies are out of scope (below).
-> **Starts after:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Starts after:** [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (the clips, `Pose::compose`, the viewer), the clip-recorder chore (the entities library under
 > `apps/flythrough/assets/entities/`), [Plan 0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
 > (it rewrites `entities.rs`'s instance write) and [Plan 0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md)'s

@@ -1113,3 +1113,33 @@ fn a_benchmark_path_runs_with_the_lamp_off_and_its_report_says_so() {
     assert_eq!(v.get("scene").and_then(Value::as_str), Some("cave"));
     assert_eq!(v.get("mode").and_then(Value::as_str), Some("bench"));
 }
+
+/// Under `--model`, `Right` and `Left` cycle the viewer's clips and `Down` pauses, each named in
+/// the banner, and the HUD's mode block carries the viewer's row.
+#[test]
+fn the_clip_keys_name_the_clip_and_the_pause() {
+    let mut run = bare_run(carved_rock());
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/walker.rig");
+    let mut viewer = crate::viewer::Viewer::open(&path, None).expect("walker.rig opens");
+    let table = crate::walker::with_walker(&crate::cave_materials());
+    assert_eq!(viewer.build_pending(&table), None);
+    run.modes.walkers.viewer = Some(viewer);
+    let mut input = Input::default();
+    let mut press = |run: &mut Run, key: KeyCode| {
+        input.end_frame();
+        input.key_up(key);
+        input.key_down(key);
+        run.handle_input(&input);
+        run.banner().expect("a press shows the banner")
+    };
+    assert!(press(&mut run, KeyCode::ArrowRight).contains("clip walk"));
+    assert!(press(&mut run, KeyCode::ArrowDown).contains("paused"));
+    let mut rows = String::new();
+    run.modes.write_rows(&mut rows);
+    assert!(
+        rows.contains("model walker clip walk 0/30 paused\n"),
+        "{rows}"
+    );
+    assert!(press(&mut run, KeyCode::ArrowLeft).contains("clip idle"));
+    assert!(press(&mut run, KeyCode::ArrowDown).contains("playing"));
+}

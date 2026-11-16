@@ -101,11 +101,12 @@ pub(crate) struct PartXform {
 }
 
 impl PartXform {
-    /// The part's placement from `pose`, through `Pose::part_point` (exact in fixed point): its
-    /// pivot's world point and the world points 256 model voxels along each axis from it.
-    fn of(model: &Model, pose: &vxe_entity::Pose, part: usize) -> Option<Self> {
-        let p = &model.parts()[part];
-        let fx = |l: [i32; 3]| pose.part_point(model, part, l).map(|f| f.0);
+    /// The part's placement from a composed pose, through `ComposedPose::part_point` (exact in
+    /// fixed point): its pivot's world point and the world points 256 model voxels along each
+    /// axis from it.
+    fn of(pose: &vxe_entity::ComposedPose<'_>, part: usize) -> Option<Self> {
+        let p = &pose.model().parts()[part];
+        let fx = |l: [i32; 3]| pose.part_point(part, l).map(|f| f.0);
         let base = fx(p.pivot)?;
         const REACH: i32 = 1 << 16;
         let mut m = [[0f32; 3]; 3];
@@ -119,7 +120,17 @@ impl PartXform {
             }
         }
         let pivot_w = base.map(|v| v as f32 / 256.0);
-        let pivot_m = p.pivot.map(|v| v as f32 / 256.0);
+        Some(Self::from_parts(
+            m,
+            p.pivot.map(|v| v as f32 / 256.0),
+            pivot_w,
+            p.detail,
+        ))
+    }
+
+    /// The placement whose linear part is `m` (a rotation over `detail`) and which takes the
+    /// model point `pivot_m` to the world point `pivot_w`.
+    fn from_parts(m: [[f32; 3]; 3], pivot_m: [f32; 3], pivot_w: [f32; 3], detail: u8) -> Self {
         let mut p2w = [[0f32; 4]; 3];
         for r in 0..3 {
             p2w[r][..3].copy_from_slice(&m[r]);
@@ -127,7 +138,7 @@ impl PartXform {
         }
         // The linear part is a rotation over `detail`, so its inverse is its transpose times
         // `detail^2`.
-        let d2 = f32::from(p.detail) * f32::from(p.detail);
+        let d2 = f32::from(detail) * f32::from(detail);
         let mut w2p = [[0f32; 4]; 3];
         for r in 0..3 {
             for c in 0..3 {
@@ -135,10 +146,10 @@ impl PartXform {
             }
             w2p[r][3] = pivot_m[r] - (0..3).map(|c| w2p[r][c] * pivot_w[c]).sum::<f32>();
         }
-        Some(Self {
+        Self {
             part_to_world: p2w,
             world_to_part: w2p,
-        })
+        }
     }
 
     /// The world box of `[0, size]` in model voxels through `xf`.
@@ -154,6 +165,152 @@ impl PartXform {
         }
         b
     }
+}
+
+/// One entity's parts placed for drawing, as `f32` affine maps: from one pose
+/// ([`DisplayPose::of`]) or between two ([`DisplayPose::between`]), so a viewer draws between
+/// two ticks of a fixed-point clip. Drawing only: the entity queries read the pose in the set.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DisplayPose {
+    /// Each part's placement and its detail.
+    parts: Vec<(PartXform, u8)>,
+}
+
+impl DisplayPose {
+    /// `model`'s parts as `pose` places them; `None` when the pose does not fit the model.
+    pub fn of(model: &Model, pose: &vxe_entity::Pose) -> Option<Self> {
+        let c = pose.compose(model)?;
+        let parts = (0..model.parts().len())
+            .map(|k| Some((PartXform::of(&c, k)?, model.parts()[k].detail)))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self { parts })
+    }
+
+    /// `model`'s parts a fraction `alpha` (0 to 1) of the way from pose `a` to pose `b`: per
+    /// part, its pivot's world point linear between the two, and its turn a normalised linear
+    /// blend of the two turns along the shorter arc. Each part blends its own composed
+    /// placement, so a child stays on its parent's pivot only to the blend's accuracy. `None`
+    /// when a pose does not fit the model.
+    pub fn between(
+        model: &Model,
+        a: &vxe_entity::Pose,
+        b: &vxe_entity::Pose,
+        alpha: f32,
+    ) -> Option<Self> {
+        let alpha = f64::from(alpha);
+        let (ca, cb) = (a.compose(model)?, b.compose(model)?);
+        let mut parts = Vec::with_capacity(model.parts().len());
+        for (k, p) in model.parts().iter().enumerate() {
+            let (xa, xb) = (PartXform::of(&ca, k)?, PartXform::of(&cb, k)?);
+            let d = f64::from(p.detail);
+            let pivot_m = p.pivot.map(|v| v as f32 / 256.0);
+            let qa = quat_of(&xa.part_to_world, d);
+            let mut qb = quat_of(&xb.part_to_world, d);
+            if (0..4).map(|i| qa[i] * qb[i]).sum::<f64>() < 0.0 {
+                qb = qb.map(|v| -v);
+            }
+            let q: [f64; 4] = std::array::from_fn(|i| qa[i] + (qb[i] - qa[i]) * alpha);
+            let r = matrix_of(q);
+            let m = r.map(|row| row.map(|v| (v / d) as f32));
+            let (pa, pb) = (
+                apply(&xa.part_to_world, pivot_m),
+                apply(&xb.part_to_world, pivot_m),
+            );
+            let pivot_w: [f32; 3] = std::array::from_fn(|i| {
+                (f64::from(pa[i]) + (f64::from(pb[i]) - f64::from(pa[i])) * alpha) as f32
+            });
+            parts.push((
+                PartXform::from_parts(m, pivot_m, pivot_w, p.detail),
+                p.detail,
+            ));
+        }
+        Some(Self { parts })
+    }
+
+    /// The parts placed.
+    pub fn len(&self) -> usize {
+        self.parts.len()
+    }
+
+    /// Whether no part is placed.
+    pub fn is_empty(&self) -> bool {
+        self.parts.is_empty()
+    }
+
+    /// Part `part`'s map from model voxels to world voxels, rows of `[m | t]`.
+    pub fn part_to_world(&self, part: usize) -> Option<[[f32; 4]; 3]> {
+        self.parts.get(part).map(|(x, _)| x.part_to_world)
+    }
+}
+
+/// `xf` applied to the point `p`.
+fn apply(xf: &[[f32; 4]; 3], p: [f32; 3]) -> [f32; 3] {
+    std::array::from_fn(|r| xf[r][3] + (0..3).map(|c| xf[r][c] * p[c]).sum::<f32>())
+}
+
+/// The unit quaternion `(w, x, y, z)` of the rotation `detail` times `xf`'s linear part
+/// (Shepperd's method: the largest of the four diagonal sums is the one divided by).
+fn quat_of(xf: &[[f32; 4]; 3], detail: f64) -> [f64; 4] {
+    let m = |r: usize, c: usize| f64::from(xf[r][c]) * detail;
+    let tr = m(0, 0) + m(1, 1) + m(2, 2);
+    let q = if tr > 0.0 {
+        let s = (tr + 1.0).sqrt() * 2.0;
+        [
+            0.25 * s,
+            (m(2, 1) - m(1, 2)) / s,
+            (m(0, 2) - m(2, 0)) / s,
+            (m(1, 0) - m(0, 1)) / s,
+        ]
+    } else if m(0, 0) > m(1, 1) && m(0, 0) > m(2, 2) {
+        let s = (1.0 + m(0, 0) - m(1, 1) - m(2, 2)).sqrt() * 2.0;
+        [
+            (m(2, 1) - m(1, 2)) / s,
+            0.25 * s,
+            (m(0, 1) + m(1, 0)) / s,
+            (m(0, 2) + m(2, 0)) / s,
+        ]
+    } else if m(1, 1) > m(2, 2) {
+        let s = (1.0 + m(1, 1) - m(0, 0) - m(2, 2)).sqrt() * 2.0;
+        [
+            (m(0, 2) - m(2, 0)) / s,
+            (m(0, 1) + m(1, 0)) / s,
+            0.25 * s,
+            (m(1, 2) + m(2, 1)) / s,
+        ]
+    } else {
+        let s = (1.0 + m(2, 2) - m(0, 0) - m(1, 1)).sqrt() * 2.0;
+        [
+            (m(1, 0) - m(0, 1)) / s,
+            (m(0, 2) + m(2, 0)) / s,
+            (m(1, 2) + m(2, 1)) / s,
+            0.25 * s,
+        ]
+    };
+    let n = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    q.map(|v| v / n)
+}
+
+/// The rotation matrix of the quaternion `(w, x, y, z)`, normalised first.
+fn matrix_of(q: [f64; 4]) -> [[f64; 3]; 3] {
+    let n = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    let [w, x, y, z] = q.map(|v| v / n);
+    [
+        [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y - w * z),
+            2.0 * (x * z + w * y),
+        ],
+        [
+            2.0 * (x * y + w * z),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z - w * x),
+        ],
+        [
+            2.0 * (x * z - w * y),
+            2.0 * (y * z + w * x),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
+    ]
 }
 
 /// One uploaded volume's place in the pool.
@@ -236,7 +393,8 @@ pub struct EntityMirror {
     moved: bool,
 }
 
-/// The working buffers of one [`EntityMirror::set_entities`] call. `prev` fills with this
+/// The working buffers of one [`EntityMirror::set_entities`] or
+/// [`EntityMirror::set_entity_displays`] call. `prev` fills with this
 /// call's transforms and is swapped with the mirror's map at the end, so the two maps trade
 /// places each frame instead of one being built fresh.
 #[derive(Default)]
@@ -244,7 +402,6 @@ struct Scratch {
     inst: Vec<u32>,
     boxes: Vec<([[f32; 3]; 2], u32, u32)>,
     prev: HashMap<(EntityId, usize), [[f32; 4]; 3]>,
-    xfs: Vec<PartXform>,
     nodes: Vec<[u32; NODE_WORDS]>,
     order: Vec<usize>,
     tree: Vec<u32>,
@@ -358,6 +515,32 @@ impl EntityMirror {
         set: &EntitySet,
         list: &[(EntityId, ModelHandle)],
     ) {
+        let shown: Vec<_> = list
+            .iter()
+            .map(|&(id, h)| {
+                let d = set.get(id).and_then(|(m, p)| DisplayPose::of(m, p));
+                (id, h, d)
+            })
+            .collect();
+        self.write(queue, shown.iter().map(|(id, h, d)| (*id, *h, d.as_ref())));
+    }
+
+    /// [`EntityMirror::set_entities`] with each entity's parts placed by a [`DisplayPose`]
+    /// (between two ticks, say) in place of a pose in a set. An entry whose display pose has
+    /// not its model's part count is counted and not drawn.
+    pub fn set_entity_displays(
+        &mut self,
+        queue: &wgpu::Queue,
+        list: &[(EntityId, ModelHandle, &DisplayPose)],
+    ) {
+        self.write(queue, list.iter().map(|&(id, h, d)| (id, h, Some(d))));
+    }
+
+    fn write<'a>(
+        &mut self,
+        queue: &wgpu::Queue,
+        list: impl Iterator<Item = (EntityId, ModelHandle, Option<&'a DisplayPose>)>,
+    ) {
         // Taken out of `self` for the call so `self.models` and `self.prev` stay readable;
         // `mem::take` of the empty default allocates nothing, and the buffers go back below.
         let mut s = std::mem::take(&mut self.scratch);
@@ -365,7 +548,6 @@ impl EntityMirror {
             inst,
             boxes,
             prev,
-            xfs,
             nodes,
             order,
             tree,
@@ -376,14 +558,12 @@ impl EntityMirror {
         nodes.clear();
         let mut over = 0;
         let mut moved = false;
-        for &(id, handle) in list {
-            let (Some((model, pose)), Some(vols)) =
-                (set.get(id), self.models.get(handle.0 as usize))
-            else {
+        for (id, handle, shown) in list {
+            let (Some(shown), Some(vols)) = (shown, self.models.get(handle.0 as usize)) else {
                 over += 1;
                 continue;
             };
-            let n = model.parts().len();
+            let n = shown.parts.len();
             if boxes.len() == MAX_ENTITIES
                 || inst.len() / INSTANCE_WORDS + n > MAX_ENTITY_PARTS
                 || vols.len() != n
@@ -391,19 +571,10 @@ impl EntityMirror {
                 over += 1;
                 continue;
             }
-            xfs.clear();
-            if !(0..n).all(|k| {
-                PartXform::of(model, pose, k)
-                    .map(|xf| xfs.push(xf))
-                    .is_some()
-            }) {
-                over += 1;
-                continue;
-            }
             let first = (inst.len() / INSTANCE_WORDS) as u32;
             let mut entity_moved = false;
             let mut bx = [[f32::MAX; 3], [f32::MIN; 3]];
-            for (k, (xf, vol)) in xfs.iter().zip(vols).enumerate() {
+            for (k, ((xf, detail), vol)) in shown.parts.iter().zip(vols).enumerate() {
                 let before = self.prev.get(&(id, k)).copied().unwrap_or(xf.part_to_world);
                 let part_moved = before != xf.part_to_world;
                 entity_moved |= part_moved;
@@ -417,7 +588,7 @@ impl EntityMirror {
                     }
                 }
                 prev.insert((id, k), xf.part_to_world);
-                let detail = f32::from(model.parts()[k].detail);
+                let detail = f32::from(*detail);
                 for row in xf.world_to_part.iter().chain(&before) {
                     inst.extend(row.map(f32::to_bits));
                 }
@@ -546,6 +717,75 @@ mod tests {
         assert_eq!(
             POOL_WORD * 4 + DEFAULT_ENTITY_POOL_BYTES as usize,
             8_458_240
+        );
+    }
+
+    /// A one-part model of a 2-voxel cube at detail 1, its pivot at its corner, and the pose
+    /// that translates the part by `t` (1/256 world voxel) and turns it `q`.
+    fn one_part(t: [i32; 3], q: vxe_entity::Quat) -> (Model, vxe_entity::Pose) {
+        let part = vxe_entity::Part {
+            volume: std::sync::Arc::new(Prefab::new([2; 3], vec![AIR; 8], None)),
+            parent: None,
+            pivot: [0; 3],
+            detail: 1,
+        };
+        let model = Model::new(vec![part]).expect("one part");
+        let mut pose = vxe_entity::Pose::rest(&model);
+        pose.parts[0].t = t;
+        pose.parts[0].q = q;
+        (model, pose)
+    }
+
+    fn close(a: &[[f32; 4]; 3], b: &[[f32; 4]; 3], tol: f32) -> bool {
+        a.iter()
+            .flatten()
+            .zip(b.iter().flatten())
+            .all(|(x, y)| (x - y).abs() <= tol)
+    }
+
+    /// Plan 0063 Phase 3 done-when 1: a part translated 0 at one tick and 256 (one voxel) at the
+    /// next sits a quarter voxel along at `alpha` 0.25, and `alpha` 0 and 1 give the two ticks'
+    /// transforms; a quarter turn about z between the ticks is an eighth turn at 0.5.
+    #[test]
+    fn display_between_two_ticks_is_between_them() {
+        let id = vxe_entity::Quat::IDENTITY;
+        let (model, a) = one_part([0; 3], id);
+        let (_, b) = one_part([256, 0, 0], id);
+        let xa = DisplayPose::of(&model, &a)
+            .expect("fits")
+            .part_to_world(0)
+            .expect("part");
+        let xb = DisplayPose::of(&model, &b)
+            .expect("fits")
+            .part_to_world(0)
+            .expect("part");
+        let at = |alpha: f32| {
+            DisplayPose::between(&model, &a, &b, alpha)
+                .expect("fits")
+                .part_to_world(0)
+                .expect("part")
+        };
+        let q = at(0.25);
+        assert!((q[0][3] - 0.25).abs() <= 1e-4, "{q:?}");
+        assert!(q[1][3].abs() <= 1e-4 && q[2][3].abs() <= 1e-4, "{q:?}");
+        assert!(close(&at(0.0), &xa, 1e-6), "{:?} against {xa:?}", at(0.0));
+        assert!(close(&at(1.0), &xb, 1e-6), "{:?} against {xb:?}", at(1.0));
+
+        // (cos 45, 0, 0, sin 45) in Q14: a quarter turn about z.
+        let (_, c) = one_part([0; 3], vxe_entity::Quat([11585, 0, 0, 11585]));
+        let h = DisplayPose::between(&model, &a, &c, 0.5)
+            .expect("fits")
+            .part_to_world(0)
+            .expect("part");
+        let (s, k) = (
+            std::f32::consts::FRAC_PI_8.sin(),
+            std::f32::consts::FRAC_PI_8.cos(),
+        );
+        // An eighth turn: x maps to (cos 45, sin 45), so m00 = cos^2 - sin^2 of 22.5 degrees.
+        let c45 = k * k - s * s;
+        assert!(
+            (h[0][0] - c45).abs() <= 1e-4 && (h[1][0] - c45).abs() <= 1e-4,
+            "{h:?}"
         );
     }
 
