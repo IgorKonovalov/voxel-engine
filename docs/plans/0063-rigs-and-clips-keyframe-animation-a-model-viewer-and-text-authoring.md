@@ -270,6 +270,25 @@ times are estimates**, none measured.
      the dev box (a `mod reading` test; the prediction: under 0.05 ms, a guess); the frame at
      `--entities 16` with the sample walker walking against Plan 0062's walker.
 
+### Phase 3b: the pose composed once, not once per part point
+Amended 2026-11-16 (owner, the recommended option under the standing rule): Phase 3's reading
+(aa097bf3, `docs/plans/logs/0063.md`) put `DisplayPose::between` at 15.12 ms for 64 sixteen-part
+entities against the guessed 0.05 ms, because Plan 0062's `PartXform::of` calls
+`Pose::part_point` four times a part and each call recomposes the pose from the root (4 n²
+part compositions a pose). The live `set_entities` path pays it too.
+- **Owner skill:** dev
+- **What:** `vxe-entity` gains a one-pass composition of every part's model-to-world transform
+  (a public `Pose::compose`, or `part_points` over all parts, the dev's call) whose results are
+  bit-identical to the per-part `part_point`; `PartXform::of` and `DisplayPose` use it, so the
+  cost is linear in the part count. `part_point` stays for one-off queries.
+- **Files touched:** `crates/vxe-entity/src/` (the pose module and its tests),
+  `crates/vxe-render/src/entities.rs`, `docs/plans/logs/0063.md`. Plan 0062's open fix pass also
+  edits `entities.rs` (its per-frame scratch buffers); keep the change to the composition calls.
+- **Done when:** a `vxe-entity` test asserts the one-pass result equals `part_point` bit for bit
+  on every part of a six-part and a sixteen-part rig at several poses (no device, under 1 s); the
+  determinism vectors still pass; Phase 3's reading reruns (64 sixteen-part entities, release,
+  dev box, perf lock) and the log states `sample` and `between` against 0.146 and 15.12 ms.
+
 ### Phase 4: The owner's window
 - **Owner skill:** human
 - **What:** one sitting with an editor beside the fly-through.
