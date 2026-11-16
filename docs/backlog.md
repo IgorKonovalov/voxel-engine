@@ -50,7 +50,7 @@ read the present pass matches the surface format, but the format picked is not l
 suspected: the panel's backlight on Windows (AMD Vari-Bright, power plan). What it takes: log
 the surface format and colour space at start (and into `system.json`/`run.json`), compare a
 Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_srgb`'s
-`pow 2.2` for the exact sRGB decode. Pick up before the next tester archive.
+`pow 2.2` for the exact sRGB decode. Pick up before the next tester archive. **Code side done 2026-11-16** (chore-surface-format: the format and colour space logged and in `run.json`, 8-bit UNORM preferred, the exact decode): by code read the Windows run used `Bgra8Unorm` and a straight copy, so no code path explains a uniform 2-3x drop. Left: a Windows screenshot and a Linux one of the same pose compared by pixel values (equal bytes: the display or OS, e.g. HDR's SDR brightness, Vari-Bright).
 
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 

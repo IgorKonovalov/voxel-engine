@@ -155,4 +155,49 @@ mod tests {
         .validate(&module)
         .expect("present.wgsl validates");
     }
+
+    /// `srgb_decode` of present.wgsl, term for term.
+    fn srgb_decode(c: f32) -> f32 {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    /// The encode an `*Srgb` format applies on write (IEC 61966-2-1), rounded to 8 bits.
+    fn srgb_encode_u8(l: f32) -> u8 {
+        let c = if l <= 0.003_130_8 {
+            l * 12.92
+        } else {
+            1.055 * l.powf(1.0 / 2.4) - 0.055
+        };
+        (c.clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+
+    /// Every 8-bit value decoded by `fs_srgb` and encoded by an sRGB surface comes back as the
+    /// same byte; the `pow(c, 2.2)` it replaces moved 10 to 3 and 128 to 129.
+    #[test]
+    fn the_srgb_decode_round_trips_every_byte_through_the_srgb_encode() {
+        for i in 0..=255u8 {
+            let c = f32::from(i) / 255.0;
+            assert_eq!(srgb_encode_u8(srgb_decode(c)), i, "byte {i}");
+        }
+        let gamma = |i: u8| srgb_encode_u8((f32::from(i) / 255.0).powf(2.2));
+        assert_eq!(gamma(10), 3);
+        assert_eq!(gamma(128), 129);
+        let src = PRESENT_WGSL;
+        let body = &src[src
+            .find("fn srgb_decode")
+            .expect("present.wgsl has srgb_decode")..];
+        let body = &body[..body.find("\n}").expect("srgb_decode ends")];
+        for term in [
+            "c / 12.92",
+            "pow((c + 0.055) / 1.055, vec3<f32>(2.4))",
+            "c <= vec3<f32>(0.04045)",
+        ] {
+            assert!(body.contains(term), "srgb_decode lacks {term:?}");
+        }
+        assert!(src.contains("return vec4<f32>(srgb_decode(c), 1.0);"));
+    }
 }

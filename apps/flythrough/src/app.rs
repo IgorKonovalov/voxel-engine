@@ -187,6 +187,7 @@ impl App for Flythrough {
                     .map(|p| PathPlayer::new(p, self.args.path_mode)),
                 recorder: self.args.path.map(|p| Recorder::for_path(p.duration_s())),
                 adapter: None,
+                surface: None,
                 help: false,
             });
         }

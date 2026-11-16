@@ -100,6 +100,8 @@ pub(crate) struct Run {
     pub(crate) recorder: Option<Recorder>,
     /// The adapter the device was created on, for the report.
     pub(crate) adapter: Option<wgpu::AdapterInfo>,
+    /// The surface's format and colour space, for the report.
+    pub(crate) surface: Option<(wgpu::TextureFormat, Option<wgpu::SurfaceColorSpace>)>,
     /// `--tester`'s help panel (`F1`) is shown.
     pub(crate) help: bool,
 }
@@ -155,6 +157,7 @@ impl Run {
 
     pub(crate) fn init(&mut self, gpu: &Gpu) {
         self.adapter = Some(gpu.adapter.get_info());
+        self.surface = Some((gpu.surface_format, gpu.surface_color_space));
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
