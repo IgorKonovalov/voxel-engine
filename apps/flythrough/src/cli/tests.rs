@@ -36,14 +36,14 @@ fn the_pace_flag_parses_both_words() {
     assert!(parse_args_from(argv(&["--pace"])).is_err());
 }
 
-/// `--workers N` sets the streamer's workers (unset: `default_workers`, one fewer than
-/// the logical cores and at least 1); 0, a non-number or a missing value is refused.
+/// `--workers N` sets the streamer's workers (unset: `default_workers`, half the logical
+/// cores and at least 1); 0, a non-number or a missing value is refused.
 #[test]
 fn the_workers_flag_parses_and_refuses_zero() {
     let a = parse_args_from(argv(&[])).expect("no flags parse");
     assert_eq!(a.workers, None);
     let cores = std::thread::available_parallelism().map_or(1, usize::from);
-    assert_eq!(default_workers(), cores.saturating_sub(1).max(1));
+    assert_eq!(default_workers(), (cores / 2).max(1));
     let a = parse_args_from(argv(&["--workers", "14"])).expect("--workers 14 parses");
     assert_eq!(a.workers, Some(14));
     let a = parse_args_from(argv(&["--workers", "1"])).expect("--workers 1 parses");

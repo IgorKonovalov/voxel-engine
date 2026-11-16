@@ -240,13 +240,11 @@ pub(crate) fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     }
 }
 
-/// The streamer's default generation workers: one fewer than the logical cores, at least 1,
-/// leaving a core to the render thread.
+/// The streamer's default generation workers: half the logical cores, at least 1. Half is a
+/// proxy for the physical cores on an SMT machine: workers on both siblings of a core starve
+/// the render thread and the light bake that share them, and the frame tail grows.
 pub(crate) fn default_workers() -> usize {
-    std::thread::available_parallelism()
-        .map_or(1, usize::from)
-        .saturating_sub(1)
-        .max(1)
+    (std::thread::available_parallelism().map_or(1, usize::from) / 2).max(1)
 }
 
 /// The castle's banner row for `shot`: `castle gate`.

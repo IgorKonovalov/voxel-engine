@@ -302,6 +302,9 @@ All answered by the owner on 2026-11-12, each with its recommendation (first opt
    Plan 0069's `F4` shipped dropping edits, Phase 3 aligns it and the log says so.
 4. **`Tab` opens the menu?** Recommended: yes; it is unbound in the fly-through, unlike `Escape`
    and `F1` to `F10`. The window confirms (Phase 6 a).
+   Amended 2026-11-16 (orchestrator): `Tab` is bound (the live queue's angle key), found while
+   drafting Plan 0076, which also moves `F1` to the key help and the frame readings to `Enter`.
+   The menu's key is reopened: pick a free one from Plan 0076's key table before this lane starts.
 5. **No menu in a `--tester` child?** Recommended: none. A benchmark's settings are the
    launcher's, and the child's report would no longer match its `settings.toml`.
 6. **Keep a hand-written comment across a save?** Recommended: no for now; the header says the

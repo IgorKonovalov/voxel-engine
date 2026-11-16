@@ -39,7 +39,7 @@ the owner is away; the owner may overturn it).
 
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
-Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart.
+Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart. **The tester's rerun (2026-11-16, v0.54.0, same machine; files in `live/tester-2026-11-16/`) settles it: the 0.51.0 stutters were the build, not Windows.** Default workers: cave wall p50 4.1 ms, p99 25.5, 32 frames over 33 ms, 1 over 100; showcase p50 2.8, p99 3.7; castle p50 4.2, p99 30.1, max 90, 20 over 33 ms, none over 100 (from p50 256 ms on 0.51.0). `--workers 4` on the castle: p99 17.6, max 66, 2 over 33 ms; the sync's p99 7.3 ms to 3.8 and light's 2.1 to 0.8. So more workers than physical cores (11 on 6 cores) still costs the tail. What it takes now: a default worker count capped at the physical cores minus one (or a measured sweep on a 6-core part), as a small chore; the entry closes with it. **Done 2026-11-16 (chore `chore-default-workers`):** the fly-through's default `--workers` is now half the logical cores, at least 1 (6 on the tester's 12 threads, where `--workers 4` read the best castle tail; no sweep between 4 and 6 was taken); the tester's next archive reads it.
 
 ### Windows draws the whole image two to three times darker than Linux
 
@@ -173,6 +173,10 @@ Parked 2026-11-05 at Plan 0057's close; taken by Plan 0058's Phase 3 (the furnac
 ### Far light on a slow adapter: a bake budget per second, and no black for missing light
 
 Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
+
+### A CPU-drawn first frame before the device
+
+Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `vxe-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
 
 ### The pre-roll never settles at small residencies
 
@@ -325,8 +329,10 @@ Owed by nobody yet; none blocks anything.
 - **The committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`** differ by
   a few pixels from the dev box's lavapipe (within the 0.1 % tolerance), at the plan's base and
   tip alike; CI's lavapipe blesses them. Re-bless on CI if one ever drifts past the tolerance.
-- **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` fails, unrelated to
-  Plan 0044.** Its `find(|l| l.starts_with("frames: "))` takes the queue step's tally line
+- **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` failed, unrelated to
+  Plan 0044 (fixed 2026-11-16 on branch chore-soak-frames: the test now matches `frames: {FRAMES} frames;`,
+  accepts frame 0's `store reads not counted` queue line, and reads the age as the last item of
+  the line's parenthesis; it passes in 8.9 s on lavapipe).** Its `find(|l| l.starts_with("frames: "))` takes the queue step's tally line
   (`frames: queue step A: ...`, printed first since 87bf0d2, Plan 0067 Phase 1) instead of the run's
   `frames: N frames; ...` line. Fix: match `frames: {FRAMES} frames;` in the test. Read at the
   close review's soak run (whole workspace, 73 run, 71 passed; the other failure is the hall
@@ -410,7 +416,10 @@ so the fly-through's wiring (the frame calls the ring's reads, not the waiting o
 no gate; the gate holds only the ring's own test. A variant of about 120 frames with the
 queue line due at least once, or a CPU test on the call sites, would bring it under the 10 s
 line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
-**It fails** (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
+**It failed** (fixed 2026-11-16 on branch chore-soak-frames: the test matches the run's line, accepts frame
+0's `store reads not counted` queue line, which prints before the frame turns the count on, and
+reads the age as the last item of the parenthesis, which now names the missing light and store
+bytes first) (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
 not this plan's code): the exit's queue tally prints `frames: queue step ...` lines
 (`run/mod.rs`, `Drop for Run`) before the `frames: N frames;` line, and the test takes the
 first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.

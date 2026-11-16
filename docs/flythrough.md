@@ -155,7 +155,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bench-at F,..` | A bench input at each of these frames |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
-| `--workers N` | The streamer's generation workers, at least 1 [one fewer than the logical cores] |
+| `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |
 | `--residency R_FULL,R_LOD` | The streamed full and LOD radii in chunks, hysteresis 1 [16,24] |
 | `--mirror-budget MIB` | The VRAM the mirror reserves at startup [3072 streamed; on the level what it needs plus dig headroom]. While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure over 0.9 and returns after 300 frames under 0.7, down to 6 |
 

@@ -84,7 +84,7 @@
 //! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
 //! after any bench; `--sync-budget` sets the mirror's upload bytes per frame and `--sync-ms` its
 //! upload time per frame (default none; 0 is none); `--workers N` sets the streamer's
-//! generation workers (default one fewer than the logical cores, at least 1); `--mirror-budget`
+//! generation workers (default half the logical cores, at least 1); `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
 //! need, with records for the residency's ball when streaming), and while streaming the full
