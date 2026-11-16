@@ -636,7 +636,8 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 | 6b: the second window | human | skipped by the owner on the readings (2026-11-16); option B picked (Phase 6c); `--young-filter` stays an off setting | |
 | 6c: the baked face read for the walkers' fallback (dev half) | dev | done; `EntityLight` behind `Insert` and `--entity-light`, `own` by default; readings in the readings log; the owner's window (`live/session62c.sh`) owed | 0fe6a257 |
 | 6c: the owner's window | human | done 2026-11-16; 16 and 64 walkers and the vein walker read fine under `world`; pick: `world` the default, `own` stays a setting; words in the readings log | |
-| 6c: the default follows the pick | dev | done; `EntityLight::World` the default of the setting and of `--entity-light`; `mode_banner.png` re-blessed after the merge of main (the banner's default line) | 6a50566c, then committed with this row |
+| 6c: the default follows the pick | dev | done; `EntityLight::World` the default of the setting and of `--entity-light`; `mode_banner.png` re-blessed after the merge of main (the banner's default line) | 6a50566c, 88b309a0 |
+| Close review fix pass | dev | done; findings 1 to 4; readings in the readings log | 54edd6f1, 818357d4, committed with this row |
 
 ### Notes
 
@@ -672,6 +673,7 @@ each. Empty is fine.)_
   other views while no part is drawn.
 - Phase 6b: the age line is `VARIANCE_AGE` (4); a young pixel under `edges` skips the a-trous zero-input early-out; the shadow-edge reading is in `gpu_dynamic_lights.rs` (outside Files touched); `cli/tests.rs`, `hud/modes.rs` and `docs/flythrough.md` carry the key and flag. The filter's GPU time was read from the fly-through's `F1` line, not a `PassTimer` reading.
 - Phase 6c: the read lives in `temporal.wgsl` and `hitrec.wgsl` (the store is bound to the temporal pass, not the light pass); the nearest world face is the first of up to 4 cells behind the hit along its normal's dominant axis that holds a face of that direction, else the missing-light chain; the lamp-off store branch now writes the fresh flag; the shading-lost reading is beside the grain rig's emitter, not the vein; no band was stated in advance; the light pass's time came from the fly-through's `F1` line; `cli/flags.rs` splits the shared lighting rows in two (`entity_filter_flags`) for clippy's line limit.
+- Close review fix pass: finding 1, `an_entity_reads_the_baked_light_of_the_world_face_behind_it` (this row's commit); finding 2, `docs/flythrough.md` (54edd6f1); finding 3, the two FSR 2 tests reuse the rig's frame (this row's commit; 8.7 s and 4.7 s); finding 4, the mirror's scratch buffers (818357d4). The 16-frame trail variant stays `soak`. The file's `reading` module moved to `tests/gpu_entities/reading.rs` (`#[path]`) for the 2000-line cap.
 - Phase 5: `Frame::frame_bytes` is in `frame/mod.rs` (the plan's `marcher.rs`); `gpu_look_field.rs`
   (outside Files touched) adds the mirror's bytes to its pinned figure.
 
