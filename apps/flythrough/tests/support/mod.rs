@@ -54,49 +54,7 @@ impl SyncNow for GpuWorld {
 /// With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead, so a CI arm that
 /// promises image comparisons cannot pass by skipping them.
 pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    }));
-    let adapter = match adapter {
-        Ok(a) if a.get_info().device_type == wgpu::DeviceType::Cpu => a,
-        other => {
-            let found = match other {
-                Ok(a) => format!(
-                    "{:?} adapter {}",
-                    a.get_info().device_type,
-                    a.get_info().name
-                ),
-                Err(e) => format!("no adapter ({e})"),
-            };
-            if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-                panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fallback is {found}");
-            }
-            println!("skipped: no software adapter ({found})");
-            return None;
-        }
-    };
-    let info = adapter.get_info();
-    let offered = adapter.limits();
-    println!(
-        "adapter: {} ({:?}, driver {} {}); max_storage_buffer_binding_size {}, max_buffer_size {}",
-        info.name,
-        info.backend,
-        info.driver,
-        info.driver_info,
-        offered.max_storage_buffer_binding_size,
-        offered.max_buffer_size
-    );
-    let desc = wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes)
-            .expect("the frame's limits on the software adapter"),
-        ..Default::default()
-    };
-    Some(pollster::block_on(adapter.request_device(&desc)).expect("device on the software adapter"))
+    vxe_render::test_support::software_device(pool_bytes, wgpu::Features::empty())
 }
 
 /// A device for a **reading-only** test, chosen by `VXE_TEST_ADAPTER` (lane rule 9c: iterate
@@ -140,21 +98,14 @@ pub fn adapter_device(
     else {
         panic!("{by}{want} matches no adapter; the adapters are {names:?}");
     };
-    let info = adapter.get_info();
-    println!(
-        "adapter: {} ({:?}, driver {} {}), chosen by {by}{want}",
-        info.name, info.backend, info.driver, info.driver_info
-    );
-    let desc = wgpu::DeviceDescriptor {
+    println!("chosen by {by}{want}");
+    let (device, queue) = vxe_render::test_support::device_on(
+        &adapter,
+        pool_bytes,
         // The per-pass readings time the frame where the adapter can.
-        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes)
-            .expect("the frame's limits on the chosen adapter"),
-        ..Default::default()
-    };
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&desc)).expect("device on the chosen adapter");
-    Some((device, queue, info.name))
+        wgpu::Features::TIMESTAMP_QUERY,
+    );
+    Some((device, queue, adapter.get_info().name))
 }
 
 /// The golden scene: cave seed 7 over chunks `[0, 6)^3`, spawn at its centre.

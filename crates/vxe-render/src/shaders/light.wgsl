@@ -185,7 +185,9 @@ fn shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
     if ((params.lighting & LIGHTING_COARSE_SHADOW) != 0u) {
         coarse_span = vec2<f32>(COARSE_MARGIN, len - COARSE_MARGIN);
     }
+    march_material = false;
     let s = march(o, d, len, false);
+    march_material = true;
     coarse_span = vec2<f32>(BIG, -BIG);
     return s.found;
 }

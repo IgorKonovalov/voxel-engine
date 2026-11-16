@@ -6,7 +6,7 @@
 > Amended 2026-11-11 (owner): Phase 4b fixes the sync's time budget before the close review;
 > Phase 5's windowed reading taken at the RTX only, the Radeon's window recorded as unread
 > **Created:** 2026-11-10
-> **Milestone:** cross-cutting (code health), like [Plan 0044](../0044-hot-path-and-defect-pass.md).
+> **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's frame and section 5's streaming line.
 > **Related ADRs:** none yet. Phase 1 is a spike; if its reading makes the pacing a trade
 > (frames the compositor never shows against a frame of latency), the architect writes the ADR

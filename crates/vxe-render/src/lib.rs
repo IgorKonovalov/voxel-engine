@@ -17,10 +17,14 @@ mod fsr2;
 mod gpu_util;
 mod gpu_world;
 mod hud;
+#[cfg(test)]
+mod layout_tests;
 mod light;
 mod present;
 mod probes;
 mod readback;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 /// Readings: the readbacks of a texture or buffer, the march's step histogram, the bake
 /// queue step's stages and regimes, and the light summaries a getter returns. For tools and

@@ -92,15 +92,15 @@ impl Default for Upscaler {
 /// `UpTuning` in `upscale.wgsl`, field for field.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct UpscaleUniform {
-    pub(super) width: f32,
-    pub(super) alpha: f32,
-    pub(super) alpha_moving: f32,
-    pub(super) clip_gamma: f32,
-    pub(super) w_mean: f32,
-    pub(super) change_rel: f32,
-    pub(super) change_abs: f32,
-    pub(super) _pad: f32,
+pub(crate) struct UpscaleUniform {
+    pub(crate) width: f32,
+    pub(crate) alpha: f32,
+    pub(crate) alpha_moving: f32,
+    pub(crate) clip_gamma: f32,
+    pub(crate) w_mean: f32,
+    pub(crate) change_rel: f32,
+    pub(crate) change_abs: f32,
+    pub(crate) _pad: f32,
 }
 
 impl Upscaler {

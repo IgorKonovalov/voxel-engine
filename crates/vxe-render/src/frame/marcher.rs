@@ -6,13 +6,23 @@ use super::*;
 /// the contour look over a mirror with the field ([`NormalMode::Contour`]) its pipeline with
 /// `FIELD_SURFACE`, which walks the field surface, or with the split walk
 /// ([`FLAG_FIELD_SPLIT`]) the plain pipeline and then `field_resume` over the rays it handed
-/// on.
+/// on. The steps view takes each with `COUNT_STEPS` on ([`Marcher::counting`]).
 pub struct Marcher {
     pub(super) pipeline: wgpu::ComputePipeline,
     pub(super) field: wgpu::ComputePipeline,
     pub(super) resume: wgpu::ComputePipeline,
     pub(super) out_layout: wgpu::BindGroupLayout,
     pub(super) resume_layout: wgpu::BindGroupLayout,
+    /// `pipeline`, `field` and `resume` with `COUNT_STEPS` on, each built on its first use.
+    counting: [std::sync::OnceLock<wgpu::ComputePipeline>; 3],
+}
+
+/// Which of the hit pass's pipelines a dispatch runs.
+#[derive(Clone, Copy)]
+pub(super) enum HitPipe {
+    Plain = 0,
+    Field = 1,
+    Resume = 2,
 }
 
 impl Marcher {
@@ -66,6 +76,52 @@ impl Marcher {
             resume,
             out_layout,
             resume_layout,
+            counting: std::array::from_fn(|_| std::sync::OnceLock::new()),
         }
+    }
+
+    /// Pipeline `which`; with `count` its `COUNT_STEPS` variant (the steps view), built over
+    /// `world_layout` on its first use.
+    pub(super) fn get(
+        &self,
+        device: &wgpu::Device,
+        world_layout: &wgpu::BindGroupLayout,
+        which: HitPipe,
+        count: bool,
+    ) -> &wgpu::ComputePipeline {
+        if !count {
+            return match which {
+                HitPipe::Plain => &self.pipeline,
+                HitPipe::Field => &self.field,
+                HitPipe::Resume => &self.resume,
+            };
+        }
+        self.counting[which as usize].get_or_init(|| {
+            let (label, out, entry, field): (_, _, _, &[(&str, f64)]) = match which {
+                HitPipe::Plain => ("hit counting", &self.out_layout, "main", &[]),
+                HitPipe::Field => (
+                    "hit field counting",
+                    &self.out_layout,
+                    "main",
+                    &[("FIELD_SURFACE", 1.0)],
+                ),
+                HitPipe::Resume => (
+                    "hit field resume counting",
+                    &self.resume_layout,
+                    "field_resume",
+                    &[],
+                ),
+            };
+            let mut constants = vec![("COUNT_STEPS", 1.0)];
+            constants.extend_from_slice(field);
+            compute_pipeline_with(
+                device,
+                label,
+                compose(HIT_MODULES),
+                &[Some(world_layout), Some(out)],
+                entry,
+                &constants,
+            )
+        })
     }
 }

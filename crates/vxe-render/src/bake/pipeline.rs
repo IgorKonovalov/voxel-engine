@@ -15,7 +15,7 @@ pub(crate) const BAKE_BATCH_FACES: usize = 65_536;
 pub(crate) const OPEN_JOBS: usize = 256;
 
 /// The bytes of the job uniform (`BakeJob` in `bake.wgsl`).
-pub(super) const JOB_BYTES: u64 = 32;
+pub(crate) const JOB_BYTES: u64 = 32;
 
 /// A slot's 16-byte words (`TABLE_SLOT` in `bake.wgsl`): the candidate table (a header, then
 /// [`LIGHT_TABLE_ENTRIES`] entries), then the job's chunk.
@@ -112,7 +112,7 @@ pub(super) const TABLE_READ: &str =
 
 /// The LOD walk's camera chunk, which the bake's module takes from the face's job instead.
 pub(super) const LOD_ORIGIN: &str =
-    "let d = chunk - floor_div(vec3<i32>(floor(params.views[0].origin)), 64);";
+    "let d = chunk - vec3<i32>(params.cam_chunk_x, params.cam_chunk_y, params.cam_chunk_z);";
 
 pub(super) fn replace_once(source: &str, from: &str, to: &str) -> String {
     assert_eq!(

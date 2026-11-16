@@ -10,30 +10,7 @@ const WHITE: [u8; 3] = [255, 255, 255];
 /// A device on the software Vulkan adapter, or `None` with a printed skip when the machine has
 /// none. With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead.
 fn software_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    }));
-    let adapter = match adapter {
-        Ok(a) if a.get_info().device_type == wgpu::DeviceType::Cpu => a,
-        other => {
-            let found = other.map_or_else(|e| format!("no adapter ({e})"), |a| a.get_info().name);
-            if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-                panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fallback is {found}");
-            }
-            println!("skipped: no software adapter ({found})");
-            return None;
-        }
-    };
-    println!("adapter: {}", adapter.get_info().name);
-    Some(
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .expect("device on the software adapter"),
-    )
+    vxe_render::test_support::software_device(0, wgpu::Features::empty())
 }
 
 /// An `rgba8unorm` target of `width` x `height` cleared to [`CLEAR`].
@@ -327,22 +304,13 @@ mod reading {
     #[test]
     #[ignore = "a GPU timing reading; run by hand with --ignored"]
     fn hud_pass_reading_at_1080p() {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))
-        .expect("an adapter");
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-            ..Default::default()
-        }))
-        .expect("a device");
+        let Some((device, queue, adapter)) =
+            vxe_render::test_support::high_performance_device(0, wgpu::Features::TIMESTAMP_QUERY)
+        else {
+            return;
+        };
         let Some(timer) = vxe_render::PassTimer::new(&device, &queue) else {
-            println!(
-                "skipped: {} has no TIMESTAMP_QUERY",
-                adapter.get_info().name
-            );
+            println!("skipped: {} has no TIMESTAMP_QUERY", adapter);
             return;
         };
         let (w, h) = (1920, 1080);
@@ -372,7 +340,7 @@ mod reading {
         println!(
             "hud pass on {} at {w}x{h}, 24 rows x 100 chars, 240 samples, scale 2: median {:.4} ms, \
          p99 {:.4} ms, max {:.4} ms over {} frames",
-            adapter.get_info().name,
+            adapter,
             ms[ms.len() / 2],
             ms[ms.len() * 99 / 100],
             ms[ms.len() - 1],
