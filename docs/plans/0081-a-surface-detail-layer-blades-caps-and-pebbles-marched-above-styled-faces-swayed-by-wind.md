@@ -1,6 +1,6 @@
 # 0081: A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen, swayed by a wind the game sets
 
-> **Status:** draft (2026-11-16), awaiting the owner's go
+> **Status:** approved (2026-11-16, the owner's go with every recommended answer)
 > **Created:** 2026-11-16
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md); the cave presets serve M6's consumer
 > **Related ADRs:** [ADR-0063](../adrs/0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md)

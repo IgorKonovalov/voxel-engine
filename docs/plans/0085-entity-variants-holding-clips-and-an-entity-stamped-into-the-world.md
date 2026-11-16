@@ -1,6 +1,6 @@
 # 0085: Entity variants: hide, swap and remap per instance from the `.rig`, a one-shot clip that holds, and a posed entity stamped into the world
 
-> **Status:** draft (2026-11-16, awaits the owner's go)
+> **Status:** approved (2026-11-16, the owner's go with every recommended answer)
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0068](../adrs/0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md)

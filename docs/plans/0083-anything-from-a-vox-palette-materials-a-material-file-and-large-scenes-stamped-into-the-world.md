@@ -1,7 +1,6 @@
 # 0083: Anything from a `.vox`: palette materials, a material file, and large scenes stamped into the world
 
-> **Status:** draft (awaits the owner's go; the owner questions under "Risks & open questions"
-> each carry a recommendation)
+> **Status:** approved (2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel)
 > **Created:** 2026-11-16
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (stamping at authored-building
 > scale), with M6's `.vox` import; the engine side in `vxe-assets` and `vxe-world`, the testbed

@@ -654,12 +654,12 @@ a cheap query.
   moving entity ghosts until this milestone's entities write motion vectors into it.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - Squash and stretch: a scale per axis per part in the pose and the clips, so a slime reads
-  soft without a soft body (Plan 0082, drafted 2026-11-16, awaits go; ADR-0064). See-through
+  soft without a soft body (Plan 0082, approved 2026-11-16; ADR-0064). See-through
   jelly and true soft bodies stay out (`docs/backlog.md`).
 - Modes of one entity: variants declared in the `.rig` (a part hidden, a volume swapped, a
   material remapped) picked per instance and honoured by the query; a one-shot clip that
   holds; a posed entity baked onto the world grid and stamped through the op log, so a corpse
-  is part of the map (Plan 0085, drafted 2026-11-16, awaits go; ADR-0068, ADR-0069).
+  is part of the map (Plan 0085, approved 2026-11-16; ADR-0068, ADR-0069).
   Per-entity voxel damage stays out (`docs/backlog.md`).
 - **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips, proposed with Plan 0063); ADR-0064 (a part's scale and its children) with Plan 0082; ADR-0068 (variants as recipes) and ADR-0069 (the bake and the stamp) with Plan 0085.
 

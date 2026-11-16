@@ -1,6 +1,6 @@
 # 0082: Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce
 
-> **Status:** draft (2026-11-16, awaits the owner's go)
+> **Status:** approved (2026-11-16, the owner's go with every recommended answer)
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0064](../adrs/0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md)
