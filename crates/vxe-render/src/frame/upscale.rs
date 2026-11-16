@@ -302,6 +302,7 @@ impl Frame {
     /// Drops the upscaler's history alone in the next encoded frame (the lighting's is kept),
     /// as a change of view does.
     pub fn reset_upscaler_history(&mut self) {
+        self.restarts += 1;
         self.history().view_changed = true;
     }
 

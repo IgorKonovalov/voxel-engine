@@ -337,6 +337,253 @@ impl RenderSettings {
         ("output_hint", Rebuild),
     ];
 
+    /// Each `pub fn set_*` of the crate that sets a field, and the fields it sets: a name, or a
+    /// group's prefix ending in a dot.
+    pub const SETTERS: &'static [(&'static str, &'static [&'static str])] = &[
+        ("set_lighting", &["lighting."]),
+        ("set_look", &["look."]),
+        ("set_lod", &["lod."]),
+        ("set_resolution", &["lighting_resolution"]),
+        ("set_upscaler_kind", &["upscaler", "fsr2.", "own."]),
+        ("set_jitter", &["jitter"]),
+        ("set_sharpness", &["sharpness"]),
+        ("set_upscaler", &["own."]),
+        ("set_light_cap", &["light_cap"]),
+        ("set_metering", &["metering"]),
+        ("set_field_split", &["field_split"]),
+        ("set_probe_spacing", &["probe_spacing"]),
+        ("set_probe_axis", &["probe_axis"]),
+        ("set_missing_light", &["missing_light"]),
+        ("set_bake_budget", &["bake.budget"]),
+        (
+            "set_bake_coarse",
+            &["bake.coarse_samples", "bake.near", "bake.full_first"],
+        ),
+        ("set_bake_full_first", &["bake.full_first"]),
+        ("set_bake_reach", &["bake.reach"]),
+        ("set_bake_digs", &["bake.edit_ms", "bake.dig_reach"]),
+        ("set_entity_mirror", &["build.entity_pool_bytes"]),
+        ("set_field_surface", &["build.field_surface"]),
+        ("set_sync_budget_time", &["build.sync_budget_time"]),
+    ];
+
+    /// Each `pub fn set_*` of the crate that is not a setting, and why.
+    pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
+        ("set_dt", "a per-frame input: the frame's step in seconds"),
+        (
+            "set_frame_index",
+            "a per-frame input: the frame index the noise seeds with",
+        ),
+        (
+            "set_focus",
+            "a per-frame input: the mirror's focus, the camera's chunk",
+        ),
+        (
+            "set_lights",
+            "a per-frame input: the consumer's list of lights",
+        ),
+        (
+            "set_entities",
+            "a per-frame input: the entities drawn, on the frame and the entity mirror",
+        ),
+        (
+            "set_entity_displays",
+            "a per-frame input: the entities drawn by display poses, on the frame and the entity mirror",
+        ),
+        (
+            "set_emission_scale",
+            "a per-frame input: an emitter's current scale (the world's look, not the renderer's)",
+        ),
+        (
+            "set_emission_scales",
+            "a per-frame input: as set_emission_scale, with the probes' scale",
+        ),
+        (
+            "set_sizes",
+            "the consumer's output size (its window); the scale field sets the internal size through it",
+        ),
+        (
+            "set_composite_capture",
+            "a test and tool hook: copies the composite's image",
+        ),
+        (
+            "set_count_store",
+            "a reading hook: counts the store's reads for the HUD and readings",
+        ),
+        (
+            "set_bypass",
+            "a test hook on Fsr2: skips its passes at equal sizes",
+        ),
+        (
+            "set_debug",
+            "a test hook on Fsr2: writes its history weight",
+        ),
+        (
+            "set_sync_clock",
+            "a test hook on GpuWorld: the clock its time budget reads",
+        ),
+        (
+            "set_reach_mode",
+            "BakeQueue's own method, which Frame::set_bake_reach calls",
+        ),
+        (
+            "set_origin",
+            "ProbeVolume's own method, a test hook: pins the volume's origin",
+        ),
+        (
+            "set_updates",
+            "ProbeVolume's own method, a test hook: the probe passes' switches",
+        ),
+        ("set_text", "HudOverlay's own method: the overlay's text"),
+        ("set_lines", "HudOverlay's own method: the overlay's lines"),
+        (
+            "set_rows",
+            "HudOverlay's own method: the overlay's coloured rows",
+        ),
+        (
+            "set_samples",
+            "HudOverlay's own method: the overlay's graph samples",
+        ),
+    ];
+
+    /// `self` with field `name` given a value other than its own, the others as they are: the
+    /// test value of each row of [`RenderSettings::FIELDS`], for the tests that prove each
+    /// field's class. `None` for no field.
+    #[doc(hidden)]
+    pub fn with_test_value(&self, name: &str) -> Option<Self> {
+        use crate::frame::{NormalMode, ViewMode};
+        let mut s = self.clone();
+        if let Some(field) = name.strip_prefix("lighting.") {
+            return lighting_test_value(&mut s.lighting, field).then_some(s);
+        }
+        match name {
+            "look.normal_mode" => other(
+                &mut s.look.normal_mode,
+                NormalMode::Face,
+                NormalMode::Trilinear8,
+            ),
+            "look.view" => other(&mut s.look.view, ViewMode::Shaded, ViewMode::Normals),
+            "look.translucent_layers" => {
+                s.look.translucent_layers = if s.look.translucent_layers == 2 { 4 } else { 2 }
+            }
+            "look.cutaway" => flip(&mut s.look.cutaway),
+            "look.tuning.face_mix" => s.look.tuning.face_mix = 0.5 - s.look.tuning.face_mix,
+            "look.far_normal" => s.look.far_normal = s.look.far_normal.map(|v| v + 1.0),
+            "lod.r_full" => s.lod.r_full += 1,
+            "lod.forced_level" => {
+                s.lod.forced_level = if s.lod.forced_level.is_some() {
+                    None
+                } else {
+                    Some(1)
+                }
+            }
+            "lighting_resolution" => other(
+                &mut s.lighting_resolution,
+                LightingResolution::Full,
+                LightingResolution::Half,
+            ),
+            "scale" => other(&mut s.scale, RenderScale::OneHalf, RenderScale::Two),
+            "upscaler" => other(&mut s.upscaler, UpscalerChoice::Own, UpscalerChoice::Off),
+            "jitter" => flip(&mut s.jitter),
+            "sharpness" => s.sharpness = 1.0 - s.sharpness,
+            "fsr2.sharpness" => s.fsr2.sharpness = 1.0 - s.fsr2.sharpness,
+            "fsr2.reactive_translucent" => s.fsr2.reactive_translucent /= 2.0,
+            "fsr2.reactive_light" => s.fsr2.reactive_light /= 2.0,
+            "fsr2.metres_per_voxel" => s.fsr2.metres_per_voxel *= 2.0,
+            "fsr2.jitter_phases" => {
+                s.fsr2.jitter_phases = if s.fsr2.jitter_phases.is_some() {
+                    None
+                } else {
+                    Some(16)
+                }
+            }
+            "fsr2.dither" => flip(&mut s.fsr2.dither),
+            "own.alpha" => s.own.alpha /= 2.0,
+            "own.alpha_moving" => s.own.alpha_moving /= 2.0,
+            "own.change_rel" => s.own.change_rel *= 2.0,
+            "own.change_abs" => s.own.change_abs *= 2.0,
+            "own.change_frames" => s.own.change_frames = s.own.change_frames / 2 + 1,
+            "light_cap" => s.light_cap = if s.light_cap == 4 { 16 } else { 4 },
+            "metering" => {
+                s.metering = match s.metering {
+                    Metering::Average => Metering::default(),
+                    Metering::CentreWeighted { .. } => Metering::Average,
+                }
+            }
+            "field_split" => flip(&mut s.field_split),
+            "probe_spacing" => s.probe_spacing = if s.probe_spacing == 8 { 16 } else { 8 },
+            "probe_axis" => {
+                s.probe_axis = if s.probe_axis.is_some() {
+                    None
+                } else {
+                    Some(4)
+                }
+            }
+            "missing_light" => other(
+                &mut s.missing_light,
+                MissingLight::Chain,
+                MissingLight::Black,
+            ),
+            "bake.budget" => {
+                s.bake.budget = match s.bake.budget {
+                    Budget::PerFrame { ms } => Budget::PerFrame { ms: ms + 1.0 },
+                    Budget::PerSecond { .. } => Budget::default(),
+                }
+            }
+            "bake.coarse_samples" => s.bake.coarse_samples = s.bake.coarse_samples / 2 + 1,
+            "bake.near" => s.bake.near += 1,
+            "bake.full_first" => {
+                s.bake.full_first = if s.bake.full_first.is_some() {
+                    None
+                } else {
+                    Some(2)
+                }
+            }
+            "bake.reach" => other(&mut s.bake.reach, ReachMode::Full, ReachMode::Partial),
+            "bake.edit_ms" => s.bake.edit_ms += 1.0,
+            "bake.dig_reach" => flip(&mut s.bake.dig_reach),
+            "build.mirror_budget_bytes" => s.build.mirror_budget_bytes /= 2,
+            "build.record_chunks" => {
+                s.build.record_chunks = if s.build.record_chunks.is_some() {
+                    None
+                } else {
+                    Some(64)
+                }
+            }
+            "build.light_samples" => s.build.light_samples /= 2,
+            "build.light_chunk_cap" => s.build.light_chunk_cap /= 2,
+            "build.light_radius" => s.build.light_radius += 1,
+            "build.light_sync_samples" => s.build.light_sync_samples /= 2,
+            "build.sync_budget_bytes" => s.build.sync_budget_bytes /= 2,
+            "build.sync_budget_time" => {
+                s.build.sync_budget_time = if s.build.sync_budget_time.is_some() {
+                    None
+                } else {
+                    Some(std::time::Duration::from_millis(2))
+                }
+            }
+            "build.field_surface" => flip(&mut s.build.field_surface),
+            "build.entity_pool_bytes" => s.build.entity_pool_bytes /= 2,
+            "build.residency" => s.build.residency.r_full -= 1,
+            "build.workers" => {
+                s.build.workers = if s.build.workers.is_some() {
+                    None
+                } else {
+                    Some(2)
+                }
+            }
+            "output_hint" => {
+                s.output_hint = if s.output_hint.is_some() {
+                    None
+                } else {
+                    Some([1280, 720])
+                }
+            }
+            _ => return None,
+        }
+        Some(s)
+    }
+
     /// The class of the field `name` names, `None` for no field.
     pub fn class_of(name: &str) -> Option<ApplyClass> {
         Self::FIELDS
@@ -383,6 +630,56 @@ impl RenderSettings {
         let names: Vec<&str> = Self::FIELDS.iter().map(|&(n, _)| n).collect();
         debug_leaves(&format!("{self:#?}"), &names)
     }
+}
+
+/// Gives `v` the value of `a` and `b` it does not hold.
+fn other<T: PartialEq + Copy>(v: &mut T, a: T, b: T) {
+    *v = if *v == a { b } else { a };
+}
+
+fn flip(b: &mut bool) {
+    *b = !*b;
+}
+
+/// [`RenderSettings::with_test_value`] for the lighting's field `name`; false for no field.
+fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
+    use crate::exposure::Exposure;
+    use crate::frame::{
+        EntityLight, HistoryKill, LightWeights, ShadowWalk, StoreRead, ToneMap, YoungFilter,
+    };
+    match name {
+        "exposure" => {
+            l.exposure = match l.exposure {
+                Exposure::Manual(e) => Exposure::Manual(e * 2.0),
+                Exposure::Auto(_) => Exposure::Manual(1.0),
+            }
+        }
+        "tone_map" => other(&mut l.tone_map, ToneMap::Aces, ToneMap::Identity),
+        "lamp" => flip(&mut l.lamp),
+        "candidates" => l.candidates = if l.candidates == 4 { 8 } else { 4 },
+        "shadow_walk" => other(&mut l.shadow_walk, ShadowWalk::Full, ShadowWalk::Coarse),
+        "filter" => flip(&mut l.filter),
+        "atrous_iterations" => l.atrous_iterations = if l.atrous_iterations == 2 { 4 } else { 2 },
+        "history" => other(&mut l.history, HistoryKill::Edits, HistoryKill::Gradient),
+        "lamp_bounce" => flip(&mut l.lamp_bounce),
+        "probe_rays" => l.probe_rays = (l.probe_rays / 2).max(1),
+        "probe_slices" => l.probe_slices *= 2,
+        "probe_freeze" => l.probe_freeze += 1,
+        "lamp_reach" => l.lamp_reach *= 2.0,
+        "probe_move_blend" => l.probe_move_blend /= 2.0,
+        "bake_pool_bytes" => l.bake_pool_bytes *= 2,
+        "store_read" => other(&mut l.store_read, StoreRead::Face, StoreRead::Normal),
+        "light_floor" => l.light_floor *= 2.0,
+        "light_weights" => other(
+            &mut l.light_weights,
+            LightWeights::Normal,
+            LightWeights::Face,
+        ),
+        "young_filter" => other(&mut l.young_filter, YoungFilter::Luma, YoungFilter::Edges),
+        "entity_light" => other(&mut l.entity_light, EntityLight::Own, EntityLight::World),
+        _ => return false,
+    }
+    true
 }
 
 /// The leaves of a pretty (`{:#?}`) `Debug` text with their values on one line: every `name:
@@ -510,6 +807,89 @@ mod tests {
             }
             assert_eq!(s.table().len(), names.len());
             assert!(s.table().iter().all(|(_, _, v)| !v.is_empty()));
+        }
+    }
+
+    /// Each field's test value changes that field alone.
+    #[test]
+    fn each_test_value_changes_its_field_alone() {
+        let base = RenderSettings::default();
+        for &(name, _) in RenderSettings::FIELDS {
+            let s = base.with_test_value(name).expect("a test value");
+            assert_eq!(base.changed_fields(&s), [name]);
+        }
+        assert!(base.with_test_value("no.such").is_none());
+    }
+
+    /// The `pub fn set_` names in the crate's source files, read at test time.
+    fn setters_in_source() -> Vec<String> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+            for e in std::fs::read_dir(dir).expect("a source dir") {
+                let p = e.expect("an entry").path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let text = std::fs::read_to_string(&p).expect("a source file");
+                    for (i, _) in text.match_indices("pub fn set_") {
+                        let name: String = text[i + "pub fn ".len()..]
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect();
+                        // The search's own literal ends at `set_`.
+                        if name.len() > "set_".len() {
+                            out.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut out,
+        );
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Every `pub fn set_` of the crate is the setter of a field or listed as not a setting;
+    /// every listed setter exists, and each field it names is a row of `FIELDS`.
+    #[test]
+    fn every_setter_is_a_setting_or_an_input() {
+        let found = setters_in_source();
+        assert!(
+            found.len() > 30,
+            "only {} setters found: {found:?}",
+            found.len()
+        );
+        let listed: Vec<&str> = RenderSettings::SETTERS
+            .iter()
+            .map(|&(n, _)| n)
+            .chain(RenderSettings::NOT_SETTINGS.iter().map(|&(n, _)| n))
+            .collect();
+        for setter in &found {
+            assert!(
+                listed.contains(&setter.as_str()),
+                "pub fn {setter} is neither a setting's setter (RenderSettings::SETTERS) nor \
+                 listed in RenderSettings::NOT_SETTINGS"
+            );
+        }
+        for n in &listed {
+            assert!(
+                found.iter().any(|f| f == n),
+                "{n} is listed but not in the source"
+            );
+        }
+        for &(setter, fields) in RenderSettings::SETTERS {
+            for f in fields {
+                assert!(
+                    RenderSettings::FIELDS
+                        .iter()
+                        .any(|(n, _)| n == f || (f.ends_with('.') && n.starts_with(f))),
+                    "{setter} names {f}, no field"
+                );
+            }
         }
     }
 

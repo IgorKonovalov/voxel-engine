@@ -1,8 +1,11 @@
 //! The render settings as one value (ADR-0055): a frame's own settings applied back change
-//! nothing, a `Settle` field applies on the next frame, and a `Rebuild` field waits for the
-//! caller.
+//! nothing, a `Settle` field applies on the next frame and restarts the history once, a `Live`
+//! field keeps it, and a `Rebuild` field waits for the caller.
 
-use vxe_render::{Camera, Frame, GpuWorld, LightParams, RenderScale, glam::Vec3, wgpu};
+use vxe_render::{
+    ApplyClass, Camera, Frame, GpuWorld, LightParams, RenderScale, RenderSettings, UpscalerChoice,
+    glam::Vec3, wgpu,
+};
 use vxe_world::*;
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -114,4 +117,77 @@ fn a_scale_change_settles_and_a_budget_change_waits_for_a_rebuild() {
     assert_eq!(frame.settings().scale, RenderScale::Two);
     assert_eq!(frame.internal_size(), RenderScale::Two.internal(SIZE));
     assert_eq!(frame.settings().build.mirror_budget_bytes, budget);
+}
+
+/// For each `Live` and `Settle` row of `FIELDS` whose name `rows` keeps, on `frame` warmed 4
+/// frames: the row's test value (`RenderSettings::with_test_value`) applied alone leaves
+/// `history_restarts()` unchanged for `Live` and raises it by exactly 1 for `Settle`; the
+/// frame's own settings are applied back and one frame stepped after each.
+fn assert_classes(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &mut Frame,
+    gpu: &GpuWorld,
+    rows: impl Fn(&str) -> bool,
+) -> usize {
+    frames(device, queue, frame, gpu, 4);
+    let base = frame.settings();
+    let mut read = 0;
+    for &(name, class) in RenderSettings::FIELDS {
+        if class == ApplyClass::Rebuild || !rows(name) {
+            continue;
+        }
+        let s = base.with_test_value(name).expect("a test value");
+        let before = frame.history_restarts();
+        let change = frame.apply_settings(device, queue, &s);
+        let after = frame.history_restarts();
+        let want = u64::from(class == ApplyClass::Settle);
+        assert_eq!(after - before, want, "{name} ({class:?}): {change:?}");
+        let named = match class {
+            ApplyClass::Live => &change.live,
+            _ => &change.settled,
+        };
+        assert_eq!(named, &[name], "{change:?}");
+        frames(device, queue, frame, gpu, 1);
+        frame.apply_settings(device, queue, &base);
+        frames(device, queue, frame, gpu, 1);
+        read += 1;
+    }
+    read
+}
+
+/// Every `Live` and `Settle` row on a default frame at 64 x 36 (no upscaler).
+#[test]
+fn every_live_field_keeps_the_history_and_every_settle_field_restarts_it() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = mirrored(&device, &queue);
+    let mut frame = Frame::new(&device, 64, 36);
+    let read = assert_classes(&device, &queue, &mut frame, &gpu, |_| true);
+    let rows = RenderSettings::FIELDS
+        .iter()
+        .filter(|(_, c)| *c != ApplyClass::Rebuild)
+        .count();
+    assert_eq!(read, rows);
+}
+
+/// The upscaler's rows again on a frame running FSR 2 at scale 1.5 for a 64 x 36 output: FSR
+/// 2's knobs keep its history, the scale and the upscaler restart it.
+#[test]
+fn under_fsr2_its_knobs_keep_the_history_and_the_scale_restarts_it() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = mirrored(&device, &queue);
+    let mut frame = Frame::new(&device, 64, 36);
+    let mut s = frame.settings();
+    s.upscaler = UpscalerChoice::Fsr2;
+    s.scale = RenderScale::OneHalf;
+    frame.apply_settings(&device, &queue, &s);
+    assert!(frame.fsr2().is_some());
+    let read = assert_classes(&device, &queue, &mut frame, &gpu, |n| {
+        n.starts_with("fsr2.") || ["scale", "upscaler", "sharpness"].contains(&n)
+    });
+    assert_eq!(read, 9);
 }

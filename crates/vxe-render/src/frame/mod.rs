@@ -91,6 +91,8 @@ pub struct Frame {
     /// The `Rebuild` values the caller last built with ([`Frame::built_with`]).
     build: crate::settings::BuildSettings,
     output_hint: Option<[u32; 2]>,
+    /// [`Frame::history_restarts`].
+    restarts: u64,
 }
 
 impl Frame {
@@ -133,6 +135,7 @@ impl Frame {
             scale: RenderScale::One,
             build: crate::settings::BuildSettings::default(),
             output_hint: None,
+            restarts: 0,
         }
     }
 
@@ -267,7 +270,16 @@ impl Frame {
 
     /// Drops all history: the next encoded frame starts every pixel afresh.
     pub fn reset_history(&mut self) {
+        self.restarts += 1;
         self.history().valid = false;
+    }
+
+    /// The restarts of the temporal history so far: each [`Frame::reset_history`] (a size, an
+    /// upscaler, a jitter or a lighting resolution change makes one) and each drop of the
+    /// upscaler's history alone ([`Frame::reset_upscaler_history`], a change of view). An
+    /// edit's history kill is not one.
+    pub fn history_restarts(&self) -> u64 {
+        self.restarts
     }
 
     /// Encodes and submits one frame of `camera` over `world` with history, after advancing
@@ -351,7 +363,7 @@ impl Frame {
     /// upscaler's history (not the lighting's).
     pub fn set_look(&mut self, look: LookParams) {
         if look.view != self.state.look.view {
-            self.history().view_changed = true;
+            self.reset_upscaler_history();
         }
         self.state.look = look;
     }
