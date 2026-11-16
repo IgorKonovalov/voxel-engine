@@ -197,6 +197,12 @@ pub struct Walkers {
     pub clock: f32,
     /// `--model`'s viewer: placements take its model in place of the built-in walker.
     pub viewer: Option<crate::viewer::Viewer>,
+    /// The frame's drawn parts, kept across frames ([`Walkers::refresh_displays`]): the first
+    /// `shown` are this frame's, the rest storage kept for later frames.
+    displays: Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)>,
+    shown: usize,
+    /// The viewer's two poses placed for one instance, reused instance to instance.
+    rig_scratch: Option<(Pose, Pose)>,
 }
 
 impl PartialEq for Walkers {
@@ -320,33 +326,49 @@ impl Walkers {
             .collect()
     }
 
-    /// Each listed entity's drawn parts: a built-in walker as the set poses it, a viewer
-    /// instance between its clip's two ticks around now ([`vxe_render::DisplayPose::between`]).
-    pub fn displays(&self) -> Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)> {
-        let rig = self
-            .viewer
-            .as_ref()
-            .and_then(|v| Some((v.loaded.as_ref()?, v.poses()?)));
+    /// Refreshes each listed entity's drawn parts ([`Walkers::displays`]): a built-in walker
+    /// as the set poses it, a viewer instance between its clip's two ticks around now
+    /// ([`vxe_render::DisplayPose::between_into`]). The list and each entry's storage are kept
+    /// across frames, so with the same walkers placed it allocates nothing per entity; the
+    /// viewer's two poses are sampled once a frame.
+    pub fn refresh_displays(&mut self) {
+        let rig = self.viewer.as_ref().and_then(|v| v.poses());
         let rig_handle = self.viewer.as_ref().and_then(|v| v.handle);
-        self.placed
-            .iter()
-            .filter_map(|p| {
-                let (model, pose) = self.set.get(p.id)?;
-                if p.rig {
-                    let (_, (a, b, alpha)) = rig.as_ref()?;
-                    let a = crate::viewer::placed(a, p.feet, p.yaw);
-                    let b = crate::viewer::placed(b, p.feet, p.yaw);
-                    let d = vxe_render::DisplayPose::between(model, &a, &b, *alpha)?;
-                    Some((p.id, rig_handle?, d))
-                } else {
-                    Some((
-                        p.id,
-                        self.handle?,
-                        vxe_render::DisplayPose::of(model, pose)?,
-                    ))
-                }
-            })
-            .collect()
+        let mut n = 0;
+        for p in &self.placed {
+            let Some((model, pose)) = self.set.get(p.id) else {
+                continue;
+            };
+            let Some(handle) = (if p.rig { rig_handle } else { self.handle }) else {
+                continue;
+            };
+            if n == self.displays.len() {
+                self.displays
+                    .push((p.id, handle, vxe_render::DisplayPose::default()));
+            }
+            let slot = &mut self.displays[n];
+            (slot.0, slot.1) = (p.id, handle);
+            let fits = if p.rig {
+                let Some((a, b, alpha)) = &rig else {
+                    continue;
+                };
+                let (sa, sb) = self
+                    .rig_scratch
+                    .get_or_insert_with(|| (a.clone(), b.clone()));
+                crate::viewer::place_into(sa, a, p.feet, p.yaw);
+                crate::viewer::place_into(sb, b, p.feet, p.yaw);
+                slot.2.between_into(model, sa, sb, *alpha)
+            } else {
+                slot.2.of_into(model, pose)
+            };
+            n += usize::from(fits);
+        }
+        self.shown = n;
+    }
+
+    /// The drawn parts [`Walkers::refresh_displays`] last refreshed, in placement order.
+    pub fn displays(&self) -> &[(EntityId, ModelHandle, vxe_render::DisplayPose)] {
+        &self.displays[..self.shown]
     }
 
     /// Each placed walker's eye light, in placement order, while they are on: the frame takes
@@ -543,9 +565,11 @@ pub fn feed(
             }
         }
     }
-    let displays = walkers.displays();
-    let list: Vec<_> = displays.iter().map(|(id, h, d)| (*id, *h, d)).collect();
-    frame.set_entity_displays(queue, &list);
+    walkers.refresh_displays();
+    frame.set_entity_displays(
+        queue,
+        walkers.displays().iter().map(|(id, h, d)| (*id, *h, d)),
+    );
     let m = frame.entity_mirror();
     (walkers.drawn, walkers.parts, walkers.over) =
         (m.entities_drawn(), m.parts_drawn(), m.entities_over_cap());
@@ -826,5 +850,62 @@ mod tests {
         );
         assert!(m.walkers.eye_lights().is_empty());
         assert_eq!(m.walkers.toggle_eye_lights(), "eye lights on");
+    }
+
+    /// Refreshing the drawn parts allocates nothing per entity once its storage has grown:
+    /// eight built-in walkers allocate nothing from the second refresh on, and each holds its
+    /// set pose's parts; viewer instances allocate the same bytes a refresh with one of them
+    /// and with four (the viewer's two poses are sampled once a refresh, not per instance).
+    #[test]
+    fn refreshing_the_displays_allocates_nothing_per_entity() {
+        use crate::test_support::counting;
+        use vxe_render::DisplayPose;
+
+        let table = with_walker(&crate::cave_materials());
+        let mut w = Walkers::default();
+        for i in 0..8 {
+            assert!(w.place(&table, [i as f32 * 20.0, 0.0, 2.0], [0.0, -9.0, 2.0]));
+        }
+        w.handle = Some(ModelHandle(0));
+        w.toggle_walk();
+        let mut bytes = Vec::new();
+        for _ in 0..4 {
+            w.step(1.0 / 60.0);
+            let before = counting::bytes();
+            w.refresh_displays();
+            bytes.push(counting::bytes() - before);
+        }
+        assert!(bytes[0] > 0, "the first refresh grows the storage");
+        assert_eq!(bytes[1..], [0; 3]);
+        assert_eq!(w.displays().len(), 8);
+        for (p, (id, h, d)) in w.placed.iter().zip(w.displays()) {
+            let (model, pose) = w.set.get(p.id).unwrap();
+            assert_eq!((*id, *h), (p.id, ModelHandle(0)));
+            assert_eq!(Some(d), DisplayPose::of(model, pose).as_ref());
+        }
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/entities/walker/walker.rig");
+        let mut viewer = crate::viewer::Viewer::open(&path, Some("walk".into())).expect("opens");
+        assert_eq!(viewer.build_pending(&table), None);
+        viewer.handle = Some(ModelHandle(1));
+        let mut w = Walkers::default().with_viewer(Some(viewer));
+        let refresh = |w: &mut Walkers| {
+            w.step(1.0 / 45.0);
+            let before = counting::bytes();
+            w.refresh_displays();
+            counting::bytes() - before
+        };
+        assert!(w.place(&table, [0.0, 0.0, 2.0], [0.0, -9.0, 2.0]));
+        refresh(&mut w);
+        let one = refresh(&mut w);
+        for i in 1..4 {
+            assert!(w.place(&table, [i as f32 * 20.0, 0.0, 2.0], [0.0, -9.0, 2.0]));
+        }
+        refresh(&mut w);
+        let four = refresh(&mut w);
+        assert_eq!(w.displays().len(), 4);
+        assert!(one > 0, "the viewer samples its two poses");
+        assert_eq!(four, one, "no bytes per instance");
     }
 }

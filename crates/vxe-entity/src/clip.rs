@@ -279,3 +279,97 @@ impl Playback {
         sample(model, rest, &self.clip, self.tick_at(now))
     }
 }
+
+/// A fade out of a held pose: over `ticks` consumer ticks from `start_tick`, a pose fades from
+/// `from` to the pose playing then, by [`blend`] at the weight [`Fade::weight`] gives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fade {
+    /// The pose the fade starts from: the one shown at the switch.
+    pub from: Pose,
+    /// The consumer tick the fade starts on.
+    pub start_tick: u64,
+    /// The fade's length in consumer ticks; 0 is no fade.
+    pub ticks: u32,
+}
+
+impl Fade {
+    /// The weight of the playing pose at consumer tick `now`, in 1/256:
+    /// `(now - start_tick) * 256 / ticks`, rounded down, 0 before the start and 256 from
+    /// `start_tick + ticks` on (and always with `ticks` 0).
+    pub fn weight(&self, now: u64) -> u16 {
+        let ticks = u64::from(self.ticks);
+        let elapsed = now.saturating_sub(self.start_tick);
+        if elapsed >= ticks {
+            256
+        } else {
+            (elapsed * 256 / ticks) as u16
+        }
+    }
+
+    /// The pose at consumer tick `now` with `to` playing: [`blend`] of `from` and `to` at
+    /// [`Fade::weight`].
+    ///
+    /// # Panics
+    ///
+    /// When `to` holds a different number of part poses from `from`.
+    pub fn pose(&self, to: &Pose, now: u64) -> Pose {
+        blend(&self.from, to, self.weight(now))
+    }
+}
+
+/// A [`Playback`] that fades into each new clip. [`Player::switch`] starts the new clip from
+/// its tick 0 and fades into it from the pose shown at the switch, so a change of clip does
+/// not jump, and neither does a change during a fade (it fades from the blend shown then).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Player {
+    pub playback: Playback,
+    /// The fade under way, if any; it stays after it ends, at weight 256.
+    pub fade: Option<Fade>,
+}
+
+impl Player {
+    /// `playback` with no fade.
+    pub fn new(playback: Playback) -> Self {
+        Self {
+            playback,
+            fade: None,
+        }
+    }
+
+    /// The pose at consumer tick `now`: the playing clip's ([`Playback::pose`]), faded from
+    /// the held pose while a fade is under way.
+    ///
+    /// # Panics
+    ///
+    /// When a fade's held pose does not hold one part pose per part of `model`.
+    pub fn pose(&self, model: &Model, rest: &Pose, now: u64) -> Pose {
+        let to = self.playback.pose(model, rest, now);
+        match &self.fade {
+            Some(f) if f.weight(now) < 256 => f.pose(&to, now),
+            _ => to,
+        }
+    }
+
+    /// Plays `clip` from its tick 0 at consumer tick `now`, at the same rate, fading over
+    /// `ticks` consumer ticks from the pose at `now` ([`Player::pose`]).
+    pub fn switch(&mut self, model: &Model, rest: &Pose, now: u64, clip: Arc<Clip>, ticks: u32) {
+        let from = self.pose(model, rest, now);
+        self.switch_from(from, now, clip, ticks);
+    }
+
+    /// [`Player::switch`] fading from `from`, the pose shown at the switch: a consumer that
+    /// draws between two ticks passes the blend it drew. `from` holds one part pose per part
+    /// of the model the player poses.
+    pub fn switch_from(&mut self, from: Pose, now: u64, clip: Arc<Clip>, ticks: u32) {
+        self.fade = (ticks > 0).then_some(Fade {
+            from,
+            start_tick: now,
+            ticks,
+        });
+        self.playback = Playback {
+            clip,
+            start_tick: now,
+            rate: self.playback.rate,
+        };
+    }
+}

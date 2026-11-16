@@ -9,8 +9,9 @@ pub(super) fn model_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--model"],
             "PATH",
-            "view a .rig model and its .vox: ` places it, Left/Right cycle its clips, Down pauses; \
-             a saved change reloads",
+            "view a .rig model and its .vox: ` places it, Left/Right cycle its clips (fading \
+             between them), Down pauses; a saved change reloads, a refused one shows in red \
+             until fixed",
             |p: &mut Parsing, v| {
                 p.args.model = Some(v.text.into());
                 Ok(())

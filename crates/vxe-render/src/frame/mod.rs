@@ -531,14 +531,16 @@ impl Frame {
     /// [`Frame::set_entities`] with each entity's parts placed by a [`crate::DisplayPose`]
     /// (between two ticks, say) in place of a pose in a set
     /// ([`crate::EntityMirror::set_entity_displays`]).
-    pub fn set_entity_displays(
+    pub fn set_entity_displays<'a>(
         &mut self,
         queue: &wgpu::Queue,
-        list: &[(
-            vxe_entity::EntityId,
-            crate::ModelHandle,
-            &crate::DisplayPose,
-        )],
+        list: impl IntoIterator<
+            Item = (
+                vxe_entity::EntityId,
+                crate::ModelHandle,
+                &'a crate::DisplayPose,
+            ),
+        >,
     ) {
         self.entities.set_entity_displays(queue, list);
     }

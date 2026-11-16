@@ -2,22 +2,34 @@
 //! it names, and `` ` `` (and `--entities N`'s ring) places that model in place of the
 //! built-in walker, playing a clip at the rig's rate from the frame's time step. The drawn
 //! pose is between two ticks ([`vxe_render::DisplayPose::between`]); the set the queries read
-//! holds the integer tick's. The two files' modified times are read once a second and a change
+//! holds the integer tick's. A change of clip fades into the new one over [`CLIP_FADE_TICKS`]
+//! ([`vxe_entity::Player`]). The two files' modified times are read once a second and a change
 //! reloads them, keeping every placed instance; a file that fails keeps the old model and
-//! shows the error (`rig line <n>: <message>`) in the banner. The wall clock read here is the
-//! testbed's, never a crate's.
+//! shows the error (`rig line <n>: <message>`) in the banner, and keeps it on screen in red
+//! (the HUD's row, or a banner row with the HUD off) until a reload succeeds. The wall clock
+//! read here is the testbed's, never a crate's.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use vxe_assets::{Rig, VoxFile};
-use vxe_entity::{Clip, Model, Pose, sample};
+use vxe_entity::{Clip, Model, Playback, Player, Pose, blend};
 use vxe_render::ModelHandle;
 use vxe_world::{MaterialId, MaterialTable};
 
 /// Seconds between two reads of the files' modified times.
 pub const POLL_SECONDS: f64 = 1.0;
+
+/// The fade from one clip into the next, in the rig's ticks: about a quarter second at the
+/// sample walker's 30 a second.
+pub const CLIP_FADE_TICKS: u32 = 8;
+
+/// Whether `line` is the viewer's error row ([`Viewer::write_row`] while an error stands),
+/// which the HUD and the banner draw in red.
+pub fn is_error_row(line: &str) -> bool {
+    line.starts_with("model ") && line.contains(" error: ")
+}
 
 /// A built rig: its model and its parts' names, its rest pose, its clips by name and its ticks per second.
 #[derive(Clone, Debug)]
@@ -47,11 +59,17 @@ pub struct Viewer {
     pub handle: Option<ModelHandle>,
     /// The playing clip's index in [`Loaded::clips`].
     pub clip: usize,
+    /// The playing clip and the fade into it, in the viewer's ticks ([`Viewer::ticks`]);
+    /// `None` with no clip.
+    pub player: Option<Player>,
     /// `--clip`'s name, picked at the first build.
     want_clip: Option<String>,
     pub paused: bool,
-    /// Seconds the clip has played.
-    pub clock: f64,
+    /// The rig's ticks played since the viewer opened, as a real number: the seconds played
+    /// times the rate. A clip change snaps it down to a whole tick.
+    pub ticks: f64,
+    /// The last build's or reload's error, kept until one succeeds.
+    pub error: Option<String>,
     stamps: [Option<SystemTime>; 2],
     polled_at: Option<f64>,
 }
@@ -108,18 +126,37 @@ impl Viewer {
             loaded: None,
             handle: None,
             clip: 0,
+            player: None,
             want_clip: clip,
             paused: false,
-            clock: 0.0,
+            ticks: 0.0,
+            error: None,
             polled_at: None,
         })
     }
 
     /// The reload step: builds the rig `rig_text` over the `.vox` `vox_bytes` against `table`
-    /// and, when it builds, swaps the model in (the playing clip kept by name, else the first)
-    /// and drops the uploaded handle. On an error the old model stays and the banner's words
-    /// come back (`rig line <n>: <message>`).
+    /// and, when it builds, swaps the model in (the playing clip kept by name, else the first,
+    /// with no fade) and drops the uploaded handle. On an error the old model stays, the
+    /// error is kept ([`Viewer::error`]) and the banner's words come back
+    /// (`rig line <n>: <message>`); a build clears the kept error.
     pub fn reload(
+        &mut self,
+        rig_text: &str,
+        vox_bytes: &[u8],
+        table: &MaterialTable,
+    ) -> Result<(), String> {
+        let r = self.try_reload(rig_text, vox_bytes, table);
+        self.keep(r)
+    }
+
+    /// Keeps `r`'s error, or clears the kept one on `Ok`.
+    fn keep(&mut self, r: Result<(), String>) -> Result<(), String> {
+        self.error = r.as_ref().err().cloned();
+        r
+    }
+
+    fn try_reload(
         &mut self,
         rig_text: &str,
         vox_bytes: &[u8],
@@ -141,6 +178,16 @@ impl Viewer {
         self.clip = want
             .and_then(|w| clips.iter().position(|(n, _)| *n == w))
             .unwrap_or(0);
+        // The clip goes on from the tick it had reached; a fade from the old model's pose is
+        // dropped, since the new model may have other parts.
+        let start_tick = self.player.as_ref().map_or(0, |p| p.playback.start_tick);
+        self.player = clips.get(self.clip).map(|(_, c)| {
+            Player::new(Playback {
+                clip: c.clone(),
+                start_tick,
+                rate: 256,
+            })
+        });
         self.vox_path = self
             .rig_path
             .parent()
@@ -157,7 +204,8 @@ impl Viewer {
         Ok(())
     }
 
-    /// Builds the files [`Viewer::open`] read, once: the banner's words for an error.
+    /// Builds the files [`Viewer::open`] read, once: the banner's words for an error, which
+    /// stands until a reload builds.
     pub fn build_pending(&mut self, table: &MaterialTable) -> Option<String> {
         let (text, bytes) = self.pending.take()?;
         self.reload(&text, &bytes, table).err()
@@ -182,7 +230,7 @@ impl Viewer {
                 self.stamps[1] = modified(&self.vox_path);
                 self.reload(&text, &bytes, table)
             }
-            Err(e) => Err(e),
+            Err(e) => self.keep(Err(e)),
         };
         Some(words.map_or_else(|e| e, |()| "reloaded".to_owned()))
     }
@@ -193,44 +241,64 @@ impl Viewer {
         l.clips.get(self.clip).map(|(n, _)| n.as_str())
     }
 
-    /// Advances the clip's clock by `dt` seconds unless paused.
+    /// Advances the clip by `dt` seconds at the rig's rate unless paused.
     pub fn advance(&mut self, dt: f32) {
         if !self.paused {
-            self.clock += f64::from(dt);
+            let rate = self.loaded.as_ref().map_or(0, |l| l.rate);
+            self.ticks += f64::from(dt) * f64::from(rate);
         }
     }
 
-    /// The clip's tick now, unwrapped, as a real number: the clock times the rate.
-    fn tick_f(&self) -> f64 {
-        let rate = self.loaded.as_ref().map_or(0, |l| l.rate);
-        self.clock * f64::from(rate)
+    /// The whole tick now and the fraction past it.
+    fn tick_now(&self) -> (u64, f32) {
+        let t = self.ticks.max(0.0);
+        (t.floor() as u64, (t - t.floor()) as f32)
     }
 
     /// The pose at the integer tick now and at the next, and the fraction between them, the
-    /// root at the origin: the rest pose with no clip. `None` before a build.
+    /// root at the origin, each faded from the last clip's while a fade is under way: the rest
+    /// pose with no clip. `None` before a build.
     pub fn poses(&self) -> Option<(Pose, Pose, f32)> {
         let l = self.loaded.as_ref()?;
-        let Some((_, clip)) = l.clips.get(self.clip) else {
+        let Some(p) = &self.player else {
             return Some((l.rest.clone(), l.rest.clone(), 0.0));
         };
-        let t = self.tick_f();
-        let tick = t.floor() as u64;
-        let alpha = (t - t.floor()) as f32;
+        let (tick, alpha) = self.tick_now();
         Some((
-            sample(&l.model, &l.rest, clip, tick),
-            sample(&l.model, &l.rest, clip, tick + 1),
+            p.pose(&l.model, &l.rest, tick),
+            p.pose(&l.model, &l.rest, tick + 1),
             alpha,
         ))
     }
 
-    /// `step` clips on from the playing one (wrapping), from its tick 0: the banner's words.
+    /// `step` clips on from the playing one (wrapping), from its tick 0, faded into over
+    /// [`CLIP_FADE_TICKS`] from the pose drawn now: the banner's words. The clock snaps down
+    /// to the whole tick, so the fade starts from exactly the drawn pose (its blend between
+    /// the two ticks, in fixed point) at the cost of under a tick of time.
     pub fn cycle(&mut self, step: i32) -> String {
         let n = self.loaded.as_ref().map_or(0, |l| l.clips.len());
         if n == 0 {
             return format!("model {}: no clip", self.name);
         }
         self.clip = (self.clip as i64 + i64::from(step)).rem_euclid(n as i64) as usize;
-        self.clock = 0.0;
+        let drawn = self.poses();
+        let (tick, _) = self.tick_now();
+        let l = self.loaded.as_ref().expect("a clip implies a build");
+        let clip = l.clips[self.clip].1.clone();
+        match (&mut self.player, drawn) {
+            (Some(p), Some((a, b, alpha))) => {
+                let from = blend(&a, &b, (alpha * 256.0).round() as u16);
+                p.switch_from(from, tick, clip, CLIP_FADE_TICKS);
+            }
+            (p, _) => {
+                *p = Some(Player::new(Playback {
+                    clip,
+                    start_tick: tick,
+                    rate: 256,
+                }));
+            }
+        }
+        self.ticks = tick as f64;
         format!("clip {}", self.clip_name().unwrap_or(""))
     }
 
@@ -241,20 +309,25 @@ impl Viewer {
     }
 
     /// The HUD row: `model <name> clip <clip> <tick>/<length>`, then ` paused` while paused;
-    /// `model <name> not built` before a build succeeds.
+    /// `model <name> not built` before a build succeeds; `model <name> error: <error>` while
+    /// the last build's or reload's error stands ([`is_error_row`]).
     pub fn write_row(&self, out: &mut String) {
         use std::fmt::Write as _;
         let _ = write!(out, "model {}", self.name);
+        if let Some(e) = &self.error {
+            let _ = write!(out, " error: {e}");
+            return;
+        }
         let Some(l) = &self.loaded else {
             out.push_str(" not built");
             return;
         };
-        match l.clips.get(self.clip) {
-            Some((name, clip)) => {
-                let tick = clip.clip_tick(self.tick_f().floor() as u64);
+        match (l.clips.get(self.clip), &self.player) {
+            (Some((name, clip)), Some(p)) => {
+                let tick = clip.clip_tick(p.playback.tick_at(self.tick_now().0));
                 let _ = write!(out, " clip {name} {tick}/{}", clip.length());
             }
-            None => out.push_str(" no clip"),
+            _ => out.push_str(" no clip"),
         }
         if self.paused {
             out.push_str(" paused");
@@ -266,9 +339,15 @@ impl Viewer {
 /// radians about z.
 pub fn placed(pose: &Pose, feet: [f32; 3], yaw: f32) -> Pose {
     let mut p = pose.clone();
-    p.root = vxe_world::Fixed3(feet.map(|v| (v * 256.0).round() as i64));
-    p.root_q = crate::walker::turn(2, yaw);
+    place_into(&mut p, pose, feet, yaw);
     p
+}
+
+/// [`placed`] into `out`, reusing its parts' storage.
+pub fn place_into(out: &mut Pose, pose: &Pose, feet: [f32; 3], yaw: f32) {
+    out.parts.clone_from(&pose.parts);
+    out.root = vxe_world::Fixed3(feet.map(|v| (v * 256.0).round() as i64));
+    out.root_q = crate::walker::turn(2, yaw);
 }
 
 #[cfg(test)]
@@ -283,5 +362,118 @@ mod tests {
         assert_eq!(material(&t, "walker_eye"), Some(eye));
         assert_eq!(material(&t, "walker eye"), Some(eye));
         assert_eq!(material(&t, "nothing"), None);
+    }
+
+    /// A refused reload stays on screen until a reload builds. The sample walker saved with line 9
+    /// broken: the viewer keeps the error; with the HUD hidden the banner's first row is
+    /// `model walker error: rig line 9: ...` in red, and still is once the banner's time is up;
+    /// with the HUD shown the viewer's mode row reads the same, in red, and the banner holds no
+    /// copy. A fixed save clears it: the banner says `reloaded`, the row names the clip again
+    /// and no row is red.
+    #[test]
+    fn a_refused_reload_stays_on_screen_until_one_builds() {
+        use crate::cave::ROCK;
+        use crate::now;
+        use crate::run::hud_feed::banner_colours;
+        use crate::test_support::bare_run;
+        use std::time::{Duration, SystemTime};
+        use vxe_render::HudColour;
+
+        let assets =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker");
+        let dir = std::env::temp_dir().join(format!("vxe-viewer-error-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let rig = std::fs::read_to_string(assets.join("walker.rig")).expect("rig reads");
+        std::fs::copy(assets.join("walker.vox"), dir.join("walker.vox")).expect("vox copied");
+        // Each save stamped `secs` after the epoch, so each is a change the poll sees.
+        let save = |text: &str, secs: u64| {
+            std::fs::write(dir.join("walker.rig"), text).expect("saved");
+            std::fs::File::options()
+                .write(true)
+                .open(dir.join("walker.rig"))
+                .expect("opens")
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+                .expect("stamped");
+        };
+        save(&rig, 5);
+        let table = crate::walker::with_walker(&crate::cave_materials());
+        let world = vxe_world::World::generate(
+            vxe_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &vxe_world::UniformSource(ROCK),
+            &table,
+        );
+        let mut run = bare_run(world);
+        let viewer = Viewer::open(&dir.join("walker.rig"), None).expect("opens");
+        run.modes.walkers.viewer = Some(viewer);
+        run.poll_viewer(0.0);
+        let v = run.modes.walkers.viewer.as_ref().expect("viewer");
+        assert!(v.loaded.is_some() && v.error.is_none(), "{:?}", v.error);
+
+        let broken = {
+            let mut lines: Vec<&str> = rig.lines().collect();
+            assert!(lines[8].starts_with("material 2"), "{}", lines[8]);
+            lines[8] = "material 2";
+            lines.join("\n") + "\n"
+        };
+        save(&broken, 10);
+        run.start = now();
+        run.poll_viewer(1000.0);
+        let e = run.modes.walkers.viewer.as_ref().unwrap().error.clone();
+        let e = e.expect("the refusal is kept");
+        assert!(e.starts_with("rig line 9: "), "{e}");
+        let error_row = format!("model walker error: {e}");
+
+        // The HUD hidden: the banner's first row, red; the other rows yellow.
+        run.hud.visible = false;
+        let mut colours = Vec::new();
+        let banner = run.banner().expect("the banner");
+        assert_eq!(banner.lines().next(), Some(error_row.as_str()), "{banner}");
+        banner_colours(&banner, &mut colours);
+        assert_eq!(colours[0], HudColour::Red);
+        assert!(colours[1..].iter().all(|&c| c == HudColour::Yellow));
+        // Long after the banner's time the error row stands, and the transient words are gone.
+        run.start = now() - Duration::from_secs(60);
+        let banner = run.banner().expect("the banner");
+        assert_eq!(banner.lines().next(), Some(error_row.as_str()), "{banner}");
+        assert_eq!(banner.matches("rig line 9").count(), 1, "{banner}");
+
+        // The HUD shown: the viewer's mode row in red, no copy in the banner.
+        run.hud.visible = true;
+        assert!(!run.banner().unwrap().contains("rig line 9"));
+        run.fill_hud(None);
+        let red: Vec<&str> = run
+            .hud
+            .text
+            .lines()
+            .zip(&run.hud.colours)
+            .filter(|&(_, &c)| c == HudColour::Red)
+            .map(|(l, _)| l)
+            .collect();
+        assert_eq!(red, [error_row.as_str()], "{}", run.hud.text);
+
+        // A fixed save builds: `reloaded`, the clip's row again, nothing red.
+        save(&rig, 20);
+        run.start = now();
+        run.poll_viewer(2000.0);
+        let v = run.modes.walkers.viewer.as_ref().unwrap();
+        assert_eq!(v.error, None);
+        let banner = run.banner().expect("the banner");
+        assert!(banner.lines().any(|l| l == "reloaded"), "{banner}");
+        assert!(!banner.contains("error"), "{banner}");
+        run.fill_hud(None);
+        assert!(
+            run.hud
+                .text
+                .lines()
+                .any(|l| l == "model walker clip idle 0/60"),
+            "{}",
+            run.hud.text
+        );
+        assert!(!run.hud.colours.contains(&HudColour::Red));
+        run.hud.visible = false;
+        let banner = run.banner().expect("the banner");
+        banner_colours(&banner, &mut colours);
+        assert!(colours.iter().all(|&c| c == HudColour::Yellow), "{banner}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
