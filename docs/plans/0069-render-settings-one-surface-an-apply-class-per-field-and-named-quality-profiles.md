@@ -364,8 +364,8 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the struct, read back and applied | dev | done; gpu_settings 2/2 at e73cf935 (readings log, Phase 2) | 3a3a3e4b |
-| 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when open pending the owner (Notes) | code 0335bc30; row committed with this row |
-| 3: the profiles, in the fly-through and the tester | dev | wip: code committed, gate owed (readings log, resume notes) | |
+| 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when open pending the owner (Notes) | code 0335bc30; row f0c8a109 |
+| 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, open pending the owner (Notes) | code e0c75597, e73cf935; committed with this row |
 | 4: readings of each profile on both adapters | dev | not started | |
 | 5: the owner's window | human | not started | |
 | 6: the picks into the profiles | dev | not started | |
@@ -391,6 +391,19 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   -p vxe-render` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line
   this branch wrote; the new docs add none. Open, pending the owner: whether the done-when
   reads "no new warnings" or the 64 are fixed (outside the plan's Files touched).
+- Phase 3 deviations: the profile cycle is on `PageDown` (`toggles::KEY_PROFILE`), not `F4`,
+  until Plan 0080 frees `F4` (the 2026-11-16 amendment); Portable's `lod.r_full` is 12, following
+  its residency (`r_full` 12), a row the "Data shapes" table does not list; the HUD's profile
+  row is written only when set (`Modes::profile` non-empty), so a `Modes` built outside the
+  run draws no blank row; the tester's `run::Scale` became `run::Profile` (`--profile NAME`),
+  and `dist/README-TESTER.txt` and `docs/flythrough.md` follow.
+- Open, pending the owner (amendment 2026-11-12): "every settings struct's `Default` equals
+  `Floor`, `Lighting::default()` included" is not done. `RenderSettings::default()` equals
+  Floor (CPU test); `Lighting::default()` and the other structs keep their library defaults
+  (`Exposure::Manual(1.0)`, bounce off, far normal [0, 0]) that the render tests build on.
+  Options: (a) change the struct defaults and re-derive the tests that lean on them; (b) keep
+  them as the neutral test baseline, `RenderSettings::default()` the consumer's entry. The
+  code is as (b).
 
 ### Close triggers
 
