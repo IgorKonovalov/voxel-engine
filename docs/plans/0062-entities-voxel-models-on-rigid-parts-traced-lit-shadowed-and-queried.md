@@ -459,6 +459,30 @@ amendment) and a per-part world-space cache (option C, an ADR, not taken).
   filter's GPU time on and off; the owner's words on the crowd and on the shadow edge. A "no"
   on the crowd goes to the architect with option B.
 
+### Phase 6c: a walker's fallback reads the baked light at the nearest world face
+Amended 2026-11-16 (owner): Phase 6b's readings (80d7def5, `docs/plans/logs/0062.md`) showed
+option A barely moves the crowd's grain (FSR 2 walking 5.5 to 5.1 %) and blurs a freshly
+uncovered shadow edge much harder (frames 1 to 4: 24 to 69 % at output size). The owner skipped
+6b's window and picked option B, Phase 6's own stop-rule amendment. `--young-filter` stays a
+setting, off (it costs nothing when off, owner 2026-11-12).
+- **Owner skill:** dev, then human
+- **What:** an entity pixel's fallback light (no list light reaching it) reads the baked store at
+  the nearest world face instead of its own per-frame emissive sample: one store read, no
+  random stream. The list lights, the lamp, the eye lights and the shadows an entity casts and
+  receives are unchanged. Behind a setting and fly-through toggle with its mode on screen
+  (`own` the current sample, `world` the baked read), so the window compares both; the default
+  follows the window.
+- **Files touched:** the entity light path in `crates/vxe-render/src/shaders/` (the light pass
+  and `entity.wgsl`), the frame's setting, the fly-through toggle and flag, `gpu_entities.rs`'s
+  grain reading, `docs/flythrough.md`, this plan's log.
+- **Done when:** the grain reading (the fix pass's rig) under `own` and `world` on the RTX: crowd
+  display noise walking and still, under FSR 2 and ours at 1.5, and the floor beside the
+  walkers; a still walker beside the vein lit under `world` within a stated band of the
+  settled `own` mean (the shading it loses, read as the rms of the difference over its faces);
+  the light pass's GPU time under both; then the owner's window over the Phase 6 run-3 crowd
+  (16 and 64 walking, eye lights off, both upscalers) and the vein walker, with the owner's
+  words and pick in the log.
+
 ## Data shapes
 
 ```rust
