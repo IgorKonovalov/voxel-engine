@@ -12,7 +12,8 @@ const FRAMES: u32 = 300;
 /// default adapter where none is named so), 64 x 36, the live queue's pre-roll at its smallest,
 /// with the stats HUD shown: the `frames:` line reads `blocking reads 0`, every queue line names
 /// the age of the store's counts it read (at most 2 frames, or not read back yet on the first
-/// frame) and at least one read them, and with `TIMESTAMP_QUERY` the march timer handed over a
+/// frame, whose line prints before the frame turns the count on and so names none) and at
+/// least one read them, and with `TIMESTAMP_QUERY` the march timer handed over a
 /// set on all but at most two frames. Before the timers and the store read through rings, the
 /// same run read 608 (two timer reads a frame and the queue line's).
 #[test]
@@ -44,24 +45,30 @@ fn a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere() {
         return;
     }
     assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    // The run's line, not the queue step's `frames: queue step ...` tally lines printed
+    // before it at exit.
+    let run_line = format!("frames: {FRAMES} frames;");
     let frames = stdout
         .lines()
-        .find(|l| l.starts_with("frames: "))
-        .unwrap_or_else(|| panic!("no frames: line in\n{stdout}"));
+        .find(|l| l.starts_with(&run_line))
+        .unwrap_or_else(|| panic!("no `{run_line}` line in\n{stdout}"));
     println!("{frames}");
-    assert!(
-        frames.starts_with(&format!("frames: {FRAMES} frames;")),
-        "{frames}"
-    );
     assert!(frames.ends_with("; blocking reads 0"), "{frames}");
     let ages: Vec<Option<u32>> = stdout
         .lines()
         .filter(|l| l.starts_with("bake queue: at "))
         .map(|l| {
+            // Frame 0's line prints before that frame turns the store's count on, so it
+            // names no read; every later line must.
+            if l.contains(", frame 0, ") && l.contains("store reads not counted") {
+                return None;
+            }
             let (_, rest) = l
                 .split_once(" pixels (")
-                .expect("the line names the read's age");
-            let (age, _) = rest.split_once(')').expect("closed");
+                .unwrap_or_else(|| panic!("the line names the read's age: {l}"));
+            // `(missing light ...; store ... B, ...; <age>)`: the age is the last item.
+            let (inside, _) = rest.split_once(')').expect("closed");
+            let age = inside.rsplit("; ").next().expect("an item");
             if age == "not read back yet" {
                 None
             } else {
