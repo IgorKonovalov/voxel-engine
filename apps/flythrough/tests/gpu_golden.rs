@@ -1337,7 +1337,7 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 /// fly-through's defaults (indirect light on at the default probe spacing, FSR 2 at its default
 /// scale 1.5 with sharpening 0.5, the lighting at its default resolution,
 /// `LookPreset::DEFAULT` with its store read and filter weights), the lamp off, the shot's exposure and the showcase's light radius,
-/// under `table`.
+/// the light store baked over [`SHOWCASE_BAKE`], under `table`.
 fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
@@ -1408,6 +1408,19 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
         pitch: (shot.pitch_deg as f32).to_radians(),
         vfov: 70f32.to_radians(),
     };
+    // The store the cube faces read: every chunk of the hall, as the fly-through's pre-roll
+    // and coarse pass leave it before its first frame. Unbaked faces read no light at all, so
+    // only the ores' own emission would show.
+    bake_around(
+        &device,
+        &queue,
+        &mut gpu,
+        &mut frame,
+        &world,
+        shot.eye.0,
+        SHOWCASE_BAKE.0,
+        SHOWCASE_BAKE.1,
+    );
     for _ in 0..frames {
         frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
     }
@@ -1416,6 +1429,10 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
         gpu.light_samples(),
     ))
 }
+
+/// The showcase's bake: a radius in chunks around the eye's that covers the whole
+/// 14 x 12 x 7-chunk world, and samples a brick direction.
+const SHOWCASE_BAKE: (i32, u32) = (14, 64);
 
 /// Frames the showcase golden settles over.
 const SHOWCASE_FRAMES: u32 = 64;
