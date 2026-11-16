@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0081** (ADRs are a separate sequence; next free there is **0063**).
+**Next free number: 0085** (ADRs are a separate sequence; next free there is **0068**).
 
 ## Active roster
 
@@ -27,6 +27,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, a reset | approved | M6, ADR-0060 (proposed). Approved 2026-11-16. After 0062 and 0063 merge, before 0077. |
 | [0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a surface mover, the smoothed normal, a body in the `.rig`, a wander | approved | M6, ADR-0062 (proposed). Phases 1-3 after 0063 and the chore; Phase 4 after 0077. |
 | [0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one overlay component, a search palette, and the minimal key set | approved | ADR-0061 (proposed). Apps only. After 0062 and 0075; before 0077, 0073. |
+| [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements, a Structures page | draft | M7, ADR-0065, ADR-0066. Awaits go. After 0063 and the clip chore; Phase 6 after 0080, 0077. |
+| [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | draft | M7, ADR-0067. Awaits go. After Plan 0083 closes. |
 <!-- roster:end -->
 
 ## Sequence
@@ -96,6 +98,20 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 **Plan 0078** (the entity pool frees models, drafted 2026-11-16 from the owner's "proper reset" on Plan 0077's question 6; ADR-0060): after Plans 0062 and 0063 merge, before Plan 0077's lane, which is re-read against it.
 
 **Plan 0079** (entities aware of the floor and the walls: a sphere surface mover beside the cylinder controller in `vxe-sim`, the solid-count gradient as the smoothed normal in `vxe-world`, `Quat::from_frame` in `vxe-entity`, a `body` and a clip `stride` in the `.rig`, a seeded wander in the fly-through; drafted 2026-11-16 from the owner's request, awaits go; ADR-0062 proposed): Phases 1 to 3 (`crates/` and the two library rigs) as a side lane once Plan 0063 and the clip-recorder chore merge, beside 0077; Phase 4 (the fly-through) after Plan 0077 merges, with the architect's re-read.
+
+**Plan 0083** (anything from a `.vox`: every palette entry a material row, the material table as a text
+file in the `.rig` grammar hot-reloaded in the window, prefabs stored as bricks, a stamp past the
+residency sphere kept as a placement the world finishes as chunks arrive, layers, hidden nodes,
+mirrors and an integer scale read from the scene graph, a Structures page of Plan 0080's menu;
+drafted 2026-11-16 from the owner's "import nearly anything that can be created as a .vox file",
+awaits go; ADR-0065 and ADR-0066 proposed): Phases 1 to 5 (`crates/` and `--vox`) once Plan 0063
+and the clip-recorder chore merge, beside Plans 0078 and 0080; Phase 6 after Plans 0080 and 0077
+merge, with the architect's re-read. It holds nothing of M10.
+
+**Plan 0084** (staged structures: a stamp with a write policy and a region, stages from a `.vox`'s
+layers, a pure reveal planner, a demolish that the support query follows; drafted 2026-11-16 from
+the owner's "a castle being built... part of the map", awaits go; ADR-0067 proposed): after Plan
+0083 closes.
 
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane

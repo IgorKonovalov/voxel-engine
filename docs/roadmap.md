@@ -666,6 +666,12 @@ a cheap query.
   scene through the importer and `StampedSource`, with its RAM and generation costs read (Plan
   0042, v0.30.0: 343 566 464 B of prefabs, about 92 % air; sparse prefab storage stays a
   followup).
+- Anything from a `.vox` (Plans 0083 and 0084, drafted 2026-11-16, await go): every palette
+  entry a material row and the material table a text file (ADR-0065); prefabs stored as bricks
+  and a stamp past the residency sphere kept as a placement the world finishes as chunks arrive
+  (ADR-0066); layers, hidden nodes, mirrors and an integer scale from the scene graph; a
+  Structures page in the fly-through; then staged structures as logged stamps with a write
+  policy and a region, revealed over ticks and demolished (ADR-0067).
 - Test tiers for the gate every lane runs: `quick` (CPU only, no perf lock) after every dev
   phase, `gpu` under the lock for render phases, `gate` (everything but the soak list) at a
   plan's tip, its close and in CI, `soak` weekly and on request, `full` only when the owner

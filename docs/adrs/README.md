@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0063.**
+**Next free number: 0068.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -77,6 +77,9 @@ the status.
 | [0060](0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md) | Entity volumes are freed by handle into a coalescing free list of word ranges, never moved; queue order makes a freed range reusable at once | proposed (Plan 0078) |
 | [0061](0061-the-apps-input-is-menu-first-a-minimal-fixed-key-set-one-overlay-menu-with-a-palette-from-one-key-table.md) | The apps' input is menu-first: a minimal fixed key set, one overlay menu with a palette, one key table driving menu, help and shortcuts; apps only, no UI library | proposed (Plan 0080) |
 | [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
+| [0065](0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md) | Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row | proposed (Plan 0083) |
+| [0066](0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md) | A large prefab is stored as bricks, and its stamp is a placement the world finishes as chunks arrive | proposed (Plan 0083) |
+| [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
