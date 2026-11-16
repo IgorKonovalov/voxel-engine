@@ -1,7 +1,6 @@
 # 0076: A key help overlay for the fly-through, written from the key table
 
-> **Status:** approved (2026-11-16, the owner's go: `F1` is the help key everywhere and the frame
-> readings move to `Enter`; the other questions take the recommendations)
+> **Status:** superseded by Plan 0080 (2026-11-16, the owner approved the fold: Phase 1 is 0080's Phase 1, Phase 2 sits in 0080's Phase 3, the panel is the menu's Keys page)
 > **Created:** 2026-11-16
 > **Milestone:** none of its own. The testbed (`apps/flythrough`); nothing under `crates/` changes.
 > **Related ADRs:** none new. Rests on ADR-0009 (the text overlay, no UI library) and ADR-0054
@@ -9,7 +8,7 @@
 > **Starts after:** Plans 0062 and 0075 have merged. Both edit `apps/flythrough/src/toggles.rs`
 > (0062 adds `` ` ``, `F11` and `F12` and gives `4` a second meaning; 0075 binds `Esc` while
 > loading), so this lane branches from the main that holds both and lists their keys.
-> **Amended 2026-11-16 (architect, pending owner):** the owner asked the same day for a menu
+> **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
 > system in place of a full keyboard ("keep using keys to minimal"). ADR-0061 and
 > [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) answer
 > it, and the recommendation (0080's owner question 6) is to **fold this plan into Plan 0080**:

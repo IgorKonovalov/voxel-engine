@@ -1,6 +1,6 @@
 # 0078: The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, and a reset
 
-> **Status:** draft
+> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the engine side (`vxe-render`,
 > `vxe-entity`), with the fly-through's reload as its first consumer.

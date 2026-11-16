@@ -38,7 +38,7 @@
 > - Phase 4 reads the hit pass alone at `Portable`'s internal size on the RADV RENOIR before the
 >   profile values are set. Over 10 ms there, the backlog's walk-speed spike runs before
 >   Phase 6, not after M10.
-> **Amended 2026-11-16 (architect, pending owner):** `F4` is bound today (the a-trous filter's
+> **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** `F4` is bound today (the a-trous filter's
 > iterations, `toggles::TOGGLES`), so "`F4` cycling the profiles" collides. Under ADR-0061 and
 > [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) the
 > iteration toggle goes menu-only and the profile cycle is an entry of the menu's Upscaler or

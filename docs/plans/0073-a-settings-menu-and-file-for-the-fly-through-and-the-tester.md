@@ -22,7 +22,7 @@
 > its picked default, and the menu shows them grouped, each with its value and apply class, a
 > profile pick on top and edits over the profile; the fly-through's key toggles and the tester's
 > quality menu keep working.
-> **Amended 2026-11-16 (architect, pending owner):** the owner asked the same day for a menu
+> **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
 > system in place of a full keyboard. ADR-0061 and
 > [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
 > the apps one menu component (pages, live values, a palette, one input-capture rule, the key
@@ -327,7 +327,7 @@ All answered by the owner on 2026-11-12, each with its recommendation (first opt
    Amended 2026-11-16 (orchestrator): `Tab` is bound (the live queue's angle key), found while
    drafting Plan 0076, which also moves `F1` to the key help and the frame readings to `Enter`.
    The menu's key is reopened: pick a free one from Plan 0076's key table before this lane starts.
-   Amended 2026-11-16 (architect, pending owner): closed by Plan 0080, whose menu this plan's
+   Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080): closed by Plan 0080, whose menu this plan's
    pages live in; the key is 0080's (`Tab` recommended there), and the queue's angle key goes
    menu-only, so `Tab` frees itself.
 5. **No menu in a `--tester` child?** Recommended: none. A benchmark's settings are the

@@ -1,6 +1,6 @@
 # 0079: Entities aware of the floor and the walls: a surface mover in `vxe-sim`, the smoothed normal, a body in the `.rig`, and a wandering demo
 
-> **Status:** draft
+> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (entities), over M3's collision
 > (`vxe-sim`, ADR-0005)

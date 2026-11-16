@@ -1,6 +1,6 @@
 # 0080: The fly-through's menu: one overlay component, a search palette, and the minimal key set
 
-> **Status:** draft (2026-11-16; awaits the owner's answers under "Owner questions")
+> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
 > **Created:** 2026-11-16
 > **Milestone:** none of its own. The testbed (`apps/flythrough`) and, through Plan 0073, the
 > tester; nothing under `crates/` changes unless Phase 5's window asks for the overlay backdrop.
