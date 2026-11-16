@@ -437,6 +437,28 @@ d^2` times the window `(1 - (d / r)^4)^2`: **9.40** at 20 voxels straight below 
   amendment is a read of the baked store at the nearest world face. The plan closes with that
   record.
 
+### Phase 6b: young pixels filtered harder, and a second window
+Amended 2026-11-16 (owner): Phase 6 answered "no" on (e) for a walking crowd with the eye lights
+off ("quite bad", even under FSR 2). The fix pass 60de1bf8 roughly halved the grain (the
+moments kept at a fresh pixel, and entity pixels borrowing history from their own walker;
+`docs/plans/logs/0062.md`, "Phase 6 fix pass"). The rest is disocclusion: pixels with no history.
+The owner picked option A over the stop rule's baked-face read (option B, kept as the next
+amendment) and a per-part world-space cache (option C, an ADR, not taken).
+- **Owner skill:** dev, then human
+- **What:** the a-trous filter ignores the luminance edge-stopping weight for a pixel younger
+  than about 4 frames (position and normal weights kept), behind a fly-through toggle and flag
+  that shows its mode on screen. It is on by default only if the window picks it (unpicked
+  arms that cost nothing when off stay settings, owner 2026-11-12). Then the owner's window over
+  the Phase 6 run-3 crowd (16 and 64 walkers, walking, eye lights off, FSR 2 and ours, toggle
+  on and off) and a lamp-shadow edge after a disocclusion (a dig, or a walker crossing the lamp).
+- **Files touched:** `crates/vxe-render/src/shaders/atrous.wgsl` and its params, the frame's
+  setting, the fly-through toggle and flag, `gpu_entities.rs`'s grain reading, this plan's log.
+- **Done when:** the grain reading (same rig as the fix pass) on and off on the RTX: walking
+  display noise and the floor beside the walkers, under FSR 2 and ours at 1.5; a world-only
+  scene's shadow edge after a disocclusion read on and off (rms over the edge's band); the
+  filter's GPU time on and off; the owner's words on the crowd and on the shadow edge. A "no"
+  on the crowd goes to the architect with option B.
+
 ## Data shapes
 
 ```rust
