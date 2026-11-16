@@ -326,12 +326,35 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 | 1: the pre-roll stepped behind a plain loading frame | dev | done; readings headless, not windowed (lane rule 10); the test runs `--room 12`; `test_support.rs` gained the `Run` field; the loading flags in a new `cli/loading.rs` with a Loading and a Diagnostics section | 1ff6ffb1 |
 | 2: every stage steps; PreRoll and LoadProgress | dev | done; the streamed stage test is born soak (22 s on lavapipe); the sync's time budget covers the first stage only (an attempt with it through the pre-roll starved the coarse pass); the GPU cap is a `device.poll(wait)` at each loading frame's start; `GpuWorld` gained `set_sync_budget_time` | 3a291c9a |
 | 3: the engine's loading frame | dev | done; the text rows are not drawn while the screen fades (alpha below 1); the loading pass reads 1.70 ms on lavapipe at 1080p against the 0.3 ms budget (1.06 ms without the cube; see Notes); the Phase 1 text bar and clear pass are gone | a6fc3c87 |
-| 4: the fly-through and the tester around it | dev | done; "the title" read as the loading frame's title row (the window's title is unchanged); the warm-up test is a lavapipe run in `gpu_loading.rs`, not CPU in `path.rs`; outside `Files touched`: `run/mod.rs` (the recorder's device-ready time), `run/tour.rs` and `tests/path.rs` (the new `RunReport` fields); `menu.rs` unchanged (the row is `Outcome::row`) | committed with this row |
-| 5: the budget readings | dev | not started | |
+| 4: the fly-through and the tester around it | dev | done; "the title" read as the loading frame's title row (the window's title is unchanged); the warm-up test is a lavapipe run in `gpu_loading.rs`, not CPU in `path.rs`; outside `Files touched`: `run/mod.rs` (the recorder's device-ready time), `run/tour.rs` and `tests/path.rs` (the new `RunReport` fields); `menu.rs` unchanged (the row is `Outcome::row`) | 559b48a4 |
+| 5: the budget readings | dev | done; headless, not windowed (lane rule 10; the windowed readings are the Phase 6 runner's); the cost misses 3 % on the streamed worlds (+9.6 % cave, +8.1 % castle on the RTX) and the interval p95 misses 50 ms there (96 to 104 ms); the slice picks 15 / 25 / 40 read on the castle go to the owner's window; tip gate green | committed with this row |
 | 6: the owner's window | human | not started | |
 | 7: after the window | dev | not started | |
 
 ### Notes
+
+- The plan file and ADR-0059 were checked out from main (2cdd89f + fecf6a3) into this lane,
+  which is stacked on plan-0062 (2836bf8) and predates their approval (933b64ec); main is not
+  merged in.
+- No name drift from the tree: `Run::init`, `Run::queue_pre_roll`, `level_pool_units`,
+  `HudOverlay`, `MirrorConfig::sync_budget_time` and `Frame::bake_queue_step` were where the
+  plan names them; `queue_pre_roll` now lives in `run/loading.rs`, its loop body in
+  `vxe_render::PreRoll`.
+- Every Phase 1 and Phase 5 reading is headless, not windowed (lane rule 10, the owner
+  asleep); the windowed ones are Phase 6's runner.
+- The loading pass reads 1.70 to 1.88 ms on lavapipe at 1080p (1.06 ms without the cube) and
+  0.21 ms on the Radeon, 0.079 ms on the RTX; open question 3 names the RTX or lavapipe
+  missing 0.3 ms as the trigger to shrink the cube, and lavapipe misses it without one: an
+  owner question, the cube unchanged.
+- The cost budget (on within 3 % of off) is missed on the streamed worlds: each loading
+  frame waits for the previous slice's GPU work (the plan's cap on work in flight), and the
+  pre-roll's bake step runs 70 to 140 ms on the RTX, over the 25 ms slice, which also puts
+  the interval p95 near 100 ms. The slices 15 and 40 read worse and slightly better on the
+  cost; both go to the owner's window.
+- `--residency 2,3` and `4,6` with `--near 0` run the pre-roll to its 120 s cap with the
+  screen on or off (the camera's chunk never settles); seen while sizing the streamed test,
+  not acted on.
+- The window's title stays `flythrough`; the `--tester` title is the loading frame's row.
 
 ### Close triggers
 
