@@ -2,7 +2,7 @@
 //! ([`super::flags`]) into [`Args`], then settles the defaults that depend on other flags.
 
 use super::flags::{Given, Parsing, table};
-use super::{AudioArgs, BakeArgs, LightingArgs, LookArgs, RunMode};
+use super::{AudioArgs, BakeArgs, LightingArgs, LoadingArgs, LookArgs, RunMode};
 use crate::audio::{CAVE_ACOUSTIC, Mix};
 use crate::castle;
 use crate::cli::{
@@ -124,6 +124,7 @@ impl Args {
                 dig_reach: true,
                 read_missing: false,
             },
+            loading: LoadingArgs::default(),
         }
     }
 }

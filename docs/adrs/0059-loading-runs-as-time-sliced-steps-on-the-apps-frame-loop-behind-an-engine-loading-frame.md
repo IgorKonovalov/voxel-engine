@@ -1,8 +1,8 @@
 # ADR-0059: Loading runs as time-sliced steps on the app's frame loop, behind an engine loading frame the app can replace
 
-> **Status:** proposed
+> **Status:** accepted (Plan 0075, 2026-11-16), with an Outcome
 > **Date:** 2026-11-15
-> **Related plan(s):** [Plan 0075](../plans/0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md)
+> **Related plan(s):** [Plan 0075](../plans/done/0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md)
 
 ## Context
 
@@ -84,3 +84,32 @@ second order in which the mirror and the bake can interleave. Rejected for the c
 The launcher's menu window draws "loading" while the child starts hidden. It covers the tester
 only, not the fly-through or a consumer; the child's window still opens blank when it appears,
 and two windows trade focus on every run. Rejected because the owner asked for the engine too.
+
+## Outcome
+
+2026-11-16, at Plan 0075's close (v0.58.0). The slices on the app's frame loop, `PreRoll` boxed
+and capped on work time, `LoadProgress` and the replaceable `LoadingScreen` shipped as decided:
+a sliced pre-roll bakes what an unsliced one bakes, and the screen is off headless. Three points
+differ from the text above:
+
+- **One worker thread, for the pipelines only.** The Positive list's "no new thread" did not
+  hold. With the NVIDIA driver compiling, the frame's creation and `Frame::prepare_entities`
+  each blocked for about 6 s, and the owner's window showed the compositor's not-responding
+  notice (Plan 0075 Phase 7b). Under the screen, the frame and its settings, the mirror, the
+  presenter, the overlay, the timers, the entity pipelines and the light bake's pipeline now
+  build on one `start-up build` thread over clones of the device and the queue, handed back to
+  the run whole before any stage reads them. The sync, the streaming and the pre-roll stay on
+  the frame loop, so Alternative B's reason (no gain for the queue's work) still stands for
+  them; the pipeline build is CPU-side driver work and gains from the thread.
+- **A frame before the run, through the shell.** `vxe-app`'s shell changed after all: the
+  `App::splash` hook draws one loading frame after the surface is configured and before
+  `App::init`, and `ShellConfig::start` times the shell's `start-up:` lines (Plan 0075 Phase
+  6b). The work before the device stays blank (278 to 394 ms from the window to the first
+  frame on the RTX 3080 Laptop); a CPU-drawn first frame is in `docs/backlog.md`.
+- **The cost and the hitch.** On the streamed worlds the screen costs +8 to +10 % of loading
+  wall time on the RTX (the 3 % proposal) and the loading frames run near 24 fps (interval p95
+  about 100 ms), because a bake step runs 70 to 140 ms against the 25 ms slice and each frame
+  waits for the previous slice's GPU work. One gap of 130 to 210 ms stays at the first near-
+  lighting frames on a cold driver cache. The owner accepted all three at the windows
+  (`docs/plans/logs/0075.md`, Phases 5, 6 and 7b); the stutter is the plan's followup and the
+  cold gap is in `docs/backlog.md`.

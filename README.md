@@ -3,20 +3,6 @@
 [![CI](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-![A cavern seen between pillars of stepped stone cubes, lit only by glowing ore: a cluster of cyan crystals in the middle distance over a red line of ember in a chasm, flecks of pale amber ore on the pillars and violet ore on a wall at the left, stalactites hanging from a red dome](docs/images/hero.png)
-
-<sub>The showcase cavern (`--source showcase`), seed 1, its `hall` shot: from voxel
-(190, 384, 218), 9 m over the west floor, at yaw 0 and pitch -12 degrees, lamp off, so all of
-the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 8192 frames at
-a manual exposure of 8, the emissive light read from the baked light store, FSR 2 on at
-internal scale 1.5 (1280x720 for 1920x1080) with sharpening 0.5, the default `face` look
-(honest cubes with the far normal at `[2, 6]`) and the fly-through's default lighting (the
-store read by the shading normal, the light filters weighted by the face normal), on an RTX
-3080 Laptop GPU at 1920x1080, rendered 2026-11-13 at v0.52.0.
-Regenerate with
-`cargo run --release -p flythrough --example hero -- --exposure 8 --frames 8192 --out docs/images/hero.png`
-(every other setting above is the example's default).</sub>
-
 ![A large dark voxel spider walking in place on the showcase cavern's floor, its eight legs stepping each on its own phase, glowing leg tips and eyes, silhouetted against a cluster of cyan crystals under a red dome](docs/images/spider-walk.gif)
 
 <sub>An entity: the spider from the [entities library](docs/entities.md), rigid voxel parts

@@ -1147,47 +1147,49 @@ fn audio_flags() -> Vec<Flag<Parsing>> {
 
 /// The fly-through's table.
 pub(crate) fn table() -> Table<Parsing> {
+    let mut sections = vec![
+        Section {
+            title: "Run",
+            flags: run_flags(),
+        },
+        Section {
+            title: "Session",
+            flags: session_flags(),
+        },
+        Section {
+            title: "World",
+            flags: scene_flags(),
+        },
+        Section {
+            title: "Look",
+            flags: look_flags(),
+        },
+        Section {
+            title: "Lighting",
+            flags: light_flags(),
+        },
+        Section {
+            title: "Light store and queue",
+            flags: bake_flags(),
+        },
+        Section {
+            title: "Model viewer",
+            flags: super::model::model_flags(),
+        },
+        Section {
+            title: "Audio",
+            flags: audio_flags(),
+        },
+    ];
+    sections.extend(super::loading::sections());
+    sections.push(Section {
+        title: "Removed",
+        flags: removed_flags(),
+    });
     Table {
         usage: "flythrough [FLAGS]: the engine's testbed (the flags and keys are documented on \
                 `flythrough::cli`)",
-        sections: vec![
-            Section {
-                title: "Run",
-                flags: run_flags(),
-            },
-            Section {
-                title: "Session",
-                flags: session_flags(),
-            },
-            Section {
-                title: "World",
-                flags: scene_flags(),
-            },
-            Section {
-                title: "Look",
-                flags: look_flags(),
-            },
-            Section {
-                title: "Lighting",
-                flags: light_flags(),
-            },
-            Section {
-                title: "Light store and queue",
-                flags: bake_flags(),
-            },
-            Section {
-                title: "Model viewer",
-                flags: super::model::model_flags(),
-            },
-            Section {
-                title: "Audio",
-                flags: audio_flags(),
-            },
-            Section {
-                title: "Removed",
-                flags: removed_flags(),
-            },
-        ],
+        sections,
     }
 }
 

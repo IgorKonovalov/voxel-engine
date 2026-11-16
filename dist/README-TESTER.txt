@@ -41,7 +41,9 @@ The best help: "run all benchmarks", then "save report", then send the zip. A fr
 each scene ("tour", then move) tells us how it feels; say so in your message.
 
 The run's window opens in front of the launcher (on some Linux desktops behind it; look for
-a second window). The launcher shows "running" until the run ends.
+a second window). It shows a loading screen first: a turning cube, a bar, the scene and what
+is loading; Esc ends the run there too. The launcher shows "running" until the run ends, then
+the run's row, with its load time ("load 7.4 s").
 
 
 Keys in a run
@@ -72,7 +74,7 @@ folder is not writable). The launcher's window shows both paths.
   runs/NN-<scene>-<mode>/log.txt    everything the run printed
   runs/NN-<scene>-<mode>/run.json   the run's frame times (median, 95th and 99th percentile,
                 worst), the resolution, whether the headlamp was on, the adapter, the peak
-                memory, and how it ended
+                memory, the load time and each loading stage's, and how it ended
 
 It holds no user name, no computer name, no file paths from your home folder and no serial
 numbers. Every file is plain text: open any of them before you send them.
