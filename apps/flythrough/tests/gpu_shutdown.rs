@@ -273,7 +273,35 @@ fn the_headless_flythrough_exits_through_every_teardown_stage_within_bound() {
     let Some(err) = headless_run_trace() else {
         return;
     };
-    let lines = teardown_lines(&err);
+    assert_teardown_within_bound(&err);
+}
+
+/// `--quit-at-loading-frame 2` with the screen on acts as `Esc` at the third loading frame,
+/// before the pre-roll's end: the run exits 0 through the same traced teardown, its stages
+/// in the same order and together under `DROP_BOUND`.
+#[test]
+fn quitting_while_loading_tears_down_within_bound() {
+    let Some((status, err)) = headless_run(&[
+        "--loading-screen",
+        "on",
+        "--load-slice",
+        "0.05",
+        "--quit-at-loading-frame",
+        "2",
+    ]) else {
+        return;
+    };
+    assert!(
+        status.success(),
+        "the fly-through failed: {status}; stderr:\n{err}"
+    );
+    assert_teardown_within_bound(&err);
+}
+
+/// Every teardown stage in the windowed shell's order, the app with its streamer and GPU
+/// objects before the queue and device, together under `DROP_BOUND`.
+fn assert_teardown_within_bound(err: &str) {
+    let lines = teardown_lines(err);
     println!("{}", lines.join("\n"));
     let expected = [
         "the app asked to exit",

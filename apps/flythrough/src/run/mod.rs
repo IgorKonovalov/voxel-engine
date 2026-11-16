@@ -160,6 +160,9 @@ impl Run {
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
+        if let Some(rec) = self.recorder.as_mut() {
+            rec.device_ms = Some(ms_since(self.start));
+        }
         let field_timer = MarchTimer::new(&gpu.device, &gpu.queue);
         let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
         let mut frame = Frame::with_sizes(&gpu.device, scale.internal(output), output);

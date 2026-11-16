@@ -14,7 +14,7 @@ use vxe_render::SyncStats;
 use crate::path::WARMUP_S;
 
 /// The `schema` field: bumped when a field changes meaning or goes away.
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
 
 /// Frames a second the recorder's series are sized for.
 pub const SIZED_FPS: f32 = 240.0;
@@ -109,6 +109,11 @@ pub struct RunReport {
     /// The mirror sync's stages over the measured frames that ran one; `None` without
     /// streaming.
     pub streaming: Option<SyncPercentiles>,
+    /// Device ready to the first world frame, in ms (schema 2); `None` when the run ended
+    /// before its first world frame.
+    pub load_ms: Option<f64>,
+    /// The loading stages in order and the step time each took, in ms (schema 2).
+    pub load_stages: Vec<(&'static str, f64)>,
     /// `completed` or `aborted`; `failed` when the session ended on an error.
     pub ended: &'static str,
 }
@@ -484,6 +489,24 @@ impl RunReport {
                 o.push('}');
             }
         }
+        field(&mut o, "load_ms");
+        match self.load_ms {
+            Some(ms) => write_ms(&mut o, ms),
+            None => o.push_str("null"),
+        }
+        field(&mut o, "load_stages");
+        o.push('[');
+        for (i, (name, ms)) in self.load_stages.iter().enumerate() {
+            if i > 0 {
+                o.push_str(", ");
+            }
+            o.push_str("{\"name\": ");
+            write_json_string(&mut o, name);
+            o.push_str(", \"ms\": ");
+            write_ms(&mut o, *ms);
+            o.push('}');
+        }
+        o.push(']');
         field(&mut o, "ended");
         write_json_string(&mut o, self.ended);
         o.push_str("\n}\n");
@@ -541,6 +564,12 @@ pub struct Recorder {
     over_100: u32,
     warmup_frames: u32,
     warmup_s: f32,
+    /// Ms since the start at device ready, set by the run's init.
+    pub device_ms: Option<f64>,
+    /// Device ready to the first world frame, in ms.
+    pub load_ms: Option<f64>,
+    /// The loading stages and their step time, in ms.
+    pub load_stages: Vec<(&'static str, f64)>,
 }
 
 impl Recorder {
@@ -594,6 +623,8 @@ impl Recorder {
         r.over_33ms = self.over_33;
         r.over_100ms = self.over_100;
         r.streaming = self.sync.percentiles();
+        r.load_ms = self.load_ms;
+        r.load_stages.clone_from(&self.load_stages);
     }
 }
 
@@ -861,8 +892,54 @@ mod tests {
             over_100ms: 0,
             peak_rss_bytes: Some(123_456_789),
             streaming: None,
+            load_ms: None,
+            load_stages: Vec::new(),
             ended: "completed",
         }
+    }
+
+    /// A schema 2 report round-trips its load time and its stages, in order.
+    #[test]
+    fn a_schema_2_report_carries_its_load_time() {
+        let mut rec = Recorder::for_path(30.0);
+        rec.load_ms = Some(7412.0);
+        rec.load_stages = vec![("streaming the near chunks", 310.5), ("pre-roll", 6120.0)];
+        let mut r = report();
+        rec.fill(&mut r);
+        let v = parse(&r.to_json()).expect("the report parses");
+        assert_eq!(v.get("schema").and_then(Value::as_f64), Some(2.0));
+        assert_eq!(v.get("load_ms").and_then(Value::as_f64), Some(7412.0));
+        let stages: Vec<(String, f64)> = v
+            .get("load_stages")
+            .and_then(Value::as_array)
+            .expect("an array")
+            .iter()
+            .map(|s| {
+                (
+                    s.get("name")
+                        .and_then(Value::as_str)
+                        .expect("a name")
+                        .to_owned(),
+                    s.get("ms").and_then(Value::as_f64).expect("ms"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            stages,
+            [
+                ("streaming the near chunks".to_owned(), 310.5),
+                ("pre-roll".to_owned(), 6120.0)
+            ]
+        );
+        let none = report();
+        let v = parse(&none.to_json()).expect("parses");
+        assert_eq!(v.get("load_ms"), Some(&Value::Null));
+        assert_eq!(
+            v.get("load_stages")
+                .and_then(Value::as_array)
+                .map(<[Value]>::len),
+            Some(0)
+        );
     }
 
     /// 100 measured frames whose wall times are 1 to 100 ms in a shuffled order
@@ -901,7 +978,7 @@ mod tests {
                 .and_then(Value::as_f64)
                 .unwrap_or_else(|| panic!("{path:?} is not a number"))
         };
-        assert_eq!(num(&["schema"]), 1.0);
+        assert_eq!(num(&["schema"]), 2.0);
         assert_eq!(num(&["wall_ms", "p50"]), 50.0);
         assert_eq!(num(&["wall_ms", "p95"]), 95.0);
         assert_eq!(num(&["wall_ms", "p99"]), 99.0);

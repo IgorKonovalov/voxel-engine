@@ -279,11 +279,18 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--loading-screen on\|off` | Step the start-up (the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; off runs it all before the first frame [on in a window, off headless] |
 | `--loading-fade MS` | Fade the loading frame out over the first world frames; 0 cuts [250] |
 
+`Esc` or the window's close during loading ends the run through the ordinary teardown; a
+benchmark so ended reports `ended: "aborted"` with 0 frames. Under `--tester` the loading
+frame's title is the path's scene and mode (`castle - benchmark`). `run.json` is schema 2:
+`load_ms` (device ready to the first world frame) and `load_stages` (`[{name, ms}]`, each
+stage's step time).
+
 ### Diagnostics
 
 | Flag | Does |
 |------|------|
 | `--load-slice MS` | The start-up step time a loading frame spends before it draws [25] |
+| `--quit-at-loading-frame N` | Act as `Esc` at loading frame `N`, a test's way to end a run while it loads |
 
 ### Removed flags
 

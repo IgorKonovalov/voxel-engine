@@ -325,8 +325,8 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 |---|---|---|---|
 | 1: the pre-roll stepped behind a plain loading frame | dev | done; readings headless, not windowed (lane rule 10); the test runs `--room 12`; `test_support.rs` gained the `Run` field; the loading flags in a new `cli/loading.rs` with a Loading and a Diagnostics section | 1ff6ffb1 |
 | 2: every stage steps; PreRoll and LoadProgress | dev | done; the streamed stage test is born soak (22 s on lavapipe); the sync's time budget covers the first stage only (an attempt with it through the pre-roll starved the coarse pass); the GPU cap is a `device.poll(wait)` at each loading frame's start; `GpuWorld` gained `set_sync_budget_time` | 3a291c9a |
-| 3: the engine's loading frame | dev | done; the text rows are not drawn while the screen fades (alpha below 1); the loading pass reads 1.70 ms on lavapipe at 1080p against the 0.3 ms budget (1.06 ms without the cube; see Notes); the Phase 1 text bar and clear pass are gone | committed with this row |
-| 4: the fly-through and the tester around it | dev | not started | |
+| 3: the engine's loading frame | dev | done; the text rows are not drawn while the screen fades (alpha below 1); the loading pass reads 1.70 ms on lavapipe at 1080p against the 0.3 ms budget (1.06 ms without the cube; see Notes); the Phase 1 text bar and clear pass are gone | a6fc3c87 |
+| 4: the fly-through and the tester around it | dev | done; "the title" read as the loading frame's title row (the window's title is unchanged); the warm-up test is a lavapipe run in `gpu_loading.rs`, not CPU in `path.rs`; outside `Files touched`: `run/mod.rs` (the recorder's device-ready time), `run/tour.rs` and `tests/path.rs` (the new `RunReport` fields); `menu.rs` unchanged (the row is `Outcome::row`) | committed with this row |
 | 5: the budget readings | dev | not started | |
 | 6: the owner's window | human | not started | |
 | 7: after the window | dev | not started | |

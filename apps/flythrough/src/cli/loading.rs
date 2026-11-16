@@ -19,6 +19,8 @@ pub(crate) struct LoadingArgs {
     pub(crate) slice_ms: f64,
     /// `--loading-fade MS`: the loading frame fades out over the first world frames; 0 cuts.
     pub(crate) fade_ms: f64,
+    /// `--quit-at-loading-frame N`: acts as `Esc` at loading frame `N`, for a test.
+    pub(crate) quit_at: Option<u32>,
 }
 
 impl Default for LoadingArgs {
@@ -27,6 +29,7 @@ impl Default for LoadingArgs {
             screen: None,
             slice_ms: LOAD_SLICE_MS,
             fade_ms: LOADING_FADE_MS,
+            quit_at: None,
         }
     }
 }
@@ -67,16 +70,27 @@ pub(crate) fn loading_flags() -> Vec<Flag<Parsing>> {
 
 /// The diagnostics' rows: flags for tests and readings.
 pub(crate) fn diagnostic_flags() -> Vec<Flag<Parsing>> {
-    vec![Flag::value(
-        &["--load-slice"],
-        "MS",
-        "the start-up step time a loading frame spends before it draws [25]",
-        |p: &mut Parsing, v| {
-            p.args.loading.slice_ms =
-                v.parse_if(|ms: &f64| *ms > 0.0 && ms.is_finite(), "a time above 0 ms")?;
-            Ok(())
-        },
-    )]
+    vec![
+        Flag::value(
+            &["--load-slice"],
+            "MS",
+            "the start-up step time a loading frame spends before it draws [25]",
+            |p: &mut Parsing, v| {
+                p.args.loading.slice_ms =
+                    v.parse_if(|ms: &f64| *ms > 0.0 && ms.is_finite(), "a time above 0 ms")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--quit-at-loading-frame"],
+            "N",
+            "act as Esc at loading frame N (a test's)",
+            |p: &mut Parsing, v| {
+                p.args.loading.quit_at = Some(v.parse()?);
+                Ok(())
+            },
+        ),
+    ]
 }
 
 #[cfg(test)]

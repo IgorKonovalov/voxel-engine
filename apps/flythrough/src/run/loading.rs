@@ -16,7 +16,7 @@ use crate::run::queue::{COARSE_PRE_ROLL_MS, PRE_ROLL_SAMPLES, queue_view_angles}
 use crate::setup::{Gfx, start_camera};
 use crate::streaming::NEAR_D2;
 use std::time::{Duration, Instant};
-use vxe_app::{Flow, Gpu};
+use vxe_app::{Flow, Gpu, Input, KeyCode};
 use vxe_render::{
     Camera, EasedBar, LoadProgress, LoadingScreen, LoadingView, PreRoll, PreRollConfig,
     PreRollState, SyncStats, wgpu,
@@ -110,6 +110,8 @@ pub(crate) struct Loading {
     pub(crate) intervals: Vec<f64>,
     /// The longest single step of each stage, by name, in ms.
     longest: Vec<(&'static str, f64)>,
+    /// The step time of each stage, by name, in order, in ms.
+    stage_ms: Vec<(&'static str, f64)>,
 }
 
 impl Loading {
@@ -150,11 +152,25 @@ impl Loading {
             Some((_, l)) => *l = l.max(ms),
             None => self.longest.push((name, ms)),
         }
+        match self.stage_ms.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, t)) => *t += ms,
+            None => self.stage_ms.push((name, ms)),
+        }
     }
 }
 
-/// The scene a loading frame names: the castle's or the pose's banner, else the source.
+/// The scene a loading frame names: under `--tester` the path's scene and mode
+/// (`castle - benchmark`), else the castle's or the pose's banner, else the source.
 pub(crate) fn scene_title(run: &Run) -> String {
+    if run.args.tester
+        && let Some(p) = &run.player
+    {
+        let mode = match p.mode {
+            crate::path::PathMode::Bench => "benchmark",
+            crate::path::PathMode::Tour => "tour",
+        };
+        return format!("{} - {mode}", p.path.scene.name());
+    }
     if let Some((row, _)) = &run.scene {
         return row.clone();
     }
@@ -238,6 +254,7 @@ impl Run {
             last: None,
             intervals: Vec::new(),
             longest: Vec::new(),
+            stage_ms: Vec::new(),
         }
     }
 
@@ -627,6 +644,9 @@ impl Run {
             .collect::<Vec<_>>()
             .join(", ");
         println!("loading: the longest step of each stage (ms): {longest}");
+        if let Some(rec) = self.recorder.as_mut() {
+            rec.load_stages.clone_from(&loading.stage_ms);
+        }
         if loading.screen.is_some() {
             let worst = loading.intervals.iter().copied().fold(0.0, f64::max);
             println!(
@@ -644,10 +664,22 @@ impl Run {
     /// behind more than one slice of bake work), steps until the slice is spent or loading
     /// ends, then draws the loading frame with the eased bar. The frame after the last loading
     /// frame is the first world frame, over which [`Run::fade_loading`] fades the screen out.
-    pub(crate) fn loading_frame(&mut self, gpu: &Gpu, surface: &wgpu::TextureView) -> Flow {
+    /// `Esc`, or `--quit-at-loading-frame` at its frame, ends the run before the slice: the
+    /// ordinary teardown follows, and a benchmark's report reads `aborted` with 0 frames.
+    pub(crate) fn loading_frame(
+        &mut self,
+        gpu: &Gpu,
+        input: &Input,
+        surface: &wgpu::TextureView,
+    ) -> Flow {
         let Some(mut loading) = self.loading.take() else {
             return Flow::Exit;
         };
+        if input.pressed(KeyCode::Escape) || self.args.loading.quit_at == Some(loading.frames) {
+            println!("loading: ended at loading frame {}", loading.frames);
+            self.loading = Some(loading);
+            return Flow::Exit;
+        }
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
         let t0 = now();
         let dt = loading.last.replace(t0).map_or(0.0, |last| {

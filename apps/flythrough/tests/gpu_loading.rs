@@ -173,3 +173,71 @@ fn the_streamed_load_reports_its_stages_in_order_and_ends_at_one() {
         "the last frame reads 1"
     );
 }
+
+/// `frames`, `warmup_frames` and `warmup_s` of a headless showcase benchmark of `--frames
+/// 130` at 64 x 36 on lavapipe, its report written to a scratch folder, with `screen`.
+fn bench_counts(screen: &str) -> Option<(f64, f64, f64)> {
+    let dir = std::env::temp_dir().join(format!(
+        "vxe-gpu-loading-{}-bench-{screen}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
+        .args([
+            "--headless",
+            "--adapter",
+            "llvmpipe",
+            "--source",
+            "showcase",
+            "--path",
+            "showcase",
+            "--path-mode",
+            "bench",
+            "--frames",
+            "130",
+            "--render",
+            "64x36",
+            "--near",
+            "0",
+            "--coarse",
+            "0",
+            "--loading-screen",
+            screen,
+            "--report",
+        ])
+        .arg(&dir)
+        .output()
+        .expect("the fly-through runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("no adapter") {
+        println!("skipped: no adapter ({})", stderr.trim());
+        return None;
+    }
+    assert!(out.status.success(), "stderr:\n{stderr}");
+    let text = std::fs::read_to_string(dir.join("run.json")).expect("run.json");
+    let num = |key: &str| {
+        text.lines()
+            .find_map(|l| l.trim().strip_prefix(&format!("\"{key}\": ")))
+            .and_then(|v| v.trim_end_matches(',').parse::<f64>().ok())
+            .unwrap_or_else(|| panic!("no {key} in\n{text}"))
+    };
+    Some((num("frames"), num("warmup_frames"), num("warmup_s")))
+}
+
+/// A benchmark's warm-up starts at the first world frame with the screen on: 120 warm-up
+/// frames over 2 s of the path's 1/60 s headless clock from frame 0 (the screen off reads the
+/// same, 9 measured and 120 warm-up frames at 2.0 s, 2026-11-16), and the measured and warm-up
+/// frames add up to the 129 world frames after frame 0, so no loading frame counts.
+#[test]
+fn a_benchmark_warms_up_from_the_first_world_frame() {
+    let Some(on) = bench_counts("on") else {
+        return;
+    };
+    println!("on {on:?}");
+    assert_eq!(
+        on,
+        (9.0, 120.0, 2.0),
+        "frames, warm-up frames and warm-up seconds"
+    );
+    assert_eq!(on.0 + on.1, 129.0, "world frames only");
+}

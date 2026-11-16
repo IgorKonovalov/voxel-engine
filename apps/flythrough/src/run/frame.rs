@@ -176,7 +176,7 @@ impl Run {
         surface: &wgpu::TextureView,
     ) -> Flow {
         if self.is_loading() {
-            return self.loading_frame(gpu, surface);
+            return self.loading_frame(gpu, input, surface);
         }
         let t0 = now();
         // A path run ends through its player, so its report can say how.
@@ -478,7 +478,7 @@ impl Run {
         );
 
         if self.frame == 0 {
-            wait_first_frame(gpu, self.start);
+            wait_first_frame(gpu, self.start, self.recorder.as_mut());
         }
         // The timers hand over their newest finished set without waiting (a frame or two old),
         // `None` on a frame with nothing new. `--lamp-toggle` and `--fade-reading` file each set
@@ -807,10 +807,14 @@ impl Run {
 }
 
 /// Waits for the GPU to finish the first frame, which counts from then: prints when, from the
-/// session's `start`.
-fn wait_first_frame(gpu: &Gpu, start: Instant) {
+/// session's `start`, and sets the `recorder`'s load time from its device-ready time.
+fn wait_first_frame(gpu: &Gpu, start: Instant, recorder: Option<&mut crate::report::Recorder>) {
     diag(format_args!("frame 0: waiting for the GPU"));
     let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
     diag(format_args!("frame 0: the GPU finished"));
     println!("first frame after {:.0} ms", ms_since(start));
+    // The report's load time: device ready to the first world frame.
+    if let Some(rec) = recorder {
+        rec.load_ms = rec.device_ms.map(|at| ms_since(start) - at);
+    }
 }
