@@ -76,6 +76,7 @@ the status.
 | [0059](0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) | Loading runs as time-sliced steps on the app's frame loop, behind an engine loading frame the app can replace | proposed |
 | [0060](0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md) | Entity volumes are freed by handle into a coalescing free list of word ranges, never moved; queue order makes a freed range reusable at once | proposed (Plan 0078) |
 | [0061](0061-the-apps-input-is-menu-first-a-minimal-fixed-key-set-one-overlay-menu-with-a-palette-from-one-key-table.md) | The apps' input is menu-first: a minimal fixed key set, one overlay menu with a palette, one key table driving menu, help and shortcuts; apps only, no UI library | proposed (Plan 0080) |
+| [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
