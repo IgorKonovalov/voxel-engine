@@ -106,7 +106,10 @@ pub struct Modes {
     pub pulse: bool,
     /// The world source the line names first (`source showcase`), when it names one.
     pub source: Option<&'static str>,
-    banner_at: f64,
+    /// A sky is set: the line names the clock's time and cycle after the source.
+    pub(crate) sky: bool,
+    pub(crate) clock: crate::daylight::Clock,
+    pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
     auto: (Adaptation, vxe_render::AutoExposure),
     /// The exposure state as last read back.
@@ -257,6 +260,8 @@ impl Modes {
             resolution,
             pulse: false,
             source: None,
+            sky: false,
+            clock: crate::daylight::Clock::default(),
             banner_at: now_ms,
             auto: match lighting.exposure {
                 vxe_render::Exposure::Auto(a) => (Adaptation::Eye, a),
@@ -612,6 +617,10 @@ impl Modes {
         let on = |b: bool| if b { "on" } else { "off" };
         if let Some(s) = self.source {
             let _ = write!(out, "source {s}, ");
+        }
+        if self.sky {
+            self.clock.write_words(out);
+            out.push_str(", ");
         }
         let _ = write!(
             out,

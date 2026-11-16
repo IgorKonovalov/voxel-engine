@@ -404,10 +404,8 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
     let cave = parse_args_from(argv(&["--level", "--source", "cave"])).expect("parses");
     assert!(!cave.mode.is_level() && !cave.mode.is_showcase() && cave.light.lamp());
     assert_eq!(
-        parse_args_from(argv(&["--source", "outdoor"]))
-            .err()
-            .as_deref(),
-        Some("--source takes cave, level or showcase, not outdoor")
+        parse_args_from(argv(&["--source", "sky"])).err().as_deref(),
+        Some("--source takes cave, level, showcase or outdoor, not sky")
     );
     for extra in [
         &["--save", "a.log"][..],
@@ -421,6 +419,81 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
         v.extend_from_slice(extra);
         let e = parse_args_from(argv(&v)).err().expect("refused");
         assert!(e.starts_with("--source showcase builds"), "{extra:?}: {e}");
+    }
+}
+
+/// `--source outdoor` and its flags: the spawn, the time (refusing 25:00), the day's length
+/// and the sky, on by default for the outdoor source alone; the world flags it refuses.
+#[test]
+fn the_outdoor_source_and_its_flags_parse() {
+    use crate::outdoor::Spawn;
+    let a = parse_args_from(argv(&["--source", "outdoor"])).expect("parses");
+    assert!(a.mode.is_outdoor() && a.sky_on() && a.outdoor.spawn == Spawn::Outside);
+    assert_eq!(a.outdoor.clock, crate::daylight::Clock::default());
+    assert_eq!(a.outdoor.clock.minutes, 720.0);
+    assert_eq!(a.outdoor.clock.day_length_s, 1200.0);
+    let a = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--spawn",
+        "inside",
+        "--time",
+        "17:45",
+        "--day-length",
+        "60",
+        "--sky",
+        "off",
+    ]))
+    .expect("parses");
+    assert_eq!(a.outdoor.spawn, Spawn::Inside);
+    assert_eq!(
+        (
+            a.outdoor.clock.minutes,
+            a.outdoor.clock.day_length_s,
+            a.sky_on()
+        ),
+        (1065.0, 60.0, false)
+    );
+    assert!(parse_args_from(argv(&["--sky", "on"])).unwrap().sky_on());
+    assert!(
+        !parse_args_from(argv(&["--source", "level"]))
+            .unwrap()
+            .sky_on()
+    );
+    assert_eq!(
+        parse_args_from(argv(&["--time", "25:00"])).err().as_deref(),
+        Some("--time takes HH:MM from 00:00 to 23:59, not 25:00")
+    );
+    assert!(parse_args_from(argv(&["--spawn", "roof"])).is_err());
+    assert!(parse_args_from(argv(&["--day-length", "0"])).is_err());
+    assert!(parse_args_from(argv(&["--sky", "maybe"])).is_err());
+    // The outdoor start exposure, unless `--exposure` or `--adaptation` is given.
+    let outdoor = vxe_render::AutoExposure {
+        min: 1e-4,
+        max: 4.0,
+        ..vxe_render::AutoExposure::eye()
+    };
+    let start = |v: &[&str]| parse_args_from(argv(v)).unwrap().start_lighting().exposure;
+    assert_eq!(start(&["--source", "outdoor"]), Exposure::Auto(outdoor));
+    assert_eq!(
+        start(&["--source", "outdoor", "--exposure", "1"]),
+        Exposure::Manual(1.0)
+    );
+    assert_eq!(
+        start(&["--source", "outdoor", "--adaptation", "eye"]),
+        Exposure::Auto(vxe_render::AutoExposure::eye())
+    );
+    assert_eq!(start(&[]), Exposure::Auto(vxe_render::AutoExposure::eye()));
+    for extra in [
+        &["--castle"][..],
+        &["--vault"],
+        &["--room", "12"],
+        &["--level"],
+    ] {
+        let mut v = vec!["--source", "outdoor"];
+        v.extend_from_slice(extra);
+        let e = parse_args_from(argv(&v)).err().expect("refused");
+        assert!(e.starts_with("--source outdoor builds"), "{extra:?}: {e}");
     }
 }
 
@@ -517,7 +590,7 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     // The line the fly-through prints at the start with no lighting flags, and under the table.
     assert_eq!(
         d.start_modes(0.0).line(),
-        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, young luma, entity light world, ore pulse off, exposure auto eye +0.00 EV"
+        "source cave, lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, young luma, entity light world, ore pulse off, exposure auto eye +0.00 EV"
     );
     // `--young-filter` reaches the frame's lighting; luma by default.
     assert_eq!(

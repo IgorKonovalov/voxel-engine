@@ -154,6 +154,7 @@ go through an in-process server, so every edit you see came back as a client eve
 ```sh
 cargo run --release -p flythrough -- --level                  # the bounded level: walk, collapse, coarse grid
 cargo run --release -p flythrough -- --source showcase        # a 72 m hall lit by four ores
+cargo run --release -p flythrough -- --source outdoor         # hills and a cave mouth under a sky
 cargo run --release -p flythrough -- --level --walk --hud     # start walking, the stats overlay shown
 cargo run --release -p flythrough -- --help                   # every flag
 ```
@@ -168,6 +169,9 @@ cargo run --release -p flythrough -- --help                   # every flag
 | `F7` | Toggle the headlamp |
 | `F10` | Cycle the upscaler: off, own, fsr2 |
 | `N` | Cycle the look presets |
+| `Home` | Switch the world source in process: cave, level, showcase, outdoor |
+| `PageUp` / `Shift` + `PageUp` | Under a sky: the time of day an hour on / back |
+| `End` | Under a sky: run or pause the day cycle |
 | `Esc` | Quit |
 
 [`docs/flythrough.md`](docs/flythrough.md) lists every key (lighting, light queue, views,

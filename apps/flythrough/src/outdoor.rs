@@ -48,6 +48,34 @@ pub const CHAMBER_CLEAR: i64 = 100;
 pub const TUNNEL_CLEAR: i64 = 60;
 /// The tunnel's axis starts this far over the mouth's surface, so its opening is cut whole.
 const MOUTH_LIFT: i32 = 10;
+/// `--spawn outside`: voxels toward -x from the mouth's column (30 m) ...
+pub const OUTSIDE_RUN: i32 = 300;
+/// ... and over the ground there (2 m).
+pub const OUTSIDE_LIFT: i32 = 20;
+/// `--spawn inside`: voxels along x into the hill past the tunnel's entrance (about 3 m along
+/// the axis at its slope of about 1 in 4).
+pub const INSIDE_RUN: i32 = 29;
+
+/// Where `--spawn` stands the outdoor camera ([`OutdoorSource::spawn`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Spawn {
+    /// In front of the mouth, facing it.
+    #[default]
+    Outside,
+    /// In the tunnel, facing out.
+    Inside,
+}
+
+impl Spawn {
+    pub const ALL: [Self; 2] = [Self::Outside, Self::Inside];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Outside => "outside",
+            Self::Inside => "inside",
+        }
+    }
+}
 
 /// The outdoor source of `seed`, unbounded in x and y.
 #[derive(Clone, Copy, Debug)]
@@ -93,6 +121,32 @@ impl OutdoorSource {
     /// The chamber's centre voxel.
     pub fn chamber(&self) -> VoxelCoord {
         VoxelCoord(self.chamber.map(|v| v as i32))
+    }
+
+    /// The eye voxel of `spawn` and the integer direction it faces: [`Spawn::Outside`]
+    /// [`OUTSIDE_RUN`] voxels toward -x from the mouth's column, [`OUTSIDE_LIFT`] over the
+    /// ground there, facing +x; [`Spawn::Inside`] on the tunnel's axis [`INSIDE_RUN`] voxels
+    /// along x past the first axis voxel under its column's surface, facing out along the axis.
+    pub fn spawn(&self, spawn: Spawn) -> (VoxelCoord, [i64; 3]) {
+        let [mx, my] = MOUTH;
+        match spawn {
+            Spawn::Outside => {
+                let x = mx - OUTSIDE_RUN;
+                let eye = VoxelCoord([x, my, self.height(x, my) + OUTSIDE_LIFT]);
+                (eye, [1, 0, 0])
+            }
+            Spawn::Inside => {
+                let d = [0, 1, 2].map(|k| self.chamber[k] - self.mouth[k]);
+                let axis_z = |i: i64| self.mouth[2] + d[2] * i / d[0];
+                let x = |i: i64| (self.mouth[0] + i) as i32;
+                let enter = (0..d[0])
+                    .find(|&i| axis_z(i) < i64::from(self.height(x(i), my)))
+                    .unwrap_or(0);
+                let i = (enter + i64::from(INSIDE_RUN)).min(d[0]);
+                let eye = VoxelCoord([x(i), my, axis_z(i) as i32]);
+                (eye, d.map(|v| -v))
+            }
+        }
     }
 
     /// The squared distance from `p` to the tunnel's axis, compared exactly: whether it is at

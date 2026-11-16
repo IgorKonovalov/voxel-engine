@@ -128,6 +128,10 @@ impl Run {
     /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     pub(crate) fn handle_input(&mut self, input: &Input) {
         self.toggle_keys(input);
+        if crate::daylight::clock_keys(input, &mut self.modes, ms_since(self.start)) {
+            println!("{}", self.modes.row(hud::HudRow::Lighting));
+        }
+        self.switch |= input.pressed(crate::daylight::KEY_SOURCE);
         let scroll = input.scroll() + f32::from(u8::from(input.pad_pressed(PadButton::DpadUp)))
             - f32::from(u8::from(input.pad_pressed(PadButton::DpadDown)));
         if scroll != 0.0

@@ -141,11 +141,14 @@ pub const KEY_CLIP_PAUSE: KeyCode = KeyCode::ArrowDown;
 
 /// Every key `run::keys` binds to an action with no mode (the toggles' keys are in
 /// [`TOGGLES`]): the bench, the stamp, walking, the coarse grid, the crumble, the castle shot,
-/// the readings, the lights' drop, removal and shot, the viewer's clip keys, and the audio's
+/// the readings, the source switch and the clock's keys (`daylight`), the lights' drop, removal and shot, the viewer's clip keys, and the audio's
 /// keys and trims; then the frame's `Esc` and `F2` (`run::frame`) and the flight's keys
 /// (`fly`). The path's `T` (resume) is the audio's pulse outside a path.
 pub const ACTION_KEYS: &[KeyCode] = &[
     KEY_PROFILE,
+    crate::daylight::KEY_SOURCE,
+    crate::daylight::KEY_HOUR,
+    crate::daylight::KEY_DAY_CYCLE,
     KeyCode::KeyB,
     KeyCode::KeyP,
     KeyCode::KeyG,

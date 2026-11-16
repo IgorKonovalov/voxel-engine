@@ -96,6 +96,9 @@ the same rows.
 | `F11` | Toggle whether the walkers walk or hold still |
 | `F12` | Toggle the walkers' eye lights |
 | `PageDown` | The next render profile: floor, portable, performance (`--profile`) |
+| `Home` | The next world source, rebuilt in process (`--source`'s order: cave, level, showcase, outdoor, and back), with that source's start settings; the window, the frame and the clock stay. A source that refuses the run's other flags is passed over |
+| `PageUp` | Under a sky: the time of day an hour on; with `Shift`, an hour back |
+| `End` | Under a sky: run or pause the day cycle (`--day-length`) |
 | `Left`, `Right` | With `--model`: the clip before and after |
 | `Down` | With `--model`: pause or play the clip |
 
@@ -192,7 +195,13 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 
 | Flag | Does |
 |------|------|
-| `--source cave\|level\|showcase` | The world: the streamed noise cave [default], the bounded level, or the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off, light radius 19 and its `hall` shot unless told otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`) |
+| `--source cave\|level\|showcase\|outdoor` | The world: the streamed noise cave [default], the bounded level, the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off, light radius 19 and its `hall` shot unless told otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`), or the streamed outdoor hills with a cave mouth under a sky (no `--level`, `--castle`, `--vault`, `--room`, a rig, `--save` or `--replay`). The banner's line starts `source NAME` |
+| `--spawn outside\|inside` | Where `--source outdoor` starts: 30 m before the cave mouth facing it, 2 m up [default], or 3 m inside the tunnel facing out |
+| `--time HH:MM` | The time of day the sky starts at, latitude 45 at an equinox [12:00]; the banner names it while a sky is set |
+| `--day-length S` | Seconds for a whole day while the cycle runs (`End`) [1200] |
+| `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
+| `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
+| `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |
 | `--level` | The bounded level (as `--source level`) |
 | `--thin-rig` | A bounded scene of thin features for the field look |
 | `--seam-rig` | A bounded scene of seams for the field look |

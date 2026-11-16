@@ -12,6 +12,7 @@ pub mod castle;
 pub mod cave;
 mod census;
 pub mod cli;
+pub mod daylight;
 pub(crate) mod edits;
 mod fly;
 pub mod hud;

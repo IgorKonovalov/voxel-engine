@@ -211,6 +211,7 @@ impl Run {
         if self.args.bench_at.contains(&self.frame) {
             self.bench();
         }
+        self.switch |= self.args.switch_at.contains(&self.frame);
         let driven = match self.path_step(input, dt) {
             Some(Flow::Exit) => return Flow::Exit,
             Some(Flow::Continue) => true,
@@ -705,6 +706,13 @@ impl Run {
         }
         gfx.frame.set_lighting(self.modes.lighting);
         gfx.frame.set_dt(step);
+        // The testbed's clock moves by the loop's step; the engine holds none.
+        self.modes.clock.advance(step);
+        let sky = self
+            .modes
+            .sky
+            .then(|| self.modes.clock.sky(crate::outdoor::BASE_Z as f32));
+        gfx.frame.set_sky(sky);
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's

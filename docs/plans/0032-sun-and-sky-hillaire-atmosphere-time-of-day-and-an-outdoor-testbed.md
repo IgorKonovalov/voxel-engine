@@ -1086,7 +1086,7 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 |---|---|---|---|
 | 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | done; golden `sky_empty_noon` waits for Phase 10 | b6c7d986 |
 | 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering (Notes); goldens wait for Phase 10 | 96c2c991 |
-| 3: The outdoor source, the source switch and the time of day in the fly-through | dev | in progress: the source and its CPU bars (wip) | |
+| 3: The outdoor source, the source switch and the time of day in the fly-through | dev | done; bar 6 soak only (Notes); keys differ (Notes) | committed with this row |
 | 4: The outdoor exposure | dev | not started | |
 | 5: The sun and the moon as the light pass's directional sample | dev | not started | |
 | 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | not started | |
@@ -1125,6 +1125,35 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   2000 km around the planet, under another horizon. `twilight_darkens_to_zero` asserts the bar
   with the term off; `reading::twilight_with_multiple_scattering` prints the default's.
 - Phase 2 goldens (`sky_empty_sunset`, `sky_empty_night`) move to Phase 10.
+- Phase 2 bar 4 stays open pending the owner (orchestrator, 2026-11-17): the test asserts it
+  with multiple scattering off and prints the default sky's residue; the term is unchanged.
+- Phase 3 keys (merge items for Plan 0080): the source switch is `Home` (the plan's `Tab`),
+  the hour step `PageUp` with `Shift` + `PageUp` back (the plan's `'` and `;`), the day cycle
+  `End` (the plan's `/`). Tab is 0080's menu key; 0080's freed keys are all bound on this
+  branch, so these are keys unbound on both branches. They are in `ACTION_KEYS`
+  (`daylight::KEY_SOURCE`, `KEY_HOUR`, `KEY_DAY_CYCLE`); the switch is `Flythrough::switch_source`,
+  callable from a menu row.
+- Phase 3: the switch keeps the `Frame`, the presenter, the HUD overlay and the timers, and
+  builds a new `GpuWorld` (the mirror's contents); the frame's histories and exposure reset and
+  its entity mirror is replaced. The new run loads without the loading screen, in the frame
+  that switched. A source whose parse refuses the run's other flags (`--castle` beside any
+  source but the cave) is passed over with a printed line. The clock (time and cycle) carries
+  across; the sky is set per the new source's start settings (`--sky`, else outdoor only).
+- Phase 3: new flags beyond the plan's: `--switch-at F,..` (the headless switch bar 6 drives)
+  and `--spawn-hash` (the hash line bar 6 reads); the files `cli/outdoor.rs`, `daylight.rs`,
+  `run/switch.rs`, and `docs/flythrough.md` (every key and flag), are outside the phase's list.
+- Phase 3: the `--source` row moved from `cli/flags.rs` to `cli/outdoor.rs` (flags.rs at the
+  1200-line cap); `hud::Modes::banner_at` became `pub(crate)` (modes.rs at 1197 lines).
+- Phase 3: every source's line starts `source NAME`, which changed three existing tests'
+  expected lines (`lighting_flags_parse_and_refuse_unknown_values`,
+  `the_default_look_is_the_windows_pick`, `the_start_banner_names_the_look_and_n_cycles`'s
+  bare modes) besides the plan's `the_showcase_banner_names_its_source_and_the_lamp`.
+- Phase 3 bar 6 not met as stated: the 600-frame run and the 60-frame variant both read over
+  the 10 s soak line on lavapipe (28.6 s and 14.2 s) and are `#[ignore = "soak"]`; no variant
+  runs in the gate. The runs use `--residency 6,8` (a `3,4` run hangs before its first frame on
+  the cave too; readings log).
+- Phase 4's start exposure (`OutdoorArgs::auto`, `OUTDOOR_MIN`, `OUTDOOR_MAX`, its parse
+  assertions) landed in Phase 3's commit, with the outdoor start settings.
 
 ### Close triggers
 
