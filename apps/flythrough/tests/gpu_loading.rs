@@ -71,7 +71,7 @@ fn world_frames(stderr: &str) -> usize {
 /// A 12 m room headless with `--loading-screen on` and a 0.05 ms slice, so the pre-roll steps
 /// once a loading frame, against the same run with the screen off (the pre-roll run in one
 /// call): the same steps, the same chunks baked and the same samples, at least 3 loading
-/// frames on, and exactly 3 world frames in both.
+/// frames on in the pre-roll's stages, none off, and exactly 3 world frames in both.
 #[test]
 fn a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes() {
     let Some((off_out, off_err)) = room_run(&["--loading-screen", "off"]) else {
@@ -86,22 +86,90 @@ fn a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes() {
     println!("pre-roll off {off:?}, on {on:?}");
     assert!(off.1 > 0 && off.2 > 0, "the pre-roll baked: {off:?}");
     assert_eq!(on, off, "steps, chunks baked and samples, on against off");
-    let loading = on_out
-        .lines()
-        .find_map(|l| l.strip_prefix("loading: pre-roll "))
-        .unwrap_or_else(|| panic!("no loading: line in\n{on_out}"));
-    let frames: u32 = loading
-        .split(", ")
-        .nth(1)
-        .and_then(|p| p.split(' ').next())
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| panic!("a frame count in {loading:?}"));
-    println!("loading: pre-roll {loading}");
-    assert!(frames >= 3, "at least 3 loading frames: {loading}");
+    let lighting = loading_frames(&on_err)
+        .iter()
+        .filter(|(stage, _)| stage.starts_with("lighting"))
+        .count();
+    println!("{lighting} loading frames stepped the pre-roll");
+    assert!(lighting >= 3, "at least 3 loading frames in the pre-roll");
     assert!(
-        !off_out.contains("loading: pre-roll"),
+        loading_frames(&off_err).is_empty(),
         "the screen off draws no loading frame"
     );
     assert_eq!(world_frames(&off_err), 3, "3 world frames off");
     assert_eq!(world_frames(&on_err), 3, "3 world frames on");
+}
+
+/// Each loading frame's `(stage, fraction)` from its `diag: loading frame N: <stage> <f>` line.
+fn loading_frames(stderr: &str) -> Vec<(String, f32)> {
+    stderr
+        .lines()
+        .filter_map(|l| l.split_once("diag: loading frame ").map(|(_, r)| r))
+        .map(|r| {
+            let (_, rest) = r.split_once(": ").expect("a frame number");
+            let rest = rest.rsplit_once(" at ").map_or(rest, |(a, _)| a);
+            let (stage, f) = rest.rsplit_once(' ').expect("a stage and a fraction");
+            (stage.to_owned(), f.parse().expect("a fraction"))
+        })
+        .collect()
+}
+
+/// The streamed cave headless on lavapipe at the default residency, the pre-roll's near ring
+/// at 0 and a coarse pass of 16, the screen on with a 0.05 ms slice (one step a loading
+/// frame): the loading frames name the near residency, then the near chunks' light, then the
+/// coarse pass, each at least once and in that order; their fractions never decrease; the
+/// last reads 1. About 21 s on lavapipe here (2026-11-16), so it runs in the soak tier.
+#[test]
+#[ignore = "soak"]
+fn the_streamed_load_reports_its_stages_in_order_and_ends_at_one() {
+    let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
+        .args([
+            "--headless",
+            "--adapter",
+            "llvmpipe",
+            "--frames",
+            "3",
+            "--render",
+            "64x36",
+            "--near",
+            "0",
+            "--coarse",
+            "16",
+            "--loading-screen",
+            "on",
+            "--load-slice",
+            "0.05",
+        ])
+        .env("RUST_LOG", "flythrough=info")
+        .output()
+        .expect("the fly-through runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("no adapter") {
+        println!("skipped: no adapter ({})", stderr.trim());
+        return;
+    }
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let frames = loading_frames(&stderr);
+    let mut order: Vec<&str> = Vec::new();
+    for (stage, _) in &frames {
+        if order.last() != Some(&stage.as_str()) {
+            order.push(stage);
+        }
+    }
+    println!("{} loading frames, stages {order:?}", frames.len());
+    let want = [
+        "streaming the near chunks",
+        "lighting the near chunks",
+        "lighting the coarse pass",
+    ];
+    assert_eq!(&order[..3], want, "the stages in order");
+    for w in frames.windows(2) {
+        assert!(w[1].1 >= w[0].1, "the bar moved back: {w:?}");
+    }
+    assert_eq!(
+        frames.last().map(|f| f.1),
+        Some(1.0),
+        "the last frame reads 1"
+    );
 }

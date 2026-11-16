@@ -887,6 +887,18 @@ impl GpuWorld {
         }
     }
 
+    /// Replaces the sync's time budget ([`MirrorConfig::sync_budget_time`]), from the next
+    /// sync on; `None` for none. A caller that steps a large first upload over several syncs
+    /// sets one, and restores its own after.
+    pub fn set_sync_budget_time(&mut self, budget: Option<std::time::Duration>) {
+        self.cfg.sync_budget_time = budget;
+    }
+
+    /// The sync's time budget ([`MirrorConfig::sync_budget_time`]).
+    pub fn sync_budget_time(&self) -> Option<std::time::Duration> {
+        self.cfg.sync_budget_time
+    }
+
     /// Replaces the clock the sync's time budget reads (wall time by default), for a test
     /// that advances it by a fixed step per read.
     pub fn set_sync_clock(&mut self, clock: SyncClock) {

@@ -5,7 +5,7 @@ use crate::audio::{Audio, RoomProbe};
 use crate::autopilot::Autopilot;
 use crate::castle;
 use crate::cli::Args;
-use crate::edits::{Coarse, Failure, Net, ball};
+use crate::edits::{Coarse, Failure, Net};
 use crate::fly::{Fly, Walk};
 use crate::hud::{self};
 use crate::now;
@@ -15,7 +15,7 @@ use crate::run::fade::FadeSample;
 use crate::run::hud_feed::{HUD_SCALE, Hud, Samples};
 use crate::run::queue::QueueRun;
 use crate::setup::{CrispRows, Gfx};
-use crate::streaming::{NEAR_D2, STREAM_POOL_BYTES, Stream};
+use crate::streaming::{STREAM_POOL_BYTES, Stream};
 use crate::{
     STREAM_MIRROR_BUDGET, ScrollSteps, chunk_ram, level_mirror_budget, level_pool_units, mips_ram,
 };
@@ -24,9 +24,9 @@ use std::time::Instant;
 use vxe_app::{Flow, Gpu};
 use vxe_render::{
     Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, LodParams, MarchTimer,
-    MirrorConfig, PassTimer, Presenter, SyncStats, Window, wgpu,
+    MirrorConfig, PassTimer, Presenter, Window, wgpu,
 };
-use vxe_world::{ChunkCoord, MaterialTable, VoxelCoord, World};
+use vxe_world::{MaterialTable, VoxelCoord, World};
 
 pub(crate) mod edit;
 pub(crate) mod fade;
@@ -185,37 +185,13 @@ impl Run {
                 r_full: self.args.residency.r_full,
                 forced_level: None,
             });
-            self.init_stream(gpu)
+            self.stream_mirror(gpu)
         } else {
             let mut mirror =
                 self.new_mirror(gpu, MirrorConfig::new(Window::Fixed(self.world.extent())));
             mirror.set_focus(self.spawn);
-            let t = now();
-            let mut enc = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
-            let sync_ms = ms_since(t);
-            gpu.queue.submit([enc.finish()]);
-            match synced {
-                Ok(s) => println!(
-                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated; lights: {} samples from {} bricks in {:.3} ms",
-                    s.bytes,
-                    s.bricks,
-                    s.chunks,
-                    s.writes,
-                    sync_ms,
-                    mirror.mirror_bytes(),
-                    mirror.allocated_bytes(),
-                    s.light_samples,
-                    s.light_bricks,
-                    s.light_us as f64 / 1e3
-                ),
-                Err(e) => self.failure.set(format!("mirror sync failed: {e}")),
-            }
             mirror
         };
-        diag(format_args!("first sync or near residency done"));
         let gfx = Gfx {
             mirror,
             frame,
@@ -226,17 +202,14 @@ impl Run {
             hud_timer: PassTimer::new(&gpu.device, &gpu.queue),
         };
         self.gfx = Some(gfx);
-        if self.args.loading.screen_on(self.args.headless) {
-            // The pre-roll and the rest step from the frame loop behind loading frames.
-            self.begin_loading(gpu);
+        let screen = self.args.loading.screen_on(self.args.headless);
+        let loading = self.start_loading(screen);
+        if screen {
+            // The rest steps from the frame loop behind loading frames.
+            self.loading = Some(loading);
             return;
         }
-        if let Some(mut gfx) = self.gfx.take() {
-            self.queue_pre_roll(gpu, &mut gfx.frame, &mut gfx.mirror);
-            self.gfx = Some(gfx);
-        }
-        diag(format_args!("pre-roll done"));
-        self.finish_load(gpu);
+        self.load_all(gpu, loading);
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -286,10 +259,10 @@ impl Run {
         mirror
     }
 
-    /// The streaming mirror, returned once the chunks within squared distance `NEAR_D2` of
-    /// the spawn chunk are resident and mirrored full.
-    pub(crate) fn init_stream(&mut self, gpu: &Gpu) -> GpuWorld {
-        let mut mirror = self.new_mirror(
+    /// The streaming mirror, before any sync: a window following the focus, under the
+    /// run's sync budgets.
+    pub(crate) fn stream_mirror(&mut self, gpu: &Gpu) -> GpuWorld {
+        self.new_mirror(
             gpu,
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
@@ -299,84 +272,7 @@ impl Run {
                     side: crate::window_side(self.args.residency),
                 })
             },
-        );
-        let Some(stream) = self.stream.as_mut() else {
-            return mirror;
-        };
-        let spawn = self.spawn.chunk();
-        let near: Vec<ChunkCoord> = ball(NEAR_D2)
-            .into_iter()
-            .map(|o| ChunkCoord([0, 1, 2].map(|k| spawn.0[k] + o[k])))
-            .collect();
-        mirror.set_focus(self.spawn);
-        // The light extraction of the first sync that scanned a brick, and of all of them.
-        let mut first_light: Option<SyncStats> = None;
-        let (mut light_us, mut syncs) = (0u64, 0u32);
-        diag(format_args!(
-            "mirror created, streaming {} near chunks",
-            near.len()
-        ));
-        let mut diag_next = now();
-        loop {
-            if now() >= diag_next {
-                let mirrored = near
-                    .iter()
-                    .filter(|&&c| mirror.is_mirrored(c) && !mirror.is_lod(c))
-                    .count();
-                diag(format_args!(
-                    "streaming, {syncs} syncs, {mirrored} of {} near chunks mirrored",
-                    near.len()
-                ));
-                diag_next = now() + std::time::Duration::from_secs(2);
-            }
-            stream.streamer.update(&self.world, &[self.spawn]);
-            stream.tick_ms.push(ms_since(self.start));
-            let ev = stream.streamer.poll(&self.world);
-            mirror.apply_events(&ev);
-            self.queue.prepared.extend(ev.prepared.iter().cloned());
-            let mut enc = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
-            gpu.queue.submit([enc.finish()]);
-            match synced {
-                Ok(s) => {
-                    syncs += 1;
-                    light_us += s.light_us;
-                    if s.light_bricks > 0 {
-                        first_light.get_or_insert(s);
-                    }
-                }
-                Err(e) => {
-                    self.failure.set(format!("mirror sync failed: {e}"));
-                    break;
-                }
-            }
-            stream.track(&ev, &mirror);
-            if near
-                .iter()
-                .all(|&c| mirror.is_mirrored(c) && !mirror.is_lod(c))
-            {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        if let Some(s) = first_light {
-            println!(
-                "lights: first sync with bricks extracted {} samples from {} bricks in {:.3} ms; {syncs} syncs to near residency spent {:.3} ms, {} samples live",
-                s.light_samples,
-                s.light_bricks,
-                s.light_us as f64 / 1e3,
-                light_us as f64 / 1e3,
-                mirror.light_samples()
-            );
-        }
-        println!(
-            "near residency ({} chunks resident and mirrored) after {:.0} ms",
-            near.len(),
-            ms_since(self.start)
-        );
-        mirror
+        )
     }
 
     pub(crate) fn resized(&mut self, gpu: &Gpu) {

@@ -19,6 +19,7 @@ mod gpu_util;
 mod gpu_world;
 mod hud;
 mod light;
+mod loading;
 mod present;
 mod probes;
 mod readback;
@@ -78,8 +79,9 @@ pub mod internals {
 pub use bake::{
     BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Budget, DEFAULT_BAKE_EDIT_MS,
     DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR, DigReport, FaceOutcome,
-    MissingLight, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder,
-    QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, queue_settings,
+    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
+    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
+    QueueView, ReachMode, Refine, Store, StoreStats, queue_settings,
 };
 pub use camera::{Camera, View};
 pub use entities::{
@@ -107,6 +109,7 @@ pub use gpu_world::{
 };
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
+pub use loading::{LoadProgress, LoadStage};
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
 pub use {glam, wgpu};

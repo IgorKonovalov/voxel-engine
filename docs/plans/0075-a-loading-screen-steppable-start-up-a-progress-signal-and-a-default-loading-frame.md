@@ -323,8 +323,8 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the pre-roll stepped behind a plain loading frame | dev | done; readings headless, not windowed (lane rule 10); the test runs `--room 12`; `test_support.rs` gained the `Run` field; the loading flags in a new `cli/loading.rs` with a Loading and a Diagnostics section | committed with this row |
-| 2: every stage steps; PreRoll and LoadProgress | dev | not started | |
+| 1: the pre-roll stepped behind a plain loading frame | dev | done; readings headless, not windowed (lane rule 10); the test runs `--room 12`; `test_support.rs` gained the `Run` field; the loading flags in a new `cli/loading.rs` with a Loading and a Diagnostics section | 1ff6ffb1 |
+| 2: every stage steps; PreRoll and LoadProgress | dev | done; the streamed stage test is born soak (22 s on lavapipe); the sync's time budget covers the first stage only (an attempt with it through the pre-roll starved the coarse pass); the GPU cap is a `device.poll(wait)` at each loading frame's start; `GpuWorld` gained `set_sync_budget_time` | committed with this row |
 | 3: the engine's loading frame | dev | not started | |
 | 4: the fly-through and the tester around it | dev | not started | |
 | 5: the budget readings | dev | not started | |
