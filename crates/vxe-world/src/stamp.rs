@@ -87,28 +87,58 @@ fn uniform_over(
     seen
 }
 
-/// Whether `prefab`, with its minimum corner at `origin`, writes any voxel in `lo..=hi` (a
-/// sub-box of its own box). A brick that writes nothing is passed over whole.
-fn writes_any(prefab: &Prefab, origin: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> bool {
+/// Calls `f` with the world coordinate and material of every voxel `prefab` (minimum corner at
+/// `origin`) writes inside `lo..=hi`, a sub-box of its own box, prefab brick by prefab brick:
+/// each brick is looked up once, a uniform brick that writes nothing is passed over whole, and
+/// a stored brick is read by row. Stops at the first call that returns `true` and returns
+/// whether one did. The order is not the dense order; callers only count, bound and write
+/// disjoint voxels.
+#[inline]
+fn each_written(
+    prefab: &Prefab,
+    origin: [i64; 3],
+    lo: [i64; 3],
+    hi: [i64; 3],
+    mut f: impl FnMut([i64; 3], MaterialId) -> bool,
+) -> bool {
     let (blo, bhi, plo, phi) = prefab_span(origin, lo, hi);
     let e = PREFAB_BRICK_EDGE;
     for bz in blo[2]..=bhi[2] {
         for by in blo[1]..=bhi[1] {
             for bx in blo[0]..=bhi[0] {
-                match prefab.brick([bx, by, bz]) {
-                    BrickRef::Uniform(_, w) => {
-                        if w {
-                            return true;
-                        }
-                    }
-                    BrickRef::Full(_) => {
-                        let b = [bx, by, bz];
-                        let clo = [0, 1, 2].map(|k| plo[k].max(b[k] * e));
-                        let chi = [0, 1, 2].map(|k| phi[k].min(b[k] * e + e - 1));
+                let b = [bx, by, bz];
+                let bmin = b.map(|v| v * e);
+                let clo = [0, 1, 2].map(|k| plo[k].max(bmin[k]));
+                let chi = [0, 1, 2].map(|k| phi[k].min(bmin[k] + e - 1));
+                match prefab.brick(b) {
+                    BrickRef::Uniform(_, false) => {}
+                    BrickRef::Uniform(m, true) => {
                         for z in clo[2]..=chi[2] {
                             for y in clo[1]..=chi[1] {
                                 for x in clo[0]..=chi[0] {
-                                    if prefab.cell([x, y, z]).1 {
+                                    let w = [x, y, z];
+                                    if f([0, 1, 2].map(|k| origin[k] + i64::from(w[k])), m) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    BrickRef::Full(full) => {
+                        for z in clo[2]..=chi[2] {
+                            let mask = full.mask[(z - bmin[2]) as usize];
+                            let wz = origin[2] + i64::from(z);
+                            for y in clo[1]..=chi[1] {
+                                let ly = y - bmin[1];
+                                let row = ((z - bmin[2]) * e + ly) * e;
+                                let wy = origin[1] + i64::from(y);
+                                for x in clo[0]..=chi[0] {
+                                    let lx = x - bmin[0];
+                                    if mask >> (lx + e * ly) & 1 == 0 {
+                                        continue;
+                                    }
+                                    let m = full.voxels[(row + lx) as usize];
+                                    if f([origin[0] + i64::from(x), wy, wz], m) {
                                         return true;
                                     }
                                 }
@@ -120,6 +150,12 @@ fn writes_any(prefab: &Prefab, origin: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> 
         }
     }
     false
+}
+
+/// Whether `prefab`, with its minimum corner at `origin`, writes any voxel in `lo..=hi` (a
+/// sub-box of its own box). A brick that writes nothing is passed over whole.
+fn writes_any(prefab: &Prefab, origin: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> bool {
+    each_written(prefab, origin, lo, hi, |_, _| true)
 }
 
 /// Writes the masked voxels of `prefab` (already rotated, minimum corner at `origin`) that
@@ -175,56 +211,29 @@ fn blit(
                 }
                 // A uniform brick expands only when a written voxel differs from it.
                 if let (None, Some(m)) = (one, uniform) {
-                    let mut differs = false;
-                    'scan: for z in elo[2]..=ehi[2] {
-                        for y in elo[1]..=ehi[1] {
-                            for x in elo[0]..=ehi[0] {
-                                let l = [x - origin[0], y - origin[1], z - origin[2]];
-                                let (p, w) = prefab.cell(l.map(|v| v as u32));
-                                if w && p != m {
-                                    differs = true;
-                                    break 'scan;
-                                }
-                            }
-                        }
-                    }
+                    let differs = each_written(prefab, origin, elo, ehi, |_, p| p != m);
                     if !differs {
                         continue;
                     }
                 }
                 let changed = chunk.brick_mut(slot).modify(|voxels| {
                     let mut changed = false;
-                    for z in elo[2]..=ehi[2] {
-                        for y in elo[1]..=ehi[1] {
-                            let local = [0, (y - bmin[1]) as i32, (z - bmin[2]) as i32];
-                            let brow = index_in_brick(local);
-                            for x in elo[0]..=ehi[0] {
-                                let new = match one {
-                                    Some((m, _)) => m,
-                                    None => {
-                                        let l = [x - origin[0], y - origin[1], z - origin[2]];
-                                        match prefab.cell(l.map(|v| v as u32)) {
-                                            (m, true) => m,
-                                            (_, false) => continue,
-                                        }
-                                    }
-                                };
-                                let cell = &mut voxels[brow + (x - bmin[0]) as usize];
-                                let old = *cell;
-                                if old == new {
-                                    continue;
-                                }
-                                *cell = new;
-                                changed = true;
-                                if let Some(t) = tally.as_deref_mut() {
-                                    // Each changed voxel bounds itself, at its `i32` coordinate.
-                                    let v = [x as i32, y as i32, z as i32].map(i64::from);
-                                    t.count(old, 1);
-                                    t.bound(v, v);
-                                }
+                    each_written(prefab, origin, elo, ehi, |v, new| {
+                        let local = [0, 1, 2].map(|k| (v[k] - bmin[k]) as i32);
+                        let cell = &mut voxels[index_in_brick(local)];
+                        let old = *cell;
+                        if old != new {
+                            *cell = new;
+                            changed = true;
+                            if let Some(t) = tally.as_deref_mut() {
+                                // Each changed voxel bounds itself, at its `i32` coordinate.
+                                let v = v.map(|c| i64::from(c as i32));
+                                t.count(old, 1);
+                                t.bound(v, v);
                             }
                         }
-                    }
+                        false
+                    });
                     changed
                 });
                 if changed {
