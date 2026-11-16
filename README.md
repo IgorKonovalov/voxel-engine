@@ -17,6 +17,15 @@ Regenerate with
 `cargo run --release -p flythrough --example hero -- --exposure 8 --frames 8192 --out docs/images/hero.png`
 (every other setting above is the example's default).</sub>
 
+![A large dark voxel spider walking in place on the showcase cavern's floor, its eight legs stepping each on its own phase, glowing amber leg tips and cyan eyes, silhouetted against a cluster of cyan crystals under a red dome](docs/images/spider-walk.gif)
+
+<sub>An entity: the spider from the [entities library](docs/entities.md), rigid voxel parts
+playing its `walk` clip in the showcase's hall, rendered headlessly frame by frame on an
+RTX 3080 Laptop GPU (1280x720, 16 settle frames a pose, exposure 10, lamp off), 25 fps, 800 px
+wide. Regenerate with
+`scripts/record-clip.sh --width 800 --out docs/images/spider-walk -- --clip walk`
+(every other setting is the clip example's default).</sub>
+
 A game-agnostic voxel engine in Rust. A streaming world of small voxels (10 cm at the first
 consumer's scale) is ray-marched in compute shaders through [`wgpu`](https://wgpu.rs), edited at
 runtime with deterministic operations that report what they changed, and queried for collision,

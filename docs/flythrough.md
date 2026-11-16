@@ -281,3 +281,62 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 Flags from earlier plans (`--steady`, `--sampler`, `--emissive-history` and others from Plan
 0057; `--light`, `--preload` and others from Plan 0059) are refused with a message that names
 the plan. `--help` lists them.
+
+## Recording clips
+
+Two scripts turn a model's clip into a GIF or MP4 for articles and the README. The models and
+how to make one are in [entities.md](entities.md).
+
+`scripts/record-clip.sh` renders headlessly: it builds the fly-through's `clip` example
+(release, in a 6G memory-capped scope), renders numbered PNGs under the GPU lock into
+`target/clip/frames/<rig>-<clip>/`, and encodes them with ffmpeg. Frame `n` shows the clip at
+tick `n * rate / fps`, so a recording is the same on every run.
+
+```sh
+scripts/record-clip.sh                                    # the spider's first clip, a GIF
+scripts/record-clip.sh --format both --width 800 -- --clip rear
+scripts/record-clip.sh -- --rig apps/flythrough/assets/entities/walker/walker.rig \
+  --clip walk --ahead 70 --orbit 20,2,-10 --aim 7          # the walker, close up
+scripts/record-clip.sh --input target/clip/frames/spider-walk --crop 960:540:160:90
+```
+
+| Option | Does |
+|--------|------|
+| `--out BASE` | The outputs' path without extension [`target/clip/<rig>-<clip>`] |
+| `--format gif\|mp4\|both` | A looping GIF (two-pass palette, ordered dither), an H.264 MP4 (yuv420p, faststart), or both [gif] |
+| `--width W` | The encoded width, the height in proportion [640] |
+| `--fps N` | Frames a second, rendered and encoded [25] |
+| `--crop W:H:X:Y` | Crop the frames, in rendered pixels, before scaling |
+| `--colors N` | The GIF palette's colours [192] |
+| `--crf N` | The MP4's quality, lower is better [20] |
+| `--input PATH` | Encode a directory of `frame-*.png` or a video instead of rendering |
+| `--no-build` | Run the example as already built |
+
+Everything after `--` goes to the example; `cargo run --release -p flythrough --example clip --
+--help` lists its flags. The ones that frame a recording:
+
+| Flag | Does |
+|------|------|
+| `--rig PATH`, `--clip NAME` | The model and its clip [the spider; the rig's first clip] |
+| `--source`, `--shot`, `--seed` | The world, as the hero's [the showcase's `hall`] |
+| `--place X,Y,Z` | The model's feet voxel [the floor `--ahead D` voxels (80) along the shot's heading] |
+| `--facing DEG` | The model's yaw from facing -y [towards the shot's eye] |
+| `--orbit DIST,HEIGHT,ANGLE` | The camera `DIST` voxels from the feet across the floor, `HEIGHT` over them, `ANGLE` degrees round from the model's front [60,12,10] |
+| `--aim H` | The orbit looks at the point `H` voxels over the feet [14] |
+| `--at X,Y,Z`, `--yaw`, `--pitch` | A fixed camera instead of the orbit |
+| `--exposure auto\|E` | The exposure [a manual 10] |
+| `--size WxH` | The rendered size [1280x720] |
+| `--loops N`, `--seconds S` | One or more passes of the clip, or a time [1 loop] |
+| `--settle N`, `--warmup N` | Frames drawn at each pose before it is kept, and before the first [16, 64] |
+
+A loop is seamless when its ticks fill whole frames (`ticks * fps / rate` whole); the example
+says so when they do not. The lighting is the hero's: lamp and bounce off, probes at 32.
+
+`scripts/record-screen.sh` is the fallback for a scene that needs hands on the controls: start
+the fly-through in a window yourself, then run it. It counts down in a desktop notification,
+dismisses the notifications (`makoctl`, when installed), records a monitor with
+`gpu-screen-recorder` for `--seconds` (10), stops it with SIGINT and hands the video to
+`record-clip.sh --input`. It never closes, moves or focuses a window. `--monitor NAME` picks
+the monitor (the first `gpu-screen-recorder --list-capture-options` names by default), `--countdown N` the
+countdown (5), `--keep-raw` keeps the recording, and `--format`, `--width`, `--fps`, `--crop`,
+`--colors` and `--crf` go to the encode.
