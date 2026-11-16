@@ -170,20 +170,58 @@ impl PartXform {
 /// One entity's parts placed for drawing, as `f32` affine maps: from one pose
 /// ([`DisplayPose::of`]) or between two ([`DisplayPose::between`]), so a viewer draws between
 /// two ticks of a fixed-point clip. Drawing only: the entity queries read the pose in the set.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// A display pose kept across frames and refreshed with [`DisplayPose::of_into`] or
+/// [`DisplayPose::between_into`] reuses its storage: once grown to its model's part count it
+/// allocates nothing.
+#[derive(Clone, Debug, Default)]
 pub struct DisplayPose {
     /// Each part's placement and its detail.
     parts: Vec<(PartXform, u8)>,
+    /// The two compositions' storage, kept for the next refresh.
+    scratch: [vxe_entity::ComposeScratch; 2],
+}
+
+impl PartialEq for DisplayPose {
+    /// Two display poses are equal when they place the same parts alike; the kept storage
+    /// does not count.
+    fn eq(&self, o: &Self) -> bool {
+        self.parts == o.parts
+    }
 }
 
 impl DisplayPose {
     /// `model`'s parts as `pose` places them; `None` when the pose does not fit the model.
     pub fn of(model: &Model, pose: &vxe_entity::Pose) -> Option<Self> {
-        let c = pose.compose(model)?;
-        let parts = (0..model.parts().len())
-            .map(|k| Some((PartXform::of(&c, k)?, model.parts()[k].detail)))
-            .collect::<Option<Vec<_>>>()?;
-        Some(Self { parts })
+        let mut d = Self::default();
+        d.of_into(model, pose).then_some(d)
+    }
+
+    /// [`DisplayPose::of`] into `self`, reusing its storage; `false`, and `self` emptied, when
+    /// the pose does not fit the model.
+    pub fn of_into(&mut self, model: &Model, pose: &vxe_entity::Pose) -> bool {
+        self.parts.clear();
+        let scratch = std::mem::take(&mut self.scratch[0]);
+        let c = match pose.compose_with(model, scratch) {
+            Ok(c) => c,
+            Err(s) => {
+                self.scratch[0] = s;
+                return false;
+            }
+        };
+        let mut fits = true;
+        for k in 0..model.parts().len() {
+            let Some(x) = PartXform::of(&c, k) else {
+                fits = false;
+                break;
+            };
+            self.parts.push((x, model.parts()[k].detail));
+        }
+        self.scratch[0] = c.into_scratch();
+        if !fits {
+            self.parts.clear();
+        }
+        fits
     }
 
     /// `model`'s parts a fraction `alpha` (0 to 1) of the way from pose `a` to pose `b`: per
@@ -197,11 +235,52 @@ impl DisplayPose {
         b: &vxe_entity::Pose,
         alpha: f32,
     ) -> Option<Self> {
-        let alpha = f64::from(alpha);
-        let (ca, cb) = (a.compose(model)?, b.compose(model)?);
-        let mut parts = Vec::with_capacity(model.parts().len());
+        let mut d = Self::default();
+        d.between_into(model, a, b, alpha).then_some(d)
+    }
+
+    /// [`DisplayPose::between`] into `self`, reusing its storage; `false`, and `self` emptied,
+    /// when a pose does not fit the model.
+    pub fn between_into(
+        &mut self,
+        model: &Model,
+        a: &vxe_entity::Pose,
+        b: &vxe_entity::Pose,
+        alpha: f32,
+    ) -> bool {
+        self.parts.clear();
+        let [sa, sb] = std::mem::take(&mut self.scratch);
+        let (ca, cb) = match (a.compose_with(model, sa), b.compose_with(model, sb)) {
+            (Ok(ca), Ok(cb)) => (ca, cb),
+            (ra, rb) => {
+                self.scratch = [
+                    ra.map_or_else(|s| s, |c| c.into_scratch()),
+                    rb.map_or_else(|s| s, |c| c.into_scratch()),
+                ];
+                return false;
+            }
+        };
+        let fits = self.blend_parts(model, &ca, &cb, f64::from(alpha));
+        self.scratch = [ca.into_scratch(), cb.into_scratch()];
+        if !fits {
+            self.parts.clear();
+        }
+        fits
+    }
+
+    /// Pushes each part of `model` blended `alpha` of the way from `ca` to `cb`; `false` at
+    /// the first part either composition cannot place.
+    fn blend_parts(
+        &mut self,
+        model: &Model,
+        ca: &vxe_entity::ComposedPose<'_>,
+        cb: &vxe_entity::ComposedPose<'_>,
+        alpha: f64,
+    ) -> bool {
         for (k, p) in model.parts().iter().enumerate() {
-            let (xa, xb) = (PartXform::of(&ca, k)?, PartXform::of(&cb, k)?);
+            let (Some(xa), Some(xb)) = (PartXform::of(ca, k), PartXform::of(cb, k)) else {
+                return false;
+            };
             let d = f64::from(p.detail);
             let pivot_m = p.pivot.map(|v| v as f32 / 256.0);
             let qa = quat_of(&xa.part_to_world, d);
@@ -219,12 +298,12 @@ impl DisplayPose {
             let pivot_w: [f32; 3] = std::array::from_fn(|i| {
                 (f64::from(pa[i]) + (f64::from(pb[i]) - f64::from(pa[i])) * alpha) as f32
             });
-            parts.push((
+            self.parts.push((
                 PartXform::from_parts(m, pivot_m, pivot_w, p.detail),
                 p.detail,
             ));
         }
-        Some(Self { parts })
+        true
     }
 
     /// The parts placed.
@@ -527,13 +606,14 @@ impl EntityMirror {
 
     /// [`EntityMirror::set_entities`] with each entity's parts placed by a [`DisplayPose`]
     /// (between two ticks, say) in place of a pose in a set. An entry whose display pose has
-    /// not its model's part count is counted and not drawn.
-    pub fn set_entity_displays(
+    /// not its model's part count is counted and not drawn. `list` is any iterator, so a
+    /// caller keeping its display poses across frames passes them with no list to build.
+    pub fn set_entity_displays<'a>(
         &mut self,
         queue: &wgpu::Queue,
-        list: &[(EntityId, ModelHandle, &DisplayPose)],
+        list: impl IntoIterator<Item = (EntityId, ModelHandle, &'a DisplayPose)>,
     ) {
-        self.write(queue, list.iter().map(|&(id, h, d)| (id, h, Some(d))));
+        self.write(queue, list.into_iter().map(|(id, h, d)| (id, h, Some(d))));
     }
 
     fn write<'a>(
@@ -787,6 +867,43 @@ mod tests {
             (h[0][0] - c45).abs() <= 1e-4 && (h[1][0] - c45).abs() <= 1e-4,
             "{h:?}"
         );
+    }
+
+    /// A display pose refreshed in place equals the one built new, keeps its parts' storage
+    /// (the same buffer, so no allocation) from the second refresh on, and empties itself on
+    /// a pose that does not fit the model.
+    #[test]
+    fn a_display_refreshed_in_place_reuses_its_storage() {
+        let id = vxe_entity::Quat::IDENTITY;
+        let (model, a) = one_part([0; 3], id);
+        let (_, b) = one_part([256, 0, 0], vxe_entity::Quat([11585, 0, 0, 11585]));
+        let mut d = DisplayPose::default();
+        assert!(d.between_into(&model, &a, &b, 0.25));
+        assert_eq!(
+            Some(&d),
+            DisplayPose::between(&model, &a, &b, 0.25).as_ref()
+        );
+        let held = (d.parts.as_ptr(), d.parts.capacity());
+        for k in 0..4 {
+            let alpha = k as f32 / 4.0;
+            assert!(d.between_into(&model, &a, &b, alpha));
+            assert_eq!(
+                Some(&d),
+                DisplayPose::between(&model, &a, &b, alpha).as_ref()
+            );
+            assert!(d.of_into(&model, &b));
+            assert_eq!(Some(&d), DisplayPose::of(&model, &b).as_ref());
+            assert_eq!((d.parts.as_ptr(), d.parts.capacity()), held, "refresh {k}");
+        }
+        let unfit = vxe_entity::Pose {
+            parts: Vec::new(),
+            ..a.clone()
+        };
+        assert!(!d.of_into(&model, &unfit));
+        assert!(d.is_empty());
+        assert!(!d.between_into(&model, &a, &unfit, 0.5));
+        assert!(d.is_empty());
+        assert!(d.of_into(&model, &a), "the storage survives a refusal");
     }
 
     #[test]
