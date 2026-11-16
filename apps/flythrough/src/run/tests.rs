@@ -1119,7 +1119,7 @@ fn a_benchmark_path_runs_with_the_lamp_off_and_its_report_says_so() {
 #[test]
 fn the_clip_keys_name_the_clip_and_the_pause() {
     let mut run = bare_run(carved_rock());
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/walker.rig");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker/walker.rig");
     let mut viewer = crate::viewer::Viewer::open(&path, None).expect("walker.rig opens");
     let table = crate::walker::with_walker(&crate::cave_materials());
     assert_eq!(viewer.build_pending(&table), None);

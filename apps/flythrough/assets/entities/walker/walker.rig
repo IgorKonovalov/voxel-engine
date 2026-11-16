@@ -1,5 +1,5 @@
 # The fly-through's sample walker (Plan 0063): six parts on walker.vox, z up, facing -y.
-#   flythrough --model apps/flythrough/assets/walker.rig --clip walk
+#   flythrough --model apps/flythrough/assets/entities/walker/walker.rig --clip walk
 # Lengths are in model voxels (two to a world voxel at detail 2); `at` is a pivot's rest place
 # from its parent's pivot, in the parent's model voxels. A material name matches a row of the
 # fly-through's table, `_` standing for a space.

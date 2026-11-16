@@ -12,7 +12,7 @@ use vxe_entity::sample;
 use vxe_world::MaterialTable;
 
 fn assets() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("assets")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker")
 }
 
 fn table() -> MaterialTable {
