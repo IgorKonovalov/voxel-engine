@@ -1,21 +1,21 @@
 # 0078: The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, and a reset
 
-> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
+> **Status:** done (closed 2026-11-16, v0.59.0: the pool frees by handle into a coalescing free list, entities keep stable instance slots with a generation, a removal takes its shadow; one review finding, the last walker's ghost leaf, fixed in d313dbbe). Approved 2026-11-16, the owner: every recommended answer under "Owner questions".
 > **Created:** 2026-11-16
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the engine side (`vxe-render`,
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md), the engine side (`vxe-render`,
 > `vxe-entity`), with the fly-through's reload as its first consumer.
-> **Related ADRs:** [ADR-0060](../adrs/0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md)
+> **Related ADRs:** [ADR-0060](../../adrs/0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md)
 > (proposed; the free list and the ownership rule), accepted at this plan's close. Rests on
-> [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (the pool, the instances, the tree) and
-> [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id, the
+> [ADR-0014](../../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id, the
 > volume's key).
 > **Source:** the owner, 2026-11-16: "proper reset should be drafted as a plan", on
-> [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)'s
+> [Plan 0077](../0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)'s
 > owner question 6 (answered "not now" there, with a backlog entry promised; none exists on main
 > at b4e72e35, so this plan is that entry).
-> **Starts after:** [Plan 0062](done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
-> and [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Starts after:** [Plan 0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
+> and [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > have merged into main (both edit `crates/vxe-render/src/entities.rs`, `entity.wgsl`,
 > `apps/flythrough/src/viewer.rs` and `walker.rs`). **Before Plan 0077's lane** (owner question
 > 5): 0077's Phase 2 reloads and uploads per library entry, and is amended at its re-read to call
@@ -318,7 +318,10 @@ the dev's cut) rather than approach the 1200-line cap. CPU tests of `vxe-render`
   - `a_reload_keeps_the_picture_steady` (`gpu_entity_pool`, about 3 s): a still walker, no
     jitter; `replace` with a model of the same voxels: every pixel of frame N+1 equals frame N
     within 1/255; `replace` with the torso's material changed: the torso's pixels change and
-    the legs' do not.
+    the legs' do not. The test runs with `Lighting::filter = false` (Amended 2026-11-16 (owner)):
+    the a-trous filter widens a young pixel's luminance weight from its neighbourhood, so with
+    it on, about 12 shadowed leg pixels next to the reset torso pick up about 14/255 at any
+    material edge; the claim is history and instance identity, which the filter has no part in.
   - Plan 0062's goldens (`walker_albedo_golden`, `walker_shadow_golden`) and every other gate
     golden pass with no re-bless; `the_caps_count_what_they_drop` holds (compaction never draws
     more than 512 parts or 64 entities).
@@ -483,22 +486,63 @@ tests assert.
 > notes go to the plan's readings log, `docs/plans/logs/0078.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings, gate counts and the plan-to-tree names: [`logs/0078.md`](../logs/0078.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the range allocator and the pool's free | dev | not started | |
-| 2: the fly-through frees on reload, and the pool on the HUD | dev | not started | |
-| 3: stable instance slots, generations, ghost leaves, no scratch | dev | not started | |
-| 4: the waste reading, the docs and the tip | dev | not started | |
+| 1: the range allocator and the pool's free | dev | done | e985fd16 (e7e6b467 the file move alone) |
+| 2: the fly-through frees on reload, and the pool on the HUD | dev | done | 0084a06d |
+| 3: stable instance slots, generations, ghost leaves, no scratch | dev | done; deviations: the hit record carries the slot and the generation's low bit (10 instance bits in `rgba16uint`), word 25 the 17-bit generation; `frame/encode.rs` changed outside the phase's files (the light pass walks entities while a ghost is listed) | e8fcda3d (code in ea9796d8, `wip`) |
+| 4: the waste reading, the docs and the tip | dev | done; `docs/flythrough.md` unchanged (its row landed in Phase 2) | 17de95b9 |
+| review fix pass: the last walker's ghost leaf leaves the tree | dev | done | d313dbbe |
 
 ### Notes
 
+- Phase 3's hit record holds 10 instance bits (`hit_info` is `rgba16uint`), not the 26 the
+  Context names: it carries the 9-bit slot and the generation's low bit; the instance word
+  carries the 17-bit generation. A slot's generation moves at most once a write.
+- `crates/vxe-render/src/frame/encode.rs` changed outside Phase 3's files (the light pass's
+  entity pipeline while a ghost leaf is listed).
+- `a_reload_keeps_the_picture_steady` failed as first written with the a-trous filter on (12
+  leg pixels next to the torso changed); the owner's amendment 9671b5df runs it with the
+  filter off. Evidence in the readings log, Phase 3.
+- Phase 3's code landed in a `wip(render)` commit (ea9796d8, a checkpoint before a reboot) and
+  the phase commit e8fcda3d on top; Phase 1's file move is its own commit (e7e6b467).
+- Phase 4's waste reading was written in Phase 3's commit.
+
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the entity pool frees models by handle into a coalescing free list
+  (`RangeAlloc`, `VolumePool`, `ModelHandle` with a generation), `EntityMirror::free_model`
+  and `clear`; the fly-through frees the replaced model on a reload, resets a fragmented pool
+  (`entity pool reset`) and shows the pool on the HUD; stable instance slots over a 512-slot
+  allocator with 17-bit generations, the slot and the generation's low bit in the hit record,
+  ghost leaves for removed entities, `write` without per-frame allocation;
+  `EntitySet::replace`, which the reload uses.
+- **Public API changed:** `vxe_render`: `EntityMirror::{free_model, clear, pool,
+  pool_total_bytes, pool_free_bytes, pool_largest_free_bytes, instances, walks_entities}`,
+  `FreedBytes`, `EntityUploadError::TooManyModels`; under `internals`: `RangeAlloc`,
+  `VolumePool`, `PoolUpload`, `EntityInstances`. `vxe_entity`: `EntitySet::replace`.
+- **Budget readings:** (readings log for the full lines)
+  - Waste, seeded 10 000 calls, deterministic, e8fcda3d: at the live peak 0.16 % of live
+    bytes outside the largest hole (bar: under 25 %); worst at least half live 14.48 %; 875
+    refusals a clear answers, 648 of a full pool.
+  - Reload pool step, release, Ryzen 9 5900HS, perf lock, load 3.23 (loaded): median 0.0189 ms
+    (bar: under 0.2 ms).
+  - Instance upload at 64 four-part entities over 200 seeded removals and placements: 32 768 B
+    first, peak and last.
+  - `set_entities` at 64 walkers, release, RTX 3080 Laptop / Ryzen 9 5900HS, perf lock, load
+    3.42 / 2.54 (loaded), ea9796d8: mean 0.0814 / 0.0800 ms against Plan 0062 Phase 5's 0.4451 ms.
+  - `write_allocates_nothing_after_warm_up`: 0 bytes over 100 writes at 64 walkers (asserted).
+- **Gate at the tip** (the tree of e8fcda3d plus this commit's docs; lavapipe, exclusive perf
+  lock, four lanes, 1-minute load 1.53 at the start, 2.44 at the end): `cargo nextest run
+  --workspace --profile gate --test-threads 2` exit 0, 983 run, 983 passed, 102 skipped,
+  884.4 s; `cargo test --doc --workspace` exit 0, 10 passed; `cargo clippy --workspace
+  --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0;
+  `check-doc-links`, `check-comment-hygiene`, `check-index-rows`, `check-plan-size`,
+  `check-test-tiers`, `check-file-size` 0. `test-times` names 13 tests over the 10 s line in
+  that loaded run, none of this plan's.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 

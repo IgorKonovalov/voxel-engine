@@ -142,12 +142,12 @@ impl Frame {
 
     /// The light pass's pipeline (`shade`), built on its first use unless
     /// [`Frame::prepare_entities`] built it: in the steps view the one whose `COUNT_STEPS` is
-    /// true, otherwise while no entity part is drawn the one whose `ENTITIES` is false, which
-    /// walks no entity.
+    /// true, otherwise while the entity tree holds no leaf (no part drawn and no ghost of one
+    /// that left) the one whose `ENTITIES` is false, which walks no entity.
     pub(super) fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let pass = if self.state.look.view == ViewMode::Steps {
             P_LIGHT_STEPS
-        } else if self.entities.parts_drawn() > 0 {
+        } else if self.entities.walks_entities() {
             P_LIGHT
         } else {
             P_LIGHT_BARE
