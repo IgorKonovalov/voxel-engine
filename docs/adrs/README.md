@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0065.**
+**Next free number: 0070** (0065 to 0067 are held by a parallel draft of 2026-11-16).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -79,6 +79,8 @@ the status.
 | [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
 | [0063](0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md) | Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only | proposed (Plan 0081) |
 | [0064](0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md) | A part's scale is per axis in its own frame, about its pivot; it moves its children's pivots and never changes their shapes | proposed (Plan 0082) |
+| [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
+| [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
