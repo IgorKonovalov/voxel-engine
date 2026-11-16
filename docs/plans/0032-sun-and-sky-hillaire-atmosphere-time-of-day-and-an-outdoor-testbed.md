@@ -55,6 +55,22 @@
 > `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
 > become tests moves.
 
+> **Amended 2026-11-16 (owner).** Outdoors needs trees, grass and water (owner). Trees need no
+> new engine mechanism, and Phase 8 already carries them: the amendment makes them **prefabs
+> stamped at generation time**. The single-tree builder in `trees.rs` produces
+> `vxe_world::Prefab`s (masked, so the world around a tree is left alone) and `OutdoorSource`
+> is wrapped in the existing `vxe_world::StampedSource`, whose placements come from the
+> scatter cells of a fixed forest box `TREE_BOX` (3072 voxels square in xy, centred between
+> `MOUTH` and `FOREST`, so the residency ball at either spawn is inside it): per cell the hash
+> says whether a tree stands, which of `TREE_VARIANTS` = 16 seeded prefabs it is, which of the
+> four z rotations and the offset. The trunk reaches 12 voxels under the prefab's base so no
+> tree floats on a slope; the voxel formulas, the exclusion zones, the flags and the bars are
+> unchanged except bar 3's second clause, below. Beyond `TREE_BOX` the hills are bare, which a
+> testbed accepts. Grass is not a voxel at 10 cm: it and every swaying thing go to
+> [Plan 0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
+> which starts after this plan and styles this plan's `grass` row. The default `--trees` stays
+> `none` until Phase 9's verdict (the owner may ask for `sparse` there).
+
 ## TL;DR
 
 The frame gets a sky. A `Sky` the game sets each frame names the atmosphere, the sun and the
@@ -703,8 +719,15 @@ README says which.
     (no trunk floats on a slope) to `base + height - 1`. The canopy is `dx^2 + dy^2 + dz^2 <=
     rc^2` in `i64` around `(axis, base + height)`, of a new `leaf` row, keeping a voxel when
     an integer hash of `(seed, x, y, z)` has `& 255 < leaf_fill`, default `LEAF_FILL` = 128.
-    Bark wins over leaf. A chunk rasterizes every tree whose reach (its canopy radius past
-    its axis) overlaps its footprint. **No tree's axis lies within 150 voxels of `MOUTH`**
+    Bark wins over leaf inside one tree. **Amended 2026-11-16 (owner):** the builder writes
+    the tree as a masked `vxe_world::Prefab` in a frame of its own (the trunk continuing 12
+    voxels under the base), `TREE_VARIANTS` = 16 of them are built once per seed, and the
+    source is a `vxe_world::StampedSource` over `OutdoorSource` whose placements are drawn per
+    scatter cell of `TREE_BOX` (variant, one of four z rotations, offset) and stood at `h` of
+    the axis column; a chunk takes every placement whose box meets it, a later placement
+    winning where two overlap, which is `StampedSource`'s rule. A variant's box is about 60 x
+    60 x 130 voxels, under 1 MB as `u16` voxels plus its mask, so the library is about 16 MB.
+    **No tree's axis lies within 150 voxels of `MOUTH`**
     (the largest canopy radius is 29, so no `bark` or `leaf` voxel lies within 121), within
     60 voxels of the xy segment from the `outside` spawn's column to `MOUTH`, or within 10
     voxels of `FOREST` (below). `bark` and `leaf` are appended after `grass` and `soil`, so
@@ -743,7 +766,9 @@ README says which.
      (no adapter; about 5 s): with `--trees forest`, no `bark` or `leaf` voxel lies within
      120 voxels of `MOUTH` in xy, over the chunks that square covers; and at 16 seeded
      scatter cells where a forest tree stands, the trunk's axis column from `h + 1` to `base
-     + height - 1` is `bark` (bark wins over a neighbour's leaf).
+     + height - 1` is `bark` or, where a later placement's canopy covers it, `leaf` (amended
+     2026-11-16: a placement has no per-material priority; the test counts the `leaf` voxels
+     of those columns and prints the share, with no bar on it).
   4. **The banner and the flags** (no adapter, under 1 s). `\` moves the banner through
      `trees none`, `trees sparse`, `trees forest` and back. The parse test pins `--trees`
      (and that no flag gives `TreeDensity::None`), `--leaf-fill` (refuses 0 and 257),
@@ -988,7 +1013,7 @@ with Phase 7's readings at the close.
 - **Adapter features.** The LUT passes use `rgba16float` storage textures and filtered
   sampling, which the frame already uses. No subgroups and no 64-bit atomics.
 - **Swaying vegetation is out of scope.** The trees are static voxels of the testbed's
-  source.
+  source. Grass and sway are Plan 0081's (amended 2026-11-16).
 
 ## Owner answers
 
@@ -1037,7 +1062,8 @@ apply: the guard and the long emissive history are gone, and Plan 0048 was dropp
   parameters are fixed per run here, though the LUTs rebuild on change.
 - **The night sky** (Plan 0037): no stars, no moon phase shape, no aurora, no night tint.
 - **Vegetation in the engine, or moving vegetation.** Trees are testbed content in
-  `apps/flythrough`.
+  `apps/flythrough`, stamped prefabs since the 2026-11-16 amendment; grass is Plan 0081's
+  surface detail layer, which the engine knows only as a style on a material row.
 - **Eclipses, bloom, lens flare**, and histogram percentile clipping in the exposure.
 - **A sun query in `vxe-world`** for gameplay ("is this voxel in sunlight"). That would be a
   deterministic integer query, its own plan if a consumer asks.
