@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0068.**
+**Next free number: 0070.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -82,6 +82,8 @@ the status.
 | [0065](0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md) | Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row | proposed (Plan 0083) |
 | [0066](0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md) | A large prefab is stored as bricks, and its stamp is a placement the world finishes as chunks arrive | proposed (Plan 0083) |
 | [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
+| [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
+| [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

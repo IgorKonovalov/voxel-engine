@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0085** (ADRs are a separate sequence; next free there is **0068**).
+**Next free number: 0086** (ADRs are a separate sequence; next free there is **0070**).
 
 ## Active roster
 
@@ -30,6 +30,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | draft | M6, ADR-0064 (proposed). Drafted 2026-11-16, awaits go. After 0063, the clip chore, 0078 and 0079 P1-3. |
 | [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements, a Structures page | draft | M7, ADR-0065, ADR-0066. After 0063 and the clip chore; Phase 6 after 0080 and 0077. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | draft | M7, ADR-0067. Awaits go. After Plan 0083 closes. |
+| [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | draft | M6, ADR-0068, ADR-0069 (proposed). Drafted 2026-11-16, awaits go. After 0063, the chore, 0078 and 0082. |
 <!-- roster:end -->
 
 ## Sequence
@@ -117,6 +118,8 @@ merge, with the architect's re-read. It holds nothing of M10.
 layers, a pure reveal planner, a demolish that the support query follows; drafted 2026-11-16 from
 the owner's "a castle being built... part of the map", awaits go; ADR-0067 proposed): after Plan
 0083 closes.
+
+**Plan 0085** (entity variants: `variant` blocks in the `.rig` that hide a part, swap its volume for another `.vox` node or remap a material, picked per instance by one index and honoured by the picture and the headless query; `Playback::ended` on a one-shot clip that already holds; a posed entity baked onto the world grid in integers, clipped to air on the server and stamped through op kind 2; the spider gains `damaged` and `dead`; drafted 2026-11-16 from the owner's "healthy, damaged, dead: three entities or one with modes?", awaits go; ADR-0068 and ADR-0069 proposed): after Plan 0063, the clip-recorder chore and Plan 0078 merge, and after Plan 0082 (recommended; it edits the same files), beside Plans 0077 and 0079's Phase 4. Per-entity voxel damage is parked in `docs/backlog.md`.
 
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
