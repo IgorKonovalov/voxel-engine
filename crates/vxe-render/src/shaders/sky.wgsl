@@ -48,3 +48,34 @@ fn sky_radiance(d: vec3<f32>) -> vec3<f32> {
     );
     return lut_tap(sky_view_lut, uv, true).xyz / sky.view_scale;
 }
+
+// The sun's and the moon's discs as radiance from unit world direction `d`: inside a body's
+// angular radius `E T / Omega`, T the transmittance from the camera's altitude toward it and
+// Omega its disc's solid angle, with an edge one pixel of view 0 wide; 0 with no sky or the
+// uniform test sky.
+fn body_disc(d: vec3<f32>) -> vec3<f32> {
+    if (!sky_on() || (sky.flags & SKY_UNIFORM) != 0u) {
+        return vec3<f32>(0.0);
+    }
+    let v = params.views[0];
+    let pix = (v.tan_up + v.tan_down) / f32(max(v.rect.w, 1u));
+    let alt = sky.camera_alt * 1000.0;
+    return disc_of(d, sky.sun_dir, sky.sun_e, sky.sun_radius, alt, pix)
+        + disc_of(d, sky.moon_dir, sky.moon_e, sky.moon_radius, alt, pix);
+}
+
+// One body's disc ([`body_disc`]): the angle to its centre from `|d x l|`, which keeps its
+// digits at the disc's size where `acos` of the dot does not.
+fn disc_of(d: vec3<f32>, l: vec3<f32>, e: vec3<f32>, radius: f32, alt_m: f32, pix: f32) -> vec3<f32> {
+    if (all(e <= vec3<f32>(0.0)) || dot(d, l) <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let a = asin(min(length(cross(d, l)), 1.0));
+    let cover = clamp((radius - a) / max(pix, 1e-6) + 0.5, 0.0, 1.0);
+    if (cover <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let h = sin(0.5 * radius);
+    let omega = 4.0 * SKY_PI * h * h;
+    return cover * e * transmittance(alt_m, l.z) / max(omega, 1e-12);
+}

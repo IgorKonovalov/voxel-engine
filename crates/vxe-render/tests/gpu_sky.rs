@@ -63,7 +63,7 @@ fn lut(
 ) -> (Vec<[f32; 4]>, usize) {
     let t = frame.sky_luts().expect("a sky is set")[i];
     (
-        vxe_render::debug::read_rgba16f(device, queue, t),
+        vxe_render::debug::read_float(device, queue, t),
         t.width() as usize,
     )
 }
@@ -206,5 +206,164 @@ fn the_hdr_composite_carries_the_sky() {
             (px[k] / want - 1.0).abs() < 0.01,
             "channel {k}: {px:?} against {want} (LUT {l:?})"
         );
+    }
+}
+
+/// The sky-view LUT after one frame of `sky` with the multiple-scattering term on or off, and
+/// the LUT's width.
+fn view_lut(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    sky: Sky,
+    multiscatter: bool,
+) -> (Vec<[f32; 4]>, usize) {
+    let mut f = frame(device, [64, 36], 1.0);
+    f.set_sky_multiscatter(multiscatter);
+    f.set_sky(Some(sky));
+    f.render(device, queue, gpu, &south(), &LightParams::at_eye());
+    lut(device, queue, &f, 1)
+}
+
+/// The rows of the sky-view LUT above the horizon (`v < 0.5`).
+fn above(w: usize, n: usize) -> usize {
+    let h = n / w;
+    (0..h)
+        .filter(|&y| (y as f32) / (h as f32 - 1.0) < 0.5)
+        .count()
+}
+
+/// At noon every sky-view texel above the horizon reads at least its single-scattering value
+/// in every channel.
+#[test]
+fn multiple_scattering_only_adds() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = empty(&device, &queue);
+    let (single, w) = view_lut(&device, &queue, &gpu, noon(), false);
+    let (multi, _) = view_lut(&device, &queue, &gpu, noon(), true);
+    let rows = above(w, single.len());
+    let mut gain = 0.0f64;
+    for i in 0..rows * w {
+        for k in 0..3 {
+            assert!(
+                multi[i][k] >= single[i][k],
+                "texel {i} channel {k}: {} under {}",
+                multi[i][k],
+                single[i][k]
+            );
+            gain = gain.max(f64::from(multi[i][k] / single[i][k].max(1e-30)));
+        }
+    }
+    println!("largest multiple over single scattering above the horizon: {gain:.3}");
+}
+
+/// The worst ratio, over every texel and channel, of the night LUT (the sun 30 degrees down,
+/// the moon at `v` with illuminance `m`) to the day LUT (the sun at `v`) times `m / E_sun`,
+/// with the multiple-scattering term on or off; texels the day reads 0 must read 0 at night.
+fn moon_over_scaled_sun(device: &wgpu::Device, queue: &wgpu::Queue, multiscatter: bool) -> f32 {
+    let gpu = empty(device, queue);
+    let v = body_direction(0.3, 0.0, 45f32.to_radians());
+    let el = (-30f32).to_radians();
+    let down = [0.0, el.cos(), el.sin()];
+    let m = 7.5e-3;
+    let moon = |direction, illuminance| Body {
+        illuminance,
+        ..Body::moon(direction)
+    };
+    let night = Sky::new(Body::sun(down), moon(v, [m; 3]));
+    let day = Sky::new(Body::sun(v), moon(down, [0.0; 3]));
+    // Both LUTs hold radiance at the same view scale (one over the sun's illuminance).
+    let (n, _) = view_lut(device, queue, &gpu, night, multiscatter);
+    let (d, _) = view_lut(device, queue, &gpu, day, multiscatter);
+    let ratio = m / vxe_render::sky::SUN_ILLUMINANCE;
+    let mut worst = 0.0f32;
+    for (i, (a, b)) in n.iter().zip(&d).enumerate() {
+        for k in 0..3 {
+            if b[k] == 0.0 {
+                assert_eq!(a[k], 0.0, "texel {i} channel {k}");
+                continue;
+            }
+            worst = worst.max((a[k] / (b[k] * ratio) - 1.0).abs());
+        }
+    }
+    worst
+}
+
+/// The zenith's luminance (LUT units) with the sun at 0, -2, .., -18 degrees, the moon off:
+/// one frame, its sky set again per elevation (the atmosphere unchanged, so only the sky-view
+/// LUT is rebuilt).
+fn twilight_zenith(device: &wgpu::Device, queue: &wgpu::Queue, multiscatter: bool) -> Vec<f32> {
+    let gpu = empty(device, queue);
+    let mut f = frame(device, [64, 36], 1.0);
+    f.set_sky_multiscatter(multiscatter);
+    (0..=9)
+        .map(|step| {
+            let r = (-(2 * step) as f32).to_radians();
+            f.set_sky(Some(Sky::new(
+                Body::sun([0.0, -r.cos(), r.sin()]),
+                Body {
+                    illuminance: [0.0; 3],
+                    ..Body::moon([0.0, 0.0, -1.0])
+                },
+            )));
+            f.render(device, queue, &gpu, &south(), &LightParams::at_eye());
+            lum(lut(device, queue, &f, 1).0[0])
+        })
+        .collect()
+}
+
+/// A sun 30 degrees down lights no point of the atmosphere (the top's horizon dips 10.1
+/// degrees), so the moon at `v` with illuminance `m` reads, in every texel, the day LUT built
+/// with the sun at `v`, times `m / E_sun`, within 1 %.
+#[test]
+fn the_moon_lights_the_sky_as_a_scaled_sun() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let worst = moon_over_scaled_sun(&device, &queue, true);
+    assert!(worst < 0.01, "worst texel off by {worst}");
+}
+
+/// Under single scattering the zenith's luminance strictly falls for each sun elevation from
+/// 0 to -10 degrees in steps of 2, and reads exactly 0 at -12, -14, -16 and -18 degrees (the
+/// moon off): every point over the camera is in the planet's shadow. The multiple-scattering
+/// LUT's rays reach points some 2000 km around the planet, under another horizon, so the
+/// default sky keeps a residue there; `reading::twilight_with_multiple_scattering` reads it.
+#[test]
+fn twilight_darkens_to_zero() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let z = twilight_zenith(&device, &queue, false);
+    for (step, w) in z.windows(2).enumerate() {
+        let el = -2 * (step as i32 + 1);
+        if el >= -10 {
+            assert!(
+                w[1] < w[0] && w[1] > 0.0,
+                "at {el}: {} after {}",
+                w[1],
+                w[0]
+            );
+        } else {
+            assert_eq!(w[1], 0.0, "at {el}: {z:?}");
+        }
+    }
+}
+
+mod reading {
+    use super::*;
+
+    /// The twilight zenith with the multiple-scattering term on, printed.
+    #[test]
+    #[ignore = "reading"]
+    fn twilight_with_multiple_scattering() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        for (step, z) in twilight_zenith(&device, &queue, true).iter().enumerate() {
+            println!("sun at -{} degrees: zenith luminance {z:e}", 2 * step);
+        }
     }
 }

@@ -201,3 +201,10 @@ fn mie_phase(c: f32, g: f32) -> f32 {
     let k = 3.0 / (8.0 * SKY_PI) * (1.0 - g2) / (2.0 + g2);
     return k * (1.0 + c * c) / pow(max(1.0 + g2 - 2.0 * g * c, 1e-6), 1.5);
 }
+
+// `1 - exp(-x)` per channel for x >= 0, by its series under 0.01, where the subtraction would
+// cancel most of f32's digits (a step of a ray that meets the ground a few metres away).
+fn one_minus_exp(x: vec3<f32>) -> vec3<f32> {
+    let series = x * (1.0 - x * (0.5 - x / 6.0));
+    return select(1.0 - exp(-x), series, x < vec3<f32>(0.01));
+}

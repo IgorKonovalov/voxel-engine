@@ -462,6 +462,10 @@ impl RenderSettings {
             "a per-frame input: the game's sky, its bodies moved by the game's clock",
         ),
         (
+            "set_sky_multiscatter",
+            "a test hook: the sky-view LUT without its multiple-scattering term",
+        ),
+        (
             "set_frame_index",
             "a per-frame input: the frame index the noise seeds with",
         ),

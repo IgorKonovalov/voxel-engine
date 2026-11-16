@@ -11,20 +11,27 @@ use crate::sky::{Sky, SkyUniform};
 pub(crate) const SKY_ATMOSPHERE_WGSL: &str = include_str!("../shaders/sky_atmosphere.wgsl");
 pub(crate) const SKY_WGSL: &str = include_str!("../shaders/sky.wgsl");
 const SKY_TRANSMITTANCE_WGSL: &str = include_str!("../shaders/sky_transmittance.wgsl");
+const SKY_MULTISCATTER_WGSL: &str = include_str!("../shaders/sky_multiscatter.wgsl");
 const SKY_VIEW_WGSL: &str = include_str!("../shaders/sky_view.wgsl");
 
 /// The LUTs' sizes, as `sky_atmosphere.wgsl` declares them.
 pub(crate) const TRANSMITTANCE_SIZE: [u32; 2] = [256, 64];
+pub(crate) const MULTISCATTER_SIZE: [u32; 2] = [32, 32];
 pub(crate) const SKY_VIEW_SIZE: [u32; 2] = [192, 108];
 
 const F16: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// The LUT passes: label, modules after the prelude, entry point.
-pub(crate) const SKY_PASSES: [(&str, &[&str], &str); 2] = [
+pub(crate) const SKY_PASSES: [(&str, &[&str], &str); 3] = [
     (
         "sky transmittance",
         &[SKY_ATMOSPHERE_WGSL, SKY_TRANSMITTANCE_WGSL],
         "sky_transmittance",
+    ),
+    (
+        "sky multiscatter",
+        &[SKY_ATMOSPHERE_WGSL, SKY_MULTISCATTER_WGSL],
+        "sky_multiscatter",
     ),
     (
         "sky view",
@@ -33,7 +40,20 @@ pub(crate) const SKY_PASSES: [(&str, &[&str], &str); 2] = [
     ),
 ];
 
+/// The sky-view LUT's format: a night sky's radiance is 1 / 400 000 of a day's, under
+/// rgba16float's normal range at the day's scale.
+const F32: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
 fn lut(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
+    lut_of(device, label, size, F16)
+}
+
+fn lut_of(
+    device: &wgpu::Device,
+    label: &str,
+    size: [u32; 2],
+    format: wgpu::TextureFormat,
+) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -44,7 +64,7 @@ fn lut(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: F16,
+        format,
         usage: wgpu::TextureUsages::STORAGE_BINDING
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_SRC,
@@ -55,14 +75,19 @@ fn lut(device: &wgpu::Device, label: &str, size: [u32; 2]) -> wgpu::Texture {
 /// The LUTs at their sizes, allocated at the first [`Frame::set_sky`] with a sky.
 pub(super) struct SkyLuts {
     pub(super) transmittance: wgpu::Texture,
+    pub(super) multiscatter: wgpu::Texture,
     pub(super) view: wgpu::Texture,
 }
 
 impl SkyLuts {
     fn bytes(&self) -> u64 {
-        [&self.transmittance, &self.view]
+        [&self.transmittance, &self.multiscatter, &self.view]
             .iter()
-            .map(|t| 8 * u64::from(t.width()) * u64::from(t.height()))
+            .map(|t| {
+                u64::from(t.format().block_copy_size(None).unwrap_or(8))
+                    * u64::from(t.width())
+                    * u64::from(t.height())
+            })
             .sum()
     }
 }
@@ -79,8 +104,10 @@ pub(super) struct SkyState {
     pub(super) uniform: wgpu::Buffer,
     pub(super) luts: Option<SkyLuts>,
     placeholder: wgpu::Texture,
-    /// The atmosphere changed since the transmittance LUT was built.
+    /// The atmosphere changed since the transmittance and multiple-scattering LUTs were built.
     dirty: AtomicBool,
+    /// The sky-view pass adds the multiple-scattering term ([`Frame::set_sky_multiscatter`]).
+    multiscatter: bool,
     pipes: OnceLock<SkyPipes>,
 }
 
@@ -97,6 +124,7 @@ impl SkyState {
             luts: None,
             placeholder: lut(device, "sky lut placeholder", [1, 1]),
             dirty: AtomicBool::new(false),
+            multiscatter: true,
             pipes: OnceLock::new(),
         }
     }
@@ -118,9 +146,10 @@ impl SkyState {
 
     fn pipes(&self, device: &wgpu::Device) -> &SkyPipes {
         self.pipes.get_or_init(|| {
-            let ios: [&[Io]; 2] = [
+            let ios: [&[Io]; 3] = [
                 &[Io::Uniform, Io::Store(F16)],
                 &[Io::Uniform, Io::Float, Io::Store(F16)],
+                &[Io::Uniform, Io::Float, Io::Float, Io::Store(F32)],
             ];
             let layouts: Vec<_> = SKY_PASSES
                 .iter()
@@ -146,8 +175,8 @@ impl SkyState {
         queue: &wgpu::Queue,
         binds: &BindCache,
         camera_z: f32,
-    ) -> Option<[wgpu::BindGroup; 2]> {
-        let u = SkyUniform::of(self.sky.as_ref(), camera_z, false);
+    ) -> Option<[wgpu::BindGroup; 3]> {
+        let u = SkyUniform::of(self.sky.as_ref(), camera_z, self.multiscatter);
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let (_, luts) = (self.sky.as_ref()?, self.luts.as_ref()?);
         let p = self.pipes(device);
@@ -163,28 +192,39 @@ impl SkyState {
                 &[
                     Res::Buf(&self.uniform),
                     Res::Tex(&luts.transmittance),
+                    Res::Tex(&luts.multiscatter),
+                ],
+            ),
+            binds.io(
+                device,
+                &p.layouts[2],
+                &[
+                    Res::Buf(&self.uniform),
+                    Res::Tex(&luts.transmittance),
+                    Res::Tex(&luts.multiscatter),
                     Res::Tex(&luts.view),
                 ],
             ),
         ])
     }
 
-    /// The LUT passes' dispatches over `groups` ([`SkyState::prepare`]): the transmittance
-    /// LUT's when the atmosphere changed (the flag then cleared), the sky view's every frame;
-    /// empty with no sky.
+    /// The LUT passes' dispatches over `groups` ([`SkyState::prepare`]): the transmittance and
+    /// multiple-scattering LUTs' when the atmosphere changed (the flag then cleared), the sky
+    /// view's every frame; empty with no sky.
     pub(super) fn dispatches<'a>(
         &'a self,
         device: &wgpu::Device,
-        groups: Option<&'a [wgpu::BindGroup; 2]>,
-    ) -> [Dispatches<'a>; 2] {
-        let mut out = [Dispatches::default(), Dispatches::default()];
+        groups: Option<&'a [wgpu::BindGroup; 3]>,
+    ) -> [Dispatches<'a>; 3] {
+        let mut out = [Dispatches::default(); 3];
         let Some(groups) = groups else {
             return out;
         };
         let p = self.pipes(device);
-        let sizes = [TRANSMITTANCE_SIZE, SKY_VIEW_SIZE];
+        let sizes = [TRANSMITTANCE_SIZE, MULTISCATTER_SIZE, SKY_VIEW_SIZE];
+        let rebuild = self.dirty.swap(false, Ordering::Relaxed);
         for (i, slot) in out.iter_mut().enumerate() {
-            if i == 0 && !self.dirty.swap(false, Ordering::Relaxed) {
+            if i < 2 && !rebuild {
                 continue;
             }
             slot.push(Dispatch {
@@ -209,7 +249,8 @@ impl Frame {
             if s.luts.is_none() {
                 s.luts = Some(SkyLuts {
                     transmittance: lut(&self.device, "sky transmittance", TRANSMITTANCE_SIZE),
-                    view: lut(&self.device, "sky view", SKY_VIEW_SIZE),
+                    multiscatter: lut(&self.device, "sky multiscatter", MULTISCATTER_SIZE),
+                    view: lut_of(&self.device, "sky view", SKY_VIEW_SIZE, F32),
                 });
                 s.dirty.store(true, Ordering::Relaxed);
             }
@@ -220,15 +261,25 @@ impl Frame {
         s.sky = sky;
     }
 
+    /// Whether the sky-view LUT adds the multiple-scattering term (on by default); a test
+    /// hook that reads single scattering alone.
+    pub fn set_sky_multiscatter(&mut self, on: bool) {
+        self.sky.multiscatter = on;
+    }
+
     /// The sky [`Frame::set_sky`] last set.
     pub fn sky(&self) -> Option<&Sky> {
         self.sky.sky.as_ref()
     }
 
     /// The transmittance LUT (rgba16float, 256 x 64, by `transmittance_uv` in
-    /// `sky_atmosphere.wgsl`) and the sky-view LUT (rgba16float, 192 x 108, radiance times
-    /// the sky's view scale), `None` before the first sky.
-    pub fn sky_luts(&self) -> Option<[&wgpu::Texture; 2]> {
-        self.sky.luts.as_ref().map(|l| [&l.transmittance, &l.view])
+    /// `sky_atmosphere.wgsl`), the sky-view LUT (rgba32float, 192 x 108, radiance times
+    /// the sky's view scale) and the multiple-scattering LUT (rgba16float, 32 x 32), `None`
+    /// before the first sky.
+    pub fn sky_luts(&self) -> Option<[&wgpu::Texture; 3]> {
+        self.sky
+            .luts
+            .as_ref()
+            .map(|l| [&l.transmittance, &l.view, &l.multiscatter])
     }
 }

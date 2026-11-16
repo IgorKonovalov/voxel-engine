@@ -6,8 +6,9 @@ use super::*;
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
 /// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 22] = [
+pub const FRAME_PASSES: [&str; 23] = [
     "sky transmittance",
+    "sky multiscatter",
     "sky view",
     "hit",
     "gradient",
@@ -802,9 +803,10 @@ impl Frame {
         let sky_groups = self
             .sky
             .prepare(device, queue, &self.binds, p.views[0].origin[2]);
-        let [sky_t, sky_v] = self.sky.dispatches(device, sky_groups.as_ref());
+        let [sky_t, sky_m, sky_v] = self.sky.dispatches(device, sky_groups.as_ref());
         let passes = [
             sky_t,
+            sky_m,
             sky_v,
             hit,
             gradient,

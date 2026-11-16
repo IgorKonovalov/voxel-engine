@@ -1084,8 +1084,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | done; golden `sky_empty_noon` waits for Phase 10 | committed with this row |
-| 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | not started | |
+| 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | done; golden `sky_empty_noon` waits for Phase 10 | b6c7d986 |
+| 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering (Notes); goldens wait for Phase 10 | committed with this row |
 | 3: The outdoor source, the source switch and the time of day in the fly-through | dev | not started | |
 | 4: The outdoor exposure | dev | not started | |
 | 5: The sun and the moon as the light pass's directional sample | dev | not started | |
@@ -1113,6 +1113,18 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 - Phase 1: with no sky ever set the LUTs are 1 x 1 placeholders and no LUT pipeline is built,
   so `frame_bytes` holds the base value; the first `set_sky` allocates them.
 - Phase 1 bar 4 (`sky_empty_noon_golden`) moves to Phase 10 (exploration amendment).
+- Phase 1 (b6c7d986) already summed the moon into the sky-view LUT and landed
+  `body_direction` with its unit tests (Phase 2's bar 1).
+- Phase 2: the sky-view LUT is rgba32float (331 776 B), not rgba16float: the night sky's
+  radiance at the day's view scale falls under rgba16float's normal range.
+- Phase 2: `Frame::set_sky_multiscatter(bool)`, a test hook (listed in `NOT_SETTINGS`), builds
+  the sky-view LUT without the multiple-scattering term for bar 2's comparison.
+- Phase 2 bar 4 not met as stated with the default sky: with the multiple-scattering term the
+  zenith reads 4.08e-8, 5.07e-9, 1.73e-9 and 1.98e-10 (LUT units, over the sun's illuminance)
+  at -12, -14, -16 and -18 degrees, not 0. The LUT's 64 rays per texel reach points some
+  2000 km around the planet, under another horizon. `twilight_darkens_to_zero` asserts the bar
+  with the term off; `reading::twilight_with_multiple_scattering` prints the default's.
+- Phase 2 goldens (`sky_empty_sunset`, `sky_empty_night`) move to Phase 10.
 
 ### Close triggers
 

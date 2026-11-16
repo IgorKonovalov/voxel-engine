@@ -144,6 +144,8 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("SKY_MULTISCATTER", SKY_MULTISCATTER),
     ("SKY_TRANSMITTANCE_W", super::sky::TRANSMITTANCE_SIZE[0]),
     ("SKY_TRANSMITTANCE_H", super::sky::TRANSMITTANCE_SIZE[1]),
+    ("SKY_MULTISCATTER_W", super::sky::MULTISCATTER_SIZE[0]),
+    ("SKY_MULTISCATTER_H", super::sky::MULTISCATTER_SIZE[1]),
     ("SKY_VIEW_W", super::sky::SKY_VIEW_SIZE[0]),
     ("SKY_VIEW_H", super::sky::SKY_VIEW_SIZE[1]),
 ];
