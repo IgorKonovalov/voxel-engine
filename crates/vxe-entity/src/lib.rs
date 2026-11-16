@@ -49,6 +49,6 @@ mod set;
 
 pub use clip::{Clip, ClipError, Key, Playback, Track, blend, sample};
 pub use model::{MAX_EDGE, MAX_PARTS, Model, ModelError, Part};
-pub use pose::{PartPose, Pose, PoseError};
+pub use pose::{ComposedPose, PartPose, Pose, PoseError};
 pub use quat::{Q14_ONE, Quat};
 pub use set::{EntityHit, EntityId, EntitySet};

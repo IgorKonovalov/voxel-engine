@@ -388,7 +388,8 @@ Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
 |---|---|---|---|
 | 1: Clips in `vxe-entity` | dev | done | 7aed6b7 |
 | 2: The `.rig` file and voxels from text | dev | done | 5c87d16 |
-| 3: The viewer, display interpolation and a sample model | dev | done | committed with this row |
+| 3: The viewer, display interpolation and a sample model | dev | done | aa097bf3 |
+| 3b: The pose composed once, not once per part point | dev | done | committed with this row |
 | 4: The owner's window | human | not started | |
 
 ### Notes
@@ -418,6 +419,11 @@ each. Empty is fine.)_
   the dev box against the plan's guess of 0.05 ms; `sample` reads 0.15 ms. The cost is Plan
   0062's `PartXform::of`, which composes the whole pose once per `part_point` call (four per
   part). Not acted on: the fix reaches `vxe-entity` (a one-pass composition).
+- Phase 3b: the one pass is a public `Pose::compose(&Model) -> Option<ComposedPose<'_>>`
+  with `ComposedPose::part_point(part, local)` and `model()`; the crate-private composition
+  formerly named `compose` is `frames`; `Pose::part_point` now goes through `compose`.
+  `DisplayPose::between` reads 0.50 ms for 64 sixteen-part entities (from 15.12 ms), still
+  above Phase 3's guessed 0.05 ms; readings in the log.
 
 ### Close triggers
 

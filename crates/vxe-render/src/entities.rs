@@ -101,11 +101,12 @@ pub(crate) struct PartXform {
 }
 
 impl PartXform {
-    /// The part's placement from `pose`, through `Pose::part_point` (exact in fixed point): its
-    /// pivot's world point and the world points 256 model voxels along each axis from it.
-    fn of(model: &Model, pose: &vxe_entity::Pose, part: usize) -> Option<Self> {
-        let p = &model.parts()[part];
-        let fx = |l: [i32; 3]| pose.part_point(model, part, l).map(|f| f.0);
+    /// The part's placement from a composed pose, through `ComposedPose::part_point` (exact in
+    /// fixed point): its pivot's world point and the world points 256 model voxels along each
+    /// axis from it.
+    fn of(pose: &vxe_entity::ComposedPose<'_>, part: usize) -> Option<Self> {
+        let p = &pose.model().parts()[part];
+        let fx = |l: [i32; 3]| pose.part_point(part, l).map(|f| f.0);
         let base = fx(p.pivot)?;
         const REACH: i32 = 1 << 16;
         let mut m = [[0f32; 3]; 3];
@@ -178,8 +179,9 @@ pub struct DisplayPose {
 impl DisplayPose {
     /// `model`'s parts as `pose` places them; `None` when the pose does not fit the model.
     pub fn of(model: &Model, pose: &vxe_entity::Pose) -> Option<Self> {
+        let c = pose.compose(model)?;
         let parts = (0..model.parts().len())
-            .map(|k| Some((PartXform::of(model, pose, k)?, model.parts()[k].detail)))
+            .map(|k| Some((PartXform::of(&c, k)?, model.parts()[k].detail)))
             .collect::<Option<Vec<_>>>()?;
         Some(Self { parts })
     }
@@ -196,9 +198,10 @@ impl DisplayPose {
         alpha: f32,
     ) -> Option<Self> {
         let alpha = f64::from(alpha);
+        let (ca, cb) = (a.compose(model)?, b.compose(model)?);
         let mut parts = Vec::with_capacity(model.parts().len());
         for (k, p) in model.parts().iter().enumerate() {
-            let (xa, xb) = (PartXform::of(model, a, k)?, PartXform::of(model, b, k)?);
+            let (xa, xb) = (PartXform::of(&ca, k)?, PartXform::of(&cb, k)?);
             let d = f64::from(p.detail);
             let pivot_m = p.pivot.map(|v| v as f32 / 256.0);
             let qa = quat_of(&xa.part_to_world, d);
