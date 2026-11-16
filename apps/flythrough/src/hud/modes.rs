@@ -304,7 +304,7 @@ impl Modes {
     }
 
     /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break,
-    /// then the walkers' row while one is placed.
+    /// then the walkers' row while one is placed and the viewer's under `--model`.
     pub fn write_rows(&self, out: &mut String) {
         for row in HudRow::ALL {
             self.write_row(row, out);
@@ -312,6 +312,10 @@ impl Modes {
         }
         if !self.walkers.placed.is_empty() {
             self.walkers.write_row(out);
+            out.push('\n');
+        }
+        if let Some(v) = &self.walkers.viewer {
+            v.write_row(out);
             out.push('\n');
         }
     }

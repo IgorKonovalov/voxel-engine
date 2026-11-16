@@ -13,7 +13,8 @@ use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
 use crate::toggles::{
-    KEY_DROP, KEY_EYE_LIGHTS, KEY_FIRE, KEY_REMOVE, KEY_WALK, KEY_WALKER, TOGGLES,
+    KEY_CLIP_BACK, KEY_CLIP_ON, KEY_CLIP_PAUSE, KEY_DROP, KEY_EYE_LIGHTS, KEY_FIRE, KEY_REMOVE,
+    KEY_WALK, KEY_WALKER, TOGGLES,
 };
 use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
@@ -201,8 +202,10 @@ impl Run {
     }
 
     /// The lights' and walkers' action keys: `1` drops a light at the looked-at surface, `` ` ``
-    /// places a walker there, `4` removes the newest of the two, `6` fires a light along the
-    /// view ray; each shows the count in the banner. A drop or
+    /// places a walker there (`--model`'s model under the viewer), `4` removes the newest of
+    /// the two, `6` fires a light along the view ray; each shows the count in the banner.
+    /// Under `--model`, `Left` and `Right` cycle the clips and `Down` pauses, naming the clip
+    /// or the pause in the banner. A drop or
     /// a shot into a full list prints [`lights::FULL_LINE`] and adds nothing.
     pub(crate) fn light_keys(&mut self, input: &Input) {
         let lamp = self.modes.lighting.lamp;
@@ -229,9 +232,22 @@ impl Run {
             shown = Some(if self.modes.walkers.place(table, feet, eye) {
                 self.modes.walkers.newest.push(true);
                 self.modes.walkers.count_words()
+            } else if let Some(v) = &self.modes.walkers.viewer {
+                format!("model {}: not built", v.name)
             } else {
                 "walker: no walker rows in this world's table".to_owned()
             });
+        }
+        if let Some(v) = &mut self.modes.walkers.viewer {
+            if input.pressed(KEY_CLIP_BACK) {
+                shown = Some(v.cycle(-1));
+            }
+            if input.pressed(KEY_CLIP_ON) {
+                shown = Some(v.cycle(1));
+            }
+            if input.pressed(KEY_CLIP_PAUSE) {
+                shown = Some(v.toggle_pause().to_owned());
+            }
         }
         if input.pressed(KEY_EYE_LIGHTS) {
             shown = Some(self.modes.walkers.toggle_eye_lights().to_owned());

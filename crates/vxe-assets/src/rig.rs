@@ -7,12 +7,12 @@
 //! vox walker.vox                       # the .vox file, relative to the rig
 //! rate 30                              # ticks per second, for viewers (default 30)
 //! material 9 glow_amber                # palette index -> a material name
-//! part torso node torso pivot 4 0 3 detail 2
-//! part head  node head  parent torso at 0 12 0  pivot 3 0 3 detail 2
-//! part leg_l model 2    parent torso at -2 0 0  pivot 1.5 8 1.5 detail 2
+//! part torso node torso pivot 4 3 0 detail 2         # z is up: the torso's bottom centre
+//! part head  node head  parent torso at 0 0 12  pivot 3 3 0 detail 2
+//! part leg_l model 2    parent torso at -2 0 0  pivot 1.5 1.5 8 detail 2
 //! clip walk ticks 40 loop
 //! key 0  leg_l rot x 30
-//! key 20 leg_l rot x -30 move 0 0.5 0
+//! key 20 leg_l rot x -30 move 0 0 0.5
 //! key 40 leg_l rot x 30
 //! ```
 //!

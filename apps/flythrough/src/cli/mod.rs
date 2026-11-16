@@ -291,6 +291,7 @@ use vxe_render::{
 use vxe_world::Residency;
 
 pub mod flags;
+mod model;
 mod parse;
 pub mod table;
 
@@ -609,6 +610,10 @@ pub struct Args {
     pub(crate) entities: u32,
     /// `--entities-walk on|off`: the walkers start walking (`F11`'s mode; off).
     pub(crate) entities_walk: bool,
+    /// `--model PATH`: the `.rig` the viewer loads (`crate::viewer`); `--clip NAME` its first
+    /// clip.
+    pub model: Option<std::path::PathBuf>,
+    pub clip: Option<String>,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.

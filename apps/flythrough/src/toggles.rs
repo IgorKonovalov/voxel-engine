@@ -129,12 +129,17 @@ pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
 pub const KEY_EYE_LIGHTS: KeyCode = KeyCode::F12;
 /// `F11`: the walkers walk or hold still (`crate::walker`).
 pub const KEY_WALK: KeyCode = KeyCode::F11;
+/// `Left` and `Right`: the viewer's clip before and after (`--model`, `crate::viewer`).
+pub const KEY_CLIP_BACK: KeyCode = KeyCode::ArrowLeft;
+pub const KEY_CLIP_ON: KeyCode = KeyCode::ArrowRight;
+/// `Down`: the viewer's clip paused or playing.
+pub const KEY_CLIP_PAUSE: KeyCode = KeyCode::ArrowDown;
 
 /// Every key `run::keys` binds to an action with no mode (the toggles' keys are in
 /// [`TOGGLES`]): the bench, the stamp, walking, the coarse grid, the crumble, the castle shot,
-/// the readings, the lights' drop, removal and shot, and the audio's keys and trims; then the
-/// frame's `Esc` and `F2` (`run::frame`) and the flight's keys (`fly`). The path's `T` (resume)
-/// is the audio's pulse outside a path.
+/// the readings, the lights' drop, removal and shot, the viewer's clip keys, and the audio's
+/// keys and trims; then the frame's `Esc` and `F2` (`run::frame`) and the flight's keys
+/// (`fly`). The path's `T` (resume) is the audio's pulse outside a path.
 pub const ACTION_KEYS: &[KeyCode] = &[
     KeyCode::KeyB,
     KeyCode::KeyP,
@@ -149,6 +154,9 @@ pub const ACTION_KEYS: &[KeyCode] = &[
     KEY_WALKER,
     KEY_EYE_LIGHTS,
     KEY_WALK,
+    KEY_CLIP_BACK,
+    KEY_CLIP_ON,
+    KEY_CLIP_PAUSE,
     KeyCode::KeyH,
     KeyCode::KeyT,
     KeyCode::KeyE,

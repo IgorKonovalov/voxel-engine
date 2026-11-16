@@ -30,7 +30,7 @@
 > run as a side lane at any point. Before the Phase 2 lane starts the architect re-reads Phases 2 to
 > 4 against the tip (Plans 0058 and 0045 move the files they name). Bit and binding numbers
 > are "the next free at the start commit".
-> **Followed by:** [Plan 0063](../0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Followed by:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (rig files, clips, the model viewer).
 
 ## TL;DR

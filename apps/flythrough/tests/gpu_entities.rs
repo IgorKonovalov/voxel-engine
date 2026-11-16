@@ -837,6 +837,40 @@ fn walker_shadow_golden() {
     assert_golden_sized("walker_shadow.png", &rig.display());
 }
 
+/// Plan 0063 Phase 3 done-when 4: the sample `walker.rig` at tick 10 of `walk`, drawn between
+/// no two ticks (`DisplayPose::of`), in [`walker_shadow_golden`]'s lit box and view.
+#[test]
+fn walker_walk_golden() {
+    let Some((mut rig, _)) = rig() else {
+        return;
+    };
+    rig.frame
+        .set_resolution(&rig.device, LightingResolution::Half);
+    rig.frame
+        .set_lights(&[Light::point([112.0, 32.0, 22.0], 1200.0)]);
+    let camera = Camera {
+        position: [80.0, 32.0, 14.0].into(),
+        yaw: 0.0,
+        pitch: -0.35,
+        vfov: 1.2,
+    };
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker/walker.rig");
+    let mut viewer = flythrough::viewer::Viewer::open(&path, Some("walk".into())).expect("opens");
+    assert_eq!(viewer.build_pending(rig.world.materials()), None);
+    let l = viewer.loaded.clone().expect("built");
+    let walk = &l.clips.iter().find(|(n, _)| n == "walk").expect("walk").1;
+    let feet = [100.0, 32.0, 2.0];
+    let yaw = walker::facing(feet, camera.position.to_array());
+    let at10 = vxe_entity::sample(&l.model, &l.rest, walk, 10);
+    let pose = flythrough::viewer::placed(&at10, feet, yaw);
+    draw(&mut rig, &[(l.model.clone(), pose)]);
+    for _ in 0..8 {
+        rig.step(&camera);
+    }
+    assert_golden_sized("walker_walk.png", &rig.display());
+}
+
 /// Plan 0062's default (`Lighting::default().entity_light` is `EntityLight::World`): an
 /// entity's emissive part is the baked light of the nearest world face behind it of its
 /// direction. The box with its ceiling lowered to height 24 and a glowing plate (emission 4)

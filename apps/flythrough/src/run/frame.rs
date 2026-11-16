@@ -664,6 +664,16 @@ impl Run {
             fwd.to_array(),
             up.to_array(),
         );
+        // The viewer's first build, and its reload once a second.
+        let now = ms_since(self.start);
+        if let Some(words) = self
+            .modes
+            .walkers
+            .poll_viewer(now / 1000.0, self.world.materials())
+        {
+            println!("{words}");
+            self.modes.show_lights(words, now);
+        }
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
         let mut lights = self.modes.lights.list();
