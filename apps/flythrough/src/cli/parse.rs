@@ -60,6 +60,8 @@ impl Args {
             model: None,
             clip: None,
             materials: None,
+            vox: None,
+            vox_clear: true,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,

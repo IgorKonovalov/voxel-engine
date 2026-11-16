@@ -13,7 +13,8 @@
 //!
 //! [`PaletteRows`] turns every palette entry of a `.vox` into a material row by colour and
 //! `MATL` material (ADR-0065), and [`MaterialFile`] reads and writes a material table as text in
-//! the rig's line grammar.
+//! the rig's line grammar. [`VoxScene`] loads a `.vox` scene for the world: hidden nodes and
+//! layers left out, reflected frames as mirrored models, a whole scale.
 //!
 //! ```
 //! use vxe_assets::{Slot, VoxMap, VoxModel};
@@ -31,6 +32,7 @@ mod materials;
 mod palette;
 mod rig;
 mod rows;
+mod scene;
 mod sines;
 mod vox;
 mod voxtext;
@@ -46,9 +48,10 @@ pub use rig::{
 pub use rows::{
     DEFAULT_EMISSION_FACTOR, PaletteRows, palette_row, resolve_existing, srgb_to_linear,
 };
+pub use scene::{MAX_SCALE, SceneError, SceneOptions, VoxScene};
 pub use vox::{
     DEFAULT_ROUGH, MAX_MODEL_EDGE, MAX_PLACEMENTS, MAX_TRANSLATION, Node, Placement, VoxError,
-    VoxFile, VoxMaterial, VoxMaterialKind, VoxModel, decode_rotation,
+    VoxFile, VoxLayer, VoxMaterial, VoxMaterialKind, VoxModel, decode_frame, decode_rotation,
 };
 pub use voxtext::{TextColor, TextModel, VoxText, VoxTextError};
 pub use write::{encode, encode_rotation};

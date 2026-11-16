@@ -503,8 +503,8 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 |---|---|---|---|
 | 1: palette rows and `MATL` | dev | done | d853afc3 |
 | 2: the material file, hot-reloaded | dev | done | 26a76ef7 |
-| 3: prefabs as bricks | dev | done | committed with this row |
-| 4: the scene: layers, mirrors, scale, `--vox` | dev | not started | |
+| 3: prefabs as bricks | dev | done | a8a53e7a |
+| 4: the scene: layers, mirrors, scale, `--vox` | dev | done | committed with this row |
 | 5: placements past residency | dev | not started | |
 | 6: the Structures page | dev | not started | |
 | 7: the owner's window | human | not started | |
@@ -542,6 +542,22 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 - Phase 3: `castle::prefab_bytes` reads `Prefab::bytes`; `dense_prefab_bytes` keeps the old sum
   for the soak test and the start-up line. `prefab256_castle_tile` is a castle-shaped 256³
   tile built in the bench (vxe-world cannot reach the fly-through's generator).
+- Phase 4: `VoxFile` gains `reflected` (a reflected frame's `_r` byte; the node's `rot` holds the
+  reflection times a mirror of x), `hidden`, `node_layers` and `layers`; `parse` accepts a
+  reflection, `try_placements` refuses it (`placements` stops before it), `decode_frame` is new
+  and `decode_rotation` still refuses. `encode` writes the new fields; files without them encode
+  byte for byte as before.
+- Phase 4: `VoxScene::load(file, map, SceneOptions { scale, honour_hidden })`; the plan's
+  "flags off" is `honour_hidden: false`. A reflected placement mirrors its model along x and
+  composes the proper `Rot`. `VoxScene::placed_at` and `size` are added.
+- Phase 4: `--vox` and `--vox-clear` are in `cli/model.rs`, not `cli/flags.rs` (at its cap); the
+  structure code is a new `apps/flythrough/src/structures.rs` (the plan names it in Phase 6).
+  `--vox` places in the streamed cave only. The carve covers the box and 1 m on its sides and
+  above, not below, so the base stands on what is under it; the default corner is 3 m ahead of
+  the spawn (+x), centred in y, the base 1.6 m below the spawn. Index 0 (empty cells) is `skip`.
+- Phase 4: `chapel.vox` is `chapel.voxtext` (models only) plus `structures::chapel_vox` (`MATL`,
+  layers, the reflected transept); `the_chapel_assets_are_in_step` keeps the two equal.
+- Phase 4 done-when 5 (the chapel in the window) waits for Phase 7.
 
 ### Close triggers
 

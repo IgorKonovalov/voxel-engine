@@ -3,7 +3,8 @@
 //! [`encode`] writes `"VOX "`, the file's version and one `MAIN` chunk holding, in order:
 //! `PACK` when there is more than one model, each model's `SIZE` and `XYZI` pair in model
 //! order with its voxels in their listed order, every scene-graph node in ascending id order
-//! (`nTRN` with one frame, `nGRP`, `nSHP`), then `RGBA`, then a `MATL` per palette index whose
+//! (`nTRN` with one frame, `nGRP`, `nSHP`), a `LAYR` per layer in ascending id order, then
+//! `RGBA`, then a `MATL` per palette index whose
 //! material is not [`crate::VoxMaterialKind::Diffuse`], ascending. The output is a pure
 //! function of the file, so the same file always encodes to the same bytes.
 
@@ -60,11 +61,12 @@ fn dict(out: &mut Vec<u8>, pairs: &[(&str, String)]) {
 /// file holds what the parser can produce: `palette[0]` is `[0, 0, 0, 0]`, every model edge
 /// is at most [`crate::MAX_MODEL_EDGE`], node ids and model ids fit in an `i32`, and
 /// `imap_present` is false (no `IMAP` is written). A node with an entry in `names` writes it
-/// as its `_name` attribute (a name for an id with no node is not written), and no other node
-/// attribute is written. A transform writes `_t` only when its
+/// as its `_name` attribute (a name for an id with no node is not written), a node in `hidden`
+/// writes `_hidden 1`, and no other node attribute is written. A transform writes `_t` only when its
 /// translation is not zero and `_r` only when its rotation is not the identity, which the
-/// parser reads back as those defaults. The root transform's layer is -1 and every other
-/// transform's 0, as MagicaVoxel writes them.
+/// parser reads back as those defaults; a transform in `reflected` writes its byte. A
+/// transform's layer is [`VoxFile::layer_of`]: by default the root's -1 and every other's 0,
+/// as MagicaVoxel writes them.
 ///
 /// # Panics
 ///
@@ -90,10 +92,14 @@ pub fn encode(file: &VoxFile) -> Vec<u8> {
     for (&id, node) in &file.nodes {
         c.clear();
         int(&mut c, len32(id as usize) as i32);
-        match file.names.get(&id) {
-            Some(name) => dict(&mut c, &[("_name", name.clone())]),
-            None => dict(&mut c, &[]),
+        let mut attrs = Vec::new();
+        if let Some(name) = file.names.get(&id) {
+            attrs.push(("_name", name.clone()));
         }
+        if file.hidden.contains(&id) {
+            attrs.push(("_hidden", "1".to_owned()));
+        }
+        dict(&mut c, &attrs);
         let tag = match node {
             Node::Transform {
                 child,
@@ -102,10 +108,12 @@ pub fn encode(file: &VoxFile) -> Vec<u8> {
             } => {
                 int(&mut c, len32(*child as usize) as i32);
                 int(&mut c, -1);
-                int(&mut c, if id == 0 { -1 } else { 0 });
+                int(&mut c, file.layer_of(id));
                 int(&mut c, 1);
                 let mut frame = Vec::new();
-                if *rot != Rot::IDENTITY {
+                if let Some(b) = file.reflected.get(&id) {
+                    frame.push(("_r", b.to_string()));
+                } else if *rot != Rot::IDENTITY {
                     frame.push(("_r", encode_rotation(*rot).to_string()));
                 }
                 if *translation != [0; 3] {
@@ -132,6 +140,20 @@ pub fn encode(file: &VoxFile) -> Vec<u8> {
             }
         };
         chunk(&mut body, tag, &c);
+    }
+    for (&id, layer) in &file.layers {
+        c.clear();
+        int(&mut c, id);
+        let mut attrs = Vec::new();
+        if !layer.name.is_empty() {
+            attrs.push(("_name", layer.name.clone()));
+        }
+        if layer.hidden {
+            attrs.push(("_hidden", "1".to_owned()));
+        }
+        dict(&mut c, &attrs);
+        int(&mut c, -1);
+        chunk(&mut body, b"LAYR", &c);
     }
     // Entry k is the colour of index k + 1; the last entry has no index.
     let mut rgba = [[0u8; 4]; 256];

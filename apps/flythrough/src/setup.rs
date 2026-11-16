@@ -132,7 +132,50 @@ pub(crate) fn world_table(args: &Args, table: &MaterialTable) -> MaterialTable {
     if let Some(path) = &args.model {
         crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR);
     }
+    if let Some(v) = &args.vox
+        && let Ok(file) = crate::structures::read(&v.path)
+    {
+        crate::structures::add_rows(&file, &mut t);
+    }
     t
+}
+
+/// `--vox`'s scene over `base` (`crate::structures`), its rows in `table`: the source and its
+/// printed line. A file that does not read or load ends the process with status 1.
+fn vox_source<S: vxe_world::WorldSource>(
+    args: &Args,
+    table: &MaterialTable,
+    spawn: VoxelCoord,
+    base: S,
+) -> vxe_world::StampedSource<crate::structures::ClearedSource<S>> {
+    use crate::structures as st;
+    let v = args.vox.as_ref().expect("--vox given");
+    let t = now();
+    let scene = st::read(&v.path)
+        .and_then(|f| st::scene(&f, table, v.scale))
+        .unwrap_or_else(|e| {
+            eprintln!("flythrough: --vox {e}");
+            std::process::exit(1)
+        });
+    let offset = st::offset(&scene, spawn, v.at);
+    let (lo, hi) = scene.bounds;
+    let size = scene.size();
+    println!(
+        "vox {}: {} placements of {} prefabs, {} x {} x {} voxels at {:?}..{:?}, scale {}, \
+         clear {}, loaded in {:.0} ms",
+        v.path.display(),
+        scene.placements.len(),
+        scene.prefabs.len(),
+        size[0],
+        size[1],
+        size[2],
+        [0, 1, 2].map(|k| lo[k] + offset[k]),
+        [0, 1, 2].map(|k| hi[k] + offset[k]),
+        v.scale,
+        if args.vox_clear { "on" } else { "off" },
+        ms_since(t)
+    );
+    st::source(base, &scene, offset, args.vox_clear)
 }
 
 /// The palette rows [`world_table`] adds for `--model`'s `.vox`: the viewer's `rows +N`.
@@ -485,7 +528,8 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     let seed = args.seed;
     let source = CaveSource::unbounded(seed);
     let workers = args.workers.unwrap_or_else(default_workers);
-    let world = World::new(&world_table(args, &materials(args)));
+    let table = world_table(args, &materials(args));
+    let world = World::new(&table);
     let cfg = StreamConfig {
         residency: args.residency,
         workers,
@@ -496,6 +540,9 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
             Arc::new(castle_source(seed, args.castle_out.as_deref())),
             cfg,
         )
+    } else if args.vox.is_some() {
+        let spawn = source.spawn();
+        Streamer::new(Arc::new(vox_source(args, &table, spawn, source)), cfg)
     } else if args.vault {
         println!(
             "vault: {VAULT_EDGE}^3 shell room at {:?}",

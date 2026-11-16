@@ -38,5 +38,27 @@ pub(super) fn model_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::value(
+            &["--vox"],
+            "PATH[@x,y,z][*k]",
+            "place a MagicaVoxel scene in the streamed cave at the start: its palette as rows \
+             (glass, glow, metal), hidden layers left out, mirrored groups mirrored, each voxel \
+             k^3 world voxels (1 to 4); its box's minimum corner at x,y,z, or 3 m ahead of the \
+             spawn (library: apps/flythrough/assets/structures/)",
+            |p: &mut Parsing, v| {
+                p.args.vox =
+                    Some(crate::structures::VoxArg::parse(v.text).map_err(|e| v.takes(&e))?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--vox-clear"],
+            "on|off",
+            "carve --vox's box (and 1 m on its sides and above) to air before placing it [on]",
+            |p: &mut Parsing, v| {
+                p.args.vox_clear = v.on_off()?;
+                Ok(())
+            },
+        ),
     ]
 }

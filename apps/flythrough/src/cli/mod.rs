@@ -617,6 +617,11 @@ pub struct Args {
     /// `--materials PATH`: the material file (`crate::materials`); `None` for
     /// `assets/materials.txt`.
     pub materials: Option<std::path::PathBuf>,
+    /// `--vox PATH[@x,y,z][*k]`: a `.vox` scene placed in the streamed cave at the start
+    /// (`crate::structures`).
+    pub vox: Option<crate::structures::VoxArg>,
+    /// `--vox-clear on|off`: carve the structure's box to air first (on).
+    pub vox_clear: bool,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.

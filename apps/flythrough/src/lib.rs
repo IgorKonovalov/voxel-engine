@@ -27,6 +27,7 @@ mod scene;
 pub mod setup;
 pub mod showcase;
 mod streaming;
+pub mod structures;
 #[cfg(test)]
 mod test_support;
 pub mod thin_rig;
