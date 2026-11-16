@@ -38,48 +38,52 @@ impl Fsr2Binds {
         &'a self,
         fsr: &'a Fsr2,
         world: &'a wgpu::BindGroup,
-    ) -> [Vec<Dispatch<'a>>; FSR2_PASSES.len()] {
+    ) -> [Dispatches<'a>; FSR2_PASSES.len()] {
         let fsr_pass = |p: &'a Pass, b: &'a wgpu::BindGroup, workgroups| {
-            vec![Dispatch {
+            Dispatches::one(Dispatch {
                 pipeline: &p.pipeline,
                 groups: [Some(&self.cb), Some(b), None, None],
                 workgroups,
                 indirect: None,
-            }]
+            })
         };
-        let tone = vec![Dispatch {
+        let tone = Dispatches::one(Dispatch {
             pipeline: &fsr.tone.pipeline,
             groups: [Some(world), None, Some(&self.tone), None],
             workgroups: self.display_groups,
             indirect: None,
-        }];
-        let record = |passes: &[Vec<Dispatch<'a>>; FSR2_PASSES.len()]| {
-            *fsr.dispatched
+        });
+        let record = |passes: &[Dispatches<'a>; FSR2_PASSES.len()]| {
+            let mut names = fsr
+                .dispatched
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = FSR2_PASSES
-                .iter()
-                .zip(passes)
-                .filter(|(_, d)| !d.is_empty())
-                .map(|(n, _)| *n)
-                .collect();
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            names.clear();
+            names.extend(
+                FSR2_PASSES
+                    .iter()
+                    .zip(passes)
+                    .filter(|(_, d)| !d.is_empty())
+                    .map(|(n, _)| *n),
+            );
         };
         if self.bypass {
-            let mut passes: [Vec<Dispatch<'a>>; FSR2_PASSES.len()] = Default::default();
+            let mut passes: [Dispatches<'a>; FSR2_PASSES.len()] = Default::default();
             passes[FSR2_PASSES.len() - 1] = tone;
             record(&passes);
             return passes;
         }
         let (rcas, tone) = match &self.rcas {
-            Some((b, workgroups)) => (fsr_pass(&fsr.rcas, b, *workgroups), Vec::new()),
-            None => (Vec::new(), tone),
+            Some((b, workgroups)) => (fsr_pass(&fsr.rcas, b, *workgroups), Dispatches::default()),
+            None => (Dispatches::default(), tone),
         };
         let passes = [
-            vec![Dispatch {
+            Dispatches::one(Dispatch {
                 pipeline: &fsr.input.pipeline,
                 groups: [Some(world), None, Some(&self.input), None],
                 workgroups: self.render_groups,
                 indirect: None,
-            }],
+            }),
             fsr_pass(&fsr.spd_mips, &self.spd_mips, self.spd_groups),
             fsr_pass(&fsr.spd_tail, &self.spd_tail, [1, 1]),
             fsr_pass(&fsr.reconstruct, &self.reconstruct, self.render_groups),

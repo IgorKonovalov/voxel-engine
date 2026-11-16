@@ -360,6 +360,8 @@ pub(crate) struct ExposurePass {
     /// The copy of the state every frame pass reads through group 0 (`UNIFORM | COPY_DST`).
     state_uniform: wgpu::Buffer,
     ring: Mutex<Ring>,
+    /// The pass's bind group, built again only when the tiles buffer is replaced.
+    binds: crate::gpu_util::BindCache,
 }
 
 impl ExposurePass {
@@ -419,6 +421,7 @@ impl ExposurePass {
             uniform,
             state,
             state_uniform,
+            binds: crate::gpu_util::BindCache::default(),
             ring: Mutex::new(Ring {
                 slots,
                 encodes: 0,
@@ -435,6 +438,11 @@ impl ExposurePass {
         &self.state_uniform
     }
 
+    /// Bind groups and texture views the pass created so far.
+    pub(crate) fn binds_built(&self) -> (u64, u64) {
+        self.binds.built()
+    }
+
     /// Bytes the state, its uniform copy, the pass's parameters and the ring occupy.
     pub(crate) fn bytes(&self) -> u64 {
         2 * size_of::<ExposureState>() as u64
@@ -442,8 +450,9 @@ impl ExposurePass {
             + RING as u64 * RING_BYTES
     }
 
-    /// Writes the pass's parameters for this frame and records it over `tiles`, then the
-    /// state's copies: into the uniform the next frame reads, and into a free ring slot.
+    /// Writes the pass's parameters for this frame and records it over `tiles` (its group built
+    /// again only for another `tiles`), then the state's copies: into the uniform the next frame
+    /// reads, and into a free ring slot.
     /// Slots copied by an earlier encode are asked to map first: every encode's commands are
     /// submitted before the next encode.
     pub(crate) fn encode(
@@ -455,25 +464,18 @@ impl ExposurePass {
         uniform: &ExposureUniform,
         timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
+        use crate::gpu_util::Res;
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(uniform));
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("exposure"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.state.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: tiles.as_entire_binding(),
-                },
+        self.binds.tick();
+        let bind = self.binds.io(
+            device,
+            &self.layout,
+            &[
+                Res::Buf(&self.uniform),
+                Res::Buf(&self.state),
+                Res::Buf(tiles),
             ],
-        });
+        );
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("exposure"),

@@ -34,7 +34,7 @@
 > (redesign this plan on the lighting base as it stands; the order below).
 > **Starts after:** Plan 0060, Plan 0061,
 > [Plan 0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md),
-> [Plan 0044](0044-hot-path-and-defect-pass.md),
+> [Plan 0044](done/0044-hot-path-and-defect-pass.md),
 > [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md), the plan that
 > removes the `own` upscaler and the render-profile plan (the last two are owed and take their
 > numbers when drafted). **The base commit** in every bar is main after the last of those

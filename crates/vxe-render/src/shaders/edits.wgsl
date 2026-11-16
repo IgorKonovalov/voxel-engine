@@ -7,7 +7,7 @@ struct Edits {
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
-    boxes: array<vec4<i32>, 128>,
+    boxes: array<vec4<i32>, 2u * MAX_EDITS>,
 };
 
 // Whether `p` lies inside an edit box dilated by one voxel: the continuous span of voxels

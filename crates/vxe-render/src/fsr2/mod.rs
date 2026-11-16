@@ -7,7 +7,7 @@
 //! image atomics, core storage formats (each of AMD's 16- and 8-bit formats widened to one at
 //! least as precise), and four-tap loads for AMD's bilinear samples.
 
-use crate::frame::{Dispatch, Params, Upscaler, WORKGROUP};
+use crate::frame::{Dispatch, Dispatches, Params, Upscaler, WORKGROUP};
 use crate::gpu_util::*;
 
 mod pipelines;

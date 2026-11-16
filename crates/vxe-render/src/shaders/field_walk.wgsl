@@ -73,7 +73,9 @@ fn field_brick(bw: vec3<i32>) -> FBrick {
     let w = params.window_size;
     if (all(rel >= vec3<i32>(0)) && all(rel < w)) {
         let wr = ((chunk % w) + w) % w;
-        loads += 1u;
+        if (COUNT_STEPS) {
+            loads += 1u;
+        }
         r.table = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
         if (r.table != ABSENT && (r.table & LOD_BIT) == 0u) {
             let rec = r.table & RECORD_MASK;
@@ -155,7 +157,7 @@ fn field_count_raw(u: vec3<i32>) -> u32 {
         return 0u;
     }
     if ((b.table & LOD_BIT) != 0u) {
-        return select(0u, 27u, lookup(u).size == 0);
+        return select(0u, 27u, solid_at(u));
     }
     let l = vec3<u32>(u - bw * 8);
     let i = l.x + 8u * (l.y + 8u * l.z);
@@ -550,7 +552,7 @@ fn field_opaque(u: vec3<i32>) -> bool {
         return false;
     }
     if ((b.table & LOD_BIT) != 0u) {
-        return lookup(u).size == 0;
+        return solid_at(u);
     }
     let e = b.entry;
     if (e == 0u) {
@@ -641,7 +643,9 @@ fn field_walk(o: vec3<f32>, d: vec3<f32>, t_start: f32, v_start: vec3<i32>, axis
     var v = v_start;
     var axis = axis_start;
     for (var step = 0u; step < MAX_STEPS; step++) {
-        walk_steps += 1u;
+        if (COUNT_STEPS) {
+            walk_steps += 1u;
+        }
         if (any(v < bmin_i) || any(v >= bmax_i)) {
             return miss;
         }

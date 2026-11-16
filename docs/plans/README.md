@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0075** (ADRs are a separate sequence; next free there is **0059**).
+**Next free number: 0076** (ADRs are a separate sequence; next free there is **0060**).
 
 ## Active roster
 
@@ -16,13 +16,12 @@ state from `git log`. Completed plans move to `done/`.
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Amended 2026-11-10. After Plan 0034. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
-| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, verified defects | in-progress | Code health. Side lane (Phases 1, 6, 7 and their Phase 0 rows) merged d6d2dfa; Phases 2, 3, 5, 8 after 0058; Phase 4 went to Plan 0070. |
 | [0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: voxel models on rigid parts, lit and shadowed by the list lights, a headless ray query | in-progress | M6, ADR-0050 (proposed). Phase 1 merged 74ae796; Phases 2-6 after 0058. |
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | in-progress | M6, ADR-0051 (proposed). Phases 1-2 merged 7ca423c; Phases 3-4 after 0062. |
 | [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
-| [0068](0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, cave, hall and castle, a camera path and free flight, a report zip | in-progress | M7, ADR-0054 (proposed). Phases 1-5 merged 56008fa; Phase 6 Linux run done, Windows run owed (owner: later). |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
+| [0075](0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: steppable start-up, a progress signal and a default loading frame | approved | ADR-0059 (proposed). Approved 2026-11-15, voxel cube. After 0062 merges, beside 0063 P3-4, before 0069. |
 <!-- roster:end -->
 
 ## Sequence
@@ -55,16 +54,16 @@ Each starts on main after the one before it closes, unless its line says otherwi
    moves. Plan 0044's render device helper (its Phase 8) now follows it.
 4. **Plan 0058**, dynamic lights: closed 2026-11-15 (v0.54.0; ADR-0044 accepted). Plan 0069's
    per-profile light cap is a field at or under its `MAX_LIGHTS` (16).
-5. **Plan 0044**, the hot-path pass, its Phases 2, 3, 5 and 8 (Phase 4 went to Plan 0070, closed 2026-11-13; the side lane, Phases 0, 1, 6
-   and 7, merged at `d6d2dfa`). Phase 0's render rows re-inventory on the split tree.
+5. **Plan 0044**, the hot-path pass: closed 2026-11-16 (v0.55.0); Phase 2 ran as Plan 0064's
+   Phase 3, Phase 4 as Plan 0070.
 6. **Plan 0069, render settings and profiles** (approved 2026-11-11, every recommendation
    taken), then the owed plan removing the `own` upscaler (not drafted; owner, 2026-11-11:
    Portable takes FSR 2, so the removal goes ahead).
 7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
    because the first consumer is a cave game).
    0062's Phase 1 and 0063's Phases 1 and 2 ran as a side lane and merged (74ae796, 7ca423c).
-   - **Plan 0068**, the tester build (approved 2026-11-11): a side lane whose Phases 1-5 merged at 56008fa;
-     it adds new files and three flags to the fly-through, and its Windows run is owed.
+   - **Plan 0068**, the tester build: closed 2026-11-15 (its code shipped in v0.54.0, the first
+     tagged release; ADR-0054 accepted).
 8. **M10 in plan order: 0032, 0033, 0034, 0035, 0036, 0037.** 0032 builds on Plan 0058's direct
    target, and each later plan relies on 0032's "Interface for Plans 0033 to 0037" section.
 
@@ -78,9 +77,10 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0074** (the sync's light stages): closed 2026-11-14 (v0.53.0). The next sync plans are the backlog's head: the light placement's eviction scan, then `alloc`.
 
+**Plan 0075** (a loading screen, drafted and approved 2026-11-15, the animation a turning voxel cube): after Plan 0062 merges, beside Plan 0063's Phases 3-4, ahead of Plan 0069 (both edit `Run::init`).
+
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
-static performance review). Plan 0044's Phase 2 ran as Plan 0064's Phase 3 (closed 2026-11-11), and its Phase 5
-stays after Plan 0058. Approval accepts the design; a plan's lane
+static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
 plans were amended on 2026-11-10;
@@ -91,6 +91,8 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0044](done/0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: audio frees nothing, bind groups kept by identity (encode CPU 0.20 to 0.03 ms), material read at the hit; goldens unchanged | 2026-11-16, v0.55.0 |
+| [0068](done/0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md) | A tester build: Linux and Windows archives, three scene paths, tour and free flight, a report zip; Windows image 2-3x darker (backlog) | 2026-11-15, shipped in v0.54.0, no bump |
 | [0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md) | Dynamic lights: sixteen exact lights, one shadow ray each, the direct part in rgb, a bounce flag; RTX 0.17 ms a light, RENOIR 1.5 | 2026-11-15, v0.54.0 |
 | [0074](done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: `light_note` p99 8.3 to 2.5 ms by masks; placement index struck, then the window put the stagger in the eviction scan (backlog) | 2026-11-14, v0.53.0 |
 | [0070](done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md) | The sync in place: rescan set dense, light walks on change; sync p50 180 to 17 us, `update + poll + sync` p99 45 to 24 ms, over 16.6; worker packing deferred | 2026-11-13, v0.52.0 |

@@ -1,8 +1,8 @@
 # ADR-0054: The tester build is a launcher that runs the fly-through once per scene
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-15, Plan 0068 closed)
 > **Date:** 2026-11-11
-> **Related plan(s):** [Plan 0068](../plans/0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md)
+> **Related plan(s):** [Plan 0068](../plans/done/0068-a-tester-build-for-linux-and-windows-scenes-paths-and-a-report.md)
 
 ## Context
 

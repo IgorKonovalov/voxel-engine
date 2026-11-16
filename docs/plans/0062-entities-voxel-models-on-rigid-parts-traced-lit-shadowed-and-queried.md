@@ -396,8 +396,7 @@ d^2` times the window `(1 - (d / r)^4)^2`: **9.40** at 20 voxels straight below 
   3. `--entities 0` reads within the round-to-round spread of the start commit's frame on
      both adapters. Outside it, the log names the pass that grew and the plan stops for the
      architect.
-     **Amended 2026-11-15 (orchestrator, the owner asleep; the owner may overturn it in the
-     morning):** the reading was outside it (the Cezanne +1.06 ms spawn and +1.05 ms vein, in
+     **Amended 2026-11-15 (orchestrator; owner, confirmed 2026-11-16):** the reading was outside it (the Cezanne +1.06 ms spawn and +1.05 ms vein, in
      the hit and light passes; the RTX +0.08 and +0.05 ms). The bar stands. Phase 5 continues:
      the hit and light passes skip every entity step when the set is empty (no part, no walk,
      no extra bind or loop work that the start commit did not do), and `--entities 0` is read
@@ -588,6 +587,12 @@ each. Empty is fine.)_
   (`marcher.rs`, `pipelines.rs`, `encode.rs`, `entity.wgsl`, outside Files touched but for
   `marcher.rs`). The AMD vein pairs of rounds 3 to 6 were read at a load of 4 to 15 (another
   project), not quiet.
+- Owner answers 2026-11-16: the walker costs (3 to 10x the plan's guesses, mostly the light
+  pass) accepted as measured, judged in the Phase 6 window; the zero-entity amendment stands;
+  the three local goldens left as they are.
+- Merge of main (plan 0044, the surface-format chore): the steps view's `COUNT_STEPS` hit and
+  light pipelines keep `ENTITIES` at its default; the `ENTITIES`-false variants serve the
+  other views while no part is drawn.
 - Phase 5: `Frame::frame_bytes` is in `frame/mod.rs` (the plan's `marcher.rs`); `gpu_look_field.rs`
   (outside Files touched) adds the mirror's bytes to its pinned figure.
 

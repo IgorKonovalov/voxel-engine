@@ -59,6 +59,7 @@ pub(super) const P_GATHER: usize = 10;
 pub(super) const P_PROBE_TRACE: usize = 11;
 pub(super) const P_PROBE_BLEND: usize = 12;
 pub(super) const P_LIGHT_BARE: usize = 13;
+pub(super) const P_LIGHT_STEPS: usize = 14;
 
 /// The probe update's modules: its trace and blend share one source.
 const PROBE_UPDATE: &[&str] = &[
@@ -73,7 +74,7 @@ const PROBE_UPDATE: &[&str] = &[
     PROBE_UPDATE_WGSL,
 ];
 
-/// The light pass's modules, in both its variants.
+/// The light pass's modules, in each of its variants.
 const LIGHT_MODULES: &[&str] = &[
     COMMON_WGSL,
     MIRROR_WGSL,
@@ -86,7 +87,7 @@ const LIGHT_MODULES: &[&str] = &[
 
 /// Every frame pass but the hit pass ([`Marcher`]) and the composite's FSR 2 variant
 /// ([`composite_hdr_source`]), indexed by the `P_*` constants.
-pub(crate) const PASSES: [PassSpec; 14] = [
+pub(crate) const PASSES: [PassSpec; 15] = [
     PassSpec {
         label: "temporal",
         modules: &[
@@ -327,6 +328,15 @@ pub(crate) const PASSES: [PassSpec; 14] = [
         modules: LIGHT_MODULES,
         entry: "shade",
         constants: &[("ENTITIES", 0.0)],
+        groups: &[W, E, Group::SharedWith(P_LIGHT)],
+        lazy: true,
+    },
+    // The light pass with `COUNT_STEPS` on, for the steps view, built on its first use.
+    PassSpec {
+        label: "light counting",
+        modules: LIGHT_MODULES,
+        entry: "shade",
+        constants: &[("COUNT_STEPS", 1.0)],
         groups: &[W, E, Group::SharedWith(P_LIGHT)],
         lazy: true,
     },

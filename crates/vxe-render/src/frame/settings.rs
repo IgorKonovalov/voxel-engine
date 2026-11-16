@@ -100,8 +100,9 @@ pub struct Params {
     pub _pad9: u32,
     /// 1: [`Fsr2Settings::dither`] while FSR 2 runs unbypassed.
     pub dither: u32,
-    /// Pads the block to a multiple of 16 bytes, as the shaders' struct is.
-    pub _tail: [u32; 3],
+    /// The chunk of `views[0]`'s origin, which the LOD walk measures its levels from;
+    /// [`Frame::encode`] sets it from the views.
+    pub cam_chunk: [i32; 3],
     /// The headlamp as a list light ([`Light::headlamp`]): [`Frame::encode`] puts it in the
     /// lights uniform's slot 0 while [`LIGHTING_LAMP`] is set. The shaders read these words as
     /// padding; the lights uniform (`common.wgsl`'s `lights`) is what they shade.

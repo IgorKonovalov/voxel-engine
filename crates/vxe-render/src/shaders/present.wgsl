@@ -5,7 +5,8 @@
 //   1  sampler  linear   bilinear, clamp to edge
 //
 // `fs_main` copies the display-encoded values to a non-sRGB surface; `fs_srgb` decodes them
-// first, because an sRGB surface encodes on write.
+// first with the exact sRGB curve, because an sRGB surface encodes on write with that curve:
+// the pair round-trips every 8-bit value, so both surfaces show the target's bytes as stored.
 
 @group(0) @binding(0) var source: texture_2d<f32>;
 @group(0) @binding(1) var linear: sampler;
@@ -30,8 +31,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(textureSampleLevel(source, linear, in.uv, 0.0).rgb, 1.0);
 }
 
+// The sRGB decode (IEC 61966-2-1): linear below 0.04045, the 2.4 power curve above. The
+// inverse of the encode an `*Srgb` format applies on write; `pow(c, 2.2)` is not, and moves
+// dark values by several steps.
+fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
+    let low = c / 12.92;
+    let high = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(high, low, c <= vec3<f32>(0.04045));
+}
+
 @fragment
 fn fs_srgb(in: VsOut) -> @location(0) vec4<f32> {
     let c = textureSampleLevel(source, linear, in.uv, 0.0).rgb;
-    return vec4<f32>(pow(c, vec3<f32>(2.2)), 1.0);
+    return vec4<f32>(srgb_decode(c), 1.0);
 }

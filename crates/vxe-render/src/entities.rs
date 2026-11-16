@@ -8,7 +8,7 @@
 //!   its box's minimum and maximum in world voxels (six `f32`), then for an inner node its two
 //!   children's indices, for a leaf its first instance with [`LEAF_BIT`] set and its instance
 //!   count, with [`LEAF_MOVED`] set when any of the entity's parts moved. The last node's
-//!   slot is the header ([`HEADER_WORD`]): the entities drawn, the nodes, the instances, and
+//!   slot is the header ([`TREE_HEADER_WORD`]): the entities drawn, the nodes, the instances, and
 //!   whether any instance moved.
 //! - the instances from [`INSTANCE_WORD`]: [`MAX_ENTITY_PARTS`] of [`INSTANCE_WORDS`] words. An
 //!   instance is its world-to-part transform (3 x 4 `f32`, row-major, model voxels from world
@@ -39,7 +39,7 @@ pub(crate) const ENTITY_NODES: usize = 2 * MAX_ENTITIES;
 /// Words of a tree node.
 pub(crate) const NODE_WORDS: usize = 8;
 /// The header's first word: the last node's slot.
-pub(crate) const HEADER_WORD: usize = (ENTITY_NODES - 1) * NODE_WORDS;
+pub(crate) const TREE_HEADER_WORD: usize = (ENTITY_NODES - 1) * NODE_WORDS;
 /// A leaf's first-instance word carries this bit.
 pub(crate) const LEAF_BIT: u32 = 1 << 31;
 /// A leaf's count word carries this bit when any of its entity's parts moved since the call
@@ -413,7 +413,7 @@ impl EntityMirror {
             tree[i * NODE_WORDS..(i + 1) * NODE_WORDS].copy_from_slice(n);
         }
         let parts = inst.len() / INSTANCE_WORDS;
-        tree[HEADER_WORD..HEADER_WORD + 4].copy_from_slice(&[
+        tree[TREE_HEADER_WORD..TREE_HEADER_WORD + 4].copy_from_slice(&[
             boxes.len() as u32,
             nodes.len() as u32,
             parts as u32,

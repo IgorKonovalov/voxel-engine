@@ -215,13 +215,13 @@ pub(super) fn bounce_moves(
 /// headlamp.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct LightsUniform {
-    pub(super) l: [Light; MAX_LIGHTS],
-    pub(super) old: [Light; MAX_LIGHTS],
-    pub(super) count: u32,
-    pub(super) old_count: u32,
-    pub(super) changed: u32,
-    pub(super) lamp: u32,
+pub(crate) struct LightsUniform {
+    pub(crate) l: [Light; MAX_LIGHTS],
+    pub(crate) old: [Light; MAX_LIGHTS],
+    pub(crate) count: u32,
+    pub(crate) old_count: u32,
+    pub(crate) changed: u32,
+    pub(crate) lamp: u32,
 }
 
 const _: () = assert!(size_of::<LightsUniform>() == 2064);

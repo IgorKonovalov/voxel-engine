@@ -375,7 +375,13 @@ fn open_folder(path: &Path) {
 impl App for Launcher {
     fn init(&mut self, gpu: &Gpu) {
         let info = gpu.adapter.get_info();
-        let adapter = format!("{} ({})", info.name, vxe_app::backend_label(info.backend));
+        let adapter = format!(
+            "{} ({}), surface {:?} {:?}",
+            info.name,
+            vxe_app::backend_label(info.backend),
+            gpu.surface_format,
+            gpu.surface_color_space.unwrap_or_default()
+        );
         println!("vxe-tester: window on {adapter}");
         lock(&self.status).window_adapter = Some(adapter);
         self.hud = Some(HudOverlay::new(&gpu.device, gpu.surface_format, TEXT_SCALE));

@@ -66,10 +66,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("RECORD_WORDS", RECORD_WORDS as u32),
     ("ENTRY_WORD", ENTRY_WORD as u32),
     ("HEADER_WORD", UNIT_WORDS as u32),
-    (
-        "HEADER_TRANSLUCENT_WORD",
-        (UNIT_WORDS + HEADER_TRANSLUCENT_WORD) as u32,
-    ),
+    ("HEADER_TRANSLUCENT_WORD", HEADER_TRANSLUCENT_WORD as u32),
     ("PAYLOAD_WORD", 2 * UNIT_WORDS as u32),
     ("HEADER_BAND_WORD", HEADER_BAND_WORD as u32),
     ("HEADER_BAND_BIT", HEADER_BAND_BIT),
@@ -82,6 +79,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("SMOOTH_COUNT_BIT", SMOOTH_COUNT_BIT as u32),
     // `Params.flags` and `Params.lighting` (`frame/settings.rs`).
     ("MAX_VIEWS", MAX_VIEWS as u32),
+    ("MAX_EDITS", MAX_EDITS as u32),
     ("FLAG_SHADOWS", FLAG_SHADOWS),
     ("FLAG_MASKS", FLAG_MASKS),
     ("NORMAL_SHIFT", NORMAL_SHIFT),
@@ -108,7 +106,10 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHT_SHADOWS", Light::SHADOWS),
     ("LIGHT_BOUNCE", Light::BOUNCE),
     // The entity mirror (`entities`).
-    ("ENTITY_HEADER_WORD", crate::entities::HEADER_WORD as u32),
+    (
+        "ENTITY_HEADER_WORD",
+        crate::entities::TREE_HEADER_WORD as u32,
+    ),
     ("ENTITY_NODE_WORDS", crate::entities::NODE_WORDS as u32),
     ("ENTITY_LEAF_BIT", crate::entities::LEAF_BIT),
     ("ENTITY_LEAF_MOVED", crate::entities::LEAF_MOVED),
@@ -350,11 +351,32 @@ mod tests {
         assert_eq!(names.len(), PRELUDE.len(), "each prelude name once");
     }
 
+    /// The walk's `floor_div` (`mirror.wgsl`) is an arithmetic shift by log2 of the divisor and
+    /// `exit_cell`'s cell corner (`walk.wgsl`) a mask; for `v` in -4096..=4096 at every cell
+    /// edge the walk uses (1 to 128) both equal `div_euclid` and the float floor division they
+    /// replace (`floor(f32(v) / f32(size))`, times `size` for the corner).
+    #[test]
+    fn the_shift_and_mask_forms_equal_the_floor_division() {
+        assert!(MIRROR_WGSL.contains("return a >> vec3<u32>(countTrailingZeros(u32(b)));"));
+        assert!(WALK_WGSL.contains("let cell_min = v & vec3<i32>(-size);"));
+        for size in [1i32, 2, 4, 8, 16, 32, 64, 128] {
+            for v in -4096i32..=4096 {
+                let shift = v >> size.trailing_zeros();
+                let mask = v & -size;
+                let float = (v as f32 / size as f32).floor() as i32;
+                assert_eq!(shift, v.div_euclid(size), "{v} / {size}");
+                assert_eq!(shift, float, "{v} / {size}");
+                assert_eq!(mask, float * size, "{v} at {size}");
+            }
+        }
+    }
+
     #[test]
     fn the_prelude_holds_the_rust_values() {
         let p = prelude();
         assert!(p.contains("const FULL_BIT: u32 = 2147483648u;"));
-        assert!(p.contains("const HEADER_TRANSLUCENT_WORD: u32 = 24u;"));
+        assert!(p.contains("const HEADER_TRANSLUCENT_WORD: u32 = 8u;"));
+        assert!(p.contains("const MAX_EDITS: u32 = 64u;"));
         assert!(p.contains("const PAYLOAD_WORD: u32 = 32u;"));
         assert!(p.contains("const FLAG_FIELD_SPLIT: u32 = 524288u;"));
         assert!(p.contains("const MATERIAL_TRANSLUCENT: u32 = 2u;"));

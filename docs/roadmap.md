@@ -300,7 +300,9 @@ throughput, not the order, limits the far light (Plan 0067 takes it). Amended 20
 0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged. Plan
 0045 closed 2026-11-13 (v0.50.0): the mega files are directories of owned parts, `vxe-render`'s
 surface is a curated root with `debug` and `internals`, and two gates cap file and function size;
-no behaviour changed.
+no behaviour changed. Plan 0044 closed 2026-11-16 (v0.55.0): the audio callback frees nothing, the frame keeps its
+bind groups by what they bind, the march reads a material only at its hit, the render tests share one
+device rule and a naga layout test pins the uniform structs; images, hashes and samples unchanged.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
@@ -653,7 +655,7 @@ a cheap query.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs:** ADR-0050 (entity representation) and ADR-0051 (rigs and clips), proposed with Plans 0062 and 0063.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and the benchmark lane is Plan 0068 (in progress: the tester build, Phases 1-5 merged, the Windows run owed); Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane

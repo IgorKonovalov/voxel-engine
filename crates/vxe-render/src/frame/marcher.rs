@@ -6,10 +6,10 @@ use super::*;
 
 /// The hit pass's three pipelines: `hit.wgsl`'s `main`, the same with `FIELD_SURFACE`, and
 /// `field_resume`.
-pub(super) struct HitPipes {
-    pub(super) pipeline: wgpu::ComputePipeline,
-    pub(super) field: wgpu::ComputePipeline,
-    pub(super) resume: wgpu::ComputePipeline,
+struct HitPipes {
+    pipeline: wgpu::ComputePipeline,
+    field: wgpu::ComputePipeline,
+    resume: wgpu::ComputePipeline,
 }
 
 /// The hit pass: `hit.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
@@ -18,12 +18,23 @@ pub(super) struct HitPipes {
 /// ([`FLAG_FIELD_SPLIT`]) the plain pipeline and then `field_resume` over the rays it handed
 /// on. Each comes twice: with `ENTITIES` false (`entity.wgsl`), built with the frame and
 /// dispatched while no entity part is drawn, and with it true, built on the first frame that
-/// draws one.
+/// draws one. The steps view takes each with `COUNT_STEPS` on ([`Marcher::get`]), which keeps
+/// `ENTITIES` at its default.
 pub struct Marcher {
-    pub(super) bare: HitPipes,
+    bare: HitPipes,
     entities: OnceLock<HitPipes>,
     pub(super) out_layout: wgpu::BindGroupLayout,
     pub(super) resume_layout: wgpu::BindGroupLayout,
+    /// `pipeline`, `field` and `resume` with `COUNT_STEPS` on, each built on its first use.
+    counting: [OnceLock<wgpu::ComputePipeline>; 3],
+}
+
+/// Which of the hit pass's pipelines a dispatch runs.
+#[derive(Clone, Copy)]
+pub(super) enum HitPipe {
+    Plain = 0,
+    Field = 1,
+    Resume = 2,
 }
 
 impl Marcher {
@@ -59,26 +70,75 @@ impl Marcher {
             entities: OnceLock::new(),
             out_layout,
             resume_layout,
+            counting: std::array::from_fn(|_| OnceLock::new()),
         }
     }
 
-    /// The pipelines for a frame that draws entities (`entities`) or none.
-    pub(super) fn pipes(
+    /// Pipeline `which` for a frame that draws entities (`entities`) or none; with `count` its
+    /// `COUNT_STEPS` variant (the steps view, `ENTITIES` at its default), built over
+    /// `world_layout` on its first use.
+    pub(super) fn get(
         &self,
         device: &wgpu::Device,
         world_layout: &wgpu::BindGroupLayout,
+        which: HitPipe,
+        count: bool,
         entities: bool,
-    ) -> &HitPipes {
-        if !entities {
-            return &self.bare;
+    ) -> &wgpu::ComputePipeline {
+        if count {
+            return self.counting(device, world_layout, which);
         }
-        self.entities.get_or_init(|| {
-            Self::build(
+        let pipes = if entities {
+            self.entities.get_or_init(|| {
+                Self::build(
+                    device,
+                    world_layout,
+                    &self.out_layout,
+                    &self.resume_layout,
+                    true,
+                )
+            })
+        } else {
+            &self.bare
+        };
+        match which {
+            HitPipe::Plain => &pipes.pipeline,
+            HitPipe::Field => &pipes.field,
+            HitPipe::Resume => &pipes.resume,
+        }
+    }
+
+    fn counting(
+        &self,
+        device: &wgpu::Device,
+        world_layout: &wgpu::BindGroupLayout,
+        which: HitPipe,
+    ) -> &wgpu::ComputePipeline {
+        self.counting[which as usize].get_or_init(|| {
+            let (label, out, entry, field): (_, _, _, &[(&str, f64)]) = match which {
+                HitPipe::Plain => ("hit counting", &self.out_layout, "main", &[]),
+                HitPipe::Field => (
+                    "hit field counting",
+                    &self.out_layout,
+                    "main",
+                    &[("FIELD_SURFACE", 1.0)],
+                ),
+                HitPipe::Resume => (
+                    "hit field resume counting",
+                    &self.resume_layout,
+                    "field_resume",
+                    &[],
+                ),
+            };
+            let mut constants = vec![("COUNT_STEPS", 1.0)];
+            constants.extend_from_slice(field);
+            compute_pipeline_with(
                 device,
-                world_layout,
-                &self.out_layout,
-                &self.resume_layout,
-                true,
+                label,
+                compose(HIT_MODULES),
+                &[Some(world_layout), Some(out)],
+                entry,
+                &constants,
             )
         })
     }
