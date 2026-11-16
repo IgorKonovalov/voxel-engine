@@ -23,6 +23,26 @@
 > itself follows Plans 0062 and 0075, so all four edits to `toggles.rs` land before this lane
 > branches. Before the lane starts the architect re-reads Phases 1 to 3 against that tip: the
 > library's final layout and the names `walker.rs` and `viewer.rs` carry then.
+> **Amended 2026-11-16 (architect, pending owner):** the owner asked the same day for a menu
+> system in place of a full keyboard. ADR-0061 and
+> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
+> the window one menu component, a palette and one input-capture rule, and this plan moves onto
+> it: **Starts after** gains Plan 0080 in place of Plan 0076 (which 0080 folds in, pending the
+> owner). **`ListMenu` is not written here**: Phase 3's picker is a **dynamic Entities page** of
+> 0080's `Menu` (one row per library entry, built each frame; `Entry::on_select` moves the
+> preview; `Value` rows for the clip; the page's footer names `Enter places, Backspace removes`;
+> the page asks for the left click through its `captures_click` flag). `` ` `` stays the
+> shortcut that opens the menu on that page (`Menu::open_at`), so `` ` `` `` ` `` still places
+> the selected entry; `Esc` closes the page (never the run, 0080's rule); `ArrowLeft`,
+> `ArrowRight` and `ArrowDown` keep acting on the aimed entity with the menu closed. The keys
+> the picker read while open (`ArrowUp`, the wheel, both clicks, `Backspace`, `Escape`, `Enter`)
+> are the menu's by 0080's one rule, so this plan adds no routing of its own and Phase 3's
+> `the_picker_routes_its_keys` becomes a case of 0080's `the_route_is_one_function`. Phase 3's
+> `hud/menu.rs` leaves its file list; `the_overlay_shows_one_panel` becomes "opening the
+> Entities page from the Keys page and back", since both are pages of one menu. Owner question 8
+> (the shared menu) is answered by 0080; Phase 4 (a) also asks whether `` ` `` keeps its key or
+> the page is reached through `Tab` alone. The decision text and Phase 3 below are left as
+> written; the lane reads this note first.
 
 ## TL;DR
 

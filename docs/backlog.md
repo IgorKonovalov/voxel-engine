@@ -433,8 +433,29 @@ Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester`
 `flythrough::path::tester_action` only for keys it already chose (`F1`, the left click), so the
 unit test of `tester_action` cannot catch a debug key read outside `handle_input`, as `F2` is.
 What it takes: route every key the frame loop reads under `--tester` through `tester_action`, or a
-test that drives the loop's input handling with the filter on. Pick up with the next change to
-the fly-through's input or with Plan 0073's settings menu.
+test that drives the loop's input handling with the filter on. Taken 2026-11-16 by
+[Plan 0080](plans/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+Phase 2 (a test drives the loop's input step with the filter on; `Tab` and `Start` map to
+nothing); the entry leaves when that plan closes.
+
+### Mouse pointing and text events for the apps' menu
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 4, recommended later; ADR-0061's
+negatives). `vxe_app::Input` reports no cursor position and no text events, so the menu is keys,
+wheel and clicks, and its palette types from `KeyCode` (wrong letters on a non-QWERTY layout).
+What it takes: `Input::cursor` from winit's `CursorMoved`, the cursor unlocked and shown while
+the menu is open (the shell's `lock_cursor` toggled at run time, with the Wayland grab quirks
+the dev box has shown), a hit test per row (one division on the overlay's cell grid), and
+`KeyEvent::text` passed through as bytes for the filter. Pick up when the owner asks to point
+at the menu, or when a non-QWERTY layout types wrong.
+
+### A radial or hold menu for the pad
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 5). The pad walks the same tree as the
+keyboard (`Start`, the D-pad, `South`, `East`). A radial menu held on a button, or a hold-to-open
+wheel for the entries used most, is a second view over the same `menu::entries()`, drawn on the
+overlay's cell grid as a ring of labels. Pick up after Plan 0080's window, if the owner plays
+with the pad and the tree is too slow.
 
 ### Plan 0068's leftovers from the owner's runs
 

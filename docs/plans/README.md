@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0080** (ADRs are a separate sequence; next free there is **0061**).
+**Next free number: 0081** (ADRs are a separate sequence; next free there is **0063**).
 
 ## Active roster
 
@@ -20,11 +20,12 @@ state from `git log`. Completed plans move to `done/`.
 | [0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: keyframe animation by tick, a rig text file, a model viewer, voxels from text | in-progress | M6, ADR-0051 (proposed). Phases 1-2 merged 7ca423c; Phases 3-4 after 0062. |
 | [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
-| [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only, over 0069's RenderSettings. After 0069 and 0071. |
+| [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only. After 0069, 0071 and 0080; amended 2026-11-16 (pending owner). |
 | [0075](0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: steppable start-up, a progress signal and a default loading frame | approved | ADR-0059 (proposed). Approved 2026-11-15, voxel cube. After 0062 merges, beside 0063 P3-4, before 0069. |
-| [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | approved | Apps only, no ADR. Approved 2026-11-16. After 0062 and 0075 merge (both edit toggles.rs). |
-| [0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: `` ` `` lists the entities library, a live preview at the crosshair, a clip per placed entity | approved | Apps only, no ADR. Approved 2026-11-16. After 0063, the clip-recorder chore and 0076. |
+| [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | approved | Apps only, no ADR. Amended 2026-11-16 (pending owner): folded into 0080. |
+| [0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: `` ` `` lists the entities library, a live preview at the crosshair, a clip per placed entity | approved | Apps only, no ADR. After 0063, the clip chore and 0080; amended 2026-11-16 (pending owner). |
 | [0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, a reset | draft | M6, ADR-0060 (proposed). Drafted 2026-11-16. After 0062 and 0063 merge, before 0077. |
+| [0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one overlay component, a search palette, and the minimal key set | draft | ADR-0061 (proposed). Apps only. After 0062 and 0075; before 0076, 0077, 0073. |
 <!-- roster:end -->
 
 ## Sequence
@@ -76,15 +77,17 @@ approved"): **Plan 0070** (the sync off the frame), closed 2026-11-13 (v0.52.0),
 Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51.0);
 **Plan 0071** (the consumer's path) after Plans 0045, 0069 and 0044's Phase 8, before M10.
 
-**Plan 0073** (a settings menu and file for the fly-through and the tester, approved 2026-11-12 with every recommendation): after Plans 0069 and 0071.
+**Plan 0073** (a settings menu and file for the fly-through and the tester, approved 2026-11-12 with every recommendation): after Plans 0069 and 0071, and after Plan 0080, whose menu its settings pages live in (amended 2026-11-16, pending owner).
+
+**Plan 0080** (the fly-through's menu: one overlay component, a palette, the minimal key set; drafted 2026-11-16 with ADR-0061 from the owner's "keep using keys to minimal"): after Plans 0062 and 0075 merge (both edit `toggles.rs`), **before Plans 0076, 0077 and 0073**, which are amended onto its component (notes of 2026-11-16, pending owner); it does not wait for Plans 0069 or 0071. Recommended there: Plan 0076 is folded into it (its Keys page) and superseded on the owner's go.
 
 **Plan 0074** (the sync's light stages): closed 2026-11-14 (v0.53.0). The next sync plans are the backlog's head: the light placement's eviction scan, then `alloc`.
 
 **Plan 0075** (a loading screen, drafted and approved 2026-11-15, the animation a turning voxel cube): after Plan 0062 merges, beside Plan 0063's Phases 3-4, ahead of Plan 0069 (both edit `Run::init`).
 
-**Plan 0076** (a key help overlay, drafted and approved 2026-11-16 from the owner's request after the Plan 0062 window; `F1` becomes help, the readings move to `Enter`): after Plans 0062 and 0075 merge, since both edit `toggles.rs`.
+**Plan 0076** (a key help overlay, drafted and approved 2026-11-16 from the owner's request after the Plan 0062 window; `F1` becomes help, the readings move to `Enter`): after Plans 0062 and 0075 merge, since both edit `toggles.rs`. Amended 2026-11-16 (pending owner): folded into Plan 0080, whose Keys page is its panel and whose Phases 1 and 3 carry its work.
 
-**Plan 0077** (an entity picker over the entities library, drafted and approved 2026-11-16, every recommendation taken): after Plan 0063 closes, the clip-recorder chore and Plan 0076 merge; its `ListMenu` is what Plan 0073's menu builds on.
+**Plan 0077** (an entity picker over the entities library, drafted and approved 2026-11-16, every recommendation taken): after Plan 0063 closes, the clip-recorder chore and Plan 0080 merge; its picker is a dynamic page of 0080's menu (amended 2026-11-16, pending owner; `ListMenu` is not written).
 
 **Plan 0078** (the entity pool frees models, drafted 2026-11-16 from the owner's "proper reset" on Plan 0077's question 6; ADR-0060): after Plans 0062 and 0063 merge, before Plan 0077's lane, which is re-read against it.
 
