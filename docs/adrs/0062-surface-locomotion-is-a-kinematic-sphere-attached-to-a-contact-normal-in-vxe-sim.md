@@ -1,4 +1,4 @@
-# ADR-0060: Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`; ground locomotion keeps the cylinder controller
+# ADR-0062: Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`; ground locomotion keeps the cylinder controller
 
 > **Status:** proposed
 > **Date:** 2026-11-16

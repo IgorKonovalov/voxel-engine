@@ -4,7 +4,7 @@
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (entities), over M3's collision
 > (`vxe-sim`, ADR-0005)
-> **Related ADRs:** [ADR-0060](../adrs/0060-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md)
+> **Related ADRs:** [ADR-0062](../adrs/0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md)
 > (proposed; the surface mover, the smoothed normal, the frame to quaternion), accepted at this
 > plan's close. Rests on [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
 > (the cylinder controller the ground mover is),
@@ -93,7 +93,7 @@ fly-through's tick), section 6 (two new vectors) and section 7 (the gate's wall 
 
 ## Decision
 
-Build ADR-0060 in four dev phases, a window and a picks phase. **The surface mover** (Phase 1)
+Build ADR-0062 in four dev phases, a window and a picks phase. **The surface mover** (Phase 1)
 is a sphere in `vxe-sim` attached to a contact normal: it moves along the tangent, takes a
 blocking contact's normal (the concave edge), re-attaches along its down each tick (which rounds
 a convex edge), detaches and falls when nothing is within reach, and lands. A probe-ahead helper
@@ -107,7 +107,7 @@ aligns a surface body to the smoothed normal, and draws it through `DisplayPose:
 window and the picks follow.
 
 We rejected a generalised controller with a gravity vector, locomotion in the app in float, a
-rigid-body library and movement over the walkable map's cells (ADR-0060 A to D). We rejected
+rigid-body library and movement over the walkable map's cells (ADR-0062 A to D). We rejected
 pathfinding here: it is a layer over the movers and the coarse grid, with its own plan when a
 consumer asks (What this plan does NOT do). We rejected inverse kinematics for the feet: the
 clips are authored strides and the stride length ties them to the ground; a foot that lands on a
@@ -581,7 +581,7 @@ unchanged (ADR-0050).
 
 ### Owner questions (each with a recommendation)
 
-1. **Where locomotion lives.** Recommended: ADR-0060, a sphere surface mover in `vxe-sim`
+1. **Where locomotion lives.** Recommended: ADR-0062, a sphere surface mover in `vxe-sim`
    beside the cylinder controller; walkers use the controller, crawlers the mover; the app
    chooses per entity from the rig's `body`. Alternative A: one generalised controller with a
    gravity vector (a rewrite of Plan 0004's pinned controller). Alternative B: locomotion in
