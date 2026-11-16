@@ -50,6 +50,16 @@ jobs:
       - name: Build or restore the pinned lavapipe
         if: runner.os == 'Linux'
         uses: ./.github/actions/lavapipe
+      # llvmpipe compiles every shader for the host CPU, and the runners vary (an EPYC 7763
+      # has no AVX-512, newer hosts do), so a render result can depend on the host. The
+      # model and its vector extensions are printed before any GPU test runs.
+      - name: The runner's CPU
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(avx|avx2|fma|f16c|avx512[a-z_]*|avx_vnni)$' | sort | tr '\n' ' '
+          echo
       # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
       - name: Cargo's fingerprint log on a manual run
