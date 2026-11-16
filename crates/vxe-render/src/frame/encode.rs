@@ -140,9 +140,10 @@ impl Frame {
         self.pipes.pipeline(device, pass)
     }
 
-    /// The light pass's pipeline (`shade`): in the steps view the one whose `COUNT_STEPS` is
-    /// true (built on its first use), otherwise while no entity part is drawn the one whose
-    /// `ENTITIES` is false, which walks no entity.
+    /// The light pass's pipeline (`shade`), built on its first use unless
+    /// [`Frame::prepare_entities`] built it: in the steps view the one whose `COUNT_STEPS` is
+    /// true, otherwise while no entity part is drawn the one whose `ENTITIES` is false, which
+    /// walks no entity.
     pub(super) fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let pass = if self.state.look.view == ViewMode::Steps {
             P_LIGHT_STEPS

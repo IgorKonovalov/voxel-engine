@@ -486,8 +486,8 @@ mod reading {
     }
 
     /// Phase 6d: the time `Frame::new` takes at 192 x 108 on a fresh device, three frames in a
-    /// row (the first pays the driver's cold compiles; a driver cache may serve the rest), and the
-    /// compute pipelines each creates.
+    /// row (the first pays the driver's cold compiles; a driver cache may serve the rest), then
+    /// `Frame::prepare_entities`'s time on each, and the compute pipelines each creates.
     #[test]
     #[ignore = "reading"]
     #[allow(
@@ -504,7 +504,15 @@ mod reading {
             let frame = vxe_render::Frame::new(&device, W, H);
             let ms = t0.elapsed().as_secs_f64() * 1e3;
             let n = vxe_render::debug::compute_pipelines_created() - made;
-            println!("{adapter}: Frame::new {k}: {ms:.1} ms, {n} compute pipelines");
+            let t1 = std::time::Instant::now();
+            frame.prepare_entities(&device);
+            let prep = t1.elapsed().as_secs_f64() * 1e3;
+            let m = vxe_render::debug::compute_pipelines_created() - made - n;
+            println!(
+                "{adapter}: Frame::new {k}: {ms:.1} ms, {n} compute pipelines; \
+                 prepare_entities: {prep:.1} ms, {m} more ({:.1} ms with the call)",
+                ms + prep
+            );
             drop(frame);
         }
     }

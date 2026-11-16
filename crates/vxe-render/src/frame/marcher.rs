@@ -16,13 +16,14 @@ struct HitPipes {
 /// the contour look over a mirror with the field ([`NormalMode::Contour`]) its pipeline with
 /// `FIELD_SURFACE`, which walks the field surface, or with the split walk
 /// ([`FLAG_FIELD_SPLIT`]) the plain pipeline and then `field_resume` over the rays it handed
-/// on. Each comes twice, both built with the frame: with `ENTITIES` false (`entity.wgsl`),
-/// dispatched while no entity part is drawn, and with it true, so the first frame that draws
-/// a part builds nothing (a driver may take seconds over the entity walk). The steps view takes each with `COUNT_STEPS` on ([`Marcher::get`]), which keeps
-/// `ENTITIES` at its default.
+/// on. Each comes twice: with `ENTITIES` false (`entity.wgsl`), built with the frame and
+/// dispatched while no entity part is drawn, and with it true, built by
+/// [`Marcher::prepare_entities`] or else on the first frame that draws a part (a driver may
+/// take seconds over the entity walk). The steps view takes each with `COUNT_STEPS` on
+/// ([`Marcher::get`]), which keeps `ENTITIES` at its default.
 pub struct Marcher {
     bare: HitPipes,
-    entities: HitPipes,
+    entities: OnceLock<HitPipes>,
     pub(super) out_layout: wgpu::BindGroupLayout,
     pub(super) resume_layout: wgpu::BindGroupLayout,
     /// `pipeline`, `field` and `resume` with `COUNT_STEPS` on, each built on its first use.
@@ -67,7 +68,7 @@ impl Marcher {
         );
         Self {
             bare: Self::build(device, world_layout, &out_layout, &resume_layout, false),
-            entities: Self::build(device, world_layout, &out_layout, &resume_layout, true),
+            entities: OnceLock::new(),
             out_layout,
             resume_layout,
             counting: std::array::from_fn(|_| OnceLock::new()),
@@ -88,12 +89,42 @@ impl Marcher {
         if count {
             return self.counting(device, world_layout, which);
         }
-        let pipes = if entities { &self.entities } else { &self.bare };
+        let pipes = if entities {
+            self.entity_pipes(device, world_layout)
+        } else {
+            &self.bare
+        };
         match which {
             HitPipe::Plain => &pipes.pipeline,
             HitPipe::Field => &pipes.field,
             HitPipe::Resume => &pipes.resume,
         }
+    }
+
+    /// Builds the `ENTITIES`-true set over `world_layout` unless it is built.
+    pub(super) fn prepare_entities(
+        &self,
+        device: &wgpu::Device,
+        world_layout: &wgpu::BindGroupLayout,
+    ) {
+        self.entity_pipes(device, world_layout);
+    }
+
+    /// The `ENTITIES`-true set, built over `world_layout` on its first use.
+    fn entity_pipes(
+        &self,
+        device: &wgpu::Device,
+        world_layout: &wgpu::BindGroupLayout,
+    ) -> &HitPipes {
+        self.entities.get_or_init(|| {
+            Self::build(
+                device,
+                world_layout,
+                &self.out_layout,
+                &self.resume_layout,
+                true,
+            )
+        })
     }
 
     fn counting(

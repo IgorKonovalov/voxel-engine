@@ -202,19 +202,28 @@ fn an_entity_hides_the_wall_behind_it() {
     );
 }
 
-/// Plan 0062 Phase 6d: the frame builds every pipeline a frame that draws an entity uses when
-/// it is created, so the first frame that draws a part creates none. The rig's frame, then a
-/// frame with no entity (the frame the no-entity hit and light pipelines serve), then the
-/// 8-voxel cube of `an_entity_hides_the_wall_behind_it` drawn from the next frame on: the
-/// process's compute-pipeline count (`debug::compute_pipelines_created`, which every compute
-/// pipeline of `vxe-render` passes) is the same after two frames with the part as when the
-/// frame was made, and the part shows (one part drawn; the centre pixel's hit is the entity's).
+/// Plan 0062 Phase 6d: [`vxe_render::Frame::prepare_entities`] builds every pipeline a frame
+/// that draws an entity uses, so the first frame that draws a part creates none, and
+/// `Frame::new` builds none of them itself. The process's compute-pipeline count
+/// (`debug::compute_pipelines_created`, which every compute pipeline of `vxe-render` passes):
+/// the call adds exactly the five it owns (the hit pass's three `ENTITIES`-true pipelines, the
+/// entity light pass and the no-entity light pass), none of which the frame's creation built.
+/// Then a frame with no entity, and the 8-voxel cube of `an_entity_hides_the_wall_behind_it`
+/// drawn on the next two: the count is the same as after the call, and the part shows (one
+/// part drawn; the centre pixel's hit is the entity's).
 #[test]
 fn the_first_frame_with_an_entity_builds_no_pipeline() {
     let Some((mut rig, red)) = rig() else {
         return;
     };
     let made = vxe_render::debug::compute_pipelines_created();
+    rig.frame.prepare_entities(&rig.device);
+    let prepared = vxe_render::debug::compute_pipelines_created();
+    assert_eq!(
+        prepared - made,
+        5,
+        "the call builds the entity set and both light pipelines, none built by the frame"
+    );
     let camera = level_camera(86.0, 26.0);
     rig.step(&camera);
     let cube = block([8; 3], red, 1);
@@ -228,8 +237,11 @@ fn the_first_frame_with_an_entity_builds_no_pipeline() {
     rig.step(&camera);
     rig.step(&camera);
     let after = vxe_render::debug::compute_pipelines_created();
-    println!("compute pipelines: {made} at the frame's creation, {after} after the part's frames");
-    assert_eq!(after, made, "pipelines built after the frame was made");
+    println!(
+        "compute pipelines: {made} at the frame's creation, {prepared} after the call, \
+         {after} after the part's frames"
+    );
+    assert_eq!(after, prepared, "pipelines built after the call");
     assert_eq!(rig.frame.entity_mirror().parts_drawn(), 1);
     let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let centre = pixel_of(&camera, [106.0, 32.0, 26.0]);

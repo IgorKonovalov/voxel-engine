@@ -143,15 +143,15 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         groups: &[W, E, Group::SharedWith(P_TEMPORAL)],
         lazy: true,
     },
-    // The light pass (`shade`) that walks the entities, built with the frame so the first
-    // frame that draws a part builds nothing.
+    // The light pass (`shade`) that walks the entities, built by
+    // [`Pipelines::prepare_entities`] or else on the first encode that runs it.
     PassSpec {
         label: "light",
         modules: LIGHT_MODULES,
         entry: "shade",
         constants: &[("ENTITY_SHADOWS", 1.0)],
         groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16, F16])],
-        lazy: false,
+        lazy: true,
     },
     PassSpec {
         label: "gradient",
@@ -323,15 +323,15 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         lazy: false,
     },
     // The light pass with `ENTITIES` false (`entity.wgsl`): the frame's light pass while no
-    // entity part is drawn ([`Frame::light_pipeline`]),
-    // built with the frame.
+    // entity part is drawn ([`Frame::light_pipeline`]), built on its first use or by
+    // [`Pipelines::prepare_entities`].
     PassSpec {
         label: "light (no entities)",
         modules: LIGHT_MODULES,
         entry: "shade",
         constants: &[("ENTITIES", 0.0)],
         groups: &[W, E, Group::SharedWith(P_LIGHT)],
-        lazy: false,
+        lazy: true,
     },
     // The light pass with `COUNT_STEPS` on, for the steps view, built on its first use.
     PassSpec {
@@ -381,6 +381,15 @@ impl Pipelines {
             }
         }
         pipes
+    }
+
+    /// Builds the hit pass's `ENTITIES`-true set and both light pipelines (`P_LIGHT` and
+    /// `P_LIGHT_BARE`) unless they are built, so no later frame, with entities or without,
+    /// builds a pipeline outside the steps view and the store counters.
+    pub(super) fn prepare_entities(&self, device: &wgpu::Device) {
+        self.hit.prepare_entities(device, &self.world_layout);
+        self.pipeline(device, P_LIGHT);
+        self.pipeline(device, P_LIGHT_BARE);
     }
 
     /// Pass `p`'s own group layout, or the layout it shares.
