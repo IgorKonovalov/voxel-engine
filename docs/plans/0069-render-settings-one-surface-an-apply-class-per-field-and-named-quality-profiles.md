@@ -365,8 +365,8 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 |---|---|---|---|
 | 1: the struct, read back and applied | dev | done; gpu_settings 2/2 at e73cf935 (readings log, Phase 2) | 3a3a3e4b |
 | 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when open pending the owner (Notes) | code 0335bc30; row f0c8a109 |
-| 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, open pending the owner (Notes) | code e0c75597, e73cf935; committed with this row |
-| 4: readings of each profile on both adapters | dev | not started | |
+| 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, open pending the owner (Notes) | code e0c75597, e73cf935; row 55e62a13 |
+| 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, over the 10 ms line (Notes) | committed with this row |
 | 5: the owner's window | human | not started | |
 | 6: the picks into the profiles | dev | not started | |
 | 7: image tests against the picks, and the tip's readings | dev | not started | |
@@ -404,6 +404,11 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   Options: (a) change the struct defaults and re-derive the tests that lean on them; (b) keep
   them as the neutral test baseline, `RenderSettings::default()` the consumer's entry. The
   code is as (b).
+- Phase 4: the done-when's "three quiet rounds" is not met for cells whose runs read a load
+  above 2 (other lanes building; each cell's loads are in the readings log). The frame's
+  reserved VRAM is not printed by the tree; the mirror's is. The RADV RENOIR's hit pass at
+  Portable's internal size reads 10.53 ms in the hall, over the 2026-11-12 amendment's 10 ms
+  line, which puts the backlog's walk-speed spike before Phase 6.
 
 ### Close triggers
 
